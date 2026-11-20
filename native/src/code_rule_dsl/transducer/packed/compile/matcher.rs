@@ -50,15 +50,15 @@ pub struct Labels {
     /// `LoweredWave::new`), with the labels they read in turn: their definitions, to read their
     /// domains (`bound`). They are evaluated as the owner's passes.
     borrowed: BTreeMap<u16, Label>,
+    /// Each label's rule, sketched, by `defs`' place: what the label census names (`RERAIL_LABEL_CENSUS`); empty
+    /// strings otherwise.
+    sources: Vec<String>,
 }
 
 impl Label {
     /// The label with every label it reads renamed by `map`.
     fn relabelled(&self, map: &dyn Fn(u16) -> u16) -> Self {
-        let domain = |domain: &Domain| match domain {
-            Domain::Label(label) => Domain::Label(map(*label)),
-            other => other.clone(),
-        };
+        let domain = |domain: &Domain| domain.relabelled(map);
         match self {
             Label::Pattern(program, starts) => Label::Pattern(program.relabelled(map), domain(starts)),
             Label::Constrained(program, starts, constraints) => Label::Constrained(
@@ -121,12 +121,63 @@ pub enum Domain {
     All,
     Kinds(Vec<u16>),
     Label(u16),
+    /// The nodes of these kinds (any kind, `None`) within a node set: where a label made inside an `all` is read, the
+    /// `all`'s demand (decision 0460). The set is read where the pass's anchor is (`anchor_bits`, `device_anchor`),
+    /// within it; elsewhere the kinds alone, a superset.
+    Within(Option<Vec<u16>>, super::compile_sets::Set),
 }
 
 impl Domain {
     pub fn of(tree: &MatchTree) -> Self {
         tree.kinds()
             .map_or(Self::All, |kinds| Self::Kinds(kinds.into_iter().collect()))
+    }
+
+    /// The domain as a node set.
+    pub fn set(&self) -> super::compile_sets::Set {
+        use super::compile_sets::Set;
+        let kinds = |kinds: &[u16]| Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect());
+        match self {
+            Domain::All => Set::All,
+            Domain::Kinds(list) => kinds(list),
+            Domain::Label(label) => Set::Class(*label),
+            Domain::Within(list, set) => Set::all_of(vec![list.as_deref().map_or(Set::All, kinds), set.clone()]),
+        }
+    }
+
+    /// Whether a node of `kind` may be in the domain, read by its kinds alone (a label's or a demand's set is read
+    /// elsewhere).
+    pub fn admits_kind(&self, kind: u16) -> bool {
+        match self {
+            Domain::All | Domain::Label(_) | Domain::Within(None, _) => true,
+            Domain::Kinds(kinds) | Domain::Within(Some(kinds), _) => kinds.binary_search(&kind).is_ok(),
+        }
+    }
+
+    /// A demand's set (`Within`), which a pass's anchor holds its starts to.
+    pub fn demand(&self) -> Option<&super::compile_sets::Set> {
+        match self {
+            Domain::Within(_, set) => Some(set),
+            _ => None,
+        }
+    }
+
+    /// The domain with every label it reads renamed by `map`.
+    pub fn relabelled(&self, map: &dyn Fn(u16) -> u16) -> Self {
+        match self {
+            Domain::Label(label) => Domain::Label(map(*label)),
+            Domain::Within(kinds, set) => Domain::Within(kinds.clone(), set.clone().relabelled(map)),
+            other => other.clone(),
+        }
+    }
+
+    /// The labels the domain reads: a label's, or those a demand's set reads.
+    pub fn labels(&self) -> Vec<u16> {
+        match self {
+            Domain::Label(label) => vec![*label],
+            Domain::Within(_, set) => set.labels(),
+            Domain::All | Domain::Kinds(_) => Vec::new(),
+        }
     }
 }
 
@@ -174,8 +225,24 @@ pub enum Label {
     Empty,
 }
 
-/// Each fact's rows on each tape, by (fact, tape source) addresses: made before any pass.
-type FactRows = HashMap<(usize, usize), crate::code_rule_dsl::matcher::FactFound>;
+/// Each fact's rows on each tape, made before any pass: written once, where they are found, into one block (Q289), and
+/// read there by the CPU's label passes and the device's (bound whole). By (fact, tape source) addresses.
+#[derive(Clone)]
+pub struct FactRows {
+    pub block: Arc<rerail_blocks::block::Block>,
+    found: HashMap<(usize, usize), crate::code_rule_dsl::matcher::FactFound>,
+}
+
+impl FactRows {
+    fn new(block: rerail_blocks::block::Block) -> Self {
+        Self { block: Arc::new(block), found: HashMap::new() }
+    }
+
+    /// Where the findings of fact `key.0` on the tape of source `key.1` are in `block`.
+    pub fn get(&self, key: &(usize, usize)) -> Option<&crate::code_rule_dsl::matcher::FactFound> {
+        self.found.get(key)
+    }
+}
 
 /// The rows of `facts` on each of `tapes`, before any label pass (decision 0030): the producers read
 /// no label. Each tape is one file evaluation, so its scope table is built once and shared by every
@@ -188,18 +255,29 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
             distinct.push(fact);
         }
     }
+    // The block's reservation is address space, resident only where written: room for each fact's rows at every
+    // node of every tape (a row is at most a start), or its bits, with alignment.
+    let nodes: usize = tapes.iter().map(|tape| tape.transducer_len()).sum();
+    let reserve = distinct.iter().map(|fact| 4 * (1 + fact.slots.len()) * nodes + 8 * (nodes / 64 + 2 * tapes.len())).sum::<usize>() + 4096;
+    let mut rows = FactRows::new(rerail_blocks::block::Block::anon(rerail_blocks::block::kind::FACTS, reserve));
     if distinct.is_empty() {
-        return FactRows::new();
+        return rows;
     }
     crate::code_rule_dsl::prof::count("labels.facts.distinct", distinct.len());
     crate::code_rule_dsl::prof::count("labels.facts.anywhere", distinct.iter().filter(|fact| fact.kinds.is_none()).count());
-    crate::code_rule_dsl::prof::time("labels.facts", || {
+    // `labels.facts` is the caller's thread CPU; each tape's rows, on whichever thread takes it, are `fact_rows.tape`
+    // (the pool's work, which the caller's does not hold: Q135). Not a `labels.` stage: those take process CPU too,
+    // which tapes in parallel would count again.
+    let block = &*rows.block;
+    rows.found = crate::code_rule_dsl::prof::time("labels.facts", || {
         crate::code_rule_dsl::logic::profile::on_cores(|| {
             tapes
                 .par_iter()
-                .flat_map_iter(|tape| {
+                .flat_map_iter(|tape| crate::code_rule_dsl::prof::time("fact_rows.tape", || {
                     let file = ast_grep_core::AstGrep::doc(tape.clone());
                     let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+                    // The tape's parents' gaps for its facts' gap tests, each parent's made once (Q135).
+                    let _gaps = crate::code_rule_dsl::matcher::gap::GapScope::install(tape.transducer_len());
                     let source = Arc::as_ptr(tape.document_source()) as usize;
                     // The tape's sibling positions and `nthChild` answers, shared by its facts.
                     let siblings = crate::code_rule_dsl::matcher::SiblingPositions::default();
@@ -207,13 +285,15 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
                         .iter()
                         .map(|fact| {
                             let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
-                            ((Arc::as_ptr(fact) as usize, source), fact.found(&file, domain(&starts, tape, &[]), &siblings))
+                            let found = fact.found(&file, domain(&starts, tape, &[]), &siblings, block).expect("the fact block holds every row");
+                            ((Arc::as_ptr(fact) as usize, source), found)
                         })
                         .collect::<Vec<_>>()
-                })
+                }))
                 .collect()
         })
-    })
+    });
+    rows
 }
 
 impl Labels {
@@ -239,7 +319,13 @@ impl Labels {
     /// A label not yet in the evaluation order.
     fn reserve(&mut self, label: Label) -> u16 {
         self.defs.push(label);
+        self.sources.push(String::new());
         LABEL_BASE + self.offset + (self.defs.len() - 1) as u16
+    }
+
+    /// The recursive group label `id` is in (its step), if it is in one: the labels that settle together in rounds.
+    pub fn group_of(&self, id: u16) -> Option<&[u16]> {
+        self.steps.iter().find(|step| step.contains(&id) && self.recursive.values().any(|r| step.contains(r))).map(Vec::as_slice)
     }
 
     pub fn def(&self, id: u16) -> &Label {
@@ -255,7 +341,8 @@ impl Labels {
     pub fn bound(&self, domain: &Domain, seen: &mut Vec<u16>) -> Option<BTreeSet<u16>> {
         match domain {
             Domain::All => None,
-            Domain::Kinds(kinds) => Some(kinds.iter().copied().collect()),
+            Domain::Kinds(kinds) | Domain::Within(Some(kinds), _) => Some(kinds.iter().copied().collect()),
+            Domain::Within(None, _) => None,
             Domain::Label(id) if seen.contains(id) => None,
             Domain::Label(id) => {
                 seen.push(*id);
@@ -279,10 +366,7 @@ impl Labels {
     /// The same labels with every id `by` higher.
     fn shifted(&self, by: u16) -> Self {
         let up = |label: u16| label + by;
-        let domain = |domain: &Domain| match domain {
-            Domain::Label(label) => Domain::Label(up(*label)),
-            other => other.clone(),
-        };
+        let domain = |domain: &Domain| domain.relabelled(&up);
         let defs = self
             .defs
             .iter()
@@ -313,6 +397,7 @@ impl Labels {
             steps: self.steps.iter().map(|step| step.iter().copied().map(up).collect()).collect(),
             recursive: self.recursive.iter().map(|(at, label)| (*at, up(*label))).collect(),
             borrowed: self.borrowed.iter().map(|(id, label)| (up(*id), label.clone())).collect(),
+            sources: self.sources.clone(),
         }
     }
 
@@ -328,13 +413,12 @@ impl Labels {
                 })
                 .collect::<Vec<_>>()
         };
-        let starts = |domain: &Domain| match domain {
-            Domain::Label(label) => Some(*label),
-            Domain::All | Domain::Kinds(_) => None,
-        };
+        let starts = |domain: &Domain| domain.labels();
         match self.def(id) {
-            Label::Pattern(_, _) | Label::Empty => Vec::new(),
-            Label::Constrained(_, _, constraints) => constraints.iter().map(|(_, label)| *label).collect(),
+            // A pattern's starts read labels where it is made inside an `all` that demands them (0460): it waits for them.
+            Label::Pattern(_, domain) => starts(domain),
+            Label::Empty => Vec::new(),
+            Label::Constrained(_, domain, constraints) => constraints.iter().map(|(_, label)| *label).chain(starts(domain)).collect(),
             Label::Roots(program, domain)
             | Label::Targets(program, domain)
             | Label::Count { program, domain, .. } => {
@@ -347,6 +431,18 @@ impl Labels {
 }
 
 impl LoweredMatcher {
+    /// The label this clause's program only reads, where it is `SUPERTYPE T; CAPTURE; EMIT`: its roots are `T`'s
+    /// members in its domain, read from the label, not walked (t45 §1: eight such clauses walked every node at s1000).
+    pub fn label_copy(&self) -> Option<u16> {
+        match self.program.words.as_slice() {
+            &[read, capture, emit] => match (split(read), split(capture).0, split(emit).0) {
+                ((SUPERTYPE, 0, label), CAPTURE, EMIT) if label >= LABEL_BASE => Some(label),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Every program the clause walks: its labels' and its root program.
     pub fn walked_programs(&self) -> Vec<&Program> {
         self.labels.defs.iter().filter_map(Label::program).chain(std::iter::once(&self.program)).collect()
@@ -356,7 +452,8 @@ impl LoweredMatcher {
         let mut labels = Labels::default();
         // Set mode (list step 14): the clause's matches are its roots, read as keys (the wave's
         // `match(c, d, n)` and spans), so the root program stops at its first emit per start.
-        let program = Builder::new(&mut labels).roots(tree)?.in_set_mode();
+        let program = Builder::new(&mut labels).roots(tree)?;
+        let program = program.in_set_mode();
         if labels.defs.len() > usize::from(u16::MAX - LABEL_BASE) {
             return Err(Error::InvalidOperand(0));
         }
@@ -384,9 +481,8 @@ impl LoweredMatcher {
         backend: Backend,
         tapes: &[TapeDoc],
     ) -> Result<Vec<BTreeSet<u32>>, Error> {
-        if let Backend::MetalInterpreter = backend
-            && super::device::matcher().is_some()
-        {
+        // Metal asked for: the device's, refused where none is registered (decision 0382), as `execute_with_backend_*`.
+        if let Backend::MetalInterpreter = backend {
             return self.roots_metal(tapes).map(|(roots, _)| roots);
         }
         let mut sets = empty_sets(tapes, self.labels.defs.len());
@@ -509,8 +605,8 @@ impl LoweredMatcher {
     /// [`evaluate`](Self::evaluate), a program's pass on the interpreter held to `budget` (decision 0334): `None` on a
     /// tape where its evaluation went to W's matcher instead (`run_budgeted`; the clause's, there).
     ///
-    /// With `anchors` (each view's column sets: a level whose labels read only finished ones), each walk starts only
-    /// within its anchor (`anchor_bits`, decision 0365).
+    /// With `anchors` (and each view's tape among them), each walk starts only within its anchor (decision 0365; a
+    /// recursive group's, Q133).
     fn evaluate_budgeted(
         &self,
         label: &Label,
@@ -518,7 +614,7 @@ impl LoweredMatcher {
         sets: &[Arc<Vec<Vec<u64>>>],
         facts: &FactRows,
         budget: WorkBudget,
-        anchors: Option<&[&std::sync::OnceLock<super::compile_sets::Index>]>,
+        anchors: Option<(&Anchoring<'_>, &[usize])>,
     ) -> Result<Vec<Option<Vec<u64>>>, Error> {
         let (Label::Roots(program, starts) | Label::Targets(program, starts) | Label::Count { program, domain: starts, .. }) = label else {
             return Ok(self.evaluate(label, views, sets, facts)?.into_iter().map(Some).collect());
@@ -537,13 +633,12 @@ impl LoweredMatcher {
                 .enumerate()
                 .map(crate::code_rule_dsl::logic::profile::carried("root programs (pool)", |(at, (view, sets)): (usize, (&TapeDoc, &Arc<Vec<Vec<u64>>>))| {
                     let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
-                    let anchor = anchors.map(|indexes| {
-                        let index = indexes[at].get_or_init(Default::default);
-                        let anchor = anchor_bits(program, walk.as_ref(), texts.as_deref(), view, sets, index);
+                    let anchor = anchors.map(|(anchors, tapes)| {
+                        let anchor = anchors.bits(tapes[at], program, starts, walk.as_ref(), texts.as_deref(), view, sets);
                         count_anchored(domain(starts, view, sets).filter(|&node| entry.admits(view, node)), &anchor);
                         anchor
                     });
-                    let starts = || anchored(domain(starts, view, sets).filter(|&node| entry.admits(view, node)), anchor.as_deref());
+                    let starts = || anchored(domain(starts, view, sets).filter(|&node| entry.admits(view, node)), anchor.as_deref().map(Vec::as_slice));
                     if let Some(walk) = &walk
                         && let Some(texts) = &texts
                         && let Some(bits) = walked_with(label, walk, texts, view, sets, starts())
@@ -575,10 +670,7 @@ impl LoweredMatcher {
     fn unlabelled_candidates<'a>(&'a self, view: &'a TapeDoc) -> impl Iterator<Item = u32> + 'a {
         let entry = Entry::of(&self.program);
         (0..view.transducer_len() as u32)
-            .filter(move |&node| match &self.domain {
-                Domain::All | Domain::Label(_) => true,
-                Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),
-            })
+            .filter(move |&node| self.domain.admits_kind(view.transducer_kind(node)))
             .filter(move |&node| entry.admits(view, node))
     }
 
@@ -658,10 +750,10 @@ impl LoweredMatcher {
                     let mut bits = empty(view);
                     let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(view.document_source()) as usize);
                     match facts.get(&key) {
-                        // No slot: the nodes are the verdicts.
-                        Some(crate::code_rule_dsl::matcher::FactFound::Nodes(nodes)) => bits.clone_from(nodes),
+                        // No slot: the nodes are the verdicts, the label's set.
+                        Some(found @ crate::code_rule_dsl::matcher::FactFound::Nodes { .. }) => bits.copy_from_slice(found.nodes(&facts.block).expect("a node set")),
                         Some(found) => {
-                            for (node, targets) in found.rows() {
+                            for (node, targets) in found.rows(&facts.block) {
                                 if targets.iter().zip(slots).all(|(&target, &label)| has(sets, label, target)) {
                                     set(&mut bits, node);
                                 }
@@ -742,6 +834,8 @@ pub struct LoweredWave {
     feeds: Vec<BTreeSet<usize>>,
     /// The level passes fused into one walk, built at their first batch (`Packs`).
     packs: Packs,
+    /// The sources of its pattern kernels on Metal, made at the first ask (`metal_ready`).
+    metal_sources: [std::sync::OnceLock<Result<Vec<String>, Error>>; 2],
 }
 
 impl LoweredWave {
@@ -829,6 +923,13 @@ impl LoweredWave {
                 }
             }
             let defs = placed.into_iter().map(|def| def.expect("a definition per kept id")).collect::<Vec<_>>();
+            let mut sources = vec![String::new(); defs.len()];
+            for local in 0..labels.defs.len() {
+                let new = map[&(LABEL_BASE + labels.offset + local as u16)];
+                if let Some(at) = usize::from(new - LABEL_BASE).checked_sub(usize::from(offset)).filter(|&at| sources[at].is_empty()) {
+                    sources[at] = labels.sources.get(local).cloned().unwrap_or_default();
+                }
+            }
             distinct += defs.len();
             for local in 0..defs.len() {
                 owner.insert(LABEL_BASE + offset + local as u16, at);
@@ -839,14 +940,12 @@ impl LoweredWave {
                 steps,
                 recursive: labels.recursive.iter().map(|(at, label)| (*at, rename(*label))).collect(),
                 borrowed: BTreeMap::new(),
+                sources,
             };
             // The labels this clause reads that an earlier clause owns, with what they read.
             let mut wanted = (0..own.defs.len())
                 .flat_map(|local| own.reads(LABEL_BASE + offset + local as u16))
-                .chain(match &clause.domain {
-                    Domain::Label(label) => Some(rename(*label)),
-                    _ => None,
-                })
+                .chain(clause.domain.labels().into_iter().map(&rename))
                 .chain(clause.program.relabelled(&rename).words.iter().filter_map(|&word| match split(word) {
                     (SUPERTYPE, _, class) if class >= LABEL_BASE => Some(class),
                     _ => None,
@@ -870,10 +969,7 @@ impl LoweredWave {
             combined.push(LoweredMatcher {
                 labels: own,
                 program: clause.program.relabelled(&rename),
-                domain: match &clause.domain {
-                    Domain::Label(label) => Domain::Label(rename(*label)),
-                    other => other.clone(),
-                },
+                domain: clause.domain.relabelled(&rename),
             });
         }
         // Each clause's root label on Metal follows every pass's.
@@ -883,7 +979,7 @@ impl LoweredWave {
         crate::code_rule_dsl::prof::count("wave.labels", total);
         crate::code_rule_dsl::prof::count("wave.distinct_labels", distinct);
         crate::code_rule_dsl::prof::count("wave.shared_groups", shared_groups);
-        Ok(Self { clauses: combined, labels: next, feeds, packs: Packs::default() })
+        Ok(Self { clauses: combined, labels: next, feeds, packs: Packs::default(), metal_sources: Default::default() })
     }
 
     /// The wave's plan identity (list step 16; t1 spec-fusion §4.9, the fused plan's cache key):
@@ -921,6 +1017,9 @@ impl LoweredWave {
             Domain::All => "all".to_owned(),
             Domain::Kinds(kinds) => format!("kinds{}", super::rir::kinds(grammar, kinds)),
             Domain::Label(label) => format!("L{label}"),
+            Domain::Within(kinds, set) => {
+                format!("{} within {set:?}", kinds.as_deref().map_or("all".to_owned(), |kinds| format!("kinds{}", super::rir::kinds(grammar, kinds))))
+            }
         };
         let mut programs = BTreeMap::<String, &Program>::new();
         let mut program = |program: &'_ Program| -> String { format!("sha256:{}", program.plain_digest()) };
@@ -1094,6 +1193,19 @@ impl LoweredWave {
         Ok(views.into_iter().map(|(view, _)| view).collect())
     }
 
+    /// Whether the wave's generated kernels on Metal (its patterns') are compiled, or at hand in the store
+    /// (decision 0395), for a batch of tapes of `format` (0: mixed), the kernels' function constant. A wave whose
+    /// kernels are not runs on the CPU meanwhile; they are compiled as the mode says.
+    pub fn metal_ready(&self, format: u32) -> bool {
+        let Some(device) = super::device::matcher() else { return true };
+        // The sources by the tape view the batch's format reads (`pattern_variant`).
+        match self.metal_sources[device.pattern_variant(format)].get_or_init(|| device.wave_pattern_sources(self, format)) {
+            Ok(sources) => device.patterns_ready(sources, format),
+            // No Metal form of its patterns: the Metal run says why (`roots_batch`).
+            Err(_) => true,
+        }
+    }
+
     /// Every clause's matches of the batch (per clause, per tape: the matched roots, tape preorder ids), the whole
     /// wave as one run: its labels' passes once, then each clause's root program from its starts. On Metal, every
     /// pass and root program in one command buffer (`roots_metal`, the batch halved where it outgrows a workspace or
@@ -1114,9 +1226,9 @@ impl LoweredWave {
         active: &[Vec<bool>],
         budget: crate::code_rule_dsl::transducer::packed::WorkBudget,
     ) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
-        if let Backend::MetalInterpreter = backend
-            && super::device::matcher().is_some()
-        {
+        crate::code_rule_dsl::prof::count("clauses.label_copies", self.clauses.iter().filter(|clause| clause.label_copy().is_some()).count());
+        // Metal asked for: the device's, refused where none is registered (decision 0382), as `execute_with_backend_*`.
+        if let Backend::MetalInterpreter = backend {
             // Each clause's roots are its domain's nodes where it runs: a rule the device reads (`ClauseRoots::Rule`),
             // no list made here.
             return self.roots_metal_split(tapes, active);
@@ -1146,10 +1258,15 @@ impl LoweredWave {
                     per.push(clause.unlabelled_candidates(view).collect());
                     continue;
                 }
+                // A program that only reads a label: its roots are the label's members in the domain.
+                if let Some(copied) = clause.label_copy() {
+                    per.push(members(sets, copied).filter(|&node| in_domain(&clause.domain, view, sets, node)).collect());
+                    continue;
+                }
                 // The root walk starts within its anchor (decision 0365): every label it reads is finished.
                 let anchor = anchors.then(|| {
                     // The root walk runs on the interpreter, which tests text at each node it reaches: no rows of its own.
-                    let anchor = anchor_bits(&clause.program, walk.as_ref(), None, view, sets, indexes[t].get_or_init(Default::default));
+                    let anchor = anchor_bits(&clause.program, walk.as_ref(), None, view, sets, indexes[t].get_or_init(Default::default), clause.domain.demand(), &|_| false);
                     count_anchored(domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node)), &anchor);
                     anchor
                 });
@@ -1176,7 +1293,22 @@ impl LoweredWave {
     /// the batch on its own where the whole outgrows a workspace or the launch bound (a file's labels read only that
     /// file).
     fn roots_metal_split(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
-        match super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active))) {
+        let found = super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active)));
+        // Past the device's room at one tape, in as few lanes and states as it runs in: its workspace was admitted as
+        // a stratum's tables are and refused (`label_passes`: no lease coming back makes the room, or waiting for it
+        // costs more than the cores take, `placement::admission_patience`), so the price has chosen the cores (0334).
+        // Its roots are found there, counted and named. A Metal failure of any other kind still stops the run (0382
+        // §6). The room is the pool's ledger and leases alone: the driver's figure, which counts the host pages
+        // wrapped for the device, refused 43 tapes with a third of a 2 GB budget free (t62, Q203).
+        if tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
+            crate::code_rule_dsl::prof::count("wave.tape_on_cpu", 1);
+            #[cfg(target_os = "macos")]
+            crate::code_rule_dsl::logic::profile::decision("a matcher wave's tape not admitted to the device, its roots found on the cores (0334)", || {
+                format!("{} nodes; the device: {}", tapes[0].transducer_len(), rerail_accel::gpu::shared::describe())
+            });
+            return self.roots_batch_budgeted(Backend::Cpu, tapes, active, WorkBudget::current());
+        }
+        match found {
             Err(Error::BackendCapacity | Error::BackendLaunchLimit) if tapes.len() > 1 => {
                 let half = tapes.len() / 2;
                 let part = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
@@ -1266,7 +1398,7 @@ impl LoweredWave {
             };
             active[at][tape]
         };
-        let active: &dyn Fn(&LoweredMatcher, usize) -> bool = &active;
+        let active: &(dyn Fn(&LoweredMatcher, usize) -> bool + Sync) = &active;
         let mut sets = empty_sets(tapes, self.labels);
         let most = tapes.iter().map(TapeDoc::transducer_len).max().unwrap_or(0);
         // Facts that are node sets are the formulas' (`formulas`): only the others' rows are made here.
@@ -1274,33 +1406,48 @@ impl LoweredWave {
         // Each tape's columns as sets, for the passes that are formulas (`compile_sets`).
         let indexes = tapes.iter().map(|_| std::sync::OnceLock::new()).collect::<Vec<_>>();
         let anchors = anchors_on();
+        let settled = Anchoring::new(&indexes, None);
         for (recursive, levels) in &steps {
             if !recursive {
                 for level in levels {
                     // A level past the recursive groups reads finished labels only: its walks start within their anchors.
-                    let (_, to_w) = label_level(level, tapes, &mut sets, active, &self.packs, &facts, &indexes, budget, anchors)?;
+                    let (_, to_w) = label_level(level, tapes, &mut sets, active, &self.packs, &facts, &indexes, budget, anchors.then_some(&settled))?;
                     given.extend(to_w.into_iter().map(|(clause, tape)| (index(clause), tape)));
                 }
                 continue;
             }
             if sweeps(levels) {
-                for (at, (tape, sets)) in tapes.iter().zip(sets.iter_mut()).enumerate() {
-                    let levels = levels
-                        .iter()
-                        .map(|level| level.iter().copied().filter(|&(clause, _)| active(clause, at)).collect::<Vec<_>>())
-                        .collect::<Vec<_>>();
-                    if levels.iter().any(|level| !level.is_empty()) && !sweep(&levels, tape, sets, budget)? {
-                        given.extend(levels.iter().flatten().map(|&(clause, _)| (index(clause), at)));
-                    }
-                }
+                // A file's sweep reads and marks its own labels only, so the files sweep in parallel, as on Metal
+                // (`matcher_metal`; Tim's e1e0209ae on tbelanger/final-rerail-shape-integration). Each gives back the
+                // clauses it handed to W on its file.
+                use rayon::prelude::*;
+                let handed = crate::code_rule_dsl::logic::profile::on_cores(|| {
+                    tapes
+                        .par_iter()
+                        .zip(sets.par_iter_mut())
+                        .enumerate()
+                        .map(crate::code_rule_dsl::logic::profile::carried("label sweep (pool)", |(at, (tape, sets)): (usize, (&TapeDoc, &mut Arc<Vec<Vec<u64>>>))| {
+                            let levels = levels
+                                .iter()
+                                .map(|level| level.iter().copied().filter(|&(clause, _)| active(clause, at)).collect::<Vec<_>>())
+                                .collect::<Vec<_>>();
+                            let to_w = levels.iter().any(|level| !level.is_empty()) && !sweep(&levels, tape, sets, indexes[at].get_or_init(Default::default), budget)?;
+                            Ok::<_, Error>(if to_w { levels.iter().flatten().map(|&(clause, _)| (index(clause), at)).collect() } else { Vec::new() })
+                        }))
+                        .collect::<Result<Vec<Vec<(usize, usize)>>, Error>>()
+                })?;
+                given.extend(handed.into_iter().flatten());
                 continue;
             }
+            // The group's anchors read its own labels as every node (Q133): evaluated once, before its rounds.
+            let own = levels.iter().flatten().map(|&(_, id)| id - LABEL_BASE).collect::<BTreeSet<u16>>();
+            let unknown = |label: u16| own.contains(&label);
+            let group = Anchoring::new(&indexes, Some(&unknown));
             let mut settled = false;
             for _round in 0..=most + 1 {
                 let mut changed = false;
                 for level in levels {
-                    // A group's anchors would read its own labels as they settle: no anchor in its rounds.
-                    let (now, to_w) = label_level(level, tapes, &mut sets, active, &self.packs, &facts, &indexes, budget, false)?;
+                    let (now, to_w) = label_level(level, tapes, &mut sets, active, &self.packs, &facts, &indexes, budget, anchors.then_some(&group))?;
                     changed |= now;
                     given.extend(to_w.into_iter().map(|(clause, tape)| (index(clause), tape)));
                 }
@@ -1322,10 +1469,7 @@ impl LoweredWave {
 
     /// Whether clause `clause`'s root program starts at `node` of `tape`: its root's kinds.
     pub fn starts(&self, clause: usize, tape: &TapeDoc, node: u32) -> bool {
-        match &self.clauses[clause].domain {
-            Domain::All | Domain::Label(_) => true,
-            Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
-        }
+        self.clauses[clause].domain.admits_kind(tape.transducer_kind(node))
     }
 }
 
@@ -1376,6 +1520,31 @@ pub fn empty_sets(tapes: &[TapeDoc], labels: usize) -> Vec<Arc<Vec<Vec<u64>>>> {
         .iter()
         .map(|tape| Arc::new(vec![vec![0_u64; tape.transducer_len().div_ceil(64)]; labels]))
         .collect()
+}
+
+/// The members of `label`, in node order.
+fn members(sets: &[Vec<u64>], label: u16) -> impl Iterator<Item = u32> + '_ {
+    sets.get(usize::from(label - LABEL_BASE)).into_iter().flat_map(|bits| {
+        bits.iter().enumerate().flat_map(|(at, &word)| {
+            let mut word = word;
+            std::iter::from_fn(move || {
+                (word != 0).then(|| {
+                    let bit = word.trailing_zeros();
+                    word &= word - 1;
+                    at as u32 * 64 + bit
+                })
+            })
+        })
+    })
+}
+
+/// Whether `node` is in `domain`.
+fn in_domain(domain: &Domain, view: &TapeDoc, sets: &[Vec<u64>], node: u32) -> bool {
+    match domain {
+        Domain::All => true,
+        Domain::Kinds(_) | Domain::Within(..) => domain.admits_kind(view.transducer_kind(node)),
+        Domain::Label(label) => has(sets, *label, node),
+    }
 }
 
 fn has(sets: &[Vec<u64>], label: u16, node: u32) -> bool {
@@ -1801,7 +1970,7 @@ impl Packs {
         views: &[TapeDoc],
         sets: &[Arc<Vec<Vec<u64>>>],
         active: &dyn Fn(&LoweredMatcher, usize) -> bool,
-        anchors: Option<&[std::sync::OnceLock<super::compile_sets::Index>]>,
+        anchors: Option<&Anchoring<'_>>,
     ) -> Vec<Option<Vec<(usize, Vec<u64>)>>> {
         use rayon::prelude::*;
         let mut out = vec![None; level.len()];
@@ -1835,15 +2004,14 @@ impl Packs {
                         let (view, sets) = (&views[tape], &sets[tape]);
                         let texts = walk.texts(program, view)?;
                         // A start any member's anchor holds (decision 0365): the members' anchors, each from its own walk.
-                        let anchor = anchors.map(|indexes| {
-                            let index = indexes[tape].get_or_init(Default::default);
+                        let anchor = anchors.map(|anchors| {
                             let mut union = vec![0_u64; view.transducer_len().div_ceil(64)];
                             for &at in &members {
                                 let (clause, id) = level[at];
-                                let Some(program) = clause.labels.def(id).program() else { continue };
+                                let (Label::Roots(program, starts) | Label::Targets(program, starts)) = clause.labels.def(id) else { continue };
                                 // The fused walk's rows are by its own slots: a member's anchor reads the term index's.
                                 let member = Micro::of(program);
-                                for (word, bits) in union.iter_mut().zip(anchor_bits(program, member.as_ref(), None, view, sets, index)) {
+                                for (word, bits) in union.iter_mut().zip(anchors.bits(tape, program, starts, member.as_ref(), None, view, sets).iter()) {
                                     *word |= bits;
                                 }
                             }
@@ -1900,7 +2068,7 @@ impl Packs {
 /// `micro` where it is not a micro walk. Each common reason is a formula form to add (`compile_sets`).
 fn fallback(label: &Label) -> &'static str {
     static NAMES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, &'static str>>> = std::sync::LazyLock::new(Default::default);
-    const FRAGMENT: [u8; 15] = [KIND, FIELD, FLAGS, SUPERTYPE, TEXT, SAVE_CURSOR, RESTORE_CURSOR, CHILD, DESCEND, PARENT, FOLLOWING, FORK, GOTO, CAPTURE, EMIT];
+    const FRAGMENT: [u8; 16] = [KIND, FIELD, FLAGS, SUPERTYPE, TEXT, SAVE_CURSOR, RESTORE_CURSOR, CHILD, compile_micro::CLOSURE, DESCEND, PARENT, FOLLOWING, FORK, GOTO, CAPTURE, EMIT];
     let outside = |program: &Program| match Micro::of(program) {
         None => "micro".to_owned(),
         Some(walk) => walk.words.iter().map(|&word| split(word).0).filter(|op| !FRAGMENT.contains(op)).collect::<BTreeSet<_>>().iter().map(|op| format!("{op:02x}")).collect::<Vec<_>>().join(","),
@@ -1955,11 +2123,7 @@ fn formulas(
             let (Label::Roots(program, domain) | Label::Targets(program, domain)) = label else { return None };
             let walk = Micro::of(program)?;
             // The starts: the domain's nodes.
-            let starts = match domain {
-                Domain::All => Set::All,
-                Domain::Kinds(kinds) => Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect()),
-                Domain::Label(label) => Set::Class(*label),
-            };
+            let starts = domain.set();
             let set = match label {
                 Label::Targets(..) => Set::targets(&walk.words, starts)?,
                 _ => Set::And(vec![starts, Set::of(&walk.words)?]),
@@ -1986,11 +2150,9 @@ fn formulas(
                             Plan::Set { walk, program, domain, set } => walk.texts(program, view).map(|texts| {
                                 let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(set);
                                 if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {
-                                    let starts = (0..view.transducer_len() as u32).filter(|&node| match domain {
-                                        Domain::All => true,
-                                        Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),
-                                        Domain::Label(label) => has(&sets[tape], *label, node),
-                                    });
+                                    // The domain read exactly, as the formula reads it (a demand's set too).
+                                    let within = Reader { tape: view, index, labels: &sets[tape], texts: &[] }.eval(&domain.set());
+                                    let starts = (0..view.transducer_len() as u32).filter(|&node| within[node as usize / 64] >> (node % 64) & 1 != 0);
                                     let (clause, id) = level[at];
                                     if let Some(walked) = walked(clause.labels.def(id), walk, program, view, &sets[tape], starts)
                                         && walked != bits
@@ -2038,15 +2200,21 @@ fn label_level<'a>(
     facts: &FactRows,
     indexes: &[std::sync::OnceLock<super::compile_sets::Index>],
     budget: WorkBudget,
-    anchored: bool,
+    anchors: Option<&Anchoring<'_>>,
 ) -> Result<(bool, Vec<(&'a LoweredMatcher, usize)>), Error> {
     let views = tapes.iter().zip(sets.iter()).map(|(tape, sets)| tape.with_labels(Arc::clone(sets))).collect::<Vec<_>>();
     // Passes that are node-set formulas: no walk (`compile_sets`).
+    let clock = std::time::Instant::now();
     let mut formulas = crate::code_rule_dsl::prof::time("labels.formulas", || formulas(level, &views, sets, active, indexes));
+    let formulas_ns = clock.elapsed().as_nanos();
     // The others walked from the same starts, as one walk (multi-target packing, `Packs`).
     let walked = level.iter().zip(&formulas).filter(|(_, found)| found.is_none()).map(|(pass, _)| *pass).collect::<Vec<_>>();
-    let mut packed_walked = crate::code_rule_dsl::prof::time("labels.packed_walk", || packs.walk(&walked, &views, sets, active, anchored.then_some(indexes))).into_iter();
+    let clock = std::time::Instant::now();
+    let mut packed_walked = crate::code_rule_dsl::prof::time("labels.packed_walk", || packs.walk(&walked, &views, sets, active, anchors)).into_iter();
+    let packed_ns = clock.elapsed().as_nanos();
     let mut packed = formulas.iter().map(|found| if found.is_some() { None } else { packed_walked.next().flatten() }).collect::<Vec<_>>();
+    let routes = formulas.iter().zip(&packed).map(|(formula, packed)| if formula.is_some() { "formula" } else if packed.is_some() { "packed" } else { "fallback" }).collect::<Vec<_>>();
+    let mut walls = vec![0_u128; level.len()];
     let found = level
         .iter()
         .enumerate()
@@ -2061,11 +2229,22 @@ fn label_level<'a>(
             let (views, read) = (on.iter().map(|&at| views[at].clone()).collect::<Vec<_>>(), on.iter().map(|&at| Arc::clone(&sets[at])).collect::<Vec<_>>());
             let why = fallback(clause.labels.def(id));
             crate::code_rule_dsl::prof::count(why, 1);
-            let anchors = anchored.then(|| on.iter().map(|&at| &indexes[at]).collect::<Vec<_>>());
-            let found = crate::code_rule_dsl::prof::time("labels.fallback", || clause.evaluate_budgeted(clause.labels.def(id), &views, &read, facts, budget, anchors.as_deref()))?;
+            let clock = std::time::Instant::now();
+            let found = crate::code_rule_dsl::prof::time("labels.fallback", || clause.evaluate_budgeted(clause.labels.def(id), &views, &read, facts, budget, anchors.map(|anchors| (anchors, on.as_slice()))))?;
+            walls[at] = clock.elapsed().as_nanos();
             Ok::<_, Error>(on.into_iter().zip(found).collect::<Vec<_>>())
         })
         .collect::<Result<Vec<_>, _>>()?;
+    if let Some(file) = census() {
+        // A formula's or packed walk's wall is its level's, shared out evenly among its passes.
+        let (formula, packed) = (routes.iter().filter(|r| **r == "formula").count().max(1), routes.iter().filter(|r| **r == "packed").count().max(1));
+        let walls = routes.iter().zip(&walls).map(|(route, wall)| match *route {
+            "formula" => formulas_ns / formula as u128,
+            "packed" => packed_ns / packed as u128,
+            _ => *wall,
+        }).collect::<Vec<_>>();
+        write_census(&file, level, &routes, &walls, &found, tapes, sets);
+    }
     drop(views);
     let (mut changed, mut given) = (false, Vec::new());
     for (&(clause, id), found) in level.iter().zip(found) {
@@ -2082,6 +2261,50 @@ fn label_level<'a>(
         }
     }
     Ok((changed, given))
+}
+
+/// The census's lines for a level (`census`): per pass, its route, label, kind, domain, starts and members summed over
+/// the tapes it ran on, its walk's words and its rule.
+fn write_census(file: &std::sync::Mutex<std::fs::File>, level: &[(&LoweredMatcher, u16)], routes: &[&str], walls: &[u128], found: &[Vec<(usize, Option<Vec<u64>>)>], tapes: &[TapeDoc], sets: &[Arc<Vec<Vec<u64>>>]) {
+    use std::io::Write;
+    let mut out = String::new();
+    for ((((clause, id), route), wall), found) in level.iter().zip(routes).zip(walls).zip(found) {
+        let label = clause.labels.def(*id);
+        let (kind, domain, program) = match label {
+            Label::Pattern(_, domain) => ("pattern", Some(domain), None),
+            Label::Constrained(_, domain, _) => ("constrained", Some(domain), None),
+            Label::Roots(program, domain) => ("roots", Some(domain), Some(program)),
+            Label::Targets(program, domain) => ("targets", Some(domain), Some(program)),
+            Label::Count { program, domain, .. } => ("count", Some(domain), Some(program)),
+            Label::Complement(_) => ("complement", None, None),
+            Label::Fact(..) => ("fact", None, None),
+            Label::Empty => ("empty", None, None),
+        };
+        let (mut starts, mut members) = (0_usize, 0_usize);
+        // A tape whose pass went to W over its budget (decision 0334) has no rows here.
+        for (at, bits) in found.iter().filter_map(|(at, bits)| Some((at, bits.as_ref()?))) {
+            members += bits.iter().map(|word| word.count_ones() as usize).sum::<usize>();
+            let tape = &tapes[*at];
+            starts += match domain {
+                None | Some(Domain::All) => tape.transducer_len(),
+                Some(domain @ (Domain::Kinds(_) | Domain::Within(..))) => (0..tape.transducer_len() as u32).filter(|&node| domain.admits_kind(tape.transducer_kind(node))).count(),
+                Some(Domain::Label(of)) => sets[*at].get(usize::from(of - LABEL_BASE)).map_or(0, |bits| bits.iter().map(|word| word.count_ones() as usize).sum()),
+            };
+        }
+        let domain = match domain {
+            None => "-".to_owned(),
+            Some(Domain::All) => "all".to_owned(),
+            Some(Domain::Kinds(kinds)) => format!("kinds{kinds:?}"),
+            Some(Domain::Label(of)) => format!("label {of}"),
+            Some(Domain::Within(kinds, set)) => format!("kinds{kinds:?} within {set:?}"),
+        };
+        let words = program.and_then(Micro::of).map_or("-".to_owned(), |walk| super::compile_micro::describe(&walk.words));
+        let source = usize::from(id - LABEL_BASE).checked_sub(usize::from(clause.labels.offset)).and_then(|at| clause.labels.sources.get(at)).map_or("", String::as_str);
+        out.push_str(&format!("{route}\t{id}\t{kind}\t{domain}\t{starts}\t{members}\t{words}\t{source}\t{wall}\n"));
+    }
+    if let Ok(mut file) = file.lock() {
+        let _ = file.write_all(out.as_bytes());
+    }
 }
 
 /// Whether a recursive step sweeps, as on Metal (`label_passes::sweeps`): its passes are programs
@@ -2104,8 +2327,8 @@ pub fn sweeps(levels: &[Vec<(&LoweredMatcher, u16)>]) -> bool {
 /// them. With complements every verdict at a node is set or cleared there (O29), so the sweeps
 /// reach the rounds' fixpoint. A recursion along the tree settles in a sweep or two, not a node
 /// depth per round.
-fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<Vec<Vec<u64>>>, budget: WorkBudget) -> Result<bool, Error> {
-    sweep_with(levels, tape, sets, &|walk, program| walk.texts(program, tape), budget, true)
+fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<Vec<Vec<u64>>>, index: &super::compile_sets::Index, budget: WorkBudget) -> Result<bool, Error> {
+    sweep_with(levels, tape, sets, index, &|walk, program| walk.texts(program, tape), budget, true)
 }
 
 /// `sweep`, each walk's text slots from `texts` (on Metal, the runs' rows: `TextRows`), its passes on the interpreter
@@ -2117,13 +2340,14 @@ pub fn sweep_with(
     levels: &[Vec<(&LoweredMatcher, u16)>],
     tape: &TapeDoc,
     sets: &mut Arc<Vec<Vec<u64>>>,
+    index: &super::compile_sets::Index,
     texts: &(dyn Fn(&Micro, &Program) -> Option<Vec<Vec<u64>>> + Sync),
     budget: WorkBudget,
     w: bool,
 ) -> Result<bool, Error> {
     let mut budget = budget;
     loop {
-        match sweep_run(levels, tape, sets, texts, budget) {
+        match sweep_run(levels, tape, sets, index, texts, budget) {
             Ok(()) => return Ok(true),
             Err(Error::WorkLimit) if w => return Ok(false),
             Err(Error::OverBudget) => {}
@@ -2160,10 +2384,7 @@ fn sweep_programs<'a>(levels: &[Vec<(&'a LoweredMatcher, u16)>], tape: &TapeDoc)
             Label::Roots(program, starts) | Label::Targets(program, starts) if Micro::of(program).is_none() => {
                 let entry = Entry::of(program);
                 let size = (0..tape.transducer_len() as u32)
-                    .filter(|&node| match starts {
-                        Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
-                        _ => true,
-                    })
+                    .filter(|&node| starts.admits_kind(tape.transducer_kind(node)))
                     .filter(|&node| entry.admits(tape, node))
                     .map(|node| {
                         let span = tape.transducer_span(node);
@@ -2194,6 +2415,7 @@ fn sweep_run(
     levels: &[Vec<(&LoweredMatcher, u16)>],
     tape: &TapeDoc,
     sets: &mut Arc<Vec<Vec<u64>>>,
+    index: &super::compile_sets::Index,
     texts: &(dyn Fn(&Micro, &Program) -> Option<Vec<Vec<u64>>> + Sync),
     budget: WorkBudget,
 ) -> Result<(), Error> {
@@ -2215,7 +2437,7 @@ fn sweep_run(
             .collect::<Vec<_>>();
         costs::observe(observations);
     };
-    let result = sweep_steps(levels, tape, sets, texts, limit, &mut spent, &mut steps_by_program);
+    let result = sweep_steps(levels, tape, sets, index, texts, limit, &mut spent, &mut steps_by_program);
     observe(&steps_by_program, matches!(result, Err(Error::OverBudget)));
     result
 }
@@ -2225,6 +2447,7 @@ fn sweep_steps(
     levels: &[Vec<(&LoweredMatcher, u16)>],
     tape: &TapeDoc,
     sets: &mut Arc<Vec<Vec<u64>>>,
+    index: &super::compile_sets::Index,
     texts: &(dyn Fn(&Micro, &Program) -> Option<Vec<Vec<u64>>> + Sync),
     limit: usize,
     spent: &mut usize,
@@ -2236,45 +2459,11 @@ fn sweep_steps(
     // order, so (node, pass) order is (node, level) order); a label domain is tested at the node.
     // 8 bytes an entry: a complement's or a full domain's passes enter every node, and the files
     // sweep in parallel (O30: 32-byte entries were S7's footprint peak, +350 MB in one sweep).
-    let stage = crate::code_rule_dsl::prof::Stage::start("sweep.entries");
     let passes = levels
         .iter()
         .enumerate()
         .flat_map(|(at, level)| level.iter().map(move |&(clause, id)| (at, clause, id)))
         .collect::<Vec<_>>();
-    // Each pass's starts: none, every node, or a node of its kinds; and its entry test. Built node
-    // by node, the entries are in (node, pass) order without a sort (sorting them was ~70% of
-    // building them on S7).
-    let starts = passes
-        .iter()
-        .map(|&(_, clause, id)| {
-            let entry = match clause.labels.def(id) {
-                Label::Roots(program, _) | Label::Targets(program, _) => Some(Entry::of(program)),
-                _ => None,
-            };
-            let kinds = match clause.labels.def(id) {
-                Label::Roots(_, Domain::Kinds(kinds)) | Label::Targets(_, Domain::Kinds(kinds)) => Some(Some(kinds)),
-                Label::Empty => None,
-                _ => Some(None),
-            };
-            (kinds, entry)
-        })
-        .collect::<Vec<_>>();
-    let mut entries: Vec<(u32, u32)> = Vec::new();
-    for node in 0..len {
-        let kind = tape.transducer_kind(node);
-        for (pass, (kinds, entry)) in starts.iter().enumerate() {
-            let Some(kinds) = kinds else { continue };
-            if kinds.is_some_and(|kinds| kinds.binary_search(&kind).is_err()) {
-                continue;
-            }
-            if entry.as_ref().is_none_or(|entry| entry.admits(tape, node)) {
-                entries.push((node, u32::try_from(pass).map_err(|_| Error::BackendCapacity)?));
-            }
-        }
-    }
-    crate::code_rule_dsl::prof::count("sweep.entry_count", entries.len());
-    drop(stage);
     let stage = crate::code_rule_dsl::prof::Stage::start("sweep.walks");
     // Each program's micro walk, where it is one (O28): no interpreter task per (node, pass).
     let walks = levels
@@ -2296,6 +2485,64 @@ fn sweep_steps(
         .iter()
         .map(|&(_, clause, id)| walks[&(std::ptr::from_ref(clause) as usize, id)].as_ref())
         .collect::<Vec<_>>();
+    // Each pass's anchor (decision 0365), the group's own labels read as every node (Q133): a pass not walked
+    // from a start outside it marks nothing there in any sweep. Once a sweep, before its entries.
+    let own = passes.iter().map(|&(_, _, id)| id - LABEL_BASE).collect::<BTreeSet<u16>>();
+    let anchors = if anchors_on() {
+        passes
+            .iter()
+            .enumerate()
+            .map(|(pass, &(_, clause, id))| {
+                let (Label::Roots(program, starts) | Label::Targets(program, starts)) = clause.labels.def(id) else { return None };
+                let (walk, rows) = pass_walks[pass].map_or((None, None), |(walk, rows)| (Some(walk), Some(rows.as_slice())));
+                Some(anchor_bits(program, walk, rows, tape, sets.as_slice(), index, starts.demand(), &|label| own.contains(&label)))
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![None; passes.len()]
+    };
+    drop(stage);
+    let stage = crate::code_rule_dsl::prof::Stage::start("sweep.entries");
+    // Each pass's starts: none, every node, or a node of its kinds; and its entry test. Built node
+    // by node, the entries are in (node, pass) order without a sort (sorting them was ~70% of
+    // building them on S7).
+    let starts = passes
+        .iter()
+        .map(|&(_, clause, id)| {
+            let entry = match clause.labels.def(id) {
+                Label::Roots(program, _) | Label::Targets(program, _) => Some(Entry::of(program)),
+                _ => None,
+            };
+            let kinds = match clause.labels.def(id) {
+                Label::Roots(_, Domain::Kinds(kinds) | Domain::Within(Some(kinds), _))
+                | Label::Targets(_, Domain::Kinds(kinds) | Domain::Within(Some(kinds), _)) => Some(Some(kinds)),
+                Label::Empty => None,
+                _ => Some(None),
+            };
+            (kinds, entry)
+        })
+        .collect::<Vec<_>>();
+    let (mut entries, mut dropped): (Vec<(u32, u32)>, usize) = (Vec::new(), 0);
+    for node in 0..len {
+        let kind = tape.transducer_kind(node);
+        for (pass, (kinds, entry)) in starts.iter().enumerate() {
+            let Some(kinds) = kinds else { continue };
+            if kinds.is_some_and(|kinds| kinds.binary_search(&kind).is_err()) {
+                continue;
+            }
+            if !entry.as_ref().is_none_or(|entry| entry.admits(tape, node)) {
+                continue;
+            }
+            if anchors[pass].as_ref().is_some_and(|bits| bits.get(node as usize / 64).is_none_or(|word| word >> (node % 64) & 1 == 0)) {
+                dropped += 1;
+                continue;
+            }
+            entries.push((node, u32::try_from(pass).map_err(|_| Error::BackendCapacity)?));
+        }
+    }
+    crate::code_rule_dsl::prof::count("sweep.entry_count", entries.len());
+    crate::code_rule_dsl::prof::count("sweep.anchor_dropped", dropped);
+    drop(stage);
     // The labels each pass reads (by index in `sets`): its walk's label class tests, its domain,
     // or its complement's source; `None` where it is not a walk (any). A pass reads the same
     // labels at a node as when it last ran there unless one of them changed since, and then it
@@ -2314,9 +2561,7 @@ fn sweep_steps(
                         (op == SUPERTYPE && arg >= LABEL_BASE).then(|| usize::from(arg - LABEL_BASE))
                     })
                     .collect::<Vec<_>>();
-                if let Domain::Label(label) = starts {
-                    reads.push(usize::from(*label - LABEL_BASE));
-                }
+                reads.extend(starts.labels().into_iter().map(|label| usize::from(label - LABEL_BASE)));
                 reads.sort_unstable();
                 reads.dedup();
                 reads
@@ -2324,7 +2569,6 @@ fn sweep_steps(
             _ => Some(Vec::new()),
         })
         .collect::<Vec<_>>();
-    drop(stage);
     let _run = crate::code_rule_dsl::prof::Stage::start("sweep.run");
     let mut frames = Frames::default();
     let mut marks = Vec::new();
@@ -2505,11 +2749,30 @@ fn from_outputs(label: &Label, views: &[TapeDoc], outputs: Vec<Vec<Found>>) -> V
 /// walk's own rows, where it has them anyway (`texts`), else the term index's row where the tape has it
 /// (`prefilter::terms`). An anchor never scans text of its own: elsewhere the test is dropped, and the walk tests
 /// it at the starts it keeps. A program that is not a micro walk has no text slots, so its text tests are dropped.
-pub(in crate::code_rule_dsl) fn anchor_bits(program: &Program, walk: Option<&Micro>, texts: Option<&[Vec<u64>]>, tape: &TapeDoc, sets: &[Vec<u64>], index: &super::compile_sets::Index) -> Vec<u64> {
+///
+/// A label `unknown` names (a recursive group's own, Q133) is read as every node: the anchor holds whatever the label
+/// settles to, and in every round before.
+///
+/// A pass that starts within a demand's set (`Domain::demand`, decision 0460) has it in its anchor.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::code_rule_dsl) fn anchor_bits(
+    program: &Program,
+    walk: Option<&Micro>,
+    texts: Option<&[Vec<u64>]>,
+    tape: &TapeDoc,
+    sets: &[Vec<u64>],
+    index: &super::compile_sets::Index,
+    demand: Option<&super::compile_sets::Set>,
+    unknown: &dyn Fn(u16) -> bool,
+) -> Vec<u64> {
     use super::compile_sets::{Reader, Set};
     let _stage = crate::code_rule_dsl::prof::Stage::start("anchor.eval");
+    let within = |anchor: Set| match demand {
+        Some(demand) => Set::all_of(vec![anchor, demand.clone()]),
+        None => anchor,
+    };
     let Some(walk) = walk else {
-        return Reader { tape, index, labels: sets, texts: &[] }.eval(&Set::anchor(&program.words, &|_| false));
+        return Reader { tape, index, labels: sets, texts: &[] }.eval(&within(Set::anchor(&program.words, &|_| false)).labels_unknown(unknown));
     };
     let indexed: Vec<Vec<u64>>;
     let (rows, has): (&[Vec<u64>], Vec<bool>) = match texts {
@@ -2521,8 +2784,41 @@ pub(in crate::code_rule_dsl) fn anchor_bits(program: &Program, walk: Option<&Mic
             (&indexed, has)
         }
     };
-    let set = Set::anchor(&walk.words, &|slot| has.get(usize::from(slot)).copied().unwrap_or(false));
+    let set = within(Set::anchor(&walk.words, &|slot| has.get(usize::from(slot)).copied().unwrap_or(false))).labels_unknown(unknown);
     Reader { tape, index, labels: sets, texts: rows }.eval(&set)
+}
+
+/// Where a level's walks start (decision 0365): within their anchors, each read from its tape's column sets
+/// (`indexes`). A recursive group's anchors read the group's own labels as every node (`group`, Q133): they hold
+/// whatever the labels settle to, so one evaluation before the group's rounds serves every round, and it is kept
+/// (`kept`, by program and tape). A level past the groups reads finished labels: its anchors are read once anyway.
+pub(super) struct Anchoring<'a> {
+    indexes: &'a [std::sync::OnceLock<super::compile_sets::Index>],
+    group: Option<&'a (dyn Fn(u16) -> bool + Sync)>,
+    kept: std::sync::Mutex<HashMap<(usize, usize), Arc<Vec<u64>>>>,
+}
+
+impl<'a> Anchoring<'a> {
+    fn new(indexes: &'a [std::sync::OnceLock<super::compile_sets::Index>], group: Option<&'a (dyn Fn(u16) -> bool + Sync)>) -> Self {
+        Self { indexes, group, kept: std::sync::Mutex::default() }
+    }
+
+    /// `program`'s anchor on tape `tape` (`view`, with labels `sets`) within its domain's demand: `anchor_bits`, a
+    /// group's once per tape.
+    #[allow(clippy::too_many_arguments)]
+    fn bits(&self, tape: usize, program: &Program, domain: &Domain, walk: Option<&Micro>, texts: Option<&[Vec<u64>]>, view: &TapeDoc, sets: &[Vec<u64>]) -> Arc<Vec<u64>> {
+        let index = self.indexes[tape].get_or_init(Default::default);
+        let Some(group) = self.group else {
+            return Arc::new(anchor_bits(program, walk, texts, view, sets, index, domain.demand(), &|_| false));
+        };
+        let key = (std::ptr::from_ref(program) as usize, tape);
+        if let Some(bits) = self.kept.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
+            return Arc::clone(bits);
+        }
+        let bits = Arc::new(anchor_bits(program, walk, texts, view, sets, index, domain.demand(), group));
+        self.kept.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(key, Arc::clone(&bits));
+        bits
+    }
 }
 
 /// Whether walks start within their anchors (decision 0365): off with `RERAIL_ANCHORS=off`, read at each batch (the
@@ -2591,7 +2887,7 @@ fn walked_with(label: &Label, walk: &Micro, texts: &[Vec<u64>], tape: &TapeDoc, 
 pub fn domain<'a>(domain: &'a Domain, tape: &'a TapeDoc, sets: &'a [Vec<u64>]) -> impl Iterator<Item = u32> + 'a {
     (0..tape.transducer_len() as u32).filter(move |&node| match domain {
         Domain::All => true,
-        Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
+        Domain::Kinds(_) | Domain::Within(..) => domain.admits_kind(tape.transducer_kind(node)),
         Domain::Label(label) => has(sets, *label, node),
     })
 }
@@ -2603,6 +2899,72 @@ struct Builder<'a> {
     predicates: Vec<TextPredicate>,
     cursors: u16,
     labels: &'a mut Labels,
+    /// The kinds the node under test can have where it matters (`None`: any): an `all`'s conjuncts all hold at the
+    /// node, so a label read there is needed only at nodes of the kinds they allow. A label made here starts there
+    /// only (`narrowed`, work queue Q182): `not: {precedes: …}` beside `inside: parameters` ran its sibling scan from
+    /// all 877,007 nodes at s1000, a module's statements included. A walk moves the node, so its rules are made with
+    /// none.
+    demand: Demand,
+}
+
+/// Where a label read at the node under test is needed (`Builder::demand`).
+#[derive(Clone, Default)]
+struct Demand {
+    /// The kinds the node can have (`None`: any).
+    kinds: Option<BTreeSet<u16>>,
+    /// A node set the node is in wherever it matters (decision 0460): an `all` with a conjunct that tests a
+    /// neighbor (`inside X` or `has X` by `neighbor`) holds only at X's children or parents, the image of X's set by
+    /// one step (`Builder::neighbor`). A label made here starts within it: a formula its pass's anchor holds, not a
+    /// label of its own, so its readers wait for no more than X.
+    set: Option<super::compile_sets::Set>,
+}
+
+/// Whether an `all`'s labels start where the kinds allow alone (`RERAIL_DEMAND_SETS=off`, a measurement switch: as
+/// before decision 0459).
+fn demand_sets_off() -> bool {
+    crate::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEMAND_SETS").is_ok_and(|mode| mode == "off"))
+}
+
+/// Where the label census goes (`RERAIL_LABEL_CENSUS=<file>`): a line per label pass a host level evaluates, its
+/// route, starts and members. A measurement switch: off, nothing is noted or written.
+fn census() -> Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>> {
+    // The run's setting (decision 0442): opened once a run, appended to.
+    crate::code_rule_dsl::logic::profile::setting(|| {
+        let path = std::env::var_os("RERAIL_LABEL_CENSUS")?;
+        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)))
+    })
+}
+
+/// A short form of `tree` for the census: kinds as `k145`, labels' rules nested, long ones cut.
+fn sketch(tree: &MatchTree) -> String {
+    let list = |trees: &[MatchTree]| trees.iter().map(sketch).collect::<Vec<_>>().join(", ");
+    let out = match tree {
+        MatchTree::Kind(kind) => format!("k{kind}"),
+        MatchTree::Supertype(class, _) => format!("super{class}"),
+        MatchTree::Pattern(_) => "pattern".to_owned(),
+        MatchTree::Constrained(_, constraints) => format!("pattern where {}", constraints.iter().map(|(name, rule)| format!("{name}: {}", sketch(rule))).collect::<Vec<_>>().join(", ")),
+        MatchTree::Regex(_) => "regex".to_owned(),
+        MatchTree::All(trees) => format!("all[{}]", list(trees)),
+        MatchTree::Any(trees) => format!("any[{}]", list(trees)),
+        MatchTree::Not(tree) => format!("not {}", sketch(tree)),
+        MatchTree::Walk { axis, field, rule, stop } => {
+            format!("{axis:?}{}({} by {})", field.map_or(String::new(), |f| format!(" field {f}")), sketch(rule), sketch_stop(stop))
+        }
+        MatchTree::Recursive(id, tree) => format!("rec{id}({})", sketch(tree)),
+        MatchTree::Recur(id) => format!("recur{id}"),
+        MatchTree::Count { .. } => "count".to_owned(),
+        MatchTree::Fact(_) => "fact".to_owned(),
+        MatchTree::Never => "never".to_owned(),
+    };
+    if out.len() > 400 { format!("{}…", &out[..out.floor_char_boundary(400)]) } else { out }
+}
+
+fn sketch_stop(stop: &Stop) -> String {
+    match stop {
+        Stop::Neighbor => "neighbor".to_owned(),
+        Stop::End => "end".to_owned(),
+        Stop::Rule(rule) => sketch(rule),
+    }
 }
 
 impl<'a> Builder<'a> {
@@ -2613,13 +2975,109 @@ impl<'a> Builder<'a> {
             predicates: Vec::new(),
             cursors: 0,
             labels,
+            demand: Demand::default(),
         }
+    }
+
+    /// `domain` within the kinds the node under test can have where it matters (`demand`), and
+    /// within the demand's set where it has one.
+    fn narrowed(&self, domain: Domain) -> Domain {
+        let kinds = match (domain, &self.demand.kinds) {
+            (Domain::All, Some(demand)) => Domain::Kinds(demand.iter().copied().collect()),
+            (Domain::Kinds(kinds), Some(demand)) => Domain::Kinds(kinds.into_iter().filter(|kind| demand.contains(kind)).collect()),
+            (domain, _) => domain,
+        };
+        match (kinds, &self.demand.set) {
+            (Domain::All, Some(set)) => Domain::Within(None, set.clone()),
+            (Domain::Kinds(kinds), Some(set)) => Domain::Within(Some(kinds), set.clone()),
+            (domain, _) => domain,
+        }
+    }
+
+    /// `f` with `demand` in place of the builder's, which is restored after.
+    fn demanding<T>(&mut self, demand: Demand, f: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = std::mem::replace(&mut self.demand, demand);
+        let result = f(self);
+        self.demand = outer;
+        result
+    }
+
+    /// The demand where `tree` holds too: the kinds both allow, and the set.
+    fn within(&self, tree: &MatchTree) -> Demand {
+        let kinds = match (self.demand.kinds.as_ref(), tree.kinds()) {
+            (Some(demand), Some(kinds)) => Some(demand.intersection(&kinds).copied().collect()),
+            (Some(demand), None) => Some(demand.clone()),
+            (None, kinds) => kinds,
+        };
+        Demand { kinds, set: self.demand.set.clone() }
     }
 
     /// A program emitting each root `tree` matches.
     fn roots(mut self, tree: &MatchTree) -> Result<Program, Error> {
-        self.test(tree)?;
+        match tree {
+            MatchTree::All(all) => self.all(tree, all)?,
+            _ => self.test(tree)?,
+        }
         self.finish(&[word(CAPTURE, 0, 0), word(EMIT, 0, 1)])
+    }
+
+    /// An `all`'s first conjunct that tests a neighbor, `inside X` or `has X` by `neighbor`, and the
+    /// set of the nodes where it holds: X's children (through the field, where one is named) or
+    /// X's parents, the image of X's set by one step. The `all` holds only there, so its labels
+    /// start there (`Demand::set`). A pass that started at every node for `inside module` (877,007
+    /// at s1000) starts at 10,274 (t45 §1). Decision 0459 made the set a label of its own (a seed),
+    /// one more level its readers waited for; here it is the formula that label's pass evaluated.
+    fn neighbor(&mut self, all: &[MatchTree]) -> Result<Option<(usize, super::compile_sets::Set)>, Error> {
+        if demand_sets_off() {
+            return Ok(None);
+        }
+        let Some((at, axis, field, rule)) = all.iter().enumerate().find_map(|(at, tree)| match tree {
+            // Only from a selective X: from every node the set narrows nothing.
+            MatchTree::Walk { axis: axis @ (Axis::Inside | Axis::Has), field, rule, stop: Stop::Neighbor }
+                if rule.walks() || rule.kinds().is_some() =>
+            {
+                Some((at, *axis, *field, &**rule))
+            }
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+        let mut builder = Builder::new(self.labels);
+        let starts = builder.start(rule)?;
+        match (axis, field) {
+            (Axis::Inside, field) => {
+                builder.push(CHILD, 0, 0);
+                if let Some(field) = field {
+                    builder.push(FIELD, 0, field);
+                }
+            }
+            (_, field) => {
+                if let Some(field) = field {
+                    builder.push(FIELD, 0, field);
+                }
+                builder.push(PARENT, 0, 0);
+            }
+        }
+        let program = builder.finish(&[word(CAPTURE, 0, 0), word(EMIT, 0, 1)])?;
+        // Its text tests are by this program's slots: dropped (a superset), as no other pass reads them so.
+        Ok(super::compile_sets::Set::targets(&program.words, starts.set()).map(|set| (at, set.texts_dropped())))
+    }
+
+    /// `all`'s conjuncts at the node, the one that tests a neighbor (`neighbor`) first: it is the selective one,
+    /// and so in the program's anchor (decision 0365). The labels made for the others start within its set.
+    fn all(&mut self, tree: &MatchTree, all: &[MatchTree]) -> Result<(), Error> {
+        let mut demand = self.within(tree);
+        let neighbor = self.neighbor(all)?;
+        if let Some((at, set)) = &neighbor {
+            self.test(&all[*at])?;
+            demand.set = Some(match demand.set.take() {
+                Some(outer) => super::compile_sets::Set::all_of(vec![outer, set.clone()]),
+                None => set.clone(),
+            });
+        }
+        self.demanding(demand, |b| {
+            all.iter().enumerate().filter(|(at, _)| neighbor.as_ref().is_none_or(|(first, _)| first != at)).try_for_each(|(_, tree)| b.test(tree))
+        })
     }
 
     fn finish(mut self, tail: &[u32]) -> Result<Program, Error> {
@@ -2647,32 +3105,55 @@ impl<'a> Builder<'a> {
 
     /// The label of the nodes `tree` matches at.
     fn label_of(&mut self, tree: &MatchTree) -> Result<u16, Error> {
+        let id = self.label_of_tree(tree)?;
+        self.note(id, || sketch(tree));
+        Ok(id)
+    }
+
+    /// The census's sketch of label `id`'s rule, where none is noted yet (`RERAIL_LABEL_CENSUS`).
+    fn note(&mut self, id: u16, sketch: impl FnOnce() -> String) {
+        if census().is_none() {
+            return;
+        }
+        if let Some(source) = usize::from(id - LABEL_BASE).checked_sub(usize::from(self.labels.offset)).and_then(|at| self.labels.sources.get_mut(at))
+            && source.is_empty()
+        {
+            *source = sketch();
+        }
+    }
+
+    fn label_of_tree(&mut self, tree: &MatchTree) -> Result<u16, Error> {
         match tree {
-            MatchTree::Pattern(pattern) => {
+            // A bare metavariable is a node test: its label is a roots label of that test, below.
+            MatchTree::Pattern(pattern) if Program::bare_metavariable(pattern).is_none() => {
                 let program = Program::compile_ast_grep_pattern(pattern)?;
-                return Ok(self.label(Label::Pattern(program, Domain::of(tree))));
+                let starts = self.narrowed(Domain::of(tree));
+                return Ok(self.label(Label::Pattern(program, starts)));
             }
             MatchTree::Constrained(pattern, constraints) => {
-                let constraints = constraints
-                    .iter()
-                    .map(|(name, rule)| Ok((name.clone(), self.label_of(rule)?)))
-                    .collect::<Result<Vec<_>, Error>>()?;
+                // A constraint is tested at its capture's node, not this one.
+                let constraints = self.demanding(Demand::default(), |b| {
+                    constraints.iter().map(|(name, rule)| Ok((name.clone(), b.label_of(rule)?))).collect::<Result<Vec<_>, Error>>()
+                })?;
                 let program = Program::compile_ast_grep_pattern(pattern)?;
-                return Ok(self.label(Label::Constrained(program, Domain::of(tree), constraints)));
+                let starts = self.narrowed(Domain::of(tree));
+                return Ok(self.label(Label::Constrained(program, starts, constraints)));
             }
             MatchTree::Recursive(id, inner) => return self.recursive(*id, inner),
             MatchTree::Recur(id) => {
                 return self.labels.recursive.get(id).copied().ok_or(Error::InvalidOperand(0));
             }
             MatchTree::Fact(fact) => {
-                let slots = fact.slots.iter().map(|slot| self.label_of(slot)).collect::<Result<Vec<_>, Error>>()?;
+                // A slot is tested at its target's node, not this one.
+                let slots = self.demanding(Demand::default(), |b| fact.slots.iter().map(|slot| b.label_of(slot)).collect::<Result<Vec<_>, Error>>())?;
                 return Ok(self.label(Label::Fact(Arc::clone(fact), slots)));
             }
             _ => {}
         }
         // A roots label is the starts that emit: set mode.
-        let program = Builder::new(self.labels).roots(tree)?.in_set_mode();
-        Ok(self.label(Label::Roots(program, Domain::of(tree))))
+        let starts = self.narrowed(Domain::of(tree));
+        let program = Builder::new(self.labels).roots(tree)?;
+        Ok(self.label(Label::Roots(program.in_set_mode(), starts)))
     }
 
     /// A recursive utility's label: its program and the labels compiled for it form one group,
@@ -2709,12 +3190,20 @@ impl<'a> Builder<'a> {
 
     fn complement_of(&mut self, tree: &MatchTree) -> Result<u16, Error> {
         let label = self.label_of(tree)?;
-        Ok(self.label(Label::Complement(label)))
+        let id = self.label(Label::Complement(label));
+        self.note(id, || format!("not {}", sketch(tree)));
+        Ok(id)
     }
 
     /// Tests `tree` at the cursor's node: the paths that pass continue there, at that node.
     fn test(&mut self, tree: &MatchTree) -> Result<(), Error> {
         match tree {
+            // `$X`: a named node; `$$X`: any node (t45 §3).
+            MatchTree::Pattern(pattern) if let Some(named) = Program::bare_metavariable(pattern) => {
+                if named {
+                    self.push(FLAGS, NAMED, 0);
+                }
+            }
             MatchTree::Kind(kind) => {
                 self.push(KIND, 0, *kind);
             }
@@ -2726,7 +3215,8 @@ impl<'a> Builder<'a> {
                 self.strings.push(regex.as_str().as_bytes().to_vec());
                 self.predicates.push(TextPredicate::Regex {
                     source: u16::try_from(source).map_err(|_| Error::InvalidOperand(source))?,
-                    compiled: regex.clone(),
+                    // The packed predicate owns a plain regex: the shared one's (`regexes`) automata.
+                    compiled: regex::Regex::clone(regex),
                 });
                 let predicate = (self.predicates.len() - 1) as u16;
                 self.push(TEXT, 0, predicate);
@@ -2745,11 +3235,7 @@ impl<'a> Builder<'a> {
                 };
                 self.push(SUPERTYPE, 0, label);
             }
-            MatchTree::All(trees) => {
-                for tree in trees {
-                    self.test(tree)?;
-                }
-            }
+            MatchTree::All(all) => self.all(tree, all)?,
             MatchTree::Any(trees) => {
                 let Some((last, alternatives)) = trees.split_last() else {
                     let label = self.label(Label::Empty);
@@ -2759,12 +3245,12 @@ impl<'a> Builder<'a> {
                 let mut ends = Vec::new();
                 for tree in alternatives {
                     let fork = self.push(FORK, 0, 0);
-                    self.test(tree)?;
+                    self.demanding(self.within(tree), |b| b.test(tree))?;
                     ends.push(self.push(GOTO, 0, 0));
                     let next = self.here()?;
                     self.patch(fork, next);
                 }
-                self.test(last)?;
+                self.demanding(self.within(last), |b| b.test(last))?;
                 let end = self.here()?;
                 for at in ends {
                     self.patch(at, end);
@@ -2796,6 +3282,14 @@ impl<'a> Builder<'a> {
     /// matches and is tallied by the node it reaches, as `reaches` does. The rule is a label, so
     /// no `any` forks a node into two paths.
     fn count(&mut self, axis: Axis, rule: &MatchTree, stop: &Stop, min: usize, max: Option<usize>) -> Result<u16, Error> {
+        // Its rule and stop are tested at the nodes it reaches.
+        // A forward count is read at its start, so it starts where that is needed (`narrowed`).
+        let starts = self.narrowed(Domain::All);
+        self.demanding(Demand::default(), |b| b.count_moved(axis, rule, stop, min, max, starts))
+    }
+
+    fn count_moved(&mut self, axis: Axis, rule: &MatchTree, stop: &Stop, min: usize, max: Option<usize>, starts: Domain) -> Result<u16, Error> {
+        let counted = census().map(|_| sketch(rule)).unwrap_or_default();
         let rule = self.label_of(rule)?;
         let bound = match stop {
             Stop::Rule(stop) => Some(self.complement_of(stop)?),
@@ -2829,15 +3323,11 @@ impl<'a> Builder<'a> {
         let (domain, by) = if backward {
             (Domain::Label(rule), Tally::Capture)
         } else {
-            (Domain::All, Tally::Start)
+            (starts, Tally::Start)
         };
-        Ok(self.label(Label::Count {
-            program,
-            domain,
-            by,
-            min,
-            max,
-        }))
+        let id = self.label(Label::Count { program, domain, by, min, max });
+        self.note(id, || format!("count {axis:?} of {counted} by {} in {min}..{max:?}", sketch_stop(stop)));
+        Ok(id)
     }
 
     /// The test of `rule` a walk starts with, and the nodes it can start from.
@@ -2865,6 +3355,10 @@ impl<'a> Builder<'a> {
     }
 
     fn walk(&mut self, axis: Axis, field: Option<u16>, rule: &MatchTree, stop: &Stop) -> Result<(), Error> {
+        self.demanding(Demand::default(), |b| b.walk_moved(axis, field, rule, stop))
+    }
+
+    fn walk_moved(&mut self, axis: Axis, field: Option<u16>, rule: &MatchTree, stop: &Stop) -> Result<(), Error> {
         if axis == Axis::Follows || axis == Axis::Inside && !matches!(stop, Stop::Neighbor) {
             // No backward walk that verifies: a loop must move forward in preorder
             // (`cycle_progress`). The nodes a forward walk from each match reaches are the nodes
@@ -2977,6 +3471,9 @@ impl<'a> Builder<'a> {
                 (_, Some(bound)) => builder.bounded(NEXT, bound)?,
             },
             (Axis::Inside, None) => match bound {
+                // `end`: every descendant of a match, a range the device scans 64 nodes at a time.
+                // Stopping at a nested match (a closure bounded by the rule's complement) marks each
+                // node once, but at s1000 it saved no step and moved the walks to the loop tier (0381).
                 None => {
                     builder.push(DESCEND, 0, 0);
                 }
@@ -3008,7 +3505,9 @@ impl<'a> Builder<'a> {
             _ => return Err(Error::UnsupportedPattern),
         }
         let program = builder.finish(&[word(CAPTURE, 0, 0), word(EMIT, 0, 1)])?;
-        Ok(self.label(Label::Targets(program, starts)))
+        let id = self.label(Label::Targets(program, starts));
+        self.note(id, || format!("reach {axis:?}{} of {} by {}", field.map_or(String::new(), |f| format!(" field {f}")), sketch(rule), sketch_stop(stop)));
+        Ok(id)
     }
 }
 

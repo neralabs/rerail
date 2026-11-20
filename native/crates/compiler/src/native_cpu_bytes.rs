@@ -107,7 +107,7 @@ impl<'a> Bytewise<'a> {
             let o = |a: u16| can[usize::from(a)];
             can[x] = plan.lanes[x]
                 || match *inst {
-                    BlockInst::Const(_) => true,
+                    BlockInst::Const(_) | BlockInst::Prefix(..) => true,
                     BlockInst::Escaped(a) | BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) => o(a),
                     BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => o(a) && o(b),
                     _ => false,
@@ -589,6 +589,7 @@ impl<'a> Bytewise<'a> {
     /// file's end. Where the output is false on a zero byte (`zero_kills`), none past it
     /// already: the bytes there are zeros, more than the 16 and its delay
     /// (`native_cpu_block::Batch`). Else the file's bytes' bits: `len - p`, at most 16.
+    #[allow(clippy::too_many_arguments)]
     fn short_cut(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, d: i64, p: Value, m: Value, stride: u32) -> Value {
         if crate::native_cpu_lanes::zero_kills(self.native, x, d as u32) {
             return m;
@@ -711,6 +712,7 @@ impl<'a> Bytewise<'a> {
     /// `bit` at a token's first byte `s`, known in `first`, where the token's bytes from `s + 1`
     /// are a split run's term's `lanes` (`RunLanes`): a test of those bytes of the term's set is
     /// a lane of its mask, as lean's number arm asks `b[pos] == b'0'` of its digits' first.
+    #[allow(clippy::too_many_arguments)]
     pub fn bit_on_run(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, s: Value, first: Option<[u64; 4]>, lanes: RunLanes, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         self.run_lanes.set(Some(lanes));
         let b = self.bit_first(f, at, o, s, first, heads);
@@ -731,7 +733,8 @@ impl<'a> Bytewise<'a> {
             let j = d - back;
             match b.native.insts[x] {
                 BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) => j == 0 || ((1..=known).contains(&j) && exact_at(b.native, x).is_some_and(|n| n.set == set)),
-                BlockInst::Within(_) | BlockInst::Const(_) => true,
+                // The prefix's bytes lie before the stream, so before any token's.
+                BlockInst::Within(_) | BlockInst::Const(_) | BlockInst::Prefix(..) => true,
                 BlockInst::Not(a) => go(b, usize::from(a), back, d, set, known),
                 BlockInst::Prev(a, k) => go(b, usize::from(a), back + i64::from(k), d, set, known),
                 BlockInst::Early(a, k) => go(b, usize::from(a), back - i64::from(k), d, set, known),
@@ -748,6 +751,7 @@ impl<'a> Bytewise<'a> {
     /// scalar loads: `a` known false there (the run of it ended), so only the other terms,
     /// and the byte at `p - 1` known in `before`. Lean's `b[end] == b'.' &&
     /// digit(b[end + 1])`, its digit test at `end` not asked again.
+    #[allow(clippy::too_many_arguments)]
     pub fn rest_after(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, a: usize, p: Value, before: [u64; 4], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         let x = usize::from(self.native.outputs[usize::from(o)]);
         let d = i64::from(self.native.output_delays[usize::from(o)]);
@@ -876,6 +880,39 @@ impl<'a> Bytewise<'a> {
                     f.set_cold_block(cold);
                     let (mut w, mut m) = (HashMap::new(), HashMap::new());
                     let v = self.mask_at(f, at, usize::from(a), start, back - i64::from(k), &mut w, &mut m, carry, heads);
+                    f.ins().jump(join, &[v.into()]);
+                    f.switch_to_block(join);
+                    f.block_params(join)[0]
+                }
+                // The prefix's positions (`BlockOp::Prefix`): the file's first `n`, where it
+                // starts with the prefix's bytes, compared once (`prefix_start`). Only a window
+                // that holds them has any, behind a branch, as an `early`'s.
+                BlockInst::Prefix(n, w) => {
+                    let pos = here(f);
+                    let near = f.ins().icmp_imm(IntCC::SignedLessThan, pos, i64::from(n));
+                    let (cold, join) = (f.create_block(), f.create_block());
+                    f.append_block_param(join, types::I64);
+                    let zero = f.ins().iconst(types::I64, 0);
+                    f.ins().brif(near, cold, &[], join, &[zero.into()]);
+                    f.switch_to_block(cold);
+                    f.set_cold_block(cold);
+                    let k = crate::native_cpu_block::prefix_start(f, n, w, at.bytes, at.len);
+                    let one = f.ins().iconst(types::I64, 1);
+                    let stride = i64::from(carry.stride.max(1));
+                    let mut v = f.ins().iconst(types::I64, 0);
+                    // Position `j`'s bit, `j - pos` lanes into the window.
+                    for j in 0..i64::from(n) {
+                        let d = f.ins().irsub_imm(pos, j);
+                        let ge = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, d, 0);
+                        let lt = f.ins().icmp_imm(IntCC::SignedLessThan, d, 64 / stride);
+                        let set = f.ins().icmp_imm(IntCC::SignedGreaterThan, k, j);
+                        let ok = f.ins().band(ge, lt);
+                        let ok = f.ins().band(ok, set);
+                        let sh = if stride == 1 { d } else { f.ins().imul_imm(d, stride) };
+                        let bit = f.ins().ishl(one, sh);
+                        let bit = f.ins().select(ok, bit, zero);
+                        v = f.ins().bor(v, bit);
+                    }
                     f.ins().jump(join, &[v.into()]);
                     f.switch_to_block(join);
                     f.block_params(join)[0]
@@ -1152,6 +1189,14 @@ impl<'a> Bytewise<'a> {
                     }
                 }
             }
+            // The prefix's positions: below the stream's start (`prefix_start`).
+            BlockInst::Prefix(n, w) => {
+                let k = crate::native_cpu_block::prefix_start(f, n, w, at.bytes, at.len);
+                let ge = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, i, 0);
+                let lt = f.ins().icmp(IntCC::SignedLessThan, i, k);
+                let both = f.ins().band(ge, lt);
+                f.ins().uextend(types::I64, both)
+            }
             // As `mask_at`'s: none from `EARLY_BITS` on.
             BlockInst::Early(a, k) => {
                 let v = self.scalar(f, at, usize::from(a), pos, back - i64::from(k), anchor, first, memo, heads);
@@ -1210,11 +1255,10 @@ impl Bytewise<'_> {
             s
         };
         // A union of byte tests at one byte (`exact_at`), that byte the first: by its set whole.
-        if let Some(n) = exact_at(self.native, x).filter(|n| n.lo == n.hi && back - i64::from(n.lo) == at) {
-            if let Some(v) = decide(n.set) {
+        if let Some(n) = exact_at(self.native, x).filter(|n| n.lo == n.hi && back - i64::from(n.lo) == at)
+            && let Some(v) = decide(n.set) {
                 return Some(v);
             }
-        }
         match self.native.insts[x] {
             BlockInst::EqByte(c) if back == at => {
                 let mut s = [0u64; 4];
@@ -1563,7 +1607,7 @@ pub fn exact(native: &BlockNative, o: u16) -> Option<Needs> {
     exact_at(native, x).map(|n| n.shift(d))
 }
 
-fn exact_at(native: &BlockNative, x: usize) -> Option<Needs> {
+pub(crate) fn exact_at(native: &BlockNative, x: usize) -> Option<Needs> {
     match native.insts[x] {
         BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) => needs_at(native, x, &mut HashMap::new()),
         BlockInst::Or(a, b) => {
@@ -1663,11 +1707,10 @@ pub fn run_last_bytes(native: &BlockNative, o: u16) -> Option<[u64; 4]> {
     }
     let mut sure = [0u64; 4];
     for &t in &terms {
-        if alone(native, t) {
-            if let Some(n) = needs_at(native, t, &mut HashMap::new()).filter(|n| n.lo == -d && n.hi == -d) {
+        if alone(native, t)
+            && let Some(n) = needs_at(native, t, &mut HashMap::new()).filter(|n| n.lo == -d && n.hi == -d) {
                 sure = std::array::from_fn(|k| sure[k] | n.set[k]);
             }
-        }
     }
     let mut set = [0u64; 4];
     for &t in &terms {
@@ -2265,7 +2308,7 @@ mod tests {
                 x ^= x >> 7;
                 x ^= x << 17;
                 // Rare bytes in a round in four, one a 16 there.
-                *byte = if round % 4 == 0 && x % 16 == 0 { rare[(x >> 8) as usize % rare.len()] } else { common[(x >> 8) as usize % common.len()] };
+                *byte = if round % 4 == 0 && x.is_multiple_of(16) { rare[(x >> 8) as usize % rare.len()] } else { common[(x >> 8) as usize % common.len()] };
             }
             let p = (round % 5).min(n - 1);
             let mut out = [0u64; 9];

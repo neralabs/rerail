@@ -53,7 +53,7 @@ pub unsafe extern "C" fn rerail_command(at: *const u8, len: usize) -> i32 {
     let code = match out {
         Ok(text) => {
             print!("{text}");
-            // Decision 0394: a relation cut at the width cap left the results incomplete.
+            // Decision 0462: a relation cut at the width cap left the results incomplete.
             match incomplete {
                 Some(message) => {
                     eprintln!("rerail-engine: {message}");

@@ -15,6 +15,7 @@ import { fixturesDirectory, fixturesExpectedPath, loadPack } from "../../conform
 import { reportFailures, runPack } from "../../conformance/languages/runner.js";
 import { summarize, ungatedRow } from "../../conformance/languages/summary.js";
 import { fixturesPath } from "../support/oracles.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const GATES = (recommended: string) => `adapter: bandit
 rerail:
@@ -52,7 +53,7 @@ beforeEach(() => {
   writeFileSync(join(pack, "upstream", "examplelint", "gates.yaml"), GATES("{ config: default, options: [] }"));
 });
 
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => removeFolderSync(root));
 
 const setUnits = (units: Record<string, { rules: string[] }>): void => {
   const path = join(pack, "upstream", "examplelint", "fixtures.expected.json");

@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 27
+VERSION = 42
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -36,10 +36,22 @@ SCCACHE = os.path.join(SHARE, "bin/sccache")
 if sys.argv and os.path.basename(sys.argv[0]) == "quiet-run" and os.path.isfile(os.path.join(SHARE, "quiet-run")):
     os.environ["RERAIL_QUIET_RUN_CHECKOUT"] = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "../.."))
     os.execv(os.path.join(SHARE, "quiet-run"), [os.path.join(SHARE, "quiet-run")] + sys.argv[1:])
+# test-remote and live-test-remote are installed beside this too (farm 34), and a checkout's copy
+# is handed to them: every checkout's commands then take a host's copy of it by the same rules
+# (`CopyUse`), whatever its branch has. Before, two commands of one checkout could each send its
+# tree into one host's copy while the other ran there, and a run read the other's files.
+for _script in ("test-remote", "live-test-remote"):
+    _installed = os.path.join(SHARE, _script)
+    if sys.argv and os.path.basename(sys.argv[0]) == _script and os.path.isfile(_installed) \
+            and os.path.realpath(sys.argv[0]) != os.path.realpath(_installed):
+        os.environ["RERAIL_FARM_CHECKOUT"] = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "../.."))
+        os.execv(_installed, [_installed] + sys.argv[1:])
 SCCACHE_CONF = os.path.join(CONFIG, "sccache.toml")
 HOSTS = os.path.join(CONFIG, "hosts.json")
 PORT = "4227"
-CACHE_SIZE_GB = 60
+# The cache's size; a machine with less disk to spare sets RERAIL_FARM_CACHE_GB (read when a new
+# checkout joins and the configuration is written).
+CACHE_SIZE_GB = int(os.environ.get("RERAIL_FARM_CACHE_GB") or 60)
 # A workspace crate that missed this recently is being edited here: it compiles incrementally, uncached.
 HOT_SECONDS = 2 * 3600
 # A host nobody has touched for this long is idle: it takes a compile per core.
@@ -120,22 +132,116 @@ def emits(args):
     return kinds or {"link"}
 
 
+def linux_compiles(args):
+    """Whether a Linux host can compile this Mac's crate to the same bytes (`mac_compiles`, README
+    "Mac compiles on a Linux host"): its rustc cross-compiles for aarch64-apple-darwin, reading
+    every file at this Mac's path. A proc-macro it loads is a macOS library: the host builds it as
+    a Linux one from how it was compiled here (`host_builds`), so one built before that was
+    recorded keeps the compile here."""
+    externs = [e.split("=", 1)[1] for e in values(args, "--extern") if "=" in e]
+    return all(e.endswith((".rlib", ".rmeta")) or (e.endswith(".dylib") and host_builds(os.path.abspath(e))[1] is None)
+               for e in externs)
+
+
+def toolchain_of(rustc):
+    """The rustup toolchain `rustc` is of (`1.99.1`), from its path; None for another rustc."""
+    m = re.search(r"/toolchains/([^/]+)-aarch64-apple-darwin/bin/rustc$", rustc)
+    return m.group(1) if m else None
+
+
+def call_stem(out_dir, crate, extra):
+    """What names a compile's outputs, whatever their kinds: `<out-dir>/<crate><extra>`."""
+    return os.path.join(os.path.abspath(out_dir), crate + extra)
+
+
+def stem_of(path):
+    """`call_stem` of an output file (`.../libfoo-abc.rlib`, `.rmeta`, `.dylib`)."""
+    d, f = os.path.split(path)
+    return os.path.join(d, os.path.splitext(f[3:] if f.startswith("lib") else f)[0])
+
+
+def record_call(args, out_dir, crate, env):
+    """Keeps how a registry library or proc-macro was compiled here (cargo's arguments, before the
+    farm's own), under `calls/` by its outputs' stem: a Linux host builds a proc-macro a compile
+    loads from it (`host_builds`), and sccache's hits never reach farm-rustc, so the wrapper keeps
+    it. Rewritten only when it changed; a record unused for a week goes (a 1 in 200 sweep)."""
+    if not out_dir or "--test" in args or not any(os.getcwd().startswith(p + "/") for p in IN_PLACE):
+        return
+    types = set()
+    for t in values(args, "--crate-type"):
+        types.update(t.split(","))
+    if not types or not types <= {"lib", "rlib", "proc-macro"}:
+        return
+    path = state("calls", key(call_stem(out_dir, crate, codegen(args, "extra-filename") or "")))
+    rec = {"cwd": os.getcwd(), "args": args, "proc_macro": "proc-macro" in types,
+           "env": {k: v for k, v in env.items() if k.startswith("CARGO") or k in ("OUT_DIR", "RUSTFLAGS")}}
+    text = json.dumps(rec, sort_keys=True)
+    try:
+        same = open(path).read() == text
+    except OSError:
+        same = False
+    if same:
+        os.utime(path)
+    else:
+        with open(path + ".tmp", "w") as f:
+            f.write(text)
+        os.replace(path + ".tmp", path)
+    if os.urandom(1)[0] < 2:
+        cutoff = time.time() - 7 * 86400
+        d = os.path.dirname(path)
+        for n in os.listdir(d):
+            try:
+                if os.stat(os.path.join(d, n)).st_mtime < cutoff:
+                    os.unlink(os.path.join(d, n))
+            except OSError:
+                pass
+
+
+def host_builds(dylib):
+    """The recorded compiles (`record_call`) that make the proc-macro `dylib` and what it links,
+    dependencies first: a Linux host builds them as Linux libraries (farm-agent, `pm_build`).
+    (calls, None), or (None, why not)."""
+    order, seen = [], set()
+
+    def visit(path):
+        stem = stem_of(path)
+        if stem in seen:
+            return None
+        seen.add(stem)
+        rec = read_json(state("calls", key(stem)), None)
+        if rec is None:
+            return f"no record of how {os.path.basename(path)} was compiled (a build before farm 32)"
+        for e in values(rec["args"], "--extern"):
+            if "=" in e:
+                why = visit(os.path.abspath(e.split("=", 1)[1]))
+                if why:
+                    return why
+        order.append(rec)
+        return None
+    why = visit(dylib)
+    return (None, why) if why else (order, None)
+
+
 def remote_eligible(args):
     """A library's compile: its outputs are files in `--out-dir`, and it links nothing."""
     types = set()
     for t in values(args, "--crate-type"):
         types.update(t.split(","))
-    return types <= {"lib", "rlib"} and "--test" not in args and value(args, "--out-dir") is not None
+    # A compile for another target (cargo-linux's) stays here: the Macs' toolchains have no std of it.
+    target = value(args, "--target")
+    return types <= {"lib", "rlib"} and "--test" not in args and value(args, "--out-dir") is not None \
+        and target in (None, "aarch64-apple-darwin")
 
 
 # ---- places
 
 
 def checkout_of(path):
-    """The checkout (worktree) holding `path`: the nearest directory above it with a `.git`."""
+    """The checkout (worktree) holding `path`: the nearest directory above it with a `.git`, or that is
+    Rerail's root (a copy synced without its `.git`, as on the build boxes)."""
     path = os.path.abspath(path)
     while path != "/":
-        if os.path.exists(os.path.join(path, ".git")):
+        if os.path.exists(os.path.join(path, ".git")) or is_rerail(path):
             return path
         path = os.path.dirname(path)
     return None
@@ -183,11 +289,85 @@ class Lock:
         self.f.close()
 
 
+class CopyUse:
+    """A command's use of `checkout`'s copy on `host` (its files under the host's farm root, at the
+    checkout's path, where its warm target directory's paths point): one tree at a time. Locks here,
+    on this machine, which sends every one of its trees:
+      - `.send`, while a tree is sent: held a few seconds;
+      - `.tree`, held shared by every command running from the copy, alone by a Relax session (it
+        sends each save); its content names the tree last sent whole (`fingerprint`).
+    A command finds the copy idle (`sends`: it sends its tree, then runs), or running from the very
+    tree it has (it runs too, sending nothing), or else not for it now (`held` false: another host,
+    or a wait). `alone` (a Relax session) takes it only idle. Two commands of one checkout once
+    sent their trees into one copy while the other ran there: a run read the other's files, and
+    failed as if a merge had broken it (2026-11-18)."""
+
+    def __init__(self, host, checkout, fingerprint, alone=False):
+        base = state("tests", f"{host}.{key(checkout)}")
+        self.alone, self.fingerprint, self.held, self.sends, self.f = alone, fingerprint, False, False, None
+        self.send = Lock(base + ".send", blocking=False)
+        if not self.send.held:
+            self.send.release()
+            return
+        f = open(base + ".tree", "a+")
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.sends = True
+            # (named again once the whole tree is there: a send cut short leaves a copy of no tree)
+            f.seek(0)
+            f.truncate()
+            f.flush()
+        except BlockingIOError:
+            f.seek(0)
+            if alone or f.read() != fingerprint:
+                f.close()
+                self.send.release()
+                return
+            try:
+                fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                # (a Relax session's, or a sender's that took it between the read and here)
+                f.close()
+                self.send.release()
+                return
+            f.seek(0)
+            if f.read() != fingerprint:
+                f.close()
+                self.send.release()
+                return
+            self.send.release()
+        self.f, self.held = f, True
+
+    def sent(self):
+        """The tree is there whole (`sends`): named, and shared with the commands of the same tree
+        from now on; a session keeps the copy alone."""
+        if not self.sends:
+            return
+        self.f.seek(0)
+        self.f.truncate()
+        if not self.alone:
+            self.f.write(self.fingerprint)
+            self.f.flush()
+            # (under `.send`: no other command looks between the two)
+            fcntl.flock(self.f, fcntl.LOCK_SH)
+        self.send.release()
+
+    def release(self):
+        if self.f:
+            self.f.close()
+            self.f = None
+        self.send.release()
+        self.held = False
+
+
 # ---- the farm's sccache
 
 
 def sccache_env(env):
+    # Either one in the environment replaces the configuration's whole disk cache (its directory
+    # becomes sccache's default, another server's): the farm's cache is the configuration's.
     env.pop("SCCACHE_DIR", None)
+    env.pop("SCCACHE_CACHE_SIZE", None)
     env.update(
         SCCACHE_SERVER_PORT=PORT,
         SCCACHE_CONF=SCCACHE_CONF,
@@ -283,7 +463,8 @@ def same_in_every_checkout(args, out_dir, crate):
     checkout = checkout_of(os.getcwd())
     out = ["--remap-path-prefix", f"{checkout}=/rerail-farm/checkout"] if checkout else []
     out += ["--remap-path-prefix", f"{target}=/rerail-farm/target"]
-    if sys.platform == "darwin":
+    # ld64's own flags: a macOS link only (cargo-linux's links are lld's, for Linux).
+    if sys.platform == "darwin" and value(args, "--target") in (None, "aarch64-apple-darwin"):
         # The path as a link-arg of its own (`link-arg=<path>`), where sccache strips a basedir from
         # its key: in `-Wl,-oso_prefix,<path>` it would not, and each checkout would key apart.
         out += ["-C", "link-arg=-Xlinker", "-C", "link-arg=-oso_prefix", "-C", "link-arg=-Xlinker", "-C", f"link-arg={target}/"]
@@ -310,6 +491,52 @@ def target_of(out_dir):
     return None
 
 
+def record(target):
+    """Notes that a build ran in `target` now: the targets `free-local` may free, and when each was
+    last built. Written once, then touched (at most a minute apart)."""
+    path = state("targets", key(target))
+    try:
+        if time.time() - os.path.getmtime(path) < 60:
+            return
+        os.utime(path)
+    except OSError:
+        try:
+            with open(path, "w") as f:
+                f.write(target)
+        except OSError:
+            pass
+
+
+# How often a build looks at this Mac's free disk (statvfs: a few microseconds).
+DISK_SECONDS = 120
+
+
+def guard_disk():
+    """Starts `free-local` (detached, at nice 19) when this Mac's free disk is under its floor
+    (`local_min_free_gb`). Looked at by one build at most every DISK_SECONDS. statvfs is the first
+    look; free-local then asks what macOS would give an important write, which also counts what it
+    purges."""
+    claim = state("disk", str(int(time.time() // DISK_SECONDS)))
+    try:
+        os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except OSError:
+        return
+    for old in os.listdir(os.path.dirname(claim)):
+        if old != os.path.basename(claim):
+            try:
+                os.unlink(os.path.join(os.path.dirname(claim), old))
+            except OSError:
+                pass
+    st = os.statvfs(HOME)
+    if st.f_bavail * st.f_frsize / 1e9 >= config().get("local_min_free_gb", 200):
+        return
+    script = os.path.join(SHARE, "free-local")
+    if os.path.exists(script):
+        with open(state("free-local.out"), "a") as out:
+            subprocess.Popen(["nice", "-n", "19", sys.executable, script], stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                             start_new_session=True, close_fds=True)
+
+
 def tidy(target, checkout):
     """Starts `clean-target --wait` on `target`, at most once every 15 minutes per target directory:
     Rerail's worktrees together write terabytes of builds a day, and what the next build cannot use
@@ -317,6 +544,8 @@ def tidy(target, checkout):
     the checkout, whose findings `advise` prints at the next builds. Detached, at nice 19."""
     if os.environ.get("RERAIL_FARM_NO_TIDY"):
         return
+    record(target)
+    guard_disk()
     script = os.path.join(SHARE, "clean-target")
     if target is None or not os.path.exists(script):
         return
@@ -385,7 +614,7 @@ def variant_hint(plus, minus):
         return ("build the CLI with the tests' features: `nice -n 19 cargo build --bin rerail-engine --features "
                 "test-hooks` (AGENTS.md)")
     if "default" in changed:
-        return ("a crate's `default` differs from what the engine gives it: scripts/check/check-dev-features.py names "
+        return ("a crate's `default` differs from what the engine gives it: scripts/check/check_dev_features.py names "
                 "the manifest to fix")
     return (f"a build with other features ({', '.join(sorted(changed))}) compiles every crate below again: run it on "
             "a farm host (scripts/dev/test-remote), not in this worktree's target directory")
@@ -641,6 +870,12 @@ def wrapper(rustc, args):
         if os.path.exists(plain):
             os.execv(plain, [plain, rustc] + args)
         os.execv(rustc, [rustc] + args)
+    # Linux: a program cargo runs (a build script, a binary) is compiled here, never written by the
+    # farm's sccache. Its server writes a hit's files while its other threads start compilers, each of
+    # which holds the file open until it execs, and running the program then fails with "Text file
+    # busy" (ETXTBSY; twice in an hour on the build boxes, 2026-11-18). macOS has no such error.
+    if sys.platform != "darwin" and "bin" in ",".join(values(args, "--crate-type")).split(","):
+        os.execv(rustc, [rustc] + args)
     # Not cargo's probes (`--print`, crate `___`): cargo keeps their output, a failure included, in
     # `target/.rustc_info.json`, and would replay a refusal after its cause was gone.
     if crate != "___" and not any(a == "--print" or a.startswith("--print=") for a in args):
@@ -654,6 +889,10 @@ def wrapper(rustc, args):
             note_variant(checkout, args, out_dir, crate)
         except (OSError, ValueError, KeyError):
             pass  # never fail a compile over its bookkeeping
+    try:
+        record_call(args, out_dir, crate, env)
+    except (OSError, ValueError):
+        pass  # never fail a compile over its bookkeeping
     args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:
@@ -706,7 +945,14 @@ def cc(argv0, args):
     """`farm-cc` and `farm-c++`, the C and C++ compilers of build scripts (`CC`, `CXX`): clang through
     the farm's sccache, so a build script's C (SQLite, tree-sitter's grammars, simdjson) is compiled
     once for every target directory and worktree, not once per target directory."""
-    compiler = "/usr/bin/clang++" if os.path.basename(argv0).endswith("++") else "/usr/bin/clang"
+    if sys.platform == "darwin":
+        compiler = "/usr/bin/clang++" if os.path.basename(argv0).endswith("++") else "/usr/bin/clang"
+    else:
+        # What the `cc` crate runs without `CC`: the system's compiler for this machine's target;
+        # clang, which cross-compiles, for another (one with no `CC_<target>` or `TARGET_CC`: wasm).
+        cross = os.environ.get("TARGET", os.environ.get("HOST")) != os.environ.get("HOST")
+        cxx = os.path.basename(argv0).endswith("++")
+        compiler = ("/usr/bin/clang++" if cxx else "/usr/bin/clang") if cross else ("/usr/bin/c++" if cxx else "/usr/bin/cc")
     if not os.path.exists(SCCACHE):
         os.execv(compiler, [compiler] + args)
     checkout = checkout_of(os.environ.get("OUT_DIR") or os.getcwd()) or checkout_of(os.getcwd())
@@ -731,6 +977,8 @@ DEFAULTS = {
     # this much: a host that dropped to WiFi or a busy network is no faster than here.
     "min_free_gb": 40,
     "floor_free_gb": 20,
+    # This Mac's floor: under it, Rerail's builds here go, least recently built first (free-local).
+    "local_min_free_gb": 200,
     # The most a host's test targets hold together (GB): over it, the least recently used that no
     # command holds go (farm-agent, `keep_to_budget`).
     "max_target_gb": 150,
@@ -738,9 +986,12 @@ DEFAULTS = {
     "min_mbps": 8,
 }
 # How long a host's health is believed: an answer that it is usable, and the first wait after it was
-# not (doubled each time it is still not, up to the last).
+# not (doubled each time it is still not, up to the last). The last was 30 minutes: hosts that
+# had failed all evening at home stayed "unreachable" for half an hour at the office, while ssh
+# reached them, and agents ran everything here (2026-11-18). A change of this Mac's network ends a
+# back-off at once too (`network_now`).
 HEALTHY_SECONDS = 30
-DOWN_SECONDS = (30, 1800)
+DOWN_SECONDS = (30, 300)
 # A host that answers, but over another link than its own (it fell back to WiFi), is tried again
 # this often, not backed off: its own link may be back at any time (`recover`).
 OFF_LINK_SECONDS = 60
@@ -774,6 +1025,28 @@ def hosts():
     return [h for h in config()["hosts"] if h.get("name")]
 
 
+def host_os(host):
+    """`host`'s system: "macos" (the default), "linux" or "windows" (`os` in the configuration). A
+    Linux host runs test commands as a Linux build (test-remote), Relax runs (live-test-remote), and
+    this Mac's compiles that need no macOS library (`linux_compiles`). A Windows host is a Windows
+    PC's (or VM's) Windows side, reached through its WSL (`shares` the
+    machine's Linux entry, `windows_dir` its farm directory on the Windows drive as WSL mounts
+    it): test commands run there as a Windows build ("Windows hosts")."""
+    return host.get("os", "macos")
+
+
+def entry(name):
+    """`name`'s configuration entry, or {} (a name ssh knows that the farm does not)."""
+    return next((h for h in hosts() if h["name"] == name), {})
+
+
+def shared_base(host):
+    """The entry whose test slots `host` takes (`shares`: one machine's Linux and Windows sides
+    take one set of slots, whichever commands come), else `host` itself."""
+    base = host.get("shares")
+    return (entry(base) or host) if base else host
+
+
 def read_json(path, default):
     try:
         return json.load(open(path))
@@ -787,6 +1060,27 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 
+def network_now():
+    """This Mac's network, as its interfaces' addresses (`scutil --nwi`): another network (home, the
+    office, a phone's hotspot) can reach hosts the last could not, so a host backed off on one is
+    probed again on the next. Read at most every 10 s, shared by every process."""
+    path = state("network")
+    try:
+        if time.time() - os.path.getmtime(path) < 10:
+            return open(path).read()
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["scutil", "--nwi"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    net = " ".join(sorted(line.split(":", 1)[1].strip() for line in out.splitlines() if line.strip().startswith("address")))
+    tmp = f"{path}.{os.getpid()}.tmp"
+    open(tmp, "w").write(net)
+    os.replace(tmp, path)
+    return net
+
+
 def mark_down(name, why):
     """Records that `name` failed in use (its agent stopped, a file could not be written there): it
     is not used until its back-off ends, and the next health check asks again."""
@@ -794,7 +1088,7 @@ def mark_down(name, why):
     h = read_json(path, {})
     failures = h.get("failures", 0) + 1
     wait = min(DOWN_SECONDS[0] * 2 ** (failures - 1), DOWN_SECONDS[1])
-    h.update(ok=False, why=why, failures=failures, checked=time.time(), down_until=time.time() + wait)
+    h.update(ok=False, why=why, failures=failures, checked=time.time(), down_until=time.time() + wait, net=network_now())
     write_json(path, h)
     log(f"{name}: down for {wait} s: {why}")
 
@@ -831,9 +1125,22 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["mbps"], h["mbps_at"] = None, 0  # another path: its throughput is not known
     # Free disk: what macOS gives an important write (AVAILABLE_JS), then statvfs's, in KB.
     available = shlex.quote(AVAILABLE_JS)
-    script = ('echo "$SSH_CONNECTION"; echo "$(osascript -l JavaScript -e ' + available + ' 2>/dev/null) $(df -k "$HOME" | tail -1 | awk \'{print $4}\')";'
+    # Linux: df alone (no purgeable space), no input to idle on (a server: never attended), the
+    # interface that holds the address ssh arrived at, /proc's load, and NFS mounts by findmnt.
+    linux = ('echo "$SSH_CONNECTION"; df -k "${RERAIL_FARM_WINDIR:-$HOME}" | tail -1 | awk \'{print $4}\'; echo 1000000000000000;'
+             " s=$(echo $SSH_CONNECTION | cut -d' ' -f3); echo \"$(ip -o addr show | awk -v s=\"$s\" '{split($4, a, \"/\")} a[1]==s {print $2; exit}')\";"
+             " a=$(head -1 /proc/stat); sleep 0.3; b=$(head -1 /proc/stat);"
+             " echo \"$(cut -d' ' -f1 /proc/loadavg) busy=$(printf '%s\\n%s\\n' \"$a\" \"$b\" | awk '{i=$5+$6; t=0; for (k=2; k<=NF; k++) t+=$k;"
+             " if (NR==1) {i0=i; t0=t} else print int(100*(1-(i-i0)/(t-t0)))}')\"; findmnt -rn -t nfs,nfs4 -o TARGET; true")
+    script = linux if host_os(host) in ("linux", "windows") else ('echo "$SSH_CONNECTION"; echo "$(osascript -l JavaScript -e ' + available + ' 2>/dev/null) $(df -k "$HOME" | tail -1 | awk \'{print $4}\')";'
               " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'; echo \"$(" + ARRIVAL + ")\";"
-              " sysctl -n vm.loadavg; mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
+              " echo \"$(sysctl -n vm.loadavg) busy=$(ps -A -o %cpu= | awk -v n=$(sysctl -n hw.logicalcpu) '{s+=$1} END {print int(s/n)}')\";"
+              " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
+    if host.get("fleet"):
+        # A nera-fleet node (`"fleet": true`): the fleet's jobs are containers carrying `fleet.job`.
+        # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
+        script = ('echo "fleet $(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin '
+                  'docker ps -q --filter label=fleet.job 2>/dev/null | wc -l)"; ' + script)
     try:
         out = subprocess.run(ssh(name, script, "health"), capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
@@ -848,6 +1155,9 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = blocked or "unreachable (off, asleep, or off the network)"
         return h
     lines = out.stdout.splitlines()
+    fleet_jobs = None
+    if lines and lines[0].startswith("fleet "):
+        fleet_jobs = h["fleet_jobs"] = int(lines.pop(0).split()[1] or 0)
     client = h["client"] = (lines[0].split() or [""])[0]
     try:
         words = lines[1].split()
@@ -862,6 +1172,11 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["load"] = float(lines[4].strip("{} ").split()[0])
     except (ValueError, IndexError):
         h["load"] = None
+    # How busy its CPUs are (percent of all of them): /proc/stat over 0.3 s on Linux, the processes'
+    # recent CPU on a Mac. Not the load average: a Mac's counts threads waiting on I/O and
+    # macOS's background work, and one about a third idle showed a load 31 over its cores.
+    busy = re.search(r"busy=(\d+)", lines[4]) if len(lines) > 4 else None
+    h["busy"] = min(int(busy.group(1)), 100) if busy else None
     h["mounts"] = [m for m in lines[5:] if m]
     # The round trip is the least of three: each starts an ssh process here, which a loaded Mac
     # delays by up to a few hundred ms, and that is not the link.
@@ -876,7 +1191,9 @@ def probe(host, cfg, fell_back=False, recovered=False):
             break
     h["rtt_ms"] = min(rtts)
     link = link_of(host)
-    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
+    # A host's own floor (`min_mbps` in its entry: a slower link it is still worth using over), else the farm's.
+    min_mbps = host.get("min_mbps", cfg["min_mbps"])
+    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < min_mbps:
         data = os.urandom(PROBE_BYTES)  # made before the clock starts: 70 ms on a loaded Mac
         # A plain pipe: `run(input=, capture_output=True)` writes stdin 512 bytes at a time while
         # it reads, and measured itself (57 MB/s where the pipe does 270).
@@ -897,7 +1214,10 @@ def probe(host, cfg, fell_back=False, recovered=False):
     if link and arrival != link and not recovered and recover(host, arrival):
         return probe(host, cfg, fell_back=fell_back, recovered=True)
     h["route"] = route(name)
-    if link and arrival != link:
+    if fleet_jobs:
+        h["why"] = (f"running {fleet_jobs} nera-fleet job{'s' * (fleet_jobs > 1)}: the farm and the fleet are equals there, "
+                    "and the farm starts nothing more until they end")
+    elif link and arrival != link:
         h["why"] = f"not on its link: reached over its {arrival or '?'}, not {link}"
     elif h["free_gb"] < cfg["floor_free_gb"]:
         h["why"] = f"{h['free_gb']} GB free, under {cfg['floor_free_gb']}: {short_of_disk(host, h, cfg)}"
@@ -907,8 +1227,8 @@ def probe(host, cfg, fell_back=False, recovered=False):
     # and more) pushed it past the limits on the fast link, taking healthy hosts out mid-build.
     elif not link and h["rtt_ms"] > cfg["max_rtt_ms"]:
         h["why"] = f"a {h['rtt_ms']} ms round trip, over {cfg['max_rtt_ms']}"
-    elif not link and (h["mbps"] or 0) < cfg["min_mbps"]:
-        h["why"] = f"{h['mbps']} MB/s, under {cfg['min_mbps']}"
+    elif not link and (h["mbps"] or 0) < min_mbps:
+        h["why"] = f"{h['mbps']} MB/s, under {min_mbps}"
     else:
         h["ok"], h["why"], h["failures"] = True, "", 0
         if h["free_gb"] < cfg["min_free_gb"]:
@@ -1008,7 +1328,7 @@ def health(host, fresh=False):
     if h is not None and not fresh:
         if h.get("ok") and now - h.get("checked", 0) < HEALTHY_SECONDS:
             return h
-        if not h.get("ok") and now < h.get("down_until", 0):
+        if not h.get("ok") and now < h.get("down_until", 0) and h.get("net", "") == network_now():
             return h
     lock = Lock(path + ".lock", blocking=fresh)
     if not lock.held:
@@ -1018,12 +1338,14 @@ def health(host, fresh=False):
         h = probe(host, config())
         if not h["ok"] and h["why"].startswith("not on its link"):
             h["down_until"] = now + OFF_LINK_SECONDS
-        elif not h["ok"] and "Local Network privacy" in h["why"]:
+        elif not h["ok"] and ("Local Network privacy" in h["why"] or h.get("fleet_jobs")):
+            # (or the fleet's jobs: asked again each minute, the moment they may have ended)
             # Not the host: it is back the moment the permission is given, so no growing back-off.
             h["down_until"] = now + DOWN_SECONDS[0]
         elif not h["ok"]:
             h["failures"] = h.get("failures", 0) + 1
             h["down_until"] = now + min(DOWN_SECONDS[0] * 2 ** (h["failures"] - 1), DOWN_SECONDS[1])
+        h["net"] = network_now()
         write_json(path, h)
         log(f"{name}: {'usable' if h['ok'] else 'not usable: ' + h['why']} ({h.get('rtt_ms')} ms, {h.get('mbps')} MB/s, {h.get('free_gb')} GB free)")
         return h
@@ -1032,10 +1354,13 @@ def health(host, fresh=False):
 
 
 def spare(host):
-    """The cores `host` has to spare now: its capacity (`capacity`) less its load average when last
-    probed. Only an order between hosts (a test command goes to the one with most to spare), never
-    a refusal: macOS's background work raises the load of an idle machine too."""
-    return capacity(host) - (health(host).get("load") or 0)
+    """The cores `host` has idle when last probed (`busy`; from the load average when an older
+    probe has no `busy`). Only an order between hosts (a test command goes to the one with most to
+    spare), never a refusal or a reason to wait."""
+    h = health(host)
+    if h.get("busy") is not None:
+        return capacity(host) * (100 - h["busy"]) / 100
+    return capacity(host) - (h.get("load") or 0)
 
 
 def usable(kind=None):
@@ -1070,9 +1395,10 @@ def free_test_slots(host):
 
 
 def test_slot_paths(name, host=None):
-    """The lock files of `name`'s test slots."""
-    host = host or next((h for h in hosts() if h["name"] == name), {"name": name})
-    return [state("tests", f"{name}.{i}.lock") for i in range(test_slots(host))]
+    """The lock files of `name`'s test slots: the machine's, which its Linux and Windows sides share
+    (`shared_base`), so the commands queued decide how many of each run."""
+    host = shared_base(host or entry(name) or {"name": name})
+    return [state("tests", f"{host['name']}.{i}.lock") for i in range(test_slots(host))]
 
 
 def capacity(host):
@@ -1207,6 +1533,11 @@ def ssh(host, command, channel=None, address=None, alias=None):
         # Each route has its own masters: one made over another link is never reused.
         control = state("ssh", f"{host}.{key(r.get('address') or '')[:6]}.{channel or CHANNEL[0]}")
         shared = ["-o", "ControlMaster=auto", "-o", f"ControlPath={control}", "-o", "ControlPersist=10m"]
+    # A Windows host's builds are on its Windows drive, as its WSL mounts it (`windows_dir`): every
+    # command there (the agent, the probe's free disk) is told.
+    windows_dir = entry(host).get("windows_dir")
+    if windows_dir:
+        command = f"export RERAIL_FARM_WINDIR={shlex.quote(windows_dir)}; {command}"
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "ServerAliveInterval=5",
             "-o", "ServerAliveCountMax=3"] + via + shared + [host, command]
 
@@ -1275,26 +1606,36 @@ def cleaner():
     return None
 
 
-def remote_slot():
+def remote_slot(args=(), rustc=""):
     """A free compile slot on a host, and its lock. Slots are taken in turn across the hosts (each
-    one's first, then each one's second, ...), so every host works, not only the first listed."""
+    one's first, then each one's second, ...), so every host works, not only the first listed: the
+    Macs', then the Linux hosts' for a compile they can take (`linux_compiles`; `mac_compiles`
+    false in the configuration keeps a Linux host to tests). `RERAIL_FARM_HOST=NAME` takes only
+    that host's slots (scripts/build/farm/test-mac-compiles)."""
     if os.environ.get("RERAIL_FARM_LOCAL"):
         return None, None
-    open_hosts = []
+    only = os.environ.get("RERAIL_FARM_HOST")
+    linux = linux_compiles(args) and toolchain_of(rustc) is not None
+    tiers = [[], []]
     for h in hosts():
-        if not h.get("enabled", True):
+        if not h.get("enabled", True) or (only and h["name"] != only):
             continue
-        open_hosts.append((h, capacity(h)))
-    for i in range(max((c for _, c in open_hosts), default=0)):
-        for host, cap in open_hosts:
-            if i >= cap:
-                continue
-            lock = Lock(state("slots", f"{host['name']}.{i}"), blocking=False)
-            if lock.held:
-                CHANNEL[0] = str(i)
-                return host, lock
-            lock.release()
+        if host_os(h) == "macos":
+            tiers[0].append((h, capacity(h)))
+        elif host_os(h) == "linux" and linux and h.get("mac_compiles", True):
+            tiers[1].append((h, capacity(h)))
+    for open_hosts in tiers:
+        for i in range(max((c for _, c in open_hosts), default=0)):
+            for host, cap in open_hosts:
+                if i >= cap:
+                    continue
+                lock = Lock(state("slots", f"{host['name']}.{i}"), blocking=False)
+                if lock.held:
+                    CHANNEL[0] = str(i)
+                    return host, lock
+                lock.release()
     return None, None
+
 
 
 def local_slot():
@@ -1364,8 +1705,10 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
     # handed this machine's own path, outside the farm's root (2026-11-17).
     if any(re.search(r"/\.\.?(/|$)", a) for a in args):
         return give_up("a path in its arguments has a `..` or `.` component")
+    linux = host_os(host) == "linux"
     out = env.get("OUT_DIR")
-    if out and os.path.isdir(out) and os.listdir(out):
+    wrote_out = out and os.path.isdir(out) and os.listdir(out)
+    if wrote_out and not linux:
         return give_up("its build script wrote OUT_DIR, which a compile there would read from another path")
     roots = [[out_dir, "deps"]]
     for d in values(args, "-L"):
@@ -1377,6 +1720,16 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
     kinds = emits(args)
     outputs = [f"{crate}{extra}.d"] * ("dep-info" in kinds) + [f"lib{crate}{extra}.rmeta"] * ("metadata" in kinds) \
         + [f"lib{crate}{extra}.rlib"] * ("link" in kinds)
+    if linux and not toolchain_of(rustc):
+        return give_up("its rustc is no rustup toolchain's")
+    pms = []
+    if linux:
+        for e in files:
+            if e.endswith(".dylib"):
+                calls, why = host_builds(e)
+                if why:
+                    return give_up(f"it loads a proc-macro the host cannot build: {why}")
+                pms.append({"dylib": e, "calls": calls})
     run = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir], "inplace": [cwd],
            "outputs": [os.path.join(out_dir, o) for o in outputs],
            "depinfo": os.path.join(out_dir, f"{crate}{extra}.d") if "dep-info" in kinds else None,
@@ -1388,6 +1741,27 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
            # vendored crate keeps its file name across edits, so a host's older copy compiled a
            # crate against another version under this one's key (Q68: E0463 above it).
            "externs": files}
+    if linux and any(not p.startswith(HOME + "/") for p in [out_dir] + files + [r for r, _ in roots]):
+        return give_up("its outputs or dependencies are outside this machine's home, which the host's container does not hold")
+    if linux:
+        # In the host's container, at this Mac's paths, with the same toolchain's Linux rustc
+        # (farm-agent, `xc`). Every path there is this Mac's, so the crate's sources and what its
+        # build script wrote go with it (a crate is sent once a connection), and nothing is
+        # read in place.
+        run["xc"] = {"home": HOME, "toolchain": toolchain_of(rustc)}
+        run["inplace"] = []
+        roots.append([cwd, "tree"])
+        if wrote_out:
+            roots.append([os.path.abspath(out), "tree"])
+        # The proc-macros it loads, as Linux libraries: built there from their sources (farm-agent,
+        # `pm_build`), the SVH of this Mac's own put in.
+        run["pm"] = pms
+        for pm in pms:
+            for rec in pm["calls"]:
+                roots.append([rec["cwd"], "tree"])
+                o = rec["env"].get("OUT_DIR")
+                if o and os.path.isdir(o):
+                    roots.append([o, "tree"])
     reply = mirror.compile({"host": host["name"], "since": since, "roots": roots, "files": files, "run": run})
     if reply is None:
         return give_up("the mirror daemon did not answer")
@@ -1441,7 +1815,7 @@ def farm_rustc(argv0, args):
         log(f"{crate}: missed, incremental here")
         local(rustc, args + ["-C", f"incremental={inc}"])
     if remote_eligible(args):
-        host, lock = remote_slot()
+        host, lock = remote_slot(args, rustc)
         if not host:
             log(f"{crate}: no host has a free slot")
         if host:

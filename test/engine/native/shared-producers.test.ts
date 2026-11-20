@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../src/engine/index.ts", import.meta.url).href;
@@ -52,7 +53,7 @@ it.skipIf(!required)("exports real shared structural bindings with pinned source
     const report = JSON.parse(readFileSync(join(directory, "checked.json"), "utf8"));
     expect(report.valid).toBe(true); expect(report.clashes).toEqual([]);
     expect(report.sharedBindings.some((b: { contract: string }) => b.contract === "syntax.source_spans.v1")).toBe(true);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeFolderSync(directory); }
 }, 45_000);
 
 it.skipIf(!required)("fills one shared span owner across two rules and two result packets", () => {
@@ -91,5 +92,5 @@ it.skipIf(!required)("fills one shared span owner across two rules and two resul
       fills += events.filter(e => e.kind === "sql" && queries.get(e.query)?.includes("INSERT INTO decoded_spans")).length;
     }
     expect(fills, "independent ready selectors must feed one physical fill, across both result packets").toBe(1);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeFolderSync(directory); }
 }, 45_000);

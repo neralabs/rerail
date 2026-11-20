@@ -6,7 +6,7 @@ global state", then "please move the rest of the tables that hold run data into 
 ## Intro
 
 Some of what a run produces for its own use lived in process-wide statics or in thread-locals: the width cap's cut
-list and widest relations (0394), a debugging trace of kept statistics, and the count of trees decoded from versions.
+list and widest relations (0462), a debugging trace of kept statistics, and the count of trees decoded from versions.
 Two runs in one process (a session's commands, the browser's reactor, tests on threads) then read or reset each
 other's. A thread-local counted only what the run did on its first thread: a job on another thread was missed.
 
@@ -16,7 +16,7 @@ other's. A thread-local counted only what the run did on its first thread: a job
    command in `tools::cli_in`, a corpus run, or a program run, whichever starts first). A run nested in it joins it.
    `run_state` carries it to the run's jobs on other threads (`RUN`, Carried). It ends with the outermost scope.
 2. **What it holds:**
-   - its limits and what it met of them (`width::Width`, decision 0394): settings, cut list, widest relations, the
+   - its limits and what it met of them (`width::Width`, decision 0462): settings, cut list, widest relations, the
      memory watch's stop;
    - the trees it decoded from versions (`Version::program`), counted on any of its threads.
 3. **It comes back with the result.** The outermost scope returns a `run::Record`: `plan::Outcome::run`,

@@ -21,8 +21,8 @@ use crate::code_rule_dsl::calls::{self, closure::Graph, contracts, summary::Summ
 use crate::code_rule_dsl::facts::core::Facts;
 use crate::code_rule_dsl::facts::vtab::syntax;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::logic::front::Program;
 use crate::code_rule_dsl::tape::TapeDoc;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::model::{CodeRuleScope, FileInput, package_marker_directory, python_module_in};
 use crate::content_store::ContentStore;
 use serde_json::Value;
@@ -44,8 +44,9 @@ struct Config {
 
 impl Config {
     /// `prog`'s `.references` setting (module doc).
-    fn of(prog: &Program) -> Result<Self> {
-        let mut settings = prog.settings.iter().filter(|(key, _)| key == "references");
+    fn of(prog: &dyn ProgramFields) -> Result<Self> {
+        let all = prog.settings();
+        let mut settings = all.iter().filter(|(key, _)| key == "references");
         let Some((_, text)) = settings.next() else {
             return Ok(Config { key: 0, scope: Some(scope(None)?) });
         };
@@ -78,17 +79,22 @@ pub(in crate::code_rule_dsl) struct Files {
     config: Config,
     /// The directories the corpus marks as packages (`__init__.py`), from which each file's module follows.
     packages: HashSet<String>,
+    /// Whether the run's shape is core.rerail's (the program declares every relation core.rerail does, `Projection::of`):
+    /// the shape its node ids are ranks in.
+    core: bool,
     files: Mutex<Vec<File>>,
 }
 
 impl Files {
     /// For `prog`, over the corpus's `paths`; `None` where `prog` reads neither relation.
-    pub(in crate::code_rule_dsl) fn new(prog: &Program, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Self>> {
+    pub(in crate::code_rule_dsl) fn new(prog: &dyn ProgramFields, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Self>> {
         if !RELATIONS.iter().any(|r| read.contains(*r)) {
             return Ok(None);
         }
         let packages = paths.iter().filter_map(|p| package_marker_directory(p)).map(str::to_owned).collect();
-        Ok(Some(Files { config: Config::of(prog)?, packages, files: Mutex::new(Vec::new()) }))
+        let names = crate::code_rule_dsl::facts::core::core_names();
+        let core = !names.is_empty() && names.iter().all(|r| prog.declares(r.as_str()));
+        Ok(Some(Files { config: Config::of(prog)?, packages, core, files: Mutex::new(Vec::new()) }))
     }
 
     /// Document `key` at `path`, with its source, core facts and tape: summarized as W's stateless evaluation
@@ -103,7 +109,7 @@ impl Files {
         let has_errors = !crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(tape).is_empty();
         let root = ast_grep_core::AstGrep::doc(tape.clone());
         let (summary, _) = calls::summarize(root.root(), GrammarDialect::Python, path, file.module.as_deref(), has_errors, file.source.len(), None);
-        let nodes = syntax::definitions(key, facts).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
+        let nodes = syntax::definitions(key, facts, self.core).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
         self.files.lock().expect("reference files").push((Arc::from(path), Arc::new(summary), nodes));
         Ok(())
     }
@@ -148,7 +154,7 @@ fn columns(names: &[&str]) -> Vec<String> {
 }
 
 /// Python's reference graph, made where a program of Python files reads it (`corpus::install_cross_file`).
-pub(in crate::code_rule_dsl) fn make(label: &str, prog: &Program, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Box<dyn super::CrossFileRelations>>> {
+pub(in crate::code_rule_dsl) fn make(label: &str, prog: &dyn ProgramFields, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Box<dyn super::CrossFileRelations>>> {
     if label != "python" {
         return Ok(None);
     }

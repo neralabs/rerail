@@ -1,6 +1,7 @@
-//! `front::prune` on the version (decision 0281's path, step 6d): the rules of relations no output reads, directly
+//! T's `prune` on the version (decision 0281's path, step 6d): the rules of relations no output reads, directly
 //! or through other rules, dropped, and the request rules none of whose readers is read (decision 0174). The record
-//! of each request's readers follows the rules kept; a native nothing reads is dropped with them. Facts stay.
+//! of each request's readers follows the rules kept; a native nothing reads is dropped with them. Facts stay. A
+//! reader outside the version (another part's, decision 0345) keeps its ask.
 
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{About, RuleRef};
@@ -35,6 +36,11 @@ impl ProgramPass for Prune {
         }
         let native_reads: HashMap<&str, Vec<&str>> = about.natives.iter().map(|n| (v.rel_name(n.rel), n.reads.iter().map(|&r| v.rel_name(r)).collect())).collect();
         let reads = |i: usize| -> Vec<String> { rules[i].body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).collect() };
+        // A reader the version neither declares nor makes is another program's: a part prepared alone (decision
+        // 0345) whose request another part reads, or a reader gone from the program (merged, renamed or inlined since
+        // the requests were made, Typing-support's 52e04565d). Whether it is read is not this version's to know, so
+        // its ask is kept, as an ungated rule is. A reader it declares and makes nothing of is unread: its ask goes.
+        let outside = |b: &str| v.decl_of(b).is_none() && !body_of.contains_key(b);
         let mut kept = vec![false; rules.len()];
         let (mut need, mut todo): (BTreeSet<String>, Vec<String>) = (BTreeSet::new(), roots.clone());
         loop {
@@ -56,7 +62,7 @@ impl ProgramPass for Prune {
                 if let Some(by) = by
                     && !kept[i]
                     && need.contains(head(i))
-                    && by.iter().any(|b| need.contains(b))
+                    && by.iter().any(|b| need.contains(b) || outside(b))
                 {
                     kept[i] = true;
                     todo.extend(reads(i));
@@ -67,6 +73,7 @@ impl ProgramPass for Prune {
             }
         }
         // The record follows the rules kept.
+        let dropped: BTreeSet<&str> = (0..rules.len()).filter(|&i| !kept[i] && !need.contains(head(i))).map(head).collect();
         let mut asked_after: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
         for (req, readers) in &asked {
             let mine: Vec<bool> = (0..rules.len()).filter(|&i| head(i) == req.as_str()).map(|i| kept[i]).collect();
@@ -75,14 +82,21 @@ impl ProgramPass for Prune {
                 let mut it = mine.iter();
                 readers.retain(|_| *it.next().unwrap());
             }
+            // A reader `prune` drops is not needed: it leaves the record, beside one it keeps, so a later gate (the
+            // embed slice's) does not take it for one gone by a rename, whose requests stay.
+            for by in &mut readers {
+                if by.iter().any(|b| dropped.contains(b.as_str())) && by.iter().any(|b| !dropped.contains(b.as_str())) {
+                    by.retain(|b| !dropped.contains(b.as_str()));
+                }
+            }
             let has_rules = (0..rules.len()).any(|i| kept[i] && head(i) == req.as_str());
             if !readers.is_empty() || has_rules {
                 asked_after.insert(req.clone(), readers);
             }
         }
-        // A reader `prune` drops is not needed: it leaves an entry another reader holds (`front::prune`), so a later gate
-        // (the embed slice's) does not take it for one gone by a rename, whose requests stay.
-        let dropped_readers: BTreeSet<&str> = (0..rules.len()).filter(|&i| !kept[i] && !need.contains(head(i))).map(head).collect();
+        // A reader the prune drops is not needed: it leaves the record where its request has readers left, as the
+        // tree's prune takes it out (`front::prune`), so a later gate does not take it for one gone by a rename.
+        let dropped_readers: HashSet<&str> = (0..rules.len()).filter(|&i| !kept[i] && !need.contains(head(i))).map(head).collect();
         for readers in asked_after.values_mut().flatten() {
             if readers.iter().any(|b| dropped_readers.contains(b.as_str())) && readers.iter().any(|b| !dropped_readers.contains(b.as_str())) {
                 readers.retain(|b| !dropped_readers.contains(b.as_str()));
@@ -109,13 +123,13 @@ impl ProgramPass for Prune {
         if !gone.is_empty() {
             w.keep(|r| !gone.contains(&r.id()))?;
         }
+        let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).chain(revived.iter().cloned()).collect();
         let b = w.on()?;
         if !revived.is_empty() {
-            let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).chain(revived.iter().cloned()).collect();
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         if asked_after != asked {
-            b.set_asked(&asked_after);
+            b.fields().set_asked(&asked_after);
         }
         // The natives' rows (each names its native in column 1).
         if !dropped_natives.is_empty() {
@@ -124,5 +138,35 @@ impl ProgramPass for Prune {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::code_rule_dsl::logic::program_image::Builder;
+    use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
+    use std::collections::BTreeSet;
+
+    /// A request rule is kept where a reader its record names is read, and where the reader is outside the version
+    /// (another part's, decision 0345: a part prepared alone does not know whether it is read). A reader of the
+    /// version that nothing reads drops it.
+    #[test]
+    fn a_request_read_by_another_part_keeps_its_ask() {
+        let text = ".decl k(x: number)\n.input k\n.decl req(x: number)\n.decl dead(x: number)\n.decl o(x: number)\n.output o\n\
+                    req(x) :- k(x).\no(x) :- req(x).\n";
+        let pruned = |reader: &str| {
+            let read = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+            let mut b = Builder::on(&read);
+            b.fields().set_asked(&std::collections::BTreeMap::from([("req".to_owned(), vec![BTreeSet::from([reader.to_owned()])])]));
+            let (v, _) = b.finish().unwrap();
+            let mut p = Pipeline::new("test", v);
+            let mut prune = super::Prune::default();
+            p.program(&mut prune);
+            let (out, _) = p.finish().unwrap();
+            (prune.0, out.rules().any(|r| out.rel_name(r.head().rel()) == "req"))
+        };
+        assert_eq!(pruned("o"), (0, true), "its reader is read");
+        assert_eq!(pruned("elsewhere"), (0, true), "its reader is another part's");
+        assert_eq!(pruned("dead"), (1, false), "its reader is the version's, and unread");
     }
 }

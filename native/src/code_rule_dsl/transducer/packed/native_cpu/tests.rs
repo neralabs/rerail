@@ -51,7 +51,9 @@
                 bytes.extend_from_slice(&column);
                 bytes.resize(bytes.len().next_multiple_of(8), 0);
             }
-            let view = rerail_clif::view::TapeView { nodes: n as u32, format: 15, widths: 4 | 4 << 4 | 4 << 8 | 1 << 12, columns: at, ..Default::default() };
+            // The source its nodes span, as a tape's header states it: its reads hold spans to it (decision 0463).
+            let source_len = nodes.iter().map(|node| node.source_end).max().unwrap_or(0);
+            let view = rerail_clif::view::TapeView { nodes: n as u32, format: 15, widths: 4 | 4 << 4 | 4 << 8 | 1 << 12, columns: at, source_len, ..Default::default() };
             let codes = nodes
                 .iter()
                 .enumerate()
@@ -200,7 +202,7 @@
                     [(b"language".to_vec(), Some(b"json".to_vec())),]
                 );
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             let scope = crate::code_rule_dsl::transducer::packed::MetalTestScope::enter();
             let actual = crate::code_rule_dsl::transducer::packed::interpreter_reference(
                 std::slice::from_ref(&program),
@@ -213,7 +215,7 @@
             .unwrap();
             assert_eq!(actual.outputs, expected, "{query}");
             assert_eq!(actual.errors, vec![vec![None]]);
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             assert!(scope.snapshot().is_empty());
         }
     }
@@ -668,6 +670,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);
@@ -772,6 +775,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);
@@ -883,6 +887,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);
@@ -1069,6 +1074,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);
@@ -1210,6 +1216,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                contains_start: 0,
                 most_steps: 0,
             };
             compiled.execute(&mut context);
@@ -1332,6 +1339,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);
@@ -1433,6 +1441,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);
@@ -1552,6 +1561,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);
@@ -1732,6 +1742,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         unsafe {
@@ -2001,6 +2012,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                contains_start: 0,
                 most_steps: 0,
             };
             compiled.execute(&mut context);
@@ -2232,6 +2244,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);
@@ -2442,6 +2455,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                contains_start: 0,
                 most_steps: 0,
             };
             compiled.execute(&mut context);
@@ -2615,6 +2629,12 @@
             let mut context: NativeTaskContext = unsafe { mem::zeroed() };
             let tape = TestTape::of(&nodes);
             tape.bind(&mut context);
+            // The batch's row for the contains test (`packed_batch::contains_rows`): node 0's text, `example`,
+            // holds `amp`. The JIT reads the bit; no other case reads the rows.
+            let rows = [1_u32];
+            context.derived = rows.as_ptr();
+            context.derived_words = 1;
+            context.contains_start = 0;
             context.node_count = 1;
             context.source = source.as_ptr();
             context.source_length = source.len() as u32;
@@ -3410,6 +3430,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                contains_start: 0,
                 most_steps: 0,
             };
             compiled.execute(&mut context);
@@ -3514,6 +3535,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);
@@ -3629,6 +3651,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);
@@ -3744,6 +3767,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                contains_start: 0,
                 most_steps: 0,
             };
             compiled.execute(&mut context);
@@ -3840,6 +3864,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            contains_start: 0,
             most_steps: 0,
         };
         compiled.execute(&mut context);

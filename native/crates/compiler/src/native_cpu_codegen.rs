@@ -58,6 +58,72 @@ pub fn tier1_builder() -> Result<cranelift_jit::JITBuilder, Box<ModuleError>> {
     cranelift_jit::JITBuilder::with_flags(flags, cranelift_module::default_libcall_names()).map_err(Box::new)
 }
 
+/// Each jump table (`br_table`) `switch_trees` leaves made a tree of compares, for Cranelift's code only: its Arm
+/// backend emits every jump table with a speculation barrier (`csel`, then `csdb`, in
+/// `JTSequence`, whatever the settings), and the jump waits for its index. In the C
+/// preprocessing words' return dispatches that barrier was most of their cycles (work queue
+/// Q184, Q186). The IR `clif_rust` is given keeps its tables: LLVM's carry no barrier.
+///
+/// The index is tested against the table's length (the default past it), then a balanced
+/// tree over the table's runs of one target finds the entry: a 256-entry table of few targets
+/// is a few compares deep. The last step of `switch_trees`, which runs before Cranelift compiles a
+/// function (`define_function`, `define_functions`, and the preprocessing words' own).
+fn balanced_trees(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{BlockArg, InstBuilder, InstructionData, condcodes::IntCC};
+    let branches: Vec<_> = func
+        .layout
+        .blocks()
+        .filter_map(|b| func.layout.last_inst(b).map(|i| (b, i)))
+        .filter(|&(_, i)| matches!(func.dfg.insts[i], InstructionData::BranchTable { .. }))
+        .collect();
+    for (block, inst) in branches {
+        let InstructionData::BranchTable { arg, table, .. } = func.dfg.insts[inst] else { unreachable!() };
+        let pool = &func.dfg.value_lists;
+        let call = |c: &cranelift_codegen::ir::BlockCall| (c.block(pool), c.args(pool).collect::<Vec<BlockArg>>());
+        let jt = &func.stencil.dfg.jump_tables[table];
+        let default = call(&jt.default_block());
+        // Runs of one target: (first index, target).
+        let mut runs: Vec<(u64, (cranelift_codegen::ir::Block, Vec<BlockArg>))> = Vec::new();
+        for (k, c) in jt.as_slice().iter().enumerate() {
+            let c = call(c);
+            if runs.last().is_none_or(|r| r.1 != c) {
+                runs.push((k as u64, c));
+            }
+        }
+        let len = jt.as_slice().len() as i64;
+        let mut pos = FuncCursor::new(func).at_inst(inst);
+        pos.remove_inst();
+        let f = pos.func;
+        let mut pos = FuncCursor::new(f).at_bottom(block);
+        if runs.is_empty() {
+            pos.ins().jump(default.0, &default.1);
+            continue;
+        }
+        let within = pos.func.dfg.make_block();
+        pos.func.layout.insert_block_after(within, block);
+        let past = pos.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, arg, len);
+        pos.ins().brif(past, default.0, &default.1, within, &[]);
+        let mut work = vec![(within, 0usize, runs.len())];
+        while let Some((b, lo, hi)) = work.pop() {
+            let mut pos = FuncCursor::new(pos.func).at_bottom(b);
+            if hi - lo == 1 {
+                let (t, args) = &runs[lo].1;
+                pos.ins().jump(*t, args);
+                continue;
+            }
+            let mid = (lo + hi) / 2;
+            let (left, right) = (pos.func.dfg.make_block(), pos.func.dfg.make_block());
+            pos.func.layout.insert_block_after(right, b);
+            pos.func.layout.insert_block_after(left, b);
+            let below = pos.ins().icmp_imm(IntCC::UnsignedLessThan, arg, runs[mid].0 as i64);
+            pos.ins().brif(below, left, &[], right, &[]);
+            work.push((right, mid, hi));
+            work.push((left, lo, mid));
+        }
+    }
+}
+
 pub fn define_function(
     module: &mut JITModule,
     id: FuncId,
@@ -71,6 +137,8 @@ pub fn define_function(
     for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
         function.colocated = false;
     }
+    // Every table a tree, rustc's where 0322 holds, balanced for the rest: no jump table in
+    // Cranelift's code (Q186).
     switch_trees(&mut context.func);
     // Each integer constant made again in the blocks that read it (decision 0351).
     remat_consts(&mut context.func);
@@ -92,7 +160,9 @@ pub fn define_function(
 }
 
 /// The tape's cold reads (decision 0310), defined once in `module` as every function is
-/// (`define_function`): what a call the pass leaves calls.
+/// (`define_function`): what a call the pass leaves calls. The closure hands `define_cold` Cranelift's own
+/// `ModuleError`, as its signature asks.
+#[allow(clippy::result_large_err)]
 pub fn define_reads(module: &mut JITModule) -> Result<(), Box<ModuleError>> {
     rerail_clif::inline::define_cold(module, &mut |module, id, context| define_function(module, id, context).map_err(|error| *error))?;
     Ok(())
@@ -205,7 +275,8 @@ pub const SWITCH_TREE_RUNS: usize = 32;
 /// 1's numbers took 75 cycles a token by the JIT against 17 by the AOT, most samples at the
 /// table's load. The IR keeps the table, as lean keeps its `match` (`clif_rust` writes it as
 /// one, and rustc lowers it so); only the JIT's copy is rewritten, before Cranelift lowers it.
-/// A table whose targets take arguments stays.
+/// A table whose targets take arguments, or of more runs, is a balanced tree of compares
+/// (`balanced_trees`, Q186): no `br_table` reaches Cranelift's code.
 /// Each integer constant a block reads but another made, made again in the block, before its
 /// first reader there (decision 0351): the optimizer's `remat` of an `iconst`, which tier 1 runs
 /// without (0069). A constant the token loop's entry makes (a table's address, the word hash's
@@ -312,15 +383,21 @@ pub fn switch_trees(func: &mut cranelift_codegen::ir::Function) {
             }
         }
     }
-    if found.is_empty() {
-        return;
+    if !found.is_empty() {
+        let mut ctx = cranelift_frontend::FunctionBuilderContext::new();
+        let mut f = cranelift_frontend::FunctionBuilder::new(func, &mut ctx);
+        for (block, inst, index, runs) in found {
+            f.func.layout.remove_inst(inst);
+            f.switch_to_block(block);
+            let end = 1u64 << f.func.dfg.value_type(index).bits();
+            crate::native_cpu_stream::dispatch(&mut f, index, &runs, end);
+        }
     }
-    let mut ctx = cranelift_frontend::FunctionBuilderContext::new();
-    let mut f = cranelift_frontend::FunctionBuilder::new(func, &mut ctx);
-    for (block, inst, index, runs) in found {
-        f.func.layout.remove_inst(inst);
-        f.switch_to_block(block);
-        let end = 1u64 << f.func.dfg.value_type(index).bits();
-        crate::native_cpu_stream::dispatch(&mut f, index, &runs, end);
-    }
+    // Every table left (its targets take arguments, or it has more runs): a balanced tree, so no
+    // jump table reaches Cranelift's code (Q186).
+    balanced_trees(func);
 }
+
+#[cfg(test)]
+#[path = "native_cpu_codegen_tests.rs"]
+mod tests;

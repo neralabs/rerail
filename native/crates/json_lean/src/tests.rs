@@ -116,16 +116,23 @@ fn tape_is_the_kernels() {
     eprintln!("{} files, {accepted} accepted; each tape and refusal the kernel's", files.len());
 }
 
-/// The process's instructions retired and cycles (`proc_pid_rusage`).
+/// The process's instructions retired and cycles (`proc_pid_rusage`, macOS's).
+#[cfg(target_os = "macos")]
 fn retired() -> (u64, u64) {
-    let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-    // SAFETY: `info` is a `rusage_info_v4`, as the flavor says.
-    unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-    (info.ri_instructions, info.ri_cycles)
+    #[cfg(target_os = "macos")]
+    {
+        let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` is a `rusage_info_v4`, as the flavor says.
+        if unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+            return (info.ri_instructions, info.ri_cycles);
+        }
+    }
+    (0, 0)
 }
 
 /// The benchmarks' inputs: JSON's corpus (`RERAIL_JSON_CORPUS`, the files simdjson accepts) and
 /// inputs that part the masks from the tokens (those of `rr_parser`'s `json_tier1_by_pass`).
+#[cfg(target_os = "macos")]
 fn inputs(kernel: Kernel) -> Vec<(&'static str, Vec<Vec<u8>>)> {
     let mut corpus = Vec::new();
     if let Ok(dir) = std::env::var("RERAIL_JSON_CORPUS") {
@@ -150,6 +157,7 @@ fn inputs(kernel: Kernel) -> Vec<(&'static str, Vec<Vec<u8>>)> {
 /// source not hashed), over JSON's corpus (`RERAIL_JSON_CORPUS`) and inputs that part the masks
 /// from the tokens (those of `rr_parser`'s `json_tier1_by_pass`).
 #[test]
+#[cfg(target_os = "macos")]
 #[ignore = "a benchmark: run by hand"]
 fn against_simdjson() {
     let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(9);
@@ -187,6 +195,7 @@ fn against_simdjson() {
 /// latency (each a function of the one before) and its throughput (none dependent), the least of
 /// `RR_ROUNDS` rounds.
 #[test]
+#[cfg(target_os = "macos")]
 #[ignore = "a benchmark: run by hand"]
 fn prefix_xor_forms() {
     assert!(std::arch::is_aarch64_feature_detected!("pmull"));

@@ -11,7 +11,7 @@
 
 use super::{Error, ExecutionBackend, Program, native_cpu};
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
 /// A plan's identity (list step 16; 03 §3 "Interpreted, then JIT"): one digest of what a batch
@@ -69,7 +69,10 @@ impl Binding {
 struct Requests {
     running: BTreeSet<(Binding, PlanId)>,
     ready: BTreeSet<(Binding, PlanId)>,
-    failed: BTreeSet<(Binding, PlanId)>,
+    /// A form the binding has no code for (`UnsupportedBackend`): the plan's batches stay interpreted.
+    unsupported: BTreeSet<(Binding, PlanId)>,
+    /// A compile that failed, with its message: the plan's next batch stops the run with it (decision 0382).
+    failed: BTreeMap<(Binding, PlanId), String>,
 }
 
 /// The compile queue's requests, by the caller's programs (decision 0442: the shared object's).
@@ -80,9 +83,18 @@ fn queue() -> std::sync::Arc<Queue> {
     crate::code_rule_dsl::logic::profile::shared::<Queue>()
 }
 
-/// Whether `plan`'s `binding` is compiled (its request finished).
+/// Whether `plan`'s `binding` is compiled (its request finished). A compile of it that failed stops the run here,
+/// on the thread that asks (decision 0382): a failed compile is never answered by interpreting for good.
 fn ready(binding: Binding, plan: PlanId) -> bool {
-    queue().0.lock().is_ok_and(|requests| requests.ready.contains(&(binding, plan)))
+    let (ready, failed) = match queue().0.lock() {
+        Ok(requests) => (requests.ready.contains(&(binding, plan)), requests.failed.get(&(binding, plan)).cloned()),
+        Err(_) => return false,
+    };
+    // Out of the lock, so the panic leaves it whole for the other threads.
+    if let Some(message) = failed {
+        panic!("rerail: the {} compile of plan {} failed: {message}", binding.form(), plan.hex());
+    }
+    ready
 }
 
 /// Starts `compile` as a job on the pool unless a request for (`binding`, `plan`) runs, finished
@@ -92,7 +104,7 @@ fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), 
     let held = queue();
     let Ok(mut requests) = held.0.lock() else { return };
     let key = (binding, plan);
-    if requests.running.contains(&key) || requests.ready.contains(&key) || requests.failed.contains(&key) {
+    if requests.running.contains(&key) || requests.ready.contains(&key) || requests.unsupported.contains(&key) || requests.failed.contains_key(&key) {
         return;
     }
     crate::code_rule_dsl::prof::count("compilation.requests", 1);
@@ -102,16 +114,30 @@ fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), 
     let (shared, held) = (crate::code_rule_dsl::logic::profile::shared_here(), std::sync::Arc::clone(&held));
     crate::code_rule_dsl::logic::profile::cores_spawn(move || {
         let _in_run = crate::code_rule_dsl::logic::profile::within(shared);
-        // A panic is a failed compilation (a job's panic would end the process).
+        // A panic is a failed compilation, kept with its message for the plan's next batch, which stops the run
+        // with it (`ready`): a job's own panic would end the process from the pool, away from the batch.
         let started = std::time::Instant::now();
-        let done = rerail_accel::exec::as_job("a compilation", || std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile))).unwrap_or(Err(Error::BackendFailure));
+        let done = rerail_accel::exec::as_job("a compilation", || std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile)))
+            .map_err(|panic| panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned())).unwrap_or_else(|| "a panic".into()));
+        let done = match done {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(Error::UnsupportedBackend)) => Err(None),
+            Ok(Err(error)) => Err(Some(format!("{error:?}"))),
+            Err(message) => Err(Some(message)),
+        };
         rerail_accel::forms::compiled(kind, &plan.hex(), "", started.elapsed().as_secs_f64(), done.is_ok());
         if let Ok(mut requests) = held.0.lock() {
             requests.running.remove(&key);
-            if done.is_ok() {
-                requests.ready.insert(key);
-            } else {
-                requests.failed.insert(key);
+            match done {
+                Ok(()) => {
+                    requests.ready.insert(key);
+                }
+                Err(None) => {
+                    requests.unsupported.insert(key);
+                }
+                Err(Some(message)) => {
+                    requests.failed.insert(key, message);
+                }
             }
         }
     });

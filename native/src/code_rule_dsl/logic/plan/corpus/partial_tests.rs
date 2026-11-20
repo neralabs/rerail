@@ -37,7 +37,7 @@ const FILES: &[(&str, &str)] = &[
 /// A cross-file rule (`at`) reads `col` of the nodes an export (`called`) names, joined with another file's export
 /// (`defined`); a file-local rule (`flagged`) is the one edited, its body testing `kind`. `both` and `doubled` are
 /// read by a later stratum (`many` reads `doubled`), so a cold run hands `both` off once `doubled` has read it, which
-/// its hand-off asserts (Q172; the counting supports, gone with decision 0364, were the relations it handed before).
+/// its hand-off asserts (Q206; the counting supports, gone with decision 0364, were the relations it handed before).
 fn program(kind: &str) -> String {
     format!(
         r#"
@@ -296,7 +296,7 @@ const LISTED: &[(&str, &str)] = &[
 ];
 
 /// A cross-file rule over a directory's entries (`dir_entry`, answered on request) and every file's exports. The
-/// directory is computed (`cat`, as the libraries' `env.rr` computes theirs), or a constant (a request fact).
+/// directory is computed (`cat`, as the libraries' `env.rerail` computes theirs), or a constant (a request fact).
 fn listing_program(dir: &str) -> String {
     format!(
         r#"
@@ -379,7 +379,7 @@ const ANNOTATED: &[(&str, &str)] = &[
 ];
 
 /// `names` reads the annotations' identifiers through `parsed` and `idents` (so the run makes guests, and hiding
-/// copies `idents` for them, folded back into it: `fold_own`); `flagged` and `ids` are the rules an edit changes.
+/// copies `idents` for them, folded back into it: `FoldOwn`); `flagged` and `ids` are the rules an edit changes.
 fn annotated(names_edit: &str, flagged_edit: &str, ids_edit: &str) -> String {
     format!(
         r#"
@@ -403,8 +403,9 @@ ids(m, x) :- idents(m, x), x != "{ids_edit}".
 const ANNOTATED_OUTPUTS: &[&str] = &["names", "flag_col", "ids"];
 
 /// An edit's chunks of partial hits run its cone alone, and make only the guests the cone can see
-/// (`guests::guests_seen`): an edit of `flagged`, which names no guest and reads no relation an annotation reaches,
-/// makes no annotation guest; one of `names`, which reads them through `parsed`, makes them all. Either way the rows
+/// (decision 0431 §8: a tape value is admitted only as the cone's rules ask for it): an edit of `flagged`, which names
+/// no guest and reads no relation an annotation reaches, admits no annotation; one of `names`, which reads them
+/// through `parsed`, admits them. Either way the rows
 /// are a full run's. Before, every chunk made every guest its entries asked for (27,373 on an edit of ep2, 1.6 s).
 #[test]
 fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
@@ -422,17 +423,17 @@ fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
     let program = annotated("n0", "while_statement", "i0");
     let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
     assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");
-    assert!(edited.guests_unseen > 0, "the cone of `flagged` sees no annotation: none is made");
+    // A tape value is made only as a rule of the cone asks for it (decision 0431 §8): no request, none admitted.
+    assert_eq!((edited.values_admitted, edited.guest_parses), (0, 0), "the cone of `flagged` sees no annotation: none is made");
     assert_eq!(rows, fresh("flagged", &program), "the rows of a full run");
     // `names`' edit: its cone reads the annotations.
     let program = annotated("n1", "while_statement", "i0");
     let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
     assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");
-    assert_eq!(edited.guests_unseen, 0, "the cone of `names` reads every annotation");
     assert!(rows[0].iter().any(|r| r[0] == "Foo"), "the annotations' names: {:?}", rows[0]);
     assert_eq!(rows, fresh("names", &program), "the rows of a full run");
     // `ids`' edit: it names no guest, but reads `idents`, which hiding widened to the annotations it copied it for
-    // (`fold_own`): it sees them, as a full run's does.
+    // (`FoldOwn`): it sees them, as a full run's does.
     let program = annotated("n1", "while_statement", "i1");
     let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
     assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");

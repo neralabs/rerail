@@ -43,7 +43,7 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
     // form, never the run's outputs.
     "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",
     "RERAIL_FRAMES_TRACE",
-    // The memory ceiling (decision 0394): a run past it is stopped and keeps nothing; one under it outputs the same.
+    // The memory ceiling (decision 0462): a run past it is stopped and keeps nothing; one under it outputs the same.
     "RERAIL_MEMORY_MAX_MB"];
 
 /// Whether a switch only measures a run, never changes what it outputs: left out of the run's key.
@@ -80,7 +80,7 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     added.hash(&mut h);
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
@@ -153,7 +153,7 @@ fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Ad
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
 ///
 /// Read off phase 0's graphs (decision 0246): each text's includes (`Graph::digests`) and the phase programs its
-/// declarations name, with theirs (`Graph::rules`), which `bootstrap.rr` resolved as it loaded the modules. Nothing is
+/// declarations name, with theirs (`Graph::rules`), which `bootstrap.rerail` resolved as it loaded the modules. Nothing is
 /// parsed: listing them by reading every module again was 4.3 G of a one-file run, the parse the shipped bundle saves.
 /// A text phase 0 has no graph of (it includes nothing, or the run was handed it read), or a `phase_dir` the graph
 /// does not search, lists them as before (`listed`). `RERAIL_REUSE_CHECK` lists both and says where they differ.
@@ -175,7 +175,7 @@ pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Resu
         None => listed(given, dir.as_deref())?,
     };
     let mut out = Vec::new();
-    // Phase 1's program (`sources.rr`), which every run's documents come from: its includes are core's, as the
+    // Phase 1's program (`sources.rerail`), which every run's documents come from: its includes are core's, as the
     // programs' are.
     let sources = super::phases::sources_path();
     let digest = observe(|o| o.digest(&sources)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
@@ -339,7 +339,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     // The documents the run read: the workspace's and those its requests loaded, each once. Phase 1 loads a
     // workspace document by its absolute path, which the run lists by its path from the root: counted twice, a warm
     // run of one file reported two.
-    let base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let base = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let read: std::collections::BTreeSet<std::path::PathBuf> =
         rest.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").map(|c| base.join(&c.1)).collect();
     report.files = read.len();
@@ -395,4 +395,4 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).

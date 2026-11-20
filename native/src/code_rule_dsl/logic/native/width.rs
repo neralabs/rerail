@@ -1,9 +1,9 @@
-//! Decision 0394: the most rows a derived relation may hold, the most memory a run may take, and what a run does
+//! Decision 0462: the most rows a derived relation may hold, the most memory a run may take, and what a run does
 //! past them. Everything here is a run's own (decision 0441): its settings, the relations it cut, the widest relations
 //! it held, and its memory watch, in the `Width` of its `run::Run`. Two runs in one process, on any threads, each have
 //! their own; nothing here is process state.
 //!
-//! A rule whose head really is huge (a product of two node ranges no join connects, 0393) fills memory until the
+//! A rule whose head really is huge (a product of two node ranges no join connects, 0461) fills memory until the
 //! machine gives out: Ruff's SLF001 as written passed 56 GB on 1,644 PostHog files. Replanning cannot help, since no
 //! order shrinks a head. So each derived relation has a cap on its rows (`Settings::cap`: `RERAIL_WIDEST_ROWS` as the
 //! run starts; default `DEFAULT_ROWS`; `off` or 0 for none). A join walk checks it as it makes each head row

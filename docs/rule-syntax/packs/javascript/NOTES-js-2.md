@@ -1,17 +1,17 @@
 # Notes: batch js-2 (ESLint core rules, no-new-func to yoda, and three unicorn rules)
 
-58 rules of the javascript pack, written by hand as .rr in four topical groups, then fixed after review. Each group
-has its own new library, built on js-1's `eslint-a-*` libraries (around `lib/tsx/eslint-a-common.rr`) and on
+58 rules of the javascript pack, written by hand as .rerail in four topical groups, then fixed after review. Each group
+has its own new library, built on js-1's `eslint-a-*` libraries (around `lib/tsx/eslint-a-common.rerail`) and on
 statements, modules, names and values:
 
 | Library | Lines | Group |
 |---|---|---|
-| `lib/tsx/eslint-b-literals.rr` | 65 | A: literals, strings, escapes, comments, comparisons (16 rules) |
-| `lib/tsx/eslint-b-objects.rr` | 222 | B: objects, members, calls, destructuring, imports (14 rules) |
-| `lib/tsx/eslint-b-control.rr` | 125 | C: statements, control flow, assignments (17 rules) |
-| `lib/tsx/eslint-b-scope.rr` | 177 | D: declarations, scope, globals, file names (11 rules) |
+| `lib/tsx/eslint-b-literals.rerail` | 65 | A: literals, strings, escapes, comments, comparisons (16 rules) |
+| `lib/tsx/eslint-b-objects.rerail` | 222 | B: objects, members, calls, destructuring, imports (14 rules) |
+| `lib/tsx/eslint-b-control.rerail` | 125 | C: statements, control flow, assignments (17 rules) |
+| `lib/tsx/eslint-b-scope.rerail` | 177 | D: declarations, scope, globals, file names (11 rules) |
 
-One data table: `unicorn-prefer-node-protocol.modules.rr`, from `gen-unicorn-prefer-node-protocol.py`, checked by
+One data table: `unicorn-prefer-node-protocol.modules.rerail`, from `gen-unicorn-prefer-node-protocol.py`, checked by
 `check-unicorn-prefer-node-protocol.py`. Rules: 2,425 lines in all.
 
 Scores are `tools/rrlab/rrlab score javascript <id>` on the rule's own fixtures (ESLint 10.11.0 recording, default
@@ -33,11 +33,11 @@ the document, not a named function or class expression's own name, not turned of
 
 Exact texts are in each group's section below. In short:
 
-1. names.rr: bind a function or class expression's own name inside it (eslint-b-scope's `expr_name` and
+1. names.rerail: bind a function or class expression's own name inside it (eslint-b-scope's `expr_name` and
    eslint-b-objects' `named_expr_around` then go).
-2. names.rr: `directive_global_off(d, x)` for `/* global x: off */` (as js-1 asked), and fill `directive_global` in
+2. names.rerail: `directive_global_off(d, x)` for `/* global x: off */` (as js-1 asked), and fill `directive_global` in
    rrlab; eslint-b-scope parses the comments meanwhile (`global_item`).
-3. names.rr: `undefined` (its own tree-sitter kind) as a reference and as a parameter name (groups A, D);
+3. names.rerail: `undefined` (its own tree-sitter kind) as a reference and as a parameter name (groups A, D);
    `for (var k in o)` heads declared; `class_static_block` and `generator_function` in `fn_scope` (group D).
 4. eslint-a-globals: `self` among the global object names (group D).
 5. core: decode identifier escapes in `name` (group B; replaces `id_value`'s table); a `@js_compare(a, b)` functor
@@ -49,7 +49,7 @@ Duplicates still to merge: eslint-b-scope's `called` against eslint-a-globals' `
 `chain` copies (`optional_link`), and fork A's `same_ref` (`ref_same`).
 
 
-## Group A: literals, strings, escapes, comments, comparisons (16 rules, library `lib/tsx/eslint-b-literals.rr`, 65 lines)
+## Group A: literals, strings, escapes, comments, comparisons (16 rules, library `lib/tsx/eslint-b-literals.rerail`, 65 lines)
 
 Scores are `rrlab score javascript <id>` on each rule's own fixtures (ESLint 10.11.0 recording, default options),
 matched on (path, line, code). The column-level score is the same for all 16. Every ESLint rule was also run beside
@@ -111,7 +111,7 @@ no-unsafe-negation enforceForOrderingRelations.
 - **unicorn-no-null optional calls.** unicorn's API exceptions differ in whether `?.` is allowed: the rule follows
   the JSON (insertBefore and bare `useRef` may be optional calls; `Object.create` and `React.useRef` may not). The
   fixtures agree (005: `parentNode?.insertBefore(newNode, null)` is fine).
-- **valid-typeof `undefined`.** tree-sitter gives `undefined` a kind of its own, so names.rr's `ref_site` cannot
+- **valid-typeof `undefined`.** tree-sitter gives `undefined` a kind of its own, so names.rerail's `ref_site` cannot
   say whether it is shadowed. The library's `global_undefined` checks declarations named `undefined` in enclosing
   scopes and parameters spelled `undefined` (fixture 026: `function f(undefined) { typeof x === undefined }`), with a default
   too: `function k(undefined = 1)` is an assignment_pattern whose left field is the name.
@@ -126,7 +126,7 @@ no-unsafe-negation enforceForOrderingRelations.
   // @js_compare("bar", "foo") = -1: JavaScript's relational order on strings (UTF-16 code units), -1, 0 or 1.
   .functor js_compare(a: symbol, b: symbol): number
   ```
-- **names.rr:** `ref` reads only `identifier` nodes, but tree-sitter parses `undefined` as its own kind (also as a
+- **names.rerail:** `ref` reads only `identifier` nodes, but tree-sitter parses `undefined` as its own kind (also as a
   parameter, `function f(undefined)`, inside `required_parameter`). So `ref_site` never resolves `undefined`, and
   `decl_site` misses a parameter named `undefined`. Proposed, in `ref`:
   ```
@@ -140,18 +140,18 @@ no-unsafe-negation enforceForOrderingRelations.
 
 ### Duplicates to merge
 
-None left. The first draft of eslint-b-literals.rr had `same_ref`, `same_ref_ask` and `ref_pair` (isSameReference)
+None left. The first draft of eslint-b-literals.rerail had `same_ref`, `same_ref_ask` and `ref_pair` (isSameReference)
 next to fork C's; fork C renamed theirs to `ref_same` (with a key mode), and this library dropped its own: yoda
-uses `ref_same(a, b, "static")` from `lib/tsx/eslint-b-control.rr`.
+uses `ref_same(a, b, "static")` from `lib/tsx/eslint-b-control.rerail`.
 
-### Library interface (lib/tsx/eslint-b-literals.rr)
+### Library interface (lib/tsx/eslint-b-literals.rerail)
 
 `global_undefined(n)` (the global `undefined`, by declarations in scope), `typeof_expr(e)`, `string_like(x)`
 (astUtils.isStringLiteral), `compare_op(o)` (the eight comparison operators), `literal_like(e)` (yoda's Literal,
 negative number or plain template), `literal_number(e, f)` (its value as a float). Builds on tsx/names and
 tsx/eslint-a-expressions (which brings tsx/eslint-a-common).
 
-## Group B: objects, members, calls, destructuring, imports (14 rules, library `lib/tsx/eslint-b-objects.rr`, 222 lines)
+## Group B: objects, members, calls, destructuring, imports (14 rules, library `lib/tsx/eslint-b-objects.rerail`, 222 lines)
 
 Scores come from `tools/rrlab/rrlab score javascript <id>` on each rule's own fixtures (ESLint 10.11.0 and
 eslint-plugin-unicorn 76.0.0 recordings, default options, matched on path, line and code). The column-level score is
@@ -233,7 +233,7 @@ rrlab's columns are bytes and ESLint's are UTF-16 units. The lines are the same.
   `optional_chain` field optional_link reads, so no-prototype-builtins keeps one clause for `op(c, "?.")`; see the
   request below.
 - **unicorn-prefer-node-protocol: the module list.** The list is the JSON's 54 names, generated into
-  `unicorn-prefer-node-protocol.modules.rr` by `gen-unicorn-prefer-node-protocol.py`.
+  `unicorn-prefer-node-protocol.modules.rerail` by `gen-unicorn-prefer-node-protocol.py`.
   `check-unicorn-prefer-node-protocol.py`
   round-trips it. require and getBuiltinModule are matched by name, as the JSON does, not checked to be the globals.
 - **Fixes not scored.** rrlab drops fixes, so they were written from ESLint's source. Each is a suggestion (`fix`,
@@ -254,11 +254,11 @@ rrlab's columns are bytes and ESLint's are UTF-16 units. The lines are the same.
 ### Library and core change requests
 
 1. **Resolved by the js-1 refactor.** The js-1 libraries' clashes (`strip`, `parent_of`, `prop`, `key_name`,
-   `keyword`, `fn_node`, `this_region`) are now settled by `lib/tsx/eslint-a-common.rr`. This library and its
+   `keyword`, `fn_node`, `this_region`) are now settled by `lib/tsx/eslint-a-common.rerail`. This library and its
    rules were ported to it: `deparen`, `estree_parent`, `static_prop`, `object_prop`, `call_arg`,
    `call_arg_count`, `token_text`/`token_text_ask`. prefer-exponentiation-operator could now use tsx/values'
    alias tracking (`const m = Math; m.pow(a, b)`); that is left as a follow-up.
-2. **names.rr: a function or class expression binds its own name inside itself.** Exact text to add after the
+2. **names.rerail: a function or class expression binds its own name inside itself.** Exact text to add after the
    `decl_site` rules for functions:
    ```
    // `const f = function g() { g(); }`: g is bound in the function's own scope, not outside it (eslint-scope's
@@ -268,7 +268,7 @@ rrlab's columns are bytes and ESLint's are UTF-16 units. The lines are the same.
    decl_site(c, x, c, "class", "value") :- kind(c, "class"), field(c, "name", n), text(n, x).
    ```
    Then eslint-b-scope's `expr_name` and this library's `named_expr_around` go.
-3. **names.rr: `/* global x: off */`** (as js-1 asked):
+3. **names.rerail: `/* global x: off */`** (as js-1 asked):
    `.decl directive_global_off(d: number, x: symbol)`. It is native, like directive_global. A rule that asks whether
    a name is the global would exclude these. Until then, these rules read eslint-b-scope's `global_off`, which
    parses the comments in Datalog; with the native fact, global_off becomes it.
@@ -301,7 +301,7 @@ tsx/values'. Locals renamed where tsx/values or tsx/statements now come in: sort
 prefer-node-protocol's `module_loader`, prefer-exponentiation-operator's `pow_lead`/`pow_trail`, prefer-object-has-own's
 `callee_glued`.
 
-### Library interface (lib/tsx/eslint-b-objects.rr)
+### Library interface (lib/tsx/eslint-b-objects.rerail)
 
 Includes eslint-a-functions, eslint-a-expressions and eslint-b-scope (so tsx/values and tsx/statements too).
 - Names:
@@ -322,7 +322,7 @@ Includes eslint-a-functions, eslint-a-expressions and eslint-b-scope (so tsx/val
 - Order: `natural_key(s, k)`. Comparing k with `<` orders s as natural-compare does, control characters included.
   It is asked for through `nat_ask`.
 
-## Group C: statements, control flow, assignments (17 rules, library `lib/tsx/eslint-b-control.rr`, 121 lines)
+## Group C: statements, control flow, assignments (17 rules, library `lib/tsx/eslint-b-control.rerail`, 121 lines)
 
 Scores are rrlab `score javascript <id>` on each rule's own fixtures (ESLint 10.11.0 recording, default options),
 matched on (path, line, code). The column-level score is the same for every rule. Each rule was also scored with
@@ -394,10 +394,10 @@ Total: 755 lines of rules, 17 rules, 15 perfect on their own fixtures.
 
 ### Library and core change requests
 
-- names.rr: a named function expression's name is a binding in the function's own scope (the group-wide request 1).
+- names.rerail: a named function expression's name is a binding in the function's own scope (the group-wide request 1).
   no-setter-return no longer needs it (builtin_ref's `expr_name` covers it), but `ref_site` would then be right for
   every rule.
-- names.rr: `directive_global_off` (request 2) would let `builtin_ref`'s `global_off` read it instead of parsing
+- names.rerail: `directive_global_off` (request 2) would let `builtin_ref`'s `global_off` read it instead of parsing
   comments.
 
 ### Duplicates to merge
@@ -407,7 +407,7 @@ Total: 755 lines of rules, 17 rules, 15 perfect on their own fixtures.
 - `lit_val(n, k, v)` (typed literal value) overlaps eslint-a-common's `static_string` (untyped); kept apart
   because isSameReference compares `1` and `"1"` as different.
 
-### Library interface (lib/tsx/eslint-b-control.rr)
+### Library interface (lib/tsx/eslint-b-control.rerail)
 
 Builds on eslint-a-common (deparen, static_prop). Precedence: `below_unary(e)`, `below_or(e)` (getPrecedence
 thresholds, for fixes that add parentheses). ASI for class members: `member_runs_on(m)`. Arrays as ESTree numbers
@@ -415,7 +415,7 @@ them: `slot(a, e, i)` (holes counted, by walking top-level tokens), `slot_count(
 `ref_same(a, b, m)` with `ref_same_ask(a, b, m)` (isSameReference, m "static" or "exact"), `lit_val(n, k, v)`.
 Optional chains: `optional_link(x)`, `chain_at(x)` (where ESTree has a ChainExpression).
 
-## Group D: declarations, scope and globals (11 rules, library `lib/tsx/eslint-b-scope.rr`, 177 lines)
+## Group D: declarations, scope and globals (11 rules, library `lib/tsx/eslint-b-scope.rerail`, 177 lines)
 
 Scores are rrlab `score` on each rule's own fixtures, matched on (path, line, code), against the ESLint 10.11
 recording (eslint-plugin-unicorn 76 for filename-case). The column-level score is the same for every rule. Each
@@ -496,43 +496,43 @@ Total: 452 rule lines, 177 library lines.
 
 ### Library and core change requests
 
-1. **tsx/names.rr, function and class expression names.** eslint-scope binds a named function expression's (and
-   class expression's) name in a scope of its own; names.rr does not, so `var g = function Function() {
+1. **tsx/names.rerail, function and class expression names.** eslint-scope binds a named function expression's (and
+   class expression's) name in a scope of its own; names.rerail does not, so `var g = function Function() {
    Function(); }` reads the inner `Function` as the global. This library works around it with `expr_name(r, x)`.
-   Proposed, in names.rr's declarations:
+   Proposed, in names.rerail's declarations:
    ```
    // `(function f() { f(); })`: a function or class expression's name binds inside the expression only.
    decl_site(f, x, n, "function", "value") :- (kind(f, "function_expression") ; kind(f, "generator_function") ;
        kind(f, "class")), field(f, "name", n), text(n, x).
    ```
    (`f` is not in fn_scope/block_scope for "class", so the lookup needs `class` added to block_scope as well.)
-2. **tsx/names.rr, `for (var k in o)` heads.** tree-sitter has no declarator there (the loop's `left` field is the
-   identifier), so names.rr declares nothing and `k` resolves outward. Proposed:
+2. **tsx/names.rerail, `for (var k in o)` heads.** tree-sitter has no declarator there (the loop's `left` field is the
+   identifier), so names.rerail declares nothing and `k` resolves outward. Proposed:
    ```
    decl_site(s, x, n, "var", "value") :- kind(f, "for_in_statement"), op(f, "var"), field(f, "left", n),
        kind(n, "identifier"), text(n, x), nearest(f, s, fn_scope).
    ```
-3. **tsx/names.rr, var scopes.** fn_scope lacks `class_static_block` and `generator_function`, so `var a` in a
+3. **tsx/names.rerail, var scopes.** fn_scope lacks `class_static_block` and `generator_function`, so `var a` in a
    static block is declared in the enclosing function. Proposed: `fn_scope("class_static_block").
-   fn_scope("generator_function").` (statements.rr's var_scope already has both; var_site uses that.)
-4. **tsx/names.rr, a parameter named `undefined`.** tree-sitter gives it the kind `undefined`, not `identifier`,
+   fn_scope("generator_function").` (statements.rerail's var_scope already has both; var_site uses that.)
+4. **tsx/names.rerail, a parameter named `undefined`.** tree-sitter gives it the kind `undefined`, not `identifier`,
    so `function f(undefined) {}` declares nothing (radix works around it locally). Proposed: let param_name accept
    `kind(p, "undefined")` beside `identifier`.
-5. **tsx/names.rr, directive_global.** rrlab has no rows for it, and global comments need their items' settings
+5. **tsx/names.rerail, directive_global.** rrlab has no rows for it, and global comments need their items' settings
    (`off`, `readonly`) and lines for no-redeclare. This library parses them in Datalog (`global_item`). Proposed: give
    directive_global rows from it, `directive_global(d, x) :- global_item(c, x, v, _), v != "off", docof(c, d).`,
    or keep the native reader and add the setting and line columns. Either way `global_off` (the `:off` case js-1
    asked for) is covered.
-6. **tsx/eslint-a-globals.rr, global objects.** `global_name` lacks `self`, which ReferenceTracker follows
+6. **tsx/eslint-a-globals.rerail, global objects.** `global_name` lacks `self`, which ReferenceTracker follows
    (`globalObjectNames`: globalThis, global, self, window). This library's `global_object_name` has all four.
 
 ### Duplicates to merge
 
 - `called(c, f)` here excludes tagged templates (ESLint's isCallee); eslint-a-globals' `callee(c, f)` includes them.
-  Same meaning otherwise; merge as `callee` plus a `!tagged(c)` guard (values.rr has `tagged`).
-- `own_name` was renamed `expr_name` (it clashed with eslint-b-objects.rr's).
+  Same meaning otherwise; merge as `callee` plus a `!tagged(c)` guard (values.rerail has `tagged`).
+- `own_name` was renamed `expr_name` (it clashed with eslint-b-objects.rerail's).
 
-### Library interface (lib/tsx/eslint-b-scope.rr)
+### Library interface (lib/tsx/eslint-b-scope.rerail)
 
 Globals: `builtin_ref(r, x)` (a reference to a built-in no definition shadows; `/* global x:off */` removes it),
 `expr_name`, `global_off`. Calls: `called` (no tagged templates), `constructed`, `member_call`,

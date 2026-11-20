@@ -5,7 +5,7 @@
 //! test's thread ends. No test sees what another left behind, and none waits on another's leases (O146).
 //!
 //! The template holds what every test would otherwise make first: the rule library's phase 0 (each module's tape and
-//! its loads, `bootstrap.rr`'s plan) and the core program's plan. It is made once per build (keyed by the build's
+//! its loads, `bootstrap.rerail`'s plan) and the core program's plan. It is made once per build (keyed by the build's
 //! identities, `build_ids`), by the first test process that wants it, under a file lock; the processes after it find
 //! it ready (`<key>.ready`). It is written to a staging store, drained (atoms, queued writes), and published with
 //! `VACUUM INTO` and a rename, so a reader never sees half of one. A binary that registers no language (a lower
@@ -99,15 +99,31 @@ fn make(path: &Path) {
         std::fs::create_dir_all(&staging).expect("the template's staging directory");
         drop(crate::content_store::ContentStore::open(&store).expect("an empty store"));
     }
+    // Its atoms' blocks frozen (each shrunk to what it holds: a copy's first write starts its own, decision 0401), and
+    // its folders (the atoms', the tapes' and sources', the frames' and the memo's) copied beside it: its rows name them.
+    crate::content_store::atoms::freeze_blocks(&store).expect("the template's atoms, frozen");
     let published = path.with_extension(format!("{}.{}.tmp", std::process::id(), nanos()));
     let db = rusqlite::Connection::open(&store).expect("the template's staging store");
     db.execute("VACUUM INTO ?1", [published.to_string_lossy()]).expect("the template, written whole");
     drop(db);
+    for suffix in FOLDERS {
+        clone_dir(&beside(&store, suffix), &beside(&published, suffix)).expect("the template's folders, copied");
+    }
     // Published as a copy needs it: in WAL mode (a store's first open would switch it), and with no identity (each
     // copy takes its own at its first open, `ContentStore::initialize`), so that a copy is a clone and nothing more.
     let db = rusqlite::Connection::open(&published).expect("the published template");
     db.execute_batch("DELETE FROM store_identity; PRAGMA journal_mode=WAL;").expect("the template, made ready to copy");
     drop(db);
+    // The folders first: a reader of the template's file finds what it names.
+    for suffix in FOLDERS {
+        let (made, at) = (beside(&published, suffix), beside(path, suffix));
+        if at.exists() {
+            std::fs::remove_dir_all(&at).expect("the old template's folders");
+        }
+        if made.exists() {
+            std::fs::rename(&made, &at).expect("the template's folders, published");
+        }
+    }
     std::fs::rename(&published, path).expect("the template, published");
     let _ = std::fs::remove_dir_all(&staging);
 }
@@ -117,14 +133,14 @@ fn make(path: &Path) {
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
-    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())], phases: Vec::new() }];
+    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rerail".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
     modules.sort();
     seeds.extend(modules.into_iter().map(super::phase0::Seed::File));
     super::phase0::graphs(&seeds).map_err(|e| e.to_string())?;
-    let program = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let program = "#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let corpus = templates().join("corpus");
     std::fs::create_dir_all(&corpus).map_err(|e| e.to_string())?;
     let out = store.with_extension("out");
@@ -143,7 +159,7 @@ fn rule_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             rule_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rr") {
+        } else if path.extension().is_some_and(|e| e == "rerail") {
             out.push(path);
         }
     }
@@ -201,6 +217,9 @@ pub fn copy() -> Store {
     std::fs::create_dir_all(&dir).expect("a test store's directory");
     let path = dir.join("store.sqlite");
     clone_file(template, &path).expect("a copy of the template");
+    for suffix in FOLDERS {
+        clone_dir(&beside(template, suffix), &beside(&path, suffix)).expect("a copy of the template's folders");
+    }
     Store { dir, path }
 }
 
@@ -257,9 +276,11 @@ pub(super) fn own() -> Option<PathBuf> {
     Some(OWN.with(|own| own.get_or_init(copy).path.clone()))
 }
 
-/// Whether `path` is the store of the test on this thread (its own, not one shared with other threads).
+/// Whether `path` is the store of the test on this thread (its own, not one shared with other threads), or the one a
+/// job was handed by its test (`carried`): the same test's store, whose observer goes with it (`Store`'s drop forgets
+/// the store's one observer; a job's own would hold its files open past the test).
 pub(super) fn is_own(path: &Path) -> bool {
-    OWN.with(|own| own.get().is_some_and(|s| s.path == path))
+    OWN.with(|own| own.get().is_some_and(|s| s.path == path)) || handed().is_some_and(|h| h == path)
 }
 
 /// Removes the directories of test processes that have exited.
@@ -291,6 +312,9 @@ fn sweep_templates(dir: &Path, key: &str) {
             for suffix in [".sqlite", ".ready", ".lock"] {
                 let _ = std::fs::remove_file(dir.join(format!("{other}{suffix}")));
             }
+            for suffix in FOLDERS {
+                let _ = std::fs::remove_dir_all(dir.join(format!("{other}.sqlite{suffix}")));
+            }
         }
     }
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
@@ -305,6 +329,37 @@ fn sweep_templates(dir: &Path, key: &str) {
             let _ = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
         }
     }
+}
+
+/// The folders beside a store's file that its rows name files in: its atoms' and kept facts' blocks (decision 0401),
+/// its tapes' and sources' segments and its memo's (0295).
+const FOLDERS: [&str; 4] = [".atoms", ".facts", ".objects", ".memo"];
+
+/// The folder `suffix` beside the store at `path`.
+fn beside(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// The files of folder `from` cloned into `to` (made), where there is one, and its folders' in turn: the kept facts
+/// are a folder a space (`kept_facts::space_dir`, `.facts/<space>/`), and a copy that took the top level alone held
+/// rows naming files it lacked ("a space's kept facts: No such file or directory").
+fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    let Ok(entries) = std::fs::read_dir(from) else { return Ok(()) };
+    std::fs::create_dir_all(to)?;
+    for e in entries.flatten() {
+        let kind = e.file_type()?;
+        if kind.is_file() {
+            clone_file(&e.path(), &to.join(e.file_name()))?;
+        } else if kind.is_dir() {
+            // A folder's own folders too: the kept facts' blocks are in one per space (`kept_facts::space_dir`,
+            // decision 0401). Copied flat, a copy's rows named blocks it did not have, and its first run failed:
+            // "a space's kept facts: No such file or directory".
+            clone_dir(&e.path(), &to.join(e.file_name()))?;
+        }
+    }
+    Ok(())
 }
 
 /// `to`, a clone of `from` where the file system makes one (APFS), else a copy.
@@ -343,6 +398,32 @@ impl Lock {
 
 #[cfg(test)]
 mod tests {
+    /// A store copied as a test's store is (`copy`: its file and `FOLDERS`) carries its memo packs: the copy's rows
+    /// find the template's bytes (decision 0240 §4), and its own writes go after them. Its file alone was copied
+    /// before, so its rows named a pack the copy's writer began again. PR #508's 62b554c01 (t47).
+    #[test]
+    fn a_template_is_published_and_copied_with_its_memo_packs() {
+        use crate::content_store::{ContentStore, MemoPut};
+        let dir = tempfile::tempdir().unwrap();
+        let space = crate::content_store::local_space(&[7u8; 32]);
+        let put = |part: i64, byte: u8| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![byte; 100], over: false };
+        let template = dir.path().join("template.sqlite");
+        ContentStore::open(&template).unwrap().put_memo_entries(&space, (0..4).map(|p| put(p, 1)).collect(), 4).unwrap();
+        let copy = dir.path().join("copy/store.sqlite");
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        super::clone_file(&template, &copy).unwrap();
+        for suffix in super::FOLDERS {
+            super::clone_dir(&super::beside(&template, suffix), &super::beside(&copy, suffix)).unwrap();
+        }
+        let store = ContentStore::open(&copy).unwrap();
+        store.put_memo_entries(&space, (4..8).map(|p| put(p, 2)).collect(), 4).unwrap();
+        let read = store.memo_entries(&space, &(0..8).collect::<Vec<_>>(), true).unwrap();
+        assert_eq!(read.len(), 8, "the template's entries and the copy's each find their bytes");
+        for (part, blob) in read {
+            assert!(blob.bytes.bytes().iter().all(|&b| b == if part < 4 { 1 } else { 2 }), "part {part} reads the bytes it was put with");
+        }
+    }
+
     /// Another build's template unused for an hour goes, by its mark's time or, without one, its own; a fresh one and
     /// this build's stay.
     #[test]

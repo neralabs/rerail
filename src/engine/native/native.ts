@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { PACKAGE_ROOT } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
+import type { EngineGitExit, EngineGitRun, EngineStartedGit } from "../git-start.js";
 
 export interface NativeHealth {
   ok: boolean;
@@ -203,7 +204,34 @@ export interface NativeRepositoryIndexOptions {
   followGitignore: boolean;
 }
 
-/** Git's exclude stack for paths below the root it was opened for; see `openGitIgnoreMatcher`. */
+/**
+ * What Rerail's Git reports about the config files it reads outside any repository (`git-access.ts` asks it): `git var
+ * GIT_CONFIG_SYSTEM`, absent on a Git before 2.42 or where it failed; and `git config --list --show-origin --show-scope
+ * -z --name-only --no-includes` outside any repository, absent where it failed.
+ */
+export interface NativeGitInstallation {
+  systemConfig?: string;
+  configOrigins?: string;
+}
+
+/**
+ * The process's one owner of the engine's in-process Git reads. Made from what Rerail's Git reported, it names the
+ * config files that Git reads to every read in the process, so the engine starts no Git of its own to find them.
+ */
+export interface NativeGitAccess {
+  /** The system config file the engine's reads take, as Rerail's Git named it; null where it named none. */
+  readonly systemConfig: string | null;
+  /** A config file the reads take besides the system one (Apple Git's); null where there is none. */
+  readonly installationConfig: string | null;
+  /**
+   * Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git
+   * worktree. Throws where Git refuses the repository (another user's, outside `safe.directory`; a config file Git
+   * cannot parse), as it does where the rules cannot be read.
+   */
+  openGitIgnoreMatcher(root: string): NativeGitIgnoreMatcher | null;
+}
+
+/** Git's exclude stack for paths below the root it was opened for; see `NativeGitAccess.openGitIgnoreMatcher`. */
 export interface NativeGitIgnoreMatcher {
   /**
    * Whether Git ignores `relativePath` (to the matcher's root, `/`-separated): `git check-ignore`'s answer, so a tracked
@@ -297,13 +325,13 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
   /**
-   * The tests the `.rr` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
+   * The tests the `.rerail` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
    * `NativeRrTestResult` (`rerail-engine test-rr`).
    */
   testRr(pathsJson: string, filter?: string | null): string;
 }
 
-/** One test of a `.rr` file, as `testRr` reports it. */
+/** One test of a `.rerail` file, as `testRr` reports it. */
 export interface NativeRrTestResult {
   file: string;
   test: string;
@@ -393,6 +421,45 @@ export interface NativeCodeRuleDslExecution {
   close(): void;
 }
 
+/** What changed under one watched root since the last `take` (`NativeTreeWatcher`). */
+export interface NativeTreeNotice {
+  root: string;
+  /** Changed entries (content, size, attributes), relative `/`-paths. Capped (see `lost`). */
+  changed: string[];
+  /** Created, deleted or renamed entries, relative `/`-paths. Capped (see `lost`). */
+  renamed: string[];
+  /**
+   * Notices were dropped (an OS overflow, more than 16,384 entries between two takes, or a Windows handle let go for a
+   * rename above the root and opened again): read the whole root.
+   */
+  lost: boolean;
+  /**
+   * The watch stopped (the root or a folder above it renamed, moved or deleted, a watch error).
+   * The root is no longer watched: read it whole and watch it again.
+   */
+  ended: boolean;
+}
+
+/**
+ * The engine's file-system event bus: one OS watch per root (FSEvents, inotify per folder, ReadDirectoryChangesW with a
+ * read-handle oplock), whose notices wait in the engine until `take`. Nothing calls into JavaScript.
+ */
+export interface NativeTreeWatcher {
+  /**
+   * Starts watching `root` (an absolute physical path). `folders`: the folders the last read walked into, relative
+   * `/`-paths with `""` for the root; only the Linux adapter uses them. False when this root cannot be watched here (a
+   * network or remote file system, a WSL path, past Linux's watch budget, Windows with no oplock, an OS with no
+   * adapter). Watching a root already watched replaces its folder set.
+   */
+  watch(root: string, folders: string[]): boolean;
+  /** Stops watching `root` and releases every handle on it, so `git worktree remove` and renames work at once. */
+  unwatch(root: string): void;
+  /** Takes every notice since the last take, at most one per root. Never blocks on the OS. */
+  take(): NativeTreeNotice[];
+  /** Stops the adapter's thread and releases every handle. Idempotent; a later `watch` is false. */
+  close(): void;
+}
+
 export interface NativeBinding {
   CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
   CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
@@ -432,12 +499,34 @@ export interface NativeBinding {
   validateRegex(pattern: string): void;
   /** Windows only: start a detached process that inherits only NUL stdin and the appended log file; returns its pid. */
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
-  /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
+  /**
+   * Windows only: the exit code of a process `spawnDetached` started from this process, or null while it runs, read from
+   * the handle it kept, so a pid Windows has given to another process is no answer. A binary built before it lacks it.
+   */
+  detachedExitCode?(pid: number): number | null;
+  /**
+   * Linux only: starts Git through `posix_spawn`, which copies nothing of this process (`git-start.ts`). A binary built
+   * before it lacks it.
+   */
+  startGit?(program: string, args: string[], env: string[], pipeStderr: boolean): EngineStartedGit;
+  /** Linux only: reaps a child `startGit` started once its exit pipe has closed. A binary built before it lacks it. */
+  reapGit?(pid: number): EngineGitExit;
+  /**
+   * Linux only: runs Git as `spawnSync` does, through `posix_spawn` (`git-start.ts`). A binary built before it lacks it.
+   */
+  runGit?(program: string, args: string[], env: string[], timeoutMs: number | undefined, maxBuffer: number): EngineGitRun;
+  /**
+   * Windows only: whether every path's owner is one Git for Windows takes as this process's user (the user, or the
+   * Administrators group while the process's token is a member); false when an owner cannot be read, and on every
+   * other platform. A binary built before it lacks it.
+   */
+  pathsOwnedByCurrentUser?(paths: string[]): boolean;
+  /** The content-store file name this binary's store schema owns (`content-v9.sqlite` at store floor 9). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
-  /** Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git worktree. */
-  openGitIgnoreMatcher(root: string): NativeGitIgnoreMatcher | null;
+  /** The owner of the engine's in-process Git reads; make it through `nativeGitAccess` (`git-access.ts`), once per process. */
+  GitAccess: new (installation: NativeGitInstallation) => NativeGitAccess;
   ConversationEngine: NativeConversationEngineConstructor;
   PackageFactsReader: new (root: string) => NativePackageFactsReader;
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
@@ -450,6 +539,8 @@ export interface NativeBinding {
   dumpRir(policies: NativeSlicePolicy[], capabilitiesJson: string, clause?: string | null, fused?: boolean | null, setplan?: boolean | null): string;
   /** Every `program` block of `text` assembled through the verifier and dumped again (`rerail engine asm`); throws the first refusal. */
   assembleRir(text: string): string;
+  /** The file-system event bus; an engine built before it lacks it. */
+  TreeWatcher?: new () => NativeTreeWatcher;
 }
 
 const require = createRequire(import.meta.url);
@@ -504,4 +595,36 @@ export function isWorkspaceBusy(error: unknown): boolean {
 
 export function nativeHealth(): NativeHealth {
   return loadNativeBinding().health();
+}
+
+/**
+ * On Windows, whether Git, started by this process, takes every one of `paths` as its user's own: the engine reads each
+ * owner as Git for Windows does. Undefined on every other platform, and when no engine here can tell (none loads, one
+ * built before it, or a read that throws), so the caller asks Git; the first such failure is reported
+ * ({@link reportOwnerReadFailure}).
+ */
+export function pathsOwnedByCurrentUser(paths: readonly string[]): boolean | undefined {
+  if (process.platform !== "win32") return undefined;
+  try {
+    const binding = loadNativeBinding();
+    if (binding.pathsOwnedByCurrentUser === undefined) throw new Error("the engine was built before it could read a path's owner");
+    return binding.pathsOwnedByCurrentUser([...paths]);
+  } catch (error) {
+    reportOwnerReadFailure(error);
+    return undefined;
+  }
+}
+
+/** Whether a failure of the engine's owner read was reported in this process. */
+let ownerReadFailureReported = false;
+
+/**
+ * Writes the first failure of the engine's owner read to stderr, which a daemon keeps in its log, once per process:
+ * without that read every worktree a repository start places is asked of Git, one process each.
+ */
+function reportOwnerReadFailure(error: unknown): void {
+  if (ownerReadFailureReported) return;
+  ownerReadFailureReported = true;
+  const reason = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`rerail: the engine could not read path owners, so Git places each worktree a start asks after: ${reason}\n`);
 }

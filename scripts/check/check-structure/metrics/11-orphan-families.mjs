@@ -7,7 +7,11 @@
 //   - `ecma`: ECMAScript expected findings shared by the javascript and typescript languages and the
 //     typescript, react, next and node packs;
 //   - `host`: host-adapter inputs, not tied to a language;
-//   - `packs`: pack-validator inputs (#1), not tied to a language.
+//   - `packs`: pack-validator inputs (#1), not tied to a language;
+//   - `code-rule-dsl`: the engine's query contracts and implementation goldens (`query/`), which hold every
+//     language's programs, not tied to one;
+//   - `simdjson-stage1`: simdjson's stage-1 structural indexes on recorded files of several kinds, the oracle of the
+//     hand-written stage 1 (`stage1.rir`), not tied to a language.
 
 import { finding, isRuleDoc, packIds, sortFindings } from "../lib.mjs";
 
@@ -15,7 +19,7 @@ export const id = 11;
 export const title = "No orphan fixture families or packs";
 export const target = "0";
 
-export const SHARED_FAMILIES = ["ecma", "host", "packs"];
+export const SHARED_FAMILIES = ["ecma", "host", "packs", "code-rule-dsl", "simdjson-stage1"];
 
 export function check(repo) {
   const families = new Set();

@@ -3,7 +3,7 @@ name = "rerail-forest"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "MLDB's random forests trained and predicted on the GPU (Metal), and the learned cost model built on them."
+description = "MLDB's random forests trained and predicted on the GPU (Metal or CUDA, through rerail-gpu), and the learned cost model built on them."
 
 [dependencies]
 rayon = "=1.12.0"
@@ -11,13 +11,20 @@ rerail-context = { path = "../native/crates/context" }
 sha2 = "0.10"
 libc = "0.2.189"
 
+# The device layer: Metal on macOS, CUDA on Linux (decision 0440).
+rerail-gpu = { path = "../gpu" }
+# The kernels preprocessed at run time for the CUDA device's architecture (decision 0440 §4).
+rerail-ukl = { path = "../native/crates/ukl" }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33.0"
 objc = "0.2.7"
 block = "0.1.6"
 
 [build-dependencies]
-cc = "=1.10.0"
+cc = "=1.11.1"
+# UKL's shims applied by the in-process preprocessor (decision 0440 §4).
+rerail-ukl = { path = "../native/crates/ukl" }
 
 [lints.rust]
 # objc 0.2's `msg_send!` tests a `cargo-clippy` feature in the calling crate.

@@ -100,11 +100,11 @@ pub struct Work(pub(super) Kind);
 
 pub(super) enum Kind {
     /// A record (decision 0306): its string and byte area, applied by its items' registered kinds.
-    Record { text: String, bytes: Vec<u8> },
-    /// A space's frames (`queue_frames`).
-    Frames(Box<super::frames::FramesWrite>),
+    Record { text: String, bytes: Vec<super::record::Bytes> },
     /// A space's memo entries in their segments (`queue_memo_segments`).
-    Memo(Box<super::frames::memo_pack::MemoWrite>),
+    Memo(Box<super::held::memo_pack::MemoWrite>),
+    /// A space's next kept file (`queue_kept`, decisions 0401 F6, 0456 K4).
+    Kept(Box<super::kept_facts::KeptWrite>),
     /// Sources and tapes gathered into segments, or each in its own rows where no segment could be placed.
     Objects(Box<super::object_segments::ObjectsWrite>),
     /// The pending atoms; `queued` clears the flag that keeps a second flush from being queued meanwhile.
@@ -116,7 +116,7 @@ pub(super) enum Kind {
 
 impl Work {
     /// A record's string and byte area (`record`).
-    pub(super) fn record(text: String, bytes: Vec<u8>) -> Work {
+    pub(super) fn record(text: String, bytes: Vec<super::record::Bytes>) -> Work {
         Work(Kind::Record { text, bytes })
     }
 
@@ -133,8 +133,8 @@ impl Work {
     fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
         match &mut self.0 {
             Kind::Record { text, bytes } => super::record::apply(store, text, bytes),
-            Kind::Frames(w) => w.run(store),
             Kind::Memo(w) => w.run(store),
+            Kind::Kept(w) => w.run(store),
             Kind::Objects(w) => w.run(store),
             Kind::Atoms { queued } => {
                 if *queued {
@@ -577,6 +577,8 @@ fn unregister(path: &Path, w: &Arc<Writer>) {
         let (jobs, bytes) = w.shared.state.lock().map(|s| (s.jobs, s.bytes)).unwrap_or_default();
         let t = std::time::Instant::now();
         drop(tx);
+        // The writer joins the checkpointer as it ends (`checkpoints`): joined, every connection to the file is
+        // closed, as a run that deletes it and creates it again (`corpus::closed`) needs.
         let _ = thread.join();
         // What the end of the run waited for: the queue the waves left behind them.
         let waited = t.elapsed().as_secs_f64();
@@ -599,15 +601,21 @@ impl Drop for Hold {
     }
 }
 
-/// `Hold` of the store at `path`.
+/// `Hold` of the store at `path`: the writer of the store a handle opens there next, or has open.
 pub fn hold(path: &Path) -> Hold {
     Hold(path.to_path_buf(), register(path))
 }
 
+/// A kind of job's count, bytes held until written, CPU on the writer's thread and the bytes of the frames it encoded.
+type KindWrites = (usize, usize, f64, usize);
+
+/// A kind of job and its `KindWrites`, as the profile lists them.
+pub type KindRow = (&'static str, usize, usize, f64, usize);
+
 /// Each kind of job's count, bytes held until written, CPU on the writer's thread and the bytes of the frames it
 /// encoded, by the shared object's writers (the profile's write-back; decision 0442).
 #[derive(Default)]
-struct ByKind(Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64, usize)>>);
+struct ByKind(Mutex<std::collections::BTreeMap<&'static str, KindWrites>>);
 
 /// Each kind of job written so far in this process: count, bytes held, the writer's CPU and the bytes of the frames
 /// it encoded, costliest first.
@@ -735,7 +743,7 @@ impl ContentStore {
             static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if t.is_some() && !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
                 let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c, _))| (*w, *j, *b, *c)).collect();
-                rows.sort_by(|a, b| b.2.cmp(&a.2));
+                rows.sort_by_key(|r| std::cmp::Reverse(r.2));
                 let rows: Vec<String> = rows.iter().map(|(w, j, b, c)| format!("{w}: {j} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect();
                 eprintln!("rerail: the writer's queue is full ({:.1} MB in {} jobs; {what} brings {:.1} MB): queued so far, by what: {}", s.bytes as f64 / 1048576.0, s.jobs, bytes as f64 / 1048576.0, rows.join("; "));
             }
@@ -901,7 +909,7 @@ impl ContentStore {
                         let mut outcomes = Vec::with_capacity(batch.len());
                         for (job, _, _, _, what) in batch.iter_mut() {
                             let (c0, e0) = (thread_cpu(), super::compression::encoded_here());
-                            let _span = super::hazards::span(*what);
+                            let _span = super::hazards::span(what);
                             outcomes.push(
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                                     .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
@@ -1075,7 +1083,7 @@ impl ContentStore {
 
     /// The writer's work by what each job writes, `(what, jobs, bytes held, writer CPU, bytes of frames encoded)`,
     /// costliest first; the most bytes queued at once; and the back-pressure's holds of a producer, `(count, seconds)`.
-    pub fn written_by_what(&self) -> (Vec<(&'static str, usize, usize, f64, usize)>, usize, (usize, f64)) {
+    pub fn written_by_what(&self) -> (Vec<KindRow>, usize, (usize, f64)) {
         let Some(w) = self.writer() else { return (Vec::new(), 0, (0, 0.0)) };
         let s = w.shared.state.lock().expect("the writer's state");
         let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c, e))| (*w, *j, *b, *c, *e)).collect();
@@ -1225,6 +1233,45 @@ mod tests {
         (dir, store)
     }
 
+    /// A store deleted and created again at its path while a handle of the old one lives has a writer of its own: its
+    /// jobs run on a handle of the new store (its atoms), not queued behind the old store's. PR #508's d9c403ebf (t47).
+    #[test]
+    fn a_store_created_again_at_its_path_has_its_own_writer() {
+        use std::sync::{Arc, Mutex, mpsc};
+        let (dir, old) = store("again");
+        let path = old.database_path.clone();
+        // The old store's writer holds its connection, on the old store's file, before the file goes: one it opened
+        // after would be refused (the store at the path is another).
+        old.write_back("open", 0, vec![], job(|_| Ok(())));
+        old.written().unwrap();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let o = Arc::clone(&order);
+        old.write_back("old", 0, vec![], job(move |_| {
+            go_rx.recv().unwrap();
+            o.lock().unwrap().push("old");
+            Ok(())
+        }));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let new = ContentStore::open(&path).unwrap();
+        assert!(!Arc::ptr_eq(old.writer().unwrap(), new.writer().unwrap()));
+        let (o, atoms) = (Arc::clone(&order), Arc::clone(&new.atoms));
+        new.write_back("new", 0, vec![], job(move |s| {
+            assert!(Arc::ptr_eq(&s.atoms, &atoms), "the new store's atoms");
+            o.lock().unwrap().push("new");
+            Ok(())
+        }));
+        // Written while the old store's job still waits.
+        new.written().unwrap();
+        go_tx.send(()).unwrap();
+        old.written().unwrap();
+        assert_eq!(*order.lock().unwrap(), ["new", "old"]);
+        drop((old, new));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// Jobs run in their order on the writer; a read of a queued key gets the job's value, or waits for it alone;
     /// `written` waits for all and gives the first error; another handle of the store shares the queue.
     #[test]
@@ -1311,10 +1358,8 @@ mod tests {
             if r.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                 go_rx.recv().unwrap();
                 s.intern_atoms(&["b"])?;
-                s.connection.lock().map_err(StoreError::Invalid)?.execute(
-                    "INSERT INTO atom_segment(first, ends, bytes) VALUES (2, x'01000000', CAST('z' AS BLOB))",
-                    [],
-                )?;
+                let connection = s.connection.lock().map_err(StoreError::Invalid)?;
+                crate::content_store::atoms::stored::append_as_another(&connection, &["z".to_owned()])?;
             }
             s.flush_atoms()
         }));
@@ -1326,8 +1371,11 @@ mod tests {
         go_tx.send(()).unwrap();
         let (done_tx, done_rx) = mpsc::channel();
         let other = ContentStore::open(&store.database_path).unwrap();
-        std::thread::spawn(move || done_tx.send(other.written().is_ok()).unwrap());
+        // The other handle is dropped (its checkpoint written) before the thread ends: joined before the directory
+        // goes, or its checkpoint writes into a directory being removed.
+        let waiter = std::thread::spawn(move || done_tx.send(other.written().is_ok()).unwrap());
         assert_eq!(done_rx.recv_timeout(Duration::from_secs(10)), Ok(true), "every queued job written");
+        waiter.join().unwrap();
         assert!(store.atoms_handle().forked(), "the job forked the batch");
         assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2, "rolled back and run again");
         assert_eq!(later.load(std::sync::atomic::Ordering::SeqCst), 2, "each wave queued meanwhile written once");
@@ -1398,4 +1446,5 @@ mod tests {
         drop(again);
         let _ = std::fs::remove_dir_all(dir);
     }
+
 }

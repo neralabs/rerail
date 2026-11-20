@@ -212,12 +212,19 @@ struct Patterns {
 }
 
 fn patterns(text: &str, lang: GrammarDialect) -> Patterns {
-    Patterns { native: crate::code_rule_dsl::test_support::unfiltered_pattern(text, lang), tape: Pattern::try_new(text, lang).unwrap() }
+    Patterns {
+        native: crate::code_rule_dsl::test_support::unfiltered_pattern(text, lang),
+        tape: Pattern::try_new(text, lang).unwrap(),
+    }
 }
 
 /// `pattern`'s matches over `root`: the tape's pattern over a tape, the native one otherwise.
 fn pattern_matches<D: Doc + 'static>(root: &AstGrep<D>, pattern: &Patterns) -> Matches {
-    let pattern = if std::any::TypeId::of::<D>() == std::any::TypeId::of::<TapeDoc>() { &pattern.tape } else { &pattern.native };
+    let pattern = if std::any::TypeId::of::<D>() == std::any::TypeId::of::<TapeDoc>() {
+        &pattern.tape
+    } else {
+        &pattern.native
+    };
     root.root()
         .find_all(pattern)
         .map(|found| {
@@ -799,7 +806,8 @@ fn persisted_blade_structural_captures_match_native() {
     let mut matched = 0;
     for &source in BLADE_RISKY_FIXTURES {
         let native = BladeLang.doc(source.as_bytes()).expect("Forte parses it");
-        let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).unwrap();
+        let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false)
+            .unwrap();
         let decoded = image.round_trip(&grammar).unwrap();
         let tape = TapeDoc::restore(Arc::new(source.into()), grammar.clone(), &decoded, &|| {
             false
@@ -1056,8 +1064,10 @@ fn worktree_oracle_parity(corpus: &OracleCorpus) {
             Native::TreeSitter(doc) => {
                 TapeImage::encode(doc.tree.root_node(), &grammar, &source, &|| false)
             }
-            Native::Blade(_) => crate::code_rule_dsl::blade::tape::encode_template(&grammar, &source, &|| false)
-                .map_err(|error| format!("{error:?}")),
+            Native::Blade(_) => {
+                crate::code_rule_dsl::blade::tape::encode_template(&grammar, &source, &|| false)
+                    .map_err(|error| format!("{error:?}"))
+            }
         };
         let image = match encoded {
             Ok(image) => image,

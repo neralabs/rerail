@@ -9,6 +9,7 @@ outputs come back on the stream. One scan of a directory serves every compile th
 it. Every file the compile read (its dep-info) must be as it is here, or the caller compiles here.
 """
 import hmac
+import hashlib
 import json
 import os
 import secrets
@@ -56,10 +57,11 @@ def stat(path):
 class Host:
     """One host's agent: the files it has, and the compiles waiting on it."""
 
-    def __init__(self, name):
+    def __init__(self, name, command=None, env=None):
+        """`command` (a test's): runs the agent so instead of over ssh."""
         self.name = name
-        self.proc = subprocess.Popen(farm.ssh(name, farm.on_host("farm-agent"), "mirror"),
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        self.proc = subprocess.Popen(command or farm.ssh(name, farm.on_host("farm-agent"), "mirror"),
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
                                      stderr=open(farm.state("mirror", f"{name}.err"), "ab"))
         self.w, self.r = self.proc.stdin, self.proc.stdout
         self.transport = "ssh"
@@ -170,6 +172,22 @@ class Host:
     def run(self, job):
         return self.ask(dict(job, op="run"))
 
+    def prune(self, root, listed):
+        """Removes from the host's copy of the checkout `root` the files the mirror wrote there that
+        this machine no longer has: a file the checkout deleted (Q63), which the incremental sends
+        never touch, and which a test reading every source file there found. `listed`: the paths
+        just synced under `root`. Only a file missing here goes: one a compile sent that git
+        ignores (a crate under the checkout's target) stays. Returns the paths removed."""
+        reply = self.ask({"op": "unlisted", "root": root, "listed": listed}, timeout=120)
+        gone = {p: s for p, s in ((reply or {}).get("files") or {}).items() if not os.path.lexists(p)}
+        if not gone:
+            return []
+        reply = self.ask({"op": "remove", "root": root, "files": gone}, timeout=60)
+        removed = (reply or {}).get("paths") or []
+        for p in removed:
+            self.sent.pop(p, None)
+        return removed
+
     def has_same(self, directory):
         """Whether the host's own copy of `directory` (a crate of the cargo registry, at the same path
         there) is this machine's, file for file: then a compile reads it in place (farm-agent,
@@ -201,7 +219,7 @@ class Host:
                 with open(tmp, "wb") as f:
                     f.write(payload)
                 os.replace(tmp, path)
-            elif header["op"] in ("done", "had", "same?"):
+            elif header["op"] in ("done", "had", "same?", "unlisted!", "removed"):
                 waiting = self.waiting.get(header["id"])
                 if waiting:
                     waiting["result"] = header
@@ -288,6 +306,19 @@ def top(root, test):
         return []
 
 
+def fingerprint(roots):
+    """The tree `roots` (as a job's) hold here now: a hash of each file's path and stat. Two commands
+    of one checkout whose fingerprints are the same run from one copy on a host (`farm.CopyUse`)."""
+    h = hashlib.sha256()
+    for root, kind in roots:
+        files = checkout_files(root) if kind == "checkout" else tree(root)
+        for p in sorted(files):
+            st = stat(p)
+            if st is not None:
+                h.update(f"{p}\0{st[0]}\0{st[1]}\0{st[2]}\n".encode())
+    return h.hexdigest()
+
+
 def needed(job, since):
     """The files `job` may read, with their stats here: (path, (mtime_ns, size, mode))."""
     out = []
@@ -315,7 +346,9 @@ def handle(conn):
         send(f, work(job))
     except Exception as e:
         try:
-            send(f, {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": f"the daemon failed: {e!r}"})
+            import traceback
+            where = traceback.format_exc().strip().splitlines()[-3:-1]
+            send(f, {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": f"the daemon failed: {e!r} ({' / '.join(w.strip() for w in where)})"})
         except OSError:
             pass
     finally:
@@ -359,6 +392,12 @@ def work(job):
         h.learn([p for p, _ in files])
         for path, st in files:
             h.put(path, st)
+        # A test command reads the checkout as it is here: what it deleted goes there too. A compile
+        # skips this: it reads only what its dep-info names, and that is checked.
+        if job.get("verify"):
+            for root, kind in job["roots"]:
+                if kind == "checkout":
+                    h.prune(root, [p for p, _ in files if p.startswith(root + "/")])
     except OSError as e:
         drop(name, h, f"the mirror's connection broke: {e!r}")
         return failed(f"the connection to {name} broke while sending")

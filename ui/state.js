@@ -3,7 +3,7 @@
  * `sheet.js`, the frame and each view's own actions) write `ui` and optimistic `data`, and `poll.js` writes fetches.
  * Rules are keyed by id so a poll can patch the row that changed and nothing else.
  */
-import { isFromPack, isRunning, packOriginName, ruleTitle, rulePrefix, scopeText } from "./derive.js";
+import { isFromPack, isLog, isRunning, packOriginName, ruleTitle, rulePrefix, scopeText } from "./derive.js";
 import { startOfDay } from "./format.js";
 
 /**
@@ -80,6 +80,17 @@ export const data = {
   followGitignore: null,
   /** Recommended packs for the scoped repository, each with its folder; fetched only when needed. */
   recommendations: null,
+  /** Merge Assist for the scoped checkout (`GET /api/merge-assist`, `MergeAssistStatus`); `null` until loaded. */
+  mergeAssist: null,
+  /** Why the last Merge Assist read failed; `null` once one succeeds. */
+  mergeAssistError: null,
+  /**
+   * Whether the daemon runs Merge Assist's experiment: `null` until a Merge Assist read answers (a failed read leaves
+   * it as it was), `false` once one answered `404 experimental-off` (the sidebar then shows no Merge Assist and nothing
+   * reads it again), `true` once one succeeded.
+   * The daemon's, so a scope change keeps it.
+   */
+  mergeAssistExperiment: null,
   /** Why the coding agents could not be checked, when `GET /api/coding-agents` failed. */
   agentsError: null,
   /** Freshness: last successful poll, and whether the last attempt failed. */
@@ -115,7 +126,7 @@ export const ui = {
   askIntent: "ask",
   /** History: the rule chosen (a `?rule=` link or a click); null shows the top-ranked one. */
   actRule: null,
-  /** History by rule's chip ("all", "steered", "logged"): which violations its list counts (`?outcome=`). */
+  /** History by rule's chip ("all", "logged" read Log only, "steered", "declined"): what it counts (`?outcome=`). */
   histOutcome: "all",
   /** Rule packs page: list or cards, and the pack whose Remove waits for its second click. */
   catView: "list",
@@ -135,6 +146,17 @@ export const ui = {
   closedEvents: new Set(),
   openFolds: new Set(),
   resumeOpen: false,
+  /** Merge Assist conflicts being dismissed, by id, while their write is out (`merge-model.js` `conflictSections`). */
+  mergeDismissing: new Set(),
+  /** Merge Assist's open disclosures: "problems", "dismissed", "settings". */
+  mergeOpen: new Set(),
+  /** The Settings form while the person edits it: `{ command, timeout, problem, field }`, or `null` for the saved values. */
+  mergeSettings: null,
+  /** Merge Assist's settings being saved, while their request is out for the repository shown. */
+  mergeSaving: false,
+  /** Merge Assist being turned on or off, and a Scan now, while their request is out for the repository shown. */
+  mergeSwitching: false,
+  mergeScanning: false,
   theme: "",
 };
 
@@ -152,8 +174,11 @@ export function sinceFor(range = ui.range) {
 
 const RANGE_LABEL = { 0: "today", 7: "in the last 7 days", 30: "in the last 30 days" };
 export const rangeLabel = () => RANGE_LABEL[ui.range] ?? "since install";
+/** The range on its own, as a count's caption reads it: "last 7 days" under "6 logged". */
+const RANGE_CAPTION = { 0: "today", 7: "last 7 days", 30: "last 30 days" };
+export const rangeCaption = () => RANGE_CAPTION[ui.range] ?? "since install";
 
-const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 };
+const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, declinedLoggedViolations: 0, rerails: 0 };
 export const activityOf = id => data.activity[id] ?? NONE;
 export const activityAllOf = id => data.activityAll[id] ?? NONE;
 export const isMeasured = id => activityOf(id).measured !== false;
@@ -213,8 +238,8 @@ export const packGroups = pack => [...new Set(pack.rules.map(r => r.group))];
 /** The folder set-up adds a pack in: its folder in `recommendations` (fetched for the write's scope), else the whole repository. */
 export const packFolder = (recommendations, id) => recommendations.find(r => r.packId === id)?.folder ?? "";
 
-/** The row title: the pack's plain title when the rule comes from one, else the rule's own. */
-export const titleOf = stored => packRuleOf(stored.rule.id)?.rule.title ?? ruleTitle(stored);
+/** The row title: the rule's own title; else the pack's plain title when the rule comes from one; else the rule's fallback. */
+export const titleOf = stored => (stored.rule.title?.trim() ? ruleTitle(stored) : packRuleOf(stored.rule.id)?.rule.title ?? ruleTitle(stored));
 
 const haystacks = new WeakMap();
 /** Text the search box runs over: title, id, description, scope, pack and group. */
@@ -228,14 +253,20 @@ function searchText(stored) {
   return hay;
 }
 
+/** What each Filter choice keeps (`PAGE_FILTERS`); "all", and any value not here, keeps every rule. */
+const FILTER_KEEPS = {
+  __proto__: null,
+  on: stored => isRunning(stored),
+  off: stored => !isRunning(stored),
+  steer: stored => isRunning(stored) && !isLog(stored),
+  log: stored => isRunning(stored) && isLog(stored),
+  fired: stored => fires(stored.rule.id) !== 0,
+};
+
 export function matches(stored) {
-  const id = stored.rule.id;
-  const f = ui.filter;
-  if (f === "on" && !isRunning(stored)) return false;
-  if (f === "off" && isRunning(stored)) return false;
-  if (f === "fired" && fires(id) === 0) return false;
-  if (ui.query && !searchText(stored).includes(ui.query)) return false;
-  return true;
+  const keeps = FILTER_KEEPS[ui.filter];
+  if (keeps !== undefined && !keeps(stored)) return false;
+  return !ui.query || searchText(stored).includes(ui.query);
 }
 export const filtering = () => ui.filter !== "all" || ui.query !== "";
 

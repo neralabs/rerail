@@ -1,4 +1,4 @@
-//! A blocked Bloom filter in a block (decision 0477): a column's keys, read where it lies by the host, the JIT and
+//! A blocked Bloom filter in a block (decision 0506): a column's keys, read where it lies by the host, the JIT and
 //! the kernels, through the reads written once in CLIF (`rerail_clif::relation`: `bloom_hash`, `bloom_mask`,
 //! `bloom_may`). One hash, one format, one memory for the CPU and the GPU.
 //!

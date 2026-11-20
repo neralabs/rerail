@@ -9,7 +9,7 @@
 //! - **`RERAIL_DEADLINE=<seconds>`:** at that wall time after start, a snapshot (`<dir>/deadline`), and go on: for a
 //!   run stopped by SIGKILL, which cannot be caught.
 //!
-//! - **The memory ceiling's backstop** (decision 0394): each run watches its own ceiling and stops itself, naming the
+//! - **The memory ceiling's backstop** (decision 0462): each run watches its own ceiling and stops itself, naming the
 //!   relations it held (`native::width`). A path that does not stop when told (a SQL stratum, the device) is stopped
 //!   here: the process's resident memory is read every 50 ms, and once it has stayed past `RERAIL_MEMORY_MAX_MB`
 //!   (`memory_ceiling`) for `GRACE`, the run is dumped as at a deadline and the process exits with code 3. A runaway

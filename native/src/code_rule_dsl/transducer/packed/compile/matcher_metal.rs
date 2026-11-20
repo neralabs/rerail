@@ -8,7 +8,12 @@ use crate::code_rule_dsl::transducer::packed::device::{ClauseRoots, Outcome, Roo
 /// (`metal_program_backend::label_passes`), pattern leaves included (`MatcherDevice::matcher_roots`).
 pub(in crate::code_rule_dsl) fn matcher_roots(this: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
     let no_labels = empty_sets(tapes, this.labels.defs.len());
-    let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&this.domain, tape, sets).collect()).collect();
+    // A label domain is not known before the passes run: its kinds' nodes.
+    let listed = match &this.domain {
+        Domain::Label(_) | Domain::Within(..) => this.labels.bound(&this.domain, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())),
+        other => other.clone(),
+    };
+    let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&listed, tape, sets).collect()).collect();
     let (mut found, outcome) = metal(&[this], this.labels.defs.len(), tapes, Some(ClauseRoots::Listed(&[roots])), None, None, None)?;
     Ok((found.pop().expect("one clause"), outcome))
 }
@@ -40,6 +45,23 @@ pub(in crate::code_rule_dsl) fn wave_labelled(
     Ok((views, outcome))
 }
 
+/// The sources of the wave's pattern kernels on Metal for a batch of `format`, in the plan's order (`metal`'s passes:
+/// the patterns as `levels` visits them, and the fact case when a clause has facts).
+pub(in crate::code_rule_dsl) fn wave_pattern_sources(this: &LoweredWave, format: u32) -> Result<Vec<String>, Error> {
+    let clauses = this.clauses.iter().collect::<Vec<_>>();
+    let mut patterns = Vec::new();
+    let mut facts = false;
+    levels(&clauses, |clause, id| {
+        match clause.labels.def(id) {
+            Label::Fact(..) => facts = true,
+            Label::Pattern(pattern, _) | Label::Constrained(pattern, _, _) => patterns.push(pattern.ast_pattern.as_ref().ok_or(Error::UnsupportedPattern)?),
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(metal_program_backend::label_passes::pattern_sources(&patterns, facts, format))
+}
+
 /// Each clause's matches of the batch from `roots` (the candidates its root program starts from: listed, or its
 /// domain's nodes where it runs), every clause's passes and roots in one command buffer.
 ///
@@ -67,7 +89,7 @@ fn metal<'a>(
     records: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
     w_cost: Option<&(dyn Fn(u32, usize) -> u64 + Sync)>,
 ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
-    use metal_program_backend::label_passes::{DeviceFormula, Pass, Plan, Roots, device_anchor, device_formula, run};
+    use metal_program_backend::label_passes::{DeviceFormula, Pass, Plan, Roots, device_anchor, device_formula, device_targets, run};
     let bases = tapes
         .iter()
         .scan(0_u32, |base, tape| {
@@ -78,35 +100,36 @@ fn metal<'a>(
         .collect::<Vec<_>>();
     let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
-    // A pass's roots: its domain's nodes. A label domain's program tests the label first, so on
-    // Metal, where the label is not known before the command buffer runs, it starts at the nodes
-    // of the kinds the label can have (`Labels::bound`). They are a rule over each document's
+    // A pass's roots: its domain's nodes. A label domain's program tests the label first. On Metal
+    // the label is not known before the command buffer runs, so the rule names the kinds the label
+    // can have (`Labels::bound`); the walk's anchor, which reads the label (its first test), keeps
+    // the walks to the label's members (decision 0365, 0459). They are a rule over each document's
     // codes (`Roots::Codes`, decision 0033), not a list: the device reads each root in place.
     // Shared by (domain, entry, the tapes the clause is active on), so passes of one domain have
     // one rule (06 S7: 605 passes, 70 M roots as lists, of 264 such keys).
+    // A demand's set (`Domain::Within`, decision 0460) is not a rule over codes: the rule names its kinds, and the
+    // pass's anchor holds the set (`demands`, by the roots it keys, read below).
     let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>), Arc<Roots>>::new();
+    let mut demands = HashMap::<usize, compile_sets::Set>::new();
+    let index = |label: u16| u32::from(label - LABEL_BASE);
     let mut roots = |clause: &LoweredMatcher, starts: &Domain, program: Option<&'a Program>| -> Arc<Roots> {
         let entry = program.map(Entry::of);
-        let bound = match starts {
-            Domain::Label(_) => {
-                Some(clause.labels.bound(starts, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())))
-            }
-            _ => None,
-        };
         let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
         let active = (0..tapes.len()).map(|tape| active.is_none_or(|active| active[at][tape])).collect::<Vec<_>>();
-        let starts = bound.unwrap_or_else(|| starts.clone());
         let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone());
-        Arc::clone(shared.entry(key).or_insert_with(|| {
+        let roots = Arc::clone(shared.entry(key).or_insert_with(|| {
             let kinds = match starts {
                 Domain::All => None,
-                Domain::Kinds(kinds) => Some(kinds),
-                Domain::Label(_) => unreachable!("a label domain is bounded by its kinds"),
+                Domain::Kinds(kinds) => Some(kinds.clone()),
+                Domain::Label(_) | Domain::Within(..) => clause.labels.bound(starts, &mut Vec::new()).map(|kinds| kinds.into_iter().collect()),
             };
             Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active, anchor: None })
-        }))
+        }));
+        if let Some(set) = starts.demand() {
+            demands.insert(Arc::as_ptr(&roots) as usize, set.clone());
+        }
+        roots
     };
-    let index = |label: u16| u32::from(label - LABEL_BASE);
     // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`).
     let facts = fact_rows(clauses.iter().flat_map(|clause| clause.labels.facts()), tapes);
     let mut slots = 0_u32;
@@ -116,17 +139,17 @@ fn metal<'a>(
         Ok(match clause.labels.def(id) {
             Label::Fact(fact, labels) => {
                 let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
-                let mut rows = Vec::new();
-                for (file, (tape, base)) in tapes.iter().zip(&bases).enumerate() {
-                    if !active.is_none_or(|active| active[at][file]) {
-                        continue;
-                    }
-                    let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
-                    for (node, targets) in facts.get(&key).into_iter().flat_map(|found| found.rows()) {
-                        rows.push((base + node, targets.iter().zip(labels).map(|(target, label)| (base + target, index(*label))).collect()));
-                    }
-                }
-                Pass::Fact { target, rows }
+                // Where each active file's findings are in the fact block, which the device reads in place (Q289).
+                let found = tapes
+                    .iter()
+                    .enumerate()
+                    .filter(|&(file, _)| active.is_none_or(|active| active[at][file]))
+                    .filter_map(|(file, tape)| {
+                        let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
+                        facts.get(&key).map(|found| (file as u32, *found))
+                    })
+                    .collect();
+                Pass::Fact { target, block: Arc::clone(&facts.block), found, labels: labels.iter().map(|label| index(*label)).collect() }
             }
             Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
                 let constraints = match clause.labels.def(id) {
@@ -187,8 +210,8 @@ fn metal<'a>(
             ClauseRoots::Listed(listed) => Roots::Listed(listed[at].clone(), None),
             ClauseRoots::Rule(active) => Roots::Codes {
                 kinds: match &clause.domain {
-                    Domain::Kinds(kinds) => Some(kinds.clone()),
-                    Domain::All | Domain::Label(_) => None,
+                    Domain::Kinds(kinds) | Domain::Within(Some(kinds), _) => Some(kinds.clone()),
+                    Domain::All | Domain::Label(_) | Domain::Within(None, _) => None,
                 },
                 entry: Vec::new(),
                 active: active[at].clone(),
@@ -201,31 +224,57 @@ fn metal<'a>(
                 clauses
                     .iter()
                     .enumerate()
-                    .map(|(at, clause)| Pass::Program { target: (labels + at) as u32, program: &clause.program, roots: Arc::new(root(at, clause)), captured: false })
+                    .map(|(at, clause)| match (clause.label_copy(), clause_roots) {
+                        // Its roots are a label's members in its domain: read from the label's row below, not walked.
+                        (Some(_), ClauseRoots::Rule(_)) => Pass::Empty { target: (labels + at) as u32 },
+                        _ => Pass::Program { target: (labels + at) as u32, program: &clause.program, roots: Arc::new(root(at, clause)), captured: false },
+                    })
                     .collect(),
             ],
         ));
         chains.push((None, false));
     }
-    // Decision 0365 §9 (0036 on Metal): a roots pass past the recursive groups whose program is a node-set formula is
-    // that formula on the device (`Pass::Formula`), not a walk; `RERAIL_SETS=walk` walks it, as on the CPU.
+    // Decision 0365 §9, §10 (0036 on Metal): a roots or targets pass past the recursive groups whose program is a
+    // node-set formula (a targets pass's: the image of its starts) is that formula on the device (`Pass::Formula`), not
+    // a walk; `RERAIL_SETS=walk` walks it, as on the CPU.
     if formulas_on() {
         for (_, levels) in steps.iter_mut().filter(|(recursive, _)| !recursive) {
             for pass in levels.iter_mut().flatten() {
-                let Pass::Program { target, program, roots, captured: false } = pass else { continue };
-                let Some(formula) = device_formula(program) else { continue };
-                *pass = Pass::Formula { target: *target, roots: Arc::clone(roots), formula };
+                let Pass::Program { target, program, roots, captured } = pass else { continue };
+                let formula = if *captured { device_targets(program, roots) } else { device_formula(program) };
+                let Some(formula) = formula else { continue };
+                *pass = Pass::Formula { target: *target, roots: Arc::clone(roots), formula, image: *captured };
             }
         }
     }
-    // Decision 0365: a walk past the recursive groups starts within its anchor, evaluated on the device (`label_formula`).
+    // Decision 0365: a walk starts within its anchor, evaluated on the device (`label_phase`). A recursive group's
+    // anchors read its own labels as every node (Q133), so they hold in every round: each is evaluated once, before
+    // the group's rounds (`Runner::anchors`).
     if anchors_on() {
         let _stage = crate::code_rule_dsl::prof::Stage::start("labels.plan.anchors");
         let mut anchored = HashMap::<(usize, Arc<DeviceFormula>), Arc<Roots>>::new();
-        for (_, levels) in steps.iter_mut().filter(|(recursive, _)| !recursive) {
+        for (recursive, levels) in steps.iter_mut() {
+            let own = if *recursive {
+                levels
+                    .iter()
+                    .flatten()
+                    .map(|pass| match pass {
+                        Pass::Program { target, .. }
+                        | Pass::Count { target, .. }
+                        | Pass::Complement { target, .. }
+                        | Pass::Pattern { target, .. }
+                        | Pass::Fact { target, .. }
+                        | Pass::Empty { target }
+                        | Pass::Formula { target, .. } => *target,
+                    })
+                    .collect::<BTreeSet<u32>>()
+            } else {
+                BTreeSet::new()
+            };
             for pass in levels.iter_mut().flatten() {
                 let (Pass::Program { program, roots, .. } | Pass::Count { program, roots, .. }) = pass else { continue };
-                let Some(formula) = device_anchor(program) else { continue };
+                let demand = demands.get(&(Arc::as_ptr(roots) as usize));
+                let Some(formula) = device_anchor(program, demand, &|label| own.contains(&u32::from(label))) else { continue };
                 let key = (Arc::as_ptr(roots) as usize, formula);
                 let with = anchored.entry(key.clone()).or_insert_with(|| {
                     let anchor = Some(key.1.clone());
@@ -249,20 +298,38 @@ fn metal<'a>(
     // Each clause's roots: its label's set bits, a word at a time, as each tape's local nodes.
     let found = (0..clauses.len())
         .map(|at| {
-            let row = &outcome.labels[(labels + at) * words..(labels + at + 1) * words];
+            let clause = clauses[at];
+            let row_of = |label: usize| &outcome.labels[label * words..(label + 1) * words];
+            // A clause that copies a label (`label_copy`): that label's row, where the clause is active, in its domain.
+            let copied = match clause_roots {
+                Some(ClauseRoots::Rule(active)) => clause.label_copy().map(|label| (index(label) as usize, active)),
+                _ => None,
+            };
+            let row = row_of(copied.map_or(labels + at, |(label, _)| label));
+            let within = match &clause.domain {
+                Domain::Label(label) if copied.is_some() => Some(row_of(index(*label) as usize)),
+                _ => None,
+            };
             tapes
                 .iter()
                 .zip(&bases)
-                .map(|(tape, &base)| {
-                    let (from, to) = (base as usize, base as usize + tape.transducer_len());
+                .enumerate()
+                .map(|(file, (tape, &base))| {
                     let mut set = BTreeSet::new();
+                    if copied.is_some_and(|(_, active)| !active[at][file]) {
+                        return set;
+                    }
+                    let (from, to) = (base as usize, base as usize + tape.transducer_len());
                     for w in from / 32..to.div_ceil(32) {
-                        let mut bits = row[w];
+                        let mut bits = row[w] & within.map_or(u32::MAX, |within| within[w]);
                         while bits != 0 {
                             let global = 32 * w + bits.trailing_zeros() as usize;
                             bits &= bits - 1;
                             if (from..to).contains(&global) {
-                                set.insert((global - from) as u32);
+                                let local = (global - from) as u32;
+                                if copied.is_none() || clause.domain.admits_kind(tape.transducer_kind(local)) {
+                                    set.insert(local);
+                                }
                             }
                         }
                     }
@@ -461,7 +528,9 @@ fn apart<'a>(
                             .collect::<Option<Vec<_>>>()
                     };
                     // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
-                    if !sweep_with(&levels, tape, sets, &texts, budget, w_cost.is_some())? {
+                    // The group's anchors read the tape's column sets (decision 0365, Q133): this sweep's own.
+                    let index = compile_sets::Index::default();
+                    if !sweep_with(&levels, tape, sets, &index, &texts, budget, w_cost.is_some())? {
                         return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
                     }
                 }

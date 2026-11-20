@@ -1,17 +1,25 @@
-//! A binary positive join projected across a hidden key. Keep correlated requests together.
-//! A frequently requested endpoint can share its side's witnesses across the requested pairs.
+//! Joins deferred to their readers' requests (decision 0506), on the version. A binary positive join projected
+//! across a hidden key (`wide(a, b) :- lhs(a, k), rhs(b, k)`) is driven by what its readers request: the pairs
+//! (or one endpoint) every reader binds become reader demand on it (`upstream::install_named`, `DEFERRED_PAIRS`);
+//! a request for one endpoint that is frequent shares its side's witnesses across the pairs requested (`share`);
+//! and a join its readers read broadly is kept as its two factors, each reduced by the other's keys, which meet in
+//! each reader (`file_local::factorize_intermediates`), its pairs cached while the factors' sizes allow.
 
+use super::{DEFERRED_PAIRS, PREFIX, Program, plain, rewritten, same, upstream};
+use crate::code_rule_dsl::logic::front::ast::AggOp;
+use crate::code_rule_dsl::logic::plan::body::atom_vars;
 use crate::code_rule_dsl::logic::profile::author_joins::{Access, Join};
-use super::{DEFERRED_PAIRS, PREFIX, atom, plain, upstream};
-use crate::code_rule_dsl::logic::front::{
-    AggOp, Atom, Literal, Program, Rule, Term, components_of,
-};
-use crate::code_rule_dsl::logic::plan::keeps;
-use crate::code_rule_dsl::typing::file_local;
+use crate::code_rule_dsl::logic::program_facts::Field;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as F;
+use crate::code_rule_dsl::logic::program_image::{AtomRef, CmpOp, Lit, RuleRef, T, TermRef, Version, t_of};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
+/// The requests of one endpoint past which its side's witnesses are shared (`share`).
 const SHARE_AFTER: i64 = 8;
 
+/// What the pass did: the relations driven by requested pairs, by one requested endpoint, kept as factors, with an
+/// endpoint's work shared; whether a pair cache was admitted; and each rewritten join for the authors' report.
 #[derive(Default)]
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct Plans {
     pub pairs: Vec<String>,
@@ -24,405 +32,465 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct Plans {
     pub author: Vec<Join>,
 }
 
-fn guard(rule: &Rule) -> Option<&Atom> {
-    let head = rule.head.rel.as_str();
-    rule.body.iter().find_map(|lit| match lit {
-        Literal::Atom(a)
-            if !a.neg
-                && !a.gated
-                && a.args == rule.head.args
-                && [PREFIX, upstream::PREFIX, DEFERRED_PAIRS]
-                    .iter()
-                    .any(|p| a.rel.strip_prefix(p) == Some(head)) =>
-        {
-            Some(a)
+/// The place in rule `r`'s body of its request guard: a positive atom of the head's own terms, of a demand relation
+/// named after the head.
+fn guard(v: &Version, r: RuleRef<'_>) -> Option<usize> {
+    let head = v.rel_name(r.head().rel());
+    let args: Vec<TermRef<'_>> = r.head().args().collect();
+    r.body().position(|l| match l.view() {
+        Lit::Atom(a) => {
+            let read: Vec<TermRef<'_>> = a.args().collect();
+            !a.neg()
+                && !a.gated()
+                && read.len() == args.len()
+                && read.iter().zip(&args).all(|(x, y)| same(*x, *y))
+                && [PREFIX, upstream::PREFIX, DEFERRED_PAIRS].iter().any(|p| v.rel_name(a.rel()).strip_prefix(p) == Some(head))
         }
-        _ => None,
+        _ => false,
     })
 }
 
-fn split(rule: &Rule) -> Option<(String, Vec<Vec<Literal>>)> {
-    let [Term::Var(a), Term::Var(b)] = rule.head.args.as_slice() else {
-        return None;
-    };
+/// A variable's name in rule `r`.
+fn var_name(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> Option<String> {
+    match t {
+        TermRef::Var(s) => Some(v.text(r.var(s)).to_owned()),
+        _ => None,
+    }
+}
+
+/// Rule `r` of two distinct head variables, of positive atoms over plain terms and comparisons other than
+/// equalities, split at a hidden key into two parts that each read it (`keeps::factors_without`, its request guard
+/// left out): the key's name and the parts' literals by place.
+fn split(v: &Version, r: RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
+    let head: Vec<TermRef<'_>> = r.head().args().collect();
+    let [TermRef::Var(a), TermRef::Var(b)] = head.as_slice() else { return None };
     if a == b
-        || !rule.body.iter().all(|l| match l {
-            Literal::Atom(a) => {
-                !a.neg && !a.gated && a.args.iter().all(|t| plain(t) || matches!(t, Term::Wild))
-            }
-            Literal::Cmp { l, r, op } => *op != "=" && plain(l) && plain(r),
+        || !r.body().all(|l| match l.view() {
+            Lit::Atom(at) => !at.neg() && !at.gated() && at.args().all(|t| plain(t) || matches!(t, TermRef::Wild)),
+            Lit::Cmp { l, op, r } => op != CmpOp::Eq && plain(l) && plain(r),
             _ => false,
         })
     {
         return None;
     }
-    let request = guard(rule);
-    let mut producer = rule.clone();
-    producer
-        .body
-        .retain(|lit| request.is_none_or(|g| lit.atom() != Some(g)));
-    let (key, parts) = keeps::factors(&producer)?;
-    (parts.len() == 2
-        && parts.iter().all(|part| {
-            part.iter()
-                .filter_map(Literal::atom)
-                .any(|a| a.vars().contains(&key))
-        }))
-    .then_some((key, parts))
+    let (key, parts) = crate::code_rule_dsl::logic::plan::keeps::factors_without(v, r, guard(v, r))?;
+    let lits: Vec<_> = r.body().collect();
+    let keyed = |part: &Vec<usize>| {
+        part.iter().any(|&i| matches!(lits[i].view(), Lit::Atom(a) if atom_vars(a).iter().any(|s| v.text(r.var(s)) == key)))
+    };
+    (parts.len() == 2 && parts.iter().all(keyed)).then_some((key, parts))
 }
 
-fn reader_binds(rule: &Rule, read: &Atom, cols: &[usize]) -> bool {
+/// Whether reader `rule` binds read `read`'s columns `cols` from elsewhere: each is plain, and its variables are all
+/// read by another positive atom of the rule (or it has none).
+fn reader_binds(v: &Version, rule: RuleRef<'_>, read: AtomRef<'_>, cols: &[usize]) -> bool {
+    let args: Vec<TermRef<'_>> = read.args().collect();
     let mut bound = BTreeSet::new();
     for &c in cols {
-        if !plain(&read.args[c]) {
-            return false;
-        }
-        read.args[c].vars(&mut bound);
+        let Some(t) = args.get(c).copied().filter(|t| plain(*t)) else { return false };
+        bound.extend(var_name(v, rule, t));
     }
+    let rel = v.rel_name(read.rel());
     bound.is_empty()
-        || rule.body.iter().any(|lit| {
-            matches!(lit, Literal::Atom(a)
-        if a.rel != read.rel && !a.neg && !a.gated && bound.is_subset(&a.vars()))
+        || rule.body().any(|l| match l.view() {
+            Lit::Atom(a) => {
+                let vars: BTreeSet<String> = atom_vars(a).iter().map(|s| v.text(rule.var(s)).to_owned()).collect();
+                v.rel_name(a.rel()) != rel && !a.neg() && !a.gated() && bound.is_subset(&vars)
+            }
+            _ => false,
         })
 }
 
-/// Whether a reader's request (`proof`, `rr_deferred_pairs_<rel>(k..) :- ..`) asks for every key the producer
-/// makes, so the request, a union over the readers, restricts nothing and costs a join of its own: each atom naming
-/// a key appears in the producer's rule too, at the key's columns and with its constants (the producer may hold more
+/// Whether a reader's request (`proof`, of `rr_deferred_pairs_<rel>(k..)`) asks for every key the producer makes,
+/// so the request, a union over the readers, restricts nothing and costs a join of its own: each atom naming a key
+/// appears in the producer's rule too, at the key's columns and with its constants (the producer may hold more
 /// constants), and every other literal is a positive atom of no constant, reached from those. `PT010(g, x) :-
 /// exc_call(c, "pytest.raises"), .., field(c, "function", g0), unparen(g0, g), text(g, x)` asks for `exc_call`'s
 /// every call through `field(c, "function", _)`, which `exc_call`'s rule reads: corpus0's request made 1.23 M rows of
-/// work to guard a join of 42 k (decision 0477). A cost guess, never a matter of rows: a join left as written is
+/// work to guard a join of 42 k (decision 0506). A cost guess, never a matter of rows: a join left as written is
 /// always right.
-fn void_request(p: &Program, rel: &str, cols: &[usize], proof: &Rule) -> bool {
-    let producers: Vec<&Rule> = p.rules.iter().filter(|r| r.head.rel == rel).collect();
-    let [producer] = producers.as_slice() else { return false };
-    let key: Vec<&str> = proof.head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
-    if key.len() != cols.len() {
+fn void_request(v: &Version, rel: &str, cols: &[usize], proof: &upstream::Proof) -> bool {
+    let mut producers = v.rules().filter(|r| v.rel_name(r.head().rel()) == rel);
+    let (Some(producer), None) = (producers.next(), producers.next()) else { return false };
+    let Some(reader) = v.rule(proof.rule) else { return false };
+    if proof.own {
         return false;
     }
-    // The producer's variable at each of the key's columns.
-    let own: Option<Vec<&str>> = cols.iter().map(|&c| match producer.head.args.get(c) { Some(Term::Var(v)) => Some(v.as_str()), _ => None }).collect();
-    let Some(own) = own else { return false };
-    let constant = |t: &Term| matches!(t, Term::Int(_) | Term::Str(_) | Term::Branded(_));
-    let covered = |a: &Atom| producer.body.iter().filter_map(Literal::atom).any(|b| {
-        !b.neg && b.rel == a.rel && b.args.len() == a.args.len() && a.args.iter().zip(&b.args).all(|(x, y)| match x {
-            Term::Var(v) if let Some(i) = key.iter().position(|k| *k == v.as_str()) => matches!(y, Term::Var(w) if w.as_str() == own[i]),
-            t if constant(t) => t == y,
-            _ => true,
+    let body: Vec<_> = reader.body().collect();
+    let Some(read) = body.get(proof.read).and_then(|l| l.atom()) else { return false };
+    fn args<'v>(a: AtomRef<'v>) -> Vec<TermRef<'v>> {
+        a.args().collect()
+    }
+    // The key's variables in the reader, and the producer's at the key's columns.
+    let at = |a: AtomRef<'_>| -> Option<Vec<_>> { let xs = args(a); cols.iter().map(|&c| xs.get(c).and_then(|t| t.var())).collect() };
+    let (Some(key), Some(own)) = (at(read), at(producer.head())) else { return false };
+    let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_));
+    let covered = |a: AtomRef<'_>| {
+        let xs = args(a);
+        producer.body().filter_map(|l| l.atom()).any(|b| {
+            let ys = args(b);
+            !b.neg() && v.rel_name(b.rel()) == v.rel_name(a.rel()) && ys.len() == xs.len() && xs.iter().zip(&ys).all(|(x, y)| match *x {
+                TermRef::Var(s) if let Some(i) = key.iter().position(|k| *k == s) => y.var() == Some(own[i]),
+                t if constant(t) => same(t, *y),
+                _ => true,
+            })
         })
-    });
+    };
     let mut keyed = false;
-    for l in &proof.body {
-        let Literal::Atom(a) = l else { return false };
-        if a.neg || a.gated {
+    for part in &proof.parts {
+        let super::Part::Lit(i) = *part else { return false };
+        let Lit::Atom(a) = body[i].view() else { return false };
+        if a.neg() || a.gated() {
             return false;
         }
-        if a.args.iter().any(|t| matches!(t, Term::Var(v) if key.contains(&v.as_str()))) {
+        let xs = args(a);
+        if xs.iter().any(|t| t.var().is_some_and(|s| key.contains(&s))) {
             if !covered(a) {
                 return false;
             }
             keyed = true;
-        } else if a.args.iter().any(|t| constant(t) || matches!(t, Term::Call(..))) {
+        } else if xs.iter().any(|t| constant(*t) || matches!(t, TermRef::Call(..))) {
             return false;
         }
     }
     keyed
 }
 
-/// Determine which restrictions the readers provide. Fanout sharing and small pair caches
-/// evaluate their size guards on the current relations.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn rewrite(
-    p: &mut Program,
-    adaptive: bool,
-    cache_pairs: bool,
-) -> Plans {
+/// A read of a relation: its rule, the literal's place, and whether it is a plain atom (not an aggregate's) and
+/// negated.
+struct Read {
+    rule: usize,
+    lit: usize,
+    atom: bool,
+    neg: bool,
+    gated: bool,
+}
+
+/// The program's version, made a whole `Arc` (the pass's input where nothing was made yet).
+fn current(p: &Program<'_>, input: &Arc<Version>) -> Arc<Version> {
+    p.made.clone().unwrap_or_else(|| Arc::clone(input))
+}
+
+/// `no_inline` on each of `rels`, the program's qualifiers kept.
+fn no_inline(p: &mut Program<'_>, rels: &BTreeSet<String>) -> Result<(), String> {
+    if rels.is_empty() {
+        return Ok(());
+    }
+    let mut qualifiers = p.f.qualifiers.clone();
+    for rel in rels {
+        qualifiers.entry(rel.clone()).or_default().insert("no_inline".to_owned());
+    }
+    let made = p.derive(&mut |_, _, _, _| Ok(false), &mut |_, b| {
+        use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
+        b.fields().set_field(Field::Qualifiers(&qualifiers));
+        Ok(())
+    })?;
+    p.set(made);
+    Ok(())
+}
+
+/// Version `input` with its joins deferred to their readers' requests (the module comment), and what was done.
+/// `adaptive`: an endpoint's work shared and pair caches admitted (`cache_pairs`); else the static rewrites alone.
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn defer(input: &Arc<Version>, adaptive: bool, cache_pairs: bool) -> Result<(Arc<Version>, Plans), String> {
+    let mut p = Program::of(input);
+    let plans = rewrite(&mut p, input, adaptive, cache_pairs)?;
+    Ok((current(&p, input), plans))
+}
+
+fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_pairs: bool) -> Result<Plans, String> {
     let mut plans = Plans::default();
-    let mut definitions = BTreeMap::<_, usize>::new();
-    let mut readers = BTreeMap::<_, Vec<_>>::new();
-    for (i, r) in p.rules.iter().enumerate() {
-        *definitions.entry(r.head.rel.clone()).or_default() += 1;
-        for (j, l) in r.body.iter().enumerate() {
-            if let Some(a) = l.atom() {
-                readers.entry(a.rel.clone()).or_default().push((i, j));
+    let v = p.v();
+    let rules: Vec<RuleRef<'_>> = v.rules().collect();
+    let head_of = |r: RuleRef<'_>| v.rel_name(r.head().rel()).to_owned();
+    let mut definitions = BTreeMap::<String, usize>::new();
+    let mut readers = BTreeMap::<String, Vec<Read>>::new();
+    for (i, r) in rules.iter().enumerate() {
+        *definitions.entry(head_of(*r)).or_default() += 1;
+        for (j, l) in r.body().enumerate() {
+            let read = match l.view() {
+                Lit::Atom(a) => Some((a, true)),
+                Lit::Agg { atom, .. } => Some((atom, false)),
+                _ => None,
+            };
+            if let Some((a, atom)) = read {
+                readers.entry(v.rel_name(a.rel()).to_owned()).or_default().push(Read { rule: i, lit: j, atom, neg: a.neg(), gated: a.gated() });
             }
         }
     }
-    // A connected-demand pass may already have restricted the producer. Include its final guard
-    // even if this pass finds no additional factorization.
+    let read_atom = |read: &Read| -> AtomRef<'_> {
+        match rules[read.rule].body().nth(read.lit).expect("a read's literal").view() {
+            Lit::Atom(a) => a,
+            Lit::Agg { atom, .. } => atom,
+            _ => unreachable!("a read"),
+        }
+    };
+    let columns = |rel: &str| p.columns(rel).unwrap_or_default();
+    // A connected-demand pass may already have restricted the producer: its final guard is reported even where this
+    // pass finds nothing more to do.
     let mut explained = BTreeSet::new();
-    for rule in &p.rules {
-        if let Some(request) = guard(rule)
-            && explained.insert(rule.head.rel.clone())
+    for r in &rules {
+        if let Some(at) = guard(v, *r)
+            && explained.insert(head_of(*r))
         {
+            let Some(Lit::Atom(request)) = r.body().nth(at).map(|l| l.view()) else { unreachable!("a guard") };
             plans.author.push(Join {
-                relation: rule.head.rel.to_string(),
-                access: Access::Requests { table: request.rel.to_string(), columns: p.decls[&rule.head.rel].iter().map(|c| c.0.to_string()).collect() },
+                relation: head_of(*r),
+                access: Access::Requests { table: v.rel_name(request.rel()).to_owned(), columns: columns(&head_of(*r)).into_iter().map(|c| c.0).collect() },
                 readers: Vec::new(),
                 placement: None,
             });
         }
     }
+    let tapes = F::tapes(v);
+    let shapes = F::shapes(v);
     let mut candidates = BTreeSet::new();
-    let mut guarded = Vec::new();
-    for (i, rule) in p.rules.iter().enumerate() {
-        let rel = rule.head.rel.as_str();
-        if rule.head.args.len() != 2
-            || rule.body.len() < 2
-            || !readers.contains_key(&rule.head.rel)
-            || !upstream::eligible(p, rel)
-            || p.qualifiers.get(rel).is_some_and(|q| !q.is_empty())
-            || p.tapes.contains_key(rel)
-            || p.demand.iter().any(|r| r == rel)
-            || p.shapes.iter().any(|s| s.head == rel || s.lit == rel)
-            || p.asked_by.values().flatten().any(|refs| refs.contains(rel))
+    let mut guarded: Vec<String> = Vec::new();
+    for r in &rules {
+        let rel = head_of(*r);
+        if r.head().args().count() != 2
+            || r.body().count() < 2
+            || !readers.contains_key(&rel)
+            || !upstream::eligible(p, &rel)
+            || p.f.qualifiers.get(&rel).is_some_and(|q| !q.is_empty())
+            || tapes.contains_key(&rel)
+            || p.f.demand.iter().any(|d| *d == rel)
+            || shapes.iter().any(|s| s.head == rel || s.lit == rel)
+            || p.f.asked_by.values().flatten().any(|refs| refs.contains(&rel))
         {
             continue;
         }
-        if let Some((key, parts)) = split(rule) {
-            if guard(rule).is_some() {
+        if split(v, *r).is_some() {
+            if guard(v, *r).is_some() {
                 if adaptive {
-                    guarded.push((i, key, parts));
+                    guarded.push(v.show_rule(*r));
                 }
-            } else if definitions[&rule.head.rel] == 1 {
-                candidates.insert(rule.head.rel.clone());
+            } else if definitions[&rel] == 1 {
+                candidates.insert(rel);
             }
         }
     }
     if candidates.is_empty() && guarded.is_empty() {
-        return plans;
+        return Ok(plans);
     }
-    let Ok(sccs) = components_of(p) else {
-        return plans;
-    };
-    let recursive: BTreeSet<_> = sccs
+    let Ok(sccs) = Program::components(v) else { return Ok(plans) };
+    let recursive: BTreeSet<String> = sccs
         .into_iter()
         .filter(|c| c.len() > 1)
         .flatten()
-        .chain(
-            p.rules
-                .iter()
-                .filter(|r| {
-                    r.body
-                        .iter()
-                        .any(|l| l.atom().is_some_and(|a| a.rel == r.head.rel))
-                })
-                .map(|r| r.head.rel.to_string()),
-        )
+        .chain(rules.iter().filter(|r| r.body().any(|l| matches!(l.view(), Lit::Atom(a) if a.rel() == r.head().rel()))).map(|r| head_of(*r)))
         .collect();
-    let mut pairs = Vec::new();
+    let mut pairs: Vec<(String, Vec<usize>, bool)> = Vec::new();
     let mut broad = BTreeSet::new();
-    let mut open_readers = BTreeMap::new();
+    let mut open_readers: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     for name in candidates {
-        let rel = name.as_str();
-        if recursive.contains(rel) {
+        if recursive.contains(&name) {
             continue;
         }
         let uses = &readers[&name];
+        let cols = columns(&name);
         let mut descriptions = BTreeSet::new();
-        for &(i, j) in uses {
-            let reader = &p.rules[i];
-            let read = reader.body[j].atom().unwrap();
-            let open: Vec<_> = (0..2).filter(|c| !reader_binds(reader, read, &[*c]))
-                .map(|c| p.decls[&name][c].0.as_str()).collect();
+        for read in uses {
+            let reader = rules[read.rule];
+            let open: Vec<&str> = (0..2).filter(|c| !reader_binds(v, reader, read_atom(read), &[*c])).map(|c| cols[c].0.as_str()).collect();
             if !open.is_empty() {
-                descriptions.insert((reader.head.rel.to_string(), format!("supplies no lookup value for {}", open.join(", "))));
+                descriptions.insert((head_of(reader), format!("supplies no lookup value for {}", open.join(", "))));
             }
         }
-        open_readers.insert(name.to_string(), descriptions.into_iter().collect::<Vec<_>>());
-        if uses
-            .iter()
-            .any(|&(i, j)| !matches!(&p.rules[i].body[j], Literal::Atom(a) if !a.gated))
-        {
+        open_readers.insert(name.clone(), descriptions.into_iter().collect());
+        if uses.iter().any(|read| !read.atom || read.gated) {
             continue;
         }
-        let mask = [&[0, 1][..], &[0][..], &[1][..]].into_iter().find(|cols| {
-            uses.iter()
-                .all(|&(i, j)| reader_binds(&p.rules[i], p.rules[i].body[j].atom().unwrap(), cols))
-        });
+        let mask = [&[0, 1][..], &[0][..], &[1][..]].into_iter().find(|cols| uses.iter().all(|read| reader_binds(v, rules[read.rule], read_atom(read), cols)));
+        let positive = uses.iter().all(|read| !read.neg);
         if let Some(cols) = mask {
-            let positive = uses.iter().all(|&(i, j)| !p.rules[i].body[j].atom().unwrap().neg);
-            pairs.push((name, cols, positive));
-        } else if uses
-            .iter()
-            .all(|&(i, j)| !p.rules[i].body[j].atom().unwrap().neg)
-        {
-            broad.insert(rel.to_owned());
+            pairs.push((name, cols.to_vec(), positive));
+        } else if positive {
+            broad.insert(name);
         }
     }
-    // A producer the chunks make (`file_local::split`) restricted by a request a cross-file reader states: the
+    // A producer the chunks make (the file-local split) restricted by a request a cross-file reader states: the
     // request's rows are the chunk's own, so a reader joining another file's rows asks nothing of this one
     // (`remark(x, ..) :- noted(c, x), defined(_, x), ..`: b.py's comment names a.py's function, and a.py's chunk,
     // asked only by its own comments, made no `defined` row). Such a join is left as written.
     if !pairs.is_empty() {
-        let local = file_local::split(p);
+        let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(input)?;
+        let (local, _) = split.found();
         pairs.retain(|(name, _, _)| {
-            let cross = local.contains(name.as_str()) && readers[name].iter().any(|&(i, _)| !local.contains(p.rules[i].head.rel.as_str()));
+            let cross = local.contains(name.as_str()) && readers[name].iter().any(|read| !local.contains(head_of(rules[read.rule]).as_str()));
             if cross {
-                plans.cross.push(name.to_string());
+                plans.cross.push(name.clone());
             }
             !cross
         });
     }
-    // Inserting a guard shifts the literal positions. Classify all reads before changing any rule.
-    for (name, cols, positive) in pairs {
-        let rel = name.as_str();
-        if upstream::install_named(p, rel, cols, &BTreeSet::new(), false, DEFERRED_PAIRS, &|p, proofs| !proofs.iter().any(|r| void_request(p, rel, cols, r))) {
-            p.qualifiers
-                .entry(rel.to_owned())
-                .or_default()
-                .insert("no_inline".into());
-            plans.author.push(Join {
-                relation: rel.to_owned(),
-                access: Access::Requests { table: format!("{DEFERRED_PAIRS}{rel}"), columns: cols.iter().map(|&c| p.decls[rel][c].0.to_string()).collect() },
-                readers: open_readers.remove(rel).unwrap_or_default(),
-                placement: None,
-            });
-            if cols.len() == 1 {
-                plans.one_sided.push(format!("{rel} column {}", cols[0]));
-                // A request for one endpoint can still match the entire opposite factor.
-                // Keep its demand guard on that factor and let positive readers consume the join directly.
-                if adaptive && positive { broad.insert(rel.to_owned()); }
-                continue;
+    // Every read is classified before any rule changes.
+    let mut inline_off = BTreeSet::new();
+    for (rel, cols, positive) in pairs {
+        if !upstream::install_named(p, &rel, &cols, &BTreeSet::new(), false, DEFERRED_PAIRS, &|v, proofs| !proofs.iter().any(|r| void_request(v, &rel, &cols, r)))? {
+            continue;
+        }
+        inline_off.insert(rel.clone());
+        let names = p.columns(&rel).unwrap_or_default();
+        plans.author.push(Join {
+            relation: rel.clone(),
+            access: Access::Requests { table: format!("{DEFERRED_PAIRS}{rel}"), columns: cols.iter().map(|&c| names[c].0.clone()).collect() },
+            readers: open_readers.remove(&rel).unwrap_or_default(),
+            placement: None,
+        });
+        if let [c] = cols.as_slice() {
+            plans.one_sided.push(format!("{rel} column {c}"));
+            // A request for one endpoint can still match the whole of the other factor: its demand guard stays on
+            // that factor, and positive readers read the join's factors directly.
+            if adaptive && positive {
+                broad.insert(rel);
             }
-            plans.pairs.push(rel.to_owned());
-            if adaptive {
-                let i = p.rules.iter().position(|r| r.head.rel == name).unwrap();
-                if let Some((key, parts)) = split(&p.rules[i]) {
-                    guarded.push((i, key, parts));
-                }
+            continue;
+        }
+        plans.pairs.push(rel.clone());
+        if adaptive {
+            let v = p.v();
+            if let Some(r) = v.rules().find(|r| v.rel_name(r.head().rel()) == rel)
+                && split(v, r).is_some()
+            {
+                guarded.push(v.show_rule(r));
             }
         }
     }
-    for (i, key, parts) in guarded {
-        if !recursive.contains(p.rules[i].head.rel.as_str()) {
-            if let Some(name) = share(p, i, &key, parts) {
-                plans.shared.push(name);
-            }
+    no_inline(p, &inline_off)?;
+    for shown in guarded {
+        let v = p.v();
+        let Some(r) = v.rules().find(|r| v.show_rule(*r) == shown) else { continue };
+        if recursive.contains(v.rel_name(r.head().rel())) {
+            continue;
+        }
+        if let Some(name) = share(p, &shown)? {
+            plans.shared.push(name);
         }
     }
-    let (factors, choices) = file_local::factorize_intermediates(p, &broad, adaptive && cache_pairs);
-    plans.factors = factors;
-    plans.cached = choices.values().any(Option::is_some);
-    for (relation, cache) in choices {
-        let readers = open_readers.remove(&relation).unwrap_or_default();
-        plans.author.push(Join { relation, access: Access::Factors { cache }, readers, placement: None });
+    if let Some((made, factors, choices)) = crate::code_rule_dsl::typing::file_local::factorize_intermediates(&current(p, input), &broad, adaptive && cache_pairs)? {
+        p.set(made);
+        plans.factors = factors;
+        plans.cached = choices.values().any(Option::is_some);
+        for (relation, cache) in choices {
+            let readers = open_readers.remove(&relation).unwrap_or_default();
+            plans.author.push(Join { relation, access: Access::Factors { cache }, readers, placement: None });
+        }
     }
     for (relation, readers) in open_readers {
         if !readers.is_empty() {
             plans.author.push(Join { relation, access: Access::Full, readers, placement: None });
         }
     }
-    plans
+    Ok(plans)
 }
 
-fn share(p: &mut Program, i: usize, key: &str, parts: Vec<Vec<Literal>>) -> Option<String> {
-    let rule = &p.rules[i];
-    // Share a compound calculation. A single indexed input already answers this probe in place.
-    let (side, part) = parts
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, part)| part.len())?;
+/// The guarded rule shown as `shown` with a frequently requested endpoint's work shared: the larger part's
+/// witnesses for each endpoint requested at least `SHARE_AFTER` times kept once (`…_factor(endpoint, witness)`, for
+/// the endpoints in `…_hot`), and those requests answered from them; the rule itself answers the rest. A part of one
+/// literal is an indexed input that answers the probe in place already. The line for the profile, or `None`.
+fn share(p: &mut Program<'_>, shown: &str) -> Result<Option<String>, String> {
+    let v = p.v();
+    let Some(r) = v.rules().find(|r| v.show_rule(*r) == shown) else { return Ok(None) };
+    let (Some(request_at), Some((key, parts))) = (guard(v, r), split(v, r)) else { return Ok(None) };
+    let Some((side, part)) = parts.iter().enumerate().max_by_key(|(_, part)| part.len()) else { return Ok(None) };
     if part.len() < 2 {
-        return None;
+        return Ok(None);
     }
-    let vars: BTreeSet<_> = part.iter().flat_map(Literal::vars).collect();
-    let col = rule
-        .head
-        .args
-        .iter()
-        .position(|t| matches!(t, Term::Var(v) if vars.contains(v.as_str())))?;
-    let endpoint = rule.head.args[col].clone();
-    let key_term = Term::Var(key.into());
-    let key_ty = part.iter().filter_map(Literal::atom).find_map(|a| {
-        let c = a.args.iter().position(|t| *t == key_term)?;
-        p.decls.get(&a.rel)?.get(c).map(|(_, ty)| ty.clone())
-    })?;
-    let endpoint_col = (
-        "endpoint".into(),
-        p.decls.get(&rule.head.rel)?.get(col)?.1.clone(),
-    );
-    let request = guard(rule)?.clone();
-    let mut args = [Term::Wild, Term::Wild];
-    args[col] = endpoint.clone();
-    let group = atom(request.rel.to_string(), &args);
-    let base = file_local::helper_name(
+    let lits: Vec<_> = r.body().collect();
+    let names = |l: usize| crate::code_rule_dsl::logic::plan::body::lit_vars(lits[l]).iter().map(|s| v.text(r.var(s)).to_owned()).collect::<BTreeSet<_>>();
+    let vars: BTreeSet<String> = part.iter().flat_map(|&l| names(l)).collect();
+    let head: Vec<TermRef<'_>> = r.head().args().collect();
+    let Some(col) = head.iter().position(|t| var_name(v, r, *t).is_some_and(|x| vars.contains(&x))) else { return Ok(None) };
+    let endpoint = head[col];
+    // The key's term, and its column's type, from the part's first atom that reads it.
+    let Some((key_term, key_ty)) = part.iter().find_map(|&l| {
+        let Lit::Atom(a) = lits[l].view() else { return None };
+        let c = a.args().position(|t| var_name(v, r, t).as_deref() == Some(key.as_str()))?;
+        let ty = F::columns_of(v, v.rel_name(a.rel()))?.get(c)?.1.clone();
+        Some((a.args().nth(c)?, ty))
+    }) else {
+        return Ok(None);
+    };
+    let rel = v.rel_name(r.head().rel()).to_owned();
+    let Some(endpoint_ty) = p.columns(&rel).and_then(|c| c.get(col).map(|c| c.1.clone())) else { return Ok(None) };
+    let Lit::Atom(request) = lits[request_at].view() else { return Ok(None) };
+    let request_rel = v.rel_name(request.rel()).to_owned();
+    let declared: BTreeSet<String> = F::declared_names(v).into_iter().collect();
+    let base = crate::code_rule_dsl::typing::file_local::helper_name(
         "rr_deferred_",
-        &rule.head.rel,
-        &rule.to_string(),
-        |n| {
-            ["hot", "factor"]
-                .iter()
-                .any(|suffix| p.decls.contains_key(format!("{n}_{suffix}").as_str()))
-        },
+        &rel,
+        shown,
+        |n| ["hot", "factor"].iter().any(|s| declared.contains(&format!("{n}_{s}"))),
         &mut Default::default(),
     );
-    let hot = atom(format!("{base}_hot"), std::slice::from_ref(&endpoint));
-    let factor = atom(format!("{base}_factor"), &[endpoint.clone(), key_term]);
+    let (hot, factor) = (format!("{base}_hot"), format!("{base}_factor"));
+    let taken: BTreeSet<String> = (0..lits.len()).flat_map(names).collect();
     let mut count = "rr_fanout".to_owned();
-    while hot.vars().contains(&count) {
+    while taken.contains(&count) {
         count.push('_');
     }
-    let hot_rule = Rule {
-        head: hot.clone(),
-        body: [
-            Literal::Atom(group.clone()),
-            Literal::Agg {
-                var: count.clone(),
-                op: AggOp::Count,
-                over: None,
-                atom: group,
-            },
-            Literal::Cmp {
-                l: Term::Var(count.into()),
-                op: ">=",
-                r: Term::Int(SHARE_AFTER),
-            },
-        ]
-        .into(),
-    };
-    let mut materialize = vec![Literal::Atom(hot.clone())];
-    materialize.extend(part.iter().cloned());
-    let mut use_factor = vec![Literal::Atom(request), Literal::Atom(factor.clone())];
-    use_factor.extend(parts[1 - side].iter().cloned());
-    let hot_answer = Rule {
-        head: rule.head.clone(),
-        body: use_factor.into(),
-    };
-    let label = format!("{} column {} ({} literals)", rule.head.rel, col, part.len());
-    p.decls
-        .insert(hot.rel.clone(), [endpoint_col.clone()].into());
-    p.decls.insert(
-        factor.rel.clone(),
-        [endpoint_col, ("witness".into(), key_ty)].into(),
-    );
-    for a in [&hot, &factor] {
-        p.qualifiers
-            .entry(a.rel.to_string())
-            .or_default()
-            .insert("no_inline".to_owned());
+    let label = format!("{rel} column {col} ({} literals)", part.len());
+    let other = parts[1 - side].clone();
+    let part = part.clone();
+    let id = r.id();
+    let mut qualifiers = p.f.qualifiers.clone();
+    for n in [&hot, &factor] {
+        qualifiers.entry(n.clone()).or_default().insert("no_inline".to_owned());
     }
-    let mut cold = hot;
-    cold.neg = true;
-    p.rules[i].body.push(Literal::Atom(cold));
-    p.rules.extend([
-        hot_rule,
-        Rule {
-            head: factor,
-            body: materialize.into(),
+    let made = p.derive(
+        &mut |first, v, r, b| {
+            if r.id() != id {
+                return Ok(false);
+            }
+            // The rule answers the endpoints not hot.
+            let mut rb = rewritten(first, v, r, b);
+            for l in r.body() {
+                rb = rb.lit(v, r, l);
+            }
+            rb.not(hot.as_str(), &[t_of(v, r, endpoint)]).finish().map(|_| true)
         },
-        hot_answer,
-    ]);
-    Some(label)
+        &mut |v, b| {
+            use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
+            let r = v.rule(id).expect("the shared rule");
+            let lits: Vec<_> = r.body().collect();
+            let e = t_of(v, r, endpoint);
+            b.fields().declare(&hot, &[("endpoint", endpoint_ty.as_str())]);
+            b.fields().declare(&factor, &[("endpoint", endpoint_ty.as_str()), ("witness", key_ty.as_str())]);
+            b.fields().set_field(Field::Qualifiers(&qualifiers));
+            // hot(e) :- request(…e…), n = count : request(…e…), n >= SHARE_AFTER.
+            let mut group = vec![T::Wild, T::Wild];
+            group[col] = e.clone();
+            b.rule()
+                .head(hot.as_str(), std::slice::from_ref(&e))
+                .atom(request_rel.as_str(), &group)
+                .agg(T::Var(&count), &AggOp::Count, None, request_rel.as_str(), &group)
+                .cmp(T::Var(&count), CmpOp::Ge, T::Int(SHARE_AFTER))
+                .finish()?;
+            // factor(e, k) :- hot(e), the part.
+            let mut rb = b.rule().head(factor.as_str(), &[e.clone(), t_of(v, r, key_term)]).atom(hot.as_str(), std::slice::from_ref(&e));
+            for &l in &part {
+                rb = rb.lit(v, r, lits[l]);
+            }
+            rb.finish()?;
+            // The rule's own head, from its request, the endpoint's witnesses and the other part.
+            let mut rb = b.rule().head_from(v, r, r.head()).lit(v, r, lits[request_at]).atom(factor.as_str(), &[e.clone(), t_of(v, r, key_term)]);
+            for &l in &other {
+                rb = rb.lit(v, r, lits[l]);
+            }
+            rb.finish()?;
+            Ok(())
+        },
+    )?;
+    p.set(made);
+    Ok(Some(label))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code_rule_dsl::logic::{
-        plan::{corpus, output::Outputs},
-        rr::parse,
-    };
+    use crate::code_rule_dsl::logic::plan::{corpus, output::Outputs};
+    use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut as _, ProgramFields as _};
+    use crate::code_rule_dsl::logic::rr::parse_version;
     use crate::code_rule_dsl::typing::file_local::Binding;
 
     const SOURCE: &str = "
@@ -440,29 +508,29 @@ mod tests {
         request(3,2). request(1,3). request(1,7).
     ";
 
-    fn execute(p: &Program, case: &str) -> BTreeMap<String, Vec<Vec<String>>> {
+    /// `v` with `more` outputs too.
+    fn with_outputs(v: &Arc<Version>, more: &[String]) -> Arc<Version> {
+        let mut outputs = v.output_names();
+        outputs.extend(more.iter().cloned());
+        let mut b = v.builder();
+        b.fields().set_outputs(&outputs);
+        b.finish_overlay().unwrap()
+    }
+
+    /// The rows of each of `v`'s outputs, sorted, from a run of it.
+    fn execute(v: &Arc<Version>, case: &str) -> BTreeMap<String, Vec<Vec<String>>> {
         let root = crate::code_rule_dsl::fixtures::temp().with_extension(case);
         std::fs::create_dir_all(&root).unwrap();
         let out = root.join("out");
-        corpus::run_read(
-            p,
-            &root,
-            &out,
-            "program",
-            Binding::Cpu,
-            4096,
-            &Default::default(),
-            &serde_json::Value::Null,
-        )
-        .unwrap();
+        corpus::run_read(v, &root, &out, "program", Binding::Cpu, 4096, &Default::default(), &serde_json::Value::Null).unwrap();
         let outputs = Outputs::open(&out).unwrap();
-        let rows = p
-            .outputs
-            .iter()
+        let rows = v
+            .output_names()
+            .into_iter()
             .map(|rel| {
-                let mut rows = outputs.get(rel).map(|r| r.shown()).unwrap_or_default();
+                let mut rows = outputs.get(&rel).map(|r| r.shown()).unwrap_or_default();
                 rows.sort();
-                (rel.clone(), rows)
+                (rel, rows)
             })
             .collect();
         drop(outputs);
@@ -470,9 +538,13 @@ mod tests {
         rows
     }
 
+    fn declared(v: &Version, f: impl Fn(&str) -> bool) -> Option<String> {
+        v.declared_names().into_iter().find(|r| f(r))
+    }
+
     #[test]
     fn hot_and_cold_requests_share_only_their_own_answers() {
-        let mut p = parse(&format!(
+        let v = parse_version(&format!(
             "{SOURCE}
             .decl yes(a: number, b: number)
             .decl missing(a: number, b: number)
@@ -482,24 +554,13 @@ mod tests {
         "
         ))
         .unwrap();
-        let expected = execute(&p, "deferred-control");
-        let plans = rewrite(&mut p, true, true);
+        let expected = execute(&v, "deferred-control");
+        let (made, plans) = defer(&v, true, true).unwrap();
         assert_eq!(plans.pairs, ["wide"]);
         assert_eq!(plans.shared.len(), 1);
-        let hot = p
-            .decls
-            .keys()
-            .find(|r| r.ends_with("_hot"))
-            .unwrap()
-            .to_string();
-        let factor = p
-            .decls
-            .keys()
-            .find(|r| r.ends_with("_factor"))
-            .unwrap()
-            .to_string();
-        p.outputs.extend([hot.clone(), factor.clone()]);
-        let mut actual = execute(&p, "deferred-adaptive");
+        let hot = declared(&made, |r| r.ends_with("_hot")).unwrap();
+        let factor = declared(&made, |r| r.ends_with("_factor")).unwrap();
+        let mut actual = execute(&with_outputs(&made, &[hot.clone(), factor.clone()]), "deferred-adaptive");
         assert_eq!(actual.remove(&hot).unwrap(), [["1"]]);
         assert_eq!(actual.remove(&factor).unwrap(), [["1", "10"], ["1", "20"]]);
         assert_eq!(actual, expected);
@@ -509,7 +570,7 @@ mod tests {
 
     #[test]
     fn broad_readers_share_reduced_factors_and_fresh_witnesses() {
-        let mut p = parse(&format!(
+        let v = parse_version(&format!(
             "{SOURCE}
             .decl pairs(a: number, b: number)
             .decl diagonal(a: number)
@@ -519,32 +580,36 @@ mod tests {
         "
         ))
         .unwrap();
-        let expected = execute(&p, "deferred-broad-control");
-        let plans = rewrite(&mut p, true, true);
+        let expected = execute(&v, "deferred-broad-control");
+        let (made, plans) = defer(&v, true, true).unwrap();
         assert_eq!(plans.factors.len(), 1);
-        assert!(!p.decls.contains_key("wide"));
-        assert_eq!(execute(&p, "deferred-broad"), expected);
+        assert!(made.columns_of("wide").is_none());
+        assert_eq!(execute(&made, "deferred-broad"), expected);
         assert_eq!(expected["pairs"].len(), 3);
     }
 
     #[test]
     fn one_requested_endpoint_can_stream_the_other_factor() {
-        let mut p = parse(&format!("{SOURCE}
+        let v = parse_version(&format!(
+            "{SOURCE}
             .decl selected(a: number,b: number)
             .output selected
             selected(a,b) :- enabled(a), wide(a,b).
-        ")).unwrap();
-        let plans = rewrite(&mut p, true, true);
+        "
+        ))
+        .unwrap();
+        let (made, plans) = defer(&v, true, true).unwrap();
         assert_eq!(plans.one_sided, ["wide column 0"]);
         assert_eq!(plans.factors.len(), 1);
-        assert!(!p.decls.contains_key("wide"));
-        assert_eq!(execute(&p, "stream-endpoint")["selected"], [["1", "1"], ["2", "1"]]);
+        assert!(made.columns_of("wide").is_none());
+        assert_eq!(execute(&made, "stream-endpoint")["selected"], [["1", "1"], ["2", "1"]]);
     }
 
     #[test]
     fn reused_product_cache_has_an_exact_witness_limit() {
         for size in [64, 65] {
-            let mut src = String::from("
+            let mut src = String::from(
+                "
                 .decl lhs(a: number, k: number)
                 .decl rhs(b: number, k: number)
                 .decl wide(a: number, b: number)
@@ -554,18 +619,22 @@ mod tests {
                 wide(a,b) :- lhs(a,k), rhs(b,k).
                 lefts(a) :- wide(a,_).
                 rights(b) :- wide(_,b).
-            ");
-            for n in 0..size { src.push_str(&format!("lhs({n},0).\n")); }
-            for n in 0..64 { src.push_str(&format!("rhs({n},0).\n")); }
-            let mut p = parse(&src).unwrap();
-            let plan = rewrite(&mut p, true, true);
-            assert_eq!(plan.factors.len(), 1);
-            let guard = p.nullary.iter().find(|r| r.starts_with("rr_pair_cache_")).unwrap();
-            assert_eq!(p.decls[guard.as_str()].len(), 1);
-            assert!(p.rules.iter().any(|r| r.head.rel == guard.as_str() && r.head.args.as_slice() == [Term::Int(1)]));
-            let pairs = p.decls.keys().find(|r| r.starts_with("rr_pair_cache_") && r.ends_with("_pairs")).unwrap().to_string();
-            p.outputs.push(pairs.clone());
-            let rows = execute(&p, &format!("bounded-pairs-{size}"));
+            ",
+            );
+            for n in 0..size {
+                src.push_str(&format!("lhs({n},0).\n"));
+            }
+            for n in 0..64 {
+                src.push_str(&format!("rhs({n},0).\n"));
+            }
+            let v = parse_version(&src).unwrap();
+            let (made, plans) = defer(&v, true, true).unwrap();
+            assert_eq!(plans.factors.len(), 1);
+            let guard = made.nullary().into_iter().find(|r| r.starts_with("rr_pair_cache_")).unwrap();
+            assert_eq!(made.columns_of(&guard).unwrap().len(), 1);
+            assert!(made.rules().any(|r| made.rel_name(r.head().rel()) == guard && matches!(r.head().args().collect::<Vec<_>>()[..], [TermRef::Int(1)])));
+            let pairs = declared(&made, |r| r.starts_with("rr_pair_cache_") && r.ends_with("_pairs")).unwrap();
+            let rows = execute(&with_outputs(&made, std::slice::from_ref(&pairs)), &format!("bounded-pairs-{size}"));
             assert_eq!(rows[&pairs].len(), if size == 64 { 4096 } else { 0 });
             let expected = |n| (0..n).map(|i: usize| vec![i.to_string()]).collect::<BTreeSet<_>>();
             assert_eq!(rows["lefts"].iter().cloned().collect::<BTreeSet<_>>(), expected(size));
@@ -575,7 +644,7 @@ mod tests {
 
     /// A reused product whose readers, or the rules over them, read an answer only a node's document gives (`value`)
     /// is factorized but not cached: a cache's readers are the cross-file part's, which has no documents to answer
-    /// it from. Decided from the program, so a run is never prepared again to find it (decision 0477).
+    /// it from. Decided from the program, so a run is never prepared again to find it (decision 0506).
     #[test]
     fn a_product_read_with_a_documents_answer_is_not_cached() {
         let src = |reader: &str| format!("
@@ -593,10 +662,10 @@ mod tests {
             over(a) :- lefts(a).
         ");
         let cached = |reader: &str| {
-            let mut p = parse(&src(reader)).unwrap();
-            let plan = rewrite(&mut p, true, true);
+            let v = parse_version(&src(reader)).unwrap();
+            let (made, plan) = defer(&v, true, true).unwrap();
             assert_eq!(plan.factors.len(), 1, "{reader}: factorized");
-            p.nullary.iter().any(|r| r.starts_with("rr_pair_cache_"))
+            made.nullary().into_iter().any(|r| r.starts_with("rr_pair_cache_"))
         };
         assert!(cached("lefts(a) :- wide(a,_)."), "a plain reader keeps its cache");
         assert!(!cached("lefts(a) :- wide(a,_), value(a, _)."), "a reader of `value`");
@@ -609,7 +678,7 @@ mod tests {
     #[test]
     fn a_cross_file_reader_does_not_restrict_a_file_local_producer() {
         let deferred = |reader: &str| {
-            let mut p = parse(&format!(r#"
+            let v = parse_version(&format!(r#"
 .decl kind(n: node, k: symbol)
 .decl field(n: node, f: symbol, c: node)
 .decl text(n: node, x: symbol)
@@ -625,8 +694,8 @@ noted(c, x) :- comment(c, x).
 {reader}
 .output remark
 "#)).unwrap();
-            let plan = rewrite(&mut p, true, true);
-            (p.decls.keys().any(|r| r.starts_with(DEFERRED_PAIRS)), plan.cross)
+            let (made, plan) = defer(&v, true, true).unwrap();
+            (declared(&made, |r| r.starts_with(DEFERRED_PAIRS)).is_some(), plan.cross)
         };
         assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(_, x), line(c, l), col(c, k)."), (false, vec!["defined".to_owned()]), "across files");
         assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), line(c, l), col(c, k)."), (true, Vec::new()), "within one document");
@@ -638,7 +707,7 @@ noted(c, x) :- comment(c, x).
     #[test]
     fn a_reader_asking_for_every_key_leaves_the_join_as_written() {
         let requested = |readers: &str| {
-            let mut p = parse(&format!(r#"
+            let v = parse_version(&format!(r#"
 .decl kind(n: node, k: symbol)
 .decl field(n: node, f: symbol, c: node)
 .decl text(n: node, x: symbol)
@@ -652,8 +721,8 @@ a(c) :- marked(c), exc_call(c, _).
 {readers}
 .output a, b
 "#)).unwrap();
-            rewrite(&mut p, true, true);
-            p.decls.contains_key(format!("{DEFERRED_PAIRS}exc_call").as_str())
+            let (_, plans) = defer(&v, true, true).unwrap();
+            plans.author.iter().any(|j| j.relation == "exc_call" && matches!(j.access, Access::Requests { .. }))
         };
         assert!(requested("b(x) :- marked(c), exc_call(c, \"p\"), field(c, \"body\", g), text(g, x)."), "every reader narrows the calls");
         assert!(!requested("b(x) :- exc_call(c, \"p\"), field(c, \"function\", g), text(g, x)."), "b asks for every call");
@@ -662,19 +731,11 @@ a(c) :- marked(c), exc_call(c, _).
 
     #[test]
     fn aggregate_recursive_and_open_negative_readers_keep_their_relation() {
-        for reader in [
-            "out(a) :- enabled(a), !wide(_,_).",
-            "out(a) :- a = count : { wide(_,_) }.",
-            "wide(a,b) :- wide(a,k), rhs(b,k). out(a) :- wide(a,_).",
-        ] {
-            let mut p = parse(&format!(
-                "{SOURCE} .decl out(a: number)\n.output out\n{reader}"
-            ))
-            .unwrap();
-            let before = p.rules.clone();
-            let plans = rewrite(&mut p, true, true);
+        for reader in ["out(a) :- enabled(a), !wide(_,_).", "out(a) :- a = count : { wide(_,_) }.", "wide(a,b) :- wide(a,k), rhs(b,k). out(a) :- wide(a,_)."] {
+            let v = parse_version(&format!("{SOURCE} .decl out(a: number)\n.output out\n{reader}")).unwrap();
+            let (made, plans) = defer(&v, true, true).unwrap();
             assert!(plans.pairs.is_empty() && plans.factors.is_empty() && plans.shared.is_empty());
-            assert_eq!(p.rules, before);
+            assert_eq!(made.digest(), v.digest(), "{}", made.show());
         }
     }
 }

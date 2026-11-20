@@ -1,7 +1,7 @@
-//! `.rdl` text to `.rr` text, comments and line breaks kept: how the engine's earlier dialect moved to Soufflé form
+//! `.rdl` text to `.rerail` text, comments and line breaks kept: how the engine's earlier dialect moved to Soufflé form
 //! (`docs/rule-syntax/ALIGNMENT.md`, the wolfeel row). Each statement is rewritten in place:
 //!
-//! | `.rdl`                                   | `.rr`                                                      |
+//! | `.rdl`                                   | `.rerail`                                                      |
 //! |------------------------------------------|------------------------------------------------------------|
 //! | `$x`                                     | `x` (`count_` where the name is a keyword)                 |
 //! | `int`, `sym`                             | `number`, `symbol`                                         |
@@ -9,6 +9,7 @@
 //! | `.decl r(k: t; v: sym) merge @f widen 8` | `.lattice f<symbol> { Lub -> @f }` and `.decl r(k: t, v: f<>) widen 8` |
 //! | `.demand a, b`                           | `.pragma "magic-transform" "a, b"`                         |
 //! | `.kindset k = "a" \| "b"`                | `.decl k(kind: symbol)` and `k("a"). k("b").`              |
+//! | `.layout r fanout(q -> v, few)`          | the same                                                   |
 //! | `@prefix($s, "_")`, `!@prefix(…)`        | `prefix("_", s)`, `!prefix("_", s)` (pattern first)        |
 //! | `@glob($s, {"a", "b"})`                  | `(glob("a", s) ; glob("b", s))`                            |
 //! | `!@glob($s, {"a", "b"})`                 | `!glob("a", s), !glob("b", s)`                             |
@@ -39,7 +40,7 @@ enum Tok {
 
 const PUNCT: [&str; 22] = [":-", "!=", "<=", ">=", "(", ")", ",", ".", ";", ":", "=", "<", ">", "!", "{", "}", "|", "@", "*", "[", "]", "-"];
 
-/// Names that are words of `.rr` where a term may stand.
+/// Names that are words of `.rerail` where a term may stand.
 const KEYWORDS: [&str; 12] = ["count", "sum", "min", "max", "mean", "join", "top", "by", "sep", "must", "may", "nil"];
 
 /// The `.rdl` tokens, as `front` reads them, with their byte ranges.
@@ -104,7 +105,7 @@ fn comment_vars(gap: &str) -> String {
         };
         out.push_str(&line[..at]);
         let mut tick = false;
-        let b = line[at..].as_bytes();
+        let b = &line.as_bytes()[at..];
         let text = &line[at..];
         let mut i = 0;
         while i < b.len() {
@@ -144,11 +145,11 @@ struct Translator<'s> {
     lattices: BTreeSet<String>,
 }
 
-/// The built-in constraints of `.rr`: a relation of the same name is renamed with a trailing `_`.
+/// The built-in constraints of `.rerail`: a relation of the same name is renamed with a trailing `_`.
 pub(super) const RESERVED: [&str; 14] =
     ["glob", "iglob", "prefix", "iprefix", "suffix", "isuffix", "contains", "icontains", "word", "iword", "match", "match_all", "match_group", "split_dot"];
 
-/// A relation's `.rr` name.
+/// A relation's `.rerail` name.
 pub fn relation(r: &str) -> String {
     if RESERVED.contains(&r) { format!("{r}_") } else { r.to_owned() }
 }
@@ -174,9 +175,9 @@ impl T {
             T::Str(s) => quote(s),
             T::Top => "top".to_owned(),
             T::Name(n) => n.clone(),
-            T::Call(f, _) if is_test(f) => return Err(Error::Syntax(format!("the text test @{f} as a value: no .rr form"))),
+            T::Call(f, _) if is_test(f) => return Err(Error::Syntax(format!("the text test @{f} as a value: no .rerail form"))),
             T::Call(f, args) => format!("@{}({})", if f == "cat" { "dot" } else { f }, list(args)?),
-            T::Set(_) => return Err(Error::Syntax("a set outside a text test: no .rr form".to_owned())),
+            T::Set(_) => return Err(Error::Syntax("a set outside a text test: no .rerail form".to_owned())),
         })
     }
 }
@@ -185,7 +186,7 @@ fn list(args: &[T]) -> Result<String, Error> {
     Ok(args.iter().map(T::print).collect::<Result<Vec<_>, _>>()?.join(", "))
 }
 
-/// A text test `@op(s, pattern)`, holding (`neg` false) or failing, in `.rr`.
+/// A text test `@op(s, pattern)`, holding (`neg` false) or failing, in `.rerail`.
 fn test(op: &str, s: &T, pattern: &T, neg: bool) -> Result<String, Error> {
     let s = s.print()?;
     let one = |p: &T| -> Result<String, Error> {
@@ -515,7 +516,7 @@ impl Translator<'_> {
                 };
                 self.out.push_str(&format!(".pragma \"magic-transform\" {}", quote(&names.join(", "))));
             }
-            // `.pragma "key" "value"` is `.rr` already.
+            // `.pragma "key" "value"` is `.rerail` already.
             "pragma" => {
                 let (Tok::Str(key), Tok::Str(value)) = (self.peek().clone(), self.peek_at(1).clone()) else {
                     return self.fail("a pragma's two strings");
@@ -544,6 +545,24 @@ impl Translator<'_> {
             "policy" => {
                 let text = self.braces()?;
                 self.out.push_str(&format!(".policy {text}"));
+            }
+            // `.layout r fanout(…)` (decision 0361's declared shapes) is `.rerail` already: its group as written.
+            "layout" => {
+                let name = self.id()?;
+                let start = self.toks.get(self.i).map_or(self.src.len(), |t| t.1);
+                self.id()?;
+                self.p("(")?;
+                let mut depth = 1;
+                while depth > 0 {
+                    match self.peek() {
+                        Tok::P("(") => depth += 1,
+                        Tok::P(")") => depth -= 1,
+                        Tok::Eof => return self.fail("a layout's closing parenthesis"),
+                        _ => {}
+                    }
+                    self.i += 1;
+                }
+                self.out.push_str(&format!(".layout {name} {}", &self.src[start..self.toks[self.i - 1].2]));
             }
             _ => return self.fail("a directive"),
         }
@@ -581,7 +600,7 @@ impl Translator<'_> {
     }
 }
 
-/// The `.rr` text of an `.rdl` program.
+/// The `.rerail` text of an `.rdl` program.
 pub fn translate(src: &str) -> Result<String, Error> {
     let mut t = Translator { src, toks: tokens(src)?, i: 0, out: String::new(), lattices: BTreeSet::new() };
     loop {

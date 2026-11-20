@@ -135,7 +135,7 @@ impl<T> Drop for DemandZeroRegion<T> {
 // Windows: committed VirtualAlloc pages are demand-zero, as an anonymous mapping's are.
 #[cfg(windows)]
 impl<T> DemandZeroRegion<T> {
-    fn new(count: usize) -> Result<Self, Error> {
+    pub fn new(count: usize) -> Result<Self, Error> {
         use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
         let mapped_bytes = count
             .checked_mul(mem::size_of::<T>())
@@ -243,6 +243,8 @@ pub struct NativeTaskContext {
     pub derived: *const u32,
     pub derived_classes: u32,
     pub derived_words: u32,
+    /// The row of the task's program's first contains test in `derived` (`PackedBatch::contains_starts`).
+    pub contains_start: u32,
     /// The most steps a path or a candidate's predicates or outputs took (`current_steps` before each reset): with
     /// the task's total, what the task needed of its budget (decision 0334). Folded where `current_steps` is
     /// replaced (`fold_most_steps`), never per step.
@@ -277,8 +279,17 @@ impl CompiledTaskShell {
     }
 }
 
+/// A JIT compile that failed stops the run (decision 0382, the user on 2026-11-18: "JIT compilation failures should
+/// crash the program"): what failed and Cranelift's message. A program whose form the JIT has no code for is
+/// `UnsupportedBackend`, decided before anything compiles; a failure past that is a bug in the code generated here.
+#[cold]
+#[track_caller]
+fn compile_failed(what: &str, error: impl std::fmt::Debug) -> ! {
+    panic!("rerail: the CPU JIT failed to compile ({what}): {error:?}")
+}
+
 pub fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskShell, Error> {
-    let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    let builder = JITBuilder::new(default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
     let mut module = JITModule::new(builder);
     let mut signature = module.make_signature();
     signature
@@ -286,7 +297,7 @@ pub fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskShell, E
         .push(AbiParam::new(module.target_config().pointer_type()));
     let function_id = module
         .declare_function("tempo_native_task", Linkage::Local, &signature)
-        .map_err(|_| Error::BackendFailure)?;
+        .unwrap_or_else(|e| compile_failed("the task shell's declaration", e));
     let mut context = module.make_context();
     context.func.signature = signature;
     let mut builder_context = FunctionBuilderContext::new();
@@ -306,11 +317,11 @@ pub fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskShell, E
         function.finalize();
     }
     super::native_cpu_codegen::define_function(&mut module, function_id, &mut context)
-        .map_err(|_| Error::BackendFailure)?;
+        .unwrap_or_else(|e| compile_failed("a function", e));
     module.clear_context(&mut context);
     module
         .finalize_definitions()
-        .map_err(|_| Error::BackendFailure)?;
+        .unwrap_or_else(|e| compile_failed("the module's definitions", e));
     let code = module.get_finalized_function(function_id);
     let entry = unsafe { mem::transmute::<*const u8, TaskEntry>(code) };
     Ok(CompiledTaskShell {
@@ -451,7 +462,7 @@ fn reverse_pending(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::
     };
     let last = function.ins().iadd_imm(high, -1);
     let (a, b) = (record(function, low), record(function, last));
-    const _: () = assert!(mem::size_of::<PendingRecord>() % 4 == 0);
+    const _: () = assert!(mem::size_of::<PendingRecord>().is_multiple_of(4));
     for word in 0..mem::size_of::<PendingRecord>() as i32 / 4 {
         let x = function.ins().load(types::I32, flags, a, 4 * word);
         let y = function.ins().load(types::I32, flags, b, 4 * word);
@@ -528,18 +539,21 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
         }
     }
 
-    let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    // The output program's form, before anything compiles: one the JIT has no code for is the interpreter's.
+    if !native_cpu_output::lowered(native) {
+        return Err(Error::UnsupportedBackend);
+    }
+    // Its code in one reservation (`rerail_clif::jit::builder`): the reads' calls are `bl`s. The browser's stand-in
+    // (`wasm/cranelift-jit`) builds no module.
+    #[cfg(not(target_family = "wasm"))]
+    let builder = rerail_clif::jit::builder().unwrap_or_else(|e| compile_failed("the JIT builder", e));
+    #[cfg(target_family = "wasm")]
+    let builder = JITBuilder::new(default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
     let mut module = JITModule::new(builder);
     // The tape's reads (decision 0310): declared once, the cold ones defined; every function's pass inlines the hot.
-    super::native_cpu_codegen::define_reads(&mut module).map_err(|_| Error::BackendFailure)?;
-    let reads = rerail_clif::inline::ReadIds::declare(&mut module).map_err(|_| Error::BackendFailure)?;
-    let scheduler = native_cpu_scheduler::define(&mut module).map_err(|error| {
-        #[cfg(any(test, feature = "test-hooks"))]
-        eprintln!("native scheduler definition failed: {error:?}");
-        #[cfg(not(any(test, feature = "test-hooks")))]
-        let _ = error;
-        Error::BackendFailure
-    })?;
+    super::native_cpu_codegen::define_reads(&mut module).unwrap_or_else(|e| compile_failed("the tape's reads", e));
+    let reads = rerail_clif::inline::ReadIds::declare(&mut module).unwrap_or_else(|e| compile_failed("the tape's reads' declarations", e));
+    let scheduler = native_cpu_scheduler::define(&mut module).unwrap_or_else(|e| compile_failed("the scheduler", e));
     let _ = (
         scheduler.cursor_value,
         scheduler.cursor_equal,
@@ -553,23 +567,9 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
         scheduler.greedy_take,
         scheduler.path_enqueue,
     );
-    let value_functions = native_cpu_value::define(&mut module, native).map_err(|error| {
-        #[cfg(any(test, feature = "test-hooks"))]
-        eprintln!("native value definition failed: {error:?}");
-        #[cfg(not(any(test, feature = "test-hooks")))]
-        let _ = error;
-        Error::BackendFailure
-    })?;
+    let value_functions = native_cpu_value::define(&mut module, native).unwrap_or_else(|e| compile_failed("the value programs", e));
     let capture_functions =
-        native_cpu_capture::define(&mut module, native, &value_functions.evaluators).map_err(
-            |error| {
-                #[cfg(any(test, feature = "test-hooks"))]
-                eprintln!("native capture definition failed: {error:?}");
-                #[cfg(not(any(test, feature = "test-hooks")))]
-                let _ = error;
-                Error::BackendFailure
-            },
-        )?;
+        native_cpu_capture::define(&mut module, native, &value_functions.evaluators).unwrap_or_else(|e| compile_failed("the capture programs", e));
     let reduction_function = native_cpu_reduction::define(
         &mut module,
         scheduler.capture_contains,
@@ -580,29 +580,15 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
         },
         native.tree_sitter_query && native.has_repeats,
     )
-    .map_err(|error| {
-        #[cfg(any(test, feature = "test-hooks"))]
-        eprintln!("native reduction definition failed: {error:?}");
-        #[cfg(not(any(test, feature = "test-hooks")))]
-        let _ = error;
-        Error::BackendFailure
-    })?;
+    .unwrap_or_else(|e| compile_failed("the reduction", e));
     let output_function =
-        native_cpu_output::define(&mut module, native, value_functions.regex_find).map_err(
-            |error| {
-                #[cfg(any(test, feature = "test-hooks"))]
-                eprintln!("native output definition failed: {error:?}");
-                #[cfg(not(any(test, feature = "test-hooks")))]
-                let _ = error;
-                Error::UnsupportedBackend
-            },
-        )?;
+        native_cpu_output::define(&mut module, native, value_functions.regex_find).unwrap_or_else(|e| compile_failed("the output program", e));
     let pointer_type = module.target_config().pointer_type();
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer_type));
     let function_id = module
         .declare_function("tempo_native_straight_line", Linkage::Local, &signature)
-        .map_err(|_| Error::BackendFailure)?;
+        .unwrap_or_else(|e| compile_failed("the program's declaration", e));
     let mut context = module.make_context();
     context.func.signature = signature;
     let query_scheduler = native.tree_sitter_query && native.has_repeats;
@@ -2442,11 +2428,11 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
         function.finalize();
     }
     super::native_cpu_codegen::define_function(&mut module, function_id, &mut context)
-        .map_err(|_| Error::BackendFailure)?;
+        .unwrap_or_else(|e| compile_failed("a function", e));
     module.clear_context(&mut context);
     module
         .finalize_definitions()
-        .map_err(|_| Error::BackendFailure)?;
+        .unwrap_or_else(|e| compile_failed("the module's definitions", e));
     let code = module.get_finalized_function(function_id);
     let entry = unsafe { mem::transmute::<*const u8, NativeTaskEntry>(code) };
     #[cfg(any(test, feature = "test-hooks"))]
@@ -2560,7 +2546,7 @@ pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLi
         return Ok(compiled);
     }
     crate::code_rule_dsl::prof::count("jit.misses", 1);
-    let native = crate::code_rule_dsl::prof::time("jit.lower", || super::native_ir::lower(program)).map_err(|_| Error::BackendFailure)?;
+    let native = crate::code_rule_dsl::prof::time("jit.lower", || super::native_ir::lower(program)).unwrap_or_else(|e| compile_failed("the program's lowering", e));
     let compiled = Arc::new(crate::code_rule_dsl::prof::time("jit.straight_line", || compile_straight_line(&native))?);
     let held_ = crate::code_rule_dsl::logic::profile::shared::<CpuPrograms>();
     let mut cache = held_.0.lock().map_err(|_| Error::BackendFailure)?;
@@ -2615,7 +2601,7 @@ pub(super) fn execute_batch_packed_with_result_limits(
     )
 }
 
-#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
 pub fn execute_terminal_reference_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],
@@ -2750,6 +2736,9 @@ fn execute_batch_packed_once(
         tapes.push((bytes.as_ptr(), view, codes));
     }
     let node_count = batch.files.iter().map(|file| file.node_count).sum::<u32>();
+    // A 16z tape's reader for each evaluation that reads it (0353 step 4b): its reads decode a block into the
+    // reader's slots, and an evaluation's tasks run on one worker, in order.
+    let mut readers: std::collections::HashMap<(u32, u32), rerail_clif::view::Reader> = std::collections::HashMap::new();
     let mut contexts = Vec::with_capacity(batch.tasks.len());
 
     for (task_index, task) in batch.tasks.iter().enumerate() {
@@ -2766,7 +2755,11 @@ fn execute_batch_packed_once(
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
         let (tape, view, codes) = &tapes[task.file as usize];
         context.tape = *tape;
-        context.view = view;
+        context.view = if view.format == rerail_clif::view::F16Z_FORMAT {
+            readers.entry((task.evaluation, task.file)).or_insert_with(|| rerail_clif::view::Reader::new(view, *tape)).view()
+        } else {
+            std::ptr::from_ref(view)
+        };
         context.codes = codes.as_ptr();
         context.node_base = view.node_base;
         context.source_base = view.source_base;
@@ -2878,6 +2871,7 @@ fn execute_batch_packed_once(
         context.derived = batch.derived.as_ptr();
         context.derived_classes = batch.derived_classes;
         context.derived_words = batch.derived_words;
+        context.contains_start = batch.contains_starts[task.program as usize];
         contexts.push((task.program as usize, context));
     }
     drop(_contexts);
@@ -2917,79 +2911,77 @@ fn execute_batch_packed_once(
             return Err(Error::BackendFailure);
         }
     }
-    let task_outputs = (|| {
-        crate::code_rule_dsl::logic::profile::on_cores(|| {
-            spans
-                .into_par_iter()
-                .map(|span| span.iter_mut().map(|(program, context)| {
-                    // The queue uses tombstones within a task. Keeping a full
-                    // table of tombstones across roots turns each new insert into
-                    // a capacity-length probe. These records reference only the
-                    // current task's histories and cannot survive its execution.
-                    unsafe {
-                        if context.queued_state_quota_limit != 0 {
-                            std::ptr::write_bytes(
-                                context.queued_states,
-                                0,
-                                context.queued_state_quota_limit as usize,
-                            );
-                        }
-                        if context.greedy_entry_quota_limit != 0 {
-                            std::ptr::write_bytes(
-                                context.greedy_entries,
-                                0,
-                                context.greedy_entry_quota_limit as usize,
-                            );
-                        }
+    let task_outputs = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        spans
+            .into_par_iter()
+            .map(|span| span.iter_mut().map(|(program, context)| {
+                // The queue uses tombstones within a task. Keeping a full
+                // table of tombstones across roots turns each new insert into
+                // a capacity-length probe. These records reference only the
+                // current task's histories and cannot survive its execution.
+                unsafe {
+                    if context.queued_state_quota_limit != 0 {
+                        std::ptr::write_bytes(
+                            context.queued_states,
+                            0,
+                            context.queued_state_quota_limit as usize,
+                        );
                     }
-                    context.most_steps = 0;
-                    unsafe { entries[*program](context) };
-                    // The task's steps: its total, or its longest path's or candidate's where that is more (what its
-                    // budget had to hold, decision 0334).
-                    unsafe {
-                        let most = context.most_steps.max(context.current_steps);
-                        (*context.status).reserved = (*context.status).reserved.max(most);
+                    if context.greedy_entry_quota_limit != 0 {
+                        std::ptr::write_bytes(
+                            context.greedy_entries,
+                            0,
+                            context.greedy_entry_quota_limit as usize,
+                        );
                     }
-                    let status = unsafe { *context.status };
-                    if status.error != 0 {
-                        return Ok(TaskPackedOutput {
-                            results: Vec::new(),
-                            captures: Vec::new(),
-                            properties: Vec::new(),
-                            bytes: Vec::new(),
-                        });
-                    }
-                    Ok(TaskPackedOutput {
-                        results: unsafe {
-                            std::slice::from_raw_parts(context.results, status.result_count as usize)
-                                .to_vec()
-                        },
-                        captures: unsafe {
-                            std::slice::from_raw_parts(
-                                context.final_captures,
-                                status.final_capture_count as usize,
-                            )
+                }
+                context.most_steps = 0;
+                unsafe { entries[*program](context) };
+                // The task's steps: its total, or its longest path's or candidate's where that is more (what its
+                // budget had to hold, decision 0334).
+                unsafe {
+                    let most = context.most_steps.max(context.current_steps);
+                    (*context.status).reserved = (*context.status).reserved.max(most);
+                }
+                let status = unsafe { *context.status };
+                if status.error != 0 {
+                    return Ok(TaskPackedOutput {
+                        results: Vec::new(),
+                        captures: Vec::new(),
+                        properties: Vec::new(),
+                        bytes: Vec::new(),
+                    });
+                }
+                Ok(TaskPackedOutput {
+                    results: unsafe {
+                        std::slice::from_raw_parts(context.results, status.result_count as usize)
                             .to_vec()
-                        },
-                        properties: unsafe {
-                            std::slice::from_raw_parts(
-                                context.properties,
-                                status.property_count as usize,
-                            )
-                            .to_vec()
-                        },
-                        bytes: unsafe {
-                            std::slice::from_raw_parts(
-                                context.output_bytes,
-                                status.output_byte_count as usize,
-                            )
-                            .to_vec()
-                        },
-                    })
-                }).collect::<Result<Vec<_>, Error>>())
-                .collect::<Result<Vec<Vec<_>>, Error>>()
-        })
-    })()?
+                    },
+                    captures: unsafe {
+                        std::slice::from_raw_parts(
+                            context.final_captures,
+                            status.final_capture_count as usize,
+                        )
+                        .to_vec()
+                    },
+                    properties: unsafe {
+                        std::slice::from_raw_parts(
+                            context.properties,
+                            status.property_count as usize,
+                        )
+                        .to_vec()
+                    },
+                    bytes: unsafe {
+                        std::slice::from_raw_parts(
+                            context.output_bytes,
+                            status.output_byte_count as usize,
+                        )
+                        .to_vec()
+                    },
+                })
+            }).collect::<Result<Vec<_>, Error>>())
+            .collect::<Result<Vec<Vec<_>>, Error>>()
+    })?
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();

@@ -161,12 +161,15 @@ const WAVE: [(&str, &str, usize); 2] = [("forbidden", "violation", 4), ("span", 
 /// The layer's tables: the program's inputs that are not the wave's, each with its declared columns
 /// (`FINDINGS`' `.decl`s), which `Layer::write` fills.
 fn tables() -> StoreResult<Vec<(String, Vec<String>)>> {
-    let program = crate::code_rule_dsl::logic::rr::parse(FINDINGS).map_err(invalid)?;
+    let program = crate::code_rule_dsl::logic::rr::parse_version(FINDINGS).map_err(invalid)?;
     Ok(program
-        .inputs
-        .iter()
+        .input_names()
+        .into_iter()
         .filter(|input| !WAVE.iter().any(|(name, _, _)| name == input))
-        .map(|input| (input.clone(), program.decls[input.as_str()].iter().map(|(column, _)| column.clone()).map(String::from).collect()))
+        .map(|input| {
+            let columns = program.columns_of(&input).unwrap_or_default().into_iter().map(|(column, _)| column).collect();
+            (input, columns)
+        })
         .collect())
 }
 
@@ -642,7 +645,7 @@ impl Layer {
             }
             let starts = lines.starts();
             for (l, &s) in starts.iter().enumerate() {
-                let e = starts.get(l + 1).copied().unwrap_or(source.len() + 1);
+                let e = starts.get(l + 1).map_or(source.len() + 1, |&e| e as usize);
                 insert("line_span", &[d, l as i64, s as i64, e as i64])?;
             }
             if around {

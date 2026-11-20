@@ -12,15 +12,15 @@
 //!   (`rr::recording`). A run takes the entry only when each file still reads as recorded: an edited library file, or
 //!   a file appearing where an include looked and found none, combines again.
 //!
-//! The entry is the read record as rows of `read_file` and the program's digest; the program is kept as its `.rr`
+//! The entry is the read record as rows of `read_file` and the program's digest; the program is kept as its `.rerail`
 //! text (`program_text`, decision 0155). The run's manifest names the source and the plan (`named`), so collection
 //! keeps the entry while it keeps the run.
 
-use crate::code_rule_dsl::logic::front::{Program, Value};
+use crate::code_rule_dsl::logic::front::Value;
 use crate::code_rule_dsl::logic::program_facts::{self, Facts};
 use crate::code_rule_dsl::logic::program_text;
 use crate::code_rule_dsl::logic::rr::{self, LibraryFile};
-use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
+use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::path::PathBuf;
 
@@ -33,9 +33,15 @@ const PATH: &str = "rerail/combined";
 /// The relation holding the program's text's digest (sha256 hex).
 const PROGRAM: &str = "rr_combined_program";
 
-/// The relation holding the images the combine read or kept (decision 0246 §6): their aliases (sha256 hex). A run
+/// The relation holding the images the combine read or kept (decision 0246 §6): their aliases (sha256 hex), or the
+/// hash of facts it kept by text (the tail run's pointer, `parts::keep_facts`). A run
 /// that names the entry names them too, so collection keeps them while it keeps the run.
 const IMAGE: &str = "rr_combined_image";
+
+/// The relation holding the kept tail run the program was made over or kept (decision 0393): its key (sha256 hex). A
+/// run that names the entry names the run's sources too (`program_text::run_sources`), as the run that made the
+/// program named them when it kept or read the run (Q101), so collection keeps the run while it keeps the entry.
+const RUN: &str = "rr_combined_tail_run";
 
 /// The relation holding the read record: (path, sha256 hex, or "" for a miss).
 const READ_FILE: &str = "rr_combined_read_file";
@@ -68,12 +74,6 @@ fn shipped_key(key: &[u8; 32]) -> HashKey {
     HashKey::sha256(&[format!("rerail combined entry {SCHEMA}\0").as_bytes(), plan().plans[0].as_slice(), key.as_slice()].concat())
 }
 
-/// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded; or,
-/// where the store has none, the one the engine ships (decision 0264).
-pub(super) fn lookup(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<Program>> {
-    Ok(lookup_read(store, key, lists)?.map(|(program, _)| program))
-}
-
 /// The key of a rule file's entry (decision 0275): the program `rr::read_file` reads of the file at `path` (canonical)
 /// whose bytes' sha256 is `sha256`. The path is in it: the files an include finds beside it are another directory's
 /// elsewhere, and the read record names this one's.
@@ -95,19 +95,20 @@ pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
     hash.finalize().into()
 }
 
-/// `lookup`, with the read record: every library file the program read or probed, in reading order. Each is checked
+/// The entry `key`'s program with the read record: every library file the program read or probed, in reading order. Each is checked
 /// as `LibraryFile::unchanged` checks it, by its `stat` while that holds and by its bytes' sha256 when it moved: the
 /// first key that settles it.
-pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<LibraryFile>)>> {
+pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<LibraryFile>)>> {
     let Some((digest, read)) = entry_read(store, key)? else { return Ok(None) };
-    Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| (program, read)))
+    Ok(program_text::load_image(store, &digest)?.map(|(v, _)| (v, read)))
 }
 
-/// `lookup`'s program as its version, opened from its image with no tree decoded (decision 0281's path, step 7a-1;
-/// Typing-support's, taken at the merge of e829e72a7).
-pub(super) fn lookup_version(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
+/// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded; or,
+/// where the store has none, the one the engine ships (decision 0264). Opened from its image as its version (decision
+/// 0281's path, step 7a-1).
+pub(super) fn lookup_version(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
     let Some((digest, _)) = entry_read(store, key)? else { return Ok(None) };
-    Ok(program_text::load_image(store, &digest, lists)?.map(|(v, _)| v))
+    Ok(program_text::load_image(store, &digest)?.map(|(v, _)| v))
 }
 
 /// The digest of the program `key`'s entry keeps, and the library files it read, when the store (or the engine's
@@ -177,48 +178,43 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-/// Keeps `program`, combined from texts `key` after reading library files `read`, in the store: made into facts and
-/// encoded here, written by the store's writer in the run's record as `what` (decisions 0102, 0306). A program that
-/// does not read back as written is not kept: the next run combines it again.
-pub(in crate::code_rule_dsl) fn record(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], program: &Program, images: &[HashKey]) {
-    let Some(encoded) = program_text::encode(program) else { return };
-    record_encoded(store, what, key, read, encoded, images);
+/// Keeps program `v`, combined from texts `key` after reading library files `read`, in the store: encoded here,
+/// written by the store's writer in the run's record as `what` (decisions 0102, 0306). A program that does not read
+/// back as written is not kept: the next run combines it again. Its image is kept as it is
+/// (`program_text::encode_version`, Typing-support's `remember_version`, taken at the merge of e829e72a7 as an item
+/// of the run's record).
+pub(in crate::code_rule_dsl) fn record_version(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey]) {
+    record_version_ran(store, what, key, read, v, images, None);
 }
 
-/// `record` of the program's version (Typing-support's `remember_version`, taken at the merge of e829e72a7 as an item
-/// of the run's record): its image kept as it is (`program_text::encode_version`); with images off, its tree, decoded
-/// at this edge alone.
-pub(super) fn record_version(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey]) {
-    let encoded = match program_text::encode_version(v) {
-        Some(encoded) => encoded,
-        None => {
-            let Ok(program) = v.program(&crate::code_rule_dsl::logic::front::Lists::default()) else { return };
-            let Some(encoded) = program_text::encode(&program) else { return };
-            encoded
-        }
-    };
-    record_encoded(store, what, key, read, encoded, images);
+/// `record_version`, naming the kept tail run it was made over or kept (`RUN`, decision 0393).
+pub(super) fn record_version_ran(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey], run: Option<[u8; 32]>) {
+    let Some(encoded) = program_text::encode_version(v) else { return };
+    record_encoded(store, what, key, read, encoded, images, run);
 }
 
-fn record_encoded(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], encoded: program_text::Encoded, images: &[HashKey]) {
+fn record_encoded(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], encoded: program_text::Encoded, images: &[HashKey], run: Option<[u8; 32]>) {
     let mut facts = Facts::new();
     facts.insert(PROGRAM.to_owned(), vec![[Value::Str(hex(&encoded.digest).into())].into()]);
     let rows = read.iter().map(|f| [Value::Str(f.path.to_string_lossy().into_owned().into()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default().into())].into()).collect();
     facts.insert(READ_FILE.to_owned(), rows);
     let images = images.iter().filter_map(|k| k.sha256_bytes()).map(|d| [Value::Str(hex(&d).into())].into()).collect();
     facts.insert(IMAGE.to_owned(), images);
+    if let Some(run) = run {
+        facts.insert(RUN.to_owned(), vec![[Value::Str(hex(&run).into())].into()]);
+    }
     let entry = program_facts::encode(&facts);
     // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry (its program's image ships with
-    // `program_text::encode`).
+    // `program_text::encode_version`).
     rr::images::export(shipped_key(key), &entry);
-    let (packed, bytes) = program_text::pack(vec![encoded], entry);
-    store.record(what, vec![queued(key)], &(*key, packed), Some(bytes), apply);
+    let (packed, pieces) = program_text::pack(vec![encoded], entry);
+    store.record_held(what, vec![queued(key)], &(*key, packed), pieces, apply);
 }
 
 fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
     let (key, packed): ([u8; 32], program_text::Packed) = crate::content_store::record::codec::from_body("the combined program", body)?;
     let store = cx.store;
-    let (text_source, entry) = program_text::store_packed(store, &packed, cx.bytes)?;
+    let (text_source, entry) = program_text::store_packed(store, &packed, cx.pieces)?;
     let text = source_text(&key);
     let hash = HashKey::sha256(text.as_bytes());
     let source = match store.source_by_hash(hash)? {
@@ -303,7 +299,8 @@ fn program_source(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<cr
     store.source_by_hash(HashKey::from_sha256_digest(digest))
 }
 
-/// The images texts `key`'s entry names (`IMAGE`) that the store still keeps.
+/// The images texts `key`'s entry names (`IMAGE`) that the store still keeps, and the sources of the tail run it names
+/// (`RUN`) where the store keeps that run whole.
 fn image_sources(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec<crate::content_store::SourceId>> {
     let Some(source) = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(Vec::new()) };
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
@@ -313,9 +310,21 @@ fn image_sources(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec<crate:
     for row in facts.get(IMAGE).into_iter().flatten() {
         if let [Value::Str(digest)] = row.as_slice()
             && let Some(digest) = unhex(digest)
-            && let Some(id) = store.source_by_alias(HashKey::from_sha256_digest(digest))?
+            && let Some(id) = match store.source_by_alias(HashKey::from_sha256_digest(digest))? {
+                Some(id) => Some(id),
+                // Facts kept by their text's hash (`parts::keep_facts`: the tail run's pointer).
+                None => store.source_by_hash(HashKey::from_sha256_digest(digest))?,
+            }
         {
             out.push(id);
+        }
+    }
+    for row in facts.get(RUN).into_iter().flatten() {
+        if let [Value::Str(run)] = row.as_slice()
+            && let Some(run) = unhex(run)
+            && let Some(ids) = program_text::run_sources(store, &run).map_err(StoreError::Invalid)?
+        {
+            out.extend(ids);
         }
     }
     crate::code_rule_dsl::prof::count("corpus.combined_images_named", out.len());

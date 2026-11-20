@@ -313,10 +313,226 @@ fn a_recursive_utility_inside_another_settles() {
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
 
+/// The lowerings of t45's plan (decisions 0459, 0460), each a clause: a bare `$X` is the named-node test, not a
+/// pattern label; a clause that is one `inside … end` copies its label; the labels made inside an `all` that tests a
+/// neighbor (`inside` or `has`, by a field or not) start within the set of the nodes it holds at, a formula, not a
+/// seed label. Each finds W's roots.
+fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
+    let clause = |id: &str, rule: &str| {
+        format!(
+            r#"{{"id": "{id}", "forbid": {{"ast": {{"language": "python", "rule": {rule}}}}}, "violation": {{"anchor": "witness.span", "code": "X", "message": "x"}}}}"#
+        )
+    };
+    let clauses = [
+        clause("named", r#"{"all": [{"pattern": "$X"}, {"kind": "identifier"}, {"inside": {"kind": "parameters", "stopBy": "neighbor"}}]}"#),
+        clause("in-function", r#"{"inside": {"kind": "function_definition", "stopBy": "end"}}"#),
+        clause("top", r#"{"kind": "expression_statement", "inside": {"kind": "module", "stopBy": "neighbor"}, "not": {"has": {"kind": "call", "stopBy": "neighbor"}}}"#),
+        clause("named-function", r#"{"kind": "function_definition", "has": {"field": "name", "kind": "identifier", "stopBy": "neighbor"}}"#),
+        clause("function-name", r#"{"kind": "identifier", "inside": {"kind": "function_definition", "field": "name", "stopBy": "neighbor"}}"#),
+        clause("lone", r#"{"not": {"inside": {"kind": "argument_list", "stopBy": "neighbor"}}}"#),
+        // A neighbor tested by text (ruff F541's shape): its set has no text test, since a text slot is its own
+        // program's (0460).
+        clause(
+            "fstring",
+            r#"{"kind": "string", "has": {"kind": "string_start", "regex": "^[fF]", "stopBy": "neighbor"}, "not": {"has": {"kind": "interpolation", "stopBy": "neighbor"}}}"#,
+        ),
+    ];
+    let policy = format!(
+        r#"{{"format": "rerail.policy/v1", "id": "seeded", "revision": 1, "mode": "steer", "description": "t45's lowerings.",
+            "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
+        clauses.join(", ")
+    );
+    let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let tape = python_tape("import os\nx = 1\nprint(x)\n\ndef f(a, b=2, *c):\n    g(a, b)\n    return a\n\nclass K:\n    def m(self):\n        x\n\ns = f\"plain\"\nt = f\"{x}\"\nu = \"{x}\"\nv = f\"{1:>10}\"\n");
+    (compiled, tape)
+}
+
+#[test]
+fn seeded_and_copied_labels_find_ws_roots() {
+    let (compiled, tape) = seeded_clauses();
+    let root = Root::doc(tape.clone());
+    let mut seen = BTreeSet::new();
+    for (clause, grammar) in python_matchers(&compiled) {
+        let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+        let mut work = usize::MAX;
+        let expected = (0..tape.transducer_len() as u32)
+            .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+            .collect::<BTreeSet<_>>();
+        assert!(!expected.is_empty(), "{clause}: W's matcher finds a root");
+        assert_eq!(program.roots(&tape).unwrap(), expected, "{clause}");
+        let census = program.census();
+        let patterns = census.iter().filter(|(kind, _)| *kind == "pattern").count();
+        // A neighbor's set is a formula a pass's anchor reads (0460), not a targets label of its own (0459's seed). The
+        // targets label of an `inside … end` reach is no seed: a clause that is one copies it (`label_copy`).
+        let copied = program.label_copy().map(|id| program.labels.def(id) as *const Label);
+        let seeds = program.labels.defs.iter().filter(|label| matches!(label, Label::Targets(..)) && Some(*label as *const Label) != copied).count();
+        assert_eq!(seeds, 0, "{clause}: no seed label");
+        let within = program.labels.defs.iter().any(|label| matches!(label, Label::Roots(_, super::compile_matcher::Domain::Within(..))));
+        match clause {
+            "named" => assert_eq!(patterns, 0, "named: `$X` is a node test, not a pattern pass"),
+            "in-function" => assert!(program.label_copy().is_some(), "in-function: its roots copy the descendant label"),
+            "top" => assert!(within, "top: the `not has` label starts within the module's children"),
+            "named-function" | "function-name" | "lone" | "fstring" => {}
+            other => panic!("an unexpected clause {other}"),
+        }
+        seen.insert(clause.to_owned());
+    }
+    assert_eq!(seen.len(), 7);
+}
+
+/// The same clauses on Metal: a label-domain pass starts only at the label's members, read from its row on the
+/// device (`root_mask_label`), and a clause that copies a label reads its row (decision 0459).
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn seeded_and_copied_labels_match_on_metal() {
+    use super::compile_matcher::Backend;
+    let (compiled, tape) = seeded_clauses();
+    let tapes = vec![tape.clone(), tape];
+    for (clause, grammar) in python_matchers(&compiled) {
+        let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+        let cpu = program.roots_batch(Backend::Cpu, &tapes).unwrap();
+        let (metal, _) = program.roots_metal(&tapes).unwrap();
+        assert_eq!(metal, cpu, "{clause}");
+    }
+}
+
+/// The nested-recursion clause: its passes start at assignments, lists, parentheses and binary operators.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+fn nested_recursion() -> LoweredMatcher {
+    let policy = r#"{
+        "format": "rerail.policy/v1", "id": "nested-recursion", "revision": 1, "mode": "steer",
+        "scope": { "include": ["**/*"], "exclude": [] },
+        "clauses": [{
+            "id": "nested",
+            "forbid": { "ast": {
+                "language": "python",
+                "utils": {
+                    "list-expr": { "any": [
+                        { "kind": "list" },
+                        { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "list-expr" } },
+                        { "matches": "list-add" }
+                    ] },
+                    "list-add": { "kind": "binary_operator", "has": { "stopBy": "neighbor", "matches": "list-expr" } }
+                },
+                "rule": { "kind": "assignment", "has": { "stopBy": "neighbor", "matches": "list-add" } }
+            } },
+            "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
+        }]
+    }"#;
+    let compiled = CodeRuleDslRuntime::compile(policy.to_owned(), "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
+    LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles")
+}
+
+/// Decision 0434 §4, step 6: a label pass over codes reads only the files whose presence may hold its domain's kinds,
+/// on Metal as on the host, by the one read of the presence in the tape's home (`tape_has_kind`). A file with none of
+/// the clause's kinds is ruled out by the host's read, and the device's roots are the CPU's.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn metal_passes_skip_the_files_their_presence_rules_out() {
+    use super::compile_matcher::Backend;
+    let program = nested_recursion();
+    let tapes = [python_tape("x = ['a'] + b\ny = (['a'] + b) + c\n"), python_tape("pass\n")];
+    assert!(tapes.iter().all(TapeDoc::has_presence), "a format 16 parse lays its presence in the tape's home");
+    let kind = |name: &str| ast_grep_language::LanguageExt::get_ts_language(&GrammarDialect::Python).id_for_node_kind(name, true);
+    for name in ["assignment", "list", "binary_operator", "parenthesized_expression"] {
+        assert!(tapes[0].may_have_kind(kind(name)), "the lists' file has its {name}");
+        assert!(!tapes[1].may_have_kind(kind(name)), "`pass` has no {name}");
+    }
+    let metal = program.roots_metal(&tapes).expect("the passes run on Metal").0;
+    assert_eq!(metal, program.roots_batch(Backend::Cpu, &tapes).expect("the CPU's roots"));
+    assert!(!metal[0].is_empty() && metal[1].is_empty(), "{metal:?}");
+}
+
+/// `tape` with block `block`'s kinds cleared in its presence, in its home as stored: a presence that lies, so that a
+/// reader of it is seen to read it.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+fn with_block_kinds_cleared(tape: &TapeDoc, block: usize) -> TapeDoc {
+    use rerail_tape_format::f16::{Tape16, Tape16Z};
+    let mut bytes = tape.image.to_bytes().expect("the tape's stored bytes");
+    let presence = match Tape16::from_bytes(bytes.clone()) {
+        Ok(t) => t.presence_bytes().map(<[u8]>::len),
+        Err(_) => Tape16Z::from_bytes(bytes.clone()).expect("a format 16 or 16z tape").presence_bytes().map(<[u8]>::len),
+    };
+    let at = bytes.len() - presence.expect("the tape's presence");
+    let word = |o: usize| u32::from_le_bytes(bytes[at + o..at + o + 4].try_into().unwrap()) as usize;
+    let (kinds, fields, count) = (word(0), word(4), word(8));
+    assert!(block + 1 < count, "block {block} of {count} presences");
+    let from = at + 16 + (1 + block) * (kinds + fields) * 8;
+    bytes[from..from + kinds * 8].fill(0);
+    let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
+    let image = TapeImage::from_bytes(&bytes, &grammar).expect("the tape, read back");
+    TapeDoc::restore(Arc::clone(&tape.source), grammar, &image, &|| false).expect("restored tape")
+}
+
+/// Decision 0434 §4, step 6, the device's block skip: a pass over codes reads no codes in a block whose presence holds
+/// none of its kinds, by the read the host makes (`tape_has_kind`), of the presence in the tape's room. A presence
+/// that says the first block holds no kind at all is believed on the device and on the host: the roots of that block
+/// go, and the others are as found with the true presence.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn metal_passes_skip_the_blocks_their_presence_rules_out() {
+    use super::compile_matcher::Backend;
+    use crate::code_rule_dsl::tape::PRESENCE_BLOCK;
+    let program = nested_recursion();
+    let source = format!("x = ['a'] + b\n{}y = (['a'] + b) + c\n", "pass\n".repeat(2600));
+    let truthful = python_tape(&source);
+    assert!(truthful.transducer_len() > 2 * PRESENCE_BLOCK, "{} nodes", truthful.transducer_len());
+    let found = program.roots_metal(std::slice::from_ref(&truthful)).expect("the passes run on Metal").0;
+    assert_eq!(found, program.roots_batch(Backend::Cpu, std::slice::from_ref(&truthful)).expect("the CPU's roots"));
+    let first = PRESENCE_BLOCK as u32;
+    assert!(found[0].iter().any(|&r| r < first) && found[0].iter().any(|&r| r >= first), "{found:?}");
+    let lying = with_block_kinds_cleared(&truthful, 0);
+    let assignment = ast_grep_language::LanguageExt::get_ts_language(&GrammarDialect::Python).id_for_node_kind("assignment", true);
+    assert!(!lying.block_may_have_kind(0, assignment) && lying.block_may_have_kind(2, assignment), "the host reads the lie");
+    let believed = program.roots_metal(std::slice::from_ref(&lying)).expect("the passes run on Metal").0;
+    assert_eq!(believed[0], found[0].iter().copied().filter(|&r| r >= first).collect::<BTreeSet<_>>(), "the device reads the lie");
+}
+
+/// Facts on Metal read their findings where the host wrote them, in the batch's fact block (Q289): rows with a slot
+/// (a node and its target), rows with none, and a node set as bits (`nthChild`). Each finds W's roots, and the
+/// device's are the CPU's.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn facts_on_metal_are_read_in_their_block() {
+    use super::compile_matcher::Backend;
+    let clause = |id: &str, rule: &str| {
+        format!(
+            r#"{{"id": "{id}", "forbid": {{"ast": {{"language": "python", "rule": {rule}}}}}, "violation": {{"anchor": "witness.span", "code": "X", "message": "x"}}}}"#
+        )
+    };
+    let clauses = [
+        clause("slot", r#"{"kind": "identifier", "binds": {"form": "assignment", "value": {"kind": "integer"}}}"#),
+        clause("no-slot", r#"{"kind": "identifier", "binds": {"form": "assignment"}}"#),
+        clause("bits", r#"{"kind": "identifier", "nthChild": 1}"#),
+    ];
+    let policy = format!(
+        r#"{{"format": "rerail.policy/v1", "id": "facts", "revision": 1, "mode": "steer", "description": "Q289's facts.",
+            "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
+        clauses.join(", ")
+    );
+    let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let tapes = vec![
+        python_tape("x = 1\ny = \"s\"\nz = 2\nprint(x, y)\n"),
+        python_tape("def f(a, b):\n    c = 3\n    d = a\n    return c\n"),
+    ];
+    let mut seen = BTreeSet::new();
+    for (clause, grammar) in python_matchers(&compiled) {
+        let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+        assert!(program.labels.defs.iter().any(|label| matches!(label, Label::Fact(..))), "{clause}: a fact label");
+        let cpu = program.roots_batch(Backend::Cpu, &tapes).unwrap();
+        assert!(cpu.iter().all(|roots| !roots.is_empty()), "{clause}: roots on every tape");
+        let (metal, _) = program.roots_metal(&tapes).unwrap();
+        assert_eq!(metal, cpu, "{clause}");
+        seen.insert(clause.to_owned());
+    }
+    assert_eq!(seen.len(), 3);
+}
+
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
 /// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
 /// CPU interpreter's root sets on every fixture.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn lowered_clauses_find_the_same_roots_on_metal() {
     use super::compile_matcher::Backend;
@@ -386,9 +602,8 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
 /// passes mark their bits as they publish (`packed_batch::MARKS`). A clause refused for the
 /// interpreter's per-lane workspace or the launch bound (5 of 39, O38; the packed batch refused the
 /// same ones) is counted, not compared: it runs as walks in production.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
-#[ignore = "Q135: on an M1 Max one clause (PYI056 add-to-all) differs, at oscar da5892e9c too"]
 fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     use super::compile_matcher::Backend;
     use metal_program_backend::label_passes::INTERPRET_ONLY;
@@ -418,6 +633,11 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
                     refused += 1;
                     eprintln!("  refused {policy}/{clause}: {error:?}");
                 }
+                (Ok(cpu), Ok(metal)) => {
+                    // Where they part: each side's count, and the first root that differs.
+                    let at = cpu.iter().zip(&metal).position(|(a, b)| a != b);
+                    differ.push(format!("{policy}/{clause}: cpu {} roots, metal {}, first differing at {at:?}: cpu {:?}, metal {:?}", cpu.len(), metal.len(), at.map(|i| &cpu[i]), at.map(|i| &metal[i])));
+                }
                 (cpu, metal) => differ.push(format!("{policy}/{clause}: cpu {:?}, metal {:?}", cpu.as_ref().err(), metal.as_ref().err())),
             }
         }
@@ -434,7 +654,7 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
 /// Decision 0334: the label sweep under the replanned budget, with every program it walks priced at almost nothing
 /// (a step per node, times the slack). Its tasks run over their budgets, the run goes again with twice the budget
 /// until they finish, and it finds the full budget's roots.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
     use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
@@ -638,7 +858,7 @@ fn replan_finds_the_full_budgets_roots_on_the_pack() {
     replan_finds_the_full_budgets_roots(super::compile_matcher::Backend::Cpu, 16);
 }
 
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn on_metal_replan_finds_the_full_budgets_roots_on_the_pack() {
     // Wider waves: a Metal wave's time is mostly its dispatches, not its clauses.
@@ -649,7 +869,7 @@ fn on_metal_replan_finds_the_full_budgets_roots_on_the_pack() {
 /// the interpreter (no micro walks). Where W is priced higher, a run whose tasks ran over goes again with twice the
 /// budget and finds the full run's roots; where W is priced lower, the unfinished (pass, file) go to W
 /// (`WaveRun::limited`: the clause's candidates, every root the full run found among them).
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not() {
     use super::compile_matcher::{Backend, LoweredWave};
@@ -726,7 +946,7 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
 
 /// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too, over the CPU check's
 /// tapes (`widened_tapes`), 16 a launch.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn metal_catches_a_widened_walk() {
     let tapes = widened_tapes();
@@ -832,10 +1052,10 @@ fn anchored_walks_find_the_unanchored_roots() {
         for (stage, (_, ms)) in counts.iter().filter(|(stage, _)| stage.starts_with("cpu_ms.")) {
             eprintln!("  {mode:>3} {stage:<36} {ms:>9} ms process CPU");
         }
-        (found, elapsed, count("anchor.kept"), count("anchor.dropped"))
+        (found, elapsed, count("anchor.kept"), count("anchor.dropped"), count("sweep.anchor_dropped"))
     };
-    let (unanchored, plain, _, _) = run("off");
-    let (anchored, with, kept, dropped) = run("on");
+    let (unanchored, plain, _, _, _) = run("off");
+    let (anchored, with, kept, dropped, swept) = run("on");
     unsafe { std::env::remove_var("RERAIL_ANCHORS") };
     // A run's findings: its roots, or W's matcher at its candidates where it gave the clause to W.
     let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
@@ -868,13 +1088,16 @@ fn anchored_walks_find_the_unanchored_roots() {
     );
     assert!(differ.is_empty(), "anchored walks differ: {differ:#?}");
     assert!(!crate::code_rule_dsl::prof::on() || dropped > 0, "the anchors dropped no start");
+    // A recursive group's sweep starts within its passes' anchors, the group's own labels read as every node (Q133).
+    eprintln!("the recursive groups' sweeps: {swept} starts outside their anchors");
+    assert!(!crate::code_rule_dsl::prof::on() || swept > 0, "the recursive groups' anchors dropped no start");
 }
 
-/// Decision 0365 on Metal: the anchors evaluated on the device (`label_formula`), for the label passes past the
+/// Decision 0365 on Metal: the anchors evaluated on the device (`label_phase`), for the label passes past the
 /// recursive groups, the wave's listed roots and the root records' walks, their text tests reading the walks' rows; and
 /// the formula passes as device formulas (§9). With and without them (`RERAIL_ANCHORS`, `RERAIL_SETS=walk`), on Metal
 /// both: the settled findings of the wave's roots are the same, and so are the root records from every node.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn on_metal_anchored_walks_find_the_unanchored_roots() {
     use super::compile_matcher::Backend;
@@ -979,6 +1202,150 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
 /// where its root walk starts) against the roots it finds, the root walk's steps, and the rows its label passes
 /// start at (each pass's domain). A census, not a check: it prints the totals and the clauses with the most
 /// candidates per answer and the most steps.
+/// The members of `set` on `tape`, node by node from what each test and step means: the reference the formula reader
+/// (`compile_sets::Reader`) is checked against, whatever order or shortcut it evaluates in.
+fn set_members(set: &super::compile_sets::Set, tape: &TapeDoc, labels: &[Vec<u64>], texts: &[Vec<u64>]) -> Vec<bool> {
+    use super::compile_sets::{Set, Step};
+    use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
+    let len = tape.transducer_len() as u32;
+    let bit = |row: &[u64], node: u32| row.get(node as usize / 64).is_some_and(|word| word >> (node % 64) & 1 != 0);
+    let named = |node: u32, named: bool| !named || tape.transducer_flags(node) & crate::code_rule_dsl::transducer::NAMED != 0;
+    let each = |f: &dyn Fn(u32) -> bool| (0..len).map(f).collect::<Vec<_>>();
+    let of = |set: &Set| set_members(set, tape, labels, texts);
+    match set {
+        Set::All => vec![true; len as usize],
+        Set::Kind(kind) => each(&|node| tape.transducer_kind(node) == *kind),
+        Set::Field(field) => each(&|node| tape.transducer_field(node) == *field),
+        Set::Flags { mode, arg } => each(&|node| tape.transducer_flags(node) & mode == *mode && tape.transducer_flags(node) & arg == 0),
+        Set::Class(class) if *class >= DERIVED_CLASS_BASE => each(&|node| labels.get(usize::from(class - DERIVED_CLASS_BASE)).is_some_and(|row| bit(row, node))),
+        Set::Class(class) => each(&|node| tape.transducer_has_supertype(node, *class)),
+        Set::Text(slot) => each(&|node| texts.get(usize::from(*slot)).is_some_and(|row| bit(row, node))),
+        Set::And(parts) => parts.iter().map(of).fold(vec![true; len as usize], |a, b| a.iter().zip(b).map(|(a, b)| *a && b).collect()),
+        Set::Or(parts) => parts.iter().map(of).fold(vec![false; len as usize], |a, b| a.iter().zip(b).map(|(a, b)| *a || b).collect()),
+        Set::Child { named: n, of: inner } => {
+            let inner = of(inner);
+            each(&|node| tape.transducer_children(node).any(|child| inner[child as usize] && named(child, *n)))
+        }
+        Set::Descendant { named: n, of: inner } => {
+            let inner = of(inner);
+            each(&|node| tape.transducer_descendants(node).any(|below| inner[below as usize] && named(below, *n)))
+        }
+        Set::Following { named: n, of: inner } => {
+            let inner = of(inner);
+            each(&|node| {
+                tape.transducer_parent(node).is_some_and(|parent| tape.transducer_children(parent).skip_while(|&c| c != node).skip(1).any(|c| inner[c as usize] && named(c, *n)))
+            })
+        }
+        Set::Parent(inner) => {
+            let inner = of(inner);
+            each(&|node| tape.transducer_parent(node).is_some_and(|parent| inner[parent as usize]))
+        }
+        Set::Chain { named: n, through, to } => {
+            let (through, to) = (of(through), of(to));
+            // A node with a child that ends the chain: in `to`, or in `through` with such a child itself.
+            let mut reach = vec![false; len as usize];
+            for node in (0..len).rev() {
+                reach[node as usize] = tape.transducer_children(node).any(|c| named(c, *n) && (to[c as usize] || (through[c as usize] && reach[c as usize])));
+            }
+            reach
+        }
+        Set::Reached { step, named: n, from } => {
+            let from = of(from);
+            match step {
+                Step::Child => each(&|node| named(node, *n) && tape.transducer_parent(node).is_some_and(|p| from[p as usize])),
+                Step::Descendant => each(&|node| {
+                    named(node, *n) && std::iter::successors(tape.transducer_parent(node), |&p| tape.transducer_parent(p)).any(|a| from[a as usize])
+                }),
+                Step::Parent => each(&|node| tape.transducer_children(node).any(|c| from[c as usize])),
+                Step::Following => each(&|node| {
+                    named(node, *n) && tape.transducer_parent(node).is_some_and(|p| tape.transducer_children(p).take_while(|&c| c != node).any(|c| from[c as usize]))
+                }),
+                Step::Chain(through) => {
+                    let through = of(through);
+                    let mut reached = vec![false; len as usize];
+                    for node in 0..len {
+                        reached[node as usize] = named(node, *n)
+                            && tape.transducer_parent(node).is_some_and(|p| from[p as usize] || (reached[p as usize] && through[p as usize]));
+                    }
+                    reached
+                }
+            }
+        }
+    }
+}
+
+/// The formula reader's sets are their members (`set_members`): each label program's anchor, its anchor with its
+/// recursive group's labels read as every node (Q133), and its formula where it is one, on real tapes with their
+/// labels settled. The reader tests a conjunction's steps within its tests and keeps the steps over every node; the
+/// members are the same.
+#[test]
+fn formula_rows_are_the_sets_members() {
+    use super::compile_sets::{Index, Reader, Set};
+    let mut tapes = fixtures();
+    tapes.truncate(3);
+    let compiled = clauses();
+    let mut lowered = Vec::new();
+    for (_, compiled) in &compiled {
+        for (_, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+            }
+        }
+    }
+    let (mut sets, mut differ) = (0, Vec::new());
+    for matchers in lowered.chunks(16) {
+        let wave = LoweredWave::new(&matchers.iter().collect::<Vec<_>>()).unwrap();
+        let active = vec![vec![true; tapes.len()]; matchers.len()];
+        let Ok(views) = wave.labelled(&tapes, &active) else { continue };
+        for (t, view) in views.iter().enumerate() {
+            let index = Index::default();
+            let labels = view.transducer_labels();
+            for clause in &wave.clauses {
+                for (at, def) in clause.labels.defs.iter().enumerate() {
+                    let (Label::Roots(program, _) | Label::Targets(program, _) | Label::Count { program, .. }) = def else { continue };
+                    let Some(walk) = super::compile_micro::Micro::of(program) else { continue };
+                    let texts = walk.texts(program, view).unwrap_or_default();
+                    let id = (crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as usize + clause.labels.offset() + at) as u16;
+                    let group = clause.labels.group_of(id).unwrap_or(&[]);
+                    let unknown = |label: u16| group.contains(&(crate::code_rule_dsl::tape::DERIVED_CLASS_BASE + label));
+                    let anchor = Set::anchor(&walk.words, &|slot| usize::from(slot) < texts.len());
+                    for set in [Some(anchor.clone()), Some(anchor.labels_unknown(&unknown)), Set::of(&walk.words)].into_iter().flatten() {
+                        let read = Reader { tape: view, index: &index, labels, texts: &texts }.eval(&set);
+                        let want = set_members(&set, view, labels, &texts);
+                        sets += 1;
+                        if let Some(node) = (0..want.len()).find(|&node| want[node] != (read[node / 64] >> (node % 64) & 1 != 0)) {
+                            differ.push(format!("tape {t} node {node}: {set:?}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("formula rows: {sets} sets, {} differ", differ.len());
+    assert!(sets > 1000, "the clauses' label programs give sets ({sets})");
+    assert!(differ.is_empty(), "{} sets differ from their members: {:?}", differ.len(), &differ[..differ.len().min(5)]);
+}
+
+/// The reads of recursive utilities in `tree` (`Recur`), and those not under a move (`Walk`, `Count`, a fact's slot or
+/// a constraint, each tested at another node): `counts`' two halves.
+fn unmoved_recurs(tree: &crate::code_rule_dsl::matcher::lower::MatchTree, moved: bool, counts: &mut (usize, usize)) {
+    use crate::code_rule_dsl::matcher::lower::MatchTree as T;
+    match tree {
+        T::Recur(_) => {
+            counts.0 += 1;
+            counts.1 += usize::from(!moved);
+        }
+        T::All(trees) | T::Any(trees) => trees.iter().for_each(|tree| unmoved_recurs(tree, moved, counts)),
+        T::Not(tree) | T::Recursive(_, tree) => unmoved_recurs(tree, moved, counts),
+        T::Walk { rule, .. } | T::Count { rule, .. } => unmoved_recurs(rule, true, counts),
+        T::Constrained(_, constraints) => constraints.iter().for_each(|(_, tree)| unmoved_recurs(tree, true, counts)),
+        T::Fact(fact) => fact.slots.iter().for_each(|tree| unmoved_recurs(tree, true, counts)),
+        T::Kind(_) | T::Supertype(..) | T::Pattern(_) | T::Regex(_) | T::Never => {}
+    }
+}
+
 #[test]
 fn anchor_rows_per_answer() {
     let mut tapes = fixtures();
@@ -986,16 +1353,21 @@ fn anchor_rows_per_answer() {
         tapes.truncate(10);
     }
     let (compiled, mut lowered, mut names) = (clauses(), Vec::new(), Vec::new());
+    let mut recursions = (0_usize, 0_usize);
     for (policy, compiled) in &compiled {
         for (clause, grammar) in python_matchers(compiled) {
             if let Ok(tree) = match_tree(grammar)
                 && let Ok(matcher) = LoweredMatcher::lower(&tree)
             {
+                unmoved_recurs(&tree, false, &mut recursions);
                 lowered.push(matcher);
                 names.push(format!("{policy}/{clause}"));
             }
         }
     }
+    // Q133 (a): a recursive utility's label narrowed by the kinds wanted where it is read (0390) is narrowed only where
+    // no read of it is under a move (a move wants every kind at the node it reaches).
+    eprintln!("recursions: {} reads, {} of them not under a move", recursions.0, recursions.1);
     let nodes: usize = tapes.iter().map(TapeDoc::transducer_len).sum();
     // Per clause: candidates, roots, root-walk steps, label rows, label passes, anchored candidates.
     let mut per: Vec<(String, u64, u64, u64, u64, usize, u64)> = Vec::new();
@@ -1004,17 +1376,22 @@ fn anchor_rows_per_answer() {
     let mut by_route = BTreeMap::<(&str, &str), (u64, u64, u64, u64)>::new();
     let mut passes = BTreeMap::<String, (u64, u64, u64, String, &str, String)>::new();
     // The anchor of a walk's program, evaluated on a tape: its members (`Set::anchor`, decision 0365).
-    let anchored = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index| -> Vec<u64> {
+    // A recursive group's pass reads its group's labels as every node (`unknown`): its anchor holds whatever they
+    // settle to, so one evaluation before the group's rounds serves every round.
+    let anchored_with = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index, unknown: &dyn Fn(u16) -> bool| -> Vec<u64> {
         use super::compile_sets::{Reader, Set};
         let walk = super::compile_micro::Micro::of(program);
         let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
         let set = match (&walk, &texts) {
             (Some(walk), Some(_)) => Set::anchor(&walk.words, &|_| true),
             _ => Set::anchor(&program.words, &|_| false),
-        };
+        }
+        .labels_unknown(unknown);
         let texts = texts.unwrap_or_default();
         Reader { tape: view, index, labels: view.transducer_labels(), texts: &texts }.eval(&set)
     };
+    let anchored = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index| anchored_with(program, view, index, &|_| false);
+
     let get = |bits: &[u64], node: u32| bits.get(node as usize / 64).is_some_and(|w| w >> (node % 64) & 1 != 0);
     for (matchers, names) in lowered.chunks(16).zip(names.chunks(16)) {
         let wave = LoweredWave::new(&matchers.iter().collect::<Vec<_>>()).unwrap();
@@ -1038,6 +1415,9 @@ fn anchor_rows_per_answer() {
                     steps += used as u64;
                 }
                 for (at, def) in clause.labels.defs.iter().enumerate() {
+                    // The recursive group the label is in, if any: its step of the clause's labels.
+                    let id = (crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as usize + clause.labels.offset() + at) as u16;
+                    let group = clause.labels.group_of(id);
                     let (kind, program, d) = match def {
                         Label::Roots(p, d) => ("roots", p, d),
                         Label::Targets(p, d) => ("targets", p, d),
@@ -1051,10 +1431,13 @@ fn anchor_rows_per_answer() {
                         (Label::Targets(..), Some(walk)) => super::compile_sets::Set::targets(&walk.words, super::compile_sets::Set::All).is_some(),
                         _ => false,
                     };
-                    let route = match (kind, formula, walk.is_some()) {
+                    let route = match (kind, formula, walk.is_some(), group.is_some()) {
                         ("pattern", ..) => "pattern",
-                        (_, true, _) => "formula",
-                        (_, false, true) => "micro walk",
+                        (_, true, _, true) => "group, formula",
+                        (.., true) if walk.is_some() => "group, micro walk",
+                        (.., true) => "group, interpreter",
+                        (_, true, ..) => "formula",
+                        (_, false, true, _) => "micro walk",
                         _ => "interpreter",
                     };
                     let pass_entry = Entry::of(program);
@@ -1062,7 +1445,24 @@ fn anchor_rows_per_answer() {
                     let rows = pass_starts.len() as u64;
                     let answers = sets.get(clause.labels.offset() + at).map_or(0, |bits| bits.iter().map(|w| u64::from(w.count_ones())).sum());
                     // Anchored starts where a pass walks from each start (a roots, targets or count walk).
-                    let anchor = if route != "formula" && route != "pattern" && matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. }) {
+                    let anchor = if let Some(group) = group.filter(|_| matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. })) {
+                        // The group's anchor (its labels unknown): no start outside it emits with the labels settled,
+                        // nor in any round before (it reads none of them).
+                        let anchor = anchored_with(program, view, index, &|label| group.contains(&((crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as usize + usize::from(label)) as u16)));
+                        let outside: Vec<u32> = pass_starts.iter().copied().filter(|&n| !get(&anchor, n)).collect();
+                        if let Ok((outputs, _)) = program.execute_roots_budgeted(view, outside.iter().copied(), usize::MAX) {
+                            assert!(outputs.is_empty(), "{name}: a recursive group's start outside its anchor emitted");
+                        }
+                        // The same pass's anchor reading its group's settled labels: what a per-round anchor could
+                        // drop at best.
+                        let settled = anchored(program, view, index);
+                        let r = by_route.entry((kind, "group, settled labels")).or_default();
+                        r.0 += 1;
+                        r.1 += rows;
+                        r.2 += pass_starts.iter().filter(|&&n| get(&settled, n)).count() as u64;
+                        r.3 += answers;
+                        pass_starts.iter().filter(|&&n| get(&anchor, n)).count() as u64
+                    } else if route != "formula" && route != "pattern" && matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. }) {
                         let anchor = anchored(program, view, index);
                         if matches!(def, Label::Count { .. }) {
                             // A count's tally is over every node, so an unwalked start must count 0: no start outside the
@@ -1276,11 +1676,45 @@ fn micro_walks_are_the_interpreters_label_outputs() {
     assert!(compared > 100_000 && overflowed * 100 < compared);
 }
 
+/// Whether a walk's first move, reached from its start through saves, forks and jumps only, is `after` with a tail
+/// that marks the start alone (tests, a `load` and its tests, a capture, the emit): the shape the device answers once
+/// for a parent's children (`label_passes.uglykl`'s `sibling_pass`, work queue Q182).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn sibling_shape(words: &[u32]) -> bool {
+    let (mut pc, mut seen) = (0, 0);
+    while pc < words.len() && seen <= words.len() {
+        seen += 1;
+        let (op, _, arg) = split(words[pc]);
+        match op {
+            0x15 | 0x30 => pc += 1,
+            0x31 => pc = arg as usize,
+            0x14 => break,
+            _ => return false,
+        }
+    }
+    let test = |op: u8| matches!(op, 0x01 | 0x02 | 0x03 | 0x04 | 0x0a);
+    let mut at = pc + 1;
+    while at < words.len() && test(split(words[at]).0) {
+        at += 1;
+    }
+    if at >= words.len() || split(words[at]).0 != 0x16 {
+        return at < words.len() && split(words[at]).0 == 0x40;
+    }
+    at += 1;
+    while at < words.len() && test(split(words[at]).0) {
+        at += 1;
+    }
+    if at < words.len() && split(words[at]).0 == 0x20 {
+        at += 1;
+    }
+    at < words.len() && split(words[at]).0 == 0x40
+}
+
 /// A long walk spills its frames to other threads (decision 0125): with a budget of one step, nearly every walk
 /// gives frames away (a descendant range halved, a move frame whole), and the wave's findings on Metal are still the
 /// CPU's (each side's roots, or W's matcher at its candidates where it gave the clause to W: a backend may stop at
 /// its limit where the other does not). A frame lost, walked twice where a tally counts, or given its walk's wrong start shows here.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn spilled_walks_find_the_cpus_roots() {
     use super::compile_matcher::Backend;
@@ -1305,9 +1739,10 @@ fn spilled_walks_find_the_cpus_roots() {
         candidates.iter().copied().filter(|&n| grammar.match_root(node_at(&root, n), &mut work).ok().flatten().is_some()).collect()
     };
     // Waves of a dozen clauses, as the engine's are (the whole set is over the launch bound).
-    let (mut found, mut differ, mut waves) = (0, Vec::new(), 0);
+    let (mut found, mut differ, mut waves, mut shared) = (0, Vec::new(), 0, 0);
     for (at, clauses) in lowered.chunks(12).enumerate() {
         let wave = LoweredWave::new(&clauses.iter().collect::<Vec<_>>()).unwrap();
+        shared += wave.label_programs().iter().filter_map(|(program, _)| Micro::of(program)).filter(|walk| sibling_shape(&walk.words)).count();
         let active = vec![vec![true; tapes.len()]; clauses.len()];
         let (mut cpu, cpu_run) = wave.roots_batch(Backend::Cpu, &tapes, &active).unwrap();
         SPILL_BUDGET_TEST.set(Some(1));
@@ -1337,7 +1772,8 @@ fn spilled_walks_find_the_cpus_roots() {
             ));
         }
     }
-    eprintln!("spilled: {waves} waves of {} clauses, {found} roots", lowered.len());
+    eprintln!("spilled: {waves} waves of {} clauses, {found} roots, {shared} walks of a shared sibling scan", lowered.len());
+    assert!(shared > 0, "some walk's sibling scan is shared (the device's `sibling_pass`)");
     assert!(waves * 2 > lowered.len() / 12 && found > 1000, "most waves ran on Metal and found roots ({waves} waves, {found} roots)");
     assert!(differ.is_empty(), "{} clauses differ on Metal with every walk spilling: {differ:?}", differ.len());
 }
@@ -1424,7 +1860,7 @@ fn ast_pattern_captures_are_pinned() {
     }
     let got: String = h.finalize().iter().take(16).map(|b| format!("{b:02x}")).collect();
     assert!(matched > 500, "{matched} matches");
-    assert_eq!(got, "ea71d4437b2c2ba12fc3b08d3c7f982c", "the captures moved ({matched} matches)");
+    assert_eq!(got, "2f1444d906c39b0c99a4e20b5b9a56cb", "the captures moved ({matched} matches)");
 }
 
 /// The verdict alone (`matches_ast_pattern`, into bindings reused from node to node) is
@@ -1455,3 +1891,129 @@ fn ast_pattern_verdicts_reuse_their_bindings() {
     }
 }
 
+
+/// A tape's presence bitmap (the codes it holds, in its header): of every (program, file) pair, how many the file's
+/// kinds and fields alone rule out before any label is known (`possible`), against how many have an empty anchor
+/// with every label read as every node (what any file-level test could rule out at most), by pairs and by the
+/// nodes a pass over those files would read.
+#[test]
+#[ignore = "a census, run by name"]
+fn presence_bitmap_census() {
+    use super::compile_sets::Set;
+    use std::collections::HashSet;
+    fn possible(set: &Set, kinds: &HashSet<u16>, fields: &HashSet<u16>) -> bool {
+        match set {
+            Set::Kind(k) => kinds.contains(k),
+            Set::Field(f) => fields.contains(f),
+            Set::And(parts) => parts.iter().all(|p| possible(p, kinds, fields)),
+            Set::Or(parts) => parts.iter().any(|p| possible(p, kinds, fields)),
+            Set::Child { of, .. } | Set::Descendant { of, .. } | Set::Parent(of) | Set::Following { of, .. } | Set::Reached { from: of, .. } => possible(of, kinds, fields),
+            Set::Chain { to, .. } => possible(to, kinds, fields),
+            Set::All | Set::Flags { .. } | Set::Class(_) | Set::Text(_) => true,
+        }
+    }
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(20);
+    }
+    let mut lowered = Vec::new();
+    for (_, compiled) in &clauses() {
+        for (_, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+            }
+        }
+    }
+    let present: Vec<(HashSet<u16>, HashSet<u16>)> = tapes
+        .iter()
+        .map(|t| (0..t.transducer_len() as u32).map(|n| (t.transducer_kind(n), t.transducer_field(n))).unzip())
+        .collect();
+    let distinct: Vec<usize> = present.iter().map(|(k, _)| k.len()).collect();
+    eprintln!("presence: {} files, {} nodes, kinds a file: min {} median {} max {}", tapes.len(), tapes.iter().map(TapeDoc::transducer_len).sum::<usize>(), distinct.iter().min().unwrap_or(&0), {
+        let mut d = distinct.clone();
+        d.sort_unstable();
+        d.get(d.len() / 2).copied().unwrap_or(0)
+    }, distinct.iter().max().unwrap_or(&0));
+    // (role) -> pairs, pairs ruled out by presence, pairs with an empty anchor; the same weighted by the file's nodes.
+    let mut counts = BTreeMap::<&str, [u64; 6]>::new();
+    for chunk in lowered.chunks(16) {
+        let wave = LoweredWave::new(&chunk.iter().collect::<Vec<_>>()).unwrap();
+        let active = vec![vec![true; tapes.len()]; chunk.len()];
+        let Ok(views) = wave.labelled(&tapes, &active) else { continue };
+        let indexes: Vec<super::compile_sets::Index> = views.iter().map(|_| Default::default()).collect();
+        for clause in &wave.clauses {
+            let mut programs = vec![("clause", &clause.program)];
+            for def in &clause.labels.defs {
+                match def {
+                    Label::Roots(p, _) | Label::Targets(p, _) | Label::Pattern(p, _) | Label::Constrained(p, _, _) => programs.push(("label", p)),
+                    Label::Count { program, .. } => programs.push(("label", program)),
+                    Label::Complement(_) | Label::Fact(..) | Label::Empty => {}
+                }
+            }
+            for (role, program) in programs {
+                let walk = super::compile_micro::Micro::of(program);
+                for ((view, index), (kinds, fields)) in views.iter().zip(&indexes).zip(&present) {
+                    let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
+                    let set = match (&walk, &texts) {
+                        (Some(walk), Some(_)) => Set::anchor(&walk.words, &|_| true),
+                        _ => Set::anchor(&program.words, &|_| false),
+                    }
+                    .labels_unknown(&|_| true);
+                    let texts = texts.unwrap_or_default();
+                    let empty = super::compile_sets::Reader { tape: view, index, labels: view.transducer_labels(), texts: &texts }.eval(&set).iter().all(|w| *w == 0);
+                    let ruled_out = !possible(&set, kinds, fields);
+                    assert!(!ruled_out || empty, "a set ruled out by presence has members");
+                    let nodes = view.transducer_len() as u64;
+                    let c = counts.entry(role).or_default();
+                    c[0] += 1;
+                    c[1] += u64::from(ruled_out);
+                    c[2] += u64::from(empty);
+                    c[3] += nodes;
+                    c[4] += if ruled_out { nodes } else { 0 };
+                    c[5] += if empty { nodes } else { 0 };
+                }
+            }
+        }
+    }
+    for (role, c) in &counts {
+        let pct = |a: u64, b: u64| 100.0 * a as f64 / b.max(1) as f64;
+        eprintln!(
+            "presence: {role:<6} {} pairs: ruled out by presence {} ({:.1}%), empty anchor {} ({:.1}%); by nodes: {:.1}% and {:.1}%",
+            c[0], c[1], pct(c[1], c[0]), c[2], pct(c[2], c[0]), pct(c[4], c[3]), pct(c[5], c[3])
+        );
+    }
+}
+
+/// The end of children meets a named candidate (RER-131): where the tokens the tape leaves out after
+/// the last matched child begin with the goal's, the rest trails, in the packed matcher as in
+/// ast-grep-core's. `case $V:` matches `case 1: f(); break;` (ast-grep 0.51.0 does); `f($A)` still
+/// refuses `f(a, b)`, whose gap after `a` is `,`.
+/// PR #508's 65ff68df5 (t47).
+#[test]
+fn ast_pattern_end_of_children_meets_implied_tokens() {
+    use ast_grep_core::matcher::MatcherExt as _;
+    let source = Arc::new("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n".to_owned());
+    let grammar = Grammar::new(GrammarDialect::TypeScript).expect("TypeScript grammar");
+    let image = TapeImage::parse(&grammar, &source, &|| false).expect("parser completed").expect("tape image");
+    let tape = TapeDoc::restore(source, grammar, &image, &|| false).expect("restored tape");
+    let root = Root::doc(tape.clone());
+    for (pattern, want) in [
+        (Pattern::contextual("switch ($X) { case $V: }", "switch_case", GrammarDialect::TypeScript).unwrap(), ["case 1: f(); break;"]),
+        (Pattern::try_new("f($A)", GrammarDialect::TypeScript).unwrap(), ["f(a)"]),
+    ] {
+        let program = Program::compile_ast_grep_pattern(&pattern).unwrap();
+        let (mut packed, mut core) = (Vec::new(), Vec::new());
+        for node in root.root().dfs() {
+            if program.execute_ast_pattern(&tape, node.node_id() as u32).unwrap().is_some() {
+                packed.push(node.text().into_owned());
+            }
+            if pattern.match_node(node.clone()).is_some() {
+                core.push(node.text().into_owned());
+            }
+        }
+        assert_eq!(packed, want, "packed");
+        assert_eq!(core, want, "ast-grep-core");
+    }
+}

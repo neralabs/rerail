@@ -45,8 +45,8 @@ fn ids() -> &'static Ids {
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_rust_lean::Refusal> {
     let ids = ids();
-    let lacks = |what: &str, i: usize| format!("tree-sitter-rust lacks the lean parser's {what} {i}");
-    let code_of = |&key: &u32| -> Result<Code, String> {
+    let lacks = move |what: &str, i: usize| format!("tree-sitter-rust lacks the lean parser's {what} {i}");
+    let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, field, class, extra) = rerail_rust_lean::unkey(key);
         let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
         let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
@@ -57,7 +57,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
         }
         Ok(code)
     };
-    rerail_rust_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, &code_of))
+    rerail_rust_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// Rust's tree parser: the lean parser, standing in for tree-sitter-rust where it reads the file.
@@ -65,8 +65,7 @@ pub struct Lean;
 
 impl TreeParser for Lean {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
-        if !grammar.lang.embeds().is_empty()
-            || !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
+        if !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
         {
             return None;
         }

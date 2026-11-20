@@ -1,7 +1,7 @@
 # Item moves (move_items.py): source, destination, items. Paths under native/src/code_rule_dsl/.
 # Each source declares its destination and re-exports what moved, so no caller changes.
 
-# The .rr AST, below the parser: rr-syntax mounts logic/front/ast.rs (the facts, profile and lang crates read it)
+# The .rerail AST, below the parser: rr-syntax mounts logic/front/ast.rs (the facts, profile and lang crates read it)
 logic/front.rs	logic/front/ast.rs	enum Term; impl Term; struct Atom; impl Atom; enum AggOp; enum Literal; impl Literal; fn cmp_binds; impl fmt::Display for Term; impl fmt::Display for Atom; impl fmt::Display for Literal; impl fmt::Display for Rule; fn join; struct Rule; struct LatticeDecl; impl LatticeDecl; enum Value; struct Program; struct Again; const QUALIFIERS; impl Program; const OPTION_GLOB; const GLOBAL; const LIBRARY; fn globals; const SCOPE_NOT; enum SpanIn; enum Native; impl Native; const RESERVED; const AXIS; const DESCENDANTS; const NEAREST; fn is_axis; fn is_transduced; fn axis; const EVERY_KIND
 logic/magic.rs	logic/front/ast.rs	struct Report; struct Gate
 

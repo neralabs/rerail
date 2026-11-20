@@ -1,5 +1,5 @@
-//! The split's preparation passes on the pass manager (decision 0281's path, step 5), each the tree pass of
-//! `file_local` it replaces, one for one, reading the split from the version (`FileLocal`).
+//! The split's preparation passes on the pass manager (decision 0281's path, step 5), each reading the split from the
+//! version (`FileLocal`).
 
 use super::FileLocal;
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
@@ -11,6 +11,7 @@ use crate::code_rule_dsl::logic::program_image::{Lit as L, LitRef, RuleRef, Slot
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod factorize;
+pub(crate) use factorize::factorize_intermediates;
 mod push;
 mod requests;
 pub use factorize::FactorizeExports;
@@ -30,11 +31,12 @@ pub(super) fn t_of<'a>(v: &'a Version, rule: RuleRef<'a>, t: TermRef<'a>) -> T<'
     }
 }
 
-/// `file_local::locate` on the version: every relation the chunks hand on (an export, or a file-local output) given
-/// a location column, so each of its rows names its document (decision 0052). A relation without one, `r(p, l)`, is
-/// derived by the chunks as `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its
-/// rules bind, and the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also
-/// read, a lattice, or one whose rule binds no location is left, and named in `blocked`.
+/// One round of `locate_all`: every relation the chunks hand on (an export, or a file-local output) given a location
+/// column, so each of its rows names its document (decision 0052). A relation without one, `r(p, l)`, is derived by
+/// the chunks as `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its rules bind
+/// (from `node`, `doc`, `tape_line`, …, a document column left unnamed included, or a node through `node(d, n, …)`),
+/// and the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
+/// one whose rule binds no location is left, and named in `blocked`: its rows are not attributable.
 #[derive(Default)]
 pub struct Locate {
     pub located: Vec<String>,
@@ -42,13 +44,39 @@ pub struct Locate {
 }
 
 impl Locate {
-    /// The tree pass's result: the relations located, or those left.
+    /// The round's result: the relations located, or those left.
     pub fn result(&self) -> Result<Vec<String>, Vec<String>> {
         if self.blocked.is_empty() { Ok(self.located.clone()) } else { Err(self.blocked.clone()) }
     }
 }
 
-/// `file_local::locate`'s move on the version: the relations a round of `Locate` left, their rows naming no document,
+/// Every relation the chunks hand on made to name its document per row, so a file's rows can be memoised (decision
+/// 0052): `Locate`, and a relation a round leaves (its rows name no document) moved to the cross-file part
+/// (`MoveCrossFile`, decision 0290), with every file-local relation that reads it, and the program located again,
+/// until every row handed on is located. The chunks then hand on only located rows, and the per-file memo holds for the
+/// rest of the program. The relations located; the `Err` names the moved relations where a round blocks one the moves
+/// cannot place, which none is.
+pub fn locate_all(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<Vec<String>, Vec<String>> {
+    let mut moved: Vec<String> = Vec::new();
+    let mut located: Vec<String> = Vec::new();
+    loop {
+        let mut locate = Locate::default();
+        p.program(&mut locate);
+        located.extend(locate.located);
+        if locate.blocked.is_empty() {
+            return Ok(located);
+        }
+        let fresh: Vec<String> = locate.blocked.into_iter().filter(|r| !moved.contains(r)).collect();
+        if fresh.is_empty() {
+            moved.sort();
+            return Err(moved);
+        }
+        moved.extend(fresh.iter().cloned());
+        p.program(&mut MoveCrossFile(fresh));
+    }
+}
+
+/// A round of `locate_all`'s move: the relations a round of `Locate` left, their rows naming no document,
 /// qualified `CROSS_FILE` (decision 0290). The split then holds them cross-file, with their file-local readers, and the
 /// program is located again (`preparation::run`).
 pub struct MoveCrossFile(pub Vec<String>);
@@ -60,7 +88,7 @@ impl ProgramPass for MoveCrossFile {
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let words: Vec<(&str, &str)> = self.0.iter().map(|r| (r.as_str(), super::CROSS_FILE)).collect();
-        w.on()?.add_qualifiers(&words);
+        w.on()?.fields().add_qualifiers(&words);
         Ok(())
     }
 }
@@ -183,7 +211,7 @@ impl ProgramPass for Locate {
         let b = w.derive()?;
         for (at, cols) in &ats {
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-            b.declare(at, &cols);
+            b.fields().declare(at, &cols);
         }
         const D: &str = "__located_d";
         for item in items {
@@ -233,6 +261,8 @@ impl ProgramPass for Locate {
 pub(super) enum BodyItem<'v> {
     Orig(LitRef<'v>),
     New(String, Vec<NOwned<'v>>),
+    /// A negated atom made (a cached product's parts read while its pairs are not kept, decision 0506).
+    Not(String, Vec<NOwned<'v>>),
 }
 
 /// A term of a rule being made: one of its source rule's, or a variable by name.
@@ -240,6 +270,8 @@ pub(super) enum BodyItem<'v> {
 pub(super) enum NOwned<'v> {
     T(TermRef<'v>),
     V(String),
+    /// A constant.
+    C(i64),
 }
 
 /// A rule of the round's program: its source rule, its head (the source's, or one made), its body.
@@ -257,6 +289,34 @@ fn t_from<'b>(input: &'b Version, src: RuleRef<'b>, n: &'b NOwned<'b>) -> T<'b> 
     match n {
         NOwned::T(t) => t_of(input, src, *t),
         NOwned::V(s) => T::Var(s.as_str()),
+        NOwned::C(n) => T::Int(*n),
+    }
+}
+
+impl Made<'_> {
+    /// The names of the variables the rule being made reads or writes.
+    pub(super) fn names(&self, v: &Version) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        let owned = |args: &[NOwned<'_>], out: &mut BTreeSet<String>| {
+            for a in args {
+                match a {
+                    NOwned::T(t) => out.extend(term_vars(v, self.src, *t)),
+                    NOwned::V(s) => drop(out.insert(s.clone())),
+                    NOwned::C(_) => {}
+                }
+            }
+        };
+        match &self.head {
+            None => self.src.head().args().for_each(|t| out.extend(term_vars(v, self.src, t))),
+            Some((_, args)) => owned(args, &mut out),
+        }
+        for it in &self.body {
+            match it {
+                BodyItem::Orig(l) => out.extend(lit_vars(v, self.src, *l)),
+                BodyItem::New(_, args) | BodyItem::Not(_, args) => owned(args, &mut out),
+            }
+        }
+        out
     }
 }
 
@@ -274,7 +334,7 @@ pub(super) fn write(b: &mut Builder<'_>, input: &Version, round: &Round<'_>) -> 
 
 /// A round's program as an overlay of `input` holding only what the round changes (the rules it rewrites or drops
 /// removed, the ones it makes added), and its split, carried from `input`'s across that edit: a round costs its
-/// change, as the tree's rounds did through `split_memo`, where a derivation of the whole program split it whole.
+/// change, where a derivation of the whole program split it whole.
 pub(super) fn candidate(input: &std::sync::Arc<Version>, round: &Round<'_>) -> Result<(std::sync::Arc<Version>, std::sync::Arc<FileLocal>), String> {
     let mut b = Builder::on(input);
     write_onto(&mut b, input, round, true)?;
@@ -295,10 +355,10 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
     }
     for (rel, cols) in &round.decls {
         let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        b.declare(rel, &cols);
+        b.fields().declare(rel, &cols);
     }
     for rel in &round.undeclared {
-        b.undeclare(rel);
+        b.fields().undeclare(rel);
     }
     for m in &round.rules {
         if m.kept {
@@ -322,18 +382,23 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
                     let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
                     rb.atom(rel.as_str(), &args)
                 }
+                BodyItem::Not(rel, args) => {
+                    let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
+                    rb.not(rel.as_str(), &args)
+                }
             };
         }
         rb.finish()?;
     }
     if !round.no_inline.is_empty() {
         let words: Vec<(&str, &str)> = round.no_inline.iter().map(|k| (k.as_str(), "no_inline")).collect();
-        b.add_qualifiers(&words);
+        b.fields().add_qualifiers(&words);
     }
     Ok(())
 }
 
-/// A variable of `rule` by its name (the passes ported from the tree read variables as it does).
+/// A variable of `rule` by its name (the passes read variables by name, so their sets and searches run in a fixed
+/// order).
 pub(super) fn name(v: &Version, rule: RuleRef<'_>, s: crate::code_rule_dsl::logic::program_image::Slot) -> String {
     v.text(rule.var(s)).to_owned()
 }

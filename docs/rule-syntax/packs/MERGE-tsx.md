@@ -11,15 +11,15 @@ same rrlab (08d977aa5).
 ## 1. Scope models
 
 There are four scope models:
-- **names.rr** (`decl_site`, `look`, `ref_site`) resolves names lexically. Function scopes and block scopes form
+- **names.rerail** (`decl_site`, `look`, `ref_site`) resolves names lexically. Function scopes and block scopes form
   one chain, and a function's body block is a scope of its own.
-- **ts-b-scope.rr** (`scope_node`, `variable`, `resolves`) is typescript-eslint's scope manager. It has scope types
+- **ts-b-scope.rerail** (`scope_node`, `variable`, `resolves`) is typescript-eslint's scope manager. It has scope types
   and definition kinds, and a function's parameters and body are one scope. It adds class-field-initializer scopes,
   enum, namespace and type scopes, the function-expression-name scope, `signature-param` and `enum-member`. A
   parameter default does not see the body, and a parameter decorator sits outside the function.
-- **eslint-b-scope.rr** (`var_site`, `escope_of`) groups names.rr's declarations the way eslint-scope does for
+- **eslint-b-scope.rerail** (`var_site`, `escope_of`) groups names.rerail's declarations the way eslint-scope does for
   no-redeclare. The function body joins the function, and a static block is a var scope.
-- **statements.rr** (`var_scope`, `decl_scope`) follows ESLint's one-var stacks. A namespace body opens no scope
+- **statements.rerail** (`var_scope`, `decl_scope`) follows ESLint's one-var stacks. A namespace body opens no scope
   there.
 
 **Decision.** The four are not merged into one model; they share their vocabulary instead.
@@ -28,20 +28,20 @@ They answer different questions. ref_site is the resolution that about 200 rules
 eslint-scope's terms. ts-b-scope reproduces the scope manager's own tree, so that no-shadow, no-redeclare,
 no-use-before-define and no-unused-vars can compare scope types and definition kinds. These two trees really
 differ:
-- In `function f(a) { let a; }`, names.rr has two scopes, while the scope manager has one scope and two
+- In `function f(a) { let a; }`, names.rerail has two scopes, while the scope manager has one scope and two
   definitions.
-- In `var v; function f(p = v) { let v; }`, a default reads the outer v in the scope manager. names.rr would need
+- In `var v; function f(p = v) { let v; }`, a default reads the outer v in the scope manager. names.rerail would need
   the body to stop being a scope of its own.
 
-Rebuilding names.rr on the scope manager's tree would change ref_site for every rule and break eslint-scope parity
-for ESLint's core rules. Rebuilding ts-b-scope on names.rr would lose the nine rules' semantics, which the ts-2
+Rebuilding names.rerail on the scope manager's tree would change ref_site for every rule and break eslint-scope parity
+for ESLint's core rules. Rebuilding ts-b-scope on names.rerail would lose the nine rules' semantics, which the ts-2
 reviewer verified against ESLint.
 
 **What is shared now:**
-- names.rr's `fn_scope` is the one list of var-scope kinds. statements.rr's `var_scope(k) :- fn_scope(k)`, and
-  statements.rr now includes names.rr. ts-b-scope's `var_home(k) :- fn_scope(k)` adds the namespace kinds, as the
-  scope manager does. eslint-a-globals' `any_scope` is gone; it was names.rr's `lex_scope`.
-- names.rr took the semantic fixes the others had worked around:
+- names.rerail's `fn_scope` is the one list of var-scope kinds. statements.rerail's `var_scope(k) :- fn_scope(k)`, and
+  statements.rerail now includes names.rerail. ts-b-scope's `var_home(k) :- fn_scope(k)` adds the namespace kinds, as the
+  scope manager does. eslint-a-globals' `any_scope` is gone; it was names.rerail's `lex_scope`.
+- names.rerail took the semantic fixes the others had worked around:
   - `class_static_block` is a var scope;
   - a class expression's name is bound in the class, heritage included (`block_scope("class")`);
   - `undefined` is a reference and a parameter name;
@@ -51,27 +51,27 @@ reviewer verified against ESLint.
   With these, eslint-b-scope's `expr_name` is gone, and so are the dead `look` workarounds:
   consistent-type-imports' `shadowed` and `qualified_member`, explicit-module-boundary-types' `local_too`, and
   react-hooks' `deps_site`.
-- ts-b-scope keeps building on names.rr's `pattern_name` and `bound_name`, and on statements.rr's `var_decl` and
+- ts-b-scope keeps building on names.rerail's `pattern_name` and `bound_name`, and on statements.rerail's `var_decl` and
   `for_head`.
 
-`first_decl` and `declaring_stmt` (ts-b-scope) do not duplicate statements.rr's `decl_stmt`. declaring_stmt maps a
+`first_decl` and `declaring_stmt` (ts-b-scope) do not duplicate statements.rerail's `decl_stmt`. declaring_stmt maps a
 declared identifier to its statement; decl_stmt maps a declaration to its `declare` wrapper.
 
 ## 2. Triage
 
 | Concept | Copies | Survivor | Owner | Rules changed |
 |---|---|---|---|---|
-| Call callee, parentheses skipped | eslint-a-globals `callee`; eslint-b-scope `called` (no tagged template); node.rr `node_call` (same as called) | `callee(c, f)` keeps tagged templates, for no-eval and no-alert. `called(c, f) :- callee(c, f), !tagged(c)` is ESTree's CallExpression | eslint-a-common | 12 node rules (node_call → called) |
-| Tagged template | values.rr `tagged(c)`; no-script-url local `tagged(s)` and vue no-ref-as-operand local `tagged(t)`, both on the template | `tagged(c)` (the call) and `tagged_template(t)` (its template) | eslint-a-common | eslint-no-script-url, vue no-ref-as-operand |
-| Parentheses | eslint-a-common `deparen`; modules.rr `unparen` (strings only) | `deparen`, moved to modules.rr so that modules can use it; unparen is gone | modules | none |
+| Call callee, parentheses skipped | eslint-a-globals `callee`; eslint-b-scope `called` (no tagged template); node.rerail `node_call` (same as called) | `callee(c, f)` keeps tagged templates, for no-eval and no-alert. `called(c, f) :- callee(c, f), !tagged(c)` is ESTree's CallExpression | eslint-a-common | 12 node rules (node_call → called) |
+| Tagged template | values.rerail `tagged(c)`; no-script-url local `tagged(s)` and vue no-ref-as-operand local `tagged(t)`, both on the template | `tagged(c)` (the call) and `tagged_template(t)` (its template) | eslint-a-common | eslint-no-script-url, vue no-ref-as-operand |
+| Parentheses | eslint-a-common `deparen`; modules.rerail `unparen` (strings only) | `deparen`, moved to modules.rerail so that modules can use it; unparen is gone | modules | none |
 | Pass-through (isPassThrough) | eslint-b-scope `pass_through`; node-trace's extra `val` clauses (C7); values' paren and assignment `val` clauses | `pass_through(n, p)`, which values' `val` follows | values | none |
 | Aliased loader | node-trace `loader(f) :- val(f, "require", "api")` | the same clause | values | none |
 | Global the file writes (isModifiedGlobal) | eslint-b-scope `global_written`; node-trace `trace_written`; eslint-b-objects `written_global` (the only one with parentheses) | `env_written(d, g)`, parentheses skipped; `env_global` excludes it | values | none |
 | String constant (getStringIfConstant) | values `const_str` (literals); n-prefer-process-get-builtin-module `const_string`, `const_part` and `tpl_upto` (folds) | `const_str` with the folds: `+`, `${const}`, `true ? a : b`, parentheses | values | n-prefer-process-get-builtin-module |
-| String import names | node-trace `trace_spec`; names.rr's `text` of a string name, quotes included | names.rr `spec_name(n, x)` in import_binding, local_of, export_from and export_name; values' api_use | names | none |
-| Configured Node range | node.rr `node_runs_on`/`node_version_opt`; the exemplar's `runs_on`/`version_opt` | `node_runs_on` | values | n-no-unsupported-features-node-builtins |
+| String import names | node-trace `trace_spec`; names.rerail's `text` of a string name, quotes included | names.rerail `spec_name(n, x)` in import_binding, local_of, export_from and export_name; values' api_use | names | none |
+| Configured Node range | node.rerail `node_runs_on`/`node_version_opt`; the exemplar's `runs_on`/`version_opt` | `node_runs_on` | values | n-no-unsupported-features-node-builtins |
 | Var-scope kinds | names `fn_scope`; statements `var_scope`; ts-b-scope `var_home`; eslint-a-globals `any_scope` | `fn_scope` (`lex_scope` for any_scope) | names | none |
-| Function or class expression name | eslint-b-scope `expr_name`; names.rr (body only) | names.rr `decl_site`, scoped to the class | names | none |
+| Function or class expression name | eslint-b-scope `expr_name`; names.rerail (body only) | names.rerail `decl_site`, scoped to the class | names | none |
 | TS parameter default as a constructor | no-invalid-this `ts_bound` clause 1 | `bound_context` clause | eslint-a-globals | typescript-eslint-no-invalid-this |
 | `this: T` is no use of this | (missing) | `this_use` / `this_annotation` in `this_owner` | eslint-a-common | none |
 
@@ -105,20 +105,20 @@ Kept apart:
 
 | concept | copies | survivor | owner file | rules changed |
 |---|---|---|---|---|
-| resolve a name or a JSX tag to its declaration | react-hooks `deps_site` (+ `deps_candidate`, max-depth), react-compiler `rc_tag_site` (+ `rc_tag_decl`) | names.rr `ref_site` (tags are refs via `jsx_tag_ref`; `look` walks one chain) | tsx/names.rr | exhaustive-deps, static-components |
-| TS tag reads in deps | react-hooks `deps_read` clause 2 (tags `[A-Z]`, incl. closing tags) | `deps_read` clause 1 over names' `ref` (jsx_tag_ref: not `^[a-z]`, as typescript-eslint) | react-hooks.rr | (exhaustive-deps, no score change) |
-| call argument i | react.rr `create_arg`, react-hooks `deps_arg` | eslint-a-common `call_arg` (react.rr now includes eslint-a-common) | tsx/eslint-a-common.rr | exhaustive-deps, void-dom-elements-no-children, no-unstable-nested-components |
-| function kinds (6: decl, expr, arrow, both generators, method) | react-hooks `hook_fn_kind` / `hook_fn` | modules `function_kind` / eslint-a-common `function_node` | tsx/modules.rr, eslint-a-common.rr | exhaustive-deps |
-| function kinds (3, no generators/methods) | jsx.rr `fn_kind` (only in `returned`) | `function_kind` — deliberate fix: a `return` in a method or generator nested in a component was attributed to the component | tsx/modules.rr | none (no score change) |
-| what a function returns | react-class `fn_returns` (own return/arrow-body clauses) | jsx.rr `returned`, `fn_returns(f, x) :- returned(f, e), deparen(e, x).` (also skips a comment after `return`) | tsx/jsx.rr | none |
-| parameter i | react-compiler `rc_param` | eslint-a-functions `fn_param` (react-compiler includes it) | tsx/eslint-a-functions.rr | hooks-immutability |
-| parentheses and `as` | react-hooks `deps_bare` (own paren walk, child 0) | kept (drops `as` too) but rebuilt on `deparen` (comment inside parens now skipped) | react-hooks.rr | none |
+| resolve a name or a JSX tag to its declaration | react-hooks `deps_site` (+ `deps_candidate`, max-depth), react-compiler `rc_tag_site` (+ `rc_tag_decl`) | names.rerail `ref_site` (tags are refs via `jsx_tag_ref`; `look` walks one chain) | tsx/names.rerail | exhaustive-deps, static-components |
+| TS tag reads in deps | react-hooks `deps_read` clause 2 (tags `[A-Z]`, incl. closing tags) | `deps_read` clause 1 over names' `ref` (jsx_tag_ref: not `^[a-z]`, as typescript-eslint) | react-hooks.rerail | (exhaustive-deps, no score change) |
+| call argument i | react.rerail `create_arg`, react-hooks `deps_arg` | eslint-a-common `call_arg` (react.rerail now includes eslint-a-common) | tsx/eslint-a-common.rerail | exhaustive-deps, void-dom-elements-no-children, no-unstable-nested-components |
+| function kinds (6: decl, expr, arrow, both generators, method) | react-hooks `hook_fn_kind` / `hook_fn` | modules `function_kind` / eslint-a-common `function_node` | tsx/modules.rerail, eslint-a-common.rerail | exhaustive-deps |
+| function kinds (3, no generators/methods) | jsx.rerail `fn_kind` (only in `returned`) | `function_kind` — deliberate fix: a `return` in a method or generator nested in a component was attributed to the component | tsx/modules.rerail | none (no score change) |
+| what a function returns | react-class `fn_returns` (own return/arrow-body clauses) | jsx.rerail `returned`, `fn_returns(f, x) :- returned(f, e), deparen(e, x).` (also skips a comment after `return`) | tsx/jsx.rerail | none |
+| parameter i | react-compiler `rc_param` | eslint-a-functions `fn_param` (react-compiler includes it) | tsx/eslint-a-functions.rerail | hooks-immutability |
+| parentheses and `as` | react-hooks `deps_bare` (own paren walk, child 0) | kept (drops `as` too) but rebuilt on `deparen` (comment inside parens now skipped) | react-hooks.rerail | none |
 
 Kept apart:
 
 - `rc_fn_kind` = function_kind without methods (Babel's Function); a derived subset, not a copy.
 - `rc_state_setter` (compiler: second pattern element) vs exhaustive-deps' `deps_second` (exactly two elements, holes counted).
-- `fn_component` / `ret_jsx` (Components.detect) vs jsx.rr `component` / `render_root` (capitalised declarations by symbol, for cross-file render).
+- `fn_component` / `ret_jsx` (Components.detect) vs jsx.rerail `component` / `render_root` (capitalised declarations by symbol, for cross-file render).
 - `rc_name` vs `hook_fn_name` (compiler's vs plugin's getFunctionName, as NOTES said).
 - `scope_holder` / `same_scope` (react-class) vs eslint-b-scope `escope_of`: same eslint-scope model, different shapes (a node set for `nearest` vs a block→scope map; scope_holder also has for/catch/switch/class body/static block/field initialiser). Now merged: react-class's same_scope reads eslint-a-common's new `escope_node`, which also fixes the switch discriminant, which scope_holder put inside the switch scope.
 - jsx-no-undef keeps its own tag lookup: it follows ESLint quirks (both namespaces, enums/namespaces, the module's first child scope), so `ref_site` would change it.
@@ -132,12 +132,12 @@ Kept apart:
 | class_static_block in fn_scope | js-2 3 | Done |
 | `undefined` as a reference and as a parameter | js-2 (A, D), react | Done (`ref` clause, `param_id`) |
 | `/* global x:off */` | js-1, js-2 2 | Native fact. Queued (core 1); eslint-b-scope's `global_off` parser stays until then |
-| directive_global rows from global_item | js-2 5 | Declined. names.rr builds on core, and the native reader is the source. The `off` case is queued |
+| directive_global rows from global_item | js-2 5 | Declined. names.rerail builds on core, and the native reader is the source. The `off` case is queued |
 | `self` among the global objects | js-2 6 | Declined for eslint-a-globals. no-eval and no-implied-eval use ESLint's own three names (global, window, globalThis). ReferenceTracker's four are eslint-b-scope's `global_object_name`, which already has self |
 | `called` / `callee` merge | js-2 dup | Done: `called(c, f) :- callee(c, f), !tagged(c)` |
 | `lit_val` beside `static_string` | js-2 dup | Kept apart: `1` and `"1"` differ in isSameReference |
-| `expr_name_at` (position form) | js-2 5 | Not needed. names.rr binds the names, and eslint-b-objects' `named_expr_around` (asked at a position with no reference) stays |
-| deparen / unparen | js-1 | Done (deparen in modules.rr) |
+| `expr_name_at` (position form) | js-2 5 | Not needed. names.rerail binds the names, and eslint-b-objects' `named_expr_around` (asked at a position with no reference) stays |
+| deparen / unparen | js-1 | Done (deparen in modules.rerail) |
 | stmt_start / semi_needed into a library | js-1 | Deferred: eslint-a-common has no second user yet |
 | const_str numbers | js-1 6 | Declined: no rule needs them. static_string has numbers. const_str now folds as getStaticValue does |
 | es_global environments, @upper, @graphemes, @js_compare, decoded names | js-1, js-2 | Queued (core 6–10) |
@@ -523,8 +523,8 @@ These counts are for lib/tsx, lib/vue and the rules of the six packs, against HE
 | Rules | −58 |
 | **Total** | **−55** |
 
-- **Libraries.** values.rr grew by 46 lines: it took pass_through, the folds, env_written and node_runs_on.
-  eslint-a-common grew by 29 lines: callee, called, tagged, escope_node and this_use. names.rr grew by 28 lines. The
+- **Libraries.** values.rerail grew by 46 lines: it took pass_through, the folds, env_written and node_runs_on.
+  eslint-a-common grew by 29 lines: callee, called, tagged, escope_node and this_use. names.rerail grew by 28 lines. The
   copies that went shrank eslint-b-scope by 28, node-trace by 24, react-hooks by 16, react-class by 13, node by 13
   and react-compiler by 11.
 - **Rules.** The local copies went.

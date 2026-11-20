@@ -4,7 +4,6 @@
 //! ```text
 //! let mut b = Builder::on(&parent);
 //! b.remove(rule.id());                                    // a rule of the parent
-//! b.add(&tree_rule)?;                                     // a rule from the tree
 //! b.copy(&other, other_rule);                             // a rule of another version, by its handles
 //! b.rule().head("p", &[T::Var("x")]).atom("e", &[T::Var("x"), T::Wild]).finish()?;
 //! b.declare("p", &[("x", "int")]);  b.set_inputs(&["e"]);
@@ -22,12 +21,12 @@ use super::encoder::{self, CellText, Decl, Encoder, FactRel, Parts};
 use super::handles::{AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 use super::version::{Made, Version, max_ranges};
 use super::{ABOUT_BIT, AtomId, Cell, RelId, RuleId, Slot, kind};
-use crate::code_rule_dsl::logic::front::{ast::{Program, Rule, Value}, name::List};
+use crate::code_rule_dsl::logic::front::{ast::Value, name::List};
 use crate::code_rule_dsl::logic::program_facts::Facts;
 use std::sync::Arc;
 
 /// A term to write, by text or by id.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum T<'a> {
     Var(&'a str),
     /// A variable of the rule being written, by the atom naming it.
@@ -93,37 +92,13 @@ impl Builder<'static> {
     pub fn base() -> Builder<'static> {
         Builder { parent: None, ids: None, enc: Encoder::new(None), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
     }
-    /// A new base of `prog`, every part its own. Refuses what the image has no form for (maintenance's parts, which
-    /// the text refuses too: `of_program_less_maintenance`) and a comparison it does not know.
-    pub fn of_program(prog: &Program) -> Result<Builder<'static>, String> {
-        if !prog.again.is_empty() || !prog.together.is_empty() {
-            return Err(super::bad("maintenance's parts (again, together) have no image"));
-        }
-        Builder::of_program_less_maintenance(prog)
-    }
-    /// A new base of all of `prog` but maintenance's parts (`again`, `together`), which a maintained program's version
-    /// holds beside its image (decision 0215, `plan::body::Maint`).
-    pub fn of_program_less_maintenance(prog: &Program) -> Result<Builder<'static>, String> {
-        let mut b = Builder::base();
-        for r in &prog.rules {
-            b.add(r)?;
-        }
-        b.set_program_header(prog);
-        Ok(b)
-    }
 
-    /// `prog`'s header but maintenance's parts on a base whose rules are written: its declarations, facts, inputs,
-    /// outputs and `.about` rows. The lowering writes a text's rules in its walk, then this (decision 0377 step 3).
-    pub fn set_program_header(&mut self, prog: &Program) {
-        for (n, c) in &prog.decls {
-            self.declare_names(n, c.as_slice());
-        }
-        for (r, rows) in &prog.facts {
-            self.set_facts(r, rows);
-        }
-        self.set_inputs(&prog.inputs);
-        self.set_outputs(&prog.outputs);
-        self.set_about(&super::about_of(prog));
+}
+
+/// A new base (`Builder::base`): a lowerer's header before it states anything.
+impl Default for Builder<'static> {
+    fn default() -> Self {
+        Builder::base()
     }
 }
 
@@ -162,6 +137,56 @@ impl<'p> Builder<'p> {
         for r in v.rules() {
             let id = b.copy(v, r);
             if let Some(src) = r.source() {
+                b.enc.set_from(id.0 - b.enc.rule_base(), src);
+            }
+        }
+        b
+    }
+
+    /// `v` with no stack (decision 0385): a view of one new base holding every rule `v`'s stack numbers, by its id,
+    /// its own and those an overlay removed, under `v`'s atom and relation ids and with its parts, each rule's source
+    /// kept; the view leaves out the removed. Its ids, size and digest are `v`'s, so an edit of it reads as an edit of
+    /// `v`. `None` where the removed rules are more ranges than a view holds.
+    pub fn flat(v: &Arc<Version>) -> Result<Option<Arc<Version>>, String> {
+        let mut b = Builder::derive(v);
+        for r in v.stack_rules() {
+            let id = b.copy(v, r);
+            if id != r.id() {
+                return Err(format!("a flat version numbers rule {} as {}", r.id().0, id.0));
+            }
+            if let Some(src) = r.source() {
+                b.enc.set_from(id.0 - b.enc.rule_base(), src);
+            }
+        }
+        let base = Version::of_image(b.image()?)?;
+        let mut ranges: Vec<(u32, u32)> = Vec::new();
+        for r in v.rules() {
+            let k = r.id().0;
+            match ranges.last_mut() {
+                Some((_, end)) if *end == k => *end = k + 1,
+                _ => ranges.push((k, k + 1)),
+            }
+        }
+        if ranges.len() > super::version::max_ranges(base.size()) {
+            return Ok(None);
+        }
+        Ok(Some(Version::view(&base, ranges, v.size(), v.digest())))
+    }
+
+    /// A base of all of `edit`, an overlay of `parent` (its derivation's input), under its atom and relation ids: each
+    /// rule copied with the source the derivation records for it: a rule of `parent` with a source its own (as `keep`
+    /// records it), a rule the edit added its source in `parent`; a rule with none stays without (a base's digest). A pass's output folded so is the same edit of its input as the
+    /// overlay was (`manager::Delta`, the request record by rule, decision 0331); `folding` keeps the older sources.
+    fn folding_edit(edit: &'p Version, parent: &Version) -> Builder<'p> {
+        let mut b = Builder::derive(edit);
+        let added = match edit {
+            Version::Overlay { delta, .. } => delta.rule_base(),
+            _ => u32::MAX,
+        };
+        for r in edit.rules() {
+            let id = b.copy(edit, r);
+            let src = r.source().map(|s| if r.id().0 < added && parent.contains(r.id()) { r.id() } else { s });
+            if let Some(src) = src {
                 b.enc.set_from(id.0 - b.enc.rule_base(), src);
             }
         }
@@ -218,23 +243,47 @@ impl<'p> Builder<'p> {
     pub fn next_id(&self) -> RuleId {
         RuleId(self.enc.rule_base() + self.enc.rules())
     }
-    /// Adds `rule`, from the tree.
-    pub fn add(&mut self, rule: &Rule) -> Result<RuleId, String> {
-        let id = self.next_id();
-        self.enc.tree_rule(rule)?;
-        Ok(id)
-    }
-    /// Adds a copy of `rule`, one of `from`'s rules: its nodes as they are when `from`'s ids are this builder's,
-    /// else each name by its text.
+    /// Adds a copy of `rule`, one of `from`'s rules: when `from`'s ids are this builder's, its nodes, variables and
+    /// hash as they are, one range; else each name by its text.
     pub fn copy(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
         let id = self.next_id();
         let same = self.same(rule);
+        if same {
+            // Its ids are this builder's: its nodes, variables and hash as they are, one range (`Encoder::copy_run`).
+            self.enc.copy_run(rule.image(), rule.local()..rule.local() + 1);
+            return id;
+        }
         let at = self.enc.begin_rule();
         let n = rule.nodes();
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
         self.enc.copy_nodes(from, rule.image(), n.start + 1..n.end, &vars, same);
         self.enc.end_rule(at);
         id
+    }
+    /// Adds copies of `rules`, `from`'s, in order, as `keep` adds each: a run of consecutive rules of one image,
+    /// when `from`'s ids are this builder's, is copied as one range of nodes (`Encoder::copy_run`, 0276 §3), as a
+    /// stratum is (0266 §3); any other rule as `keep` copies it.
+    pub fn keep_run(&mut self, from: &Version, rules: &[RuleRef<'_>]) {
+        let mut i = 0;
+        while i < rules.len() {
+            let r = rules[i];
+            if !self.same(r) {
+                self.keep(from, r);
+                i += 1;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < rules.len() && std::ptr::eq(rules[j].image(), r.image()) && rules[j].local() == rules[j - 1].local() + 1 {
+                j += 1;
+            }
+            let first = self.enc.copy_run(r.image(), r.local()..r.local() + (j - i) as u32);
+            if self.parent.is_none() {
+                for (n, kept) in rules[i..j].iter().enumerate() {
+                    self.enc.set_from(first + n as u32, kept.id());
+                }
+            }
+            i = j;
+        }
     }
     /// Adds a copy of `rule`, one of a derivation's input's, recording it as the copy's source (§9): a rule a pass
     /// kept as it was (`manager`'s derivations).
@@ -261,6 +310,13 @@ impl<'p> Builder<'p> {
         }
         id
     }
+    /// Adds a copy of `rule`, one of `from`'s, recording `source` as its source: a rule a pass rewrote elsewhere (a
+    /// derivation of its own), replacing its input's rule `source` in an edit (`product_demand`).
+    pub fn copy_from(&mut self, from: &Version, rule: RuleRef<'_>, source: RuleId) -> RuleId {
+        let id = self.copy(from, rule);
+        self.enc.set_from(id.0 - self.enc.rule_base(), source);
+        id
+    }
     fn same(&self, rule: RuleRef<'_>) -> bool {
         self.ids.is_some_and(|v| v.holds_image(rule.image()))
     }
@@ -270,8 +326,142 @@ impl<'p> Builder<'p> {
         RuleBuilder { b: self, at, head: false, failed: None, done: false, from: None }
     }
 
+    /// Opens a rule written literal by literal between other reads and edits of this builder's fields (the
+    /// lowering reads declarations while it writes a rule, decision 0276 A3): its head first, then its body, then
+    /// `close_rule`. One rule is open at a time.
+    pub fn open_rule(&mut self) -> Open {
+        Open { at: self.enc.begin_rule(), head: false, failed: None }
+    }
+    fn put_atom_node(&mut self, rel: Rel<'_>, args: &[T<'_>], flags: u8) {
+        let r = self.rel_id(rel);
+        let at = self.enc.open(kind::ATOM | flags, r);
+        for a in args {
+            write_t(&mut self.enc, a);
+        }
+        self.enc.close(at);
+    }
+    fn put_body(o: &mut Open) {
+        if !o.head && o.failed.is_none() {
+            o.failed = Some(super::bad("a rule's body before its head"));
+        }
+    }
+    /// Open rule `o`'s head.
+    pub fn put_head<'r>(&mut self, o: &mut Open, rel: impl Into<Rel<'r>>, args: &[T<'_>]) {
+        if o.head {
+            o.failed = Some(super::bad("a rule with two heads"));
+        }
+        self.put_atom_node(rel.into(), args, 0);
+        o.head = true;
+    }
+    /// An atom of open rule `o`'s body: negated, gated.
+    pub fn put_atom<'r>(&mut self, o: &mut Open, rel: impl Into<Rel<'r>>, args: &[T<'_>], neg: bool, gated: bool) {
+        Self::put_body(o);
+        self.put_atom_node(rel.into(), args, if neg { kind::NEG } else { 0 } | if gated { kind::GATED } else { 0 });
+    }
+    /// A comparison of open rule `o`'s body.
+    pub fn put_cmp(&mut self, o: &mut Open, l: T<'_>, op: CmpOp, r: T<'_>) {
+        Self::put_body(o);
+        let at = self.enc.open(kind::CMP, op as u32);
+        write_t(&mut self.enc, &l);
+        write_t(&mut self.enc, &r);
+        self.enc.close(at);
+    }
+    /// `nearest(n, a, kindset)` in open rule `o`'s body: `a` the nearest ancestor of `n` in the kind set.
+    pub fn put_nearest(&mut self, o: &mut Open, n: &str, a: &str, kindset: &str) {
+        Self::put_body(o);
+        let k = self.enc.atom(kindset);
+        let at = self.enc.open(kind::NEAREST, k);
+        self.enc.var(n);
+        self.enc.var(a);
+        self.enc.close(at);
+    }
+    /// An `ast(document, node, matcher)` literal of open rule `o`'s body, its captures (name, variable) in order.
+    pub fn put_ast(&mut self, o: &mut Open, document: &str, node: &str, matcher: &str, captures: &[(&str, &str)]) {
+        Self::put_body(o);
+        let m = self.enc.atom(matcher);
+        let at = self.enc.open(kind::AST, m);
+        self.enc.var(document);
+        self.enc.var(node);
+        for (name, var) in captures {
+            let a = self.enc.atom(name);
+            self.enc.leaf(kind::STR, a);
+            self.enc.var(var);
+        }
+        self.enc.close(at);
+    }
+    /// An aggregate `var = op over : { rel(args) }` of open rule `o`'s body (`over` `None` for a count); a join's
+    /// keys follow `over`, then its separator.
+    pub fn put_agg<'r>(&mut self, o: &mut Open, var: &str, op: &crate::code_rule_dsl::logic::front::ast::AggOp, over: Option<&str>, rel: impl Into<Rel<'r>>, args: &[T<'_>]) {
+        use crate::code_rule_dsl::logic::front::ast::AggOp;
+        Self::put_body(o);
+        let code: u8 = match op {
+            AggOp::Count => 0,
+            AggOp::Min => 1,
+            AggOp::Max => 2,
+            AggOp::Sum => 3,
+            AggOp::Product => 4,
+            AggOp::Join { .. } => 5,
+        };
+        let a = self.enc.atom(var);
+        let s = self.enc.slot_of(a);
+        let at = self.enc.open(kind::AGG | code << 5, s);
+        match over {
+            Some(v) => self.enc.var(v),
+            None => self.enc.leaf(kind::WILD, 0),
+        }
+        if let AggOp::Join { by, sep } = op {
+            for k in by {
+                self.enc.var(k);
+            }
+            let a = self.enc.atom(sep);
+            self.enc.leaf(kind::STR, a);
+        }
+        self.put_atom_node(rel.into(), args, 0);
+        self.enc.close(at);
+    }
+    /// Ends open rule `o`: its id, or why it is refused (then it is not written).
+    pub fn close_rule(&mut self, mut o: Open) -> Result<RuleId, String> {
+        if let Some(e) = o.failed.take().or_else(|| (!o.head).then(|| super::bad("a rule with no head"))) {
+            self.enc.abandon(o.at);
+            return Err(e);
+        }
+        Ok(RuleId(self.enc.rule_base() + self.enc.end_rule(o.at)))
+    }
+    /// Ends open rule `o` unless a rule of the same hash was ended before (its hash in `seen`): then it is left out
+    /// and `None`.
+    pub fn close_rule_once(&mut self, o: Open, seen: &mut std::collections::HashSet<u64>) -> Result<Option<RuleId>, String> {
+        if o.failed.is_none() && o.head {
+            self.enc.close(o.at);
+            let h = self.enc.hash_closed(o.at);
+            if !seen.insert(h) {
+                self.enc.abandon(o.at);
+                return Ok(None);
+            }
+        }
+        self.close_rule(o).map(Some)
+    }
+    /// Leaves open rule `o` out.
+    pub fn abandon_rule(&mut self, o: Open) {
+        self.enc.abandon(o.at);
+    }
+
     /// Starts a rule that is `from`'s rule `rule` rewritten by `rw` as it is copied: its head, then each body literal
     /// `rw` keeps. More literals may follow; `finish` writes it, recording `rule` as its source (§9).
+    /// Every rule of `from` through `rw` (0276 §3), in order: a rule `rw.begin` picks is rewritten, the rest are kept
+    /// (`keep_run`). The rewrite of the whole program, one call.
+    pub fn rewrite_all(&mut self, from: &Version, rw: &mut impl Rewrite) -> Result<(), String> {
+        let mut kept: Vec<RuleRef<'_>> = Vec::new();
+        for r in from.rules() {
+            if rw.begin(r) {
+                self.keep_run(from, &std::mem::take(&mut kept));
+                self.rewrite(from, r, rw).finish()?;
+            } else {
+                kept.push(r);
+            }
+        }
+        self.keep_run(from, &kept);
+        Ok(())
+    }
     pub fn rewrite(&mut self, from: &Version, rule: RuleRef<'_>, rw: &mut impl Rewrite) -> RuleBuilder<'_, 'p> {
         let same = self.same(rule);
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
@@ -293,7 +483,7 @@ impl<'p> Builder<'p> {
         self.declare(rel, &pairs);
     }
     /// Declares relation `rel`'s columns (names and types), replacing the parent's.
-    pub fn declare(&mut self, rel: &str, cols: &[(&str, &str)]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn declare(&mut self, rel: &str, cols: &[(&str, &str)]) {
         let a = self.enc.atom(rel);
         self.enc.rel_of_atom(a);
         let ids = cols.iter().map(|&(n, t)| (self.enc.atom(n), self.enc.atom(t))).collect();
@@ -302,7 +492,7 @@ impl<'p> Builder<'p> {
         self.parts_changed = true;
     }
     /// Removes the parent's declaration of `rel`.
-    pub fn undeclare(&mut self, rel: &str) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn undeclare(&mut self, rel: &str) {
         let a = self.enc.atom(rel);
         self.parts.decls.remove(&a);
         if self.parent.is_some_and(|p| p.decl(AtomId(a)).is_some()) {
@@ -325,7 +515,7 @@ impl<'p> Builder<'p> {
         })))
     }
     /// States relation `rel`'s facts, replacing the parent's.
-    pub fn set_facts(&mut self, rel: &str, rows: &[List<Value>]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_facts(&mut self, rel: &str, rows: &[List<Value>]) {
         let a = self.enc.atom(rel);
         self.enc.rel_of_atom(a);
         let cells = self.rows_of(rows);
@@ -335,7 +525,7 @@ impl<'p> Builder<'p> {
         self.parts_changed = true;
     }
     /// Removes the parent's facts of `rel`.
-    pub fn drop_facts(&mut self, rel: &str) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn drop_facts(&mut self, rel: &str) {
         let a = self.enc.atom(rel);
         self.parts.facts.remove(&a);
         if self.parent.is_some_and(|p| p.facts(AtomId(a)).is_some()) {
@@ -344,7 +534,7 @@ impl<'p> Builder<'p> {
         self.parts_changed = true;
     }
     /// States relation `rel`'s facts as cells of this builder's atoms, replacing the parent's.
-    pub fn set_fact_cells(&mut self, rel: &str, rows: Vec<Vec<Cell>>) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_fact_cells(&mut self, rel: &str, rows: Vec<Vec<Cell>>) {
         let a = self.enc.atom(rel);
         self.enc.rel_of_atom(a);
         let hash = self.hash_cells(rel, false, &rows);
@@ -368,8 +558,19 @@ impl<'p> Builder<'p> {
         self.parts.facts.get(&(a | ABOUT_BIT)).map(|f| f.rows.clone()).unwrap_or_default()
     }
     /// States about relation `name`'s rows, every other about relation kept.
-    pub fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
         self.own_about();
+        // The program's own row, which every field's reader asks for, is held by every version that states an about
+        // row, whichever edit stated the first: a version from a tree has it (`about_of`), and one a pass's field or
+        // a record (`set_asked`) gave about rows has it too. Stated by one edit only, two runs of one program differed
+        // by it (Q358).
+        if name != "program" && !rows.is_empty() {
+            let program = self.enc.atom("program");
+            if !self.parts.facts.contains_key(&(program | ABOUT_BIT)) {
+                let p = Cell::Str(self.atom(super::ABOUT));
+                self.set_about_rows("program", vec![vec![p]]);
+            }
+        }
         let a = self.enc.atom(name);
         for &c in super::about::relation_columns(name) {
             for row in &rows {
@@ -401,49 +602,151 @@ impl<'p> Builder<'p> {
         }
         self.parts.owns_about = true;
     }
-    pub fn set_inputs<S: AsRef<str>>(&mut self, names: &[S]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_inputs<S: AsRef<str>>(&mut self, names: &[S]) {
         let ids = names.iter().map(|n| self.enc.rel_atom_of(n.as_ref())).collect();
         self.parts.inputs = Some((ids, encoder::names_hash(0, names.iter().map(|n| n.as_ref()))));
         self.parts_changed = true;
     }
-    pub fn set_outputs<S: AsRef<str>>(&mut self, names: &[S]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_outputs<S: AsRef<str>>(&mut self, names: &[S]) {
         let ids = names.iter().map(|n| self.enc.rel_atom_of(n.as_ref())).collect();
         self.parts.outputs = Some((ids, encoder::names_hash(1, names.iter().map(|n| n.as_ref()))));
         self.parts_changed = true;
     }
-    /// States the fields of `header` besides its rules (`Version::header`'s, edited by a pass that reads and writes
-    /// only those): its declarations, facts, inputs, outputs and the rest of its `.about` rows, each where it differs
-    /// from `was`, the header the pass was given. Its rules are the builder's own.
-    pub fn set_header(&mut self, was: &Program, header: &Program) {
-        for (n, c) in &header.decls {
-            if was.decls.get(n) != Some(c) {
-                self.declare_names(n, c.as_slice());
-            }
-        }
-        for n in was.decls.keys().filter(|n| !header.decls.contains_key(*n)) {
-            self.undeclare(n);
-        }
-        for (r, rows) in &header.facts {
-            if was.facts.get(r) != Some(rows) {
-                self.set_facts(r, rows);
-            }
-        }
-        for r in was.facts.keys().filter(|r| !header.facts.contains_key(*r)) {
-            self.drop_facts(r);
-        }
-        if was.inputs != header.inputs {
-            self.set_inputs(&header.inputs);
-        }
-        if was.outputs != header.outputs {
-            self.set_outputs(&header.outputs);
-        }
-        let (a, b) = (super::about_of(was), super::about_of(header));
-        if a != b {
-            self.set_about(&b);
+    /// The inputs this edit states, or its parent's.
+    pub fn input_names(&self) -> Vec<String> {
+        match &self.parts.inputs {
+            Some((ids, _)) => ids.iter().map(|&a| self.enc.text(a).to_owned()).collect(),
+            None => self.parent.map(|p| p.input_names()).unwrap_or_default(),
         }
     }
+    /// Whether `rel` is an input this edit states, or its parent's: `input_names` with nothing copied.
+    pub fn has_input(&self, rel: &str) -> bool {
+        match &self.parts.inputs {
+            Some((ids, _)) => self.enc.find(rel).is_some_and(|a| ids.contains(&a)),
+            None => self.parent.is_some_and(|p| p.inputs().any(|a| p.text(a) == rel)),
+        }
+    }
+    /// The outputs this edit states, or its parent's.
+    pub fn output_names(&self) -> Vec<String> {
+        match &self.parts.outputs {
+            Some((ids, _)) => ids.iter().map(|&a| self.enc.text(a).to_owned()).collect(),
+            None => self.parent.map(|p| p.output_names()).unwrap_or_default(),
+        }
+    }
+    /// Relation `rel`'s fact rows as this edit states them, or its parent's (`None` where it has none).
+    pub fn fact_cells(&self, rel: &str) -> Option<Vec<Vec<Cell>>> {
+        let a = self.enc.find(rel)?;
+        match self.parts.facts.get(&a) {
+            Some(f) => Some(f.rows.clone()),
+            None if self.parts.facts_gone.contains(&a) => None,
+            None => self.parent.and_then(|p| p.facts(AtomId(a))).map(|f| f.rows().map(|r| r.collect()).collect()),
+        }
+    }
+    /// Whether relation `rel` is declared, by this edit or its parent.
+    pub fn declares(&self, rel: &str) -> bool {
+        let Some(a) = self.enc.find(rel) else { return false };
+        self.parts.decls.contains_key(&a) || (!self.parts.decls_gone.contains(&a) && self.parent.is_some_and(|p| p.decl(AtomId(a)).is_some()))
+    }
+    /// States the fields edit `e` states (its declarations, facts, inputs, outputs and `.about` rows, by name), as
+    /// this builder's: an edit staged against the same input (`fields::Edit`), its rules this builder's own.
+    pub(in crate::code_rule_dsl::logic::program_image) fn state_fields_of(&mut self, e: &Builder<'_>) {
+        let text = |a: u32| e.enc.text(a).to_owned();
+        let value = |c: &Cell| match *c {
+            Cell::Int(i) => Value::Int(i),
+            Cell::Str(a) => Value::Str(e.enc.text(a.0).to_owned().into()),
+            Cell::Branded(b) => Value::Branded(b),
+        };
+        for (&a, d) in &e.parts.decls {
+            let cols: Vec<(String, String)> = d.cols.iter().map(|&(n, t)| (text(n), text(t))).collect();
+            let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+            self.declare(&text(a), &pairs);
+        }
+        for &a in &e.parts.decls_gone {
+            self.undeclare(&text(a));
+        }
+        for (&k, f) in e.parts.facts.iter().filter(|(k, _)| *k & ABOUT_BIT == 0) {
+            let rows: Vec<List<Value>> = f.rows.iter().map(|row| row.iter().map(value).collect::<Vec<_>>().into()).collect();
+            self.set_facts(&text(k), &rows);
+        }
+        for &a in &e.parts.facts_gone {
+            self.drop_facts(&text(a));
+        }
+        if let Some((ids, _)) = &e.parts.inputs {
+            self.set_inputs(&ids.iter().map(|&a| text(a)).collect::<Vec<_>>());
+        }
+        if let Some((ids, _)) = &e.parts.outputs {
+            self.set_outputs(&ids.iter().map(|&a| text(a)).collect::<Vec<_>>());
+        }
+        if e.parts.owns_about {
+            let about: Vec<(String, Vec<List<Value>>)> = e
+                .parts
+                .facts
+                .iter()
+                .filter(|(k, _)| *k & ABOUT_BIT != 0)
+                .map(|(&k, f)| (text(k & !ABOUT_BIT), f.rows.iter().map(|row| row.iter().map(value).collect::<Vec<_>>().into()).collect()))
+                .collect();
+            self.own_about();
+            self.parts.facts.retain(|k, _| k & ABOUT_BIT == 0);
+            for (name, rows) in about {
+                let cells: Vec<Vec<Cell>> = rows.iter().map(|row| row.iter().map(|v| self.cell(v)).collect()).collect();
+                self.set_about_rows(&name, cells);
+            }
+        }
+    }
+    /// Relation `rel`'s declared columns (name, type), as this edit leaves them.
+    pub fn columns_of(&self, rel: &str) -> Option<Vec<(String, String)>> {
+        let a = self.enc.find(rel)?;
+        if let Some(d) = self.parts.decls.get(&a) {
+            return Some(d.cols.iter().map(|&(n, t)| (self.enc.text(n).to_owned(), self.enc.text(t).to_owned())).collect());
+        }
+        if self.parts.decls_gone.contains(&a) {
+            return None;
+        }
+        self.parent.and_then(|p| p.columns_of(rel))
+    }
+    /// The declared relations' names, in name order, as this edit leaves them.
+    pub fn declared_names(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<String> = self.parent.map(|p| p.declared_names()).unwrap_or_default().into_iter().collect();
+        for a in &self.parts.decls_gone {
+            names.remove(self.enc.text(*a));
+        }
+        names.extend(self.parts.decls.keys().map(|&a| self.enc.text(a).to_owned()));
+        names.into_iter().collect()
+    }
+    /// The relations with facts stated, in name order, as this edit leaves them.
+    pub fn fact_names(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<String> = self.parent.map(|p| p.fact_names()).unwrap_or_default().into_iter().collect();
+        for a in &self.parts.facts_gone {
+            names.remove(self.enc.text(*a));
+        }
+        names.extend(self.parts.facts.keys().filter(|&&k| k & ABOUT_BIT == 0).map(|&a| self.enc.text(a).to_owned()));
+        names.into_iter().collect()
+    }
+    /// The rows of about relation `name` as this edit leaves them, read without taking them over (`about_rows`).
+    pub fn about_cells(&self, name: &str) -> Vec<Vec<Cell>> {
+        if self.parts.owns_about {
+            let Some(a) = self.enc.find(name) else { return Vec::new() };
+            return self.parts.facts.get(&(a | ABOUT_BIT)).map(|f| f.rows.clone()).unwrap_or_default();
+        }
+        let Some(p) = self.parent else { return Vec::new() };
+        p.about_facts().into_iter().filter(|f| p.text(f.name()) == name).flat_map(|f| f.rows().map(|r| r.collect::<Vec<Cell>>()).collect::<Vec<_>>()).collect()
+    }
+    /// Adds rows `rows` to relation `rel`'s facts, after the parent's.
+    pub(in crate::code_rule_dsl::logic::program_image) fn add_facts(&mut self, rel: &str, rows: &[List<Value>]) {
+        if rows.is_empty() {
+            return;
+        }
+        let a = self.atom(rel);
+        let mut cells: Vec<Vec<Cell>> = match self.parts.facts.get(&a.0) {
+            Some(f) => f.rows.clone(),
+            None if self.parts.facts_gone.contains(&a.0) => Vec::new(),
+            None => self.parent.and_then(|p| p.facts(a)).map(|f| f.rows().map(|r| r.collect()).collect()).unwrap_or_default(),
+        };
+        cells.extend(rows.iter().map(|row| row.iter().map(|v| self.cell(v)).collect::<Vec<Cell>>()));
+        self.set_fact_cells(rel, cells);
+    }
     /// States the program's other fields (`about_of`), all of them.
-    pub fn set_about(&mut self, about: &Facts) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_about(&mut self, about: &Facts) {
         self.parts.facts.retain(|k, _| k & ABOUT_BIT == 0);
         for (rel, rows) in about {
             let a = self.enc.atom(rel);
@@ -466,26 +769,24 @@ impl<'p> Builder<'p> {
 
     // -- the version --
 
-    /// The image's bytes: a base's, or a delta's over the parent.
-    pub fn finish_bytes(mut self) -> Result<Vec<u8>, String> {
-        self.removed.sort_unstable();
-        self.removed.dedup();
-        if self.parent.is_none() && (!self.removed.is_empty() || self.parts.inputs.is_none() || self.parts.outputs.is_none() || !self.parts.owns_about) {
-            if !self.removed.is_empty() {
-                return Err(super::bad("a base removes nothing"));
-            }
-            // A base owns every part: what was not stated is empty.
-            if self.parts.inputs.is_none() {
-                self.set_inputs::<&str>(&[]);
-            }
-            if self.parts.outputs.is_none() {
-                self.set_outputs::<&str>(&[]);
-            }
-            if !self.parts.owns_about {
-                self.set_about(&Facts::new());
-            }
+    /// The image written so far, once, in place (decision 0464): a base's, or a delta's over the parent. The builder
+    /// is left as it is, to write on: nothing is cloned to write it.
+    pub fn image(&self) -> Result<super::Image, String> {
+        if self.removed.windows(2).all(|w| w[0] < w[1]) {
+            return self.enc.finish(&self.parts, &self.removed);
         }
-        Ok(self.enc.finish(&self.parts, &self.removed))
+        let mut removed = self.removed.clone();
+        removed.sort_unstable();
+        removed.dedup();
+        self.enc.finish(&self.parts, &removed)
+    }
+
+    /// The base written (`image`), as a version read where it was written.
+    pub fn base_version(&self) -> Result<Arc<Version>, String> {
+        if self.parent.is_some() {
+            return Err(super::bad("an edit of a parent is no base"));
+        }
+        Version::of_image(self.image()?)
     }
 
     /// The edit as an overlay of its parent, never folded: for a version whose ids must stay as written (a
@@ -494,26 +795,37 @@ impl<'p> Builder<'p> {
         let parent = self.parent.ok_or("an overlay of no parent")?;
         self.removed.sort_unstable();
         self.removed.dedup();
-        Version::over(parent, &self.finish_bytes()?)
+        Version::over_image(parent, self.image()?)
     }
     /// The version the edit makes: a view, an overlay, or folded (`Builder`'s doc).
-    pub fn finish(mut self) -> Result<(Arc<Version>, Made), String> {
+    pub fn finish(self) -> Result<(Arc<Version>, Made), String> {
+        self.finish_as(false).map(|(v, made, _)| (v, made))
+    }
+    /// The version the edit makes (`finish`), and where it folded, each rule's id in the folded version by its id in
+    /// the edit: a fold numbers the rules from 0, in the edit's order (the parent's kept, then the added). A pass that
+    /// keeps its rules in an order of its own (`Placed`'s) reads its order back through it.
+    pub fn finish_placing(self) -> Result<(Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>), String> {
+        self.finish_as(true)
+    }
+    fn finish_as(mut self, placing: bool) -> Result<(Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>), String> {
         let Some(parent) = self.parent else {
-            return Ok((Version::open(&self.finish_bytes()?)?, Made::Folded));
+            return Ok((Version::of_image(self.image()?)?, Made::Folded, None));
         };
         self.removed.sort_unstable();
         self.removed.dedup();
         if self.enc.rules() == 0 && !self.parts_changed
             && let Some(v) = view(parent, &self.removed)
         {
-            return Ok((v, Made::View));
+            return Ok((v, Made::View, None));
         }
         let size = self.size();
-        let overlay = Version::over(parent, &self.finish_bytes()?)?;
+        let overlay = Version::over_image(parent, self.image()?)?;
         if 2 * size >= parent.size().max(1) {
-            return Ok((overlay.fold()?, Made::Folded));
+            // `folding_edit` copies the overlay's rules in its order, so the k-th is rule k.
+            let order = placing.then(|| overlay.rules().enumerate().map(|(k, r)| (r.id(), RuleId(k as u32))).collect());
+            return Ok((Builder::folding_edit(&overlay, parent).finish()?.0, Made::Folded, order));
         }
-        Ok((overlay, Made::Overlay))
+        Ok((overlay, Made::Overlay, None))
     }
 }
 
@@ -556,6 +868,14 @@ pub fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
         }
     }
     Some(Version::view(over, out, size, digest))
+}
+
+/// A rule open on a builder (`Builder::open_rule`), written by the builder's `put_` writes.
+#[must_use]
+pub struct Open {
+    at: usize,
+    head: bool,
+    failed: Option<String>,
 }
 
 /// A rule written term by term: its head, then its body's literals, in order. A rule refused (`finish`'s error) or
@@ -636,7 +956,7 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self
     }
     /// An aggregate `var = op over : { rel(args) }`, written as the encoder writes a tree's (`over` `None` for a
-    /// count); `var` a variable. A join's separator and keys are not written term by term: refused.
+    /// count); `var` a variable. A join's keys follow `over`, a variable each, then its separator.
     pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::ast::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
         use crate::code_rule_dsl::logic::front::ast::AggOp;
         self.body();
@@ -646,10 +966,7 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
             AggOp::Max => 2,
             AggOp::Sum => 3,
             AggOp::Product => 4,
-            AggOp::Join { .. } => {
-                self.failed = Some(super::bad("a join aggregate written term by term"));
-                return self;
-            }
+            AggOp::Join { .. } => 5,
         };
         let s = match var {
             T::Var(v) => {
@@ -666,6 +983,13 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         match over {
             Some(t) => self.term(&t),
             None => self.b.enc.leaf(kind::WILD, 0),
+        }
+        if let AggOp::Join { by, sep } = op {
+            for k in by {
+                self.term(&T::Var(k));
+            }
+            let a = self.b.enc.atom(sep);
+            self.b.enc.leaf(kind::STR, a);
         }
         self.atom_node(rel.into(), args, 0);
         self.b.enc.close(at);
@@ -759,63 +1083,6 @@ impl Version {
         Builder::on(self)
     }
 
-    /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
-    /// both programs (a test, the trace's replay); a pass states its edit instead.
-    pub fn diff<'p>(self: &'p Arc<Self>, to: &Program) -> Result<Builder<'p>, String> {
-        let mut want: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
-        let mut scratch = Encoder::new(None);
-        for (k, r) in to.rules.iter().enumerate() {
-            let at = scratch.tree_rule(r)?;
-            want.entry(scratch.rule_hash_of(at)).or_default().push(k);
-        }
-        let mut b = Builder::on(self);
-        let mut kept = vec![false; to.rules.len()];
-        for r in self.rules() {
-            match want.get_mut(&r.hash()).and_then(Vec::pop) {
-                Some(k) => kept[k] = true,
-                None => b.remove(r.id()),
-            }
-        }
-        for (r, k) in to.rules.iter().zip(&kept) {
-            if !k {
-                b.add(r)?;
-            }
-        }
-        for (n, c) in &to.decls {
-            let cols: Vec<(&str, &str)> = c.iter().map(|(a, t)| (a.as_str(), t.as_str())).collect();
-            if self.decl_of(n).is_none_or(|d| d.hash() != encoder::decl_hash(n, cols.iter().copied())) {
-                b.declare(n, &cols);
-            }
-        }
-        for d in self.decls() {
-            if !to.decls.contains_key(self.text(d.name())) {
-                b.undeclare(self.text(d.name()));
-            }
-        }
-        for (rel, rows) in &to.facts {
-            if self.find(rel).and_then(|a| self.facts(a)).is_none_or(|f| f.hash() != Builder::hash_rows(rel, false, rows)) {
-                b.set_facts(rel, rows);
-            }
-        }
-        for f in self.all_facts() {
-            if !to.facts.contains_key(self.text(f.name())) {
-                b.drop_facts(self.text(f.name()));
-            }
-        }
-        let about = super::about_of(to);
-        let old: std::collections::BTreeMap<&str, u64> = self.about_facts().into_iter().map(|f| (self.text(f.name()), f.hash())).collect();
-        let new: std::collections::BTreeMap<&str, u64> = about.iter().map(|(r, rows)| (r.as_str(), Builder::hash_rows(r, true, rows))).collect();
-        if old != new {
-            b.set_about(&about);
-        }
-        if self.inputs_hash() != encoder::names_hash(0, to.inputs.iter().map(String::as_str)) {
-            b.set_inputs(&to.inputs);
-        }
-        if self.outputs_hash() != encoder::names_hash(1, to.outputs.iter().map(String::as_str)) {
-            b.set_outputs(&to.outputs);
-        }
-        Ok(b)
-    }
 }
 
 /// Which relations' fields a part keeps (`Version::part`): its natives', its lattices' and its gates' (by key).
@@ -872,6 +1139,11 @@ pub enum Site<'v> {
 /// A rule rewritten as it is copied (`Builder::rewrite`). Each hook's default keeps what it is given, so a pass states
 /// only what it changes, and never walks a rule's nodes itself.
 pub trait Rewrite {
+    /// Starts rule `r` of a rewrite of the whole program (`Builder::rewrite_all`): whether it is rewritten. A rule it
+    /// leaves is kept as it is, copied with its neighbours as a range.
+    fn begin(&mut self, _r: RuleRef<'_>) -> bool {
+        true
+    }
     /// Terms to write before atom `a`'s own arguments (a presence column, say), into `out`.
     fn prefix(&mut self, _a: AtomRef<'_>, _out: &mut Vec<T<'static>>) {}
     /// A term to write in place of `t` at `site`; `None` keeps it (and asks again of each of a call's arguments).

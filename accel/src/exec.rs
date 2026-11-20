@@ -89,13 +89,131 @@ thread_local! {
     static LAST_JOB: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
     /// The wait this thread is in, and the job it last ran for others: (wall, name).
     static LAST_RUN: std::cell::Cell<(f64, &'static str)> = const { std::cell::Cell::new((0.0, "")) };
+    /// While this thread helps in a wait with a deadline ([`Waiting::help_within`]): by when what it waits for is
+    /// expected. A job expected to run past it declines to run here ([`declines`]).
+    static HELP_BY: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// The job this thread's last help popped declined to run here ([`declines`]): it is back in its queue.
+    static DECLINED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]).
+/// Each named job's expected wall seconds: a running mean of its last runs ([`as_job`]), for a wait with a deadline
+/// to know which jobs fit the time it has ([`declines`]). One atomic a name (its `f64`'s bits, `u64::MAX` before its
+/// first run), the machine's (decision 0442: a measure of this machine, as the cost model is), found under a read
+/// lock: a lock taken for writing at every job's end was contended (ab71: 0.5 s).
+#[derive(Default)]
+struct JobWalls(std::sync::RwLock<BTreeMap<&'static str, Arc<std::sync::atomic::AtomicU64>>>);
+
+fn wall_of(name: &'static str) -> Arc<std::sync::atomic::AtomicU64> {
+    let walls = rerail_context::machine::<JobWalls>();
+    if let Some(w) = walls.0.read().unwrap_or_else(|p| p.into_inner()).get(name) {
+        return Arc::clone(w);
+    }
+    Arc::clone(walls.0.write().unwrap_or_else(|p| p.into_inner()).entry(name).or_insert_with(|| Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX))))
+}
+
+/// A job's expected wall seconds from its runs so far; `None` before its first.
+pub fn expected_wall(name: &'static str) -> Option<f64> {
+    let bits = wall_of(name).load(std::sync::atomic::Ordering::Relaxed);
+    (bits != u64::MAX).then(|| f64::from_bits(bits))
+}
+
+/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]), and its wall
+/// joins the job's expected wall ([`expected_wall`]). The job runs in a job scope of its own ([`in_job_scope`]).
 pub fn as_job<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
-    let r = f();
+    // A job declined inside this one (by a wait of its own) is not the help that ran this one; and a job that runs
+    // was judged to fit its helper's deadline, so its own waits have none (a steal inside them that declined would
+    // be stolen again at once, with no wait's pause between).
+    let declined = DECLINED.with(|d| d.replace(false));
+    let by = HELP_BY.with(|h| h.replace(None));
+    let t0 = Instant::now();
+    let r = in_job_scope(f);
+    let wall = t0.elapsed().as_secs_f64();
+    let w = wall_of(name);
+    let was = w.load(std::sync::atomic::Ordering::Relaxed);
+    let mean = if was == u64::MAX { wall } else { 0.7 * f64::from_bits(was) + 0.3 * wall };
+    w.store(mean.to_bits(), std::sync::atomic::Ordering::Relaxed);
     LAST_JOB.with(|j| j.set(name));
+    DECLINED.with(|d| d.set(declined));
+    HELP_BY.with(|h| h.set(by));
     r
+}
+
+/// Whether the job `name` (the caller's estimate `estimate` seconds, 0 when unknown) declines to run on this thread
+/// now: the thread is helping in a wait whose work is expected by a deadline ([`Waiting::help_within`]), and the job
+/// is expected to run past it, or its time is not known yet. A job that declines goes back to its queue for a thread
+/// that is not waiting (`rerail::threads::Jobs::spawn`, [`Exec::spawn`]): a long job run in a wait for a device
+/// held the batch's continuation up to 2.7 s, 7.7 s in all on 300 files (Q203 item 5). Outside such a help, never.
+pub fn declines(name: &'static str, estimate: f64) -> bool {
+    let Some(by) = HELP_BY.with(std::cell::Cell::get) else { return false };
+    let left = by.saturating_duration_since(Instant::now()).as_secs_f64();
+    let expected = match expected_wall(name) {
+        Some(w) => Some(w.max(estimate)),
+        None => (estimate > 0.0).then_some(estimate),
+    };
+    let declined = expected.is_none_or(|e| e > left);
+    if declined {
+        DECLINED.with(|d| d.set(true));
+    }
+    declined
+}
+
+/// A job scope's entry and exit (decision 0386): what a layer above keeps per job rather than per thread, saved
+/// when a job starts on a thread and restored when it ends. A job may start on a thread in the middle of another (a
+/// wait that runs the pool's jobs): the inner job's work must not join the outer's, nor be left for it.
+pub type JobScopeEnter = fn() -> Box<dyn std::any::Any>;
+pub type JobScopeExit = fn(Box<dyn std::any::Any>);
+
+static JOB_SCOPE: std::sync::OnceLock<(JobScopeEnter, JobScopeExit)> = std::sync::OnceLock::new();
+
+/// Sets the job scope's entry and exit, once for the process (before its first job); later calls are ignored.
+pub fn set_job_scope(enter: JobScopeEnter, exit: JobScopeExit) {
+    let _ = JOB_SCOPE.set((enter, exit));
+}
+
+/// Runs `f` in a job scope of its own: the scope set by [`set_job_scope`] is entered before it and exited after it,
+/// also when it panics. Every job of the pool runs in one: [`as_job`]'s and a stream's ([`crate::stream`]).
+pub fn in_job_scope<R>(f: impl FnOnce() -> R) -> R {
+    let Some(&(enter, exit)) = JOB_SCOPE.get() else { return f() };
+    struct Exit(Option<Box<dyn std::any::Any>>, JobScopeExit);
+    impl Drop for Exit {
+        fn drop(&mut self) {
+            if let Some(saved) = self.0.take() {
+                (self.1)(saved);
+            }
+        }
+    }
+    let _exit = Exit(Some(enter()), exit);
+    f()
+}
+
+thread_local! {
+    /// The command buffers this thread made and has not committed (decision 0386).
+    static UNCOMMITTED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts a command buffer this thread made, to be committed by it ([`command_committed`]). A queue holds a bounded
+/// number of command buffers not yet completed (64 on Metal), and a thread asking for one past them waits for one to
+/// complete: one never committed never completes. So a thread commits what it made before it waits for anything
+/// ([`assert_no_uncommitted`]), and leaves none open when the call that made it returns.
+pub fn command_opened() {
+    UNCOMMITTED.with(|c| c.set(c.get() + 1));
+}
+
+/// A command buffer [`command_opened`] counted, committed or dropped unencoded.
+pub fn command_committed() {
+    UNCOMMITTED.with(|c| c.set(c.get().saturating_sub(1)));
+}
+
+/// The command buffers this thread holds uncommitted.
+pub fn uncommitted_here() -> u32 {
+    UNCOMMITTED.try_with(std::cell::Cell::get).unwrap_or(0)
+}
+
+/// A wait's check (debug builds): the waiting thread holds no uncommitted command buffer. A thread that waits with one
+/// can hold up every thread that needs a command buffer of the queue, and the one that would commit it.
+#[track_caller]
+pub fn assert_no_uncommitted(site: &'static str) {
+    debug_assert_eq!(uncommitted_here(), 0, "{site}: a thread waits holding command buffers it did not commit (decision 0386)");
 }
 
 /// Runs one of the pool's other jobs on this thread, if one is queued (a pool thread's wait): whether it ran one. Its
@@ -110,7 +228,8 @@ pub fn help_once() -> bool {
     let c0 = crate::score::thread_cpu();
     let t0 = Instant::now();
     LAST_JOB.with(|j| j.set(""));
-    let ran = rayon::yield_now() == Some(rayon::Yield::Executed);
+    DECLINED.with(|d| d.set(false));
+    let ran = rayon::yield_now() == Some(rayon::Yield::Executed) && !DECLINED.with(|d| d.replace(false));
     if ran {
         let spent = crate::score::thread_cpu() - c0;
         HELPED.with(|h| h.set(h.get() + spent));
@@ -144,6 +263,8 @@ pub struct WaitStats {
     /// The longest job run in a wait, and its name.
     pub longest: f64,
     pub longest_job: &'static str,
+    /// Jobs that declined to run in a wait with a deadline, expected past it ([`declines`]).
+    pub declined: u64,
 }
 
 /// The jobs that made waits late: by job, how many waits and their late seconds (the bound).
@@ -154,12 +275,18 @@ pub struct LateBy {
     pub late_max: f64,
 }
 
+/// Every site's wait stats, and by job the waits it made late.
+type WaitTables = (BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>);
+
 /// The run's waits, by site, and the jobs that made them late (decision 0442: the profile's, so the run's).
 #[derive(Default)]
-struct Waits(std::sync::Mutex<(BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>)>);
+struct Waits(std::sync::Mutex<WaitTables>);
+
+/// [`waits`]: every site's waits, and the jobs that made them late.
+pub type SiteWaits = (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>);
 
 /// Every site's waits so far in the run under way, and the jobs that made them late: for the profile.
-pub fn waits() -> (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>) {
+pub fn waits() -> SiteWaits {
     let waits = rerail_context::local::<Waits>();
     let w = waits.0.lock().unwrap_or_else(|p| p.into_inner());
     (w.0.iter().map(|(k, v)| (*k, v.clone())).collect(), w.1.iter().map(|(k, v)| (*k, v.clone())).collect())
@@ -173,11 +300,14 @@ pub struct Waiting {
     s: WaitStats,
     /// The last job run, if nothing was polled since: (wall, name, when it ended).
     last: Option<(f64, &'static str, Instant)>,
+    /// When a job last declined to run in this wait ([`declines`]): the wait offers none again for a millisecond,
+    /// so the job is left to the pool's other threads.
+    declined: Option<Instant>,
 }
 
 impl Waiting {
     pub fn new(site: &'static str) -> Self {
-        Waiting { site, began: Instant::now(), s: WaitStats { waits: 1, ..Default::default() }, last: None }
+        Waiting { site, began: Instant::now(), s: WaitStats { waits: 1, ..Default::default() }, last: None, declined: None }
     }
 
     /// Runs one of the pool's other jobs, if one is queued: whether it ran one.
@@ -197,6 +327,24 @@ impl Waiting {
         } else {
             self.last = None;
         }
+        ran
+    }
+
+    /// [`Waiting::help`], for a wait whose work is expected by `by`: only a job expected to end by then runs here
+    /// ([`declines`]); one that would not goes back to its queue, and the wait offers none for a millisecond.
+    pub fn help_within(&mut self, by: Instant) -> bool {
+        if self.declined.is_some_and(|d| d.elapsed() < std::time::Duration::from_millis(1)) {
+            return false;
+        }
+        let outer = HELP_BY.with(std::cell::Cell::get);
+        HELP_BY.with(|h| h.set(Some(by)));
+        DECLINED.with(|d| d.set(false));
+        let ran = self.help();
+        if !ran && DECLINED.with(|d| d.replace(false)) {
+            self.declined = Some(Instant::now());
+            self.s.declined += 1;
+        }
+        HELP_BY.with(|h| h.set(outer));
         ran
     }
 
@@ -231,6 +379,7 @@ impl Waiting {
         t.late_wall += self.s.late_wall;
         t.late_max = t.late_max.max(self.s.late_max);
         t.late_exact += self.s.late_exact;
+        t.declined += self.s.declined;
         if self.s.longest > t.longest {
             t.longest = self.s.longest;
             t.longest_job = self.s.longest_job;
@@ -265,6 +414,7 @@ pub fn help_until<T>(poll: impl FnMut() -> Option<T>) -> T {
 
 /// [`help_until`], its waits recorded under `site` ([`waits`]).
 pub fn help_until_as<T>(site: &'static str, mut poll: impl FnMut() -> Option<T>) -> T {
+    assert_no_uncommitted(site);
     let pool = on_pool();
     let mut nap = 20e-6f64;
     let mut wait = Waiting::new(site);
@@ -303,6 +453,7 @@ impl Bell {
     /// Waits until `poll` gives a value, recorded under `site` ([`waits`]), running no job: it polls each time the
     /// bell rings, and at least every millisecond (a ring is never needed for the wait to end).
     pub fn wait_as<T>(&self, site: &'static str, mut poll: impl FnMut() -> Option<T>) -> T {
+        assert_no_uncommitted(site);
         let mut wait = Waiting::new(site);
         loop {
             let seen = *self.rung.lock().unwrap_or_else(|p| p.into_inner());
@@ -325,10 +476,10 @@ impl Bell {
 pub fn cores_slowdown() -> f64 {
     let pools = pools();
     let mut last = pools.load.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some((at, v)) = *last {
-        if at.elapsed().as_secs_f64() < 0.1 {
-            return v;
-        }
+    if let Some((at, v)) = *last
+        && at.elapsed().as_secs_f64() < 0.1
+    {
+        return v;
     }
     let ncpu = std::thread::available_parallelism().map_or(1, |n| n.get()) as f64;
     #[cfg(unix)]
@@ -939,6 +1090,16 @@ impl Claims {
         (!late.is_empty()).then_some(late)
     }
 
+    /// When the launches not `done` are expected to have ended: each on its planned lane, by its finish there (its
+    /// lane's queue and latency counted), at least its due start and its work.
+    fn expected_end(&self, done: impl Fn(usize) -> bool) -> Instant {
+        let end = (0..self.plan.len())
+            .filter(|&i| !done(i))
+            .map(|i| self.costs[i][self.plan[i].index()].map_or(self.due[i], |c| c.finish.max(self.due[i] + c.wall)))
+            .fold(0.0f64, f64::max);
+        self.begun + std::time::Duration::from_secs_f64(end.max(0.0))
+    }
+
     /// When `lane`'s plan had it start (a device's latency is part of its finish, not of its start).
     fn due_on(&self, lane: Lane) -> f64 {
         (0..self.plan.len()).find(|&i| self.plan[i] == lane).map_or(0.0, |i| self.due[i])
@@ -1041,6 +1202,10 @@ impl<R> Job<R> {
     }
 }
 
+/// A batch's placement ([`Executor::place`]): per launch, its lane, its cost there and the fastest lane's; and the
+/// load it was weighed against.
+pub type Placement = (Vec<(Lane, Cost, Cost)>, Load);
+
 impl Executor {
     /// The executor's scoreboard, shared: a host stream ([`crate::stream`]) scores its jobs on it.
     pub fn board(&self) -> Arc<Scoreboard> {
@@ -1051,14 +1216,14 @@ impl Executor {
     pub fn new() -> Self {
         configure();
         let present = lanes::present();
-        // The device lanes are macOS's: elsewhere the two are all.
-        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        // SME and the Neural Engine are macOS's; the GPU lane is any device's (decision 0440 step E).
+        #[cfg_attr(not(any(target_os = "macos", gpu_lane)), allow(unused_mut))]
         let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(crate::sql::SqlBackend)];
-        #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
+        #[cfg(sme_lane)]
         if present[Lane::Sme.index()] {
             backends.extend(crate::sme::backend());
         }
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[cfg(gpu_lane)]
         if present[Lane::Gpu.index()] {
             backends.extend(crate::gpu::backend());
         }
@@ -1186,7 +1351,7 @@ impl Executor {
 
     /// Places each launch of a batch of kind `tag`, largest first, by host CPU (`Prices::choose_host`): per launch,
     /// in the batch's order, its lane, its cost there and the fastest lane's; and the load it was weighed against.
-    pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+    pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<Placement, String> {
         let predicted = self.predict(batch, &self.load(tag));
         self.place_predicted(tag, batch, &predicted)
     }
@@ -1199,7 +1364,7 @@ impl Executor {
     }
 
     /// [`Executor::place`] with the model's costs (`predicted`, per launch by lane).
-    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<Placement, String> {
         let mut order: Vec<usize> = (0..batch.0.len()).collect();
         order.sort_by(|&a, &b| batch.0[b].kernel.units().total_cmp(&batch.0[a].kernel.units()));
         let prices = self.measured_prices();
@@ -1301,7 +1466,7 @@ impl Executor {
             self.board.plan(lane, per_lane[lane.index()] as i64, est);
         }
         // The engine's launch budget, checked on the submitting thread (decision 0100 §2).
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[cfg(gpu_lane)]
         if per_lane[Lane::Gpu.index()] > 0 {
             crate::gpu::shared::guard().map_err(|e| format!("gpu lane: {e}"))?;
         }
@@ -1334,6 +1499,9 @@ impl Executor {
                         let run = rerail_context::job_run();
                         rerail_context::cores_spawn_fifo(move || {
                             let _run = rerail_context::enter(run);
+                            // Moved in after the run is entered, so they drop before it is left: the last claims
+                            // drop their kernels' buffers into the machine's pool (decision 0442).
+                            let (claims, backend) = (claims, backend);
                             as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
                         });
                     }
@@ -1357,15 +1525,32 @@ impl Executor {
         let mut ticket = self.board.queue(Lane::Cpu, vec![Item { form: name, units: 0.0, estimate, host: estimate }]);
         let (reply, take) = std::sync::mpsc::sync_channel(1);
         let board = Arc::clone(&self.board);
+        // Declined in a wait with a deadline ([`declines`]): queued again, for a thread that is not waiting.
+        // The check reads the job's expected wall, which is its run's: it is made in the run (decision 0442).
+        fn queue(job: Box<dyn FnOnce() -> bool + Send>, name: &'static str, estimate: f64, run: Option<Arc<dyn rerail_context::RunOwn>>) {
+            rerail_context::cores_spawn_fifo(move || {
+                let declined = {
+                    let _run = rerail_context::enter(run.clone());
+                    declines(name, estimate)
+                };
+                if declined {
+                    return queue(job, name, estimate, run);
+                }
+                job();
+            });
+        }
         // The job is its caller's run's (decision 0442), on whichever pool thread takes it.
         let run = rerail_context::job_run();
-        rerail_context::cores_spawn_fifo(move || {
-            let _run = rerail_context::enter(run);
-            board.start(&mut ticket);
-            let r = as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
-            board.finish(ticket, r.is_ok());
-            let _ = reply.send((r, Instant::now()));
-        });
+        queue(Box::new({
+            let run = run.clone();
+            move || {
+                let _run = rerail_context::enter(run);
+                board.start(&mut ticket);
+                let r = as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
+                board.finish(ticket, r.is_ok());
+                reply.send((r, Instant::now())).is_ok()
+            }
+        }), name, estimate, run);
         Job { name, take }
     }
 }
@@ -1394,8 +1579,11 @@ impl Running {
         let mut helped = 0u64;
         let mut wait = Waiting::new("a batch's launches");
         let mut lane_cpu = [0.0f64; Lane::COUNT];
-        let mut store = |(lane, ids, (r, start, end, cpu)): Got, got: &mut usize| {
+        // The launches replied: what the wait's deadline is no longer for (`Claims::expected_end`).
+        let mut done = vec![false; n];
+        let mut store = |(lane, ids, (r, start, end, cpu)): Got, got: &mut usize, done: &mut [bool]| {
             *got += ids.len();
+            ids.iter().for_each(|&i| done[i] = true);
             lane_cpu[lane.index()] += cpu;
             let s = &mut span[lane.index()];
             *s = Some(s.map_or((start, end), |(a, b)| (a.min(start), b.max(end))));
@@ -1417,7 +1605,7 @@ impl Running {
         while got < n {
             match replies.next().map(Ok).unwrap_or_else(|| take.try_recv()) {
                 Ok(g) => {
-                    store(g, &mut got);
+                    store(g, &mut got, &mut done);
                     // More to wait for: the job last run did not hold up the batch's end.
                     if got < n {
                         wait.polled();
@@ -1439,16 +1627,17 @@ impl Running {
             if let Some((host, i, lane)) = mine {
                 let ticket = claims.board.claimed(lane, vec![claims.item(i, lane)], claims.begun);
                 let r = run_job(&**host, &claims.board, &[&claims.kernels[i]], ticket);
-                store((lane, vec![i], r), &mut got);
+                store((lane, vec![i], r), &mut got, &mut done);
                 helped += 1;
                 continue;
             }
-            // On one of the pool's threads, the pool's other jobs meanwhile.
-            if on_pool && wait.help() {
+            // On one of the pool's threads, the pool's other jobs meanwhile: those expected to end before the
+            // batch's launches are (Q203 item 5); a longer one is left to a thread that is not waiting.
+            if on_pool && wait.help_within(claims.expected_end(|i| done[i])) {
                 continue;
             }
             match take.recv_timeout(std::time::Duration::from_micros(100)) {
-                Ok(g) => store(g, &mut got),
+                Ok(g) => store(g, &mut got, &mut done),
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             }
@@ -1480,10 +1669,10 @@ impl Running {
             moved += u64::from(lane != claims.plan[i]);
             report.launches[lane.index()] += 1;
             report.lost += (c.wall - fastest.wall).max(0.0);
-            if !lane.is_pool() {
-                if let Some(cc) = claims.costs[i][Lane::Cpu.index()] {
-                    report.cpu_freed += cc.wall;
-                }
+            if !lane.is_pool()
+                && let Some(cc) = claims.costs[i][Lane::Cpu.index()]
+            {
+                report.cpu_freed += cc.wall;
             }
             done.push(Done { out, lane, estimate: c.wall, fastest: fastest.wall, host: c.host });
         }
@@ -1681,10 +1870,10 @@ impl Backend for CpuBackend {
         Ok((ran.into_iter().map(|r| r.0).collect(), Phases { worker_cpu, ..Phases::default() }))
     }
     fn forget(&self, id: u64) {
-        if let Ok(mut s) = self.space.lock() {
-            if let Some((rows, k)) = s.sorted.remove(&id) {
-                s.bytes -= rows * 12 + k.runs.len() * 16;
-            }
+        if let Ok(mut s) = self.space.lock()
+            && let Some((rows, k)) = s.sorted.remove(&id)
+        {
+            s.bytes -= rows * 12 + k.runs.len() * 16;
         }
     }
     fn clear(&self) {
@@ -1753,5 +1942,65 @@ mod stack_tests {
             left
         }).unwrap().join().unwrap();
         assert!(deeper + (512 << 10) <= left + (64 << 10), "a frame of 512 KiB is counted: {deeper} after {left}");
+    }
+}
+
+#[cfg(test)]
+mod job_scope_tests {
+    use std::cell::Cell;
+
+    thread_local! {
+        static DEPTH: Cell<u32> = const { Cell::new(0) };
+        static ENTERED: Cell<u32> = const { Cell::new(0) };
+    }
+
+    fn enter() -> Box<dyn std::any::Any> {
+        ENTERED.set(ENTERED.get() + 1);
+        Box::new(DEPTH.replace(0))
+    }
+
+    fn exit(saved: Box<dyn std::any::Any>) {
+        DEPTH.set(*saved.downcast::<u32>().expect("the saved depth"));
+    }
+
+    /// Decision 0386: every job runs in a scope of its own, entered before it and exited after it, also when it
+    /// panics; a job nested in another (a wait that ran it) sees its own state, and the outer's comes back.
+    #[test]
+    fn a_job_runs_in_a_scope_of_its_own() {
+        super::set_job_scope(enter, exit);
+        std::thread::spawn(|| {
+            DEPTH.set(7);
+            let seen = super::as_job("a test's job", || {
+                let outer = DEPTH.replace(1);
+                let nested = super::as_job("a nested job", || DEPTH.get());
+                (outer, nested, DEPTH.get())
+            });
+            assert_eq!(seen, (0, 0, 1), "each job starts with its own state; the outer's is back after the nested one");
+            assert_eq!(DEPTH.get(), 7, "the thread's is back after the job");
+            let r = std::panic::catch_unwind(|| super::as_job("a panicking job", || {
+                DEPTH.set(3);
+                panic!("a test's panic")
+            }));
+            assert!(r.is_err());
+            assert_eq!(DEPTH.get(), 7, "restored after a panic too");
+            assert_eq!(ENTERED.get(), 3);
+        })
+        .join()
+        .unwrap();
+    }
+
+    /// The count of command buffers a thread holds uncommitted.
+    #[test]
+    fn a_thread_counts_its_uncommitted_command_buffers() {
+        std::thread::spawn(|| {
+            super::command_opened();
+            super::command_opened();
+            assert_eq!(super::uncommitted_here(), 2);
+            super::command_committed();
+            super::command_committed();
+            super::assert_no_uncommitted("a test");
+        })
+        .join()
+        .unwrap();
     }
 }

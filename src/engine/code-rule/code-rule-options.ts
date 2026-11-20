@@ -291,6 +291,11 @@ function optionDeclarations(defines: Array<[Path, JsonObject]>): Map<string, Cod
   return declared;
 }
 
+/** The names of the options a document (as written) declares. Throws a `CodeRuleOptionError` for an invalid declaration. */
+export function codeRuleDeclaredOptions(document: unknown): ReadonlySet<string> {
+  return new Set(optionDeclarations(codeRuleDefines(document)).keys());
+}
+
 /** The effective values of a document's options: each `config` value, else its default. */
 export function codeRuleOptionValues(document: unknown): Map<string, CodeRuleDslValue> {
   const defines = codeRuleDefines(document);

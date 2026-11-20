@@ -62,6 +62,7 @@ fn a_store_created_again_at_its_path_gives_a_run_its_symbols() {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
     Connection::open(&elsewhere).unwrap().execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
+    crate::content_store::atoms::copy_blocks(&elsewhere, &path).unwrap();
     assert_eq!(run(&["SELECT CAST(sym_atom('first') AS TEXT)", "SELECT sym_text(1)"]), ["2", "second"]);
 }
 
@@ -77,6 +78,7 @@ fn a_fresh_arena_reads_the_stores_atoms() {
     }
     // A copy at a path this process never opened: its arena starts empty.
     Connection::open(&elsewhere).unwrap().execute("VACUUM INTO ?1", [path.to_str().unwrap()]).unwrap();
+    crate::content_store::atoms::copy_blocks(&elsewhere, &path).unwrap();
     let db = Connection::open(&path).unwrap();
     super::register_symbols(&db).unwrap();
     let text: String = db.query_row("SELECT sym_text(2) || ',' || sym_text(sym_cat(1, 2))", [], |r| r.get(0)).unwrap();
@@ -248,7 +250,7 @@ fn symbols_are_the_stores_atoms() {
 /// The device work queue's file-local FIX (list step 17) solves the CPU's system: many components (as
 /// files), with chains, cycles, transfers and conflicting seeds, and one long counting chain,
 /// give the same values on both.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn the_device_fix_waves_reach_the_cpus_fixpoint() {
     let db = connection();

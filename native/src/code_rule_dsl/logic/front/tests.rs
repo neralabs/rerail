@@ -1,11 +1,26 @@
-//! The front end's checks (stratification, lattices, value cycles, prune) on programs in `.rr` (`logic::rr`).
+//! The front end's checks (stratification, lattices, value cycles, prune) on programs in `.rerail` (`logic::rr`), read
+//! on their versions.
 
 use super::*;
-use crate::code_rule_dsl::logic::rr::parse;
+use crate::code_rule_dsl::logic::program_image::about::About;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit, TermRef, Version, analyses};
+use crate::code_rule_dsl::logic::rr::parse_version as parse;
+use std::sync::Arc;
 
-fn program(name: &str) -> Program {
-    let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/logic/plan/golden/programs").join(name);
+fn program(name: &str) -> Arc<Version> {
+    let path = rerail_store::source_tree::native().join("src/code_rule_dsl/logic/plan/golden/programs").join(name);
     parse(&std::fs::read_to_string(path).unwrap()).unwrap_or_else(|e| panic!("{name}: {e}"))
+}
+
+/// `v`'s components in T's order (by name), or the first that a negation or an aggregate closes.
+fn strata(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
+    analyses::components_by_name(v, &About::of(v))
+}
+
+/// The body literals of `v`'s rule `k`.
+fn body(v: &Version, k: usize) -> Vec<Lit<'_>> {
+    v.rules().nth(k).expect("the rule").body().map(|l| l.view()).collect()
 }
 
 /// T's five programs parse, stratify and prune to what T's `rdl.py` reports (its `parse`, `strata` and `prune`,
@@ -15,34 +30,36 @@ fn program(name: &str) -> Program {
 fn t_programs_match_t_front_end() {
     type Expected = (usize, usize, usize, usize, &'static [&'static str], usize, usize, usize, usize, usize, usize, usize);
     let golden: [(&str, Expected); 5] = [
-        ("calls.rr", (99, 221, 160, 0, &[], 3, 8, 7, 76, 7, 221, 76)),
-        ("calls_rust.rr", (61, 147, 9, 0, &[], 5, 6, 4, 45, 8, 146, 44)),
-        ("workload.rr", (42, 63, 35, 1, &[], 1, 7, 3, 29, 2, 63, 29)),
+        ("calls.rerail", (99, 221, 160, 0, &[], 3, 8, 7, 76, 7, 221, 76)),
+        ("calls_rust.rerail", (61, 147, 9, 0, &[], 5, 6, 4, 45, 8, 146, 44)),
+        ("workload.rerail", (42, 63, 35, 1, &[], 1, 7, 3, 29, 2, 63, 29)),
         (
-            "workload_demand.rr",
+            "workload_demand.rerail",
             (43, 63, 35, 1, &["class_ref", "cv", "fn_ref", "has_def", "lookup", "returns", "type_of"], 1, 7, 3, 30, 2, 63, 30),
         ),
-        ("workload_perdoc.rr", (45, 66, 35, 1, &[], 1, 10, 3, 29, 2, 66, 29)),
+        ("workload_perdoc.rerail", (45, 66, 35, 1, &[], 1, 10, 3, 29, 2, 66, 29)),
     ];
     for (name, expected) in golden {
         let p = program(name);
-        let (sccs, _) = strata(&p).unwrap();
-        let mut demand = p.demand.clone();
+        let sccs = strata(&p).unwrap();
+        let mut demand = ProgramFields::demand(&*p);
         demand.sort();
-        let pruned = prune(p.clone());
-        let (pruned_sccs, _) = strata(&pruned).unwrap();
+        let mut pipeline = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", p.clone());
+        pipeline.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::prune::Prune::default());
+        let (pruned, _) = pipeline.finish().unwrap();
+        let pruned_sccs = strata(&pruned).unwrap();
         let got = (
-            p.decls.len(),
-            p.rules.len(),
-            p.facts.values().map(Vec::len).sum::<usize>(),
-            p.lattice.len(),
+            p.declared_names().len(),
+            p.rules().count(),
+            p.fact_names().iter().map(|r| p.fact_values(r, &Default::default()).map_or(0, |rows| rows.len())).sum::<usize>(),
+            p.lattice_decls().unwrap().len(),
             demand.iter().map(String::as_str).collect::<Vec<_>>(),
-            p.kindsets.len(),
-            p.inputs.len(),
-            p.outputs.len(),
+            ProgramFields::kindsets(&*p).len(),
+            p.input_names().len(),
+            p.output_names().len(),
             sccs.len(),
             sccs.iter().map(BTreeSet::len).max().unwrap_or(0),
-            pruned.rules.len(),
+            pruned.rules().count(),
             pruned_sccs.len(),
         );
         let (d, r, f, l, dm, k, i, o, s, big, pr, ps) = expected;
@@ -50,8 +67,8 @@ fn t_programs_match_t_front_end() {
         // O11: the value cycles, each bounded by the tree.
         let treed: Vec<String> = cycles::check(&p).unwrap().iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect();
         let expected: &[&str] = match name {
-            "calls.rr" => &["qn"],
-            "calls_rust.rr" => &["modn"],
+            "calls.rerail" => &["qn"],
+            "calls_rust.rerail" => &["modn"],
             _ => &["resolves"],
         };
         for rel in expected {
@@ -73,15 +90,18 @@ fn literals_parse_to_t_ast() {
         "#,
     )
     .unwrap();
-    assert_eq!(p.facts["e"], [vec![Value::Int(1), Value::Int(-2)]]);
-    let body = &p.rules[0].body;
-    assert_eq!(p.rules[0].head.args[1], Term::Call("cat".into(), [Term::Var("q".into()), Term::Var("a".into())].into()));
-    assert!(matches!(&body[1], Literal::Atom(a) if a.neg && a.rel == "g"));
-    assert!(matches!(&body[2], Literal::Agg { var, op: AggOp::Count, over: None, atom } if var == "k" && atom.args[1] == Term::Wild));
-    assert!(matches!(&body[3], Literal::Cmp { op: ">=", r: Term::Int(2), .. }));
-    assert!(matches!(&body[4], Literal::Nearest { kindset, .. } if kindset == "scope"));
-    assert!(matches!(&body[6], Literal::Cmp { r: Term::Top, .. }));
-    assert_eq!(p.kindsets["scope"], ["module", "function_definition"]);
+    assert_eq!(p.fact_values("e", &Default::default()).unwrap(), [vec![Value::Int(1), Value::Int(-2)]]);
+    let r = p.rules().next().unwrap();
+    let name = |t: TermRef<'_>| t.var().map(|x| p.text(r.var(x)).to_owned());
+    let head: Vec<TermRef<'_>> = r.head().args().collect();
+    assert!(matches!(head[1], TermRef::Call(f, ref args) if p.text(f) == "cat" && args.clone().map(name).collect::<Vec<_>>() == [Some("q".to_owned()), Some("a".to_owned())]), "{}", p.show_rule(r));
+    let body = body(&p, 0);
+    assert!(matches!(&body[1], Lit::Atom(a) if a.neg() && p.rel_name(a.rel()) == "g"));
+    assert!(matches!(&body[2], Lit::Agg { var, op: crate::code_rule_dsl::logic::program_image::AggRef::Count, over: None, atom } if p.text(r.var(*var)) == "k" && matches!(atom.args().nth(1), Some(TermRef::Wild))));
+    assert!(matches!(&body[3], Lit::Cmp { op: CmpOp::Ge, r: TermRef::Int(2), .. }));
+    assert!(matches!(&body[4], Lit::Atom(a) if p.rel_name(a.rel()) == format!("{AXIS}scope")) || matches!(&body[4], Lit::Nearest { kindset, .. } if p.text(*kindset) == "scope"), "{}", p.show_rule(r));
+    assert!(matches!(&body[6], Lit::Cmp { r: TermRef::Top, .. }));
+    assert_eq!(ProgramFields::kindsets(&*p)["scope"], ["module", "function_definition"]);
 }
 
 #[test]
@@ -95,13 +115,13 @@ fn section_12_extensions_parse() {
         "#,
     )
     .unwrap();
-    assert_eq!(p.lattice["type_of"], LatticeDecl { keys: 2, ty: "approx".into(), merge: Some("approx_join".into()), widen: Some(8) });
-    assert_eq!(p.lattice["type_of"].lattice(), "approx_join");
-    assert_eq!(p.demand, ["*"]);
-    assert!(matches!(&p.rules[0].body[1], Literal::Agg { op: AggOp::Min, over: Some(v), .. } if v == "v"));
-    assert!(
-        matches!(&p.rules[1].body[0], Literal::Ast { matcher, .. } if matcher == "{ kind: typed_parameter, not: { inside: { kind: lambda } } }")
-    );
+    let lattice = p.lattice_decls().unwrap();
+    assert_eq!(lattice["type_of"], LatticeDecl { keys: 2, ty: "approx".into(), merge: Some("approx_join".into()), widen: Some(8) });
+    assert_eq!(lattice["type_of"].lattice(), "approx_join");
+    assert_eq!(ProgramFields::demand(&*p), ["*"]);
+    let r0 = p.rules().next().unwrap();
+    assert!(matches!(&body(&p, 0)[1], Lit::Agg { op: crate::code_rule_dsl::logic::program_image::AggRef::Min, over: Some(v), .. } if p.text(r0.var(*v)) == "v"));
+    assert!(matches!(&body(&p, 1)[0], Lit::Ast { matcher, .. } if p.text(*matcher) == "{ kind: typed_parameter, not: { inside: { kind: lambda } } }"));
 }
 
 /// A matcher atom exports metavariables: each binds a variable to its captured node, and prints back as written.
@@ -109,10 +129,12 @@ fn section_12_extensions_parse() {
 fn matcher_atom_exports_captures() {
     let src = r#"f(n, s) :- ast(d, f, {"rule": {"kind": "function_definition", "has": {"field": "name", "pattern": "$FNAME"}}}, FNAME: n), text(n, s)."#;
     let p = parse(src).unwrap();
-    let Literal::Ast { captures, .. } = &p.rules[0].body[0] else { panic!("not a matcher atom") };
-    assert_eq!(captures, &[("FNAME".to_owned(), "n".to_owned())]);
-    assert_eq!(p.rules[0].body[0].vars(), ["d", "f", "n"].map(String::from).into());
-    assert!(crate::code_rule_dsl::logic::rr::print(&p).unwrap().contains(src));
+    let r = p.rules().next().unwrap();
+    let Lit::Ast { document, node, captures, .. } = body(&p, 0).remove(0) else { panic!("not a matcher atom") };
+    let captures: Vec<(String, String)> = captures.map(|(c, x)| (p.text(c).to_owned(), p.text(r.var(x)).to_owned())).collect();
+    assert_eq!(captures, [("FNAME".to_owned(), "n".to_owned())]);
+    assert_eq!([p.text(r.var(document)), p.text(r.var(node))], ["d", "f"]);
+    assert!(crate::code_rule_dsl::logic::rr::print_version(&p).unwrap().contains(src));
     assert!(matches!(parse("f(n) :- ast(d, f, {}, FNAME n)."), Err(Error::Syntax(_))));
 }
 
@@ -121,6 +143,13 @@ fn named_errors() {
     let unbounded = parse(".decl hi(n: node, v: max<>)\n");
     assert_eq!(unbounded.unwrap_err(), Error::UnboundedLattice { relation: "hi".into() });
     assert!(parse(".decl hi(n: node, v: max<>) widen 4\n").is_ok());
+
+    // A min over symbols reduced their ids, not their text (python/references.rerail picked a route at random).
+    let symbols = ".decl p(a: number, s: symbol)\n.decl q(a: number, s: symbol)\n.decl n(a: number, s: number)\n.decl r(a: number, s: number)\n";
+    let refused = parse(&format!("{symbols}q(a, s) :- p(a, _), s = min t : {{ p(a, t) }}.\n"));
+    assert!(matches!(&refused, Err(Error::Syntax(m)) if m.contains("min over a symbol of p")), "{refused:?}");
+    let numbers = parse(&format!("{symbols}r(a, s) :- n(a, _), s = max t : {{ n(a, t) }}.\n"));
+    assert!(numbers.is_ok(), "{numbers:?}");
 
     let negation = parse("a(x) :- e(x), !b(x).\nb(x) :- a(x).\n").unwrap();
     assert!(matches!(strata(&negation), Err(Error::NotStratifiable { negated, .. }) if negated == "b"));
@@ -165,7 +194,7 @@ fn named_errors() {
     assert!(parse(&derived).is_ok());
 
     // Depth bounds what preorder cannot: a parent relation with a decorator's edge (to the definition, a later
-    // node: up two edges, down one) still climbs one level each step (`ast_parent` in `python/ast.rr`).
+    // node: up two edges, down one) still climbs one level each step (`ast_parent` in `python/ast.rerail`).
     let tree = ".decl child(p: node, c: node, i: number)\n.decl kind(n: node, k: symbol)\n.decl nm(n: node, s: symbol)\n.input child, kind, nm\n\
         .decl deco(f: node, e: node)\ndeco(f, e) :- kind(dd, \"decorated_definition\"), child(dd, f, 1), child(dd, dc, 0), child(dc, e, 0).\n\
         .decl up(n: node, p: node)\nup(n, p) :- child(p, n, _), !kind(p, \"block\").\nup(e, f) :- deco(f, e).\nup(n, q) :- child(p, n, _), kind(p, \"block\"), up(p, q).\n";
@@ -175,8 +204,16 @@ fn named_errors() {
     let sideways = format!("{tree}.decl sib(a: node, b: node)\nsib(a, b) :- child(p, a, _), child(p, b, _).\n.decl qn(k: node, s: symbol)\nqn(k, s) :- nm(k, s).\nqn(k, @dot(p, s)) :- sib(k, o), qn(o, p), nm(k, s).\n");
     assert!(matches!(parse(&sideways), Err(Error::UnboundedValueCycle { .. })));
 
-    // The engine joins on variables: a computed atom argument is refused (`.rr` binds it first, `rr::lower`).
-    let computed = super::parse(".decl e(x: sym)\n.decl a(x: sym)\na($x) :- e(@cat($x, $x)).\n");
+    // The engine joins on variables: a computed atom argument is refused (`.rerail` binds it first, `rr::lower`; a
+    // builder can write one).
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::base();
+    {
+        use crate::code_rule_dsl::logic::program_image::{T, fields::FieldsMut};
+        b.fields().declare("e", &[("x", "sym")]);
+        b.fields().declare("a", &[("x", "sym")]);
+        b.rule().head("a", &[T::Var("x")]).atom("e", &[T::Call("cat", vec![T::Var("x"), T::Var("x")])]).finish().unwrap();
+    }
+    let computed = finish_checks_on(&b.finish().unwrap().0);
     assert!(matches!(computed, Err(Error::Syntax(m)) if m.contains("computed term")));
 }
 
@@ -231,7 +268,8 @@ q(n, s) :- node(_, n, \"identifier\", _, _), text(n, s).
 #[test]
 fn positive_nearest_takes_a_wildcard() {
     let p = parse(".decl k(kind: symbol)\nk(\"module\").\n.decl r(n: node)\nr(n) :- node(_, n, \"identifier\", _, _), nearest(n, _, k).\n").unwrap();
-    assert!(matches!(&p.rules[0].body[1], Literal::Atom(a) if a.rel == format!("{AXIS}k") && a.args[1] == Term::Wild && !a.neg), "{}", p.rules[0]);
+    let r = p.rules().next().unwrap();
+    assert!(matches!(&body(&p, 0)[1], Lit::Atom(a) if p.rel_name(a.rel()) == format!("{AXIS}k") && matches!(a.args().nth(1), Some(TermRef::Wild)) && !a.neg()), "{}", p.show_rule(r));
 }
 
 /// `.input` of a relation nothing declares is a named error, not the planner's panic (`plan`'s `prog.decls[rel]`).
@@ -241,22 +279,44 @@ fn an_undeclared_input_is_named() {
     assert_eq!(parse(undeclared).unwrap_err(), Error::UndeclaredInput { relation: "undeclared".into() });
 }
 
+/// `x = @cat(q, a)` binds x once q and a are bound; with x bound it splits into its unbound parts; a test binds
+/// nothing (`Body::cmp_binds`, T's).
 #[test]
 fn comparisons_bind_like_t() {
-    let bound = |vs: &[&str]| vs.iter().map(|v| v.to_string()).collect::<BTreeSet<_>>();
-    let x = Term::Var("x".into());
-    let cat = Term::Call("cat".into(), [Term::Var("q".into()), Term::Var("a".into())].into());
-    assert_eq!(cmp_binds(&x, "=", &cat, &bound(&["q", "a"])), Some(bound(&["x"])));
-    assert_eq!(cmp_binds(&x, "=", &cat, &bound(&["q"])), None);
+    let p = parse(".decl e(q: symbol, a: symbol)\n.input e\n.decl r(x: symbol)\nr(x) :- e(q, a), x = @cat(q, a), x < 3.\n.output r\n").unwrap();
+    let b = crate::code_rule_dsl::logic::plan::body::nth(&p, 0);
+    let r = p.rules().next().unwrap();
+    let cmps: Vec<(TermRef<'_>, CmpOp, TermRef<'_>)> = body(&p, 0).into_iter().filter_map(|l| if let Lit::Cmp { l, op, r } = l { Some((l, op, r)) } else { None }).collect();
+    let (x, eq, cat) = cmps.iter().copied().find(|c| c.1 == CmpOp::Eq).expect("the equality");
+    let (lx, lt, three) = cmps.iter().copied().find(|c| c.1 == CmpOp::Lt).expect("the test");
+    // Each variable's slot, by name.
+    let mut slots = std::collections::HashMap::new();
+    let mut walk = |t: TermRef<'_>| {
+        fn go(p: &Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, t: TermRef<'_>, out: &mut std::collections::HashMap<String, crate::code_rule_dsl::logic::program_image::Slot>) {
+            match t {
+                TermRef::Var(s) => {
+                    out.insert(p.text(r.var(s)).to_owned(), s);
+                }
+                TermRef::Call(_, args) => args.for_each(|a| go(p, r, a, out)),
+                _ => {}
+            }
+        }
+        go(&p, r, t, &mut slots)
+    };
+    walk(x);
+    walk(cat);
+    let bound = |vs: &[&str]| crate::code_rule_dsl::logic::plan::body::VarSet::of(vs.iter().map(|v| slots[*v]));
+    assert_eq!(b.cmp_binds(x, eq, cat, &bound(&["q", "a"])), Some(bound(&["x"])));
+    assert_eq!(b.cmp_binds(x, eq, cat, &bound(&["q"])), None);
     // A bound result splits into its unbound parts.
-    assert_eq!(cmp_binds(&x, "=", &cat, &bound(&["x", "q"])), Some(bound(&["a"])));
-    assert_eq!(cmp_binds(&x, "<", &Term::Int(3), &bound(&[])), None);
+    assert_eq!(b.cmp_binds(x, eq, cat, &bound(&["x", "q"])), Some(bound(&["a"])));
+    assert_eq!(b.cmp_binds(lx, lt, three, &bound(&[])), None);
 }
 
 /// The components come in T's order, which the planner and the native strata follow.
 #[test]
 fn components_in_t_order() {
-    let (sccs, _) = strata(&program("calls_rust.rr")).unwrap();
+    let sccs = strata(&program("calls_rust.rerail")).unwrap();
     let got = sccs.iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect::<Vec<_>>().join(" | ");
     assert_eq!(
         got,
@@ -272,7 +332,7 @@ fn components_in_t_order() {
 /// both in one round).
 #[test]
 fn every_unstratified_component_is_named() {
-    let prog = super::parse(
+    let prog = parse(
         "
         .decl e(x: node)
         .decl a(x: node)
@@ -281,15 +341,15 @@ fn every_unstratified_component_is_named() {
         .decl d(x: node)
         .input e
         .output a, c
-        a($x) :- e($x), !b($x).
-        b($x) :- e($x), a($x).
-        c($x) :- e($x), !d($x).
-        d($x) :- e($x), c($x).
+        a(x) :- e(x), !b(x).
+        b(x) :- e(x), a(x).
+        c(x) :- e(x), !d(x).
+        d(x) :- e(x), c(x).
         ",
     )
     .unwrap();
     assert!(strata(&prog).is_err());
-    let all = unstratified(&prog);
+    let all = analyses::unstratified(&prog, &About::of(&prog));
     assert_eq!(all.len(), 2, "{all:?}");
 }
 
@@ -368,4 +428,69 @@ fn regex_group_gaps() {
     assert_eq!(gap("^(?:(?:ab(?<r>c)){3})$", "r"), Some(8));
     assert_eq!(gap("^(?:(?<r>a)b|cde)$", "r"), Some(1));
     assert_eq!(gap("^(?:(?<r>a))$", "s"), None);
+}
+
+/// Decision 0276 §6: a program is written through the builder and read as a version, never held as a tree. The tree
+/// program (`front`'s `Program`), the lowered program's tree (`lower`'s `Tree`), the tree's rules and their parts
+/// (`front`'s rule, literal, atom and term forms), a version's rules read as those (`program_image`'s `Tree`) and the
+/// encoder of a tree rule into an image (`tree_rule`, the builder's `add` of one) are gone, and this refuses each in
+/// the engine's code (`native/src` and each crate's `src`, comments aside): a path naming one, an import of one from
+/// `front`, or a definition of one where they lived. The names are built at run time, so this file does not name them
+/// itself.
+#[test]
+fn no_tree_program_comes_back() {
+    fn files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                files(&path, out);
+            } else if path.extension().is_some_and(|x| x == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let native = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+    let mut all = Vec::new();
+    files(&native.join("src"), &mut all);
+    for krate in std::fs::read_dir(native.join("crates")).unwrap() {
+        let src = krate.unwrap().path().join("src");
+        if src.is_dir() {
+            files(&src, &mut all);
+        }
+    }
+    assert!(all.len() > 100, "the engine's sources are read: {} files", all.len());
+    let tree = ["Tr", "ee"].concat();
+    // The tree's forms, by name: what `front` (or `front::ast`) defined.
+    let forms: Vec<String> = [["Pro", "gram"], ["Ru", "le"], ["Lite", "ral"], ["At", "om"], ["Te", "rm"]].iter().map(|p| p.concat()).collect();
+    let mut paths: Vec<String> = forms.iter().flat_map(|f| [format!("front::{f}"), format!("front::ast::{f}")]).collect();
+    paths.extend([format!("lower::{tree}"), format!("program_image::{tree}"), ["tree_", "rule("].concat()]);
+    // Whether `line` names `p` as a whole path (the next character ends the name).
+    let names = |line: &str, p: &str| line.match_indices(p).any(|(at, _)| !line[at + p.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_'));
+    // An import from `front` (or `front::ast`) that lists a form.
+    let imports = |line: &str| {
+        line.match_indices("front::").any(|(at, _)| {
+            let rest = line[at + "front::".len()..].trim_start_matches("ast::");
+            rest.strip_prefix('{').and_then(|r| r.split('}').next()).is_some_and(|list| list.split(',').any(|item| forms.iter().any(|f| item.trim() == f)))
+        })
+    };
+    let mut found = Vec::new();
+    for path in &all {
+        let text = std::fs::read_to_string(path).unwrap();
+        let rel = path.strip_prefix(native).unwrap_or(path).display().to_string();
+        let home = rel.ends_with("logic/front/ast.rs") || rel.ends_with("logic/front.rs");
+        let lowering = rel.contains("logic/rr/lower");
+        let image = rel.contains("logic/program_image");
+        for (n, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let named = paths.iter().any(|p| names(line, p));
+            let defined = (home && forms.iter().any(|f| names(line, &format!("struct {f}")) || names(line, &format!("enum {f}"))))
+                || ((lowering || image) && names(line, &format!("struct {tree}")));
+            if named || imports(line) || defined {
+                found.push(format!("{rel}:{}: {}", n + 1, line.trim()));
+            }
+        }
+    }
+    assert!(found.is_empty(), "the tree program is back (decision 0276 §6):\n{}", found.join("\n"));
 }

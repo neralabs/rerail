@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { removeFolderSync } from "../../../support/platform/remove-folder.js";
 
 const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../../src/engine/index.ts", import.meta.url).href;
@@ -57,5 +58,5 @@ it.skipIf(!required)("shares one indexed SQL owner across independent selector p
     expect(candidates[0].setup).toHaveLength(2);
     expect(candidates[0].setup[1]).toContain('producer,fid,pre');
 
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeFolderSync(directory); }
 }, 45_000);

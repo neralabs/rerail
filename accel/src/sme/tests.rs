@@ -17,10 +17,15 @@ impl Rng {
     }
 }
 
-fn sme() -> Sme {
+/// The SME lane, or none on a machine without SME2 (an M1 or M3: platform priorities), whose test then has
+/// nothing to run and says so.
+fn sme() -> Option<Sme> {
     match backend() {
-        Some(_) => Sme { units: lanes::sme_units() },
-        None => panic!("this machine has no SME2"),
+        Some(_) => Some(Sme { units: lanes::sme_units() }),
+        None => {
+            eprintln!("skipped: this machine has no SME2");
+            None
+        }
     }
 }
 
@@ -58,7 +63,7 @@ fn check(s: &Sme, ks: &[Kernel]) {
 
 #[test]
 fn counts_many_shapes() {
-    let s = sme();
+    let Some(s) = sme() else { return };
     let mut rng = Rng(0x5eed);
     let shapes = [(1, 1, 1), (31, 33, 2), (32, 32, 3), (33, 65, 5), (7, 100, 64), (100, 7, 130), (64, 96, 300), (45, 17, 257)];
     for &(n, m, words) in &shapes {
@@ -77,7 +82,7 @@ fn counts_many_shapes() {
 
 #[test]
 fn thresholds_many_shapes() {
-    let s = sme();
+    let Some(s) = sme() else { return };
     let mut rng = Rng(0xfeed);
     for t in 0..16 {
         let (n, m, words) = (1 + rng.below(80) as usize, 1 + rng.below(80) as usize, 1 + rng.below(300) as usize);
@@ -103,7 +108,7 @@ fn thresholds_many_shapes() {
 
 #[test]
 fn self_product_writes_both_triangles() {
-    let s = sme();
+    let Some(s) = sme() else { return };
     let mut rng = Rng(0xabc);
     for &(n, words) in &[(1, 1), (31, 4), (32, 205), (97, 205), (130, 17)] {
         let a = rows(&mut rng, n, words * 64, 1);
@@ -115,7 +120,7 @@ fn self_product_writes_both_triangles() {
 
 #[test]
 fn a_batch_is_one_submission() {
-    let s = sme();
+    let Some(s) = sme() else { return };
     let mut rng = Rng(0x77);
     let shared = rows(&mut rng, 70, 3000, 1);
     let mut ks = Vec::new();
@@ -130,7 +135,7 @@ fn a_batch_is_one_submission() {
 
 #[test]
 fn degenerate_shapes() {
-    let s = sme();
+    let Some(s) = sme() else { return };
     let mut rng = Rng(3);
     let a = rows(&mut rng, 5, 70, 1);
     let ks = [
@@ -151,7 +156,11 @@ fn the_executor_places_on_sme() {
     let (a, b) = (rows(&mut rng, 50, 640, 1), rows(&mut rng, 40, 640, 1));
     let k = Kernel::BitProduct { a, b, min: None };
     let want = crate::cpu::run(&k);
-    let ex = Executor::with(vec![backend().unwrap()]);
+    let Some(sme) = backend() else {
+        eprintln!("skipped: this machine has no SME2");
+        return;
+    };
+    let ex = Executor::with(vec![sme]);
     let (done, report) = ex.run(Batch(vec![Launch::on(k, Lane::Sme)])).unwrap();
     assert_eq!(done[0].lane, Lane::Sme);
     assert_eq!(done[0].out, want);
@@ -163,7 +172,7 @@ fn the_executor_places_on_sme() {
 #[test]
 #[ignore = "timing: run alone with --ignored --nocapture"]
 fn timing_w5_shape() {
-    let s = sme();
+    let Some(s) = sme() else { return };
     let mut rng = Rng(0x55);
     let a = rows(&mut rng, 2048, 205 * 64, 3);
     let b = Bits::new(2048, 205, a.data.to_vec());

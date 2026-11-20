@@ -1,7 +1,9 @@
 # Writing a command rule
 
-Internal testing: conversation rules are not part of Rerail's latest release, which ships code rules only. Tell the person so in the
-read-back (SKILL.md, Write step 6).
+Internal testing: conversation rules are not part of Rerail's latest release, which ships code rules only. They are experimental
+and off unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1` (or `RERAIL_EXPERIMENTAL=1`) is set: for `rerail rules test` and
+`rules add`, which refuse a conversation draft otherwise, and for the daemon, which checks none otherwise. Tell the person so in
+the read-back (SKILL.md, Write step 6).
 
 A conversation rule with a structural `match` checks each tool call the agent makes, before Rerail records it. Use one for a
 command the agent should never run, or should run only with care: force pushes, skipped hooks, publishing, deleting outside
@@ -15,6 +17,7 @@ scratch folders. Rerail's test suite runs every example on this page through the
   "rule": {
     "id": "local:<short-kebab-name>",
     "mode": "steer",
+    "title": "<The rule in the person's own words>",
     "match": { "field": "input.command", "regex": "…" },
     "sample": { "source": "tool:*", "boundary": "tool-call" },
     "action": { "content": "What not to do, and what to do instead." },
@@ -29,6 +32,7 @@ scratch folders. Rerail's test suite runs every example on this page through the
 
 | Part | What to put there |
 |---|---|
+| `title` | The rule in the person's own words, which the dashboard shows; `rules add` refuses a rule without one. As in [Writing the title](code-rules.md#writing-the-title). |
 | `match` | One condition: a `field` and exactly one of `regex`, `eq` or `contains`. Combine conditions with `all`, `any` and `not`. |
 | `field` | `input.command` for a shell command. `tool.name` for the tool. `input.<key>` for another argument, such as `input.file_path`. |
 | `sample.source` | `tool:*` reads every agent's shell: `Bash` in Claude Code, `bash` in OMP and Pi, and the shell tools of Codex and Cursor. Use `tool:<name>` to read one tool. |
@@ -61,6 +65,7 @@ that, and accept the rare miss.
   "rule": {
     "id": "local:no-skipping-git-hooks",
     "mode": "steer",
+    "title": "Don't skip the git hooks",
     "match": {
       "any": [
         { "field": "input.command", "regex": "\\bgit\\s+commit\\b[^\\n;&|]*\\s-[A-Za-z]*n[A-Za-z]*\\b" },

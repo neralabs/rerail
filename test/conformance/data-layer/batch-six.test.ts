@@ -4,14 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { fixturesPath } from "../../support/oracles.js";
+import { fixturesPath, repositoryPath } from "../../support/oracles.js";
+import { requirePackFixture } from "../../../scripts/s3/pack-fixtures.mjs";
 
-const paths = ["batch-06-recording.json", "batch-06-probes.json"]
-  .map(name => fixturesPath("host", "data-layer-port", name));
+// The probes are pack test data, not in git: `npm run fixtures:pull` fetches them.
+const paths = [fixturesPath("host", "data-layer-port", "batch-06-recording.json"),
+  repositoryPath("packs", "data-layer", "upstream", "lint", "authored", "fixtures", "host", "data-layer-port", "batch-06-probes.json")];
 
 // The recording is not in git (30 MB of captured source): `data_layer_record.py --batch 6` writes it.
 it.skipIf(!existsSync(paths[0]!))("matches positive and clean source observations for all ten sixth-batch candidates", async () => {
   const directory = mkdtempSync(join(tmpdir(), "rerail-batch-six-"));
+  requirePackFixture(paths[1]!);
   const output = join(directory, "result.json"), log = join(directory, "replay.log");
   // Profiling builds emit large matcher descriptions. A file keeps their writes
   // off the fork runner's nonblocking stderr pipe.

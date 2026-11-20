@@ -4,6 +4,7 @@ import { z } from "zod";
 import superjson from "superjson";
 import type { AdapterDelivery, AdapterEvent, AdapterSample, AdapterSession, RerailHost } from "../engine/adapter-contract.js";
 import { LiveConversationRules } from "../engine/catalog/conversation-rule-sync.js";
+import { requireExperiment } from "../engine/experimental-features.js";
 import { AdapterEventSchema } from "../runtime/event-protocol.js";
 import type { OmpSessionEntryLike } from "../runtime/omp-semantic.js";
 import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "../engine/native/semantic-types.js";
@@ -12,8 +13,10 @@ import { NativeSemanticRuntime } from "../runtime/native-semantic-runtime.js";
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
 import { openCheckoutConversationRules } from "../engine/code-rule/code-rule-dsl-catalog.js";
+import type { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type DroppedEvents, type RuleMutation } from "../runtime/session-state.js";
 import { RerailRuntime } from "../runtime/runtime.js";
+import type { MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 
 export type NativeSessionRequest = z.infer<typeof requestSchema>;
@@ -91,6 +94,19 @@ const droppedEventsSchema = z.object({
 }) satisfies z.ZodType<DroppedEvents>;
 const conversationRulesInputSchema = objectSchema.extend({ action: z.string() });
 const awaitReplyInputSchema = z.object({ ticket: z.string().min(1) });
+const initializeInputSchema = objectSchema.extend({
+  cwd: z.string().optional(),
+  modelPath: z.string().optional(),
+  databasePath: z.string().optional(),
+  storageRoot: z.string().optional(),
+  maxInputTokens: z.number().int().positive().optional(),
+  maxRules: z.number().int().positive().optional(),
+  rebuild: z.boolean().optional(),
+});
+type InitializeOptions = {
+  cwd?: string; modelPath?: string; databasePath?: string; storageRoot?: string;
+  maxInputTokens?: number; maxRules?: number; rebuild?: boolean;
+};
 
 
 /** Branch entries carry arbitrary host payloads, so the client encodes them; plain JSON stays accepted. */
@@ -108,10 +124,38 @@ function parseEvent(value: unknown, session: AdapterSession): AdapterEvent {
   }
   return event;
 }
+
+/** A session's conversation rules, under the limits its host asked for; a limit left out is the registry's. */
+function conversationRuleRegistry(modelPath: string, options: InitializeOptions): ConversationRuleRegistry {
+  return new ConversationRuleRegistry({
+    modelPath,
+    ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
+    ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
+  });
+}
+
+/** Closes what a failed initialization built; a runtime that fails to dispose leaves the initialization's error to throw. */
+async function discardSession(
+  runtime: RerailRuntime | undefined,
+  semantic: NativeSemanticRuntime | undefined,
+  ruleSync: LiveConversationRules,
+): Promise<void> {
+  try { await runtime?.dispose(); } catch { /* Preserve the initialization error. */ }
+  semantic?.close();
+  ruleSync.close();
+}
 export class NativeSessionServer {
   readonly #workspaceRoot: string;
   readonly #modelPath: string;
   readonly #databasePath: string;
+  /** The daemon's Merge Assist, over `#databasePath`; a session over another database makes its own. */
+  readonly #mergeAssist: MergeAssistRuntime | undefined;
+  /**
+   * The daemon's walks of the repositories' other worktrees, over `#databasePath`, which its engine service's sessions
+   * share too, so a session here and one there in worktrees of one repository walk them once; a session over another
+   * database walks them on its own.
+   */
+  readonly #worktreeWalks: RepositoryWorktreeWalks | undefined;
   readonly #sessionLeaseMs: number;
   readonly #sessions = new Map<string, NativeSession>();
   readonly #lanes = new SessionLanes();
@@ -127,6 +171,8 @@ export class NativeSessionServer {
     workspaceRoot: string;
     modelPath: string;
     databasePath: string;
+    mergeAssist?: MergeAssistRuntime;
+    worktreeWalks?: RepositoryWorktreeWalks;
     sessionLeaseMs?: number;
     sessionSweepIntervalMs?: number;
     replyWithinMs?: number;
@@ -134,6 +180,8 @@ export class NativeSessionServer {
     this.#workspaceRoot = resolve(options.workspaceRoot);
     this.#modelPath = resolve(options.modelPath);
     this.#databasePath = resolve(options.databasePath);
+    this.#mergeAssist = options.mergeAssist;
+    this.#worktreeWalks = options.worktreeWalks;
     this.#sessionLeaseMs = options.sessionLeaseMs ?? NATIVE_SESSION_LEASE_MS;
     this.#replyWithinMs = options.replyWithinMs ?? NATIVE_REPLY_WITHIN_MS;
     if (this.#replyWithinMs <= 0) throw new RangeError("native reply bound must be positive");
@@ -254,9 +302,13 @@ export class NativeSessionServer {
       return this.#reply(session);
     }
     if (input.operation === "cosine") {
+      // Internal testing: OMP's `conversation_rules` and `/cosine-rules`, refused while the daemon runs without them.
+      requireExperiment("CONVERSATION_RULES", "start the Rerail daemon with");
       const result = await this.#conversationRules(session, conversationRulesInputSchema.parse(input.input) as ConversationRulesInput, (customType, data) => session.appendEntries.push({ customType, data }));
       return { ...this.#reply(session), result };
     }
+    // Internal testing: OMP's semantic tools, refused while the daemon runs without them.
+    requireExperiment("SEMANTIC_TOOLS", "start the Rerail daemon with");
     const semantic = await this.#semantic(session, input.input);
     const reply = this.#reply(session);
     if (semantic.revisionEntry === undefined) return { ...reply, result: semantic.result };
@@ -294,34 +346,36 @@ export class NativeSessionServer {
 
   async #initialize(input: NativeSessionRequest): Promise<NativeSessionResponse> {
     const branch = entriesSchema.parse(decodeEntries(input)) as SessionEntry[];
-    const options = objectSchema.extend({
-      cwd: z.string().optional(),
-      modelPath: z.string().optional(),
-      databasePath: z.string().optional(),
-      storageRoot: z.string().optional(),
-      maxInputTokens: z.number().int().positive().optional(),
-      maxRules: z.number().int().positive().optional(),
-      rebuild: z.boolean().optional(),
-    }).parse(input.input ?? {}) as {
-      cwd?: string; modelPath?: string; databasePath?: string; storageRoot?: string;
-      maxInputTokens?: number; maxRules?: number; rebuild?: boolean;
-    };
+    const options = initializeInputSchema.parse(input.input ?? {}) as InitializeOptions;
     const cwd = resolve(options.cwd ?? this.#workspaceRoot);
     const existing = this.#sessions.get(input.sessionId);
-    if (existing !== undefined && existing.session.cwd === cwd && options.rebuild !== true) {
-      existing.ruleSync.prime();
-      existing.turn = replaySessionState(existing.registry, branch);
-      existing.runtime.restoreNativeTurn(input.sessionId, existing.turn);
-      existing.entries = branch;
-      return this.#reply(existing);
-    }
+    if (existing !== undefined && existing.session.cwd === cwd && options.rebuild !== true) return this.#resume(existing, branch);
+    return this.#attach(input, options, cwd, branch, existing);
+  }
+
+  /** A session initialized again in the same cwd, and not asked to rebuild, keeps its runtime and replays the host's branch. */
+  #resume(existing: NativeSession, branch: SessionEntry[]): NativeSessionResponse {
+    existing.ruleSync.prime();
+    existing.turn = replaySessionState(existing.registry, branch);
+    existing.runtime.restoreNativeTurn(existing.session.sessionId, existing.turn);
+    existing.entries = branch;
+    return this.#reply(existing);
+  }
+
+  /**
+   * Builds a new session over the request's paths and publishes it in place of `existing`, if any; what it built is
+   * closed again if any step fails.
+   */
+  async #attach(
+    input: NativeSessionRequest,
+    options: InitializeOptions,
+    cwd: string,
+    branch: SessionEntry[],
+    existing: NativeSession | undefined,
+  ): Promise<NativeSessionResponse> {
     const { modelPath, databasePath, storageRoot } = this.#sessionPaths(options, cwd);
     const session: AdapterSession = { host: input.host as RerailHost, sessionId: input.sessionId, cwd };
-    const registry = new ConversationRuleRegistry({
-      modelPath,
-      ...(options.maxInputTokens === undefined ? {} : { maxInputTokens: options.maxInputTokens }),
-      ...(options.maxRules === undefined ? {} : { maxRules: options.maxRules }),
-    });
+    const registry = conversationRuleRegistry(modelPath, options);
     const ruleSync = new LiveConversationRules(openCheckoutConversationRules(databasePath, cwd), registry);
     let runtime: RerailRuntime | undefined;
     let semantic: NativeSemanticRuntime | undefined;
@@ -332,15 +386,10 @@ export class NativeSessionServer {
       runtime = new RerailRuntime({
         storageRoot, modelPath, databasePath, workspaceRoot: cwd,
         autostart: false, startGate: true,
+        ...this.#sharedServices(databasePath),
         // Resolved per line so the daemon's stderr (its log file) is whatever it is when the line is written.
         timingLog: line => process.stderr.write(line),
-        beforeSessionPublish: async () => {
-          await this.#close(input.sessionId);
-          if (existing !== undefined) {
-            attached.pendingDeliveries.push(...existing.pendingDeliveries.splice(0));
-            attached.appendEntries.push(...existing.appendEntries.splice(0));
-          }
-        },
+        beforeSessionPublish: () => this.#replace(existing, attached),
         // No deliverBackground: a result completing during an event rides that event's reply, so the
         // host sees it before its next model call; other results are drained by `poll`, and the findings that missed
         // their step by `yield` at the end of the run.
@@ -366,11 +415,29 @@ export class NativeSessionServer {
       this.#sessions.set(input.sessionId, attached);
       return this.#reply(attached);
     } catch (error) {
-      try { await runtime?.dispose(); } catch { /* Preserve the initialization error. */ }
-      semantic?.close();
-      ruleSync.close();
+      await discardSession(runtime, semantic, ruleSync);
       throw error;
     }
+  }
+
+  /** The daemon's Merge Assist and worktree walks serve a session only over the daemon's own database. */
+  #sharedServices(databasePath: string): { mergeAssist?: MergeAssistRuntime; worktreeWalks?: RepositoryWorktreeWalks } {
+    if (databasePath !== this.#databasePath) return {};
+    return {
+      ...(this.#mergeAssist === undefined ? {} : { mergeAssist: this.#mergeAssist }),
+      ...(this.#worktreeWalks === undefined ? {} : { worktreeWalks: this.#worktreeWalks }),
+    };
+  }
+
+  /**
+   * Before the new session is published, the one it replaces is closed, and the deliveries and entries that one still
+   * held move to the new one, so the host still receives them.
+   */
+  async #replace(existing: NativeSession | undefined, attached: NativeSession): Promise<void> {
+    await this.#close(attached.session.sessionId);
+    if (existing === undefined) return;
+    attached.pendingDeliveries.push(...existing.pendingDeliveries.splice(0));
+    attached.appendEntries.push(...existing.appendEntries.splice(0));
   }
 
   async #conversationRules(session: NativeSession, input: ConversationRulesInput, append: (customType: string, data: unknown) => void): Promise<unknown> {

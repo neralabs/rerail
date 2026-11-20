@@ -54,18 +54,42 @@ impl<'v> R<'v> {
     }
 }
 
-/// A base relation of the corpus: an input, a `nearest_<set>` or an `inside_<set>`.
-fn base(f: &Fields<'_>, rel: &str) -> bool {
-    f.is_input(rel) || rel.starts_with("nearest_") || rel.starts_with(super::super::super::front::AXIS)
+/// A base relation of the corpus: an input, a view of an input's columns, a `nearest_<set>` or an `inside_<set>`.
+fn base(f: &Fields<'_>, rel: &str, a: AtomRef<'_>) -> bool {
+    f.is_input(rel) || super::super::super::front::is_transduced(rel) || view_of(f, a).is_some()
 }
 
-/// The rows a base atom reaches: its relation's, or, with constants, the fewest postings of one of them.
+/// Atom `a` of a view of an input's columns (Q37, `kind(n, k) :- node(_, n, k, _, _)`) as the input's reads it: the
+/// input, and its column of each of the view's. A view is the input's rows, so it is a base relation here: taken as
+/// derived, `kind(o, "type_alias_statement")` bound nothing, a definition's `field(o, "left", l)` (8,152 rows in a
+/// chunk of PostHog) made `tp_name` large and so demanded, and `tp_ref`'s split made every identifier with each of
+/// its ancestors (55 M rows a cold run; work queue Q88's measurement).
+fn view_of<'v>(f: &Fields<'v>, a: AtomRef<'_>) -> Option<(String, Vec<usize>)> {
+    if f.is_input(f.v.rel_name(a.rel())) {
+        return None;
+    }
+    let mut rules = f.v.heads(a.rel());
+    let (Some(r), None) = (rules.next(), rules.next()) else { return None };
+    super::super::input_view_shape(f.v, r, |x| f.is_input(x))
+}
+
+/// The rows a base atom reaches: its relation's, or, with constants, the fewest postings of one of them (a view's
+/// those of its input's columns).
 fn base_rows(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<'_>) -> f64 {
-    let all = if rel.starts_with("nearest_") || rel.starts_with(super::super::super::front::AXIS) { model.stats.nodes } else { model.card(rel) };
+    let view = view_of(f, a);
+    let (rel, at): (&str, Option<&[usize]>) = match &view {
+        Some((input, at)) => (input.as_str(), Some(at.as_slice())),
+        None => (rel, None),
+    };
+    let all = if super::super::super::front::is_transduced(rel) { model.stats.nodes } else { model.card(rel) };
     let names: Option<Vec<&str>> = f.v.decl_of(rel).map(|d| d.cols().map(|(n, _)| f.v.text(n)).collect());
     a.args()
         .enumerate()
         .filter_map(|(c, t)| {
+            let c = match at {
+                Some(at) => *at.get(c)?,
+                None => c,
+            };
             let v = match t {
                 TermRef::Int(i) => super::super::Constant::Int(i),
                 TermRef::Branded(a) => super::super::Constant::Int(a.value()),
@@ -86,11 +110,64 @@ fn base_rows(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<
 /// An atom that restricts the rows a body reaches: a derived relation (not a text test, whose selectivity is unknown),
 /// or a base atom whose measured rows are fewer than a scan's (`node(_, $n, 1223, _, _)`, not the 6M identifiers of
 /// `node(_, $n, 1025, _, _)`).
-fn anchor(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<'_>) -> bool {
+/// A derived relation of a row per node (`per_node_relations`) restricts nothing: two of its atoms joined off their
+/// key (`mf_def($c, $f), mf_def($a, $f)`) are every pair of nodes in a def, 22M rows of `pre_292` on 91 files.
+fn anchor(f: &Fields<'_>, model: &super::super::Model, per_node: &BTreeSet<String>, rel: &str, a: AtomRef<'_>) -> bool {
     if rel.starts_with("strtest_") || rel.starts_with("demand_") {
         return false;
     }
-    !base(f, rel) || base_rows(f, model, rel, a) < model.stats.nodes / 32.0
+    if base(f, rel, a) { base_rows(f, model, rel, a) < model.stats.nodes / 32.0 } else { !per_node.contains(rel) }
+}
+
+/// The derived relations of a row per node: one of their rules reads its head's key only at the key of a per-node
+/// read (a `nearest`, an axis or a kind-free `node` atom, or another such relation; `mf_def(n, f) :- mf_up(n, f), ..`
+/// over `mf_up(n, o) :- nearest(n, o, mf_mark), ..`). A rule whose positive atom tests the key otherwise
+/// (`kind(c, "call")`) restricts it. Structural: no estimate is read.
+fn per_node_relations(rules: &[R<'_>]) -> BTreeSet<String> {
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    loop {
+        let before = out.len();
+        for r in rules {
+            if out.contains(r.head()) {
+                continue;
+            }
+            let Some(TermRef::Var(key)) = r.r.head().args().next() else { continue };
+            let (mut sourced, mut restricted) = (false, false);
+            for i in 0..r.lits.len() {
+                match r.lits[i].view() {
+                    Lit::Nearest { n, a, .. } => {
+                        if n == key {
+                            sourced = true;
+                        } else if a == key {
+                            restricted = true;
+                        }
+                    }
+                    Lit::Atom(a) if !a.neg() => {
+                        let at: Vec<usize> = a.args().enumerate().filter(|(_, t)| t.var() == Some(key)).map(|(c, _)| c).collect();
+                        if at.is_empty() {
+                            continue;
+                        }
+                        let rel = r.rel(a);
+                        let source = if super::super::super::front::is_transduced(rel) || out.contains(rel) {
+                            at == [0]
+                        } else {
+                            rel == "node" && at == [1] && matches!(a.args().nth(2), Some(TermRef::Wild))
+                        };
+                        if source { sourced = true } else { restricted = true }
+                    }
+                    // A comparison or a negation on the key (a scope's `$d = @doc($n), !rr_scope_not($d)`) keeps
+                    // a share of unknown size: it does not make the relation small.
+                    _ => {}
+                }
+            }
+            if sourced && !restricted {
+                out.insert(r.head().to_owned());
+            }
+        }
+        if out.len() == before {
+            return out;
+        }
+    }
 }
 
 /// The relations `split_negations` demands, before its rounds (the module's conditions): derived, not kept, not
@@ -98,9 +175,6 @@ fn anchor(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<'_>
 pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super::Model) -> BTreeSet<&'v str> {
     let n = p.len();
     let rules: Vec<R<'v>> = (0..n).map(|k| R::of(p, k)).collect();
-    // Relations a rule derives from a `<rel>__cross` copy: memoised per import component (decision 0076), their
-    // stored rows must be all of a document's, not those a reader outside the closure asked for.
-    let from_cross: BTreeSet<&str> = rules.iter().filter(|r| (0..r.lits.len()).any(|i| r.plain(i).is_some_and(|a| r.rel(a).ends_with("__cross")))).map(R::head).collect();
     let kept = |rel: &str| {
         f.is_output(rel)
             || f.is_input(rel)
@@ -110,7 +184,6 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
             || f.demanded(rel)
             || f.gate(rel)
             || f.qualified(rel, "no_magic")
-            || from_cross.contains(rel)
     };
     let mut by_rel: BTreeMap<&str, Vec<&R<'v>>> = BTreeMap::new();
     for r in &rules {
@@ -123,7 +196,7 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
         (0..r.lits.len()).any(|i| match r.lits[i].view() {
             Lit::Atom(a) if !a.neg() => {
                 let rel = r.rel(a);
-                ((rel.starts_with("nearest_") || rel.starts_with(super::super::super::front::AXIS)) && on_key(a, 0))
+                (super::super::super::front::is_transduced(rel) && on_key(a, 0))
                     || (rel == "node" && on_key(a, 1) && matches!(a.args().nth(2), Some(TermRef::Wild)))
             }
             Lit::Nearest { n, .. } => n == key,
@@ -143,7 +216,7 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
             .filter_map(|v| {
                 (0..r.lits.len())
                     .filter_map(|i| match r.lits[i].view() {
-                        Lit::Atom(a) if !a.neg() && base(f, r.rel(a)) && a.args().any(|t| t.var() == Some(v)) => Some(base_rows(f, model, r.rel(a), a)),
+                        Lit::Atom(a) if !a.neg() && base(f, r.rel(a), a) && a.args().any(|t| t.var() == Some(v)) => Some(base_rows(f, model, r.rel(a), a)),
                         _ => None,
                     })
                     .reduce(f64::min)
@@ -186,38 +259,74 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
 /// Whether the positive atoms `cut` leaves fall apart: two of them share no variable through the others (or
 /// through an equality).
 fn disconnected(r: &R<'_>, cut: &dyn Fn(usize) -> bool) -> bool {
-    // A document variable does not connect: a document has a row for each of its nodes, so atoms joined only by
-    // their documents (`docof($s, $e9), rr_cx_reach($d9, $e9)` and a row of `$d9`'s) are a product per pair of
-    // documents. 4,719 `anc` rows times the annotations of every document they reach made 24M rows (O136).
-    let mut documents: BTreeSet<String> = BTreeSet::new();
-    for i in 0..r.lits.len() {
-        let Some(a) = r.atom(i).filter(|a| !a.neg()) else { continue };
-        let rel = r.rel(a);
-        let terms: Vec<TermRef<'_>> = match rel {
-            "docof" => a.args().nth(1).into_iter().collect(),
-            x if x.starts_with("rr_cx_") => a.args().collect(),
-            _ => Vec::new(),
-        };
-        documents.extend(terms.into_iter().filter_map(|t| t.var()).map(|s| r.name(s).to_owned()));
-    }
+    let documents = documents(r);
+    let joins = |j: usize| match r.lits[j].view() {
+        Lit::Atom(a) => !a.neg() && !cut(j),
+        Lit::Cmp { op: CmpOp::Eq, .. } => true,
+        _ => false,
+    };
+    let tied = tied(r, &documents, &joins);
     let mut groups: Vec<BTreeSet<String>> = Vec::new();
-    for j in 0..r.lits.len() {
-        let joins = match r.lits[j].view() {
-            Lit::Atom(a) => !a.neg() && !cut(j),
-            Lit::Cmp { op: CmpOp::Eq, .. } => true,
-            _ => false,
-        };
-        let vars: BTreeSet<String> = r.lit_vars(j).into_iter().filter(|v| !documents.contains(v)).collect();
-        if !joins || vars.is_empty() {
-            continue;
+    for j in (0..r.lits.len()).filter(|&j| joins(j)) {
+        let vars = joining_vars(r, j, &documents, &tied);
+        if !vars.is_empty() {
+            join_group(&mut groups, vars);
         }
-        let (mut joined, rest): (Vec<_>, Vec<_>) = groups.into_iter().partition(|g| !g.is_disjoint(&vars));
-        let mut all = vars;
-        joined.iter_mut().for_each(|g| all.append(g));
-        groups = rest;
-        groups.push(all);
     }
     groups.len() > 1
+}
+
+/// The document variables of `r`'s positive atoms: `docof`'s document and every column of an `rr_cx_` relation. A
+/// document variable does not connect: a document has a row for each of its nodes, so atoms joined only by their
+/// documents (`docof($s, $e9), rr_cx_reach($d9, $e9)` and a row of `$d9`'s) are a product per pair of documents.
+/// 4,719 `anc` rows times the annotations of every document they reach made 24M rows (O136).
+fn documents(r: &R<'_>) -> BTreeSet<String> {
+    let columns = |a: AtomRef<'_>| -> Vec<Option<Slot>> {
+        match r.rel(a) {
+            "docof" => a.args().nth(1).map(|t| t.var()).into_iter().collect(),
+            x if x.starts_with("rr_cx_") => a.args().map(|t| t.var()).collect(),
+            _ => Vec::new(),
+        }
+    };
+    (0..r.lits.len()).filter_map(|i| r.atom(i).filter(|a| !a.neg())).flat_map(columns).flatten().map(|s| r.name(s).to_owned()).collect()
+}
+
+/// The documents the kept atoms (`joins`) tie to nodes: read beside a node (`docof($n, $d)`, `node($d, $n, …)`), or
+/// beside a tied document in an atom of documents only (`rr_cx_reach($d, $e)`, `$d` tied, ties `$e`). A part that
+/// meets the rest only at a document nothing kept ties is a row for every document: with `docof($n, $d)` cut,
+/// simplify's `exists_0($d)` (`modnode($d, $m), !star($m)`) made python/calls' `builtin_ref` split every builtin
+/// reference times every document (129.7M rows on edx-platform's 4,459 files).
+fn tied(r: &R<'_>, documents: &BTreeSet<String>, joins: &dyn Fn(usize) -> bool) -> BTreeSet<String> {
+    let kept = (0..r.lits.len()).filter(|&j| matches!(r.lits[j].view(), Lit::Atom(_)) && joins(j)).map(|j| r.lit_vars(j));
+    let (beside, only): (Vec<_>, Vec<_>) = kept.partition(|vs| vs.iter().any(|v| !documents.contains(v)));
+    let mut tied: BTreeSet<String> = beside.into_iter().flatten().filter(|v| documents.contains(v)).collect();
+    loop {
+        let more: Vec<String> = only.iter().filter(|vs| !vs.is_disjoint(&tied)).flatten().filter(|v| !tied.contains(*v)).cloned().collect();
+        if more.is_empty() {
+            return tied;
+        }
+        tied.extend(more);
+    }
+}
+
+/// The variables literal `j` joins the rest by: its own less the documents; for an atom of documents only, those no
+/// kept atom ties (`tied`), so such a part is a group of its own.
+fn joining_vars(r: &R<'_>, j: usize, documents: &BTreeSet<String>, tied: &BTreeSet<String>) -> BTreeSet<String> {
+    let own = r.lit_vars(j);
+    let vars: BTreeSet<String> = own.iter().filter(|v| !documents.contains(*v)).cloned().collect();
+    if !vars.is_empty() || !matches!(r.lits[j].view(), Lit::Atom(_)) {
+        return vars;
+    }
+    own.into_iter().filter(|v| !tied.contains(v)).collect()
+}
+
+/// `vars` into `groups`: one group of them and every group they meet.
+fn join_group(groups: &mut Vec<BTreeSet<String>>, vars: BTreeSet<String>) {
+    let (joined, rest): (Vec<_>, Vec<_>) = std::mem::take(groups).into_iter().partition(|g| !g.is_disjoint(&vars));
+    let mut all = vars;
+    joined.into_iter().for_each(|mut g| all.append(&mut g));
+    *groups = rest;
+    groups.push(all);
 }
 
 /// Whether the body of `rule` less its demanded reads (`cut(j)`) is small: every kept positive literal is reached
@@ -228,7 +337,7 @@ fn disconnected(r: &R<'_>, cut: &dyn Fn(usize) -> bool) -> bool {
 /// estimate of a derived relation is read, and an axis read from its ancestor end (every descendant) is not a
 /// lookup. Decision 0048's extension, since axes are made per looked-up node (decision 0057).
 /// Also the variables so bound.
-fn reached(f: &Fields<'_>, model: &super::super::Model, r: &R<'_>, own: bool, cut: &dyn Fn(usize) -> bool) -> (BTreeSet<String>, bool) {
+fn reached(f: &Fields<'_>, model: &super::super::Model, per_node: &BTreeSet<String>, r: &R<'_>, own: bool, cut: &dyn Fn(usize) -> bool) -> (BTreeSet<String>, bool) {
     let mut bound: BTreeSet<String> = if own { r.head_vars() } else { BTreeSet::new() };
     let lookup = |a: AtomRef<'_>, bound: &BTreeSet<String>| {
         let on = |c: usize| match a.args().nth(c) {
@@ -255,7 +364,7 @@ fn reached(f: &Fields<'_>, model: &super::super::Model, r: &R<'_>, own: bool, cu
         let before = todo.len();
         todo.retain(|&j| {
             let hit = match r.lits[j].view() {
-                Lit::Atom(b) => anchor(f, model, r.rel(b), b) || lookup(b, &bound),
+                Lit::Atom(b) => anchor(f, model, per_node, r.rel(b), b) || lookup(b, &bound),
                 Lit::Nearest { n, .. } => bound.contains(r.name(n)),
                 _ => true,
             };
@@ -278,6 +387,10 @@ pub(super) type Analysis = (BTreeMap<usize, Split>, Vec<(String, Vec<(String, St
 pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, candidates: &BTreeSet<&str>) -> Result<Analysis, BTreeSet<String>> {
     let n = p.len();
     let rules: Vec<R<'_>> = (0..n).map(|k| R::of(p, k)).collect();
+    let per_node = per_node_relations(&rules);
+    if std::env::var_os("RERAIL_DEMAND_TRACE").is_some() {
+        eprintln!("demand: relations of a row per node: {per_node:?}");
+    }
     let negated = |r: &R<'_>, i: usize| r.plain(i).is_some_and(|a| candidates.contains(r.rel(a)));
     let readers: Vec<usize> = (0..n).filter(|&k| (0..rules[k].lits.len()).any(|i| negated(&rules[k], i))).collect();
     // A positive read is cut only where one kept anchor binds all its variables (the module's guard). Every reader is
@@ -302,14 +415,14 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
             let vars = r.lit_vars(i);
             let anchors = |demanded: bool| {
                 (0..r.lits.len()).find_map(|j| match r.plain(j) {
-                    Some(b) if j != i && !b.neg() && negated(r, j) == demanded && anchor(f, model, r.rel(b), b) && vars.is_subset(&r.lit_vars(j)) => Some(r.rel(b)),
+                    Some(b) if j != i && !b.neg() && negated(r, j) == demanded && anchor(f, model, &per_node, r.rel(b), b) && vars.is_subset(&r.lit_vars(j)) => Some(r.rel(b)),
                     _ => None,
                 })
             };
             // Bound by the kept anchors through bounded lookups; or anchored only by another demanded read, which then
             // stays in the body instead (its relation is built whole).
             let own = candidates.contains(r.head());
-            let (reach, small) = reached(f, model, r, own, &cut);
+            let (reach, small) = reached(f, model, &per_node, r, own, &cut);
             if anchors(false).is_none() && !vars.is_subset(&reach) {
                 match anchors(true) {
                     Some(b) => refused.insert(b.to_owned()),
@@ -383,11 +496,10 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
         let var_type = |var: &str| -> Option<String> {
             // The own demand's atom first: its relation is declared only once demanded (`split_with`), so a type is
             // taken from it only where the program declares it already.
-            if let Some((_, Some((rel, c)))) = own_atom.iter().find(|(v, _)| v.as_deref() == Some(var)) {
-                if let Some(t) = f.v.decl_of(rel).and_then(|d| d.cols().nth(*c)).map(|(_, t)| f.v.text(t).to_owned()) {
+            if let Some((_, Some((rel, c)))) = own_atom.iter().find(|(v, _)| v.as_deref() == Some(var))
+                && let Some(t) = f.v.decl_of(rel).and_then(|d| d.cols().nth(*c)).map(|(_, t)| f.v.text(t).to_owned()) {
                     return Some(t);
                 }
-            }
             kept.iter().find_map(|&i| match r.lits[i].view() {
                 Lit::Atom(a) if !a.neg() => {
                     let c = a.args().position(|t| t.var().is_some_and(|s| r.name(s) == var))?;
@@ -421,15 +533,45 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
 
 #[cfg(test)]
 mod tests {
-    use super::{R, disconnected};
+    use super::{R, base, disconnected, per_node_relations, view_of};
     use super::super::super::body::Placed;
+    use super::super::super::fields::Fields;
 
-    /// Whether rule `k` of `text` falls apart once its reads of `cut` are cut.
+    /// Whether rule `k` of `text` falls apart once its reads of `cut` are cut. Its variables are written `$x`, as the
+    /// planner shows them; the `.rerail` text names them without the `$`.
     fn apart(text: &str, k: usize, cut: &str) -> bool {
-        let prog = super::super::super::super::front::parse(text).unwrap();
-        let p = Placed::of_program(&prog).unwrap();
+        let p = Placed::whole(super::super::super::super::rr::parse_version(&text.replace('$', "")).unwrap());
         let r = R::of(&p, k);
         disconnected(&r, &|j| r.plain(j).is_some_and(|a| r.rel(a) == cut))
+    }
+
+    /// A relation of a row per node, through another (`mf_def` over `mf_up`), is per node; one that tests its key
+    /// (`ctor`) or reads it off a per-node relation's key (`by_def`) is not.
+    #[test]
+    fn relations_of_a_row_per_node_are_found_through_others() {
+        let p = r#"
+            .decl node(d: number, n: node, k: number, s: number, e: number)
+            .decl kind(n: node, k: symbol)
+            .decl up(n: node, o: node)
+            .decl def(n: node, f: node)
+            .decl ctor(n: node)
+            .decl by_def(f: node, n: node)
+            .decl rr_nearest_ks1(n: node, a: node)
+            .decl near(n: node, o: node)
+            .input node, kind, rr_nearest_ks1
+            .output def, ctor, by_def, near
+            up(n, o) :- node(_, n, _, _, _), kind(o, "def").
+            def(n, f) :- up(n, f), kind(f, "function_definition").
+            ctor(c) :- up(c, _), kind(c, "call").
+            by_def(f, n) :- def(n, f).
+            near(n, o) :- rr_nearest_ks1(n, o), !kind(o, "decorator").
+        "#;
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(p).unwrap();
+        let placed = Placed::whole(prog.clone());
+        let rules: Vec<R<'_>> = (0..placed.len()).map(|k| R::of(&placed, k)).collect();
+        let got = per_node_relations(&rules);
+        assert!(got.contains("up") && got.contains("def") && got.contains("near"), "{got:?}");
+        assert!(!got.contains("ctor") && !got.contains("by_def"), "{got:?}");
     }
 
     /// A split whose kept atoms only the demanded read joins is refused: its `pre_<i>` would be their cross product.
@@ -466,5 +608,74 @@ mod tests {
             "#;
         assert!(apart(p, 0, "uinst"), "cutting uinst leaves a product by documents");
         assert!(!apart(p, 0, "rr_cx_reach"), "the rest still joins by t and c");
+    }
+
+    /// A view of an input's columns (Q37) is a base relation to the split, read as its input's columns: `kind(o, 7)`
+    /// is `node(_, o, 7, _, _)`, whose postings bound the scan. Taken as derived, a definition's `tp_name` was large by
+    /// its `field` atom alone, and demanded (work queue Q88's measurement).
+    #[test]
+    fn a_view_of_an_input_reads_as_the_inputs_columns() {
+        let p = r#"
+            .decl node(d: number, n: node, kind: number, s: number, e: number)
+            .decl field(p: node, f: number, c: node)
+            .decl kind(n: node, k: number)
+            .decl named(o: node, c: node)
+            .decl out(o: node)
+            .input node, field
+            .output out
+            kind($n, $k) :- node(_, $n, $k, _, _).
+            named($o, $c) :- kind($o, 7), field($o, 3, $c).
+            out($o) :- named($o, _).
+            "#;
+        let placed = Placed::whole(super::super::super::super::rr::parse_version(&p.replace('$', "")).unwrap());
+        let f = Fields::of(&placed).unwrap();
+        let k = (0..placed.len()).find(|&k| R::of(&placed, k).head() == "named").unwrap();
+        let r = R::of(&placed, k);
+        let atom = |rel: &str| (0..r.lits.len()).find_map(|i| r.plain(i).filter(|a| r.rel(*a) == rel)).unwrap();
+        assert_eq!(view_of(&f, atom("kind")), Some(("node".to_owned(), vec![1, 2])), "kind's columns are node's 1 and 2");
+        assert!(base(&f, "kind", atom("kind")), "a view of an input is a base relation");
+        assert_eq!(view_of(&f, atom("field")), None, "an input is no view");
+        let n = (0..placed.len()).find(|&k| R::of(&placed, k).head() == "out").unwrap();
+        let o = R::of(&placed, n);
+        let named = (0..o.lits.len()).find_map(|i| o.plain(i)).unwrap();
+        assert!(!base(&f, "named", named), "a derived relation is not");
+    }
+
+    /// A part that meets the rest only at a document the cut read binds is apart: cutting `docof` leaves `ex($d)` a
+    /// row for every document against every `walk` row (python/calls' `builtin_ref`, its `exists_0($d)` simplify's).
+    /// Kept, `docof` ties `$d` to `$n`, and the part only filters.
+    #[test]
+    fn a_part_that_meets_the_rest_only_at_a_cut_document_is_disconnected() {
+        let p = r#"
+            .decl walk(n: node, x: number, m: node)
+            .decl builtin(x: number)
+            .decl docof(n: node, d: number)
+            .decl ex(d: number)
+            .decl out(n: node, x: number)
+            .input walk, builtin, docof, ex
+            .output out
+            out($n, $x) :- walk($n, $x, $m), builtin($x), docof($n, $d), ex($d).
+            "#;
+        assert!(apart(p, 0, "docof"), "cutting docof leaves ex($d) a product with every document");
+        assert!(!apart(p, 0, "builtin"), "docof kept ties $d to $n");
+    }
+
+    /// A tie carries through an atom of documents only: `docof` ties `$d`, `rr_cx_reach($d, $e)` then ties `$e`, and
+    /// `ex($e)` only filters. With `docof` cut, nothing ties `$d` and the chain is a part of its own.
+    #[test]
+    fn a_tie_carries_through_an_atom_of_documents_only() {
+        let p = r#"
+            .decl walk(n: node, x: number, m: node)
+            .decl builtin(x: number)
+            .decl docof(n: node, d: number)
+            .decl rr_cx_reach(d: number, e: number)
+            .decl ex(d: number)
+            .decl out(n: node, x: number)
+            .input walk, builtin, docof, rr_cx_reach, ex
+            .output out
+            out($n, $x) :- walk($n, $x, $m), builtin($x), docof($n, $d), rr_cx_reach($d, $e), ex($e).
+            "#;
+        assert!(!apart(p, 0, "builtin"), "docof ties $d, rr_cx_reach ties $e");
+        assert!(apart(p, 0, "docof"), "nothing kept ties $d");
     }
 }

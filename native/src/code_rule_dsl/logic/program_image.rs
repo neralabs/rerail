@@ -35,7 +35,7 @@
 //! The image is read through handles (`handles`: rules, atoms, literals, terms), versions (`version`: lookups by
 //! id and by name, rules by head and by reader) and written through `build::Builder`, never by indexing regions:
 //! the regions and their layout are this module's.
-use super::front::{ast::{Program, Value}, name::{Lists, Name}};
+use super::front::{ast::Value, name::{Lists, Name}};
 use super::program_facts::{self, Facts};
 use std::collections::BTreeMap;
 
@@ -44,20 +44,19 @@ pub mod build;
 pub mod csr;
 pub mod encoder;
 pub mod extents;
+pub mod fields;
 pub mod grouped;
 pub mod handles;
 pub mod show;
 pub mod strings;
-pub mod tree;
 pub mod version;
 
 pub use about::{About, GateRef, LatticeRef, NativeKind, NativeRef, NativeSpec, ShapeRef, ShapeWaitRef};
-pub use build::{Builder, PartFields, Rel, Rewrite, RuleBuilder, Site, T, t_of};
+pub use build::{Builder, Open, PartFields, Rel, Rewrite, RuleBuilder, Site, T, t_of};
 pub use extents::Extents;
 pub use grouped::Grouped;
 pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 pub use strings::Strings;
-pub use tree::Tree;
 pub use version::{DeclRef, FactsRef, Layer, Made, Version, differences, same_program};
 
 pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x05";
@@ -223,19 +222,73 @@ pub fn bad(what: impl std::fmt::Display) -> String {
 
 /// An image's bytes, held at 16-byte alignment, viewed by region.
 pub struct Image {
-    buf: Vec<u128>,
+    buf: Buf,
     len: usize,
     regions: [(usize, usize); REGIONS],
 }
 
+/// Bytes an image is read in place from, at a stable address for as long as they are held: a store's segment,
+/// mapped (decision 0394).
+pub type SharedBytes = std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>;
+
+/// How much of an image its open checks (decision 0464 §3). Every handle indexes safely, and only strings are read
+/// unchecked (`text`), so what is never skipped is the header, every region's bounds, every reference into
+/// another region, and the strings' UTF-8.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Depth {
+    /// Bytes from elsewhere: every rule's node tree and every fact's cell too.
+    Full,
+    /// Bytes its own writer wrote and checked (the store's, the bundle's): not the trees or cells, which would read
+    /// every page of an image a run reads a few rules of.
+    Held,
+}
+
+/// Where an image's bytes are: a buffer of its own, or bytes it shares, read where they are.
+enum Buf {
+    Owned(Vec<u128>),
+    Shared(SharedBytes),
+}
+
+/// An image is its bytes, where they are: a record carries it to the store's writer as it is (decision 0464).
+impl AsRef<[u8]> for Image {
+    fn as_ref(&self) -> &[u8] {
+        self.bytes()
+    }
+}
+
 impl Image {
-    /// The image of `bytes`, copied to an aligned buffer and checked: its header, every region's width and bounds,
-    /// every reference, and every rule's node tree. A checked image's handles read it without further checks.
+    /// The image of foreign `bytes` (a test's, a tool's), loaded into a buffer at 16 bytes and checked in full: its
+    /// header, every region's width and bounds, every reference, and every rule's node tree. The engine's own reads
+    /// never come here: they open an image where it is held (`open_shared`).
     pub fn open(bytes: &[u8]) -> Result<Image, String> {
         let mut buf = vec![0u128; bytes.len().div_ceil(16)];
         // SAFETY: `buf` holds at least `bytes.len()` bytes.
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.as_mut_ptr().cast::<u8>(), bytes.len()) };
-        let mut image = Image { buf, len: bytes.len(), regions: [(0, 0); REGIONS] };
+        Image::checked(Image { buf: Buf::Owned(buf), len: bytes.len(), regions: [(0, 0); REGIONS] }, Depth::Full)
+    }
+
+    /// The image of `bytes` the engine's store or shipped bundle holds, read where they are, not copied (decisions
+    /// 0394, 0464). Bytes not at 16 bytes are refused: an image's regions are read at 16. Its writer checked its rules'
+    /// node trees and facts' cells from a builder's checked parts (`Placing::finish`; a debug build checks every
+    /// writer's whole), so they are not walked again here, which would touch every page (decision 0464 §3); its
+    /// header, bounds, references and strings are (`Depth::Held`). A debug build checks all of it here too.
+    pub fn open_shared(bytes: SharedBytes) -> Result<Image, String> {
+        let (at, len) = {
+            let b = (*bytes).as_ref();
+            (b.as_ptr() as usize, b.len())
+        };
+        if !at.is_multiple_of(16) {
+            return Err(bad("shared bytes not at 16 bytes"));
+        }
+        Image::checked(Image { buf: Buf::Shared(bytes), len, regions: [(0, 0); REGIONS] }, Depth::Held)
+    }
+
+    /// Whether its bytes are shared, read where they are (`open_shared`), not a copy of its own.
+    pub fn is_shared(&self) -> bool {
+        matches!(self.buf, Buf::Shared(_))
+    }
+
+    fn checked(mut image: Image, depth: Depth) -> Result<Image, String> {
         let b = image.bytes();
         if b.len() < HEADER || b[..8] != MAGIC {
             return Err(bad("no image"));
@@ -256,7 +309,7 @@ impl Image {
                 return Err(bad(format!("region {r} is {width} bytes wide, not {}", WIDTH[r])));
             }
             let end = count.checked_mul(width as usize).and_then(|n| n.checked_add(offset));
-            if offset % 16 != 0 || offset < HEADER || end.is_none_or(|e| e > b.len()) {
+            if !offset.is_multiple_of(16) || offset < HEADER || end.is_none_or(|e| e > b.len()) {
                 return Err(bad(format!("region {r} out of bounds")));
             }
             *region = (offset, count);
@@ -265,13 +318,16 @@ impl Image {
         if image.u64s(R::Meta).len() != meta::WORDS {
             return Err(bad("no meta"));
         }
-        image.check()?;
+        image.check(if cfg!(debug_assertions) { Depth::Full } else { depth })?;
         Ok(image)
     }
 
     pub fn bytes(&self) -> &[u8] {
-        // SAFETY: `buf` holds `len` initialized bytes.
-        unsafe { std::slice::from_raw_parts(self.buf.as_ptr().cast::<u8>(), self.len) }
+        match &self.buf {
+            // SAFETY: `buf` holds `len` initialized bytes.
+            Buf::Owned(buf) => unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), self.len) },
+            Buf::Shared(b) => (**b).as_ref(),
+        }
     }
 
     fn slice<T>(&self, r: R) -> &[T] {
@@ -500,7 +556,7 @@ impl Image {
     /// slot an id this image or its parent holds, tables sorted where they are searched, and every rule's nodes a
     /// tree of the grammar (`check_rule`). A delta's references below its bases are its parent's, checked when it is
     /// stacked on one (`Version::over`).
-    fn check(&self) -> Result<(), String> {
+    fn check(&self, depth: Depth) -> Result<(), String> {
         let atoms = self.atoms();
         let mut last = 0;
         for &e in self.u32s(R::StrEnds) {
@@ -556,7 +612,7 @@ impl Image {
             return Err(bad("rules"));
         }
         let decls = self.decl_count();
-        if !offsets(R::DeclCols, decls, self.u32s(R::Cols).len() / 2) || self.u32s(R::Cols).len() % 2 != 0 || self.u64s(R::DeclHash).len() != decls {
+        if !offsets(R::DeclCols, decls, self.u32s(R::Cols).len() / 2) || !self.u32s(R::Cols).len().is_multiple_of(2) || self.u64s(R::DeclHash).len() != decls {
             return Err(bad("declarations"));
         }
         let facts = self.fact_count();
@@ -565,7 +621,7 @@ impl Image {
         if !offsets(R::FactRows, facts, rows) || !offsets(R::RowCells, rows, cells) || self.u64s(R::CellVal).len() != cells || self.u64s(R::FactHash).len() != facts {
             return Err(bad("facts"));
         }
-        for (k, &v) in self.u8s(R::CellKind).iter().zip(self.u64s(R::CellVal)) {
+        for (k, &v) in self.u8s(R::CellKind).iter().zip(self.u64s(R::CellVal)).filter(|_| depth == Depth::Full) {
             if *k > 4 || (*k == 1 && v >= atom_end as u64) || (*k >= 2 && v > u64::from(u32::MAX)) {
                 return Err(bad("a fact's cell"));
             }
@@ -598,6 +654,10 @@ impl Image {
         let buckets = self.buckets(R::StrBuckets).len() as u64;
         if level > 31 || buckets != (1u64 << level) + self.meta(meta::HASH_SPLIT) || self.meta(meta::HASH_COUNT) != atoms as u64 {
             return Err(bad("string table"));
+        }
+        if depth == Depth::Held {
+            // The trees' extent alone: the last rule's node is in bounds (above), and the nodes are the trees'.
+            return Ok(());
         }
         let mut next = 0u32;
         for k in 0..rules as u32 {
@@ -773,99 +833,93 @@ impl Check<'_> {
     }
 }
 
-// ---- writing an image's regions ----
+// ---- writing an image in place (decision 0464) ----
 
-/// The regions of an image being written, each appended to, then laid out once.
-pub struct Writer {
-    regions: Vec<Vec<u8>>,
+/// An image's layout before it is written: each region's item count. `place` makes the one buffer the image lives in,
+/// 16-byte aligned, its header written and each region at its 16-byte offset; the writer then writes each region
+/// there, once (`Placing`), and the image is that buffer (`Placing::finish`): never assembled or copied after.
+pub struct Layout {
+    counts: [usize; REGIONS],
 }
 
-impl Default for Writer {
-    fn default() -> Self {
-        Writer { regions: vec![Vec::new(); REGIONS] }
+impl Default for Layout {
+    fn default() -> Layout {
+        Layout { counts: [0; REGIONS] }
     }
 }
 
-impl Writer {
-    pub fn u8(&mut self, r: R, v: u8) {
-        self.regions[r as usize].push(v);
+impl Layout {
+    /// Region `r` holds `n` items.
+    pub fn set(&mut self, r: R, n: usize) {
+        self.counts[r as usize] = n;
     }
-    pub fn u32(&mut self, r: R, v: u32) {
-        self.regions[r as usize].extend_from_slice(&v.to_le_bytes());
-    }
-    pub fn u64(&mut self, r: R, v: u64) {
-        self.regions[r as usize].extend_from_slice(&v.to_le_bytes());
-    }
-    pub fn u32s(&mut self, r: R, v: &[u32]) {
-        let out = &mut self.regions[r as usize];
-        out.reserve(v.len() * 4);
-        for x in v {
-            out.extend_from_slice(&x.to_le_bytes());
+
+    /// The image's buffer, zeroed, its header written: each region after the one before, at 16 bytes.
+    pub fn place(&self) -> Placing {
+        let mut regions = [(0, 0); REGIONS];
+        let mut at = HEADER;
+        for (r, region) in regions.iter_mut().enumerate() {
+            at = at.next_multiple_of(16);
+            *region = (at, self.counts[r]);
+            at += self.counts[r] * WIDTH[r] as usize;
         }
-    }
-    pub fn u64s(&mut self, r: R, v: &[u64]) {
-        let out = &mut self.regions[r as usize];
-        out.reserve(v.len() * 8);
-        for x in v {
-            out.extend_from_slice(&x.to_le_bytes());
-        }
-    }
-    pub fn raw(&mut self, r: R, bytes: &[u8]) {
-        self.regions[r as usize].extend_from_slice(bytes);
-    }
-    /// The image: the header, then each region at a 16-byte offset.
-    pub fn finish(self) -> Vec<u8> {
-        let mut out = vec![0u8; HEADER];
-        out[..8].copy_from_slice(&MAGIC);
-        out[8..12].copy_from_slice(&FORMAT.to_le_bytes());
-        out[12..16].copy_from_slice(&(REGIONS as u32).to_le_bytes());
-        for (r, bytes) in self.regions.iter().enumerate() {
-            while out.len() % 16 != 0 {
-                out.push(0);
-            }
+        let len = at;
+        let mut buf = vec![0u128; len.div_ceil(16)];
+        // SAFETY: `buf` holds at least `len` bytes, and is borrowed here alone.
+        let head = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), HEADER) };
+        head[..8].copy_from_slice(&MAGIC);
+        head[8..12].copy_from_slice(&FORMAT.to_le_bytes());
+        head[12..16].copy_from_slice(&(REGIONS as u32).to_le_bytes());
+        for (r, &(offset, count)) in regions.iter().enumerate() {
             let at = 16 + 24 * r;
-            let offset = out.len() as u64;
-            let count = (bytes.len() / WIDTH[r] as usize) as u64;
-            out[at..at + 4].copy_from_slice(&WIDTH[r].to_le_bytes());
-            out[at + 8..at + 16].copy_from_slice(&count.to_le_bytes());
-            out[at + 16..at + 24].copy_from_slice(&offset.to_le_bytes());
-            out.extend_from_slice(bytes);
+            head[at..at + 4].copy_from_slice(&WIDTH[r].to_le_bytes());
+            head[at + 8..at + 16].copy_from_slice(&(count as u64).to_le_bytes());
+            head[at + 16..at + 24].copy_from_slice(&(offset as u64).to_le_bytes());
         }
-        out
+        Placing { buf, len, regions }
+    }
+}
+
+/// An image's buffer as its writer writes it: each region a slice in place (`Layout::place`).
+pub struct Placing {
+    buf: Vec<u128>,
+    len: usize,
+    regions: [(usize, usize); REGIONS],
+}
+
+impl Placing {
+    fn region<T>(&mut self, r: R) -> &mut [T] {
+        let (offset, count) = self.regions[r as usize];
+        debug_assert_eq!(WIDTH[r as usize] as usize, std::mem::size_of::<T>(), "{r:?}");
+        // SAFETY: `place` laid each region out at a 16-byte offset inside the buffer, `count` items of its width, and
+        // the buffer is borrowed mutably here alone; every T is a plain integer (or an array of them).
+        unsafe { std::slice::from_raw_parts_mut(self.buf.as_mut_ptr().cast::<u8>().add(offset).cast::<T>(), count) }
+    }
+    pub fn u8s(&mut self, r: R) -> &mut [u8] {
+        self.region(r)
+    }
+    pub fn u32s(&mut self, r: R) -> &mut [u32] {
+        self.region(r)
+    }
+    pub fn u64s(&mut self, r: R) -> &mut [u64] {
+        self.region(r)
+    }
+    pub fn buckets(&mut self, r: R) -> &mut [[u64; 8]] {
+        self.region(r)
+    }
+    /// The image written: its own buffer, read where it was written. The writer wrote what an image may hold (its
+    /// strings interned from `&str`, its references its own), so a release build checks only its meta; a debug build
+    /// checks it whole, as `open` does, which is the tests' check of every writer.
+    pub fn finish(self) -> Result<Image, String> {
+        let image = Image { buf: Buf::Owned(self.buf), len: self.len, regions: self.regions };
+        if image.u64s(R::Meta).len() != meta::WORDS {
+            return Err(bad("no meta"));
+        }
+        if cfg!(debug_assertions) {
+            image.check(Depth::Full)?;
+        }
+        Ok(image)
     }
 }
 
 // ---- a program to and from its image ----
-
-/// The image of `prog`: a base, every part its own. Refuses what the image has no form for (maintenance's parts,
-/// which the text refuses too) and a comparison it does not know.
-pub fn encode(prog: &Program) -> Result<Vec<u8>, String> {
-    Builder::of_program(prog)?.finish_bytes()
-}
-
-/// The program image `bytes` holds, its lists taken from the run's `lists`.
-pub fn decode(bytes: &[u8], lists: &Lists) -> Result<Program, String> {
-    Version::open(bytes)?.program(lists)
-}
-
-/// The program of a version's parts and rules, assembled as the text's reader assembles it: the `.about` rows give
-/// the program's other fields; its facts are the facts' own (the rows' `fact_rel` restates their names).
-pub fn assemble(rules: Vec<super::front::ast::Rule>, decls: BTreeMap<Name, super::front::name::List<(Name, Name)>>, facts: BTreeMap<String, Vec<super::front::name::List<Value>>>, about: Facts, inputs: Vec<String>, outputs: Vec<String>) -> Result<Program, String> {
-    let mut prog = program_facts::program(&about, ABOUT)?;
-    prog.facts = facts;
-    prog.decls = decls;
-    prog.inputs = inputs;
-    prog.outputs = outputs;
-    prog.rules = rules;
-    Ok(prog)
-}
-
-/// The `.about` rows of `prog`: its fields besides rules, declarations, facts, inputs and outputs, as facts.
-pub fn about_of(prog: &Program) -> Facts {
-    let mut about = Facts::new();
-    program_facts::write_about(&mut about, ABOUT, prog);
-    // The image holds each fact relation itself (`assemble` reads them from there), so `fact_rel` is not kept: a
-    // pass that adds a fact relation states it once, and its version's about rows are the result's own.
-    about.remove("fact_rel");
-    about
-}

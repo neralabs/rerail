@@ -7,7 +7,7 @@
 //! from one start with a few frames on a stack: a frame is a forked path, or a move's remaining
 //! candidates (children, descendants, following siblings), so the stack grows with the program's
 //! nesting, not with a node's fan-out. On Metal it is one thread per (pass, start), with no task
-//! list built on the host (`label_micro` in `metal_label_passes.metal`, the same walk).
+//! list built on the host (`label_micro` in `label_passes.uglykl`, the same walk).
 //!
 //! The walk's outputs are the interpreter's, as a label reads them: a roots label is the starts that
 //! emit (the walk stops at the first), a targets label every node captured on a path that emits. A
@@ -34,6 +34,36 @@ pub(in crate::code_rule_dsl) const STEPS: u32 = 1 << 16;
 /// over every node per word where that is more. A move's candidates are a file's nodes at most, so
 /// a walk with one move from the root takes about that; one with nested moves may take more and
 /// then fails (06 S7: a descent from a 25 K-node module took more than `STEPS`).
+/// A micro walk's words as the profile names them (`kind=1 save0 parent … capture emit1`): the device's walk table
+/// and the label census (`RERAIL_LABEL_CENSUS`) print the same, so their rows can be matched.
+pub fn describe(words: &[u32]) -> String {
+    let parts = words.iter().map(|&word| {
+        let (op, mode, arg) = split(word);
+        let named = if mode == 1 { "n" } else { "" };
+        match op {
+            0 => "fail".to_owned(),
+            1 => format!("kind={arg}"),
+            2 => format!("field={arg}"),
+            3 => format!("flags{mode}/{arg}"),
+            4 => format!("text{arg}"),
+            10 => format!("class={arg}"),
+            16 => format!("child{named}"),
+            17 => format!("next{named}"),
+            18 => "parent".to_owned(),
+            19 => format!("desc{named}"),
+            20 => format!("after{named}"),
+            21 => format!("save{arg}"),
+            22 => format!("load{arg}"),
+            32 => "capture".to_owned(),
+            48 => format!("fork@{arg}"),
+            49 => format!("jump@{arg}"),
+            64 => format!("emit{arg}"),
+            other => format!("op{other}/{arg}"),
+        }
+    });
+    parts.collect::<Vec<_>>().join(" ")
+}
+
 pub fn steps(nodes: usize, words: usize) -> u32 {
     u32::try_from(nodes.saturating_mul(words).saturating_mul(2)).unwrap_or(u32::MAX).max(STEPS)
 }
@@ -473,8 +503,8 @@ impl Micro {
     ) -> Result<(), Overflow> {
         self.walk(tape, tape.transducer_labels(), texts, start, ROOT_CAPTURES, frames, &mut |state: &State, label| {
             let mut captures = [(0_u16, NONE); ROOT_CAPTURES];
-            for at in 0..usize::from(state.captured) {
-                captures[at] = (state.labels[at], state.captures[at]);
+            for (at, slot) in captures.iter_mut().enumerate().take(usize::from(state.captured)) {
+                *slot = (state.labels[at], state.captures[at]);
             }
             out.push(RootRecord { start, label, captured: state.captured, captures });
             false
@@ -532,7 +562,7 @@ impl Micro {
         };
         let mut steps = 0_u32;
         let mut fired = 0_u64;
-        let limit = self::steps(tape.transducer_len() as usize, self.words.len());
+        let limit = self::steps(tape.transducer_len(), self.words.len());
         loop {
             // The path from `state` until it ends.
             loop {

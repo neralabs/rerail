@@ -15,7 +15,9 @@
             if !(in_crate || name.starts_with("metal"))
                 || !name.ends_with(".rs")
                 || name.ends_with("_tests.rs")
-                || (in_crate && name == "launch.rs")
+                // The checked layers themselves: Metal's (`launch.rs`) and the device layer's (`lane.rs`, which
+                // charges each launch and checks the submission there).
+                || (in_crate && (name == "launch.rs" || name == "lane.rs"))
             {
                 continue;
             }
@@ -35,8 +37,10 @@
                 );
             }
             if name != "metal_backend.rs" {
+                // A commit is the checked pass's (`rerail_accel::gpu::join::Pass::commit`, which checks the
+                // submission's budget), never a Metal command buffer's this file made.
                 assert!(
-                    !source.contains(".commit()"),
+                    !(source.contains(".commit()") && source.contains("new_command_buffer")),
                     "{name} bypasses checked submission"
                 );
             } else {

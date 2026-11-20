@@ -1,12 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE } from "../../src/runtime/index.js";
 import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
+import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
+import { linkFolder } from "../support/platform/links.js";
 import { otherUserPid } from "../support/other-user-pid.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** The Rerail home and which daemon pid answers on each local port; a step may change either to stage a restart. */
 interface Machine {
@@ -31,6 +35,13 @@ interface RecordedDaemon {
   pid: number;
   port: number;
   startedAt?: number;
+  /**
+   * The engine endpoint the state records, which the test then holds itself. Without one the state records a test
+   * endpoint that stays held until the test ends, as a live daemon holds its engine pipe.
+   */
+  kernelSocketPath?: string;
+  /** The capability the daemon holds: its engine proves it, and the state records it. */
+  accessToken?: string;
 }
 
 interface BridgeSetup {
@@ -44,9 +55,12 @@ const NOT_RUNNING = "Rerail daemon is not running; start it with rerail daemon s
 const REFUSED = "Rerail daemon refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start";
 
 const directories: string[] = [];
+/** Closes each engine endpoint a recorded daemon holds. */
+const heldEndpoints: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(heldEndpoints.splice(0).map(async release => await release()));
+  await Promise.all(directories.splice(0).map(path => removeFolder(path)));
 });
 
 function jsonResponse(status: number, body: unknown, contentType = "application/json"): Response {
@@ -59,7 +73,15 @@ function collect(stream: PassThrough): () => string[] {
   return () => Buffer.concat(chunks).toString("utf8").split("\n").filter(Boolean);
 }
 
+/**
+ * Writes `daemon` as the home's daemon state. On Windows a recorded daemon counts as alive only while its engine pipe
+ * exists (`recordedDaemonAlive`), so the test endpoint it records is held until the test ends.
+ */
 async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void> {
+  // A short folder: macOS reads a recorded socket path of at most 103 bytes, and a temp home there already takes
+  // about 90. Nothing listens on it off Windows.
+  const kernelSocketPath = daemon.kernelSocketPath ?? testEngineEndpoint("/tmp");
+  if (daemon.kernelSocketPath === undefined) heldEndpoints.push(await holdEngineEndpoint(kernelSocketPath, daemon.accessToken));
   await mkdir(home, { recursive: true });
   await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify({
     pid: daemon.pid,
@@ -68,10 +90,11 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
     url: `http://127.0.0.1:${daemon.port}/`,
     version: "0.0.0",
     databasePath: join(home, "rerail.sqlite"),
-    kernelSocketPath: "/tmp/rerail-bridge-test.sock",
+    kernelSocketPath,
     ui: "bundled",
     startedAt: daemon.startedAt ?? 0,
     packageRoot: "/tmp/rerail-bridge-test-package",
+    ...(daemon.accessToken === undefined ? {} : { accessToken: daemon.accessToken }),
   }));
 }
 
@@ -249,7 +272,7 @@ describe("Rerail MCP bridge", () => {
       const checkout = join(root, "dépôt 項目");
       await mkdir(checkout);
       const link = join(root, "link");
-      await symlink(checkout, link);
+      linkFolder(checkout, link);
       const headers: string[] = [];
       const bodies: string[] = [];
       const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
@@ -273,7 +296,7 @@ describe("Rerail MCP bridge", () => {
       expect(decodeURIComponent(headers[0]!)).toBe(checkout);
       expect(bodies).toEqual([request, request]);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await removeFolder(root);
     }
   });
 
@@ -317,6 +340,25 @@ describe("Rerail MCP bridge", () => {
     expect(run.stderr).toEqual([`rerail: mcp bridge: ${NOT_RUNNING}`]);
   });
 
+  it.runIf(process.platform === "win32")("on Windows probes no live pid whose engine pipe is gone, and relays to the daemon that holds it", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-bridge-test-${process.pid}-${Date.now().toString(16)}`;
+    const daemon = { pid: process.pid, port: 4321, kernelSocketPath: pipe };
+    const ping = JSON.stringify({ jsonrpc: "2.0", id: 6, method: "ping" });
+    const pong = JSON.stringify({ jsonrpc: "2.0", id: 6, result: {} });
+    // Windows ends a daemon without its cleanup at logoff and hands its pid on; a live daemon always holds its pipe.
+    const stale = await runBridge([ping], [new Response(pong, { status: 200 })], { daemon });
+    expect(stale.probes).toEqual([]);
+    expect(stale.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 6, error: { code: -32000, message: NOT_RUNNING } })]);
+    const engine = createServer();
+    await new Promise<void>(resolve => engine.listen(pipe, resolve));
+    try {
+      const live = await runBridge([ping], [new Response(pong, { status: 200 })], { daemon });
+      expect(live.stdout).toEqual([pong]);
+    } finally {
+      await new Promise<void>(resolve => engine.close(() => resolve()));
+    }
+  });
+
   it("reports a daemon that stopped answering after its health check as not running", async () => {
     const lines = [1, 2, 3].map(id => JSON.stringify({ jsonrpc: "2.0", id, method: "ping" }));
     const pong = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
@@ -337,7 +379,7 @@ describe("Rerail MCP bridge", () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-bridge-access-"));
     directories.push(root);
     const home = join(root, "home");
-    await recordDaemon(home, { pid: process.pid, port: 4321 });
+    await recordDaemon(home, { pid: process.pid, port: 4321, accessToken: "kept" });
     const state = JSON.parse(await readFile(join(home, DAEMON_STATE_FILE), "utf8")) as Record<string, unknown>;
     const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
     const pong = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
@@ -360,8 +402,11 @@ describe("Rerail MCP bridge", () => {
       return { sent, stdout: lines() };
     };
     expect(await bridge("kept", "kept")).toEqual({ sent: ["/healthz kept", "/mcp kept"], stdout: [pong] });
-    // A capability daemon.json no longer matches is refused at the health check: said so, not "not running".
-    expect(await bridge("stale", "kept")).toEqual({ sent: ["/healthz stale"], stdout: [refused] });
+    // A capability daemon.json no longer matches is refused at the health check: said so, not "not running". On
+    // Windows the daemon's engine has already refused to prove it holds that capability, so nothing is sent at all.
+    expect(await bridge("stale", "kept")).toEqual(process.platform === "win32"
+      ? { sent: [], stdout: [JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: NOT_RUNNING } })] }
+      : { sent: ["/healthz stale"], stdout: [refused] });
     // One that stops being accepted after the check: the 401 body is no MCP answer, so the client gets the same error.
     expect(await bridge("kept", "kept", () => jsonResponse(401, { error: "access-required", message: "…" })))
       .toEqual({ sent: ["/healthz kept", "/mcp kept"], stdout: [refused] });

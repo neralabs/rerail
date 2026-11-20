@@ -2,7 +2,7 @@
 //! inline grammar's tape, with nothing packed again (`formats::lean`: format 15's columns, or format 16 written in one pass). The tape is the one
 //! tree-sitter-md-inline's tree encodes to, node for node
 //! (`markdown_inline_tapes_from_the_lean_parser_are_tree_sitters`). The texts are the guests a
-//! Markdown file's `inline` and `pipe_table_cell` nodes embed (`guests::markdown_inline_text`).
+//! Markdown file's `inline` and `pipe_table_cell` nodes embed (`embed::inline_content`).
 //!
 //! The parser's keys name kinds by their names in the inline grammar
 //! (`rerail_markdown_inline_lean::KINDS`; it has no fields); here they are its ids. A text the
@@ -29,12 +29,12 @@ fn kinds() -> &'static [Option<u16>] {
 /// cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_markdown_inline_lean::Refusal> {
     let kinds = kinds();
-    let code_of = |&key: &u32| -> Result<Code, String> {
+    let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, _, _, _) = rerail_markdown_inline_lean::unkey(key);
         let kind = kinds[usize::from(kind)].ok_or_else(|| format!("tree-sitter-md-inline lacks the lean parser's kind {kind}"))?;
         Code::plain(kind, 0, &[])
     };
-    rerail_markdown_inline_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, &code_of))
+    rerail_markdown_inline_lean::tape_into(source.as_bytes(), &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// The inline grammar's tree parser: the lean parser, standing in for tree-sitter-md-inline where it
@@ -43,9 +43,6 @@ pub struct Lean;
 
 impl TreeParser for Lean {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
-        if !grammar.lang.embeds().is_empty() {
-            return None;
-        }
         let span = crate::code_rule_dsl::logic::profile::span(|| "lean Markdown inline parse and tape".into());
         match encode(grammar, source, &budget) {
             Ok(image) => {

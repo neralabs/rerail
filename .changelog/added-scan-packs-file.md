@@ -1,0 +1,1 @@
+In internal testing, `rerail scan` runs the rule packs a repository lists in `.rerail/packs.json`, by exact version or by a folder in the repository, optionally only in the `folders` each names and with the rule options its `config` sets, read from the commit its rules come from. `--pack` replaces the listed packs and their options, to try others.

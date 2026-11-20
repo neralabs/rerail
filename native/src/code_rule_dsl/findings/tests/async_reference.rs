@@ -138,16 +138,9 @@ fn bind(modules: &Modules, db: &Connection, name: &str, relation: Relation) -> B
     Bound { binding: modules.get(name).unwrap(), len }
 }
 
+/// The process's CPU time in nanoseconds, worker threads included (`rerail_prof::process_cpu`).
 pub fn cpu_ns() -> u64 {
-    let mut time = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: valid writable timespec; the process clock includes worker CPU.
-    unsafe {
-        libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut time);
-    }
-    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
+    rerail_prof::process_cpu().as_nanos() as u64
 }
 fn unparen<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
     while node.kind() == "parenthesized_expression" {
@@ -311,8 +304,8 @@ fn origins<'t>(
         out.push(unparen(value));
     }
     if let Some(site) = binding.site.and_then(find) {
-        if site.kind() == "assignment" {
-            if let (Some(left), Some(right)) = (site.field("left"), site.field("right")) {
+        if site.kind() == "assignment"
+            && let (Some(left), Some(right)) = (site.field("left"), site.field("right")) {
                 let list = |node: &Node<'_, TapeDoc>| {
                     matches!(
                         node.kind().as_ref(),
@@ -338,13 +331,11 @@ fn origins<'t>(
                 let target = elements(&left)
                     .iter()
                     .rposition(|child| child.kind() == "identifier" && child.text() == owner.text());
-                if let Some(target) = target.filter(|_| list(&left) && list(&right)) {
-                    if let Some(value) = elements(&right).get(target) {
+                if let Some(target) = target.filter(|_| list(&left) && list(&right))
+                    && let Some(value) = elements(&right).get(target) {
                         out.push(unparen(value.clone()));
                     }
-                }
             }
-        }
         if with_context
             && site.kind() == "as_pattern"
             && site.parent().is_some_and(|p| p.kind() == "with_item")
@@ -639,11 +630,10 @@ pub fn execute_sql<'t>(
             if matches!(value.kind().as_ref(), "identifier" | "attribute") {
                 value_demand.insert(v);
             }
-            if reading == 0 && value.kind() == "call" {
-                if let (Some(callee), Some(arguments)) =
+            if reading == 0 && value.kind() == "call"
+                && let (Some(callee), Some(arguments)) =
                     (value.field("function"), value.field("arguments"))
-                {
-                    if matches!(callee.kind().as_ref(), "identifier" | "attribute")
+                    && matches!(callee.kind().as_ref(), "identifier" | "attribute")
                         && arguments.kind() == "argument_list"
                         && callee
                             .next()
@@ -655,8 +645,6 @@ pub fn execute_sql<'t>(
                             constructs.push(&[owner.doc as i64, id(v), id(callee)]);
                         }
                     }
-                }
-            }
         }
     }
     metrics.origin_rows = origin_rows.len();

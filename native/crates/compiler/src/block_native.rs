@@ -84,6 +84,10 @@ pub enum BlockInst {
     Load(u16),
     /// The bytes inside the stream at a delay (`block::BlockOp::Within`), from its length.
     Within(u8),
+    /// The file's positions before the stream (`block::BlockOp::Prefix`): the low `n` bits of
+    /// the first block where the file starts with `word`'s `n` bytes. From the file's first
+    /// word, compared once (`native_cpu_block::stream_start`).
+    Prefix(u8, u64),
     /// The bytes whose position is `r` mod `k` (`block::BlockOp::Phase`), from the position.
     Phase(u8, u8),
     /// Plane `j` of each byte's position (`block::BlockOp::Position`), from the position.
@@ -145,6 +149,7 @@ impl BlockNative {
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
                 BlockOp::BackFill(a, b) => BlockInst::BackFill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
+                BlockOp::Prefix(n, w) => BlockInst::Prefix(n, w),
                 BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
                 BlockOp::Position(j) => BlockInst::Position(j),
                 BlockOp::Carry(a) => BlockInst::Carry(a),
@@ -191,7 +196,7 @@ impl BlockNative {
 
     /// A walk with its values renamed by `m`.
     fn walk_renamed(w: &crate::block::Walk, m: impl Fn(u16) -> u16) -> crate::block::Walk {
-        let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), ..*k }).collect();
+        let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), or: k.or.map(|(c, n)| (m(c), n)), ..*k }).collect();
         crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds }
     }
 
@@ -278,8 +283,8 @@ impl BlockNative {
                 }
             }
         }
-        for x in 0..insts.len() {
-            if keep[x] && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
+        for (x, &kept) in keep.iter().enumerate().take(insts.len()) {
+            if kept && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
                 place(x, &insts, &mut placed, &mut order);
             }
         }
@@ -325,10 +330,13 @@ impl BlockNative {
         }
     }
 
-    /// The output of the records' lasts extract, where their end rules give the lasts instead
-    /// (decision 0177): the CPU makes no last-byte mask for it.
+    /// The output of the records' lasts extract, where their end rules (decision 0177) or
+    /// their gaps (0411) give the lasts instead: the CPU makes no last-byte mask for it.
     pub fn ruled_lasts(&self) -> Option<usize> {
-        let r = self.records.as_ref().filter(|r| !r.rules.is_empty())?;
+        let r = self
+            .records
+            .as_ref()
+            .filter(|r| !r.rules.is_empty() || r.gap.is_some())?;
         self.extracts.get(usize::from(r.lasts)).copied()
     }
 
@@ -346,7 +354,23 @@ impl BlockNative {
         // does not set itself): a token mark's mask is the starts (`tokens K …`).
         let stored = self.marks_stored();
         let walked = self.walked_starts().filter(|o| !stored.contains(o));
-        self.ruled_lasts().into_iter().chain(walked).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).collect()
+        self.ruled_lasts().into_iter().chain(walked).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).chain(self.blank_masks()).collect()
+    }
+
+    /// The masks of the marks the CPU's token loop reads from the blanks (`blank_marks`,
+    /// decision 0430), where no other mark reads them: the loop tests their classes, so the
+    /// body makes none of them.
+    fn blank_masks(&self) -> Vec<usize> {
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+            return Vec::new();
+        };
+        let bytes = crate::native_cpu_bytes::Bytewise::of(self);
+        let blank = crate::native_cpu_block::blank_bits(r, &|o| bytes.can(o));
+        let kept: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| blank >> k & 1 == 0).map(|(_, m)| m.0).collect();
+        let mut v: Vec<usize> = r.marks.iter().enumerate().filter(|&(k, m)| blank >> k & 1 == 1 && !kept.contains(&m.0)).map(|(_, m)| usize::from(m.0)).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     /// The outputs the marks the token loop does not set read from their rows.
@@ -356,8 +380,19 @@ impl BlockNative {
         };
         let bytes = crate::native_cpu_bytes::Bytewise::of(self);
         let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
-        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
+        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k) | crate::native_cpu_block::blank_bits(r, &|o| bytes.can(o));
         r.marks.iter().enumerate().filter(|&(k, m)| looped >> k & 1 == 0 && m.0 != crate::records::WORD_ALONE).map(|(_, m)| usize::from(m.0)).collect()
+    }
+
+    /// The outputs whose rows the CPU's tier 1 does not store: those the record pass makes
+    /// (`records_made`), and the totals no one reads by their rows (`rowless_totals`), each its
+    /// file's flag only. Its rows are compared to the interpreter's without them.
+    pub fn cpu_unstored(&self) -> Vec<usize> {
+        let mut v = self.records_made();
+        v.extend(self.rowless_totals());
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     /// The outputs the CPU's token loop makes from the file's bytes where it reads them
@@ -365,7 +400,8 @@ impl BlockNative {
     /// body makes none of them. The skip, the end rules', the readers' and the tests' masks.
     pub fn read_at_tokens(&self) -> Vec<usize> {
         use crate::records::EndRule;
-        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+        // The token loop's (`skip`), or tier 2's where it makes the records (page 40).
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some() || r.fetched_in_tier2()) else {
             return Vec::new();
         };
         let bytes = crate::native_cpu_bytes::Bytewise::of(self);
@@ -381,30 +417,50 @@ impl BlockNative {
         // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
         // still reads from its row stays stored.
         let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
-        let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
-        read.extend(lift.iter().chain(&at).map(|&(_, o)| o));
+        let blanks = crate::native_cpu_block::blank_marks(r, &|o| bytes.can(o));
+        let looped: u32 = lift.iter().chain(&at).chain(&blanks).fold(0, |a, &(k, _)| a | 1 << k);
+        // An output another mask names too (a `ROW`'s, the row's start a token mark's kind is
+        // told by, `TokenElem::rows`) stays stored: tier 2 reads it from its row.
+        let named = |o: u16| self.masks.iter().filter(|&&x| x == usize::from(o)).count() > 1;
+        read.extend(lift.iter().chain(&at).chain(&blanks).map(|&(_, o)| o).filter(|&o| !named(o)));
         let stored: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
         // The masks tier 2's local checks alone read: tier 2 on the CPU reads them from the
         // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.
         let others: Vec<usize> = self.masks.iter().enumerate().filter(|(i, _)| !r.check_masks.contains(&(*i as u16))).map(|(_, &o)| o).collect();
         read.extend(r.check_masks.iter().filter_map(|&m| self.masks.get(usize::from(m))).filter(|o| !others.contains(o)).map(|&o| o as u16));
-        let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !stored.contains(&o)).map(usize::from).collect();
+        // A region tier 2 reads as `parse_string` (`native_cpu_stream::sequential`) reads its
+        // part's start from no mask at all.
+        let unread: Vec<u16> = if r.fetched_in_tier2() {
+            r.readers
+                .iter()
+                .filter(|rd| rd.split == crate::records::Split::Tier2 && rd.arms.len() == 1)
+                .filter(|rd| {
+                    let mut parts: Vec<(u16, u8)> = rd.parts.iter().map(|p| (p.start, p.bytes)).collect();
+                    parts.sort_by_key(|&(o, n)| (n, o));
+                    crate::native_cpu_stream::sequential(self, &rd.arms[0], &parts).is_some()
+                })
+                .flat_map(|rd| rd.parts.iter().map(|p| p.start))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();
         v
     }
 
-    /// The totals whose words no one reads from the rows where the CPU's token loop runs
-    /// (decision 0347): a total is read as one running word, its file's flag (`Batch::results`),
-    /// and only tier 2 (`masks`), a mark, or the token loop's own reads (the skip, the end
-    /// rules', the readers', the tests') read a row. simdjson keeps its error flags so: one
-    /// register, OR-ed a block, never stored a block.
+    /// The totals whose words no one reads from the rows (decisions 0347, 0406): a total is read
+    /// as one running word, its file's flag (`Batch::results`, tier 2's `totals`), and only
+    /// tier 2 (`masks`), a mark, or the token loop's own reads (the skip, the end rules', the
+    /// readers', the tests') read a row. With no token loop, only tier 2's masks and the marks.
+    /// simdjson keeps its error flags so: one register, never stored a block.
     pub fn rowless_totals(&self) -> Vec<usize> {
         use crate::records::EndRule;
-        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
-            return Vec::new();
-        };
         let mut read: Vec<usize> = self.masks.clone();
+        let Some(r) = self.records.as_ref() else {
+            return self.totals.iter().copied().filter(|t| !read.contains(t)).collect();
+        };
         read.extend(r.skip.map(usize::from));
         read.extend(r.marks.iter().filter(|m| m.0 != crate::records::WORD_ALONE).map(|m| usize::from(m.0)));
         read.extend(r.rules.iter().filter_map(|x| match *x {
@@ -518,6 +574,7 @@ impl BlockNative {
 
 /// A pass over a file's blocks, of a program in passes (`BlockNative::passes`).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Pass {
     /// First block to first: a body, as a program without passes runs it. Its `Load`s read the
     /// slots of passes before it. Before the last pass, output `k` is stored to slot
@@ -562,7 +619,7 @@ impl BlockNative {
         let mut pure = vec![false; n];
         for x in 0..n {
             pure[x] = match self.insts[x] {
-                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
+                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
                 BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) | BlockInst::Prev(..) | BlockInst::Early(..) => self.insts[x].operands().into_iter().all(|o| pure[o]),
                 _ => false,
             };
@@ -642,9 +699,9 @@ impl BlockNative {
                 slots += 1;
             }
         };
-        for x in 0..n {
+        for (x, inst) in self.insts.iter().enumerate() {
             for p in (0..=last).filter(|&p| made[p][x]) {
-                for o in self.insts[x].operands() {
+                for o in inst.operands() {
                     if !in_pass(o, p) {
                         give(o, &mut slot);
                     }
@@ -798,11 +855,10 @@ impl PlaneFormulas {
     fn push(&mut self, inst: BlockInst) -> u16 {
         // A carry is its group's own value, never another's, however alike their starts.
         let pure = !matches!(inst, BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Carry(_));
-        if pure {
-            if let Some(&i) = self.shared.get(&inst) {
+        if pure
+            && let Some(&i) = self.shared.get(&inst) {
                 return i;
             }
-        }
         let i = self.insts.len() as u16;
         self.insts.push(inst);
         if pure {

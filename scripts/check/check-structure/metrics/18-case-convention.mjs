@@ -15,12 +15,36 @@
 // Exemption `vendored`: `native/grammars/**` is third-party code kept byte-identical.
 // Exemption `fixture-trees`: files below any `fixtures/` directory mimic the projects under test (framework
 // route files such as `pages/_app.tsx` or `app/(shop)/[id]/`); #3 decides where they may live.
+// Exemption `kept-records` (the `.rerail` workbench and the design notes, kept in git as they are:
+// docs/repository-structure.md, "Kept as they are"): the directories KEPT_RECORDS lists, with their reasons.
+// Exemption `engine-layout`: the engine line's files ENGINE_LAYOUT lists by exact path, with their reasons, until its
+// layout is settled with its owner in a follow-up.
 
 import { extension, finding, isDataPath, isVendored, sortFindings } from "../lib.mjs";
 
 export const id = 18;
 export const title = "One case convention per language";
 export const target = "100%";
+
+/** Exemption `kept-records`: a directory and why its file names stay as they are. */
+const KEPT_RECORDS = new Map([
+  ["docs/final-shape/notes/", "a note's scripts are named after the note (`0096-regret.py`), which cites them"],
+  ["docs/rule-syntax/data-layer/", "each rule's generator is named after the rule (`gen-<rule>.py`), which the rule's header cites"],
+  ["docs/rule-syntax/packs/", "each rule's generator and check are named after the rule (`gen-<rule-id>.py`, `check-<rule-id>.py`), which the rule's header cites"],
+  ["docs/rule-syntax/site/", "the explorer's vendored WASI shim (@bjorn3/browser_wasi_shim 0.4.2) keeps upstream's file names, and the bench's script is cited by its name"],
+]);
+
+/** Exemption `engine-layout`: a file and why its name stays. */
+const ENGINE_LAYOUT = new Map([
+  ["native/src/bin/rerail-engine.rs", "the `rerail-engine` binary: Cargo names it after the file"],
+  ["native/examples/sql-executor-bench.rs", "a Cargo example run by its name (`--example sql-executor-bench`)"],
+  ["native/examples/sql-work-plan.rs", "a Cargo example run by its name (`--example sql-work-plan`)"],
+  ["benchmark/sql-executor.py", "the SQL execution benchmark's harness, run by this path (benchmark/README.md)"],
+]);
+
+function kept(path) {
+  return ENGINE_LAYOUT.has(path) || [...KEPT_RECORDS.keys()].some((directory) => path.startsWith(directory));
+}
 
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const SNAKE = /^[a-z0-9]+(_[a-z0-9]+)*$/;
@@ -62,7 +86,7 @@ export function check(repo) {
   const findings = [];
   let checked = 0;
   for (const path of repo.files) {
-    if (isDataPath(path) || isVendored(path) || path.split("/").slice(0, -1).includes("fixtures")) continue;
+    if (isDataPath(path) || isVendored(path) || path.split("/").slice(0, -1).includes("fixtures") || kept(path)) continue;
     const ext = extension(path);
     let problem;
     if (SCRIPT.includes(ext)) problem = scriptProblem(path);

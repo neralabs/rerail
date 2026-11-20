@@ -1,6 +1,6 @@
 //! A relation's reads as CLIF functions, written once (decision 0325): what `rerail_blocks`' `Rows` and `Relation`
 //! read, for the host (the Rust backend: the blocks crate's `generated_reads.rs`), the kernels (the MSL backend:
-//! `relation_reads.metal`) and the JIT (inlined where hot).
+//! `<ukl/reads/relation.h>`) and the JIT (inlined where hot).
 //!
 //! A read takes a descriptor's address (a `Rows`, or a `Relation`) and reaches everything else through the block's
 //! self-relative references: a span's items lie `off` bytes from the span's own address, a column's chunk `chunk[k]`
@@ -28,10 +28,14 @@ const SPAN_OFF: i32 = offset_of!(Span<u64>, off) as i32;
 const SPAN_LEN: i32 = offset_of!(Span<u64>, len) as i32;
 const ROWS_MIN_LOG: i32 = offset_of!(Rows, min_log) as i32;
 const ROWS_COLS: i32 = offset_of!(Rows, cols) as i32;
+const ROWS_RESERVED: i32 = offset_of!(Rows, reserved) as i32;
+const ROWS_NEEDED: i32 = offset_of!(Rows, needed) as i32;
+const ROWS_NCOLS: i32 = offset_of!(Rows, ncols) as i32;
 const COL_WIDTH: i32 = offset_of!(ColDir, width) as i32;
 const COL_CHUNK: i32 = offset_of!(ColDir, chunk) as i32;
 const COL_SIZE: i64 = size_of::<ColDir>() as i64;
 const REL_BASE_ROWS: i32 = offset_of!(Relation, base_rows) as i32;
+const REL_BASE_OFF: i32 = offset_of!(Relation, base_off) as i32;
 const REL_ROWS: i64 = offset_of!(Relation, rows) as i64;
 const REL_DEAD: i32 = offset_of!(Relation, dead) as i32;
 const REL_INDEXES: i32 = offset_of!(Relation, indexes) as i32;
@@ -59,7 +63,7 @@ impl B<'_, '_> {
         self.f.ins().iadd(p, at)
     }
     /// The read `name` of the descriptor at `desc` (in the same block) with `args`.
-    fn call_at(&mut self, name: &str, desc: Value, args: &[Value]) -> Value {
+    pub(crate) fn call_at(&mut self, name: &str, desc: Value, args: &[Value]) -> Value {
         let tape = std::mem::replace(&mut self.tape, desc);
         let value = self.call(name, args);
         self.tape = tape;
@@ -146,6 +150,54 @@ pub fn rows_at(b: &mut B<'_, '_>) -> Value {
     b.call_at("col_at", dir, &[min_log, i])
 }
 
+/// `rows_put(rows, i, c, v)`: `v` written as row `i`'s value in column `c`, at the column's width; 1. Where the row
+/// is not below the rows the chunks hold (`reserved`), or the column not below the columns, nothing is written and
+/// the rows' `needed` is counted (the overflow protocol); 0. Decision 0463: a device writer's row and column come
+/// from its sizes and its kernels, which the host's sizing bounds; this bounds them whatever the sizes held. A row
+/// past the chunks made would find a chunk's offset 0, its address the column's directory, and overwrite it and the
+/// descriptors after it (Q265).
+pub fn rows_put(b: &mut B<'_, '_>) -> Value {
+    let (i, c, v) = (b.arg(0), b.arg(1), b.arg(2));
+    let reserved = b.word_at(I32, b.tape, ROWS_RESERVED);
+    let ncols = b.word_at(I32, b.tape, ROWS_NCOLS);
+    let in_rows = b.f.ins().icmp(IntCC::UnsignedLessThan, i, reserved);
+    let in_cols = b.f.ins().icmp(IntCC::UnsignedLessThan, c, ncols);
+    let ok = b.f.ins().band(in_rows, in_cols);
+    b.either(
+        I32,
+        ok,
+        |b| {
+            let p = b.call("rows_at", &[i, c]);
+            let width = b.call("rows_width", &[c]);
+            let four = b.f.ins().icmp_imm(IntCC::Equal, width, 4);
+            b.either(
+                I32,
+                four,
+                |b| {
+                    let low = b.f.ins().ireduce(I32, v);
+                    b.f.ins().store(written(), low, p, 0);
+                    b.c32(1)
+                },
+                |b| {
+                    b.f.ins().store(written(), v, p, 0);
+                    b.c32(1)
+                },
+            )
+        },
+        |b| {
+            let needed = b.f.ins().iadd_imm(b.tape, i64::from(ROWS_NEEDED));
+            let one = b.c32(1);
+            b.f.ins().atomic_rmw(I32, cranelift_codegen::ir::MemFlags::trusted(), cranelift_codegen::ir::AtomicRmwOp::Add, needed, one);
+            b.c32(0)
+        },
+    )
+}
+
+/// A store of a row's value: aligned, as the loads of the block's words are, and not read-only.
+fn written() -> cranelift_codegen::ir::MemFlags {
+    cranelift_codegen::ir::MemFlags::new().with_notrap().with_aligned()
+}
+
 /// `rows_get(rows, i, c)`: row `i`'s value in column `c` (a 4-byte column's unsigned).
 pub fn rows_get(b: &mut B<'_, '_>) -> Value {
     let (i, c) = (b.arg(0), b.arg(1));
@@ -154,13 +206,49 @@ pub fn rows_get(b: &mut B<'_, '_>) -> Value {
     b.call_at("col_get", dir, &[min_log, i])
 }
 
-/// `rel_get(rel, id, c)`: the relation's own row `id` (counted from its `base_rows`) in column `c`.
+/// `rel_get(rel, id, c)`: row `id` in column `c`: the relation's own row (counted from its `base_rows`), or, for a
+/// continuation (decision 0384 step 7: `base_off` set), an id below `base_rows` its base's row, the base's descriptor
+/// `base_off` bytes from its own in the same block. A base may continue another (a fork of a fork, step 8): the read
+/// walks the chain until the relation whose own rows hold `id` (a chain's length is bounded: `rows::MAX_SEGMENTS`).
 pub fn rel_get(b: &mut B<'_, '_>) -> Value {
     let (id, c) = (b.arg(0), b.arg(1));
-    let base_rows = b.word_at(I32, b.tape, REL_BASE_ROWS);
-    let i = b.f.ins().isub(id, base_rows);
-    let rows = b.f.ins().iadd_imm(b.tape, REL_ROWS);
-    b.call_at("rows_get", rows, &[i, c])
+    let off = b.word_at(I64, b.tape, REL_BASE_OFF);
+    let continues = b.f.ins().icmp_imm(IntCC::NotEqual, off, 0);
+    // A relation that continues none (nearly every one): its own row, one load and one branch more than before.
+    b.either(
+        I64,
+        continues,
+        |b| {
+            let tape = b.tape;
+            let (head, step, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+            b.f.append_block_param(head, I64);
+            b.f.append_block_param(done, I64);
+            b.f.append_block_param(done, I32);
+            b.f.ins().jump(head, &[tape.into()]);
+            b.f.switch_to_block(head);
+            let rel = b.f.block_params(head)[0];
+            let base_rows = b.word_at(I32, rel, REL_BASE_ROWS);
+            let off = b.word_at(I64, rel, REL_BASE_OFF);
+            let below = b.f.ins().icmp(IntCC::UnsignedLessThan, id, base_rows);
+            let more = b.f.ins().icmp_imm(IntCC::NotEqual, off, 0);
+            let in_base = b.f.ins().band(below, more);
+            b.f.ins().brif(in_base, step, &[], done, &[rel.into(), base_rows.into()]);
+            b.f.switch_to_block(step);
+            let base = b.f.ins().iadd(rel, off);
+            b.f.ins().jump(head, &[base.into()]);
+            b.f.switch_to_block(done);
+            let (rel, base_rows) = (b.f.block_params(done)[0], b.f.block_params(done)[1]);
+            let i = b.f.ins().isub(id, base_rows);
+            let rows = b.f.ins().iadd_imm(rel, REL_ROWS);
+            b.call_at("rows_get", rows, &[i, c])
+        },
+        |b| {
+            let base_rows = b.word_at(I32, b.tape, REL_BASE_ROWS);
+            let i = b.f.ins().isub(id, base_rows);
+            let rows = b.f.ins().iadd_imm(b.tape, REL_ROWS);
+            b.call_at("rows_get", rows, &[i, c])
+        },
+    )
 }
 
 /// `rel_dead(rel, id)`: 1 if the relation's dead bits mark row `id` (a delta's kills of its base, or of its own).
@@ -378,6 +466,52 @@ mod tests {
                 assert_eq!(g, ((start as u64) << 32) | group.len() as u64, "rel_group of row {id}'s key");
             }
         }
+    }
+
+    /// Decision 0463: the device's row writer (`rows_put`) writes a row the chunks hold at its column's width, and
+    /// a row past them, or a column past the columns, not at all: it counts the rows' `needed`, and the relation's
+    /// directory and descriptor are as they were (a row past the chunks made would have found a chunk offset of 0,
+    /// its address the column's directory: Q265).
+    #[test]
+    fn the_devices_row_writer_stays_in_its_rows() {
+        let reads = crate::jit::Reads::new();
+        type Put = extern "C" fn(*const u8, u32, u32, u64) -> u32;
+        type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        // SAFETY: each read's signature: its descriptor's address, then its parameters.
+        let (put, get): (Put, Two) = unsafe { (std::mem::transmute::<*const u8, Put>(reads.function("rows_put")), std::mem::transmute::<*const u8, Two>(reads.function("rows_get"))) };
+        let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![], min_log: 4 };
+        let lock = Mutex::new(());
+        let block = Block::anon(kind::FACTS, 1 << 20);
+        let rel = Relation::create(&block, &spec, None);
+        RelW { block: &block, rel, lock: &lock }.extend(&(0..40i64).flat_map(|i| [i, i]).collect::<Vec<_>>());
+        let rows = std::ptr::from_ref(&rel.rows).cast::<u8>();
+        let reserved = rel.rows.reserved.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(reserved >= 40);
+        let descriptor = |r: &Relation| unsafe { std::slice::from_raw_parts(std::ptr::from_ref(r).cast::<u8>(), std::mem::size_of::<Relation>()) }.to_vec();
+        let dirs = |r: &Relation| r.rows.cols.as_slice().iter().map(|d| (d.width, d.chunk.iter().map(|c| c.load(std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>())).collect::<Vec<_>>();
+        // In its rows: written at the column's width (the 4-byte column's next row untouched).
+        assert_eq!(put(rows, 7, 0, 0x0101_463c_52c3_00cd), 1);
+        assert_eq!(put(rows, 7, 1, 0xFFFF_FFFF_0000_0009), 1);
+        assert_eq!(get(rows, 7, 0), 0x0101_463c_52c3_00cd);
+        assert_eq!((get(rows, 7, 1), get(rows, 8, 1)), (9, 8));
+        // What an unchecked writer's address was (`rows_at`): a row past the chunks made, inside its column's
+        // directory, whose chunk offsets it would overwrite.
+        // SAFETY: `rows_at`'s signature; it reads the descriptor and the directory only.
+        let at: Two = unsafe { std::mem::transmute(reads.function("rows_at")) };
+        let col = std::ptr::from_ref(&rel.rows.cols.as_slice()[0]) as u64;
+        let wild = at(rows, reserved + 16, 0);
+        assert!((col..col + std::mem::size_of::<rerail_blocks::rows::ColDir>() as u64).contains(&wild), "row {} at {wild:#x}, the directory at {col:#x}", reserved + 16);
+        // Past its chunks, or its columns: nothing written, each counted.
+        let (before, dir) = (descriptor(rel), dirs(rel));
+        for (i, c) in [(reserved, 0), (reserved, 1), (reserved + 5000, 0), (u32::MAX, 1), (3, 2), (3, u32::MAX)] {
+            assert_eq!(put(rows, i, c, 0x0101_463c_52c3_00cd), 0, "row {i} column {c}");
+        }
+        assert_eq!(rel.rows.needed.load(std::sync::atomic::Ordering::Relaxed), 6);
+        let mut now = descriptor(rel);
+        let at = std::mem::offset_of!(Relation, rows) + std::mem::offset_of!(rerail_blocks::rows::Rows, needed);
+        now[at..at + 4].copy_from_slice(&before[at..at + 4]);
+        assert_eq!(now, before, "the descriptor, but for its count");
+        assert_eq!(dirs(rel), dir, "the columns' directories");
     }
 
     /// The host's chunk arithmetic for ranges (`rows::chunk_of`) is the reads': every row's address through

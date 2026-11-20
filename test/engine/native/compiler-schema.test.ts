@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { loadNativeBinding } from "../../../src/engine/index.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../src/engine/index.ts", import.meta.url).href;
@@ -79,7 +80,7 @@ it.skipIf(!required)("validates independent input and syntax schemas without exe
     }
     expect(ddl, "compilation must register opaque schemas, without executed input/syntax CREATEs").toEqual([]);
     expect(submitted, "prepare-only compilation needs no runtime connection PRAGMAs").toEqual([]);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeFolderSync(directory); }
 }, 40_000);
 
 it.skipIf(!required)("infers each physical and deferred public schema once across document compilations in one cold job", () => {
@@ -120,5 +121,5 @@ it.skipIf(!required)("infers each physical and deferred public schema once acros
     expect(statements.filter(sql => /^DROP TABLE "__deferred_schema_seed"/.test(sql))).toHaveLength(1);
     expect(statements.filter(sql => /^DROP TABLE "seed"/.test(sql))).toHaveLength(1);
     expect(statements, "SQLite infers both physical and public affinities once; subsequent documents execute no schema probes").toHaveLength(6);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeFolderSync(directory); }
 }, 40_000);

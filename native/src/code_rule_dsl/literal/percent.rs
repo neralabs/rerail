@@ -185,7 +185,7 @@ fn spec(
                 chars.byte(open + 1),
                 chars.byte(index - 1),
             )
-            .with_value(Value::Str(text.clone().into())),
+            .with_value(Value::Str(text.clone())),
         );
         key = Some(text);
     }
@@ -267,7 +267,7 @@ fn spec(
     }
     children.push(
         PNode::new(G, "conversion", chars.byte(index), chars.byte(index + 1))
-            .with_value(Value::Str(c.to_string().into())),
+            .with_value(Value::Str(c.to_string())),
     );
     index += 1;
     let mut placeholder = PNode::new(G, "placeholder", chars.byte(percent), chars.byte(index));
@@ -319,6 +319,33 @@ fn quantity(
             ))
         }
         _ => Ok(None),
+    }
+}
+
+/// The `percentFormat` grammar (`literal::LiteralGrammar`).
+pub(crate) struct PercentGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&PercentGrammar);
+
+impl super::LiteralGrammar for PercentGrammar {
+    fn name(&self) -> &'static str {
+        "percentFormat"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        KINDS
+    }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn host(&self) -> &'static str {
+        "Python literals"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["string", "concatenated_string"]
+    }
+    fn parse(&self, _: super::Grammar, text: &str) -> super::PNode {
+        parse(text)
     }
 }
 
@@ -498,32 +525,5 @@ pub mod tests {
                 assert_eq!(keys, expected_keys, "{text:?}");
             }
         }
-    }
-}
-
-/// The `percentFormat` grammar (`literal::LiteralGrammar`).
-pub(crate) struct PercentGrammar;
-
-/// Its handle, which the engine registers (`literal::install`).
-pub const GRAMMAR: super::Grammar = super::Grammar::new(&PercentGrammar);
-
-impl super::LiteralGrammar for PercentGrammar {
-    fn name(&self) -> &'static str {
-        "percentFormat"
-    }
-    fn kinds(&self) -> &'static [&'static str] {
-        KINDS
-    }
-    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
-        crate::code_rule_dsl::language::GrammarDialect::Python
-    }
-    fn host(&self) -> &'static str {
-        "Python literals"
-    }
-    fn host_kinds(&self) -> &'static [&'static str] {
-        &["string", "concatenated_string"]
-    }
-    fn parse(&self, _: super::Grammar, text: &str) -> super::PNode {
-        parse(text)
     }
 }

@@ -24,6 +24,29 @@ pub(super) fn pack_test_data(relative: &str) -> PathBuf {
     path
 }
 
+/// Runs `test` (its whole path, an ignored test of this binary) alone in a child process of this binary. Every test
+/// of a run shares the process: its one pool, which a long parallel loop of another test's holds (minutes, on a loaded
+/// 4-core runner), and its process-wide counts, which other tests' runs move. In the child, both are the test's own,
+/// so what it times, overlaps or counts is its own run's.
+pub(super) fn alone(test: &str) {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command.args(["--exact", test, "--ignored"]);
+    let mut process = super::logic::plan::corpus::switches::started(|| command.spawn()).unwrap();
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = process.try_wait().unwrap() {
+            break status;
+        }
+        if started.elapsed() > std::time::Duration::from_secs(120) {
+            let _ = process.kill();
+            let _ = process.wait();
+            panic!("{test} stalled");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert!(status.success(), "{test} failed: {status}");
+}
+
 pub(super) const JSX_SOURCE: &str =
     "export const View = () => <button type=\"button\">Go</button>;\n";
 
@@ -380,23 +403,35 @@ impl ast_grep_core::language::Language for Unfiltered {
     fn pre_process_pattern<'q>(&self, query: &'q str) -> std::borrow::Cow<'q, str> {
         self.0.pre_process_pattern(query)
     }
-    fn build_pattern(&self, builder: &ast_grep_core::matcher::PatternBuilder) -> std::result::Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError> {
+    fn build_pattern(
+        &self,
+        builder: &ast_grep_core::matcher::PatternBuilder,
+    ) -> std::result::Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError>
+    {
         match self.0 {
             // Forte's trees are Blade's own: no tree-sitter tree to read.
             super::language::GrammarDialect::Blade => self.0.build_pattern(builder),
-            dialect => builder.build(|source| ast_grep_core::tree_sitter::StrDoc::try_new(source, dialect)),
+            dialect => {
+                builder.build(|source| ast_grep_core::tree_sitter::StrDoc::try_new(source, dialect))
+            }
         }
     }
 }
 
 /// `text` as a pattern over tree-sitter's tree of `lang` (every token kept).
-pub(super) fn unfiltered_pattern(text: &str, lang: super::language::GrammarDialect) -> ast_grep_core::matcher::Pattern {
+pub(super) fn unfiltered_pattern(
+    text: &str,
+    lang: super::language::GrammarDialect,
+) -> ast_grep_core::matcher::Pattern {
     ast_grep_core::matcher::Pattern::try_new(text, Unfiltered(lang)).unwrap()
 }
 
 /// `text` as a pattern over documents of type `D` of `lang`: a tape's (`TapeDoc`), else the unfiltered
 /// one over tree-sitter's tree.
-pub(super) fn pattern_for<D: 'static>(text: &str, lang: super::language::GrammarDialect) -> ast_grep_core::matcher::Pattern {
+pub(super) fn pattern_for<D: 'static>(
+    text: &str,
+    lang: super::language::GrammarDialect,
+) -> ast_grep_core::matcher::Pattern {
     if std::any::TypeId::of::<D>() == std::any::TypeId::of::<super::tape::TapeDoc>() {
         ast_grep_core::matcher::Pattern::try_new(text, lang).unwrap()
     } else {

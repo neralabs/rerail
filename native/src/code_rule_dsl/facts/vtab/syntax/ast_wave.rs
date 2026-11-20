@@ -16,17 +16,18 @@ pub(crate) struct Compiler;
 impl AstCompiler for Compiler {
     /// Each relation's matcher lowered for the transducer, over the program's first `.policy` (its utils). A matcher
     /// that does not lower fails the run, naming it.
-    fn compile(&self, matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<Matchers, String> {
-        compiled(matchers, policies)
+    fn compile(&self, matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<Matchers, String> {
+        compiled(matchers, demand, policies)
     }
 }
 
-fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
+fn compiled(matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
     let base = policies.first();
     let base_text = base.map(|b| b.to_string()).unwrap_or_default();
     matchers
         .iter()
-        .map(|(rel, text, captures)| {
+        .enumerate()
+        .map(|(k, (rel, text, captures))| {
             let key = (text.clone(), base_text.clone());
             let got = {
                 let held_ = crate::code_rule_dsl::logic::profile::shared::<LoweredWaves>();
@@ -36,7 +37,7 @@ fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::
                     .clone()
             };
             let (lowered, gates, captor) = got.map_err(|why| format!("{rel}: the matcher {text} does not lower: {why}"))?;
-            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor })
+            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor, demanded_by: demand.get(k).cloned().flatten() })
         })
         .collect::<Result<Vec<_>, String>>()
         .and_then(Wave::new)
@@ -53,6 +54,9 @@ pub(crate) struct Matcher {
     /// The metavariables the atom captures, in its relation's column order after `n` (decision 0107).
     pub(crate) captures: Vec<String>,
     pub(in crate::code_rule_dsl) captor: Arc<crate::code_rule_dsl::waves::policies::Captor>,
+    /// The matchers (by place in the wave) whose roots hold every node this one's rows are read at
+    /// (`matchers::demanded_by_roots`, decision 0459): its rows are made only there. `None`: at every root.
+    pub(crate) demanded_by: Option<Vec<usize>>,
 }
 
 /// A program's matchers (decision 0106) and the wave they run as: every matcher's labels and roots in one run per
@@ -115,10 +119,6 @@ const WAVE_CPU_PER_NODE_PASS: f64 = 4e-8;
 const WAVE_GPU_PER_NODE_PASS: f64 = 1.5e-8;
 const WAVE_GPU_HOST_PER_NODE_PASS: f64 = 4e-9;
 
-/// The profile's topic for a wave the GPU lane ran on the CPU, its Metal run having failed (`MatcherWave::run`).
-#[cfg(target_os = "macos")]
-pub const METAL_FELL_BACK: &str = "ast matcher wave fell back to the CPU (its Metal run failed)";
-
 impl MatcherWave {
     fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {
         let started = std::time::Instant::now();
@@ -154,22 +154,14 @@ impl rerail_accel::kernel::Program for MatcherWave {
 
     fn run(&self, lane: rerail_accel::Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
         use crate::code_rule_dsl::transducer::packed::MatcherBackend;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if lane == rerail_accel::Lane::Gpu {
-            match self.on(MatcherBackend::MetalInterpreter) {
-                // The CPU's wave instead, named in the profile's warnings: a Metal path that fails (a kernel that does
-                // not compile, a run over its bounds) is never silent.
-                Ok(found) => {
-                    // The wave's GPU form is the Metal interpreter: no generated kernel (decision 0202).
-                    rerail_accel::forms::missing("metal-jit-form", "ast matcher wave", "ast matcher wave", "the wave runs the Metal interpreter: no generated MSL", 1);
-                    return Ok(Arc::new(Ok(found) as WaveFound));
-                }
-                Err(e) => {
-                    let reason: String = e.lines().next().unwrap_or("").chars().take(160).collect();
-                    rerail_accel::forms::missing("metal-form", "ast matcher wave", "ast matcher wave", &reason, 1);
-                    crate::code_rule_dsl::logic::profile::decision(METAL_FELL_BACK, || reason.clone())
-                }
-            }
+            // A Metal run that fails stops the run (decision 0382 §6): no CPU wave in its place. What does not fit is
+            // split, and work past its budget replanned, inside the run (0334).
+            let found = self.on(MatcherBackend::MetalInterpreter).unwrap_or_else(|e| panic!("rerail: the ast matcher wave failed on Metal: {e} ({} tapes; the device: {})", self.tapes.len(), rerail_accel::gpu::shared::describe()));
+            // The wave's GPU form is the Metal interpreter: no generated kernel (decision 0202).
+            rerail_accel::forms::missing("metal-jit-form", "ast matcher wave", "ast matcher wave", "the wave runs the Metal interpreter: no generated MSL", 1);
+            return Ok(Arc::new(Ok(found) as WaveFound));
         }
         let _ = lane;
         // The wave's CPU form is the interpreter: no Cranelift form of its roots (decision 0202).
@@ -193,7 +185,7 @@ fn matched(
     let Some(wave) = &matchers.wave else { return Ok(Vec::new()) };
     let metal = matches!(binding, crate::code_rule_dsl::typing::file_local::Binding::Metal);
     // Each tape's document in the batch; the tapes outside it take no part.
-    let at: Vec<Option<&Projected>> = tapes.iter().map(|(facts, _, _)| batch.docs.iter().find(|p| Arc::ptr_eq(&p.facts, facts))).collect();
+    let at: Vec<Option<&Projected>> = tapes.iter().map(|(facts, _, _)| batch.docs.iter().find(|p| Arc::ptr_eq(&p.facts, facts)).map(|p| &**p)).collect();
     let held: Vec<usize> = (0..tapes.len()).filter(|&i| at[i].is_some()).collect();
     // A matcher runs where its gates hold and W admits the file: its `syntax` (valid or invalid) and text literals.
     let errors: Vec<crate::code_rule_dsl::soundness::SyntaxErrors> = held.iter().map(|&i| crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&tapes[i].1)).collect();
@@ -216,7 +208,17 @@ fn matched(
     let (found, limited) = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
         (vec![vec![BTreeSet::new(); docs.len()]; matchers.len()], Vec::new())
     } else {
-        let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu: cfg!(target_os = "macos") && metal };
+        // The GPU's form only once its generated kernels are at hand (decision 0395): till then, the cores'.
+        // The batch's one tape format, the label kernels' constant (`DocTable::format`: 15, or 16 for 16 and 16z),
+        // 0 for a mixed batch.
+        let format = || {
+            use crate::code_rule_dsl::tape::formats::Format;
+            let of = |d: &crate::code_rule_dsl::tape::TapeDoc| if d.image.format() == Format::F15 { 15 } else { 16 };
+            let first = docs.first().map_or(0, of);
+            if docs.iter().all(|d| of(d) == first) { first } else { 0 }
+        };
+        let gpu = cfg!(any(target_os = "macos", target_os = "linux")) && metal && wave.metal_ready(format());
+        let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
         let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);
         let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(&ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;
@@ -236,6 +238,27 @@ fn matched(
         (found, run.limited)
     };
     profile::work(profile::Unit::Node, nodes);
+    // A matcher read only where other matchers' roots are (decision 0459): its roots there alone, before any capture.
+    let mut demanded: Vec<Option<Vec<BTreeSet<u32>>>> = matchers
+        .list
+        .iter()
+        .map(|m| {
+            let by = m.demanded_by.as_ref()?;
+            Some((0..held.len()).map(|t| by.iter().flat_map(|&b| found[b].get(t)).flatten().copied().collect::<BTreeSet<u32>>()).collect())
+        })
+        .collect();
+    let found: Vec<Vec<BTreeSet<u32>>> = found
+        .into_iter()
+        .zip(&mut demanded)
+        .map(|(roots, demand)| match demand.take() {
+            Some(demand) => {
+                let kept: Vec<BTreeSet<u32>> = roots.iter().zip(&demand).map(|(roots, demand)| roots.intersection(demand).copied().collect()).collect();
+                crate::code_rule_dsl::prof::count("ast.demanded_dropped", roots.iter().map(BTreeSet::len).sum::<usize>() - kept.iter().map(BTreeSet::len).sum::<usize>());
+                kept
+            }
+            None => roots,
+        })
+        .collect();
     let mut out = Vec::new();
     for (c, (m, found)) in matchers.list.iter().zip(found).enumerate() {
         let columns = crate::code_rule_dsl::logic::plan::corpus::ast_columns(&m.rel);
@@ -247,7 +270,7 @@ fn matched(
             let _confirm = profile::span(|| "ast roots over the work limit, confirmed (W's matcher at each root)".into());
             let held_over: Vec<usize> = over.iter().map(|&t| held[t]).collect();
             let found_over: Vec<BTreeSet<u32>> = over.iter().map(|&t| found[t].clone()).collect();
-            let (found_rows, budget) = captured_rows(m, &held_over, &found_over, &at, tapes, atoms, Some(wave.w_key(c)))?;
+            let (found_rows, budget, _) = captured_rows(m, &held_over, &found_over, &at, tapes, atoms, Some(wave.w_key(c)))?;
             if budget > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {budget} roots", m.rel));
             }
@@ -274,7 +297,13 @@ fn matched(
             // Captures, or a relaxed matcher's roots to confirm (decision 0107): W's matcher at each root.
             let _captures = profile::span(|| "ast captures and confirmations (W's matcher at each root)".into());
             let roots: usize = found.iter().map(BTreeSet::len).sum();
-            let (found_rows, limited) = captured_rows(m, &held, &found, &at, tapes, atoms, Some(wave.w_key(c)))?;
+            let (found_rows, limited, cpu) = captured_rows(m, &held, &found, &at, tapes, atoms, Some(wave.w_key(c)))?;
+            // What the host's confirmation costs each relation: its roots, the rows kept and the pool's CPU.
+            if crate::code_rule_dsl::prof::on() {
+                profile::decision("ast captures by W at each root: roots, rows, captures, CPU ms", || {
+                    format!("{}: {roots} roots, {} rows, {} captures, {:.1} ms", m.rel, found_rows.len(), m.captures.len(), cpu as f64 / 1e6)
+                });
+            }
             if limited > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {limited} roots", m.rel));
             }
@@ -307,14 +336,14 @@ fn captured_rows(
     tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
     atoms: &crate::content_store::atoms::Atoms,
     w_key: Option<String>,
-) -> StoreResult<(Vec<Vec<i64>>, usize)> {
+) -> StoreResult<(Vec<Vec<i64>>, usize, u128)> {
     use crate::code_rule_dsl::transducer::packed::evaluation_costs as costs;
     use crate::code_rule_dsl::waves::findings::Capture;
     use rayon::prelude::*;
     // W's steps at the roots and their subtrees' nodes, for its rate in the cost store (decision 0334): what the
-    // wave weighs a clause over its budget against.
+    // wave weighs a clause over its budget against. And each tape's CPU, for the profile's captures (t45).
     let measure = w_key.is_some();
-    let per: Vec<StoreResult<(Vec<Vec<i64>>, usize, u64, u64)>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+    let per: Vec<StoreResult<(Vec<Vec<i64>>, usize, u64, u64, u128)>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
         held
             .par_iter()
             .zip(found.par_iter())
@@ -322,8 +351,9 @@ fn captured_rows(
                 let mut rows = Vec::new();
                 let (mut limited, mut steps, mut nodes) = (0, 0_u64, 0_u64);
                 if roots.is_empty() {
-                    return Ok((rows, limited, steps, nodes));
+                    return Ok((rows, limited, steps, nodes, 0));
                 }
+                let started = rerail_prof::thread_cpu();
                 let p = at[i].expect("held");
                 let tape = &tapes[i].1;
                 // W's matcher reads the file's path (`filePath`, which a relaxed matcher leaves to it).
@@ -364,18 +394,20 @@ fn captured_rows(
                     }
                     rows.extend(product);
                 }
-                Ok((rows, limited, steps, nodes))
+                let cpu = (rerail_prof::thread_cpu() - started).as_nanos();
+                Ok((rows, limited, steps, nodes, cpu))
             }))
             .collect()
     });
     let per = per.into_iter().collect::<StoreResult<Vec<_>>>()?;
-    let limited = per.iter().map(|(_, l, _, _)| l).sum();
+    let limited = per.iter().map(|(_, l, ..)| l).sum();
+    let cpu = per.iter().map(|(.., cpu)| cpu).sum();
     if let Some(key) = w_key.filter(|_| measure) {
-        let (steps, nodes) = per.iter().fold((0, 0), |(s, n), (_, _, steps, nodes)| (s + steps, n + nodes));
+        let (steps, nodes) = per.iter().fold((0, 0), |(s, n), (_, _, steps, nodes, _)| (s + steps, n + nodes));
         if steps > 0 {
             costs::observe([costs::Observation { program: key, steps, size: nodes, predicted: 0, over_budget: false }]);
         }
     }
-    Ok((per.into_iter().flat_map(|(rows, _, _, _)| rows).collect(), limited))
+    Ok((per.into_iter().flat_map(|(rows, ..)| rows).collect(), limited, cpu))
 }
 

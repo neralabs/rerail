@@ -9,7 +9,7 @@
 //! less what the edit removes or replaces, plus what it adds.
 use super::handles::{AtomRef, RuleRef};
 use super::{AtomId, Cell, Image, RelId, RuleId, bad};
-use crate::code_rule_dsl::logic::front::{ast::Program, name::Lists};
+use crate::code_rule_dsl::logic::front::name::Lists;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
@@ -127,7 +127,26 @@ impl<'v> Iterator for Down<'v> {
 impl Version {
     /// The base `bytes` hold.
     pub fn open(bytes: &[u8]) -> Result<Arc<Version>, String> {
-        let image = Image::open(bytes)?;
+        Version::base_of(Image::open(bytes)?)
+    }
+
+    /// The base `bytes` hold, read where they are, not copied (`Image::open_shared`, decision 0394).
+    pub fn open_shared(bytes: super::SharedBytes) -> Result<Arc<Version>, String> {
+        Version::base_of(Image::open_shared(bytes)?)
+    }
+
+    /// The base its writer wrote (`Builder::image`), read where it was written: no copy, and the writer's own checks
+    /// (`Placing::finish`, decision 0464).
+    pub fn of_image(image: Image) -> Result<Arc<Version>, String> {
+        Version::base_of(image)
+    }
+
+    /// The overlay of `parent` and the delta its writer wrote (`Builder::image`), read where it was written.
+    pub fn over_image(parent: &Arc<Version>, delta: Image) -> Result<Arc<Version>, String> {
+        Version::overlay_of(parent, delta)
+    }
+
+    fn base_of(image: Image) -> Result<Arc<Version>, String> {
         if image.is_delta() {
             return Err(bad("a delta is opened over its parent (`Version::over`)"));
         }
@@ -135,10 +154,23 @@ impl Version {
         Ok(Arc::new(Version::Base { image: Arc::new(image), digest, analyses: Held::default() }))
     }
 
+    /// The overlay of `parent` and the delta `bytes` hold, read where they are (`Image::open_shared`, decision 0394).
+    pub fn over_shared(parent: &Arc<Version>, bytes: super::SharedBytes) -> Result<Arc<Version>, String> {
+        Version::overlay_of(parent, Image::open_shared(bytes)?)
+    }
+
+    /// Whether its own image (a base's, or an overlay's delta) is read where a store holds it, not copied.
+    pub fn is_shared(&self) -> bool {
+        self.top().is_shared()
+    }
+
     /// The overlay of `parent` and the delta `bytes` hold: the delta's bases must be `parent`'s id spaces, and what
     /// it removes `parent`'s rules.
     pub fn over(parent: &Arc<Version>, bytes: &[u8]) -> Result<Arc<Version>, String> {
-        let delta = Image::open(bytes)?;
+        Version::overlay_of(parent, Image::open(bytes)?)
+    }
+
+    fn overlay_of(parent: &Arc<Version>, delta: Image) -> Result<Arc<Version>, String> {
         if !delta.is_delta() || delta.atom_base() != parent.atom_end() || delta.rel_base() != parent.rel_end() || delta.rule_base() != parent.rule_end() {
             return Err(bad("a delta over another parent"));
         }
@@ -192,6 +224,18 @@ impl Version {
         debug_assert!(!matches!(**parent, Version::View { .. }), "a view of a view is of its parent");
         Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Held::default() })
     }
+    /// Its twin: the same layer (its image or delta, its parent, its ranges, its digest), as a version of its own
+    /// with an empty slot (`held`). What a version's analysis makes over it is made over its twin: kept in the
+    /// version's slot, it would hold its parent, the version itself, which then never drops (Q377).
+    pub fn twin(&self) -> Arc<Version> {
+        Arc::new(match self {
+            Version::Base { image, digest, .. } => Version::Base { image: image.clone(), digest: *digest, analyses: Held::default() },
+            Version::View { parent, ranges, size, digest, .. } => Version::View { parent: parent.clone(), ranges: ranges.clone(), size: *size, digest: *digest, analyses: Held::default() },
+            Version::Overlay { parent, delta, size, depth, digest, .. } => {
+                Version::Overlay { parent: parent.clone(), delta: delta.clone(), size: *size, depth: *depth, digest: *digest, analyses: Held::default() }
+            }
+        })
+    }
     /// Whether rule id `k` is in `ranges`.
     fn in_ranges(ranges: &[(u32, u32)], k: u32) -> bool {
         let at = ranges.partition_point(|&(s, _)| s <= k);
@@ -231,6 +275,16 @@ impl Version {
             Version::View { size, .. } | Version::Overlay { size, .. } => *size,
         }
     }
+    /// Every rule its stack numbers, by id, ascending: its own and those an overlay above removed (decision 0385,
+    /// `build::flat`).
+    pub(crate) fn stack_rules(&self) -> Vec<RuleRef<'_>> {
+        let mut layers: Vec<&Image> = self.down().collect();
+        layers.reverse();
+        layers.into_iter().flat_map(|im| {
+            let base = if im.is_delta() { im.rule_base() } else { 0 };
+            (0..im.rules() as u32).map(move |k| RuleRef::new(im, k, RuleId(base + k)))
+        }).collect()
+    }
     /// How many deltas are stacked on the base.
     pub fn depth(&self) -> usize {
         match self {
@@ -244,6 +298,15 @@ impl Version {
         match self {
             Version::Base { image, .. } => Some(image.bytes()),
             _ => None,
+        }
+    }
+    /// Its own image, as it is held (decision 0464: a record's piece takes it so, uncopied): a base's, or an overlay's
+    /// delta; `None` for a view, which has none.
+    pub fn own_image(&self) -> Option<&Arc<Image>> {
+        match self {
+            Version::Base { image, .. } => Some(image),
+            Version::Overlay { delta, .. } => Some(delta),
+            Version::View { .. } => None,
         }
     }
     /// What it is made of over its parent (decision 0333 §2): a base's image bytes, an overlay's parent and delta
@@ -468,26 +531,6 @@ impl Version {
         self.owner(2).outputs_hash()
     }
 
-    /// The program this version is, as the tree: a decode, counted in the run's record (`run::Record::trees_decoded`)
-    /// and, when profiling, named by the caller's place (the decision "a tree decoded from its version"), so what still
-    /// reads a tree is seen.
-    #[track_caller]
-    pub fn program(&self, lists: &Lists) -> Result<Program, String> {
-        let at = std::panic::Location::caller();
-        if let Some(run) = crate::code_rule_dsl::logic::profile::run_own() {
-            run.decoded(at);
-        }
-        crate::code_rule_dsl::logic::profile::decision("a tree decoded from its version", || format!("{}:{}", at.file(), at.line()));
-        super::Tree::new(self, lists).program()
-    }
-
-    /// The program's fields besides its rules (its declarations, facts, inputs, outputs, settings, policies and the
-    /// rest of its `.about` rows), as a tree without rules: what a run reads of a program other than its rules, with no
-    /// rule decoded (decision 0281's path, step R).
-    pub fn header(&self, lists: &Lists) -> Result<Program, String> {
-        super::Tree::new(self, lists).program_of(std::iter::empty())
-    }
-
     /// A new base of this version's program, keeping its atom and relation ids (rule ids are renumbered from 0).
     pub fn fold(&self) -> Result<Arc<Version>, String> {
         super::Builder::folding(self).finish().map(|(v, _)| v)
@@ -523,11 +566,15 @@ pub fn same_program(a: &Version, b: &Version) -> bool {
 /// What two versions differ in, by text: the rules, declarations, facts and about rows only one has (a debug check's
 /// message).
 pub fn differences(a: &Version, b: &Version) -> String {
-    use std::collections::BTreeSet;
-    let texts = |v: &Version| -> BTreeSet<String> {
-        let mut out: BTreeSet<String> = v.rules().map(|r| format!("rule {}", v.show_rule(r))).collect();
+    // Each text with how often it is held: a part held twice digests twice.
+    let texts = |v: &Version| -> std::collections::BTreeMap<String, usize> {
+        let mut out = std::collections::BTreeMap::<String, usize>::new();
+        let mut add = |t: String| *out.entry(t).or_default() += 1;
+        for r in v.rules() {
+            add(format!("rule {}", v.show_rule(r)));
+        }
         for d in v.decls() {
-            out.insert(format!("decl {}({})", v.text(d.name()), d.cols().map(|(n, t)| format!("{}: {}", v.text(n), v.text(t))).collect::<Vec<_>>().join(", ")));
+            add(format!("decl {}({})", v.text(d.name()), d.cols().map(|(n, t)| format!("{}: {}", v.text(n), v.text(t))).collect::<Vec<_>>().join(", ")));
         }
         let cell = |c: Cell| match c {
             Cell::Int(i) => i.to_string(),
@@ -536,17 +583,24 @@ pub fn differences(a: &Version, b: &Version) -> String {
         };
         for f in v.all_facts().into_iter().chain(v.about_facts()) {
             // Named, rows or none: an empty relation is one too.
-            out.insert(format!("{} {} ({} rows)", if f.about() { "about" } else { "fact" }, v.text(f.name()), f.rows().count()));
+            add(format!("{} {} ({} rows)", if f.about() { "about" } else { "fact" }, v.text(f.name()), f.rows().count()));
             for (k, row) in f.rows().enumerate() {
-                out.insert(format!("{} {} #{k} ({})", if f.about() { "about" } else { "fact" }, v.text(f.name()), row.map(cell).collect::<Vec<_>>().join(", ")));
+                add(format!("{} {} #{k} ({})", if f.about() { "about" } else { "fact" }, v.text(f.name()), row.map(cell).collect::<Vec<_>>().join(", ")));
             }
         }
-        out.insert(format!("inputs {:?}", v.inputs().map(|a| v.text(a)).collect::<Vec<_>>()));
-        out.insert(format!("outputs {:?}", v.outputs().map(|a| v.text(a)).collect::<Vec<_>>()));
+        add(format!("inputs {:?}", v.inputs().map(|a| v.text(a)).collect::<Vec<_>>()));
+        add(format!("outputs {:?}", v.outputs().map(|a| v.text(a)).collect::<Vec<_>>()));
         out
     };
     let (ta, tb) = (texts(a), texts(b));
-    let only = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.difference(y).take(40).cloned().collect::<Vec<_>>().join("\n    ");
+    let only = |x: &std::collections::BTreeMap<String, usize>, y: &std::collections::BTreeMap<String, usize>| {
+        x.iter()
+            .filter(|(t, n)| y.get(*t).is_none_or(|m| m < *n))
+            .take(40)
+            .map(|(t, n)| if y.contains_key(t) { format!("{t} (×{n}, against ×{})", y[t]) } else { t.clone() })
+            .collect::<Vec<_>>()
+            .join("\n    ")
+    };
     // The same texts may lie in another order: the first rule out of place.
     let order = |v: &Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>();
     let (oa, ob) = (order(a), order(b));

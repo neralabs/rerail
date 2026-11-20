@@ -1,12 +1,13 @@
-//! Where a batch's projections keep their arrays (decision 0289 §3). With Metal, in the batch's block, which its
-//! chunk is nested in and the device reads in place (`rerail_blocks::Cells`). Elsewhere no device reads them, and a
-//! block's address space reservation has no counterpart (WASM), so they are heap arrays with the same API.
+//! Where a batch's projections keep their arrays (decision 0289 §3): in the batch's block, which its chunk is nested
+//! in and the device reads in place (`rerail_blocks::Cells`), on every native target (decision 0440 step E). On WASM
+//! a block's address space reservation has no counterpart and no device reads them, so they are heap arrays with the
+//! same API.
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_family = "wasm"))]
 pub use rerail_blocks::{Block, Cells};
 
 /// A block of `bytes` for a batch's (or one projection's) arrays: address space, not memory.
-#[cfg(target_os = "macos")]
+#[cfg(not(target_family = "wasm"))]
 pub fn block(bytes: usize) -> std::sync::Arc<Block> {
     // From the one block policy (decision 0342): host memory (a reservation of a GB and more, never a pool
     // slab), which the device reads in place through a no-copy buffer.
@@ -14,21 +15,21 @@ pub fn block(bytes: usize) -> std::sync::Arc<Block> {
 }
 
 /// What cells can hold: plain data a block holds as its bytes (`rerail_blocks::Pod`).
-#[cfg(target_os = "macos")]
+#[cfg(not(target_family = "wasm"))]
 pub trait Cell: rerail_blocks::Pod + Copy + Default {}
-#[cfg(target_os = "macos")]
+#[cfg(not(target_family = "wasm"))]
 impl<T: rerail_blocks::Pod + Copy + Default> Cell for T {}
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_family = "wasm")]
 pub use heap::{Block, Cells, block};
 
 /// What cells can hold (heap arrays: any plain value).
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_family = "wasm")]
 pub trait Cell: Copy + Default {}
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_family = "wasm")]
 impl<T: Copy + Default> Cell for T {}
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_family = "wasm")]
 mod heap {
     use std::ops::Deref;
     use std::sync::Arc;
@@ -73,11 +74,11 @@ mod heap {
 /// One `T` that readers find by its address, in `block` beside the arrays it describes (a descriptor whose runs point
 /// at them, `rerail_clif::ids::Numbering`). Written while it is built, read only after.
 pub struct Desc<T> {
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_family = "wasm"))]
     p: *mut T,
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_family = "wasm"))]
     _block: std::sync::Arc<Block>,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_family = "wasm")]
     b: Box<T>,
 }
 
@@ -88,14 +89,14 @@ unsafe impl<T: Sync> Sync for Desc<T> {}
 impl<T: Default> Desc<T> {
     /// A default `T` in `block`.
     pub fn new(block: &std::sync::Arc<Block>) -> Self {
-        #[cfg(target_os = "macos")]
+        #[cfg(not(target_family = "wasm"))]
         {
             let p: *mut T = block.try_alloc_t(1).expect("a batch's block holds its projection");
             // SAFETY: just allocated for this alone.
             unsafe { p.write(T::default()) };
             Desc { p, _block: std::sync::Arc::clone(block) }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_family = "wasm")]
         {
             let _ = block;
             Desc { b: Box::default() }
@@ -106,11 +107,11 @@ impl<T: Default> Desc<T> {
 impl<T> Desc<T> {
     /// Its address: for the builder to write through (before it is shared) and the reads to read.
     pub fn as_ptr(&self) -> *mut T {
-        #[cfg(target_os = "macos")]
+        #[cfg(not(target_family = "wasm"))]
         {
             self.p
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_family = "wasm")]
         {
             std::ptr::from_ref::<T>(&self.b).cast_mut()
         }

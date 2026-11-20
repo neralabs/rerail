@@ -3,7 +3,7 @@
   "id": "data-layer-dynamic-module-loading",
   "revision": 1,
   "mode": "block",
-  "description": "Candidate port of nera-data-layer dynamic_module_loading at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "description": "Candidate port of the data-layer repository's dynamic_module_loading at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
       "impl/**/*.py",

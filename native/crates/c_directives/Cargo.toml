@@ -6,10 +6,15 @@ publish = false
 description = "C's and C++'s directives as a Bitlex grammar (decision 0327, mode (a) compiled): the directive tape, held to the lean scan's rows."
 
 [features]
-# The compiler's and Metal's test hooks, for a build with `--features test-hooks` (scripts/check/check-dev-features.py).
+# The compiler's and Metal's test hooks, for a build with `--features test-hooks` (scripts/check/check_dev_features.py).
 test-hooks = ["rerail-c-pp/test-hooks", "rerail-c-lean/test-hooks", "rerail-tape-format/test-hooks", "rerail-compiler/test-hooks", "rerail-metal/test-hooks"]
+# The words' compiled code as Rust (`rerail-pp-aot`), compiled by rustc: the preprocessor's CPU
+# path (decision 0348, t44). On by default; without it the path is the JIT's code of the same IR.
+default = ["generated"]
+generated = ["rerail-pp-aot/generated"]
 
 [dependencies]
+rerail-pp-aot = { path = "../pp_aot" }
 rerail-compiler = { path = "../compiler" }
 rerail-tape-format = { path = "../tape_format" }
 bitlex = { path = "../../../tools/bitlex", default-features = false }
@@ -19,8 +24,11 @@ rerail-c-pp = { path = "../c_pp" }
 rerail-c-lean = { path = "../c_lean" }
 rerail-simd8 = { path = "../simd8" }
 
-[target.'cfg(target_os = "macos")'.dependencies]
+# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 rerail-metal = { path = "../metal" }
+# A placed document's digest (`eval::rounds::place`).
+sha2 = "0.10"
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

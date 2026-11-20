@@ -143,7 +143,7 @@ impl ContentStore {
 
 fn digest(lanes: [i64; 4]) -> [u8; 32] {
     let mut digest = [0; 32];
-    for (chunk, lane) in digest.chunks_exact_mut(8).zip(lanes) {
+    for (chunk, lane) in digest.as_chunks_mut::<8>().0.iter_mut().zip(lanes) {
         chunk.copy_from_slice(&lane.to_be_bytes());
     }
     digest

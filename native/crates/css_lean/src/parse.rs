@@ -21,7 +21,7 @@
 use crate::block::Blocks;
 use crate::kinds::K;
 use crate::{Refusal, Tape, key};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 type R<T> = Result<T, Refusal>;
 
@@ -56,7 +56,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
-pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     if src.contains(&0) {
         return Err(Refusal::Lex(src.iter().position(|&c| c == 0).unwrap_or(0) as u32));
     }
@@ -64,12 +64,12 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
     loop {
         // A leading byte order mark is skipped (tree-sitter's lexer skips it): the text starts after.
         let start = if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 };
-        let mut p = P { src, at: start, pending: Vec::new(), seen: 0, w: Writer::new(0, widths, src.len() / 3 + 16), b: Blocks::of(src), last_end: 0, depth: 0 };
+        let mut p = P { src, at: start, pending: Vec::new(), seen: 0, w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src), b: Blocks::of(src), last_end: 0, depth: 0 };
         p.stylesheet()?;
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -263,9 +263,7 @@ impl<'a> P<'a> {
     /// The end of an `identifier` at `at` (`(--|-?[a-zA-Z_])[a-zA-Z0-9-_]*`), or `None`.
     fn identifier_end(&self, at: usize) -> R<Option<usize>> {
         let c = self.byte(at);
-        let body = if c == b'-' && self.byte(at + 1) == b'-' {
-            at + 2
-        } else if c == b'-' && is_ident_start(self.byte(at + 1)) {
+        let body = if c == b'-' && (self.byte(at + 1) == b'-' || is_ident_start(self.byte(at + 1))) {
             at + 2
         } else if c == b'-' && self.latin1(at + 1) {
             at + 3
@@ -398,6 +396,8 @@ impl<'a> P<'a> {
                 break;
             }
             self.item(false)?;
+            // A top-level rule is final: its nodes are committed (passed to format 16's ops; decision 0434 §2).
+            self.w.commit();
         }
         self.flush(usize::MAX);
         self.w.close(root, self.src.len() as u32);
@@ -556,11 +556,10 @@ impl<'a> P<'a> {
                 let n = self.open(K::NamespaceStatement, at);
                 self.tok(K::NamespaceStatement, K::TAtNamespace, e - at)?;
                 let s = self.skip()?;
-                if let Some(ie) = self.identifier_end(s)? {
-                    if self.byte(ie) != b'(' {
+                if let Some(ie) = self.identifier_end(s)?
+                    && self.byte(ie) != b'(' {
                         self.leaf(K::NamespaceName, s, ie);
                     }
-                }
                 let s = self.skip()?;
                 if matches!(self.byte(s), b'"' | b'\'') {
                     self.string_value()?;
@@ -1149,9 +1148,11 @@ impl<'a> P<'a> {
                 b'+' | b'-' => {
                     let d = self.byte(s + 1);
                     // `-2`, `+.5` and `-name` are operands, the longer tokens.
-                    if d.is_ascii_digit() || (d == b'.' && self.byte(s + 2).is_ascii_digit()) || (self.byte(s) == b'-' && self.identifier_end(s)?.is_some()) {
-                        None
-                    } else if self.byte(s) == b'-' && self.plain_value_end(s)?.is_some() {
+                    if d.is_ascii_digit()
+                        || (d == b'.' && self.byte(s + 2).is_ascii_digit())
+                        || (self.byte(s) == b'-' && self.identifier_end(s)?.is_some())
+                        || (self.byte(s) == b'-' && self.plain_value_end(s)?.is_some())
+                    {
                         None
                     } else if self.byte(s) == b'+' {
                         Some(K::TPlus)

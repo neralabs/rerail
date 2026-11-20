@@ -181,10 +181,33 @@ mod tests {
         assert_eq!(unsafe { *f.ptr::<u64>(keep) }, 7);
     }
 
+    /// Q337: a freeze gives back only the free chunks' own pages, never one a live chunk shares. A chunk of a page or
+    /// more lies at 64-byte alignment (or at an eighth of its class, a fit's piece), so its first and last pages hold
+    /// its neighbours' bytes; marked reusable, the OS could drop them under pressure, and a reader read zeros.
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn a_freeze_gives_back_no_page_a_live_chunk_shares() {
+        let b = block();
+        let before = b.try_alloc_chunk(64, 64).unwrap();
+        let big = b.try_alloc_chunk(2 * PAGE, 64).unwrap();
+        let after = b.try_alloc_chunk(64, 64).unwrap();
+        assert!(big % PAGE != 0 && (big + 2 * PAGE) % PAGE != 0 && after < (big + 2 * PAGE).next_multiple_of(PAGE), "the big chunk shares its first and last pages");
+        unsafe {
+            *b.ptr::<u64>(before) = 7;
+            *b.ptr::<u64>(after) = 9;
+        }
+        b.free_chunk(big, 2 * PAGE);
+        let f = b.freeze();
+        assert!(crate::mem::tests::modified(f.ptr::<u8>(before)), "the page of the chunk before still holds its bytes");
+        assert!(crate::mem::tests::modified(f.ptr::<u8>(after)), "the page of the chunk after still holds its bytes");
+        assert_eq!(unsafe { (*f.ptr::<u64>(before), *f.ptr::<u64>(after)) }, (7, 9));
+    }
+
     /// A chunk written before it is read (a relation's rows) is taken again as it was left: no bytes are zeroed
-    /// for it. One asked zeroed is, and the bytes zeroed are counted.
+    /// for it. One asked zeroed is, and the bytes zeroed are counted (the run's count: other tests zero too).
     #[test]
     fn a_chunk_written_before_read_is_not_zeroed() {
+        let _run = rerail_context::test_run();
         let b = block();
         let a = b.try_alloc_chunk(4096, 64).unwrap();
         unsafe { std::ptr::write_bytes(b.ptr::<u8>(a), 0xab, 4096) };

@@ -56,7 +56,7 @@ pub struct F16Lang {
 }
 
 /// The codes a language's grammar allows (E25, `tape16 gcodes`, which derives them from node-types.json and
-/// checks every captured node against them): the table every tape of the language numbers into. `.rr` and
+/// checks every captured node against them): the table every tape of the language numbers into. `.rerail` and
 /// Blade, whose parsers declare no node types, are the bound kinds × fields × flags.
 pub fn grammar_codes(tag: u8) -> usize {
     match tag {

@@ -3,7 +3,7 @@
   "id": "complexity-cyclomatic-php",
   "revision": 1,
   "mode": "steer",
-  "description": "Keep PHP functions at cyclomatic complexity 6 or below, counting each if, elseif, loop, catch, switch, match, ternary and && or || (and, or); branch-heavy functions are hard to follow and test.",
+  "description": "Keep PHP functions to 6 or fewer paths (cyclomatic complexity), counting each if, elseif, loop, catch, switch, match, ternary and && or || (and, or), so they stay easy to read and test.",
   "scope": {
     "include": [
       "**/*.php"
@@ -27,6 +27,13 @@
     {
       "id": "complexity",
       "define": {
+        "options": {
+          "ceiling": {
+            "type": "integer",
+            "default": 6,
+            "description": "The highest cyclomatic complexity a function may have: a function over it is flagged. At least 1."
+          }
+        },
         "language": "php",
         "utils": {
           "boundary": {
@@ -102,7 +109,9 @@
                   "matches": "boundary"
                 }
               },
-              "min": 6,
+              "min": {
+                "$option": "ceiling"
+              },
               "as": "CCN",
               "offset": 1
             }
@@ -150,7 +159,10 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+        "message": {
+          "$option": "ceiling",
+          "template": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of {}. Decompose it into smaller functions."
+        }
       }
     },
     {
@@ -175,7 +187,10 @@
       "violation": {
         "anchor": "witness.span",
         "code": "CYCLOMATIC_COMPLEXITY",
-        "message": "This function has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+        "message": {
+          "$option": "ceiling",
+          "template": "This function has cyclomatic complexity $CCN, over the ceiling of {}. Decompose it into smaller functions."
+        }
       }
     }
   ]

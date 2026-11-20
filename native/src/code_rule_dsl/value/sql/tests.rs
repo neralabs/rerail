@@ -91,7 +91,7 @@
                     Err(_) => vec![Value::Float(text.parse::<f64>().unwrap())],
                 }
             }
-            "string" => vec![Value::Str(value[1].as_str().unwrap().to_string().into())],
+            "string" => vec![Value::Str(value[1].as_str().unwrap().to_string())],
             "bool" => vec![Value::Bool(value[1].as_bool().unwrap())],
             "null" => vec![Value::None],
             "bits" => vec![Value::Unknown],

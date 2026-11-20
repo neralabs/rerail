@@ -8,8 +8,10 @@
 //! - **Workers.** The executor starts a worker for the stream only while the stream's queued estimate, spread over
 //!   the workers serving it, is above its **floor** (the cost below which a pool job loses to running inline), and
 //!   while the cores leave a thread: the pool's threads less the caller's, less what else runs on the cores, over
-//!   the machine's load (`cores_slowdown`). Otherwise the jobs wait for the caller. With one thread
-//!   (`RERAIL_THREADS=1`), or on a loaded machine, every job runs on the caller, in the order it waits for them.
+//!   the machine's load (`cores_slowdown`). A call starts at most one worker per job queued, and never again for a
+//!   worker that ended during it (one that found nothing to claim). Otherwise the jobs wait for the caller. With one
+//!   thread (`RERAIL_THREADS=1`), or on a loaded machine, every job runs on the caller, in the order it waits for
+//!   them.
 //! - **The floor** is measured: the stream's workers' start latency (from being started to their first claim), at
 //!   least `RERAIL_STREAM_FLOOR` seconds (100 µs).
 //! - **Waiting.** [`Stream::wait`] runs the awaited job itself if no worker has claimed it, else helps the pool
@@ -58,9 +60,10 @@ struct State<'s> {
     latency: AtomicU64,
     board: Arc<Scoreboard>,
     next: AtomicU64,
-    /// Jobs run by the caller and by workers (for tests and the trace).
+    /// Jobs run by the caller and by workers, and the workers started (for tests and the trace).
     by_caller: AtomicUsize,
     by_workers: AtomicUsize,
+    workers: AtomicUsize,
     peak: AtomicUsize,
     running: AtomicUsize,
     /// Jobs ended so far, and the waiters' wake-up when one does (`Stream::pause`).
@@ -88,7 +91,7 @@ impl<'s> State<'s> {
         let now = self.running.fetch_add(1, Ordering::AcqRel) + 1;
         self.peak.fetch_max(now, Ordering::AcqRel);
         IN_JOB.set(IN_JOB.get() + 1);
-        (j.job)();
+        crate::exec::in_job_scope(j.job);
         IN_JOB.set(IN_JOB.get() - 1);
         self.running.fetch_sub(1, Ordering::AcqRel);
         self.board.finish(j.ticket, true);
@@ -118,11 +121,12 @@ pub struct Handle<R> {
     slot: Slot<R>,
 }
 
-/// What a stream did: jobs run by the caller and by its workers, and the most that ran at once.
+/// What a stream did: jobs run by the caller and by its workers, the workers started, and the most that ran at once.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StreamCounts {
     pub by_caller: usize,
     pub by_workers: usize,
+    pub workers: usize,
     pub peak: usize,
 }
 
@@ -149,23 +153,26 @@ impl<'s> Stream<'s, '_> {
         Handle { id, slot }
     }
 
-    /// Starts workers while the queued estimate per worker is above the floor and the cores leave a thread.
+    /// Starts workers while the queued estimate per worker is above the floor and the cores leave a thread: at most
+    /// one per queued job. The count serving is this call's own, from its start: a worker that ends meanwhile (it
+    /// found nothing to claim) is not started again, or the call would spin starting workers that end at once.
     fn start_workers(&self) {
         let st = &self.state;
-        let queued: f64 = st.queue.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|j| j.estimate).sum();
+        let (queued, jobs) = {
+            let q = st.queue.lock().unwrap_or_else(|p| p.into_inner());
+            (q.iter().map(|j| j.estimate).sum::<f64>(), q.len())
+        };
         // The caller is one thread; others' jobs on the cores take theirs.
         let others = st.board.with_units(Lane::Cpu, |u| u.running).saturating_sub(st.running.load(Ordering::Acquire));
         let cores = (threads() as f64 / cores_slowdown()).floor() as usize;
         let free = cores.saturating_sub(1 + others);
         let floor = st.floor();
-        loop {
-            let serving = st.serving.load(Ordering::Acquire);
+        for serving in (st.serving.load(Ordering::Acquire)..).take(jobs) {
             if serving >= free || queued / (serving + 1) as f64 <= floor {
                 return;
             }
-            if st.serving.compare_exchange(serving, serving + 1, Ordering::AcqRel, Ordering::Acquire).is_err() {
-                continue;
-            }
+            st.serving.fetch_add(1, Ordering::AcqRel);
+            st.workers.fetch_add(1, Ordering::Relaxed);
             let state = Arc::clone(st);
             let started = Instant::now();
             self.scope.spawn(move |_| {
@@ -186,6 +193,7 @@ impl<'s> Stream<'s, '_> {
 
     /// Waits for `h`: runs it here if no worker claimed it, else helps the pool meanwhile.
     pub fn wait<R>(&self, h: Handle<R>) -> Result<R, String> {
+        crate::exec::assert_no_uncommitted("a stream's wait");
         let st = &self.state;
         let mut nap = 20e-6f64;
         loop {
@@ -242,7 +250,7 @@ impl<'s> Stream<'s, '_> {
 
     pub fn counts(&self) -> StreamCounts {
         let st = &self.state;
-        StreamCounts { by_caller: st.by_caller.load(Ordering::Relaxed), by_workers: st.by_workers.load(Ordering::Relaxed), peak: st.peak.load(Ordering::Relaxed) }
+        StreamCounts { by_caller: st.by_caller.load(Ordering::Relaxed), by_workers: st.by_workers.load(Ordering::Relaxed), workers: st.workers.load(Ordering::Relaxed), peak: st.peak.load(Ordering::Relaxed) }
     }
 }
 
@@ -260,6 +268,7 @@ impl Executor {
                 next: AtomicU64::new(0),
                 by_caller: AtomicUsize::new(0),
                 by_workers: AtomicUsize::new(0),
+                workers: AtomicUsize::new(0),
                 peak: AtomicUsize::new(0),
                 running: AtomicUsize::new(0),
                 ended: Mutex::new(0),
@@ -341,6 +350,27 @@ mod tests {
         });
         IN_JOB.set(0);
         assert_eq!(counts.0, 7);
+    }
+
+    #[test]
+    fn a_submit_starts_a_worker_per_job_and_not_again_for_one_that_ended() {
+        // One job at a time, each far above the floor: a submit starts at most one worker for it. The workers end at
+        // once (the job is quick, or the caller took it); started again for each that ended, a submit would spin until
+        // every thread the cores leave happened to serve at once (the data-layer replay's livelock).
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let exec = Executor::with(vec![Arc::new(crate::exec::CpuBackend::default())]);
+            let counts = exec.stream("one at a time", |s| {
+                for i in 0..64u64 {
+                    let h = s.submit(1.0, move || i);
+                    assert_eq!(s.wait(h).unwrap(), i);
+                }
+                s.counts()
+            });
+            let _ = tx.send(counts);
+        });
+        let counts = rx.recv_timeout(std::time::Duration::from_secs(60)).expect("64 submits and waits end within a minute");
+        assert!(counts.workers <= 64, "{counts:?}");
     }
 
     #[test]

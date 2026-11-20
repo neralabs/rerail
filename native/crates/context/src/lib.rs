@@ -21,8 +21,6 @@ thread_local! {
 
 /// What the crates below `logic` tell the run under way, and read of it (`RUN`; decisions 0441, 0442).
 pub trait RunOwn: Send + Sync {
-    /// A tree decoded from a program's version, at `at`.
-    fn decoded(&self, at: &'static std::panic::Location<'static>);
     /// A job's handle (`job_run`): the run, and the context it was taken in. `enter` puts both on the job's thread.
     fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
         None
@@ -38,7 +36,7 @@ pub trait RunOwn: Send + Sync {
 /// The run under way on this thread (`RUN`), if any.
 pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
     // A thread-local's drop, as its thread ends, may ask after this one's: then no run.
-    RUN.try_with(|r| r.borrow().clone()).ok().flatten().or_else(|| inside_pool().map(|(run, _)| run))
+    RUN.try_with(|r| r.borrow().clone()).ok().flatten()
 }
 
 pub type AnyArc = std::sync::Arc<dyn std::any::Any + Send + Sync>;
@@ -72,6 +70,8 @@ pub struct Machine {
 
 impl Machine {
     pub fn new() -> std::sync::Arc<Machine> {
+        // Before any of its pools makes a job: every pool's jobs carry their makers' runs.
+        install_carrier();
         std::sync::Arc::default()
     }
     /// Its value of type `T`, made the first time it is asked for.
@@ -281,8 +281,8 @@ pub fn is_main_thread() -> bool {
     }
     #[cfg(target_os = "linux")]
     {
-        // SAFETY: no arguments.
-        unsafe { libc::gettid() == libc::getpid() }
+        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
+        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
@@ -298,79 +298,60 @@ pub const POOL_STACK: usize = 16 << 20;
 /// loop of the engine (`on_cores`, `cores_spawn`, `cores_scope`). Two machines in one process have two pools; two
 /// callers on one machine share it, each job in its own caller's run.
 #[derive(Default)]
-pub struct Cores(std::sync::OnceLock<rayon::ThreadPool>, std::sync::Arc<Inside>);
+pub struct Cores(std::sync::OnceLock<rayon::ThreadPool>);
 
 impl Cores {
     /// The pool, made the first time it is asked for.
     pub fn pool(&self) -> &rayon::ThreadPool {
-        self.0.get_or_init(|| make_pool(false, std::sync::Arc::clone(&self.1)))
+        self.0.get_or_init(|| make_pool(false))
     }
 }
 
-/// The jobs inside a pool's `on_cores` now (each a `job_run`: a run and its context). A loop's items split by
-/// rayon's `join`, and a half another of the pool's threads steals runs there with nothing of its caller's: no hook
-/// carries it. Such a thread takes the run and the context of the jobs inside its pool (`inside_pool`) where they
-/// are one run's; with two runs' loops in one pool at once, a stolen half cannot tell which it is of, and a read there
-/// is refused as before (`missed`).
-#[derive(Default)]
-pub struct Inside(parking_lot::Mutex<Vec<std::sync::Arc<dyn RunOwn>>>);
-
-thread_local! {
-    /// The jobs inside this thread's pool (`Inside`), on a pool's threads.
-    static POOL: std::cell::RefCell<Option<std::sync::Arc<Inside>>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Where this thread has no run of its own and is one of a pool's: the run inside its pool, and its context where the
-/// jobs there share one (`Inside`).
-#[cold]
-fn inside_pool() -> Option<(std::sync::Arc<dyn RunOwn>, Option<Context>)> {
-    let inside = POOL.try_with(|p| p.borrow().clone()).ok().flatten()?;
-    let jobs = inside.0.lock();
-    let first = jobs.first()?;
-    let (run, context) = first.with_context().map(|(r, c)| (std::sync::Arc::clone(r), c.clone())).unwrap_or_else(|| (std::sync::Arc::clone(first), Context::default()));
-    let mut same_context = true;
-    for job in &jobs[1..] {
-        let (r, c) = job.with_context().map(|(r, c)| (std::sync::Arc::clone(r), Some(c))).unwrap_or_else(|| (std::sync::Arc::clone(job), None));
-        if !std::ptr::addr_eq(std::sync::Arc::as_ptr(&r), std::sync::Arc::as_ptr(&run)) {
-            return None;
-        }
-        same_context &= c.is_some_and(|c| c.same(&context));
-    }
-    Some((run, same_context.then_some(context)))
-}
-
-/// This thread's context: its own, else, with no run of its own on a pool's thread, the one inside its pool.
+/// This thread's context.
 fn context_here() -> Context {
-    let own = CONTEXT.try_with(|c| c.borrow().clone()).unwrap_or_default();
-    if own.0.is_some() || RUN.try_with(|r| r.borrow().is_some()).unwrap_or(true) {
-        return own;
-    }
-    inside_pool().and_then(|(_, c)| c).unwrap_or(own)
+    CONTEXT.try_with(|c| c.borrow().clone()).unwrap_or_default()
 }
 
-/// A job inside a pool (`Inside`) until dropped.
-struct InPool<'a>(&'a Inside, std::sync::Arc<dyn RunOwn>);
-
-impl Drop for InPool<'_> {
-    fn drop(&mut self) {
-        let mut jobs = self.0.0.lock();
-        if let Some(i) = jobs.iter().position(|j| std::ptr::addr_eq(std::sync::Arc::as_ptr(j), std::sync::Arc::as_ptr(&self.1))) {
-            jobs.swap_remove(i);
+/// What a job made on this thread carries to the thread that runs it (rayon-core's patch, `set_job_carrier`): the
+/// run under way and its context (`job_run`). A loop's items split by rayon's `join`, and a half another thread steals
+/// runs in its maker's run, whichever runs share the pool (decision 0442, Q386). Nothing where the thread holds no
+/// run: a thread the engine gave none (in a test build, a test's own thread carries the tests' object).
+fn carry() -> Option<rayon_core::Carried> {
+    if RUN.try_with(|r| r.borrow().is_none()).unwrap_or(true) {
+        #[cfg(feature = "test-hooks")]
+        if on_a_tests_thread() {
+            return Some(Box::new(job_run()));
         }
+        return None;
     }
+    Some(Box::new(job_run()))
 }
 
-/// A pool of [`threads`] threads; with `this_thread`, the calling thread its thread 0. Each thread knows the jobs
-/// inside the pool (`inside`).
-fn make_pool(this_thread: bool, inside: std::sync::Arc<Inside>) -> rayon::ThreadPool {
+/// Enters what a job carried (`carry`) on the thread that runs it, until the guard drops; nothing where the thread
+/// holds that run and context already.
+fn enter_carried(carried: rayon_core::Carried) -> Box<dyn std::any::Any> {
+    let job = *carried.downcast::<Option<std::sync::Arc<dyn RunOwn>>>().expect("rerail: the engine's job carrier carries a job's run");
+    if holds(&job) {
+        return Box::new(());
+    }
+    Box::new(enter(job))
+}
+
+/// Installs the engine's job carrier (`carry`) before the first pool is made: code registered at load, set once for
+/// the process (later calls are ignored).
+fn install_carrier() {
+    rayon_core::set_job_carrier(carry, enter_carried);
+}
+
+/// A pool of [`threads`] threads; with `this_thread`, the calling thread its thread 0. Its jobs carry their makers'
+/// runs (`install_carrier`).
+fn make_pool(this_thread: bool) -> rayon::ThreadPool {
+    install_carrier();
     let b = rayon::ThreadPoolBuilder::new()
         .num_threads(threads())
         .thread_name(|i| format!("rerail-cpu {i}"))
         .stack_size(POOL_STACK)
-        .start_handler(move |_| {
-            engine_thread();
-            let _ = POOL.try_with(|p| *p.borrow_mut() = Some(std::sync::Arc::clone(&inside)));
-        });
+        .start_handler(move |_| engine_thread());
     if this_thread { b.use_current_thread() } else { b }.build().expect("rerail: the machine's job pool")
 }
 
@@ -382,8 +363,7 @@ impl Machine {
     /// with it.
     pub fn here() -> std::sync::Arc<Machine> {
         let machine = Machine::new();
-        let cores = machine.get::<Cores>();
-        let _ = cores.0.set(make_pool(true, std::sync::Arc::clone(&cores.1)));
+        let _ = machine.get::<Cores>().0.set(make_pool(true));
         machine
     }
 }
@@ -399,24 +379,12 @@ fn on_a_pool() -> bool {
 /// split over the machine's pool. On one of a pool's threads it runs here; else on one of the cores', in this
 /// caller's run and context (`job_run`), while this thread waits.
 pub fn on_cores<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    // A loop's halves another thread steals carry this caller's run (`carry`), on a pool's thread or on the cores.
     if on_a_pool() {
-        // A pool's thread with a run of its own (a program's main thread is its machine's thread 0): its loop's
-        // halves other threads steal find the run inside the pool too.
-        let own = RUN.try_with(|r| r.borrow().is_some()).unwrap_or(false);
-        let inside = own.then(|| POOL.try_with(|p| p.borrow().clone()).ok().flatten()).flatten();
-        let Some(inside) = inside else { return f() };
-        let job = job_run().expect("a job's run");
-        inside.0.lock().push(std::sync::Arc::clone(&job));
-        let _inside = InPool(&inside, job);
         return f();
     }
     let run = job_run();
-    let cores = machine::<Cores>();
-    // Inside the pool while it runs: a half of its loop another thread steals finds it there (`inside_pool`).
-    let job = run.clone().expect("a job's run");
-    cores.1.0.lock().push(std::sync::Arc::clone(&job));
-    let _inside = InPool(&cores.1, job);
-    cores.pool().install(move || {
+    machine::<Cores>().pool().install(move || {
         let _in = enter(run);
         f()
     })
@@ -521,15 +489,17 @@ pub fn holds(job: &Option<std::sync::Arc<dyn RunOwn>>) -> bool {
     same_run && context.is_none_or(|c| CONTEXT.with(|x| x.borrow().same(c)))
 }
 
-/// A run has left this thread (a guard that put it there dropped, `RUN` back as it was): if it has ended (nothing
-/// holds it), this thread's copy of its values (`SEEN`) is dropped now, outside the copy's borrow (a value's drop may
-/// read a run). Kept, they would live until the thread next enters a run or exits, where a value's drop can find the
-/// thread's other locals gone.
+/// A run has left this thread (a guard that put it there dropped, `RUN` back as it was): unless the run back on the
+/// thread is the one it copied, this thread's copy of the run's values (`SEEN`) is dropped now, outside the copy's
+/// borrow (a value's drop may read a run). The copy lives while the thread is in the run, never after: kept, a pool
+/// thread whose job ended before its run did would hold the run's locals and its shared and machine values until it
+/// next entered a run (Q377: a test's store's connections, its database files open after the test), or until it
+/// exited, where a value's drop can find the thread's other locals gone.
 pub fn left_run() {
     let dead = SEEN
         .try_with(|seen| {
             let mut seen = seen.borrow_mut();
-            seen.run.as_ref().is_some_and(|w| w.strong_count() == 0).then(|| std::mem::take(&mut *seen))
+            (seen.run.is_some() && !seen.is_current()).then(|| std::mem::take(&mut *seen))
         })
         .ok()
         .flatten();
@@ -563,9 +533,6 @@ pub fn job_run() -> Option<std::sync::Arc<dyn RunOwn>> {
 struct InContext(std::sync::Arc<dyn RunOwn>, Context);
 
 impl RunOwn for InContext {
-    fn decoded(&self, at: &'static std::panic::Location<'static>) {
-        self.0.decoded(at)
-    }
     fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
         Some((&self.0, &self.1))
     }
@@ -624,7 +591,8 @@ impl Context {
         Context(Some(std::sync::Arc::new(Link { key: std::any::TypeId::of::<T>(), value: Box::new(value), up: self.clone(), here })))
     }
 
-    /// The nearest link a guard made, past those `bind_here` made above it.
+    /// The nearest link a guard made, past those `bind_here` made above it: a test build's check of the guards' order.
+    #[cfg(feature = "test-hooks")]
     fn guarded(&self) -> Option<&std::sync::Arc<Link>> {
         let mut at = self.0.as_ref();
         while let Some(link) = at.filter(|l| l.here) {
@@ -652,15 +620,22 @@ pub fn with_bound<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R
 /// Binds `value` in the run's context on this thread, and in every job taken here, until the guard drops; then the
 /// context is as it was.
 pub fn bind<T: Send + Sync + 'static>(value: T) -> Bound {
-    let was = CONTEXT.try_with(|c| {
+    let mut bound = Bound {
+        was: None,
+        #[cfg(feature = "test-hooks")]
+        made: 0,
+        on_thread: std::marker::PhantomData,
+    };
+    // No context on this thread (it is being torn down): the guard puts nothing back.
+    let _ = CONTEXT.try_with(|c| {
         let next = c.borrow().with(value, false);
-        let made = next.0.as_ref().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize);
-        (c.replace(next), made)
+        #[cfg(feature = "test-hooks")]
+        {
+            bound.made = next.0.as_ref().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize);
+        }
+        bound.was = Some(c.replace(next));
     });
-    match was {
-        Ok((was, made)) => Bound(Some(was), made, std::marker::PhantomData),
-        Err(_) => Bound(None, 0, std::marker::PhantomData),
-    }
+    bound
 }
 
 /// Binds `value` for the rest of the extent under way on this thread (an extent's guard dropping takes it with it): a
@@ -684,18 +659,25 @@ pub fn bind_here<T: Send + Sync + 'static>(value: T) {
 /// A binding (`bind`): dropped, the run's context on this thread is as it was before. It stays on its thread (not
 /// `Send`): dropped on another, it would set that thread's context.
 #[must_use = "the binding ends when the guard drops"]
-pub struct Bound(Option<Context>, usize, std::marker::PhantomData<*const ()>);
+pub struct Bound {
+    /// The context it replaced, put back when it drops.
+    was: Option<Context>,
+    /// The link it made, by address: a test build checks it is the nearest a guard made when it drops.
+    #[cfg(feature = "test-hooks")]
+    made: usize,
+    on_thread: std::marker::PhantomData<*const ()>,
+}
 
 impl Drop for Bound {
     fn drop(&mut self) {
         // A test build checks that guards drop in the reverse of their order: this guard's link is the nearest a guard
         // made. Dropped out of order, an inner binding would outlive its guard.
         #[cfg(feature = "test-hooks")]
-        if self.0.is_some() && !std::thread::panicking() {
-            let nearest = CONTEXT.try_with(|c| c.borrow().guarded().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize)).unwrap_or(self.1);
-            assert_eq!(nearest, self.1, "rerail: a binding of the run's context dropped out of order (decision 0442): guards drop in the reverse of their order");
+        if self.was.is_some() && !std::thread::panicking() {
+            let nearest = CONTEXT.try_with(|c| c.borrow().guarded().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize)).unwrap_or(self.made);
+            assert_eq!(nearest, self.made, "rerail: a binding of the run's context dropped out of order (decision 0442): guards drop in the reverse of their order");
         }
-        let left = self.0.take().and_then(|was| CONTEXT.try_with(|c| c.replace(was)).ok());
+        let left = self.was.take().and_then(|was| CONTEXT.try_with(|c| c.replace(was)).ok());
         drop(left);
     }
 }
@@ -720,7 +702,6 @@ impl Caller {
 struct Bare(RunValues, std::sync::Arc<Shared>);
 
 impl RunOwn for Bare {
-    fn decoded(&self, _: &'static std::panic::Location<'static>) {}
     fn values(&self) -> &RunValues {
         &self.0
     }
@@ -1033,11 +1014,56 @@ mod tests {
 mod stolen_halves {
     use super::*;
 
+    /// Q386: two runs' loops in one pool at once (a corpus run's phase 0 beside its main program). Every item, the
+    /// halves other threads steal included, reads its own run's value and its own caller's binding: each job carries
+    /// its maker's run (rayon-core's patch, `carry`).
+    #[test]
+    fn two_runs_loops_in_one_pool_at_once_each_read_their_own_run() {
+        use rayon::prelude::*;
+        #[derive(Default)]
+        struct Mark;
+        #[derive(Clone, Default)]
+        struct Tag(u32);
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let callers: Vec<_> = [1u32, 2]
+            .into_iter()
+            .map(|tag| {
+                let start = std::sync::Arc::clone(&start);
+                std::thread::spawn(move || {
+                    let _run = test_run();
+                    let _tag = bind(Tag(tag));
+                    let mark = local::<Mark>();
+                    start.wait();
+                    let mut wrong = 0usize;
+                    let mut threads = std::collections::HashSet::new();
+                    // Several loops, so the two callers' loops are in the pool together.
+                    for _ in 0..8 {
+                        let seen: Vec<(bool, u32, std::thread::ThreadId)> = on_cores(|| {
+                            (0..4096)
+                                .into_par_iter()
+                                .map(|_| {
+                                    std::hint::black_box((0..200).sum::<u64>());
+                                    (std::sync::Arc::ptr_eq(&local::<Mark>(), &mark), bound::<Tag>().0, std::thread::current().id())
+                                })
+                                .collect()
+                        });
+                        wrong += seen.iter().filter(|&&(same, t, _)| !same || t != tag).count();
+                        threads.extend(seen.iter().map(|s| s.2));
+                    }
+                    (wrong, threads.len())
+                })
+            })
+            .collect();
+        for caller in callers {
+            let (wrong, threads) = caller.join().expect("a caller's thread");
+            assert_eq!(wrong, 0, "items read another run's value or lost their caller's binding");
+            assert!(threads > 1 || super::threads() == 1, "a caller's loops ran on one thread: nothing was stolen");
+        }
+    }
+
     /// A loop's items split over the pool, the halves other threads steal included, each read the caller's run and
-    /// its bindings: `local` the run's one value, `bound` the caller's binding (`Inside`). Then the same where the
-    /// loop starts on one of the pool's own threads holding a run (a program's main thread is its machine's thread 0),
-    /// which nothing outside the pool registered. One test: with two runs' loops in the pool at once a stolen half
-    /// cannot tell which it is of.
+    /// its bindings: `local` the run's one value, `bound` the caller's binding. Then the same where the loop starts
+    /// on one of the pool's own threads holding a run (a program's main thread is its machine's thread 0).
     #[test]
     fn a_loops_stolen_halves_are_in_its_run() {
         use rayon::prelude::*;

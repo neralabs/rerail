@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""A test of the live mirror against a farm-agent run here, under a home of its own (no ssh, no host).
+
+A file the checkout deleted is gone from the host's copy once a test command's sync prunes it (Q63),
+and nothing else goes: not a file the checkout still has, not one a compile sent that git ignores
+(it is still here), not one a command on the host made (it carries no attribute).
+
+    scripts/build/farm/test-mirror
+"""
+import os
+import sys
+import tempfile
+
+here = os.path.dirname(os.path.abspath(__file__))
+work = tempfile.mkdtemp(prefix="farm-test-mirror-")
+os.environ["HOME"] = os.path.join(work, "home")
+os.environ["RERAIL_FARM_TCP"] = "0"
+os.environ.pop("RERAIL_FARM_CONFIG", None)
+os.makedirs(os.environ["HOME"])
+sys.path.insert(0, here)
+import farm  # noqa: E402  (after HOME: its state goes under the test's home)
+import mirror  # noqa: E402
+
+os.environ.pop("XDG_CACHE_HOME", None)
+ROOT = os.path.join(os.environ["HOME"], "Library/Caches" if sys.platform == "darwin" else ".cache", "rerail-farm/root.noindex")
+checkout = os.path.join(work, "checkout")
+
+
+def write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(text)
+
+
+def there(path):
+    return ROOT + path
+
+
+failures = []
+
+
+def synced(h):
+    """Waits until the agent has written every put so far: it answers in the order it reads."""
+    h.ask({"op": "have", "paths": []}, timeout=30)
+
+
+def check(what, ok):
+    print(("ok   " if ok else "FAIL ") + what)
+    if not ok:
+        failures.append(what)
+
+
+h = mirror.Host("test", command=[sys.executable, os.path.join(here, "farm-agent")])
+try:
+    kept = os.path.join(checkout, "src/kept.rs")
+    deleted = os.path.join(checkout, "src/deleted.rs")
+    nested = os.path.join(checkout, "tests/old/only.rs")
+    ignored = os.path.join(checkout, "target/debug/deps/libx.rmeta")
+    for p in (kept, deleted, nested, ignored):
+        write(p, p)
+        h.put(p, mirror.stat(p))
+    synced(h)
+    made = there(os.path.join(checkout, "src/made-there.rs"))
+    write(made, "a command on the host made this")
+    check("the agent wrote what was put", all(os.path.exists(there(p)) for p in (kept, deleted, nested, ignored)))
+
+    # The checkout deletes two files (one the only file of its directory), then a test command syncs.
+    os.unlink(deleted)
+    os.unlink(nested)
+    os.rmdir(os.path.dirname(nested))
+    removed = h.prune(checkout, [kept])
+    check("the deleted files are named removed", sorted(removed) == sorted([deleted, nested]))
+    check("the deleted file is gone there", not os.path.exists(there(deleted)))
+    check("the directory it left empty is gone there", not os.path.exists(there(os.path.dirname(nested))))
+    check("the kept file stays", os.path.exists(there(kept)))
+    check("a file git ignores that is still here stays", os.path.exists(there(ignored)))
+    check("a file the host made stays", os.path.exists(made))
+    check("what was removed is no longer counted as sent", deleted not in h.sent and kept in h.sent)
+
+    # A file deleted here, named by a prune's walk, and then made and sent again before the removal:
+    # the removal finds another file than the walk named, and leaves it.
+    write(deleted, "back")
+    h.put(deleted, mirror.stat(deleted))
+    synced(h)
+    named = (h.ask({"op": "unlisted", "root": checkout, "listed": [kept]}, timeout=30) or {}).get("files") or {}
+    check("the walk names the file", deleted in named)
+    os.utime(deleted, ns=(1, 1))
+    h.put(deleted, mirror.stat(deleted))
+    reply = h.ask({"op": "remove", "root": checkout, "files": {deleted: named.get(deleted)}}, timeout=30)
+    check("a file sent again since the walk stays", (reply or {}).get("paths") == [] and os.path.exists(there(deleted)))
+    check("a prune that lists it removes nothing", h.prune(checkout, [kept, deleted]) == [])
+finally:
+    h.stop()
+
+if failures:
+    print(f"{len(failures)} failed (kept: {work})")
+    sys.exit(1)
+import shutil  # noqa: E402
+shutil.rmtree(work)
+print("all passed")

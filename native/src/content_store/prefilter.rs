@@ -213,7 +213,7 @@ impl ContentStore {
             } else {
                 connection.execute_batch(
                     "INSERT INTO capture.tape_objects SELECT t.tape_id, t.source_id, t.canonical_hash_id, t.grammar_id, \
-                       t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation, 0, 0, 0 \
+                       t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation, -1, 0, 0 \
                        FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
                 )?;
             }
@@ -223,7 +223,7 @@ impl ContentStore {
                  INSERT INTO capture.tape_kind_counts SELECT k.* FROM temp.capture_tapes c JOIN main.tape_kind_counts k USING(tape_id);
                  INSERT INTO capture.term_postings SELECT p.* FROM temp.capture_tapes c JOIN main.term_postings p USING(tape_id);
                  INSERT INTO capture.term_coverage SELECT v.* FROM temp.capture_tapes c JOIN main.term_coverage v USING(tape_id);
-                 INSERT OR IGNORE INTO capture.atom_segment SELECT * FROM main.atom_segment;
+                 INSERT INTO capture.atom_blocks SELECT * FROM main.atom_blocks;
                  INSERT INTO capture.kind_size SELECT * FROM main.kind_size;
                  INSERT INTO capture.edge_freq SELECT * FROM main.edge_freq;
                  INSERT INTO capture.term_freq SELECT * FROM main.term_freq;
@@ -236,7 +236,10 @@ impl ContentStore {
                  INSERT INTO capture.vocabulary_pending SELECT * FROM main.vocabulary_pending;
                  DROP TABLE temp.capture_tapes;
                  COMMIT;",
-            )
+            )?;
+            // The atoms' blocks (decision 0401), beside the capture as beside the store: what the rows copied name.
+            super::atoms::copy_blocks(&self.database_path, path).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            Ok(())
         })();
         if copied.is_err() && !connection.is_autocommit() {
             connection.execute_batch("ROLLBACK")?;

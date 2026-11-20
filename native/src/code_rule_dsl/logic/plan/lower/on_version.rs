@@ -1,5 +1,4 @@
-//! `lower_tree` on the version (decision 0281's path, step 6b): the program lowered for one dialect by passes over
-//! its image, as `lower_tree` lowers the tree. A membership of a kind or field in a set of them is a rule per member
+//! The program lowered for one dialect (decision 0281's path, step 6b), by passes over its image. A membership of a kind or field in a set of them is a rule per member
 //! (`Memberships`); then every string becomes its atom, by its column's domain (a name's atom, a kind's or a field's
 //! id), in rules (`Constants`), facts and kind sets (`FactsAndSets`).
 
@@ -14,8 +13,15 @@ use super::super::{Error, Result};
 use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
-/// `v` lowered for `dialect`, with the domains of its relations' columns (found before its strings became atoms, as
-/// `lower_tree` finds them) and the name atoms of `+`, `-` and `*`; `intern` gives the name atoms of strings.
+/// `v` lowered for `dialect` and read as the run reads it (`Lowered::of_placed`), with no preparation pass between:
+/// what a test or a tool that runs a program as written lowers. `intern` gives the name atoms of strings.
+pub fn lowered(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> Result<super::Lowered> {
+    let (v, domains, ops) = lower_version(v, dialect, intern)?;
+    Ok(super::Lowered::of_placed(super::super::body::Placed::whole(v), domains, ops, dialect))
+}
+
+/// `v` lowered for `dialect`, with the domains of its relations' columns (found before its strings became atoms) and
+/// the name atoms of `+`, `-` and `*`; `intern` gives the name atoms of strings.
 pub fn lower_version(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> Result<(Arc<Version>, Domains, [i64; 3])> {
     let tag = tape_tag(dialect).ok_or_else(|| Error::Plan("the dialect has no tape tag".to_owned()))?;
     let mut p = Pipeline::new("lower", v);
@@ -349,7 +355,7 @@ impl ProgramPass for FactsAndSets<'_> {
         }
         let b = w.on()?;
         for (rel, rows) in facts {
-            b.set_fact_cells(&rel, rows);
+            b.fields().set_fact_cells(&rel, rows);
         }
         let rows = b.about_rows("kindset_kind");
         if rows.is_empty() {
@@ -378,7 +384,7 @@ impl ProgramPass for FactsAndSets<'_> {
             }
             out.push(row);
         }
-        b.set_about_rows("kindset_kind", out);
+        b.fields().set_about_rows("kindset_kind", out);
         Ok(())
     }
 }

@@ -1,10 +1,10 @@
 //! The workspace call graph (`calls`): `Semantic::Calls`.
 
 use super::{Refusal, Refused};
+use crate::code_rule_dsl::calls::FileTables;
 use crate::code_rule_dsl::calls::closure::{Graph, Link};
 use crate::code_rule_dsl::calls::names::Name;
 use crate::code_rule_dsl::calls::summary::{Callee, SHADOWED, Summary};
-use crate::code_rule_dsl::calls::{FileTables};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::ScopeTable;

@@ -1,0 +1,294 @@
+// The joins' fixed kernels (decision 0095 §4, §5; 0100 §9), in UKL (decision 0440 step C): the pairs' sort keys, a
+// device column's span, and the batch's fused small sorts and probes. The scans and the radix sort are the UKL
+// library's (`ukl/scan.h`, `ukl/radix.h`, decision 0440 step D); the sort's keys, runs and gather are
+// `join_sort.uglykl`, made per width; the probe's are written per key widths (`join.rs`).
+//
+// Every kernel runs threadgroups of 256 threads (`JOIN_TG`), a 1-D grid; it checks its own bounds. Its parameters are
+// one `JoinP` (`a`): up to eight words and eight longs. Every loop's trip count follows from its inputs.
+
+#include <ukl/backend.h>
+#include <ukl/simd.h>
+#include <ukl/reads/relation.h>
+// `join_common.h` before it (`join.rs`: `JoinP`, `join_tg_prefix`).
+
+// ---- Pairs as sort keys (`encode_sorted_pairs`). ----
+
+// Pairs (two 32-bit words, the first in the low half) as sort keys: the first word above the second's p[2] bits,
+// written as 64 bits when p[1], else 32. p0: the pairs.
+DEFINE_KERNEL2(join, pair_keys,
+               ROBUFFER, uint64_t, words, "[a.p0]",
+               RWBUFFER, uint32_t, out,   "[2 * a.p0]",
+               ARGS,     JoinP,    a,     ,
+               GID0,     uint32_t, t,     )
+{
+  if (t >= a.p0) return;
+  uint64_t w = words[t];
+  uint64_t key = ((uint64_t)(uint32_t)w << a.p2) | (w >> 32);
+  if (a.p1 != 0u) { out[2u * t] = (uint32_t)key; out[2u * t + 1u] = (uint32_t)(key >> 32); }
+  else out[t] = (uint32_t)key;
+}
+
+// ---- A device column's span and its keys (`column_stats_of`). ----
+
+// Value `r` of a column: at `at` of `src`, or (`rel_col` its number + 1) column `rel_col - 1` of the relation whose
+// descriptor is `at` bytes into the block `src` binds.
+UKL_INLINE int64_t col_value(UKL_GLOBAL const int64_t* src, uint64_t at, uint32_t rel_col, uint32_t r)
+{
+  return rel_col == 0u ? src[at + r] : (int64_t)clif_rel_get((UKL_GLOBAL const uint8_t*)src, at, r, rel_col - 1u);
+}
+
+#define JOIN_LEAST ((int64_t)0x8000000000000000UL)
+#define JOIN_MOST ((int64_t)0x7fffffffffffffffL)
+
+// The least and the greatest of the threadgroup's `lo` and `hi`, into L[0] and H[0].
+UKL_INLINE void join_tg_span(UKL_LOCAL int64_t* L, UKL_LOCAL int64_t* H, uint32_t t, int64_t lo, int64_t hi)
+{
+  L[t] = lo; H[t] = hi;
+  ukl_tg_barrier();
+  for (uint32_t s = 128u; s > 0u; s >>= 1) {
+    if (t < s) { L[t] = L[t] < L[t + s] ? L[t] : L[t + s]; H[t] = H[t] > H[t + s] ? H[t] : H[t + s]; }
+    ukl_tg_barrier();
+  }
+}
+
+// Each tile's least and greatest into `part`. p: the rows, `at` (low, high), the relation's column + 1 (0: values).
+DEFINE_KERNEL2(join, col_span,
+               ROBUFFER, int64_t,  src,  "[rows]",
+               RWBUFFER, int64_t,  part, "[2 * tiles]",
+               ARGS,     JoinP,    a,    ,
+               SHARED,   int64_t,  L,    256,
+               SHARED,   int64_t,  H,    256,
+               TGID0,    uint32_t, g,    ,
+               LID0,     uint32_t, t,    )
+{
+  uint32_t n = a.p0;
+  uint64_t at = (uint64_t)a.p1 | ((uint64_t)a.p2 << 32);
+  int64_t lo = JOIN_MOST, hi = JOIN_LEAST;
+  for (uint32_t i = 0u; i < 4u; i++) {
+    uint32_t r = g * 1024u + i * 256u + t;
+    if (r >= n) break;
+    int64_t v = col_value(src, at, a.p3, r);
+    lo = v < lo ? v : lo;
+    hi = v > hi ? v : hi;
+  }
+  join_tg_span(L, H, t, lo, hi);
+  if (t == 0u) { part[2u * g] = L[0]; part[2u * g + 1u] = H[0]; }
+}
+
+// One threadgroup: the tiles' (p[0] of them) least and greatest; the base, and whether the span passes 32 bits.
+DEFINE_KERNEL2(join, col_base,
+               ROBUFFER, int64_t,  part, "[2 * a.p0]",
+               RWBUFFER, int64_t,  span, "[2]",
+               ARGS,     JoinP,    a,    ,
+               SHARED,   int64_t,  L,    256,
+               SHARED,   int64_t,  H,    256,
+               LID0,     uint32_t, t,    )
+{
+  uint32_t groups = a.p0;
+  int64_t lo = JOIN_MOST, hi = JOIN_LEAST;
+  for (uint32_t g = t; g < groups; g += 256u) {
+    lo = part[2u * g] < lo ? part[2u * g] : lo;
+    hi = part[2u * g + 1u] > hi ? part[2u * g + 1u] : hi;
+  }
+  join_tg_span(L, H, t, lo, hi);
+  if (t == 0u) { span[0] = L[0]; span[1] = (((uint64_t)H[0] - (uint64_t)L[0]) >> 32) != 0u ? 1 : 0; }
+}
+
+// Each value less the base as a sort key: 32 bits wide, or 64 when p[3]. p: the rows, `at`, wide, the column + 1.
+DEFINE_KERNEL2(join, col_narrow,
+               ROBUFFER, int64_t,  src,  "[rows]",
+               ROBUFFER, int64_t,  span, "[2]",
+               RWBUFFER, uint8_t,  keys, "[8 * a.p0]",
+               ARGS,     JoinP,    a,    ,
+               GID0,     uint32_t, r,    )
+{
+  uint32_t n = a.p0;
+  if (r >= n) return;
+  uint64_t at = (uint64_t)a.p1 | ((uint64_t)a.p2 << 32);
+  uint64_t d = (uint64_t)col_value(src, at, a.p4, r) - (uint64_t)span[0];
+  if (a.p3 == 0u) ((UKL_GLOBAL uint32_t*)keys)[r] = (uint32_t)d; else ((UKL_GLOBAL uint64_t*)keys)[r] = d;
+}
+
+// ---- One dispatch for a batch's small sorts, one for its probes (decision 0100 §9). ----
+//
+// Each job's buffers are reached through device addresses in a table the host writes (`Buffer::device_address`),
+// and made resident with the launch: a batch of any number of joins costs two dispatches. A device without
+// addresses for its allocations (OpenCL without Intel's unified shared memory) takes the radix sort and the probe
+// join instead (`Fused::can`).
+
+typedef struct SortJob {
+  UKL_GLOBAL const int64_t* c[3];
+  UKL_GLOBAL uint32_t* perm;
+  UKL_GLOBAL uint32_t* starts;
+  UKL_GLOBAL uint64_t* rkeys;
+  UKL_GLOBAL uint32_t* nruns;
+  UKL_GLOBAL int64_t* o[2];
+  uint32_t n, m, k, pad;
+} SortJob;
+
+typedef struct ProbeJob {
+  UKL_GLOBAL const uint8_t* rkeys;
+  UKL_GLOBAL const uint32_t* starts;
+  UKL_GLOBAL const uint32_t* nruns;
+  UKL_GLOBAL const uint32_t* perm;
+  UKL_GLOBAL const uint64_t* l[3];
+  UKL_GLOBAL const uint8_t* r[2];
+  // The sort's screen (`Keyed::screen`, decision 0506): a `bloom::Bloom` at byte `screen_at`; NO_SCREEN for none.
+  UKL_GLOBAL const uint8_t* screen;
+  int64_t lbase[3];
+  int64_t kbase;
+  int64_t rbase[2];
+  uint32_t nl, k, kw, screen_at;
+  uint32_t rw[2];
+  uint32_t pad2[2];
+} ProbeJob;
+
+UKL_STATIC_ASSERT(sizeof(SortJob) == 88, "SortJob: size");
+UKL_STATIC_ASSERT(sizeof(ProbeJob) == 160, "ProbeJob: size");
+
+// Value `i` of `w` bytes at `p`.
+UKL_INLINE uint64_t ld(UKL_GLOBAL const uint8_t* p, uint32_t w, uint32_t i)
+{
+  if (w == 2u) return ((UKL_GLOBAL const uint16_t*)p)[i];
+  if (w == 4u) return ((UKL_GLOBAL const uint32_t*)p)[i];
+  return ((UKL_GLOBAL const uint64_t*)p)[i];
+}
+
+// A threadgroup a small sort (at most 2,048 rows): a bitonic sort of the keys and their rows in threadgroup memory,
+// then the runs. The keys are offsets from `long`'s least (the runs' keys `^ 1 << 63`).
+DEFINE_KERNEL2(join, sort_all,
+               ROBUFFER, SortJob,  jobs, "[groups]",
+               ARGS,     JoinP,    a,    ,
+               SHARED,   int64_t,  K,    2048,
+               SHARED,   uint16_t, I,    2048,
+               SHARED,   uint32_t, part, JOIN_SGS,
+               TGID0,    uint32_t, g,    ,
+               LID0,     uint32_t, t,    ,
+               LANE,     uint32_t, lane, )
+{
+  UKL_GLOBAL const SortJob* j = &jobs[g];
+  uint32_t n = j->n, m = j->m;
+  for (uint32_t i = t; i < m; i += 256u) {
+    bool live = i < n;
+    K[i] = live ? j->c[0][i] : JOIN_MOST;
+    I[i] = live ? (uint16_t)i : (uint16_t)0xFFFFu;
+  }
+  ukl_tg_barrier();
+  for (uint32_t size = 2u; size <= m; size <<= 1) {
+    for (uint32_t stride = size >> 1; stride > 0u; stride >>= 1) {
+      for (uint32_t q = t; q < m / 2u; q += 256u) {
+        uint32_t lo = 2u * q - (q & (stride - 1u));
+        uint32_t hi = lo + stride;
+        bool up = (lo & size) == 0u;
+        int64_t ka = K[lo], kb = K[hi];
+        uint16_t ia = I[lo], ib = I[hi];
+        bool gt = ka > kb || (ka == kb && ia > ib);
+        if (gt == up) { K[lo] = kb; K[hi] = ka; I[lo] = ib; I[hi] = ia; }
+      }
+      ukl_tg_barrier();
+    }
+  }
+  uint32_t i0 = t * 8u;
+  uint32_t mine = 0u, heads = 0u;
+  for (uint32_t q = 0u; q < 8u; q++) {
+    uint32_t i = i0 + q;
+    bool h = i < n && (i == 0u || K[i] != K[i - 1u]);
+    heads |= (uint32_t)h << q;
+    mine += (uint32_t)h;
+  }
+  uint32_t total = 0u;
+  uint32_t run = join_tg_prefix(mine, t, lane, part, &total __UKL_ARGS);
+  for (uint32_t q = 0u; q < 8u; q++) {
+    uint32_t i = i0 + q;
+    if (i >= n) break;
+    uint32_t pi = I[i];
+    j->perm[i] = pi;
+    for (uint32_t c = 1u; c < j->k; c++) j->o[c - 1u][i] = j->c[c][pi];
+    if ((heads >> q) & 1u) { j->starts[run] = i; j->rkeys[run] = (uint64_t)K[i] ^ 0x8000000000000000UL; run++; }
+  }
+  if (t == JOIN_TG - 1u) {
+    j->nruns[0] = total;
+    j->starts[total] = n;
+  }
+}
+
+// The run of a left row's key 0 (`*lo`, and whether there is one): a bounded binary search of the runs' keys.
+UKL_INLINE bool fused_find(uint64_t key, UKL_GLOBAL const ProbeJob* j, uint32_t runs, UKL_PRIVATE uint32_t* lo)
+{
+  uint32_t l = 0u, hi = runs;
+  for (uint32_t s = 0u; s < 34u && l < hi; s++) {
+    uint32_t mid = (l + hi) / 2u;
+    int64_t v = (int64_t)(ld(j->rkeys, j->kw, mid) + (uint64_t)j->kbase);
+    if (v < (int64_t)key) l = mid + 1u; else hi = mid;
+  }
+  *lo = l;
+  return l < runs && (int64_t)(ld(j->rkeys, j->kw, l) + (uint64_t)j->kbase) == (int64_t)key;
+}
+
+// Whether left row `r` and right place `q` agree on keys 1..
+UKL_INLINE bool fused_same(UKL_GLOBAL const ProbeJob* j, uint32_t r, uint32_t q)
+{
+  for (uint32_t c = 1u; c < j->k; c++) {
+    if (j->l[c][r] + (uint64_t)j->lbase[c] != ld(j->r[c - 1u], j->rw[c - 1u], q) + (uint64_t)j->rbase[c - 1u]) return false;
+  }
+  return true;
+}
+
+// A threadgroup a block of 1,024 left rows of any probe. The table: per threadgroup (job, the block's number in the
+// arena's blocks, its number in the job, 0). p0: the arena's capacity in pairs.
+DEFINE_KERNEL2(join, probe_all,
+               ROBUFFER, ProbeJob, jobs,   "[probes]",
+               ROBUFFER, uint32_t, table,  "[4 * groups]",
+               RWBUFFER, uint32_t, arena,  "[2 * a.p0]",
+               RWBUFFER, uint32_t, head,   "[1]",
+               RWBUFFER, uint32_t, blocks, "[2 * blocks]",
+               RWBUFFER, uint32_t, flags,  "[1]",
+               ARGS,     JoinP,    a,      ,
+               SHARED,   uint32_t, part,   JOIN_SGS,
+               SHARED,   uint32_t, place,  2,
+               TGID0,    uint32_t, g,      ,
+               LID0,     uint32_t, t,      ,
+               LANE,     uint32_t, lane,   )
+{
+  uint32_t ex = table[4u * g], ey = table[4u * g + 1u], ez = table[4u * g + 2u];
+  UKL_GLOBAL const ProbeJob* j = &jobs[ex];
+  uint32_t nl = j->nl;
+  uint32_t runs = j->nruns[0];
+  uint32_t at = ez * 1024u + t * 4u;
+  uint32_t run[4];
+  uint32_t c[4];
+  uint32_t mine = 0u;
+  for (uint32_t i = 0u; i < 4u; i++) {
+    uint32_t r = at + i;
+    c[i] = 0u;
+    run[i] = 0xFFFFFFFFu;
+    uint32_t lo = 0u;
+    uint64_t key = r < nl ? j->l[0][r] + (uint64_t)j->lbase[0] : 0u;
+    if (r < nl && screen_may_hold(j->screen, j->screen_at, key) && fused_find(key, j, runs, &lo)) {
+      run[i] = lo;
+      for (uint32_t q = j->starts[lo]; q < j->starts[lo + 1u]; q++) c[i] += (uint32_t)fused_same(j, r, q);
+    }
+    mine += c[i];
+  }
+  uint32_t total = 0u;
+  uint32_t off = join_tg_prefix(mine, t, lane, part, &total __UKL_ARGS);
+  if (t == JOIN_TG - 1u) {
+    uint32_t b = total > 0u ? ukl_atomic_add(&head[0], total) : 0u;
+    bool fits = (uint64_t)b + (uint64_t)total <= (uint64_t)a.p0;
+    if (!fits) ukl_atomic_store(&flags[0], 1u);
+    blocks[2u * ey] = fits ? b : 0xFFFFFFFFu;
+    blocks[2u * ey + 1u] = total;
+    place[0] = b;
+    place[1] = (uint32_t)fits;
+  }
+  ukl_tg_barrier();
+  if (place[1] == 0u) return;
+  uint32_t o = place[0] + off;
+  for (uint32_t i = 0u; i < 4u; i++) {
+    if (run[i] == 0xFFFFFFFFu) continue;
+    uint32_t r = at + i;
+    for (uint32_t q = j->starts[run[i]]; q < j->starts[run[i] + 1u]; q++) {
+      if (fused_same(j, r, q)) { arena[2u * o] = r; arena[2u * o + 1u] = j->perm[q]; o++; }
+    }
+  }
+}

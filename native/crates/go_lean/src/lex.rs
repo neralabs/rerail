@@ -690,11 +690,10 @@ impl<'s> Lexer<'s> {
                 if self.at(e) == b'.' {
                     mant.push(self.digits(e + 1, hexd).unwrap_or(e + 1));
                 }
-            } else if self.at(s + 2) == b'.' {
-                if let Some(f) = self.digits(s + 3, hexd) {
+            } else if self.at(s + 2) == b'.'
+                && let Some(f) = self.digits(s + 3, hexd) {
                     mant.push(f);
                 }
-            }
             for m in mant {
                 if let Some(x) = self.exponent(m, true) {
                     take(T::Float, x);
@@ -716,11 +715,10 @@ impl<'s> Lexer<'s> {
                 if let Some(e) = self.prefixed_digits(s + 1, |c| (b'0'..=b'7').contains(&c)) {
                     take(T::Int, e);
                 }
-            } else if c0 != b'.' {
-                if let Some(e) = self.digits(s, dec) {
+            } else if c0 != b'.'
+                && let Some(e) = self.digits(s, dec) {
                     take(T::Int, e);
                 }
-            }
             let int = if c0 == b'.' { Some(s) } else { self.digits(s, dec) };
             if let Some(e) = int {
                 if c0 != b'.' {

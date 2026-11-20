@@ -2,7 +2,7 @@
 
 > **Superseded (2026-10-25).** This report predates `metal-enqueue.md` and the no-fallback rule (spec §8). Statements below that route anything to a CPU/JIT rerun are replaced: monotone recursion runs on Metal as GPU-scheduled waves, constructs that cannot be stratified are rejected by the verifier, and hard device limits yield `Unknown(resource)`, which is counted and gated.
 
-Benchmark sources and raw output are in `../experiments/fusion/`. These are CPU measurements only. The Metal claims below are structural (task counts, frontier boundedness, pass shape), not measured.
+Benchmark sources and raw output are in `../experiments/fusion/` (removed; at 7efcac9c67). These are CPU measurements only. The Metal claims below are structural (task counts, frontier boundedness, pass shape), not measured.
 
 ## Setup
 

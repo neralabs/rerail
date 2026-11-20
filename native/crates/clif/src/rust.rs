@@ -54,6 +54,19 @@ thread_local! {
     /// The functions' style: `None` the parser's (`translate`), else the reads' (`translate_reads`), each
     /// function's inlining by its id.
     static READS: std::cell::RefCell<Option<Vec<(u32, bool)>>> = const { std::cell::RefCell::new(None) };
+    /// Whether a load of the reads' memory is checked against the tape's bytes (`ld`): not the writer's ops'
+    /// (`translate_ops`).
+    static CHECKED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// The writer's ops (`writer::OPS`) as Rust: `translate_reads` of a relation's family, but each load a plain one.
+/// The ops' loads are of the region's parts, each in its part by the host's reservations before the op (decision
+/// 0434 §6); the parts are buffers of their own, so no one span bounds them as `ld` bounds a tape's.
+pub fn translate_ops(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)]) -> Result<String, String> {
+    CHECKED.with(|c| c.set(false));
+    let out = translate_reads(funcs, entries, crate::reads::Family::Relation);
+    CHECKED.with(|c| c.set(true));
+    out
 }
 
 /// Whether the functions are the reads' (`translate_reads`): no pinned register; and function `id`'s
@@ -123,6 +136,18 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &st
             let args: Vec<String> = (2..types.len()).map(|i| format!(", a{i}")).collect();
             let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
             let ret = ty(ret.value_type)?.0;
+            // A read that takes an address past the tape and its view (`tape_lz4`'s destination) writes or reads
+            // there unchecked: unsafe, its address the caller's to give.
+            if types[2..].contains(&"u64") {
+                writeln!(
+                    out,
+                    "/// The read `{n}` of the tape in `tape`, whose `view`'s offsets count from its first byte.\n///\n/// # Safety\n/// Each address it takes is valid for what the read says it does there.\n#[inline(always)]\npub unsafe fn {n}(tape: &[u8], view: &rerail_clif::view::TapeView, {}) -> {ret} {{\n    // SAFETY: the caller's for the addresses; each load of the tape is checked against `tape` (`ld`).\n    unsafe {{ f{entry}(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64{}) }}\n}}\n",
+                    params.join(", "),
+                    args.concat()
+                )
+                .unwrap();
+                continue;
+            }
             writeln!(
                 out,
                 "/// The read `{n}` of the tape in `tape`, whose `view`'s offsets count from its first byte.\n#[inline(always)]\npub fn {n}(tape: &[u8], view: &rerail_clif::view::TapeView, {}) -> {ret} {{\n    // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).\n    unsafe {{ f{entry}(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64{}) }}\n}}\n",
@@ -293,9 +318,14 @@ pub struct Shape {
     merges: Vec<Vec<usize>>,
     header: Vec<bool>,
     merge: Vec<bool>,
+    /// The structure printed as C (`clif_ukl`), which has no labels: each labelled
+    /// block a `do { … } while (false)` and each loop a `for (;;)` over one. A jump sets the
+    /// target's number (`j`: a loop's `2x + 1`, a merge's `2y + 2`) and breaks; each construct
+    /// on the way out stops it there or breaks on.
+    pub c: bool,
 }
 
-fn successors(f: &ir::Function, b: ir::Block) -> Vec<ir::Block> {
+pub fn successors(f: &ir::Function, b: ir::Block) -> Vec<ir::Block> {
     let Some(last) = f.layout.last_inst(b) else { return Vec::new() };
     f.dfg.insts[last].branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables).iter().map(|c| c.block(&f.dfg.value_lists)).collect()
 }
@@ -408,6 +438,13 @@ impl Shape {
     /// copies; past that, each loop with two entries given one, a dispatch.
     /// A graph's nodes' successors, the entry node 0, and each node's size (its copies' cost).
     pub fn of(first: Vec<Vec<usize>>, sizes: &[usize]) -> Option<Shape> {
+        Self::threaded(first, sizes, &vec![false; sizes.len()])
+    }
+
+    /// As `of`, `only_jump[b]` where block `b`'s code is its one jump: a dispatch's entry that
+    /// only jumps to another of its entries is not one; the edges labelled for it carry the
+    /// other's label (so no arm only sets `d` again).
+    pub fn threaded(first: Vec<Vec<usize>>, sizes: &[usize], only_jump: &[bool]) -> Option<Shape> {
         let size = |b: usize| sizes[b];
         let budget: usize = sizes.iter().sum();
         let (mut block, mut succ): (Vec<Option<usize>>, _) = ((0..first.len()).map(Some).collect(), first.clone());
@@ -420,6 +457,7 @@ impl Shape {
             copied += block[t].map_or(0, size);
             if copied > budget {
                 (block, succ, label) = Self::dispatched((0..first.len()).map(Some).collect(), first.clone())?;
+                Self::thread(&block, &mut succ, &mut label, only_jump);
                 let order = Order::of(&succ);
                 if order.irreducible(&succ).is_some() {
                     return None;
@@ -447,7 +485,32 @@ impl Shape {
         for m in &mut merges {
             m.sort_by_key(|&b| std::cmp::Reverse(order.rpo[b]));
         }
-        Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge })
+        Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge, c: false })
+    }
+
+    /// Each dispatch's entry `e` that only jumps (`only_jump`) on into the same dispatch, with
+    /// label `i`: the edges labelled `e`'s place carry `i`, until none does. `e` is then
+    /// reached from no edge, and its arm is not written (`within`).
+    fn thread(block: &[Option<usize>], succ: &mut [Vec<usize>], label: &mut std::collections::HashMap<(usize, usize), usize>, only_jump: &[bool]) {
+        for d in (0..block.len()).filter(|&d| block[d].is_none()) {
+            for _ in 0..succ[d].len() {
+                let mut changed = false;
+                for j in 0..succ[d].len() {
+                    let e = succ[d][j];
+                    let jumps = block[e].is_some_and(|b| only_jump.get(b) == Some(&true)) && succ[e].len() == 1 && succ[e][0] == d;
+                    let Some(&i) = label.get(&(e, 0)).filter(|&&i| jumps && i != j) else { continue };
+                    for (&(u, k), l) in label.iter_mut() {
+                        if *l == j && u != e && succ[u][k] == d {
+                            *l = i;
+                            changed = true;
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
     }
 
     /// Each loop (a strongly connected part of the graph, its header out, then the parts within,
@@ -504,16 +567,20 @@ impl Shape {
     /// successor's).
     pub fn tree(&self, emit: Emit<'_>, x: usize) -> Result<String, String> {
         let within = self.within(emit, x, &self.merges[x])?;
-        Ok(if self.header[x] { format!("'b{x}: loop {{\n{within}}}\n") } else { within })
+        Ok(match (self.header[x], self.c) {
+            (false, _) => within,
+            (true, false) => format!("'b{x}: loop {{\n{within}}}\n"),
+            (true, true) => format!("for (;;) {{\ndo {{\n{within}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n}}\n", 2 * x + 1),
+        })
     }
 
     /// Node `x`'s `k`th edge: its dispatch's label, then a jump.
     fn transfer(&self, emit: Emit<'_>, x: usize, k: usize) -> Result<String, String> {
         let to = self.succ[x][k];
         let jump = if self.rpo[to] <= self.rpo[x] {
-            format!("continue 'b{to};")
+            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 1) } else { format!("continue 'b{to};") }
         } else if self.merge[to] {
-            format!("break 'm{to};")
+            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 2) } else { format!("break 'm{to};") }
         } else {
             self.tree(emit, to)?
         };
@@ -527,11 +594,24 @@ impl Shape {
         if let Some((&y, rest)) = ys.split_first() {
             let inner = self.within(emit, x, rest)?;
             let after = self.tree(emit, y)?;
+            if self.c {
+                return Ok(format!("do {{\n{inner}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n{after}", 2 * y + 2));
+            }
             return Ok(format!("'m{y}: {{\n{inner}}}\n{after}"));
         }
         let Some(b) = self.block[x] else {
+            if self.c {
+                // A jump in a case breaks the `switch`, then the construct around it.
+                let mut s = String::from("switch (d) {\n");
+                for k in 0..self.succ[x].len() {
+                    writeln!(s, "case {k}u: {{ {} }} break;", self.transfer(emit, x, k)?).unwrap();
+                }
+                s.push_str("default: break;\n}\n");
+                return Ok(s);
+            }
             let mut s = String::from("match d {\n");
-            for k in 0..self.succ[x].len() {
+            // Only the arms an edge labels (`thread` leaves some none).
+            for k in (0..self.succ[x].len()).filter(|&k| self.label.iter().any(|(&(u, e), &l)| l == k && self.succ[u][e] == x)) {
                 writeln!(s, "{k} => {{ {} }}", self.transfer(emit, x, k)?).unwrap();
             }
             s.push_str("// SAFETY: a dispatch's label is one of its entries.\n_ => unsafe { core::hint::unreachable_unchecked() },\n}\n");
@@ -645,7 +725,7 @@ fn cond(cc: IntCC, a: &str, b: &str, s: &str, u: &str) -> String {
 
 /// Whether call `inst` is followed by a return of its results, in order, and nothing else:
 /// `return f(…)`.
-fn returned_call(f: &ir::Function, inst: ir::Inst) -> bool {
+pub fn returned_call(f: &ir::Function, inst: ir::Inst) -> bool {
     let dfg = &f.dfg;
     if dfg.insts[inst].opcode() != ir::Opcode::Call {
         return false;
@@ -711,6 +791,14 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Isub => set(format!("{}.wrapping_sub({})", args[0], args[1])),
         Opcode::Ineg => set(format!("{}.wrapping_neg()", args[0])),
         Opcode::Imul => set(format!("{}.wrapping_mul({})", args[0], args[1])),
+        // A division traps where Cranelift's does (by zero: Rust's panic, an abort here); a
+        // signed one's overflow wraps, where Cranelift's traps (the code never divides so).
+        Opcode::Udiv => set(format!("{} / {}", args[0], args[1])),
+        Opcode::Urem => set(format!("{} % {}", args[0], args[1])),
+        Opcode::Sdiv => set(format!("(({} as {s}).wrapping_div({} as {s})) as {u}", args[0], args[1])),
+        Opcode::Srem => set(format!("(({} as {s}).wrapping_rem({} as {s})) as {u}", args[0], args[1])),
+        Opcode::Umulhi => set(format!("((({} as u128) * ({} as u128)) >> {bits}) as {u}", args[0], args[1])),
+        Opcode::RotlImm => set(format!("{}.rotate_left({})", args[0], (imm()? as u32) % bits)),
         Opcode::Band => set(format!("{} & {}", args[0], args[1])),
         Opcode::Bor => set(format!("{} | {}", args[0], args[1])),
         Opcode::Bxor => set(format!("{} ^ {}", args[0], args[1])),
@@ -753,7 +841,11 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             set(format!("({} as {} as {s}) as {u}", args[0], from.1))
         }
         // A read's load of the tape: checked against its bytes (`translate_reads`).
-        Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32 if read_style(u32::MAX).is_some() && !data.memflags().is_some_and(|m| m.aligned()) => {
+        // The tape's loads are read-only and not marked aligned (the view's fields are); a load that may be written
+        // (a 16z block's slot, which the decoder bounds itself, decision 0463) is not the tape's.
+        Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32
+            if read_style(u32::MAX).is_some() && CHECKED.with(std::cell::Cell::get) && data.memflags().is_some_and(|m| m.readonly() && !m.aligned()) =>
+        {
             let base = name(dfg.block_params(f.layout.entry_block().ok_or("no entry block")?)[0]);
             let t = match op {
                 Opcode::Uload8 => "u8",
@@ -777,6 +869,26 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Istore8 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u8, {} as u8) }};", addr(&args[1]), args[0]),
         Opcode::Istore16 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u16, {} as u16) }};", addr(&args[1]), args[0]),
         Opcode::Istore32 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u32, {} as u32) }};", addr(&args[1]), args[0]),
+        // A rolling cache's words (decision 0353 step 4b, 0478 step 2d), shared with other threads and the device: u32s,
+        // sequentially consistent as CLIF's atomics are.
+        Opcode::AtomicLoad | Opcode::AtomicStore | Opcode::AtomicRmw | Opcode::AtomicCas if u != "u32" && op != Opcode::AtomicStore => {
+            return Err(format!("an atomic of {u}"));
+        }
+        Opcode::AtomicLoad => set(format!("unsafe {{ (*({} as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) }}", addr(&args[0]))),
+        Opcode::AtomicStore => format!("unsafe {{ (*({} as *const core::sync::atomic::AtomicU32)).store({} as u32, core::sync::atomic::Ordering::SeqCst) }};", addr(&args[1]), args[0]),
+        Opcode::AtomicRmw => {
+            let how = match data {
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } => "fetch_add",
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Or, .. } => "fetch_or",
+                _ => return Err("an atomic other than an add or an or".into()),
+            };
+            set(format!("unsafe {{ (*({} as *const core::sync::atomic::AtomicU32)).{how}({}, core::sync::atomic::Ordering::SeqCst) }}", addr(&args[0]), args[1]))
+        }
+        Opcode::AtomicCas => set(format!(
+            "unsafe {{ match (*({} as *const core::sync::atomic::AtomicU32)).compare_exchange({}, {}, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) {{ Ok(x) | Err(x) => x }} }}",
+            addr(&args[0]), args[1], args[2]
+        )),
+        Opcode::Fence => "core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);".to_owned(),
         Opcode::GetPinnedReg if read_style(u32::MAX).is_some() => return Err("a read takes no pinned register".into()),
         Opcode::GetPinnedReg => set("pin".to_string()),
         Opcode::SetPinnedReg => format!("pin = {};", args[0]),
@@ -864,7 +976,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
 
 /// The `band`s each read only by compares that print as a bit test (`tested_bits`): the
 /// test is the `and` too, so they are not printed.
-fn absorbed(f: &ir::Function) -> std::collections::HashSet<ir::Inst> {
+pub fn absorbed(f: &ir::Function) -> std::collections::HashSet<ir::Inst> {
     let dfg = &f.dfg;
     let insts: Vec<ir::Inst> = f.layout.blocks().flat_map(|b| f.layout.block_insts(b)).collect();
     let mut tested = std::collections::HashSet::new();

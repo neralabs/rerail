@@ -410,16 +410,62 @@ Levels as decided: a levelled relation keeps a level per row (4 bytes a row, abo
 lines. 0090 §4's threshold still derives a stratum again when an edit reaches too much of it, and that derive
 resets the levels.
 
+A proved component's measure by depth or document order reads `ast_depth` or `node_order` of its candidates'
+nodes. A cross part holds no tree (its tree steps are pushed into the chunks, 0051), so the chunks hand the key
+relation on as an input of the part, as they hand on a base relation a cross-file rule looks a node up in: the rows
+of the nodes the part holds, its exports' and its held base relations' (no rule makes a node). Each candidate is
+then rechecked once, in order (R6). A removal's candidate at a node the edit took out of the tree has no key now:
+it alone goes first, and is checked again as a row it may read goes, which is sound in any order (t43 step 10).
+
+## Required shape (locked, the user, 2026-11-18)
+
+What the implementation must be, from this decision and 0328 §3–6 as agreed. Stages 2–6 departed from it in places
+(t43, "Review against the design"). Each requirement has a test in `plan/corpus/maintain_tests.rs`. A test the code
+does not meet yet is ignored with its requirement and the step that meets it, and that step's commit removes the
+`ignore`. A requirement changes only with the user, and its test changes with it.
+
+| | Requirement | Test |
+|---|---|---|
+| R1 | No relation or rule of a run is a maintenance relation: none of `__old`, `__del`, `__ins`, `__redo`, `__minus`, `__plus`, `__ready`, `__cand`, `__chk`, `__held`, `__gone`, `__live`, `__sup`, `__grp`, `__mm_*` is declared, held or named by the engine. | `r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows`, `r1_the_engine_source_names_no_maintenance_relation` |
+| R2 | A relation's change is its version, read in place: the kept relation and the mark of its rows and kills (0328 §5). No row is copied to state a change: not for an input, a stratum the mode maintains, or a stratum derived again (no diff against kept rows). | `r1_r2_…` |
+| R3 | A stratum an edit reaches is skipped (no read changed), maintained by the mode, or derived again. It is derived again only on its part's first run (nothing kept) or past the threshold (R4). Its kind decides how the mode maintains it: a non-recursive stratum by delta joins and a recheck with the head bound; an aggregate by its changed groups; a recursive one by levels (R5). A native operator keeps its own decision's maintenance (the reach index, 0119). | `r3_a_reached_stratum_is_derived_again_only_on_its_first_run_or_past_the_threshold` |
+| R4 | 0090 §4's threshold: a stratum whose changed reads' deltas are past θ of the rows those reads hold, or whose mode lines the planner prices above a derive, is derived again, and its levels come fresh from that derive. A small edit is maintained, and each maintained line is led by its changed read's delta, a negated read's too, so its work follows the delta, not the corpus (t43 Step 9). | `r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again`, `r4_a_changed_read_s_delta_leads_its_line` |
+| R5 | Levels: one integer per row of a recursive relation, kept with its rows. Candidates go in level order; a candidate stays only on a derivation from rows of lower level; added rows never lower a level; a rewrite is a kill and an add. An unfounded cycle goes. | `r5_a_ring_that_loses_its_entry_loses_every_row_it_held` |
+| R6 | A recursive component the static check proves cannot cycle keeps no levels, and its candidates are rechecked once each. | `r6_a_component_that_cannot_cycle_keeps_no_levels` |
+| R7 | The mode's lines are the program's plans, made with it and priced as the others are (0328 §4, 0122), the recheck's order with its head bound included (Q208). | `r7_the_recheck_order_is_priced` |
+| R8 | A session's kept rows stay in place between its runs: an edit reads no kept frame back (0328 §5). | `r8_a_session_edit_reads_no_kept_frame` |
+| R9 | The driver decides one of three things for each reached stratum (skip, mode, derive again with an R3 reason), and nothing else: no slots, forms or paths of their own for other cases. | `r9_each_reached_stratum_is_skipped_maintained_or_derived_again` |
+| R10 | Each edit's outputs are a run's from an empty store. | every test above |
+
+The goal they serve (the user, 2026-11-17): far fewer facts, cheaper fact pages and metadata, less work to remove
+outdated rows. It is measured, not tested: on the O125 replay, facts held, kept bytes and instructions per edit
+against the forms' figures (t43, "Measurements"). The forms' figures hold for steps 01-04 only: their runs of 05-08 panicked (t43
+step 18).
+
 ## Open
 
-- **Instructions.** Every real-data figure is rows, candidates, probes and rewrites. Instructions come when the
-  evaluator's mode runs it. The only instruction figures for levels are the spike's.
-- **The static check in the engine.** `wf.py` is a script. It would also be worth teaching it string length
-  (`@pkg_up`-style chains) and the tree helpers it cannot read yet.
+- **The static check in the engine** is `plan/wellfounded.rs` (2026-11-18, t43 step 7): `wf.py` ported, an analysis
+  of the whole program's version that a part's run asks by component. It reads `nearest` as the engine lowers it
+  (`rr_nearest_<set>`). Still worth teaching it string length (`@pkg_up`-style chains) and the tree helpers it
+  cannot read yet.
+- **Inputs still found by hashing their documents.** A session reads an input's delta from the changed documents'
+  memo entries (t43 step 13), but on O125 a few are still found by hashing every document's rows (`inputs_hashed`):
+  per-document relations no entry holds (`doc_key`, `observer__source_file`, `doc`, `tape_of`), and a semi-join
+  input (`child`) whose kept rows for an unchanged document grow when another document's exports start to mention
+  its nodes (phase 1's imports name other documents' nodes), so the changed entries' rows do not add up.
+- **A new process reads its changed documents' old rows from the frames, decoded and hashed** (t43 step 17). A
+  changed input is an `OldInput`: its new rows of the unchanged documents, read in place, then the changed
+  documents' old rows, decoded from their granules (64 an input) into columns and checked against their digests.
+  That is work in proportion to the changed documents' rows (O125 step 05: 14 of 77 documents, 1.1 s), and it
+  stays until frames are read in place (0402's packed columns). A semi-join input (`child`), and an input whose
+  unchanged documents' row counts differ, is still read whole.
 - **A dump artifact.** In the data-layer history's first state, the run split into 2 chunks and dumped 210
   `dotted_expr` rows that no `drv` rule derives. It is a file-local relation, and the rows measured are the heads,
   but the cause is not known (`REC_LAX`).
 - **A cross-file recursive lattice,** should the least-route open item be closed with a `min` lattice: its value
   per key changes without its existence changing, which levels alone do not cover.
-- **Scale.** The largest real set here is 37 files and 480,000 recursive rows. The data-layer repository has 9,010
-  files; its edits should be checked once the evaluator's mode runs at that size.
+- **Scale.** The largest real set here is 37 files and 480,000 recursive rows. At 2,410 files of the data layer a
+  session's edits now take 44-59 s against a 515 s first run, their findings a cold run's (t43 step 20). Left at
+  that size: two strata derived again where the mode is priced above a derive by small deltas (Q352), and the
+  9,010-file ladder (Q351). That ladder is one policy run with its scope dropped (`dl-history.sh`), not the data
+  layer's workload (its 50 policies together, Q354); its times are this mode's at size, nothing more.

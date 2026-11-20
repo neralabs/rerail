@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b413-import-pycrypto",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Avoid importing the pyCrypto package; it is unmaintained and has known vulnerabilities, so use the cryptography package instead.",
   "scope": {
@@ -19,124 +19,53 @@
           "rule": {
             "any": [
               {
-                "pattern": "import Crypto.Cipher"
+                "kind": "import_statement",
+                "has": {
+                  "any": [
+                    {
+                      "kind": "dotted_name"
+                    },
+                    {
+                      "kind": "aliased_import"
+                    }
+                  ],
+                  "regex": "^(?:Crypto\\s*\\.\\s*Cipher|Crypto\\s*\\.\\s*Hash|Crypto\\s*\\.\\s*IO|Crypto\\s*\\.\\s*Protocol|Crypto\\s*\\.\\s*PublicKey|Crypto\\s*\\.\\s*Random|Crypto\\s*\\.\\s*Signature|Crypto\\s*\\.\\s*Util)"
+                }
               },
               {
-                "pattern": "import Crypto.Cipher as $ALIAS"
+                "kind": "import_from_statement",
+                "has": {
+                  "field": "module_name",
+                  "regex": "^[.\\s]*(?:Crypto\\s*\\.\\s*Cipher|Crypto\\s*\\.\\s*Hash|Crypto\\s*\\.\\s*IO|Crypto\\s*\\.\\s*Protocol|Crypto\\s*\\.\\s*PublicKey|Crypto\\s*\\.\\s*Random|Crypto\\s*\\.\\s*Signature|Crypto\\s*\\.\\s*Util)"
+                }
               },
               {
-                "pattern": "from Crypto.Cipher import $$$NAMES"
-              },
-              {
-                "pattern": "from Crypto import Cipher"
-              },
-              {
-                "pattern": "from Crypto import Cipher as $ALIAS"
-              },
-              {
-                "pattern": "import Crypto.Hash"
-              },
-              {
-                "pattern": "import Crypto.Hash as $ALIAS"
-              },
-              {
-                "pattern": "from Crypto.Hash import $$$NAMES"
-              },
-              {
-                "pattern": "from Crypto import Hash"
-              },
-              {
-                "pattern": "from Crypto import Hash as $ALIAS"
-              },
-              {
-                "pattern": "import Crypto.IO"
-              },
-              {
-                "pattern": "import Crypto.IO as $ALIAS"
-              },
-              {
-                "pattern": "from Crypto.IO import $$$NAMES"
-              },
-              {
-                "pattern": "from Crypto import IO"
-              },
-              {
-                "pattern": "from Crypto import IO as $ALIAS"
-              },
-              {
-                "pattern": "import Crypto.Protocol"
-              },
-              {
-                "pattern": "import Crypto.Protocol as $ALIAS"
-              },
-              {
-                "pattern": "from Crypto.Protocol import $$$NAMES"
-              },
-              {
-                "pattern": "from Crypto import Protocol"
-              },
-              {
-                "pattern": "from Crypto import Protocol as $ALIAS"
-              },
-              {
-                "pattern": "import Crypto.PublicKey"
-              },
-              {
-                "pattern": "import Crypto.PublicKey as $ALIAS"
-              },
-              {
-                "pattern": "from Crypto.PublicKey import $$$NAMES"
-              },
-              {
-                "pattern": "from Crypto import PublicKey"
-              },
-              {
-                "pattern": "from Crypto import PublicKey as $ALIAS"
-              },
-              {
-                "pattern": "import Crypto.Random"
-              },
-              {
-                "pattern": "import Crypto.Random as $ALIAS"
-              },
-              {
-                "pattern": "from Crypto.Random import $$$NAMES"
-              },
-              {
-                "pattern": "from Crypto import Random"
-              },
-              {
-                "pattern": "from Crypto import Random as $ALIAS"
-              },
-              {
-                "pattern": "import Crypto.Signature"
-              },
-              {
-                "pattern": "import Crypto.Signature as $ALIAS"
-              },
-              {
-                "pattern": "from Crypto.Signature import $$$NAMES"
-              },
-              {
-                "pattern": "from Crypto import Signature"
-              },
-              {
-                "pattern": "from Crypto import Signature as $ALIAS"
-              },
-              {
-                "pattern": "import Crypto.Util"
-              },
-              {
-                "pattern": "import Crypto.Util as $ALIAS"
-              },
-              {
-                "pattern": "from Crypto.Util import $$$NAMES"
-              },
-              {
-                "pattern": "from Crypto import Util"
-              },
-              {
-                "pattern": "from Crypto import Util as $ALIAS"
+                "kind": "import_from_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^[.\\s]*Crypto$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "kind": "aliased_import"
+                        }
+                      ],
+                      "regex": "^(?:Cipher|Hash|IO|Protocol|PublicKey|Random|Signature|Util)",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      }
+                    }
+                  }
+                ]
               }
             ]
           }

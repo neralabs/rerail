@@ -60,8 +60,8 @@ pub fn encode_program(grammar: &Grammar, text: &str, budget: &dyn Fn() -> bool) 
 /// The tape of `input`, which has `source`'s length and offsets, reading `source`.
 fn encode_input(grammar: &Grammar, input: &[u8], source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_php_lean::Refusal> {
     let ids = ids();
-    let lacks = |what: &str, i: usize| format!("tree-sitter-php lacks the lean parser's {what} {i}");
-    let code_of = |&key: &u32| -> Result<Code, String> {
+    let lacks = move |what: &str, i: usize| format!("tree-sitter-php lacks the lean parser's {what} {i}");
+    let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, field, class, extra) = rerail_php_lean::unkey(key);
         let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
         let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
@@ -72,7 +72,7 @@ fn encode_input(grammar: &Grammar, input: &[u8], source: &str, budget: &dyn Fn()
         }
         Ok(code)
     };
-    rerail_php_lean::tape_into(input, &mut super::formats::lean(grammar, source, budget, &code_of))
+    rerail_php_lean::tape_into(input, &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// PHP's tree parser: the lean parser, standing in for tree-sitter-php where it reads the file.
@@ -80,9 +80,6 @@ pub struct Lean;
 
 impl TreeParser for Lean {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
-        if !grammar.lang.embeds().is_empty() {
-            return None;
-        }
         let span = crate::code_rule_dsl::logic::profile::span(|| "lean PHP parse and tape".into());
         match encode(grammar, source, &budget) {
             Ok(image) => {

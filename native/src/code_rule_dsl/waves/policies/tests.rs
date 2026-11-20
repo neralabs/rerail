@@ -43,18 +43,19 @@ fn the_python_pack_runs_as_its_logic_program() {
     let lowered = lower(&policies).unwrap();
     assert!(!lowered.clauses.is_empty());
     assert_eq!(lowered.clauses.len(), lowered.shapes.len());
-    let forbids = lowered.program.rules.iter().filter(|rule| rule.body.iter().any(|l| matches!(l, Literal::Ast { .. }))).count();
+    let program = &lowered.program;
+    let forbids = program.rules().filter(|rule| rule.body().any(|l| matches!(l.view(), Lit::Ast { .. }))).count();
     assert!(forbids >= lowered.clauses.len(), "{forbids} forbid rules, {} lowered", lowered.clauses.len());
     // Rules of one shape are one rule over its table: each lowered atom is a row, or a rule kept as written.
     let wave = &lowered.logic.rules;
-    let rows: usize = wave.facts.iter().filter(|(rel, _)| rel.starts_with("violation_shape_")).map(|(_, rows)| rows.len()).sum();
-    let kept = wave.rules.iter().filter(|rule| !rule.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.starts_with("violation_shape_")))).count();
+    let rows: usize = wave.fact_names().iter().filter(|rel| rel.starts_with("violation_shape_")).map(|rel| wave.fact_rows(rel).len()).sum();
+    let kept = wave.rules().filter(|&rule| !reads(wave, rule).any(|rel| rel.starts_with("violation_shape_"))).count();
     assert!(rows > 0, "the pack's forbid rules share a shape");
     assert_eq!(rows + kept, lowered.clauses.len(), "each lowered atom once");
-    assert!(wave.rules.len() < lowered.clauses.len() / 4, "{} rules for {} atoms", wave.rules.len(), lowered.clauses.len());
+    assert!(wave.rules().count() < lowered.clauses.len() / 4, "{} rules for {} atoms", wave.rules().count(), lowered.clauses.len());
     // YAML rules demand every clause on every document of the chunk.
     let demand = lowered.logic.demand.as_ref().expect("a demand program");
-    assert_eq!(demand.rules.iter().filter(|rule| rule.head.rel.starts_with("magic_ast_")).count(), lowered.clauses.len());
+    assert_eq!(demand.rules().filter(|&rule| demand.rel_name(rule.head().rel()).starts_with("magic_ast_")).count(), lowered.clauses.len());
     let sql = lowered.logic.demand_statement(&store()).unwrap().expect("one statement");
     let db = rusqlite::Connection::open_in_memory().unwrap();
     db.execute_batch("CREATE TEMP TABLE wave_document(position INTEGER, d INTEGER); INSERT INTO temp.wave_document VALUES (0, 5), (1, 9)").unwrap();
@@ -66,20 +67,13 @@ fn the_python_pack_runs_as_its_logic_program() {
 /// read after another is demanded wherever the seed is (widened: the other is the batch's).
 #[test]
 fn magic_sets_demand_each_clause_where_its_rules_read_it() {
-    let rule = |clause: &str, body: Vec<Literal>| Rule {
-        head: Atom { rel: "violation".into(), args: [Term::Str("p".into()), Term::Str(clause.to_owned().into()), var("D"), var("N")].into(), neg: false, gated: false },
-        body: std::iter::once(atom(WAVE, vec![var("D")])).chain(body).collect(),
-    };
-    let ast = |i: usize, n: &str| atom(&format!("ast_{i}"), vec![var("D"), var(n)]);
-    let seven = Literal::Cmp { l: var("D"), op: "=", r: Term::Int(7) };
-    let prog = Program {
-        rules: vec![rule("a", vec![ast(0, "N")]), rule("b", vec![seven, ast(1, "N")]), rule("c", vec![ast(0, "M"), ast(2, "N")])],
-        ..Program::default()
-    };
-    let mut wave = Program::default();
-    declare_violation(&mut wave);
-    let demand = demand_program(prog, &wave, 3).unwrap().unwrap();
-    let logic = Logic { rules: Program::default(), demand: Some(demand), bound: Vec::new() };
+    let demand = demand_of(
+        "violation(\"p\", \"a\", D, N) :- wave(D), ast_0(D, N).
+         violation(\"p\", \"b\", D, N) :- wave(D), D = 7, ast_1(D, N).
+         violation(\"p\", \"c\", D, N) :- wave(D), ast_0(D, M), ast_2(D, N).",
+        3,
+    );
+    let logic = Logic { rules: nothing().unwrap(), demand: Some(demand), bound: Vec::new() };
     let sql = logic.demand_statement(&store()).unwrap().expect("one statement");
     let db = rusqlite::Connection::open_in_memory().unwrap();
     db.execute_batch("CREATE TEMP TABLE wave_document(position INTEGER, d INTEGER); INSERT INTO temp.wave_document VALUES (0, 5), (1, 7)").unwrap();
@@ -88,22 +82,30 @@ fn magic_sets_demand_each_clause_where_its_rules_read_it() {
     assert_eq!(rows, [(0, 5), (0, 7), (1, 7), (2, 5), (2, 7)]);
 }
 
+/// The demand program of the rules of `src` (each reading `ast_i` atoms after `wave` seeds), declared as the wave
+/// declares them.
+fn demand_of(src: &str, atoms: usize) -> Arc<Version> {
+    let v = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+    let mut b = Builder::base();
+    let mut read = BTreeSet::new();
+    for r in v.rules() {
+        b.copy(&v, r);
+        read.extend(reads(&v, r).map(str::to_owned));
+    }
+    declare_violation(&mut b);
+    declare_read(&mut b, &read);
+    demand_program(b, atoms).unwrap().unwrap()
+}
+
 /// A `py.*` family is bound before the batch, so a rule that reads one before its atom narrows that
 /// atom's demand: clause 0 is demanded only on the documents with a call (`py_call`).
 #[test]
 fn py_families_narrow_demand_before_the_batch() {
-    let rule = |clause: &str, body: Vec<Literal>| Rule {
-        head: Atom { rel: "violation".into(), args: [Term::Str("p".into()), Term::Str(clause.to_owned().into()), var("D"), var("N")].into(), neg: false, gated: false },
-        body: std::iter::once(atom(WAVE, vec![var("D")])).chain(body).collect(),
-    };
-    let calls = atom("py_call", vec![var("D"), var("C"), var("F")]);
-    let prog = Program { rules: vec![rule("a", vec![calls, atom("ast_0", vec![var("D"), var("N")])])], ..Program::default() };
-    let mut wave = Program { rules: prog.rules.clone(), ..Program::default() };
-    declare_violation(&mut wave);
-    declare_py(&mut wave);
-    assert_eq!(wave.decls["py_call"].iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>(), ["d", "call", "callee"]);
-    let demand = demand_program(prog, &wave, 1).unwrap().unwrap();
-    let logic = Logic { rules: Program::default(), demand: Some(demand), bound: Vec::new() };
+    let mut b = Builder::base();
+    declare_read(&mut b, &["py_call".to_owned()].into());
+    assert_eq!(b.columns_of("py_call").unwrap().iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>(), ["d", "call", "callee"]);
+    let demand = demand_of("violation(\"p\", \"a\", D, N) :- wave(D), py_call(D, C, F), ast_0(D, N).", 1);
+    let logic = Logic { rules: nothing().unwrap(), demand: Some(demand), bound: Vec::new() };
     let sql = logic.demand_statement(&store()).unwrap().expect("one statement");
     assert!(sql.contains("py_call"), "{sql}");
     let db = rusqlite::Connection::open_in_memory().unwrap();
@@ -126,18 +128,14 @@ fn rules_of_one_shape_are_one_rule_over_their_constants() {
         violation("q", "b", X, Y) :- matched(1, X, Y).
         violation("p", "c", D, N) :- matched(2, D, N), D = 7.
     "#;
-    let prog = merged(crate::code_rule_dsl::logic::rr::parse(src).unwrap());
-    assert_eq!(prog.rules.len(), 2, "{:?}", prog.rules.iter().map(ToString::to_string).collect::<Vec<_>>());
-    assert_eq!(prog.rules[0].to_string(), "violation($K0, $K1, $V0, $V1) :- violation_shape_0($K0, $K1, $K2), matched($K2, $V0, $V1)");
-    assert_eq!(prog.rules[1].to_string(), r#"violation("p", "c", $D, $N) :- matched(2, $D, $N), $D = 7"#);
-    let rows = &prog.facts["violation_shape_0"];
-    assert_eq!(rows, &vec![
-        vec![Value::Str("p".into()), Value::Str("a".into()), Value::Int(0)],
-        vec![Value::Str("q".into()), Value::Str("b".into()), Value::Int(1)],
+    let prog = merged(&crate::code_rule_dsl::logic::rr::parse_version(src).unwrap()).unwrap();
+    let rules: Vec<String> = prog.rules().map(|r| prog.show_rule(r)).collect();
+    assert_eq!(rules.len(), 2, "{rules:?}");
+    assert_eq!(rules[0], "violation($K0, $K1, $D, $N) :- violation_shape_0($K0, $K1, $K2), matched($K2, $D, $N)", "{rules:?}");
+    assert_eq!(rules[1], r#"violation("p", "c", $D, $N) :- matched(2, $D, $N), $D = 7"#, "{rules:?}");
+    assert_eq!(prog.fact_rows("violation_shape_0"), vec![
+        List::from(vec![Value::Str("p".into()), Value::Str("a".into()), Value::Int(0)]),
+        List::from(vec![Value::Str("q".into()), Value::Str("b".into()), Value::Int(1)]),
     ]);
-    assert_eq!(prog.decls["violation_shape_0"].iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(), ["sym", "sym", "int"]);
-    // The wave's program holds them as they are, its node columns the wave's integers.
-    let wave = wave_program(&prog);
-    assert_eq!(wave.rules, prog.rules);
-    assert_eq!(wave.facts, prog.facts);
+    assert_eq!(prog.columns_of("violation_shape_0").unwrap().iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(), ["sym", "sym", "int"]);
 }

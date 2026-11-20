@@ -25,7 +25,7 @@
 //! trees of `trainMultipleSamplings` in parallel.
 
 use crate::compute_kernel_grid::ComputeKernelArgument::{self, Buffer as B, Float, Int};
-use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeEvent, MetalComputeQueue};
+use crate::device::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, ComputeEvent, ComputeQueue};
 use crate::dataset_feature_space::DatasetFeatureSpace;
 use crate::memory_region::FrozenMemoryRegionT;
 use crate::compute_kernel_grid::{GridComputeKernelSpecialization, GridLaunchPlan};
@@ -35,7 +35,7 @@ use crate::memory_region::{MappedSerializer, MemorySerializer};
 use crate::randomforest_recursive::{extract_tree, side_of, split_and_recurse_partitioned, test_all};
 use crate::randomforest_types::*;
 use crate::tree::{Ptr, Tree};
-use metal::Buffer;
+use crate::device::Buffer;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::sync::Arc;
@@ -239,7 +239,7 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
         let targets: &[f32] = rows.targets.as_deref().map_or(&[], |t| &t[..]);
         let device_targets = transfer_to_device_immutable(device, if targets.is_empty() { &[0f32][..] } else { targets });
 
-        let mut queue = MetalComputeQueue::new(&shared.queue);
+        let mut queue = ComputeQueue::new(&shared.queue);
         if num_examples.is_none() {
         run(&queue, "decodeRows", &[
             ("rowData", B(&row_data)),
@@ -310,7 +310,7 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
 }
 
 /// Enqueues grid kernel `name` on the queue.
-fn run(queue: &MetalComputeQueue, name: &str, args: &[(&str, ComputeKernelArgument)], grid: &[u32]) -> Result<(), String> {
+fn run(queue: &ComputeQueue, name: &str, args: &[(&str, ComputeKernelArgument)], grid: &[u32]) -> Result<(), String> {
     let k = kernel(name)?;
     let mut ctx = queue.new_bind_context(k.function);
     k.enqueue(args, grid, &mut ctx)
@@ -402,7 +402,7 @@ pub struct FeatureSamplingTrainerPartition<'o, 'a> {
     pub splits_pool: usize,
     /// Whether the device can stop before its levels (on width or on the splits pool).
     pub can_stop: bool,
-    pub depth_queue: MetalComputeQueue,
+    pub depth_queue: ComputeQueue,
     pub device_tree_training_info: Buffer,
     pub device_bucket_numbers: Buffer,
     pub device_feature_is_active: Buffer,
@@ -493,7 +493,7 @@ struct ResultSlot {
 }
 
 impl ResultSlot {
-    fn new(d: &metal::DeviceRef, splits_pool: usize, continuation: Option<[u64; 3]>, busy: bool) -> Self {
+    fn new(d: &crate::device::DeviceRef, splits_pool: usize, continuation: Option<[u64; 3]>, busy: bool) -> Self {
         let bytes = |n: u64| alloc_uninitialized_array_sync::<u8>(d, n as usize);
         ResultSlot {
             splits: alloc_uninitialized_array_sync::<IndexedPartitionSplit>(d, splits_pool),
@@ -508,7 +508,7 @@ impl ResultSlot {
 /// tree's use of the pools does not touch them). When the device leaves levels for the host, the rows' partitions,
 /// and the active partitions' weights and places in the tree, as the last device level left them.
 pub struct ScheduledTree {
-    pub event: MetalComputeEvent,
+    pub event: ComputeEvent,
     pub partition_splits: Buffer,
     pub tree_depth_info: Buffer,
     pub continuation: Option<(Buffer, Buffer, Buffer)>,
@@ -537,7 +537,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             width,
             splits_pool,
             can_stop,
-            depth_queue: MetalComputeQueue::new(&shared.queue),
+            depth_queue: ComputeQueue::new(&shared.queue),
             device_tree_training_info: alloc_uninitialized_array_sync::<TreeTrainingInfo>(d, 1),
             device_bucket_numbers: alloc_uninitialized_array_sync::<u32>(d, nf + 1),
             device_feature_is_active: alloc_uninitialized_array_sync::<u32>(d, nf),
@@ -1545,7 +1545,7 @@ pub(crate) mod tests {
     /// train over the same schedule; several trees (feature samplings) scheduled before any is awaited each come
     /// out the same as trained alone.
     #[test]
-    fn trees_trained_on_metal_match_the_host_schedule() {
+    fn trees_trained_on_the_device_match_the_host_schedule() {
         if crate::gpu::shared::get().is_none() {
             eprintln!("no Metal device: skipped");
             return;

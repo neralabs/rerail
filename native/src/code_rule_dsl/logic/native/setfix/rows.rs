@@ -15,6 +15,9 @@ impl RowData for Rows {
     fn value(&self, id: u32, _k: usize, c: usize) -> i64 {
         Rows::get(self, id, c)
     }
+    fn home(&self) -> Option<Home> {
+        Rows::home(self)
+    }
 }
 
 impl RowData for Vec<i64> {

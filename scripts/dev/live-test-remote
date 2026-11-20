@@ -1,7 +1,7 @@
 #!/usr/bin/python3
-"""Relax's live test loop on another Mac (docs/final-shape/notes/t37, §3 "On another Mac").
+"""Relax's live test loop on another machine of the farm (docs/final-shape/notes/t37, §3 "On another Mac").
 
-    scripts/dev/live-test-remote [--host NAME] [--verbose] [--once] PACKAGE [--lib | --test NAME] [-- FILTER...]
+    scripts/dev/live-test-remote [--host NAME] [--os macos|linux|any] [--verbose] [--once] PACKAGE [--lib | --test NAME] [-- FILTER...]
 
 Runs `relax test --live PACKAGE ...` on a host of the build farm (scripts/build/farm: the first usable one by default) in this
 checkout's copy there (under the host's farm root), and
@@ -10,7 +10,9 @@ live mirror, where Relax's own watcher sees it written and patches the running t
 the live process and Relax's store are the host's, and this machine spends only the send.
 
 Relax is `$RELAX`, else the one `scripts/dev/relax/build` installs (with its std), else `relax` on
-PATH; its std is `$RELAX_STD` if set. Both are sent to the host's farm root. Ctrl-C stops the session on the host too.
+PATH; its std is `$RELAX_STD` if set. Both are sent to the host's farm root. A Mac host is taken
+first; a Linux host (aarch64) runs `bin/relax-linux` of the installed version (`$RELAX_LINUX`),
+which the build script makes once the farm's Linux sysroot is here: the result is a Linux run. Ctrl-C stops the session on the host too.
 `--once` stops it after the first verdict: a check that runs the named tests once, not a loop that waits for saves.
 """
 import ctypes
@@ -25,9 +27,13 @@ import sys
 import threading
 import time
 
-CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
+# The checkout's: the installed copy of this script runs for every checkout (the farm hands a
+# checkout's own copy to it), told which.
+CHECKOUT = os.environ.get("RERAIL_FARM_CHECKOUT") or os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
 # The installed farm, the one every worktree's compiles use (scripts/build/farm/setup).
 SHARE = os.path.expanduser("~/.local/share/rerail-farm")
+# How long a session waits for this checkout's copy on a host, while other commands run from it.
+COPY_WAIT = 540
 if not os.path.exists(os.path.join(SHARE, "farm.py")):
     sys.exit("live-test-remote: the farm is not installed (scripts/build/farm/setup); run `relax test --live` here instead")
 sys.path.insert(0, SHARE)
@@ -92,37 +98,72 @@ def watch(root, on_files):
 
 
 def main(argv):
-    host, verbose, once = None, False, False
-    while argv and argv[0] in ("--host", "--verbose", "--once"):
+    host, verbose, once, oses = None, False, False, ("macos", "linux")
+    while argv and argv[0] in ("--host", "--verbose", "--once", "--os"):
         if argv[0] == "--host":
             host, argv = argv[1], argv[2:]
         elif argv[0] == "--once":
             once, argv = True, argv[1:]
+        elif argv[0] == "--os":
+            oses = ("macos", "linux") if argv[1] == "any" else (argv[1],)
+            argv = argv[2:]
         else:
             verbose, argv = True, argv[1:]
     if not argv:
         sys.exit(__doc__)
+    installed = os.path.expanduser("~/.local/share/rerail-relax")
+    linux_relax = os.environ.get("RELAX_LINUX") or os.path.join(installed, "bin/relax-linux")
+    if not os.path.exists(linux_relax):
+        oses = tuple(o for o in oses if o != "linux")
     if host is None:
-        hosts = farm.usable()
+        # The Macs first: a Linux host's run is another platform's.
+        hosts = sorted((h for h in farm.usable() if farm.host_os(h) in oses), key=lambda h: farm.host_os(h) != "macos")
         if not hosts:
             reasons = [f"{h['name']}: {farm.health(h).get('why')}" for h in farm.hosts() if h.get("enabled", True)]
             sys.exit("live-test-remote: no usable host" + (f" ({'; '.join(reasons)})" if reasons else "")
                      + "; run `relax test --live` here instead")
-        host = hosts[0]["name"]
-    installed = os.path.expanduser("~/.local/share/rerail-relax")
-    relax = os.environ.get("RELAX") or (os.path.join(installed, "bin/relax") if os.path.exists(os.path.join(installed, "bin/relax"))
+        names = [h["name"] for h in hosts]
+    else:
+        names = [host]
+    # The session sends each save into this checkout's copy on the host: it takes the copy alone, on
+    # the first host where no command of this checkout runs from it (`farm.CopyUse`), waiting at most
+    # COPY_WAIT for one.
+    use, said, began = None, False, time.time()
+    while True:
+        for name in names:
+            use = farm.CopyUse(name, CHECKOUT, "", alone=True)
+            if use.held:
+                host = name
+                break
+            use.release()
+        if use.held:
+            break
+        if time.time() - began > COPY_WAIT:
+            sys.exit(f"live-test-remote: this checkout's copy on {', '.join(names)} is still in use by its other commands "
+                     f"after {COPY_WAIT} s; run `relax test --live` here, or start this again once they end")
+        if not said:
+            print(f"live-test-remote: this checkout's other commands run from its copy on {', '.join(names)}: waiting for one to end", flush=True)
+            said = True
+        time.sleep(2)
+    entry = next((h for h in farm.hosts() if h["name"] == host), {})
+    linux = farm.host_os(entry) == "linux"
+    if linux and not os.path.exists(linux_relax):
+        sys.exit(f"live-test-remote: {host} is a Linux host and there is no Linux Relax ({linux_relax}):"
+                 " scripts/build/farm/linux-sysroot HOST, then scripts/dev/relax/build")
+    relax = linux_relax if linux else os.environ.get("RELAX") or (os.path.join(installed, "bin/relax") if os.path.exists(os.path.join(installed, "bin/relax"))
                                         else subprocess.run(["which", "relax"], capture_output=True, text=True).stdout.strip())
     if not relax:
         sys.exit("live-test-remote: no Relax: run scripts/dev/relax/build, or set RELAX to Relax's binary")
     relax = os.path.realpath(relax)
     std = os.environ.get("RELAX_STD")
-    if std is None and relax == os.path.realpath(os.path.join(installed, "bin/relax")):
+    if std is None and relax in (os.path.realpath(os.path.join(installed, "bin/relax")), os.path.realpath(linux_relax)):
         std = os.path.join(installed, "src/libs/relax/compiler/std")
 
     started = time.time()
     roots = [(CHECKOUT, "checkout")] + ([(os.path.realpath(std), "tree")] if std else [])
     t = send(host, files=[relax], roots=roots, verify=True)
-    print(f"live-test-remote: {host}: checkout, Relax sent ({t.get('files')} files, {t.get('sync')} s)", flush=True)
+    use.sent()
+    print(f"live-test-remote: {host}{' (Linux: a Linux run)' if linux else ''}: checkout, Relax sent ({t.get('files')} files, {t.get('sync')} s)", flush=True)
 
     # As AGENTS.md runs Relax here: every checkout's runs on the host share one run dir, capped.
     # Relax's home is the farm's too, never the host's own ~/.relax: a path named here that the
@@ -134,7 +175,7 @@ def main(argv):
     # `exec` maps their paths there, and stops Relax when this connection's input ends.
     # (and this terminal's open-file limit: a command over ssh starts with 256, which the engine's
     # parallel tests run out of, as test-remote's do)
-    job = {"cwd": os.path.join(CHECKOUT, "native"), "argv": [relax, "test", "--live"] + argv, "env": env, "nice": 10,
+    job = {"cwd": os.path.join(CHECKOUT, "native"), "argv": [relax, "test", "--live"] + argv, "env": env, "nice": entry.get("nice", 10),
            "map": [CHECKOUT, relax, home] + ([os.path.realpath(std)] if std else []),
            "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}
     remote = farm.agent_exec(job)
@@ -145,8 +186,20 @@ def main(argv):
     passed = [None]
 
     def show():
+        # A failed test's section (`---- NAME stdout ----` to the blank line after it): its panic's
+        # message and place, an assertion's left and right. Only the lines naming a panic were
+        # shown before, and a test's difference had to be printed by the test itself.
+        failure = False
         for line in proc.stdout:
-            if line.startswith("testverdict"):
+            if line.startswith("---- ") and line.rstrip().endswith(" stdout ----"):
+                failure = True
+            if failure:
+                print(line.rstrip(), flush=True)
+                failure = line.strip() != "" or line.startswith("---- ")
+                continue
+            if line.startswith("test ") and line.rstrip().endswith("FAILED"):
+                print(line.rstrip(), flush=True)
+            elif line.startswith("testverdict"):
                 since = f" ({time.time() - pushed[0]:.1f} s after the save)" if pushed[0] else \
                     f" ({time.time() - started:.0f} s after the start)"
                 print(line.rstrip() + since, flush=True)

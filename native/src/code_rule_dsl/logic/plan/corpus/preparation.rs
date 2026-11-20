@@ -10,18 +10,19 @@ use std::sync::Arc;
 mod merge;
 pub(super) mod combining;
 pub(super) mod hide;
-pub(crate) mod on_request;
+pub mod on_request;
 pub(super) mod whole;
 pub(crate) mod lowering_tail;
-mod demand;
-mod magic;
-mod prune;
+pub mod demand;
+pub mod magic;
+pub mod prune;
 mod rank;
-mod simplify;
+pub mod simplify;
 mod nearest;
 pub mod parts;
 pub mod text;
-pub use merge::{DropRepeated, MergeIdentical};
+pub use merge::{DropRepeated, MergeIdentical, congruence};
+pub use prune::Prune;
 pub use nearest::Nearest;
 
 /// A check of the program that writes nothing (what every relation read is bound by, `corpus::bound`): its error
@@ -47,7 +48,7 @@ impl ProgramPass for InputsRead {
         let inputs: Vec<&str> = v.inputs().map(|a| v.text(a)).collect();
         let kept: Vec<&str> = inputs.iter().copied().filter(|i| v.rel(i).is_some_and(|r| read.contains(&r.0)) || outputs.contains(i)).collect();
         if kept.len() != inputs.len() {
-            w.on()?.set_inputs(&kept);
+            w.on()?.fields().set_inputs(&kept);
         }
         Ok(())
     }
@@ -128,7 +129,7 @@ pub fn reader_demand() -> bool {
 
 /// How the deferred joins pass (`product_demand::deferred`) runs for one prepared program. `RERAIL_DEFERRED_JOINS`:
 /// `auto` (the default) and `adaptive` share a frequently requested endpoint's work and admit small pair caches; `on`
-/// makes the static rewrites alone; `off` leaves the joins as written. On by default (decision 0477): an insurance
+/// makes the static rewrites alone; `off` leaves the joins as written. On by default (decision 0506): an insurance
 /// against a join over-long for its readers' demand, at 0.27% more instructions on corpus0 x B-now (955.9 G against
 /// 953.3 G, the same findings). A run that loads (`world::wanted`) keeps them: a load hands exports back by location,
 /// which a new factor has none of.
@@ -197,39 +198,30 @@ pub struct DeferredJoins(pub Option<&'static str>);
 #[derive(Clone, Default)]
 pub struct Replans(pub Option<Arc<parking_lot::Mutex<std::collections::BTreeMap<[u8; 32], Deferral>>>>);
 
-/// The stages of `front`, in order, at which a debug build checks the version against the tree's passes.
-pub const STAGES: [&str; 12] = ["inputs", "prune", "simplify", "prune again", "products", "deferred", "reach", "negated demand", "demand", "undo", "rank", "text"];
+/// The deferred joins' step (`defer_joins`).
+const DEFERRED_PASS: &str = "joins deferred to their readers' requests";
 
-/// `prog` as the deferred joins pass leaves it under `d`, the rounds `d` makes eager undone first: what it decided,
-/// and the relations it gave a pair cache.
-pub fn defer_joins(prog: &mut crate::code_rule_dsl::logic::front::Program, d: &Deferral) -> (Vec<manager::Decided>, Vec<String>) {
+/// `v` as the deferred joins pass (`product_demand::deferred`) leaves it under `d`, and what it decided: the
+/// rewrite's plans, and each rewritten join for the authors' report (a factor read placed as `d` asks).
+pub fn defer_joins(v: &Arc<Version>, d: &Deferral) -> Result<(Arc<Version>, Vec<manager::Decided>), String> {
     use crate::code_rule_dsl::logic::profile::author_joins::{Access, TOPIC};
-    use crate::code_rule_dsl::logic::rr::lower::{ON_REQUEST, undo_round};
-    for &round in &d.undone {
-        let mut rules = std::mem::take(&mut prog.rules);
-        undo_round(prog, &mut rules, ON_REQUEST[round]);
-        prog.rules = rules;
-    }
-    if !d.undone.is_empty() {
-        *prog = crate::code_rule_dsl::logic::front::prune(std::mem::take(prog));
-    }
-    let plans = super::product_demand::deferred::rewrite(prog, d.adaptive, d.cache_pairs);
-    let pass = std::borrow::Cow::Borrowed("joins deferred to their readers' requests");
-    let mut decided = vec![manager::Decided { pass: pass.clone(), what: "deferred joins".into(), detail: format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross) }];
-    let mut cached = Vec::new();
+    let (out, plans) = super::product_demand::deferred::defer(v, d.adaptive, d.cache_pairs)?;
+    let pass = std::borrow::Cow::Borrowed(DEFERRED_PASS);
+    let mut decided = vec![manager::Decided {
+        pass: pass.clone(),
+        what: "deferred joins".into(),
+        detail: format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross),
+    }];
     for mut join in plans.author {
-        match &join.access {
-            Access::Factors { cache: Some(_) } => cached.push(join.relation.clone()),
-            Access::Factors { cache: None } => join.placement = d.placement.get(&join.relation).cloned(),
-            _ => {}
+        if let Access::Factors { cache: None } = &join.access {
+            join.placement = d.placement.get(&join.relation).cloned();
         }
         decided.push(manager::Decided { pass: pass.clone(), what: TOPIC.into(), detail: serde_json::to_string(&join).expect("join decision") });
     }
-    (decided, cached)
+    Ok((out, decided))
 }
 
-/// `version` pruned to the rules its outputs read (`front::prune`): what the bridged programs' check reads
-/// (`bridge::wanted`), before the run prepares the program.
+/// `version` pruned to the rules its outputs read (`prune::Prune`), before the run prepares the program.
 pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
     let mut p = Pipeline::new("pruned", version);
     p.program(&mut prune::Prune::default());
@@ -239,71 +231,47 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// The passes before lowering, on the version (decision 0281's path, steps 6c–6e): the functors only CPython gives
 /// and the base relations as inputs, a prune, `simplify` and a prune again, the reach form, the demand for negated
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after
-/// it, the reaches in cycles made rows again, the counts below a bound made by rank, then the text passes. Their decisions reach the run's profile, as the
-/// tree's passes made them. `check` is called after each of `STAGES` with the version so far.
-pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, deferral: &Deferral, last: Option<Run>, check: &mut dyn FnMut(&'static str, &Arc<Version>)) -> Result<(Arc<Version>, Front, Run), String> {
+/// it, the reaches in cycles made rows again, the counts below a bound made by rank, then the text passes. Their decisions reach the run's profile.
+pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, deferral: &Deferral, last: Option<Run>) -> Result<(Arc<Version>, Front, Run), String> {
+    front_of(version, dialect, deferral, last, true)
+}
+
+/// `front`, with the node products bounded by their readers (`product_demand`) where `whole`: a whole program's; a
+/// part's are bounded once the parts are linked (`parts::front`), where the products' readers are.
+pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, deferral: &Deferral, last: Option<Run>, whole: bool) -> Result<(Arc<Version>, Front, Run), String> {
     let mut p = kept(FRONT, version, last)?;
-    let mut at = |p: &mut Pipeline<'_>, stage: &'static str| -> Result<(), String> {
-        let v = p.current()?.clone();
-        check(stage, &v);
-        Ok(())
-    };
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
     p.program(&mut simplify::CpythonFunctors);
     p.program(&mut simplify::BaseInputs);
-    at(&mut p, "inputs")?;
     // Only the rules an output reads, directly or through other rules (T's front prunes the same way).
     p.program(&mut prune::Prune::default());
-    at(&mut p, "prune")?;
     // Bodies simplified (decision 0038), then pruned again.
     let simplified = simplify::passes(&mut p)?;
     simplify::decide(&simplified);
-    at(&mut p, "simplify")?;
     p.program(&mut prune::Prune::default());
-    at(&mut p, "prune again")?;
-    // A rule whose head pairs node ranges no join connects (a Cartesian product of the corpus's nodes) is bounded by
-    // the tuples its readers can use, or refused (`product_demand`). Found on the version; the rewrite reads the
-    // tree, decoded only for a program with such a product. A part prepared alone (`parts`) lacks its readers.
-    if !parts::on() {
-        let v = p.current()?.clone();
-        let d = p.get::<crate::code_rule_dsl::logic::plan::fields::FieldsData>()?;
-        if super::product_demand::has_products(&v, &crate::code_rule_dsl::logic::plan::fields::Fields::over(&v, &d)) {
-            let narrow = reader_demand();
-            p.made("node products bound by their readers' demand", 1, &[u8::from(narrow)], |v| {
-                let mut prog = v.program(&Default::default())?;
-                let r = super::product_demand::rewrite(&mut prog, narrow)?;
-                let mut decided = Vec::new();
-                let pass = std::borrow::Cow::Borrowed("node products bound by their readers' demand");
-                if !r.products.is_empty() {
-                    decided.push(manager::Decided { pass: pass.clone(), what: "node Cartesian products".into(), detail: format!("restricted to connected reader demands: {}", r.products.into_iter().collect::<Vec<_>>().join(", ")) });
-                }
-                if !r.readers.is_empty() {
-                    decided.push(manager::Decided { pass, what: "projected reader demand".into(), detail: format!("{} ({} ordered node and {} present location witnesses)", r.readers.into_iter().collect::<Vec<_>>().join(", "), r.order_witnesses, r.present_witnesses) });
-                }
-                let (out, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish())?;
-                Ok((out, decided))
+    if whole {
+        p.program(&mut super::product_demand::BoundProducts::Whole);
+    }
+    // Joins deferred to what their readers request (`product_demand::deferred`, decision 0506): the requested pairs
+    // or endpoints drive the producer, or the two factors meet in each reader. A part prepared alone lacks its
+    // readers. The rounds of attributes answered on request that an earlier try made eager are undone first.
+    if deferral.on && whole {
+        for &round in &deferral.undone {
+            p.made("a round of requests made eager (deferred joins)", 1, &[round as u8], |v| {
+                use crate::code_rule_dsl::logic::rr::lower::{ON_REQUEST, undo_round, undone_with};
+                Ok((undone_with(v, |head, rules| undo_round(head, rules, ON_REQUEST[round]))?, Vec::new()))
             });
         }
+        if !deferral.undone.is_empty() {
+            p.program(&mut prune::Prune::default());
+        }
+        p.made(DEFERRED_PASS, 1, &deferral.settings(), |v| defer_joins(v, deferral));
     }
-    at(&mut p, "products")?;
-    // Joins deferred to what their readers request (`product_demand::deferred`): the requested pairs or endpoints
-    // drive the producer, or the two factors meet in each reader. A part prepared alone lacks its readers.
-    if deferral.on && !parts::on() {
-        p.made("joins deferred to their readers' requests", 1, &deferral.settings(), |v| {
-            let mut prog = v.program(&Default::default())?;
-            let (decided, _) = defer_joins(&mut prog, deferral);
-            let (out, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish())?;
-            Ok((out, decided))
-        });
-    }
-    at(&mut p, "deferred")?;
     let mut reach = demand::ReachForm::default();
     p.program(&mut reach);
-    at(&mut p, "reach")?;
     let mut negated = demand::NegatedDemand::default();
     p.program(&mut negated);
-    at(&mut p, "negated demand")?;
     let mut own = magic::ProgramDemand::default();
     if std::env::var("RERAIL_DEMAND").map_or(true, |x| x != "off") {
         p.program(&mut own);
@@ -317,10 +285,8 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
             }
         }
     }
-    at(&mut p, "demand")?;
     let mut undo = demand::UndoInCycles::default();
     p.program(&mut undo);
-    at(&mut p, "undo")?;
     // Counts below a bound made without the pairs (decision 0361 step 7), once demand has placed its readers: a
     // relation the form replaced is unread, and pruned.
     let mut ranks = rank::RankForm::default();
@@ -329,9 +295,7 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
         p.program(&mut prune::Prune::default());
         crate::code_rule_dsl::logic::profile::decision("counts below a bound (decision 0361 step 7)", || format!("{} counts made by rank over their asked and counted rows, not their pairs", ranks.found));
     }
-    at(&mut p, "rank")?;
     let text::Found { matchers, vocabulary } = text::passes(&mut p, dialect)?;
-    at(&mut p, "text")?;
     let mut cached = Vec::new();
     for d in p.decisions() {
         if d.what == crate::code_rule_dsl::logic::profile::author_joins::TOPIC
@@ -350,8 +314,11 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
 /// The passes that follow the program's image, over `version`: the program that runs, a base (what the store keeps),
 /// with what they found; the pipeline's stages traced. The joins pushed are made per rule, so two programs' copies
 /// of one library rule made two: after the rows are located, they are merged again, and so are the relations over
-/// them, before the program splits. The merges (`merge`) run as `corpus::merge_and_drop_repeats`
-/// runs them, or the merge alone with `RERAIL_SAME=off`.
+/// them, before the program splits. The merges (`merge`) run as `MergeIdentical` between two `DropRepeated`, or
+/// the merge alone with `RERAIL_SAME=off`. One merge finds every class at once: its congruence is the greatest, and
+/// it compares a relation's rules as a set, so a repeated rule does not keep a relation from its twin. The merge's
+/// renaming can make rules repeat; they are dropped after it, and make nothing more mergeable. (A loop of merges
+/// until no rule repeated was 2-3 congruences a call, 1.5 s of the dl1 batch's 13.8 s CPU.)
 /// `bound` checks every relation read is bound, after `nearest` is read from the transducer.
 pub fn run(version: Arc<Version>, factorize: bool, last: Option<Run>, bound: impl FnMut(&Version) -> Result<(), String>) -> Result<(Arc<Version>, Found, Run), String> {
     let mut p = kept(PREPARATION, version, last)?;
@@ -370,27 +337,7 @@ pub fn run(version: Arc<Version>, factorize: bool, last: Option<Run>, bound: imp
     for line in &demand.lines {
         crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
     }
-    // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
-    // A relation a round leaves (its rows name no document) is moved to the cross-file part, its file-local readers
-    // following, and the program is located again until every row handed on is located (decision 0290, as
-    // `file_local::locate` does on the tree).
-    let mut moved: Vec<String> = Vec::new();
-    let mut located: Vec<String> = Vec::new();
-    let located = loop {
-        let mut locate = crate::code_rule_dsl::typing::file_local::Locate::default();
-        p.program(&mut locate);
-        located.extend(locate.located);
-        if locate.blocked.is_empty() {
-            break Ok(located);
-        }
-        let fresh: Vec<String> = locate.blocked.into_iter().filter(|r| !moved.contains(r)).collect();
-        if fresh.is_empty() {
-            moved.sort();
-            break Err(moved);
-        }
-        moved.extend(fresh.iter().cloned());
-        p.program(&mut crate::code_rule_dsl::typing::file_local::MoveCrossFile(fresh));
-    };
+    let located = crate::code_rule_dsl::typing::file_local::locate_all(&mut p);
     let mut merge = MergeIdentical::default();
     let mut repeats = DropRepeated::default();
     if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
@@ -438,7 +385,8 @@ pub fn runs_digest(front: &Run) -> [u8; 32] {
 /// A pipeline named `name` over `version`, kept to be stored: run `again` from `last` when `version` is an edit of
 /// its input (`rebase`), else from scratch.
 fn kept(name: &'static str, version: Arc<Version>, last: Option<Run>) -> Result<Pipeline<'static>, String> {
-    if let Some(last) = last
+    // Its versions a few edits deep made flat (decision 0385), so a ninth edit in a row runs again too.
+    if let Some(last) = last.map(crate::code_rule_dsl::logic::program_image::manager::Run::shallow)
         && let Some(v) = crate::code_rule_dsl::logic::program_image::manager::rebase(last.input(), &version)?
     {
         crate::code_rule_dsl::logic::profile::decision("the last run (decision 0333)", || format!("{name}: run again over an edit of the last run's input ({} rules)", crate::code_rule_dsl::logic::program_image::manager::Delta::of(last.input(), &v).size()));
@@ -451,16 +399,24 @@ fn kept(name: &'static str, version: Arc<Version>, last: Option<Run>) -> Result<
 mod tests {
     use super::*;
 
+    /// `p` with the readers of each of `q`'s rules, in order (its `asked` rows).
+    fn asked(p: &Arc<Version>, readers: Vec<std::collections::BTreeSet<String>>) -> Arc<Version> {
+        use crate::code_rule_dsl::logic::program_facts::Field;
+        use crate::code_rule_dsl::logic::program_image::{Builder, fields::FieldsMut};
+        let mut b = Builder::on(p);
+        b.fields().set_field(Field::Asked(&std::collections::BTreeMap::from([("q".to_owned(), readers)])));
+        b.finish().unwrap().0
+    }
+
     /// An input no rule reads leaves the inputs (an output stays one); the rules reordered keep each rule; the
     /// program that comes out is a base, which the store keeps.
     #[test]
     fn the_passes_after_the_image_prune_the_inputs_and_reorder_the_rules() {
-        let p = crate::code_rule_dsl::logic::rr::parse(
+        let v = crate::code_rule_dsl::logic::rr::parse_version(
             ".decl a(x: number)\n.decl b(x: number)\n.decl c(x: number)\n.input a, b, c\n.decl p(x: number)\n.decl q(x: number)\n\
              p(x) :- a(x).\nq(x) :- p(x).\n.output p, q, c\n",
         )
         .unwrap();
-        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
         let (out, _, _) = run(v.clone(), true, None, |_| Ok(())).unwrap();
         assert!(out.base_bytes().is_some(), "a base");
         let inputs: Vec<&str> = out.inputs().map(|a| out.text(a)).collect();
@@ -476,25 +432,23 @@ mod tests {
     /// holds one entry a rule after the pipeline; readers merged are named by their class.
     #[test]
     fn the_request_record_follows_the_preparation_steps() {
-        let mut p = crate::code_rule_dsl::logic::rr::parse(
+        let p = crate::code_rule_dsl::logic::rr::parse_version(
             ".decl k(x: number)\n.input k\n.decl q(x: number)\n.decl a(x: number)\n.decl b(x: number)\n\
              q(x) :- k(x), x < 3.\nq(x) :- k(x), x > 5.\na(x) :- q(x).\nb(x) :- q(x), x != 1.\n.output a, b\n",
         )
         .unwrap();
         let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<std::collections::BTreeSet<String>>();
-        p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
-        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let v = asked(&p, vec![by(&["a"]), by(&["b"])]);
         let (out, _, _) = run(v, true, None, |_| Ok(())).unwrap();
         assert_eq!(out.asked_against_rules(), [("q".to_owned(), 2, 2)]);
         assert_eq!(out.asked()["q"], [by(&["a"]), by(&["b"])]);
-        // Two equal readers merged: the record names the class (`simplify::merge_identical`'s rename, the tree's).
-        let mut p = crate::code_rule_dsl::logic::rr::parse(
+        // Two equal readers merged: the record names the class (`MergeIdentical`'s rename).
+        let p = crate::code_rule_dsl::logic::rr::parse_version(
             ".decl k(x: number)\n.input k\n.decl q(x: number)\n.decl a(x: number)\n.decl a2(x: number)\n.decl o(x: number)\n\
              q(x) :- k(x), x < 3.\nq(x) :- k(x), x > 5.\na(x) :- q(x).\na2(x) :- q(x).\no(x) :- a(x), a2(x).\n.output o\n",
         )
         .unwrap();
-        p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["a2"])]);
-        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let v = asked(&p, vec![by(&["a"]), by(&["a2"])]);
         let (out, _, _) = run(v, true, None, |_| Ok(())).unwrap();
         assert!(out.rel("a2").is_none_or(|r| out.heads(r).next().is_none()), "a2 merged into a");
         assert_eq!(out.asked()["q"], [by(&["a"]), by(&["a"])]);

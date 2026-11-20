@@ -1,0 +1,143 @@
+// The radix sort's keys, its runs, the gather and the column statistics (decision 0095 §4, 0209 §6), in UKL (decision
+// 0440 step C), for a column word `COL_T` (16, 32 or 64 bits) read into sort words `KEY_T` (32 or 64): defined in front of
+// the source by `join.rs` (`sort_source`), with `join_common.h`. One variant per column width.
+//
+// The sort itself is the UKL library's radix sort (`ukl/radix.h`, decision 0440 step D): these are its keys and rows
+// before it, and its runs and the gather after it.
+
+// Each row's key and its place. p0: the rows.
+DEFINE_KERNEL2(join, sort_init,
+               ROBUFFER, COL_T,    col,  "[a.p0]",
+               RWBUFFER, KEY_T,    keys, "[a.p0]",
+               RWBUFFER, uint32_t, idx,  "[a.p0]",
+               ARGS,     JoinP,    a,    ,
+               GID0,     uint32_t, t,    )
+{
+  if (t < a.p0) { keys[t] = (KEY_T)col[t]; idx[t] = t; }
+}
+
+// Whether each sorted place starts a run. p0: the rows.
+DEFINE_KERNEL2(join, run_heads,
+               ROBUFFER, KEY_T,    keys,  "[a.p0]",
+               RWBUFFER, uint32_t, heads, "[a.p0]",
+               ARGS,     JoinP,    a,     ,
+               GID0,     uint32_t, t,     )
+{
+  if (t < a.p0) heads[t] = (uint32_t)(t == 0u || keys[t] != keys[t - 1u]);
+}
+
+// Each run's first place and key; the runs' count, and the end of the last. p0: the rows.
+DEFINE_KERNEL2(join, run_compact,
+               ROBUFFER, KEY_T,    keys,   "[a.p0]",
+               ROBUFFER, uint32_t, rid,    "[a.p0]",
+               RWBUFFER, uint32_t, starts, "[a.p0 + 1]",
+               RWBUFFER, KEY_T,    rkeys,  "[a.p0]",
+               RWBUFFER, uint32_t, nruns,  "[1]",
+               ARGS,     JoinP,    a,      ,
+               GID0,     uint32_t, t,      )
+{
+  uint32_t n = a.p0;
+  if (t >= n) return;
+  bool head = t == 0u || keys[t] != keys[t - 1u];
+  if (head) { starts[rid[t]] = t; rkeys[rid[t]] = keys[t]; }
+  if (t == n - 1u) { uint32_t r = rid[t] + (uint32_t)head; starts[r] = n; nruns[0] = r; }
+}
+
+// A column gathered into a sorted order. p0: the rows.
+DEFINE_KERNEL2(join, gather,
+               ROBUFFER, COL_T,    col,  "[rows]",
+               ROBUFFER, uint32_t, perm, "[a.p0]",
+               RWBUFFER, COL_T,    out,  "[a.p0]",
+               ARGS,     JoinP,    a,    ,
+               GID0,     uint32_t, t,    )
+{
+  if (t < a.p0) out[t] = col[perm[t]];
+}
+
+// The threadgroup's sums of `sq` and `cube` into S[0] and C[0].
+UKL_INLINE void join_tg_sums(UKL_LOCAL uint64_t* S, UKL_LOCAL uint64_t* C, uint32_t t, uint64_t sq, uint64_t cube)
+{
+  S[t] = sq; C[t] = cube;
+  ukl_tg_barrier();
+  for (uint32_t s = 128u; s > 0u; s >>= 1) {
+    if (t < s) { S[t] += S[t + s]; C[t] += C[t + s]; }
+    ukl_tg_barrier();
+  }
+}
+
+// Each run's length (0 past the runs), 1,024 a threadgroup, four a thread; the group's sums of lengths squared and
+// cubed into `part` (two words a group). p0: the rows.
+DEFINE_KERNEL2(join, col_stats,
+               ROBUFFER, uint32_t, starts, "[a.p0 + 1]",
+               ROBUFFER, uint32_t, nruns,  "[1]",
+               RWBUFFER, uint32_t, lens,   "[a.p0]",
+               RWBUFFER, uint64_t, part,   "[2 * tiles]",
+               ARGS,     JoinP,    a,      ,
+               SHARED,   uint64_t, S,      256,
+               SHARED,   uint64_t, C,      256,
+               TGID0,    uint32_t, g,      ,
+               LID0,     uint32_t, t,      )
+{
+  uint32_t n = a.p0;
+  uint32_t runs = n > 0u ? nruns[0] : 0u;
+  uint64_t sq = 0u, cube = 0u;
+  for (uint32_t i = 0u; i < 4u; i++) {
+    uint32_t r = g * 1024u + i * 256u + t;
+    if (r >= n) break;
+    uint32_t len = r < runs ? starts[r + 1u] - starts[r] : 0u;
+    lens[r] = len;
+    uint64_t l = len;
+    sq += l * l;
+    cube += l * l * l;
+  }
+  join_tg_sums(S, C, t, sq, cube);
+  if (t == 0u) { part[2u * g] = S[0]; part[2u * g + 1u] = C[0]; }
+}
+
+// One threadgroup: the groups' sums (p[1] of them) and the runs' count into `out`. p0: the rows.
+DEFINE_KERNEL2(join, col_sum,
+               ROBUFFER, uint64_t, part,  "[2 * a.p1]",
+               ROBUFFER, uint32_t, nruns, "[1]",
+               RWBUFFER, uint64_t, out,   "[3]",
+               ARGS,     JoinP,    a,     ,
+               SHARED,   uint64_t, S,     256,
+               SHARED,   uint64_t, C,     256,
+               LID0,     uint32_t, t,     )
+{
+  uint32_t n = a.p0, groups = a.p1;
+  uint64_t sq = 0u, cube = 0u;
+  for (uint32_t g = t; g < groups; g += 256u) { sq += part[2u * g]; cube += part[2u * g + 1u]; }
+  join_tg_sums(S, C, t, sq, cube);
+  if (t == 0u) { out[0] = n > 0u ? nruns[0] : 0u; out[1] = S[0]; out[2] = C[0]; }
+}
+
+// The k longest runs, longest first, from the lengths' sort (ascending, stable): each one's key and length.
+// p: the rows, k.
+DEFINE_KERNEL2(join, col_top,
+               ROBUFFER, uint32_t, perm,  "[a.p0]",
+               ROBUFFER, uint32_t, lens,  "[a.p0]",
+               ROBUFFER, KEY_T,    rkeys, "[a.p0]",
+               RWBUFFER, uint64_t, out,   "[3 + 2 * a.p1]",
+               ARGS,     JoinP,    a,     ,
+               GID0,     uint32_t, t,     )
+{
+  uint32_t n = a.p0, k = a.p1;
+  if (t >= k) return;
+  uint64_t key = 0u, len = 0u;
+  if (t < n) { uint32_t r = perm[n - 1u - t]; len = lens[r]; key = (uint64_t)rkeys[r]; }
+  out[3u + t] = key;
+  out[3u + k + t] = len;
+}
+
+// A sort's screen (decision 0506, `join::Keyed::screen`): a thread a run, its key (the sort word plus `a.b0`) added
+// to the screen at byte 0 of `f`. p0: the rows (a bound on the runs).
+DEFINE_KERNEL2(join, screen_bloom,
+               ROBUFFER, KEY_T,    rkeys, "[a.p0]",
+               ROBUFFER, uint32_t, nruns, "[1]",
+               RWBUFFER, uint8_t,  f,     "[the screen]",
+               ARGS,     JoinP,    a,     ,
+               GID0,     uint32_t, r,     )
+{
+  if (r >= a.p0 || r >= nruns[0]) return;
+  screen_add(f, 0u, (uint64_t)rkeys[r] + (uint64_t)a.b0);
+}

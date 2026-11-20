@@ -1,0 +1,22 @@
+[package]
+name = "rerail-device"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The device layer (decision 0440): one interface over Metal (macOS), CUDA (Linux), OpenCL and the CPU, MLDB's grid runtime, and the process's shared device. Below the UKL preprocessor, so the blocks bind their memory through it."
+
+[dependencies]
+libc = "0.2.189"
+
+[dev-dependencies]
+# The runtimes' tests preprocess their kernels (the crate itself takes preprocessed source).
+rerail-ukl = { path = "../../native/crates/ukl" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.33.0"
+objc = "0.2.7"
+block = "0.1.6"
+
+[lints.rust]
+# objc 0.2's `msg_send!` tests a `cargo-clippy` feature in the calling crate.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

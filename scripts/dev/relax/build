@@ -12,6 +12,9 @@
 #   v/<version>/   the patched source tree of one version, never changed once built. The binary
 #                  reads its std from the tree it was built from, so no RELAX_STD is needed.
 #   bin/relax      the binary of the current version
+#   bin/relax-linux  the same version for the farm's aarch64 Linux hosts (built here with
+#                  scripts/build/farm/cargo-linux, once its sysroot is copied; live-test-remote
+#                  sends it to a Linux host)
 #   src            a link to the current version's tree (scripts/dev/live-test-remote sends its std)
 #
 # A version is COMMIT and the patches' hash. While a Relax session of the installed binary runs,
@@ -47,6 +50,15 @@ if [ ! -f "$tree/.built" ]; then
   "$here/../clean-target" "$cache/target" | tail -1
   touch "$tree/.built"
 fi
+# The Linux binary of the version, when the farm's Linux sysroot is here (a tree built before
+# it was gets it now; without the sysroot there is none, and Linux hosts take no Relax run).
+linux_sysroot=$HOME/Library/Caches/rerail-farm/sysroot/aarch64-unknown-linux-gnu
+if [ ! -f "$tree/relax-linux" ] && [ -e "$linux_sysroot/lib/aarch64-linux-gnu/libc.so.6" ]; then
+  (cd "$tree" && PATH=$HOME/.cargo/bin:$PATH RUSTC_WRAPPER= RERAIL_FARM_QUIET=1 nice -n 19 "$here/../../build/farm/cargo-linux" build -q --release \
+    -p relax-runner --bin relax --target-dir "$cache/target")
+  install -m 0755 "$cache/target/aarch64-unknown-linux-gnu/release/relax" "$tree/relax-linux"
+fi
+linux_current() { [ ! -f "$tree/relax-linux" ] || cmp -s "$tree/relax-linux" "$share/bin/relax-linux"; }
 # Versions pile up (about 110 MB each, one per change of a patch): kept are the installed one,
 # the newest other (to go back to), and any a process runs from (its binary or std under it).
 # A version is rebuilt exactly from COMMIT and the patches, so nothing else is lost. Not
@@ -64,7 +76,7 @@ prune_versions() {
   done
   git --git-dir="$repo" worktree prune
 }
-if [ "$(readlink "$share/src" 2>/dev/null)" = "$tree" ] && cmp -s "$tree/relax" "$share/bin/relax"; then
+if [ "$(readlink "$share/src" 2>/dev/null)" = "$tree" ] && cmp -s "$tree/relax" "$share/bin/relax" && linux_current; then
   prune_versions
   echo "relax: $share/bin/relax is version $version"
   exit 0
@@ -77,6 +89,9 @@ if [ -n "$running" ] && [ -z "$now" ]; then
 fi
 install -m 0755 "$tree/relax" "$share/bin/relax.tmp"
 mv "$share/bin/relax.tmp" "$share/bin/relax"
+if [ -f "$tree/relax-linux" ]; then
+  install -m 0755 "$tree/relax-linux" "$share/bin/relax-linux.tmp" && mv "$share/bin/relax-linux.tmp" "$share/bin/relax-linux"
+fi
 # The checkout an earlier version of this script made at src: kept beside, never removed here.
 if [ -d "$share/src" ] && [ ! -L "$share/src" ]; then mv "$share/src" "$share/v/old-src"; fi
 ln -sfh "$tree" "$share/src"

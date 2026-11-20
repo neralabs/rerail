@@ -11,6 +11,9 @@
 //! The index holds, in order, the offset of each structural byte (`{ } [ ] : ,`) and of each
 //! scalar's first byte (a string's opening quote, a number's or a literal's first byte). Each
 //! thread parses with a parser of its own.
+//!
+//! Nothing on MSVC, as `rerail-simdjson-native` (its C++ does not build there).
+#![cfg(not(all(windows, target_env = "msvc")))]
 
 pub use rerail_simdjson_native::{Error, Kernel, implementation, structurals};
 use rerail_simdjson_native::{KEEP, Sink, release_above};
@@ -163,23 +166,7 @@ fn run_as(kernel: Kernel, src: &[u8], kinds: &Kinds, read: Read) -> Result<Tape,
         return Err(Refusal::TooLarge);
     }
     let mut columns: [Vec<u8>; 5] = Default::default();
-    let k = kinds;
-    let mut sink = Sink {
-        col: [std::ptr::null_mut(); 5],
-        len: [0; 5],
-        cap: [0; 5],
-        width: [2; 3],
-        ctx: (&raw mut columns).cast(),
-        grow,
-        kind: [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null, k.comment],
-        key_field: k.key_field,
-        value_field: k.value_field,
-        codes: 0,
-        code_kind: [0; 36],
-        code_field: [0; 36],
-        code_value: [0; 36],
-        digest: [0; 32],
-    };
+    let mut sink = sink(kinds, (&raw mut columns).cast());
     // SAFETY: the sink's buffers are `columns`, which `grow` grows; the shim writes them only within
     // what `grow` gave.
     let code = unsafe {
@@ -208,6 +195,99 @@ fn run_as(kernel: Kernel, src: &[u8], kinds: &Kinds, read: Read) -> Result<Tape,
             let [code, size, off, tail, base] = columns;
             Ok(Tape { code, codes, size, base, off, tail, widths: sink.width, digest: Some(sink.digest) })
         }
+        error => Err(Refusal::Simdjson(Error(error))),
+    }
+}
+
+/// A sink for `kinds` whose `ctx` is `ctx`: the columns grown by `grow`, no events.
+fn sink(k: &Kinds, ctx: *mut std::ffi::c_void) -> Sink {
+    Sink {
+        col: [std::ptr::null_mut(); 5],
+        len: [0; 5],
+        cap: [0; 5],
+        width: [2; 3],
+        ctx,
+        grow,
+        kind: [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null, k.comment],
+        key_field: k.key_field,
+        value_field: k.value_field,
+        codes: 0,
+        code_kind: [0; 36],
+        code_field: [0; 36],
+        code_value: [0; 36],
+        digest: [0; 32],
+        ev: std::ptr::null_mut(),
+        ev_len: 0,
+        ev_cap: 0,
+        flush: flush_events,
+    }
+}
+
+/// A format 16 walk's events (`events_with`), the low byte of an event's first word; the code id above it.
+pub const EV_OPEN: u32 = 0;
+pub const EV_LEAF: u32 = 1;
+pub const EV_CLOSE: u32 = 2;
+
+/// The events a walk holds before it passes them on: 4,096 nodes'.
+const EVENT_WORDS: usize = 3 * 4096;
+
+/// The codes a walk has numbered so far, by id (`events_with`): kind, field, and whether in a value's place.
+pub struct Codes<'a>(&'a Sink);
+
+impl Codes<'_> {
+    pub fn len(&self) -> usize {
+        self.0.codes as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.codes == 0
+    }
+
+    pub fn get(&self, id: usize) -> (u16, u16, bool) {
+        (self.0.code_kind[id], self.0.code_field[id], self.0.code_value[id] != 0)
+    }
+}
+
+/// What `flush_events` passes the events to: the caller's.
+type OnEvents<'a> = &'a mut dyn FnMut(&Codes, &[u32]);
+
+/// `flush`: the window's events given to the caller's `on`, which `ctx` points to.
+unsafe extern "C" fn flush_events(sink: *mut Sink) {
+    // SAFETY: the shim passes the sink `events_with` made, whose `ctx` is its `OnEvents` and whose `ev` holds
+    // `ev_len` words it wrote; `on` is apart from the sink and its buffer.
+    unsafe {
+        let sink: &Sink = &*sink;
+        if sink.ctx.is_null() {
+            return;
+        }
+        let on = &mut *sink.ctx.cast::<OnEvents>();
+        let words = std::slice::from_raw_parts(sink.ev, sink.ev_len as usize);
+        on(&Codes(sink), words);
+    }
+}
+
+/// `src` walked by `kernel` for format 16 (decision 0434): no column is written; each node's event (`EV_OPEN`, its
+/// code id and start; `EV_LEAF`, its code id, start and end; `EV_CLOSE` and its end; three words each) is given to
+/// `on` in preorder, a window of them at a time, with the codes numbered so far. The walk never edits a node it
+/// gave. `jsonc` reads the file as JSONC (`tape_jsonc_with`). The source's SHA-256, or why it has no tape: then `on`
+/// may have had some of its events.
+pub fn events_with(kernel: Kernel, src: &[u8], kinds: &Kinds, jsonc: bool, mut on: impl FnMut(&Codes, &[u32])) -> Result<[u8; 32], Refusal> {
+    if src.len() >= u32::MAX as usize / 2 {
+        return Err(Refusal::TooLarge);
+    }
+    let mut on: OnEvents = &mut on;
+    let mut buf = vec![0u32; EVENT_WORDS];
+    let mut sink = sink(kinds, (&raw mut on).cast());
+    sink.ev = buf.as_mut_ptr();
+    sink.ev_cap = EVENT_WORDS as u32;
+    // SAFETY: the sink writes no column; its events go to `buf`, `ev_cap` words, and `flush_events` gives them to `on`.
+    let code = unsafe { if jsonc { kernel.tape_jsonc(src, &mut sink) } else { kernel.tape(src, &mut sink) } };
+    if src.len() > KEEP {
+        release_above(KEEP);
+    }
+    match code {
+        -1 => Err(Refusal::NotHere),
+        0 => Ok(sink.digest),
         error => Err(Refusal::Simdjson(Error(error))),
     }
 }
@@ -287,7 +367,7 @@ impl Writer<'_> {
             self.tape.codes.push((kind, field_id, slot >= OBJECT && field != KEY));
         }
         self.tape.code.extend_from_slice(&id.to_le_bytes());
-        if ord as usize % STRIDE == 0 {
+        if (ord as usize).is_multiple_of(STRIDE) {
             self.base = start;
             self.tape.base.extend_from_slice(&start.to_le_bytes());
         }
@@ -445,8 +525,21 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
 mod tests {
     use super::*;
 
+    /// The process's instructions retired so far (`proc_pid_rusage`), for the measurements (macOS's, as they are):
+    /// their difference over a run on one thread is its count. Zero where the call fails.
+    #[cfg(target_os = "macos")]
+    fn retired() -> u64 {
+        // SAFETY: the call writes the structure, which is plain integers.
+        let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+        if unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+            return info.ri_instructions;
+        }
+        0
+    }
+
     /// The kernel a measurement runs: `RERAIL_SIMDJSON_KERNEL` (its `Kernel` name, as `Haswell`), else the
     /// fastest this CPU runs.
+    #[allow(dead_code, reason = "the kernel choice of the measurements, which run by hand (none is in the suite now)")]
     fn kernel_under_test() -> Kernel {
         match std::env::var("RERAIL_SIMDJSON_KERNEL") {
             Ok(name) => *Kernel::ALL.iter().find(|k| format!("{k:?}") == name).expect("a kernel's name"),
@@ -465,6 +558,7 @@ mod tests {
 
     /// The tape's cost alone, for `/usr/bin/time -l`: `RERAIL_TAPE_RUN` is `none` (read the files), `index`
     /// (parse and index) or `tape`, 10 rounds over the repository's `.json` files up to 1 MB.
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with RERAIL_TAPE_RUN"]
     fn tape_cost() {
@@ -506,11 +600,6 @@ mod tests {
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
         let kernel = kernel_under_test();
-        let retired = || {
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-            info.ri_instructions
-        };
         let mut n = 0usize;
         let mut best = u64::MAX;
         for _ in 0..5 {
@@ -622,10 +711,11 @@ mod tests {
                 let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
                 if p.is_dir() && !skip {
                     work.push(p);
-                } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 4 << 20) {
-                    if let Ok(f) = std::fs::read(&p) {
-                        checked += usize::from(same(&f));
-                    }
+                } else if p.extension().is_some_and(|x| x == "json")
+                    && e.metadata().is_ok_and(|m| m.len() <= 4 << 20)
+                    && let Ok(f) = std::fs::read(&p)
+                {
+                    checked += usize::from(same(&f));
                 }
             }
         }
@@ -633,14 +723,10 @@ mod tests {
     }
 
     /// Instructions a node by the document's shape: simdjson's DOM parse, stage 1, and the v9np stage 2.
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with --nocapture"]
     fn shape_costs() {
-        let retired = || {
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-            info.ri_instructions
-        };
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let kernel = kernel_under_test();
         let n = 20_000;

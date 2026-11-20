@@ -20,22 +20,26 @@ import * as create from "./create.js";
 import * as history from "./history.js";
 import * as sessions from "./sessions.js";
 import * as settings from "./settings.js";
+import * as merge from "./merge.js";
+import * as access from "./access.js";
 import * as noRepo from "./no-repo.js";
 import * as missing from "./missing.js";
 import * as notSetUp from "./not-set-up.js";
 
-export const VIEWS = { overview, pack, created: pack, packs, review: packs, create, history, sessions, settings };
+export const VIEWS = { overview, pack, created: pack, packs, review: packs, create, history, sessions, settings, merge };
 
-const PAGES = { "no-repo": noRepo, missing, "not-set-up": notSetUp };
+const PAGES = { access, "no-repo": noRepo, missing, "not-set-up": notSetUp };
 
 /** Views a repository that is not set up shows its Not set up page in place of: they list rules, and it has none. */
 const NEED_SET_UP = new Set(["overview", "pack", "created"]);
 
 /**
- * What `#content` shows: the view, or the page in its place. Settings are the machine's and always show; every other
- * view needs a repository the daemon knows.
+ * What `#content` shows: the view, or the page in its place. A browser the daemon refuses (no access capability) has
+ * no data for any view, so every view shows the access page. Otherwise Settings are the machine's and always show;
+ * every other view needs a repository the daemon knows.
  */
 export function pageKey() {
+  if (data.accessRequired) return "access";
   if (ui.view === "settings") return "settings";
   if (ui.scope === null) return "no-repo";
   if (data.missing) return "missing";
@@ -46,8 +50,11 @@ export function pageKey() {
 /** The module that draws page `key`. */
 export const pageModule = (key = pageKey()) => PAGES[key] ?? VIEWS[key];
 
-/** The sidebar lists the repository's packs with how many of their rules are on, on every view. */
-const SIDEBAR_NEEDS = ["rules", "packs"];
+/**
+ * The sidebar lists the repository's packs with how many of their rules are on, and Merge Assist with how many of
+ * its conflicts are open, on every view.
+ */
+const SIDEBAR_NEEDS = ["rules", "packs", "mergeAssistCount"];
 
 /** What a poll loads for the page now (`setNeeds` in `poll.js`): the sidebar's, the view's and an open sheet's. */
 export function currentNeeds() {

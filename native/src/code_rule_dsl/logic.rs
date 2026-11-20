@@ -37,7 +37,7 @@ pub mod front {
         #[path = "caches_tests.rs"]
         pub mod tests;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::{Error, Literal, Program, Term};
+        use crate::code_rule_dsl::logic::front::Error;
         #[allow(unused_imports)]
         use std::collections::BTreeSet;
     }
@@ -52,7 +52,7 @@ pub mod front {
         #[cfg(any(test, feature = "test-hooks"))]
         pub mod tests;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Program, Rule, Term};
+        use crate::code_rule_dsl::logic::front::Error;
         #[allow(unused_imports)]
         use serde_json::Value;
     }
@@ -68,16 +68,11 @@ pub mod lanes;
 #[allow(dead_code)]
 pub mod answers;
 pub mod liveness;
-// Its files are its test modules alone.
-#[cfg_attr(any(test, feature = "test-hooks"), path = "logic/magic")]
+// The demand passes' tests (`plan::corpus::preparation::magic`) against T's goldens; its files are those alone.
+#[cfg(any(test, feature = "test-hooks"))]
+#[path = "logic/magic"]
 pub mod magic {
-    pub use rerail_rr::code_rule_dsl::logic::magic::*;
-    #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
-    #[allow(unused_imports)]
-    use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
-    #[allow(unused_imports)]
-    use std::collections::{BTreeMap, BTreeSet};
 }
 #[allow(dead_code)]
 pub mod native;
@@ -114,14 +109,13 @@ pub mod program_image {
 }
 pub mod program_text;
 pub mod version_trace;
-/// Main's JSON rules translated to `.rr` on read (decision 0175).
+/// Main's JSON rules translated to `.rerail` on read (decision 0175).
 pub mod json_rules;
 #[allow(dead_code)]
 pub mod rr;
 pub mod settings;
 #[allow(dead_code)]
 pub mod sql;
-pub mod simplify;
 /// The reach index's form found in a program (decision 0119).
 pub mod reach_form;
 pub mod rank_form;
@@ -139,7 +133,5 @@ pub mod strings {
     use crate::code_rule_dsl::text::{Domain, Lowered, Source, Spelling, lower};
     #[allow(unused_imports)]
     use rusqlite::Connection;
-    #[allow(unused_imports)]
-    use crate::code_rule_dsl::logic::front::ast::{Atom, Literal, Program, Term};
 }
 // cratify: `convert` is rerail-engine's (it mounts it)

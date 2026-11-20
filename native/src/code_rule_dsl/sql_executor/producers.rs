@@ -21,29 +21,34 @@ pub struct Producer {
     pub query: String,
 }
 
-/// `front::prune`, keeping what SQL producers' queries may read: every relation a query names,
-/// directly or as `rr_rel_<name>`. Naming is a superset of reading, so nothing read is dropped.
-pub fn prune(mut program: front::Program) -> front::Program {
-    let named: BTreeSet<String> = program
-        .settings
+/// The program pruned (`preparation::Prune`), keeping what SQL producers' queries may read: every relation a query
+/// names, directly or as `rr_rel_<name>`. Naming is a superset of reading, so nothing read is dropped.
+pub fn prune(program: Arc<Version>) -> Result<Arc<Version>> {
+    let named: BTreeSet<String> = ProgramFields::settings(&*program)
         .iter()
         .filter(|(k, t)| k == "input" && t.contains("IO=sql"))
         .flat_map(|(_, t)| words(t))
         .collect();
     let keep: Vec<String> = program
-        .decls
-        .keys()
+        .declared_names()
+        .into_iter()
         .filter(|r| {
             let r = r.to_ascii_lowercase();
             named.contains(&r) || named.contains(&format!("{}rel_{r}", catalog::PREFIX))
         })
-        .cloned()
-        .map(String::from).collect();
-    let outputs = program.outputs.clone();
-    program.outputs.extend(keep);
-    let mut program = front::prune(program);
-    program.outputs = outputs;
-    program
+        .collect();
+    let outputs = program.output_names();
+    // Kept as outputs while pruned, then the outputs as they were.
+    let mut b = Builder::on(&program);
+    for rel in &keep {
+        b.fields().add_output(rel);
+    }
+    let mut p = Pipeline::new("sql producers' prune", b.finish().map_err(error)?.0);
+    p.program(&mut plan::corpus::preparation::Prune::default());
+    let pruned = p.finish().map_err(error)?.0;
+    let mut b = Builder::on(&pruned);
+    b.fields().set_outputs(&outputs);
+    Ok(b.finish().map_err(error)?.0)
 }
 
 /// The words of a text, lowercased: its identifiers and anything else that looks like one.
@@ -53,11 +58,12 @@ fn words(text: &str) -> impl Iterator<Item = String> + '_ {
         .map(str::to_ascii_lowercase)
 }
 
-/// Take the program's SQL producers out of its inputs: each becomes a derived relation.
-pub fn take(program: &mut front::Program) -> Result<Vec<Producer>> {
+/// Take the program's SQL producers out of its inputs: each becomes a derived relation. The program without them as
+/// inputs or settings, and the producers.
+pub fn take(program: Arc<Version>) -> Result<(Arc<Version>, Vec<Producer>)> {
     let mut producers = Vec::new();
     let mut kept = Vec::new();
-    for (key, text) in std::mem::take(&mut program.settings) {
+    for (key, text) in ProgramFields::settings(&*program) {
         let parsed = (key == "input")
             .then(|| text.strip_suffix(')').and_then(|s| s.split_once('(')))
             .flatten();
@@ -78,20 +84,30 @@ pub fn take(program: &mut front::Program) -> Result<Vec<Producer>> {
             .filter(|q| !q.trim().is_empty())
             .ok_or_else(|| error(format!("{rel}: IO=sql needs a query")))?;
         let decl = program
-            .decls
-            .get(rel)
+            .columns_of(rel)
             .ok_or_else(|| error(format!("{rel}: a SQL producer needs a declaration")))?;
         if decl.is_empty() {
             return Err(error(format!("{rel}: a SQL producer needs at least one column")));
         }
-        if program.rules.iter().any(|r| r.head.rel == rel) || program.facts.contains_key(rel) {
+        if program.rules().any(|r| program.rel_name(r.head().rel()) == rel) || program.states_facts(rel) {
             return Err(error(format!("{rel}: a SQL producer's rows come only from its query")));
         }
-        program.inputs.retain(|i| i != rel);
         producers.push(Producer { rel: rel.to_owned(), query: query.trim().trim_end_matches(';').to_owned() });
     }
-    program.settings = kept;
-    Ok(producers)
+    if producers.is_empty() {
+        return Ok((program, producers));
+    }
+    let mut b = Builder::on(&program);
+    let inputs: Vec<String> = program.input_names().into_iter().filter(|i| !producers.iter().any(|p| p.rel == *i)).collect();
+    b.fields().set_inputs(&inputs);
+    // The settings left, in their order.
+    let p = b.about_rows("setting").first().map(|row| row[0]);
+    let rows = match p {
+        Some(p) => kept.iter().enumerate().map(|(k, (key, text))| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(key)), Cell::Str(b.atom(text))]).collect(),
+        None => Vec::new(),
+    };
+    b.fields().set_about_rows("setting", rows);
+    Ok((b.finish().map_err(error)?.0, producers))
 }
 
 /// The program relations each producer reads, as SQLite resolves its query. Missing relations
@@ -100,7 +116,7 @@ pub fn take(program: &mut front::Program) -> Result<Vec<Producer>> {
 /// counts as the relations that view reads. Each query must give its declaration's columns.
 /// Per producer: the wave relations it reads, and every other table or view it reads (lowercased),
 /// which tuple maintenance watches for changes.
-fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<Vec<(Vec<String>, Vec<String>)>> {
+fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &Version, producers: &[Producer]) -> Result<Vec<(Vec<String>, Vec<String>)>> {
     use rusqlite::hooks::{AuthAction, Authorization};
     let tables: BTreeMap<String, String> =
         emitted.program.relations.iter().map(|(r, _)| (r.to_ascii_lowercase(), r.clone())).collect();
@@ -121,8 +137,9 @@ fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Pr
             let prepared = db.prepare(&format!("{prefix}SELECT * FROM ({})", p.query)).map(|s| s.column_count());
             db.connection_mut().authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>).map_err(error)?;
             let width = prepared.map_err(|e| error(format!("{}: SQL producer query: {e}", p.rel)))?;
-            if width != program.decls[p.rel.as_str()].len() {
-                return Err(error(format!("{}: the query gives {width} columns, the declaration {}", p.rel, program.decls[p.rel.as_str()].len())));
+            let declared = program.columns_of(&p.rel).map_or(0, |c| c.len());
+            if width != declared {
+                return Err(error(format!("{}: the query gives {width} columns, the declaration {declared}", p.rel)));
             }
             let mut reads = BTreeSet::new();
             let mut other = BTreeSet::new();
@@ -152,13 +169,13 @@ fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Pr
 
 /// The relations whose rows depend on `rel` through the program's rules and producers, `rel`
 /// included.
-fn downstream(program: &front::Program, producers: &[Producer], reads: &[Vec<String>], rel: &str) -> BTreeSet<String> {
+fn downstream(program: &Version, producers: &[Producer], reads: &[Vec<String>], rel: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::from([rel.to_owned()]);
     loop {
         let before = out.len();
-        for r in &program.rules {
-            if r.body.iter().filter_map(front::Literal::atom).any(|a| out.contains(a.rel.as_str())) {
-                out.insert(r.head.rel.to_string());
+        for r in program.rules() {
+            if r.body().filter_map(|l| l.atom()).any(|a| out.contains(program.rel_name(a.rel()))) {
+                out.insert(program.rel_name(r.head().rel()).to_owned());
             }
         }
         for (p, reads) in producers.iter().zip(reads) {
@@ -174,7 +191,7 @@ fn downstream(program: &front::Program, producers: &[Producer], reads: &[Vec<Str
 
 /// Add each producer's step to the emitted program, and the typed views its query may read.
 /// Returns what each producer reads beyond the wave relations (`resolve`), by producer.
-pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<BTreeMap<String, Vec<String>>> {
+pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &Version, producers: &[Producer]) -> Result<BTreeMap<String, Vec<String>>> {
     if producers.is_empty() {
         return Ok(BTreeMap::new());
     }
@@ -185,9 +202,10 @@ pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &fro
     }
     let resolved = resolve(db, emitted, program, producers)?;
     let all_reads: Vec<Vec<String>> = resolved.iter().map(|(reads, _)| reads.clone()).collect();
-    let mut stratum = emitted.program.steps.iter().map(|s| s.stratum).max().unwrap_or(0);
-    for (p, reads) in producers.iter().zip(&all_reads) {
-        let decl = &program.decls[p.rel.as_str()];
+    let top = emitted.program.steps.iter().map(|s| s.stratum).max().unwrap_or(0);
+    // Each producer a stratum of its own, after the program's.
+    for (stratum, (p, reads)) in (top + 1..).zip(producers.iter().zip(&all_reads)) {
+        let decl = program.columns_of(&p.rel).unwrap_or_default();
         let below = downstream(program, producers, &all_reads, &p.rel);
         if let Some(cycle) = reads.iter().find(|r| below.contains(*r)) {
             return Err(error(format!(
@@ -201,7 +219,6 @@ pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &fro
             .zip(&columns)
             .map(|((_, ty), c)| if ty == "sym" { format!("sym_atom({c})") } else { c.clone() })
             .collect();
-        stratum += 1;
         emitted.program.steps.push(schedule::Step {
             output: p.rel.clone(),
             stratum,
@@ -221,9 +238,9 @@ pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &fro
         .filter(|(r,_)|named.contains(&format!("{}rel_{}",catalog::PREFIX,r.to_ascii_lowercase())))
         .map(|(r,_)|r.clone())).collect::<BTreeSet<_>>();
     for rel in typed_reads {
-        if let Some(decl)=program.decls.get(rel.as_str()) {
+        if let Some(decl)=program.columns_of(&rel) {
             let view=quote(&format!("{}rel_{rel}",catalog::PREFIX));
-            let names=catalog::view_columns(decl).iter().map(|c|quote(c)).collect::<Vec<_>>().join(", ");
+            let names=catalog::view_columns(&decl).iter().map(|c|quote(c)).collect::<Vec<_>>().join(", ");
             emitted.setup.push(format!("DROP VIEW IF EXISTS temp.{view}"));
             emitted.setup.push(format!("CREATE TEMP VIEW {view}({names}) AS SELECT * FROM {}",quote(&rel)));
         }

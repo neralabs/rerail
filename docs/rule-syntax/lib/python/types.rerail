@@ -1,0 +1,24 @@
+// python/types: what class of value an expression holds (python/points-to, the analysis phase's typing).
+// COPY: Typing-support-final-shape@b193a9209:docs/rule-syntax/lib/python/calls.rerail (its type relations).
+//
+// The types are python/points-to's: the analysis phase's typing (P3 of decision 0083 §1), rules of the including
+// program's own fixpoint over the earlier phases' exports (struct, types). There is no type checker: types come
+// from what the code assigns, returns, constructs and inherits, and from the libraries' declarations, and every gap
+// is "unknown", never a wrong class.
+//
+// Types are answered where the program models a value: callees and receivers, assigned, returned and decorating
+// values, arguments and bases. Three-valued, like call targets:
+//   type_of(n, t)        n may hold a value whose class is t: a workspace class's qualified name ("pkg.models.Base"),
+//                        or a builtin's name ("str", "int", "None", "module", "type")
+//   type_open(n)         n may also hold a value of a class not listed
+//   proven_type(n, t)    `isinstance(n, t)` is surely true: every class n may hold is t or a subclass, none unlisted
+//   possible_type(n, t)  `isinstance(n, t)` may be true, for a listed class
+//   possible_open(n)     possible_type is incomplete
+// A rule's "possibly a t" is possible_type(n, t) or possible_open(n); "not proven a t" is !proven_type(n, t).
+//
+// e.g. with `class Base: …`, `class Child(Base): …`, then `x = Child()` and `x.run()` in pkg/models.py, the
+// receiver x of `x.run()` has type_of(<x>, "pkg.models.Child") and proven_type for "pkg.models.Child",
+// "pkg.models.Base" and "object". In `def f(y): y.run()` the receiver has type_open(<y>): annotations are not
+// read yet.
+
+#include "python/points-to.rerail"

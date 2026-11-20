@@ -1,4 +1,4 @@
-//! A join's size from its columns' count sketches (decision 0477): the AMS estimate (Alon, Matias and Szegedy; Alon,
+//! A join's size from its columns' count sketches (decision 0506): the AMS estimate (Alon, Matias and Szegedy; Alon,
 //! Gibbons, Matias and Szegedy's "tug of war"), from counters every column's sketch keeps already
 //! (`native::setfix::sketch::Sketch`), as its rows come, at no cost a probe pays.
 //!
@@ -53,13 +53,14 @@ impl Joined {
 
 impl JoinCounts {
     /// From a sketch's counters, its exact counts where it keeps few, its rows and its `F2`.
-    pub fn new(counters: &[i32; BUCKETS], exact: Option<&[(i64, u32)]>, rows: u64, f2: u64) -> JoinCounts {
+    pub fn new(counters: &[i32], exact: Option<&[[i64; 2]]>, rows: u64, f2: u64) -> JoinCounts {
         let exact = exact.filter(|e| e.len() <= EXACT).map(|e| {
-            let mut e: Box<[(i64, u32)]> = e.into();
+            let mut e: Box<[(i64, u32)]> = e.iter().map(|&[v, n]| (v, n as u32)).collect();
             e.sort_unstable_by_key(|t| t.0);
             e
         });
-        JoinCounts { counters: Box::new(*counters), exact, rows: rows as f64, f2: f2 as f64 }
+        let counters: Box<[i32; BUCKETS]> = Box::new(counters.try_into().expect("a sketch's counters"));
+        JoinCounts { counters, exact, rows: rows as f64, f2: f2 as f64 }
     }
 
     /// A column's counts, from its values (the sketch's adds, for tests and columns the engine does not sketch).
@@ -73,7 +74,7 @@ impl JoinCounts {
         }
         let rows = counts.values().map(|&n| u64::from(n)).sum();
         let f2 = counts.values().map(|&n| u64::from(n).pow(2)).sum();
-        let exact: Vec<(i64, u32)> = counts.into_iter().collect();
+        let exact: Vec<[i64; 2]> = counts.into_iter().map(|(v, n)| [v, i64::from(n)]).collect();
         JoinCounts::new(&counters, Some(&exact), rows, f2)
     }
 

@@ -50,7 +50,12 @@ impl Prepared {
         if v.analyses().holds::<Prepared>() {
             return manager::analysis::<Prepared>(v).unwrap_or_default();
         }
-        // The run's kept plans' entry holds the plans an earlier process made of a version the same as this one (Q183):
+        // A program of no rules (a cross part whose every stratum was kept) has no plan to make, read or keep: kept,
+        // it was a write of every warm run, which makes it fresh each time.
+        if v.rules().next().is_none() {
+            return Default::default();
+        }
+        // The run's kept plans' entry holds the plans an earlier process made of a version the same as this one (Q228):
         // read, not made.
         let Some(id) = super::run_holds_plans().then(|| manager::identity(v)) else { return manager::analysis::<Prepared>(v).unwrap_or_default() };
         if let Some(p) = super::prepared_stored(&id) {
@@ -236,14 +241,14 @@ impl Analysis for Prepared {
             let mut sums: HashMap<&str, Estimate> = HashMap::new();
             let mut all_known = true;
             for &k in &base {
-                match prepare_rule(&mut model, f, &placed.body(k), &scc, &estimated, &mut out) {
+                match prepare_rule(&mut model, f, &layouts, &placed.body(k), &scc, &estimated, &mut out) {
                     Some(e) => sums.entry(placed.body(k).rel(placed.body(k).head())).or_default().add(e),
                     None => all_known = false,
                 }
             }
             if !derive {
                 for &k in &steps {
-                    prepare_rule(&mut model, f, &placed.body(k), &scc, &estimated, &mut out);
+                    prepare_rule(&mut model, f, &layouts, &placed.body(k), &scc, &estimated, &mut out);
                 }
                 continue;
             }
@@ -258,7 +263,7 @@ impl Analysis for Prepared {
                 let width = v.decl_of(name).map_or(0, |d| d.cols().count());
                 let estimate = (e.rows * times).max(1.0);
                 let recursion = times > 1.0;
-                // Q184's oracle (`sizes_from`): the rows per node a run held of it, where one did.
+                // Q290's oracle (`sizes_from`): the rows per node a run held of it, where one did.
                 let rows = sizes_from().and_then(|m| m.get(name).copied()).map_or(estimate, |per| (per * NOMINAL_NODES).max(1.0));
                 let times = times * rows / estimate;
                 if let Some(log) = sizes_log() {
@@ -281,7 +286,7 @@ impl Analysis for Prepared {
                     }
                 }
                 for &k in &steps {
-                    prepare_rule(&mut model, f, &placed.body(k), &scc, &estimated, &mut out);
+                    prepare_rule(&mut model, f, &layouts, &placed.body(k), &scc, &estimated, &mut out);
                 }
             } else if all_known {
                 for n in &names {
@@ -293,8 +298,9 @@ impl Analysis for Prepared {
         }
         Ok(Prepared(out))
     }
-    /// 2: each plan's assumed sizes of the derived relations an estimate sized.
-    const VERSION: u32 = 2;
+    /// 2: each plan's assumed sizes of the derived relations an estimate sized. 3: no plan for a line with a constant
+    /// on a column a `values` fact answers.
+    const VERSION: u32 = 3;
     fn rows(&self, _v: &Version) -> Option<Vec<Row>> {
         Some(self.to_rows())
     }
@@ -304,7 +310,7 @@ impl Analysis for Prepared {
 }
 
 /// Prepared plans by the identity of the version they were made of (`manager::identity`): what the kept plans'
-/// entry holds of them (Q183).
+/// entry holds of them (Q228).
 pub type ByVersion = HashMap<[u8; 32], Arc<Prepared>>;
 
 /// `by`'s rows for the kept plans' entry: each the version's identity as four ints, then a plan's row.
@@ -312,6 +318,12 @@ pub fn store_rows(by: &ByVersion) -> Vec<Row> {
     let mut out: Vec<Row> = Vec::new();
     for (id, p) in by {
         let head: Vec<Value> = id.chunks(8).map(|c| Value::Int(i64::from_le_bytes(c.try_into().expect("eight bytes")))).collect();
+        // A version with no prepared plan is kept too, as its id alone: else it is not read back, and the next run
+        // makes its (empty) plans again and writes them.
+        if p.0.is_empty() {
+            out.push(head);
+            continue;
+        }
         out.extend(p.to_rows().into_iter().map(|r| head.iter().cloned().chain(r).collect()));
     }
     out.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
@@ -328,7 +340,12 @@ pub fn of_store_rows(rows: &[Row]) -> ByVersion {
         for (k, i) in ids.iter().enumerate() {
             id[k * 8..k * 8 + 8].copy_from_slice(&i.to_le_bytes());
         }
-        by.entry(id).or_default().push(&r[4..]);
+        let plans = by.entry(id).or_default();
+        // Its id alone: a version with no prepared plan (`store_rows`).
+        if r.len() == 4 {
+            continue;
+        }
+        plans.push(&r[4..]);
         if r.len() < 8 {
             bad.insert(id);
         }
@@ -341,7 +358,7 @@ pub fn of_store_rows(rows: &[Row]) -> ByVersion {
 const RECURSION_DEPTH: f64 = 8.0;
 
 /// Whether derived relations the facts do not size are sized from their rules' plans, and the rules reading them
-/// prepared: off (Q184, 2026-11-19). Plans prepared over derived relations cost the run more the more lines they take,
+/// prepared: off (Q290, 2026-11-19). Plans prepared over derived relations cost the run more the more lines they take,
 /// and right sizes do not save them: corpus0 x B-now, 957-969 G instructions off, 991-1,056 G on, 1,128 G sized from
 /// what a run on another project held, 1,203 G from what the same corpus's run held (an oracle), the same findings in
 /// each. A relation's size is not what such a plan lacks; the distributions it is priced by are the facts' alone.
@@ -378,7 +395,7 @@ impl Estimate {
 /// reads have distinct values, or a comparison), with a recursive rule's deltas: its head's estimate from the plan
 /// (`None` where it is not planned). The rows are the plan's; a head column's distinct values those of the body column
 /// that binds it, at most the rows (one for a constant).
-fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, b: &super::body::Body<'_>, scc: &HashMap<&str, usize>, estimated: &HashSet<String>, out: &mut HashMap<u128, PreparedPlan>) -> Option<Estimate> {
+fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, layouts: &crate::code_rule_dsl::logic::program_image::layouts::Layouts, b: &super::body::Body<'_>, scc: &HashMap<&str, usize>, estimated: &HashSet<String>, out: &mut HashMap<u128, PreparedPlan>) -> Option<Estimate> {
     let known = |model: &Model, i: usize| -> bool {
         match b.view(i) {
             Lit::Cmp { .. } => true,
@@ -414,6 +431,18 @@ fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, b: &super::body
         }
         return None;
     }
+    // A constant on a column a `values` fact answers: the fact gives the column's distinct values, not how many rows
+    // hold this one, and the plan turns on it. PostHog's `param`: `kind($p, #k1025)` (an identifier, 16 % of the
+    // nodes) priced as one kind in 200 led and read 10.4 M rows, where the search, from the kind's frequency, led with
+    // `field($f, #f65559, $ps)` (0.4 %): 253 k. Such a line is planned at run time, from the constant's statistics
+    // (decision 0361 item 5: what no fact answers); its rows still size its head here.
+    let by_values = |i: usize| -> bool {
+        let Lit::Atom(a) = b.view(i) else { return false };
+        b.args(i).iter().enumerate().any(|(c, t)| {
+            matches!(t, TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_)) && layouts.of(a.rel()).any(|f| matches!(f, LayoutFact::Values { col, .. } if *col == c))
+        })
+    };
+    let kept = !(0..b.len()).any(by_values);
     let own = scc.get(b.rel(b.head())).copied();
     let deltas: Vec<usize> = (0..b.len()).filter(|&i| matches!(b.view(i), Lit::Atom(a) if !a.neg() && own.is_some() && scc.get(b.rel(a)).copied() == own)).collect();
     let mut whole = None;
@@ -436,7 +465,9 @@ fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, b: &super::body
         if first.is_none() {
             whole = Some(rows);
         }
-        out.insert(super::line_key(b, first), PreparedPlan { order, work_per_node: work / NOMINAL_NODES, rows_per_node: rows / NOMINAL_NODES, assumed: assumed.clone() });
+        if kept {
+            out.insert(super::line_key(b, first), PreparedPlan { order, work_per_node: work / NOMINAL_NODES, rows_per_node: rows / NOMINAL_NODES, assumed: assumed.clone() });
+        }
     }
     let rows = whole?.max(1.0);
     let ndv = b
@@ -469,7 +500,7 @@ fn why_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> {
     })
 }
 
-/// `RERAIL_SIZES_LOG=FILE` (Q184's measurement): the derived relations' sizes, estimated and met, appended as tab-separated
+/// `RERAIL_SIZES_LOG=FILE` (Q290's measurement): the derived relations' sizes, estimated and met, appended as tab-separated
 /// lines. `estimate REL PER_NODE RECURSIVE`: what preparation sized a relation at, rows per node at the nominal scale
 /// (`RECURSIVE` 1 for a recursion's, its base rules' times `RECURSION_DEPTH`). `seen REL ASSUMED HELD NODES`: a prepared
 /// plan taken by a run, each relation it assumed a size of, rows per node, against what the run holds of it then (a
@@ -481,7 +512,7 @@ pub fn sizes_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> 
     })
 }
 
-/// `RERAIL_SIZES_FROM=LOG` (Q184's oracle, a measurement aid: a labelled bound, never a product path): each derived
+/// `RERAIL_SIZES_FROM=LOG` (Q290's oracle, a measurement aid: a labelled bound, never a product path): each derived
 /// relation an estimate sizes is sized instead at the rows per node an earlier run held of it (the median of its `seen`
 /// lines in `LOG`, `sizes_log`'s), its columns' distinct values scaled with it. A version's prepared plans are kept by
 /// its identity (Q183), so a run under it needs a new store.

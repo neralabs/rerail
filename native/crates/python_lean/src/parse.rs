@@ -14,7 +14,7 @@
 
 use crate::lex::{Extra, Lexed, Refusal, T, Tok, soft};
 use crate::{K, f, key, unkey};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 type R<X> = Result<X, Refusal>;
 
@@ -155,8 +155,21 @@ pub enum Relex {
 /// Line ends a text may join before it is refused.
 pub const MAX_JOINS: usize = 64;
 
+/// A node kind a parse may start at (decision 0466): a file's `module`, or a `type` (a string annotation's text, read
+/// as if in parentheses).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    Module,
+    Type,
+}
+
 /// `src` parsed, `joins` joined; `Err(Ok(r))`, the text to be lexed again.
-pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> Result<Out, Result<Relex, Refusal>> {
+pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn Sink<Out>) -> Result<Out, Result<Relex, Refusal>> {
+    parse_from(src, lexed, joins, Start::Module, finish)
+}
+
+/// [`parse`] from `start`.
+pub fn parse_from<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], start: Start, finish: &mut dyn Sink<Out>) -> Result<Out, Result<Relex, Refusal>> {
     let mut widths = Widths::guess(src.len());
     loop {
         let mut p = P {
@@ -165,19 +178,23 @@ pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn FnM
             extras: &lexed.extras,
             i: 0,
             e: 0,
-            w: Writer::new(0, widths, lexed.toks.len() + lexed.extras.len() + 1),
+            w: Writer::new(0, widths, lexed.toks.len() + lexed.extras.len() + 1).to(finish.target(), src),
             last_end: 0,
             depth: 0,
             relex: None,
             joins,
         };
-        if let Err(r) = p.module() {
+        let read = match start {
+            Start::Module => p.module(),
+            Start::Type => p.type_fragment(),
+        };
+        if let Err(r) = read {
             return Err(p.relex.ok_or(r));
         }
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Err(Refusal::TooLarge));
                 }
                 widths = w;
@@ -723,6 +740,7 @@ impl<'a> P<'a> {
         Ok(n)
     }
 
+    #[allow(clippy::wrong_self_convention, reason = "named for the grammar rule it parses")]
     fn from_import(&mut self) -> R<()> {
         if self.is_name(1, b"__future__") {
             let n = self.open(K::FutureImportStatement, f::NONE, C_NONE);
@@ -893,11 +911,10 @@ impl<'a> P<'a> {
             match self.toks[k].kind {
                 T::LParen | T::LBracket if after(&[T::Name, T::RParen, T::RBracket, T::StrEnd]) => open.push(CALL),
                 T::LParen | T::LBracket | T::LBrace => open.push(0),
-                T::RParen | T::RBracket | T::RBrace => {
-                    if open.pop() == Some(SPLAT | COMMA) {
+                T::RParen | T::RBracket | T::RBrace
+                    if open.pop() == Some(SPLAT | COMMA) => {
                         return true;
                     }
-                }
                 T::Star if after(&[T::LParen, T::LBracket, T::Comma]) => {
                     if let Some(b) = open.last_mut().filter(|b| **b & CALL == 0) {
                         *b |= SPLAT;
@@ -953,6 +970,7 @@ impl<'a> P<'a> {
     }
 
     /// The expression at `at` made a pattern (an assignment's target), in `field`.
+    #[allow(clippy::wrong_self_convention, reason = "makes the expression at `at` a pattern in the tape, not `self` into one")]
     fn to_pattern(&mut self, at: usize, field: u8) -> R<()> {
         let kind = self.kind_at(at);
         let pat = |k: K| key(k, field, C_PAT, false);
@@ -2625,6 +2643,24 @@ impl<'a> P<'a> {
     }
 
     // ---- Types.
+
+    /// A `type` alone, the root (decision 0466): what follows `x:` in an annotated assignment, as tree-sitter reads it
+    /// there (the annotation's rule: a generic's union a `union_type`, any other `|` an expression's). No extra lies
+    /// outside the root: a fragment's tape has one root.
+    fn type_fragment(&mut self) -> R<()> {
+        let (first, last) = match (self.toks.first(), self.toks.iter().rev().find(|t| t.kind != T::Eof)) {
+            (Some(f), Some(l)) if f.kind != T::Eof => (f.start, l.end),
+            _ => return self.refuse(),
+        };
+        if self.extras.iter().any(|x| x.start < first || x.start >= last) {
+            return Err(Refusal::Parse(first));
+        }
+        self.annotation(f::NONE)?;
+        if self.peek() != T::Eof {
+            return self.refuse();
+        }
+        Ok(())
+    }
 
     /// `type`, with unions over its operands (left to right), in `field`.
     fn ty(&mut self, field: u8) -> R<N> {

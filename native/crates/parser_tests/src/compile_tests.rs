@@ -2,13 +2,13 @@
 //! (`tools/bitlex`): each named mask of the compiled block program equals the evaluator's mask on
 //! every input and every executor (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 
-use crate::block_tests::{Executors, executors, inputs, runs};
+use crate::block_tests::{Executors, inputs, runs};
 #[allow(unused_imports)]
 use rerail_compiler::*;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
 use rerail_compiler::bitlex_masks as bitlex_compile;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_metal as metal_program_backend;
 
 /// The masks the compiler handles so far: classes, logic, `prev`, `starts`, `after`, `span`,
@@ -71,11 +71,12 @@ fn forward_masks_equal_the_evaluator_on_every_executor() {
     let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.push(br#"{"a\"b": [1, -2.5e3, "x\\"], "c": true}"#.to_vec());
     for bytes in cases {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in executors(&p, &bytes) {
+        for (executor, got) in ex.every(&bytes) {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
             }
@@ -97,12 +98,14 @@ fn classes_pack_into_shared_products() {
     assert!(compiled.rows.contains("= eq 0x22"), "{}", compiled.rows);
 }
 
-/// What the compiler does not handle yet is refused by name, not guessed.
+/// What the compiler does not handle yet is refused by name, not guessed: `line_has`, which the
+/// evaluator has and the masks do not (`text`, the operation this test named first, is compiled
+/// since 0332's Kotlin step 2).
 #[test]
 fn unsupported_operations_are_refused() {
-    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = text(\"ab\") & a\n").expect("parses");
+    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = line_has(a, a) & a\n").expect("parses");
     let error = bitlex_compile::compile(&stmts, &["b"], None).expect_err("refused");
-    assert!(error.contains("text"), "{error}");
+    assert!(error.contains("line_has"), "{error}");
 }
 
 /// Errors and escapes are the fallback output: on every input and every executor its bits equal
@@ -127,6 +130,7 @@ fn errors_and_escapes_are_the_fallback_output() {
     let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.extend([b"{\"a/b\": 1}".to_vec(), b"{\"a\": 1} // c".to_vec(), b"\"a\nb\"".to_vec(), b"/".to_vec()]);
     let (mut clean, mut falls) = (0, 0);
@@ -143,7 +147,7 @@ fn errors_and_escapes_are_the_fallback_output() {
         // The program has no tokens, so the evaluator's "in no token" errors are not its own.
         let falls_back = out.errors.iter().any(|e| !e.contains("is in no token"));
         assert_eq!(want.iter().any(|&w| w != 0), falls_back, "{} bytes: {:?}", bytes.len(), out.errors);
-        for (executor, got) in executors(&p, &bytes) {
+        for (executor, got) in ex.every(&bytes) {
             // The fallback's outputs, one per delay, ORed: the OR of the masks.
             let mut any = vec![0u64; bytes.len().div_ceil(64)];
             for &k in &compiled.fallbacks {
@@ -184,19 +188,29 @@ fn every_total_is_one_flag_on_every_executor() {
     let files: Vec<&[u8]> = cases.iter().map(Vec::as_slice).collect();
     let batch: Vec<block::BatchFile<'_>> = files.iter().map(|&bytes| block::BatchFile { bytes, program: 0 }).collect();
     let mut runs: Vec<(String, Vec<block::BlockRun>)> = vec![("cpu interpreter".into(), block.run_files(&files)), ("cranelift".into(), cranelift.run_files(&files))];
-    #[cfg(target_os = "macos")]
-    {
-        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
-        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-        runs.push(("metal generated".into(), run_split(&[&native], &batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files));
-        runs.push(("metal forward carry".into(), run_serial_split(&[&native], &batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files));
-    }
-    let _ = &batch;
+    runs.extend(metal_batch_runs(&native, &batch));
     for (executor, got) in runs {
         for (k, run) in got.iter().enumerate() {
             assert_eq!(run.totals, want[k], "{executor}, file {k}: {:?}", String::from_utf8_lossy(&cases[k]));
         }
     }
+}
+
+/// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn metal_batch_runs(native: &block_native::BlockNative, batch: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+    vec![
+        ("metal generated".into(), run_split(&[native], batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files),
+        ("metal forward carry".into(), run_serial_split(&[native], batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files),
+    ]
+}
+
+/// No Metal executors off macOS.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn metal_batch_runs(_: &block_native::BlockNative, _: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
+    Vec::new()
 }
 
 /// Masks that read later bytes, by delays: `next`, `lasts`, the last byte, `next` of a value
@@ -230,16 +244,23 @@ fn later_masks_equal_the_evaluator_on_every_executor() {
     assert!(compiled.rows.contains("delay 5"), "the largest next is 5 bytes\n{}", compiled.rows);
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.extend([b"1e+5 2E-x 3e 4e9 \"\\\\\\\"\0".to_vec(), vec![0u8; 70], b"\"\"\"".to_vec()]);
     for bytes in cases {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in executors(&p, &bytes) {
+        for (executor, got) in ex.every(&bytes) {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
             }
         }
     }
+}
+
+/// A grammar of the IR's tests of its backward pass (decision 0416): its `fill` named `ahead`, a
+/// `back_fill` (`syntax::backward`), as no grammar may write one.
+fn backward(text: &str) -> Vec<::bitlex::syntax::Stmt> {
+    ::bitlex::syntax::backward(::bitlex::syntax::parse(text).expect("parses"), &["ahead"]).expect("a fill named `ahead`")
 }
 
 /// Numbers (`number`): planes of a place, carried back and forth, subtracted and compared, in a
@@ -248,14 +269,14 @@ const NUMBERS: &str = r#"
 lexer numbers
 class tick = '`'
 mask last  = tick & ~next(tick)
-number end = back_fill(last, ~tick, position)
-number rem = end - position
+number ahead = fill(last, ~tick, position)
+number rem = ahead - position
 mask long  = tick & at_least(rem, 3)
 number n   = fill(long, long, rem)
 mask close = tick & at_least(rem, n) & ~long
 mask over  = above(n, rem)
 mask far   = at_least(position, 1000) & ~at_least(position, 66000)
-mask odd   = above(end, 65537)
+mask odd   = above(ahead, 65537)
 rounds until settled {
   carry h  = empty
   mask o   = long & ~h
@@ -269,7 +290,7 @@ rounds until settled {
 #[test]
 fn numbers_equal_the_evaluator_on_every_executor() {
     let names = ["long", "close", "over", "far", "odd", "o", "c", "f"];
-    let stmts = ::bitlex::syntax::parse(NUMBERS).expect("parses");
+    let stmts = backward(NUMBERS);
     let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
     assert!(compiled.rows.contains("position 6") && !compiled.rows.contains("position 5"), "planes from bit 6 are the block's place\n{}", compiled.rows);
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
@@ -295,13 +316,13 @@ fn numbers_equal_the_evaluator_on_every_executor() {
 }
 
 /// Values made from the position alone, read after a backward pass (stored by the first pass and
-/// loaded): `aligned(_, 3)`'s phases and `end - position`'s previous position, on every executor,
+/// loaded): `aligned(_, 3)`'s phases and `ahead - position`'s previous position, on every executor,
 /// Metal's forward carry and backward passes included.
 #[test]
 fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
-    let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask s = back_fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(s, 3)\n";
+    let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask ahead = fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(ahead, 3)\n";
     for (text, names) in [(aligned, &["a", "b"][..]), (NUMBERS, &["long", "close", "over", "far", "odd"][..])] {
-        let stmts = ::bitlex::syntax::parse(text).expect("parses");
+        let stmts = backward(text);
         let compiled = bitlex_compile::compile(&stmts, names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
         let rows = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
         let p = rir::assemble(&rows).unwrap_or_else(|e| panic!("{e}\n{rows}"));
@@ -314,7 +335,7 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
             // interpreter or generated kernels.
             #[allow(unused_mut)]
             let mut got = Executors::new(&p).run(&bytes, false).0;
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
                 use metal_program_backend::block_program::serial::{Segments, run_serial_split};
                 let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
@@ -336,15 +357,15 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
 /// The payoff on Metal of remaking values made from the position (doc 26 §1.10), run by hand:
 /// the row's slots and the forward carry's GPU seconds, best of 5, over 8 MB (1 MB for the
 /// numbers, whose stored row is over the device's capacity at 8).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 #[ignore = "a measurement: run by hand"]
 fn positions_after_a_backward_pass_metal_payoff() {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
-    let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask s = back_fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(s, 3)\n";
+    let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask ahead = fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(ahead, 3)\n";
     for (name, text, names, mb) in [("aligned", aligned, &["a", "b"][..], 8), ("numbers", NUMBERS, &["long", "close", "over", "far", "odd"][..], 1)] {
         let file: Vec<u8> = runs().into_iter().flatten().map(|b| [b'1', b'`', b'"', b' '][usize::from(b) % 4]).cycle().take(mb << 20).collect();
-        let stmts = ::bitlex::syntax::parse(text).expect("parses");
+        let stmts = backward(text);
         let compiled = bitlex_compile::compile(&stmts, names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
         let p = rir::assemble(&format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows)).expect("assembles");
         let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
@@ -386,6 +407,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
     let prepared = Executors::new(&p);
     let label = |name: &str| usize::from(compiled.labels.iter().find(|l| l.0 == name).unwrap_or_else(|| panic!("no {name}")).1);
     let (starts, lasts) = (label(bitlex_compile::STREAM_START), label(bitlex_compile::STREAM_LAST));
+    let lasts_made = p.block_programs.first().is_some_and(|b| rerail_compiler::block_native::BlockNative::lower(b).records_made().contains(&lasts));
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
@@ -411,7 +433,10 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
             }
             let at = format!("{executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
             assert_eq!(cut(got[starts].clone(), n), want_starts, "starts, {at}");
-            assert_eq!(cut(got[lasts].clone(), n), want_lasts, "lasts, {at}");
+            // The CPU makes no lasts mask where its record pass makes the lasts (decision 0411).
+            if !(executor == "cranelift" && lasts_made) {
+                assert_eq!(cut(got[lasts].clone(), n), want_lasts, "lasts, {at}");
+            }
             compared += 1;
         }
     }
@@ -419,11 +444,13 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
     assert!(compared > 0 && rejected > 0);
 }
 
-/// All of `json.bitlex` as generated MSL: one kernel, a few lines per instruction (it was 0.7 to
-/// 1.1 MB of round kernels, each recomputing what came before it, and took Metal minutes).
+/// All of `json.bitlex` as generated UKL: one kernel, a few lines per instruction (it was 0.7 to
+/// 1.1 MB of round kernels, each recomputing what came before it, and took Metal minutes). The lines
+/// counted are those generated for the program, after the head every source shares
+/// (`block_program::head`: the carries, the sinks and the interpreter's helpers, 0440 step C).
 #[test]
-#[cfg(target_os = "macos")]
-fn json_msl_is_one_kernel() {
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn json_ukl_is_one_kernel() {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
@@ -439,12 +466,18 @@ fn json_msl_is_one_kernel() {
     let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     for width in LaneWidth::ALL {
         for strategy in ClassStrategy::ALL {
-            let msl = generate_with(&native, width, strategy);
-            assert_eq!(msl.matches("kernel void ").count(), 1);
-            let lines = msl.lines().count();
+            let ukl = generate_with(&native, width, strategy);
+            assert_eq!(ukl.matches("DEFINE_KERNEL2(").count(), 1);
+            let generated = ukl.strip_prefix(&metal_program_backend::block_program::head(width)).expect("a source starts with the shared head");
+            let lines = generated.lines().count();
+            // Counted on the form generated: `Planes` writes each class out as the planes' logic.
+            let insts = match strategy {
+                ClassStrategy::Lookup => native.insts.len(),
+                ClassStrategy::Planes => native.planes_form().insts.len(),
+            };
             // A fixed preamble (the kernel's arguments, tables and stores), then a few lines per
             // instruction in each of three bodies (general, full group, ASCII full group).
-            assert!(lines < 200 + 15 * native.insts.len(), "{}-byte {strategy:?}: {lines} lines for {} instructions", width.bytes(), native.insts.len());
+            assert!(lines < 200 + 15 * insts, "{}-byte {strategy:?}: {lines} lines for {insts} instructions", width.bytes());
         }
     }
 }
@@ -455,7 +488,7 @@ fn json_msl_is_one_kernel() {
 /// default polls it is one launch; with one poll per predecessor and none after it, groups leave unfinished and the launch is repeated; the
 /// results are the same.
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn a_batch_of_files_and_programs_is_one_launch() {
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_batch};
     let programs = batch_programs();
@@ -537,11 +570,18 @@ fn the_cpu_executors_take_a_batch() {
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
+    // The rows the CPU's tier 1 does not store (0406): a total no one reads by its rows is its
+    // flag only, compared below.
+    let unstored: Vec<Vec<usize>> = blocks.iter().map(|b| rerail_compiler::block_native::BlockNative::lower(b).cpu_unstored()).collect();
     for (name, got) in [("interpreter", block::run_batch(&blocks, &files)), ("cranelift", native_cpu_block::run_batch(&compiled, &files))] {
         assert_eq!(got.len(), files.len());
         for (k, (got, want)) in got.iter().zip(&want).enumerate() {
             let what = format!("{name}: file {k} ({} bytes, program {})", files[k].bytes.len(), files[k].program);
-            assert_eq!(got.outputs, want.outputs, "{what}");
+            let rows = |r: &block::BlockRun| -> Vec<Vec<u64>> {
+                r.outputs.iter().enumerate().filter(|&(o, _)| name == "interpreter" || !unstored[files[k].program].contains(&o)).map(|(_, w)| w.clone()).collect()
+            };
+            assert_eq!(rows(got), rows(want), "{what}");
+            assert_eq!(got.totals, want.totals, "{what}: the totals");
             if name == "interpreter" {
                 // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
                 assert_eq!(got.positions, want.positions, "{what}");
@@ -578,7 +618,7 @@ fn json_batch_cost_per_block() {
     println!("files to the fallback: {fallback}");
     let s = compiled.batch_cpu_seconds(&slices, 3);
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
         use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, RepeatedLaunches, run_split};
         // The count is the run's (decision 0442).
@@ -802,9 +842,15 @@ fn json_loop_keeps_values_in_registers() {
 /// and Cranelift spills two values elsewhere. 667 and 4 with 0381: a class one `cmtst` (24
 /// fewer), the escaped quotes' rounds behind a branch (5), no complement of a complement (5),
 /// the bitmask's weights one load, the constants made at the body's head, and a total read
-/// back from its row at the step's end, not held through the body.
-const JSON_LOOP: usize = 667;
-const JSON_LOOP_STACK: usize = 4;
+/// back from its row at the step's end, not held through the body. 673 and 7 with 0383: the
+/// full body runs on the edge blocks too, its edge part behind one cold branch at its end, so
+/// the loop has no general body. The branch's test is a load of the edge slot (+1), and the
+/// edge part reads two of the body's early words, the string's, which then live to the body's
+/// end (one spill, +2). The head's test, outside this loop, is one compare where it was two.
+#[cfg(target_arch = "aarch64")]
+const JSON_LOOP: usize = 673;
+#[cfg(target_arch = "aarch64")]
+const JSON_LOOP_STACK: usize = 7;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
 //
@@ -815,6 +861,7 @@ const JSON_LOOP_STACK: usize = 4;
 /// A tier-1 program's violations: more string state than simdjson's (one `escaped`, one
 /// `toggle`), a `fill` (a run is a token's; tier 2 reads it from the token's text), or a look-back
 /// past the byte before (a token start looks one byte back, as simdjson's `follows`).
+#[cfg(target_arch = "aarch64")]
 fn tier1_violations(p: &block::BlockProgram) -> Vec<String> {
     use rerail_compiler::block::BlockOp::*;
     let count = |f: fn(&block::BlockOp) -> bool| p.ops.iter().filter(|op| f(op)).count();
@@ -983,17 +1030,24 @@ fn only_the_compiler_reads_tier2s_states() {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("reads a source file");
-            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`, a part's
-            // `parted[0].arms`) are not the table's, nor a shape's or a count's (`shape.arms`, `cols.arms`,
-            // `c.arms`): an `.arms` is the table's only after another name.
-            let table_arms = |line: &str| {
-                line.match_indices(".arms").any(|(at, _)| {
+            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`,
+            // and `self.arms` in `Reader`'s own methods) and tier 1's counts of arms read in place
+            // (`shape.arms`, `cols.arms`, `c.arms`) are not the table's: a `.arms` is the table's
+            // unless its receiver is one of those. The table's own `self.arms` is in `grammar.rs`.
+            let other_arms = |line: &str| {
+                line.match_indices(".arms").all(|(at, _)| {
                     let before = &line[..at];
-                    let name = &before[before.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_').len()..];
-                    !before.ends_with(']') && !["rd", "reader", "shape", "cols", "c"].contains(&name)
+                    let receiver = before.rsplit(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or_default();
+                    // `readers[…].arms`: the indexed list before the `.arms` is the readers'.
+                    let indexed = before.ends_with(']') && before.rfind("readers[").is_some_and(|k| !before[k..].contains(".arms"));
+                    ["rd", "reader", "shape", "cols", "c", "self"].contains(&receiver) || indexed
                 })
             };
-            let table_line = |line: &str| table_arms(line) || needles[1..].iter().any(|n| line.contains(n));
+            // And `.arms` is the table's only in code that reaches `grammar` (its rows are
+            // `grammar::ArmRow`s); a comment reads nothing.
+            let code = |line: &str| !line.trim_start().starts_with("//");
+            let reaches_grammar = text.lines().filter(|l| code(l)).any(|l| l.contains("grammar::"));
+            let table_line = |line: &str| code(line) && (needles[1..].iter().any(|n| line.contains(n)) || (reaches_grammar && line.contains(".arms") && !other_arms(line)));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }
@@ -1012,33 +1066,36 @@ fn json_with_check(with: Option<&str>) -> Result<(Program, bitlex_compile::Compi
     json_compiled_text(&text)
 }
 
-/// JSON's number check (doc 18 §4) is tier 1's: masks computed with the rest of the block
-/// program, a state's mask per state of its byte machine, joining the fallback. One `fill` per
-/// run (the integer, the fraction, the exponent) and one for the tokens it leaves to tier 2's
-/// keywords; `prev`s by one byte, and logic; no other carry. Tier 2 has no word for it. Its
-/// size is a ratchet: lower it as the compiler improves.
+/// JSON's number check (doc 18 §4) is a token's check (decision 0398), as simdjson's stage 2
+/// parses a number: tier 2 runs it over each number's bytes, and tier 1 makes none of it (its
+/// program is the one with no check). One `fill` per run (the integer, the fraction, the
+/// exponent) and one for the span it checks; `prev`s by one byte, and logic. Its size is a
+/// ratchet: lower it as the compiler improves.
 #[test]
-fn json_number_check_is_tier1_masks() {
-    use rerail_compiler::block::BlockOp::*;
+fn json_number_check_is_a_tokens_check() {
+    use rerail_compiler::program::LocalOp;
     let (with, _) = json_compiled();
     let (without, _) = json_with_check(None).expect("compiles without the check");
-    let (a, b) = (&with.block_programs[0], &without.block_programs[0]);
-    let fills = |p: &block::BlockProgram| p.ops.iter().filter(|op| matches!(op, Fill(..))).count();
-    let added: Vec<&block::BlockOp> = a.ops.iter().filter(|op| !b.ops.contains(op)).collect();
-    let other: Vec<&&block::BlockOp> = added.iter().filter(|op| !matches!(op, Eq(_) | Class { .. } | Const(_) | Within(_) | Not(_) | And(..) | Or(..) | AndNot(..) | Prev(_, 1) | Fill(..))).collect();
-    eprintln!("json number check: {} operations, {} fills", a.ops.len() - b.ops.len(), fills(a) - fills(b));
-    assert_eq!((fills(a) - fills(b), other.len()), (4, 0), "{other:?}");
-    assert!(a.ops.len() - b.ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", a.ops.len() - b.ops.len());
+    assert_eq!(with.block_programs[0].ops, without.block_programs[0].ops, "tier 1 makes the check");
+    let checks: Vec<&rerail_compiler::program::LocalCheck> = with.local_checks.iter().filter(|c| c.token).collect();
+    assert_eq!(checks.len(), 1, "{:?}", with.local_checks);
+    let ops = &checks[0].ops;
+    let fills = ops.iter().filter(|op| matches!(op, LocalOp::Fill(..))).count();
+    let other: Vec<&LocalOp> = ops.iter().filter(|op| !matches!(op, LocalOp::Bytes(_) | LocalOp::Not(_) | LocalOp::And(..) | LocalOp::Or(..) | LocalOp::AndNot(..) | LocalOp::Prev(_, 1) | LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last)).collect();
+    eprintln!("json number check: {} operations, {fills} fills", ops.len());
+    assert_eq!((fills, other.len()), (4, 0), "{other:?}");
+    assert!(ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", ops.len());
     let text = rir::disassemble(&with);
-    assert!(!text.lines().any(|l| l.split_whitespace().nth(1) == Some("CHECK")), "tier 2 checks a token");
+    assert!(text.lines().any(|l| l.split_whitespace().nth(1) == Some("CHECK")), "tier 2 checks no token");
 }
 
 /// The check's operations (a ratchet). 100 as a program of its own run per number in tier 2;
 /// 43 as masks in tier 1, its arms into a state on the same bytes sharing one `prev`; 44 when its
-/// span fills from the starts it takes.
-const JSON_NUMBER_CHECK_OPS: usize = 44;
+/// span fills from the starts it takes; 48 as a token's check (0398): its own `start`, `last`
+/// and byte sets, which tier 1's shared.
+const JSON_NUMBER_CHECK_OPS: usize = 48;
 
-/// JSON's number check, as tier 1's masks, equals the reference's grammar on every word of up
+/// JSON's number check, a token's check, equals the reference's grammar on every word of up
 /// to five bytes over `-01.eEx`, and on longer ones: a file of the word alone is parsed, both
 /// tiers on their interpreters, exactly when the reference parses it, to the same nodes.
 #[test]
@@ -1185,9 +1242,11 @@ fn json_tier2_is_transducer_words() {
     }
     // The keywords (`true`, `false`, `null`) are a switch's targets, a row each.
     assert!(text.lines().any(|l| l.trim_start().starts_with("switch ") && l.contains(" word s")), "no switch names a keyword");
-    for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT", "CHECK"] {
+    for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT"] {
         assert!(!words.iter().any(|l| l.split_whitespace().nth(1) == Some(banned)), "{banned}:\n{}", words.join("\n"));
     }
+    // A `CHECK` is a number's: a token's check over its bytes (decision 0398).
+    assert!(p.local_checks.iter().all(|c| c.token), "a check of tier 1's mask: {:?}", p.local_checks);
 }
 
 /// JSON's tier 2, on the words' interpreter, writes the reference parser's nodes, and goes to
@@ -1217,21 +1276,27 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns). Its loop
     // heads are the stream's. The table is written as it goes (each row's parent and extra flag
-    // with the row), and JSON defers no leaf: no call, no pass at its end. A token's end is its
-    // record's (`records`): no search.
+    // with the row), and JSON defers no leaf: no pass over the table, at its end or before. A
+    // token's end is its record's (`records`): no search. Its calls are the tape's rare steps
+    // (decision 0140: a block's base, a commit of codes, the image's end), none a table pass.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    // Its calls are the tape's (8a1762be0: tier 2 writes the tape): a block's offsets, a commit,
-    // a code taken back, the image's end, each rare (`TableFns`), the module's ids 1 to 4. A pass
-    // over the table (a wrap's `shift`, a drop's) would be declared before them, and the tape's
-    // ids past 4.
-    let callees: Vec<u32> = tier2.clif.lines().filter_map(|l| l.trim().split_once(" = colocated u0:")).filter(|(k, _)| k.starts_with("fn")).filter_map(|(_, rest)| rest.split_whitespace().next()?.parse().ok()).collect();
-    assert!(callees.iter().all(|&id| (1..=4).contains(&id)), "no pass over the table: {callees:?}");
+    // Its calls are the tape's rare steps and the outlined checks (a number's, decision 0398, rare code
+    // out of the arm's): every one an outlined function's, none a pass over the table.
+    assert_eq!(tier2.table_passes, 0, "no pass over the table");
+    assert!(tier2.own_calls > 0 && rerail_compiler::clif_text::callees(&tier2.clif).len() == tier2.own_calls, "every call an outlined function's: {}", tier2.own_calls);
     let files = json_tier2_files();
+    let made =
+        rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).cpu_unstored();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);
         let got1 = tier1.extract(f);
-        assert_eq!(got1, want1, "tier 1: {}", String::from_utf8_lossy(f));
+        assert_eq!(
+            got1.without(&made),
+            want1.without(&made),
+            "tier 1: {}",
+            String::from_utf8_lossy(f)
+        );
         let want = stream::run(&p, f, &want1).map_err(|r| r.pc);
         let got = tier2.run(f, &got1).map_err(|r| r.pc);
         assert_eq!(got, want, "tier 2: {}", String::from_utf8_lossy(f));

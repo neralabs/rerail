@@ -96,10 +96,15 @@ pub const COUNT: u8 = 0x65;
 /// the check holds at a bit of its mask among the token's bytes, as the lean lexer checks a
 /// string's `\u` escapes where it notes one.
 pub const CHECK: u8 = 0x66;
-/// The pending extras that start where mask `operand` (`Words::block_programs`' masks) does not
-/// hold, from the first on, are no longer pending: the nodes closed next keep them, as a leaf
-/// taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
+/// The pending extras before the first whose code has mark `operand`'s bit (the marks of its
+/// own gap, `records::Records::own`) are no longer pending: the nodes closed next keep them, as
+/// a leaf taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
 /// line break are the statement's.
+/// `m=1` (`mark … , drops …`): where gap pattern `operand` holds at the token
+/// (`Words::gap_patterns`, its first entry), the extra pending last is dropped: no node of the
+/// tape (decision 0416, the lean lexer's swallowed comment). `m=2`, and `m=3+F` where flag `F`
+/// is set (`mark … , loses …`): where gap pattern `operand` holds, the extra pending last is
+/// lost: of no width, after the token (decision 0451, the lean lexer's `asi`).
 pub const SETTLE: u8 = 0x84;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
@@ -237,6 +242,18 @@ pub fn split(word: u32) -> (u8, u8, u16) {
     (word as u8, (word >> 8) as u8, (word >> 16) as u16)
 }
 
+/// The grammar's names for a program's numbers (`name rule R "N"`, `name kind #K "N"`, `name
+/// token K "N"`, `name mark K "N"`): each rule's (by its place among `Words::rules`), each node
+/// kind's, each record kind's (the token kinds tier 1's records give), and each mark's in the
+/// records' code (`Records::marks`, by its bit).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Names {
+    pub rules: Vec<(u16, String)>,
+    pub kinds: Vec<(u16, String)>,
+    pub tokens: Vec<(u8, String)>,
+    pub marks: Vec<(u8, String)>,
+}
+
 /// A program's words and the tables they index.
 #[derive(Clone, Default)]
 pub struct Words {
@@ -262,6 +279,9 @@ pub struct Words {
     /// rule's), its calls (`PUSH`) native calls: only a call's `GOTO`, the word after its
     /// `PUSH`, goes to another rule (`stream::validate_rules`). Empty: one state machine.
     pub rules: Vec<u16>,
+    /// The grammar's names (`name …` rows), for code that reads as the grammar does: none changes
+    /// what the program does.
+    pub names: Names,
     /// Tier 2's marks that hold only at a token of one word (`markword K sW`): mark `K` (its
     /// order) holds where its mask does and the token's record names string `W`, as a parser
     /// tests the next token's word. Rising by mark.
@@ -278,12 +298,19 @@ pub struct Words {
     /// record's bit does and its tokens follow, each element one record (the extras between
     /// skipped). Rising by mark.
     pub token_marks: Vec<TokenMark>,
+    /// The questions a mark's `drops` and `loses` ask (decision 0451; `gappattern P oO kK …`):
+    /// entries of one pattern share its order `P`, which `SETTLE` names by its first entry
+    /// (`patterns_hold`). Each element is a record as the lexer wrote it, extras included, at
+    /// its offset from the token (`gap_pattern_holds`): the lean lexer's `asi`, which reads on
+    /// past a comment after a line break. Rising by pattern.
+    pub gap_patterns: Vec<TokenMark>,
     /// The counts of tokens (`COUNT`; `tokencount N max M`): each one's most.
     pub counts: Vec<u16>,
     /// Checks of a few bytes at each bit of a sparse mask (`localcheck`): tier 1's escape or
     /// error `A & L`, with `A` a mask tier 2 reads and `L` local (byte tests at fixed offsets);
     /// at `ACCEPT`, the file is refused where `L` holds at a bit of `A`. As the lean lexer checks
-    /// a string's `\u` escapes where it notes one.
+    /// a string's `\u` escapes where it notes one. Or a check over a token's own bytes
+    /// (`LocalCheck::token`): a number's syntax, as simdjson's stage 2 parses a number.
     pub local_checks: Vec<LocalCheck>,
     /// The preprocessing words' tables (`pp_words`), when the program has them.
     pub pp: PpTables,
@@ -294,20 +321,38 @@ pub struct Words {
 pub struct PpTables {
     /// The punctuators (`ppop sN`): two punctuators paste into one where their bytes spell one.
     pub ops: Vec<u16>,
-    /// A literal pastes with an identifier after it into one literal, its suffix (`ppsuffix`,
-    /// C++'s user-defined literals).
+    /// The punctuators C++ has and C does not (`ppop sN cpp`): one where the run is C++'s
+    /// (`pp_words::Env::cpp`).
+    pub cpp_ops: Vec<u16>,
+    /// In C++, a literal pastes with an identifier after it into one literal, its suffix
+    /// (`ppsuffix`, user-defined literals).
     pub suffix: bool,
-    /// `#if` reads C++'s alternative tokens as operators and `true` as 1 (`ppcpp`).
+    /// In C++, `#if` reads the alternative tokens as operators and `true` as 1 (`ppcpp`).
     pub cpp: bool,
 }
 
 /// A local check (`Words::local_checks`): at each byte `j` of mask `mask`, `ops`' last value at
 /// stream place `j + delay` (`LocalOp`, each op's operands earlier ones); 1 refuses.
+///
+/// A token's check (`token`, decision 0398): `ops` over the token's own bytes, place 0 its first
+/// byte, as simdjson's stage 2 reads a number (`token_value`); `mask` unused. With a `delay`
+/// (decision 0399), the frame runs that many bytes past the token, and the test at place `i`
+/// is the last op at `i + delay`: 1 at any of places `delay` to `n + delay` refuses. A
+/// `within k` there is a byte of the file: place `i - k` is in the frame and the file. A check
+/// `check KIND = G` compiles to one: its byte machine as a `fill` per self-loop and logic, run
+/// word-parallel, 64 places a word, its carries passed from word to word on a longer token. No
+/// loop over bytes.
+///
+/// A token's check may read `back` bytes before the token (decision 0428): the frame then
+/// begins that many bytes earlier, the token's first byte at place `back`. Before the file every
+/// op's operand is 0 (no byte, no token), as tier 1's `prev` reads it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LocalCheck {
     pub mask: u16,
     pub delay: u8,
     pub ops: Vec<LocalOp>,
+    pub token: bool,
+    pub back: u8,
 }
 
 /// A local check's operation, at a stream place `i` (tier 1's meaning: `block::BlockOp`): a
@@ -327,6 +372,71 @@ pub enum LocalOp {
     Xor(u16, u16),
     AndNot(u16, u16),
     Prev(u16, u8),
+    /// A token's check only (`LocalCheck::token`): `fill(s, e)`, `block::BlockOp::Fill`'s, from
+    /// the token's first byte: `f[i] = s[i] | (f[i - 1] & !e[i])`, `f[-1] = 0`.
+    Fill(u16, u16),
+    /// A token's check only: 1 at the token's first byte.
+    Start,
+    /// A token's check only: 1 at the token's last byte.
+    Last,
+    /// A token's check only (decision 0428): 1 where a token before this one has its last
+    /// byte, as tier 2's records hold them; 0 at the token and after it.
+    Ended,
+}
+
+impl LocalOp {
+    /// The ops it reads.
+    pub fn operands(&self) -> Vec<u16> {
+        match *self {
+            LocalOp::Not(a) | LocalOp::Prev(a, _) => vec![a],
+            LocalOp::And(a, b) | LocalOp::Or(a, b) | LocalOp::Xor(a, b) | LocalOp::AndNot(a, b) | LocalOp::Fill(a, b) => vec![a, b],
+            LocalOp::Bytes(_) | LocalOp::Const(_) | LocalOp::Within(_) | LocalOp::Start | LocalOp::Last | LocalOp::Ended => vec![],
+        }
+    }
+
+    /// An op of a token's check only.
+    pub fn token_only(&self) -> bool {
+        matches!(self, LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last | LocalOp::Ended)
+    }
+}
+
+/// A token's check (`LocalCheck::token`) at the token of `bytes[start..end]`: whether it
+/// refuses. The frame is `back` bytes before the token, its bytes and `delay` more, a byte past
+/// the file 0. `ended(j)`: whether a token before this one has its last byte at `j`.
+pub fn token_value(c: &LocalCheck, bytes: &[u8], start: usize, end: usize, ended: &dyn Fn(usize) -> bool) -> bool {
+    let (ops, back) = (&c.ops, usize::from(c.back));
+    let (n, d) = (end - start, usize::from(c.delay));
+    let m = back + n + d;
+    // The file's index of place `i`; none before the file.
+    let file = |i: usize| (start + i).checked_sub(back);
+    let byte = |i: usize| file(i).map(|j| bytes.get(j).copied().unwrap_or(0));
+    let mut v: Vec<Vec<bool>> = Vec::with_capacity(ops.len());
+    for op in ops {
+        let at = |a: u16, i: usize| v[usize::from(a)][i];
+        let row: Vec<bool> = match *op {
+            LocalOp::Bytes(s) => (0..m).map(|i| byte(i).is_some_and(|b| s[usize::from(b) / 64] >> (b % 64) & 1 == 1)).collect(),
+            LocalOp::Const(p) => (0..m).map(|i| p >> (i % 64) & 1 == 1).collect(),
+            LocalOp::Within(k) => (0..m).map(|i| i >= usize::from(k) && file(i - usize::from(k)).is_some_and(|j| j < bytes.len())).collect(),
+            LocalOp::Ended => (0..m).map(|i| i < back && file(i).is_some_and(ended)).collect(),
+            LocalOp::Not(a) => (0..m).map(|i| !at(a, i)).collect(),
+            LocalOp::And(a, b) => (0..m).map(|i| at(a, i) && at(b, i)).collect(),
+            LocalOp::Or(a, b) => (0..m).map(|i| at(a, i) || at(b, i)).collect(),
+            LocalOp::Xor(a, b) => (0..m).map(|i| at(a, i) != at(b, i)).collect(),
+            LocalOp::AndNot(a, b) => (0..m).map(|i| at(a, i) && !at(b, i)).collect(),
+            LocalOp::Prev(a, k) => (0..m).map(|i| i >= usize::from(k) && at(a, i - usize::from(k))).collect(),
+            LocalOp::Fill(a, b) => {
+                let mut f = vec![false; m];
+                for i in 0..m {
+                    f[i] = at(a, i) || (i > 0 && f[i - 1] && !at(b, i));
+                }
+                f
+            }
+            LocalOp::Start => (0..m).map(|i| i == back).collect(),
+            LocalOp::Last => (0..m).map(|i| i + 1 == back + n).collect(),
+        };
+        v.push(row);
+    }
+    v.last().is_some_and(|r| r[back + d..].iter().any(|&b| b))
 }
 
 /// A local check's value at stream place `i` over `bytes` (`LocalCheck`), each op's once.
@@ -346,6 +456,8 @@ pub fn local_value(ops: &[LocalOp], bytes: &[u8], i: i64) -> bool {
             LocalOp::Xor(a, b) => at(ops, usize::from(a), bytes, i) != at(ops, usize::from(b), bytes, i),
             LocalOp::AndNot(a, b) => at(ops, usize::from(a), bytes, i) && !at(ops, usize::from(b), bytes, i),
             LocalOp::Prev(a, k) => i >= i64::from(k) && at(ops, usize::from(a), bytes, i - i64::from(k)),
+            // A token's check's alone (`stream::validate_local_checks`).
+            LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last | LocalOp::Ended => unreachable!("a token's check's op in a local check"),
         }
     }
     !ops.is_empty() && at(ops, ops.len() - 1, bytes, i)
@@ -359,6 +471,30 @@ pub struct TokenMark {
     /// A mark the grammar takes nowhere: where it holds, the file is refused. `TOKEN` tests it
     /// at each token its record's bit names, once (no state tests it).
     pub refuses: bool,
+    /// An `unless before` (decision 0416): the mark holds where it does not. A mark's entries
+    /// share its order (`patterns_hold`).
+    pub unless: bool,
+}
+
+/// Whether the token marks of one order hold (`Words::token_marks` from `first`, the entries
+/// of `first`'s order): none of its `unless` ones, and one of the others where it has any.
+/// `holds` tests one entry.
+pub fn patterns_hold(marks: &[TokenMark], first: usize, holds: &mut dyn FnMut(&TokenMark) -> bool) -> bool {
+    let order = marks[first].order;
+    let these = marks[first..].iter().take_while(|m| m.order == order);
+    let (mut some, mut any) = (false, false);
+    for m in these {
+        let h = holds(m);
+        if m.unless {
+            if h {
+                return false;
+            }
+        } else {
+            some = true;
+            any |= h;
+        }
+    }
+    !some || any
 }
 
 /// One token of a token mark: its offset from the mark's token (-1 the one before), and what
@@ -377,6 +513,60 @@ pub struct TokenElem {
     pub not: bool,
     /// The file's end takes it too: no token left (the last element only).
     pub end: bool,
+    /// A run (decision 0416): any number of records the element takes, then the elements after
+    /// it from any of them on (one run at most, after offset 0, never last).
+    pub run: bool,
+    /// A run's depths (Q339, Bitlex's `nest`): each side of one, the run's records it takes go
+    /// one deeper (`open`) or one out. The elements after the run are tried only where every
+    /// depth is 0; a closer where its depth is 0 ends the run.
+    pub nests: Vec<Nest>,
+    /// A run's `ending` (Q342): the elements after it are tried only where its last record (the
+    /// one before it, where it took none) is one this test takes.
+    pub ending: Option<Box<TokenElem>>,
+    /// The marks (bits of the records' marks) whose bit the record must not hold (`without M`),
+    /// as the lean parser asks `!peek_at(j).nl`: the element holds only where the code has none
+    /// of them.
+    pub without: u32,
+    /// The marks whose bit the record must hold (`with M`), as the lean parser asks
+    /// `peek_at(j).nl`: the element holds only where the code has all of them.
+    pub with: u32,
+    /// The bytes the record's token may begin with (`starting "B"`, a gap pattern's only): a
+    /// set of 256 bits, none for no test. The lean lexer's `asi` reads the byte after a comment.
+    pub first: [u64; 4],
+    /// The marks (bits of the records' marks) that take a record as one of the kinds: a kind
+    /// whose first byte another token's starts too has its rows' starts as a mark bit of the
+    /// code, read as tier 2's `ROW` reads a row's start, and `kinds` holds only the classes of
+    /// the bytes no other token starts.
+    pub rows: u32,
+}
+
+/// One side of a run's depth (`TokenElem::nests`): its counter (0 to 3), whether it opens, and
+/// the records it takes (`test`'s kinds and words; never a `~`, an `end` or a run).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Nest {
+    pub counter: u8,
+    pub open: bool,
+    pub test: TokenElem,
+}
+
+/// The depths a run counts (`TokenElem::nests`): 4 at most.
+pub const NESTS: usize = 4;
+
+/// A run's depths after it takes a record (`code`): `None` where a closer's depth is 0, which
+/// ends the run (Q339).
+pub fn nest_step(nests: &[Nest], depth: [u32; NESTS], code: u32) -> Option<[u32; NESTS]> {
+    let mut d = depth;
+    for n in nests.iter().filter(|n| n.test.takes(code)) {
+        let k = usize::from(n.counter);
+        if n.open {
+            d[k] += 1;
+        } else if d[k] == 0 {
+            return None;
+        } else {
+            d[k] -= 1;
+        }
+    }
+    Some(d)
 }
 
 impl TokenElem {
@@ -385,14 +575,20 @@ impl TokenElem {
         let kind = code & 0xff;
         let word = crate::records::word_of(code);
         let keyword = word > 0 && self.except.contains(&((word - 1) as u16));
-        (kind < 64 && self.kinds >> kind & 1 == 1 && !keyword) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+        let row = code >> crate::records::MARK_SHIFT & self.rows != 0;
+        ((kind < 64 && self.kinds >> kind & 1 == 1 || row) && !keyword) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+    }
+
+    /// Whether the record's first byte is one the element takes (`TokenElem::first`).
+    pub fn first_holds(&self, byte: u8) -> bool {
+        self.first == [0; 4] || self.first[usize::from(byte / 64)] >> (byte % 64) & 1 == 1
     }
 
     /// Whether the element holds at a record's code (`None`: no record left, the file's end).
     pub fn holds(&self, code: Option<u32>) -> bool {
         match code {
             None => self.end,
-            Some(c) => self.takes(c) != self.not,
+            Some(c) => self.takes(c) != self.not && c >> crate::records::MARK_SHIFT & self.without == 0 && c >> crate::records::MARK_SHIFT & self.with == self.with,
         }
     }
 }
