@@ -11,8 +11,9 @@
 //     today: the lead under the unreleased heading and the entries pending in .changelog/ by change type, whose files it
 //     deletes. A version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is
 //     left alone.
-//   - Core ranges: a pack this run releases that an older core cannot load (core.mjs: a rule held off, a rule in a
-//     language added since, an ast rule key added since) has its core range raised to leave those cores out, in its
+//   - Core ranges: a pack this run releases that an older core cannot load (a rule any released core from 0.1.5
+//     refuses, as it checks the rule itself (acceptedFloor in core.mjs); for older cores, core.mjs's maps: a rule held off, a
+//     rule in a language added since, an ast rule key added since) has its core range raised to leave those cores out, in its
 //     package.json and in package-lock.json, once core is at the release that first loads it. The description lists
 //     each; a pack that needs it and is not released here is named in a warning, since nothing publishes its
 //     package.json. Only a plain >=<version> range is rewritten: a released pack with any other stops the run, to be
@@ -28,7 +29,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
+import { acceptedFloor, admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreRefusals, coreTag, coreTagRefusal, heldOffRules, isOpenRange, newerFloor, nextCoreVersion, packRuleDocuments, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, releasedCoreVersions, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
 import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
@@ -174,11 +175,38 @@ function versionCore() {
 
 const core = versionCore();
 
-/** The oldest core release that loads pack `id` as the checkout holds it (core.mjs); undefined when every core does. */
+/**
+ * What each released core from 0.1.5 refuses of the published packs' rules (core.mjs): a Map from version
+ * to `{ pack: [rule id] }`. Read once, the first time a floor is asked for, with every released core installed and run.
+ */
+let releasedCoreRefusals;
+function coreRefusalsByVersion() {
+  if (releasedCoreRefusals !== undefined) return releasedCoreRefusals;
+  const documents = Object.fromEntries(listPacks().filter((pack) => !pack.private).map((pack) => [pack.id, packRuleDocuments(join(ROOT, `packs/${pack.id}`))]));
+  const versions = releasedCoreVersions(git(["tag", "--list", "v*"]).split("\n"));
+  releasedCoreRefusals = new Map(versions.map((version) => [version, coreRefusals(version, documents)]));
+  return releasedCoreRefusals;
+}
+
+/** Each pack's floor once worked out, so a pack is judged once a run. */
+const packFloors = new Map();
+
+/**
+ * The oldest core release that loads pack `id` as the checkout holds it; undefined when every core does. The newer of
+ * two floors: the oldest release from which every released core accepts all its rules, as those cores check them
+ * (acceptedFloor), and, for the cores before 0.1.5, which can't check, the maps' floor (coreFloor in core.mjs).
+ */
 function packFloor(id) {
+  if (packFloors.has(id)) return packFloors.get(id);
   const directory = `packs/${id}`;
   const packJson = existsSync(join(ROOT, directory, "pack.json")) ? JSON.parse(readText(`${directory}/pack.json`)) : {};
-  return coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)), shippedRuleKeys(join(ROOT, directory)));
+  const mapped = coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)), shippedRuleKeys(join(ROOT, directory)));
+  const byVersion = coreRefusalsByVersion();
+  const checked = acceptedFloor([...byVersion.keys()], (version) => byVersion.get(version)[id] ?? [], JSON.parse(readText("package.json")).version);
+  for (const { version, rules } of checked.refusals) console.log(`${id}: core ${version} refuses ${rules.length} rule(s): ${rules.join(", ")}`);
+  const floor = newerFloor(mapped, checked.floor);
+  packFloors.set(id, floor);
+  return floor;
 }
 
 /**

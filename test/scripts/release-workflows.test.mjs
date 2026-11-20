@@ -117,3 +117,16 @@ describe("every release workflow", () => {
   });
 });
 
+describe("release-pr.yml", () => {
+  const { jobs } = workflow("release-pr.yml");
+
+  it("keeps the released cores the rules are checked against between runs, keyed by the release tags, before versioning", () => {
+    const steps = jobs["pull-request"].steps;
+    const cache = steps.findIndex((step) => String(step.uses ?? "").startsWith("actions/cache@") && step.with?.path === "~/.cache/rerail-release-cores");
+    expect(cache).toBeGreaterThan(-1);
+    expect(steps[cache].with.key).toContain("steps.cores.outputs.key");
+    expect(cache).toBeLessThan(runs(steps, "release-version.mjs"));
+    expect(runs(steps, "git tag --list 'v*'")).toBeLessThan(cache);
+  });
+});
+

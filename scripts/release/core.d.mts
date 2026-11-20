@@ -9,4 +9,14 @@ export function coreFloor(heldOff: readonly string[], languages: readonly string
 export function admitsRefusingCore(range: string, floor: string | undefined, coreVersion: string): boolean;
 export function coreBeforeFloor(coreVersion: string, floor: string | undefined): boolean;
 export function isOpenRange(range: string): boolean;
+export const FIRST_CHECKING_CORE: string;
+export function releasedCoreVersions(tags: readonly string[]): string[];
+export function acceptedFloor(
+  versions: readonly string[],
+  refusedBy: (version: string) => readonly string[],
+  coreVersion: string,
+): { floor: string | undefined; refusals: { version: string; rules: readonly string[] }[] };
+export function newerFloor(a: string | undefined, b: string | undefined): string | undefined;
+export function packRuleDocuments(directory: string): Record<string, unknown>;
+export function coreRefusals(version: string, documents: Record<string, Record<string, unknown>>): Record<string, string[]>;
 export function raisedCoreRange(floor: string): string;

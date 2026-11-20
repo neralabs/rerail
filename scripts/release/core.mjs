@@ -3,8 +3,10 @@
 // changed since its last release (core-paths.mjs), the pull request bumps its patch version and writes the root
 // CHANGELOG.md's section for it from the entries pending in .changelog/, by change type, below the lead written under
 // the unreleased heading. Each released core version is marked by the git tag `v<version>`, which release.yml publishes.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, relative } from "node:path";
 import semver from "semver";
 import { CHANGE_TYPES, changeType, changeTypeRefusal, changeTypeSections, releaseNoteEntry } from "./release-notes.mjs";
 
@@ -249,7 +251,9 @@ export function coreTagRefusal(version, tags) {
 // something in a pack drops the whole pack, so once the first core that reads it is released the pack leaves every
 // older core out of its core range (`peerDependencies["@neralabs/rerail"]`). The pack validation's check 5 fails a
 // pack that does not (conformance/pack-validation.ts), and the Release pull request raises the range of each pack it
-// releases (release-version.mjs). Both read the releases and the rule from here, so they cannot disagree. It is here
+// releases (release-version.mjs). Both read the releases and the rule from here, so they cannot disagree; the Release
+// pull request also has each released core from 0.1.5 check the rules itself (acceptedFloor below), which catches a
+// refusal these maps don't name, and takes the newer of the two floors. It is here
 // and not in packs.mjs because it needs semver, and release jobs run packs.mjs without the repository's packages.
 
 /** The first core release that reads a rule's `heldOff` in `pack.json`: an older core refuses a `pack.json` naming it. */
@@ -388,6 +392,105 @@ export function coreBeforeFloor(coreVersion, floor) {
 export function isOpenRange(range) {
   const alternatives = new semver.Range(range, { includePrerelease: true }).set;
   return alternatives.length === 1 && alternatives[0].length === 1 && alternatives[0][0].operator === ">=";
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Which released core versions accept a pack's rules, checked by those cores themselves: each core release from 0.1.5
+// exports `validateCodeRule` from `@neralabs/rerail/rules`, the check its own catalog makes before it loads a rule. A
+// core that refuses one rule of a pack leaves the whole pack out, so the Release pull request (release-version.mjs)
+// raises a released pack's core range to the oldest release from which every release accepts all its rules, and the
+// maps above still judge the cores before 0.1.5, which can't check. Each core is installed once into a cache folder
+// ($RERAIL_RELEASE_CORES, else ~/.cache/rerail-release-cores, which release-pr.yml keeps between runs) and runs in a
+// process of its own, so two releases' native engines never load into one process.
+
+/** The first core release that exports `validateCodeRule` from `@neralabs/rerail/rules`. */
+export const FIRST_CHECKING_CORE = "0.1.5";
+
+/** The plain core versions `tags` (git tags, `v<version>`) release from FIRST_CHECKING_CORE on, oldest first. */
+export function releasedCoreVersions(tags) {
+  return tags
+    .map((tag) => /^v(\d+\.\d+\.\d+)$/u.exec(tag)?.[1])
+    .filter((version) => version !== undefined && semver.gte(version, FIRST_CHECKING_CORE))
+    .sort(semver.compare);
+}
+
+/**
+ * The oldest of `versions` (released cores, oldest first) from which every one accepts every rule, as
+ * `refusedBy(version)` (the ids of the rules that release refuses) says: `{ floor, refusals }`, `refusals` naming what
+ * each older release refuses. No floor when the oldest accepts all: the cores before it are the maps' to judge. When
+ * the newest refuses, the floor is `coreVersion`, the core this release brings, if it is newer, else the next patch
+ * past every release, which no released core meets.
+ */
+export function acceptedFloor(versions, refusedBy, coreVersion) {
+  const refusals = versions.map((version) => ({ version, rules: refusedBy(version) })).filter(({ rules }) => rules.length > 0);
+  const newestRefusing = refusals.at(-1)?.version;
+  if (newestRefusing === undefined) return { floor: undefined, refusals };
+  const later = versions.find((version) => semver.gt(version, newestRefusing));
+  const newest = versions.at(-1);
+  const floor = later ?? (semver.gt(coreVersion, newest) ? coreVersion : semver.inc(newest, "patch"));
+  return { floor, refusals };
+}
+
+/** The newer of two floors, either of which may be undefined (no floor). */
+export function newerFloor(a, b) {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return semver.gt(a, b) ? a : b;
+}
+
+/**
+ * The rule documents under `<directory>/rules`, parsed, by their path under it without `.json`. A document that is not
+ * JSON is left out: the pack validation's check 1 reports it.
+ */
+export function packRuleDocuments(directory) {
+  const rules = join(directory, "rules");
+  if (!existsSync(rules)) return {};
+  const documents = {};
+  for (const entry of readdirSync(rules, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const path = join(entry.parentPath, entry.name);
+    try {
+      documents[relative(rules, path).replace(/\.json$/u, "").replaceAll("\\", "/")] = JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      // Not JSON: check 1 reports it.
+    }
+  }
+  return documents;
+}
+
+/** Where released cores are installed, one folder per version. */
+const coresFolder = () => process.env.RERAIL_RELEASE_CORES ?? join(homedir(), ".cache", "rerail-release-cores");
+
+/** The folder core `version` is installed in, installing it from npm the first time; its install scripts never run. */
+function installedCore(version) {
+  const folder = join(coresFolder(), version);
+  const manifest = join(folder, "node_modules", "@neralabs", "rerail", "package.json");
+  if (existsSync(manifest) && JSON.parse(readFileSync(manifest, "utf8")).version === version) return folder;
+  mkdirSync(folder, { recursive: true });
+  execFileSync("npm", ["install", "--prefix", folder, "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock", `@neralabs/rerail@${version}`], { stdio: ["ignore", "ignore", "inherit"] });
+  return folder;
+}
+
+/** Run in a released core's own folder: reads `{ pack: { rule id: document } }` on stdin, prints each pack's refused rule ids. */
+const CHECK = `
+import { validateCodeRule } from "@neralabs/rerail/rules";
+let input = "";
+for await (const chunk of process.stdin) input += chunk;
+const refused = {};
+for (const [pack, rules] of Object.entries(JSON.parse(input))) {
+  refused[pack] = Object.entries(rules).filter(([, document]) => !validateCodeRule(document).ok).map(([id]) => id).sort();
+}
+process.stdout.write(JSON.stringify(refused));
+`;
+
+/**
+ * The rules core `version` refuses, for each pack in `documents` (`{ pack: { rule id: document } }`): `{ pack: [rule
+ * id] }`. Installs the core the first time. Throws when it can't be installed or run, so no range is left unchecked.
+ */
+export function coreRefusals(version, documents) {
+  const folder = installedCore(version);
+  const output = execFileSync(process.execPath, ["--input-type=module", "--eval", CHECK], { cwd: folder, input: JSON.stringify(documents), encoding: "utf8", maxBuffer: 1 << 28 });
+  return JSON.parse(output);
 }
 
 /** The core range that leaves out every core older than `floor`: what the Release pull request writes. */

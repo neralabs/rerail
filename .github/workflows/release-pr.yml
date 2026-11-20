@@ -93,6 +93,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: git fetch --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" 'refs/tags/v*:refs/tags/v*'
 
+      # Each released core from 0.1.5 checks the packs' rules (acceptedFloor in scripts/release/core.mjs), installed once:
+      # the cache is keyed by the release tags, so a new core release installs one more and the rest are kept.
+      - id: cores
+        name: List the released cores the packs' rules are checked against
+        run: echo "key=$(git tag --list 'v*' | sort | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the released cores
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/rerail-release-cores
+          key: release-cores-${{ steps.cores.outputs.key }}
+          restore-keys: release-cores-
+
       - id: version
         name: Version every releasable package
         run: node scripts/release/release-version.mjs "$RUNNER_TEMP/release-pr.md"
