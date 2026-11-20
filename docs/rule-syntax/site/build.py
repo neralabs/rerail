@@ -93,6 +93,8 @@ def display(paths):
 
 
 def git_show(repo, rev, path):
+    if not rev:
+        return None
     try:
         return subprocess.run(["git", "-C", repo, "show", f"{rev}:{path}"], check=True, capture_output=True, text=True).stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -166,7 +168,7 @@ def main():
                       ]})
 
     fli1, fli2 = read(os.path.join(RS, "function-level-imports.b1.rerail")), read(os.path.join(RS, "function-level-imports.b2.rerail"))
-    yaml = (a.yaml_rev and git_show(a.ndl, a.yaml_rev, "scripts/lint_specs/lint_function_level_imports.yaml")) or "# The earlier YAML port is not available in this checkout\n"
+    yaml = git_show(a.ndl, a.yaml_rev, "scripts/lint_specs/lint_function_level_imports.yaml") or "# The earlier YAML port is not available in this checkout\n"
     py = git_show(a.ndl, NDL_COMMIT, "scripts/lint_function_level_imports.py") or "# The Python linter is not available in this checkout\n"
     hand_data["fli"] = {"yaml": yaml, "b1": fli1, "b2": fli2, "py": py}
     hand_meta.append({"key": "fli", "title": "function-level-imports", "tags": ["data-layer", "ratchet"],
