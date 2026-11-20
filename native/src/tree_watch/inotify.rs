@@ -145,21 +145,21 @@ impl Watches {
         }
     }
 
-    /// Marks `root`, just watched, spare or not. False for a spare root that takes the watches
-    /// past `budget`: the room check before its watch counts its own folders, and the folders
-    /// above it that no other root holds come only with the watch.
+    /// Marks `root`, just watched, spare when `spare` (its room check unmarked it). False for a
+    /// spare root that takes the watches past `budget`: the room check before its watch counts
+    /// its own folders, and the folders above it that no other root holds come only with the
+    /// watch.
     fn settle(&mut self, root: &str, spare: bool, budget: usize) -> bool {
         if !spare {
-            self.spare.remove(root);
             return true;
         }
         self.spare.insert(root.to_owned());
         self.owners.len() <= budget
     }
 
-    /// How many descriptors only spare roots other than `root` hold: those ending them frees.
-    fn spare_only(&self, root: &str) -> usize {
-        let freed = |owner: &Owner| owner.root != root && self.spare.contains(&owner.root);
+    /// How many descriptors only spare roots hold: those ending every spare root frees.
+    fn spare_only(&self) -> usize {
+        let freed = |owner: &Owner| self.spare.contains(&owner.root);
         self.owners
             .values()
             .filter(|owners| owners.iter().all(freed))
@@ -532,18 +532,19 @@ impl Inotify {
         false
     }
 
-    /// Whether `root` fits the budget watching `folders` folders. A root that is not spare makes
-    /// room by ending spare roots, one at a time, until it fits; one that would not fit with
-    /// every other spare root ended ends none.
+    /// Whether `root` fits the budget watching `folders` folders, counted as no spare root, so it
+    /// never ends itself. A root that is not spare makes room by ending spare roots, one at a
+    /// time, until it fits; one that would not fit with every spare root ended ends none.
     fn room_for(&self, watches: &mut Watches, root: &str, folders: usize, spare: bool) -> bool {
+        watches.spare.remove(root);
         let needed = watches.count_with(root, folders);
         if needed > self.budget
-            && (spare || needed.saturating_sub(watches.spare_only(root)) > self.budget)
+            && (spare || needed.saturating_sub(watches.spare_only()) > self.budget)
         {
             return false;
         }
         while watches.count_with(root, folders) > self.budget {
-            let other = watches.spare.iter().find(|other| *other != root).cloned();
+            let other = watches.spare.iter().next().cloned();
             let Some(other) = other else {
                 return false;
             };
