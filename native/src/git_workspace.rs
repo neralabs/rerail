@@ -1852,6 +1852,31 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// A file on a network share whose change time moved keeps the stat's answer with no read: the
+    /// share's change time is another machine's clock, so no reading of this one can prove it.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_on_a_share_whose_change_time_moved_is_taken_by_its_stat() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_file_on_a_share_whose_change_time_moved_is_taken_by_its_stat",
+        ) {
+            return;
+        }
+        let (root, path, _) = committed_long_ago("stat-share", b"print(1)\n");
+        let blob = HashKey::git_sha1([7; 20]);
+        let moved = WorktreeStat::as_if(&path, Some((2, 1)), 0);
+        let held = |on_a_share: bool| {
+            worktree_stat::files_are_on_a_share(on_a_share);
+            let proof = VerifiedFiles::new(None, &root).proof("a.py", blob, &moved);
+            worktree_stat::files_are_on_a_share(false);
+            matches!(proof, Proof::Held)
+        };
+        assert!(held(true), "on a share");
+        assert!(!held(false), "on this machine");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// A change time the file clock had not left when the read that hashed the file began is not
     /// remembered: a write after the read, in the same tick of that clock, gets the same time.
     /// Each restore reads such a file until one begins after the clock has left it.

@@ -925,6 +925,38 @@ fn a_source_whose_read_is_denied_keeps_the_summary_of_its_last_write() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// A source rewritten at the same length with its modification time put back, which another
+/// handle locks when the walk comes, keeps the summary of its last write while the lock holds, and
+/// is read once the lock is let go: the summary kept for a source the walk could not read is not
+/// cached under the source's new stamp.
+#[cfg(windows)]
+#[test]
+fn a_rewrite_locked_when_the_walk_comes_is_read_once_let_go() {
+    let root = temp_root("locked");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "import './a';\nexport default 1;\n");
+    write_file(&root, "app/b.ts", "");
+    let source = root.join("app/a.ts");
+    let settled = SystemTime::now() - Duration::from_secs(3600);
+    // Each rewrite's change time is one the clock has left, as a later walk sees it.
+    let rewrite = |directive: &str, changed: SystemTime| {
+        std::fs::write(&source, format!("'{directive}';\nimport './b';\n")).unwrap();
+        crate::git_workspace::backdate(&source, settled);
+        crate::git_workspace::set_change_time(&source, changed);
+    };
+    let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
+    rewrite("use server", settled);
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    rewrite("use client", settled + Duration::from_secs(1));
+    let lock = std::fs::File::open(&source).unwrap();
+    lock.lock().unwrap();
+    assert!(std::fs::read(&source).is_err(), "the lock denies the read");
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    drop(lock);
+    assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// A source whose data a provider moved off this disk after the walk cached its summary (a cloud
 /// file placeholder freed, a file moved to offline storage) keeps the summary of its last write
 /// with no read: the attribute moves NTFS's change time, and a read would make the provider
@@ -1024,6 +1056,45 @@ fn the_walk_reads_no_folder_page_past_its_entry_bound() {
     assert!(all > 2, "the folder takes {all} pages");
     assert_eq!(pages(10), (false, 1));
     std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// The walk follows no junction: one to a folder of the package would read its sources again
+/// under another path, and one to a folder outside it sources the package does not hold.
+#[cfg(windows)]
+#[test]
+fn the_walk_follows_no_junction() {
+    let root = temp_root("junctions");
+    let outside = temp_root("junctions-outside");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "export default 1;\n");
+    write_file(&root, "lib/a.ts", "");
+    write_file(&outside, "b.ts", "");
+    for (link, target) in [
+        ("app/lib", root.join("lib")),
+        ("app/outside", outside.clone()),
+    ] {
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.join(link))
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(
+            made.status.success(),
+            "mklink /J {link}: {}",
+            String::from_utf8_lossy(&made.stdout)
+        );
+    }
+    let mut sources = Vec::new();
+    let (mut budget, mut entries) = (MAX_GRAPH_BYTES, MAX_GRAPH_ENTRIES);
+    assert!(walk(&root, &root, &mut sources, &mut budget, &mut entries));
+    let walked = sources
+        .into_iter()
+        .map(|(relative, _, _)| relative)
+        .collect::<Vec<_>>();
+    assert_eq!(walked, ["app/page.tsx", "lib/a.ts"]);
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_dir_all(&outside).unwrap();
 }
 
 /// An `extends` base already read, one past the chain's depth and an entry past the first

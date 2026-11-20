@@ -375,5 +375,27 @@ mod windows {
             );
             std::fs::remove_dir_all(&folder).unwrap();
         }
+
+        /// A reparse point whose tag names another file (a junction, a symbolic link) is a link;
+        /// one whose tag does not (a cloud file placeholder, its folder) is what its attributes
+        /// say, as std's `FileType` reads them.
+        #[test]
+        fn only_a_reparse_point_naming_another_file_is_a_link() {
+            const JUNCTION: u32 = 0xA000_0003;
+            const SYMBOLIC_LINK: u32 = 0xA000_000C;
+            const CLOUD: u32 = 0x9000_001A;
+            let (folder, reparse) = (FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT);
+            for (attributes, tag, kind) in [
+                (folder | reparse, JUNCTION, Kind::Other),
+                (folder | reparse, SYMBOLIC_LINK, Kind::Other),
+                (reparse, SYMBOLIC_LINK, Kind::Other),
+                (folder | reparse, CLOUD, Kind::Folder),
+                (reparse, CLOUD, Kind::File),
+                (folder, 0, Kind::Folder),
+                (0, 0, Kind::File),
+            ] {
+                assert_eq!(kind_of(attributes, tag), kind, "{attributes:#x} {tag:#x}");
+            }
+        }
     }
 }

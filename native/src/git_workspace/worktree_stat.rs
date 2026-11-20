@@ -74,6 +74,13 @@ pub(super) fn file_ids_answer(answer: bool) {
     platform::NO_FILE_ID.set(!answer);
 }
 
+/// Makes every file this thread's proofs ask about answer as one on a network share, or as one on
+/// this machine again.
+#[cfg(all(test, windows))]
+pub(super) fn files_are_on_a_share(answer: bool) {
+    platform::ON_A_SHARE.set(answer);
+}
+
 /// Makes the file clock read `reading` on this thread, as on a tick these cases cannot time, or
 /// read the system's clock again (`None`).
 #[cfg(all(test, windows))]
@@ -423,6 +430,8 @@ mod platform {
         /// Whether the file id query answers nothing on this thread, as on a volume that gives
         /// no file id.
         pub(super) static NO_FILE_ID: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// Whether every file answers as one on a network share on this thread.
+        pub(super) static ON_A_SHARE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         /// The file clock's reading on this thread, where a case sets one (`super::file_clock_reads`).
         pub(super) static CLOCK: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
     }
@@ -443,11 +452,11 @@ mod platform {
         Some((i64::from(now.dwHighDateTime) << 32) | i64::from(now.dwLowDateTime))
     }
 
-    /// Counts a query; whether it is a file id query this thread's volume does not answer.
+    /// Counts a query; `answer`, what this thread's case makes it answer in place of the file.
     #[cfg(test)]
-    fn queried(file_id: bool) -> bool {
+    fn queried(answer: bool) -> bool {
         QUERIES.set(QUERIES.get() + 1);
-        file_id && NO_FILE_ID.get()
+        answer
     }
 
     /// The times and attributes NTFS keeps for `file`.
@@ -468,7 +477,7 @@ mod platform {
     /// The serial number of `file`'s volume and its 128-bit id there, as NTFS and ReFS give them.
     fn identity(file: &File) -> Option<(u64, [u8; 16])> {
         #[cfg(test)]
-        if queried(true) {
+        if queried(NO_FILE_ID.get()) {
             return None;
         }
         let mut info = FILE_ID_INFO::default();
@@ -488,7 +497,9 @@ mod platform {
     /// is reached by.
     fn is_local(file: &File) -> bool {
         #[cfg(test)]
-        queried(false);
+        if queried(ON_A_SHARE.get()) {
+            return false;
+        }
         // Larger than `FILE_REMOTE_PROTOCOL_INFO`, and aligned as it is.
         let mut info = [0_u64; 32];
         // SAFETY: an open handle, and a buffer of the size given that lives across the call.
