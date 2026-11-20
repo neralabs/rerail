@@ -74,6 +74,15 @@ pub fn set_lease_hook(hook: fn(usize, usize)) {
     let _ = LEASE_HOOK.set(hook);
 }
 
+/// A profiler's hook (`set_refusal_hook`): told of each lease `lease_within` refuses, with its message, so it can say
+/// what holds the budget then (the engine's heap sampler: the live leases by the span that leased them).
+static REFUSAL_HOOK: OnceLock<fn(&str)> = OnceLock::new();
+
+/// Sets the hook told of every refused lease.
+pub fn set_refusal_hook(hook: fn(&str)) {
+    let _ = REFUSAL_HOOK.set(hook);
+}
+
 fn leased(b: &Buffer) {
     LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
     if let Some(hook) = LEASE_HOOK.get() {
@@ -536,10 +545,14 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
         let (live, idle) = held_bytes();
         // What this thread's admission left it (none: no admission, or one spent), and what others reserve.
         let left = RESERVE_LEFT.with(|r| r.get());
-        return Err(format!(
+        let why = format!(
             "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool; this thread's reservation {} MB left, {} MB reserved in all)",
             need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20, left >> 20, reserved() >> 20
-        ));
+        );
+        if let Some(hook) = REFUSAL_HOOK.get() {
+            hook(&why);
+        }
+        return Err(why);
     }
     lease(bytes).map(held_here)
 }

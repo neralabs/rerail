@@ -2923,6 +2923,17 @@ submitted" now hold device memory at once.
   relations across a chunk's strata, kept workspaces), and what is refused is the uploads, sorts' scratch and
   unestimated stages that `expected()` does not count. To decide: what holds the 511 MB at a refusal (by holder),
   then whether admission reserves the whole footprint and a lease past it waits as admission does.
+  What holds it (2026-11-19, t72 heap-sampled with `RERAIL_HEAP_FRAMES`, each refusal printing the live device
+  leases by span and stack, `set_refusal_hook`; ab91, ab92, sym92): at the first refusal of 99, 511 MB leased are
+  the tape residency's slab (64 MB, `slabs::tape_room`, evictable when no batch reads it); relations' rows in
+  `Device::May` slabs (64 + 16 + 16 + 16 MB, `rows::new_open`: kept inputs, vtab relations, fresh rows; they live as
+  long as their relations and nothing retires them); and the device residency (42 + 5 x 20 = 142 MB, `DevRel::empty`
+  in `resident`: views made on the device), spread over threads whose strata ended. The residency is thread-local:
+  its bound (`resident_max`, 80 MB at 512) is a thread's, so 16 threads may hold 1,280 MB of a 512 MB budget, and
+  no `make_room` on another thread can retire it. The strata refused are those that came last, whatever they need.
+  The fix is the residency's home: one residency for a chunk's strata (its entries are a run's relations, by
+  `Weak`), bounded as a whole and retired by `make_room` like the tape residency; then `Device::May` rows counted
+  in what admission waits for.
   (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —
