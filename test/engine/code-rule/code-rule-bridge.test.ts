@@ -2465,6 +2465,53 @@ describe("CodeRuleBridge", () => {
     expect(audited(auditGeneratedEdits)).toEqual([{ mode: undefined, edits: [{ path: "deep/a.py", generatedText: "x = 1\n", readError: undefined }] }]);
   });
 
+  // Another program moves the folder or file as the walk at the command's result examines it: the walk finds it gone,
+  // which is no place, but it did not see the write where it went, so the next walk takes it as the session's.
+  it.each([
+    ["a folder, as the walk lists it", "directories", "deep", "moved", "moved/a.py"],
+    ["a file, as the walk examines it", "lstats", "deep/a.py", "deep/b.py", "deep/b.py"],
+  ] as const)("checks a command's write that another program moves at the walk at its result at the next walk, as the session's: %s", async (_kind, hook, from, to, found) => {
+    const root = await workspace();
+    await mkdir(join(root, "deep"));
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await writeFile(join(root, "deep", "a.py"), "x = 1\n");
+    const moved = join(root, from);
+    discovery[hook].set(moved, [async () => { await rename(moved, join(root, to)); }]);
+    await bridge.finish("shell-1");
+    expect(discovery[hook].get(moved)).toEqual([]);
+    await bridge.begin("shell-2", "Bash", { command: "ls" });
+    await bridge.finish("shell-2");
+    expect(audited(auditGeneratedEdits)).toEqual([{ mode: undefined, edits: [{ path: found, generatedText: "x = 1\n", readError: undefined }] }]);
+  });
+
+  // So too for a file that refused that walk with EPERM, as Windows refuses one whose delete is pending, and was gone
+  // when the walk looked at it again: another program had moved it.
+  it("checks a command's write to a file that refused the walk at its result and moved before its look again, at the next walk", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+
+    await bridge.begin("shell-1", "Bash", { command: "python3 generate.py" });
+    await writeFile(path, "x = 1\n");
+    discovery.lstats.set(path, [async () => {
+      await rename(path, join(root, "src", "b.py"));
+      throw Object.assign(new Error(`EPERM: operation not permitted, lstat '${path}'`), { code: "EPERM", syscall: "lstat", path });
+    }]);
+    await bridge.finish("shell-1");
+    expect(discovery.lstats.get(path)).toEqual([]);
+    await bridge.begin("shell-2", "Bash", { command: "ls" });
+    await bridge.finish("shell-2");
+    expect(audited(auditGeneratedEdits)).toEqual([{ mode: undefined, edits: [{ path: "src/b.py", generatedText: "x = 1\n", readError: undefined }] }]);
+  });
+
   // A program writes the file after the command whose result's walk could not read it, while no call of the session
   // runs: its stamp says so, and the walk that reads it takes the write for that program's, as for any file.
   it("takes a write made after the command whose result's walk could not read the file for another writer's", async () => {

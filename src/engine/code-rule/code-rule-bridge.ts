@@ -465,12 +465,13 @@ function recordReadError(scan: SourceScan, source: Source): void {
 }
 /**
  * Notes each file the session folder's walk could not read, with the calls that may have written it unseen
- * (`SourceDiscovery.missedFiles`). Whether the walk lets the other calls go: it listed every folder, so it read every
- * file but those, and the calls it keeps for them claim only their writes (`ToolCallWindows.ranDuring`).
+ * (`SourceDiscovery.missedFiles`). Whether the walk lets the other calls go: it gave up on no path it met
+ * (`SourceScan.gaveUp`), so it read every file but those, and the calls it keeps for them claim only their writes
+ * (`ToolCallWindows.ranDuring`).
  */
 function holdMissedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): boolean {
   discovery.missedFiles = missedFiles(discovery, walk, scan);
-  if (scan.failedRoots.size > 0) return false;
+  if (scan.gaveUp === true) return false;
   discovery.listedEnds = walk.callsEnded;
   return true;
 }
@@ -499,11 +500,19 @@ function missedThrough(discovery: SourceDiscovery, path: string, through: number
 function unreadOversize(source: Source): source is Source & { readonly stamp: string } {
   return source.readError === OVERSIZE_ERROR && source.stamp !== undefined && sourceLanguageOfPath(source.path) === undefined;
 }
+/**
+ * The walk gave up on a path it met (`SourceScan.gaveUp`), whether its failure is a place or not: the one way a walk
+ * says it did not see every file.
+ */
+function gaveUpOn(scan: SourceScan): void {
+  scan.gaveUp = true;
+}
 /** A folder the walk could not read: its first sight next time is a baseline, and each source seen under it keeps the error. */
 function failFolder(walk: SourceWalk, path: string, readError: string): void {
   const { previousSources, scan } = walk;
   scan.errors.push({ path, readError });
   scan.failedRoots.add(path);
+  gaveUpOn(scan);
   const failed = new Set([path]);
   for (const [sourcePath, source] of previousSources)
     if (underBaselineRoot(failed, sourcePath)) scan.sources.set(sourcePath, { path: sourcePath, language: source.language, readError });
@@ -923,7 +932,14 @@ export interface ScanError {
 }
 export interface SourceScan {
   readonly sources: Map<string, Source>;
+  /** The folders the walk could not list: a first sight under one next time is a baseline (`firstSightIsBaseline`). */
   readonly failedRoots: Set<string>;
+  /**
+   * The walk gave up on a path it met (`gaveUpOn`): a folder it could not list, or a path gone when it examined it or
+   * looked at it again, which may have moved where the walk did not look. Whether a place is recorded for it or not, the
+   * walk did not see every file: it lets no ended call go (`holdMissedFiles`), and another worktree's read is tried again.
+   */
+  gaveUp?: true;
   readonly errors: ScanError[];
   /** Unlisted files too large to read, by path (`SourceDiscovery.unread`); left out of `errors`. */
   readonly unread: Map<string, { readonly stamp: string; readonly readError: string }>;
@@ -1254,7 +1270,8 @@ function vanished(error: unknown): boolean {
 }
 /**
  * A path a folder's listing named that was gone when the walk examined it: nothing is left there to check, so it is no
- * gap, as a read finds a file gone (`#failedSourceRead`). A path the walk starts at stays a gap when it cannot be read.
+ * gap, as a read finds a file gone (`#failedSourceRead`). It may have moved where the walk did not look, so the walk gave
+ * up on it (`gaveUpOn`). A path the walk starts at stays a gap when it cannot be read.
  */
 function goneWhenExamined(walk: SourceWalk, absolute: string, error: unknown): boolean {
   return vanished(error) && !walk.roots.has(absolute);
@@ -1359,10 +1376,11 @@ function notDenied(walk: SourceWalk, judged: Judged, { path, examined }: Refusal
 /**
  * Takes back the walk's failure of `path`, which was gone when looked at again: a file's read error, or a folder's
  * (`failFolder`) and what it set for each source seen in it before, which then reads as deleted, as when the walk's
- * lstat finds it gone. It costs what the failure did.
+ * lstat finds it gone. It costs what the failure did. As for a path gone when examined, the walk gave up on it.
  */
 function absentAfterAll(walk: SourceWalk, path: string): void {
   const { scan } = walk;
+  gaveUpOn(scan);
   scan.sources.delete(path);
   if (!scan.failedRoots.delete(path)) return;
   const gone = new Set([path]);
@@ -3131,8 +3149,9 @@ export class CodeRuleBridge {
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
     // A subtree or a file it could not read may still hold writes of the calls that ended before it: the next walk that
-    // reads them judges each by its stamp. A folder it could not list keeps every call; a file keeps those that may have
-    // written it unseen (`holdMissedFiles`), for its own writes only.
+    // reads them judges each by its stamp. A walk that gave up on a path (a folder it could not list, or a path gone as
+    // it looked, perhaps moved) keeps every call; a file keeps those that may have written it unseen
+    // (`holdMissedFiles`), for its own writes only.
     if (holdMissedFiles(discovery, walk, scan)) discovery.toolCalls.answered(walk.callsEnded, [...discovery.missedFiles.values()]);
     this.#listLateAgain(discovery, scan.lateListings);
   }
@@ -3610,7 +3629,11 @@ export class CodeRuleBridge {
       info = await lstat(absolute);
       await this.#observeEntry(walk, absolute, info);
     } catch (error) {
-      if (walk.discovery.cancelled || goneWhenExamined(walk, absolute, error)) return;
+      if (walk.discovery.cancelled) return;
+      if (goneWhenExamined(walk, absolute, error)) {
+        gaveUpOn(walk.scan);
+        return;
+      }
       this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
       noteRefusal(walk, absolute, error, info);
     }
@@ -3640,7 +3663,9 @@ export class CodeRuleBridge {
 
   /**
    * Asks for the owner of the `.git` entry, not of its folder: it is owned as the files beside it are. One removed as the
-   * walk asks (`vanished`) marks no checkout, and never fails the folder that listed it.
+   * walk asks (`vanished`) marks no checkout, and never fails the folder that listed it. The walk never enters the entry,
+   * and each other entry the listing named is examined, so a folder moved as the walk lists it is found there
+   * (`goneWhenExamined`).
    */
   #noteCheckout(walk: SourceWalk, gitEntry: string): void {
     let checkout: string | undefined;

@@ -324,9 +324,12 @@ function skippedIn(root: string, skip: ReadonlySet<string>): string {
   return [...skip].filter(folder => folder.startsWith(`${root}${sep}`)).sort().join("\n");
 }
 
-/** Whether a read must be tried again: a folder it could not list, or a file whose read failed (an error with no stamp). */
+/**
+ * Whether a read must be tried again: it gave up on a path it met (`SourceScan.gaveUp`: a folder it could not list, or a
+ * path gone as it looked, which may have moved where it did not look), or a file's read failed (an error with no stamp).
+ */
 function retried(scan: SourceScan): boolean {
-  if (scan.failedRoots.size > 0) return true;
+  if (scan.gaveUp === true) return true;
   for (const source of scan.sources.values()) if (source.readError !== undefined && source.stamp === undefined) return true;
   return false;
 }
