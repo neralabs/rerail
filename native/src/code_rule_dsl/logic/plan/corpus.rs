@@ -6859,8 +6859,10 @@ fn run_observed(
                 let at = |i: usize| k[i].load(std::sync::atomic::Ordering::Relaxed);
                 let sk = &crate::code_rule_dsl::logic::native::setfix::SORTED_KEPT;
                 format!(
-                    "{} in their relation's block directory, {} read in an older relation's, {} kept as they were (decision 0450 step 5b); known-sorted ranges of {} relations in their block, {} not (5c)",
-                    at(0), at(1), at(2), sk[0].load(std::sync::atomic::Ordering::Relaxed), sk[1].load(std::sync::atomic::Ordering::Relaxed)
+                    "{} in their relation's block directory, {} read in an older relation's, {} kept as they were (decision 0450 step 5b); known-sorted ranges of {} relations in their block, {} not (5c); dead rows of {} relations their block relation's, {} not (5d)",
+                    at(0), at(1), at(2), sk[0].load(std::sync::atomic::Ordering::Relaxed), sk[1].load(std::sync::atomic::Ordering::Relaxed),
+                    crate::code_rule_dsl::logic::native::setfix::DEAD_KEPT[0].load(std::sync::atomic::Ordering::Relaxed),
+                    crate::code_rule_dsl::logic::native::setfix::DEAD_KEPT[1].load(std::sync::atomic::Ordering::Relaxed)
                 )
             });
             crate::code_rule_dsl::logic::profile::decision("chunk size", || {

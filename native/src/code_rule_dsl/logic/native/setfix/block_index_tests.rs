@@ -144,3 +144,29 @@ fn a_frozen_relations_known_sorted_ranges_are_in_its_block() {
     assert_eq!(known.iter().map(|kn| (kn.lo, kn.hi)).collect::<Vec<_>>(), vec![(0, (n / 2) as u32)]);
     assert_eq!(rel.sorted.within(&cols, 2, 100, 200), vec![(100, 200)], "read from the block");
 }
+
+/// Decision 0450 step 5d: a frozen relation's dead rows are its block relation's (`own_dead`), read there by the CPU,
+/// and its kills delta, the device's dead rows, reads the same words: none copied.
+#[test]
+fn a_frozen_relations_dead_rows_are_its_blocks_and_the_devices() {
+    let n = 1000;
+    let mut rel = super::Rel::new("edge", &[b'i', b'i']);
+    for r in rows(n).chunks_exact(2) {
+        rel.push(r);
+    }
+    for id in (0..n as u32).step_by(5) {
+        if super::kill(&mut rel.dead, id) {
+            rel.ndead += 1;
+        }
+    }
+    let rel = InRel::moved(rel);
+    let ib = directory(&rel);
+    let own = ib.relation().own_dead();
+    assert!(!own.is_empty() && std::ptr::eq(own, &rel.dead[..]), "the relation's dead rows are its block relation's");
+    let dev = rel.in_block().expect("in its block, its dead rows a delta");
+    assert_ne!(dev.dead, 0);
+    // SAFETY: `dev.dead` is a delta's descriptor in `dev`'s block, which `dev` keeps.
+    let delta = unsafe { &*dev.facts.block.ptr::<rerail_blocks::relation::Relation>(dev.dead) };
+    assert!(std::ptr::eq(delta.dead.as_slice(), own), "the delta reads the same words");
+    assert_eq!(probed(&rel, 0), (0..n as i64).filter(|id| id % 7 == 0 && id % 5 != 0).collect::<Vec<_>>());
+}

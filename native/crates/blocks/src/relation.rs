@@ -113,6 +113,10 @@ structure! {
         /// input (decision 0450 step 5c), in row order; and the bytes of their chunk, given back at its release.
         pub known: Span<Known>,
         pub known_kept: AtomicU64,
+        /// A frozen relation's dead rows (bit `id`; decision 0450 step 5d), given to it once and given back at its
+        /// release; the bytes of their chunk. Its kills delta (`try_kills_at`) reads them here.
+        pub own_dead: Span<u64>,
+        pub own_dead_kept: AtomicU64,
     }
 }
 
@@ -187,6 +191,17 @@ impl Relation {
     /// A delta of `base` with no rows of its own whose dead bits are `words` (row `id` dead when bit `id` of them is
     /// set): a relation's kills of the rows it shares, read beside them where they lie (decision 0325: the device
     /// skips a dead row by its bit, `rel_dead`). `None` when the block cannot hold it.
+    /// `try_kills`, its dead bits the ones `base` keeps (`own_dead`), read where they lie: nothing copied.
+    pub fn try_kills_own<'b>(block: &'b Block, spec: &Spec, base: &Relation) -> Option<&'b Relation> {
+        let words = base.own_dead();
+        assert!(!words.is_empty(), "a relation's own dead rows");
+        let rel = Relation::try_create(block, spec, Some(base))?;
+        // SAFETY: `words` lie in `block` (`base`'s), which `base` keeps while its delta lives (the delta's holder keeps
+        // `base`).
+        unsafe { Span::set(&rel.dead, words.as_ptr(), words.len()) };
+        Some(rel)
+    }
+
     pub fn try_kills<'b>(block: &'b Block, spec: &Spec, base: &Relation, words: &[u64]) -> Option<&'b Relation> {
         let rel = Relation::try_create(block, spec, Some(base))?;
         let w: *mut u64 = block.try_alloc_t(words.len().max(1))?;
@@ -277,6 +292,10 @@ impl Relation {
         if kept > 0 {
             block.free_chunk_fit(block.offset_of(self.known.as_ptr()), kept);
         }
+        let kept = self.own_dead_kept.load(Acquire) as usize;
+        if kept > 0 {
+            block.free_chunk_fit(block.offset_of(self.own_dead.as_ptr()), kept);
+        }
         // Its added indexes, and their directory: chunks of the block's.
         if self.flags.load(Acquire) & ADDED != 0 {
             // SAFETY: the caller's: this is the relation's last use.
@@ -351,6 +370,33 @@ impl Relation {
         let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].rows.len() == rows as usize);
         std::sync::atomic::fence(Acquire);
         found
+    }
+
+    /// Its dead rows' bits as given (`adopt_dead`): empty when none were.
+    pub fn own_dead(&self) -> &[u64] {
+        if self.own_dead_kept.load(Acquire) == 0 {
+            return &[];
+        }
+        self.own_dead.as_slice()
+    }
+
+    /// Takes its dead rows' bits, `len` words in the chunk at `at` of `block` (`kept` bytes), written: kept from now on,
+    /// given back at its release (decision 0450 step 5d). False when it has some already.
+    ///
+    /// # Safety
+    /// It lies in `block`; the chunk is the caller's to give and nothing writes it after; nothing else writes its
+    /// descriptor meanwhile.
+    pub unsafe fn adopt_dead(&self, block: &Block, at: usize, len: usize, kept: usize) -> bool {
+        if self.own_dead_kept.load(Acquire) != 0 || len == 0 || kept == 0 {
+            return false;
+        }
+        // SAFETY: the caller's.
+        unsafe {
+            let me = std::ptr::from_ref(self).cast_mut();
+            Span::set(&raw mut (*me).own_dead, block.ptr::<u64>(at), len);
+        }
+        self.own_dead_kept.store(kept as u64, Release);
+        true
     }
 
     /// Its row ranges known to be in an order (`Known`): none until `try_set_known`.

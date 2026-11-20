@@ -338,6 +338,32 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap: g.kept / size_of::<T>(), kept: g.kept, owner: None, _t: std::marker::PhantomData }
     }
 
+    /// `n` items, those past its length `v`.
+    pub fn resize(&mut self, n: usize, v: T)
+    where
+        T: Copy,
+    {
+        if n <= self.len {
+            if self.owner.is_some() {
+                let near = self.facts.clone();
+                self.realloc(near.as_ref().map(|f| (f, 0)), self.len);
+            }
+            self.len = n;
+            return;
+        }
+        if self.owner.is_some() || n > self.cap {
+            let near = self.facts.clone();
+            self.realloc(near.as_ref().map(|f| (f, 0)), n.max(2 * self.cap));
+        }
+        // SAFETY: room for `n` past the chunk's start, this vector's alone.
+        unsafe {
+            for i in self.len..n {
+                self.ptr_mut().add(i).write(v);
+            }
+        }
+        self.len = n;
+    }
+
     /// Whether `into_chunk` would hand its chunk on to `facts`' block (or it has none to hand).
     pub fn can_give(&self, facts: &Arc<Facts>) -> bool {
         self.len == 0 || (self.facts.as_ref().is_some_and(|f| Arc::ptr_eq(f, facts)) && self.owner.is_none() && self.kept > 0)
@@ -1342,11 +1368,18 @@ impl Rows {
         // are checked, `setfix::Levels`): a delta made before holds the dead bits of then. Reused only while they are
         // these (Q173: the device's subtraction of a head's rows read the old bits, and some runs' findings differed).
         // SAFETY: `at` is a delta's descriptor in `one`'s block, which `one` keeps.
-        let fresh = |at: usize| unsafe { (*block.ptr::<Relation>(at)).dead.as_slice() == dead };
+        let fresh = |at: usize| unsafe {
+            let d = (*block.ptr::<Relation>(at)).dead.as_slice();
+            std::ptr::eq(d, dead) || d == dead
+        };
+        // Its own dead bits, kept in its block (decision 0450 step 5d): the delta reads them there.
+        let own = one.rel().own_dead();
+        let own = !own.is_empty() && std::ptr::eq(own, dead);
         let at = match *kills {
             Some(at) if fresh(at) => at,
             _ => {
-                let at = block.offset_of(Relation::try_kills(block, &spec(self.k), one.rel(), dead)?);
+                let rel = if own { Relation::try_kills_own(block, &spec(self.k), one.rel())? } else { Relation::try_kills(block, &spec(self.k), one.rel(), dead)? };
+                let at = block.offset_of(rel);
                 *kills = Some(at);
                 at
             }

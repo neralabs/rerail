@@ -456,3 +456,19 @@ sort again).
 - Test: `a_frozen_relations_known_sorted_ranges_are_in_its_block`.
 - hogql cold, profiling, format 15, load 24-28: CPU 83.5-83.7 B against 5b's 83.3-83.8 B; Metal 74.7-76.3 B, 1,629
   findings in each run.
+
+## Built (2026-11-19, step 5d: the dead rows in the block)
+
+- A relation's dead rows (bit `id`) are a block array (`BlockVec<u64>`) while it is derived (`Rel::dead`) and after
+  (`InRel::dead`), not a heap vector. So are those that hold them for a step: a maintained relation's origin
+  (`Origin::Based`), a mark (`RelMark`), the statistics' dead rows when they were counted, and the levels' dead rows
+  at their start. At freeze (`in_block_dead`), the chunk goes to the block relation that holds the relation's last
+  rows (`Relation::adopt_dead`, `own_dead`; given back at its release). From then on `InRel::dead` reads it there,
+  borrowed, and every clone of it is another borrow.
+- The device's dead rows (the kills delta, `Rows::in_block_dead`) read the same words when the relation is in one
+  part (`Relation::try_kills_own`). Before, the bits were copied into the delta at each change. Rows in several
+  parts still merge for the device (0353 row 6), and their delta still copies.
+- Left as they are (counted, "frozen orders"): dead rows that lie in another block than the last part's.
+- Test: `a_frozen_relations_dead_rows_are_its_blocks_and_the_devices`.
+- hogql cold freezes no relation with dead rows (0 either way), so it measures no change: CPU 83.2-83.3 B against
+  5c's 83.2-83.3 B at load 57-65; Metal 73.7-74.8 B, 1,629 findings in each run.
