@@ -24,7 +24,7 @@ after:  one field per carry, its width in bits, packed        104 bits = 2 words
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike ran no block programs. Its rule of measuring against
+- **SQL index prototype indexes:** the spike ran no block programs. Its rule of measuring against
   the real reference holds: simdjson's carries are the reference here.
 - **Lessons ledger #28** (proxies are not the cost; only end-to-end CPU time counts). **Agrees.**
   The guard counts bits, but the change was kept only after paired CPU timings on the same

@@ -167,7 +167,7 @@ and removes the entry from `corpus::cache_architecture`.
 
 ## Prior work consulted
 
-- **ast-index-spike history index, §2.16 (d):** "Key memoized analysis by what it is a function of (pattern,
+- **SQL index prototype history index, §2.16 (d):** "Key memoized analysis by what it is a function of (pattern,
   language), never by object identity", and "Language must be part of every cache key" (the S238 bug,
   DESIGN_HISTORY L7131-7133).
   - **Agrees.** The key rule is where "what it is a function of" is written, in the program, where it can be

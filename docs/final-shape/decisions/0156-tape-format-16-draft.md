@@ -493,7 +493,7 @@ There are three levels, each loading without the source:
 - **Structure:** the node stream alone. Spans, shapes, kinds.
 - **Names:** plus the leaf pieces. Identifier and literal text: what most text tests read. The leaf
   pieces are the deduplicated leaf vocabulary the spike's value index requires
-  (`ast-index-spike-history-index.md` §11), so a leaf piece id can be that index's value id.
+  (`sql-index-prototype-history-index.md` §11), so a leaf piece id can be that index's value id.
 - **Source:** plus the gap pieces. The exact bytes: CRLF, BOM and invalid UTF-8 alike, since pieces
   are bytes. Hashing them gives the source's hash.
 

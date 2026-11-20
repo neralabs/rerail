@@ -242,7 +242,7 @@ surfaces blocked). The oracle is also compared with the script.
 The set-based plan equals the script's answer on every root of every version, on one core, 8 threads and
 the GPU.
 
-What the versions show (data-layer/upstream/LEG-083.md, with a patch for the script):
+What the versions show (the LEG-083 port note, with a patch for the script, both removed):
 
 - The eager test, not the search, is what is wrong today. At the October commit all 18 LEG-083 findings
   in its files are a pathlib `resolve()` or a `resolve(arg)` lookup, and none is a lazy terminal.
@@ -473,7 +473,7 @@ Recorded as for a decision: the source, what it says, and whether this design ag
   repository-level findings have no line, which is what `@place(path, 0)` and a missing path give.
 - **Decision 0005, named derived facts** (admission rule 3). Agrees. New library relations are concept-named and
   shared by at least two checks (python/ast.rerail, signing.rerail). Single-check helpers stay in the check.
-- **Stateful-reset semantics are a limit of relational lowering** (ast-index-spike history index, topic 2.21:
+- **Stateful-reset semantics are a limit of relational lowering** (SQL index prototype history index, topic 2.21:
   DH L3791-3795; design index §7: LCS L191-195). Agrees for SQL, departs for this language. A guard cleared at
   each reassignment cannot be one flat anti-join. As Datalog it is "the latest reset before n", a `max` over
   syntax, followed by positive recursion; versioned-table-names.rerail is that case. The remaining case, "latest

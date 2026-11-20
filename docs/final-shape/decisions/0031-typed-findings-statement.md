@@ -35,7 +35,7 @@ negation (`!quiet`), ranges (`$s <= $b`) and `count`.
     blocks are the planner's, and only their reads of derived relations are rebound.
   - **#19** (fragments, not an interpreter). **Agrees:** the fold is relational composition, with one
     CTE per relation, not one per operator (N1562's 8,397 CTEs).
-- **ast-index-spike** (`prior-work/ast-index-spike-design-index.md`):
+- **SQL index prototype** (`prior-work/sql-index-prototype-design-index.md`):
   - **§5, fused plans beat materialized intermediates.** **Departs, as 0013 did:** the negated
     suppression strata are read more than once (`anchored`, `honoured`, `resolved`), so each is
     fenced once. The output's own expression is not materialized, because only the statement reads it.

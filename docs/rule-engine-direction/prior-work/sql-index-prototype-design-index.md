@@ -1,6 +1,6 @@
-# ast-index-spike: design-decision index
+# SQL index prototype: design-decision index
 
-Source: github.com/neralabs/ast-index-spike @ 9449260. Read in full: DESIGN.md (7,129 lines),
+Source: an internal prototype repository at 9449260. Read in full: DESIGN.md (7,129 lines),
 README.md, LINTER_ARCHITECTURE.md, LINTER_CASE_STUDY.md, SQL_ONLY_RECOVERY_ANALYSIS.md,
 SQL_CORRECTNESS_PERFORMANCE_RECONSTRUCTION.md, bench/AST_GREP_SQL_GAPS.md.
 

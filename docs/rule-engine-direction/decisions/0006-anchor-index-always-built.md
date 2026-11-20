@@ -7,7 +7,7 @@ Date: 2026-10-25
 Can the positional anchor index (`matcher/anchors/sql`: kind postings, value postings, the FTS kind index) be skipped when whole-run CPU is lower without it? And what does a performance comparison measure? This affects all three targets.
 
 ## Prior work consulted
-- ast-index-spike design index, topic 3 (anchor selection is finished: the rarest mandatory concrete variable, 112 s to 33 s, 1.05 rows per answer; D S050 L3081-3112, D S151 L6640-6686).
+- SQL index prototype design index, topic 3 (anchor selection is finished: the rarest mandatory concrete variable, 112 s to 33 s, 1.05 rows per answer; D S050 L3081-3112, D S151 L6640-6686).
 - Topic 5 (anchor rule [STABLE]; a value anchor before kind; D S049 L3024-3080, D S054 L3349-3382).
 - kidx positional kind posting (D S053 L3319-3348) and topic 7, "The value index (vidx) is mandatory".
 Agreement: agrees.

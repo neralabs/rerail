@@ -1,6 +1,6 @@
-# ast-index-spike: design-decision index
+# SQL index prototype: design-decision index
 
-Source: `github.com/neralabs/ast-index-spike` at commit `9449260`. Files read in full:
+Source: an internal prototype repository at commit `9449260`. Files read in full:
 
 * `DESIGN_HISTORY.md` (8,775 lines). This document calls it **DH**.
 * `bench/TAPE_AST_GREP_RECONSTRUCTION.md` (**TAG**, 374 lines)
