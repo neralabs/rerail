@@ -233,7 +233,7 @@ hosts, and everything compiles and tests here, as without the farm.
 | `floor_free_gb` | the free disk left to the host's own work: under it the host is not used (default 20) |
 | `max_target_gb` | the most a host's test target directories hold together (default 150 GB; per host too) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
-| `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh: the round trip is the least of three (each starts an ssh process, which a loaded Mac delays), and the throughput is 32 MB written through a plain pipe (Python's `run(input=)` writes 512 bytes at a time and read 57 MB/s on a Thunderbolt link that does 270 through ssh and 800 raw). They still fall when either Mac is busy: a low figure is no proof of a slow link |
+| `min_mbps` | the least throughput to it, MB/s (default 8; a host's entry may set its own, for a slow link still worth using), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh: the round trip is the least of three (each starts an ssh process, which a loaded Mac delays), and the throughput is 32 MB written through a plain pipe (Python's `run(input=)` writes 512 bytes at a time and read 57 MB/s on a Thunderbolt link that does 270 through ssh and 800 raw). They still fall when either Mac is busy: a low figure is no proof of a slow link |
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
 
 A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and
@@ -267,6 +267,38 @@ attended. `setup` installs the pinned toolchain with the host's rustup; rustup i
 
     curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal
     curl -LsSf https://get.nexte.st/<version>/linux-arm | tar zxf - -C ~/.cargo/bin
+
+(`linux` in place of `linux-arm` on an x86_64 host.)
+
+An x86_64 Linux host takes test commands, but not this Mac's compiles (`"mac_compiles": false`):
+its rustc, compiling for `aarch64-apple-darwin`, gave 12 of `test-mac-compiles`' 42 outputs other
+bytes than this Mac's (proc-macro2, regex-automata, libc; 2026-11-19). The agent uses the host's
+own triple for its rustc and its proc-macro builds (farm 39), so the test can be run there again.
+
+### Windows PCs, through WSL
+
+A Windows PC joins as a Linux host: its WSL2 Ubuntu 24.04, reached by ssh directly, as the other
+Linux hosts are. Nothing of the farm runs on Windows itself. Set up once, as an administrator:
+
+- Windows' OpenSSH server (`Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0`, the
+  service automatic, PowerShell its shell), and a local administrator account for the farm,
+  this Mac's key in `C:\ProgramData\ssh\administrators_authorized_keys` (icacls: Administrators
+  and SYSTEM only). An Azure AD account cannot log in by key (sshd resets the connection), and
+  a local account keeps the farm's files apart from the PC's user's.
+- WSL (the features by `dism /online /enable-feature`, `Microsoft-Windows-Subsystem-Linux` and
+  `VirtualMachinePlatform`, then Microsoft's WSL release MSI: the inbox `wsl --install` refuses
+  over ssh), a restart, `wsl --install Ubuntu-24.04 --no-launch`.
+- In the account's `.wslconfig`: `networkingMode=mirrored` (WSL has the PC's address), `memory`,
+  `processors`, `vmIdleTimeout=-1`, and `instanceIdleTimeout=-1` under `[general]`. The Hyper-V
+  firewall lets WSL's VMs take connections in (`Set-NetFirewallHyperVVMSetting` for WSL's creator
+  id, a rule for the port), and a task at startup, as the account (S4U), runs
+  `wsl.exe -d Ubuntu-24.04 -u root -- sleep infinity`, so WSL runs from boot with no one signed in.
+- In Ubuntu: systemd (`/etc/wsl.conf`), the packages a Linux host has (build-essential, cmake,
+  clang, libclang-dev, libssl-dev, pkg-config, git, zstd, python3, docker.io), a `farm` user in
+  `docker` with this Mac's key, and sshd on a port of its own (Windows' sshd has 22), password
+  logins off. Then rustup and cargo-nextest as above, the host in `farm.json` as `"os": "linux"`
+  (with its `link`, WSL's `eth0`), and `setup`.
+- A laptop: on AC power, no sleep and no action on closing the lid (`powercfg`).
 
 ### Mac compiles on a Linux host
 

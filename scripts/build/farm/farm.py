@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 38
+VERSION = 40
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1176,7 +1176,9 @@ def probe(host, cfg, fell_back=False, recovered=False):
             break
     h["rtt_ms"] = min(rtts)
     link = link_of(host)
-    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
+    # A host's own floor (`min_mbps` in its entry: a slower link it is still worth using over), else the farm's.
+    min_mbps = host.get("min_mbps", cfg["min_mbps"])
+    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < min_mbps:
         data = os.urandom(PROBE_BYTES)  # made before the clock starts: 70 ms on a loaded Mac
         # A plain pipe: `run(input=, capture_output=True)` writes stdin 512 bytes at a time while
         # it reads, and measured itself (57 MB/s where the pipe does 270).
@@ -1210,8 +1212,8 @@ def probe(host, cfg, fell_back=False, recovered=False):
     # and more) pushed it past the limits on the fast link, taking healthy hosts out mid-build.
     elif not link and h["rtt_ms"] > cfg["max_rtt_ms"]:
         h["why"] = f"a {h['rtt_ms']} ms round trip, over {cfg['max_rtt_ms']}"
-    elif not link and (h["mbps"] or 0) < cfg["min_mbps"]:
-        h["why"] = f"{h['mbps']} MB/s, under {cfg['min_mbps']}"
+    elif not link and (h["mbps"] or 0) < min_mbps:
+        h["why"] = f"{h['mbps']} MB/s, under {min_mbps}"
     else:
         h["ok"], h["why"], h["failures"] = True, "", 0
         if h["free_gb"] < cfg["min_free_gb"]:
