@@ -175,8 +175,7 @@ outside this batch.
 
 ## What the pack costs a user
 
-Measured to decide which rules the pack starts on. Every rule starts on until this is measured again on an engine
-that runs the mid-size app.
+Measured to decide which rules the pack starts on. The decision and its basis are at the end of this section.
 
 **Method.** A release `rerail-engine` (`cargo build --release --manifest-path native/Cargo.toml --bin rerail-engine`)
 of `main` at `1328a4e386`, on an idle 32-vCPU, 64 GB Linux machine with nothing else running. All 27 rules in one
@@ -190,6 +189,8 @@ select-for-update-outside-atomic, sync-orm-reached-from-async), each group run o
 scope is `**/*.py`, so every rule takes the edited file: a run of only the rules whose scope takes it is (c). The apps
 are pinned commits of [the corpus](README.md#the-corpus); the edited files were `bookmarks/services/assets.py`,
 `netbox/virtualization/forms/model_forms.py` and `cms/djangoapps/api/v1/views/course_runs.py`.
+
+Before bulk-not-loop's bound (below):
 
 | App (Python files) | Step | Wall | CPU | Peak memory | Findings |
 |---|---|--:|--:|--:|--:|
@@ -205,14 +206,38 @@ are pinned commits of [the corpus](README.md#the-corpus); the edited files were 
 | | the 23 other rules, unchanged and after the edit | killed at 324 s and 208 s | 1,364 s and 619 s | 55-57 GB (out of memory) | none |
 | | the 4 call-graph rules, unchanged | 197 s | 682 s | 9.9 GB | 99 |
 
-On this engine an edit costs a whole run: the store answers a run only when nothing it read changed. The pack does not
-finish on netbox or edx-platform within 64 GB, though netbox ran the whole pack in 164 s at 4.5 GB on an earlier
-`main` ([ENGINE-BUGS.md](ENGINE-BUGS.md), bug 2) with these rules unchanged: the out-of-memory runs come from the
-engine. The call-graph rules alone finish on edx-platform.
+On this engine an edit costs a whole run: the store answers a run only when nothing it read changed.
 
 Each rule alone, first run on a fresh store, linkding: bulk-not-loop takes 54.0 s, 73.7 s CPU and 4.9 GB (2 findings);
 every other rule 0.7 to 6.4 s and 0.2 to 0.8 GB, the four call-graph rules 4.9 to 6.4 s of those. On netbox the four
 call-graph rules together finish a first run in 98.5 s, 291 s CPU and 7.1 GB (16 findings).
+
+The cause was bulk-not-loop's `bnl_number`, which paired every attribute name of the run with every node: a run that
+keeps its cross-file part in the store evaluated all of it. It now takes only the field and step pairs of the
+assignments the rule tests (`bnl_step`), with the same findings: 2 on linkding, 30 on netbox, and on edx-platform the
+59 the whole pack reported before. With that bound, `rerail scan --pack django` from the installed tarball (the
+product's child process, store kept, 16 threads) completes on linkding in 19.7 s at 1.4 GB (18 findings) and on netbox
+in 172 s at 8.4 GB (1,050 findings, 950 of them lazy-translation-at-import, as in the README).
+
+With the bound, all 27 rules, idle machine, 16 threads, first run / unchanged / after the one-line edit:
+
+| App | With the store | Without a store (`RERAIL_TAPE_CACHE=off`) |
+|---|---|---|
+| linkding | 10.1 s, 1.2 GB / 0.17 s / 3.4 s | 13 to 15 s, 0.8 GB, every run |
+| netbox | 107 s, 8.0 GB / 0.27 s / 184 s, 6.0 GB | 123 s, 4.7 GB, every run |
+| edx-platform | 187 s, 12.6 GB / 0.42 s / 493 s, 8.5 GB | about 251 s, 7.7 GB, every run |
+
+The store's first run peaks at about 1.7 times a run without one, and on the mid-size and large apps a run after an
+edit costs more with the store than without, so the product runs a pack's `.rerail` rules without a store.
+
+**Decision: every rule starts on**, in the mode README.md's table gives it (22 steer, 5 log; no `heldOff`, which is
+for a rule its upstream turns on). From the column without a store, the run the product makes: the whole pack after
+an edit of netbox, the mid-size app, takes 123 s and 4.7 GB, inside the runner's default time and memory limits, so no
+rule is one that cannot finish there; and no rule alone is costly any more (bulk-not-loop's bound removed the only
+outlier). Limits: by default a run may use half the machine's memory, so with less than about 10 GB a run over
+netbox is stopped and its rules reported as not run, and below about 16 GB a run over edx-platform. Open when this
+was written: without a store, netbox stalled at 4 threads, and a 16-thread edx-platform run reported fewer findings
+than a 4-thread one (95, most of them get-handler-writes); both are being fixed in the engine.
 
 ## Overlap with existing tools (partial)
 

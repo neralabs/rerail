@@ -75,13 +75,18 @@ function childArguments(): string[] {
 }
 
 /**
- * This process's environment, for the child: its thread cap, and none of the runner's own settings. A store named by
- * `RERAIL_TAPE_CACHE` is left out too: the child keeps the store of the checkout it runs in (its working directory),
- * so runs of two checkouts never share one, and every `RERAIL_*` variable is part of a run's reuse key.
+ * This process's environment, for the child: its thread cap, its store, and none of the runner's own settings.
+ *
+ * With no store (`budgets.store` false, the default; `rr-budgets.ts` says why) the child runs with
+ * `RERAIL_TAPE_CACHE=off`. With one, it keeps the engine's store of the checkout it runs in: the engine picks one per
+ * working directory (`$TMPDIR/rerail-stores/<build>-<directory>.sqlite`, one owner process at a time), never the
+ * daemon's content store, so runs of one checkout reuse each other's work and runs of two checkouts never share a
+ * store. Either way a `RERAIL_TAPE_CACHE` this process has is not passed on (every `RERAIL_*` variable is also part
+ * of a run's reuse key).
  */
-function childEnvironment(threads: number): NodeJS.ProcessEnv {
+function childEnvironment(budgets: RrBudgets): NodeJS.ProcessEnv {
   const kept = Object.entries(process.env).filter(([name]) => !name.startsWith("RERAIL_RR_") && name !== "RERAIL_TAPE_CACHE");
-  return { ...Object.fromEntries(kept), RERAIL_THREADS: String(threads) };
+  return { ...Object.fromEntries(kept), RERAIL_THREADS: String(budgets.threads), ...(budgets.store ? {} : { RERAIL_TAPE_CACHE: "off" }) };
 }
 
 /** A temporary directory for one child: its request written, an empty `out` for the run, its result's path. */
@@ -186,7 +191,7 @@ export async function runChild(requestOf: RrChildRequestOf, options: RrChildOpti
     killLiveOnExit();
     const child = spawn(process.execPath, args, {
       cwd: options.cwd,
-      env: childEnvironment(options.budgets.threads),
+      env: childEnvironment(options.budgets),
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
     live.set(child, directory);
@@ -206,7 +211,7 @@ export function runChildSync(requestOf: RrChildRequestOf, options: Omit<RrChildO
     const started = performance.now();
     const ran = spawnSync(process.execPath, args, {
       cwd: options.cwd,
-      env: childEnvironment(options.budgets.threads),
+      env: childEnvironment(options.budgets),
       stdio: ["ignore", "ignore", "pipe"],
       timeout: options.budgets.deadlineMs,
       killSignal: "SIGKILL",
