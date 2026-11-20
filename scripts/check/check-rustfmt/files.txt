@@ -362,9 +362,12 @@ native/src/tree_watch/tests.rs
 native/src/tree_watch/windows.rs
 
 # Files written for this repository since.
+native/src/code_rule_dsl/module_graph/listing.rs
+native/src/content_store/verified_files.rs
 native/src/git_start.rs
 native/src/git_start/run.rs
 native/src/git_start/spawn.rs
+native/src/git_workspace/worktree_stat.rs
 native/src/path_owner.rs
 scripts/profiling/preparation/src/code_rule_dsl.rs
 scripts/profiling/reachability/src/code_rule_dsl.rs
