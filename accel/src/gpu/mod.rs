@@ -155,8 +155,8 @@ impl Backend for GpuBackend {
                 let (n, words) = (*n as u64, (*n as u64).div_ceil(64).max(1));
                 off.len() as u64 == n + 1 && u32ok(n * words * 2) && fits(n * words * 8)
             }
-            // Programs run kernels still Metal's (decision 0440 step C): on Metal alone until they are UKL.
-            Kernel::Program(p) => shared::get().is_some() && p.0.per_unit(crate::lanes::Lane::Gpu).is_some(),
+            // A program's kernels are UKL, on the process's device (decision 0440 step C).
+            Kernel::Program(p) => p.0.per_unit(crate::lanes::Lane::Gpu).is_some(),
             Kernel::Join { left, right, by, .. } => {
                 let Ok((nl, nr)) = Kernel::join_shape(left, right) else {
                     return false;

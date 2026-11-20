@@ -1261,6 +1261,11 @@ rerun, 126 checks on Metal, the CPU and OpenCL) and the tests (`the_device_reads
 - **A race fixed:** `a_wrap_of_host_memory_leaves_the_metal_budget_unchanged` compared the pool's whole idle count
   across a trim while other tests lease and return small buffers from the same pool; it checks its own 64 MB.
 
+**C: programs on the GPU lane of every device (2026-11-19).** accel's GPU lane takes a program wherever the program
+offers that lane (`can`): the gate on Metal's `Shared` is gone, since the programs that offer it (the span prefilter,
+the matcher wave) run their kernels through the lane on the process's device. The span prefilter's and the wave's
+tests pass on Metal, the CPU and OpenCL, and accel's 85 on all three (the CPU's in 399 s cold: its compiles).
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
