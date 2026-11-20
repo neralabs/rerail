@@ -85,8 +85,8 @@ fn table_rows(cap_in: usize, nr: usize, scan: bool, seen: Option<f64>, est: Opti
 /// A table sized by the planner's estimate holds this many times it: the estimates miss by about that (rr_token_req's
 /// first step: 2,848 expected, 7,453 made), and an overflow runs the stage again exactly.
 const EST_MARGIN: f64 = 2.0;
-/// The device's buffers share the Metal budget (`metal_buffer_limit`, 512 MB by default; decision 0126) with the
-/// buffer pool and the other lanes. The device joins keep within about a quarter of it at the default (their sizes
+/// The device's buffers share the Metal budget (`metal_buffer_limit`, the overall budget by default; decisions 0126 and
+/// 0518) with the buffer pool and the other lanes. The device joins keep within about a quarter of it at the default (their sizes
 /// below are those at 512 MB, scaled with the budget, `metal_share`):
 /// the most bytes one binding table may take: past it the rule is refused at run time and runs on the CPU, named;
 fn table_max() -> usize { rerail_accel::budget::metal_share(48 << 20) }
