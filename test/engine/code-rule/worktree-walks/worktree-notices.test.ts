@@ -15,6 +15,9 @@ vi.mock("node:fs", async importOriginal => {
   return { ...original, lstatSync: vi.fn(original.lstatSync) };
 });
 
+/** A read of a path that could not be read, which says nothing of what stands there. */
+const unreadable = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+
 /** A read that walked the worktree, `src` and `src/deep`, and left out an ignored folder, an ignored file and a worktree. */
 const seen = { folders: new Set(["", "src", "src/deep"]), leftOut: new Set(["node_modules", "src/cache.tmp", "nested"]) };
 
@@ -410,6 +413,31 @@ describe("WorktreeNotices", () => {
     expect(await states(subject, ["/w"])).toEqual([[true, false]]);
     watch.refused.delete("/w");
     expect(await states(subject, ["/w"])).toEqual([[true, true]]);
+  });
+
+  it.each<[string, boolean, string | Error, string | Error]>([
+    ["nothing, nothing", false, "", ""],
+    ["nothing, a folder", false, "", "b"],
+    ["nothing, an error", false, "", unreadable],
+    ["a folder, nothing", false, "a", ""],
+    ["a folder, a folder", true, "a", "a"],
+    ["a folder, an error", true, "a", unreadable],
+    ["an error, nothing", false, unreadable, ""],
+    ["an error, a folder", true, unreadable, "b"],
+    ["an error, an error", true, unreadable, unreadable],
+  ])("records a refused watch as failed unless a read of its path before or after the refusal found nothing there (%s): failed %s", async (_reads, failed, before, after) => {
+    const watch = new ScriptedWatch();
+    const reads = [before, after];
+    const folderAt = async (): Promise<string> => {
+      const answer = reads.shift() ?? "b";
+      if (answer instanceof Error) throw answer;
+      return answer;
+    };
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "darwin", now: () => 0, folderAt });
+    watch.refused.add("/w");
+    expect(await states(subject, ["/w"])).toEqual([[true, false]]);
+    watch.refused.delete("/w");
+    expect(await states(subject, ["/w"])).toEqual([[true, !failed]]);
   });
 
   it("records no failed watch for a worktree a walk let go of while its path was read again after the engine refused it", async () => {

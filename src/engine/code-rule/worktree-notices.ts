@@ -141,6 +141,11 @@ function nothingAt(error: unknown): boolean {
   return code === "ENOENT" || code === "ENOTDIR";
 }
 
+/** Whether `read` (`folderAt`) found no folder at its path; false when it rejected, which says nothing of what stands there. */
+function foundNothing(read: Promise<string>): Promise<boolean> {
+  return read.then(folder => folder === "", () => false);
+}
+
 /** `folderAt` of the entry `info` describes: `""` for no folder, `UNKNOWN_FOLDER` for one with no birth time. */
 export function folderIdentity(info: Pick<BigIntStats, "dev" | "ino" | "birthtimeNs" | "isDirectory">): string {
   if (!info.isDirectory()) return "";
@@ -312,14 +317,15 @@ export class WorktreeNotices {
    */
   async #open(root: string): Promise<Watched | undefined> {
     if (this.#watch === undefined || this.#waits(root)) return undefined;
+    const read = this.#folderAt(root);
     // A path that could not be read tells no folder from another, as one with no folder.
-    const folder = await this.#folderAt(root).catch(() => "");
+    const folder = await read.catch(() => "");
     if (this.#waitsFor(root, folder) || this.#letGo(root)) return undefined;
     this.#failed.delete(root);
     this.#ended.delete(root);
     // Up before the read: a change made while it runs is a notice.
     if (!this.#watch.watch(root, [""])) {
-      await this.#refused(root);
+      await this.#refused(root, await foundNothing(read));
       return undefined;
     }
     const watched: Watched = { folders: new Set([""]), seen: undefined, changed: true, folder };
@@ -328,13 +334,15 @@ export class WorktreeNotices {
   }
 
   /**
-   * The engine refused to watch `root`: it is tried again after `WATCH_RETRY_MS`. Its path is read again after the
-   * refusal, and nothing there (it went after the walk listed or read it) is no failed watch: the walk Git's registry
-   * asks for once the worktree is made again watches it. A path that could not be read is a failed watch.
-   * A `retain` that let go of `root` meanwhile forgot it, so nothing is recorded.
+   * The engine refused to watch `root`: it is tried again after `WATCH_RETRY_MS`, unless a read of its path found no
+   * folder there, the read before the watch (`nothingBefore`) or one after the refusal: the folder went after the walk
+   * listed or read it, or came only after the read before the watch, and the walk Git's registry asks for once the
+   * worktree is made again watches it. A read that rejected says nothing of what stands there: with the other finding a
+   * folder or rejecting too, the watch failed. A `retain` that let go of `root` meanwhile forgot it, so nothing is
+   * recorded.
    */
-  async #refused(root: string): Promise<void> {
-    const gone = await this.#folderAt(root).then(folder => folder === "", () => false);
+  async #refused(root: string, nothingBefore: boolean): Promise<void> {
+    const gone = nothingBefore || (await foundNothing(this.#folderAt(root)));
     if (!gone && !this.#letGo(root)) this.#failed.set(root, this.#now());
   }
 
@@ -398,7 +406,8 @@ export class WorktreeNotices {
     if (!this.#watch!.watch(root, [...folders])) {
       this.#watched.delete(root);
       this.#watch!.unwatch(root);
-      void this.#refused(root);
+      // The walk's read found its folder there: only a read after the refusal may find none.
+      void this.#refused(root, false);
       return;
     }
     watched.folders = folders;
