@@ -3055,6 +3055,13 @@ submitted" now hold device memory at once.
   removes no refusals: what remains of (c) is what admission counts. Its `fits` counts every live lease, held rows too,
   so the refusals are leases a stratum makes past its own reservation (uploads, sorts' scratch, rows put in spare slabs)
   that `expected()` does not estimate. Next: the refused leases at 1 GB by kind against the reservation they came under.
+  The interpreter's compile (parked 2026-11-20, no Metal until this Mac's GPU crashes are understood): the transducer's
+  `run_batch` took 44.7 s to build on an M5 Max with every hot tape read inlined, 7.1 s with the six largest written
+  `UKL_COLD` (`ukl::translate_reads`, a body past 70 statements; a draft decision 0507 and its patch are in the
+  worktree's `tmp/parked/`). Not committed: `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` then has 4
+  clauses fail (`BackendFailure`, a lane status, not a GPU error) where the base has 1 (`log001`, red there too), and 18
+  refused where the base has 12. Next: the lane status code the three new failures return, then the reads whose call
+  changes it.
   (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —
