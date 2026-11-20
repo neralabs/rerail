@@ -537,6 +537,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     for (const entry of taken) this.#taken.add(entry);
     for (const entry of taken) {
       const branches = await this.#branches(entry.path);
+      if (this.#stopped) break;
       this.#taken.delete(entry);
       this.#fire({ checkoutPath: entry.path, repositoryKey }, entry.fires, null, branches);
     }
@@ -645,15 +646,21 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     this.#listeners.clear();
     // No queued handler starts from now on, so none starts a command after the running ones are ended.
     this.#hook.stop();
-    // The hook hears no event from now on: those a turn-off has not handed yet are kept, before anything is awaited.
-    this.#keepTaken(waitMs > 0);
+    // The hook hears no event from now on. With no wait, the events a turn-off has not handed yet are kept now.
+    if (waitMs <= 0) this.#keepTaken(false);
     // With no wait, the passes end in this call, before it awaits anything: its caller may close the database as soon
     // as it returns, as `DatabaseApiStores.close()` does. Nor does it wait for another process's write lock.
     if (waitMs <= 0) void this.#endPasses(false);
     const started = Date.now();
     await this.#commands.stop(Math.min(STOP_KILL_GRACE_MS, waitMs / 2));
+    const commandsEnded = Date.now();
+    // With a wait, once the hook commands are ended, since keeping them waits for another process's write lock. A
+    // turn-off whose branch read answers meanwhile hands nothing and leaves them taken (`setEnabled`).
+    if (waitMs > 0) this.#keepTaken(true);
+    // The keep's wait for the lock is not taken from the passes' wait: they get `waitMs` from the stop, less the time
+    // the commands took to end.
     const timer = Promise.withResolvers<void>();
-    const timeout = setTimeout(timer.resolve, Math.max(0, waitMs - (Date.now() - started)));
+    const timeout = setTimeout(timer.resolve, Math.max(0, waitMs - (commandsEnded - started)));
     const running = [this.#hook.settled(), ...this.#hookWork, ...[...this.#scans.values()].map(scan => scan.work)];
     try {
       // A scan or detection that ends meanwhile stores what it found, as one that ended before the stop did.
