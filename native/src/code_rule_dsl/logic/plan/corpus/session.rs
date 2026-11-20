@@ -30,6 +30,9 @@ pub(in crate::code_rule_dsl) struct Session {
     /// per cross program (`retain::keys`' second, of the cross program alone, which a file-local rule's edit leaves):
     /// a run's passes are different programs, and one would take the other's place.
     pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
+    /// The corpus batch as the last run made it (decision 0458), by the same key as `cross` (the maintained cross
+    /// program's): taken out while a run uses it, and put back with that run's.
+    pub(super) corpus: Mutex<std::collections::HashMap<[u8; 32], HeldCorpus>>,
     /// Each output a run of the session wrote (`out/<rel>`): the program's cross-file key and its rows. A later run of
     /// that program whose output stratum is clean leaves it in the stack as it is.
     pub(super) written: Mutex<std::collections::HashMap<PathBuf, ([u8; 32], usize)>>,
@@ -69,6 +72,7 @@ impl Handle {
             store,
             memo: Default::default(),
             cross: Default::default(),
+            corpus: Default::default(),
             written: Mutex::new(Default::default()),
             stacks: Mutex::new(Default::default()),
             stats: Mutex::new(Default::default()),
@@ -151,6 +155,16 @@ pub(super) fn current() -> Held {
         handle.session.lock_arc()
     };
     Held(Some(held))
+}
+
+/// A session's corpus batch as its last run made it (decision 0458): each path's documents (its file's and its guests'),
+/// with the content and key they were made from; the documents' digest, which the base relations' digests are of;
+/// and each base relation's statistics, with the digest of the rows they count. An edit makes the changed files'
+/// documents alone, and the held ones of those paths are the base relations' old versions.
+pub(super) struct HeldCorpus {
+    pub docs: std::collections::HashMap<String, ((memo::Content, i64), Vec<crate::code_rule_dsl::facts::vtab::syntax::Document>)>,
+    pub digest: u64,
+    pub stats: std::collections::HashMap<String, (u64, crate::code_rule_dsl::logic::plan::statkeep::RelStats)>,
 }
 
 /// The session held for a run.

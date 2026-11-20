@@ -5541,6 +5541,24 @@ fn run_observed_within(
         }
         _ => (None, (None, HashMap::new())),
     };
+    // A session's corpus batch as its last run made it (decision 0458), under the key a kept part's documents' table
+    // has (the maintained cross program's): taken out for the run, in memory, and put back with this run's. Its
+    // statistics are the kept ones, of its documents' digest.
+    let session_binds: Option<[u8; 32]> = if session.is_some() && !stored.is_empty() {
+        let maintained = maintained_cross_of(shared_maintained, &cross)?;
+        Some(retain::keys(&prepared_key, maintained.digest()?).1)
+    } else {
+        None
+    };
+    let mut session_corpus: Option<session::HeldCorpus> =
+        session_binds.and_then(|b| session.as_ref().and_then(|s| s.corpus.lock().expect("the session's corpus batches").remove(&b)));
+    if let Some(held) = session_corpus.as_mut() {
+        base_stats_kept = (Some(held.digest), std::mem::take(&mut held.stats));
+    }
+    // This run's batch, for the session's next run: `None` where a document's content is not known.
+    let mut session_corpus_next: Option<HashMap<String, ((memo::Content, i64), Vec<syntax::Document>)>> = None;
+    // The paths whose documents changed since the session's last run, and their documents then.
+    let mut session_old: Option<(BTreeSet<String>, Vec<syntax::Document>)> = None;
     let base_compare = |now_of: HashMap<String, (i64, Option<memo::Content>)>| -> Result<OldBases> {
         let (Some(_), Some(memo @ memo::Memo::Stored(_)), true) = (base_binds, memo, looking) else { return Ok(None) };
         let found = (|| -> Result<std::result::Result<(BTreeSet<String>, HashMap<String, OldBase>), String>> {
@@ -8626,6 +8644,12 @@ fn run_observed_within(
         use rayon::prelude::*;
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the corpus batch (decision 0458)".into());
         let hits = std::mem::take(&mut corpus_hits);
+        // A session's: a file whose content and key are as its last run had them has the documents that run made.
+        let now_docs: input_delta::Docs = run_docs_held.lock().expect("the run's documents").clone();
+        let held_docs = session_corpus.as_ref().map(|h| &h.docs);
+        let same = |path: &str| held_docs.and_then(|d| d.get(path)).filter(|(was, _)| now_docs.get(path) == Some(was)).map(|(_, docs)| docs);
+        let (reused, hits): (Vec<CorpusHit>, Vec<CorpusHit>) = hits.into_iter().partition(|h| same(&h.path).is_some());
+        let reused: Vec<syntax::Document> = reused.iter().flat_map(|h| same(&h.path).into_iter().flatten().cloned()).collect();
         let tapes_of = std::mem::take(&mut *hit_tapes.lock());
         // The run on each job's thread (`run_state::Carry`, decision 0442): without it a job's tape took a residency
         // (and a 64 MB slab) of a machine of its own.
@@ -8643,11 +8667,36 @@ fn run_observed_within(
         with_guests(&mut made, hits.into_iter().flat_map(|h| h.rounds).collect())?;
         let mut all = std::mem::take(&mut corpus_docs);
         all.extend(made);
+        let (made, held) = (all.len(), reused.len());
+        crate::code_rule_dsl::logic::profile::decision("the corpus batch (decision 0458)", || match held_docs {
+            Some(_) => format!("{made} documents made, {held} held from the session's last run"),
+            None => format!("{made} documents made, none held"),
+        });
+        all.extend(reused);
         // A guest two files asked for (a value's askers) is one document, made alike by each.
         all.sort_by_key(|d| d.key);
         all.dedup_by_key(|d| d.key);
-        if let Some((changed, _)) = &old_base {
+        // A session's change: each path whose content or key is not as its last run's, or which is gone, with the
+        // documents that run made of it, the base relations' old version (as the kept route's `old_base` is).
+        if let Some(was) = held_docs {
+            let changed: BTreeSet<String> = was.keys().chain(now_docs.keys()).filter(|p| was.get(*p).map(|(c, _)| c) != now_docs.get(*p)).cloned().collect();
+            let olds = changed.iter().filter_map(|p| was.get(p)).flat_map(|(_, docs)| docs.iter().cloned()).collect();
+            session_old = Some((changed, olds));
+        }
+        if let Some(changed) = old_base.as_ref().map(|(c, _)| c).or(session_old.as_ref().map(|(c, _)| c)) {
             changed_docs = all.iter().filter(|d| changed.contains(&d.path)).cloned().collect();
+        }
+        // This run's batch, held for the session's next: every document under its path's content, else none.
+        if session_binds.is_some() {
+            let mut by_path: HashMap<String, ((memo::Content, i64), Vec<syntax::Document>)> = HashMap::new();
+            let whole = all.iter().all(|d| match now_docs.get(&d.path) {
+                Some(content) => {
+                    by_path.entry(d.path.clone()).or_insert_with(|| (*content, Vec::new())).1.push(d.clone());
+                    true
+                }
+                None => false,
+            });
+            session_corpus_next = whole.then_some(by_path);
         }
         // What the base relations are a function of, under the run's plan: their documents (decision 0458). A base
         // relation's digest is theirs, taken here, never its rows' (a scan of every row).
@@ -8674,9 +8723,11 @@ fn run_observed_within(
     let mut base_wholes: HashMap<String, Whole> = HashMap::new();
     // The statistics counted or patched this run, with the digest of their rows: kept beside the table.
     let mut base_stats_out: Vec<(String, u64, super::statkeep::RelStats)> = Vec::new();
-    let base_versions: Versions = match &old_base {
+    // The changed files' old documents: made from their old sources and tapes (the kept route's `old_base`), or, in a
+    // session, the ones its last run made (`session_old`).
+    let old_documents: Option<Vec<syntax::Document>> = match &old_base {
         Some((changed, olds)) if !corpus_sources.is_empty() && !changed.is_empty() => {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' versions (decision 0458)".into());
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' old documents, made (decision 0458)".into());
             let mut old_docs: Vec<syntax::Document> = Vec::new();
             let mut old_rounds: Vec<(usize, String, output::Rows)> = Vec::new();
             for (path, old) in olds {
@@ -8689,6 +8740,14 @@ fn run_observed_within(
                 }
             }
             with_guests(&mut old_docs, old_rounds)?;
+            Some(old_docs)
+        }
+        Some(_) => None,
+        None => session_old.take().filter(|(changed, _)| !corpus_sources.is_empty() && !changed.is_empty()).map(|(_, olds)| olds),
+    };
+    let base_versions: Versions = match old_documents {
+        Some(old_docs) => {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' versions (decision 0458)".into());
             let batch_of = |mut docs: Vec<syntax::Document>| -> Result<HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>> {
                 if docs.is_empty() {
                     return Ok(HashMap::new());
@@ -9072,8 +9131,16 @@ fn run_observed_within(
             let names: Vec<String> = from.iter().map(|&c| columns[c].clone()).collect();
             let rows = source.len() as i64;
             let now = base_digest(rel);
+            // Kept for the next run: beside the documents' table (`base_binds`), or in the session (`session_binds`),
+            // which holds every one, the ones taken as kept too.
+            let keeps = base_binds.is_some() || session_binds.is_some();
             let counted = match kept_stats.remove(rel).filter(|(_, k)| k.columns() == names.as_slice()) {
-                Some((d, k)) if d == now && k.rows() == rows => Some((k, "kept")),
+                Some((d, k)) if d == now && k.rows() == rows => {
+                    if session_binds.is_some() {
+                        base_stats_out.push((rel.to_owned(), now, k.clone()));
+                    }
+                    Some((k, "kept"))
+                }
                 Some((d, mut k)) if Some(d) == table_digest.map(|t| t ^ tag(rel)) => base_wholes.get(rel).and_then(|(old, new)| {
                     for (v, sign) in [(old, -1), (new, 1)] {
                         if let Some(v) = v {
@@ -9081,7 +9148,7 @@ fn run_observed_within(
                         }
                     }
                     (k.rows() == rows).then(|| {
-                        if base_binds.is_some() {
+                        if keeps {
                             base_stats_out.push((rel.to_owned(), now, k.clone()));
                         }
                         (k, "patched by the changed documents")
@@ -9093,7 +9160,7 @@ fn run_observed_within(
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}'s statistics off the corpus batch"));
                 let mut k = super::statkeep::RelStats::new(names.clone());
                 k.documents_read(source.len(), width, &|r, c| source.value(r, c), &from, 1);
-                if base_binds.is_some() {
+                if keeps {
                     base_stats_out.push((rel.to_owned(), now, k.clone()));
                 }
                 (k, "counted")
@@ -10103,6 +10170,11 @@ fn run_observed_within(
                     next.let_go_past();
                     if !handed_any {
                         cells.insert(binds, next);
+                    }
+                    // The corpus batch and its base statistics, for the session's next run (decision 0458).
+                    if let (Some(b), Some(docs)) = (session_binds, session_corpus_next.take()) {
+                        let stats = base_stats_out.iter().map(|(rel, digest, k)| (rel.clone(), (*digest, k.clone()))).collect();
+                        session.as_ref().expect("a session's run").corpus.lock().expect("the session's corpus batches").insert(b, session::HeldCorpus { docs, digest: corpus_digest, stats });
                     }
                 }
                 None => {
