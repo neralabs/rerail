@@ -1,0 +1,116 @@
+// P1 on the device (decision 0467): the unit's include tree, laid out.
+//
+// An instance is a file entered at an include (`PpNode`): its file, its parent instance and the
+// directive of the parent's that entered it, its depth, and its unit (a batch holds several). A
+// root has no parent: each unit's predefines (`pdir` 0), then its main file (`pdir` 1), the next
+// instance. Every directive of an instance's file is a word of the instance's (from its
+// `dir_first`), and every stretch is (from its `gap_first`): a file's stretch `k` comes before
+// its directive `k`, the last after them all.
+//
+// The layout, from the tree (§2):
+// - each instance's size: its directives, its text tokens, and its entered children's sizes,
+//   bottom-up, a phase a depth (a child adds its size to its parent's, and writes it at the
+//   directive that entered it);
+// - each stretch's shift: the sizes of the children the instance's earlier directives entered,
+//   a segmented scan over the instance's stretches;
+// - each unit's floor (its first slot less one), a scan over the units of their sizes;
+// - each instance's base, top-down, a phase a depth: a child starts at the slot after its
+//   directive;
+// - then each directive's slot, `base + d + text_before + shift[d]`, and each stretch's,
+//   `base + k + first + shift[k]` (`first` the text tokens before its directive `k - 1`).
+
+typedef struct PpNode { uint32_t file, parent, pdir, depth, unit; } PpNode;
+
+// The instance word `w` (a directive's, by `dir_first`; a stretch's, by `gap_first`) is in.
+UKL_INLINE uint32_t p1_inst_of(UKL_GLOBAL const PpInst* insts, uint32_t n, uint32_t w, bool gaps) {
+    uint32_t lo = 0u, hi = n;
+    for (uint32_t k = 0u; k < 32u && hi - lo > 1u; k++) {
+        uint32_t mid = (lo + hi) / 2u;
+        if ((gaps ? insts[mid].gap_first : insts[mid].dir_first) <= w) lo = mid; else hi = mid;
+    }
+    return lo;
+}
+
+// File `f`'s directives and text tokens.
+UKL_INLINE uint32_t p1_file_dirs(UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const uint32_t* dir_total, uint32_t n_files, uint32_t f) {
+    return (f + 1u < n_files ? dir_bases[f + 1u] : dir_total[0]) - dir_bases[f];
+}
+UKL_INLINE uint32_t p1_file_text(UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint32_t* text_rank, UKL_GLOBAL const uint32_t* text_total, uint32_t n_files, uint32_t f) {
+    return (f + 1u < n_files ? text_rank[bases[f + 1u]] : text_total[0]) - text_rank[bases[f]];
+}
+
+// Instance `i`'s words (its file's directives, and one stretch more) and its own size.
+UKL_INLINE void p1_counts(UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const uint32_t* dir_total, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint32_t* text_rank, UKL_GLOBAL const uint32_t* text_total, UKL_GLOBAL uint32_t* ndirs, UKL_GLOBAL uint32_t* ngaps, UKL_GLOBAL uint32_t* size, uint32_t n_files, uint32_t i) {
+    if (i >= n_nodes[0]) return;
+    uint32_t f = nodes[i].file;
+    uint32_t d = p1_file_dirs(dir_bases, dir_total, n_files, f);
+    ndirs[i] = d;
+    ngaps[i] = d + 1u;
+    size[i] = d + p1_file_text(bases, text_rank, text_total, n_files, f);
+}
+
+// Instance `i`'s first words, as the visibility reads them.
+UKL_INLINE void p1_insts(UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* dir_first, UKL_GLOBAL const uint32_t* gap_first, UKL_GLOBAL PpInst* insts, uint32_t i) {
+    if (i >= n_nodes[0]) return;
+    insts[i].file = nodes[i].file;
+    insts[i].dir_first = dir_first[i];
+    insts[i].gap_first = gap_first[i];
+}
+
+// Depth `depth`'s instances, their sizes done: each adds its size to its parent's, at the
+// directive that entered it.
+UKL_INLINE void p1_up(UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const PpInst* insts, UKL_GLOBAL uint32_t* size, UKL_GLOBAL uint32_t* csize, uint32_t depth, uint32_t i) {
+    if (i >= n_nodes[0] || nodes[i].depth != depth || nodes[i].parent == PP_NONE) return;
+    uint32_t p = nodes[i].parent, s = ukl_atomic_load(&size[i]);
+    csize[insts[p].dir_first + nodes[i].pdir] = s;
+    ukl_atomic_add(&size[p], s);
+}
+
+// Stretch word `w`'s scan input (the size its directive `k` entered; the last stretch none) and
+// its segment's head.
+UKL_INLINE void p1_gap_words(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* csize, UKL_GLOBAL uint32_t* gc, UKL_GLOBAL uint32_t* heads, uint32_t w) {
+    if (w >= n_gaps[0]) return;
+    uint32_t n = n_nodes[0], i = p1_inst_of(insts, n, w, true);
+    uint32_t k = w - insts[i].gap_first;
+    uint32_t end = i + 1u < n ? insts[i + 1u].gap_first : n_gaps[0];
+    gc[w] = k + 1u < end - insts[i].gap_first ? csize[insts[i].dir_first + k] : 0u;
+    heads[w] = k == 0u ? 1u : 0u;
+}
+
+// Each unit's size: its roots'. Then each unit's floor's scan input.
+UKL_INLINE void p1_unit_sizes(UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* size, UKL_GLOBAL uint32_t* usize, uint32_t i) {
+    if (i >= n_nodes[0] || nodes[i].parent != PP_NONE) return;
+    ukl_atomic_add(&usize[nodes[i].unit], size[i]);
+}
+UKL_INLINE void p1_unit_spans(UKL_GLOBAL uint32_t* usize, uint32_t n_units, uint32_t u) {
+    if (u < n_units) usize[u] += 1u;
+}
+
+// A root's base: its unit's floor, past the predefines for the main file.
+UKL_INLINE void p1_root_base(UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* size, UKL_GLOBAL const uint32_t* floors, UKL_GLOBAL uint32_t* base, uint32_t i) {
+    if (i >= n_nodes[0] || nodes[i].parent != PP_NONE) return;
+    base[i] = floors[nodes[i].unit] + 1u + (nodes[i].pdir == 1u ? size[i - 1u] : 0u);
+}
+
+// Depth `depth`'s instances: each starts at the slot after its directive.
+UKL_INLINE void p1_down(UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint32_t* gshift, UKL_GLOBAL const uint32_t* gc, UKL_GLOBAL uint32_t* base, uint32_t depth, uint32_t i) {
+    if (i >= n_nodes[0] || nodes[i].depth != depth || nodes[i].parent == PP_NONE) return;
+    uint32_t p = nodes[i].parent, d = nodes[i].pdir, w = insts[p].gap_first + d;
+    uint32_t shift = gshift[w] - gc[w];
+    base[i] = ukl_atomic_load(&base[p]) + d + rows[dir_bases[insts[p].file] + d].text_before + shift + 1u;
+}
+
+// Each directive's slot, and each stretch's.
+UKL_INLINE void p1_dir_slot(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint32_t* gshift, UKL_GLOBAL const uint32_t* gc, UKL_GLOBAL const uint32_t* base, UKL_GLOBAL uint32_t* dslot, uint32_t w) {
+    if (w >= n_dirs[0]) return;
+    uint32_t i = p1_inst_of(insts, n_nodes[0], w, false);
+    uint32_t d = w - insts[i].dir_first, g = insts[i].gap_first + d;
+    dslot[w] = base[i] + d + rows[dir_bases[insts[i].file] + d].text_before + (gshift[g] - gc[g]);
+}
+UKL_INLINE void p1_gap_slot(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint32_t* gshift, UKL_GLOBAL const uint32_t* gc, UKL_GLOBAL const uint32_t* base, UKL_GLOBAL uint32_t* gslot, uint32_t w) {
+    if (w >= n_gaps[0]) return;
+    uint32_t i = p1_inst_of(insts, n_nodes[0], w, true);
+    uint32_t k = w - insts[i].gap_first;
+    uint32_t first = k == 0u ? 0u : rows[dir_bases[insts[i].file] + k - 1u].text_before;
+    gslot[w] = base[i] + k + first + (gshift[w] - gc[w]);
+}

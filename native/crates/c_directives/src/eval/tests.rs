@@ -312,10 +312,10 @@ fn the_paste_relexer_is_the_lexers() {
 /// A unit read by the spike's P1, on the device: its files with their tapes, and its layout as
 /// test input (0448: until P1's includes and conditionals run on the device).
 fn unit_of(p1: &rerail_c_pp::stream::parallel::P1, cpp: bool) -> (Unit, rerail_metal::pp_expand::Layout, Vec<Vec<u8>>) {
-    use rerail_metal::pp_expand::{Layout, PpInst};
+    use rerail_metal::pp_expand::{Layout, NO_PARENT, PpNode};
     let tapes: Vec<Vec<u8>> = p1.files.iter().map(|s| image(s, crate::pp::options(cpp))).collect();
     let unit = place(&p1.files.iter().map(|s| (s.as_slice(), cpp)).collect::<Vec<_>>());
-    let mut lay = Layout { insts: Vec::new(), dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), builtins: p1.builtins.iter().map(|n| name_key(n)).collect(), relex_options: {
+    let mut lay = Layout { nodes: Vec::new(), dir_active: Vec::new(), gap_active: Vec::new(), builtins: p1.builtins.iter().map(|n| name_key(n)).collect(), relex_options: {
         let o = crate::pp::options(cpp);
         rerail_metal::pp_expand::relex_options(o.cpp, o.colons, o.digit_separators, o.raw_strings)
     }, file_literals: {
@@ -332,13 +332,10 @@ fn unit_of(p1: &rerail_c_pp::stream::parallel::P1, cpp: bool) -> (Unit, rerail_m
         }
         q.push(b'"');
         q
-    }).collect() }, unit_floors: vec![0], unit_gaps: vec![0] };
+    }).collect() }, unit_gaps: vec![0] };
     for i in &p1.insts {
-        lay.insts.push(PpInst { file: i.file, dir_first: lay.dir_slots.len() as u32, gap_first: lay.gap_slots.len() as u32 });
-        let slot = |s: u64| u32::try_from(s).expect("a slot in 32 bits");
-        lay.dir_slots.extend(i.dir_slots.iter().map(|&s| slot(s)));
+        lay.nodes.push(PpNode { file: i.file, parent: if i.parent == u32::MAX { NO_PARENT } else { i.parent }, pdir: i.dir, depth: i.depth, unit: 0 });
         lay.dir_active.extend(i.dir_active.iter().map(|&a| u32::from(a)));
-        lay.gap_slots.extend(i.gap_slots.iter().map(|&s| slot(s)));
         lay.gap_active.extend(i.gap_active.iter().map(|&a| u32::from(a)));
     }
     (unit, lay, tapes)
@@ -351,7 +348,12 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
     use rerail_metal::pp_expand::{L_BUILTIN, L_DATE, L_FILE, L_IDENT, L_LINE, L_NONE, L_NOT_NAME, L_TIME, L_TIMESTAMP, lookups};
     let p1 = p1_of(cfg, io, path)?;
     let (unit, lay, _) = unit_of(&p1, cpp);
-    let (ev, got) = lookups(&unit, &lay).unwrap();
+    let (ev, got, (dslot, gslot)) = lookups(&unit, &lay).unwrap();
+    // R1 of decision 0467: the layout the device made from the spike's tree is the spike's.
+    let want_d: Vec<u32> = p1.insts.iter().flat_map(|i| i.dir_slots.iter().map(|&s| s as u32)).collect();
+    let want_g: Vec<u32> = p1.insts.iter().flat_map(|i| i.gap_slots.iter().map(|&s| s as u32)).collect();
+    same(dslot, want_d, format!("{what}: the directives' slots"));
+    same(gslot, want_g, format!("{what}: the stretches' slots"));
     same(got.len(), p1.lookups.len(), format!("{what}: the active text's tokens"));
     for (k, (&g, want)) in got.iter().zip(&p1.lookups).enumerate() {
         let g = match g {

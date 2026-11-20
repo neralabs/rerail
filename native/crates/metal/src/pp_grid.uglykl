@@ -127,6 +127,38 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     BARRIER();
     EACH(s, N(ITOTAL)) pd_items(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint32_t, IFIRST), AT(const uint32_t, ITOTAL), AT(const uint64_t, PKEYS), AT(uint32_t, ITEMS), AT(uint32_t, ROOM), nf, W(CAP), s);
     if (last == 2u) return;
+    // --- P1: the include tree laid out (decision 0467 §2) -------------------------------------
+    BARRIER();
+    uint32_t ni = N(N_INSTS);
+    UKL_GLOBAL const PpNode* nodes = AT(const PpNode, P1_NODES);
+    EACH(i, ni) p1_counts(nodes, AT(const uint32_t, N_INSTS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(const uint32_t, BASES), AT(const uint32_t, TRANK), AT(const uint32_t, TTOTAL), AT(uint32_t, P1_NDIRS), AT(uint32_t, P1_NGAPS), AT(uint32_t, P1_SIZE), nf, i);
+    BARRIER();
+    JOB(0, ni, P1_NDIRS, P1_DFIRST, N_DIRS);
+    JOB(1, ni, P1_NGAPS, P1_GFIRST, N_GAPS);
+    SCANS(2);
+    EACH(i, ni) p1_insts(nodes, AT(const uint32_t, N_INSTS), AT(const uint32_t, P1_DFIRST), AT(const uint32_t, P1_GFIRST), AT(PpInst, INSTS), i);
+    BARRIER();
+    // Sizes bottom-up, a phase a depth.
+    for (uint32_t dep = W(P1_DEPTH); dep > 0u; dep--) {
+        EACH(i, ni) p1_up(nodes, AT(const uint32_t, N_INSTS), AT(const PpInst, INSTS), AT(uint32_t, P1_SIZE), AT(uint32_t, P1_CSIZE), dep, i);
+        BARRIER();
+    }
+    EACH(w, N(N_GAPS)) p1_gap_words(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, N_GAPS), AT(const uint32_t, P1_CSIZE), AT(uint32_t, P1_GC), AT(uint32_t, P1_GHEADS), w);
+    EACH(i, ni) p1_unit_sizes(nodes, AT(const uint32_t, N_INSTS), AT(const uint32_t, P1_SIZE), AT(uint32_t, P1_USIZE), i);
+    BARRIER();
+    SEG(UKL_SEG_ADD, N(N_GAPS), P1_GC, P1_GHEADS, P1_GSHIFT);
+    EACH(u, W(N_UNITS)) p1_unit_spans(AT(uint32_t, P1_USIZE), W(N_UNITS), u);
+    BARRIER();
+    SCAN(W(N_UNITS), P1_USIZE, FLOORS, P1_UTOTAL);
+    EACH(i, ni) p1_root_base(nodes, AT(const uint32_t, N_INSTS), AT(const uint32_t, P1_SIZE), AT(const uint32_t, FLOORS), AT(uint32_t, P1_BASE), i);
+    BARRIER();
+    // Bases top-down, a phase a depth.
+    for (uint32_t dep = 1u; dep <= W(P1_DEPTH); dep++) {
+        EACH(i, ni) p1_down(nodes, AT(const uint32_t, N_INSTS), AT(const PpInst, INSTS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, P1_GSHIFT), AT(const uint32_t, P1_GC), AT(uint32_t, P1_BASE), dep, i);
+        BARRIER();
+    }
+    EACH(w, W(ND)) p1_dir_slot(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, P1_GSHIFT), AT(const uint32_t, P1_GC), AT(const uint32_t, P1_BASE), AT(uint32_t, DSLOT), w);
+    EACH(w, W(NG)) p1_gap_slot(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, N_GAPS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, P1_GSHIFT), AT(const uint32_t, P1_GC), AT(const uint32_t, P1_BASE), AT(uint32_t, GSLOT), w);
     // --- The visibility: the rows, the stretches, the lookups (the text map is the front's) --
     // The definitions' flags, done.
     BARRIER();

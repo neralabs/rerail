@@ -153,12 +153,13 @@ impl Bound for Buffer {
 pub fn source() -> &'static str {
     static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "#include <ukl/backend.h>\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n{}{}\n{}\n{}\n{}\n{}",
+            "#include <ukl/backend.h>\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n{}{}\n{}\n{}\n{}\n{}\n{}",
             rerail_clif::view::ukl(),
             SLOTS.iter().enumerate().map(|(k, s)| format!("#define S_{s} {k}u\n")).collect::<String>(),
             include_str!("pp_eval.uglykl"),
             include_str!("pp_search.uglykl"),
             include_str!("pp_expand.uglykl"),
+            include_str!("pp_p1.uglykl"),
             include_str!("pp_grid.uglykl"),
             include_str!("pp_probes.uglykl")
         )
@@ -294,6 +295,8 @@ pub const SLOTS: &[&str] = &[
     "OWNER", "TFLAG", "TRANK", "TTOTAL", "TEXT_NODES", "RFLAG", "RAT", "RTOTAL", "SORT_KEYS", "NAME_KEYS", "VALUES", "N_ROWS",
     "SORT_KB", "SORT_VA", "SORT_VB", "SORT_HIST", "GCOUNTS", "GFIRSTS", "GKEYS", "GSORT_KB", "GSORT_VA", "GSORT_VB", "GSORT_HIST",
     "SSLOT", "GAT", "GTOTAL", "LOOKUPS", "VBAD", "FLOORS", "N_UNITS",
+    "P1_NODES", "P1_DEPTH", "P1_NDIRS", "P1_NGAPS", "P1_DFIRST", "P1_GFIRST", "P1_SIZE", "P1_CSIZE", "P1_GC", "P1_GHEADS", "P1_GSHIFT",
+    "P1_USIZE", "P1_UTOTAL", "P1_BASE",
     "THEADS", "DELTA", "DEPTH", "CLOSE", "CLOSE_AT", "CLOSE_TOTAL", "CLOSE_KEYS", "CSORT_KB", "CSORT_VA", "CSORT_VB", "CSORT_HIST",
     "CLOSE_BITS", "CEND", "EHEADS", "REACH", "STATE", "OFLAG", "OID", "OTOTAL", "LISTS", "SLOTS", "CTL", "QCTL", "XFLAG", "XAT",
     "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OUT", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP",

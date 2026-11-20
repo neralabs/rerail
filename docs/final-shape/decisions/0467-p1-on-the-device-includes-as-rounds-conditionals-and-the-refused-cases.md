@@ -160,4 +160,18 @@ row.
 
 ## Built
 
-(Written as each step is built.)
+- **Step 1: the layout on the device (§2; R1).** `pp_p1.uglykl`, as phases of `pp_setup`
+  between the definitions and the visibility.
+  - The host gives the tree (`PpNode`: an instance's file, parent, directive, depth, unit) and,
+    until step 3, the spike's activity. `pp_expand::Layout` holds no slots any more: no
+    `insts`, `dir_slots`, `gap_slots` or `unit_floors`.
+  - The device makes them: each instance's words (`dir_first`, `gap_first`: a scan of its
+    file's directive counts), its size bottom-up (a phase a depth; a child adds its size to its
+    parent's with an atomic add, and writes it at its directive), the stretches' shifts (one
+    segmented scan), the units' floors (a scan), the bases top-down (a phase a depth), and
+    every directive's and stretch's slot.
+  - The spike's `P1Inst` gives each instance's parent, directive and depth.
+  - R1: `every_name_sees_the_spikes_definition` compares the device's slots (`Vis::slots`)
+    with the spike's, on its shapes and the first 40 corpus units: equal.
+  - All 18 evaluator tests pass. The corpus, in batches of up to 300 units: 3,132 units equal,
+    the same 3 refused, 4 launches each.
