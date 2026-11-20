@@ -1,27 +1,21 @@
-import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import type { FSWatcher, watch as watchFolder } from "node:fs";
-import { appendFileSync, chmodSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, win32 } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { databaseChangeFeed, LOOK_AGAIN_MS, type ChangeNotice } from "../../src/api/change-feed.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 /**
- * Takes the rights to the database's `folder` away, as a person's machine can, so `stat` of a file in it fails: the
- * mode on Linux and macOS; on Windows a deny for everyone, which the folder and its files inherit (a file pending
- * delete does not do it there: Windows 11 still answers its `stat`). The owner keeps the right to change the folder's
- * rights, so the call it returns gives them back.
+ * Puts a link that leads to itself in the place of the file at `path`, so `stat` of it fails (ELOOP) for every account
+ * on every system: on Windows a junction, which needs no privilege. Rights taken away would not bind every account:
+ * root reads past a folder's mode, and on Windows a token whose backup privilege is on (an elevated administrator's in
+ * Git Bash, as GitHub's Windows runner runs the tests) reads past a deny rule.
  */
-function takeFolderRights(folder: string): () => void {
-  if (process.platform !== "win32") {
-    chmodSync(folder, 0o000);
-    return () => chmodSync(folder, 0o700);
-  }
-  const icacls = win32.join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "icacls.exe");
-  execFileSync(icacls, [folder, "/deny", "*S-1-1-0:(OI)(CI)(F)"], { stdio: "ignore", windowsHide: true });
-  return () => execFileSync(icacls, [folder, "/remove:d", "*S-1-1-0"], { stdio: "ignore", windowsHide: true });
+function loopInPlace(path: string): void {
+  rmSync(path);
+  symlinkSync(path, path, process.platform === "win32" ? "junction" : null);
 }
 
 const DATABASE = join("/rerail-home", "rerail.sqlite");
@@ -219,8 +213,7 @@ describe("the database's change feed", () => {
     }
   });
 
-  // Root reads a folder whatever its rights say.
-  it.skipIf(process.getuid?.() === 0)("looks again, and throws nowhere, when the database's files cannot be read: their folder's rights taken away", async () => {
+  it("looks again, and throws nowhere, when the database's files cannot be read: a link that leads to itself in the -wal file's place", async () => {
     const folder = fakeWatch();
     const home = mkdtempSync(join(tmpdir(), "rerail-feed-"));
     const database = join(home, "rerail.sqlite");
@@ -230,9 +223,9 @@ describe("the database's change feed", () => {
     const feed = databaseChangeFeed(database, () => version, { watch: folder.watch, beatMs: 60_000 });
     const heard: ChangeNotice[] = [];
     feed.listen(notice => heard.push(notice));
-    const restore = takeFolderRights(home);
+    loopInPlace(`${database}-wal`);
     try {
-      expect(() => statSync(`${database}-wal`)).toThrow(/EACCES|EPERM/u);
+      expect(() => statSync(`${database}-wal`)).toThrow(/ELOOP/u);
       folder.report("rerail.sqlite-wal");
       await vi.advanceTimersByTimeAsync(LOOK_AGAIN_MS[2]);
       version = "2";
@@ -240,7 +233,6 @@ describe("the database's change feed", () => {
 
       expect(heard).toEqual(["data"]);
     } finally {
-      restore();
       feed.close();
       await removeFolder(home);
     }
