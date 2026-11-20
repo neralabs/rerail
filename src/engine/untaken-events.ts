@@ -234,7 +234,8 @@ class Taker {
 
   taken(): Promise<void> {
     if (this.#running !== undefined) {
-      this.#next ??= this.#running.then(() => {
+      // After the running pass however it ends: one that failed tells its own caller, and the next takes what came since.
+      this.#next ??= this.#running.catch(() => undefined).then(() => {
         this.#next = undefined;
         return this.taken();
       });
@@ -305,12 +306,16 @@ function begunCheck(path: string, name: UntakenName, handler: UntakenHandler): P
   return handler.take({ body, arrivedAt: name.order[0]! });
 }
 
-/** Tells `handler` of a pass over `names` once every check it began has ended (each true when it passed). */
+/**
+ * Tells `handler` of a pass once every check it began has ended (each true when it passed), over the names it handed
+ * on: the first of `names`, one per check. A close cuts a pass short, and the names it did not hand on stay in the folder
+ * for the next daemon's taker; a pass that handed on none tells nothing.
+ */
 async function reportPass(names: readonly UntakenName[], checks: readonly Promise<boolean>[], handler: UntakenHandler): Promise<void> {
-  const ended = await Promise.all(checks);
-  const failed = ended.filter(passed => !passed).length + names.length - checks.length;
+  if (checks.length === 0) return;
+  const failed = (await Promise.all(checks)).filter(passed => !passed).length;
   try {
-    handler.passed({ events: names.length, from: names[0]!.order[0]!, to: names.at(-1)!.order[0]!, failed });
+    handler.passed({ events: checks.length, from: names[0]!.order[0]!, to: names[checks.length - 1]!.order[0]!, failed });
   } catch {
     // What the daemon says of a pass is its own; the events are checked whatever it could say.
   }

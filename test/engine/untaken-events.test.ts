@@ -334,4 +334,49 @@ describe("the home's untaken events", () => {
     checks.resolve();
     expect(await reported.promise).toEqual({ events: 3, from: 1_000, to: 3_000, failed: 1 });
   });
+
+  // A daemon that stops while a pass hands on a backlog leaves what it did not hand on in the folder for the next one.
+  it("report a pass a close cut short for the events it handed on alone, and leave the rest in the folder", async () => {
+    const rerailHome = await home();
+    for (let count = 0; count < 40; count += 1) await leaveUntaken(rerailHome, 7, `event ${count}`, 1_000 + count);
+    const reported = Promise.withResolvers<UntakenPass>();
+    let handed = 0;
+    const taker = untakenEventTaker(rerailHome, {
+      take: async () => {
+        handed += 1;
+        // The daemon stops as the pass hands on the last event of its first slice.
+        if (handed === 16) taker.close();
+      },
+      passed: pass => reported.resolve(pass),
+    });
+    await taker.taken();
+    // Before, the 24 events it never handed on were reported as failed, and lost, though they stay to be checked.
+    expect(await reported.promise).toEqual({ events: 16, from: 1_000, to: 1_015, failed: 0 });
+    expect(await eventFiles(rerailHome)).toHaveLength(24);
+  });
+
+  // A handler's `take` that throws as it is called, rather than rejecting, fails the pass that met it.
+  it("take what came since for a call made while a pass that failed ran", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    let throws = true;
+    const bodies: string[] = [];
+    const taker = untakenEventTaker(rerailHome, {
+      take: ({ body }) => {
+        if (throws) {
+          throws = false;
+          throw new Error("not taken");
+        }
+        bodies.push(body);
+        return Promise.resolve();
+      },
+      passed: () => undefined,
+    });
+    const failing = taker.taken();
+    const after = taker.taken();
+    await expect(failing).rejects.toThrow("not taken");
+    // Before, the call made meanwhile ended with the failed pass, and so did every call made while a later pass ran.
+    await expect(after).resolves.toBeUndefined();
+    expect(bodies).toEqual(["first"]);
+  });
 });
