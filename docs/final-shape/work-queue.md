@@ -8644,3 +8644,22 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Open**: Q397; Q367; the eval tests on a Mac once Metal runs are allowed again;
   `the_search_prices_the_steps_past_a_bound_head_as_one_witness` and
   `a_constant_counted_none_when_planned_is_growth_when_it_has_rows`, red at the hub before this merge (Q392).
+
+
+### Q409. (Q388 on phased-facts, cited there but never written) An aggregate inside a component that loads waits for its group's gate (done)
+
+- **Found** (2026-11-20, phased-facts): on the 57 data-layer rule files together, `logic` stopped at the gate. The
+  shared `rr_value_req` puts `plain_str`'s `join` over a parsed string's nodes inside the parse demand's component
+  (0431 §8), and the gate refused an aggregate there.
+- **Done** (2026-11-20, phased-facts 128bba24f0; the user: "Gate aggregates per key"; decision 0065 §2a):
+  - `answers::gate`: an aggregate of the component is gated as a negation is. Its key is the columns of its atom
+    that the literals before it bind (its group). Its atom is written gated, so the stratifier counts the edge as
+    positive, as `front::graph` already did for a gated atom.
+  - An `ask` writes the literals before it as the rewrite does: an earlier negation or aggregate of the component
+    is gated there too, not read raw.
+  - A gate's quiet set skips every gated atom's read (before, a negation's alone).
+  - The plan: a gate waits for its key with a gated aggregate in the body too (`gate_waits`).
+  - With it, a key of no columns (layouts' `Key([])` for a rule whose constants fix its one row, `cpl_policy_doc`)
+    is a relation of one row at most (ecd7a4e175, 0361 step 6).
+  - Tests: `an_aggregate_inside_a_loading_component_is_gated_per_group`, `a_key_of_no_columns_is_one_row_at_most`.
+    The 50 data-layer files with the 57 rule files run to their end (0494 R7).

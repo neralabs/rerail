@@ -878,8 +878,6 @@ unused(f) :- def(f, _), !used(f).
 #[test]
 #[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the maintain mode maintains no stratum"]
 fn a_maintained_strata_pieces_run_as_one_component() {
-    // The run's counts are the run's (decision 0442): the test's scope holds them across its runs.
-    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("together");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1004,8 +1002,6 @@ reach(a, a) :- side(a), never(a).
 #[test]
 #[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the maintain mode maintains no stratum"]
 fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
-    // The run's counts are the run's (decision 0442): the test's scope holds them across its runs.
-    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mode-aggregates");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1627,10 +1623,10 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
             child.env("RERAIL_WARM", "list");
         }
         let output = super::switches::started(|| child.output()).unwrap();
-        // Each fault and the line after it, which says what was written.
+        // Each fault and the two lines after it, which say what was written and in which span.
         let stderr = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<&str> = stderr.lines().collect();
-        let faults: Vec<String> = lines.iter().enumerate().filter(|(_, l)| l.starts_with("rerail: RERAIL_WARM")).map(|(i, l)| format!("{l}{}", lines.get(i + 1).map_or(String::new(), |n| format!(" ({})", n.trim())))).collect();
+        let faults: Vec<String> = lines.iter().enumerate().filter(|(_, l)| l.starts_with("rerail: RERAIL_WARM")).map(|(i, l)| format!("{l}{}", lines[i + 1..(i + 3).min(lines.len())].iter().map(|n| format!(" ({})", n.trim())).collect::<String>())).collect();
         // No fault named: the process failed some other way, and its stderr's tail says how.
         let tail = if faults.is_empty() { lines[lines.len().saturating_sub(30)..].join("\n") } else { String::new() };
         assert!(output.status.success(), "the run's process: {}; {}{tail}", output.status, faults.join("; "));

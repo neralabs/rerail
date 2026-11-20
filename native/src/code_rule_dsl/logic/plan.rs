@@ -4258,13 +4258,13 @@ impl Model {
         // relation is T's choice on its programs (`dec1` before `pv`: work 67, not 7,001).
         let connected = |l: usize, bound: &VarSet| { let live = bound.minus(&pinned); live.is_empty() || !b.vars(l).is_disjoint(&live) };
         let full_mask: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
-        // A gate (`answers::gate`'s `done_N_ad(t)` before `!N(t)`) holds only keys its rule's own literals give
+        // A gate (`answers::gate`'s `done_N_ad(t)` before `!N(t)` or an aggregate) holds only keys its rule's own literals give
         // (its `ask` is the body before the negation), so it never yields a row they would not: it is a test of a
         // bound key, joined once its key is bound and never crossed in to bind it. Its size is the size of what is
         // answered so far, which the stats of an earlier wave do not know. As the delta, it anchors as any atom.
         let gate_waits = |i: usize, bound: &dyn Fn(VarSlot) -> bool| -> bool {
             matches!(b.view(joins[i]), Lit::Atom(a) if super::answers::is_gate(b.rel(a)))
-                && (0..b.len()).any(|l| matches!(b.view(l), Lit::Atom(n) if n.neg() && n.gated()))
+                && (0..b.len()).any(|l| matches!(b.view(l), Lit::Atom(n) if n.neg() && n.gated()) || matches!(b.view(l), Lit::Agg { atom: n, .. } if n.gated()))
                 && first != Some(joins[i])
                 && b.vars(joins[i]).iter().any(|v| !bound(v))
                 && (0..joins.len()).any(|j| j != i)

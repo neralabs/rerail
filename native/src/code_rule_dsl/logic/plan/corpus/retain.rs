@@ -1699,8 +1699,8 @@ pub(in crate::code_rule_dsl) fn read_run_docs(store: &ContentStore, space: [u8; 
     let rel = run_docs_rel(binds);
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
     let Some(entry) = bound.entry(&rel.name, &rel.ident, DOCS_PART).filter(|e| e.digest() == docs_tag(program)) else { return Ok(None) };
-    let Some(table) = documents_table(store, &entry, true)? else { return Ok(None) };
-    let docs: super::input_delta::Docs = table.into_iter().map(|(path, key, content)| (path, (content, key))).collect();
+    let Some((table, _)) = documents_table(store, &entry, true)? else { return Ok(None) };
+    let docs: super::input_delta::Docs = table.into_iter().map(|((path, key, content), _)| (path, (content, key))).collect();
     Ok(Some(docs))
 }
 
@@ -2151,27 +2151,31 @@ fn base_documents_ident(binds: &[u8; 32]) -> [u8; 32] {
 pub(in crate::code_rule_dsl) type BaseDocument = (String, i64, super::memo::Content);
 
 /// The documents' table the store's frames in `space` keep for the cross part of `binds`, as written (an `Unstored`
-/// content is the caller's to resolve), and the digest of the documents it names (the base relations' digests are
-/// of it); `None` when there is none. Read before the first wave.
-pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<Option<(Vec<BaseDocument>, u64)>> {
+/// content is the caller's to resolve), each document with its places where the writer found them (decision 0494
+/// step 4 part 2), and the digest of the documents it names (the base relations' digests are of it); `None` when
+/// there is none. Read before the first wave, from the snapshot (a run inside another's waves too).
+pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<Option<(Vec<PlacedDocument>, u64)>> {
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
     let Some(entry) = bound.entry(BASE_DOCUMENTS, &base_documents_ident(&binds), DOCS_PART) else { return Ok(None) };
-    Ok(documents_table(store, &entry, false)?.map(|docs| (docs, entry.digest())))
+    documents_table(store, &entry, false)
 }
 
 /// A documents' table's rows (`put_base_documents`, `write_run_docs`): each file's path (an atom), document key, and
-/// content (a tag, then its source or digest in four words), read where they lie. `held`: whether a content only in
-/// memory (tag 2) is one; `None` when a row does not read.
-fn documents_table(store: &ContentStore, entry: &kept_read::Entry, held: bool) -> Result<Option<Vec<BaseDocument>>> {
-    if entry.width() != 7 {
+/// content (a tag, then its source or digest in four words), and in a base relations' table its places
+/// (`DocumentPlaces`), read where they lie. `held`: whether a content only in memory (tag 2) is one; `None` when a
+/// row does not read. With the entry's digest: the documents' (decision 0458).
+fn documents_table(store: &ContentStore, entry: &kept_read::Entry, held: bool) -> Result<Option<(Vec<PlacedDocument>, u64)>> {
+    use crate::content_store::{DOCUMENT_WORDS, DocumentPlaces, PLACED_WORDS};
+    let width = entry.width();
+    if width != DOCUMENT_WORDS && width != PLACED_WORDS {
         return Ok(None);
     }
     let atoms = store.atoms_handle();
     // copy (0353 step 8): a documents' table's words read for their decoder (a row a file).
-    let mut rows: Vec<i64> = Vec::with_capacity(entry.len() * 7);
+    let mut rows: Vec<i64> = Vec::with_capacity(entry.len() * width);
     entry.each_rows(&mut |r| rows.extend_from_slice(r));
     let mut out = Vec::with_capacity(entry.len());
-    for r in rows.chunks_exact(7) {
+    for r in rows.chunks_exact(width) {
         let Ok(atom) = u32::try_from(r[0]) else { return Ok(None) };
         let Some(path) = atoms.value(atom).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
         let content = match r[2] {
@@ -2180,10 +2184,13 @@ fn documents_table(store: &ContentStore, entry: &kept_read::Entry, held: bool) -
             2 if held => super::memo::Content::Held(words_digest(&r[3..7])),
             _ => return Ok(None),
         };
-        out.push((path, r[1], content));
+        out.push(((path, r[1], content), DocumentPlaces::of_row(r)));
     }
-    Ok(Some(out))
+    Ok(Some((out, entry.digest())))
 }
+
+/// A document of a documents' table, with its places where the writer found them (decision 0494 step 4 part 2).
+pub(in crate::code_rule_dsl) type PlacedDocument = (BaseDocument, Option<crate::content_store::DocumentPlaces>);
 
 /// Each base relation `rels`' statistics the store's frames in `space` keep for the cross part of `binds`, with the
 /// digest of the rows they count (decision 0458: kept by file as the keeper's are, 0096 §3, but of the documents).
@@ -2265,8 +2272,10 @@ pub(in crate::code_rule_dsl) fn put_base_stats(store: &ContentStore, was: &InKep
 }
 
 /// Queues the documents' table `docs` for the cross part of `binds` into the space `was` was read from, in the keep's
-/// wave. `false` (nothing queued) when a file's content is only in memory (`Held`) or its path is no atom.
-pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &InKept, binds: [u8; 32], docs: &[BaseDocument], digest: u64) -> bool {
+/// wave: the writer finds each document's places as it writes it, its tape in the grammar `tape` (grammar id,
+/// grammar version, tape format version) names (decision 0494 step 4 part 2). `false` (nothing queued) when a file's
+/// content is only in memory (`Held`) or its path is no atom.
+pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &InKept, binds: [u8; 32], docs: &[BaseDocument], digest: u64, tape: Option<[i64; 3]>) -> bool {
     if docs.iter().any(|(_, _, c)| matches!(c, super::memo::Content::Held(_))) {
         return false;
     }
@@ -2285,8 +2294,10 @@ pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &I
         }
     }
     let name = KeptRel { name: BASE_DOCUMENTS.to_owned(), ident: base_documents_ident(&binds) };
-    let types = [b's', b'i', b'i', b'i', b'i', b'i', b'i'].to_vec();
-    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), types, rows, docs.len())]);
+    let mut types = vec![b'i'; crate::content_store::PLACED_WORDS];
+    types[0] = b's';
+    let what = crate::content_store::kept_facts::KeptWhat::Documents { rows, n: docs.len(), tape };
+    store.queue_kept(was.space, vec![crate::content_store::kept_facts::KeptPut { rel: name.name, ident: name.ident, part: DOCS_PART, digest, reads: Vec::new(), types, what }]);
     true
 }
 

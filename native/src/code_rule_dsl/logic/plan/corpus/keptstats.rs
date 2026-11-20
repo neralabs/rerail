@@ -290,7 +290,7 @@ impl Keeper {
         let doc_at = &self.doc_at;
         let ok = self.export_rels.iter().all(|rel| match (entry.rows.get(rel), doc_at.get(rel).copied().flatten()) {
             (Some((width, values)), Some(at)) if by_file && at < *width => {
-                by_document(values, *width, |row| memo::document_of(row[at]), None).iter().all(|(d, rows)| counted.patch_own(rel, *width, *d, Some(at), rows, sign))
+                by_document(values, *width, |row| memo::document_of(row[at])).iter().all(|(d, rows)| counted.patch_own(rel, *width, *d, Some(at), rows, sign))
             }
             (Some((width, values)), _) => counted.patch(rel, *width, values, sign),
             (None, _) => true,
@@ -615,9 +615,8 @@ pub(super) fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
 }
 
 /// `flat`'s rows (`width` a row) grouped by the document `doc` says each names, in the order the documents first
-/// come, each row taken at the columns `from` (all, when `None`). A document's rows mostly come together, so its
-/// group is looked up once a run of them.
-fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64, from: Option<&[usize]>) -> Vec<(i64, Vec<i64>)> {
+/// come. A document's rows mostly come together, so its group is looked up once a run of them.
+fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64) -> Vec<(i64, Vec<i64>)> {
     let mut groups: Vec<(i64, Vec<i64>)> = Vec::new();
     let mut at: rustc_hash::FxHashMap<i64, usize> = Default::default();
     let mut last: Option<(i64, usize)> = None;
@@ -634,10 +633,7 @@ fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64, from: Op
                 g
             }
         };
-        match from {
-            Some(from) => groups[g].1.extend(from.iter().map(|&c| row[c])),
-            None => groups[g].1.extend_from_slice(row),
-        }
+        groups[g].1.extend_from_slice(row);
     }
     groups
 }

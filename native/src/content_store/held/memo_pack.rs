@@ -148,6 +148,12 @@ impl ContentStore {
             .collect()
     }
 
+    /// Whether this process holds `space`'s entries its waves may look up (`admit_memo_entries`): a lookup there
+    /// reads no SQL.
+    pub fn memo_admitted(&self, space: &[u8; 32]) -> bool {
+        self.snapshot().is_some_and(|s| s.lock().expect("the frames' snapshot").admitted.contains(space))
+    }
+
     /// The entries of `space` at `parts`: from the run's snapshot (`stored` false, where this process admitted the
     /// space's entries: `admit_memo_entries`), else from the store.
     pub fn memo_entries(&self, space: &[u8; 32], parts: &[i64], stored: bool) -> StoreResult<HashMap<i64, Arc<MemoBlob>>> {

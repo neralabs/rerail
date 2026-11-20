@@ -1208,6 +1208,12 @@ impl Locs {
     }
 }
 
+/// The key of the file document `key` is part of (decision 0431 §4): a program's file's (`Guest::file`), else its own.
+/// `guest` is the document's guest as its projection places it (in `core.rerail`'s shape only).
+pub(crate) fn file_of(key: u32, guest: Option<&Guest>) -> u32 {
+    guest.filter(|g| g.made == Made::Host && g.file != 0).map_or(key, |g| g.file)
+}
+
 impl Projected {
     /// Document `key`'s projection in `shape`; `dialect` is its facts' (`None` for a text-only document, which has no
     /// node). A `withheld` document (`core.rerail`: one that does not parse) has no nodes and no spans: no facts. A guest's
@@ -1333,7 +1339,7 @@ impl Projected {
             }
         });
         let tokens = ranks.count(Item::Token);
-        let file = guest.as_ref().map(|(g, _)| *g).filter(|g| g.made == Made::Host && g.file != 0).map_or(key, |g| g.file);
+        let file = file_of(key, guest.as_ref().map(|(g, _)| *g));
         let mut p = Projected {
             module: None,
             key,
@@ -1672,7 +1678,7 @@ pub struct Batch {
     /// searched in (Q220).
     pub docs: made::Docs,
     /// The programs among the documents (decision 0431 §4), by file: `(file, document)`, ascending; a lookup of `node`
-    /// by its document reads a file's programs' rows with its own. Found from the documents' inputs: none is made for it.
+    /// by its document reads a file's programs' rows with its own. Found from the documents' inputs (`file_of`): none is made for it.
     programs: Vec<(u32, usize)>,
     /// Each document's tape, for W's values answered on request (`LongTexts::value_any`, decision 0174), and its values,
     /// read off it at the first request; empty where no program asks for values.
@@ -2777,7 +2783,7 @@ impl Batch {
     /// Document `doc`'s file (decision 0431 §4): a program's is its file's, any other document's its own key. Read
     /// from its input, so no document is made for it.
     fn file(&self, doc: usize) -> u32 {
-        file_of_input(self.docs.input(doc))
+        file_of(self.docs.key(doc), self.docs.input(doc).guest.as_deref().filter(|_| self.shape == Shape::Core))
     }
 
     /// Whether the batch's documents are made by its probes: one given its documents' counts (decision 0494), whose
@@ -2927,7 +2933,7 @@ impl Batch {
         }
         // The programs among the documents, by file (decision 0431 §4): a program's file is its guest's (`Guest::file`).
         let mut programs: Vec<(u32, usize)> = (0..n).filter_map(|i| {
-            let file = file_of_input(docs.input(i));
+            let file = file_of(docs.key(i), docs.input(i).guest.as_deref().filter(|_| shape == Shape::Core));
             (file != docs.key(i)).then_some((file, i))
         }).collect();
         programs.sort_unstable();
@@ -4252,12 +4258,6 @@ pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Proje
     Ok(out)
 }
 
-/// A document's file (decision 0431 §4), as `Projected::narrowed` sets it: a program's (a guest made with its host,
-/// `Made::Host`) is its guest's `file`, any other document's its own key.
-fn file_of_input(d: &Document) -> u32 {
-    d.guest.as_deref().filter(|g| g.made == Made::Host && g.file != 0).map_or(d.key, |g| g.file)
-}
-
 /// The views a batch of `shape` binds by name (`views`).
 fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
     let mut named = vec![("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core), ("node_order", View::Order)];
@@ -4503,7 +4503,7 @@ impl Grower {
         let (batch, made) = Batch::add(&mut self.growth, store, documents, projection, &tests.matches, &tests.markers, metal, wave, given, alone)?;
         drop(built);
         let Some(made) = made else {
-            // The batch's relations, the `match_all` relations (`logic::strings::as_relations`: each regex's matches in
+            // The batch's relations, the `match_all` relations (`preparation::text::TextRelations`: each regex's matches in
             // the batch's spans) and the `ast` matchers', made by group (decision 0494), but none the program derives.
             let mut out: Vec<(String, Arc<dyn Source>)> = made_sources(&batch).into_iter().map(|(name, _, source)| (name.to_owned(), source)).collect();
             // The text tests' relations (decision 0037): each a test of a string, which a probe asks of the probed

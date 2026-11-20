@@ -1199,6 +1199,11 @@ pub struct TapeFrame {
 }
 
 impl TapeFrame {
+    /// A tape of `raw_length` bytes in `frame` (`document_places`: a place its documents' table keeps).
+    pub(super) fn new(raw_length: i64, frame: ObjectFrame) -> Self {
+        Self { raw_length, frame }
+    }
+
     /// The tape's stored bytes, read in place in its segment.
     pub fn in_place(&self) -> &[u8] {
         self.frame.segment().bytes()

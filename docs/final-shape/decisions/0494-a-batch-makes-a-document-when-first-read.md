@@ -114,6 +114,37 @@ Each has its test before the code that meets it.
    `within`, reached by no test before). Test: `made_batch_tests::r6_an_edit_reads_no_base_relation_through`
    (`child`, `field`, `within` read across files; no read-through; the edit's outputs a cold run's). Part 2: the
    import fixpoint's run lists its files inside another run's waves and reads no old source there (0458's open
-   item), so its `doc` and `tape_of` are counted again; `r6_an_edit_counts_no_kept_statistic_again` is ignored
-   until it reads them with no SQL.
+   item), so its `doc` and `tape_of` were counted again. Done (2026-11-20, below):
+   `r6_an_edit_counts_no_kept_statistic_again` passes.
+
+   Part 2, decided by the user (2026-11-20: "Table keeps the places"). The run is phase 1's `load` run: its files
+   are listed inside phase 1's waves, and its compare runs after its chunks, still inside them. Finding an old
+   source, tape or memo entry takes SQL (its row names its segment), and 0104 has none in a wave. The documents'
+   table is read there already (a kept fact, in the snapshot). So each row of the table also keeps:
+   - its content's sha256;
+   - its source's place in its segment;
+   - its tape's hash (`HashKey::tape_identity`) and place, in the run's grammar.
+
+   The writer resolves them as it writes the table (its transaction may read SQL), once this run's sources and tapes
+   are placed. Inside the waves the compare reads with no SQL:
+   - it compares a file's digest now with the row's;
+   - it maps the places, each checked by the hash kept: a segment number is `max + 1`, so a removed last segment's
+     number is used again, and a place gone, moved, archived or reused is a miss;
+   - it finds the old memo entry by the digest in the snapshot (each path's newest entry under the plan: the old one).
+
+   A miss there is "none", as before (what reads a base relation runs again). Before the first wave a miss is read
+   through SQL, as before.
+
+   As built (`content_store::document_places`, `KeptWhat::Documents`): a row is 23 words (the 7 given, then the
+   sha256, the source's place, the tape's hash, place and length); a table of 7 (an older store's) reads with no
+   places. A content the run gave by its sha256 (not stored then) and stored by the time the writer writes is kept
+   by its id, as the compare before the first wave resolves it: inside the waves a file is found by its id, and
+   with a row still by digest every file of a warm run's `load` compared as changed
+   (`the_run_after_a_cold_one_with_tape_values_writes_nothing`: 4 writes). `memo_admitted` says whether the plan's
+   entries are in the snapshot: where not, inside the waves the old entries are "none", not a SQL read.
+
+   Rejected:
+   - the store's places of every object held in memory (a read of every place each process start, for this one
+     reader);
+   - the read as work behind the run, through 0298 §5's exception (a second exception to 0104).
 5. Measured. R7.

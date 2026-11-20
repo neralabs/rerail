@@ -1497,6 +1497,8 @@ impl Executor {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
                         // The launches run in their submitter's run, on whichever pool thread takes them.
                         let run = rerail_context::job_run();
+                        // `in_run`: the claims (the batch's kernels, their columns and device leases) may be the last
+                        // holder's, and a lease goes back to its pool in the run (Q337).
                         rerail_context::cores_spawn_fifo(move || {
                             let _run = rerail_context::enter(run);
                             // Moved in after the run is entered, so they drop before it is left: the last claims
