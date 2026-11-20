@@ -877,9 +877,9 @@ describe("the engine service's idle close", () => {
   }, 30_000);
 
   // Before, the wait went on, a worker thread with its own connection watching the database's log, until the lock was
-  // given back, though nothing was left for it to open.
-  it("stops a quiet session's wait for the write lock its open for a scan met once the session's next event opens it", async () => {
-    const { clock, service, start, prompt, databasePath } = await idleService({ needsRoom: () => false });
+  // given back, though nothing was left for it to open. An event of the session cannot open it while the lock is held.
+  it("stops a quiet session's wait for the write lock its open for a scan met once the session's end comes", async () => {
+    const { clock, service, start, send, session, databasePath } = await idleService({ needsRoom: () => false });
     await start("a");
     clock.now += 60_000;
     await service.closeIdleSessions();
@@ -892,7 +892,8 @@ describe("the engine service's idle close", () => {
       await service.resumeSession("a");
       const [wait] = lockWaits.filter(begun => begun.resume);
       expect(wait?.signal?.aborted).toBe(false);
-      await prompt("a", "back");
+      // Its runtime cannot record the end while the lock is held; the service ends the suspended session's record anyway.
+      await send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") }).catch(() => undefined);
       expect(wait!.signal!.aborted).toBe(true);
     } finally {
       if (writer.inTransaction) writer.exec("ROLLBACK");
