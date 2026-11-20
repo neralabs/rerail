@@ -7100,7 +7100,7 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
 - **Inputs found by hashing** (`doc_key`, `observer__source_file`): 2 of a session edit's inputs, a few hundred
   rows; no measurable cost at 2,410 files.
 
-### Q359. A file whose times are set is once named by the journal under load
+### Q359. A file whose times are set is once named by the journal under load (done 2026-11-20)
 
 - **Seen** (2026-11-19, the sync branch's merge of investigate-bend-vs-datalog, the M1 Max, `-p rerail-store`
   with 105 other tests): `the_journal_names_what_changed_since_its_cursor` failed once at "an access time set is
@@ -7115,6 +7115,16 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
 - **To do**: on the next failure, read its flags. `RERAIL_JOURNAL_TRACE` now prints every event's flags
   (`journal flags <id> <flags> <path>`). If the record is coalesced, the test should set the times on a file
   whose creation the stream's history does not hold.
+- **Found** (2026-11-20, two probes on the M1 Max, `RERAIL_JOURNAL_TRACE`): fseventsd keeps one record a path whose
+  flags gather, live as in a replay. A file made while its stream is told, then its times set, comes as `0x11500`
+  (made, modified, inode metadata) at every times-set for at least 21 s after; the test failed so on a run alone. A
+  file made 1.5 s before its stream started, its times set later, came as `0x10400`. A replay from a cursor after
+  the making gives the merged record too. So which record comes is fseventsd's, and the journal cannot split it:
+  naming the file is the safe answer, as the item said.
+- **Done**: the filter is `fsevents::names`, with its test over the flags measured
+  (`an_event_of_metadata_alone_names_nothing`). The end-to-end test asserts what the records that came for the
+  file say (a test build keeps each event's flags, `fsevents::flags_of`): with content bits the file is named, of
+  metadata alone it is not.
 
 ### Q360. A session's edit reads its phases' kept parts back, and at the cycle cut finds no input delta in the entries
 
