@@ -889,7 +889,7 @@ const STATE: &str = "/// The run's buffers and state, as the lean parser's `Pars
 /// as the lean parser's methods take `&mut self`.
 struct S {
     bytes: *const u8, len: u32, starts: *const u32, lasts: *const u32, codes: *const u32, n: core::cell::Cell<usize>,
-    /// Tier 1's feed (decision 0493): its `more` and the file's feed, zero where tier 1 made every record; whether
+    /// Tier 1's feed (decision 0496): its `more` and the file's feed, zero where tier 1 made every record; whether
     /// it is feeding (0), has made them all (1), or refused the file (2).
     more: u64, feed: u64, fed: core::cell::Cell<u8>,
     /// The words from a token's record field to the next token's (`Ctx::record_stride`).
@@ -951,7 +951,7 @@ impl S {
     fn bit(&self, o: usize, at: u32) -> bool { self.mask_word(o, at >> 6) >> (at & 63) & 1 != 0 }
     #[inline(always)]
     /// Whether record `i` is made: where it is not yet, tier 1's feed asked for the next records until it is or the
-    /// file's are all made (decision 0493), as the lean parser's `fill(k)` asks `lex_batch`.
+    /// file's are all made (decision 0496), as the lean parser's `fill(k)` asks `lex_batch`.
     #[inline(always)]
     fn has(&self, i: usize) -> bool { i < self.n.get() || self.fill(i) }
     #[cold]

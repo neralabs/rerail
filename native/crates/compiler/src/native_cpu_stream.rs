@@ -107,7 +107,7 @@ pub struct Ctx {
     /// argument; each slot key's number in the language's table (`Numbers`). Null in a format 15 run.
     writer: *mut u8,
     numbers: *const u32,
-    /// Tier 1's feed (decision 0493, `native_cpu_block::Feed`): its `more` and the file's feed, which tier 2 asks
+    /// Tier 1's feed (decision 0496, `native_cpu_block::Feed`): its `more` and the file's feed, which tier 2 asks
     /// for the next records where it reaches `nstarts`. Zero where tier 1 made them all.
     more: u64,
     feed: u64,
@@ -282,7 +282,7 @@ pub struct CompiledStream {
     entry: Entry,
     /// The log of the smallest rule function's frame (`Ctx::frame_shift`).
     frame_shift: u64,
-    /// Whether the code asks tier 1's feed for its records (`Ctx::more`, decision 0493): another backend's
+    /// Whether the code asks tier 1's feed for its records (`Ctx::more`, decision 0496): another backend's
     /// (`set_entry`, the generated Rust). The JIT's reads the records made.
     asks_feed: bool,
     bounds: Bounds,
@@ -8204,7 +8204,7 @@ pub struct Tier1View {
     pub feed: u64,
 }
 
-/// The records a call reads at most: tier 1's count, or with a feed (decision 0493) a token a byte and the end.
+/// The records a call reads at most: tier 1's count, or with a feed (decision 0496) a token a byte and the end.
 fn fed_bound(tier1: &Tier1View, len: usize) -> usize {
     if tier1.feed != 0 { len + 1 } else { tier1.nstarts }
 }
@@ -8845,7 +8845,7 @@ impl Parser {
         }
     }
 
-    /// The records tier 2 reads in `batch` (its first file): tier 1's count; with a feed (decision 0493), which
+    /// The records tier 2 reads in `batch` (its first file): tier 1's count; with a feed (decision 0496), which
     /// makes them as tier 2 asks, the most a file of its bytes has (a token a byte, and the end).
     fn records_bound(&self, batch: &crate::native_cpu_block::Batch, e: Option<usize>) -> usize {
         if batch.feeds.is_empty() { self.stream(batch, e).1 } else { batch.rows[0].len as usize + 1 }
@@ -8887,7 +8887,7 @@ impl Parser {
     /// `words_with`'s call: 0, one more than the word that refused, or `OVERFLOW` (a format 16 run's).
     fn words_raw(&self, t2: &CompiledStream, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> u64 {
         let row = batch.rows[0];
-        // Tier 1's feed, where it made the file's (decision 0493): tier 2 asks it for the records.
+        // Tier 1's feed, where it made the file's (decision 0496): tier 2 asks it for the records.
         // A tier 2 that reads the records made (the JIT's) has them all made first.
         if !t2.asks_feed {
             batch.fed_all();

@@ -55,7 +55,7 @@ pub struct Row {
 }
 
 /// A compiled block program.
-/// A tier 1 that feeds tier 2 its records a batch at a time, as the lean lexer's `lex_run` (decision 0493):
+/// A tier 1 that feeds tier 2 its records a batch at a time, as the lean lexer's `lex_run` (decision 0496):
 /// another build's (`CompiledBlock::set_feed`), its stage 1 at once.
 #[derive(Clone, Copy)]
 pub struct Feed {
@@ -185,7 +185,7 @@ impl CompiledBlock {
         self.entries = entries;
     }
 
-    /// Feeds tier 2 from now on (`Feed`, decision 0493): `Batch::call` makes each file's feed, not its records.
+    /// Feeds tier 2 from now on (`Feed`, decision 0496): `Batch::call` makes each file's feed, not its records.
     ///
     /// # Safety
     /// `feed` must be this program's code, its records and buffers as the entries'.
@@ -329,7 +329,7 @@ impl Batch {
 
     pub fn call(&mut self, program: &CompiledBlock) {
         // A feed's files (no prefix stripped, whose positions move after the passes): stage 1 now, the records as
-        // tier 2 asks (decision 0493).
+        // tier 2 asks (decision 0496).
         if let Some(f) = program.feed.filter(|_| self.stripped.iter().all(|&k| k == 0)) {
             // A call again (a benchmark's round): the last call's feeds end first.
             if let Some(old) = self.feed {

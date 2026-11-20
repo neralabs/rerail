@@ -1,4 +1,6 @@
-# 0493: Tier 1 feeds tier 2 a batch at a time
+# 0496: Tier 1 feeds tier 2 a batch at a time
+
+Numbered 0493 where it was written.
 
 Status: decided (the user, 2026-11-19: "tier 1 interleaved with tier 2 in batches, instead of two
 whole-file passes"). Item 4 of the lean shape; follows 0489, 0490 and 0492.

@@ -77,7 +77,7 @@ pub fn aot(tiers: Tiers, known: rerail_kotlin_parser::Proofs) -> Result<rerail_k
         unsafe { c.parser.tier2.set_entry(entry, 4) };
     }
     if tiers.one && tiers.two {
-        // Tier 1 feeds tier 2 (decision 0493): stage 1 at once, the token loop a batch at a time as tier 2 reaches
+        // Tier 1 feeds tier 2 (decision 0496): stage 1 at once, the token loop a batch at a time as tier 2 reaches
         // the records made, as the lean parser's `fill` asks its lexer's `lex_run`. Only the generated tier 2 asks.
         type New = unsafe extern "C" fn(*const u8, *const tier1_aot::Row, u64, *mut u64, *mut u32, *mut u64) -> *mut u8;
         let new: New = tier1_aot::tier1_feed;
