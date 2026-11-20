@@ -2128,7 +2128,9 @@ mod tests {
         let store = ContentStore::open(&path).unwrap();
         let space = local_space(&[9u8; 32]);
         let put = |part: i64| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![part as u8; 100], over: false };
-        let segments = || std::fs::read_dir(dir.path().join("store.sqlite.memo")).unwrap().count();
+        // The memo directory's files: a named segment is `<n>.seg`, one not named yet its writer's `w-<pid>-<n>.seg`.
+        let segments = || -> Vec<String> { std::fs::read_dir(dir.path().join("store.sqlite.memo")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect() };
+        let named = |files: &[String]| files.iter().all(|f| f.strip_suffix(".seg").is_some_and(|n| n.parse::<i64>().is_ok()));
         store.put_memo_entries(&space, vec![put(0)], 4).unwrap();
         let during = store
             .in_one_transaction(|| {
@@ -2137,9 +2139,10 @@ mod tests {
                 (compaction.map_err(|e| e.to_string()), segments())
             })
             .unwrap();
-        assert_eq!(during, (Err("content store writer is busy".to_owned()), 2), "during the batch: busy, both segments as they were");
+        assert_eq!(during.0, Err("content store writer is busy".to_owned()), "during the batch: busy");
+        assert!(during.1.len() == 2 && named(&during.1), "during the batch, before its commit: both segments named, none merged: {:?}", during.1);
         ContentStore::open(&path).unwrap().compact_memo_pack_within(u64::MAX, 0).unwrap();
-        assert_eq!(segments(), 1, "after it: both segments merged");
+        assert_eq!(segments().len(), 1, "after it: both segments merged");
         assert_eq!(store.memo_entries(&space, &[0, 1], true).unwrap().len(), 2, "neither entry forgotten");
     }
 
