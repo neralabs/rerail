@@ -51,6 +51,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
     ("crates/clif/src/rust.rs", "CHECKED", Call, "the state of one call in progress on this thread, set and reset within it (`translate_ops`)"),
     ("crates/clif/src/rust.rs", "READS", Thread, "this thread's scratch or counters in a backend"),
+    ("crates/compiler/src/pp_words.rs", "HOST_RUNS", Thread, "a count of this thread's work, read by tests and the profile"),
     ("crates/compiler/src/native_cpu_stream.rs", "IDS", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/launch.rs", "EVALUATION", Thread, "this thread's scratch or counters in a backend"),

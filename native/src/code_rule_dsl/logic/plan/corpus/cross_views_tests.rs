@@ -190,6 +190,8 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     profile::set(true);
     let mut inside = false;
     let mut how = |c: &mut Corpus| {
+        // The run's scope, which the corpus run joins: its decisions are the run's (decision 0442).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         profile::take_decisions();
         c.run();
         let made = profile::take_decisions();

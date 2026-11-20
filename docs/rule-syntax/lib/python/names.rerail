@@ -80,10 +80,13 @@ rdefn(s, x, f) :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x)
 .decl rasg(s: node, x: symbol, r: node, a: node)
 rasg(s, x, r, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r), nearest(a, s, scope).
 // param(f, x, i): function f's i-th parameter is named x. First rule: a bare `x`. Second: a wrapped one whose
-// first child is the identifier: `x: int`, `x=1`, `x: int = 1`, `*x`, `**x`.
+// first child is the identifier: `x: int`, `x=1`, `x: int = 1`, `*x`, `**x`. Third: `*x: int`.
 .decl param(f: node, x: symbol, i: number)
 param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
 param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), child(p, id, 0), kind(id, "identifier"), text(id, x).
+// Third: a typed splat, `*x: int` and `**x: int`, whose first child is the splat.
+param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), kind(p, "typed_parameter"), child(p, sp, 0),
+    child(sp, id, 0), kind(id, "identifier"), text(id, x).
 // Targets whose value is not tracked: patterns, loop and comprehension variables, `with`/`except` names, walrus,
 // augmented assignment, and names a `global`/`nonlocal` declaration hands to another scope.
 // patkind(k): node kinds that destructure: `a, b = ...`, `[a, *rest] = ...`, `(a, b) = ...`.

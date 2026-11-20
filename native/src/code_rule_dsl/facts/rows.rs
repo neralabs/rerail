@@ -1758,8 +1758,9 @@ impl Rows {
         Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: k.at, kills: Some(k), part: Some(one.clone()) })
     }
 
-    /// `in_block`, never merging parts: `None` where the rows are in several parts not merged yet. A reader that can
-    /// do without the block (the CPU's probes) asks for this, so it makes no copy.
+    /// `in_block`, never merging parts: `None` where the rows are in several parts that read as no one relation and
+    /// are not merged yet. A reader that can do without the block (the CPU's probes) asks for this, so it makes no
+    /// copy.
     pub fn in_one_block(&self) -> Option<InBlock> {
         let (one, rows) = self.one_unmerged().or_else(|| self.merged.get().map(|m| (m, self.rows() as u32)))?;
         Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: 0, kills: None, part: Some(one.clone()) })
@@ -2473,6 +2474,34 @@ mod tests {
         assert_eq!((fork.parts().count(), fork.from), (1, 0), "the chain absorbed");
         assert_eq!(read(&fork), w);
         assert_eq!(merged(), before, "nothing merged");
+    }
+
+    /// A chunk takes its size class, the next power of two, from a block with a free list: an open block whose room
+    /// passes the check (`bytes` and the margin) can still hold no chunk of the class. "an open block with room holds
+    /// 2144940 bytes" (`python/references.rerail` on all): its room was 3 to 4 MiB. Such a chunk goes to a new open block.
+    #[test]
+    fn a_chunk_the_open_blocks_room_cannot_take_goes_to_a_new_block() {
+        // A run of its own: the open blocks are the run's (`Open`), and another test's would take their room.
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
+        let room = |f: &Arc<Facts>| f.block.reserved().saturating_sub(f.block.used());
+        let probe = BlockVec::<u8>::from_iter_in(None, [0u8]);
+        let open = probe.facts().expect("a chunk").clone();
+        // Fillers of whole classes bring the room to 3.5 MiB: past 2 MiB and the margin, short of 4 MiB.
+        let target = 7usize << 19;
+        let mut fillers = Vec::new();
+        for bit in (6..40).rev() {
+            while room(&open) >= target + (1 << bit) {
+                let v = BlockVec::<u8>::with_capacity_in(None, 1 << bit);
+                assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &open), "a filler in the open block");
+                fillers.push(v);
+            }
+        }
+        let need = (1usize << 21) + 4;
+        let left = room(&open);
+        assert!(left >= need + MARGIN && left < need.next_power_of_two(), "room {left} for {need} bytes");
+        let v = BlockVec::<u32>::from_iter_in(None, 0..(need / 4) as u32);
+        assert!(!Arc::ptr_eq(v.facts().expect("a chunk"), &open), "in a new open block");
+        assert!(v.iter().copied().eq(0..(need / 4) as u32));
     }
 
     /// Decision 0384: a tail whose block has no room for the device's rows is moved into a relation with room

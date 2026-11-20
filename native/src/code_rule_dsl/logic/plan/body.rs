@@ -685,7 +685,7 @@ pub fn pass<T, E>(site: &'static str, span: &'static str, p: &Placed, f: impl Fn
 pub struct Placed {
     pub v: Arc<Version>,
     ids: Option<Arc<[RuleId]>>,
-    /// Whether `v` holds the program's other fields too (`of_program`), not its rules alone.
+    /// Whether `v` holds the program's other fields too (`Placed::whole`), not its rules alone.
     pub whole: bool,
     /// The version's other fields, read once at the first `Fields::of` and shared by every clone after it.
     pub(super) fields: std::sync::OnceLock<Arc<super::fields::FieldsData>>,
@@ -702,7 +702,7 @@ impl Placed {
     pub fn normalized(&self, apart: bool) -> Result<Normalized> {
         use super::super::program_image::passes;
         #[cfg(any(test, feature = "test-hooks"))]
-        NORMALIZED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        super::run_counts().normalized.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if !self.whole || self.ids.is_some() {
             return Err(Error::Plan("the program has no image: its run reads it from its version".into()));
         }
@@ -784,10 +784,6 @@ impl Placed {
 
 /// A program's version as `plan::run` normalizes it (`Placed::normalized`): the version, the relations given a
 /// presence column, and the pairs `(rel, rel__stated)` whose stated facts were moved apart.
-/// Tests: the programs normalized so far in this process (`Placed::normalized`).
-#[cfg(any(test, feature = "test-hooks"))]
-pub static NORMALIZED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 pub struct Normalized {
     pub placed: Placed,
     pub sentinels: std::collections::BTreeSet<String>,

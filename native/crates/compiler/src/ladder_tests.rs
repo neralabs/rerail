@@ -481,3 +481,175 @@ tree t {
     assert_eq!(opened, [1, 0, 0, 1, 2, 0, 0]);
     assert_eq!(check_documents("ending", &c, b"ab<>(), ", &[], &fixed, &|_, _, _, _| None), None);
 }
+
+/// A rule made a call keeps the reference's meaning (doc 24 §2.3): a rule not `nested` takes
+/// its caller's follow, so a hidden mark its caller takes after it ends it. `ops` is a call
+/// under `Shape::Rules`; inlined, its loop stops at the line's `eol`, which `line` takes. As a
+/// call it must stop there too, not read the next line's first word as its own.
+#[test]
+fn a_called_rule_ends_at_the_hidden_marks_its_caller_takes() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name
+token simple_identifier = start name & ~prev(name) run word
+skip ws
+mark eol        = lf, end
+tree t {
+  node source_file whole = (line)*
+  node line       = simple_identifier ops eol
+  node ops        = simple_identifier simple_identifier simple_identifier (simple_identifier)*
+  hidden eol
+}
+"#;
+    let fixed = ["a b c d\ne f g h\n", "a b c d\n", "a b c d e\nf g h i", "a b c d\n\ne f g h i j\n"];
+    for shape in [crate::bitlex_masks::Shape::Machine, crate::bitlex_masks::Shape::Rules] {
+        let c = compile_step_shaped("follow", source, shape);
+        let line = c.ids.of("line");
+        let lines: Vec<usize> = fixed.iter().map(|d| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == line).count()).collect();
+        assert_eq!(lines, [2, 1, 2, 2], "the reference: a line a line break");
+        if shape == crate::bitlex_masks::Shape::Rules {
+            assert!(c.text.lines().any(|l| l.contains(" PUSH ")), "`ops` is a call:\n{}", c.text);
+        }
+        let differ = check_documents("follow", &c, b"ab \n", &[], &fixed, &|_, _, _, _| None);
+        if let Some(d) = &differ {
+            eprintln!("DIFFERS {shape:?}: {d}");
+        }
+        assert_eq!(differ, None, "{shape:?}");
+    }
+}
+
+/// A called level that takes only a mark: `rest` is `eol` alone or words then `eol`, a call
+/// under `Shape::Rules`. A taken mark is progress (a mark taken clears it and the marks before
+/// it, and only `TOKEN` sets them again), so the verifier accepts the call, and it parses as
+/// the reference.
+#[test]
+fn a_called_level_may_take_only_a_mark() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name
+token simple_identifier = start name & ~prev(name) run word
+skip ws
+mark eol        = lf, end
+tree t {
+  node source_file whole = (line)*
+  node line       = simple_identifier rest
+  choice rest     = eol | simple_identifier (simple_identifier)* eol
+  hidden eol
+}
+"#;
+    let fixed = ["a\nb c d\n", "a\n", "a b\nc\n", "a b c\n\nd\n"];
+    for shape in [crate::bitlex_masks::Shape::Machine, crate::bitlex_masks::Shape::Rules] {
+        let c = compile_step_shaped("mark_only", source, shape);
+        assert_eq!(check_documents("mark_only", &c, b"ab \n", &[], &fixed, &|_, _, _, _| None), None, "{shape:?}");
+        if shape != crate::bitlex_masks::Shape::Rules {
+            continue;
+        }
+        // `rest`'s own marks kept (`MARK_KEEP`): taken by nobody, no progress, refused.
+        let first_call = c.text.lines().filter_map(|l| l.strip_prefix("  rule ")).filter_map(|l| l.split_once(" @")).filter(|(r, _)| *r != "0").map(|(_, pc)| pc.to_owned()).min().expect("a called rule");
+        let kept: Vec<String> = c
+            .text
+            .lines()
+            .map(|l| match l.trim_start().split_once(" MARK m=") {
+                Some((pc, rest)) if pc >= first_call.as_str() => {
+                    let (m, operand) = rest.split_once(' ').expect("an operand");
+                    format!("  {pc} MARK m={} {operand}", m.parse::<u8>().expect("a mode") | crate::program::MARK_KEEP)
+                }
+                _ => l.to_owned(),
+            })
+            .collect();
+        let e = crate::rir_asm::assemble(&(kept.join("\n") + "\n")).err().expect("a kept mark is no progress");
+        assert!(e.contains("NonProgressingCycle"), "{e}");
+    }
+}
+
+/// A call whose uses differ in a hidden mark after them, where it may end and go on, is
+/// refused: after `line`'s use the reference ends `ops` at `eol`, after `last`'s it reads on
+/// past it, and one call can not do both. One that can not go on where it may end compiles:
+/// there ending at the mark and skipping it are the same (`a_called_rule_…` above).
+#[test]
+fn a_call_whose_uses_differ_where_it_can_go_on_is_refused() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+class punct     = '.' ';'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start punct
+keywords punct { "." ";" } required
+skip ws
+mark eol        = lf, end
+tree t {
+  node source_file whole = (line)* [last]
+  node line       = simple_identifier ops eol
+  node last       = '.' OPS
+  node ops        = simple_identifier simple_identifier simple_identifier (simple_identifier)*
+  hidden eol
+}
+"#;
+    let open = source.replace("OPS", "ops");
+    let e = compile_error_shaped(&open, crate::bitlex_masks::Shape::Rules).expect("refused");
+    if !e.contains("may end here and take a token it may hold at") {
+        eprintln!("REFUSED: {e}");
+        panic!("the refusal says why");
+    }
+    // `last`'s `ops` closed by a `;`: a call that can not go on where it may end after `last`
+    // ends there whatever follows.
+    let closed = source.replace("OPS", "ops ';'").replace("(simple_identifier)*", "(simple_identifier)* ';'");
+    let fixed = ["a b c d ;\n", "a b c d ;\n. e f g ; ;\n", "a b c d e ;\n. f g h ;\n;", ". a b\nc ; ;"];
+    for shape in [crate::bitlex_masks::Shape::Machine, crate::bitlex_masks::Shape::Rules] {
+        let c = compile_step_shaped("differ", &closed, shape);
+        let differ = check_documents("differ", &c, b"ab .;\n", &[], &fixed, &|_, _, _, _| None);
+        if let Some(d) = &differ {
+            eprintln!("DIFFERS {shape:?}: {d}");
+        }
+        assert_eq!(differ, None, "{shape:?}");
+    }
+}
+
+/// A token mark over a kind whose first byte another token's starts too: `annot` (`@a`) and
+/// the punctuation `@` both start with `@`, so the records' kind of a byte can not tell them
+/// apart. The kind's tokens are told by its rows' starts, a mark bit of the code
+/// (`TokenElem::rows`): `tagged` holds at `@a b`, not at `@ a`. The reference and every executor.
+#[test]
+fn a_token_mark_tells_a_kind_by_its_rows_where_a_first_byte_is_shared() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class word      = 'a'..'z'
+class at        = '@'
+class dot       = '.'
+mask name       = fill(word, ~word)
+mask lone_at    = at & ~next(word)
+mask p          = lone_at | dot
+error "a byte no token takes" by tokens when ~ws & ~name & ~at & ~dot
+token simple_identifier = start name & ~prev(name) & ~prev(at) run word
+token annot     = start at & next(word) run word
+token punct     = start p
+keywords punct { "@" "." } required
+skip ws
+mark tagged     = tokens annot simple_identifier
+tree t {
+  node source_file whole = (item)*
+  node item       = tagged tagged_item | annot | '@' simple_identifier | '.'
+  node tagged_item = annot simple_identifier
+}
+"#;
+    let c = compile_step("shared", source);
+    let rows: Vec<u32> = c.program.token_marks.iter().flat_map(|m| m.elems.iter().map(|e| e.rows)).collect();
+    assert!(rows.iter().any(|&r| r != 0), "`annot` is told by its rows: {rows:?}");
+    let fixed = ["@a b\n", "@ a\n", "@a\n.@b c", "@ a @b\n@c d", "@a @b c", "@a .", "@ a b"];
+    let parses: Vec<bool> = fixed.iter().map(|d| reference(&c, d.as_bytes()).is_some()).collect();
+    assert_eq!(parses, [true, true, true, true, true, true, false]);
+    let differ = check_documents("shared", &c, b"ab@. \n", &[], &fixed, &|_, _, _, _| None);
+    if let Some(d) = &differ {
+        eprintln!("DIFFERS: {d}");
+    }
+    assert_eq!(differ, None);
+}

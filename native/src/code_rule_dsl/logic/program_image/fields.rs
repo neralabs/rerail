@@ -155,12 +155,7 @@ impl Version {
 impl Builder<'_> {
     /// States field `f`: its relations' rows are `f`'s, every other field's kept.
     pub(in crate::code_rule_dsl::logic::program_image) fn set_field(&mut self, f: Field<'_>) {
-        // The program's own row, which every field's reader asks for: a new base's first field states it (a
-        // version's from a tree has it from `about_of`).
-        if self.about_cells("program").is_empty() {
-            let p = self.cell(&Value::Str(ABOUT.into()));
-            self.set_about_rows("program", vec![vec![p]]);
-        }
+        // The program's own row comes with the first about row stated (`set_about_rows`).
         let mut facts = Facts::new();
         program_facts::write_field(&mut facts, ABOUT, &f);
         for &name in f.relations() {

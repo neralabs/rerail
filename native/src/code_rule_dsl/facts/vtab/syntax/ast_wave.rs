@@ -85,12 +85,12 @@ impl AstWave for Wave {
     }
     fn matched(
         &self,
-        batch: &Batch,
         tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+        at: &[Option<&Projected>],
         binding: crate::code_rule_dsl::typing::file_local::Binding,
         atoms: &crate::content_store::atoms::Atoms,
-    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-        matched(batch, tapes, self, binding, atoms)
+    ) -> StoreResult<Vec<(String, Relation)>> {
+        matched(tapes, at, self, binding, atoms)
     }
 }
 
@@ -174,18 +174,17 @@ impl rerail_accel::kernel::Program for MatcherWave {
 /// roots mapped from tape preorder (a core id) to the batch's node ids. A document with no tape (a guest, a text-only
 /// file) or one a matcher's gates exclude has no rows of that matcher.
 fn matched(
-    batch: &Batch,
     tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+    at: &[Option<&Projected>],
     matchers: &Wave,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
     atoms: &crate::content_store::atoms::Atoms,
-) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+) -> StoreResult<Vec<(String, Relation)>> {
     use crate::code_rule_dsl::logic::profile;
     let _span = profile::span(|| "ast matchers on the transducer".into());
     let Some(wave) = &matchers.wave else { return Ok(Vec::new()) };
     let metal = matches!(binding, crate::code_rule_dsl::typing::file_local::Binding::Metal);
-    // Each tape's document in the batch; the tapes outside it take no part.
-    let at: Vec<Option<&Projected>> = tapes.iter().map(|(facts, _, _)| batch.docs.iter().find(|p| Arc::ptr_eq(&p.facts, facts)).map(|p| &**p)).collect();
+    // Each tape's document in the batch (`at`, the caller's); the tapes outside it take no part.
     let held: Vec<usize> = (0..tapes.len()).filter(|&i| at[i].is_some()).collect();
     // A matcher runs where its gates hold and W admits the file: its `syntax` (valid or invalid) and text literals.
     let errors: Vec<crate::code_rule_dsl::soundness::SyntaxErrors> = held.iter().map(|&i| crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&tapes[i].1)).collect();
@@ -319,7 +318,7 @@ fn matched(
             }
         }
         crate::code_rule_dsl::prof::count("ast.matched", rows as usize);
-        out.push((m.rel.clone(), Arc::new(r) as Arc<dyn Source>));
+        out.push((m.rel.clone(), r));
     }
     Ok(out)
 }

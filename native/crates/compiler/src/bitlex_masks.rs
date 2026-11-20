@@ -1013,7 +1013,11 @@ impl Lowering {
                 Stmt::Implied { .. } => {}
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
-                Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
+                // The tree's too: a call keeps its rule's follows (`grammar::follow_contexts`).
+                Stmt::Hidden(kinds) => {
+                    self.hidden.extend(kinds.iter().cloned());
+                    self.tree.push(stmt.clone());
+                }
                 Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses } => {
                     if !drops.is_empty() {
                         self.drops.insert(self.marks.len(), drops.clone());
@@ -1463,6 +1467,28 @@ impl Lowering {
         }
     }
 
+    /// A prover over this program (`bitlex_prove::Induction`) that knows what the rounds' equations do not show
+    /// alone: a walk's regions (`block::Walk`) hide each other, as the walk opens a region only past the last
+    /// one's closer, so no two of its kinds' fills hold at one place (`NO_WALK_LEMMAS`: not told).
+    fn induction(&self, horizon: u32, conflicts: u32) -> bitlex_prove::Induction {
+        let mut settled = bitlex_prove::Induction::new(&self.program.rounds, horizon, conflicts);
+        #[cfg(any(test, feature = "test-hooks"))]
+        let told = !NO_WALK_LEMMAS.get();
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let told = true;
+        if told {
+            for walk in &self.program.walks {
+                for (i, a) in walk.kinds.iter().enumerate() {
+                    for b in &walk.kinds[i + 1..] {
+                        // One group's values are at one delay: a place is one lag in both.
+                        settled.add_lemma(vec![(a.fill, 0, true), (b.fill, 0, true)]);
+                    }
+                }
+            }
+        }
+        settled
+    }
+
     /// The operations as the prover reads them (`bitlex_prove`): with a prefix, its value zero.
     /// The prover's positions are the stream's, and every bit of the prefix's lies before the
     /// stream, where its model has no byte in any class and every carried value 0, as the cut
@@ -1492,7 +1518,7 @@ impl Lowering {
     pub fn settled_never(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> bool {
         let ops = proof_ops(&self.program, &self.prefix);
         let tables = &self.program.tables;
-        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("never"));
+        let key = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("never"), prover.given());
         self.proofs.never(key, || prover.never(&ops, tables, x.v, x.d))
     }
 
@@ -1500,7 +1526,7 @@ impl Lowering {
     pub fn settled_first_bytes(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> ByteSet {
         let ops = proof_ops(&self.program, &self.prefix);
         let tables = &self.program.tables;
-        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("first"));
+        let key = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("first"), prover.given());
         self.proofs.bytes(key, || prover.first_bytes(&ops, tables, x.v, x.d))
     }
 
@@ -1509,7 +1535,7 @@ impl Lowering {
     pub fn either_never(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> bool {
         let ops = proof_ops(&self.program, &self.prefix);
         let tables = &self.program.tables;
-        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("either never"));
+        let key = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("either never"), prover.given());
         self.proofs.never(key, || !prover.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never(&ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d)))
     }
 
@@ -2945,6 +2971,13 @@ fn mergeable(a: &crate::program::LocalCheck, b: &crate::program::LocalCheck) -> 
     a.back == b.back || a.ops.iter().chain(&b.ops).all(|op| !matches!(op, L::Fill(..)) && !matches!(op, L::Const(c) if *c != 0 && *c != u64::MAX))
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Compile with no walk lemmas (`Lowering::induction`), for the tests' oracle: the program they prove smaller
+    /// reads every file as this one does.
+    pub static NO_WALK_LEMMAS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 #[cfg(test)]
 thread_local! {
     /// Compile with tier 1's lasts as before decision 0411, for the tests' oracle.
@@ -3000,8 +3033,8 @@ fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Opt
     for &c in &claims[1..] {
         all = low.or(all, c)?;
     }
-    let prover = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
-    let key = bitlex_prove::question(&low.proof_ops(), &low.program.tables, &low.program.rounds, all.v, all.d, &prover.asker("gap ends"));
+    let prover = low.induction(8, 100_000);
+    let key = bitlex_prove::question_given(&low.proof_ops(), &low.program.tables, &low.program.rounds, all.v, all.d, &prover.asker("gap ends"), prover.given());
     let holds = match low.proofs.known.get(&key) {
         Some(&bitlex_prove::Answer::Never(b)) => b,
         _ => {
@@ -3481,7 +3514,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // check it (or none: everywhere), its mask `A` and its check.
     let mut checks: Vec<(Vec<u16>, Option<u16>, Val, crate::program::LocalCheck)> = Vec::new();
     // With the fixed points' equations and the lemmas proved on the way, kept for every mark.
-    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    let mut settled = low.induction(8, 100_000);
     // Where the token loop finds the starts (decision 0177), a mark is no start mask: a mark of
     // one word is its other terms at the token's first byte (none: the word alone), a token mark
     // the word alone, any other its own mask, which the records lift to the next grammar token
@@ -4062,8 +4095,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut classes: HashMap<Vec<u16>, u8> = HashMap::default();
     let mut sigs: Vec<Vec<u16>> = Vec::new();
     // A token mark's kinds (decision 0129): a column each, so a kind of the records is one
-    // kind's tokens or none of them; a byte that starts that kind's tokens and another's can not
-    // tell them apart, and the mark is not compiled.
+    // kind's tokens or none of them. A byte that starts that kind's tokens and another's can not
+    // tell them apart: there the kind's tokens are told by its rows' starts, a mark bit of the
+    // code (`TokenElem::rows`), and such a byte is a class of its own (2 in the column).
     let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, _, _, es)| es.iter().flat_map(|e| e.1.iter().chain(e.6.iter().flat_map(|n| n.2.iter())).chain(e.7.iter().flat_map(|x| x.0.iter())).cloned())).collect();
     mark_kind_names.sort();
     mark_kind_names.dedup();
@@ -4076,16 +4110,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // inside the region, whose rule takes no mark, so a mark that holds there is skipped (hidden)
     // or refuses the file, and never reads a token otherwise.
     let inside = |r: usize| low.inside.get(r).copied().unwrap_or(false);
-    for name in &mark_kind_names {
-        for b in 0..256 {
-            if starts_kind(name, b) && (0..rows.len()).any(|r| token_rows[r].0 != *name && !inside(r) && !low.extra.contains(&token_rows[r].0) && rows[r].first[b / 64] >> (b % 64) & 1 == 1) {
-                return Err(format!("a token mark's kind `{name}` shares byte {b:#04x} with another token"));
-            }
-        }
-    }
+    let shared: Vec<(String, [bool; 256])> = mark_kind_names
+        .iter()
+        .map(|name| (name.clone(), std::array::from_fn(|b| starts_kind(name, b) && (0..rows.len()).any(|r| token_rows[r].0 != *name && !inside(r) && !low.extra.contains(&token_rows[r].0) && rows[r].first[b / 64] >> (b % 64) & 1 == 1))))
+        .collect();
+    let shares = |name: &str, b: usize| shared.iter().any(|(n, s)| n == name && s[b]);
+    let shared_kinds: Vec<String> = shared.iter().filter(|(_, s)| s.contains(&true)).map(|(n, _)| n.clone()).collect();
     for b in 0..256 {
         let mut sig: Vec<u16> = lowered.switches.iter().filter(|s| s.offset == 0).map(|s| s.targets[b]).collect();
-        sig.extend(mark_kind_names.iter().map(|n| u16::from(starts_kind(n, b))));
+        sig.extend(mark_kind_names.iter().map(|n| u16::from(starts_kind(n, b)) + u16::from(shares(n, b))));
         let n = classes.len();
         let k = *classes.entry(sig.clone()).or_insert(n as u8);
         if usize::from(k) == sigs.len() {
@@ -4171,6 +4204,25 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
         crate::rir_text::extra_rows(&mut lowered.text, &bits);
     }
+    // A token mark's kind whose first byte another token's starts too: its rows' starts, a bit
+    // of the code after the extras' (`TokenElem::rows`).
+    let mut row_bits: Vec<(String, u8)> = Vec::new();
+    for name in &shared_kinds {
+        let mut starts: Option<Val> = None;
+        for r in (0..rows.len()).filter(|&r| token_rows[r].0 == *name) {
+            starts = Some(match starts {
+                Some(s) => low.or(s, token_rows[r].1)?,
+                None => token_rows[r].1,
+            });
+        }
+        mark_masks.push(starts.ok_or("a token mark's kind with no rows")?);
+        in_code.push((mark_masks.len() as u16 - 1, 0));
+        if in_code.len() > crate::records::MARKS {
+            return Err(format!("a token mark's kind `{name}` shares a first byte with another token, and the code has no mark bit left to tell its tokens by"));
+        }
+        row_bits.push((name.clone(), (in_code.len() - 1) as u8));
+    }
+    let kind_rows = row_bits.first().map(|&(_, b)| b);
     // The mark bits an extra's token has: the extra's, and its kind's own after the first.
     let extra_kinds: Vec<String> = low.extra.clone();
     let extra_marks = |kind: &String| -> u32 {
@@ -4194,16 +4246,17 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             // Kinds' names as the records' kind set, and their hard keywords: a record of the kind
             // with one of these words is the keyword's token (`TokenElem::except`). Not a row of
             // keywords only (`required`, kind 0): its kind names the row, every token of it a keyword.
-            let kind_set = |names: &[String]| -> Result<(u64, Vec<u16>), String> {
-                let (mut set, mut except) = (0u64, Vec::new());
+            let kind_set = |names: &[String]| -> Result<(u64, Vec<u16>, u32), String> {
+                let (mut set, mut except, mut by_rows) = (0u64, Vec::new(), 0u32);
                 for name in names {
+                    by_rows |= row_bits.iter().filter(|(n, _)| n == name).fold(0, |a, &(_, b)| a | 1u32 << b);
                     for r in (0..rows.len()).filter(|&r| &token_rows[r].0 == name && rows[r].kind != 0) {
                         for (w, _) in &rows[r].keywords {
                             let s = lowered.strings.iter().position(|x| x == w).ok_or("a keyword not among the words")?;
                             except.push(s as u16);
                         }
                     }
-                    for b in (0..256).filter(|&b| starts_kind(name, b)) {
+                    for b in (0..256).filter(|&b| starts_kind(name, b) && !shares(name, b)) {
                         let k = kinds[b];
                         if k >= 64 {
                             return Err(format!("a token mark's kind `{name}` is kind {k} of the records, past 64"));
@@ -4211,10 +4264,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         set |= 1 << k;
                     }
                 }
-                Ok((set, except))
+                Ok((set, except, by_rows))
             };
             for (offset, names, words, not, end, run, nest_rows, ending_row, without_names) in elems {
-                let (set, except) = kind_set(names)?;
+                let (set, except, by_rows) = kind_set(names)?;
+                token_read |= by_rows;
                 // `without M`, `with M`: mark `M`'s bit in the record's code, so a mark of a mask
                 // the code holds (not a token mark's, which tier 2 tests itself).
                 let (mut without, mut with) = (0u32, 0u32);
@@ -4232,18 +4286,20 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 token_read |= without | with;
                 let mut nests = Vec::new();
                 for (counter, open, ns, ws) in nest_rows {
-                    let (kinds, except) = kind_set(ns)?;
-                    let test = crate::program::TokenElem { offset: *offset, kinds, words: ws.clone(), except, ..Default::default() };
+                    let (kinds, except, rows) = kind_set(ns)?;
+                    token_read |= rows;
+                    let test = crate::program::TokenElem { offset: *offset, kinds, words: ws.clone(), except, rows, ..Default::default() };
                     nests.push(crate::program::Nest { counter: *counter, open: *open, test });
                 }
                 let ending = match ending_row {
                     Some((ns, ws)) => {
-                        let (kinds, except) = kind_set(ns)?;
-                        Some(Box::new(crate::program::TokenElem { offset: *offset, kinds, words: ws.clone(), except, ..Default::default() }))
+                        let (kinds, except, rows) = kind_set(ns)?;
+                        token_read |= rows;
+                        Some(Box::new(crate::program::TokenElem { offset: *offset, kinds, words: ws.clone(), except, rows, ..Default::default() }))
                     }
                     None => None,
                 };
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, ending, without, with, first: [0; 4] });
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, ending, without, with, first: [0; 4], rows: by_rows });
             }
             tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses, unless: *unless });
         }
@@ -4747,7 +4803,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let settling = low.settles.iter().filter(|&&k| gaps >> k & 1 == 1 && low.tested_only.iter().all(|&t| t != k)).fold(0u32, |a, &k| a | 1 << k);
     let own = if extra_mark.is_some() { blanks.iter().fold(settling, |a, &(k, _)| a | 1 << k) } else { 0 };
     let token_read = token_read | settling;
-    let records = crate::records::Records { own, starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), read: token_read, blanks, check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
+    let records = crate::records::Records { own, starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, kind_rows, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), read: token_read, blanks, check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).
@@ -4830,7 +4886,7 @@ fn row_modes(
 ) -> Result<Vec<Vec<bool>>, String> {
     // With the fixed points' equations (a region's carry is its fills' bytes after the openers)
     // where the plain search does not prove it, as the marks' proofs.
-    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    let mut settled = low.induction(8, 100_000);
     // A stream a solve found refutes most questions first (`Induction::refutes`): most fail.
     let mut proved = |low: &mut Lowering, v: Val| low.either_never(&mut settled, v);
     // The toggles whose `x` bits are all token starts, at most eight.
@@ -4849,26 +4905,32 @@ fn row_modes(
             modes.push((t, x));
         }
     }
-    // Each row's mode at its start, and its flips: per toggle, `Some(bit)` when fixed.
-    let mut fixed = |low: &mut Lowering, s: Val, v: Val| -> Result<Option<bool>, String> {
+    // Each row's mode at its start, and its flips: per toggle, `Some(bit)` when fixed. Both proved, the row's
+    // start never holds (`s & ~v` and `s & v`): the row is dead, and meets no state.
+    let mut fixed = |low: &mut Lowering, s: Val, v: Val, dead: &mut bool| -> Result<Option<bool>, String> {
         let off = low.andnot(s, v)?;
         let on = low.and(s, v)?;
         Ok(match (proved(low, off), proved(low, on)) {
             (true, false) => Some(true),
             (false, true) => Some(false),
+            (true, true) => {
+                *dead = true;
+                None
+            }
             _ => None,
         })
     };
     let mut need: Vec<Vec<Option<bool>>> = Vec::new();
     let mut flip: Vec<Vec<Option<bool>>> = Vec::new();
-    for (_, s, _) in token_rows {
+    let mut dead: Vec<bool> = vec![false; token_rows.len()];
+    for (r, (_, s, _)) in token_rows.iter().enumerate() {
         let (mut n, mut f) = (Vec::new(), Vec::new());
         for &(t, x) in &modes {
             // The mode before the token: the toggle at its start, less `x` there (the toggle's
             // asked only where `x`'s is fixed: else the mode is free).
-            let xv = fixed(low, *s, x)?;
+            let xv = fixed(low, *s, x, &mut dead[r])?;
             n.push(match xv {
-                Some(b) => fixed(low, *s, t)?.map(|a| a != b),
+                Some(b) => fixed(low, *s, t, &mut dead[r])?.map(|a| a != b),
                 None => None,
             });
             f.push(xv);
@@ -4897,7 +4959,7 @@ fn row_modes(
             flip[r].push(f);
         }
     }
-    let fits = |r: usize, m: u8| need[r].iter().enumerate().all(|(i, n)| n.is_none_or(|n| n == (m >> i & 1 == 1)));
+    let fits = |r: usize, m: u8| !dead[r] && need[r].iter().enumerate().all(|(i, n)| n.is_none_or(|n| n == (m >> i & 1 == 1)));
     // The modes after a row's token, from `m`.
     let after = |r: usize, m: u8| -> Vec<u8> {
         let mut out = vec![m];

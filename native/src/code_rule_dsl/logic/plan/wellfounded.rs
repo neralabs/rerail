@@ -555,7 +555,7 @@ mod tests {
     }
 
     /// `nearest(n, a, set)` as the engine lowers it (`rr_nearest_<set>(n, a)`) is a step up: a walk out through
-    /// scopes (calls.rr's `walk`) is proved, nearer scopes first.
+    /// scopes (calls.rerail's `walk`) is proved, nearer scopes first.
     #[test]
     fn a_walk_out_through_lowered_nearest_scopes() {
         let m = check_of(

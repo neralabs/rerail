@@ -276,9 +276,11 @@ pub(super) fn own() -> Option<PathBuf> {
     Some(OWN.with(|own| own.get_or_init(copy).path.clone()))
 }
 
-/// Whether `path` is the store of the test on this thread (its own, not one shared with other threads).
+/// Whether `path` is the store of the test on this thread (its own, not one shared with other threads), or the one a
+/// job was handed by its test (`carried`): the same test's store, whose observer goes with it (`Store`'s drop forgets
+/// the store's one observer; a job's own would hold its files open past the test).
 pub(super) fn is_own(path: &Path) -> bool {
-    OWN.with(|own| own.get().is_some_and(|s| s.path == path))
+    OWN.with(|own| own.get().is_some_and(|s| s.path == path)) || handed().is_some_and(|h| h == path)
 }
 
 /// Removes the directories of test processes that have exited.

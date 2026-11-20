@@ -117,13 +117,6 @@ fn leased(b: &DeviceBuffer) {
     }
 }
 
-/// What the device holds: the pool's leases and idle buffers and the ledger's reservations, all inside the Metal
-/// budget (decision 0126), which is on top of the overall one.
-pub fn device_held() -> usize {
-    let (live, idle) = held_bytes();
-    live + idle + other()
-}
-
 /// The bytes no other lease can have until they come back: the pool's leases and the reservations not yet leased
 /// (`admit`). Its idle buffers are not counted: room is made of them on demand (`make_room`).
 pub fn bound_bytes() -> usize {

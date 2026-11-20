@@ -2614,8 +2614,7 @@ mod tests {
         let store = base.join("store.files");
         let run = |settle: i64| {
             let mut o = Observer::open(Some(&store));
-            // By the journal: a root this small is otherwise checked by its listing (decision 0400), which finds the
-            // edit whatever the journal says.
+            // The journal's path (Q189): a root this small is otherwise checked by its listings (decision 0400).
             o.list_max = 0;
             o.journal_settle = JOURNAL_TEST_BUDGET;
             o.settle_ns = settle;

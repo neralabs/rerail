@@ -1,0 +1,204 @@
+//! Decision 0494's requirements over whole runs, one test each (R1–R3 are `facts::vtab::syntax`'s, over batches):
+//! a batch makes a document when first read. A requirement is not dropped or weakened here without the user.
+
+use crate::code_rule_dsl::typing::file_local::Binding;
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
+/// Cross-file: `named` joins two files' identifiers on their text and tests it, so the cross part reads `text` of
+/// both files and the text test (0037) bound by it.
+const PROGRAM: &str = r#"
+.decl named(t: symbol)
+named(t) :- kind(a, "identifier"), text(a, t), docof(a, d), kind(b, "identifier"), text(b, t), docof(b, e), d < e, contains("o", t).
+.output named
+"#;
+
+const FILES: &[(&str, &str)] = &[
+    ("a.py", "def foo(x):\n    return x\n\ndef bar():\n    pass\n"),
+    ("b.py", "from a import foo\n\ndef go(y):\n    return foo(y)\n"),
+    ("c.py", "from b import go\n\ndef h():\n    pass\n"),
+];
+
+struct Corpus {
+    dir: PathBuf,
+    marker: String,
+    program: String,
+    runs: usize,
+}
+
+impl Corpus {
+    fn new(name: &str) -> Corpus {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(format!("made-batch-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = format!("# {name} {:?}\n", std::time::SystemTime::now());
+        let rule = dir.join("program.rerail");
+        std::fs::write(&rule, PROGRAM).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+        let c = Corpus { dir, marker, program, runs: 0 };
+        for (file, body) in FILES {
+            c.write(file, body);
+        }
+        c
+    }
+
+    fn write(&self, file: &str, body: &str) {
+        let path = self.dir.join("src").join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, format!("{}{body}", self.marker)).unwrap();
+    }
+
+    /// A run over the store `store`: its report and `named`'s rows.
+    fn run_over(&mut self, store: &str) -> (super::Report, BTreeSet<Vec<String>>) {
+        self.runs += 1;
+        let out = self.dir.join(format!("out{}", self.runs));
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join(store)));
+        let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        (report, crate::code_rule_dsl::logic::plan::output::shown(&out, "named").unwrap_or_default().into_iter().collect())
+    }
+}
+
+impl Drop for Corpus {
+    fn drop(&mut self) {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// R4: a text test is a test of a string. After an edit the cross part gives it no version (nothing of a test changes
+/// with an edit), and its results are a cold run's over the edited tree.
+#[test]
+fn r4_a_text_test_has_no_version_after_an_edit() {
+    use crate::code_rule_dsl::logic::profile;
+    let mut c = Corpus::new("r4");
+    let (_, cold) = c.run_over("kept.sqlite");
+    assert!(!cold.is_empty(), "the corpus exercises the test: {cold:?}");
+    let edits: &[(&str, &str)] = &[
+        ("a.py", "def foo(x, y):\n    return x\n\ndef bar():\n    pass\n\ndef solo():\n    pass\n"),
+        ("b.py", "from a import foo\nfrom a import solo\nfrom a import bar\n\ndef go(y):\n    return foo(y)\n"),
+        ("a.py", "def bar():\n    pass\n\ndef solo():\n    pass\n"),
+    ];
+    let mut unversioned = BTreeSet::new();
+    for (i, (file, body)) in edits.iter().enumerate() {
+        c.write(file, body);
+        // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::set(true);
+        profile::take_decisions();
+        let (_, rows) = c.run_over("kept.sqlite");
+        let made = profile::take_decisions();
+        profile::set(false);
+        let versioned: BTreeSet<String> = made.keys().filter(|(t, _)| t == "the base relations' versions (decision 0458)").map(|(_, x)| x.clone()).collect();
+        unversioned.extend(versioned.into_iter().filter(|x| x.ends_with("a text test, no version (decision 0494)")));
+        let (_, fresh) = c.run_over(&format!("fresh{i}.sqlite"));
+        assert_eq!(rows, fresh, "edit {i} ({file}): the outputs are a cold run's");
+    }
+    assert!(!unversioned.is_empty(), "the cross part reads the text test, given no version");
+}
+
+/// R5: the documents' table keeps each document's views' counts. A cold run counts and keeps them; after a one-file
+/// edit the corpus batch is given the kept counts of every document but the changed one, and its base relations'
+/// rows by their kept statistics; the outputs are a cold run's.
+#[test]
+fn r5_the_documents_counts_are_kept_and_given_to_the_corpus_batch() {
+    use crate::code_rule_dsl::logic::profile;
+    let mut c = Corpus::new("r5");
+    let row_space = |c: &mut Corpus, store: &str| {
+        // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::set(true);
+        profile::take_decisions();
+        let (_, rows) = c.run_over(store);
+        let made = profile::take_decisions();
+        profile::set(false);
+        let said: BTreeSet<String> = made.into_keys().filter(|(t, _)| t == "the corpus batch's row space (decision 0494)").map(|(_, x)| x).collect();
+        (rows, said)
+    };
+    let (_, cold) = row_space(&mut c, "kept.sqlite");
+    assert!(cold.contains(&format!("0 of {} documents' views' counts kept", FILES.len())), "a cold run keeps none yet: {cold:?}");
+    c.write("b.py", "from a import foo\nfrom a import bar\n\ndef go(y):\n    return foo(y)\n");
+    let (rows, edit) = row_space(&mut c, "kept.sqlite");
+    assert!(edit.contains(&format!("{} of {} documents' views' counts kept", FILES.len() - 1, FILES.len())), "all but the changed file's: {edit:?}");
+    assert!(edit.iter().any(|x| x.ends_with("base relations' rows counted by their kept statistics") && !x.starts_with("0 of")), "the relations' rows by their kept statistics: {edit:?}");
+    let (fresh, _) = row_space(&mut c, "fresh.sqlite");
+    assert_eq!(rows, fresh, "the edit's outputs are a cold run's");
+}
+
+/// R6's program: cross-file joins of two files' function names, each reading the views (`child`, `field`) and the
+/// containment axis (`within`) of both files' nodes, so the cross part reads them all as base relations.
+const SHAPES: &str = r#"
+.decl named_in(f: node, t: symbol)
+named_in(f, t) :- kind(f, "function_definition"), field(f, "name", c), text(c, t).
+.decl twins(t: symbol, k: symbol)
+twins(t, k) :- named_in(f, t), docof(f, d), named_in(g, t), docof(g, e), d < e, child(f, b, _), kind(b, k), field(g, "body", y), within(x, y), kind(x, "identifier").
+.output twins
+"#;
+
+/// R6: after an edit, no base relation's changed rows are read through: each is found where the batch knows it lies
+/// (by group, by offset, by its nodes' lookup), and the outputs are a cold run's.
+#[test]
+fn r6_an_edit_reads_no_base_relation_through() {
+    use crate::code_rule_dsl::logic::profile;
+    let mut c = Corpus::new("r6-through");
+    let rule = c.dir.join("shapes.rerail");
+    std::fs::write(&rule, SHAPES).unwrap();
+    c.program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    c.write("c.py", "def foo(z):\n    return z\n\ndef h():\n    pass\n");
+    let shown = |c: &mut Corpus, store: &str| {
+        c.runs += 1;
+        let out = c.dir.join(format!("out{}", c.runs));
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(c.dir.join(store)));
+        super::run(&c.program, &c.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        crate::code_rule_dsl::logic::plan::output::shown(&out, "twins").unwrap_or_default().into_iter().collect::<BTreeSet<Vec<String>>>()
+    };
+    let cold = shown(&mut c, "kept.sqlite");
+    assert!(!cold.is_empty(), "the corpus exercises the joins");
+    c.write("a.py", "def foo(x, y):\n    w = x\n    return w\n\ndef bar():\n    pass\n");
+    // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    profile::take_decisions();
+    let rows = shown(&mut c, "kept.sqlite");
+    let made = profile::take_decisions();
+    profile::set(false);
+    let versions: BTreeSet<String> = made.keys().filter(|(t, _)| t == "the base relations' versions (decision 0458)").map(|(_, x)| x.clone()).collect();
+    assert!(!versions.iter().any(|x| x.contains("read through")), "a relation read through: {versions:?}");
+    let stats: BTreeSet<String> = made.keys().filter(|(t, _)| t == "the base relations' statistics (decision 0458)").map(|(_, x)| x.clone()).collect();
+    for rel in ["child", "field", "within"] {
+        assert!(stats.iter().any(|x| x.starts_with(&format!("{rel}: "))), "the cross part reads {rel}: {stats:?}");
+    }
+    assert_eq!(rows, shown(&mut c, "fresh.sqlite"), "the edit's outputs are a cold run's");
+}
+
+/// R6: after an edit, each base relation's changed rows are found by group (the changed documents made as one, whose
+/// rows are theirs): none is read through, and no kept statistic is counted again; the outputs are a cold run's.
+#[test]
+#[ignore = "0494 step 4: the import fixpoint's run lists its files inside another run's waves and reads no old source there (0458's open item), so its doc and tape_of are counted again"]
+fn r6_an_edit_counts_no_kept_statistic_again() {
+    use crate::code_rule_dsl::logic::profile;
+    let mut c = Corpus::new("r6");
+    c.run_over("kept.sqlite");
+    let edits: &[(&str, &str)] = &[
+        ("b.py", "from a import foo\nfrom a import bar\n\ndef go(y):\n    return foo(y)\n"),
+        ("a.py", "def foo(x, y):\n    return x\n\ndef bar():\n    pass\n\ndef solo():\n    pass\n"),
+    ];
+    for (i, (file, body)) in edits.iter().enumerate() {
+        c.write(file, body);
+        // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::set(true);
+        profile::take_decisions();
+        let (_, rows) = c.run_over("kept.sqlite");
+        let made = profile::take_decisions();
+        profile::set(false);
+        let said = |title: &str| -> BTreeSet<String> { made.keys().filter(|(t, _)| t == title).map(|(_, x)| x.clone()).collect() };
+        let versions = said("the base relations' versions (decision 0458)");
+        assert!(!versions.iter().any(|x| x.contains("read through")), "edit {i}: a relation read through: {versions:?}");
+        let stats = said("the base relations' statistics (decision 0458)");
+        assert!(!stats.is_empty(), "edit {i}: the cross part reads base relations");
+        let old = said("the base relations' old documents (decision 0458)");
+        assert!(!stats.iter().any(|x| x.ends_with(": counted")), "edit {i}: a kept statistic counted again: {stats:?}; old documents: {old:?}");
+        let (_, fresh) = c.run_over(&format!("fresh{i}.sqlite"));
+        assert_eq!(rows, fresh, "edit {i} ({file}): the outputs are a cold run's");
+    }
+}

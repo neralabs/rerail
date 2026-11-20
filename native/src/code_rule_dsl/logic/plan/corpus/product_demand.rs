@@ -742,6 +742,34 @@ mod tests {
         let v = parse(&format!("{LOOKUP}\npair(x, y) :- a(x), named(_, \"cls\", y).\n")).unwrap();
         let error = rewrite(&mut Program::of(&v), true).err().unwrap();
         assert!(error.contains("unbounded node Cartesian product in `pair`"), "{error}");
+        assert!(error.contains("the products: pair("), "{error}");
+    }
+
+    /// Q249: a node reached from constants through declared few-row fan-outs (a lookup on a fixed variable, not on
+    /// constants alone) is no side of a product; without the fan-outs the same rule is one, and its refusal names it.
+    #[test]
+    fn a_node_a_few_row_fanout_reaches_from_constants_makes_no_product() {
+        let text = |layout: &str| {
+            format!(
+                "
+                .decl a(n: node)
+                .decl b(q: symbol, m: symbol)
+                .decl named(q: symbol, k: symbol, v: node)
+                .input a, b, named
+                {layout}
+                .decl out(x: node, y: node)
+                .output out
+                out(x, y) :- a(x), b(\"k\", m), named(m, \"cls\", y).
+            "
+            )
+        };
+        let v = parse(&text(".layout b fanout(q -> m, few)\n.layout named fanout(q, k -> v, few)")).unwrap();
+        let mut program = Program::of(&v);
+        assert!(rewrite(&mut program, true).unwrap().products.is_empty());
+        assert_eq!(program.v().show(), v.show());
+        let v = parse(&text("")).unwrap();
+        let error = rewrite(&mut Program::of(&v), true).err().unwrap();
+        assert!(error.contains("unbounded node Cartesian product in `out`") && error.contains("the products: out("), "{error}");
     }
 
     /// A node reached from fixed values through declared few-row fan-outs is no side of a product (Q249, decision

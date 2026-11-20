@@ -78,6 +78,8 @@ mod maintain_mode_tests;
 #[cfg(test)]
 mod cut_tests;
 #[cfg(test)]
+mod key_tests;
+#[cfg(test)]
 mod view_tests;
 #[cfg(test)]
 mod base_probe;
@@ -491,7 +493,18 @@ pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data
              cap: u32,
              /// Declared sorted (`.decl … sorted`, decision 0456 K7): its live rows laid out in canonical order (its
              /// columns in turn) when its component is done (`InRel::moved`).
-             ordered: bool }
+             ordered: bool,
+             /// The keys its layout declares (`key` lines, decision 0361 step 6), each checked as rows are written;
+             /// and those a second row of a key broke, not checked again, until `key_breaks` takes them.
+             keyed: Vec<KeyCheck>, broke: Vec<Vec<usize>> }
+
+/// A key a relation's layout declares (decision 0361 step 6): its columns, and an index of the relation's rows by
+/// them in its block (`keys::KeyMap`), each key's first live row. A second live row of a key breaks the fact.
+#[derive(Clone)]
+pub struct KeyCheck {
+    cols: Vec<usize>,
+    map: keys::KeyMap,
+}
 
 /// A lattice relation's state (decision 0124): its last column is the value, the columns before it the key. A key's
 /// row is replaced when a wave's values for it join to a new value: the old row dead, the new one the next wave's
@@ -578,7 +591,7 @@ impl Rel {
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::new(k), stored: 0, lo: 0, hi: 0, wave: 0,
               idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: keys::RowSet::default(),
               sketches: vec![Sketch::default(); k], dead: BlockVec::new(), ndead: 0, summaries: Default::default(), sorted: Default::default(), from: None,
-              level: BlockVec::new(), lbase: 0, leveled: true, stats: None, stats_dead: BlockVec::new(), lat: None, cap: u32::MAX, ordered: false }
+              level: BlockVec::new(), lbase: 0, leveled: true, stats: None, stats_dead: BlockVec::new(), lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new() }
     }
     /// Makes this relation a lattice's (its `lattice` line): the rows it holds so far fold by key, as a wave's do.
     fn set_lattice(&mut self, name: &str, keys: usize, lattice: Arc<dyn super::Lattice>, widen: Option<u32>) -> Result<()> {
@@ -744,7 +757,7 @@ impl Rel {
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n, dead: Arc::new(old.dead.clone()) });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: old.rows.shared(old.n), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
                    indexed: old.n, pending: keys::RowSet::default(), sketches, dead, ndead, summaries: Default::default(), sorted: old.sorted.clone(), from, level,
-                   lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.clone(), lat: None, cap: u32::MAX, ordered: false })
+                   lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.clone(), lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new() })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
     fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
@@ -847,8 +860,78 @@ impl Rel {
         }
         any
     }
+    /// Checks columns `cols` as a key of its rows from now on (a `key` line, decision 0361 step 6), the rows it holds
+    /// already first. A lattice relation's key is its own (it folds by it), and a key it broke is not checked again.
+    fn set_key(&mut self, cols: Vec<usize>) -> Result<()> {
+        if cols.is_empty() || cols.len() > MAX_KEY || cols.iter().any(|&c| c >= self.k) {
+            return Err(err(format!("{}: key {cols:?} of {} columns", self.table, self.k)));
+        }
+        if self.lat.is_some() || self.keyed.iter().any(|x| x.cols == cols) || self.broke.contains(&cols) {
+            return Ok(());
+        }
+        self.keyed.push(KeyCheck { cols, map: keys::KeyMap::new(None, 0) });
+        let n = self.n;
+        self.check_key(self.keyed.len() - 1, 0, n);
+        Ok(())
+    }
+    /// Checks every declared key over rows `from..` (written since `from`).
+    fn check_keys(&mut self, from: usize) {
+        for i in (0..self.keyed.len()).rev() {
+            self.check_key(i, from, self.n);
+        }
+    }
+    /// Checks key `i` over rows `from..to`: each live row's key put in the map, or found there. Found with another live
+    /// row (of other values: dedup leaves no two equal), the key is broken: moved to `broke`, its map dropped. A key
+    /// whose row died is taken by the next row of it (a maintained run's removal, then its add).
+    fn check_key(&mut self, i: usize, from: usize, to: usize) {
+        let k = self.k;
+        let (dead, cap, level, data) = (&self.dead, self.cap, &self.level, &self.data);
+        let gone = |id: u32| is_dead(dead, id) || (cap != u32::MAX && level.get(id as usize).is_some_and(|&l| l >= cap));
+        let check = &mut self.keyed[i];
+        // copy: not block data: one key's values at a time, what the map's hash reads.
+        let mut key = [0i64; MAX_KEY];
+        let mut broken = false;
+        for id in from..to {
+            let id = id as u32;
+            if gone(id) {
+                continue;
+            }
+            for (j, &c) in check.cols.iter().enumerate() {
+                key[j] = data.value(id, k, c);
+            }
+            let key = &key[..check.cols.len()];
+            check.map.reserve_at(data, k, &check.cols, None);
+            match check.map.find_at(data, k, &check.cols, key) {
+                Ok(s) => {
+                    let held = check.map.row(s);
+                    if held == id {
+                        continue;
+                    }
+                    if gone(held) {
+                        check.map.set(s, id, 0, 0);
+                    } else if (0..k).any(|c| data.value(held, k, c) != data.value(id, k, c)) {
+                        broken = true;
+                        break;
+                    }
+                }
+                Err(s) => check.map.set(s, id, 0, 0),
+            }
+        }
+        if broken {
+            let c = self.keyed.remove(i);
+            self.broke.push(c.cols);
+        }
+    }
     /// Adds a row (of the next wave, its delta) unless it is there.
     fn push(&mut self, row: &[i64]) -> bool {
+        let from = self.n;
+        let new = self.push_row(row);
+        if new && !self.keyed.is_empty() {
+            self.check_keys(from);
+        }
+        new
+    }
+    fn push_row(&mut self, row: &[i64]) -> bool {
         // A dead row derived again is a new row (its old id stays dead).
         if self.contains(row) { return false; }
         let k = self.k;
@@ -866,7 +949,17 @@ impl Rel {
     /// (`Fresh::settle`), so the dedup test reads each of the first order's runs once, in order, not row by row
     /// (decision 0112). `pend`: the rows stay in no order past this wave's end (a gate's relation, its delta set
     /// later), so they are also put in `pending` for the dedup tests until then. Whether any was new.
-    fn push_fresh(&mut self, mut f: Fresh, pend: bool) -> bool {
+    fn push_fresh(&mut self, f: Fresh, pend: bool) -> bool {
+        let (from, placed) = (self.n, !f.placed.is_empty());
+        let new = self.push_fresh_rows(f, pend);
+        // A declared key's check over the rows written (decision 0361 step 6). Rows the device placed are not read on
+        // the host (decision 0384: no host work on the Metal path): their key's check is the device's, left open.
+        if new && !self.keyed.is_empty() && !placed {
+            self.check_keys(from);
+        }
+        new
+    }
+    fn push_fresh_rows(&mut self, mut f: Fresh, pend: bool) -> bool {
         // Rows placed by the device (decision 0325 step 4) are taken as they lie: claimed in this relation's tail,
         // where the device wrote them past its rows (decision 0384 step 3), or their relation made its tail. Beside
         // rows derived here (which may repeat them) or into a lattice (which folds each), they are read with those
@@ -1151,6 +1244,10 @@ impl Cands<'_> {
 /// `levels`: per row, the device fixpoint's round that made it (decision 0311), where its relation keeps levels; else
 /// empty.
 pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, breaks: Vec<u32>, lost: bool, levels: Vec<u32>,
+                   /// The relation's first order when its first row came, or as of its last settle: the order its
+                   /// settled rows are in and `breaks` were noted in. An order a relation reorders (`Rel::want` chains
+                   /// a new set into it) leaves them in no order known.
+                   order: Vec<usize>,
                    /// Rows written in place by another writer (the device, decision 0325 step 4), each lot distinct,
                    /// not held by the relation, and in no order: the relation takes them as they lie (`push_fresh`).
                    /// With each lot, its rows' rounds when the device's fixpoint made them (decision 0311's levels).
@@ -1234,6 +1331,9 @@ impl Fresh {
     #[inline]
     fn offer(&mut self, row: &[i64], rel: &Rel) {
         let k = rel.k;
+        if self.n == 0 {
+            self.order.clone_from(&rel.idx[0].cols);
+        }
         if !self.lost && self.n > self.settled && runs::known_beyond_runs() {
             let cols = &rel.idx[0].cols;
             if runs::cmp_vals(cols, runs::tagged(cols, k), &self.data[(self.n - 1) * k..self.n * k], row).is_gt() {
@@ -1254,6 +1354,15 @@ impl Fresh {
     /// Drops the rows `rel` holds and the repeats: the rest, distinct, sorted by `rel`'s first order (so a wave's rows
     /// are checked against it as one sorted batch, each run searched once in order, not row by row).
     fn settle(&mut self, rel: &Rel) {
+        // Settled and noted in an order the relation has since changed: sorted whole.
+        if self.order != rel.idx[0].cols {
+            if self.n > 0 {
+                self.settled = 0;
+                self.lost = true;
+                self.breaks.clear();
+            }
+            self.order.clone_from(&rel.idx[0].cols);
+        }
         let (k, n, settled) = (rel.k, self.n, self.settled);
         if settled == n {
             return;
@@ -1325,6 +1434,14 @@ impl Fresh {
             return;
         }
         debug_assert_eq!(o.settled, o.n, "a morsel's rows are settled");
+        if self.n == 0 {
+            self.order = o.order.clone();
+        } else if o.order != self.order {
+            // Settled in another order than these: none of them is in a known order.
+            self.settled = 0;
+            self.lost = true;
+            self.breaks.clear();
+        }
         if !self.lost && self.n > self.settled {
             self.breaks.push(self.n as u32);
             if self.breaks.len() * IN_ORDER > self.n - self.settled + o.n + IN_ORDER * IN_ORDER {
@@ -2035,6 +2152,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                 let lattice = super::lattice(name).map_err(|e| err(format!("lattice {name}: {e}")))?;
                 rels.get_mut(*rel).ok_or_else(|| err(format!("lattice: no relation {rel}")))?.set_lattice(name, *keys, lattice, *widen)?;
             }
+            Line::Key { rel, cols } => rels.get_mut(*rel).ok_or_else(|| err(format!("key: no relation {rel}")))?.set_key(cols.clone())?,
             Line::Seed { head, join } => {
                 let j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, join, &mut syms, !device_wanted)? };
                 if device_wanted { seed_specs.push((probes.len(), join.clone())); }
@@ -3062,6 +3180,16 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
         }
         Body::Sql(_) | Body::Unplanned => Vec::new(),
     }).collect())
+}
+
+/// The declared keys (`key` lines, decision 0361 step 6) a second row broke in component `name`'s relations since the
+/// last call: each relation's place in the spec and the key's columns. Taken: each is reported once.
+pub fn key_breaks(conn: impl Scoped, name: &str) -> Result<Vec<(usize, Vec<usize>)>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let mut store = comp.store.write().unwrap();
+    Ok(store.rels.iter_mut().enumerate().flat_map(|(i, r)| std::mem::take(&mut r.broke).into_iter().map(move |c| (i, c))).collect())
 }
 
 /// The maintain mode's lines of component `name` (decision 0364 stage 3): its removal joins, its checked adds and its
@@ -9322,5 +9450,40 @@ impl TestLattice {
         }).collect();
         out.sort_unstable();
         out
+    }
+}
+
+#[cfg(test)]
+pub mod fresh_tests {
+    use super::*;
+
+    /// A relation's first order can change while a wave's rows wait in `Fresh` (`Rel::want` chains a new key set
+    /// into it: (0, 1, 2, 3) became [1, 0, 2, 3]). The rows settled and the stretches noted in the old order are in
+    /// no order known in the new one, so they are sorted whole. Taken as known, the relation was handed rows "said
+    /// sorted" that were not (`python/references.rerail`'s `rf_hit` on 1,000 files).
+    #[test]
+    fn rows_settled_before_a_reorder_are_sorted_again() {
+        for settle_first in [false, true] {
+            let mut rel = Rel::new("t", b"iiii");
+            let old = rel.idx[0].cols.clone();
+            let mut rows: Vec<[i64; 4]> = (0..500i64).map(|i| [i, (i * 7919) % 211, i % 3, 0]).collect();
+            rows.sort_by(|a, b| runs::cmp_vals(&old, runs::tagged(&old, 4), a, b));
+            let mut f = Fresh::default();
+            for (i, r) in rows.iter().enumerate() {
+                f.offer(r, &rel);
+                if settle_first && i == 300 {
+                    f.settle(&rel);
+                }
+            }
+            rel.want(&[1]);
+            let cols = rel.idx[0].cols.clone();
+            assert_ne!(cols, old, "the first order changed");
+            assert!(rel.push_fresh(f, false));
+            assert_eq!(rel.n, 500);
+            let t = runs::tagged(&cols, 4);
+            for id in 1..rel.n as u32 {
+                assert!(runs::cmp_ids(&rel.data, 4, &cols, t, id - 1, id).is_le(), "settle first {settle_first}: rows {} and {id}", id - 1);
+            }
+        }
     }
 }

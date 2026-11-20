@@ -419,7 +419,10 @@ impl BlockNative {
         let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
         let blanks = crate::native_cpu_block::blank_marks(r, &|o| bytes.can(o));
         let looped: u32 = lift.iter().chain(&at).chain(&blanks).fold(0, |a, &(k, _)| a | 1 << k);
-        read.extend(lift.iter().chain(&at).chain(&blanks).map(|&(_, o)| o));
+        // An output another mask names too (a `ROW`'s, the row's start a token mark's kind is
+        // told by, `TokenElem::rows`) stays stored: tier 2 reads it from its row.
+        let named = |o: u16| self.masks.iter().filter(|&&x| x == usize::from(o)).count() > 1;
+        read.extend(lift.iter().chain(&at).chain(&blanks).map(|&(_, o)| o).filter(|&o| !named(o)));
         let stored: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
         // The masks tier 2's local checks alone read: tier 2 on the CPU reads them from the
         // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.

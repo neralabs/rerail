@@ -32,6 +32,10 @@
 .layout doc key(d) key(path) size(per document) values(module, many)
 // pkg(d, "app") for src/app/main.py: the dotted Python package holding the document.
 .decl pkg(d: number, p: symbol)                          // the package a document belongs to (Python)
+// unpackaged(d): no regular package holds Python document d: it is a file of the root, or its folder has no
+// `__init__.py`. Ruff names such a module by its file's stem and resolves no relative import from it; Python can
+// still import it as a namespace package's module, by `doc`'s name.
+.decl unpackaged(d: number)                              // a Python file outside every regular package
 // For "src/app/main.py": path_part(d, "src"), path_part(d, "app"), path_part(d, "main.py"). Lets rules test
 // "is this file under a `tests` directory" without regex on the whole path.
 .decl path_part(d: number, s: symbol)                    // each directory of the document's path, and its file name
@@ -113,7 +117,7 @@
 // fstring_template(n, "{...}", "SELECT {...} FROM t") for f'SELECT {x} FROM t': n's decoded text with each
 // interpolation replaced by the marker, a constant; a debug field's `x = ` stays literal text. The same hosts.
 .decl fstring_template(n: node, marker: symbol, v: symbol)
-.input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
+.input doc, pkg, unpackaged, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
 .input value, str, strprefix, name, comment, static_value, value_type, value_type_of, fstring_piece, fstring_template
 
 // ---- text tests (built-in constraints) -----------------------------------------------------------------------
@@ -737,6 +741,10 @@
 // .guests on | off                            whether the run language's guests are shown to rules that do not
 //                                              reach them through a guest relation (on by default); embeds are
 //                                              made either way (decision 0058).
+// .embedded on | off                          on: the run also reads the files of other languages that hold
+//                                              programs in its own (an HTML page's scripts for a JavaScript run, a
+//                                              Python string at a declared place for an HTML run), seeing only those
+//                                              programs, at their files' lines. Off by default (decision 0470).
 // .on guest_error [GRAMMAR] skip | partial [warn | report CODE]
 //                                              a guest that does not parse: skip (the default) has no nodes;
 //                                              partial keeps the tree the parser recovered. warn or report also

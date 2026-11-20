@@ -116,6 +116,9 @@ pub(in crate::code_rule_dsl) struct Files {
     config: Config,
     /// The directories the corpus marks as packages (`__init__.py`), from which each file's module follows.
     packages: HashSet<String>,
+    /// Whether the run's shape is core.rerail's (the program declares every relation core.rerail does, `Projection::of`):
+    /// the shape its node ids are ranks in.
+    core: bool,
     files: Mutex<Vec<File>>,
     retained: bool,
 }
@@ -130,7 +133,9 @@ impl Files {
             Some(markers) => markers.iter().filter(|(_, present)| **present).map(|(path, _)| path.clone()).collect(),
             None => paths.iter().filter_map(|p| package_marker_directory(p)).map(str::to_owned).collect(),
         };
-        Ok(Some(Files { config: Config::of(prog)?, packages, files: Mutex::new(Vec::new()), retained }))
+        let names = crate::code_rule_dsl::facts::core::core_names();
+        let core = !names.is_empty() && names.iter().all(|r| prog.declares(r.as_str()));
+        Ok(Some(Files { config: Config::of(prog)?, packages, core, files: Mutex::new(Vec::new()), retained }))
     }
 
     /// Document `key` at `path`, with its content digest, tape and core facts: summarized as W's stateless evaluation
@@ -152,7 +157,7 @@ impl Files {
         } else {
             LocalSummary::Direct(summarize(tape.expect("direct reference analysis requests tapes").clone(), path, file.module.as_deref()))
         };
-        let nodes = syntax::definitions(key, facts).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
+        let nodes = syntax::definitions(key, facts, self.core).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
         self.files.lock().expect("reference files").push((Arc::from(path), summary, nodes));
         Ok(())
     }

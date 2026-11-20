@@ -61,9 +61,10 @@ calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
     let out = dir.join("out");
     let run = |chunk_nodes: usize, store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(format!("store-{store}.sqlite"))));
-        let before = crate::code_rule_dsl::logic::plan::body::NORMALIZED.load(std::sync::atomic::Ordering::Relaxed);
+        // The run's own scope, held here: what it normalized is the run's count (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let report = super::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
-        let normalized = crate::code_rule_dsl::logic::plan::body::NORMALIZED.load(std::sync::atomic::Ordering::Relaxed) - before;
+        let normalized = crate::code_rule_dsl::logic::plan::run_counts().normalized.load(std::sync::atomic::Ordering::Relaxed);
         (report.chunks, normalized, crate::code_rule_dsl::logic::plan::output::shown(&out, "calls").unwrap())
     };
     // The process's first run of the program does more than any later one (its images made): a warm-up, then
@@ -907,6 +908,8 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run_on = |store: &str, binding: Binding| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        // The run's own scope, held here: the maintain mode's count is the run's (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let moded = crate::code_rule_dsl::logic::plan::mode_strata();
         let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
         let rows = ["unused", "lone"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
@@ -1030,6 +1033,8 @@ named(n, @dot(q, q)) :- uses(n, f), def(f, q).
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        // The run's own scope, held here: the maintain mode's count is the run's (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let before = crate::code_rule_dsl::logic::plan::mode_strata();
         super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         let rows = ["fanout", "most", "named"].map(|r| {
@@ -1259,7 +1264,7 @@ fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
 /// Each test's store is its own: a copy of the template (the library's phase 0 in it), with an identity of its own,
 /// and closed and removed when the test ends (`test_store`). Two tests at once have two stores.
 #[test]
-#[ignore = "Q363: an object segment of the first probe's store (`.objects/<n>.seg`) stays open after its thread ends"]
+#[ignore = "Q377: one object segment of a probe's store (`objects/<n>.seg`) stays mapped after its test; the holder is not found yet"]
 fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
     if std::env::var_os("RERAIL_TAPE_CACHE").is_some() {
         return;
@@ -1421,6 +1426,46 @@ fn modules_are_named_from_their_package_roots_and_relative_imports_of_any_depth_
     assert_eq!(read("subs"), [["shop.child.Child"]]);
     assert_eq!(read("syms"), [["a.b.c.x.one"], ["a.b.x.two"], ["a.x.three"]]);
     assert_eq!(read("open_names"), [["four"]]);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// `unpackaged(d)` holds for a Python file no regular package holds: one at the tree's root, or in a folder with no
+/// `__init__.py`. Ruff names such a file by its stem and resolves no relative import in it, and
+/// `python/references.rerail` does the same, from this fact alone, so its file-local part reads no other document. A
+/// folder that gains an `__init__.py` makes its files packaged in the next run (the memo keys on the folders).
+#[test]
+fn a_python_file_no_package_holds_is_unpackaged() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("unpackaged");
+    let _ = std::fs::remove_dir_all(&base);
+    let src = base.join("tree");
+    for (path, text) in [
+        ("top.py", "x = 1\n"),
+        ("loose/x.py", "x = 1\n"),
+        ("pkg/__init__.py", ""),
+        ("pkg/m.py", "x = 1\n"),
+        ("pkg/sub/n.py", "x = 1\n"),
+    ] {
+        let p = src.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let rule = base.join("unpackaged.rerail");
+    std::fs::write(
+        &rule,
+        ".language python\n.scope include \"**/*.py\"\n\
+         .decl loose(p: symbol)\nloose(p) :- unpackaged(d), doc(d, p, _).\n.output loose\n",
+    )
+    .unwrap();
+    let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
+    let out = base.join("out");
+    let run = || {
+        let _ = std::fs::remove_dir_all(&out);
+        super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        crate::code_rule_dsl::logic::plan::output::shown(&out, "loose").unwrap_or_default()
+    };
+    assert_eq!(run(), [["loose/x.py"], ["pkg/sub/n.py"], ["top.py"]]);
+    std::fs::write(src.join("loose/__init__.py"), "").unwrap();
+    assert_eq!(run(), [["pkg/sub/n.py"], ["top.py"]]);
     let _ = std::fs::remove_dir_all(&base);
 }
 

@@ -67,3 +67,9 @@ queue's terms an item is then a block of a step's words, (file, formula, step, b
 the blocks of the step before it. A step that reads across blocks (a descendant's ranks, a reach's running maximum)
 needs a scan between blocks. That is the next measure, before the level DAG: it is where this file's time is, and a
 DAG of whole (file, formula) items keeps the chain.
+
+## On rr-align (roll-up 11, Q369)
+
+The label passes launch through the device layer (`lane`, 0440 step C). The lane has no concurrent dispatch, so a
+batch with both size classes is two launches of `label_formula` in a row, the large files' first. They read and
+write apart, so the rows are the same. Whether running them concurrently matters is open (Q369).

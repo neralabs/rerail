@@ -137,7 +137,7 @@ template tail's, a character's). The walk makes a byte one region's at most, but
 all the kinds together, not of two alone: each pair is apart because the others are, so no
 induction on one pair proves it. The compiler now proves the joint fact first (any two kinds'
 `open` or `fill` at one byte, one value, never, by induction on itself) and gives each pair to
-the prover as a lemma, as 0401's regions are. Two pairs are left, inside a character literal
+the prover as a lemma, as 0412's regions are. Two pairs are left, inside a character literal
 (`\u`, its digits, an escape). Tier 1: 1,728 operations a block; the compile 16 s, from 21;
 the corpus and the generated Rust's tapes unchanged. Next: the marks and escapes at the token
 (stages 3 and 4).

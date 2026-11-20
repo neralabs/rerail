@@ -157,14 +157,26 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
     }
 }
 
-/// A read's declaration: `UKL_INLINE` where it is hot, `UKL_COLD` (a call) where it is marked cold, as the JIT's
-/// inlining pass and the Rust backend treat it (decision 0310).
+/// The most instructions a read may have and still be inlined into its callers. A larger one (the 16z tape's block
+/// decode, about 3,000) is called, not copied into each caller: the backend's compile of a kernel grows with every
+/// copy, and a read that calls it from a loop gets several (Q383: one view read's pipeline took 32 s cold with its
+/// copies inlined, 2 s with the decode called).
+const MOST_INLINED: usize = 1024;
+
+/// Whether `f` is small enough to be inlined into its callers (`MOST_INLINED`).
+fn inlined(f: &ir::Function) -> bool {
+    f.layout.blocks().map(|b| f.layout.block_insts(b).count()).sum::<usize>() <= MOST_INLINED
+}
+
+/// A read's declaration: `UKL_INLINE` where it is hot and small (`MOST_INLINED`), else `UKL_COLD` (a call), as the
+/// JIT's inlining pass and the Rust backend treat a cold one (decision 0310): inlined at each use, 16z's block decoder
+/// (3,000 lines) made the node view's read 118,000 lines, and the M3's compiler took 114 s over it (2.6 s called).
 fn signature(f: &ir::Function, name: &str, family: Family, hot: bool) -> Result<String, String> {
     let [ret] = f.signature.returns.as_slice() else { return Err(format!("{name}: a read returns one value")) };
     let params: Vec<String> =
         f.signature.params.iter().enumerate().skip(family.pointers()).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
     let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
-    let qualifier = if hot { "UKL_INLINE" } else { "UKL_COLD" };
+    let qualifier = if hot && inlined(f) { "UKL_INLINE" } else { "UKL_COLD" };
     Ok(format!("{qualifier} {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
 }
 
