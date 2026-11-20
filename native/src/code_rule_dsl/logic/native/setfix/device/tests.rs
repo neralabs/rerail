@@ -1092,7 +1092,12 @@
             {
                 let view = |name: &str| core_views.iter().find(|(n, _)| *n == name).unwrap().1.clone();
                 let (docof, line) = (view("docof"), view("line"));
-                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 100).collect();
+                // `docof` is a place's file (decision 0431 §4): the guest's is its host's, 7. Its rows are those of
+                // file 7 that the batch without it does not have.
+                let without = shaped(&store, make(), &Projection::core()).unwrap();
+                let host = without.iter().find(|(n, _)| *n == "docof").unwrap().1.clone();
+                let host: std::collections::HashSet<i64> = (0..host.len()).filter(|&r| host.value(r, 1) == 7).map(|r| host.value(r, 0)).collect();
+                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 7 && !host.contains(&docof.value(r, 0))).collect();
                 assert!(!guest.is_empty(), "the guest's places are rows");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }

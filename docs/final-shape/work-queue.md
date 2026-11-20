@@ -2016,13 +2016,67 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   of one level share tests.
 - **Done when**: a level's formulas over a file are evaluated together, sharing their common subsets, with
   `label_formula` measured pinned before and after.
+- **Done** (2026-11-18, decision 0419): measured, and not the default. Evaluating a file's formulas together
+  (`RERAIL_FORMULA_FUSED=1`) took internal_dead_code's label GPU time from 83–95 to 165–175 ms, and public_api_triples'
+  from 71–79 to 105–112 ms. The groups of one file's formulas overlap their latency, and the shared tests are shared
+  already (`label_leaves`, identical formulas once). The time was latency: the step formulas, with a chain's reach as
+  the long pole (now read by blocks: 96.8 → 54.6 ms), and every level once per chunk (now a chunk below the credible
+  growth makes the next 4×: 82–98 → 77–84 ms, 89–94 → 67–82 ms). 0460's times were taken under the default memory
+  line (14–17 chunks).
+- **Closed** (2026-11-18, 0419's follow-up): with the line lifted, fewer or larger chunks did not lower the label GPU
+  time beyond noise (one chunk at a time with a 1M-node cap: 84–107 ms against 70–130 ms). A chunk's measured growth
+  is noise (16–113 MB whatever its nodes), so no finer sizing rule was adopted. Gathering concurrent chunks' label runs
+  is not built, since its prize is fewer runs and 0386 keeps each job's wave its own.
 
-### Q289. (Q219 on q178) A level's fact constraints are uploaded rows
+### Q281. `label_leaves` is most of the label passes' GPU time (done)
+
+- **Found** (2026-11-19, 0447): with `label_formula`'s floor gone, `label_leaves` takes 32.2 ms of internal_dead_code's
+  50.7 ms of GPU time at s1000 (`RERAIL_GPU_ENCODER_TIMES`): 12 encoders of about 2.7 ms each, against 16.8 ms for
+  every formula.
+- **Done when:** what a leaves pass spends its time on is measured, and either changed with rows the same as native,
+  or recorded as its work.
+- **Closed** (2026-11-19, 0449): a thread a word with no atomics, and a code read once for each block of 8 tests. The
+  leaves passes went from 31.5–39.6 to 7.8–8.0 ms, and the GPU total from 55.5–59.5 to 42.0–45.3 ms, with the rows
+  the same.
+
+### Q332. (Q270 on final-rerail-shape) The children of members read a chain of child reads on one thread per member
+
+- **Found** (2026-11-18, 0437): with a chain's reach at the dispatch floor, op 9 (the children of members,
+  `tape_first_child` then `tape_next` per member) is `label_formula`'s largest step in one-formula mode: 103 ms over
+  224 passes at s1000, 461 µs a pass. A member's children are a chain of dependent reads, so a member with many
+  children holds its thread.
+- **Direction:** children of F are a chain's reach with `through` empty, but its blockers are every non-member below a
+  member, a size read each, and its levels follow how deeply members nest. Measure that against spreading a member's
+  children over the lanes (its child count, `tape_child_count`, and `tape_child`).
+- **Done when:** op 9's pass is near the dispatch floor (about 100 µs), with the rows the same as native.
+- **Closed** (2026-11-19, 0457, was 0440): the cost was not the shape but the read. `tape_next` searches for the parent at each
+  hop. The walks take the parent's end once and hop by `tape_next_in`. The op-9 formulas went from 431–846 µs to
+  133–212 µs, at the leaf-only floor, with the rows the same as native.
+
+### Q331. (Q252 on final-rerail-shape, Q220 until the hub merge) A chain's reach climbs a node at a time in each (file, formula) group
+
+- **Found** (2026-11-18, 0419): `label_formula`'s time is its steps (64–70 ms of 65–79 ms at s1000). A chain's reach
+  (`REACH_CHAIN`) takes about 1.1 ms a pass, against 23–68 µs for the other steps. Each thread decides 32 nodes in a
+  row, a tape parent read each, and climbs where a parent is before its block. Adding dispatches does not fit the
+  launch budget, so the fix stays inside the group.
+- **Direction:** reached(n) is `from` at n's nearest ancestor that is in `from` or not in `through`. Every node can find that
+  ancestor by pointer doubling: log(depth) rounds with barriers, and no tape read in the rounds. The jump pointers
+  are a file's nodes: threadgroup memory holds them only for small files, well under 32 KB a group, so larger files'
+  go to device memory, coalesced.
+- **Done when:** `REACH_CHAIN` is node-parallel within the group, with the rows the same and the step's time measured
+  before and after.
+- **Closed** (2026-11-18, 0437): not by pointer doubling but through the hot `tape_size` accessor (the user: "I
+  think this is mostly fixed by using an accessor"). The reach is descendant images, a level each time a member sits
+  below a blocker. A chain's pass went from 0.8–6.8 ms to 22–225 µs, with the rows the same as native.
+
+### Q289. (Q219 on q178) A level's fact constraints are uploaded rows (done)
 
 - **Found** (2026-11-18, Q288's measurements): `Runner::level` uploaded the facts' `(node, label)` pairs once per
   pattern kernel group, the same buffer each time: 32 MB (8.1 M words) on 15 fixtures. Fixed: once a level (0460).
 - **Left**: the upload itself is a copy of the facts' rows (AGENTS.md, 0353).
 - **Done when**: `Pass::Fact` reads the fact's relation in its block, and the upload is gone.
+- **Done** (2026-11-19, 0446): the findings are written once into the batch's fact block (`FactRows::block`), and
+  the CPU's passes and the pattern kernels read them there. The upload and both host copies are gone.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 
@@ -6127,6 +6181,12 @@ Open:
     asserted.
   All four are decision 0400's listing checks, and 27 of the 31 observer tests pass. Not PR #508's.
 - **Done when**: all four pass.
+- **Seen** (2026-11-19, the M3, with the journal's wait bound restored: `journal.rs`'s `sync` takes the caller's
+  `wait` again, else `WAIT.max(settle)`): the same four fail, and `the_journal_names_what_changed_since_its_cursor`
+  passes again (it asserts a zero bound answers `Lost`, "slower"). Four more journal-observer tests
+  (`a_watched_root_is_not_statted_where_the_journal_says_nothing_changed` and three like it) depend on a new stream's
+  first events arriving within the observer's 5 s budget. Run alone, they came in 0.4–3.3 s in two runs, and none
+  came in 5 s in three; the wait was the same 5 s with and without the bound.
 - **Done** (2026-11-19): two causes, neither the hosts'.
   - Q189's settle window (6c7467af5) was applied to every trusted root, also to one its listings checked (decision
     0400). There each answer is compared with the listing's stat, so the journal's silence is not what trusts it. A
@@ -6822,15 +6882,19 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   the embedded language reads the files holding its programs (0470 "Steps"); an HTML run sees no Python file's
   program, nor a JavaScript run an HTML file's `<script>`.
 
-### Q328. `logic/native/setfix/device.rs` and its `device/tests.rs` are compiled by no crate
+### Q328. `logic/native/setfix/device.rs` and its `device/tests.rs` are compiled by no crate (closed: they are)
 
 - **Found** (2026-11-20, roll-up 4's CUDA-support merge): the crate split (2a116f7478, `tools/cratify/moves.tsv`
   row 9) moved `setfix::device` to `logic/device.rs`, and no `mod` names the old file since. Merges still carry edits
   into both files (CUDA-support's to `device/tests.rs`), and `facts_only.rs` and `run_state.rs` list statics by the old
   path. `views_made_on_the_device_are_the_hosts_rows` and the file's other tests run nowhere.
-- **Steps**: each test the old `tests.rs` holds that `logic/device.rs`'s tests lack goes there (or to the device
-  crate's); then both files are removed and the two lists' rows cut.
-- **Done when**: no source file is outside every crate's module tree, with a check that says so.
+- **Closed** (2026-11-20, roll-up 4's final-rerail-shape merge): wrong. `rerail-device-metal` mounts both files
+  (`native/crates/device_metal/src/lib.rs`, `#[path = "setfix"] ... pub mod device;`), and its tests run there; the
+  search behind the finding looked in `rerail-logic` alone. Two of them failed on the hub, found running them: the
+  crate's `test_languages` registered no embedder, and Python's tape reads `CallArgument`'s since 0470 step 1 (it
+  registers it now); and `views_made_on_the_device_are_the_hosts_rows` found a guest's places by its document key in
+  `docof`, which is the place's file since 0431 §4 (the guest's rows are now file 7's rows that the batch without
+  it lacks). The crate's 30 `setfix::device` tests pass.
 
 ### Q329. (Q187 on cost-classifier-metal-rf) The test binaries' unwind info is past what the compact unwind table can address
 - **Found** (2026-11-19, a tidy-up of 0442's work): every large test binary's link warns `__eh_frame section too
@@ -6856,3 +6920,76 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   (setfix's CPU levels, its closures, the device's): a second row for a key breaks it (`shapes::Broken`).
 - **Done when**: a test declares a key of a derived relation whose rules break it, and the run names it broken and
   plans the relation from statistics.
+
+### Q333. (Q283 on final-rerail-shape) A level's formulas as phases: the pushes' chains are the time (0474; done in 0475)
+
+- **Found** (2026-11-19, 0474): `label_phase` runs a level's word steps and one-hop pushes in one dispatch a phase
+  for the whole batch. Its word steps cost about 32 µs a dispatch, but its pushes are chains within a thread: up to 7
+  dependent hops for a format 16 parent, and one hop for each child. On s1000 it does not beat `label_formula`, so it
+  stays behind `RERAIL_FORMULA_PHASES=1`.
+- **Next**, in this order:
+  1. spread a phase's members over its SIMD group (`simd_roots`, as `label_micro`'s roots), then measure big1 and
+     s1000;
+  2. range steps (descendants, following, reaches: ops 8, 10, 11, 15, 16, 23–25) as scans between blocks, so a
+     level runs on one kernel;
+  3. then compare a level's phases with 0473's size classes, and remove the loser.
+- **Done** (2026-11-19, 0475): the parents once a batch (`label_parents`), the range steps as scans and the climbs, so
+  every formula runs on `label_phase`; `label_formula` and 0473's size classes are removed. The SIMD spread was not
+  built: the pushes are under 1 ms once a parent is one load. Left: `label_leaves` (7.4–11 ms on s1000), the
+  epilogue (2–3 ms), and a descendant scan in one dispatch (decoupled look-back).
+
+### Q334. (Q284 on final-rerail-shape) After 0465: the parse workers, the serial phases, and small label runs
+
+- **Found** (2026-11-19, 0465), on all (3,089 files, 9.6 M nodes; about 20 s on an M1 Max):
+  - the parse workers take 13.4 s of CPU (4.3 ms a file);
+  - the run uses 3.3–3.6 of 10 cores, with 13–48 s of its threads ready and no core;
+  - the run's thread spends 8–10 s in serial phases: cross 2.7–5.1 s, stats 2.1–2.5 s (400,000–800,000
+    involuntary switches), combine 2.2–3.0 s;
+  - the large program's label runs are 283 runs with a median of 6 files, where s1000's were 6 runs with a median of
+    36. Each run pays its fixed costs.
+- **Next**, in order:
+  1. Why the pool oversubscribes its cores, and the parse workers' CPU a file.
+     **Answered** (0477): it does not. The waits were locks (the scalar pool, the residency, the grammars) and the
+     machine's load, and the measured binary was renamed, which leaves the main thread out of the pool (the
+     load-time constructor's name test). The parse workers' phase is 7.4 s on all (8.1–8.5 s): W's reference graph
+     5.9 s of it. Open: the summary as a tape pass; the interner's waits; the store writer's one lock.
+  2. `stats`' switches, `cross`' `public_best_*` waits, `combine`'s fixpoint waits.
+     **Done** (0477): `public_best_*` were the pool's threads waiting on the scalar pool's one lock; sharded, `cross`
+     6.2 → 3.0–3.3 s, `stats` 1.0 s. `combine`'s waits are the chunks' parse and evaluation on the workers.
+  3. Trace where the small label runs come from, then batch them to a chunk's size.
+     **Done** (0471): they were a wave halved until its files shared a slab (`gather` found no room). A batch now
+     reads each document in its own slab; 78 runs on all, one a wave. The cold run's exit was the device joins'
+     caches, capped per thread: now one cap for every thread's.
+  4. A cold first Metal run of all exited 1 (its log was lost). Reproduce it with a fresh binary path.
+     **Done** (0471): the panic of a one-file wave the budget had no room for, the device joins' caches holding
+     127 MB; two cold runs of a new binary passed.
+
+### Q335. `RERAIL_GPU_ENCODER_TIMES` (0447) has no form on the device layer's launches
+
+- **Found** (2026-11-20, roll-up 4's final-rerail-shape merge): final-rerail-shape's 0447 timed each compute encoder
+  of the label passes from stage-boundary counter samples (`EncoderTimes`, `encoder_us.<label>`, `encoder_gap_us`),
+  on raw Metal encoders. The hub's label passes launch through `lane::Command` (0440 C/D), which opens its own
+  encoders, so the measurement went with the port; `RERAIL_GPU_KERNEL_TIMES` (a command buffer a kernel) still times
+  each kernel, with its command buffer's cost in the number.
+- **Steps**: a launch's counter-sample slot on `lane::Command` (Metal: a sample buffer with stage-boundary samples;
+  other backends: none), read at the command's end into `encoder_us.<label>` and the gaps.
+- **Done when**: `RERAIL_GPU_ENCODER_TIMES=1` on a label-pass run prints the same counters 0447 measured with.
+
+### Q336. A chain's reruns (0475) spend the evaluation's 200 launches: two ruf028 cases refused on Metal
+
+- **Found** (2026-11-20, roll-up 4's final-rerail-shape merge, M3, `metal-tests`):
+  `lowered_clauses_find_the_same_roots_on_metal` has 490 of 492 clauses equal. The two that differ are
+  `ruff-ruf028-invalid-formatter-suppression-comment`'s `in-non-statement` and `skip-or-on-misplaced` (once `log001`
+  in their place): `cpu None, metal Some(BackendLaunchLimit)`. With `RERAIL_LAUNCHES=1` the refused evaluation
+  shows three runs (`label_parents` 3) and about 130 of its launches on `label_phase`.
+- **Cause**: a chain's reach with more levels than the run's phases hold is found after the run (flags bit 512),
+  and the run goes again with twice the levels (1, 2, 4, ... up to `PHASE_CHAIN_MOST`; the merge dropped a further
+  rerun on the interpreter, which runs `label_phase` the same way and so overflowed again). Each rerun is a whole
+  encoding, about 70 launches here. The ledger (`KERNEL_LAUNCH_LIMIT`, 200) counts them all, but the plan-time
+  bound counts only successful runs (`used`), and `formula_phase_count` counts phases at `PHASE_CHAIN_LEVELS`.
+  So the plan passes, and the ledger refuses the third run. The loop's other retries (widened, deep, released)
+  leave `used` the same way; the chain's are the ones that run several times.
+- **Choice (the user's)**: the run's first levels from the batch's chains, measured on the host as the plan
+  measures a group's nesting; or the kernel writes the levels it needed, so one rerun suffices; or the retries
+  count into `used` and the plan bound reads the ledger, so the batch is split before it runs.
+- **Done when**: both cases are equal on Metal, and the retry loop's plan bound is the ledger's.

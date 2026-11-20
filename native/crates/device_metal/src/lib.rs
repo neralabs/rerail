@@ -663,5 +663,8 @@ pub(crate) fn test_languages() {
     ONCE.call_once(|| {
         register(Family::Python, &Pack::<Python>::NEW);
         language::register_base(Family::Python, &Pack::<Python>::NEW);
+        // Python's strings embed code at the places it declares (decision 0470): a Python file's tape reads its
+        // embedder, which the engine registers with the rest as it loads.
+        crate::code_rule_dsl::embed::install_embedders(vec![(language::Via::CallArgument, &rerail_lang_python::code_rule_dsl::embed::call_argument::CallArgument)]);
     });
 }

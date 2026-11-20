@@ -11,7 +11,7 @@ typedef struct ViewRow {
     UKL_GLOBAL const uint8_t* tape;
     UKL_GLOBAL const uint8_t* lines;
     uint32_t rows[9];
-    uint32_t view[31];
+    uint32_t view[32];
 } ViewRow;
 typedef struct ViewDir {
     UKL_GLOBAL const uint8_t* chunk;
@@ -19,7 +19,7 @@ typedef struct ViewDir {
     uint32_t pad;
     UKL_GLOBAL const ViewRow* rows;
 } ViewDir;
-UKL_STATIC_ASSERT(sizeof(ViewRow) == 184, "ViewRow: size");
+UKL_STATIC_ASSERT(sizeof(ViewRow) == 192, "ViewRow: size");
 UKL_STATIC_ASSERT(__builtin_offsetof(ViewRow, view) == 60, "ViewRow.view");
 UKL_STATIC_ASSERT(sizeof(ViewDir) == 24, "ViewDir: size");
 UKL_STATIC_ASSERT(__builtin_offsetof(ViewDir, rows) == 16, "ViewDir.rows");

@@ -59,18 +59,24 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
         roots: std::sync::Arc<Roots>,
         constraints: Vec<(String, u32)>,
     },
-    /// The global roots a semantic predicate's producer reported (O24, decision 0030) whose slots'
-    /// targets each have their label: per root, its (target node, label) pairs. The pattern kernel's
-    /// fact case (`patterns::FACT`) tests them, so a fact settles from scratch as a pattern does.
-    Fact { target: u32, rows: Vec<(u32, Vec<(u32, u32)>)> },
+    /// The roots a semantic predicate's producer reported (O24, decision 0030) whose slots' targets each have their
+    /// label (`labels`, a slot each). The findings are where the host wrote them, in the batch's fact block (Q289):
+    /// per file, its rows (node, then a target per slot, file-local) or its nodes as bits. The pattern kernel's fact
+    /// case (`patterns::FACT`) reads them there and tests them, so a fact settles from scratch as a pattern does.
+    Fact {
+        target: u32,
+        block: std::sync::Arc<rerail_blocks::block::Block>,
+        found: Vec<(u32, crate::code_rule_dsl::matcher::FactFound)>,
+        labels: Vec<u32>,
+    },
     Empty { target: u32 },
     /// A pass whose program is a node-set formula (decision 0036 on Metal, 0365 §9, §10): `formula` evaluated on the
-    /// device (`label_formula`) into the pass's scratch row, which settles as a program's does. No walk. A roots
+    /// device (`label_phase`) into the pass's scratch row, which settles as a program's does. No walk. A roots
     /// pass's is within `roots`; a targets pass's (`image`) is the image of its starts, which the formula holds.
     Formula { target: u32, roots: std::sync::Arc<Roots>, formula: std::sync::Arc<DeviceFormula>, image: bool },
 }
 
-/// A formula `label_formula` evaluates (decision 0365): where its set goes (`row`, `mode`, `rule`, as `FormulaTarget`),
+/// A formula `label_phase` evaluates (decision 0365): where its set goes (`row`, `mode`, `rule`, as `FormulaTarget`),
 /// and each of its text slots' row in the bound text rows (`None`: every node, for an anchor).
 #[derive(Clone)]
 struct FormulaJob {
@@ -88,7 +94,7 @@ struct FormulaJob {
 /// the tape's code bytes (`root_mask`). Listed roots (a clause's prefilter candidates, few and
 /// scattered) are a row of bits over the batch's nodes.
 ///
-/// Either may have an anchor (decision 0365): a formula `label_formula` evaluates on the device before the walks
+/// Either may have an anchor (decision 0365): a formula `label_phase` evaluates on the device before the walks
 /// of its level, into a row of bits the rule's roots are also in (a rule over codes: its row; listed: the list's
 /// row, the nodes outside the anchor cleared). The host's view of the roots (`nodes`) is the rule's, a superset.
 #[derive(Debug)]
@@ -218,7 +224,7 @@ const ROOT_GROUP: usize = 64;
 struct RootTable {
     words: Vec<u32>,
     by_rule: HashMap<usize, (u32, bool)>,
-    /// By rule, its anchor's row and mode (`Roots::table`), for `label_formula`.
+    /// By rule, its anchor's row and mode (`Roots::table`), for `label_phase`.
     anchors: HashMap<usize, (u32, u32)>,
 }
 
@@ -320,6 +326,13 @@ const _: () = assert!(ROOT_POOL * ROOT_STACK_WORDS <= STACK_WORDS);
 const GROUP_STACK_WORDS: usize = 32 * 17;
 
 /// A formula's word that is a leaf (decision 0365): a test of the node alone, read for every formula by `label_leaves`.
+/// A formula's phases (`phase_program`) at the first chain levels, its leaf tests as the rows the device reads them
+/// by: a plan's launches.
+fn formula_phase_count(formula: &DeviceFormula) -> usize {
+    let words = formula.words.iter().map(|&word| if formula_leaf(word) { compile_sets::device_ops::LEAF } else { word }).collect::<Vec<_>>();
+    phase_program(&words, PHASE_CHAIN_LEVELS).map_or(1, |program| program.phases as usize)
+}
+
 fn formula_leaf(word: u32) -> bool {
     use compile_sets::device_ops;
     let (op, arg) = (word & 255, word >> 8);
@@ -527,7 +540,7 @@ pub(in crate::code_rule_dsl) fn text_row(
 ) -> Option<std::sync::Arc<Vec<u32>>> {
     use rayon::prelude::*;
     let _texts = crate::code_rule_dsl::prof::Stage::start("size.texts");
-    let per_file = crate::code_rule_dsl::logic::profile::on_cores(|| files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>())?;
+    let per_file = crate::code_rule_dsl::logic::profile::on_cores(|| files.par_iter().map(crate::code_rule_dsl::logic::profile::carried("size.text_file", |tape: &TapeDoc| walk.slot(program, slot, tape))).collect::<Option<Vec<_>>>())?;
     let mut bits = vec![0_u32; words];
     for (file, base) in per_file.iter().zip(bases) {
         for (index, &word) in file.iter().enumerate() {
@@ -559,10 +572,11 @@ pub(in crate::code_rule_dsl) fn text_rows(
     let per_pair = crate::code_rule_dsl::logic::profile::on_cores(|| {
         (0..slots.len() * files.len())
             .into_par_iter()
-            .map(|pair| {
+            // Each item in the caller's run (decision 0442): a walk's texts are the run's.
+            .map(crate::code_rule_dsl::logic::profile::carried("size.text_pair", |pair: usize| {
                 let (walk, program, slot) = slots[pair / files.len()];
                 walk.slot(program, slot, &files[pair % files.len()])
-            })
+            }))
             .collect::<Vec<_>>()
     });
     crate::code_rule_dsl::logic::profile::on_cores(|| {
@@ -787,9 +801,9 @@ fn label_rows(plan: &Plan<'_>, micro: bool) -> Option<(Vec<u32>, Vec<u32>)> {
                     mark(*label)?;
                 }
             }
-            Pass::Fact { target, rows } => {
+            Pass::Fact { target, labels, .. } => {
                 mark(*target)?;
-                for (_, label) in rows.iter().flat_map(|(_, targets)| targets) {
+                for label in labels {
                     mark(*label)?;
                 }
             }
@@ -923,17 +937,277 @@ impl LabelKernel {
 /// A walk's stack tiers are one kernel each (`label_micro`, `label_group`, `root_records`), their frames the dispatch's
 /// shape's (`Shape::frames`), not a template's: an Apple GPU's compiler compiled each tier's copy of the walk on its own,
 /// 8–10 s each for format 16 (work queue Q181).
-const KERNELS: [&str; 8] = ["label_sink", "label_settle", "label_round", "label_micro", "label_group", "root_records", "label_formula", "label_leaves"];
-/// `label_formula` and `label_leaves` in `KERNELS` (decision 0365).
-const FORMULA_KERNEL: usize = 6;
-const LEAVES_KERNEL: usize = 7;
-/// `label_formula`'s threads a (file, formula).
-const FORMULA_WIDTH: u64 = 128;
-/// `label_formula`'s profile words: a step kind's members by its op (to `REACH_CHAIN`), and its reads and groups (16–20).
-const FORMULA_STATS: usize = compile_sets::device_ops::REACH_CHAIN as usize + 1;
-/// `label_formula`'s scratch: the formulas of a dispatch each have their own, so a level's formulas take as many
-/// dispatches as this holds.
+const KERNELS: [&str; 9] = ["label_sink", "label_settle", "label_round", "label_micro", "label_group", "root_records", "label_leaves", "label_phase", "label_parents"];
+/// `label_leaves` in `KERNELS` (decision 0365).
+const LEAVES_KERNEL: usize = 6;
+/// `label_phase` (decisions 0474, 0475): a level's formulas, a dispatch a phase, a thread a (word, formula).
+const PHASE_KERNEL: usize = 7;
+/// `label_parents` (0475): the batch's parents once, for `label_phase`.
+const PARENTS_KERNEL: usize = 8;
+/// A formula compiled for `label_phase` (decision 0474): its instructions (`[code, dst, src, extra]`, the kernel's
+/// `PHASE_*`), its phases, the slot of its set, and its slots.
+#[derive(Debug, PartialEq)]
+struct PhaseProgram {
+    code: Vec<[u32; 4]>,
+    phases: u32,
+    result: u32,
+    slots: u32,
+}
+
+/// The kernel's instructions (`label_passes.uglykl`'s `PHASE_*`).
+const PHASE_END: u32 = 0;
+const PHASE_ROW: u32 = 1;
+const PHASE_AND: u32 = 2;
+const PHASE_OR: u32 = 3;
+const PHASE_ZERO: u32 = 4;
+const PHASE_UP: u32 = 5;
+const PHASE_DOWN: u32 = 6;
+const PHASE_ZERO32: u32 = 8;
+const PHASE_LAST: u32 = 9;
+const PHASE_BEFORE: u32 = 10;
+const PHASE_SPAN: u32 = 11;
+const PHASE_COVER: u32 = 12;
+const PHASE_BLOCKERS: u32 = 13;
+const PHASE_ANDNOT: u32 = 14;
+const PHASE_COPY: u32 = 15;
+const PHASE_CHECK: u32 = 16;
+const PHASE_CLIMB: u32 = 17;
+/// `label_phase`'s threadgroup: its words (`PHASE_WORDS`), a thread each.
+const PHASE_WORDS: u64 = 64;
+/// The levels of a chain's reach (`REACH_CHAIN`) a run's programs hold at first, each two descendant scans: a member
+/// below a blocker below a member is a level. A chain with more fails its run (flags bit 512), which runs again with
+/// twice the levels (`Error::ChainLevels`, 0475). One held every chain of s1000.
+const PHASE_CHAIN_LEVELS: usize = 1;
+/// Past this many levels a chain's run fails (`label_phase` runs a level's formulas whether the walks are micro or
+/// interpreted).
+const PHASE_CHAIN_MOST: usize = 64;
+
+/// `words` (a lowered formula, `compile_sets::DeviceFormula`'s postfix) as `label_phase`'s program (decision 0475), where its steps
+/// are rows, AND, OR, the one-hop steps (`CHILD`, `PARENT`, `CHILD_IN`), the siblings (`FOLLOWING`, `FOLLOWING_IN`,
+/// `REACH_FOLLOWING`), descendants (`REACH_DESCENDANT`), a chain's reach (`REACH_CHAIN`, `levels` of it) and the
+/// climbs (`DESCENDANT`, `DESCENDANT_IN`, `CHAIN`); else `None` (a word no device formula has).
+///
+/// Every value has a slot. A step that reads only its thread's word needs its operands settled there; a pull (the
+/// parent's bit, a sibling array's entry, the blocks' ends) reads other words, so it needs them whole: written in an
+/// earlier phase. A push sets bits in other words, into a slot cleared in phase 0, so its value is whole only in the
+/// next phase. A slot is used again only after the phase that freed it. A node's parent is read where
+/// `label_parents` wrote it, once a batch, before the first level (`label_parents`).
+fn phase_program(words: &[u32], levels: usize) -> Option<PhaseProgram> {
+    use compile_sets::device_ops as op;
+    #[derive(Clone, Copy)]
+    struct Value {
+        slot: u32,
+        // Pushed in this phase (others' threads set its bits or entries), the sibling array a pull is still to read
+        // (and whether it holds the first, not the last), and the candidates it is still to be cut to.
+        pushed: Option<u32>,
+        pull: Option<(u32, u32)>,
+        cand: Option<u32>,
+        // The phase that last wrote its own words.
+        written: u32,
+    }
+    struct Build {
+        code: Vec<[u32; 4]>,
+        zeros: Vec<[u32; 4]>,
+        free: Vec<u32>,
+        pending: Vec<u32>,
+        slots: u32,
+        phase: u32,
+    }
+    impl Build {
+        fn take(&mut self) -> u32 {
+            self.free.pop().unwrap_or_else(|| self.fresh(1))
+        }
+        /// `n` slots in a row, never freed (a node array is 32).
+        fn fresh(&mut self, n: u32) -> u32 {
+            self.slots += n;
+            self.slots - n
+        }
+        fn end_phase(&mut self) {
+            self.code.push([PHASE_END, 0, 0, 0]);
+            self.phase += 1;
+            self.free.append(&mut self.pending);
+        }
+        /// A push writes into slots phase 0 clears, so it comes after it.
+        fn push_phase(&mut self) {
+            if self.phase == 0 {
+                self.end_phase();
+            }
+        }
+        /// `value` readable in this thread's word: its pushes done, its pull read, cut to its candidates.
+        fn settle(&mut self, value: &mut Value) {
+            if value.pushed == Some(self.phase) {
+                self.end_phase();
+            }
+            value.pushed = None;
+            if let Some((array, first)) = value.pull.take() {
+                self.code.push([PHASE_BEFORE, value.slot, array, first << 1]);
+                value.written = self.phase;
+            }
+            if let Some(cand) = value.cand.take() {
+                self.code.push([PHASE_AND, value.slot, cand, 0]);
+                self.pending.push(cand);
+                value.written = self.phase;
+            }
+        }
+        /// `value` readable in every word: settled, and written before this phase.
+        fn whole(&mut self, value: &mut Value) {
+            self.settle(value);
+            if value.written == self.phase {
+                self.end_phase();
+            }
+        }
+        /// The descendants of `level`'s members into a fresh slot: their ends this phase (into `pair`), the cover
+        /// the next.
+        fn descend(&mut self, level: u32, pair: (u32, u32)) -> u32 {
+            self.code.push([PHASE_SPAN, pair.0, level, pair.1]);
+            self.end_phase();
+            let out = self.take();
+            self.code.push([PHASE_COVER, out, level, pair.0 | pair.1 << 16]);
+            out
+        }
+        fn value(&self, slot: u32) -> Value {
+            Value { slot, pushed: None, pull: None, cand: None, written: self.phase }
+        }
+    }
+    let mut b = Build { code: Vec::new(), zeros: Vec::new(), free: Vec::new(), pending: Vec::new(), slots: 0, phase: 0 };
+    let mut stack = Vec::<Value>::new();
+    for &word in words {
+        let (kind, arg) = (word & 255, word >> 8);
+        match kind {
+            op::ALL | op::CLASS | op::NONE | op::LEAF | op::TEXT => {
+                let slot = b.take();
+                b.code.push([PHASE_ROW, slot, word, 0]);
+                stack.push(b.value(slot));
+            }
+            op::AND | op::OR => {
+                let n = arg as usize;
+                if n == 0 || stack.len() < n {
+                    return None;
+                }
+                let mut operands = stack.split_off(stack.len() - n);
+                for value in &mut operands {
+                    b.settle(value);
+                }
+                let dst = operands[0].slot;
+                for other in &operands[1..] {
+                    b.code.push([if kind == op::AND { PHASE_AND } else { PHASE_OR }, dst, other.slot, 0]);
+                    b.pending.push(other.slot);
+                }
+                stack.push(b.value(dst));
+            }
+            op::CHILD | op::CHILD_IN | op::FOLLOWING | op::FOLLOWING_IN | op::REACH_FOLLOWING => {
+                let mut inner = stack.pop()?;
+                let cand = if kind == op::CHILD_IN || kind == op::FOLLOWING_IN {
+                    let mut cand = stack.pop()?;
+                    b.settle(&mut cand);
+                    Some(cand.slot)
+                } else {
+                    None
+                };
+                b.settle(&mut inner);
+                b.push_phase();
+                b.pending.push(inner.slot);
+                // `REACH_FOLLOWING` takes every member; the others their named ones where `arg` says.
+                let named = if kind == op::REACH_FOLLOWING { 0 } else { arg & 1 };
+                if kind == op::CHILD || kind == op::CHILD_IN {
+                    let dst = b.fresh(1);
+                    b.zeros.push([PHASE_ZERO, dst, 0, 0]);
+                    b.code.push([PHASE_UP, dst, inner.slot, named]);
+                    stack.push(Value { pushed: Some(b.phase), cand, ..b.value(dst) });
+                } else {
+                    // The members' parents' last (first) member child, then each node before (after) it.
+                    let first = u32::from(kind == op::REACH_FOLLOWING);
+                    let array = b.fresh(32);
+                    b.zeros.push([PHASE_ZERO32, array, 0, 0]);
+                    b.code.push([PHASE_LAST, array, inner.slot, named | first << 1]);
+                    let dst = b.fresh(1);
+                    stack.push(Value { pushed: Some(b.phase), pull: Some((array, first)), cand, ..b.value(dst) });
+                }
+            }
+            op::DESCENDANT | op::DESCENDANT_IN | op::CHAIN => {
+                // A climb from the members (named where `arg` says), each stopping at an ancestor another set; a
+                // chain's goes on only through `through` (the set below `to`, read at the ancestors' words).
+                let mut inner = stack.pop()?;
+                let cand = if kind == op::DESCENDANT_IN {
+                    let mut cand = stack.pop()?;
+                    b.settle(&mut cand);
+                    Some(cand.slot)
+                } else {
+                    None
+                };
+                let through = if kind == op::CHAIN {
+                    let mut through = stack.pop()?;
+                    b.whole(&mut through);
+                    b.pending.push(through.slot);
+                    Some(through.slot)
+                } else {
+                    None
+                };
+                b.settle(&mut inner);
+                b.push_phase();
+                b.pending.push(inner.slot);
+                let dst = b.fresh(1);
+                b.zeros.push([PHASE_ZERO, dst, 0, 0]);
+                b.code.push([PHASE_CLIMB, dst, inner.slot, (arg & 1) | u32::from(through.is_some()) << 1 | through.unwrap_or(0) << 8]);
+                stack.push(Value { pushed: Some(b.phase), cand, ..b.value(dst) });
+            }
+            op::PARENT => {
+                let mut inner = stack.pop()?;
+                b.whole(&mut inner);
+                let dst = b.take();
+                b.code.push([PHASE_DOWN, dst, inner.slot, 0]);
+                b.pending.push(inner.slot);
+                stack.push(b.value(dst));
+            }
+            op::REACH_DESCENDANT => {
+                let mut inner = stack.pop()?;
+                b.settle(&mut inner);
+                let pair = (b.fresh(1), b.fresh(1));
+                let out = b.descend(inner.slot, pair);
+                b.pending.push(inner.slot);
+                stack.push(b.value(out));
+            }
+            op::REACH_CHAIN => {
+                // As the CPU's `Reader` reads it: the union over levels of desc(F_k) \ desc(X_k), F_0 the members (`from`),
+                // X_k the blockers (in neither `through` nor `from`) within desc(F_k), F_k+1 the members within
+                // desc(X_k).
+                let mut through = stack.pop()?;
+                let mut from = stack.pop()?;
+                b.settle(&mut through);
+                b.settle(&mut from);
+                let (blockers, out, mut level) = (b.take(), b.take(), b.take());
+                b.code.push([PHASE_BLOCKERS, blockers, through.slot, from.slot]);
+                b.code.push([PHASE_ZERO, out, 0, 0]);
+                b.code.push([PHASE_COPY, level, from.slot, 0]);
+                b.pending.push(through.slot);
+                // Two pairs for the scans' ends, in turn: a cover reads one while the next span writes the other.
+                let pairs = [(b.fresh(1), b.fresh(1)), (b.fresh(1), b.fresh(1))];
+                for step in 0..2 * levels {
+                    let (keep, cut) = if step % 2 == 0 { (blockers, false) } else { (from.slot, true) };
+                    let reached = b.descend(level, pairs[step % 2]);
+                    b.code.push([if cut { PHASE_ANDNOT } else { PHASE_OR }, out, reached, 0]);
+                    b.code.push([PHASE_AND, reached, keep, 0]);
+                    b.pending.push(level);
+                    level = reached;
+                }
+                b.code.push([PHASE_CHECK, 0, level, 0]);
+                b.pending.extend([level, blockers, from.slot]);
+                stack.push(b.value(out));
+            }
+            _ => return None,
+        }
+    }
+    let [mut result] = stack[..] else { return None };
+    b.settle(&mut result);
+    let mut code = b.zeros;
+    code.extend(b.code);
+    Some(PhaseProgram { code, phases: b.phase + 1, result: result.slot, slots: b.slots })
+}
+/// `label_phase`'s scratch: the formulas of a dispatch each have their own slots, so a level's formulas take as many
+/// dispatches as this holds (and a leaf group's rows, `Runner::formulas`).
 const FORMULA_SCRATCH_BYTES: usize = 32 << 20;
+/// `label_leaves`' threads a group.
+const LEAVES_WIDTH: u64 = 128;
 /// The fused group kernel in `KERNELS` (`Runner::group`), for 8, 32, 64, 128 and 256 frames a walk (`GROUP_FRAMES`),
 /// and its tiers' names, which their dispatches and the profile keep.
 const GROUP_KERNEL: usize = 4;
@@ -1269,22 +1543,25 @@ struct Runner<'a> {
     micro: bool,
     /// Whether the loop tier runs with 128-frame stacks (`label_micro_deep`).
     deep: bool,
+    /// The levels of a chain's reach the formulas' phases hold (`PHASE_CHAIN_LEVELS`, doubled when a run's chain
+    /// outgrows them).
+    chain_levels: usize,
     walks: HashMap<usize, Walks>,
     /// Every pass's roots as rules (`RootTable`), one buffer for the run (`root_words`).
     root_table: RootTable,
     root_words: Option<Arc<HostMapped>>,
+    /// The batch's fact block (`Pass::Fact`, Q289), bound to the pattern kernels where the facts are read: its
+    /// address, and its device buffer.
+    facts: Option<(usize, Buffer)>,
     /// The rules whose anchors were evaluated this run (`anchors`), by address.
     anchored: std::collections::HashSet<usize>,
-    /// Under `RERAIL_PROF`, each `label_formula` group's counts, read after the flush.
-    formula_stats: Vec<HostMapped>,
     /// The anchors' leaf tests for the whole run (`size`), and their rows once read (`formulas`).
     run_leaves: Vec<u32>,
     run_leaf_rows: Option<HostMapped>,
-    /// `label_formula`'s scratch, one for the run: each level's formulas run after the last level's in the command
-    /// buffer, so they reuse it, and it grows where a level needs more, to `FORMULA_SCRATCH_BYTES` at most. A new one
-    /// each level counted toward the segment as an upload, so two levels of formulas ended the command buffer
-    /// (`SEGMENT_BYTES`; `the_wave_is_one_evaluation_on_metal`: 3 of them, 50 s against 0.9 s).
-    formula_scratch: Option<HostMapped>,
+    /// `label_phase`'s slots (0474).
+    phase_scratch: Option<HostMapped>,
+    /// The batch's parents (`label_parents`, 0475), made at its first phases.
+    phase_parents: Option<HostMapped>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<Arc<HostMapped>>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
@@ -1318,12 +1595,14 @@ fn interpret_only() -> bool {
     false
 }
 
-/// `Error::BackendCapacity`, counted by where it was raised (`capacity.<line>` in the profile's stages): which bound a
-/// run that fell back to the CPU met.
+/// `Error::BackendCapacity`, counted by where it was raised (`capacity.<file>:<line>` in the profile's stages): which
+/// bound split the wave. Called, not passed (`ok_or_else(|| capacity())`): passed as a function, its caller is
+/// `FnOnce::call_once`'s line in core.
 #[track_caller]
 fn capacity() -> Error {
     if crate::code_rule_dsl::prof::on() {
-        crate::code_rule_dsl::prof::count_named(format!("capacity.label_passes:{}", std::panic::Location::caller().line()), 1);
+        let at = std::panic::Location::caller();
+        crate::code_rule_dsl::prof::count_named(format!("capacity.{}:{}", at.file().rsplit('/').next().unwrap_or(""), at.line()), 1);
     }
     Error::BackendCapacity
 }
@@ -1342,21 +1621,33 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let launches = |level: &Vec<Pass<'_>>| {
         let programs = level.iter().any(|pass| matches!(pass, Pass::Program { .. } | Pass::Count { .. }));
         let patterns = level.iter().any(kernel_pass);
-        // Decision 0365: a level's formulas (its anchors, its formula passes) and their leaves.
-        let formulas = level.iter().any(|pass| match pass {
-            Pass::Program { roots, .. } | Pass::Count { roots, .. } => roots.anchor().is_some(),
-            Pass::Formula { .. } => true,
-            _ => false,
-        });
-        2 * usize::from(programs) + usize::from(patterns) + 1 + 2 * usize::from(formulas)
+        // Decision 0365: a level's formulas (its anchors, its formula passes): their leaves, and a dispatch a phase of
+        // the one with the most (0475).
+        let phases = level
+            .iter()
+            .filter_map(|pass| match pass {
+                Pass::Program { roots, .. } | Pass::Count { roots, .. } => roots.anchor().map(|anchor| &**anchor),
+                Pass::Formula { formula, .. } => Some(&**formula),
+                _ => None,
+            })
+            .map(formula_phase_count)
+            .max();
+        2 * usize::from(programs) + usize::from(patterns) + 1 + phases.map_or(0, |phases| 1 + phases)
     };
+    // The batch's parents, once where a level has formulas (`label_parents`, 0475).
+    let parents = plan.steps.iter().flat_map(|(_, levels)| levels.iter().flatten()).any(|pass| match pass {
+        Pass::Program { roots, .. } | Pass::Count { roots, .. } => roots.anchor().is_some(),
+        Pass::Formula { .. } => true,
+        _ => false,
+    });
     let fixed = plan
         .steps
         .iter()
         .filter(|(recursive, _)| !recursive)
         .flat_map(|(_, levels)| levels)
         .map(launches)
-        .sum::<usize>();
+        .sum::<usize>()
+        + usize::from(parents);
     // A group of micro walks runs to its fixpoint in one dispatch (`Runner::group`), which needs
     // no pattern pass; whether its walks fuse is known only once sized, so a plan counts it as
     // fused, and the evaluation's ledger refuses the submission of one that did not.
@@ -1450,8 +1741,18 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
     let (mut lanes, mut micro, mut deep, mut released) = (NARROW, !interpret_only(), false, false);
     let (mut budget, mut replanned) = (super::WorkBudget::current(), 0);
+    let mut chain_levels = PHASE_CHAIN_LEVELS;
     loop {
-        let mut outcome = match encode(plan, files, &rounds, lanes, micro, deep, budget) {
+        let mut outcome = match encode(plan, files, &rounds, lanes, micro, deep, chain_levels, budget) {
+            // A chain's reach outgrew the levels its phases hold (0475): the run again with twice them, the walks
+            // micro or interpreted alike (`label_phase` runs a level's formulas either way, so the interpreter's
+            // walks hold no more of a chain: a run past the most fails).
+            Err(Error::ChainLevels) if chain_levels < PHASE_CHAIN_MOST => {
+                crate::code_rule_dsl::prof::count("run.chain_levels", 1);
+                chain_levels *= 2;
+                continue;
+            }
+            Err(Error::ChainLevels) => return Err(Error::BackendFailure),
             // A task over its step budget, below the ceiling (decision 0334): the run again with twice the
             // budget, until its tasks' budgets are the ceiling (then a stop is `WorkLimit`'s failure).
             Err(Error::OverBudget) => {
@@ -1602,6 +1903,7 @@ fn encode(
     lanes: (usize, Option<u32>),
     micro: bool,
     deep: bool,
+    chain_levels: usize,
     budget: super::WorkBudget,
 ) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
@@ -1654,14 +1956,16 @@ fn encode(
         budget,
         micro,
         deep,
+        chain_levels,
         walks: HashMap::new(),
         root_table: RootTable::default(),
         root_words: None,
+        facts: None,
         anchored: Default::default(),
-        formula_stats: Vec::new(),
         run_leaves: Vec::new(),
         run_leaf_rows: None,
-        formula_scratch: None,
+        phase_scratch: None,
+        phase_parents: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.clone()),
         group_stacks: [None, None, None, None, None],
         encoded: false,
@@ -1731,21 +2035,6 @@ fn encode(
     mark("encoded");
     crate::code_rule_dsl::prof::time("gpu.flush", || runner.flush())?;
     mark("flushed");
-    for stats in &runner.formula_stats {
-        let words = unsafe { std::slice::from_raw_parts(stats.host().cast::<u32>(), FORMULA_STATS) };
-        let mut names = [""; FORMULA_STATS];
-        for (op, name) in [(7, "child"), (8, "descendant"), (9, "parent"), (10, "following"), (11, "chain"), (14, "child_in"), (15, "descendant_in"), (16, "following_in"), (23, "reach_descendant"), (24, "reach_following"), (25, "reach_chain")] {
-            names[op] = name;
-        }
-        for (op, name) in names.iter().enumerate().filter(|(_, name)| !name.is_empty()) {
-            crate::code_rule_dsl::prof::count_named(format!("formula.members.{name}"), words[op] as usize);
-        }
-        crate::code_rule_dsl::prof::count("formula.parent_reads", words[16] as usize);
-        crate::code_rule_dsl::prof::count("formula.child_reads", words[17] as usize);
-        crate::code_rule_dsl::prof::count("formula.groups", words[18] as usize);
-        crate::code_rule_dsl::prof::count("formula.within_down", words[19] as usize);
-        crate::code_rule_dsl::prof::count("formula.within_climb", words[20] as usize);
-    }
     // A node past the batch's, which a pass would have marked or counted (decision 0463): not written, and the
     // passes again on the interpreter. Said once a run: it is a tape's walk or a capture that left its tape.
     if runner.flag(0) & 256 != 0 {
@@ -1756,6 +2045,11 @@ fn encode(
         if !rerail_prof::code_rule_dsl::logic::profile::with_local::<Said, _>(|said| said.0.swap(true, std::sync::atomic::Ordering::Relaxed)) {
             eprintln!("rerail: a label pass took a node past its batch's {} (decision 0463, Q265): not written; the passes on the interpreter", runner.nodes);
         }
+    }
+    // A chain's reach with more levels than `label_phase`'s programs hold (0475): the run again with twice them.
+    if runner.flag(0) & 512 != 0 {
+        crate::code_rule_dsl::prof::count("gpu.phase_levels_overflow", 1);
+        return Err(Error::ChainLevels);
     }
     // A micro walk that outgrew its frames: the passes again on the interpreter.
     if runner.flag(0) & 2 != 0 {
@@ -1878,7 +2172,7 @@ fn tapes(
     }
     // The documents resident, gathered into one block (decision 0289 §4), one table over them.
     let table = crate::code_rule_dsl::prof::time("residency.docs", || crate::code_rule_dsl::residency::slabs::admit_docs(files))?;
-    let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or_else(capacity)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or_else(|| capacity())?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
@@ -1913,7 +2207,8 @@ impl Runner<'_> {
     }
 
     /// A launch of `kernel` in the run's command, as `label`, with the block at its `chunk` row where it has one
-    /// (`LabelKernel`), and the 16z documents' cache, which their reads reach from the block by the views' offsets.
+    /// (`LabelKernel`). What the batch's reads reach from the block by the views' offsets is made resident: its other
+    /// slabs (read; decision 0353 step 4, 0471) and the 16z documents' cache.
     fn launch(&mut self, kernel: &LabelKernel, label: &str) -> lane::Launch<'_> {
         let block = self.block().clone();
         crate::code_rule_dsl::prof::count("gpu.encoders", 1);
@@ -1922,9 +2217,12 @@ impl Runner<'_> {
         let mut launch = self.command.launch(&kernel.kernel, label);
         if let Some(slot) = kernel.chunk {
             launch = launch.slot(slot, &block, 0);
-            if let Some(cache) = &self.tapes.table.cache {
-                launch = launch.uses(cache);
-            }
+        }
+        for slab in &self.tapes.table.slabs {
+            launch = launch.uses(slab.device_buffer());
+        }
+        if let Some(cache) = &self.tapes.table.cache {
+            launch = launch.uses(cache);
         }
         launch
     }
@@ -1971,12 +2269,13 @@ impl Runner<'_> {
     /// Profiling (`RERAIL_GPU_KERNEL_TIMES`): the command buffer so far committed and waited on,
     /// its GPU time added to `kernel_us.<label>` and `kernel_n.<label>`, and a new one begun.
     /// Kernels then run one buffer each, in the same order on the same queue.
-    fn split(&mut self, label: &str) {
+    /// The dispatch's GPU time in µs where it is timed.
+    fn split(&mut self, label: &str) -> Option<f64> {
         if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_GPU_KERNEL_TIMES").is_some()) {
-            return;
+            return None;
         }
         // Refused (the launch ledger is spent): the flush reports it.
-        let Ok(times) = std::mem::replace(&mut self.command, lane::Command::new("Rerail label passes")).run() else { return };
+        let Ok(times) = std::mem::replace(&mut self.command, lane::Command::new("Rerail label passes")).run() else { return None };
         let (start, end) = (0.0, times.device);
         crate::code_rule_dsl::prof::count_named(format!("kernel_us.{label}"), ((end - start) * 1e6) as usize);
         crate::code_rule_dsl::prof::count_named(format!("kernel_n.{label}"), 1);
@@ -1984,6 +2283,7 @@ impl Runner<'_> {
         crate::code_rule_dsl::prof::count("gpu.device_us", ((end - start) * 1e6) as usize);
         self.outcome.device += (end - start).max(0.0);
         self.outcome.command_buffers += 1;
+        Some((end - start) * 1e6)
     }
 
     fn upload<T: Copy>(&mut self, values: &[T]) -> Result<Buffer, Error> {
@@ -2471,7 +2771,7 @@ impl Runner<'_> {
         Ok(())
     }
 
-    /// A level's formulas (decision 0365), by `label_formula`, before its walks: the anchors of its passes not yet
+    /// A level's formulas (decision 0365), by `label_phase`, before its walks: the anchors of its passes not yet
     /// evaluated, each into its rule's row the walks read, and its formula passes (`Pass::Formula`), each into its
     /// scratch row within its rule. The labels a formula reads are the levels' before, settled in the command buffer by
     /// now; a label test reads the label's row in the prefix (`label_rows`), a text test the row the level's walks read.
@@ -2507,7 +2807,7 @@ impl Runner<'_> {
         self.formulas(&list, &rows, text_rows.as_ref())
     }
 
-    /// `label_formula` over `list` (each formula's row, in `rows` for modes 0 and 1 and in scratch for 2; its rule, `u32::MAX`
+    /// `label_phase` over `list` (each formula's row, in `rows` for modes 0 and 1 and in scratch for 2; its rule, `u32::MAX`
     /// none; its text rows in `texts`), after `label_leaves` (decision 0365): the formulas in groups whose distinct leaf
     /// tests' rows fit `FORMULA_SCRATCH_BYTES`, each group's leaves read in one pass over the nodes.
     fn formulas(&mut self, list: &[FormulaJob], rows: &Buffer, texts: Option<&Buffer>) -> Result<(), Error> {
@@ -2567,13 +2867,20 @@ impl Runner<'_> {
         let shape = Shape { target_count: tests.len() as u32, recursive: self.region() as u32, ..self.shape() };
         crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[LEAVES_KERNEL]), 1);
         crate::code_rule_dsl::prof::count("gpu.anchor_leaves", tests.len());
-        let (kernel, groups) = (self.kernels[LEAVES_KERNEL].clone(), self.files.len().max(1) as u64);
+        if crate::code_rule_dsl::prof::on() {
+            for test in tests {
+                crate::code_rule_dsl::prof::count_named(format!("gpu.anchor_leaves.op{}", test & 255), 1);
+            }
+        }
+        // A thread a word of the rows' region (`region`: the files' words, two spare a file, two at the end).
+        let threads = self.region() as u64;
+        let kernel = self.kernels[LEAVES_KERNEL].clone();
         self.launch(&kernel, KERNELS[LEAVES_KERNEL])
             .slot(0, &docs, 0)
             .slot(1, &tests_buffer, 0)
             .slot(2, leaves, 0)
             .slot_value(3, &shape)
-            .groups([groups, 1, 1], [FORMULA_WIDTH, 1, 1]);
+            .threads(threads, LEAVES_WIDTH);
         self.split(KERNELS[LEAVES_KERNEL]);
         Ok(())
     }
@@ -2608,31 +2915,38 @@ impl Runner<'_> {
                 .collect()
         };
         // Identical formulas once, each with its targets.
-        let mut unique = Vec::<(Vec<u32>, u32, Vec<[u32; 3]>)>::new();
+        let mut unique = Vec::<(Vec<u32>, Vec<[u32; 3]>)>::new();
         let mut at = HashMap::<Vec<u32>, usize>::new();
         for job in list {
             let words = lowered(job);
             match at.get(&words) {
-                Some(&index) => unique[index].2.push([job.row, job.mode, job.rule]),
+                Some(&index) => unique[index].1.push([job.row, job.mode, job.rule]),
                 None => {
                     at.insert(words.clone(), unique.len());
-                    unique.push((words, job.formula.depth, vec![[job.row, job.mode, job.rule]]));
+                    unique.push((words, vec![[job.row, job.mode, job.rule]]));
                 }
             }
+        }
+        // Each formula as phases (0475). Every step a device formula has compiles; one that did not would have no
+        // kernel to run it.
+        let mut programs = Vec::with_capacity(unique.len());
+        for (words, _) in &unique {
+            let Some(program) = phase_program(words, self.chain_levels) else {
+                eprintln!("rerail: a device formula with a step label_phase does not hold: {words:?}");
+                return Err(Error::BackendFailure);
+            };
+            programs.push(program);
         }
         let mut headers = Vec::<u32>::new();
         let mut targets = Vec::<[u32; 3]>::new();
         let mut words = Vec::<u32>::new();
-        let mut depth = 0_u32;
-        for (own, slots, to) in &unique {
+        for (own, to) in &unique {
             headers.extend([targets.len() as u32, to.len() as u32, words.len() as u32, own.len() as u32, 0]);
             targets.extend(to);
             words.extend(own);
-            depth = depth.max(*slots);
         }
-        let count = unique.len();
         crate::code_rule_dsl::prof::count("gpu.anchors", list.len());
-        crate::code_rule_dsl::prof::count("gpu.anchors_distinct", count);
+        crate::code_rule_dsl::prof::count("gpu.anchors_distinct", unique.len());
         let (headers, words, targets) = (self.upload(&headers)?, self.upload(&words)?, self.upload(&targets)?);
         let own = match leaves {
             Some(_) => None,
@@ -2643,58 +2957,99 @@ impl Runner<'_> {
             }
         };
         let leaves = leaves.cloned().unwrap_or_else(|| own.as_ref().expect("the group's leaves").buffer().clone());
-        let stride = depth as usize * region;
-        let per = (FORMULA_SCRATCH_BYTES / 4 / stride).clamp(1, count);
-        if self.formula_scratch.as_ref().is_none_or(|scratch| scratch.byte_length() < 4 * stride * per) {
-            // Not an upload: one buffer for the run, at most `FORMULA_SCRATCH_BYTES`, as the stacks are.
-            let grown = HostMapped::zeroed::<u32>(stride * per)?;
-            // The smaller one may still be read by the levels encoded before: it is kept with the command buffer.
-            if let Some(old) = self.formula_scratch.replace(grown) {
-                self.retained.push(old);
-            }
-        }
-        let scratch = self.formula_scratch.as_ref().expect("the formulas' scratch").buffer().clone();
         let docs = self.tapes.docs.buffer().clone();
         let head = self.tapes.supertypes.buffer().clone();
-        let base = Shape { round: depth, recursive: region as u32, ..self.shape() };
-        let kernel = self.kernels[FORMULA_KERNEL].clone();
         let rules = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer().clone();
-        // Profiling (`RERAIL_PROF`): each step kind's members, the parent and child reads, the (file, formula)s.
-        let profile = crate::code_rule_dsl::prof::on();
-        let stats = HostMapped::zeroed::<u32>(if profile { FORMULA_STATS } else { 1 })?;
-        for first in (0..count).step_by(per) {
-            let formulas = per.min(count - first);
-            let shape = Shape { item_count: first as u32, target_count: formulas as u32, queue: stride as u32, profile: u32::from(profile), ..base };
-            crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[FORMULA_KERNEL]), 1);
-            let (scratch_rows, scratch_at) = (self.tapes.supertypes.buffer().clone(), self.tapes.scratch_at);
-            let groups = self.files.len().max(1) as u64;
-            let mut launch = self.launch(&kernel, KERNELS[FORMULA_KERNEL]);
-            for (index, buffer) in [&docs, &head, &headers, &words, rows, &scratch].into_iter().enumerate() {
-                launch = launch.slot(index as u64, buffer, 0);
-            }
-            launch
-                .slot_value(6, &shape)
-                .slot(7, &leaves, 0)
-                .slot(8, stats.buffer(), 0)
-                .slot(9, &targets, 0)
-                // A formula pass's scratch, the rules (the run's roots table), the text rows.
-                .slot(10, &scratch_rows, scratch_at)
-                .slot(11, &rules, 0)
-                .slot(12, texts.unwrap_or(&rules), 0)
-                .groups([groups, formulas as u64, 1], [FORMULA_WIDTH, 1, 1]);
-            self.split(KERNELS[FORMULA_KERNEL]);
-        }
+        self.phase_dispatches(&programs, region, &[&docs, &head, &headers, &words, rows], &leaves, &targets, &rules, texts)?;
         if let Some(own) = own {
             self.segment_bytes += own.byte_length();
             self.retained.push(own);
         }
-        // Held to the flush either way: the launches bind it, and a buffer does not hold its mapping.
-        if profile {
-            self.formula_stats.push(stats);
-        } else {
-            self.retained.push(stats);
-        }
         self.encoded = true;
+        Ok(())
+    }
+
+    /// `label_phase` (0474): `programs`' formulas (the first of the group's headers), a dispatch a phase, a thread a
+    /// (word of the region, formula). Their slots in a scratch of their own, as many formulas at once as it holds.
+    #[allow(clippy::too_many_arguments)]
+    fn phase_dispatches(&mut self, programs: &[PhaseProgram], region: usize, inputs: &[&Buffer; 5], leaves: &Buffer, targets: &Buffer, rules: &Buffer, texts: Option<&Buffer>) -> Result<(), Error> {
+        let slots = programs.iter().map(|program| program.slots).max().unwrap_or(1).max(1) as usize;
+        let at_once = (FORMULA_SCRATCH_BYTES / 4 / (slots * region)).clamp(1, programs.len());
+        if self.phase_scratch.as_ref().is_none_or(|scratch| scratch.byte_length() < 4 * slots * region * at_once) {
+            // Not an upload: one buffer for the run, at most `FORMULA_SCRATCH_BYTES`, as the stacks are.
+            let grown = HostMapped::zeroed::<u32>(slots * region * at_once)?;
+            // The smaller one may still be read by the levels encoded before: it is kept with the command buffer.
+            if let Some(old) = self.phase_scratch.replace(grown) {
+                self.retained.push(old);
+            }
+        }
+        let scratch = self.phase_scratch.as_ref().expect("the phases' scratch").buffer().clone();
+        let groups = (region as u64).div_ceil(PHASE_WORDS);
+        // A threadgroup a block of `PHASE_WORDS` words, whole: its barriers are every thread's.
+        let whole = |kernel: &LabelKernel, name: &str| {
+            if let Some(metal) = kernel.kernel.metal() {
+                assert!(metal.compute_pipeline_state.max_total_threads_per_threadgroup() >= PHASE_WORDS, "{name} takes {PHASE_WORDS} threads a group");
+            }
+        };
+        if self.phase_parents.is_none() {
+            // Not an upload: a derived answer (each node's parent), written once where it is computed (0353).
+            let parents = HostMapped::zeroed::<u32>(32 * region)?;
+            let kernel = self.kernels[PARENTS_KERNEL].clone();
+            whole(&kernel, KERNELS[PARENTS_KERNEL]);
+            let shape = Shape { recursive: region as u32, ..self.shape() };
+            crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[PARENTS_KERNEL]), 1);
+            self.launch(&kernel, KERNELS[PARENTS_KERNEL])
+                .slot(0, inputs[0], 0)
+                .slot(1, parents.buffer(), 0)
+                .slot_value(2, &shape)
+                .groups([groups, 1, 1], [PHASE_WORDS, 1, 1]);
+            let _ = self.split(KERNELS[PARENTS_KERNEL]);
+            self.phase_parents = Some(parents);
+        }
+        let parents = self.phase_parents.as_ref().expect("the batch's parents").buffer().clone();
+        let kernel = self.kernels[PHASE_KERNEL].clone();
+        whole(&kernel, KERNELS[PHASE_KERNEL]);
+        crate::code_rule_dsl::prof::count("gpu.formula_phased", programs.len());
+        let (scratch_rows, scratch_at) = (self.tapes.supertypes.buffer().clone(), self.tapes.scratch_at);
+        let flags = self.flags.buffer().clone();
+        for first in (0..programs.len()).step_by(at_once) {
+            let own = &programs[first..(first + at_once).min(programs.len())];
+            // Each formula's header (its instructions' first word, their count, its result, its phases), then the
+            // instructions, then each phase's first instruction.
+            let mut program = vec![0_u32; 4 * own.len()];
+            for (index, compiled) in own.iter().enumerate() {
+                let at = program.len() as u32;
+                program.extend(compiled.code.iter().flatten());
+                program.push(0);
+                program.extend(compiled.code.iter().enumerate().filter(|(_, code)| code[0] == PHASE_END).map(|(i, _)| i as u32 + 1));
+                program[4 * index..4 * index + 4].copy_from_slice(&[at, compiled.code.len() as u32, compiled.result, compiled.phases]);
+            }
+            let phases = own.iter().map(|program| program.phases).max().unwrap_or(1);
+            crate::code_rule_dsl::prof::count("gpu.formula_phases", phases as usize);
+            let program = self.upload(&program)?;
+            // A launch a phase, in order in the run's command: each reads what the one before wrote.
+            for round in 0..phases {
+                let shape = Shape { item_count: first as u32, target_count: own.len() as u32, round, recursive: region as u32, queue: (slots * region) as u32, ..self.shape() };
+                crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[PHASE_KERNEL]), 1);
+                let mut launch = self.launch(&kernel, KERNELS[PHASE_KERNEL]);
+                for (index, buffer) in inputs.iter().enumerate() {
+                    launch = launch.slot(index as u64, buffer, 0);
+                }
+                launch
+                    .slot(5, &scratch, 0)
+                    .slot_value(6, &shape)
+                    .slot(7, leaves, 0)
+                    .slot(8, &program, 0)
+                    .slot(9, targets, 0)
+                    .slot(10, &scratch_rows, scratch_at)
+                    .slot(11, rules, 0)
+                    .slot(12, texts.unwrap_or(rules), 0)
+                    .slot(13, &flags, 0)
+                    .slot(14, &parents, 0)
+                    .groups([groups, own.len() as u64, 1], [PHASE_WORDS, 1, 1]);
+            }
+            let _ = self.split(KERNELS[PHASE_KERNEL]);
+        }
         Ok(())
     }
 
@@ -2758,14 +3113,33 @@ impl Runner<'_> {
                         ..Op::default()
                     }
                 }
-                Pass::Fact { target, rows: reported } => {
-                    for (root, targets) in reported {
-                        let start = (constraints.len() / 2) as u32;
-                        for (node, label) in targets {
-                            constraints.extend([*node, place(label)]);
+                Pass::Fact { target, block, found, labels } => {
+                    // One item a file: a thread a row, or a word of the bits. Its constraints are the file, whether
+                    // its findings are bits, then each slot's label; its root the findings' u32 in the block.
+                    // The block bound whole, as a no-copy wrap of its written extent (made once, and kept by it).
+                    let fact_block = std::sync::Arc::as_ptr(block) as usize;
+                    if self.facts.as_ref().is_none_or(|(at, _)| *at != fact_block) {
+                        self.facts = Some((fact_block, block.device_buffer(lane::device()?).map_err(|_| Error::BackendFailure)?));
+                    }
+                    for (file, found) in found {
+                        let (at, threads, bits) = match *found {
+                            crate::code_rule_dsl::matcher::FactFound::Rows { at, n, .. } => (at, n, 0),
+                            crate::code_rule_dsl::matcher::FactFound::Nodes { at, words } => (at, words, 1),
+                        };
+                        if threads == 0 {
+                            continue;
                         }
-                        matches[0].extend([patterns::FACT, row, *root, start, targets.len() as u32, pattern_threads[0]]);
-                        pattern_threads[0] += 1;
+                        let start = (constraints.len() / 2) as u32;
+                        constraints.extend([*file, bits]);
+                        if bits == 0 {
+                            for label in labels {
+                                constraints.extend([0, place(label)]);
+                            }
+                        }
+                        let root = u32::try_from(at / 4).map_err(|_| capacity())?;
+                        let slots = if bits == 0 { labels.len() as u32 } else { 0 };
+                        matches[0].extend([patterns::FACT, row, root, start, slots, pattern_threads[0]]);
+                        pattern_threads[0] += u32::try_from(threads).map_err(|_| capacity())?;
                     }
                     Op {
                         target: place(target),
@@ -2787,8 +3161,9 @@ impl Runner<'_> {
         let labels = self.tapes.supertypes.buffer().clone();
         let (state, flags) = (self.tapes.supertypes.buffer().clone(), self.flags.buffer().clone());
         let (scratch, counts) = ((&state, self.tapes.scratch_at), (&state, self.tapes.counts_at));
-        // The facts' constraints, once for the level's pattern kernels (each group's binds them; only the first's
-        // tasks read them). copy (0353 step 4): the fact's rows, Q289.
+        // The level's constraints, once for its pattern kernels (each group's binds them): the patterns' (variable,
+        // label) pairs and each fact item's file and slots' labels. copy: not block data (the level's task
+        // description). The facts' findings are read in their block (`facts`, Q289).
         let constraints = if matches.iter().any(|matches| !matches.is_empty()) { Some(self.upload(&constraints)?) } else { None };
         for (group, (matches, pattern_threads)) in matches.iter().zip(pattern_threads).enumerate() {
             if matches.is_empty() {
@@ -2799,6 +3174,7 @@ impl Runner<'_> {
             let (items, constraints) = (self.upload(matches)?, constraints.clone().ok_or(Error::BackendFailure)?);
             let docs = self.tapes.docs.buffer().clone();
             let root_words = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer().clone();
+            let facts = self.facts.as_ref().map_or(self.flags.buffer(), |(_, buffer)| buffer).clone();
             let shape = Shape {
                 item_count: pattern_threads,
                 task_count,
@@ -2814,6 +3190,7 @@ impl Runner<'_> {
                     (&items, 0),
                     (&constraints, 0),
                     (&root_words, 0),
+                    (&facts, 0),
                 ],
                 shape,
             )?;
@@ -2850,7 +3227,7 @@ impl Runner<'_> {
         let lease = &mut workspace.lease;
         let generation = lease.generation;
         let span = u32::try_from(prepared.task_count + 1).map_err(|_| capacity())? * 2;
-        lease.generation = lease.generation.checked_add(span).ok_or_else(capacity)?;
+        lease.generation = lease.generation.checked_add(span).ok_or_else(|| capacity())?;
         let stamp = |evaluations: &[MetalEvaluation]| {
             let mut evaluations = evaluations.to_vec();
             evaluations.iter_mut().for_each(|evaluation| evaluation.generation = generation);
@@ -3123,7 +3500,7 @@ impl Runner<'_> {
             .collect::<Vec<_>>();
         let (largest, mut longest) = (self.files.iter().map(TapeDoc::transducer_len).max().unwrap_or(0), 0);
         let (mut passes, mut words, mut texts, mut walked) = (Vec::<[u32; 5]>::new(), Vec::<u32>::new(), Vec::<u32>::new(), Vec::new());
-        // Decision 0365: each walk's anchor, as a row of `texts` past the text rows (`label_formula` sets it), the
+        // Decision 0365: each walk's anchor, as a row of `texts` past the text rows (`label_phase` sets it), the
         // walk's starts outside it not walked. A pack's is its members' union.
         // A pass's fifth word: its anchor's index here until the text rows are known, then its row.
         let mut anchors = Vec::<std::sync::Arc<DeviceFormula>>::new();
@@ -3538,4 +3915,61 @@ fn programs_of<'p>(passes: &'p [Pass<'_>], rows: bool) -> Vec<(&'p Program, &'p 
             _ => None,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod phase_program_tests {
+    /// 0474, 0475: a push writes into a slot cleared before phase 0, so it starts in phase 1 and is read in the
+    /// next; a pull reads a set written in an earlier phase; `CHILD_IN` takes its candidates when read; a sibling
+    /// step is a push into a node array and a pull from it; descendants are a span and a cover a phase apart; a
+    /// chain's reach is two scans a level; an ancestor step is a climb, a chain's through a set whole before it.
+    #[test]
+    fn a_formula_is_compiled_to_phases_of_word_and_push_steps() {
+        use super::*;
+        use crate::code_rule_dsl::transducer::packed::compile_sets::device_ops as op;
+        let word = |kind: u32, arg: u32| arg << 8 | kind;
+        let end = [PHASE_END, 0, 0, 0];
+        let (a, b) = (word(op::CLASS, 16384), word(op::CLASS, 16385));
+        // CHILD(a): the parents of a's named members.
+        assert_eq!(
+            phase_program(&[a, word(op::CHILD, 1)], 1),
+            Some(PhaseProgram {
+                code: vec![[PHASE_ZERO, 1, 0, 0], [PHASE_ROW, 0, a, 0], end, [PHASE_UP, 1, 0, 1], end],
+                phases: 3,
+                result: 1,
+                slots: 2,
+            })
+        );
+        // OR(PARENT(a), b): the pull reads `a` from the phase before.
+        let program = phase_program(&[a, word(op::PARENT, 0), b, word(op::OR, 2)], 1).expect("phases hold it");
+        assert_eq!(program.code, vec![[PHASE_ROW, 0, a, 0], end, [PHASE_DOWN, 1, 0, 0], [PHASE_ROW, 2, b, 0], [PHASE_OR, 1, 2, 0]]);
+        assert_eq!(program.phases, 2);
+        // CHILD_IN(b, a): a's parents, cut to b when read.
+        let program = phase_program(&[b, a, word(op::CHILD_IN, 0)], 1).expect("phases hold it");
+        assert_eq!(program.code.last(), Some(&[PHASE_AND, program.result, 0, 0]));
+        // FOLLOWING(a): the last member child of each parent (a node array, 32 slots), then the nodes before it.
+        let program = phase_program(&[a, word(op::FOLLOWING, 1)], 1).expect("phases hold it");
+        assert_eq!(
+            program.code,
+            vec![[PHASE_ZERO32, 1, 0, 0], [PHASE_ROW, 0, a, 0], end, [PHASE_LAST, 1, 0, 1], end, [PHASE_BEFORE, 33, 1, 0]]
+        );
+        assert_eq!((program.result, program.slots, program.phases), (33, 34, 3));
+        // REACH_DESCENDANT(a): the members' ends and the blocks', then the cover.
+        let program = phase_program(&[a, word(op::REACH_DESCENDANT, 0)], 1).expect("phases hold it");
+        assert_eq!(program.code, vec![[PHASE_ROW, 0, a, 0], [PHASE_SPAN, 1, 0, 2], end, [PHASE_COVER, 3, 0, 1 | 2 << 16]]);
+        // REACH_CHAIN(a, b): two scans a level, and a check that no member is left.
+        for levels in [1, 2, 4] {
+            let program = phase_program(&[a, b, word(op::REACH_CHAIN, 0)], levels).expect("phases hold it");
+            assert_eq!(program.phases as usize, 2 * levels + 1);
+            assert_eq!(program.code.last().map(|c| c[0]), Some(PHASE_CHECK));
+        }
+        // DESCENDANT(a): a climb from a's named members.
+        let program = phase_program(&[a, word(op::DESCENDANT, 1)], 1).expect("phases hold it");
+        assert_eq!(program.code, vec![[PHASE_ZERO, 1, 0, 0], [PHASE_ROW, 0, a, 0], end, [PHASE_CLIMB, 1, 0, 1], end]);
+        // CHAIN(b, a): a climb from a's members through b's, b whole before it.
+        let program = phase_program(&[b, a, word(op::CHAIN, 0)], 1).expect("phases hold it");
+        assert_eq!(program.code, vec![[PHASE_ZERO, 2, 0, 0], [PHASE_ROW, 0, b, 0], [PHASE_ROW, 1, a, 0], end, [PHASE_CLIMB, 2, 1, 2], end]);
+        // A leaf test reaches the device as its row (`LEAF`); its own op is no step.
+        assert_eq!(phase_program(&[word(op::KIND, 3)], 1), None);
+    }
 }

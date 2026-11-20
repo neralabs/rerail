@@ -46,6 +46,7 @@ use Class::*;
 /// Every thread-local outside the tests: `(file under native/, name, class, why)` (Carried ones need no why: they
 /// are carried).
 pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
+    ("crates/blocks/src/block.rs", "ZEROED_HERE", Thread, "the bytes this thread's block allocations zeroed, a count a test reads apart from its neighbours'"),
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
     ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
