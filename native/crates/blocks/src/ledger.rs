@@ -73,6 +73,9 @@ struct State {
 /// GPU's work.
 pub struct Ledger {
     state: Mutex<State>,
+    /// GPU uses of chunks queued now (`State::chunks`' length): with none, a CPU access is checked without the lock
+    /// (a block's arrays are read and written at every value, `cpu_read`, `cpu_write`).
+    chunk_uses: std::sync::atomic::AtomicUsize,
     base: usize,
     /// Its pages may go to the OS: an anonymous block's (a slab's are the device buffer's, a file's are written back).
     pages: bool,
@@ -139,7 +142,7 @@ fn bit(bits: &[u64], i: usize) -> bool {
 
 impl Ledger {
     pub(crate) fn new(base: *mut u8, len: usize, pages: bool, ext: Arc<Extent>) -> Arc<Ledger> {
-        let l = Arc::new(Ledger { state: Mutex::default(), base: base as usize, pages, ext });
+        let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), base: base as usize, pages, ext });
         let mut live = blocks();
         let i = live.partition_point(|e| e.0 < l.base);
         live.insert(i, (l.base, l.base + len, Arc::downgrade(&l)));
@@ -291,16 +294,29 @@ impl Ledger {
     }
 
     /// The CPU is about to write `len` bytes at `at` (R4: no GPU use of them is queued).
+    #[inline]
     pub fn cpu_write(&self, at: usize, len: usize) {
         self.cpu(at, len, true);
     }
 
     /// The CPU is about to read `len` bytes at `at` (R4: no GPU write of them is queued).
+    #[inline]
     pub fn cpu_read(&self, at: usize, len: usize) {
         self.cpu(at, len, false);
     }
 
+    #[inline]
     fn cpu(&self, at: usize, len: usize, write: bool) {
+        // Relaxed: a use begins on the thread that encodes it, before its command buffer is committed; one begun by
+        // another thread meanwhile is a race the check cannot order.
+        if self.chunk_uses.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            return;
+        }
+        self.cpu_locked(at, len, write);
+    }
+
+    #[cold]
+    fn cpu_locked(&self, at: usize, len: usize, write: bool) {
         let v = {
             let s = self.lock();
             match s.chunks.iter().find(|u| u.at < at + len && at < u.at + u.len && (write || u.access == Access::Write)) {
@@ -339,6 +355,7 @@ impl Ledger {
         s.next_id += 1;
         if let Some((at, len)) = chunk {
             s.chunks.push(ChunkUse { id, at, len, access });
+            self.chunk_uses.store(s.chunks.len(), std::sync::atomic::Ordering::Release);
         }
         (id, epoch)
     }
@@ -348,6 +365,7 @@ impl Ledger {
         let gone = {
             let mut s = self.lock();
             s.chunks.retain(|u| u.id != id);
+            self.chunk_uses.store(s.chunks.len(), std::sync::atomic::Ordering::Release);
             if let Some(i) = s.open.iter().position(|(e, _)| *e == epoch) {
                 s.open[i].1 -= 1;
                 if s.open[i].1 == 0 {

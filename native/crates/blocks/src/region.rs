@@ -273,6 +273,13 @@ impl Region {
             } else {
                 a.gpu_reads.push((id, op));
             }
+            // Its block's ledger holds the chunk too (0487 R4, one place): a writer by raw offset is checked there.
+            let bytes = self.len.max(1);
+            if write {
+                fence.writes_chunk(&self.block, self.at, bytes);
+            } else {
+                fence.reads_chunk(&self.block, self.at, bytes);
+            }
             let held = self.clone();
             fence.on_complete(Box::new(move || {
                 let mut a = held.lock();
@@ -731,6 +738,26 @@ mod tests {
         assert!(next.region().at() < at + 4 * 1000, "the tail went back: {} after {at}", next.region().at());
         let f = m.freeze();
         assert_eq!(&f[..], &[1; 10]);
+    }
+
+    /// A region's GPU pin is its block's chunk use too: the ledger's CPU check, which writers by raw offset take, sees
+    /// it (0487 R4, one place).
+    #[test]
+    fn a_regions_gpu_pin_is_its_ledgers_chunk_use() {
+        let b = block();
+        let m = Mutable::<u64>::alloc(&b, 64, "rows").unwrap();
+        let (at, len) = (m.region().at(), m.region().len());
+        let f = Fence::new();
+        m.bind_write(&f, "kernel");
+        assert!(fails(|| b.ledger().cpu_read(at, 8)), "the ledger sees the GPU write");
+        f.complete();
+        b.ledger().cpu_write(at, len);
+        let s = m.share();
+        let g = Fence::new();
+        s.bind_read(&g, "kernel");
+        assert!(fails(|| b.ledger().cpu_write(at + 8, 8)), "the ledger sees the GPU read");
+        b.ledger().cpu_read(at, len);
+        g.complete();
     }
 
     /// A device with memory of its own (a discrete GPU's), simulated: its copy, and what crossed the bus.

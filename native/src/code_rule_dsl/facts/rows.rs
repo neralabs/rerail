@@ -462,6 +462,9 @@ pub struct BlockVec<T: rerail_blocks::Pod> {
     kept: usize,
     /// A borrowed one's relation, whose directory owns its chunk (decision 0478 step 5b): kept while it lives.
     owner: Option<Part>,
+    /// Its block's ledger, beside the pointer: each read and write is checked against the GPU's queued uses of its
+    /// chunk (decision 0487 R4), with no walk to the block.
+    ledger: Option<Arc<rerail_blocks::ledger::Ledger>>,
     _t: std::marker::PhantomData<T>,
 }
 
@@ -478,7 +481,7 @@ impl<T: rerail_blocks::Pod> Default for BlockVec<T> {
 impl<T: rerail_blocks::Pod> BlockVec<T> {
     /// Empty, with no chunk.
     pub const fn new() -> Self {
-        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, kept: 0, owner: None, _t: std::marker::PhantomData }
+        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, kept: 0, owner: None, ledger: None, _t: std::marker::PhantomData }
     }
 
     /// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0478 step
@@ -492,7 +495,8 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         }
         let facts = owner.facts().clone();
         let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(at)).expect("a block's chunk");
-        BlockVec { facts: Some(facts), ptr, life: owner.life(), at, len, cap: len, kept: 0, owner: Some(owner.clone()), _t: std::marker::PhantomData }
+        let ledger = Some(facts.block.ledger().clone());
+        BlockVec { facts: Some(facts), ptr, life: owner.life(), at, len, cap: len, kept: 0, owner: Some(owner.clone()), ledger, _t: std::marker::PhantomData }
     }
 
     /// The chunk `into_chunk` handed on, its own again (no directory took it).
@@ -501,7 +505,8 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             return BlockVec::new();
         }
         let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(g.at)).expect("a block's chunk");
-        BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap: g.kept / size_of::<T>(), kept: g.kept, owner: None, _t: std::marker::PhantomData }
+        let ledger = Some(facts.block.ledger().clone());
+        BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap: g.kept / size_of::<T>(), kept: g.kept, owner: None, ledger, _t: std::marker::PhantomData }
     }
 
     /// `n` items, those past its length `v`.
@@ -521,6 +526,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             let near = self.facts.clone();
             self.realloc(near.as_ref().map(|f| (f, 0)), n.max(2 * self.cap));
         }
+        self.check(self.len, n - self.len, true);
         // SAFETY: room for `n` past the chunk's start, this vector's alone.
         unsafe {
             for i in self.len..n {
@@ -553,6 +559,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         let given = rerail_blocks::relation::Given { at: self.at, len: self.len, kept: self.kept };
         // Handed on: nothing of it is given back here.
         self.facts = None;
+        self.ledger = None;
         self.kept = 0;
         self.cap = 0;
         self.len = 0;
@@ -594,12 +601,14 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             }
         };
         if self.len > 0 {
+            self.check(0, self.len, false);
             // SAFETY: the old chunk holds `len` written `T`s; the new one is this vector's alone, apart from it.
             // copy: growth: an array that outgrew its chunk, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), facts.block.ptr::<T>(at), self.len) };
         }
         self.free();
         self.ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(at)).expect("a block's chunk");
+        self.ledger = Some(facts.block.ledger().clone());
         self.facts = Some(facts);
         self.at = at;
         self.kept = size;
@@ -615,6 +624,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         {
             f.block.free_chunk_fit(self.at, self.kept);
         }
+        self.ledger = None;
         self.ptr = std::ptr::NonNull::dangling();
         self.cap = 0;
     }
@@ -634,6 +644,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         if self.len == self.cap {
             self.reserve(1);
         }
+        self.check(self.len, 1, true);
         // SAFETY: `len` is within the chunk's room, this vector's alone.
         unsafe { self.ptr_mut().add(self.len).write(v) };
         self.len += 1;
@@ -642,6 +653,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
     // copy: derived: an array's values written once where they are computed (a merged run's)
     pub fn extend_from_slice(&mut self, src: &[T]) {
         self.reserve(src.len());
+        self.check(self.len, src.len(), true);
         // SAFETY: room for `src` past `len` is this vector's alone, apart from `src`.
         // copy: derived: the values `extend_from_slice` writes
         unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), self.ptr_mut().add(self.len), src.len()) };
@@ -666,6 +678,17 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
     #[inline]
     pub fn as_ptr(&self) -> *const T {
         self.ptr.as_ptr()
+    }
+
+    /// The CPU reads (or writes) `n` `T`s from its `from`th: none may be under a GPU write (or use) of its chunk
+    /// queued (decision 0487 R4). With none queued on its block, one load.
+    #[inline]
+    #[track_caller]
+    fn check(&self, from: usize, n: usize, write: bool) {
+        if let Some(l) = &self.ledger {
+            let (at, len) = (self.at + from * size_of::<T>(), (n * size_of::<T>()).max(1));
+            if write { l.cpu_write(at, len) } else { l.cpu_read(at, len) }
+        }
     }
 
     #[inline]
@@ -698,6 +721,7 @@ impl<T: rerail_blocks::Pod> std::ops::Deref for BlockVec<T> {
     type Target = [T];
     #[inline]
     fn deref(&self) -> &[T] {
+        self.check(0, self.len, false);
         // SAFETY: `len` `T`s are written at `as_ptr`, in the block it keeps.
         unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len) }
     }
@@ -711,6 +735,7 @@ impl<T: rerail_blocks::Pod> std::ops::DerefMut for BlockVec<T> {
             let near = self.facts.clone();
             self.realloc(near.as_ref().map(|f| (f, 0)), self.len);
         }
+        self.check(0, self.len, true);
         // SAFETY: as `deref`, and `&mut self` is the one writer.
         unsafe { std::slice::from_raw_parts_mut(self.ptr_mut(), self.len) }
     }
@@ -744,6 +769,7 @@ impl<T: rerail_blocks::Pod> Clone for BlockVec<T> {
         v.life = self.life;
         if self.len > 0 {
             v.realloc(self.facts.as_ref().map(|f| (f, 0)), self.len);
+            self.check(0, self.len, false);
             // SAFETY: room for `len` `T`s, this vector's alone.
             // copy: derived: a derived array written again for a writer of its own (a merge of a shared run)
             unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), v.ptr_mut(), self.len) };
@@ -2320,6 +2346,31 @@ mod tests {
         let lone = BlockVec::from_iter_in(None, [7i64, 8]);
         assert_eq!(*lone, [7, 8]);
         assert!(BlockVec::<u8>::new().facts().is_none(), "empty holds no chunk");
+    }
+
+    /// Decision 0487 R4 at a relation's arrays: with a GPU read of a `BlockVec`'s items queued, a CPU write of them
+    /// fails and a push past them (in place) passes; with a GPU write queued, a read fails. Once the fence completes
+    /// both pass.
+    #[test]
+    fn a_block_vec_under_a_queued_gpu_use_of_its_chunk_fails() {
+        let fails = |f: &mut dyn FnMut()| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err();
+        let mut v = BlockVec::from_iter_in(None, 0..64u64);
+        // Room past its length, so the push below writes in place.
+        v.reserve(8);
+        let (facts, at, len) = (v.facts().expect("a chunk").clone(), v.offset(), v.len() * 8);
+        let block = &facts.block;
+        let r = rerail_blocks::ledger::Fence::new();
+        r.reads_chunk(block, at, len);
+        assert_eq!(v[3], 3, "reads pass under a GPU read");
+        assert!(fails(&mut || v[3] = 7), "a write by index under a GPU read");
+        assert!(!fails(&mut || v.push(64)), "a push past what the GPU reads");
+        r.complete();
+        v[3] = 7;
+        let w = rerail_blocks::ledger::Fence::new();
+        w.writes_chunk(block, at, len);
+        assert!(fails(&mut || { std::hint::black_box(v[3]); }), "a read under a GPU write");
+        w.complete();
+        assert_eq!(v[3], 7);
     }
 
     /// A tail opened past a relation of its own that cannot be continued in its block (a full one) holds every row it
