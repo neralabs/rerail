@@ -199,7 +199,10 @@ public_best_len(o, n, l) :- public_len(o, n, _), l = min k : { public_len(o, n, 
 .decl public_route(owner: symbol, name: symbol, route: symbol)
 public_route(o, n, r) :- public_candidate(o, n, _, l, r), public_best_len(o, n, l).
 .decl public_best_route(owner: symbol, name: symbol, route: symbol)
-public_best_route(o, n, r) :- public_route(o, n, _), r = min q : { public_route(o, n, q) }.
+// The least route by its text, as SQL's ORDER BY (a min over symbols orders their ids).
+public_best_route(o, n, r) :- public_route(o, n, r), !public_later_route(o, n, r).
+.decl public_later_route(owner: symbol, name: symbol, route: symbol)
+public_later_route(o, n, r) :- public_route(o, n, r), public_route(o, n, q), q < r.
 .decl public_methods(owner: symbol, name: symbol, symbol: symbol)
 public_methods(o, n, id) :- public_candidate(o, n, id, _, r), public_best_route(o, n, r).
 
