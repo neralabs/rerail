@@ -633,9 +633,7 @@ export class WorktreeWalks {
   /** Drops what was kept of each worktree no session watches, and stops watching it. */
   #forget(watched: ReadonlyArray<ReadonlySet<string>>): void {
     const roots = new Set(watched.flatMap(worktrees => [...worktrees]));
-    for (const root of this.#kept.keys()) if (!roots.has(root)) this.#kept.delete(root);
-    for (const root of this.#owed) if (!roots.has(root)) this.#owed.delete(root);
-    for (const root of this.#withdrawn.keys()) if (!roots.has(root)) this.#withdrawn.delete(root);
+    for (const held of [this.#kept, this.#owed, this.#withdrawn]) for (const root of held.keys()) if (!roots.has(root)) held.delete(root);
     this.#notices.retain(roots);
     this.#looks.retain(roots);
   }
