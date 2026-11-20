@@ -118,11 +118,30 @@ struct Deferred { texts: Vec<String>, at: HashMap<String, u32> }
 /// (whose document is in the high 32 bits, from 0x6000… on).
 const DEFERRED: i64 = 1 << 40;
 
+/// A database's shared symbols: its interner, behind the lock that `sym_atom`, `sym_cat` and `cat_symbols`
+/// write under, with its atom arena beside the lock. The arena is the interner's own and never changes, so a
+/// loader's cursor (`Interner::for_loading`, at every component's open) reads it without the lock: it waited there
+/// behind the SQL functions' writes, 2,004 of 2,204 samples parked (Q203 item 3, ab71).
+pub struct Symbols { atoms: Arc<crate::content_store::atoms::Atoms>, cursor: RwLock<Interner> }
+
+impl Symbols {
+    fn new(atoms: Arc<crate::content_store::atoms::Atoms>) -> Symbols {
+        Symbols { atoms: Arc::clone(&atoms), cursor: RwLock::new(Interner { atoms, buf: String::new(), failed: None, deferred: None }) }
+    }
+    /// The atom arena the symbols are in, read without the lock.
+    pub fn atoms(&self) -> &Arc<crate::content_store::atoms::Atoms> { &self.atoms }
+}
+
+impl std::ops::Deref for Symbols {
+    type Target = RwLock<Interner>;
+    fn deref(&self) -> &RwLock<Interner> { &self.cursor }
+}
+
 impl Interner {
     /// A loader's scratch cursor over the same atom arena. Loading SQL may call sym_text/sym_atom,
-    /// so it must not hold the registered cursor's lock across SQLite execution.
-    fn for_loading(shared: &RwLock<Self>) -> Self {
-        Self { atoms: Arc::clone(&shared.read().unwrap().atoms), buf: String::new(), failed: None, deferred: None }
+    /// so it must not hold the registered cursor's lock across SQLite execution; nor does it take it.
+    fn for_loading(shared: &Symbols) -> Self {
+        Self { atoms: Arc::clone(shared.atoms()), buf: String::new(), failed: None, deferred: None }
     }
     /// The text `v` stands for if it is a text this morsel deferred.
     fn deferred_text(&self, v: i64) -> Option<&str> {
@@ -185,9 +204,9 @@ impl Interner {
 /// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 /// `RERAIL_LEVELS_ON_CYCLES`: a leveled component keeps levels only on its relations on a cycle (`open`).
 #[derive(Default)]
-struct DatabaseSymbols(Mutex<HashMap<String, Arc<RwLock<Interner>>>>);
+struct DatabaseSymbols(Mutex<HashMap<String, Arc<Symbols>>>);
 /// The symbols of `conn`'s database: the shared object's arena of it.
-pub fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
+pub fn symbols(conn: impl Scoped) -> Result<Arc<Symbols>> {
     let conn = conn.db();
     // A connection's symbols are found once (by its path) and kept for it until it closes (`forget_scope`).
     let on = on(&conn);
@@ -221,8 +240,7 @@ fn conn_path(conn: impl Scoped) -> Arc<str> {
 pub fn prime(conn: &Connection) -> Result<Arc<crate::content_store::atoms::Atoms>> {
     conn_path(conn);
     let syms = symbols(conn)?;
-    let arena = Arc::clone(&syms.read().unwrap().atoms);
-    Ok(arena)
+    Ok(Arc::clone(syms.atoms()))
 }
 /// What the evaluator keeps for one connection (decision 0442): on the connection itself (`vtab::ConnData`), dropped
 /// as it closes, or (its relations and components) as a run reuses it (`forget_engine`). Two connections, on any
@@ -232,7 +250,7 @@ pub struct OnConn {
     /// Its main database's path (`conn_path`): SQLite's `sqlite3_db_filename` takes the connection's mutex.
     path: parking_lot::Mutex<Option<Arc<str>>>,
     /// Its symbols (`symbols`).
-    syms: parking_lot::Mutex<Option<Arc<RwLock<Interner>>>>,
+    syms: parking_lot::Mutex<Option<Arc<Symbols>>>,
     /// Its open components, by name.
     components: parking_lot::Mutex<HashMap<String, Arc<Mutex<Component>>>>,
     /// The relations of components run with `nowrite`, by table, until they are materialized.
@@ -251,19 +269,19 @@ pub struct OnConn {
 fn on(conn: impl Scoped) -> Arc<OnConn> {
     conn.db().data().get::<OnConn>()
 }
-fn symbols_by_path(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
+fn symbols_by_path(conn: impl Scoped) -> Result<Arc<Symbols>> {
     let conn = conn.db();
     let key = conn_path(conn).to_string();
     let held_ = crate::code_rule_dsl::logic::profile::shared::<DatabaseSymbols>();
     let mut syms = held_.0.lock().unwrap();
     let atoms = crate::content_store::atoms::Atoms::for_connection(conn.sql()?);
     // A store created again at the same path has new atoms (`Atoms::for_database`, checked by `Atoms::attach`).
-    if let Some(s) = syms.get(&key) && Arc::ptr_eq(&s.read().unwrap().atoms, &atoms) {
+    if let Some(s) = syms.get(&key) && Arc::ptr_eq(s.atoms(), &atoms) {
         return Ok(Arc::clone(s));
     }
     // An arena made after the store was written holds none of its atoms yet: the run's SQL and joins read them.
     atoms.read_stored().map_err(|e| err(e.to_string()))?;
-    let s = Arc::new(RwLock::new(Interner { atoms, buf: String::new(), failed: None, deferred: None }));
+    let s = Arc::new(Symbols::new(atoms));
     syms.insert(key, Arc::clone(&s));
     Ok(s)
 }
@@ -1314,7 +1332,7 @@ enum Body { Sql(String), Join(JoinRule), Unplanned }
 /// `full`: its head reached the width cap under `RERAIL_WIDEST=cut` (decision 0462): it derives no more this run.
 struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>>, budget: std::cell::Cell<Option<u64>>, full: std::cell::Cell<bool> }
 
-pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
+pub struct Store { pub rels: Vec<Rel>, syms: Arc<Symbols> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
@@ -8940,6 +8958,23 @@ pub mod scope_tests {
         // A connection opened after it, at its address or not, starts with none of it.
         let next = Connection::open(&path).unwrap();
         assert!(on(&next).path.lock().is_none() && on(&next).syms.lock().is_none());
+    }
+
+    /// A loader's cursor (`Interner::for_loading`, at every component's open) takes no lock: while a writer
+    /// (`sym_atom`, `sym_cat`) holds the symbols, one is made at once, over the same arena, and interns into it.
+    /// It read the arena under the lock, and waited there (Q203 item 3: 2,004 samples of 2,204 parked).
+    #[test]
+    fn a_loaders_cursor_is_made_while_the_symbols_are_written() {
+        let path = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
+        let conn = Connection::open(&path).unwrap();
+        let shared = symbols(&conn).unwrap();
+        let mut writing = shared.write().unwrap();
+        let mut cursor = Interner::for_loading(&shared);
+        assert!(Arc::ptr_eq(cursor.atoms(), writing.atoms()));
+        let id = cursor.id("a loader's text");
+        assert_eq!(writing.get("a loader's text"), Some(id));
+        writing.check().unwrap();
     }
 }
 
