@@ -74,10 +74,13 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
 4. **Write and test each one**, as [Write](#write) steps 1 to 5, without the read-back: pin down what it means, choose the kind,
    write the cases, test, get it reviewed. Only code rules: leave out a candidate that would be a conversation rule, and name
    it under Left out. A candidate that fails a gate, or does not pass after about five rounds, is left out too.
-5. **Add the ones that pass, in Log.** For each: `rerail rules add <tmp>/draft.json`, and do **not** approve it. A rule that is
-   added but not approved runs in Log whatever its mode: Rerail records what it would catch and tells the agent nothing. It
-   waits on the dashboard's Overview, under "Your coding agent added …", and the person approves it from its page there.
-   Skip a candidate that does the same as a rule in `rules export`; say so under Left out.
+5. **Add the ones that pass, in Log.** First leave out a candidate that does the same as a rule in `rules export`, and say
+   so under Left out. Then give each a new id if its id is taken: `rules add` with the id of a rule in `rules export`
+   overwrites that rule, which then runs in Log until approved again, in every repo that has it; with the id of a By Rerail
+   rule (`rerail rules show <id>` prints one) it stores an edited copy, whose approval turns the original off. For each:
+   `rerail rules add <tmp>/draft.json`, and do **not** approve it. A rule that is added but not approved runs in Log
+   whatever its mode: Rerail records what it would catch and tells the agent nothing. It waits on the dashboard's Overview,
+   under "Your coding agent added …", and the person approves it from its page there.
 6. **Ask once, in exactly this form.** One block per rule added, in the order added:
 
    ```text
@@ -98,7 +101,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    Approve them so they steer?
      1. Yes, all of them
      2. Some of them (say which)
-     3. Not now: they stay in Log, and the dashboard's Overview lists them for approval
+     3. Not now: they stay in Log, and the dashboard's Overview sends you to them in Created by you
      4. Show me a rule
    ```
 
@@ -112,7 +115,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
 7. **Approve what the person says.** On 1, `rerail rules approve <id>` for each rule in the list. On 2, for each rule they
    named, and only those. The person's yes after reading the list is their approval of what each rule says, as the
    read-back is in Write. Reply in one line per rule approved, `● <what it checks> is approved, set to <Steer|Log>.`, then one
-   line for the rest: `The others stay in Log; the dashboard's Overview lists them for approval.` On 3, reply with that line
+   line for the rest: `The others stay in Log; the dashboard's Overview sends you to them in Created by you.` On 3, reply with that line
    alone. Any rule can be removed from its page on the dashboard (`rerail manage --print` gives the link).
 8. **Offer to show one working**, as Write step 8, for a rule that was approved and set to Steer.
 
@@ -200,7 +203,6 @@ again), add it again, and show its block alone with the same question.
    - **Log rules.** The What happens row reads "Log: Rerail only records it, for you to review. I'm not told."
    - **Rows you are unsure of.** Mark the row `Not sure`. Below the card, show one line from this repo that the rule catches and
      one that it misses, and set the rule to Log.
-   - **Rules from the shortlist.** Put one line above the card: `From: <the evidence, e.g. "you corrected this 3 times">`.
    - **Architecture rules.** Put the history result above the card in one line: `Checked against history: caught the first
      draft of #123; quiet on its merge and on 15 recent merged PRs.`
    - **Conversation rules** (command or similarity). Put one line above the card: `Experimental: this kind of rule is not
