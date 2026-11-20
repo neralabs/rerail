@@ -42,8 +42,8 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_GLOBAL const UKL_RADI
         // A row past the end has a digit of its own, equal to no live row's.
         uint32_t d = live ? UKL_RADIX_NAME(ukl_radix_digit)(key, args.shift) : UKL_RADIX_DIGITS;
 #if UKL_RADIX_MATCHED
-        uint32_t m = ukl_sg_match(d __UKL_ARGS);
-        uint32_t rank = ukl_rank32(m, me);
+        ukl_mask_t m = ukl_sg_match(d __UKL_ARGS);
+        uint32_t rank = ukl_mask_rank(m, me);
         bool last = (m >> me) == 1u;
         (void)digits;
 #else

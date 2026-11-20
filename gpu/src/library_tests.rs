@@ -230,10 +230,10 @@ fn simd_group_operations_and_their_references() {
         })
         .collect();
     let inb = buffer_of(&vals).unwrap();
-    let out = alloc::<u32>(n as usize * 16).unwrap();
+    let out = alloc::<u32>(n as usize * 18).unwrap();
     launch(&q, p.function("t_simd").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("in", &inb).buffer("out", &out).run(&[(n / 128) as u64], &[128]).unwrap();
     q.flush().await_().unwrap();
-    let got: Vec<u32> = read(&out, n as usize * 16);
+    let got: Vec<u32> = read(&out, n as usize * 18);
     // The device's SIMD groups: 32 lanes, or another width (the CPU's `RERAIL_CPU_SIMD_WIDTH`, an OpenCL device's).
     let w = crate::device::simd_width() as usize;
     for g in 0..n as usize / w {
@@ -246,7 +246,8 @@ fn simd_group_operations_and_their_references() {
             let below = odd[..lane].iter().filter(|&&b| b).count() as u32;
             let mn = *v.iter().min().unwrap();
             let mx = *v.iter().max().unwrap();
-            let same = (0..w).filter(|&j| v[j] % 4 == v[lane] % 4).fold(0u32, |m, j| m | 1 << j);
+            let same = (0..w).filter(|&j| v[j] % 4 == v[lane] % 4).fold(0u64, |m, j| m | 1 << j);
+            let (lo, hi) = (same as u32, (same >> 32) as u32);
             let want = [
                 sum,
                 sum,
@@ -262,11 +263,13 @@ fn simd_group_operations_and_their_references() {
                 odd.iter().filter(|&&b| b).count() as u32,
                 first,
                 v[g % w],
-                same,
-                same,
+                lo,
+                hi,
+                lo,
+                hi,
             ];
             let i = g * w + lane;
-            assert_eq!(&got[i * 16..i * 16 + 16], &want, "{}: group {g}, lane {lane}: sum min max (backend, reference), scans, votes, broadcast, match", crate::device::backend());
+            assert_eq!(&got[i * 18..i * 18 + 18], &want, "{}: group {g}, lane {lane}: sum min max (backend, reference), scans, votes, broadcast, match", crate::device::backend());
         }
     }
 }
@@ -275,7 +278,8 @@ fn simd_group_operations_and_their_references() {
 fn threadgroup_sums_and_scans() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(19);
-    for lsz in [32u32, 64, 96, 256, 1024].into_iter().filter(|&l| l <= crate::device::max_threadgroup()) {
+    // Threadgroups of whole SIMD groups (`ukl/group.h`).
+    for lsz in [32u32, 64, 96, 256, 1024].into_iter().filter(|&l| l <= crate::device::max_threadgroup() && l % crate::device::simd_width() == 0) {
         let groups = 5u32;
         let n = lsz * groups;
         let vals: Vec<u32> = (0..n).map(|_| if rng.below(3) == 0 { rng.next() as u32 } else { rng.below(100) as u32 }).collect();
@@ -404,7 +408,7 @@ fn lz4_blocks_decode_as_lz4_does() {
     let (jb, sb) = (buffer_of(&jobs).unwrap(), buffer_of(&src).unwrap());
     let ob = buffer_of(&vec![0u8; out_len]).unwrap();
     let lb = alloc::<u32>(blocks.len()).unwrap();
-    launch(&q, p.function("t_lz4").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("jobs", &jb).buffer("in", &sb).buffer("outData", &ob).buffer("lengths", &lb).run(&[n as u64], &[32]).unwrap();
+    launch(&q, p.function("t_lz4").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("jobs", &jb).buffer("in", &sb).buffer("outData", &ob).buffer("lengths", &lb).run(&[n as u64], &[crate::device::simd_width().max(32) as u64]).unwrap();
     q.flush().await_().unwrap();
     let lengths: Vec<u32> = read(&lb, blocks.len());
     let out: Vec<u8> = read(&ob, out_len);

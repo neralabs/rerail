@@ -182,8 +182,12 @@ UKL_INLINE uint32_t combine_borrow(uint32_t a, uint32_t b)
 }
 UKL_INLINE uint32_t combine_carry(uint32_t kind, uint32_t a, uint32_t b) { return SEL(combine_parity(a, b), combine_borrow(a, b), kind == 1u); }
 
-// The group's aggregate of its lanes' summaries.
-UKL_INLINE uint32_t reduce_parity(uint32_t s __UKL_PARAMS) { return ukl_popcount32(ukl_sg_ballot((s & 1u) != 0u __UKL_ARGS)) & 1u; }
+// The group's aggregate of its lanes' summaries. The borrow's carry-lookahead is a 32-lane add: a group of 32 lanes
+// at most.
+#if UKL_SIMD_WIDTH > 32
+#  error "block_common: the borrow's carry-lookahead adds 32 lanes' masks"
+#endif
+UKL_INLINE uint32_t reduce_parity(uint32_t s __UKL_PARAMS) { return ukl_mask_count(ukl_sg_ballot((s & 1u) != 0u __UKL_ARGS)) & 1u; }
 UKL_INLINE uint32_t reduce_borrow(uint32_t s __UKL_PARAMS)
 {
     uint32_t G = ukl_sg_ballot((s & 1u) != 0u __UKL_ARGS), P = ukl_sg_ballot((s & 2u) != 0u __UKL_ARGS);
@@ -194,8 +198,7 @@ UKL_INLINE uint32_t reduce_borrow(uint32_t s __UKL_PARAMS)
 // the parity of the ballot below the lane.
 UKL_INLINE uint32_t lane_in_parity(uint32_t s, uint32_t e, uint32_t l __UKL_PARAMS)
 {
-    uint32_t below = ukl_sg_ballot((s & 1u) != 0u __UKL_ARGS) & ((1u << l) - 1u);
-    return (e ^ ukl_popcount32(below)) & 1u;
+    return (e ^ ukl_mask_rank(ukl_sg_ballot((s & 1u) != 0u __UKL_ARGS), l)) & 1u;
 }
 UKL_INLINE uint32_t lane_in_borrow(uint32_t s, uint32_t e, uint32_t l __UKL_PARAMS)
 {

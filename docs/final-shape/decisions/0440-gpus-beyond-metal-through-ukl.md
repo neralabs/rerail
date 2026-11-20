@@ -1551,6 +1551,30 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
   loses. Open: the gap between kernels on host allocations (a native Linux or Windows driver, or Level Zero's
   immediate command lists, may not have it; the plan's step 3 is that measurement).
 
+**The Intel plan, steps 3 and 4: not called for yet (2026-11-20).**
+
+- **Level Zero (step 3) waits:** its condition is a measurement in which OpenCL's launch or submission costs matter
+  after steps 1 and 2. On the Arc a launch costs 6.1-6.6 µs and an empty submission 74-96 µs (`host_costs`), against
+  the engine's fixed handful of launches per evaluation, and the lane suite takes 17-19 s warm (the GB10's CUDA:
+  29 s). The one cost found, the gap between kernels on host allocations, is the opt-in USM path's; whether Level
+  Zero's immediate command lists lack it is that backend's first measurement, if the path is wanted. The machine has
+  Intel's Level Zero driver and `ocloc`, not the loader.
+- **Windows (step 4)** comes with the workspace's Windows build, which is not written; the laptop runs the farm's
+  Linux jobs under WSL2.
+
+**A 64-lane mask: `ukl_mask_t` (2026-11-20).**
+
+- **The type** (`ukl/backend.h`): a SIMD group's lanes as bits, lane `l` at bit `l`; 32 bits, or 64 where
+  `UKL_SIMD_WIDTH` is wider (AMD's 64 lanes). Every backend's ballot and match return it, and `ukl_mask_count`,
+  `_lowest`, `_lane`, `_below` and `_rank` read it at either width. `UKL_SIMD_WIDTH` is a power of two from 1 to 64.
+- **Its users:** the votes (`ukl_sg_count`, `_count_below`, `_first`), the match, and the radix sort's rank
+  (`radix_tile.h`: a 64-lane rank group); the transducer's parities (`block_common`). That file's borrow is a
+  carry-lookahead over a 32-lane add, so it refuses a wider group at compile time. Upstream's CPU shim operations
+  (`ukl_simdgroup_*`) stay 32-lane, as upstream's kernels are.
+- **Tested on the CPU at 64 lanes** (`RERAIL_CPU_SIMD_WIDTH=64`, now allowed): the library's 19 pass, as at 32, 8
+  and 1. Two of the tests assumed 32-thread groups (a threadgroup of 32 threads, the LZ4 decoder's group): they take
+  the device's width now. The test of the votes writes each mask as two words.
+
 - **Open:** `rerail-device-metal`'s tests register Python's and `.rr`'s packs (`test_languages`) only where two tests
   call it, while its corpus runs read `.rr` documents (`lines::of`) in tests that do not: a CPU worker panics
   ("no language registered for Rr"), now and then by which test runs first, caught and run again. Every test passes
