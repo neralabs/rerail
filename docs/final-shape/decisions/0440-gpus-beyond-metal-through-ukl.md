@@ -1484,6 +1484,25 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
 - **Found after the commit:** accel's tests did not compile (`blocks.rs`' test module named `Budget` and `Size`, whose
   import had moved into the lane's function): imported in the tests. accel's 85 pass on the Mac, its 60 on the Arc.
 
+**Step E, the whole replay on the GB10 (2026-11-20).**
+
+- **Run** as 12 parts of the 142 checks, each one farm job, with `RERAIL_DEVICE=always` (every program the GPU can
+  take runs there). The engine's test watchdog stops a test at 600 s; the parts take 4-27 minutes, so the runs raise
+  it (`RERAIL_TEST_TIMEOUT`).
+- **Results:** 5,284 events, 5,223 run, 5,215 exact, 0 errors. These are the CPU's numbers in
+  `replay_baseline.txt`, and its eight misses are the same eight.
+- **Found: `text_verdicts` read a text whose buffer had gone back to the pool.** One part (10 checks) failed 2 runs
+  of 4 with CUDA error 700, an illegal address; none failed with launches made blocking (`CUDA_LAUNCH_BLOCKING`).
+  A GPU core dump (`CUDA_ENABLE_COREDUMP_ON_EXCEPTION`, read with `cuda-gdb`) named the kernel: `text_verdicts`,
+  at a load of a term's bytes.
+  - The cause: the text it reads (a column's symbols' names) is held only by its relation's resident entry. A later
+    upload in the same batch may trim that entry (`Resident::trim`, least recently used first) before the kernel
+    has run, so the text's pooled buffer goes back to the pool. The next lease writes it from the host, and the
+    kernel reads those bytes as the text's offsets.
+  - `Batch::replace` and `text_map` keep their input text to the batch's end (`Batch::read`); `verdicts` now does
+    too. The race is the same on every backend; it has not shown on Metal.
+  - With the fix, that part passes 3 runs of 3 (at 457-901 s, the host loaded).
+
 **The Intel plan, step 1: OpenCL's native sub-groups (2026-11-20).**
 
 - **Where the device has them** (`native_subgroups`): OpenCL 3.0's sub-groups with shuffles, relative shuffles and

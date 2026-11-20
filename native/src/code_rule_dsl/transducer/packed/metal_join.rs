@@ -954,7 +954,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// by the host when handed out again, and no host write is ordered after a device read).
     keep: Vec<Held>,
     /// Text buffers its passes read, kept until it is done (a chain's intermediate texts are dropped by their
-    /// maker once the next pass is encoded: their buffers must not be reused while the GPU reads them).
+    /// maker once the next pass is encoded, and a relation's texts go with its resident entry, which a later upload
+    /// may trim: their buffers must not be reused while the GPU reads them).
     read: Vec<std::rc::Rc<DevRel>>,
     /// What its passes write that their maker gave up before it was done (a stratum refused after some of its rules
     /// were encoded): kept until it is, so no buffer it writes goes back to the pool while the GPU may write it.
@@ -1531,6 +1532,10 @@ impl Batch {
         // A SIMD group a term, a threadgroup each.
         pass.run_bytes_simd(&kernel, &[&text.packed.buffer.buffer, &table.table.buffer, &bits.buffer.buffer, &scratch.buffer], bytes, groups);
         self.keep.push(scratch);
+        // The text is its relation's resident entry's, which a later upload of this batch may trim (`Resident::trim`)
+        // before the kernel has run: its buffer back to the pool, the next lease's host writes under the device's
+        // reads (an illegal address on CUDA, 0440 step E).
+        self.read.push(text.packed.clone());
         Ok(())
     }
 
