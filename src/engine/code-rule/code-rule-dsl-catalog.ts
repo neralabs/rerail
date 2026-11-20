@@ -110,28 +110,12 @@ function liveOutcome(held: HeldOutcome): CompileOutcome | undefined {
   return executable === undefined ? undefined : { ...held, executable };
 }
 
-/** The terms of a rule whose finding in one file can depend on another file the workspace holds. */
-const CROSS_FILE_TERMS = new Set(["budget", "require_each", "calls", "importTarget", "relational", "report_when"]);
-
-/**
- * Whether a rule's finding in one file can depend on other files the workspace holds: a `budget` or `require_each`
- * clause counts or pairs matches across files, a `calls` term follows calls into them, an `importTarget` term reads the
- * file an import names, a `relational` clause queries relations over many files, and a `report_when` bound reports a
- * document's findings only once their count over the workspace passes it. Where none does, the order files are checked
- * in changes no finding.
- */
-function readsOtherFiles(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(readsOtherFiles);
-  if (value === null || typeof value !== "object") return false;
-  return Object.entries(value).some(([key, item]) => CROSS_FILE_TERMS.has(key) || readsOtherFiles(item));
-}
-
 function compileOutcome(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string): CompileOutcome {
   try {
     const executable = loadNativeBinding().CodeRuleDslRuntime.compile(sourceText, "json", capabilities.json);
     const canonical = JSON.parse(executable.canonicalJson()) as { id?: unknown };
     return canonical.id === policyId
-      ? { ok: true, executable, crossFile: readsOtherFiles(canonical) }
+      ? { ok: true, executable, crossFile: executable.readsOtherFiles() }
       : { ok: false, reason: `Compiled policy ID does not match rule document: ${policyId}` };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
@@ -145,7 +129,7 @@ export interface CompiledCodeRuleDslEntry {
   readonly executable: NativeCompiledCodeRuleDsl;
   /** Where the code rule runs in the checkout, at which mode, and where suppression comments are ignored; passed to the native workspace. */
   readonly placement: CodeRulePlacement;
-  /** Whether its finding in one file can depend on other files the workspace holds (`readsOtherFiles`). */
+  /** Whether its finding in one file can depend on another file's text, as the engine routes its clauses (`readsOtherFiles`). */
   readonly crossFile: boolean;
 }
 

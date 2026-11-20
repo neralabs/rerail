@@ -638,6 +638,16 @@ impl Query {
         }
     }
 
+    /// Whether the query is answered one file at a time: a `select_when` reports its `select`
+    /// side's witnesses when its `exists` side has a witness in any file. No arm is a wildcard, so
+    /// a new kind of query does not compile until it says which it is.
+    pub(super) fn is_file_local(&self) -> bool {
+        match self {
+            Query::Regex { .. } | Query::Ast { .. } | Query::File => true,
+            Query::SelectWhen { .. } => false,
+        }
+    }
+
     /// Whether a leaf here reads a file as text (a regex over either source) or stands for the
     /// file itself (`file`): such a query reads files no code-rule language lists.
     pub(super) fn reads_text(&self) -> bool {
@@ -746,6 +756,46 @@ pub struct CompiledClause {
     pub data_layer: Option<std::sync::Arc<crate::code_rule_dsl::waves::relational::Plan>>,
 }
 
+impl CompiledClause {
+    /// Whether the workspace evaluates the clause one file at a time: a forbid whose query is
+    /// (`Query::is_file_local`). Every other clause runs over the workspace's files together. No
+    /// arm is a wildcard, so a new kind of clause does not compile until it says which it is.
+    pub fn is_file_local(&self) -> bool {
+        match &self.kind {
+            ClauseKind::Forbid(query) => query.is_file_local(),
+            ClauseKind::RequireEach { .. }
+            | ClauseKind::Budget { .. }
+            | ClauseKind::Llm
+            | ClauseKind::Relational(_) => false,
+        }
+    }
+
+    /// Whether the clause holds a `calls` term, whose closure the workspace keeps over every file
+    /// (`CrossFileScheduler::register`).
+    pub fn holds_calls(&self) -> bool {
+        self.kind
+            .calls_query()
+            .is_some_and(|query| !query.calls().is_empty())
+    }
+
+    /// Whether the workspace resolves an `importTarget` for the clause file by file: a file-local
+    /// forbid whose matcher reads one (`Query::reads_import_targets`), which reads the file an
+    /// import names.
+    pub fn reads_import_targets_locally(&self) -> bool {
+        let ClauseKind::Forbid(query) = &self.kind else {
+            return false;
+        };
+        query.is_file_local() && query.reads_import_targets()
+    }
+
+    /// Whether the clause's finding in one file can depend on another file's text: the workspace
+    /// evaluates it over its files together, or keeps a `calls` closure or an `importTarget` view
+    /// over every file for it. These are the predicates `add_code_rule` routes the clause by.
+    pub fn reads_other_files(&self) -> bool {
+        !self.is_file_local() || self.holds_calls() || self.reads_import_targets_locally()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RuleMode {
     Log,
@@ -835,6 +885,14 @@ impl CompiledCodeRule {
                 .iter()
                 .any(|(_, input)| input.ast.query.reads_text()),
         })
+    }
+
+    /// Whether a finding of the code rule in one file can depend on another file's text, so a
+    /// host that checks a workspace's edits in another order than they came could see another
+    /// finding: a `report_when` gate counts the rule's findings over every file, and a clause can
+    /// read beyond its file (`CompiledClause::reads_other_files`).
+    pub fn reads_other_files(&self) -> bool {
+        self.report_count_gt.is_some() || self.clauses.iter().any(CompiledClause::reads_other_files)
     }
 }
 

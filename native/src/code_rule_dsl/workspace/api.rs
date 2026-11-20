@@ -285,8 +285,7 @@ impl CodeRuleDslWorkspace {
         CrossFileScheduler::register(&mut state, index, &mut resident)?;
         // Global clauses read import targets through their synthetic file-local leaves.
         for (clause_index, clause) in resident.clauses.iter().enumerate() {
-            if matches!(&clause.kind, ClauseKind::Forbid(query) if is_file_local(clause) && query.reads_import_targets())
-            {
+            if clause.reads_import_targets_locally() {
                 state.import_clauses.insert((index, clause_index));
             }
         }

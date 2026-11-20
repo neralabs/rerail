@@ -102,6 +102,12 @@ export interface NativeCompiledCodeRuleDsl {
   readsServerGraph(): boolean;
   /** Whether the code rule reads text: some clause, however nested, is a `regex` or `file` query, so files no language lists are read for it. */
   readsText(): boolean;
+  /**
+   * Whether a finding of the code rule in one file can depend on another file's text: a clause the engine evaluates over
+   * many files (any but a `regex`, `ast` or `file` forbid), a `calls` or `importTarget` term, or a `report_when` gate.
+   * The engine routes each clause by the same predicates, so the answer cannot drift from what it evaluates.
+   */
+  readsOtherFiles(): boolean;
 }
 
 export interface NativeCodeRuleDslEditor {

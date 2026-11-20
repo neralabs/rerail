@@ -17,10 +17,12 @@ import {
 } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { decisionFor, type RepositoryAuditRuleProvenance } from "../../../src/engine/audit/audit.js";
 import {
+  CLAUSE_KINDS,
   CODE_RULE_LATEST_ECMA_VERSION,
   CODE_RULE_PARSE_GRAMMARS,
   CODE_RULE_PARSE_KINDS,
   CODE_RULE_PYTHON_VERSIONS,
+  CODE_RULE_QUERY_SOURCES,
   codeRuleSchema,
   type CodeRule,
 } from "../../../src/engine/code-rule/code-rule-schema.js";
@@ -1644,6 +1646,58 @@ describe("compiled rule cache", () => {
 });
 
 describe("rules whose finding in one file can depend on another", () => {
+  const violation = { code: "X", anchor: "witness.span", message: "x" };
+  const needle = { regex: { pattern: "NEEDLE", source: "file.content" } };
+  const python = (rule: Record<string, unknown>) => ({ ast: { language: "python", rule } });
+  const crossFileOf = (documents: Record<string, Record<string, unknown>[]>) => {
+    const rules = Object.entries(documents).map(([id, clauses]) => codeRuleSchema.parse({
+      format: "rerail.policy/v1", id, revision: 1, mode: "block", scope: { include: ["**/*.py"], exclude: [] },
+      clauses: clauses.map((clause, index) => (clause.define === undefined ? { id: `c${index}`, violation, ...clause } : { id: `c${index}`, ...clause })),
+    }));
+    const catalog = testCodeRuleCatalog(rules, writeCapabilities(temporaryRoot()));
+    expect(catalog.quarantined()).toEqual([]);
+    return Object.fromEntries(catalog.snapshot().codeRules.map(rule => [rule.id, rule.crossFile]));
+  };
+
+  it("marks a rule whose only clause that reads other files is a select_when, whose exists side holds in any file", () => {
+    // Its select side's findings in one file come and go as another file gains or loses an import.
+    const exists = python({ kind: "import_statement" });
+    expect(crossFileOf({
+      "test:select-when": [{ forbid: { select_when: { select: needle, exists } } }],
+      "test:select-when-absent": [{ forbid: { select_when: { select: needle, exists: python({ kind: "module", not: { has: { kind: "import_statement", stopBy: "end" } } }) } } }],
+    })).toEqual({ "test:select-when": true, "test:select-when-absent": true });
+  });
+
+  it("marks every clause kind and query source the rule schema accepts as the engine evaluates it", () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_RELATIONAL_RULES", "1");
+    try {
+      const evidence = { evidence: { as: "s", query: python({ kind: "identifier" }), project: { path: "file.path" } } };
+      const files = { evidence: { as: "file", query: python({ kind: "module" }), project: { path: "file.path" } } };
+      // One rule per construct the schema names, and whether a finding of it in one file can depend on another file.
+      const constructs: Record<string, [Record<string, unknown>[], boolean]> = {
+        "forbid.regex": [[{ forbid: needle }], false],
+        "forbid.ast": [[{ forbid: python({ kind: "identifier" }) }], false],
+        "forbid.file": [[{ forbid: { file: {} } }], false],
+        "forbid.select_when": [[{ forbid: { select_when: { select: needle, exists: python({ kind: "import_statement" }) } } }], true],
+        require_each: [[{ require_each: { subject: evidence, evidence } }], true],
+        budget: [[{ budget: { query: evidence, count: { lte: 1 } } }], true],
+        relational: [[{ relational: { inputs: { files }, query: "SELECT __path path,__start start_byte,__end end_byte FROM files", key: ["path"] } }], true],
+        llm: [[{ llm: {} }], true],
+        // A `report_when` gate reports the rule's findings only once their count over every file passes it.
+        define: [[{ define: { report_when: { count: { gt: 3 } } } }, { forbid: needle }], true],
+      };
+      // A clause kind or query source the schema gains fails here until it has a rule above.
+      expect(Object.keys(constructs).sort()).toEqual(
+        [...CLAUSE_KINDS.filter(kind => kind !== "forbid"), ...CODE_RULE_QUERY_SOURCES.map(source => `forbid.${source}`)].sort(),
+      );
+      const marked = crossFileOf(Object.fromEntries(Object.entries(constructs).map(([name, [clauses]]) => [`test:${name}`, clauses])));
+      // The constructs marked otherwise than they read, by name.
+      expect(Object.entries(constructs).filter(([name, [, crossFile]]) => marked[`test:${name}`] !== crossFile).map(([name]) => name)).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("marks each compiled rule that counts, pairs, follows calls or reads imports across files", () => {
     const evidence = { evidence: { as: "s", query: { ast: { language: "python", rule: { kind: "identifier" } } }, project: { path: "file.path" } } };
     const document = (id: string, clause: Record<string, unknown>) => codeRuleSchema.parse({
