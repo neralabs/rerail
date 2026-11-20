@@ -658,8 +658,8 @@ pub fn bind<T: Send + Sync + 'static>(value: T) -> Bound {
         (c.replace(next), made)
     });
     match was {
-        Ok((was, made)) => Bound(Some(was), made, std::marker::PhantomData),
-        Err(_) => Bound(None, 0, std::marker::PhantomData),
+        Ok((was, _made)) => Bound(Some(was), #[cfg(feature = "test-hooks")] _made, std::marker::PhantomData),
+        Err(_) => Bound(None, #[cfg(feature = "test-hooks")] 0, std::marker::PhantomData),
     }
 }
 
@@ -684,7 +684,8 @@ pub fn bind_here<T: Send + Sync + 'static>(value: T) {
 /// A binding (`bind`): dropped, the run's context on this thread is as it was before. It stays on its thread (not
 /// `Send`): dropped on another, it would set that thread's context.
 #[must_use = "the binding ends when the guard drops"]
-pub struct Bound(Option<Context>, usize, std::marker::PhantomData<*const ()>);
+/// A test build keeps its link's address too, for the check of the drop order.
+pub struct Bound(Option<Context>, #[cfg(feature = "test-hooks")] usize, std::marker::PhantomData<*const ()>);
 
 impl Drop for Bound {
     fn drop(&mut self) {

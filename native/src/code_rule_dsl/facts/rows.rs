@@ -1599,7 +1599,7 @@ mod tests {
                 }
             }
         };
-        let merged = merged().0;
+        let merged_before = merged().0;
         let old = rows.tail.as_ref().expect("a tail").clone();
         // As if its block were full: moved.
         let lent = rows.tail_moved(2).expect("a tail with rows");
@@ -1619,7 +1619,7 @@ mod tests {
         drop((lent, next, old));
         assert_eq!(rows.parts().count(), 1, "one relation");
         assert_eq!(rows.in_block().expect("bound whole").rows, 5);
-        assert_eq!(merged().0, merged, "nothing merged");
+        assert_eq!(merged().0, merged_before, "nothing merged");
         // copy: not block data: a test's rows
         let all: Vec<Vec<i64>> = (0..5).map(|i| rows.row(i, k).to_vec()).collect();
         assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22]].map(|r| r.to_vec()));
@@ -1679,7 +1679,7 @@ mod tests {
                 }
             }
         };
-        let merged = merged().0;
+        let merged_before = merged().0;
         let lent = rows.tail_room(3).expect("room in the tail's block");
         assert_eq!(lent.at, 2);
         assert!(rows.tail_room(1).is_none(), "one loan a tail at a time");
@@ -1697,7 +1697,7 @@ mod tests {
         assert_eq!(rows.parts().count(), 1, "one relation");
         let b = rows.in_block().expect("bound whole");
         assert_eq!(b.rows, 5);
-        assert_eq!(merged().0, merged, "nothing merged");
+        assert_eq!(merged().0, merged_before, "nothing merged");
         // copy: not block data: a test's rows
         let all: Vec<Vec<i64>> = (0..5).map(|i| rows.row(i, k).to_vec()).collect();
         assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22]].map(|r| r.to_vec()));
@@ -1728,10 +1728,10 @@ mod tests {
         next.extend_from_slice(&[4]);
         assert_eq!((kept.rows(), next.rows()), (3, 4), "the frozen rows read their own");
         assert!(next.shares(&kept));
-        let merged = merged().0;
+        let merged_before = merged().0;
         assert_eq!(next.in_block().expect("bound").rows, 4);
         assert_eq!(kept.in_block().expect("bound").rows, 3, "a prefix bound as its rows");
-        assert_eq!(merged().0, merged, "nothing merged");
+        assert_eq!(merged().0, merged_before, "nothing merged");
         // The writer is the first's: a second goes on in a tail of its own.
         let other = kept.shared(3);
         assert!(other.tail.is_none() && other.segs.len() == 1);

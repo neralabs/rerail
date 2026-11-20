@@ -2823,9 +2823,9 @@ pub mod tests {
                 let tx = tx.clone();
                 // Each thread in the test's run, profiled (decision 0442: the records and the switch are the run's
                 // and its caller's).
-                let run = run_own();
+                let run = job_run();
                 std::thread::spawn(move || {
-                    let _run = InRun::enter(&run, true);
+                    let _run = InRun::enter(&run);
                     for _ in 0..10 {
                         let _s = span(|| "xsharded".into());
                         decision("xshard", || "on another thread".into());
@@ -2920,11 +2920,12 @@ pub mod tests {
         }
         // Another thread, stopped inside a span with a statement running, while this one dumps.
         let (opened, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
-        let run = run_own();
+        // The test's run with its context (`job_run`: the switch `set` bound), as a job carries it.
+        let run = job_run();
         let holder = std::thread::Builder::new()
             .name("holder".into())
             .spawn(move || {
-                let _run = InRun::enter(&run, true);
+                let _run = InRun::enter(&run);
                 let _held = span(|| "held open".into());
                 statement(Some("SELECT 42".into()));
                 opened.0.send(()).unwrap();

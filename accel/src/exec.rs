@@ -1396,6 +1396,9 @@ impl Executor {
                         let run = rerail_context::job_run();
                         rerail_context::cores_spawn_fifo(move || {
                             let _run = rerail_context::enter(run);
+                            // Moved in after the run is entered, so they drop before it is left: the last claims
+                            // drop their kernels' buffers into the machine's pool (decision 0442).
+                            let (claims, backend) = (claims, backend);
                             as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
                         });
                     }

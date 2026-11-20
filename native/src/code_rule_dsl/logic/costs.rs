@@ -461,11 +461,15 @@ const TRAINING_THREADS: usize = 2;
 /// phases once `stop` says so (a run began, under upkeep): whether it was.
 #[cfg(target_os = "macos")]
 fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool, stop: &(dyn Fn() -> bool + Sync)) -> bool {
+        // Its threads hold the caller's object, as the engine's threads do (decision 0442): the model is the machine's.
+        let starter = crate::code_rule_dsl::logic::profile::shared_here();
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(TRAINING_THREADS)
             .thread_name(|i| format!("rerail-cost-model-{i}"))
             .start_handler(move |_| {
                 rerail_prof::code_rule_dsl::logic::profile::engine_thread();
+                // Held for the thread's life: the pool's threads end with it.
+                std::mem::forget(rerail_prof::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&starter)));
                 if upkeep {
                     rerail_accel::upkeep::lower_this_thread();
                 } else {

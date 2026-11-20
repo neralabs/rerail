@@ -384,7 +384,7 @@ mod tests {
         let mut segments = writer.seal();
         let files = segments.files().len();
         assert!(files <= 6, "expected at most 6 segments for 32 small entries, got {files}");
-        segments.write_back().unwrap();
+        segments.write_back(rerail_blocks::block::Flush::None).unwrap();
         for value in 0..32u64 {
             assert_eq!(segments.entry(value as usize).bytes(), value.to_le_bytes());
         }

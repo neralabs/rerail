@@ -4098,7 +4098,7 @@ tests, `read_derived`/`rows_of` (tests and outputs) and the session deltas.
 - **Record**: done (2026-11-17). What was still to do is 0353's list of copies, each marked `copy (0353 step N)` in
   the code, and is followed there.
 
-### Q155. (Q82 on Typing-support) Relations declare their shapes; plans come from them (0361)
+### Q155. (Q82 on Typing-support) (done) Relations declare their shapes; plans come from them (0361)
 
 The user (2026-11-17): a directive giving relations enough data in the `.rr` files for good default shapes, so runs
 pay for planning only in exceptional circumstances. Designed with the user in 0361 (`.layout` lines; classes with
@@ -4110,8 +4110,11 @@ Build steps 1-7 in 0361. Step 7's running aggregate is the `rr_agg56` planner fi
 - **State** (2026-11-20): step 6 built. The probes' checks (a fan-out or key a probe is bounded by, against the
   executors' counts; a broken fact the run's, planned from statistics after) are cost-classifier-metal-rf's
   (merged here; they replace this branch's 2b9841b58b). The key a derived relation declares is checked where its
-  rows are written (39c6f43cea, ported onto theirs; Q299). Left: the corpus0 cold run, to confirm 463 findings
-  d067ec2ebf6f and no fact broken; then this item is done.
+  rows are written (39c6f43cea, ported onto theirs; Q299).
+- **Record**: done (2026-11-20). corpus0 x B-now cold: 463 findings, no fact broken, once core.rr's false
+  `doc key(path)` (a guest's path is its host's) was dropped; the writes' check found it (0361, "The writes' check at
+  scale"). The same runs found two jobs reading machine state outside any run (the cost model's training pool, and
+  `begin_as`'s claims dropped after their job left its run): both fixed.
 
 ### Q156. (Q88 on Typing-support; Q83 on phased-facts at 77a9d64fc) Exports held where they lie (0325)
 
