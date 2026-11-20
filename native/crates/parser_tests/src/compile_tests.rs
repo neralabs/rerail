@@ -429,11 +429,13 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
     assert!(compared > 0 && rejected > 0);
 }
 
-/// All of `json.bitlex` as generated MSL: one kernel, a few lines per instruction (it was 0.7 to
-/// 1.1 MB of round kernels, each recomputing what came before it, and took Metal minutes).
+/// All of `json.bitlex` as generated UKL: one kernel, a few lines per instruction (it was 0.7 to
+/// 1.1 MB of round kernels, each recomputing what came before it, and took Metal minutes). The lines
+/// counted are those generated for the program, after the head every source shares
+/// (`block_program::head`: the carries, the sinks and the interpreter's helpers, 0440 step C).
 #[test]
 #[cfg(target_os = "macos")]
-fn json_msl_is_one_kernel() {
+fn json_ukl_is_one_kernel() {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
@@ -449,9 +451,10 @@ fn json_msl_is_one_kernel() {
     let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     for width in LaneWidth::ALL {
         for strategy in ClassStrategy::ALL {
-            let msl = generate_with(&native, width, strategy);
-            assert_eq!(msl.matches("kernel void ").count(), 1);
-            let lines = msl.lines().count();
+            let ukl = generate_with(&native, width, strategy);
+            assert_eq!(ukl.matches("DEFINE_KERNEL2(").count(), 1);
+            let generated = ukl.strip_prefix(&metal_program_backend::block_program::head(width)).expect("a source starts with the shared head");
+            let lines = generated.lines().count();
             // Counted on the form generated: `Planes` writes each class out as the planes' logic.
             let insts = match strategy {
                 ClassStrategy::Lookup => native.insts.len(),

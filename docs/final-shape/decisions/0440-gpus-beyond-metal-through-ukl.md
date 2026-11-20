@@ -1299,6 +1299,34 @@ and cached under (`format!("{name}.uglykl")` in accel's other-device path, the t
 paths), so a search for UKL finds every one and none is taken for another language's. The last file that kept the
 old suffix, `gpu/src/library_tests.ukl`, is renamed.
 
+**D: the preprocessor's words in UKL, and the last Metal launch path gone (2026-11-19).**
+
+- **`clif_ukl`** (was `clif_msl`) prints the C preprocessor's compiled words (`native_cpu_pp::ukl_source`) as UKL's C:
+  C types and casts, the library's bit counts, `ukl_min`/`ukl_max`, and one kernel, `pp_batch`, by `DEFINE_KERNEL2`.
+  Its functions are `UKL_CALLED` (the compiler inlines as it chooses; `UKL_FUNCTION` is MLDB's shims' own, a
+  versioned macro). The words read and write their arena at several widths, so every access is a byte or an
+  aligned 64-bit word: the library's new `ukl_ldw_*` and `ukl_stw_*` (`ukl/memory.h`), where MSL had its aliasing
+  typedefs and direct accesses. The library has `ukl_umulhi64` and `ukl_reverse32`/`64` too, each tested
+  (`word_stores_at_unaligned_addresses`, `bits_within_words`) on Metal, OpenCL, the CPU and CUDA on a GB10.
+  `Shape`'s labelless form is `Shape::c`.
+- **`pp_on`** launches it through the lane on the process's device. A device whose buffers have no address
+  (OpenCL 1.2) gets a base of its own: the words read every pointer as an offset from the arena's base.
+  `the_device_words_are_the_interpreters` and `the_device_rungs_run_a_tu_again_past_its_room` pass on Metal, OpenCL
+  and the CPU's backend.
+- **Metal's checked encoder is gone** (`CheckedComputeEncoder`, `commit_checked`, `wait_checked`, the runtime's
+  `pipeline_named*`, accel's `pipeline`, `pipeline_fixed`, `ready`, `ready_behind`): every launch is a lane
+  command's. The launch guards (`gpu_launch_guard_counts_all_dispatch_apis_and_refuses_submission`,
+  `an_over_budget_command_does_not_run_its_allowed_prefix`) launch UKL kernels through it on all three. The
+  kernel store counts a kernel made on any backend in `made_here`, which `pipelines_compiled_here` reads; it had
+  counted only the Metal pipelines nothing asked for any more. The pattern passes ask `ready_function`, not
+  Metal's `ready`.
+- **Found on the way:** two `parser_tests` were red. `json_msl_is_one_kernel` (now `json_ukl_is_one_kernel`)
+  counted `kernel void` in UKL; it counts `DEFINE_KERNEL2(`, and its line budget is over what is generated after
+  the head every source shares (`block_program::head`, since step C the whole of `block_common.uglykl`).
+  `every_step_on_metal_equals_the_interpreter` compared a token's last on files tier 1 refuses, where 0411's
+  gap rule and Metal's extract need not agree (its R5): it excuses the gap lasts there, as `ladder::tier1_agrees`
+  does on the CPU. The crate's 86 pass on Metal.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

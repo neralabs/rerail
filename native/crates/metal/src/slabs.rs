@@ -62,14 +62,14 @@ pub fn aligned(length: usize) -> usize {
 /// A document as the device reads it: its first byte in the batch's chunk block (`at`, decision 0289 §4), and its
 /// parts as byte offsets from there, so a copy into another block changes `at` alone. It is the view the reads
 /// written once take (`rerail_clif::view::TapeView`, decision 0310), one definition for the device, the JIT and the
-/// tape crate, and its MSL is written from it (`msl`), with every field's offset asserted. `node_base` is the
+/// tape crate, and its UKL struct is written from it (`ukl`), with every field's offset asserted. `node_base` is the
 /// document's first node in a batch's numbering, set by the batch's document table (`DocTable`). The tape is read
 /// where it lies, format 15's columns or format 16's arrays (decision 0293): nothing per node is derived beside it.
 pub use rerail_clif::view::TapeView as DocView;
 const _: () = assert!(std::mem::size_of::<DocView>() == 120);
 
-/// The MSL of `DocView`, for the kernels that read documents in place (`device_tape.h`).
-pub fn msl() -> String {
+/// The UKL struct of `DocView`, for the kernels that read documents in place (`device_tape.h`).
+pub fn ukl() -> String {
     rerail_clif::view::ukl()
 }
 

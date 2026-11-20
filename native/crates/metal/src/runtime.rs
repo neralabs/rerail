@@ -1,9 +1,5 @@
 use crate::Error;
-#[allow(unused_imports)]
-use crate::launch::{CheckedComputeEncoder, commit_checked, wait_checked};
-use metal::{
-    Buffer, ComputePipelineState, Device, MTLResourceOptions,
-};
+use metal::{Buffer, Device, MTLResourceOptions};
 use std::mem::size_of_val;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -752,57 +748,16 @@ pub fn drop_pipelines() {
     }
 }
 
-pub fn pipeline_named(source: &str, name: &str) -> Result<ComputePipelineState, Error> {
-    pipeline_named_constant(source, name, None)
-}
-
-/// [`pipeline_named`] of an interpreter's fixed source (the same for every rule set): recorded for the kernels the
-/// engine ships compiled (`rerail_accel::gpu::kernels::pipeline_fixed`, decision 0395).
-pub fn pipeline_named_fixed(source: &str, name: &str, constant: Option<u32>) -> Result<ComputePipelineState, Error> {
-    crate::device()?;
-    Ok(rerail_accel::gpu::kernels::pipeline_fixed(source, name, constant))
-}
-
-/// `source`'s pipeline `name` when a form of it is at hand (made by this process, or archived); otherwise `None`
-/// at once, and its compile behind the caller or left to maintenance (`rerail_accel::gpu::kernels::ready_behind`):
-/// a caller with another form of the work (a pipeline compiled before, the interpreter) runs that meanwhile instead
-/// of waiting on the compiler (decision 0012).
-pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> {
-    crate::device().ok()?;
-    rerail_accel::gpu::kernels::ready_behind(source, name, None)
-}
-
-/// `source`'s pipeline `name` (with `constant` at function constant 0), compiled on this thread unless this
-/// process or the store has it (decision 0395). A kernel that does not compile is fatal.
-pub fn pipeline_named_constant(
-    source: &str,
-    name: &str,
-    constant: Option<u32>,
-) -> Result<ComputePipelineState, Error> {
-    crate::device()?;
-    #[cfg(any(test, feature = "test-hooks"))]
-    let before = rerail_accel::gpu::kernels::made_here();
-    let pipeline = rerail_accel::gpu::kernels::pipeline(source, name, constant);
-    #[cfg(any(test, feature = "test-hooks"))]
-    COMPILED_HERE.set(COMPILED_HERE.get() + (rerail_accel::gpu::kernels::made_here() - before) as usize);
-    Ok(pipeline)
-}
-
-#[cfg(any(test, feature = "test-hooks"))]
-thread_local! {
-    /// Pipelines this thread compiled (the process's cache is shared with every other test's).
-    static COMPILED_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn pipeline_cache_len() -> usize {
     rerail_accel::gpu::kernels::held()
 }
 
-/// The pipelines this thread has compiled, not found in the cache: a test's own, whatever other tests compile.
+/// The kernels this thread has made, not found in the process's memory (on any backend: `rerail_accel`'s
+/// `made_here`): a test's own, whatever other tests make.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn pipelines_compiled_here() -> usize {
-    COMPILED_HERE.get()
+    rerail_accel::gpu::kernels::made_here() as usize
 }
 
 #[cfg(test)]

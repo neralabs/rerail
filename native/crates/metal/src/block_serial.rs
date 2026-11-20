@@ -936,7 +936,7 @@ fn carried_serial(at: usize, inst: &BlockInst, out: &mut String) {
 static SOURCES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, (std::sync::Arc<String>, usize, usize)>>> = std::sync::LazyLock::new(Default::default);
 
 /// A source's kernels by its key (`serial_source`) and name: found without hashing the source
-/// again, as `pipeline_named` does (twelve kernels a pass, its source near a megabyte).
+/// again, as `lane::kernel` does (twelve kernels a pass, its source near a megabyte).
 pub(crate) static KERNELS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(u64, &'static str), lane::Kernel>>> = std::sync::LazyLock::new(Default::default);
 
 /// Sources generated and kernels compiled by this process's serial runs: a benchmark reads it

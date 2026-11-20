@@ -260,7 +260,7 @@ static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|
 fn prefix(defines: &str) -> String {
     format!(
         "{defines}{}{}{}",
-        crate::code_rule_dsl::residency::slabs::msl(),
+        crate::code_rule_dsl::residency::slabs::ukl(),
         "#include <ukl/reads/tape_z.h>\n",
         include_str!("device_tape.h")
     )
@@ -281,7 +281,7 @@ pub(super) static VIEW_PIECES: std::sync::LazyLock<[String; 2]> = std::sync::Laz
     ["#include <ukl/reads/tape.h>\n", "#include <ukl/reads/tape_z.h>\n"].map(|reads| {
         format!(
             "{}UKL_CONSTANT_U32(tape_format)\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
-            crate::code_rule_dsl::residency::slabs::msl(),
+            crate::code_rule_dsl::residency::slabs::ukl(),
             std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
             reads,
             include_str!("device_tape.h")

@@ -43,8 +43,8 @@ static INTERPRETER: std::sync::LazyLock<[String; 3]> =
     std::sync::LazyLock::new(|| LaneWidth::ALL.map(|w| format!("{}{}", head(w), include_str!("block_program.uglykl"))));
 
 /// A source's head at lane width `width`: its word (`BW`, `BM`), how a poll reads
-/// (`poll_rmw`), and the shared code.
-fn head(width: LaneWidth) -> String {
+/// (`poll_rmw`), and the shared code. Every source starts with it, the interpreter's and each generated one.
+pub fn head(width: LaneWidth) -> String {
     format!("#define BW {}\n#define BM {}\n#define BLOCK_POLL_RMW {}\n{COMMON}\n", width.bytes(), width.word(), u32::from(poll_rmw()))
 }
 
@@ -234,7 +234,7 @@ pub fn run_split(
 
 /// Whether generated UKL's pipeline for `programs` at `width` (classes by lookups) is compiled; when it is not, its
 /// compile starts on a thread of its own and this is false at once: the caller runs the batch on the interpreter's
-/// pipeline (compiled once for every program) meanwhile, never waiting on the compiler (`runtime::pipeline_ready`).
+/// pipeline (compiled once for every program) meanwhile, never waiting on the compiler (`kernels::ready_behind_function`).
 pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
     ready().is_ok() && rerail_accel::gpu::kernels::ready_behind_function(&generate_forms(programs, width), "tempo_batch", None).is_some()
 }

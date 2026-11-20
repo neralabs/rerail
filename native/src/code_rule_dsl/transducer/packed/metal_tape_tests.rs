@@ -84,7 +84,7 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     assert_eq!(tapes.iter().map(TapeDoc::transducer_len).sum::<usize>(), table.nodes);
     let node_doc = table.views.iter().enumerate().flat_map(|(doc, view)| std::iter::repeat_n(doc as u32, view.nodes as usize)).collect::<Vec<_>>();
     let shared = rerail_gpu::shared::get().expect("the process's device");
-    let source = format!("{}{TAPE}{KERNEL}", slabs::msl());
+    let source = format!("{}{TAPE}{KERNEL}", slabs::ukl());
     // The same source for every backend this machine has: the views are portable UKL.
     let others = [
         rerail_gpu::compute_kernel_cpu::CpuDevice::system_default().map(rerail_gpu::device::Device::Cpu),

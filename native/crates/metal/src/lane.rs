@@ -4,7 +4,7 @@
 //!
 //! A command holds its launches until it is committed: each is charged to the evaluation's budget when it is asked
 //! for (a launch past the budget is not encoded), and a command whose evaluation is past its budget at the commit
-//! runs none of them. That is Metal's rule (`commit_checked`), kept on backends whose queue starts a launch as it is
+//! runs none of them: the rule Metal's command buffers kept, kept on backends whose queue starts a launch as it is
 //! enqueued. A kernel's arguments are bound by their names in its rows (`DEFINE_KERNEL2`).
 //!
 //! Kernels come from the engine's kernel store (`rerail_accel::gpu::kernels::function`): on Metal its pipelines
