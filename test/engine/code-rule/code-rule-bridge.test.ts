@@ -4902,6 +4902,26 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(recorded()).toEqual([[[repositoryPath(root, join(worktree, "src", "a.py"))], "log", "repository"]]);
   });
 
+  // The walk that leaves the change to the walk after the long command keeps the call that made it for that worktree:
+  // the long command runs elsewhere, so only that call can claim the change there.
+  it("steers the session, once a command of it running elsewhere ends, on its call's shell write in another worktree meanwhile", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const recorded = () => auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode, batch.owner]);
+    await bridge.begin("shell-long", "Bash", { command: "./long.sh" }, undefined, root);
+    await bridge.begin("shell-w", "Bash", { command: "./w.sh" }, undefined, worktree);
+    await writeFile(join(worktree, "src", "a.py"), "old\nviolation\nother\n");
+    await bridge.finish("shell-w");
+    await bridge.settleWorktreeWalk();
+    expect(recorded()).toEqual([]);
+    await bridge.finish("shell-long");
+    await bridge.settleWorktreeWalk();
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(recorded()).toEqual([[[repositoryPath(root, join(worktree, "src", "a.py"))], undefined, undefined]]);
+  });
+
   // A read that gave up on a path (one gone as it looked, perhaps moved) saw none of what was written there: the call
   // that wrote it claims it at the read that tries again.
   it("steers the session on its call's shell write in another worktree that the walk at its result gave up on", async () => {

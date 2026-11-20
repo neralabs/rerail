@@ -3048,8 +3048,7 @@ export class CodeRuleBridge {
       if (this.#abandoned(discovery)) return;
       await this.#enqueue(async () => {
         if (this.#abandoned(discovery)) return;
-        this.#takeSnapshots(discovery, take);
-        await this.#applyWalk(discovery, take.walk, take.scan);
+        await this.#applyWalk(discovery, this.#takeSnapshots(discovery, take), take.scan);
       });
     } catch (error) {
       const gaps = await this.#failedWalkGaps(error);
@@ -3303,16 +3302,22 @@ export class CodeRuleBridge {
   /**
    * Moves the session's view of each worktree the walk read to the walk's snapshot. A source a tool call of the session
    * touched while the walk ran is not the walk's to answer for, nor one a shell command of it may still be writing
-   * (`#toolChanged`): it keeps what the session saw of it before (`#leaveToNextWalk`). So does one the take leaves to the
-   * next walk (`WorktreeTake.views`).
+   * (`#toolChanges`): it keeps what the session saw of it before (`#leaveToNextWalk`). So does one the take leaves to the
+   * next walk (`WorktreeTake.views`). Returns the walk to apply: one that answers for no call in a worktree where it left
+   * a source, as the call that changed it is the one that may claim it at the next walk (`#finishWorktreeWalk`).
    */
-  #takeSnapshots(discovery: SourceDiscovery, take: WorktreeTake): void {
+  #takeSnapshots(discovery: SourceDiscovery, take: WorktreeTake): WalkStart {
     for (const [worktree, snapshot] of take.snapshots) if (discovery.worktrees.roots.has(worktree)) this.#worktreeView.take(worktree, snapshot);
     const toolChanged = this.#toolChanges(discovery, take.walk);
+    const left = new Set(take.views.keys());
     for (const path of new Set([...take.walk.previous.keys(), ...take.scan.sources.keys()])) {
-      if (toolChanged(path, take.scan.sources.get(path))) this.#leaveToNextWalk(discovery, take.walk, path);
+      if (!toolChanged(path, take.scan.sources.get(path))) continue;
+      this.#leaveToNextWalk(discovery, take.walk, path);
+      left.add(path);
     }
     for (const [path, before] of take.views) this.#keepToolView(path, before);
+    const holding = new Set([...left].map(path => rootHolding(take.walk.worktrees, path)));
+    return holding.size === 0 ? take.walk : { ...take.walk, readFrom: new Map([...take.walk.readFrom].filter(([worktree]) => !holding.has(worktree))) };
   }
 
   /**
