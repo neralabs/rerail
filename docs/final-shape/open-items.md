@@ -3035,7 +3035,7 @@ and both in a `rr_in_annotation_0_*` relation.
 
   It persists on the tree with every branch merged (survivors in place, scalar sharing, exports in memory;
   2026-11-08). One session over steps 01–20 matches a full run until step 05. From step 05 on, `call_open` has 2
-  extra rows (`l2055_lazy_result/tests/test_lazy_result_bugs.py:1067`), unchanged through step 20. Survivors in
+  extra rows (one call in a test of the lazy-result package), unchanged through step 20. Survivors in
   place is not the cause, because the departure is older than that spike. On the merged tree, the row is
   `(c, b) = (…6151, …5048)` with `e = …6154`, and the rule now reads `fl684_ext_base_up__old(c, e),
   pv__del(e, 158, b), !special_base__old(e)`. Every input row is present: `ext_base_up__old(c, e)`,
@@ -3336,20 +3336,18 @@ or an enum. `data_layer_testing/` holds the first two; `test-budget` reads it. T
 
 **Measured (2026-11-09), `test-budget`'s scope** (`conform/`, `data_layer_testing/`, the root's files; 1,601
 files): 1,127 of 1,143 exact, total 13,585; 262 s user + 4.6 s sys, load 90–130. The four files where the rules and
-the model differ read an enum defined outside the scope (`MatchProducerFamily` in `l1470_matching_contracts/`,
-`BranchTipMaterialization` and two more in `data_layer/`); each is reported open and counted as 1.
+the model differ read an enum defined outside the scope (one in the matching contracts package, three in
+another package); each is reported open and counted as 1.
 
 **Beyond the model (2026-11-09).** Lists a function builds by `append`/`extend`/`+=` under `for` loops, helpers
 with several returns (the largest), function-local names, and `range` bounds given as `len(x)`.
-`test_speculative_publication_scenarios.py` (pytest 66, model 13) and `test_branches.py` (18, model 8) are now
+The publication-scenario test (pytest 66, model 13) and a branches test (18, model 8) are now
 exact. The same scope run with them: 1,129 of 1,143 exact, total 13,648; 208 s user + 4.2 s sys, load 20–60; the
-only files below the model are the four enum files above. A list built by introspection (`test_phase1_case_matrix.py`, 819) has no length; it stays in
+only files below the model are the four enum files above. A list built by introspection (the case-matrix test, 819) has no length; it stays in
 `collect_disabled`.
 
 **The enums need only their documents (2026-11-09).** A scoped run of the four files, plus each enum's re-export
-chain (`data_layer/matching.py` → `l5250_matching/__init__.py` → `l1470_matching_contracts/graph_producer_models.py`;
-`data_layer/versioned_schema.py` → `l7000_versioned_schema/compatibility.py` → `…/versioned_schema.py`;
-`l1500_llm/delegation_consent.py`), counts all four exactly (22, 12, 25, 40): no rule change.
+chain, counts all four exactly (22, 12, 25, 40): no rule change.
 
 **Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Through the `values` phase
 (O-names-cost) the four enum files count exactly on a 212-file root; over the whole workspace that waits on the
@@ -3424,7 +3422,7 @@ the wrapper's, in bytes, not the engine's.)
   files, their conftests, each enum's re-export chain (19 files), and `data_layer_testing/` and the root's files
   (`pcE.rr`'s scope). `struct` and `values` run over all 212; `pytest-collect` reads `values__len`. All four exact
   (22, 12, 25, 40), none open. Cold 25.0 s CPU (318 MB peak RSS); phases reused 13.9 s; with the per-file memo on,
-  19.4 s then 5.6 s. `test_fts_versioned_isolation.py`'s 12 needs `data_layer_testing`: its `TestFTSBranchIsolation`
+  19.4 s then 5.6 s. A versioned full-text test's 12 needs `data_layer_testing`: its test class
   is replaced by a function (`@requires_capabilities`, `pc_replaced`); without the decorator's document the class
   counts 21 more (its fixture's 7 scenarios, now read through `values`, times three tests).
 - What a cold phase spends, measured on samples (237, 591 and 2,063 files), and fixed (2026-11-09; outputs

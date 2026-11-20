@@ -71,7 +71,7 @@ Legend:
 | `demand.rs`, `file_guard.rs` | 522 | Demand propagation and file guards | Mixed | — | Demand-to-the-transducer is **S** (it becomes the demand relation). In-file guards are **T** |
 | `parse_facts.rs`, `parse_export.rs`, `format_facts.rs` | about 430+ | Parse and format facts | Yes | — | **T+** (sub-document switch, extension 7) |
 | `planner_stats.rs`, `physical.rs`, `job.rs`, `shared_job.rs` | 693 | Statistics read, physical plan, job batching, sharing | No; planning | Superseded by N1562 `query/plan/` (workstream scan) | **S**, taken from N1562 instead |
-| `sql/frames*`, `sql/emit*`, `sql/fused`, `sql/large`, `sql/exec.rs`, `sql/lower.rs`, `sql/lower/` | about 18k | The frame/stage set-composition executor (The facts-engine stream's base) | Yes | Retired by its author at about 3x native. It encodes an interpreter in SQL (D73) | **D** |
+| `sql/frames*`, `sql/emit*`, `sql/fused`, `sql/large`, `sql/exec.rs`, `sql/lower.rs`, `sql/lower/` | about 18k | The frame/stage set-composition executor (the facts-engine stream's base) | Yes | Retired by its author at about 3x native. It encodes an interpreter in SQL (D73) | **D** |
 | `sql/nodes.rs` | 1,164 | `node` vtab, one row per tape node | Yes | Per-node rows cost 110 ns/node of SQL machinery (spike topic 19). The old callback engine took 1,141 s against 10 s native | **D** as an execution path. A narrow node relation survives only for the pure-SQL fallback (an address-based TVF in the style of `nera_kids`, topic 8) |
 | `sql/terminals/` | 2,571 | Batched native terminal matches behind a vtab | Yes | Works; one xFilter per batch | **T**. Merge into the transducer vtab boundary |
 | `sql/nearest.rs`, `sql/recursion.rs`, `sql/texts.rs`, `sql/shapes.rs`, `sql/skip.rs`, `sql/scan.rs` | about 2.6k | Nearest enclosing ancestor, recursion, text access, shape choice, skip | Yes | — | **T** (nearest is **T+**, extension 4). Shape choice is **S** (planner) |
@@ -103,7 +103,7 @@ Legend:
 | `query/plan/` (`mod`, `identity`, `scope`, `grouping`, `semantics`, `utility`) | 1,396 | Semantic plan identities, exact candidate-scope identities, grouping by identical scope, utility dedup by semantic identity | No; planning | **S**. Keep as `engine/plan/`. Utility dedup now dedups transducer sub-programs |
 | `transducer/sql_backend.rs` | 2,903 | The `rerail_matches` vtab | Boundary | **Keep, reshaped.** Use narrow typed outputs per section 4 instead of one 35-column union. Report estimated rows from statistics, not a constant 100,000. Add demand through `sqlite3_vtab_in` |
 
-### 2.4 the facts-engine stream's branches
+### 2.4 The facts-engine stream's branches
 
 | Item | Lines | Verdict |
 |---|---|---|

@@ -691,17 +691,17 @@ fn regexes_become_exact_globs() {
         (r"\basyncio\s*\.\s*to_thread$", Text::Name, Some(&["*.asyncio.to_thread", "asyncio.to_thread"])),
         (r"^(?:materialize|assert_result|.*_post_op)$", Text::Name, Some(&["*_post_op", "assert_result", "materialize"])),
         (r"(?:^|/)tests(?:/|$)", Text::Path, Some(&["**/tests", "**/tests/**"])),
-        (r"^(?:api/)?impl/common/l2070_server_plan(?:/|$)", Text::Path, None),
-        (r"(?:^|/)l2070_batching/(?:.*/)?executor\.py$", Text::Path, None),
-        (r"(?:^|/)l9750_graphql/", Text::Path, None),
+        (r"^(?:api/)?src/core/query_plan(?:/|$)", Text::Path, None),
+        (r"(?:^|/)batching/(?:.*/)?executor\.py$", Text::Path, None),
+        (r"(?:^|/)graphql/", Text::Path, None),
         (r"(?i)cursor|^(?:db|conn)$", Text::Name, None),
         (r"^(?:ab|c)+$", Text::Name, Some(&[])),
     ];
     let samples = [
         "a_b", "_ab", "ab", "apply_x_effect", "apply__effect", "_my_cache_x", "cache", "PyResult", "Pyresult", "Py", "_Async", "__Lazy_x", "Lazy",
-        "materialize", "x_post_op", "_post_op", "tests", "a/tests", "a/tests/b.py", "tests/b", "attests/b", "a/b/tests/c/d.py", "impl/common/l2070_server_plan",
-        "api/impl/common/l2070_server_plan/x.py", "impl/common/l2070_server_planx", "l2070_batching/executor.py", "a/l2070_batching/x/y/executor.py",
-        "xl2070_batching/executor.py", "l9750_graphql/a.py", "a/l9750_graphql/b/c.py", "l9750_graphqlx/a.py", "raw_CURSOR", "db", "dbx", "conn", "asyncio.to_thread", "x.asyncio.to_thread", "xasyncio.to_thread",
+        "materialize", "x_post_op", "_post_op", "tests", "a/tests", "a/tests/b.py", "tests/b", "attests/b", "a/b/tests/c/d.py", "src/core/query_plan",
+        "api/src/core/query_plan/x.py", "src/core/query_planx", "batching/executor.py", "a/batching/x/y/executor.py",
+        "xbatching/executor.py", "graphql/a.py", "a/graphql/b/c.py", "graphqlx/a.py", "raw_CURSOR", "db", "dbx", "conn", "asyncio.to_thread", "x.asyncio.to_thread", "xasyncio.to_thread",
     ];
     for (re, text, expect) in cases {
         let got = globs(&parse(re), text);

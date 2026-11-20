@@ -10,7 +10,7 @@ Scripts: `../experiments/m1/` (removed; at 7efcac9c67) (recordings not checked i
 - **Driver:** unchanged `conformance/data-layer/suite.ts`. The recording is `all-60-recording.json` (pinned commit `2b1504ad`, 9,021 files, 137.9 MB), filtered to one rule each. I used the Pulling-it-all-together policies, 4 native workers, and no `--cold-only`.
 - **Command (from `scratchpad/m1/run_one.sh`):**
   `RERAIL_ENGINE_PATH=<addon> RERAIL_NATIVE_WORKERS=4 /usr/bin/time -lp -o resource.txt node --import tsx conformance/data-layer/suite.ts --recording recordings/<rule>.json --output parity.json --policies packs/data-layer/candidates/rules --progress`
-- **Columns:** "Cold" is the driver's measurement for a fresh process. "Ingest" is the per-file applies (parse, SQL anchor selection, AST matching). "Global" is the repository-wide relational apply. "Edit" is the warm one-file edit of `impl/common/l2200_sql_dialect/sql_connection.py`.
+- **Columns:** "Cold" is the driver's measurement for a fresh process. "Ingest" is the per-file applies (parse, SQL anchor selection, AST matching). "Global" is the repository-wide relational apply. "Edit" is the warm one-file edit of the SQL dialect package's connection module.
 
 ## Per-rule results (run -1 / run -2)
 Load average at the start of each run: run -1 was 35–62 on 18 cores; run -2 was 8–48, and mostly 8–17.

@@ -605,7 +605,7 @@ relations a run used, 2.5 s of a 3.25 s wait. SQLite rewrites a whole record, bl
 
 ### The corpus had grown
 
-Each edit of the bench appended an `x_edit_probe` line to `connection_helpers.py`: 259 of them on a 787-line file.
+Each edit of the bench appended an `x_edit_probe` line to the same helper module: 259 of them on a 787-line file.
 Each one added about 300 rows to the module-level `pyi` joins, so cold runs had reached 3.09 T and edits 310–420 G.
 The file is now its original lines plus one probe line, whose value an edit changes (`edit1.sh`).
 

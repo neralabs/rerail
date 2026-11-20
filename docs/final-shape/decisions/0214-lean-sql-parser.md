@@ -37,7 +37,7 @@ refused, and tree-sitter reads it with its own recovery.
 
 ## Prior work consulted
 
-- **SQL index prototype indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds 3,353
+- **SQL index prototype indexes:** the prototype's sample corpus holds 3,353
   SQL files (PostgreSQL's tests and contrib, sqlfluff's dialect fixtures, TimescaleDB). The oracle's
   set is 600 of them.
 - **0237 (lean Markdown), 0200 (lean CSS), 0199, 0198, 0196, 0195, 0193, 0163.** **Agrees and

@@ -79,9 +79,9 @@ live session would otherwise find its std's files changed under it.
 
 ## The fork
 
-The fork is a patched checkout of [makepad/relax](https://github.com/makepad/relax), not public, branch
-`rerail`. `rerail.patch` is `git diff` from its first commit (the std items) to its last;
-`std.patch` is the first commit alone. To change the fork: commit on `rerail`, push, regenerate
+The patches come from a private fork of [makepad/relax](https://github.com/makepad/relax), on its branch
+`rerail`; the build script clones the public repository and applies them. `rerail.patch` is `git diff` from the fork's first commit (the std items) to its last;
+`std.patch` is the first commit alone. To change the fork: commit on `rerail`, push to the fork, regenerate
 the patch (`git diff <std commit> rerail > scripts/dev/relax/rerail.patch`), run the build
 script, and commit the patch here.
 

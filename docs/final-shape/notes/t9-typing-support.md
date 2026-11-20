@@ -215,7 +215,7 @@ contains material RESULTS dates "since round 4" (ingestion statistics, per-wave 
 - DP over subsets of the join literals (positive atoms and `nearest`), keeping the cheapest order per subset, with
   filters closed as early as possible; the first literal (anchor) must be an atom; with `first=` (a semi-naive delta
   or probe), only orders anchored on that atom (`:733-734`). "Bodies here have at most ten join literals" (`:719`).
-- The anchor = "SQL index prototype's rarest mandatory concrete variable (DESIGN S049–S050), generalised to joins"
+- The anchor = "[The SQL index prototype]'s rarest mandatory concrete variable (DESIGN S049–S050), generalised to joins"
   (`DE/rdl/RESULTS.md:31-32`). Greedy order was myopic: `lookup` 92 s, plan 9.7M → subset DP (`DE/rdl/RESULTS.md:64`).
 - Chosen plans round 2 (`DE/rdl/RESULTS.md:44-54`): `lookup` local anchored on `text($n,$x)`, climb, est. 3.6M;
   fallback on `modnode`, 72k; `assigns` on `field($a,"right",$r)`, 57k; `defines_fn/class` on `kind`, 43k/6.6k;

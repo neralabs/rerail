@@ -71,7 +71,7 @@ The receiver-token relation and the in-file call graph used here (`resolved_call
 
 ## 4. Findings recorded on the way
 
-- The new hasattr-async gate finding (`l2070_batching/execution_runtime.py:5978`) is genuine. It is `getattr(self._backend, "…_async", None)` split across lines, which the oracle's line regex cannot see.
+- The new hasattr-async gate finding (in the batching package's execution runtime) is genuine. It is `getattr(self._backend, "…_async", None)` split across lines, which the oracle's line regex cannot see.
 - The rule-level trigger gate (`inside: module` + regex) is evaluated once per file thanks to relation memoization. Literal sets inside a rule's regexes also give a per-file `memmem` prefilter (`GrammarMatcher::admits_source`). Literal-name clauses are therefore close to free on files that lack the names.
 - `filePath` needs at least one of `regex`/`notRegex`. An empty allowlist must emit no gate.
 

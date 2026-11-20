@@ -181,7 +181,7 @@ Anything else stays a named gap for a hand rewrite. It never guesses.
 
 - **A selective test drives the plan.** The engine starts from the few matching symbols and
   reads their postings: the value index.
-  - The AST-index spike's design index (§1 item 7) found the value index mandatory: 15.8 times
+  - The SQL index prototype's design index (§1 item 7) found the value index mandatory: 15.8 times
     faster literal seeks on SQLite.
   - Its text-candidate hierarchy (§4b) puts "exact token / any-of: vidx" first.
 - **Negation is a complement over the vocabulary,** not a per-row test.

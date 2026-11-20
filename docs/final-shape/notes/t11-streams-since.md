@@ -306,7 +306,7 @@ Rules: `ConsumerState` owns no private SQLite schema and no connection per file.
 
 **Finite kind alternatives** (`docs/performance-decisions/finite-kind-alternatives.md`):
 - Evidence: Q224 spent 1.247 CPU s and 50,792,117 VM instructions partitioning and reuniting one candidate scope over nested finite kind alternatives (`:7-9`) **M**.
-- Prior work: ast-index S066 (lines 3855–3874) kept a single SQL integer `IN` list after a bitmap alternative lost, 123 versus 110 ms. "The shared indexes contain no directly measured finite-kind Boolean folding experiment" (`:20-22`).
+- Prior work: the SQL index prototype's S066 (lines 3855–3874) kept a single SQL integer `IN` list after a bitmap alternative lost, 123 versus 110 ms. "The shared indexes contain no directly measured finite-kind Boolean folding experiment" (`:20-22`).
 - **D** (`:26-31`): recognize exact finite kind alternatives before emitting individual SQL branches. Union their kind sets, intersect any enclosing restriction, emit one filter over the original scope. Memoize utility references. Approximate or non-kind conditions stay on the conservative path. "Negation remains caller SQL and may subtract only an exact result. No scope is widened."
 - Result: 1,516 DSL tests, 42 shape tests, 2,350 originals, and 120 controls pass. The three-run median ingestion CPU on the 128-file/60-rule control fell **25.675→21.827 s (−15.0%)**; wall 33.310→24.824 s; RSS effectively unchanged (`:43-45`; journal 4146-4158) **M**. One-file SQL CPU fell 6.369→4.977 s; VM 301,856,025→259,876,714; full-scan steps 8,450,565→4,280,207 (journal 4134-4135) **M**.
 

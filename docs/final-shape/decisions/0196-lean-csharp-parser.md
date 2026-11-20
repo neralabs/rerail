@@ -28,7 +28,7 @@ refused, and tree-sitter reads it with its own recovery. There are no modes.
 
 ## Prior work consulted
 
-- **SQL index prototype indexes:** the spike's sample corpus (`ast-index-sample-corpus`) holds
+- **SQL index prototype indexes:** the prototype's sample corpus holds
   `runtime` and `PowerShell`. 820 of their files are one of the oracle's sets below.
 - **0195 (lean Java), 0193 (lean Rust), 0178 (lean ECMAScript), 0163 and 0169 (lean Python), 0181
   (their profile).** **Agrees and follows:** the same crate shape, stage 1, keyword hash, writer,
@@ -118,7 +118,7 @@ refuses goes to tree-sitter-c-sharp.
 **The oracle** (`rerail-csharp-lean`'s ignored `oracle` test) compares the parser's tape with
 tree-sitter's, line by line. Its sets:
 
-- **ast-index corpus:** 881 files of `runtime` and `PowerShell` (61 with tree-sitter errors).
+- **Prototype corpus:** 881 files of `runtime` and `PowerShell` (61 with tree-sitter errors).
 - **Stored repositories:** 640 files of 69 repositories (a local corpus, 12 a repository,
   by `tmp/corpus/extract.sh`; 23 with tree-sitter errors).
 - **Cut and edited:** 500 of those files (250 of each set), each cut at 3 places and with 3 lines
@@ -127,7 +127,7 @@ tree-sitter's, line by line. Its sets:
 
 | set | clean texts: same / differ / refused | texts with errors: as tree-sitter / differ / refused |
 |---|---|---|
-| ast-index corpus, 881 files | 795 / 0 / 25 | 0 / 0 / 61 |
+| prototype corpus, 881 files | 795 / 0 / 25 | 0 / 0 / 61 |
 | stored repositories, 640 files | 588 / 0 / 29 | 0 / 0 / 23 |
 | cut and edited (500 files) | 806 / 0 / 39 | 0 / 0 / 1,967 |
 | probes, 67 cases | 65 / 0 / 0 | 0 / 0 / 2 |

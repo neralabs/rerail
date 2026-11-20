@@ -33,7 +33,7 @@ Status: draft (2026-11-11), for review. Only the measurements and one fix (below
 
 The 20-file corpus (476 KB, 20 `.py` files), under strict mode, with the debug-profile build, the queue's cap at
 4 GB (0147), and the export demand on (0099). A cold run, then a one-line edit (an assignment appended to
-`_internal/connection_helpers.py`), then a warm run against the cold run's store.
+one of the corpus's helper modules), then a warm run against the cold run's store.
 
 | | Cold | Warm, one-line edit |
 |---|---|---|

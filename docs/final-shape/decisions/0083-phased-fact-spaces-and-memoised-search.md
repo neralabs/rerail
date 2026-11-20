@@ -17,7 +17,7 @@ Measured this week, on the 84-file data-layer corpus with typeshed (267 document
 | warm, nothing changed | | 8.0 s, 386 MB |
 | one workspace file edited | the whole fixpoint again | 24.9 s, 570 MB |
 | replay per import component, `calls_cx` (0076 §8) | 7.8 s | 53.7 s |
-| one comment added to `l1100_exceptions/exceptions.py` | 39.3 s: 41 of 133 components missed | 87.7 s |
+| one comment added to the corpus's exceptions module | 39.3 s: 41 of 133 components missed | 87.7 s |
 
 Four things cause this:
 
@@ -340,7 +340,7 @@ no edge, at 138.7 s user CPU and 625 MB. Typeshed's flows are declared (stubs), 
 A run of a1234 with typeshed has not been made yet.
 
 The dumps per call show what changed:
-- a1234 against base: one call. `l2050_transaction/tests/test_legacy_wrappers_runtime.py:116` reaches
+- a1234 against base: one call. A test of the corpus's transaction package reaches
   `_resolve_legacy_result_async` through a module's computed value. It goes from agree to unknown.
 - k3 against base: three calls in `transaction.py` go from unknown to agree. Closed-world subclasses made them open.
 

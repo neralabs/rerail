@@ -50,7 +50,7 @@ LEG_083(c) :- leg_root(f, _),
 // terminals are LazyResult/LazySeq `resolve(self)` and `resolve_async(self)`: no arguments.
 // A pathlib path's `resolve()` and a lookup such as `catalog.resolve(ref)` are not eager
 // lazy terminals. At the data layer's 2026-10-18 commit, all 18 LEG-083 findings in its own
-// files come from such calls (spikes/dfs-first and the LEG-083 port note, both removed; at 7efcac9c67).
+// files come from such calls (spikes/dfs-first (removed; at 7efcac9c67) and the LEG-083 port note (removed)).
 
 // path_class(q): the pathlib classes, by qualified name.
 .decl path_class(q: symbol)

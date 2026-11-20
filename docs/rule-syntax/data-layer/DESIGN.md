@@ -242,7 +242,7 @@ surfaces blocked). The oracle is also compared with the script.
 The set-based plan equals the script's answer on every root of every version, on one core, 8 threads and
 the GPU.
 
-What the versions show (the LEG-083 port note, with a patch for the script, both removed; at 7efcac9c67):
+What the versions show (the LEG-083 port note, with a patch for the script, both removed):
 
 - The eager test, not the search, is what is wrong today. At the October commit all 18 LEG-083 findings
   in its files are a pathlib `resolve()` or a `resolve(arg)` lookup, and none is a lazy terminal.

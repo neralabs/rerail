@@ -91,7 +91,7 @@ confirm once a parser and engine exist. None is fixed yet.
    repository. test-budget.rerail is the worked port; the other four checks are not ported yet.
 6. `.budget M by k from base` over a metric relation was dropped: a metric ratchet is a rule
    (noqa-sec-ratchet.rerail, test-budget.rerail). The coverage table's 16 `.budget … from` uses include metric ratchets.
-7. LEG-083 is wrong upstream (a patch was written and not applied; its note was removed, at 7efcac9c67):
+7. LEG-083 is wrong upstream (a patch was written and not applied; its note was removed):
    - any method named `resolve` counts as eager: all 18 findings at 2b1504 are pathlib or `resolve(arg)`
      calls;
    - one memo shared by a file's functions makes findings depend on name order;
