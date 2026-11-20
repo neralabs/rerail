@@ -256,7 +256,15 @@ async function answerCursorHook(
  */
 function transcriptStep(input: CursorHookInput, descriptor: AdapterSession, eventLoop: RerailEventLoop, storageRoot: string): () => Promise<boolean> {
   if (eventLoop.untaken === true) return async () => await transcriptCarriesText(input, descriptor, storageRoot);
-  return async () => await ingestCursorTranscript(input, descriptor, eventLoop, storageRoot);
+  return async () => await ingestCursorTranscript(input, descriptor, linkingByAnswer(eventLoop), storageRoot);
+}
+
+/**
+ * `eventLoop`, its deliveries linked with the facts of the answers that found them (`linkedByAnswer`): the steers the
+ * transcript's lines find are held for a later hook, whose own answer usually links nothing.
+ */
+function linkingByAnswer(eventLoop: RerailEventLoop): RerailEventLoop {
+  return { ingest: async event => linkedByAnswer(await eventLoop.ingest(event), answeredFacts(eventLoop)) };
 }
 
 /** Runs `work` while `lock` is kept, or as it is when there is no lock. */
