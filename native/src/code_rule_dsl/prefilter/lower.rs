@@ -1,6 +1,6 @@
 //! Candidate plans lower to SQL sets of (tape, preorder). The matcher retains capture semantics.
 //!
-//! Adapted from Pulling-it-all-together's `matcher/anchors/sql/lower.rs`. The sets read the
+//! Adapted from PIAT's `matcher/anchors/sql/lower.rs`. The sets read the
 //! content store's per-tape prefilter rows (`content_store::prefilter`); `fid` names a tape
 //! (`tape_id`) throughout, and the requested tapes are the `request_file` temp table. P decoded
 //! node properties (parents, ends, fields, spans) into SQL tables to evaluate relations, pattern

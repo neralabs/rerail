@@ -8,7 +8,7 @@ Rules:
 - Where tracks disagree, the disagreement is listed under "Contradictions", not resolved silently.
 - Decisions that belong to the user are listed under "Open decisions". Measurements that settle a question are listed under "Open measurements".
 
-Tracks: t1 PIAT spec, t2 PIAT research core, t3 PIAT costs/ledger, t4 SQL index prototype, t5 Tempo residency, t6 Tempo transducer/Metal, t7 main store/invalidation, t8 PIAT branch docs, t9 Typing-support, t10 Facts-engine, t11 DLRE/N1562/SSC since the review.
+Tracks: t1 PIAT spec, t2 PIAT research core, t3 PIAT costs/ledger, t4 SQL index prototype, t5 the predecessor's residency, t6 the predecessor's transducer/Metal, t7 main store/invalidation, t8 PIAT branch docs, t9 Typing-support, t10 Facts-engine, t11 DLRE/N1562/SSC since the review.
 
 ---
 
@@ -17,7 +17,7 @@ Tracks: t1 PIAT spec, t2 PIAT research core, t3 PIAT costs/ledger, t4 SQL index 
 These come before the nine answers, because every answer depends on them.
 
 1. **The execution unit is a batch: many documents × many program groups.** It is never one file.
-   - Tempo's execution unit was already cross-file batched: one Metal invocation covers every (file, program, root) task (t2 transducer-ir §1).
+   - The predecessor's execution unit was already cross-file batched: one Metal invocation covers every (file, program, root) task (t2 transducer-ir §1).
    - The spec defines a batch as documents × the program groups assigned to them. Tasks are (group, document, root), and dispatches cover all documents of the batch (t1 spec-fusion "what batch means").
    - Audit batches are cut by resident bytes, never by file count (t1 §11, §18).
    - The PIAT GPU producer contract: "Resident input and result capacity determine execution partitions. SQL insertion batches, publication pages, file boundaries, and exact signatures cannot determine dispatch boundaries." Also: "100× more roots/files must keep the same stage count; only true dependencies add waves" (t8 §4).
@@ -28,18 +28,18 @@ These come before the nine answers, because every answer depends on them.
    - M2: 0.26–0.40 ns per program-node at 13–17 ns per evaluation; the pass comes from 20–40× fewer evaluations (M) (t2 m2-m7).
    - SSC/DLRE: moving one operator native is not automatically a CPU win (DLRE native child 105.8 vs SQL 106.8 ms; SSC native waves ~0% whole-job) (M) (t11 S.1).
    - Shared sub-rule evaluation is the primary lever: 535 queries become one hash-consed graph, and text scanned falls from 2.59 TB to 3.1 GB (t1 §7).
-4. **Tempo's authors reached the same conclusion from the Metal side:**
+4. **The predecessor's authors reached the same conclusion from the Metal side:**
    - "The executor shape is the primary constraint. Input packing, Program lowering, continuation, and publication must conform to this shape."
    - "The measured difference is not query count or corpus size. The difference is execution shape." (t6 S6)
 5. **Completeness of an implementation is not evidence about shape** (user instruction, turn 2).
-   - Tempo's Metal executor refusing at 600 dispatches (t6 S8) is evidence about *exact SCM semantics on a path-enumerating model* (t2 transducer-ir "inherent vs implementation"; t6 S2.3). It is not evidence against Metal or against batching.
+   - The predecessor's Metal executor refusing at 600 dispatches (t6 S8) is evidence about *exact SCM semantics on a path-enumerating model* (t2 transducer-ir "inherent vs implementation"; t6 S2.3). It is not evidence against Metal or against batching.
 
 ---
 
 ## Q1. Transducers
 
 ### The IR (base)
-- **Encoding:** Tempo's 32-bit word `opcode:u8 | mode:u8<<8 | operand:u16<<16`; ≤ 65,536 words and ≤ 65,536 entries per table; tables hold data, never hidden instruction sequences (t6 S1.1).
+- **Encoding:** the predecessor's 32-bit word `opcode:u8 | mode:u8<<8 | operand:u16<<16`; ≤ 65,536 words and ≤ 65,536 entries per table; tables hold data, never hidden instruction sequences (t6 S1.1).
 - **Identity:** a canonical digest over the format, grammar, words and tables; machine code is never hashed (t6 S1.1). The spec adds SHA-256 over the normalised serialisation, which keys the plan cache (t1 spec-transducer §3).
 - **Opcodes** 0x00–0x40: tests, navigation, state, control (t6 S1.2). The spec reserves new ranges for tests, axes, calls, set stage, documents/side facts, patterns and line documents (t1 spec-transducer §2).
 - **Side programs:**
@@ -48,7 +48,7 @@ These come before the nine answers, because every answer depends on them.
   - output: #set!, #offset!, …
   
   (t6 S1.4; t1 spec-transducer §4.)
-- **Tempo's machine model:** path-enumerating DFS from roots, with an ordered capture list, cursor slots and repeat counters; FORK defers; only EMIT outputs (t2 transducer-ir §1; t6 S1.3).
+- **The predecessor's machine model:** path-enumerating DFS from roots, with an ordered capture list, cursor slots and repeat counters; FORK defers; only EMIT outputs (t2 transducer-ir §1; t6 S1.3).
 
 ### What the final shape changes (PIAT spec-transducer)
 - **Set mode.** Output is a set over terminal events, independent of path order, task order and run multiplicity. Executor freedoms follow: stop a KEY label at its first emit, prune paths whose reachable labels have all fired, lazy enumeration (t1 spec-transducer §1).
@@ -81,8 +81,8 @@ These come before the nine answers, because every answer depends on them.
   
   The same abstract work units are charged on every backend. There is no Metal → CPU fallback.
 
-### Why Tempo's Metal run failed, and why the set formulation does not
-- **Tempo's constraints** were exact tree-sitter query semantics:
+### Why the predecessor's Metal run failed, and why the set formulation does not
+- **The predecessor's constraints** were exact tree-sitter query semantics:
   - backtracking quantifiers;
   - longest match as ordered capture containment;
   - raw candidate ordinals as a public contract;
@@ -101,7 +101,7 @@ These come before the nine answers, because every answer depends on them.
   - GPU-scheduled hybrid waves: 1.2–1.6 µs per wave against 386–890 µs for a CPU round trip; a 27-wave wide fixpoint takes 1.57 ms GPU (t2 metal-enqueue).
   
   The set stage is stratified Datalog over node sets, with any axis in either direction; only unstratifiable programs are rejected (t2 metal-enqueue §3).
-- **Tempo's own grid** spike met full production volumes in 34 invocations and 40 ms (M), but it does not prove semantics (t6 S2.2; t2 transducer-ir §3).
+- **The predecessor's own grid** spike met full production volumes in 34 invocations and 40 ms (M), but it does not prove semantics (t6 S2.2; t2 transducer-ir §3).
 
 ### Fusion
 - **Normalisation** canonicalises programs and deduplicates equal digests into one program with several labels (t1 spec-fusion §4.1).
@@ -118,7 +118,7 @@ These come before the nine answers, because every answer depends on them.
 - **On exhaustion** the planner resubmits on Metal with the group split, never on the CPU (t1 spec-fusion §6.10).
 
 ### Defects and gaps to carry into the design
-- **FLAGS.** The spec copied Tempo's generic interpreter path, which never tests the required bits. The production path at `transducer.rs:2679-2682` is correct: bits named=1, extra=2, missing=4, error=8, with required/forbidden masks (t6 S1.2, S7.2; RESEARCH log 2026-10-26).
+- **FLAGS.** The spec copied the predecessor's generic interpreter path, which never tests the required bits. The production path at `transducer.rs:2679-2682` is correct: bits named=1, extra=2, missing=4, error=8, with required/forbidden masks (t6 S1.2, S7.2; RESEARCH log 2026-10-26).
 - **Current state of each codebase:**
   - **Main runs no transducer in production:** it uses the ast-grep matcher per file with a kind-presence filter (t7 T7 synthesis).
   - N1562's packed IR lowers none of TP/ASD/SAS (t2 m2-m7).
@@ -142,13 +142,13 @@ These come before the nine answers, because every answer depends on them.
   - v8 (absolute start/len): 1.24–1.59× logical and 1.47–1.90× zstd;
   - stored `par`: +2 B/node (10.25–10.84 logical);
   - interleaved layouts compress 6–21% worse;
-  - Tempo's 44 B/node `MetalNode` and ~40 B/node `TapeDoc` exist only as expansions;
+  - The predecessor's 44 B/node `MetalNode` and ~40 B/node `TapeDoc` exist only as expansions;
   - DLRE's `decoded_*` caches were 211 B/node on SQLite, 88% of the store.
 - **Derived on load, kept as resident sidecars, never stored:**
   - `par`, built by a stack pass at 4.1–5.1 ns/node (M); +32–46 MB for the gate corpora (D);
   - `cidx`, line starts, text hashes, `tid`.
   
-  (t1 §20.6; t2 tempo-residency footprint.)
+  (t1 §20.6; t2 predecessor-residency footprint.)
 - **Spike disk rules carried as constraints** (t4 §30):
   - #1: no relation stores one row per node; at most 0.25 rows/node; enforced by test;
   - #2: any node-level relation is charged against the budget;
@@ -157,7 +157,7 @@ These come before the nine answers, because every answer depends on them.
   
   The spike's own tape stored `par` and still missed 6 B at 8.66 (t2 E34). v9np drops `par` and matches v7.
 - **Index budget in the spec:** ≤ 4.1 B/node (kind 2.6 + term 1.3 + edge 0.15 + sets 0.01) (t1 spec-indexes §2.14).
-  - Tempo's Schema 12 FTS measured 2.998 B/node in total, kind 1.172 B/node (M) (t5 §14 missed-7).
+  - The predecessor's Schema 12 FTS measured 2.998 B/node in total, kind 1.172 B/node (M) (t5 §14 missed-7).
 - **What the disk budget rules out for facts.** These copies must not become a second persisted copy of the tree beside the tape:
   - The facts-engine stream's core facts on disk: `RRFACTS` 6.6 B/node, 186.4 MB (M) (t10 Q1);
   - Typing's exported `facts.sqlite`: 175 MB for 1.2M named nodes, a spike export (M) (t9 §5.2).
@@ -169,14 +169,14 @@ These come before the nine answers, because every answer depends on them.
 
 ## Q3. Residency and caching
 
-- **What Tempo has** (t5 §15 Q1–Q2):
+- **What the predecessor has** (t5 §15 Q1–Q2):
   - zstd-3 frames in a machine-wide CAS;
   - a bounded 32 MiB / 30 s decompressed cache keyed by row id;
   - per-evaluation repacking into 44 B MetalNode heap Vecs;
   - a per-call private MTLBuffer upload, rebuilt every time.
   
-  **A pinned uncompressed tape store does not exist in Tempo;** the tape cache by identity is designed, not implemented.
-- **Tempo evidence** (M) (t5 §15):
+  **A pinned uncompressed tape store does not exist in the predecessor;** the tape cache by identity is designed, not implemented.
+- **The predecessor's evidence** (M) (t5 §15):
   - first-use mapping 213.3 ms against 6.1 ms GPU;
   - buffer reuse 230.5 → 3.8 ms and 110.6 → 2.4 ms;
   - mapped no-copy warm 1.47 ms against cold 39.12 ms;
@@ -184,9 +184,9 @@ These come before the nine answers, because every answer depends on them.
   - the 32 MiB cache had 0 hits on a full scan, which reads each tape once;
   - warm re-scan: 37.6 worker-seconds decompressing against 0.003 s matching;
   - heap decompression left 3.3 GiB of malloc high-water.
-- **Correction to the PIAT reading (t5 §14):** Tempo's own conclusion for warm workspaces was **result reuse, not a bigger tape cache**.
+- **Correction to the PIAT reading (t5 §14):** the predecessor's own conclusion for warm workspaces was **result reuse, not a bigger tape cache**.
   - With result reuse, 47 warm workspaces decompressed no tape, at a peak RSS of 499 MB (M).
-  - Tempo also concluded that a process boundary is required to return allocator high-water.
+  - The predecessor also concluded that a process boundary is required to return allocator high-water.
 - **Final form (spec §20; t1 §20):**
   - at rest: zstd-3 frames;
   - resident: decompressed **directly** into anonymous-mmap 64 MiB slabs with 16 B-aligned columns, byte-identical to the at-rest blob;
@@ -198,13 +198,13 @@ These come before the nine answers, because every answer depends on them.
   - audits over budget run in residency waves;
   - per edit, the tape is encoded straight into a pinned edit slab, so there is zero upload;
   - forbidden: repacking, concatenation, heap decompression, copy on hit, re-hash, per-object mmap, small TTL caches, partial DONTNEED, mlock.
-- **Footprint** (D): CPython ≈ 99 MB, data-layer ≈ 158 MB resident (+32–46 MB `par`). **The whole gate corpus stays resident** (t2 tempo-residency).
+- **Footprint** (D): CPython ≈ 99 MB, data-layer ≈ 158 MB resident (+32–46 MB `par`). **The whole gate corpus stays resident** (t2 predecessor-residency).
 - **How the two warm mechanisms combine:**
   - result reuse (main's keys, Q6) means unchanged files need no tape at all;
   - pinned residency serves whatever executes: cold audit, a rule-set change, cross-file re-evaluation and the edit slab.
   
   Both are needed; neither replaces the other (t5 §14 missed-1; t7 T7 synthesis).
-- **Open measurements:** Q-R1 private vs shared storage (no Tempo comparison exists; t5 §15 Q2 and contradictions 3), Q-R2 ResidencySet, Q-R3 binding limit, Q-R7 pin cost per GB, and Q-R8 cold admission throughput (t1 §20.12).
+- **Open measurements:** Q-R1 private vs shared storage (no comparison of the predecessor's exists; t5 §15 Q2 and contradictions 3), Q-R2 ResidencySet, Q-R3 binding limit, Q-R7 pin cost per GB, and Q-R8 cold admission throughput (t1 §20.12).
   - Pre-touching pinned slabs (`residency.pin`) answers the first-touch evidence above.
 
 ## Q4. Fact storage
@@ -288,7 +288,7 @@ These come before the nine answers, because every answer depends on them.
   - cross-file evidence uses partitions plus a global re-answer with a per-path diff;
   - `calls` uses per-file summaries, sparse backward closure and **per-consumer stamps**: a consumer re-runs only if what it reads of the closure changed. This is a shipped read-set memo with early cutoff.
   - **Cross-file rules are excluded from tree-level result reuse** (t7 CAWS :68).
-- **Tempo:** a changed source or language fully invalidates that file's state; results are keyed by canonical source + catalog (t5 §15 Q4).
+- **The predecessor:** a changed source or language fully invalidates that file's state; results are keyed by canonical source + catalog (t5 §15 Q4).
 - **PIAT spec §21.8** (t1):
   - the dependency DAG comes from the definitions;
   - per-document facts are recomputed for the edited document;
@@ -389,13 +389,13 @@ These come before the nine answers, because every answer depends on them.
 | C1 | spec-indexes vs decision 0006 | per-node positions in SQL serve only the fallback; inside a document the transducer scans the kind column (t1 spec-indexes §2.0.5) | the positional anchor index is always built (t1 OPEN CONFLICT; memory `anchor-index-mandatory`) | postings always built, in the one content store, feeding set-stage LEAF and anchor choice; what is retired is DLRE's private copies → **D1** |
 | C2 | spec §21.8 vs facts-engine Y2 | DRed for recursive components | level witness: 80 vs 388,040 over-deleted (M) (t10 Q3) | **D3** |
 | C3 | spec §21 vs Typing / facts-engine | derived facts compiled to SQL and run in SQLite (t1 §21.1) | recursive and set strata run natively, with SQLite as the system of record and oracle; Typing's native mode beats Ascent; facts-engine left SQLite over per-statement cost (t9 §3.3, Synthesis 5; t10 Q7) | **D2** |
-| C4 | CAWS vs Tempo Metal vs facts-engine Y3 | < 1 GiB steady RSS (t7 CAWS) | Tempo Metal observed 3.09–3.59 GB (t5 contradictions 1); Y3 1.94–2.09 GB (t10 Q5) | resident tapes fit (≈ 0.1–0.2 GB); the overruns are path arenas and maintained cross-file state → **D5** |
+| C4 | CAWS vs the predecessor's Metal vs facts-engine Y3 | < 1 GiB steady RSS (t7 CAWS) | The predecessor's Metal observed 3.09–3.59 GB (t5 contradictions 1); Y3 1.94–2.09 GB (t10 Q5) | resident tapes fit (≈ 0.1–0.2 GB); the overruns are path arenas and maintained cross-file state → **D5** |
 | C5 | sql-vs-transducer ext. 9 vs spec-tooling | non-regular programs routed to CPU | every program Metal-capable; no routing (t2 sql-vs-transducer) | spec-tooling wins; resolved |
 | C6 | tape-regularity vs §20 | concatenate the columns of a batch | reference through a document table (t2 tape-regularity) | §20 wins; resolved |
 | C7 | metal-recursion vs v9np | resident `parent` | `par` not stored (t2 metal-recursion) | resident sidecar keyed by tape digest; resolved |
-| C8 | spec-transducer vs Tempo production | FLAGS generic packing | production masks (t6 S7.2) | fix the spec; resolved |
-| C9 | Tempo docs | no-copy shared over mmap (E40–42) | private + staging (grid cutover), with no recorded reason (t5 contradictions 3) | measure Q-R1; §20 defaults to shared no-copy |
-| C10 | t5 vs PIAT tempo-residency | Tempo's lesson was "result reuse" | PIAT: "bigger/pinned tape cache" | both are needed (Q3) |
+| C8 | spec-transducer vs the predecessor's production | FLAGS generic packing | production masks (t6 S7.2) | fix the spec; resolved |
+| C9 | The predecessor's docs | no-copy shared over mmap (E40–42) | private + staging (grid cutover), with no recorded reason (t5 contradictions 3) | measure Q-R1; §20 defaults to shared no-copy |
+| C10 | t5 vs PIAT predecessor-residency | The predecessor's lesson was "result reuse" | PIAT: "bigger/pinned tape cache" | both are needed (Q3) |
 | C11 | t8 | PIAT corpus DB is per process, not across restarts | the content store persists across processes (t8 §contradictions) | the one content store holds the indexes and fact caches (spec-indexes §2.0.1) |
 | C12 | t11 | SSC: hard 100-statement gate | DLRE: counts are diagnostic | the spec's gate reads CPU, wall, RSS, parity and Unknown rate; counts are diagnostic (t1 spec-tooling §2.6) |
 

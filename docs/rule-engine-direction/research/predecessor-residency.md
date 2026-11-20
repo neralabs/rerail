@@ -1,21 +1,21 @@
-# Tempo tape and source residency
+# The predecessor's tape and source residency
 
-The short version: Tempo has real page-allocated, uncompressed caches and real pinning, but its production Metal path still copies every tape on every evaluation. v9np can avoid that copy, but four lines in our spec currently forbid or ignore the residency design (Part D lists them).
+The short version: the predecessor has real page-allocated, uncompressed caches and real pinning, but its production Metal path still copies every tape on every evaluation. v9np can avoid that copy, but four lines in our spec currently forbid or ignore the residency design (Part D lists them).
 
 Abbreviations used below:
-- **T:** = `scale-test-the-re-railer:tempo/`. Branch `scale-test-the-re-railer`, HEAD `d737fad16`. The working tree is clean (`git status` shows nothing), so everything below is committed.
-- **M:** = `Pulling-it-all-together:native/src/`.
-- **S:** = `Pulling-it-all-together:docs/rule-engine-direction/`.
+- **T:** = `<predecessor>/`, on a branch of the predecessor repository, HEAD `d737fad16`. The working tree is clean (`git status` shows nothing), so everything below is committed.
+- **M:** = `PIAT:native/src/`.
+- **S:** = `PIAT:docs/rule-engine-direction/`.
 
 ---
 
-# Part A. What Tempo actually does
+# Part A. What the predecessor actually does
 
 ## A.0 Summary
 
 What the user called "cached, pinned, page-allocated uncompressed tapes and source", split into what is built and what is only designed:
 
-| Claim | Status in Tempo | Where |
+| Claim | Status in the predecessor | Where |
 |---|---|---|
 | Uncompressed tapes and source cached | **Real.** One 64 MiB anonymous mapping holds decompressed tapes and sources, with a 32 MiB logical limit and a 30 s sliding lifetime. The cache was too small to get hits | `T:native/src/content_store.rs:968-1287` |
 | Page-allocated | **Real.** Allocations are page-rounded anonymous `mmap`s (`sysconf(_SC_PAGESIZE)`, which is 16 KiB on Apple Silicon). This covers no-copy Metal buffers, CPU JIT workspaces and the cache arena | `metal_backend.rs:170-237`, `native_cpu.rs:30-100`, `content_store.rs:987-1077` |
@@ -111,7 +111,7 @@ Code is at `T:native/src/content_store.rs:968-1287`.
 - Upload goes through the 8 MiB staging blit, with odd tails zero-padded to 4 bytes (`:146-162`).
 - `ResidentInput` is "one immutable input for the complete evaluation, independent of publication batches" (`metal_grid_plan.rs:174-195`). It is still **built and uploaded per call**: `execute_shared_corpus_pages` → `build_streamed_with_upload` → `executor()` (`metal_program_backend.rs:78-94`). Nothing is retained across evaluations.
 
-**Pinning evidence** (all from Tempo docs):
+**Pinning evidence** (all from the predecessor's docs):
 - A Metal System Trace showed a 213.3 ms GPU queue delay against **6.1 ms of GPU execution**, with about 7.77 GB of mutable buffers mapped (`T:docs/packed-result-throughput-design.md`, commit `dfa1897a1`; `shared-sparse-bump-arena-design.md:14-35`).
 - A reused-buffer dispatch cut the host wait from 230.5 to 3.8 ms. Later, with the retained workspace, it went from 110.6 to 2.4 ms (`:29-35, :260`). Conclusion: first-use mapping/pinning dominates.
 - Rejected approaches:
@@ -137,7 +137,7 @@ Invalidation follows from content addressing:
 - Results are reused by canonical source hash plus catalog identity (`journal:683-700`).
 - Cache entries are keyed by row id, so a re-inserted object gets a new key.
 
-## A.7 SQL access in Tempo
+## A.7 SQL access in the predecessor
 
 - Tapes are opaque zstd blobs, never read by SQL.
 - Query-independent contentless FTS5 indexes exist: the kind stream (position = preorder ordinal, `detail=full`), values, and source words (`content_store.rs:359-386`). The tape-delete trigger cleans them up.
@@ -147,7 +147,7 @@ Invalidation follows from content addressing:
 
 # Part B. Main today (`M:`)
 
-Same lineage as Tempo, one generation older on the Metal side. This is from a delegated survey; the citations are the survey's.
+Same lineage as the predecessor, one generation older on the Metal side. This is from a delegated survey; the citations are the survey's.
 - **Tape format:** v7 (`TMPTAPE7`, `code_rule_dsl/tape.rs:26-27`).
 - **Storage:** zstd-3 `frame BLOB` in `source_objects` and `tape_objects`, same schema shape (`content_store/schema.rs:60-86`), in `content-v1.sqlite`. `object_pins` lease table (`:167-175`). SQLite `cache_size=-1024`, about 1 MiB (`connection.rs:320`).
 - **Read cache:** `DecompressedReadCache` keyed by **content hash** (`CacheKey::{Source(HashKey),Tape(HashKey)}`, `read_cache.rs:13-17`), 32 MiB, 30 s TTL, one 64 MiB mmap arena with 8-byte slots, compaction and `MADV_DONTNEED` (`read_cache.rs:41-117, 312-360`).
@@ -163,9 +163,9 @@ Same lineage as Tempo, one generation older on the Metal side. This is from a de
 # Part C. What to adopt, and what not to
 
 **Adopt:**
-1. zstd-3 independent frames at rest, with raw length and canonical hash outside the frame. Tempo's L1/L3/L5/L7 curve supports L3.
-2. Content-addressed identity `(source, grammar, grammar_version, tape_format_version)`. Use main's **hash-keyed** cache keys, not Tempo's row ids.
-3. **One large anonymous mapping per slab** instead of one mapping per object (Tempo's VM-metadata finding), with two-generation compaction and refcount retirement.
+1. zstd-3 independent frames at rest, with raw length and canonical hash outside the frame. The predecessor's L1/L3/L5/L7 curve supports L3.
+2. Content-addressed identity `(source, grammar, grammar_version, tape_format_version)`. Use main's **hash-keyed** cache keys, not the predecessor's row ids.
+3. **One large anonymous mapping per slab** instead of one mapping per object (the predecessor's VM-metadata finding), with two-generation compaction and refcount retirement.
 4. `MADV_DONTNEED` + `munmap` **only at final release**, never on memory Metal still maps.
 5. The no-copy `MTLBuffer` lifetime pattern: deallocator owns the mapping, plus associated-object retention.
 6. A reserve-before-allocate ledger with page rounding.
@@ -189,24 +189,24 @@ Same lineage as Tempo, one generation older on the Metal side. This is from a de
 | CPython (7.90M nodes) | 66 MB | 33 MB | ≈ 99 MB | +32 MB |
 | data-layer `impl/` (11.62M nodes) | 99 MB | 58 MB | ≈ 158 MB | +46 MB |
 
-- **The whole gate corpus can stay resident.** Tempo's 32 MiB cache held about a fifth of it, which explains its zero hits.
-- **Cold loading from the store costs too much** for the 1–2 s audit target: about 59–77 µs per file (Tempo p50) × 5,725 files ≈ 0.34–0.44 s single-threaded.
-- **Pinning tapes is cheap if done once.** Scaling Tempo's 213 ms first-use delay over 7.77 GB down to 158 MB gives roughly 4 ms. This is an unmeasured extrapolation. The cost matters only if it is paid every evaluation, which Tempo's production path currently does.
+- **The whole gate corpus can stay resident.** The predecessor's 32 MiB cache held about a fifth of it, which explains its zero hits.
+- **Cold loading from the store costs too much** for the 1–2 s audit target: about 59–77 µs per file (the predecessor's p50) × 5,725 files ≈ 0.34–0.44 s single-threaded.
+- **Pinning tapes is cheap if done once.** Scaling the predecessor's 213 ms first-use delay over 7.77 GB down to 158 MB gives roughly 4 ms. This is an unmeasured extrapolation. The cost matters only if it is paid every evaluation, which the predecessor's production path currently does.
 
 ---
 
 # Part D. Conflicts with the current spec (v9np and related)
 
 1. **§4 "Execution batches concatenate documents' columns"** contradicts zero-copy residency, because concatenating is a copy. Replace it with batch document tables that reference resident slices (§20.5 below).
-2. **§3 "JIT/Metal: columns upload as they are."** On UMA with shared no-copy there is no upload at all. Tempo's production path (private plus blit) is an upload; §20 makes the choice a measurement (Q-R1).
+2. **§3 "JIT/Metal: columns upload as they are."** On UMA with shared no-copy there is no upload at all. The predecessor's production path (private plus blit) is an upload; §20 makes the choice a measurement (Q-R1).
 3. **§3 per-document width switch** (`size` is u16 or u32) conflicts with one concatenated column per batch. Without concatenation it becomes a per-document descriptor. Batches should be width-homogeneous (§20.5).
 4. **§3 "`par` derived" and spec-transducer §8 "`par`, `cidx` and line columns derived per batch."** For resident documents, per-batch derivation repeats work (4.1–5.1 ns/node). These should become cached resident sidecars keyed by tape digest.
-5. **§3 "line tables recomputed"** stays, but once per resident source, not per batch. Tempo paid this per batch and per witness.
+5. **§3 "line tables recomputed"** stays, but once per resident source, not per batch. The predecessor paid this per batch and per witness.
 6. **spec-tooling §2.1 `tape.columns` pool** ("per batch, host and device; upload refuses the batch") assumes per-batch tape memory. Replace it with process-scope `tape.resident` and `source.resident` pools plus a small per-batch `batch.doctable`.
 7. **§13 pure-SQL fallback "TVF that reads the tape"** cannot read zstd frames. It needs the zero-copy column TVF (§20.9). Storing uncompressed columns in SQLite would duplicate them in SQLite's page cache.
 8. **§14 per-edit** says nothing about residency. "While typing" needs the edited document's tape written straight into pinned memory (§20.8).
 9. **§18 caps** (`device_bytes` as 50% of `recommendedMaxWorkingSetSize`, `host_bytes`) would double-count shared no-copy memory unless the spec defines how it is counted (§20.10).
-10. **Tempo's GPU ABI cannot be reused under v9np.** `MetalNode`, `ChildIndex`, named order and the relations array are deleted. Kernels read `kf`, `size`, `base`, `off`, `tail` plus the derived sidecars.
+10. **The predecessor's GPU ABI cannot be reused under v9np.** `MetalNode`, `ChildIndex`, named order and the relations array are deleted. Kernels read `kf`, `size`, `base`, `off`, `tail` plus the derived sidecars.
 
 `S:spec-transducer.md:551` already points to "`spec.md` §20 (tape residency)", which does not exist yet. The draft below fills it.
 
@@ -216,7 +216,7 @@ Same lineage as Tempo, one generation older on the Metal side. This is from a de
 
 > ## 20. Tape residency and caching
 >
-> Tempo evidence: first-use Metal mapping cost 213 ms against 6.1 ms of GPU time, and reused buffers cut the wait 30–60× (`shared-sparse-bump-arena-design.md:14-35,260`). A 32 MiB / 30 s decompressed cache got 0 hits on full scans and spent 37.6 worker-seconds decompressing in a warm run. Heap decompression left 3.3 GiB of malloc high-water (`workspace-store-runtime-journal.md:536-681`). Per-object mappings were rejected for VM metadata cost (`:517-520`).
+> The predecessor's evidence: first-use Metal mapping cost 213 ms against 6.1 ms of GPU time, and reused buffers cut the wait 30–60× (`shared-sparse-bump-arena-design.md:14-35,260`). A 32 MiB / 30 s decompressed cache got 0 hits on full scans and spent 37.6 worker-seconds decompressing in a warm run. Heap decompression left 3.3 GiB of malloc high-water (`workspace-store-runtime-journal.md:536-681`). Per-object mappings were rejected for VM metadata cost (`:517-520`).
 >
 > **20.1 Forms.** A document's tape and source exist in exactly these forms:
 >
@@ -234,7 +234,7 @@ Same lineage as Tempo, one generation older on the Metal side. This is from a de
 > 2. Objects are bump-allocated in a slab at 16-byte alignment.
 > 3. The at-rest v9np blob is laid out so that every column starts at a 16-byte offset from the blob start. One zstd decompression **directly into the slab** (known `raw_length`) therefore produces aligned, ready columns. Decompressing into an intermediate heap buffer is forbidden.
 > 4. A slab is append-only until it is retired. Compaction copies live objects into a **new** slab, publishes new handles, and retires the old slab when its lease count reaches zero. At most two generations of a slab exist at once. If a third would be needed, the load waits.
-> 5. A slab is released with `MADV_DONTNEED` then `munmap`, only after its `MTLBuffer` is gone. Partial `MADV_DONTNEED` on a live slab is forbidden, because Metal treats re-touched pages as new mappings (Tempo: 84.94 s, `packed-result-bottleneck-profile.md:102`).
+> 5. A slab is released with `MADV_DONTNEED` then `munmap`, only after its `MTLBuffer` is gone. Partial `MADV_DONTNEED` on a live slab is forbidden, because Metal treats re-touched pages as new mappings (the predecessor: 84.94 s, `packed-result-bottleneck-profile.md:102`).
 > 6. Transparent huge pages, superpages and `mlock`/wired memory are not used. `mlock` does not keep a GPU mapping.
 >
 > **20.3 Identity, admission and validation.**
@@ -293,7 +293,7 @@ Same lineage as Tempo, one generation older on the Metal side. This is from a de
 > 5. The profile records slab count, resident, pinned and derived bytes, admissions, decompressed bytes, hits and misses per class, compactions, `residency.pin` time and `residency_waves`.
 > 6. The always-on Metal counters add `bytes_bound` per command and `slabs_bound`.
 >
-> **20.11 Forbidden.** Per-batch repacking into node records, such as Tempo's 44-byte `MetalNode`. Per-batch source concatenation or line rescans. Heap-`Vec` decompression. Copying source on cache hit. Re-hashing on restore. Per-object `mmap`. TTL-only caches smaller than the working set. Partial `MADV_DONTNEED` on mapped slabs. `mlock` as pinning. Fixed byte caps in code.
+> **20.11 Forbidden.** Per-batch repacking into node records, such as the predecessor's 44-byte `MetalNode`. Per-batch source concatenation or line rescans. Heap-`Vec` decompression. Copying source on cache hit. Re-hashing on restore. Per-object `mmap`. TTL-only caches smaller than the working set. Partial `MADV_DONTNEED` on mapped slabs. `mlock` as pinning. Fixed byte caps in code.
 >
 > **20.12 Open measurements before locking.**
 > - **Q-R1:** shared no-copy vs a private copy made once per admission, measured on GPU time of the stratified kernels over the gate corpora.
@@ -302,7 +302,7 @@ Same lineage as Tempo, one generation older on the Metal side. This is from a de
 > - **Q-R4:** slab size (16/64/256 MiB) vs VM metadata and compaction cost.
 > - **Q-R5:** a file-backed, read-only shared mapping of a snapshot image for multi-daemon sharing, and whether GPU no-copy over file-backed pages is safe.
 > - **Q-R6:** whether no-copy buffers count in `currentAllocatedSize`.
-> - **Q-R7:** pin cost per GB of tape and source slabs, to check the about-27 µs/MB extrapolation from Tempo's scratch measurement.
+> - **Q-R7:** pin cost per GB of tape and source slabs, to check the about-27 µs/MB extrapolation from the predecessor's scratch measurement.
 > - **Q-R8:** cold admission throughput (zstd into slab) at 4/8/16 workers against the 1–2 s audit target.
 
 **Consequential edits** (each is a short change):
@@ -314,4 +314,4 @@ Same lineage as Tempo, one generation older on the Metal side. This is from a de
 - **spec-tooling §2.1:** swap the pools per §20.10.
 - **spec-transducer §8:** change "derived per batch" to "resident sidecars (§20.6)."
 
-The cache policy and the slab/pin mechanics are the parts with evidence behind them. Q-R1 (whether to keep Tempo's private storage) is the one Tempo chose without measuring, so it should be measured before the spec takes a position.
+The cache policy and the slab/pin mechanics are the parts with evidence behind them. Q-R1 (whether to keep the predecessor's private storage) is the one the predecessor chose without measuring, so it should be measured before the spec takes a position.

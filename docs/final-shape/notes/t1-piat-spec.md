@@ -1,6 +1,6 @@
 # T1 notes: the PIAT normative spec
 
-Source root: `Pulling-it-all-together:docs/rule-engine-direction/` at `85098ee3`. Citations are `file:line`.
+Source root: `PIAT:docs/rule-engine-direction/` at `85098ee3`. Citations are `file:line`.
 
 ## spec.md (597 lines), read in full
 
@@ -79,7 +79,7 @@ Measured over 24.2M nodes: CPython 3.13 Lib, data-layer `impl/`, and rerail's TS
 - **"DLRE's private anchor store is retired"** (:127). To reconcile with decision 0006 ("anchor index always built"): 0006 concerns the anchor index's existence; §5 places it in the shared content-store FTS indexes. Check `spec-indexes.md`.
 
 ### §6 Transducer IR (130–172)
-Normative text is `spec-transducer.md`. Base is Tempo's IR: 32-bit words, path-forking execution over one document from root nodes, typed output arenas (:134).
+Normative text is `spec-transducer.md`. Base is the predecessor's IR: 32-bit words, path-forking execution over one document from root nodes, typed output arenas (:134).
 - Tests: KIND, FIELD, FLAGS, TEXT/TEXT_EVAL, SIZE, SUPERTYPE.
 - Navigation: CHILD, NEXT, PARENT, DESCEND, FOLLOWING.
 - SAVE/RESTORE_CURSOR, CAPTURE, REPEAT_*, FORK, GOTO, EMIT.
@@ -117,7 +117,7 @@ Extensions E1–E16 (:142-160):
 
 ### §7 Lowering and fusion (174–210)
 - **Two-level execution model** (:178-181):
-  - instruction programs for node-local tests and bounded paths (Tempo classes 1–3);
+  - instruction programs for node-local tests and bounded paths (the predecessor's classes 1–3);
   - the set stage (E14) for relations and nesting: the inner rule is materialised as a per-node set by a pass over the regular tape, and the outer rule tests membership;
   - Metal stratified-range and CPU mask passes are this model.
 - **Frontends** (:183-187):
@@ -205,7 +205,7 @@ Already recorded in `00-review.md`. Notable: `engine/vtab/graph.rs` comes from D
 ### §18 Tooling (339–370)
 Summary of `spec-tooling.md` (read separately):
 - **Memory pools sized at plan time** (tape columns, set stages, outputs, device queues, facts, SQL temp, caches); exceeding one yields `Unknown(resource)`; CI gates peak RSS, device bytes and Unknown rate.
-- Tempo launch accounting is kept and checked against the plan's dispatch count.
+- The predecessor's launch accounting is kept and checked against the plan's dispatch count.
 - **Resident-batch pool:** CPU batches cut by resident bytes. SSC measured 760 MB of navigation data retained; a 4 MiB-of-source partition target cut peak RSS 2,933 → 1,233 MB at unchanged CPU.
 - Debugging: text dumps and assembler, `explain`, interpreter trace, Metal debug mode, repro bundles, inspectors, the `rerail engine …` CLI.
 - Testing: differential on finding keys across every backend and against the matcher and oracle; proptest and fuzz; v7↔v9np round trip; Blade vs php check.
@@ -220,7 +220,7 @@ Recorded in `00-review.md` and the earlier read. Key points:
 - Cold is not the target case; parse and fact extraction are content-addressed and cached.
 
 ### §20 Tape residency and caching (443–549)
-Tempo evidence (:447):
+The predecessor's evidence (:447):
 - first-use Metal mapping 213 ms against 6.1 ms of GPU time; reused buffers cut the wait 30–60× (`shared-sparse-bump-arena-design.md:14-35,260`);
 - a 32 MiB / 30 s decompressed cache got **0 hits** on full scans and spent 37.6 worker-seconds decompressing in a warm run;
 - heap decompression left 3.3 GiB of malloc high-water (`workspace-store-runtime-journal.md:536-681`);
@@ -242,7 +242,7 @@ Tempo evidence (:447):
 - bump allocation at 16-byte alignment;
 - **one zstd decompression directly into the slab**; intermediate heap buffers are forbidden;
 - append-only; compaction copies live objects to a new slab, with at most two generations;
-- release is `MADV_DONTNEED` + `munmap` after the `MTLBuffer` is gone; partial `MADV_DONTNEED` on a live slab is forbidden (Metal treats re-touched pages as new mappings: Tempo 84.94 s, `packed-result-bottleneck-profile.md:102`);
+- release is `MADV_DONTNEED` + `munmap` after the `MTLBuffer` is gone; partial `MADV_DONTNEED` on a live slab is forbidden (Metal treats re-touched pages as new mappings: the predecessor 84.94 s, `packed-result-bottleneck-profile.md:102`);
 - no huge pages, no `mlock`; `mlock` does not keep a GPU mapping.
 
 **20.3 Identity and admission** (:473-476):
@@ -375,7 +375,7 @@ Boundary test (:34): "a transducer program should read like a structural pattern
 - **Determinism** (:109-111): Out is a function; backends and fused/unfused produce the same set, which is the differential invariant.
 
 ### §2 Operations (115–343)
-- **Encoding** (:119-130): `opcode | mode<<8 | operand<<16` (Tempo `transducer.rs:1111`). Existing opcodes 0x00–0x40 are listed at :122-125. New ranges:
+- **Encoding** (:119-130): `opcode | mode<<8 | operand<<16` (the predecessor's `transducer.rs:1111`). Existing opcodes 0x00–0x40 are listed at :122-125. New ranges:
   - tests 0x0b–0x0f (NTH, TEXT_ID, TEXT_DFA, TEXT_SET, TEXT_ID_EQ);
   - navigation 0x17–0x1f; sub-programs/calls 0x32–0x3f; set stage 0x50–0x57; documents/side facts 0x58–0x5f; pattern 0x60–0x6f; line documents 0x70–0x77.
 - REPEAT_* is admitted in set mode only without capture-containment reduction (:132).
@@ -432,7 +432,7 @@ Boundary test (:34): "a transducer program should read like a structural pattern
 - **Canonical digest:** SHA-256 over the normalised serialisation. It keys the plan cache and the dump tools (:393-395).
 
 ### §4 Side programs (399–430)
-- **Value programs** (Tempo `value.rs:157`, :403-420): Equal, Prefix, Regex (byte NFA: Bytes, Look, Split, Capture, Fail, Match; Metal NFA frontier `metal_regex_frontier.metal`), Lua patterns. Set-mode additions:
+- **Value programs** (the predecessor's `value.rs:157`, :403-420): Equal, Prefix, Regex (byte NFA: Bytes, Look, Split, Capture, Fail, Match; Metal NFA frontier `metal_regex_frontier.metal`), Lua patterns. Set-mode additions:
   - TEXT_ID (once per distinct token text, a bit in a result table indexed by interned tid);
   - TEXT_ID_EQ;
   - TEXT_DFA (dense byte DFA where admissible, required on Metal; NFA is the reference);
@@ -517,11 +517,11 @@ CPU and Metal implementations per op. Notable Metal forms:
 - **Outputs:** t_match, t_export, t_count, t_outcome. Metal output placement is count → scan → scatter, with no atomics on order.
 
 ### §9 Verifier (671–684)
-Ten rules: encoding; control flow; progress (every CFG cycle advances along an axis, from Tempo `cycle_progress.rs`, or is a bounded REPEAT); stratified recursion, ≤ 16 strata, ≤ 8 sub-depth; grammar typing; set mode; bounds (every loop bounded by a batch constant, value work bounds, arena bounded from stats); every backend implements every op; patterns; text rules.
+Ten rules: encoding; control flow; progress (every CFG cycle advances along an axis, from the predecessor's `cycle_progress.rs`, or is a bounded REPEAT); stratified recursion, ≤ 16 strata, ≤ 8 sub-depth; grammar typing; set mode; bounds (every loop bounded by a batch constant, value work bounds, arena bounded from stats); every backend implements every op; patterns; text rules.
 
 ### §10 Backends (688–696)
 - Rust interpreter (reference);
-- CPU JIT (arm64, from Tempo `native_ir.rs`);
+- CPU JIT (arm64, from the predecessor's `native_ir.rs`);
 - Metal (interpreter kernels, then MSL codegen from `native_ir.rs`): production on Apple GPUs and the per-edit target.
 
 **The same abstract work units are charged per op on every backend**, so budgets give the same Complete/Unknown everywhere.
@@ -530,7 +530,7 @@ Ten rules: encoding; control flow; progress (every CFG cycle advances along an a
 - Constants: ≤ 65,536 words, ≤ 4,096 labels, sub-depth 8, strata 16, CPU steps per path 2^20, work per task 2^26 (these become per-label budgets).
 - Open: compiled evaluation (13–17 ns/eval at 74% interpretive); N1562 packed lowers none of TP/ASD/SAS (E2, E6, E14 FIX close the gaps); the 113-clause rewrite; pattern words vs `PackedPattern`; Metal cursor stacks and DFA placement.
 
-### What this means against Tempo's Metal state (from the T6 survey earlier)
+### What this means against the predecessor's Metal state (from the T6 survey earlier)
 The spec already defines the Metal execution that avoids per-path continuation growth:
 - lazy cursors (§2.7);
 - EXISTS inline only when shallow and bounded, otherwise promoted to the set stage (§2.3);
@@ -538,7 +538,7 @@ The spec already defines the Metal execution that avoids per-path continuation g
 - set-stage passes with multi-target packing (§2.6);
 - dispatches O(nesting depth) per batch (spec.md §8).
 
-Tempo's current executor (generations of successor paths with cursor and repeat frames, "dynamic frontier continuation") implements the pre-spec model. Confirm against T6 notes.
+The predecessor's current executor (generations of successor paths with cursor and repeat frames, "dynamic frontier continuation") implements the pre-spec model. Confirm against T6 notes.
 
 ## spec-indexes.md (390 lines), read in full
 
@@ -732,7 +732,7 @@ Each transform preserves Out as a set and may change multiplicity, order, witnes
 - **§6.1** 65,536 words and table entries; K=512 measured 1,750 words; split by root kind; nesting > 8 → set stage; strata > 16 → split across two dispatch rounds with an intermediate set kept resident.
 - **§6.2** Labels: bitsets of 64/128/256; split above; dedup-in-consolidation is not used on Metal (it loses early stop and pruning).
 - **§6.3 Metal divergence:** δ_div bounds live branches; **tasks within a dispatch are sorted by root kind so that a threadgroup executes one trie**; split sub-tries by second-level kind or field when divergence exceeds gain.
-- **§6.4 Register pressure:** per-thread pc, node, a cursor per enumeration level (≤ MAX_SUB_DEPTH+2), ≤ 16 live captures (Tempo's capture arena for more), label bitset, ≤ 4 counters. The verifier computes max live state; over budget, split or move to the set stage (device memory, no per-thread state); threadgroup memory only for scan tiles.
+- **§6.4 Register pressure:** per-thread pc, node, a cursor per enumeration level (≤ MAX_SUB_DEPTH+2), ≤ 16 live captures (the predecessor's capture arena for more), label bitset, ≤ 4 counters. The verifier computes max live state; over budget, split or move to the set stage (device memory, no per-thread state); threadgroup memory only for scan tiles.
 - **§6.5** Nesting d needs d strata (`d·n·c_pass/T`, selectivity-independent) or d inline cursor levels (selectivity-weighted), chosen per level.
 - **§6.6** In-document capture joins: all 29 per-file joins in the relational clauses are expressible. Use EXISTS + TEXT_EQ/SIDE_EQ from the reaching side, else L5 (a shared join is a catalog fact), chosen by cost, because a per-candidate EXISTS over a function body can go quadratic. Across documents: a SQL hash join over t_export.
 - **§6.7 Cross-document is never fused.** A group runs within one document (DOC_* within a file only); cross-file is SQL over t_export, fact_* and graph vtabs.
@@ -763,7 +763,7 @@ Each transform preserves Out as a set and may change multiplicity, order, witnes
 
 ## spec-tooling.md (313 lines, read in full) — proposed spec.md §18
 
-Source: `Pulling-it-all-together/docs/rule-engine-direction/spec-tooling.md`. Governing positions (:3-6): there is **no Metal → CPU/JIT fallback**; resource exhaustion is reported as `Unknown` and counts against coverage; memory limits, debugging, testing and profiling are first-class.
+Source: `<PIAT>/docs/rule-engine-direction/spec-tooling.md`. Governing positions (:3-6): there is **no Metal → CPU/JIT fallback**; resource exhaustion is reported as `Unknown` and counts against coverage; memory limits, debugging, testing and profiling are first-class.
 
 ### Inventory verdicts (Part 1)
 - Reuse from main/DLRE (:18-35):
@@ -777,7 +777,7 @@ Source: `Pulling-it-all-together/docs/rule-engine-direction/spec-tooling.md`. Go
   - `scripts/profiling/run.py/report.py/compare.py`;
   - DLRE `full_repository.py` as the measurement gate.
 - Budgets change meaning: they only ever produce `Unknown(budget)` and are never semantics (:32, decision 0001).
-- Reuse from Tempo:
+- Reuse from the predecessor:
   - `validate` (`transducer.rs:1534`) as the verifier core (:41);
   - launch-guard accounting and its bypass tests (`metal_launch.rs:18-185,296-376`), but the fixed caps go: 200/600 launches and `METAL_BUFFER_LIMIT = 2_000_000_000` (:42);
   - the semantic conformance suite (:45).
@@ -877,7 +877,7 @@ Source: `Pulling-it-all-together/docs/rule-engine-direction/spec-tooling.md`. Go
 - CLI: dump, asm, explain, run, replay, tape, index --check, diff (:275-284).
 
 ### Removed (:309-313)
-Tempo's fixed caps; N1562's 14 arena kinds; SSC's duplicate EXPLAIN; the authored-SQL budget scripts.
+The predecessor's fixed caps; N1562's 14 arena kinds; SSC's duplicate EXPLAIN; the authored-SQL budget scripts.
 
 ### Pertinence to the final shape
 - No fallback plus "every program Metal-capable" means the IR and lowering must keep every program in set mode with bounded or queue-declared loops. A per-file CPU path is not an escape hatch.
