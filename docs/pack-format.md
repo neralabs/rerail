@@ -89,10 +89,13 @@ packs/<id>/
 ```
 
 - **`peerDependencies`**: the core range. A pack has no `dependencies`. A pack that ships a rule in a language core first
-  reads in a later release (`LANGUAGE_SINCE` in `scripts/release/core.mjs`: Java, 0.1.5) leaves older cores out
-  from that release on, as for `heldOff` below: they refuse the document and would drop the whole pack. Once core is at
-  that release the pack validation fails a range that admits them, and the Release pull request raises the range of
-  each such pack it releases ([release](release.md#release-pull-request)).
+  reads in a later release (`LANGUAGE_SINCE` in `scripts/release/core.mjs`), or whose ast rule uses a key core first
+  reads in a later release (`RULE_KEY_SINCE` there), leaves older cores out from that release on, as for `heldOff`
+  below: they refuse the document and would drop the whole pack. Once core is at that release the pack validation fails
+  a range that admits them, and the Release pull request raises the range of each such pack it releases
+  ([release](release.md#release-pull-request)). The Release pull request also has each released core from 0.1.5 check
+  the pack's rules, so a rule an older core refuses for any other reason raises the range too; the pack validation
+  reads only the maps.
 - **`files`**: the pack and its licence records. Validation material never reaches npm.
 - **`repository`**: this repository and the pack's directory. `publishConfig.access` is `public`, like core.
 - **`private`**: `true` makes a pack that is never published. It needs no `publishConfig`; `false` is refused (a
@@ -957,7 +960,8 @@ summaries.
   (`scripts/release/github-release.mjs`), beside the npm publish rather than after it, so npm can neither hold back
   nor skip a Release. Rerun, it rewrites an existing Release's notes and flags.
 - A pack's Release is never the repository's latest release, which is core's. It is a pre-release while its version is
-  on `next`, and the promote makes it a full release.
+  on `next`, and the promote makes it a full release, its notes then everything since the pack's last version on
+  `latest`, a version that never reached `latest` included ([release.md](release.md#before-promoting)).
 - Releases missing for older tags, or from a run that failed before its Release, are made by hand with the script's
   backfill, which skips a version whose changelog has no section ([release.md](release.md#release)).
 

@@ -264,7 +264,7 @@ pending pre-lock measurements**, never accepted.
   is fine for Blade to store something compatible with the generic structure, in a generic way.
 - Tapes must stay processable in SQL with the SQL index prototype techniques. A format change has to show
   clear benefits; a size increase (8 → 11 B/node, about 30%) was not acceptable, hence v9np.
-- Tempo keeps cached, pinned, page-allocated uncompressed tapes and source (§ residency, O5). The
+- The predecessor keeps cached, pinned, page-allocated uncompressed tapes and source (§ residency, O5). The
   at-rest format and the resident page format should be designed together.
 
 **Pre-lock measurements** (`research/tape-regularity.md` "Open measurements"). The spike used
@@ -1607,7 +1607,7 @@ one run. There were five causes:
 **Closed:** `transducer::packed` passes in one parallel run: 689 passed, 0 failed, 63 ignored (the grid
 executor's, and the admission spike), 104 s at load 40-73.
 
-## O84. The Pulling-it-all-together merge (41f1c88e5): what was checked, and P's tests that need P's addon
+## O84. The PIAT merge (41f1c88e5): what was checked, and P's tests that need P's addon
 
 **Native code.** Every native file P changed since the merge base (`5cf4246e`) was checked hunk by
 hunk against this tree. All but 59 hunks are here. 35 of the 59 are in `matcher/anchors*`: P's
@@ -1620,7 +1620,7 @@ and SQL anchor engine are production in P and test-only here (`CLAUSE_KINDS` and
 **TS and scripts.** Taken from P as they were (the schema's `filePath`, `pythonFString`,
 `calls.graph`, `query.regex.lines`, `layout.line`, which this native compiles; the `data-layer`
 pack in the catalog, whose `rules` list is empty). Checked against this branch's addon (a
-`--profile profiling` build) and against P's own (`Pulling-it-all-together/native/*.node`, built
+`--profile profiling` build) and against P's own (`<PIAT>/native/*.node`, built
 after P's last native commit):
 - Tests that compile a `relational` clause fail here with "unknown field `relational`" and pass on
   P's addon. `vitest.config.ts` leaves them out unless `RERAIL_RELATIONAL_TESTS=1`.
