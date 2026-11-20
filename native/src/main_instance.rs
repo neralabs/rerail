@@ -13,13 +13,16 @@
 //! the request, which returns at once, and hands it to that thread; `flock` blocks the thread that
 //! asks, so on Unix the waiting thread asks.
 
-use napi::bindgen_prelude::PromiseRaw;
-use napi::{Env, Error, JsDeferred, JsValue, Result, Status};
+use napi::{Error, Result, Status};
 use napi_derive::napi;
 use parking_lot::Mutex;
 use std::fs::{File, OpenOptions, TryLockError};
+// Only Unix and Windows have the waiting take (`lock_exclusive`): wasm32-wasip1 has no Node to
+// call it and no thread to wait on.
+#[cfg(any(unix, windows))]
+use napi::{bindgen_prelude::PromiseRaw, Env, JsDeferred, JsValue};
+#[cfg(any(unix, windows))]
 use std::sync::mpsc;
-// Only the waits of Unix and Windows count time; wasm32-wasip1 has none.
 #[cfg(any(unix, windows))]
 use std::time::Duration;
 
@@ -68,6 +71,7 @@ fn open_lock_file(path: &str) -> Result<File> {
 /// Opens (creating) the lock file at `path` for a wait. On Windows the handle is opened for
 /// overlapped I/O, so a waiting `LockFileEx` returns at once and its wait can be given a bound and
 /// cancelled; a try keeps its synchronous handle.
+#[cfg(any(unix, windows))]
 fn open_waiting_lock_file(path: &str) -> Result<File> {
     let mut options = lock_file_options();
     overlapped_on_windows(&mut options);
@@ -83,7 +87,7 @@ fn overlapped_on_windows(options: &mut OpenOptions) {
 }
 
 /// Unix opens a waiting take's file as any other: `flock` blocks on any descriptor.
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn overlapped_on_windows(_options: &mut OpenOptions) {}
 
 fn lock_file_options() -> OpenOptions {
@@ -105,13 +109,14 @@ pub fn try_lock_exclusive(path: String) -> Result<Option<ExclusiveFileLock>> {
 }
 
 /// What the wait's promise settles with, made on the JavaScript thread.
-// Only the thread's wait of `lock_exclusive` uses it, which only JavaScript calls and
-// wasm32-wasip1 has not.
-#[cfg_attr(any(test, not(any(unix, windows))), allow(dead_code))]
+// Only the thread's wait of `lock_exclusive` uses it, which only JavaScript calls.
+#[cfg(any(unix, windows))]
+#[cfg_attr(test, allow(dead_code))]
 type Settle = Box<dyn FnOnce(Env) -> Result<Option<ExclusiveFileLock>> + Send>;
 
 /// The promise `lock_exclusive` returns.
 // Only `lock_exclusive` uses it, which only JavaScript calls.
+#[cfg(any(unix, windows))]
 #[cfg_attr(test, allow(dead_code))]
 type Taking<'env> = PromiseRaw<'env, Option<ExclusiveFileLock>>;
 
@@ -122,6 +127,9 @@ type Taking<'env> = PromiseRaw<'env, Option<ExclusiveFileLock>>;
 /// moment the OS hands it over, or with `null` when the other handle still holds it at the bound.
 /// A wait given up never ends up holding the lock. The open and the first try happen before this
 /// returns, so a failure of either throws here.
+// Unix and Windows only: its promise needs the class's conversion to JavaScript, which napi does
+// not give wasm32-wasip1.
+#[cfg(any(unix, windows))]
 #[napi(ts_return_type = "Promise<ExclusiveFileLock | null>")]
 // Only JavaScript calls it; tests make the calls its wait makes (`wait_for_lock` on Unix,
 // `request_lock` then `PendingLock::granted_within` on Windows).
@@ -138,6 +146,7 @@ pub fn lock_exclusive(env: &Env, path: String, wait_ms: u32) -> Result<Taking<'_
 
 /// A take that never waits keeps the handle a try has always had; one that may wait opens its file
 /// for the wait.
+#[cfg(any(unix, windows))]
 #[cfg_attr(test, allow(dead_code))]
 fn open_for_take(path: &str, wait_ms: u32) -> Result<File> {
     if wait_ms == 0 {
@@ -175,17 +184,10 @@ fn wait_for_release(env: &Env, file: File, wait_ms: u32, path: String) -> Result
     }
 }
 
-/// wasm32-wasip1, and any target that is neither: no thread can wait for the holder there, so a
-/// held lock settles at once with `null`, as a take that never waits, and the thread's helpers
-/// below go unused.
-#[cfg(not(any(unix, windows)))]
-fn wait_for_release(env: &Env, _file: File, _wait_ms: u32, _path: String) -> Result<Taking<'_>> {
-    PromiseRaw::resolve(env, None)
-}
-
 /// Runs `wait`, a wait for the lock another handle holds, on a thread of its own, and settles the
 /// promise it returns with what that wait ends with.
-#[cfg_attr(any(test, not(any(unix, windows))), allow(dead_code))]
+#[cfg(any(unix, windows))]
+#[cfg_attr(test, allow(dead_code))]
 fn wait_on_its_thread<Wait>(env: &Env, path: String, wait: Wait) -> Result<Taking<'_>>
 where
     Wait: FnOnce() -> std::io::Result<Option<File>> + Send + 'static,
@@ -212,7 +214,8 @@ where
     Ok(PromiseRaw::new(env.raw(), promise.raw()))
 }
 
-#[cfg_attr(any(test, not(any(unix, windows))), allow(dead_code))]
+#[cfg(any(unix, windows))]
+#[cfg_attr(test, allow(dead_code))]
 fn wait_and_name(
     wait: impl FnOnce() -> std::io::Result<Option<File>>,
     path: &str,
@@ -222,7 +225,8 @@ fn wait_and_name(
     })
 }
 
-#[cfg_attr(any(test, not(any(unix, windows))), allow(dead_code))]
+#[cfg(any(unix, windows))]
+#[cfg_attr(test, allow(dead_code))]
 fn settle(deferred: JsDeferred<Option<ExclusiveFileLock>, Settle>, waited: Result<Option<File>>) {
     match waited {
         Ok(file) => deferred.resolve(Box::new(move |_| Ok(file.map(ExclusiveFileLock::holding)))),
