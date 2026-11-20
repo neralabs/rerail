@@ -1900,17 +1900,26 @@ pub(in crate::code_rule_dsl) fn memo_plan_tag(plan: &[u8; 32]) -> u64 {
     u64::from_le_bytes(plan[..8].try_into().expect("eight bytes"))
 }
 
+/// A documents' table as read (`base_documents`).
+pub(in crate::code_rule_dsl) struct BaseTable {
+    /// Its files, as written (an `Unstored` content is the caller's to resolve).
+    pub(in crate::code_rule_dsl) docs: Vec<BaseDocument>,
+    /// The memo plan it was written under (`memo_plan_tag`), none for a table written before it was recorded.
+    pub(in crate::code_rule_dsl) plan: Option<u64>,
+    /// The digest of the documents it names: the base relations' digests are of it (decision 0458).
+    pub(in crate::code_rule_dsl) digest: u64,
+}
+
 /// The documents' table the store's frames in `space` keep for the cross part of `binds`, as written (an `Unstored`
-/// content is the caller's to resolve), with the memo plan it was written under (`memo_plan_tag`, none for a table
-/// written before it was recorded); `None` when there is none. Read before the first wave.
-pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<Option<(Vec<BaseDocument>, Option<u64>)>> {
+/// content is the caller's to resolve), as a `BaseTable`; `None` when there is none. Read before the first wave.
+pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<Option<BaseTable>> {
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
     base_documents_in(store, &bound, binds)
 }
 
 /// The documents' table of `base_documents`, read from a space already bound (a kept part's, `InKept::bound_space`):
 /// a run inside another's waves reads it there, where it reads no store.
-pub(in crate::code_rule_dsl) fn base_documents_in(store: &ContentStore, bound: &Arc<kept_read::Bound>, binds: [u8; 32]) -> Result<Option<(Vec<BaseDocument>, Option<u64>)>> {
+pub(in crate::code_rule_dsl) fn base_documents_in(store: &ContentStore, bound: &Arc<kept_read::Bound>, binds: [u8; 32]) -> Result<Option<BaseTable>> {
     let Some(entry) = bound.entry(BASE_DOCUMENTS, &base_documents_ident(&binds), DOCS_PART) else { return Ok(None) };
     let plan = entry.reads().into_iter().find(|(r, _)| r == MEMO_PLAN_READ).map(|(_, tag)| tag);
     if entry.width() != 7 {
@@ -1936,13 +1945,52 @@ pub(in crate::code_rule_dsl) fn base_documents_in(store: &ContentStore, bound: &
         };
         out.push((path, r[1], content));
     }
-    Ok(Some((out, plan)))
+    Ok(Some(BaseTable { docs: out, plan, digest: entry.digest() }))
+}
+
+/// Each base relation `rels`' statistics the store's frames in `space` keep for the cross part of `binds`, with the
+/// digest of the rows they count (decision 0458: kept by file as the keeper's are, 0096 §3, but of the documents).
+pub(in crate::code_rule_dsl) fn base_stats(store: &ContentStore, space: [u8; 32], binds: [u8; 32], rels: &[String]) -> Result<HashMap<String, (u64, crate::code_rule_dsl::logic::plan::statkeep::RelStats)>> {
+    let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(HashMap::new()) };
+    let ident = base_documents_ident(&binds);
+    let mut out = HashMap::new();
+    for rel in rels {
+        let Some(entry) = bound.entry(&base_stats_name(rel), &ident, DOCS_PART) else { continue };
+        let mut words: Vec<i64> = Vec::with_capacity(entry.len());
+        entry.each_rows(&mut |r| words.extend_from_slice(r));
+        let Some((&n, words)) = words.split_first() else { continue };
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).take(usize::try_from(n).unwrap_or(0)).collect();
+        if let Some(stats) = crate::code_rule_dsl::logic::plan::statkeep::RelStats::decode(&bytes, &mut 0) {
+            out.insert(rel.clone(), (entry.digest(), stats));
+        }
+    }
+    Ok(out)
+}
+
+fn base_stats_name(rel: &str) -> String {
+    format!("#base-stats/{rel}")
+}
+
+/// Queues base relation `rel`'s statistics `stats`, of the rows of digest `digest`, beside the documents' table.
+pub(in crate::code_rule_dsl) fn put_base_stats(store: &ContentStore, was: &InKept, binds: [u8; 32], rel: &str, digest: u64, stats: &crate::code_rule_dsl::logic::plan::statkeep::RelStats) {
+    let mut bytes = Vec::new();
+    stats.encode(&mut bytes);
+    let mut words: Vec<i64> = vec![bytes.len() as i64];
+    words.extend(bytes.chunks(8).map(|c| {
+        let mut w = [0u8; 8];
+        w[..c.len()].copy_from_slice(c);
+        i64::from_le_bytes(w)
+    }));
+    let name = KeptRel { name: base_stats_name(rel), ident: base_documents_ident(&binds) };
+    let n = words.len();
+    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], words, n)]);
 }
 
 /// Queues the documents' table `docs` for the cross part of `binds` into the space `was` was read from, in the keep's
-/// wave, under the memo plan `plan` (`memo_plan_tag`). `false` (nothing queued) when a file's content is only in
-/// memory (`Held`) or its path is no atom.
-pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &InKept, binds: [u8; 32], plan: u64, docs: &[BaseDocument]) -> bool {
+/// wave, under the memo plan `plan` (`memo_plan_tag`), with `digest`, the digest of the documents it names (decision
+/// 0458: the base relations' digests are of it). `false` (nothing queued) when a file's content is only in memory
+/// (`Held`) or its path is no atom.
+pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &InKept, binds: [u8; 32], plan: u64, docs: &[BaseDocument], digest: u64) -> bool {
     if docs.iter().any(|(_, _, c)| matches!(c, super::memo::Content::Held(_))) {
         return false;
     }
@@ -1961,7 +2009,6 @@ pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &I
         }
     }
     let name = KeptRel { name: BASE_DOCUMENTS.to_owned(), ident: base_documents_ident(&binds) };
-    let digest = rows.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| (h ^ *v as u64).wrapping_mul(0x0000_0100_0000_01b3));
     let types = [b's', b'i', b'i', b'i', b'i', b'i', b'i'].to_vec();
     store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, vec![(MEMO_PLAN_READ.to_owned(), plan)], types, rows, docs.len())]);
     true
