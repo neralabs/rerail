@@ -680,8 +680,10 @@ preimages and held steers.
   waits only for the read, and one that opens while the ACL is passed on first gives its own folder the same ACL, one
   more `icacls`, so what it writes in its own folder is private from its first byte. An entry someone set on that
   folder itself for another account stays. A lock or held-steer folder another account made before the first repair
-  stays its maker's, whose ACL only that account may change: the daemon log names it, and the repairing account's hooks
-  of that agent host cannot lock there.
+  keeps the ACL it had, as on 0.1.5, since only its maker may change it: the daemon log names it, and every account's
+  hooks still lock there through the entries it inherited. Rerail's Git status reads nothing in a records folder (its
+  walk never enters one, and its built-in ignores name it), so an account that may not list the folder, or read a
+  file Git put there, keeps its repository reuse there.
   `rerail remote add` gives the `remote-tokens` folder the ACL before it writes a token there, so a remote's token is
   private before any daemon launch. A failure is reported on stderr, a daemon's log, with `icacls`'s reason, and never
   fails the caller.
