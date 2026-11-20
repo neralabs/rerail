@@ -317,3 +317,52 @@ row.
   - All 24 evaluator tests pass; the Metal gates pass. The corpus, from main files: 3,132 units
     equal, at most 2 rounds of 4 launches; refused: `#line` 2, a call across a stretch's end 1.
     GPU time 251 ms against 206 ms, at a load average of 55 (not comparable).
+- **Step 7: the cases of §6 (R7).** One commit each (7a–7f); R7's test,
+  `the_refused_cases_are_the_serial_passes`, grows a shape with each, in C and C++, 4 launches.
+  - 7a, `__INCLUDE_LEVEL__`, `__FILE_NAME__`, `__BASE_FILE__`: each top stretch (and each
+    directive's line) knows its instance (`SINST`, `IF_INST`). A built-in reads its instance's
+    depth, its file's last component's literal (placed by the host beside `__FILE__`'s, from the
+    configuration's paths), or its unit's main file's literal.
+  - 7b, the `__has_*` tests in text: a test the configuration answers is a function-like name
+    (`L_FEATURE`). Its call's raw operand, spelled together, keys the configuration's table, as in
+    an `#if`, and the call is one number token. `__has_include` and `__has_embed` stay plain names
+    in text, as clang reads them.
+  - 7c, `__COUNTER__`: each use is a number token with room for its digits and a row of the
+    uses' table (`CNT`). Once every list is placed, a use's value is the count of its unit's
+    live uses before it. Two uses' order is where their chains part: an argument's list is
+    ordered by its parameter's first plain use in the body, the serial pass's `pre`, and comes
+    before the call's rescan; a list is ordered by its place in its parent; a top call by its
+    top token. A list a claim rolled back is never placed, so it is not counted: the serial pass
+    reads it raw.
+    - **Refused, by name:** `__COUNTER__` in a directive's line (`X_COUNTER`). Its value would
+      count text expanded only after P1. The corpus has none.
+  - 7d, `_Pragma`: a function-like built-in whose call leaves no tokens. Its pragma goes to the
+    sink, not the output.
+    - **Refused, by name (`X_PRAGMA`):** a pragma that would make a row (`once`, `push_macro`,
+      `pop_macro`), and an operand that is a macro's (its string is known only once expanded).
+      Those rows need the text expanded inside P1's iterations, which §6 asks for and this step
+      does not build. **Open**: either the text pass joins P1's iterations where a unit has such a
+      `_Pragma`, or the refusal stays. The corpus has none.
+  - 7e, `#line` and line markers: an active one's operands (its `LINE_REST` or `MARKER_REST`)
+    are a line of §4's pass, expanded.
+    - At each iteration's end, its row is made from the output: its offset (the line it names
+      less the physical line after it) and, with a string, its presumed path's and that path's
+      last component's literals, in two scratch tokens of its own.
+    - Two segmented max scans over each instance's directive words give the latest row, and the
+      latest row with a file, before each directive and each stretch.
+    - `__LINE__` is the physical line plus the latest row's offset at the call's end; `__FILE__`
+      and `__FILE_NAME__` are the latest named row's literals.
+    - A row that changed is a change, so the iterations go on until the rows hold too.
+  - 7f, a call across a stretch's end: a top call's arguments read on past directives, through
+    the run of its file's stretches with nothing of another file between (`RSTART`, `RUN_END`).
+    The depth's scan and the close table are scoped to the run.
+    - The call's slot is its `)`'s stretch's, since the serial pass expands it once its
+      arguments are read; an exit's at the top level the same.
+    - A function-like name's `(` must be in its own stretch: the serial pass looks for it past
+      no directive, at the top level and for an exit alike.
+    - **Refused (`X_ACROSS`):** a call whose arguments run into an included file or past their
+      file's end. The serial pass ends such a call with its file. The corpus has none.
+    - `a_batch_is_its_units` now refuses a call past its file's end.
+  - All 25 evaluator tests pass; the Metal gates pass. The corpus, from main files: **3,135 units
+    equal, none refused**, at most 2 rounds of 4 launches. GPU time 245 ms over the three slices,
+    at a load average of 18–22.

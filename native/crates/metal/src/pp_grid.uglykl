@@ -42,8 +42,10 @@
 // (its active stretches in the unit's order), and the tests' lines' (decision 0467 §4).
 #define TEXT_TOP AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL)
 // Each top stretch's instance.
-#define TEXT_INST AT(const uint32_t, SINST), AT(const PpNode, P1_NODES), AT(const uint32_t, P1_UFILE), AT(const uint32_t, SLINE), AT(const uint32_t, SLINEN)
-#define IF_INST AT(const uint32_t, IF_INST), AT(const PpNode, P1_NODES), AT(const uint32_t, P1_UFILE), AT(const uint32_t, ILINE), AT(const uint32_t, ILINEN)
+#define TEXT_SCOPE mk_scope(1u, AT(const uint32_t, RSTART), AT(const uint32_t, RUNX), AT(const uint32_t, RUN_END), AT(const uint32_t, SINST), AT(const uint32_t, SSLOT))
+#define IF_SCOPE mk_scope(0u, AT(const uint32_t, RSTART), AT(const uint32_t, RUNX), AT(const uint32_t, RUN_END), AT(const uint32_t, IF_INST), AT(const uint32_t, DSLOT))
+#define TEXT_INST AT(const uint32_t, SINST), AT(const PpNode, P1_NODES), AT(const uint32_t, P1_UFILE), AT(const uint32_t, SLINE), AT(const uint32_t, SLINEN), TEXT_SCOPE
+#define IF_INST AT(const uint32_t, IF_INST), AT(const PpNode, P1_NODES), AT(const uint32_t, P1_UFILE), AT(const uint32_t, ILINE), AT(const uint32_t, ILINEN), IF_SCOPE
 #define IF_TOP AT(const uint32_t, IF_NODES), AT(const uint32_t, IF_AT), AT(const uint32_t, N_DIRS), AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL)
 // The same without the tokens' count.
 #define TEXT_STRETCHES AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS)
@@ -123,7 +125,8 @@
     u.floors = AT(const uint32_t, FLOORS); u.n_units = W(N_UNITS); u.tinst = AT(const uint32_t, IF_INST); u.nodes = AT(const PpNode, P1_NODES); \
     u.unit_file = AT(const uint32_t, P1_UFILE); u.op_keys = AT(const uint64_t, IF_OPKEYS); u.op_kinds = AT(const uint32_t, IF_OPKINDS); \
     u.n_ops = W(N_IFOP); u.feat_keys = AT(const uint64_t, IF_FEATKEYS); u.feat_vals = AT(const uint64_t, IF_FEATVALS); u.n_feat = W(N_FEAT); \
-    u.tline = AT(const uint32_t, ILINE); u.tlinen = AT(const uint32_t, ILINEN); u.ldelta = AT(const uint32_t, LDELTA); u.lt0 = AT(const uint32_t, LCTL)[0]
+    u.tline = AT(const uint32_t, ILINE); u.tlinen = AT(const uint32_t, ILINEN); u.ldelta = AT(const uint32_t, LDELTA); u.lt0 = AT(const uint32_t, LCTL)[0]; \
+    u.sc = IF_SCOPE
 
 // A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts or
 // a sorted tile (the segmented scans' two rows alias them: no phase runs two of them).
@@ -334,7 +337,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
                                          AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(uint32_t, IF_NODES), AT(uint32_t, IF_OPS), AT(uint32_t, LOOKUPS), AT(uint32_t, P1_FLAGS), AT(uint32_t, VBAD), s);
             }
             BARRIER();
-            EACH(s, nt) px_top_parens(files, data, AT(const uint32_t, BASES), IF_TOP, AT(uint32_t, THEADS), AT(uint32_t, DELTA), AT(uint32_t, CLOSE), nf, s);
+            EACH(s, nt) px_top_parens(files, data, AT(const uint32_t, BASES), IF_TOP, IF_SCOPE, AT(uint32_t, THEADS), AT(uint32_t, DELTA), AT(uint32_t, CLOSE), nf, s);
             BARRIER();
             SEG(UKL_SEG_ADD, nt, DELTA, THEADS, DEPTH);
             SCAN(nt, CLOSE, CLOSE_AT, CLOSE_TOTAL);
@@ -351,7 +354,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
             SEG(UKL_SEG_MAX, nt, CEND, THEADS, REACH);
             EACH(s, nt) p1_if_mask(AT(const uint32_t, IF_AT), AT(const uint32_t, N_DIRS), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, REACH), AT(uint32_t, IF_OPS), AT(uint32_t, LOOKUPS), s);
             BARRIER();
-            EACH(s, nt) px_top_calls(files, data, AT(const uint32_t, BASES), AT(const PpDef, DEFS), AT(const uint32_t, LOOKUPS), IF_TOP, AT(const uint32_t, DEPTH), icloses, AT(const uint32_t, CLOSE_TOTAL), AT(uint32_t, CEND), AT(uint32_t, CTL), nf, s);
+            EACH(s, nt) px_top_calls(files, data, AT(const uint32_t, BASES), AT(const PpDef, DEFS), AT(const uint32_t, LOOKUPS), IF_TOP, IF_SCOPE, AT(const uint32_t, DEPTH), icloses, AT(const uint32_t, CLOSE_TOTAL), AT(uint32_t, CEND), AT(uint32_t, CTL), nf, s);
             BARRIER();
             SEG(UKL_SEG_MAX, nt, CEND, EHEADS, REACH);
             EACH(s, nt) px_top_outer(AT(const uint32_t, CEND), AT(const uint32_t, REACH), AT(const uint32_t, IF_TOTAL), AT(uint32_t, STATE), AT(uint32_t, OFLAG), s);
@@ -434,6 +437,12 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     TICK();
     BARRIER();
     SCAN(N(N_GAPS), GCOUNTS, GAT, GTOTAL);
+    // The stretches' runs: a top call's scope in the text (§6).
+    EACH(p, N(N_GAPS)) pe_run_starts(AT(const uint32_t, SINST), AT(const uint32_t, N_GAPS), AT(uint32_t, RSTART), p);
+    BARRIER();
+    SCAN(N(N_GAPS), RSTART, RUNX, RUNTOT);
+    EACH(p, N(N_GAPS)) pe_run_ends(AT(const uint32_t, GAT), AT(const uint32_t, GCOUNTS), AT(const uint32_t, RSTART), AT(const uint32_t, RUNX), AT(const uint32_t, N_GAPS), AT(uint32_t, RUN_END), p);
+    BARRIER();
     // The active text past its room: the round again, at P1's next rung.
     if (N(GTOTAL) > W(TC)) {
         ONE(x) { ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ROOM); AT(uint32_t, GRID)[PG_STOP] = 1u; }
@@ -446,7 +455,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     // --- The top level: depth, the close table, the calls, the outermost, the lists --------
     PX_RESET();
     uint32_t nt = N(GTOTAL);
-    EACH(s, nt) px_top_parens(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL), AT(uint32_t, THEADS), AT(uint32_t, DELTA), AT(uint32_t, CLOSE), nf, s);
+    EACH(s, nt) px_top_parens(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL), TEXT_SCOPE, AT(uint32_t, THEADS), AT(uint32_t, DELTA), AT(uint32_t, CLOSE), nf, s);
     BARRIER();
     SEG(UKL_SEG_ADD, nt, DELTA, THEADS, DEPTH);
     SCAN(nt, CLOSE, CLOSE_AT, CLOSE_TOTAL);
@@ -455,7 +464,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     SORT_FROM(N(CLOSE_TOTAL), 24u, W(CLOSE_BITS), CLOSE_KEYS, CSORT_VA, CSORT_KB, CSORT_VB, CSORT_HIST);
     UKL_GLOBAL const uint64_t* closes = ukl_grid_sort_in_input(W(CLOSE_BITS)) ? AT(const uint64_t, CLOSE_KEYS) : AT(const uint64_t, CSORT_KB);
     TICK();
-    EACH(s, nt) px_top_calls(files, data, AT(const uint32_t, BASES), AT(const PpDef, DEFS), AT(const uint32_t, LOOKUPS), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL), AT(const uint32_t, DEPTH), closes, AT(const uint32_t, CLOSE_TOTAL), AT(uint32_t, CEND), AT(uint32_t, CTL), nf, s);
+    EACH(s, nt) px_top_calls(files, data, AT(const uint32_t, BASES), AT(const PpDef, DEFS), AT(const uint32_t, LOOKUPS), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL), TEXT_SCOPE, AT(const uint32_t, DEPTH), closes, AT(const uint32_t, CLOSE_TOTAL), AT(uint32_t, CEND), AT(uint32_t, CTL), nf, s);
     BARRIER();
     SEG(UKL_SEG_MAX, nt, CEND, EHEADS, REACH);
     EACH(s, nt) px_top_outer(AT(const uint32_t, CEND), AT(const uint32_t, REACH), AT(const uint32_t, GTOTAL), AT(uint32_t, STATE), AT(uint32_t, OFLAG), s);

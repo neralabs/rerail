@@ -413,6 +413,11 @@ pub struct Vis {
     iline: Buf,
     ilinen: Buf,
     sline: Buf,
+    // The stretches' runs (a top call's scope in the text): starts, their scan, each run's end.
+    rstart: Buf,
+    runx: Buf,
+    run_scan: Scan,
+    run_end: Buf,
     slinen: Buf,
     lctl: Buf,
     // The requests' names: the device's bytes, their top and room.
@@ -588,6 +593,10 @@ impl Vis {
             iline: zeroed(nd)?,
             ilinen: zeroed(nd)?,
             sline: zeroed(ng)?,
+            rstart: zeroed(ng)?,
+            runx: zeroed(ng)?,
+            run_scan: Scan::new(arena)?,
+            run_end: zeroed(ng)?,
             slinen: zeroed(ng)?,
             lctl: zeroed(4)?,
             rnames: arena.zeroed::<u8>(nd * 64 + 4096)?,
@@ -694,7 +703,7 @@ impl Vis {
         l.at("P1_LIVE", &self.live);
         l.at("IF_COUNT", &self.if_count).at("IF_FIRST", &self.if_first).at("IF_KIND", &self.if_kind).at("IF_INST", &self.if_inst)
             .at("LDELTA", &self.ldelta).at("LKEY", &self.lkey).at("LVAL", &self.lval).at("LVALN", &self.lvaln).at("LHEAD", &self.lhead).at("LATEST", &self.latest).at("LATESTN", &self.latestn)
-            .at("ILINE", &self.iline).at("ILINEN", &self.ilinen).at("SLINE", &self.sline).at("SLINEN", &self.slinen).at("LCTL", &self.lctl).at("P1_RNAMES", &self.rnames).at("P1_RNTOP", &self.rntop).word("RNC", self.rn_cap).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
+            .at("ILINE", &self.iline).at("ILINEN", &self.ilinen).at("SLINE", &self.sline).at("RSTART", &self.rstart).at("RUNX", &self.runx).at("RUNTOT", &self.run_scan.total).at("RUN_END", &self.run_end).at("SLINEN", &self.slinen).at("LCTL", &self.lctl).at("P1_RNAMES", &self.rnames).at("P1_RNTOP", &self.rntop).word("RNC", self.rn_cap).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
         l.at("IF_OPS", &self.if_ops).at("IF_VAL", &self.if_val).at("IF_KEYS", &self.if_keys).word("IF_TRUE", self.true_is_one).word("N_IFOP", self.n_ifop);
         l.at("IF_OPKEYS", &self.op_keys).at("IF_OPKINDS", &self.op_kinds).word("N_FEAT", self.n_feat).at("IF_FEATKEYS", &self.feat_keys).at("IF_FEATVALS", &self.feat_vals);
         l.at("P1_MADE", &self.made).at("P1_MADEF", &self.made_file).at("P1_ENTER", &self.enter).at("P1_CAND", &self.cand).at("P1_ONCE", &self.once);

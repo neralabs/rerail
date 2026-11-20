@@ -510,7 +510,9 @@ fn expanded_include_names_are_the_spikes() {
 }
 
 /// R7 of decision 0467: each case §6 lists, refused until step 7, gives the serial pass's
-/// tokens on the device, in C and C++, a round of 4 launches. Built so far: `#line` and line
+/// tokens on the device, in C and C++, a round of 4 launches. A call across a stretch's end (its
+/// arguments over a `#define`, an `#undef`, a conditional, a `#line`, a pragma; nested; an exit
+/// whose `(` follows a directive; in a header), `#line` and line
 /// markers (a line alone, a file, a macro's line and file, in an inactive group, in a header,
 /// read by `#if`, an escaped name, a name ending in `/`, malformed), `_Pragma` (no
 /// tokens: a string, spaced, prefixed, stringized in a macro, named by a macro, malformed, across
@@ -527,6 +529,18 @@ fn expanded_include_names_are_the_spikes() {
 fn the_refused_cases_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
     let shapes: &[(&str, &[(&str, &str)])] = &[
+        (
+            "a call across a stretch's end",
+            &[
+                (
+                    "main.c",
+                    "#define F(x) [x]\n#define G(a, b) a b\nF(1\n#define A 2\nA)\nG(A,\n#undef A\n#define A 3\nA)\n\
+                     F(\n#if 1\nyes\n#else\nno\n#endif\n)\n#define H F\nH\n#define X x\n(X)\nG(__LINE__,\n#line 40\n__LINE__) __LINE__\n\
+                     F(F(\n#pragma p\n1))\n#include \"h.h\"\nF(z\n#define B b\n)B\n",
+                ),
+                ("h.h", "F(in_header\n#define C c\nC)\n"),
+            ],
+        ),
         (
             "#line and line markers",
             &[
@@ -839,8 +853,8 @@ fn part_tokens(part: &rerail_metal::pp_expand::Part, files: &[Vec<u8>], tapes: &
 /// Decision 0460, batching: units expanded in one batch give each its own serial answer. The same
 /// names are defined differently, undefined, or left undefined from unit to unit, so a unit that
 /// saw an earlier unit's row would differ; `__FILE__` used after another unit redefined it; one
-/// unit the device refuses (a call across a stretch's end), so the batch splits and that unit
-/// alone is refused.
+/// unit the device refuses (a call past its file's end), so the batch splits and that unit alone
+/// is refused.
 #[test]
 fn a_batch_is_its_units() {
     use rerail_c_pp::files::Search;
@@ -850,7 +864,7 @@ fn a_batch_is_its_units() {
         &[("main.c", "#define A 2\n#undef F\nF(4) A\n")],
         &[("main.c", "#define __FILE__ x\n__FILE__ __LINE__\n")],
         &[("main.c", "__FILE__ __LINE__ A\n")],
-        &[("main.c", "#define F(x) x\nF(\n#define A\n)\n")],
+        &[("main.c", "#define F(x) x\nF(1\n")],
         &[("main.c", "#include \"a.h\"\nH K\n"), ("a.h", "#define K k\n#define H(x) x\n")],
         &[("main.c", "K H(1)\n")],
     ];
@@ -879,7 +893,7 @@ fn a_batch_is_its_units() {
         same(show(&part_tokens(part, &d.files, &d.tapes)), show(serial), format!("unit {k}"));
     }
     eprintln!("refused alone: {alone:?}");
-    same(alone, vec![(5, rerail_metal::pp_expand::X_ACROSS)], "the units refused: a call across a directive's stretch end");
+    same(alone, vec![(5, rerail_metal::pp_expand::X_ACROSS)], "the units refused: a call past its file's end");
     // The units before a refused one ran in a batch of more than one.
     assert!(std::rc::Rc::ptr_eq(&parts[0].x, &parts[1].x), "units 0 and 1 in one batch");
 }

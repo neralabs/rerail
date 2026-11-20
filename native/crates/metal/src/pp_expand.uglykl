@@ -601,6 +601,18 @@ UKL_INLINE void pe_gap_counts(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const u
     slinen[p] = k > 0u ? latestn[insts[lo].dir_first + k - 1u] : 0u;
 }
 
+// Each stretch's run (decision 0467 §6): whether it starts one (its instance not the one before's).
+UKL_INLINE void pe_run_starts(UKL_GLOBAL const uint32_t* sinst, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL uint32_t* rstart, uint32_t p) {
+    if (p >= n_gaps[0]) return;
+    rstart[p] = p == 0u || sinst[p] != sinst[p - 1u] ? 1u : 0u;
+}
+// Each run's end: its last stretch's tokens' end.
+UKL_INLINE void pe_run_ends(UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* counts, UKL_GLOBAL const uint32_t* rstart, UKL_GLOBAL const uint32_t* runx, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL uint32_t* run_end, uint32_t p) {
+    uint32_t n = n_gaps[0];
+    if (p >= n) return;
+    if (p + 1u == n || rstart[p + 1u] != 0u) run_end[runx[p] + rstart[p] - 1u] = gat[p] + counts[p];
+}
+
 // Each active stretch token's meaning where it stands (R4's test): `L_NOT_NAME` where it is no
 // identifier, else what its key means at its stretch's slot.
 UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gap_at, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* gslot, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* floors, uint32_t n_units, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* bad, uint32_t n_files, uint32_t s) {
@@ -749,6 +761,34 @@ UKL_INLINE uint32_t top_end(UKL_GLOBAL const uint32_t* gat, uint32_t n_gaps, uin
     return j + 1u < n_gaps ? gat[j + 1u] : n_toks;
 }
 
+// How far a top call reads (decision 0467 §6): in the text, a run of its file's stretches with
+// nothing of another file between (a call's arguments go on past a directive, not into an
+// included file nor past their file's end: `lex_raw` while collecting); in a directive's line,
+// the line. `runs` 0 for the lines; else each stretch's run (`rstart`: it starts one; `runx`
+// their scan), each run's end, each stretch's instance, and each stretch's slot.
+typedef struct Scope {
+    uint32_t runs;
+    UKL_GLOBAL const uint32_t* rstart; UKL_GLOBAL const uint32_t* runx; UKL_GLOBAL const uint32_t* run_end;
+    UKL_GLOBAL const uint32_t* tinst; UKL_GLOBAL const uint32_t* gslot;
+} Scope;
+UKL_INLINE Scope mk_scope(uint32_t runs, UKL_GLOBAL const uint32_t* rstart, UKL_GLOBAL const uint32_t* runx, UKL_GLOBAL const uint32_t* run_end, UKL_GLOBAL const uint32_t* tinst, UKL_GLOBAL const uint32_t* gslot) {
+    Scope c;
+    c.runs = runs; c.rstart = rstart; c.runx = runx; c.run_end = run_end; c.tinst = tinst; c.gslot = gslot;
+    return c;
+}
+// The end of top token `s`'s scope.
+UKL_INLINE uint32_t scope_end(Scope c, UKL_GLOBAL const uint32_t* gat, uint32_t n_gaps, uint32_t n_toks, uint32_t s) {
+    if (c.runs == 0u) return top_end(gat, n_gaps, n_toks, s);
+    uint32_t p = pb_item_of(gat, n_gaps, s);
+    return c.run_end[c.runx[p] + c.rstart[p] - 1u];
+}
+// Whether top token `s` starts its scope.
+UKL_INLINE bool scope_head(Scope c, UKL_GLOBAL const uint32_t* gat, uint32_t n_gaps, uint32_t s) {
+    uint32_t j = pb_item_of(gat, n_gaps, s);
+    if (c.runs == 0u) return s == gat[j];
+    return s == 0u || c.tinst[j] != c.tinst[pb_item_of(gat, n_gaps, s - 1u)];
+}
+
 // The unit, as every expansion kernel reads it.
 // A key over bytes given a piece at a time (`name_key`'s: the count first, then 8 bytes a word).
 typedef struct KeyAcc { uint64_t h, w; uint32_t m; } KeyAcc;
@@ -780,6 +820,7 @@ typedef struct Ux {
     // `#line`'s rows: each top stretch's latest before it (its word + 1, 0 none) and latest with a
     // file, each row's offset, and the rows' first scratch token (two a word: its literals).
     UKL_GLOBAL const uint32_t* tline; UKL_GLOBAL const uint32_t* tlinen; UKL_GLOBAL const uint32_t* ldelta; uint32_t lt0;
+    Scope sc;
 } Ux;
 
 // Whether `p[0..n)` holds a line splice (`\`, blanks, a newline): its phase-2 spelling differs.
@@ -856,12 +897,12 @@ UKL_INLINE uint32_t paren_delta(Ux u, uint32_t g) {
 
 // Each top token's stretch head (for the depth's segmented scan), its depth change, and whether it
 // is a `)` (for the close table).
-UKL_INLINE void px_top_parens(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL uint32_t* heads, UKL_GLOBAL uint32_t* delta, UKL_GLOBAL uint32_t* close, uint32_t n_files, uint32_t s) {
+UKL_INLINE void px_top_parens(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, Scope sc, UKL_GLOBAL uint32_t* heads, UKL_GLOBAL uint32_t* delta, UKL_GLOBAL uint32_t* close, uint32_t n_files, uint32_t s) {
     if (s >= n_toks[0]) return;
     Ux u; u.files = files; u.data = data; u.bases = bases; u.n_files = n_files;
     uint32_t j = pb_item_of(gat, n_gaps[0], s);
     uint32_t d = paren_delta(u, text_nodes[firsts[j] + (s - gat[j])]);
-    heads[s] = s == gat[j] ? 1u : 0u;
+    heads[s] = scope_head(sc, gat, n_gaps[0], s) ? 1u : 0u;
     delta[s] = d;
     close[s] = d == 0xffffffffu ? 1u : 0u;
 }
@@ -893,7 +934,7 @@ UKL_INLINE uint32_t top_close(UKL_GLOBAL const uint64_t* closes, uint32_t n_clos
 
 // Each top token's call: an object-like name, or a function-like one followed in its stretch by
 // `(`, to its `)`. `cend` is the call's last token + 1 (0: no call), the max scan's input.
-UKL_INLINE void px_top_calls(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* lookups, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* depth, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL uint32_t* cend, UKL_GLOBAL uint32_t* ctl, uint32_t n_files, uint32_t s) {
+UKL_INLINE void px_top_calls(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* lookups, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, Scope sc, UKL_GLOBAL const uint32_t* depth, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL uint32_t* cend, UKL_GLOBAL uint32_t* ctl, uint32_t n_files, uint32_t s) {
     uint32_t n = n_toks[0];
     if (s >= n) return;
     uint32_t m = lookups[s];
@@ -906,12 +947,14 @@ UKL_INLINE void px_top_calls(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const ui
         if (!px_fnlike(defs, m)) {
             e = s + 1u;
         } else {
-            uint32_t end = top_end(gat, n_gaps[0], n, s);
+            // Its `(` in its own stretch (the serial pass looks for it past no directive), its
+            // arguments on to its scope's end.
+            uint32_t end = scope_end(sc, gat, n_gaps[0], n, s);
             Ux u; u.files = files; u.data = data; u.bases = bases; u.n_files = n_files;
-            if (s + 1u < end && ref_is(u, top_ref(text_nodes, gat, n_gaps[0], firsts, s + 1u), '(')) {
+            if (s + 1u < top_end(gat, n_gaps[0], n, s) && ref_is(u, top_ref(text_nodes, gat, n_gaps[0], firsts, s + 1u), '(')) {
                 uint32_t c = top_close(closes, n_close[0], depth, s + 1u, end);
-                // A call whose arguments go on past its stretch (a directive among them, or its
-                // file's end) is the CPU's.
+                // A call whose arguments go on past its scope (into an included file, or past
+                // their file's end) is refused.
                 if (c == 0xffffffffu) px_refuse(ctl, X_ACROSS);
                 else e = c + 1u;
             }
@@ -938,7 +981,8 @@ UKL_INLINE void px_top_lists(UKL_GLOBAL const uint32_t* lookups, UKL_GLOBAL cons
     if (c >= list_cap) { px_refuse(ctl, X_ROOM); return; }
     uint32_t m = lookups[s];
     UKL_GLOBAL PxList* l = &lists[c];
-    px_init(l, TOP, m, gslot[pb_item_of(gat, n_gaps[0], s)], LK_MACRO);
+    // Its slot the `)`'s stretch's: the serial pass expands it once its arguments are read.
+    px_init(l, TOP, m, gslot[pb_item_of(gat, n_gaps[0], cend[s] - 1u)], LK_MACRO);
     l->lo = s; l->hi = cend[s] - 1u; l->at = l->lo; l->end = l->hi;
     uint32_t item = px_fnlike(defs, m) ? (c | IT_CALL) : (c | IT_SUBST);
     ukl_atomic_store(&slots[c], item + 1u);
@@ -1003,7 +1047,8 @@ UKL_INLINE bool px_peek_paren(Ux u, UKL_GLOBAL PxList* lists, UKL_GLOBAL const u
         if (lists[k].kind == LK_ARG) return false;
         uint32_t p = lists[k].parent, at = lists[k].hi + 1u;
         if ((p & TOP) != 0u) {
-            if (at >= top_end(u.gat, u.n_gaps, u.n_toks, lists[k].lo)) return false;
+            // The `(` in the name's stretch: the serial pass looks for it past no directive.
+            if (at >= top_end(u.gat, u.n_gaps, u.n_toks, lists[k].hi)) return false;
             return ref_is(u, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, at), '(');
         }
         if (at < lists[p].len) return ref_is(u, tok[lists[p].first + at], '(');
@@ -1192,7 +1237,7 @@ UKL_INLINE void px_exit(Ux u, Ar a, uint32_t l, uint32_t j, uint32_t m, uint32_t
         if (K->kind != LK_MACRO) break;
         uint32_t p = K->parent, s0 = K->hi + 1u;
         if ((p & TOP) != 0u) {
-            uint32_t end = top_end(u.gat, u.n_gaps, u.n_toks, K->lo);
+            uint32_t end = scope_end(u.sc, u.gat, u.n_gaps, u.n_toks, K->lo);
             uint32_t c = top_close_to(u.closes, u.n_close, u.tdepth[K->hi] - r, s0, end);
             if (c != NO_POS) { segl[ns] = TOP; seglo[ns] = s0; seghi[ns] = c; ns++; x = TOP; e = c; }
             break;
@@ -1258,7 +1303,8 @@ UKL_INLINE void px_exit(Ux u, Ar a, uint32_t l, uint32_t j, uint32_t m, uint32_t
         px_init(J, x, NO_DEF, L->slot, LK_JOIN);
         J->first = base; J->len = total;
         UKL_GLOBAL PxList* N = &a.lists[nid];
-        px_init(N, x, m, L->slot, LK_MACRO);
+        // At the top level, its slot the `)`'s stretch's.
+        px_init(N, x, m, (x & TOP) != 0u ? u.sc.gslot[pb_item_of(u.gat, u.n_gaps, e)] : L->slot, LK_MACRO);
         N->lo = seglo[ns - 1u]; N->hi = e; N->src = jid; N->at = 0u; N->end = total - 1u;
         if ((x & TOP) == 0u) ukl_atomic_add(&a.lists[x].pending, 1u);
         L->xname = j + 1u; L->xcall = nid + 1u;
@@ -1385,6 +1431,18 @@ UKL_INLINE void px_copy(Ar a, uint32_t dst, uint32_t src, uint32_t n, uint32_t l
 // count checked (a wrong one leaves the name alone, painted), and a list for each parameter used
 // expanded (claimed once), its tokens the argument's refs, its SCAN pushed. SUBST follows when the
 // last is flattened.
+// List `l`'s top call: its frames climbed, an argument's by its call.
+UKL_INLINE uint32_t px_top_call(Ar a, uint32_t l) {
+    uint32_t k = l;
+    for (uint32_t step = 0u; step < MAX_CHAIN; step++) {
+        UKL_GLOBAL const PxList* K = &a.lists[k];
+        if (K->kind == LK_ARG) k = K->call;
+        else if ((K->parent & TOP) != 0u) break;
+        else k = K->parent;
+    }
+    return k;
+}
+
 // A number token in the scratch, by lane 0 (its ref broadcast).
 UKL_INLINE uint32_t px_number(Ar a, uint32_t value, uint32_t lane __UKL_PARAMS) {
     uint32_t nd = 1u;
@@ -1927,9 +1985,9 @@ UKL_INLINE void px_builtin(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
     } else if (L->def != L_LINE) {
         // The outermost call's top token: its stretch's file and instance, and its latest
         // `#line` row with a file (its presumed path's).
-        uint32_t k = l;
-        for (uint32_t step = 0u; step < MAX_CHAIN && (a.lists[k].parent & TOP) == 0u; step++) k = a.lists[k].parent;
-        uint32_t s = a.lists[k].lo, p = pb_item_of(u.gat, u.n_gaps, s);
+        uint32_t k = px_top_call(a, l);
+        // Where its call ends (the serial pass expands it once its arguments are read).
+        uint32_t s = a.lists[k].hi, p = pb_item_of(u.gat, u.n_gaps, s);
         uint32_t f = file_of(u.bases, u.n_files, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, s));
         PpNode nd = u.nodes[u.tinst[p]];
         uint32_t row = u.tlinen[p];
@@ -1948,9 +2006,7 @@ UKL_INLINE void px_builtin(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
         }
         uint32_t g = par_ref(u, a, p, k);
         // The physical line plus the latest `#line` row's offset before the outermost call.
-        uint32_t c = l;
-        for (uint32_t step = 0u; step < MAX_CHAIN && (a.lists[c].parent & TOP) == 0u; step++) c = a.lists[c].parent;
-        uint32_t row = u.tline[pb_item_of(u.gat, u.n_gaps, a.lists[c].lo)];
+        uint32_t row = u.tline[pb_item_of(u.gat, u.n_gaps, a.lists[px_top_call(a, l)].hi)];
         uint32_t delta = row != 0u ? u.ldelta[row - 1u] : 0u;
         ref = px_number(a, (g & SCRATCH) == 0u ? px_line(u, g) + delta : 0u, lane __UKL_ARGS);
     }
@@ -2179,7 +2235,7 @@ UKL_INLINE void px_place(Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
 }
 
 // The queue's workers: a SIMD group each, lane 0 taking an item and the 32 lanes doing it.
-UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* tinst, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* unit_file, UKL_GLOBAL const uint32_t* tline, UKL_GLOBAL const uint32_t* tlinen, UKL_GLOBAL const uint32_t* top_depth, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* cols, UKL_GLOBAL PxArg* args, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* words, UKL_GLOBAL PxScratch* scratch, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL const uint32_t* floors, uint32_t n_units,
+UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* tinst, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* unit_file, UKL_GLOBAL const uint32_t* tline, UKL_GLOBAL const uint32_t* tlinen, Scope sc, UKL_GLOBAL const uint32_t* top_depth, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* cols, UKL_GLOBAL PxArg* args, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* words, UKL_GLOBAL PxScratch* scratch, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL const uint32_t* floors, uint32_t n_units,
                           UKL_GLOBAL const uint64_t* op_keys, UKL_GLOBAL const uint32_t* op_kinds, uint32_t n_ops, UKL_GLOBAL const uint64_t* feat_keys, UKL_GLOBAL const uint64_t* feat_vals, uint32_t n_feat,
                           UKL_GLOBAL uint32_t* cnt, uint32_t cnt_cap, UKL_GLOBAL const uint32_t* ldelta, uint32_t lt0, uint32_t lane __UKL_PARAMS) {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
@@ -2197,7 +2253,7 @@ UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8
     u.floors = floors; u.n_units = n_units;
     u.tinst = tinst; u.nodes = nodes; u.unit_file = unit_file;
     u.op_keys = op_keys; u.op_kinds = op_kinds; u.n_ops = n_ops; u.feat_keys = feat_keys; u.feat_vals = feat_vals; u.n_feat = n_feat;
-    u.tline = tline; u.tlinen = tlinen; u.ldelta = ldelta; u.lt0 = lt0;
+    u.tline = tline; u.tlinen = tlinen; u.ldelta = ldelta; u.lt0 = lt0; u.sc = sc;
     Ar a;
     // The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth, the origin.
     uint32_t tc = words[1];
