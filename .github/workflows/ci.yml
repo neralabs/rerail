@@ -648,8 +648,9 @@ jobs:
           cargo check -p rerail-engine --lib --target wasm32-wasip1
           cargo check -p rerail-engine --bin rerail-engine --target wasm32-wasip1 --no-default-features --features headless,lang-python
 
+      # Also when a step above failed: the compiles before it passed, and the next runs start from them.
       - name: Save the compile cache for later runs
-        if: env.SAVE_WARM == 'true'
+        if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}
         uses: ./.github/actions/rust-compile-cache/save
         with:
           artifact: ${{ steps.compile-cache.outputs.artifact }}

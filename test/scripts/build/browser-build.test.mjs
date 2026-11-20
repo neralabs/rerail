@@ -1,11 +1,15 @@
-// native/wasm/env.sh, the C and C++ toolchain of the engine's browser build (wasm32-wasip1). CI checks that build with
-// `cargo check`, which links nothing, so a wrong link flag passes it: this reads env.sh's link line.
+// native/wasm/env.sh, the C and C++ toolchain of the engine's browser build (wasm32-wasip1), and CI's check of that
+// build in ci.yml's rust-clippy job. The check runs `cargo check`, which links nothing, so a wrong link flag passes it:
+// these read env.sh's link line, and the job's steps around the check.
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const ENV_SH = fileURLToPath(new URL("../../../native/wasm/env.sh", import.meta.url));
+const CI = fileURLToPath(new URL("../../../.github/workflows/ci.yml", import.meta.url));
 
 /** The flags env.sh gives rustc for wasm32-wasip1 with the wasi-sdk at `sdk`, split at spaces. */
 function rustflags(sdk) {
@@ -27,5 +31,16 @@ describe.skipIf(process.platform === "win32")("env.sh with wasi-sdk", () => {
       "-L", `native=${lib}`,
       "-l", "static=c++", "-l", "static=c++abi",
     ]);
+  });
+});
+
+describe("CI's check of the browser build", () => {
+  const job = parse(readFileSync(CI, "utf8")).jobs["rust-clippy"];
+  const check = job.steps.find((step) => step.run?.includes("--target wasm32-wasip1"));
+
+  it("keeps the job's compiles for later runs when the check or a step before it fails", () => {
+    const save = job.steps.find((step) => step.uses === "./.github/actions/rust-compile-cache/save");
+    expect(job.steps.indexOf(save)).toBeGreaterThan(job.steps.indexOf(check));
+    expect(save.if).toContain("!cancelled()");
   });
 });
