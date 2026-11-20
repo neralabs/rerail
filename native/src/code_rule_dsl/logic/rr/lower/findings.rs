@@ -365,7 +365,17 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
     /// every match is that one (`first_match`), for `@rx_replace`. No setting, no facts.
     fn references_setting(&mut self) -> Result<(), Error> {
         let settings: Vec<String> = self.prog.settings().into_iter().filter(|(k, _)| k == "references").map(|(_, v)| v).collect();
-        if settings.is_empty() || !self.prog.declares(REFERENCE_SETTING[0]) {
+        if !self.prog.declares(REFERENCE_SETTING[0]) {
+            return Ok(());
+        }
+        // No setting: the relations are stated, empty. They are the run's constants either way, so the rules
+        // reading them stay file-local (t50 step 1); a relation with no stated facts has no location to the split.
+        if settings.is_empty() {
+            for rel in REFERENCE_SETTING {
+                if self.prog.declares(rel) && self.prog.fact_rows(rel).is_empty() {
+                    self.prog.set_facts(rel, &[]);
+                }
+            }
             return Ok(());
         }
         let bad = |m: String| Error::Syntax(format!(".references: {m}"));
@@ -420,6 +430,12 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
         }
         for (rel, row) in rows {
             self.prog.add_facts(rel, &[crate::code_rule_dsl::logic::front::List::from(row)]);
+        }
+        // A part the setting leaves out (no `siblingLinks`, no `constructorFields`) is stated, empty.
+        for rel in REFERENCE_SETTING {
+            if self.prog.declares(rel) && self.prog.fact_rows(rel).is_empty() {
+                self.prog.set_facts(rel, &[]);
+            }
         }
         Ok(())
     }

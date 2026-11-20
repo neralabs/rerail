@@ -229,6 +229,11 @@ fn heads(text: &str) -> HashSet<String> {
 /// The rules' side over the files under `dir`: the compared rows, and each stage's CPU (its strata's own, from the
 /// run's profile), with the run's CPU outside every stratum as `(engine)`.
 pub(super) fn rules_side(dir: &std::path::Path) -> Side {
+    rules_side_in(dir, 1 << 18)
+}
+
+/// `rules_side` with chunks of `chunk_nodes` nodes: the rows are the same at any size.
+pub(super) fn rules_side_in(dir: &std::path::Path, chunk_nodes: usize) -> Side {
     let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/lib/python");
     let names = heads(&std::fs::read_to_string(lib.join("names.rr")).unwrap());
     let refs = std::fs::read_to_string(lib.join("references.rr")).unwrap();
@@ -239,7 +244,7 @@ pub(super) fn rules_side(dir: &std::path::Path) -> Side {
     let profile = crate::code_rule_dsl::logic::profile::on();
     crate::code_rule_dsl::logic::profile::set(true);
     crate::code_rule_dsl::logic::profile::reset();
-    crate::code_rule_dsl::logic::plan::corpus::run(PROGRAM, dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+    crate::code_rule_dsl::logic::plan::corpus::run(PROGRAM, dir, None, &out, "program", Binding::Cpu, chunk_nodes).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
     let spans = crate::code_rule_dsl::logic::profile::spans();
     crate::code_rule_dsl::logic::profile::set(profile);
     let mut side = Side::default();
@@ -323,6 +328,22 @@ fn each_stage_of_ws_reference_graph_is_the_rules_on_the_projects() {
         failures.extend(differences(&w, &ours, 6).into_iter().map(|d| format!("{name} {d}")));
     }
     assert!(failures.is_empty(), "stages differ from W's:\n{}", failures.join("\n"));
+}
+
+/// The rows do not depend on how the files are chunked: the package's files, a chunk or a few each, give the rows one
+/// chunk gives. (s1000 in two chunks lost 1,433 `<unqualified>` references once the setting's relations were stated,
+/// t50 step 1.)
+#[test]
+fn each_stage_is_the_same_in_small_chunks() {
+    let package: Vec<(String, String)> = super::reference_tests::PACKAGE.iter().map(|(p, s)| ((*p).to_owned(), (*s).to_owned())).collect();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("reference-stages-chunks");
+    let _ = std::fs::remove_dir_all(&dir);
+    write_files(&dir, package.iter().map(|(p, s)| (p.as_str(), s.as_str())));
+    let (one, small) = (rules_side_in(&dir, 1 << 18), rules_side_in(&dir, 1 << 6));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(one.rows.get("ref").is_some_and(|r| !r.is_empty()), "the package has references");
+    let differ = differences(&one, &small, 6);
+    assert!(differ.is_empty(), "one chunk (W's side here) and small chunks differ:\n{}", differ.join("\n"));
 }
 
 /// The cases the corpus runs found where a stage differed from W's, each a few files: every stage's rows are W's.
@@ -501,7 +522,9 @@ fn reference_stages_timed() {
     let root = std::path::PathBuf::from(std::env::var("RERAIL_STAGE_CORPUS").expect("RERAIL_STAGE_CORPUS"));
     let files = files_under(&root);
     let w = w_side(&files);
-    let ours = rules_side(&root);
+    // `RERAIL_STAGE_CHUNK=<nodes>`: the run's chunk size (2^18 by default).
+    let chunk = std::env::var("RERAIL_STAGE_CHUNK").ok().and_then(|c| c.parse().ok()).unwrap_or(1 << 18);
+    let ours = rules_side_in(&root, chunk);
     println!("{} files\n{}", files.len(), report(&w, &ours));
     for d in differences(&w, &ours, 3) {
         println!("differs: {d}");

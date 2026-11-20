@@ -340,6 +340,38 @@ Two ratios are the worst. The first is the lookup, at 54×: a scope walk materia
 keyed nearest replaces. The second is the time outside the strata, which is larger than all the stages together.
 Steps 1 and 8 address that part.
 
+### Step 1, done: the setting's relations are stated, empty when unset
+
+A `.references` setting's relations (`REFERENCE_SETTING`) are declared by the program and stated by the lowering
+(`references_setting`). With no setting given, nothing was stated, so the split saw relations with no location. It
+counted every reader as cross-file, and `rf_module`, `rf_qn`, `rf_ref` and their readers went across files. Now the
+lowering states each declared setting relation, empty when unset. The split already counts a stated relation as a run
+constant (`fact`), so those relations go back to the per-file part. The split's test is
+`a_relation_stated_empty_is_a_constant`. A structural rule ("declared and not derived is a constant") was tried first
+and was wrong: the engine's world facts (`dir_entry`, `file_line`, …) are declared non-inputs too, and it made
+`lib/c/includes.rr` unstratifiable.
+
+The move surfaced an engine bug. An input's index was kept by its set of key columns, in the column order of the first
+caller (the planner's `probe_size`). A join that probed the same columns in another order read its key in its own order
+through that index and found nothing. This happens only when a join is cut and its rows are handed to a new order
+(decision 0206). On s1000 in two chunks, 1,433 `<unqualified>` references were lost. The fix puts a step's keys in the
+index's order (`index_order_tests`). `each_stage_is_the_same_in_small_chunks` checks that the rows do not depend on
+the chunking.
+
+s1000 after step 1, every stage's rows equal (same host, 2026-11-20):
+
+| Stage | W s | rules s | rules/W |
+|---|---|---|---|
+| scope | 0.182 | 2.408 | 13.2 |
+| lookup | 0.016 | 1.020 | 65.5 |
+| summary | 0.619 | 4.757 | 7.7 |
+| link | 0.193 | 1.373 | 7.1 |
+| (engine) | — | 8.5 (was 16.9) | — |
+| (generated strata) | — | 3.2 (was 5.7) | — |
+| (outputs) | — | 2.9 | — |
+
+The rules' total went from 31.2 s to 24.1 s. The lookup's ratio is now the worst by far (step 5).
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.
