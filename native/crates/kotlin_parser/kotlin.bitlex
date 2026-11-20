@@ -783,6 +783,9 @@ tree kotlin {
   implied when_subject '(' ')' 'val' '='
   implied when_entry ',' 'else'
   implied callable_reference '::' 'class'
-  hidden apart this_at jump_at as_q sfx recv dotted fn_recv semi semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr
+  # Every mark a rule takes is asked only where a rule takes it, as the lean parser asks each
+  # question where it branches (decision 0492). Not hidden: `generic`, where a `<` that opens type
+  # arguments no rule reads refuses the file.
+  hidden apart this_at jump_at as_q sfx recv dotted fn_recv semi semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class acc
   extra line_comment multiline_comment
 }

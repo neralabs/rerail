@@ -89,7 +89,7 @@ impl Writer {
         // One arena, so a call between the ops stays in a `bl`'s reach (as `Reads`).
         builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(16 << 20).unwrap()));
         let mut module = cranelift_jit::JITModule::new(builder);
-        let ids = crate::writer::define_ops(&mut module, cranelift_module::Linkage::Export).unwrap();
+        let ids = crate::writer::define_ops(&mut module, cranelift_module::Linkage::Export, true).unwrap();
         module.finalize_definitions().unwrap();
         let fns = ids.into_iter().map(|(name, (id, _))| (name, module.get_finalized_function(id))).collect();
         Self { _module: module, fns }

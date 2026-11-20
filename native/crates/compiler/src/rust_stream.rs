@@ -2518,6 +2518,11 @@ impl Plan {
 /// place with the most runs the default where every value has one; else a value with no
 /// place refuses.
 fn arms(p: &mut Plan, scrutinee: &str, values: &[u16], name: &dyn Fn(usize) -> String) -> String {
+    arms_or(p, scrutinee, values, name, None)
+}
+
+/// `arms`, its default arm `dflt`'s where one is given (a value no index names goes there).
+fn arms_or(p: &mut Plan, scrutinee: &str, values: &[u16], name: &dyn Fn(usize) -> String, dflt: Option<u16>) -> String {
     let mut by: BTreeMap<u16, Vec<(usize, usize)>> = BTreeMap::new();
     let mut i = 0;
     while i < values.len() {
@@ -2529,9 +2534,13 @@ fn arms(p: &mut Plan, scrutinee: &str, values: &[u16], name: &dyn Fn(usize) -> S
         i = j + 1;
     }
     let mut s = format!("match {scrutinee} {{\n");
-    let dflt = if by.contains_key(&REFUSE) { None } else { by.iter().max_by_key(|(_, r)| r.len()).map(|(&t, _)| t) };
+    let dflt = match dflt {
+        Some(t) => (t != REFUSE).then_some(t),
+        None if by.contains_key(&REFUSE) => None,
+        None => by.iter().max_by_key(|(_, r)| r.len()).map(|(&t, _)| t),
+    };
     for (&t, runs) in &by {
-        if t == REFUSE || Some(t) == dflt {
+        if Some(t) == dflt || dflt.is_none() && t == REFUSE {
             continue;
         }
         let pats: Vec<String> = runs.iter().map(|&(a, b)| if a == b { name(a) } else { format!("{}..={}", name(a), name(b)) }).collect();
@@ -2610,13 +2619,13 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
                 values[k] = tk;
                 continue;
             }
-            let mut inner = String::from("match s.word() {\n");
-            for (w, to_w) in named {
-                let j = p.to(to_w);
-                writeln!(inner, "{} => {{ {j} }}", x.word(w)).unwrap();
+            // One arm a target, its words' runs as ranges, as the lean parser's `soft` and
+            // `ident_word` read a word's class, not each word (decision 0492).
+            let mut to = vec![tk; x.word_names.len().max(usize::from(named.iter().map(|&(w, _)| w).max().unwrap_or(0)) + 1) + 1];
+            for &(w, to_w) in &named {
+                to[usize::from(w) + 1] = to_w;
             }
-            let j = p.to(tk);
-            writeln!(inner, "_ => {{ {j} }}\n}}").unwrap();
+            let inner = arms_or(&mut p, "s.word()", &to, &|v| if v == 0 { "0".into() } else { x.word((v - 1) as u16) }, Some(tk));
             writeln!(by_word, "{} => {{ {inner} }}", x.token(k)).unwrap();
         }
         let rest = arms(&mut p, "kind", &values, &|k| x.token(k));
