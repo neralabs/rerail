@@ -739,7 +739,7 @@ DEFINE_KERNEL2(t, t_divergent,
     /// Threadgroup memory, a barrier and SIMD-group shuffles give each thread what a GPU gives it.
     #[test]
     fn a_threadgroup_runs_as_on_a_gpu() {
-        let Some((device, lib)) = compile("t.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_group").unwrap();
         let (grid, block) = (3u32, 64u32);
         let out = alloc_uninitialized_array_sync::<u32>(&device, (grid * block) as usize);
@@ -758,7 +758,7 @@ DEFINE_KERNEL2(t, t_divergent,
     /// A barrier no thread can pass is an error that says who waits where, not a hang.
     #[test]
     fn a_barrier_no_thread_can_pass_is_an_error() {
-        let Some((device, lib)) = compile("t.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_divergent").unwrap();
         let out = alloc_uninitialized_array_sync::<u32>(&device, 1);
         let e = run(&device, &f, &out, None, 1, 64).unwrap_err();

@@ -1294,6 +1294,11 @@ still:
   decision 0156's measures), the Swift GPU probe (`tools/matrix-offload`) and the enqueue experiment's kernels in
   `docs/rule-engine-direction`: records of measures already taken, not code the engine runs.
 
+**Names: `.uglykl` everywhere (2026-11-19).** A UKL source is `.uglykl` on disk and in the names programs are compiled
+and cached under (`format!("{name}.uglykl")` in accel's other-device path, the tests' programs, the `/<tests>/`
+paths), so a search for UKL finds every one and none is taken for another language's. The last file that kept the
+old suffix, `gpu/src/library_tests.ukl`, is renamed.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

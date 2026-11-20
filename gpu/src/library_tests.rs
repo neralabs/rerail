@@ -7,7 +7,7 @@ use crate::kernels::{alloc, buffer_of, launch, program, read, Program};
 use crate::library::{compact_u32, histogram, radix_sort_pairs, scan_exclusive_popcount_u32, scan_exclusive_u32, HashTable, RadixKey, Sorted};
 use crate::Pod;
 
-const TESTS: &str = include_str!("library_tests.ukl");
+const TESTS: &str = include_str!("library_tests.uglykl");
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -23,7 +23,7 @@ fn setup() -> Option<(&'static Program, ComputeQueue)> {
         eprintln!("no device: the UKL library's tests did not run");
         return None;
     };
-    let p = program("library_tests.ukl", TESTS).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let p = program("library_tests.uglykl", TESTS).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     Some((p, ComputeQueue::new(&shared.queue)))
 }
 

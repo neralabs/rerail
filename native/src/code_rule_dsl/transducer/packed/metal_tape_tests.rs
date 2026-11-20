@@ -92,15 +92,15 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     ];
     for device in others.into_iter().flatten() {
         let which = if device.is_cpu() { "the CPU" } else { "OpenCL" };
-        let text = rerail_gpu::Preprocessing::preprocess(&device).file("/<tests>/tape_conformance.ukl", source.as_str()).run("/<tests>/tape_conformance.ukl").unwrap_or_else(|e| panic!("{which}: {e}"));
-        let lib = ComputeFunctionLibrary::compile_from_source(&device, &text, "tape_conformance.ukl").unwrap_or_else(|e| {
+        let text = rerail_gpu::Preprocessing::preprocess(&device).file("/<tests>/tape_conformance.uglykl", source.as_str()).run("/<tests>/tape_conformance.uglykl").unwrap_or_else(|e| panic!("{which}: {e}"));
+        let lib = ComputeFunctionLibrary::compile_from_source(&device, &text, "tape_conformance.uglykl").unwrap_or_else(|e| {
             let kept = std::env::temp_dir().join(format!("tape_conformance.{}.cl", std::process::id()));
             let _ = std::fs::write(&kept, &text);
             panic!("{which}: {e} (the text compiled: {})", kept.display())
         });
         lib.get_function(&device, "tape_conformance").unwrap_or_else(|e| panic!("{which}: {e}"));
     }
-    let program = rerail_gpu::kernels::program("tape_conformance.ukl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("{e}"));
+    let program = rerail_gpu::kernels::program("tape_conformance.uglykl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("{e}"));
     let docs = buffer_of::<u32>(bytemuck_words(&table.views)).unwrap();
     let node_doc = buffer_of(&node_doc).unwrap();
     let out = buffer_of(&vec![0u32; table.nodes * FIELDS]).unwrap();

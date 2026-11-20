@@ -300,7 +300,7 @@ fn elsewhere(source: &str, name: &str, constant: Option<u32>) -> Result<Arc<Func
     }
     let value = constant.map(|c| format!("{c}u"));
     let defines: Vec<(&str, &str)> = value.as_deref().map(|v| ("UKL_CONSTANT_0", v)).into_iter().collect();
-    let program = rerail_gpu::kernels::program_with(&format!("{name}.ukl"), source, &defines)?;
+    let program = rerail_gpu::kernels::program_with(&format!("{name}.uglykl"), source, &defines)?;
     let shared = rerail_gpu::shared::get().ok_or("no device")?;
     let f = Arc::new(program.library().get_function(&shared.device, name)?);
     MADE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).insert(key, Arc::clone(&f));
