@@ -3,10 +3,10 @@
 The normative text derived from this report is `spec.md` §21 and decision 0005. Part (e) lists the spec edits that were applied.
 
 **Sources and short forms**
-- **PR** = the data-layer repository's PR 2539 at tip `281f500d7c`, read from the checkout `/Users/jeremy/orca/workspaces/data-layer-10/DL-PR-2564`. `dd/` means `docs/design/`.
-- **FE** = `origin/Moti-Velz/facts-engine` at tip `685db3f7`.
+- **PR** = the data-layer repository's PR 2539 at tip `281f500d7c`, read from a local checkout of that PR. `dd/` means `docs/design/`.
+- **FE** = `facts-engine` at tip `685db3f7`.
 - **HEAD** = the Pulling-it-all-together worktree.
-- Gate-corpus row counts come from `/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-Pulling-it-all-together/3adb237a-22e7-4e0c-9a7a-33e109d2ab63/scratchpad/rule-profiles/out/facts.sqlite`, `.../flow.sqlite` and `.../measure.txt` in the same folder, plus `research/heavy-rule-profiles.md`.
+- Gate-corpus row counts come from `rule-profiles/out/facts.sqlite`, `flow.sqlite` and `measure.txt` in a session scratchpad (not kept), plus `research/heavy-rule-profiles.md`.
 
 ---
 
@@ -54,7 +54,7 @@ The PR designed four layers. Shared intermediate facts belong to fact materializ
 - `DerivedFactSpec` is rejected on the declarative path (`fact_engine.py@281f500d7c:1800-1802`).
 - The one global derived table, `lint_function_transitive_summary`, is rebuilt in full on every save (`fact_store.py@281f500d7c:8788`). It also hard-codes lazy-architecture tails (`:8861-8899`), which is a Process Failure case, as are `serverplan_step_class` and `pure_lazy_body_event`.
 
-### Facts-engine (Moti)
+### Facts-engine
 
 - **Today: one definition for both engine and compiler.** Derived relations are SQL views written in `docs/facts/SCHEMA.md` (`py_owner`, `py_function`, `py_call`, `py_parameter`, `cg_def`, `cg_call`, …, `:84-284`). The engine reads them with `include_str!` (`spikes/facts-a/src/views.rs:1-27`). Any change bumps `SCHEMA_VERSION`.
 - **Rules don't name facts yet.** A rule stage binds to a view only when its text is byte-identical, and only under a subtree-closure side condition (SCHEMA.md §2.3).

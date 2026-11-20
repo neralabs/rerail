@@ -1,12 +1,12 @@
-# T4 notes: ast-index-spike prior work
+# T4 notes: SQL index prototype prior work
 
 Research track T4. Source material, read in full:
 
 - `Pulling-it-all-together/docs/rule-engine-direction/prior-work/README.md` (29 lines), cited **PW L**.
-- `.../prior-work/ast-index-spike-design-index.md` (1,484 lines), cited **DI L**.
-- `.../prior-work/ast-index-spike-history-index.md` (1,319 lines), cited **HI L**.
+- `.../prior-work/sql-index-prototype-design-index.md` (1,484 lines), cited **DI L**.
+- `.../prior-work/sql-index-prototype-history-index.md` (1,319 lines), cited **HI L**.
 
-The indexes cover `neralabs/ast-index-spike` at commit `9449260` (PW L5; DI L3; HI L3). A local directory exists at `/private/tmp/rerail-related-review-20261020/ast-index-spike`. It holds only `bench/`, `conform/`, `results/` and a `.git` stub, which is not a working repository. It has no `DESIGN.md` and no `DESIGN_HISTORY.md`. Every note below therefore comes from the indexes. No cited source line was re-read.
+The indexes cover the SQL index prototype at commit `9449260` (PW L5; DI L3; HI L3). No working checkout of the repository was available, so every note below comes from the indexes. No cited source line was re-read.
 
 Citation conventions used here:
 
@@ -23,7 +23,7 @@ Setting (HI L18): tree-sitter syntax trees were stored as a per-file binary "tap
 
 ## 0. Protocol for citing prior work (PW README)
 
-- **Purpose** (PW L3): ast-index-spike already ran most of the experiments this engine needs. Those cover tape layout, indexes, anchor choice, pattern lowering, planner behaviour, materialization, batching, parity and measurement. DESIGN.md is 7,129 lines and DESIGN_HISTORY.md is 8,775. "Branches here have repeatedly re-learned its results, at real cost."
+- **Purpose** (PW L3): SQL index prototype already ran most of the experiments this engine needs. Those cover tape layout, indexes, anchor choice, pattern lowering, planner behaviour, materialization, batching, parity and measurement. DESIGN.md is 7,129 lines and DESIGN_HISTORY.md is 8,775. "Branches here have repeatedly re-learned its results, at real cost."
 - **Index roles** (PW L7-10):
   - The design index covers DESIGN/README/LA/LCS/SORA/AG. Use it for current conclusions, the revision and contradiction ledger, and the section map.
   - The history index covers DESIGN_HISTORY plus the bench notes. Use it for experiments with numbers, the 57 traps (T1-T57), the 75 dead ends (D1-D75) and the Part 4 checklist.

@@ -134,11 +134,11 @@ pack run each. Where the pack's time goes now is O135.
   the profile had not been measuring the pack's largest cost; the dump showed it.
 - **Lessons ledger 16:** the cost is repeated work over the same relations. The dump shows 355,782 rules for 542
   programs: each program carries its libraries again.
-- **ast-index-spike history index T24 (DH L7673-7687, S250):** a profile has to attribute the cost to the part
+- **SQL index prototype history index T24 (DH L7673-7687, S250):** a profile has to attribute the cost to the part
   that pays it. Here that means the open span and its bytes, not only the totals at the end.
-- **ast-index-spike design index L379:** a runtime timeout probe (try, then retry) is rejected, because it spends
+- **SQL index prototype design index L379:** a runtime timeout probe (try, then retry) is rejected, because it spends
   the budget. The dump does not retry anything: it records where the time went, once, for the next decision.
-- **ast-index-spike design index L1032 (budgets, C4):** the spike's budgets were sizes, and its actuals missed them.
+- **SQL index prototype design index L1032 (budgets, C4):** the spike's budgets were sizes, and its actuals missed them.
   The 1 GB budget here is a footprint, so the report names the spans that raise the peak, not only those that
   allocate most.
 - **Decisions 0058, 0075 and 0081:** the bounded programs (`hiding`), the profiled text-test compile, and

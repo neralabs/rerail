@@ -1435,9 +1435,9 @@ pub struct PackedExecution {
 
 #[track_caller]
 fn grid_result_failure() -> Error {
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_GRID_RESULT_INVARIANT {}",
+            "RERAIL_PACKED_GRID_RESULT_INVARIANT {}",
             std::panic::Location::caller()
         );
     }

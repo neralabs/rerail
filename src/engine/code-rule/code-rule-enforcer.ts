@@ -20,7 +20,7 @@ import {
   type NativePackageFactsReader,
   type NativeRepositoryIndexOptions,
 } from "../native/native.js";
-import type { CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
+import type { CodeRuleDslCatalog, CompiledCodeRuleDslEntry } from "./code-rule-dsl-catalog.js";
 import {
   buildSteer,
   type CodeRuleEdit,
@@ -287,6 +287,8 @@ type PreparedWorkspace = {
   workspace: NativeCodeRuleDslWorkspace;
   version: string;
   provenance: readonly AuditRuleProvenance[];
+  /** The snapshot's compiled rules, whose titles a steer from this workspace names its rules by (`#steerSourceOf`). */
+  codeRules: readonly CompiledCodeRuleDslEntry[];
   /** The storage attach, settled before the workspace's first apply; true when a Git store attached (repository audits then index natively). */
   storage: Promise<boolean>;
   /** Whether a rule's finding in one file can depend on another file (`CompiledCodeRuleDslEntry.crossFile`). */
@@ -1287,7 +1289,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#workspaceEvaluations.set(workspace, emptyEvaluation());
     this.#workspacePackages.set(workspace, new Map());
     const crossFile = snapshot.codeRules.some(rule => rule.crossFile);
-    return { workspace, version: snapshot.version, provenance: snapshot.provenance, storage, crossFile };
+    return { workspace, version: snapshot.version, provenance: snapshot.provenance, codeRules: snapshot.codeRules, storage, crossFile };
   }
 
   #disposeWorkspace(workspace: NativeCodeRuleDslWorkspace): void {
@@ -2525,6 +2527,21 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#responseMode = mode;
   }
 
+  /**
+   * Where each rule of a steer comes from, as the workspace's provenance records it (the `.rerail` rules' included), with
+   * the title its document gives it: what the person's line names it by.
+   */
+  #steerSourceOf(): SteerSourceOf {
+    const snapshot = this.#catalog.snapshot();
+    const provenance = [...(this.#workspace?.provenance ?? this.#catalog.provenance()), ...snapshot.rerailRules.map(rule => rule.provenance)];
+    const codeRules = this.#workspace?.codeRules ?? snapshot.codeRules;
+    return ruleId => {
+      const recorded = provenance.find(entry => entry.ruleId === ruleId);
+      if (recorded === undefined || !("source" in recorded)) return undefined;
+      return { ...recorded.source, title: codeRules.find(rule => rule.id === ruleId)?.title };
+    };
+  }
+
   async #publish(
     revision: number,
     sourceScope: readonly string[],
@@ -2534,8 +2551,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     generatedEdit = false,
   ): Promise<void> {
     if (!this.#publishes(revision, sourceScope, mode)) return;
-    const sourceOf = steerSourceOf([...(this.#workspace?.provenance ?? this.#catalog.provenance()), ...this.#catalog.snapshot().rerailRules.map(rule => rule.provenance)]);
-    await deliverSteer(this.#steerTarget(this.#sessionId!), { revision, sourceScope, violations, trigger, sourceOf, generatedEdit });
+    await deliverSteer(this.#steerTarget(this.#sessionId!), { revision, sourceScope, violations, trigger, sourceOf: this.#steerSourceOf(), generatedEdit });
   }
 
   /** Whether findings at `revision` for `sourceScope` steer: the audit steers, and no later revision overtook them. */

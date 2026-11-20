@@ -6,8 +6,8 @@ Status: proposed part of `spec.md` (new §18). It follows `findings-contract.md`
 - memory limits, debugging, testing tools and profiling are first-class design parts.
 
 The paths below are relative to the merged worktree (`Pulling-it-all-together`) unless prefixed:
-- `N1562:` means `jbarnes/sql-rerailer@8b6576f0`;
-- `SSC:` means `jeremy/sql-capture-demand-spikes@b87eba3b`;
+- `N1562:` means `sql-rerailer@8b6576f0`;
+- `SSC:` means `sql-capture-demand-spikes@b87eba3b`;
 - `Tempo:` means `scale-test-the-re-railer@e95613625`, under `tempo/`;
 - `DLRE:` means the DLRE worktree.
 
@@ -56,7 +56,7 @@ The paths below are relative to the merged worktree (`Pulling-it-all-together`) 
 | `dbstat` | not used | **New:** index size accounting (§2.6.3) |
 | Data-layer replay and parity | `conformance/data-layer/replay.ts:176-186`, `suite.ts`, `incremental.ts` | Reuse. Convert to finding-key sets (`findings-contract.md` §5) |
 | Language-pack scoring | `score.ts:39-58` | Reuse, as sets |
-| Two-binding swap precedent | ast-index-spike native↔pure-SQL child function, 0 mismatches over 4,264 queries (`README.md`, Architecture 2); N1562 plain-table substitution for `rerail_matches` | The pattern for the binding differential (§2.4.1) |
+| Two-binding swap precedent | SQL index prototype native↔pure-SQL child function, 0 mismatches over 4,264 queries (`README.md`, Architecture 2); N1562 plain-table substitution for `rerail_matches` | The pattern for the binding differential (§2.4.1) |
 | Fuzzing and property tests | none in `native/Cargo.toml` (no proptest, quickcheck or cargo-fuzz) | **New** (§2.4.3) |
 
 ---
@@ -177,7 +177,7 @@ With `--path` it also shows the document's scope result (Absent / Present / Unkn
   |---|---|
   | interpreter ↔ JIT ↔ Metal | executor equivalence |
   | fused ↔ unfused | fusion legality |
-  | vtab binding ↔ pure-SQL binding | two-binding rule (ast-index-spike swap precedent) |
+  | vtab binding ↔ pure-SQL binding | two-binding rule (SQL index prototype swap precedent) |
   | engine ↔ native ast-grep matcher | semantics oracle |
   | engine ↔ data-layer oracle findings | port parity, via `conformance/data-layer/replay.ts` as sets |
 

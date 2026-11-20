@@ -9,26 +9,28 @@ name: Release packs
 #   Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
 #   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, and
 #   tagged. The release never waits on npm: the tag comes first, then the version's GitHub Release and its publish
-#   under `latest` with trusted publishing, side by side; its `next` is moved up to that version too, unless `next` is
-#   already at a newer one, so `next` never trails `latest`. A pack held at an older `latest` (put back on purpose) is
-#   published under `next` instead, so the hold stays. A version tagged but not on npm (a failed or unapproved
-#   publish) is planned again by every later run, so re-running the run or the next push publishes it. The dist-tags
-#   job then lists each published pack's dist-tags in the run summary and fails if one is not
-#   where it was published, or one's `next` is older than its `latest`. A pack never published at all needs its first
+#   under `next` with trusted publishing, side by side. Nothing a push publishes reaches `latest` until a person
+#   approves it: the request-promotion job starts a run of this workflow that promotes exactly what was published,
+#   and waits for that approval once the release is tested on `next` (docs/release.md, "Promoting"). A version tagged
+#   but not on npm (a failed or unapproved publish) is planned again by every later run, so re-running the run or the
+#   next push publishes it. The dist-tags job then lists each published pack's dist-tags in the run summary and fails
+#   if one's `next` is not the version just published, or is older than its `latest`. A pack never published at all needs its first
 #   publish by hand; the run reports it and fails after publishing the others.
 # A pull request touching packs runs the validation and packing as a dry run and publishes nothing, and fails if it
 # changes what a published pack publishes without a changeset naming that pack, or if a changeset names a private pack
 # (the Release pull request is not checked). Its
 # paths see only the git diff, not the packs' test data: a change to that data is a change to a tool-pack's
 # test-data.lock, under packs/**, and a pull request that checks data in adds it there too (CONTRIBUTING.md).
-# `workflow_dispatch` points `latest` at released pack versions, to put one back: naming a pack and an older version
-# puts it back and holds it there (`held`), and naming the pack alone, at its package.json version, promotes it again
-# and releases the hold. With no inputs, every pack whose released version is not `latest` yet, less any pack held.
+# `workflow_dispatch` points `latest` at released pack versions. With `released`, as a release run starts it, it
+# promotes those versions. By hand with no inputs, every pack whose released version is not `latest` yet, less any held. Naming a pack and an older version puts it back and holds it there
+# (`held`), and naming the pack alone, at its package.json version, promotes it again and releases the hold.
 # The promote-plan job lists them in the run summary before the promote job, which needs the `release` environment's
 # approval, moves them all, moves each one's `next` up to it unless `next` is at a newer version, and then fails if a
-# promoted pack's `latest` is not the version or its `next` is older (docs/pack-format.md, "Release").
+# promoted pack's `latest` is not the version or its `next` is older (docs/pack-format.md, "Release"). Once approved,
+# the promote job refuses a pack whose `latest` is already newer or whose core range leaves out the core on `latest`,
+# and the promoted-releases job makes each promoted version's GitHub Release a full release.
 # Each pack version a push tags gets its GitHub Release on its tag, with the version's CHANGELOG.md section as its
-# notes (the github-releases job).
+# notes (the github-releases job), a pre-release until it is promoted.
 
 on:
   push:
@@ -55,15 +57,23 @@ on:
         required: false
         default: ""
         type: string
+      released:
+        description: "The versions a release published, to promote exactly those: <name>@<version>:next, space-separated. A release run sets it; copy it from an expired run to promote by hand. Leave pack and version empty"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
-# GitHub keeps one pending run per group and cancels the older one. Every promotion shares one group, so two never
+# GitHub keeps one pending run per group and cancels the older one. Promotions run by hand share one group, so two never
 # move the same pack's `latest` at once, while a promotion can neither cancel a publish queued behind a release run
-# nor be cancelled by one.
+# nor be cancelled by one. A release run's promotion waits for its approval, for days if testing takes that long, so
+# it is a group of its own: it holds back neither the next release nor a put-back, and none of them cancels it. It
+# therefore runs beside them once approved: each reads the dist-tags and then moves them, so two approved at once can
+# undo each other. Approve one promotion or put-back at a time and let it finish (docs/release.md, "Promoting").
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && 'release-packs-promote' || format('release-packs-{0}', github.event.pull_request.number || github.ref) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && (inputs.released != '' && format('release-packs-promote-{0}', github.run_id) || 'release-packs-promote') || format('release-packs-{0}', github.event.pull_request.number || github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -102,7 +112,6 @@ jobs:
     outputs:
       publish: ${{ steps.plan.outputs.publish }}
       first: ${{ steps.plan.outputs.first }}
-      held: ${{ steps.plan.outputs.held }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,8 +119,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # On a push, the plan reads from npm whether each tagged version is published and each pack's dist-tags (is it
-      # held?), with the read-only NPM_PACKS_READ_TOKEN, as the promote-plan job does. A pack it cannot read fails the
+      # On a push, the plan reads from npm whether each tagged version is published, with the read-only
+      # NPM_PACKS_READ_TOKEN, as the promote-plan job does. A pack it cannot read fails the
       # plan, so a version npm lacks is never taken as released. The file names the variable, not the token.
       - name: Authenticate npm to read the packs
         if: github.event_name == 'push'
@@ -287,14 +296,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          HELD: ${{ needs.plan.outputs.held }}
         run: node scripts/release/packs-tag.mjs "$RUNNER_TEMP/rule-packs"
 
   # The GitHub Release of each pack version the tag job tagged, beside the npm publish rather than after it: its notes
   # are the version's section of the pack's CHANGELOG.md (scripts/release/github-release.mjs), so release notes are
   # written once, in the changelog. A pack's Release is never the repository's latest release (core's is), and is a
-  # pre-release only when the pack is held and published under `next`. Run again, it rewrites the notes and flags of
-  # the Releases it made.
+  # pre-release while the version is on `next`; the promote makes it a full release. Run again, it rewrites the notes
+  # and flags of the Releases it made.
   github-releases:
     name: GitHub Releases
     needs: tag
@@ -343,7 +351,7 @@ jobs:
         with:
           node-version: "24"
 
-      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (moving `next`, and the promote job) 11.21.0.
+      # Trusted publishing needs npm 11.5.1 or newer; the promote job, which moves dist-tags over it, needs 11.21.0.
       - name: Install npm with trusted publishing support
         run: |
           npm install --global "npm@^11.21.0"
@@ -362,14 +370,12 @@ jobs:
           path: ${{ runner.temp }}/rule-packs
 
       - id: publish
-        name: Publish under latest and raise next
-        env:
-          HELD: ${{ needs.plan.outputs.held }}
+        name: Publish under next
         run: node scripts/release/packs-publish.mjs "$RUNNER_TEMP/rule-packs"
 
   # Reads back what the publish job released, with no npm login, so it also proves each pack public: each pack's
-  # dist-tags in the run summary, failing if one cannot be read anonymously, if one's `latest` (`next` for a held pack)
-  # is not the version just published, or if its `next` is older than its `latest`. It gates nothing: the tags and
+  # dist-tags in the run summary, failing if one cannot be read anonymously, if one's `next` is not the version just
+  # published, or if its `next` is older than its `latest`. It gates nothing: the tags and
   # Releases are made already.
   dist-tags:
     name: Published dist-tags
@@ -407,6 +413,25 @@ jobs:
         run: |
           echo "::error::Never published, so not published by this run: ${FIRST}. Publish each by hand and configure its trusted publisher (docs/publishing-a-new-pack.md)."
           exit 1
+
+  # Starts this workflow's promotion of exactly what the publish job released: a run of its own, whose promote job waits
+  # for a person to approve it once the release is tested on `next` (docs/release.md, "Promoting"). A run of its own,
+  # in a group of its own, so the wait holds back no later release. GITHUB_TOKEN can start a workflow_dispatch run.
+  request-promotion:
+    name: Start the promotion to latest
+    needs: publish
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.publish.outputs.released != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Start a promotion of what this run published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASED: ${{ needs.publish.outputs.released }}
+        run: gh workflow run release-packs.yml --ref main -f released="$RELEASED"
 
   # Reads each pack's dist-tags from npm, which for these restricted packs needs the read-only NPM_PACKS_READ_TOKEN
   # (as ci.yml's installed-packs job does), and lists what the promote job will move. A pack it cannot read fails
@@ -453,6 +478,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
           PACK: ${{ inputs.pack }}
           VERSION: ${{ inputs.version }}
+          RELEASED: ${{ inputs.released }}
         run: node scripts/release/packs-promote-plan.mjs "$PACK" "$VERSION"
 
   promote:
@@ -462,6 +488,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
+    outputs:
+      promoted: ${{ steps.promote.outputs.promoted }}
     permissions:
       contents: read
       id-token: write
@@ -498,3 +526,30 @@ jobs:
         env:
           RELEASED: ${{ steps.promote.outputs.promoted }}
         run: node scripts/release/dist-tags-check.mjs
+
+  # The GitHub Release of each version the promote job moved to `latest`, rewritten as a full release: published under
+  # `next`, it was a pre-release. A pack's Release is never the repository's latest release (core's is). Its notes are
+  # the version's section of the pack's CHANGELOG.md on main, which keeps every released version's section.
+  promoted-releases:
+    name: Promoted GitHub Releases
+    needs: promote
+    if: ${{ !cancelled() && needs.promote.outputs.promoted != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Make each promoted version's GitHub Release a full release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASED: ${{ needs.promote.outputs.promoted }}
+        run: node scripts/release/github-release.mjs

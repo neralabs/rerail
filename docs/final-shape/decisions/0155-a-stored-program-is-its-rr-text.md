@@ -174,5 +174,5 @@ Two faults the build found:
 - **Decision 0074:** what it kept stays: a program in the store as data, readable by a rule. Only the form changes.
 - **Lessons ledger 1:** the compact source is the source of truth, and the rest is derived from it on demand. The text
   is kept, and the rows and the tape are made from it when asked for.
-- **ast-index-spike design index S112 (the compiled artifact):** a compiled query is an artifact of its own. Here it
+- **SQL index prototype design index S112 (the compiled artifact):** a compiled query is an artifact of its own. Here it
   is a `.rr` text, which a person can read too.

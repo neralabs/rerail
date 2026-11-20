@@ -1,6 +1,6 @@
 # T1 notes: the PIAT normative spec
 
-Source root: `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/docs/rule-engine-direction/` at `85098ee3`. Citations are `file:line`.
+Source root: `Pulling-it-all-together:docs/rule-engine-direction/` at `85098ee3`. Citations are `file:line`.
 
 ## spec.md (597 lines), read in full
 
@@ -49,7 +49,7 @@ Measured over 24.2M nodes: CPython 3.13 Lib, data-layer `impl/`, and rerail's TS
 - Deleted readers (:84): the checkpoint walk, overflow and flag binary searches, alias tables, DLRE's `decoded_*` caches. `TapeDoc::restore` becomes optional.
 - **Blade** (:86-89):
   - It stores exactly the tree-sitter-php tape of the view text.
-  - ERROR nodes carry the ERROR code and their real span; MISSING nodes are zero-width with the MISSING code (as ast-index-spike does).
+  - ERROR nodes carry the ERROR code and their real span; MISSING nodes are zero-width with the MISSING code (as the SQL index prototype does).
   - No grammar-specific tables.
   - The view text, segment map and host errors are a derivation sidecar keyed by (template digest, via).
 - **Before locking** (:91-95): code space and aliases on the patched grammars; the stack-carried walker; kind+size layout for SQL; whether to keep `par`.
@@ -584,7 +584,7 @@ Tokens are global base36. **Shape chosen at run time by `count(*)`** (trap T18):
 
 **SSC** (:90-93): in-memory `PlannerStats` (kinds, edges) rebuilt per batch in Rust: the right statistics in the wrong place.
 
-**Moti Y1** (:95-98): a fact relation, not a statistic.
+**Facts-engine Y1** (:95-98): a fact relation, not a statistic.
 
 **Spike** (:100-125):
 - two-stage execution: postings generate candidates, the tape confirms; never under-produce;

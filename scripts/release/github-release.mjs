@@ -2,9 +2,10 @@
 // Makes the GitHub Release of each released version on its release tag, with that version's section of the package's
 // CHANGELOG.md as its notes, so release notes are written once, in the changelog (docs/release.md, "GitHub Releases").
 // Core's Release, on `v<version>`, is a pre-release on `next` and `beta` and the repository's latest release on
-// `latest`; a pack's, on `<name>@<version>`, is never the latest release, and is a pre-release only when published
-// under `next` (held). A Release that exists already has its notes, pre-release flag and latest flag rewritten, so any
-// run can be run again, and a put-back (release.yml's `latest` input) makes the version put back the latest release.
+// `latest`; a pack's, on `<name>@<version>`, is never the latest release, and is a pre-release while it is on `next`.
+// A release publishes to `next`, so its Releases start as pre-releases. A Release that exists already has its notes,
+// pre-release flag and latest flag rewritten, so any run can be run again, and a promotion or a put-back (release.yml's
+// `latest` input, release-packs.yml's promote) rewrites the flags for `latest`.
 //
 // Release mode names what a release run published, as dist-tags-check.mjs takes it, and reads the notes from the
 // checkout's changelog: the released commit on a release run (release.yml for core, release-packs.yml for the packs),

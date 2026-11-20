@@ -101,7 +101,7 @@ the pool built here.
   idle wake is the GPU's, not the buffers'.
 - **PIAT §20.12 Q-R7:** pin cost per MB. Fresh buffers of 1.7 MB cost 0.2–0.36 ms to make, which
   is 120–210 µs per MB including the copy.
-- **The AST-index spike's history index, T15:** position 1 pays the warm-up, so measure off/on/off/on.
+- **The SQL index prototype's history index, T15:** position 1 pays the warm-up, so measure off/on/off/on.
   **Agrees:** the corpus runs alternate fresh and blocks, at noted load.
 
 ## Decision
