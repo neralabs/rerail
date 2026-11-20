@@ -32,7 +32,7 @@ import { memoryRoom } from "./memory/memory-room.js";
 import { checkoutStatus } from "./repository-start.js";
 import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
-import { NO_UNTAKEN_EVENTS, untakenEventTaker, type UntakenEventTaker, type UntakenPass } from "../engine/untaken-events.js";
+import { NO_UNTAKEN_EVENTS, untakenEventTaker, type UntakenEventTaker, type UntakenPass } from "../engine/storage/untaken-events.js";
 import {
   endSuspendedSessions, failQueuedScans, type IngestOptions, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";

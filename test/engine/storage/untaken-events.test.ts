@@ -19,8 +19,8 @@ import {
   type UntakenEvent,
   type UntakenHandler,
   type UntakenPass,
-} from "../../src/engine/untaken-events.js";
-import { removeFolder } from "../support/platform/remove-folder.js";
+} from "../../../src/engine/storage/untaken-events.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const homes: string[] = [];
 async function home(): Promise<string> {

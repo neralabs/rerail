@@ -25,7 +25,7 @@ import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { BUSY_DAEMON_WAIT_MS, PROBE_TIMEOUT_MS, START_TIMEOUT_MS } from "./daemon/daemon-waits.js";
 import { engineCapabilityProof, type EngineProofAnswer, type EngineProofOptions } from "./daemon/engine-proof.js";
-import { untakenFor } from "../engine/untaken-events.js";
+import { untakenFor } from "../engine/storage/untaken-events.js";
 import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./daemon/engine-pipe.js";
 import { processStartedAt, processState, type ProcessSignal } from "../engine/process-liveness.js";
 import {

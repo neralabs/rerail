@@ -21,7 +21,7 @@ import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.j
 import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/daemon/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
-import type { UntakenPass } from "../engine/untaken-events.js";
+import type { UntakenPass } from "../engine/storage/untaken-events.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { startCheckoutPruning, type CheckoutPruning } from "./checkout-pruning.js";

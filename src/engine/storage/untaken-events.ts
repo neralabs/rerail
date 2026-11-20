@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
-import { replaceFile } from "./file-replace.js";
+import { replaceFile } from "../file-replace.js";
 
 /**
  * The Rerail home's untaken events: events whose hook found the home's daemon running but not reading. The first hook

@@ -5,7 +5,7 @@ import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { engineLink, engineRequestBody, type EngineLink, type EngineRuntimeConfiguration } from "../runtime/engine-service.js";
 import { RERAIL_EVENT_MAX_FRAME_BYTES } from "../runtime/event-protocol.js";
-import { leaveUntaken, UntakenFolderFullError } from "../engine/untaken-events.js";
+import { leaveUntaken, UntakenFolderFullError } from "../engine/storage/untaken-events.js";
 import { scrubValue } from "../engine/secret-scrub.js";
 import { WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";

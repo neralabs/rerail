@@ -6,7 +6,7 @@ import { loadNativeBinding, type NativeExclusiveFileLock } from "../engine/nativ
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
-import { UNTAKEN_EVENTS_DIR, untakenWaiting, type UntakenPass } from "../engine/untaken-events.js";
+import { UNTAKEN_EVENTS_DIR, untakenWaiting, type UntakenPass } from "../engine/storage/untaken-events.js";
 
 /**
  * In the Rerail home: one JSON line per hook event Rerail could not record, so `rerail status` can say that hooks run
