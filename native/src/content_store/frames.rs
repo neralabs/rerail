@@ -32,10 +32,13 @@ pub(super) use memo_pack::drop_memo_space;
 
 /// The run each space last counted in this process, by its token: a later program of that run puts under the same
 /// stamp. A new process counts its first run of a space, since its tokens are new.
-fn counted() -> &'static std::sync::Mutex<HashMap<[u8; 32], u64>> {
-    static COUNTED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], u64>>> = std::sync::OnceLock::new();
-    COUNTED.get_or_init(Default::default)
+fn counted() -> Arc<Counted> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Counted>()
 }
+
+/// The shared object's (decision 0442).
+#[derive(Default)]
+struct Counted(std::sync::Mutex<HashMap<[u8; 32], u64>>);
 
 /// What a program derives in a space, with what it puts there: the relations, the run's token (`0`: a write of its
 /// own, counted each time) and the program (its key). Its relations are kept while the program is live
@@ -391,10 +394,13 @@ impl std::ops::DerefMut for Snapshot {
 /// Each space's confirmations: by frame (`confirm_key`), the hash of the reads it was confirmed under.
 type Confirms = HashMap<[u8; 32], HashMap<u64, u64>>;
 
-fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>> {
-    static SNAPSHOTS: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>>> = std::sync::OnceLock::new();
-    SNAPSHOTS.get_or_init(Default::default)
+fn snapshots() -> Arc<Snapshots> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Snapshots>()
 }
+
+/// The shared object's (decision 0442): another object's handles on a store keep their own, as another process's.
+#[derive(Default)]
+struct Snapshots(std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>>);
 
 /// The relations a corpus memo's space kept per file as frames before decision 0240 (`local`, its entries;
 /// `local_out`, their outputs again): no longer written or read. Preloading skips them; collection forgets them.
@@ -470,7 +476,7 @@ impl FramesWrite {
 impl ContentStore {
     /// The snapshot of this store's file, by its canonical path: handles that name it differently share it.
     fn snapshot(&self) -> Option<Arc<std::sync::Mutex<Snapshot>>> {
-        snapshots().lock().expect("the frames' snapshots").get(&super::atoms::key(&self.database_path)).cloned()
+        snapshots().0.lock().expect("the frames' snapshots").get(&super::atoms::key(&self.database_path)).cloned()
     }
 
     /// Reads every frame of the store, once a process (decision 0104: before a run's first wave): from then on the
@@ -588,7 +594,7 @@ impl ContentStore {
                 compose_chains(held, chains.get(space))?;
             }
         }
-        snapshots().lock().expect("the frames' snapshots").entry(super::atoms::key(&self.database_path)).or_insert_with(|| Arc::new(std::sync::Mutex::new(snapshot)));
+        snapshots().0.lock().expect("the frames' snapshots").entry(super::atoms::key(&self.database_path)).or_insert_with(|| Arc::new(std::sync::Mutex::new(snapshot)));
         Ok((frames, bytes))
     }
 
@@ -1709,7 +1715,8 @@ pub fn local_space(plan: &[u8; 32]) -> [u8; 32] {
 fn count_run(t: &rusqlite::Connection, space: &[u8; 32], token: u64) -> rusqlite::Result<i64> {
     t.execute_cached("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
     let run: i64 = t.query_row_cached("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?;
-    let mut counted = counted().lock().expect("the spaces' counted runs");
+    let held = counted();
+    let mut counted = held.0.lock().expect("the spaces' counted runs");
     if token == 0 || counted.get(space) != Some(&token) {
         t.execute_cached("UPDATE frame_spaces SET runs = runs + 1 WHERE space = ?1", [&space[..]])?;
         counted.insert(*space, token);
@@ -2328,7 +2335,7 @@ mod tests {
     #[test]
     fn a_run_reads_its_cross_space_by_identity_whichever_run_reads_first() {
         use rerail_prof::code_rule_dsl::logic::profile;
-        let _run = profile::one_run();
+        let _run = profile::test_run();
         profile::reset();
         profile::set(true);
         let dir = tempfile::tempdir().unwrap();
@@ -2442,5 +2449,5 @@ mod tests {
 
 /// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.
 pub fn forget_snapshot(path: &str) {
-    snapshots().lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
+    snapshots().0.lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
 }

@@ -48,7 +48,19 @@ pub enum Mode {
     Defer,
 }
 
-static MODE: OnceLock<Mutex<Option<Mode>>> = OnceLock::new();
+/// The machine's kernel store (decision 0442: the machine's, as its device is): the mode its runs compile in, where
+/// the store is, the libraries and pipelines made, and their counts.
+#[derive(Default)]
+struct Kernels {
+    mode: Mutex<Option<Mode>>,
+    places: OnceLock<Arc<Places>>,
+    made: Arc<Mutex<Made>>,
+    counts: Mutex<Counts>,
+}
+
+fn kernels() -> Arc<Kernels> {
+    rerail_context::machine::<Kernels>()
+}
 
 /// The mode: `RERAIL_METAL_COMPILE`, else what `set_mode` set, else `Wait`.
 pub fn mode() -> Mode {
@@ -58,12 +70,14 @@ pub fn mode() -> Mode {
         Ok("defer") => return Mode::Defer,
         _ => {}
     }
-    MODE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).unwrap_or(Mode::Wait)
+    let k = kernels();
+    k.mode.lock().unwrap_or_else(|p| p.into_inner()).unwrap_or(Mode::Wait)
 }
 
-/// Sets the mode for this process (the engine's runs: `Defer`); `RERAIL_METAL_COMPILE` still wins.
+/// Sets the mode for the machine's runs (the engine's: `Defer`); `RERAIL_METAL_COMPILE` still wins.
 pub fn set_mode(mode: Mode) {
-    *MODE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()) = Some(mode);
+    let k = kernels();
+    *k.mode.lock().unwrap_or_else(|p| p.into_inner()) = Some(mode);
 }
 
 /// A kernel's identity: its library (the source's digest) and its pipeline (the library, the kernel's name and
@@ -105,9 +119,9 @@ struct Places {
     run: String,
 }
 
-fn places() -> &'static Places {
-    static P: OnceLock<Places> = OnceLock::new();
-    P.get_or_init(|| {
+fn places() -> Arc<Places> {
+    let k = kernels();
+    Arc::clone(k.places.get_or_init(|| {
         let store = match std::env::var("RERAIL_METAL_KERNELS") {
             Ok(v) if v == "off" => None,
             Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
@@ -120,18 +134,18 @@ fn places() -> &'static Places {
         };
         let tag = super::shared::get().map(|s| device_tag(&s.device)).unwrap_or_else(|| "no-device".to_owned());
         let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        Places { store, shipped, tag, run: format!("{started:024}-{}", std::process::id()) }
-    })
+        Arc::new(Places { store, shipped, tag, run: format!("{started:024}-{}", std::process::id()) })
+    }))
 }
 
 /// The store's directory, when it is on.
-pub fn store_dir() -> Option<&'static Path> {
-    places().store.as_deref()
+pub fn store_dir() -> Option<PathBuf> {
+    places().store.clone()
 }
 
 /// The shipped kernels' directory, when there is one.
-pub fn shipped_dir() -> Option<&'static Path> {
-    places().shipped.as_deref()
+pub fn shipped_dir() -> Option<PathBuf> {
+    places().shipped.clone()
 }
 
 /// A device's tag: its name. A binary archive is the GPU code of one device and driver; Metal refuses an archive of
@@ -187,14 +201,14 @@ struct Made {
     fixed: std::collections::HashSet<[u8; 32]>,
 }
 
-fn made() -> &'static Mutex<Made> {
-    static M: OnceLock<Mutex<Made>> = OnceLock::new();
-    M.get_or_init(Default::default)
+fn made() -> Arc<Mutex<Made>> {
+    Arc::clone(&kernels().made)
 }
 
 /// Releases every compiled library and pipeline this process holds (the store keeps them).
 pub fn release() {
-    let mut m = made().lock().unwrap_or_else(|p| p.into_inner());
+    let held = made();
+    let mut m = held.lock().unwrap_or_else(|p| p.into_inner());
     m.libraries.clear();
     m.pipelines.clear();
 }
@@ -209,8 +223,6 @@ pub struct Counts {
     pub back_end_s: f64,
     pub wanted: u64,
 }
-
-static COUNTS: Mutex<Counts> = Mutex::new(Counts { from_memory: 0, from_archive: 0, compiled: 0, front_end_s: 0.0, back_end_s: 0.0, wanted: 0 });
 
 thread_local! {
     /// Pipelines this thread made (compiled, or from an archive), not found in the process's memory.
@@ -228,11 +240,13 @@ pub fn held() -> usize {
 }
 
 pub fn counts() -> Counts {
-    *COUNTS.lock().unwrap_or_else(|p| p.into_inner())
+    let k = kernels();
+    *k.counts.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 fn count(f: impl FnOnce(&mut Counts)) {
-    f(&mut COUNTS.lock().unwrap_or_else(|p| p.into_inner()));
+    let k = kernels();
+    f(&mut k.counts.lock().unwrap_or_else(|p| p.into_inner()));
 }
 
 /// The pipeline `name` (with `constant` at function constant 0) of `source`: from this process, else from an
@@ -269,7 +283,8 @@ fn record_fixed(source: &str, name: &str, constant: Option<u32>) {
     if !made().lock().unwrap_or_else(|p| p.into_inner()).fixed.insert(key.pipeline) {
         return;
     }
-    let Some(store) = places().store.as_ref() else { return };
+    let p = places();
+    let Some(store) = p.store.as_ref() else { return };
     let src = store.join("src").join(format!("{}.metal", hex(&key.library)));
     if !src.is_file() {
         let _ = write_whole(&src, source.as_bytes());
@@ -439,7 +454,8 @@ fn with_options(device: &Device, descriptor: &metal::ComputePipelineDescriptorRe
 /// The back end's compile, into an archive the store keeps: adding the pipeline to a new archive compiles it, and
 /// the pipeline is then made from that archive (no second compile). Without a store, a plain compile.
 fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescriptorRef, key: &Key) -> Result<ComputePipelineState, String> {
-    let Some(store) = places().store.as_ref() else {
+    let p = places();
+    let Some(store) = p.store.as_ref() else {
         return device.new_compute_pipeline_state(descriptor);
     };
     let archive = device.new_binary_archive_with_descriptor(&metal::BinaryArchiveDescriptor::new())?;
@@ -649,7 +665,7 @@ pub struct Size {
 pub fn size() -> Size {
     let mut s = Size::default();
     let Some(store) = store_dir() else { return s };
-    for e in walk(store) {
+    for e in walk(&store) {
         let len = e.1;
         match e.0.extension().and_then(|x| x.to_str()) {
             Some("archive") => {
@@ -688,7 +704,7 @@ fn walk(dir: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
 /// was made from.
 pub fn prune(max_bytes: u64) -> u64 {
     let Some(store) = store_dir() else { return 0 };
-    let mut archives: Vec<_> = walk(store).into_iter().filter(|e| e.0.extension().is_some_and(|x| x == "archive")).collect();
+    let mut archives: Vec<_> = walk(&store).into_iter().filter(|e| e.0.extension().is_some_and(|x| x == "archive")).collect();
     let mut total: u64 = archives.iter().map(|e| e.1).sum();
     archives.sort_by_key(|e| e.2);
     let mut removed = 0;

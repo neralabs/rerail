@@ -37,12 +37,14 @@ pub(super) fn encode(width: usize, values: &[i64]) -> Vec<u8> {
     if width > 0 && rows >= 2 * PART {
         use rayon::prelude::*;
         let parts: Vec<(usize, usize)> = (0..width).flat_map(|c| (0..rows).step_by(PART).map(move |a| (c, a))).collect();
-        let bytes: Vec<Vec<u8>> = parts.par_iter().map(|&(c, a)| {
-            let mut out = Vec::with_capacity(PART.min(rows - a) * 2);
-            let last = if a == 0 { 0 } else { values[(a - 1) * width + c] };
-            encode_column(width, c, &values[a * width..(a + PART).min(rows) * width], last, &mut out);
-            out
-        }).collect();
+        let bytes: Vec<Vec<u8>> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+            parts.par_iter().map(|&(c, a)| {
+                let mut out = Vec::with_capacity(PART.min(rows - a) * 2);
+                let last = if a == 0 { 0 } else { values[(a - 1) * width + c] };
+                encode_column(width, c, &values[a * width..(a + PART).min(rows) * width], last, &mut out);
+                out
+            }).collect()
+        });
         let mut out = Vec::with_capacity(bytes.iter().map(Vec::len).sum());
         for b in &bytes {
             out.extend_from_slice(b);

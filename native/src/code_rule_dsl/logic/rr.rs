@@ -419,12 +419,14 @@ pub fn modules_of(srcs: &[&str]) -> Vec<Result<Option<Modules>, Error>> {
     }
     // The caller's context on each job's thread (its observer and store, a test's own), as the corpus's reads carry it.
     let carry = super::run_state::Carry::here();
-    srcs.par_iter()
-        .map(|src| {
-            let _in = carry.enter();
-            modules(src)
-        })
-        .collect()
+    super::profile::on_cores(|| {
+        srcs.par_iter()
+            .map(|src| {
+                let _in = carry.enter();
+                modules(src)
+            })
+            .collect()
+    })
 }
 
 /// A run's library (decision 0089): its modules, each with its files (canonical paths), and the program linked from
@@ -517,7 +519,8 @@ impl Library {
 pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::ContentStore>) -> Result<std::sync::Arc<Library>, Error> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
-    static LIBRARIES: OnceLock<Mutex<HashMap<Vec<(PathBuf, [u8; 32])>, Arc<Library>>>> = OnceLock::new();
+    #[derive(Default)]
+    struct Libraries(Mutex<HashMap<Vec<(PathBuf, [u8; 32])>, Arc<Library>>>);
     let mut files = Vec::new();
     let mut key = Vec::new();
     for path in paths {
@@ -525,7 +528,8 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
         key.push((path.clone(), file.sha256.unwrap_or_default()));
         files.push((path.clone(), statements.into_iter().filter(|s| !is_include(s)).collect()));
     }
-    let cache = LIBRARIES.get_or_init(Default::default);
+    let cache_held = crate::code_rule_dsl::logic::profile::shared::<Libraries>();
+    let cache = &cache_held.0;
     if let Some(library) = cache.lock().expect("the lowered libraries").get(&key) {
         crate::code_rule_dsl::prof::count("rr.library_reused", 1);
         return Ok(Arc::clone(library));
@@ -1407,10 +1411,12 @@ const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
 pub fn read_file(path: &Path) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, std::sync::Arc<super::program_image::Version>)>>> = OnceLock::new();
+    use std::sync::Mutex;
+    #[derive(Default)]
+    struct Programs(Mutex<HashMap<PathBuf, (Vec<LibraryFile>, std::sync::Arc<super::program_image::Version>)>>);
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-    let cache = PROGRAMS.get_or_init(Default::default);
+    let cache_held = crate::code_rule_dsl::logic::profile::shared::<Programs>();
+    let cache = &cache_held.0;
     if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
         && files.iter().all(|file| LibraryFile::now(&file.path) == *file)
     {
@@ -1840,12 +1846,14 @@ pub fn read(path: &Path) -> Result<(Vec<Stmt>, LibraryFile), Error> {
 /// A library file as kept for the process (its text and tape), and the file as read.
 fn read_shared(path: &Path) -> Result<(std::sync::Arc<RrFile>, LibraryFile), Error> {
     use std::collections::HashMap;
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, Mutex};
     // Each file's statements, kept for the process by its path and bytes' digest: programs that include one library
     // (the Python pack's files) parse it once, not once per program. Phase 0's observer gives the digest by a `stat`
     // while the file is unchanged, so a kept file is not read again. Held shared: a reader copies what it keeps.
-    static PARSED: OnceLock<Mutex<HashMap<PathBuf, ([u8; 32], Arc<RrFile>)>>> = OnceLock::new();
-    let cache = PARSED.get_or_init(Default::default);
+    #[derive(Default)]
+    struct ParsedFiles(Mutex<HashMap<PathBuf, ([u8; 32], Arc<RrFile>)>>);
+    let cache_held = crate::code_rule_dsl::logic::profile::shared::<ParsedFiles>();
+    let cache = &cache_held.0;
     if let Some(digest) = super::plan::corpus::observe(|o| o.digest(path))
         && let Some((kept, statements)) = cache.lock().expect("the parsed files").get(path)
         && *kept == digest
@@ -1943,6 +1951,36 @@ fn program_order(path: &Path) -> Result<(Vec<PathBuf>, Vec<LibraryFile>), Error>
         trace(&g, &library, &target, &mut files, &mut seen);
     }
     Ok((order, files))
+}
+
+/// Index authored clause heads for the current CLI profile. Shared library names survive
+/// combination; private heads also have the policy prefix assigned by the combiner.
+pub fn profile_join_sources(paths: &[&Path]) -> Option<super::profile::author_joins::Sources> {
+    use super::profile::author_joins::{Locations, Sources};
+    if !super::profile::on() { return None; }
+    let mut locations = Locations::default();
+    let mut indexed = BTreeSet::new();
+    for (i, root) in paths.iter().enumerate() {
+        if root.extension().is_some_and(|e| e == "json") { continue; }
+        let own = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let files = program_order(&own).map(|(order, _)| order).unwrap_or_else(|_| vec![own.clone()]);
+        for file in files {
+            if file != own && !indexed.insert(file.clone()) { continue; }
+            let Ok((parsed, _)) = read_shared(&file) else { continue };
+            for s in parsed.statements() {
+                if s.what() != Some(S::Clause) || !check::has_body(&s) { continue; }
+                let (reads, line) = (check::clause_reads(&s), s.line());
+                for name in s.heads() {
+                    let key = if file == own && paths.len() > 1 { format!("p{i}_{name}") } else { name.to_owned() };
+                    for read in &reads {
+                        locations.reads.entry((key.clone(), read.clone())).or_default().insert((file.clone(), line));
+                    }
+                    locations.definitions.entry(key).or_insert_with(|| (name.to_owned(), BTreeSet::new())).1.insert((file.clone(), line));
+                }
+            }
+        }
+    }
+    Some(Sources::enter(locations))
 }
 
 /// A file and everything it includes, each once, includes first: (path, statements without the

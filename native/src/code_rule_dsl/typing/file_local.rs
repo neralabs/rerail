@@ -187,6 +187,7 @@ mod on_version;
 pub use on_version::FileLocal;
 mod passes;
 pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, locate_all};
+pub(crate) use passes::factorize_intermediates;
 pub mod export_demand;
 pub use export_demand::DemandExports;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
@@ -242,7 +243,9 @@ fn close_under<T: Ord + Clone>(vars: &mut std::collections::BTreeSet<T>, equal: 
     }
 }
 
-pub(super) fn push_equal_columns() -> bool {
+/// `RERAIL_PUSH_EQUAL_COLUMNS=off` (a measurement aid): a pushed helper exports only a column its atoms type, not one an
+/// equality binds to it.
+pub fn push_equal_columns() -> bool {
     std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off")
 }
 

@@ -28,3 +28,7 @@ npm run --silent check:ui-tokens
 python3 scripts/check/check-dev-features.py
 # Blocks are never copied into another data structure (decision 0353): a commit that adds a copy is refused.
 python3 scripts/check/check-no-block-copies.py
+# No process-global state (decision 0442): a commit that adds a static the list does not hold is refused.
+python3 scripts/check/check-no-global-state.py
+# A job pool per machine (decision 0442): parallel work outside the machine's pool reaches rayon's global one.
+python3 scripts/check/check-machine-pool.py

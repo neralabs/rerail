@@ -2555,14 +2555,17 @@ pub mod tests {
         use std::sync::atomic::Ordering::Relaxed;
         let c = crate::compiled().expect("compiles");
         let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
+        // The compiles' options are the run's (decision 0442).
+        let _run = rerail_context::test_run();
+        let options = rerail_compiler::native_cpu_codegen::options();
         let tier1: Vec<(&str, rerail_compiler::native_cpu_block::CompiledBlock)> = [("off", false), ("on", true)]
             .into_iter()
             .map(|(label, on)| {
-                rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(on, Relaxed);
+                options.optimize_tier1.store(on, Relaxed);
                 (label, rerail_compiler::native_cpu_block::compile(&c.native).expect("tier 1"))
             })
             .collect();
-        rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(false, Relaxed);
+        options.optimize_tier1.store(false, Relaxed);
         let files = corpus();
         let mut batches: Vec<Vec<_>> = tier1.iter().map(|(_, t)| files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(t, &[f.as_bytes()])).collect()).collect();
         let mut best = vec![(std::time::Duration::MAX, u64::MAX, u64::MAX); tier1.len()];
@@ -2988,6 +2991,8 @@ pub mod tests {
     #[test]
     #[ignore = "a profile: run by hand"]
     fn rr_parser_profile() {
+        // Its counts are the run's (decision 0442).
+        let _run = rerail_context::test_run();
         use rerail_compiler::native_cpu_block::Batch;
         const REPEAT: u32 = 5;
         let c = super::compiled().expect("compiles");
@@ -3044,7 +3049,7 @@ pub mod tests {
                 used += tape.counts[0] as usize;
             }
         }
-        let retries = rerail_compiler::native_cpu_stream::ROOM_RETRIES.load(std::sync::atomic::Ordering::Relaxed);
+        let retries = rerail_compiler::native_cpu_codegen::options().room_retries.load(std::sync::atomic::Ordering::Relaxed);
         eprintln!("tape nodes: {room} room, {used} written ({:.1}x); {retries} runs again on the bound's tape (all passes)", room as f64 / used.max(1) as f64);
         // Tier 1 alone, every file in one batch.
         let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
@@ -3380,7 +3385,9 @@ mod json_probe {
         for p in &mut n.block_programs {
             p.pad = rerail_compiler::native_cpu_block::BACK as u16;
         }
-        rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
+        // The compile's options are the run's (decision 0442).
+        let _run = rerail_context::test_run();
+        rerail_compiler::native_cpu_codegen::options().keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
         let kept = json_parser(&n);
         let src = rerail_compiler::clif_rust::rust_source(&kept).expect("to Rust");
         let switches = src.matches("a dispatch's label is one of its entries").count();
@@ -3419,10 +3426,11 @@ mod json_probe {
             std::fs::write(&path, p.tier1.passes.iter().map(|x| x.clif.as_str()).collect::<Vec<_>>().join("\n")).expect("writes");
         }
         if let Ok(path) = std::env::var("RERAIL_JSON_RUST") {
-            rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
-            let bit = rerail_compiler::native_cpu_lanes::BIT_TEST.swap(true, std::sync::atomic::Ordering::Relaxed);
+            let options = rerail_compiler::native_cpu_codegen::options();
+            options.keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
+            let bit = options.bit_test.swap(true, std::sync::atomic::Ordering::Relaxed);
             let kept = json_parser(&n);
-            rerail_compiler::native_cpu_lanes::BIT_TEST.store(bit, std::sync::atomic::Ordering::Relaxed);
+            options.bit_test.store(bit, std::sync::atomic::Ordering::Relaxed);
             let src = rerail_compiler::clif_rust::rust_source(&kept).unwrap_or_else(|e| panic!("to Rust: {e}"));
             std::fs::write(&path, &src).expect("writes");
             eprintln!("tier 1 as Rust: {path}, {} bytes", src.len());

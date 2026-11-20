@@ -29,6 +29,7 @@
 // Facts about documents. A document is one parsed source file; `d` is its integer id.
 // doc(d, "src/app/main.py", "app.main"): the module name is derived from the path; "" when the file has none.
 .decl doc(d: number, path: symbol, module: symbol)  // one row per document; module is the dotted module name, or ""
+.layout doc key(d) key(path) size(per document) values(module, many)
 // pkg(d, "app") for src/app/main.py: the dotted Python package holding the document.
 .decl pkg(d: number, p: symbol)                          // the package a document belongs to (Python)
 // For "src/app/main.py": path_part(d, "src"), path_part(d, "app"), path_part(d, "main.py"). Lets rules test
@@ -67,6 +68,7 @@
 // op(args, ","); in `static readonly x`, op(field, "static") and op(field, "readonly"). These tokens have no
 // node of their own. op_at (below) is the ordered view.
 .decl op(n: node, s: symbol)                             // an anonymous token child: operators, keywords, punctuation
+.layout op fanout(n -> s, few) local values(s, ~100)
 // docof(n, d): the document node n was parsed from. Joins a node to doc(d, path, module).
 .decl docof(n: loc, d: number)
 .layout docof key(n) local values(d, documents)
@@ -237,6 +239,8 @@
 // would materialise every (node, ancestor) pair; on the tape each question is a range comparison.
 // In `function f() { g(); }`: within(call_g, body), within(call_g, f), but not within(f, call_g).
 .decl within(n: node, a: node)                           // n is strictly below a
+// A node's ancestors are about a tree's depth; most nodes are no one's ancestor.
+.layout within fanout(n -> a, ~8) local values(a, rows / 4)
 // Cost: a range test per pair, but its rows are every (node, ancestor) pair. Bind both ends, or use inside/nearest.
 // inside(n, a, set): a is a strict ancestor of n, and a's kind is in set. has(a, n, set): n is a strict descendant
 // of a, and n's kind is in set. So has is not inside with its columns swapped: has(a, n, set) is

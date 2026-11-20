@@ -202,8 +202,9 @@ pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
 /// The bindings of a batch's slabs (`MAX_SLABS`): 0, then past the interpreter's 12–15.
 const SLAB_BUFFERS: [u64; crate::slabs::MAX_SLABS] = [0, 16, 17, 18];
 
-/// Launches repeated because a look-back ran out of polls.
-pub static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Launches repeated because a look-back ran out of polls: the run's count (decision 0442).
+#[derive(Default)]
+pub struct RepeatedLaunches(pub std::sync::atomic::AtomicUsize);
 
 /// Whether a program starts a file's stream late, which Metal does not generate yet: an
 /// `early` (decision 0330), a file's first lane shifted down; or a prefix (decision 0335), its
@@ -397,7 +398,7 @@ pub fn run_batch(
             return Err(Error::BackendFailure);
         }
         if launches > 0 {
-            REPEATED_LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            rerail_context::with_local::<RepeatedLaunches, _>(|r| r.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
             // SAFETY: two words, written between launches, when no kernel runs.
             unsafe { std::ptr::write_bytes(tickets.host().cast::<u32>(), 0, 2) };
         }

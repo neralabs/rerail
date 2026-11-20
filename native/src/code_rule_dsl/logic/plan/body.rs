@@ -216,6 +216,20 @@ impl<'v> Body<'v> {
     pub fn args(&self, i: usize) -> &[TermRef<'v>] {
         &self.args.get_or_init(|| self.lits.iter().map(|l| l.atom().map_or_else(Vec::new, |a| a.args().collect())).collect())[i]
     }
+    /// Whether another kept read already proves this positive read, with the same bound columns.
+    pub(super) fn implied_read(&self, at: usize, kept: &[usize]) -> bool {
+        let Some(read) = self.plain_atom(at).filter(|a| !a.neg() && !a.gated()) else { return false };
+        let args = self.args(at);
+        kept.iter().copied().filter(|&other| other != at).any(|other| {
+            if !self.plain_atom(other).is_some_and(|a| !a.neg() && !a.gated() && a.rel() == read.rel()) {
+                return false;
+            }
+            let terms = self.args(other);
+            args.len() == terms.len()
+                && args.iter().zip(terms).all(|(&a, &b)| matches!(a, TermRef::Wild) || self.same_term(a, self, b))
+                && (other < at || args.iter().zip(terms).any(|(&a, &b)| matches!(a, TermRef::Wild) && !matches!(b, TermRef::Wild)))
+        })
+    }
     /// The head as text, written only when shown (`{head}` in a message).
     pub fn head_text(&self) -> HeadText<'_, 'v> {
         HeadText(self)
@@ -229,13 +243,24 @@ impl<'v> Body<'v> {
         self.lits.iter().filter(|l| l.atom().is_some()).count()
     }
     /// The demand that drives its rule whatever the statistics say: a demand-restricted aggregate's
-    /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys.
+    /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys, or the tuple
+    /// demand that bounds a Cartesian product (`product_demand::PREFIX`): the product's only bound, so it leads.
     pub fn demand_first(&self) -> Option<usize> {
         let head = self.rel(self.head());
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
-            let rel = self.rel(a);
-            !a.neg() && (rel.contains("rr_demand_agg_") || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
-        }))
+        (0..self.len()).find(|&i| {
+            self.plain_atom(i).is_some_and(|a| {
+                let rel = self.rel(a);
+                !a.neg() && (rel.contains("rr_demand_agg_")
+                    || rel.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_small")).is_some_and(|base|
+                        super::super::front::shape_base(head).strip_prefix("rr_pair_cache_")
+                            .and_then(|s| s.strip_suffix("_pairs")) == Some(base))
+                    || ["demand_", super::corpus::product_demand::PREFIX].iter().any(|&p| rel.strip_prefix(p) == Some(head))
+                    // Maintenance gives each witness rule a support head (wide__sup0). It needs the same
+                    // driving request as wide itself. An explicitly driving delta still takes precedence.
+                    || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS)
+                        .is_some_and(|producer| producer == super::super::front::shape_base(head)))
+            })
+        })
     }
     /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
     pub fn own_demand(&self) -> Option<usize> {
@@ -575,8 +600,7 @@ impl std::fmt::Display for HeadText<'_, '_> {
 /// cross product of `p` and `q` narrowed after by the test (decision 0099 item 4: `fl4317_typing_root`, 14 k rows,
 /// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
 pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {
+    if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {
         return None;
     }
     let TermRef::Var(y) = r else { return None };

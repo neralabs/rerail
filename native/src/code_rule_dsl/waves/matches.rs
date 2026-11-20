@@ -165,7 +165,8 @@ fn invalid(error: impl std::fmt::Debug) -> StoreError {
 
 
 /// The process's planned wave programs, in memory before the store (`stats::plans`' bounded cache).
-static WAVE_PLANS: std::sync::LazyLock<std::sync::Mutex<crate::code_rule_dsl::stats::plans::Plans>> = std::sync::LazyLock::new(Default::default);
+#[derive(Default)]
+struct WavePlans(std::sync::Mutex<crate::code_rule_dsl::stats::plans::Plans>);
 
 impl Wave {
     /// The wave of `clauses`, each its own forbid rule demanded everywhere (`Logic::per_clause`).
@@ -266,7 +267,7 @@ impl Wave {
             identity = identity.text(name);
         }
         let id = *identity.finish().as_bytes();
-        let held = store.candidate_transaction(false, |db| WAVE_PLANS.lock().expect("wave plans mutex poisoned").valid(db, &[id], &reads))?;
+        let held = store.candidate_transaction(false, |db| crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").valid(db, &[id], &reads))?;
         if let Some(held) = held.get(&id) {
             // The SQL holds this store's atom ids: a plan is reused only where the atoms it was
             // planned with have the same ids here (its decisions record them).
@@ -293,7 +294,7 @@ impl Wave {
         let decisions = serde_json::to_string(&atoms).map_err(|error| invalid(error.to_string()))?;
         store.candidate_transaction(true, |db| {
             let compiled = crate::code_rule_dsl::stats::plans::Compiled { decisions: decisions.clone(), program: bytes.clone() };
-            WAVE_PLANS.lock().expect("wave plans mutex poisoned").put(db, id, compiled, &reads).map(|_| ())
+            crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").put(db, id, compiled, &reads).map(|_| ())
         })?;
         crate::code_rule_dsl::prof::count("wave.plan.compiled", 1);
         Ok(program)
@@ -539,20 +540,22 @@ impl Wave {
         use rayon::prelude::*;
         // Each clause's starts per file: its set's nodes where its root program starts, ascending
         // (the set's order). Held through the labels and the roots: no growth slack.
-        sets.into_par_iter()
-            .enumerate()
-            .map(|(clause, set)| {
-                let out = (0..tapes.len())
-                    .map(|file| {
-                        let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<Vec<_>>();
-                        nodes.shrink_to_fit();
-                        nodes
-                    })
-                    .collect::<Vec<_>>();
-                crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
-                Ok(out)
-            })
-            .collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            sets.into_par_iter()
+                .enumerate()
+                .map(|(clause, set)| {
+                    let out = (0..tapes.len())
+                        .map(|file| {
+                            let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<Vec<_>>();
+                            nodes.shrink_to_fit();
+                            nodes
+                        })
+                        .collect::<Vec<_>>();
+                    crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
+                    Ok(out)
+                })
+                .collect()
+        })
     }
 
     /// Each clause family's row estimate in `fact_stats`, and the terminal relation's (their

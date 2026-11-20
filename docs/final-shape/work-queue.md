@@ -4107,6 +4107,11 @@ Build steps 1-7 in 0361. Step 7's running aggregate is the `rr_agg56` planner fi
 - **State** (2026-11-19): 0361's steps 1–5 and 7 are built (2026-11-18). Left: step 6, the checks (keys where the
   rows are written, fan-out from the executors' counts, a broken fact replans and is reported). Done when 0361's
   "Done when" holds.
+- **State** (2026-11-20): step 6 built. The probes' checks (a fan-out or key a probe is bounded by, against the
+  executors' counts; a broken fact the run's, planned from statistics after) are cost-classifier-metal-rf's
+  (merged here; they replace this branch's 2b9841b58b). The key a derived relation declares is checked where its
+  rows are written (39c6f43cea, ported onto theirs; Q299). Left: the corpus0 cold run, to confirm 463 findings
+  d067ec2ebf6f and no fact broken; then this item is done.
 
 ### Q156. (Q88 on Typing-support; Q83 on phased-facts at 77a9d64fc) Exports held where they lie (0325)
 
@@ -5113,7 +5118,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   checks it against the tree's; 252 tests of preparation, program_image, the corpus, the merges, simplify and rr
   pass (M3).
 
-### Q226. (Q180 on cost-classifier-metal-rf) The version after `simplify` keeps a request record by place where the tree's states it by rule
+### Q226. (Q180 on cost-classifier-metal-rf) The version after `simplify` keeps a request record by place where the tree's states it by rule (done)
 
 - **Found** (2026-11-18, the same run past Q225): the preparation's check after `simplify` fails. `rr_value_req`'s
   record on the version has more entries than rules, and its readers sit on other rules; the tree's is by rule.
@@ -5123,6 +5128,17 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   A debug assert at every pipeline step that a request relation's entries match its rules, or the step stated none,
   would find each such pass at once, not one per run.
 - **Done when**: a debug run of corpus0 x B-now passes every stage check.
+- **Done** (2026-11-18): a probe on the pipeline's steps named it: `inline filters` made three of `rr_value_req`'s
+  rules (51 to 54) and did not state the record, so `request rules another subsumes` read it misaligned (51 entries,
+  54 rules) and kept it whole while dropping 28 rules; past it, a text pass replaced one rule (the count the same).
+  Not one pass's fault but the shape: the pipeline carried the record by rule and stated it only at its end. Now it
+  states it again after any step whose rules leave the version's record other than the carried one
+  (`AskedByRule::restated`), so every pass reads it aligned, as the tree's passes state it after each.
+  Past the stages, the prepared program's header check compared ruleless images by digest, the record by place
+  under two rule orders; it now leaves the record out (checked by rule after the merges) and prints the
+  differences. And Q179's test never built its repeat (the parser keeps one of a rule written twice): it adds it
+  after parsing now. Debug run of corpus0 x B-now: every check passes, 463 findings, d067ec2ebf6f. Tests:
+  `a_request_record_a_step_misaligns_is_stated_again_at_once`, Q179's, and the record tests (cargo, M3).
 
 ### Q227. (Q182 on cost-classifier-metal-rf) Relax cannot load the engine under `RELAX_SHARE` (a patched `native/vendor` crate)
 
@@ -5451,3 +5467,149 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   Max); on a DGX Spark 217 s → 19.8 s (`none`) and 19.3 s (`synced`). It stays in the slow tier, without its 8-period
   override.
 
+### Q295. (Q184 on cost-classifier-metal-rf) Derived relations' sizes estimated at preparation are off by over 2x about half the time
+
+- **Found** (2026-11-18, 0361 step 5): sizing derived relations from their rules' plans (summed up the strata from
+  the facts, at a nominal scale) let 7,881 lines be prepared on corpus0 x B-now, but their orders ran the joins 70%
+  longer. With each plan checked against the sizes it assumed (`Prepared::take`, `PRICE_DRIFT`), 2,870 of 6,063 were
+  refused, and the run is neutral: the estimates miss by over 2x as often as not.
+- **Next**: size them from what runs saw, not from the facts alone: a run knows each derived relation's rows when
+  it plans the strata above it. Kept per node with the prepared plans (by the version's identity, Q183's entry), a
+  later process prepares from them, and the check keeps them honest. Measure the refused share first and after.
+- **Done when**: a cold run's refused prepared lines are under a tenth of those taken, with the joins' CPU no worse
+  than with prepared plans off.
+- **Tried, dropped** (2026-11-18): each refusal noted the rows per node the run held of the relations the plan
+  assumed, and at the run's end the version's plans were made again with them in place of the estimates (the
+  columns' distinct values scaled with them), kept for the next run. corpus0 x B-now, profiling, M3: a second run on
+  the same store over the corpus edited (a comment line added to every file, so nothing is reused) refused 938 lines
+  against 3,382, but took 1,263 billion instructions against 963 with prepared plans off (+31%; joins 41.3 s ->
+  51.4 s); the commit before it, 987 (+2.5%); with derived estimates off, 967 (+0.5%); 463 findings, d067ec2ebf6f, in
+  every one. Correcting a relation's rows lets more lines take a plan whose distributions are still estimates, and a
+  line's plan taken on a kept-plan miss is kept (`decide`), so its order outlives the run. The diff is not in the
+  tree. What the next attempt needs: a plan priced on the run's statistics is what a search gives at 0.1-0.3 s a run
+  (search) and 1-2 s (statistics) of about 85 s; a prepared plan has to be priced as well as that to pay.
+- **Measured directly** (2026-11-19). The estimates are now measured on their own, not through a run's time, which
+  moves about 3% between runs of one build. This follows the Release-debugging worktree's deferred-joins lab: capture a
+  run's real outputs once, then judge each strategy against them. `RERAIL_SIZES_LOG=FILE` logs what preparation sized
+  each derived relation at, and, at each prepared plan a run takes, what it assumed of each estimated relation against
+  what the run held then (rows per node). `scripts/profiling/derived_sizes.py` reads one log, or two to compare.
+  `RERAIL_SIZES_FROM=LOG` prepares from the sizes a log's run held: a labelled oracle, a measurement aid only.
+  corpus0 x B-now and hogql (437 files of another project), profiling build, M1 Max at load 5-28, a new store each:
+  - **The estimates from facts:** 15% of the 241 relations a taken plan read were within 2x of what the run held, and
+    4% weighted by plans taken; median held about 400 times assumed. Most hit the 1-row floor. In `attr_of(n, o, a)
+    :- kind(n, "attribute"), field(n, "object", o), field(n, "attribute", at), text(at, a)`, the facts give the kind
+    1/200 of the nodes and each named field 3/50 a node. Python has about 5% attribute nodes, each with both fields
+    once. A grammar's kind skew and its kinds' fields are in no fact.
+  - **What a run held transfers:** per node, corpus0's and hogql's held sizes agree within 2x for 85% of relations,
+    95% weighted by plans.
+  - **Right sizes do not pay:** instructions with derived relations sized by nothing were 957, 969 and 964 G; by their
+    rules' estimates (the default), 1,056, 1,005 and 991 G; by what hogql's run held, 1,128 G (93% within 2x); by what
+    corpus0's own run held, 1,203 G (99% within 2x). The more lines prepared (2,497 off; 5,951-7,935 on), the more the
+    run costs. Findings 463 d067ec2ebf6f in every run. A plan made at the nominal scale from facts is priced by the
+    facts' distributions even where its sizes are right; the run's search, with the run's statistics, plans better
+    for 1-3% of the run.
+- **Done** (2026-11-19): derived relations are no longer sized by an estimate by default (`RERAIL_DERIVED_ESTIMATES`
+  is now off unless `=on`, kept as a measurement aid for the oracle lab). Rules reading a derived relation that facts
+  do not size are planned at run time, as before 0361's "Wider" step. Relations whose facts, declared or inferred,
+  size them are still prepared. The criterion above, refused lines under a tenth, has no subject: no line is refused
+  since prepared plans are taken by default. What it stood for, the joins no worse than with prepared plans off, holds
+  as the default's 957-969 G. Test: `a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it` (on when
+  bound; off by default, the recursion it sized left to run time).
+
+### Q296. (Q185 on cost-classifier-metal-rf) A lowered program's identity is its store's: kept plans and prepared plans miss across stores
+
+- **Found** (2026-11-18, while measuring Q295): the same rules lowered on two fresh stores give versions of other
+  identities (`manager::identity`): a lowered rule holds a name as the store's atom (decision 0270, `#n2708` on
+  one, `#n13220` on another), and every hash over the rules' text moves with it: rule hashes, the file-local
+  helpers' names (`fl<hash>_…`, `typing::file_local::helper_name` hashes the rule's text, atoms included), the version
+  identity and `line_key`. Within one store all of them hold (the atoms are the store's for good), so a project's
+  later runs read what its earlier ones kept. A run on a new store (CI, a fresh checkout) never reads another
+  store's kept or prepared plans, even for the same rules.
+- **Next**: decide whether plans should move across stores at all. If so, key them by the program before lowering,
+  or hash a branded name by its text (as `relocate` maps names by their strings), helpers' names included.
+- **Done when**: two fresh stores give the same rules one identity, and a test lowers them on two numberings and
+  finds the same keys.
+- **Decided** (2026-11-19, decision 0472): plans do not move across stores. The kept and prepared plans are rows in
+  the project's store, so a new store has none to read whatever the identity; sharing them would carry one project's
+  corpus data to another outside 0442's explicit `Shared`; planning is 1-3% of a cold run's CPU; and every hash over a
+  lowered rule would be re-based on text. A seeded store (an explicit export and import keyed by the rules' text) is
+  0472's open item, not built. Closed.
+
+### Q297. (Q186 on cost-classifier-metal-rf) (done) The node-product rewrite on the version (0461, numbered 0393 there)
+
+- **Found** (2026-11-18, while porting Release-debugging's product demand): `product_demand::rewrite` and its
+  `upstream`/`nullable` passes edit the front tree. On the version path (0281) it runs as a `Pipeline::made` step
+  that decodes the tree, rewrites it, and builds a new version. Finding the products is already on the version, so
+  a program with no product decodes nothing; SLF001 and any rule with a product decode once.
+- **Next**: write the rewrite as a `ProgramPass` over the version (`ProgramW::rule`), as `push.rs` did for the
+  local joins.
+- **Done when**: a run with a product decodes no tree (`trees_decoded` 0), and a test compares the pass with the
+  tree's rewrite on the module's programs.
+- **Record** (2026-11-20, the merge of cost-classifier-metal-rf into Typing-support): done on Typing-support before
+  the merge (0276 C): `product_demand`, `upstream` and `nullable` rewrite the version (`BoundProducts`), and the tree
+  forms are gone (0276 step 6), so no run decodes one. The merge keeps that rewrite and takes this branch's
+  `RERAIL_READER_DEMAND` aid into it (its setting is the pass's key).
+
+### Q298. (Q187 on cost-classifier-metal-rf) The test binaries' unwind info is past what the compact unwind table can address
+
+- **Found** (2026-11-19, a tidy-up of 0442's work): every large test binary's link warns `__eh_frame section too
+  large (max 16MB) to encode dwarf unwind offsets in compact unwind table` (the engine's, `rerail-logic`'s and
+  `rerail-device-metal`'s lib tests, dev profile). The engine's on an M1 Max: `__text` 188 MB, `__eh_frame` 41.7 MB,
+  `__unwind_info` 5.8 MB. A function whose unwinding the compact table cannot point to is unwound from its DWARF
+  entry by a search: a panic in such a test is slower to unwind; nothing else changes.
+- **Next**: find why 41.7 MB of DWARF unwind entries are kept. A frame-pointer function on arm64 has a compact
+  encoding, and ld drops the DWARF entry of a function that has one, so the entries kept are of functions it could
+  not encode, or they are kept for all. Count the kept entries against the functions (`dwarfdump --eh-frame` on the
+  binary), and look at what the compiler and linker are told (`-C force-unwind-tables`, ld's
+  `-no_keep_dwarf_unwind`). If the binary is simply this large, the cause is its size at opt-level 0.
+- **Done when**: the link gives no warning, or the cause is shown to be the binary's size and the choice (a smaller
+  test binary, or the warning accepted with its reason) is the user's.
+
+### Q299. (Q188 on cost-classifier-metal-rf) (done) A key a derived relation declares is checked where its rows are written (0361 step 6)
+
+- **Found** (2026-11-19, 0361 step 6): the step's checks are built at the probes (`Model::layout_broken`): a key or
+  fan-out a probe is bounded by, against the executors' counts. A key is also to be checked where the rows are
+  written, as the decision says: dedup probes the whole row, and a key needs one more probe. No program has a subject
+  for it: core.rr declares keys only of base relations (tape views, never written), and an inferred key is proved
+  from the facts of what its rules read.
+- **Next**: when a program first declares a key of a derived relation (`.layout r key(...)` where `r` has rules),
+  probe the key's columns in that relation's block index as each row is written, in every executor that writes it
+  (setfix's CPU levels, its closures, the device's): a second row for a key breaks it (`shapes::Broken`).
+- **Done when**: a test declares a key of a derived relation whose rules break it, and the run names it broken and
+  plans the relation from statistics.
+- **Record** (2026-11-20, Typing-support 39c6f43cea, kept by the merge): the planner writes a declared key into the
+  join spec (`SpecLine::Key`); the executor probes the key's columns as each row is written and counts a second row
+  for a key (`Fx::key_breaks`); the planner notes it broken in the run's `Broken` (`shapes::report_broken`, as the
+  probes' check reports) and plans the relation from statistics for the rest of the run. The end-to-end test
+  declares `under`'s key, breaks it, and reads `[("under", "key(a)")]` from the run.
+
+
+### Q300. (Q189 on cost-classifier-metal-rf) A loop's stolen halves lose their run where two runs share a pool
+
+- **Found** (2026-11-19, porting 0477): a parallel loop inside `on_cores` splits by rayon's `join`, and a half
+  another of the machine's pool threads steals runs with nothing of its caller's: no run and no bindings. With
+  `RERAIL_PROFILE` the first file-stat loop (`profile::work`) is refused at once. Before 0442 step 5 the loops ran on
+  rayon's global pool, whose threads were not marked as the engine's: the same reads silently took values of their
+  own, so a profile lost the stolen halves' work and a binding read there gave its default.
+- **Built so far** (60df62dc48): `on_cores` registers its job in its pool's `Inside`, and a pool thread with no run of
+  its own takes the run there when the jobs inside are one run's (tests in rerail-context). That covers a program
+  with one run. It does not cover two runs' loops in one pool at once: a corpus run's phase 0 and its main program
+  do, and a profiled corpus0 x B-now run is still refused there.
+- **Next**: a stolen job carries its creator's run. Rayon has no hook for it: patch rayon-core (`[patch.crates-io]`)
+  so `StackJob` and `HeapJob` capture a carrier the engine installs (`job_run`) when made and enter it when run.
+  Then `Inside` goes.
+- **Done when**: a test with two runs' loops in one pool at once reads each run's own value in every item, and a
+  profiled corpus0 x B-now run completes.
+
+### Q301. (Q190 on cost-classifier-metal-rf) The deferred joins are priced (0477)
+
+- **Found** (2026-11-19, 0477): `RERAIL_DEFERRED_JOINS=auto` took 7-12% more instructions on corpus0 x B-now for the
+  same findings, so it is off by default. It rewrote pair demand into many rules (`c4_elt`, `c4_comp`, `exc_call`,
+  ...), each a few more strata, where the joins were cheap as written.
+- **Next**: offer each rewrite as an alternative the pricer scores against the join as written, from the readers'
+  distinct requests and the factors' sizes (the lab's design, `scripts/profiling/deferred_joins/README.md`, "Where
+  the classifier belongs"), and keep it only where it wins.
+- **Done when**: the rewrite is on by default and corpus0 x B-now takes no more instructions than with it off, with
+  SLF001 on PostHog bounded as Release-debugging measured.
+- **State** (2026-11-20, the merge into Typing-support): the rewrite is a step on the version there (0477, item 1):
+  the tree forms are gone, so it was ported, its five tests with it. Its pricing is as open as before.

@@ -1696,9 +1696,6 @@ pub(crate) mod logic {
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]
-        #[cfg(test)]
-        pub(crate) use crate::code_rule_dsl::logic::native::setfix::DERIVATIONS;
-        #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::native::setfix::{forget_engine, forget_scope};
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::native::setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};

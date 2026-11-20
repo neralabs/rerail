@@ -512,7 +512,7 @@ pub(in crate::code_rule_dsl) fn text_row(
 ) -> Option<std::sync::Arc<Vec<u32>>> {
     use rayon::prelude::*;
     let _texts = crate::code_rule_dsl::prof::Stage::start("size.texts");
-    let per_file = files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>()?;
+    let per_file = crate::code_rule_dsl::logic::profile::on_cores(|| files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>())?;
     let mut bits = vec![0_u32; words];
     for (file, base) in per_file.iter().zip(bases) {
         for (index, &word) in file.iter().enumerate() {
@@ -541,30 +541,34 @@ pub(in crate::code_rule_dsl) fn text_rows(
     crate::code_rule_dsl::prof::count("size.text_slots", slots.len());
     // Each (slot, file)'s bits, `None` where an evaluation failed: one task each, so a large
     // file's slots spread over the threads.
-    let per_pair = (0..slots.len() * files.len())
-        .into_par_iter()
-        .map(|pair| {
-            let (walk, program, slot) = slots[pair / files.len()];
-            walk.slot(program, slot, &files[pair % files.len()])
-        })
-        .collect::<Vec<_>>();
-    (0..slots.len())
-        .into_par_iter()
-        .map(|at| {
-            let mut bits = vec![0_u32; words];
-            for (file, base) in per_pair[at * files.len()..(at + 1) * files.len()].iter().zip(bases) {
-                for (index, &word) in file.as_ref()?.iter().enumerate() {
-                    let mut word = word;
-                    while word != 0 {
-                        let node = *base + (index * 64) as u32 + word.trailing_zeros();
-                        bits[node as usize / 32] |= 1 << (node % 32);
-                        word &= word - 1;
+    let per_pair = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        (0..slots.len() * files.len())
+            .into_par_iter()
+            .map(|pair| {
+                let (walk, program, slot) = slots[pair / files.len()];
+                walk.slot(program, slot, &files[pair % files.len()])
+            })
+            .collect::<Vec<_>>()
+    });
+    crate::code_rule_dsl::logic::profile::on_cores(|| {
+        (0..slots.len())
+            .into_par_iter()
+            .map(|at| {
+                let mut bits = vec![0_u32; words];
+                for (file, base) in per_pair[at * files.len()..(at + 1) * files.len()].iter().zip(bases) {
+                    for (index, &word) in file.as_ref()?.iter().enumerate() {
+                        let mut word = word;
+                        while word != 0 {
+                            let node = *base + (index * 64) as u32 + word.trailing_zeros();
+                            bits[node as usize / 32] |= 1 << (node % 32);
+                            word &= word - 1;
+                        }
                     }
                 }
-            }
-            Some(std::sync::Arc::new(bits))
-        })
-        .collect()
+                Some(std::sync::Arc::new(bits))
+            })
+            .collect()
+    })
 }
 
 /// Slot `slot` of `walk` on the file whose nodes start at global `base`, from `rows` where a run
@@ -604,8 +608,7 @@ pub(in crate::code_rule_dsl) fn text_slot(
 /// its passes are micro walks (`Runner::group`), else as rounds of levels. The host's sweeps
 /// between the GPU's segments (O26) stay as the reference, `RERAIL_HOST_SWEEPS`.
 pub(in crate::code_rule_dsl) fn host_sweeps() -> bool {
-    static HOST: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_HOST_SWEEPS").is_some());
-    *HOST
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_HOST_SWEEPS").is_some())
 }
 
 /// Whether a recursive group runs as sweeps: its passes are programs (or empty), whose results only
@@ -697,8 +700,7 @@ const SPILL_ITEM: usize = 20;
 
 /// Whether long micro walks spill their frames to other threads (`RERAIL_MICRO_SPILL=off`: not).
 fn spill_on() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_MICRO_SPILL").map_or(true, |v| v != "off"));
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_MICRO_SPILL").map_or(true, |v| v != "off"))
 }
 
 /// Where a micro kernel binds its walk statistics (`Shape::profile`): below the slabs.
@@ -707,8 +709,7 @@ const WALK_STATS_SLOT: u64 = 26;
 /// Profiling (`RERAIL_GPU_WALK_STEPS`): each micro pass's walks, steps and longest walk, by its
 /// words, in the profile's stages (`walk_steps.`, `walk_items.`, `walk_max.`).
 fn walk_steps_on() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_WALK_STEPS").is_some());
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_GPU_WALK_STEPS").is_some())
 }
 
 /// A micro walk's words as text: what a profile names the walk by.
@@ -993,11 +994,16 @@ const SEGMENT_BYTES: usize = 64 << 20;
 /// a job on the pool, once a process: each is compiled from source, 0.6 s together, and a pass that
 /// needs one before it is ready waits for the rest of its compile (they are cached behind locks).
 pub(in crate::code_rule_dsl) fn warm() {
-    static STARTED: std::sync::Once = std::sync::Once::new();
-    STARTED.call_once(|| {
+    // Once a machine (decision 0442): its pipelines are the machine's.
+    #[derive(Default)]
+    struct Warmed(std::sync::OnceLock<()>);
+    crate::code_rule_dsl::logic::profile::machine::<Warmed>().0.get_or_init(|| {
+        // The job compiles on this thread's machine: a pool thread holds no run.
+        let shared = crate::code_rule_dsl::logic::profile::shared_here();
         // A panic leaves the kernels to be compiled where they are needed (a job's panic would end
         // the process).
-        rayon::spawn(|| rerail_accel::exec::as_job("the label kernels' warm-up", || {
+        crate::code_rule_dsl::logic::profile::cores_spawn(move || rerail_accel::exec::as_job("the label kernels' warm-up", || {
+            let _in_run = crate::code_rule_dsl::logic::profile::within(shared);
             let _ = std::panic::catch_unwind(|| {
                 // The set program's kernels first: it runs first in a wave (its candidates). The shared
                 // device is not opened here: on S7 a wave waiting on this job's open waited longer (to
@@ -1016,9 +1022,11 @@ pub(in crate::code_rule_dsl) fn warm() {
 }
 
 /// The label kernels, compiled once per tape format (until the residency's drop).
-static PIPELINES: LazyLock<Mutex<HashMap<u32, Vec<ComputePipelineState>>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct LabelPipelines(Mutex<HashMap<u32, Vec<ComputePipelineState>>>);
 /// The clauses' pattern kernels, by source and tape format (until the residency's drop).
-static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), ComputePipelineState>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct PatternPipelines(Mutex<HashMap<(String, u32), ComputePipelineState>>);
 
 /// A pipeline of a source over [`TAPE_VIEW`] for a batch of tapes in `format` (0: mixed).
 fn pipeline_of(source: &str, name: &str, format: u32) -> Result<ComputePipelineState, Error> {
@@ -1027,16 +1035,19 @@ fn pipeline_of(source: &str, name: &str, format: u32) -> Result<ComputePipelineS
 
 /// Releases the compiled label and pattern kernels (the residency's drop).
 pub(in crate::code_rule_dsl) fn drop_pipelines() {
-    if let Ok(mut pipelines) = PIPELINES.lock() {
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<LabelPipelines>();
+    if let Ok(mut pipelines) = held_.0.lock() {
         pipelines.clear();
     }
-    if let Ok(mut pipelines) = PATTERN_PIPELINES.lock() {
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<PatternPipelines>();
+    if let Ok(mut pipelines) = held_.0.lock() {
         pipelines.clear();
     }
 }
 
 fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
-    let mut cached = PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<LabelPipelines>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipelines) = cached.get(&format) {
         return Ok(pipelines.clone());
     }
@@ -1114,7 +1125,8 @@ fn pattern_pipeline(patterns: &[&PackedPattern], first: usize, format: u32) -> R
         source.hash(&mut hasher);
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{:016x}.metal", hasher.finish())), &source);
     }
-    let mut cached = PATTERN_PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<PatternPipelines>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     let key = (source, format);
     if let Some(pipeline) = cached.get(&key) {
         return Ok((pipeline.clone(), names));
@@ -1493,11 +1505,12 @@ fn mark(at: &str) {
             super::super::metal_backend::reserved_mb(),
             tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20
         );
-        static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        #[derive(Default)]
+        struct HoldSeen(std::sync::atomic::AtomicUsize);
         let wanted = std::env::var("RERAIL_HOLD_AT").ok();
         let nth = wanted.as_deref().and_then(|wanted| wanted.split_once('#')).map_or(Some(1), |(_, n)| n.parse().ok());
         let here = wanted.as_deref().is_some_and(|wanted| wanted.split('#').next() == Some(at))
-            && Some(SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1) == nth;
+            && Some(rerail_prof::code_rule_dsl::logic::profile::local::<HoldSeen>().0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1) == nth;
         if let Some(path) = std::env::var_os("RERAIL_HOLD").filter(|_| here) {
             eprintln!("FLUSH holding, pid {}", std::process::id());
             while !std::path::Path::new(&path).exists() {
@@ -1914,8 +1927,7 @@ impl Runner<'_> {
     /// its GPU time added to `kernel_us.<label>` and `kernel_n.<label>`, and a new one begun.
     /// Kernels then run one buffer each, in the same order on the same queue.
     fn split(&mut self, label: &str) {
-        static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_KERNEL_TIMES").is_some());
-        if !*ON {
+        if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_GPU_KERNEL_TIMES").is_some()) {
             return;
         }
         // Refused (the launch ledger is spent): the flush reports it.

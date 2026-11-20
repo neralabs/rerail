@@ -1847,6 +1847,39 @@ fn a_request_record_a_step_drops_stays_dropped() {
     assert_eq!(asked.get("s"), Some(&vec![BTreeSet::from(["r3".to_owned()])]));
 }
 
+/// Q180: a step that changes a request relation's rules and does not state the record (here drops `q`'s first
+/// rule) leaves it by place over other rules. The pipeline states it again by rule at once, so the next pass reads it
+/// aligned (`request rules another subsumes` read it misaligned and kept it whole), not only at the pipeline's end.
+#[test]
+fn a_request_record_a_step_misaligns_is_stated_again_at_once() {
+    use std::collections::BTreeSet;
+    struct DropFirstQ;
+    impl super::manager::ProgramPass for DropFirstQ {
+        const NAME: &'static str = "drop q's first rule";
+        fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            let v = cx.v();
+            let first = v.heads(v.rel("q").unwrap()).next().unwrap().id();
+            w.keep(|r| r.id() != first)
+        }
+    }
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n\
+                q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    let parsed = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+    let asked: super::about::Asked = [("q".to_owned(), ["r1", "r2", "r3"].iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect())].into();
+    let v = {
+        let mut b = parsed.builder();
+        b.fields().set_asked(&asked);
+        b.finish_overlay().unwrap()
+    };
+    let mut pipe = super::manager::Pipeline::new("test", v);
+    pipe.program(&mut DropFirstQ);
+    let now = pipe.current().unwrap().clone();
+    let by = |r: &str| BTreeSet::from([r.to_owned()]);
+    assert_eq!(now.asked().get("q"), Some(&vec![by("r2"), by("r3")]), "stated by rule after the step");
+    // The rule dropped, and with it its entry: the record names the two rules left.
+    assert_eq!(now.rules().count(), 2, "{}", now.show());
+}
+
 /// Each relation's layout, declared or inferred (`layouts`, decision 0361 step 3).
 mod layouts {
     use crate::code_rule_dsl::logic::program_image::layouts::{Layouts, Origin};
@@ -1867,6 +1900,22 @@ mod layouts {
     }
     fn facts(v: &Version, l: &Layouts, rel: &str) -> Vec<F> {
         l.of(v.rel(rel).unwrap()).cloned().collect()
+    }
+
+    /// An input the transducer makes from a kind set has the engine's facts (decision 0361 step 5): `nearest`'s a key
+    /// on its node, an axis's a fan-out from it; one with facts declared keeps its own.
+    #[test]
+    fn a_relation_made_from_a_kind_set_has_the_engines_facts() {
+        use crate::code_rule_dsl::logic::front::{Fan, LayoutValues};
+        let (v, l) = of(".decl rr_nearest_ks1(n: node, a: node)\n.input rr_nearest_ks1\n\
+                         .decl rr_inside_ks2(n: node, a: node)\n.input rr_inside_ks2\n\
+                         .decl rr_has_ks3(n: node, a: node)\n.input rr_has_ks3\n.layout rr_has_ks3 key(n)\n\
+                         .decl f(n: node)\n.output f\nf(n) :- rr_nearest_ks1(n, _), rr_inside_ks2(n, _), rr_has_ks3(n, _).\n");
+        let ancestors = F::Values { col: 1, values: LayoutValues::OneIn(4) };
+        assert_eq!(facts(&v, &l, "rr_nearest_ks1"), [F::Key(vec![0]), F::Local, ancestors.clone()]);
+        assert_eq!(facts(&v, &l, "rr_inside_ks2"), [F::Fanout { from: vec![0], to: vec![1], fan: Fan::About(2) }, F::Local, ancestors]);
+        assert_eq!(facts(&v, &l, "rr_has_ks3"), [F::Key(vec![0])], "declared: its own");
+        assert!(l.0.get(&v.rel("rr_nearest_ks1").unwrap()).unwrap().iter().all(|(_, o)| *o == Origin::Made));
     }
 
     /// A projection keeps the key its columns hold, the fan-out and the tree; a filter keeps them too, and the order

@@ -1270,6 +1270,28 @@ impl AskedByRule {
         }
         Some(AskedByRule { by, reqs: self.reqs.clone() })
     }
+    /// `v`'s record with the carried relations' entries by rule, where they differ from what `v` states (a step
+    /// changed their rules and did not state it); `None` where they agree. A request relation the pipeline does not
+    /// carry (a step made it) keeps its own.
+    fn restated(&self, v: &Version) -> Option<super::about::Asked> {
+        let stated = v.asked();
+        let carried = self.asked(v);
+        if self.reqs.iter().all(|req| carried.get(req) == stated.get(req)) {
+            return None;
+        }
+        let mut out = stated;
+        for req in &self.reqs {
+            match carried.get(req) {
+                Some(by) => {
+                    out.insert(req.clone(), by.clone());
+                }
+                None => {
+                    out.remove(req);
+                }
+            }
+        }
+        Some(out)
+    }
     /// The record as `Version::asked` states it, for `v`'s rules.
     fn asked(&self, v: &Version) -> super::about::Asked {
         let mut asked = super::about::Asked::new();
@@ -1406,7 +1428,8 @@ impl<'s> Pipeline<'s> {
     /// stage, its analyses carried from `from`'s, and, when kept, its versions.
     #[allow(clippy::too_many_arguments)]
     fn record(&mut self, pass: &'static str, out: Arc<Version>, ran: Ran, form: Form, visited: usize, from: &Arc<Version>, rule: Option<RuleKept>, carry: Carry) -> Result<()> {
-        let delta = Delta::of(from, &out);
+        let mut delta = Delta::of(from, &out);
+        let mut out = out;
         match (&mut self.asked, carry) {
             (Some(asked), Carry::Step) => asked.step(from, &out, &delta),
             (Some(asked), Carry::Onto(kept)) => *asked = asked.onto(&kept, &out, &delta),
@@ -1415,6 +1438,18 @@ impl<'s> Pipeline<'s> {
             // requests made on request, `SourcesOnRequest`), unless a stored step left it to be read on `load`.
             (None, _) if !self.asked_again && from.asked().is_empty() => self.asked = AskedByRule::of(&out),
             (None, _) => {}
+        }
+        // A step that added, dropped, replaced or reordered a request relation's rules and did not state the record
+        // left it by place over other rules (Q180 on cost-classifier-metal-rf, Q226 here: `inline filters` made three,
+        // and `request rules another subsumes` read the record misaligned and kept it whole; a text pass replaced one,
+        // the count the same). Stated again now, by rule, so the next pass reads it aligned.
+        if let Some(asked) = &self.asked
+            && let Some(restated) = (!delta.is_empty()).then(|| asked.restated(&out)).flatten()
+        {
+            let mut b = out.builder();
+            b.fields().set_asked(&restated);
+            out = b.finish_overlay()?;
+            delta = Delta::of(from, &out);
         }
         let cx = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided, asked: None };
         out.analyses().carry(from.analyses(), &cx, &delta)?;

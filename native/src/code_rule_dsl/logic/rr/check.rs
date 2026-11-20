@@ -400,9 +400,14 @@ fn tarjan(nodes: &BTreeSet<String>, graph: &BTreeMap<String, BTreeSet<String>>) 
     out
 }
 
-/// Relations a program's rules read that none of its files declares, nor the lowering makes (its built-ins): the
-/// syntax-level form of `lowering_tail::Declared`, which a run and check-rr apply to the lowered program.
-pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
+/// Whether clause `s` has a body (a rule, not facts).
+pub fn has_body(s: &Stmt) -> bool {
+    !body_of(s.file(), s.node()).is_empty()
+}
+
+/// Relations clause `s` reads, its nested groups' and aggregate bodies' included, in the order read (the authors'
+/// report, `profile::author_joins`, and `undeclared`).
+pub fn clause_reads(s: &Stmt) -> Vec<String> {
     fn reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
         fn term(f: &RrFile, t: &At, out: &mut Vec<String>) {
             match f.tv(t) {
@@ -430,6 +435,15 @@ pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
             }
         }
     }
+    let (f, n) = (s.file(), s.node());
+    let mut out = Vec::new();
+    reads(f, &body_of(f, n), &mut out);
+    out
+}
+
+/// Relations a program's rules read that none of its files declares, nor the lowering makes (its built-ins): the
+/// syntax-level form of `lowering_tail::Declared`, which a run and check-rr apply to the lowered program.
+pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
     let mut declared = BTreeSet::new();
     for s in statements {
         if let Some(S::Decl(name) | S::Edit(name) | S::Violation(name)) = s.what() {
@@ -443,8 +457,7 @@ pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
         if f.check_clause(n).is_err() {
             continue;
         }
-        let mut read = Vec::new();
-        reads(f, &body_of(f, n), &mut read);
+        let read = clause_reads(s);
         let head = s.heads().first().map_or("", |h| *h).to_owned();
         for rel in read.into_iter().filter(|r| !declared.contains(r) && !built_in(r)) {
             out.insert(format!("line {}: relation {rel} is read by the rule for {head} and not declared", s.line()));

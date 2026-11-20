@@ -37,9 +37,11 @@ system-allocator = []
 code-rule-profile = []
 p-anchor-corpus = []
 metal-tests = []
-test-hooks = []
+test-hooks = ["rerail-context/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
+# The names' table is the shared object's (decision 0442).
+rerail-context = { path = "../context" }
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.51.0"

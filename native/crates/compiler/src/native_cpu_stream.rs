@@ -118,8 +118,6 @@ const CODE_FIRST: i32 = std::mem::offset_of!(Ctx, code_first) as i32;
 /// The run stopped for the tape's room: the host runs it again with the bound's room.
 pub const OVERFLOW: u64 = u64::MAX;
 
-/// Runs again on the bound's tape (`CompiledStream::call`), for the profile.
-pub static ROOM_RETRIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The field offsets of `Ctx`.
 const BYTES: i32 = 0;
@@ -220,9 +218,6 @@ impl NodeCol {
 /// Tier 2's entry: `ctx`, the run's end.
 pub type Entry = unsafe extern "C" fn(*const Ctx) -> u64;
 
-/// Keep each tier 2 function's IR (`CompiledStream::ir`), for an ahead-of-time build of the same
-/// code (`clif_rust`).
-pub static KEEP_IR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The most a program writes between two `TOKEN`s: nodes, supertypes and returns pushed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -289,7 +284,7 @@ pub struct CompiledStream {
     pub word_bytes: Vec<u32>,
     /// Each word's machine code's ranges in `code_bytes` (its place, start, end), for the shape.
     pub word_ranges: Vec<(u32, u32, u32)>,
-    /// With `KEEP_IR`: each function's IR as Cranelift was given it (its `FuncId`), and the
+    /// With `Options::keep_ir`: each function's IR as Cranelift was given it (its `FuncId`), and the
     /// entry's id.
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     pub entry_id: u32,
@@ -3217,7 +3212,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
 
 /// `compile`'s cut: every word in one cluster, at the configured speed.
 fn one_cut(native: &Structure) -> crate::native_cpu_clusters::Cut {
-    let speed = crate::native_cpu_codegen::OPTIMIZE_TIER2.load(std::sync::atomic::Ordering::Relaxed);
+    let speed = crate::native_cpu_codegen::options().optimize_tier2.load(std::sync::atomic::Ordering::Relaxed);
     crate::native_cpu_clusters::Cut { speed, ..crate::native_cpu_clusters::Cut::one(native.structural.len()) }
 }
 
@@ -5370,7 +5365,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     for (_, c) in &items {
         clif.push_str(&c.func.display().to_string());
     }
-    let ir: Vec<(u32, cranelift_codegen::ir::Function)> = if KEEP_IR.load(std::sync::atomic::Ordering::Relaxed) { items.iter().map(|(fid, c)| (fid.as_u32(), c.func.clone())).collect() } else { Vec::new() };
+    let ir: Vec<(u32, cranelift_codegen::ir::Function)> = if crate::native_cpu_codegen::options().keep_ir.load(std::sync::atomic::Ordering::Relaxed) { items.iter().map(|(fid, c)| (fid.as_u32(), c.func.clone())).collect() } else { Vec::new() };
     let defined = crate::native_cpu_codegen::define_functions(&mut module, items, cut.near).map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2: {e:?}");
@@ -5983,7 +5978,7 @@ impl CompiledStream {
             unsafe { tape.written(r == 0) };
             return r;
         }
-        ROOM_RETRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::native_cpu_codegen::options().room_retries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *tape = self.full_tape(self.tokens(tier1.nstarts, len));
         // SAFETY: as above, on the bound's tape.
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };

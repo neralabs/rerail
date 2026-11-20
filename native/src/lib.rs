@@ -143,15 +143,6 @@ fn install_store_functions_on_load() {
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
-    // Library callers and the test runner can park their main thread. Their pool needs
-    // actual workers, including with RERAIL_THREADS=1. The CLI registers its own main thread
-    // explicitly, before its first job (`threads::configure(true)`), headless or not: a
-    // constructor that made the pool first left the CLI's main thread out of it, so every
-    // parallel loop it ran queued its work and slept, and its waits ran no jobs.
-    #[cfg(not(feature = "headless"))]
-    if !std::env::current_exe().is_ok_and(|e| e.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("rerail-engine"))) {
-        threads::configure(false);
-    }
     install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
@@ -202,15 +193,15 @@ fn install_tree_sitter_allocator() {
     }
 }
 
-/// The one pool, of the most threads the process uses (`RERAIL_THREADS`), the loading thread one of them when it is
-/// the process's main thread: made as Node registers the addon's exports, before any of them runs, and not in the
-/// library's constructor. A constructor runs inside `dlopen`, which holds glibc's loader lock; rayon's
+/// The one block policy, as Node registers the addon's exports, before any of them runs. The pool is each
+/// environment's machine's (decision 0442: `workspace::api::environment_machine`), made at its first workspace, never
+/// in the library's constructor: a constructor runs inside `dlopen`, which holds glibc's loader lock; rayon's
 /// `use_current_thread` waits for every pool thread to start, and each one's first thread-local with a destructor
 /// registers it through `__cxa_thread_atexit_impl`, which takes that lock: the load never returned.
 #[cfg(not(target_family = "wasm"))]
 #[napi(module_exports)]
 pub fn configure_thread_pool(_exports: napi::bindgen_prelude::Object) {
-    threads::configure(threads::is_main_thread());
+    threads::configure();
 }
 
 #[napi(object)]
@@ -541,7 +532,7 @@ mod executor_tests {
         let before = rerail_accel::lanes::device_lanes_asked();
         let ex = rerail_facts::code_rule_dsl::facts::core::executor_for(false);
         assert_eq!(rerail_accel::lanes::device_lanes_asked(), before, "the lookup asked for a device lane");
-        assert!(std::ptr::eq(ex, crate::code_rule_dsl::logic::lanes::executor_for(false)), "not the run's executor");
+        assert!(std::sync::Arc::ptr_eq(&ex, &crate::code_rule_dsl::logic::lanes::executor_for(false)), "not the run's executor");
     }
 }
 

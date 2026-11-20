@@ -2419,8 +2419,7 @@ impl Words {
 /// the threads past the rows are fewer than the sizing's own dispatch costs. `RERAIL_DEVICE_SIZED_MIN` sets it
 /// (0: every stage's, to test them), `RERAIL_DEVICE_SIZED=off` turns the sizing off.
 fn sized_min() -> usize {
-    static MIN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *MIN.get_or_init(|| match std::env::var("RERAIL_DEVICE_SIZED") {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_DEVICE_SIZED") {
         Ok(v) if v == "off" => usize::MAX,
         _ => std::env::var("RERAIL_DEVICE_SIZED_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(4096),
     })

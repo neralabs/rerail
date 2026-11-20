@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 // Whether this thread runs phase 0: the flag is the profiler's (`phase_clock`), which reads it too.
-pub use crate::code_rule_dsl::phase_clock::{IN_PHASE_0, active};
+pub use crate::code_rule_dsl::phase_clock::{active, in_phase_0};
 
 /// What phase 0 starts from for one program: its text's includes, or its file.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -142,10 +142,12 @@ pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
 
 /// The include graphs for `seeds`, each kept in this process while it holds; those not kept are derived by one run
 /// of `bootstrap.rr` over all of them (a pack's programs are one run, not one each).
-static KEPT: OnceLock<Mutex<HashMap<Seed, Arc<Graph>>>> = OnceLock::new();
+#[derive(Default)]
+struct PhaseZeroGraphs(Mutex<HashMap<Seed, Arc<Graph>>>);
 
 pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
-    let kept = KEPT.get_or_init(Default::default);
+    let kept_held = crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>();
+    let kept = &kept_held.0;
     let mut found: Vec<Option<Arc<Graph>>> = {
         let map = kept.lock().expect("phase 0's graphs");
         seeds.iter().map(|s| map.get(s).cloned()).collect()
@@ -295,7 +297,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
         whole.phases.insert(text_key(0), named);
     }
     let graph = whole.of(seed, 0);
-    KEPT.get_or_init(Default::default).lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
+    crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>().0.lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
     true
 }
 
@@ -591,9 +593,9 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let out = std::env::temp_dir().join(format!("rerail-phase-0-{}-{}", std::process::id(), RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     let options = serde_json::json!({ "reuse": true });
-    IN_PHASE_0.with(|c| c.set(true));
+    let phase_0 = in_phase_0();
     let run = super::run_with_options(&[&text], &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
-    IN_PHASE_0.with(|c| c.set(false));
+    drop(phase_0);
     let result = run.map(|report| {
         use crate::code_rule_dsl::logic::plan::output::Value as V;
         let mut g = Graph { plans: report.plans, ..Graph::default() };

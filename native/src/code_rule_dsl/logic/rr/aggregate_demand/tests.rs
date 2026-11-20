@@ -148,7 +148,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         );
     }
     // Keep the frozen text-symbol extension compatible; unsupported reductions must fall back to SQL.
-    let _serial = crate::code_rule_dsl::logic::profile::one_run();
+    let _serial = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let was_on = crate::code_rule_dsl::logic::profile::on();
     crate::code_rule_dsl::logic::profile::reset();
     crate::code_rule_dsl::logic::profile::set(true);

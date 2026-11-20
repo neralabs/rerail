@@ -45,8 +45,7 @@ fn cap_bytes_default() -> usize {
 
 /// The queue's cap: 192 MB, or `RERAIL_WRITE_QUEUE_MB` (a measurement aid: how far behind the writer may fall).
 fn cap_bytes() -> usize {
-    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CAP.get_or_init(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(cap_bytes_default(), |mb| mb << 20))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(cap_bytes_default(), |mb| mb << 20))
 }
 
 /// The first wait before a busy job runs again: a writer that held the store is often done at once.
@@ -252,38 +251,41 @@ pub fn seals(boundary: Boundary) -> bool {
     !matches!(boundary, Boundary::ConeRound)
 }
 
-thread_local! {
-    /// The run whose waves this thread's writes join (`run_waves`); 0 outside a run, where each write is a wave of
-    /// its own. Carried to the run's jobs on other threads (`run_state`).
-    pub static WAVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+/// The run whose waves its writes join (`run_waves`), in the run's context (its jobs' writes join them too); 0 outside
+/// a run, where each write is a wave of its own.
+#[derive(Clone, Copy, Default)]
+struct RunWaves(u64);
+
+/// The run whose waves this caller's writes join (`RunWaves`).
+fn waves() -> u64 {
+    rerail_prof::code_rule_dsl::logic::profile::bound::<RunWaves>().0
 }
 
-/// While it lives, this thread's writes (and its run's jobs') join a run's waves of their own (`WAVES`); dropped, the
-/// run's wave still being written is sealed, in every store's writer, and the thread's run before is back. Its end
+/// While it lives, this caller's writes (and its run's jobs') join a run's waves of their own (`RunWaves`); dropped,
+/// the run's wave still being written is sealed, in every store's writer, and the run before is back. Its end
 /// does not wait for the writer: `written` does.
 pub struct Waves {
     run: u64,
-    before: u64,
+    _bound: rerail_prof::code_rule_dsl::logic::profile::Bound,
 }
 
 /// A run's waves of its own, from here (`Waves`).
 pub fn run_waves() -> Waves {
     static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves { run, before: WAVES.with(|w| w.replace(run)) }
+    Waves { run, _bound: rerail_prof::code_rule_dsl::logic::profile::bind(RunWaves(run)) }
 }
 
 impl Drop for Waves {
     fn drop(&mut self) {
         seal_everywhere(self.run, Seal::Finished);
-        WAVES.with(|w| w.set(self.before));
     }
 }
 
 /// Ends this thread's run's wave at `boundary`, in the writer of every store it wrote to, where `seals` says the
 /// boundary seals one (decision 0259).
 pub fn end_wave(boundary: Boundary) {
-    let run = WAVES.with(std::cell::Cell::get);
+    let run = waves();
     if run != 0 && seals(boundary) {
         seal_everywhere(run, if boundary == Boundary::End { Seal::End } else { Seal::Wave });
     }
@@ -302,7 +304,7 @@ enum Seal {
 
 /// Seals `run`'s wave still being written in every store's writer.
 fn seal_everywhere(run: u64, how: Seal) {
-    let all: Vec<Arc<Writer>> = writers().lock().expect("the writers").values().cloned().collect();
+    let all: Vec<Arc<Writer>> = writers().0.lock().expect("the writers").values().cloned().collect();
     for w in all {
         w.seal(run, how);
     }
@@ -402,9 +404,8 @@ struct Wave {
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
 /// `RERAIL_WRITES` (a measurement aid): seconds since the writer's first use in this process, for its timeline.
 fn writes_trace() -> Option<f64> {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_WRITES").is_some());
     static T0: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
-    (*ON).then(|| T0.elapsed().as_secs_f64())
+    (rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_WRITES").is_some())).then(|| T0.elapsed().as_secs_f64())
 }
 
 fn small_job() -> usize {
@@ -527,15 +528,19 @@ impl Writer {
     }
 }
 
-/// The process's writers, by store path.
-fn writers() -> &'static Mutex<HashMap<PathBuf, Arc<Writer>>> {
-    static WRITERS: std::sync::OnceLock<Mutex<HashMap<PathBuf, Arc<Writer>>>> = std::sync::OnceLock::new();
-    WRITERS.get_or_init(Default::default)
+/// The shared object's writers, by store path (decision 0442): another object's handles on a store have a writer of
+/// their own, as another process's would (the store's lease keeps them apart).
+#[derive(Default)]
+struct Writers(Mutex<HashMap<PathBuf, Arc<Writer>>>);
+
+fn writers() -> Arc<Writers> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Writers>()
 }
 
 /// The writer of the store at `path`, counted as one more of its handles (a `Hold`, which names no store).
 pub(super) fn register(path: &Path) -> Arc<Writer> {
-    let mut all = writers().lock().expect("the writers");
+    let held = writers();
+    let mut all = held.0.lock().expect("the writers");
     let w = Arc::clone(all.entry(path.to_path_buf()).or_default());
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     w
@@ -544,7 +549,8 @@ pub(super) fn register(path: &Path) -> Arc<Writer> {
 /// The writer of the store at `path` whose identity is `identity`, counted as one more of its handles. The path's
 /// writer of a store since deleted stays its handles' alone: this store gets a new one.
 pub(super) fn register_store(path: &Path, identity: i64) -> Arc<Writer> {
-    let mut all = writers().lock().expect("the writers");
+    let held = writers();
+    let mut all = held.0.lock().expect("the writers");
     let entry = all.entry(path.to_path_buf()).or_default();
     if *entry.identity.get_or_init(|| identity) != identity {
         *entry = Arc::default();
@@ -559,7 +565,8 @@ pub(super) fn register_store(path: &Path, identity: i64) -> Arc<Writer> {
 fn unregister(path: &Path, w: &Arc<Writer>) {
     // Under the registry's lock: a handle opened meanwhile finds this writer, never a new one that cannot see its
     // queue (the writer's jobs never take this lock).
-    let mut all = writers().lock().expect("the writers");
+    let held = writers();
+    let mut all = held.0.lock().expect("the writers");
     if w.handles.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) != 1 {
         return;
     }
@@ -601,13 +608,14 @@ pub fn hold(path: &Path) -> Hold {
 }
 
 /// Each kind of job's count, bytes held until written, CPU on the writer's thread and the bytes of the frames it
-/// encoded, in this process (the profile's write-back).
-static BY_KIND: std::sync::LazyLock<Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64, usize)>>> = std::sync::LazyLock::new(Default::default);
+/// encoded, by the shared object's writers (the profile's write-back; decision 0442).
+#[derive(Default)]
+struct ByKind(Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64, usize)>>);
 
 /// Each kind of job written so far in this process: count, bytes held, the writer's CPU and the bytes of the frames
 /// it encoded, costliest first.
 pub fn written_by_kind() -> Vec<(&'static str, usize, usize, f64, usize)> {
-    let mut v: Vec<_> = BY_KIND.lock().expect("the writer's account").iter().map(|(k, (n, b, c, e))| (*k, *n, *b, *c, *e)).collect();
+    let mut v: Vec<_> = rerail_prof::code_rule_dsl::logic::profile::shared::<ByKind>().0.lock().expect("the writer's account").iter().map(|(k, (n, b, c, e))| (*k, *n, *b, *c, *e)).collect();
     v.sort_by(|a, b| b.3.total_cmp(&a.3));
     v
 }
@@ -632,7 +640,7 @@ impl ContentStore {
     /// read of it gets meanwhile (`None`: a read waits for the job). The writer's own handle (in a
     /// job) writes at once.
     ///
-    /// The job joins the wave the run is writing (`WAVES`), and the store takes the wave whole, in one transaction
+    /// The job joins the wave the run is writing (`RunWaves`), and the store takes the wave whole, in one transaction
     /// (`ContentStore::in_one_transaction`), each job a savepoint in it, once a boundary seals it (`end_wave`).
     pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Work) {
         self.queue(what, bytes, keys, guarded(Syms::Unmapped, job.into_job()), Run::InWave, false);
@@ -672,7 +680,7 @@ impl ContentStore {
     /// in the run's wave once it holds [`gather_cap`] bytes, or when the wave is sealed. False, nothing added, outside
     /// a run's waves, with no writer, or with no threads (the browser build): the caller queues the write itself.
     pub fn gather<G: Gather>(&self, what: &'static str, make: impl FnOnce() -> G, add: impl FnOnce(&mut G)) -> bool {
-        let run = WAVES.with(std::cell::Cell::get);
+        let run = waves();
         let Some(w) = self.writer().filter(|_| run != 0 && !cfg!(target_family = "wasm")) else { return false };
         if !super::hazards::warm_write_allowed(what) {
             super::hazards::warm_fault("a write gathered for the store", || what.to_owned());
@@ -709,7 +717,7 @@ impl ContentStore {
             return true;
         };
         let mut job = accounted(what, bytes, job);
-        let wave = WAVES.with(std::cell::Cell::get);
+        let wave = waves();
         {
             let mut s = w.shared.state.lock().expect("the writer's state");
             // Back-pressure: past the cap, wait for the writer while it has sealed waves to take (never for waves
@@ -990,7 +998,7 @@ impl ContentStore {
     /// the manifest, which names what the lease protected, is in the store by then. Outside a run, or with no writer,
     /// let go now (what was queued is written already).
     pub fn keep_until_written(&self, thing: impl Any + Send) {
-        let run = WAVES.with(std::cell::Cell::get);
+        let run = waves();
         let Some(w) = self.writer().filter(|_| run != 0 && !cfg!(target_family = "wasm")) else { return };
         w.shared.state.lock().expect("the writer's state").kept.entry(run).or_default().push(Box::new(thing));
     }
@@ -1042,7 +1050,7 @@ impl ContentStore {
     /// run queued, and every wave sealed before. The first error a job met since the last call.
     pub fn written(&self) -> StoreResult<()> {
         let Some(w) = self.writer() else { return Ok(()) };
-        let run = WAVES.with(std::cell::Cell::get);
+        let run = waves();
         if run != 0 {
             w.seal(run, Seal::End);
         }
@@ -1099,7 +1107,8 @@ fn accounted(what: &'static str, bytes: usize, mut job: Job) -> Job {
         }
         let (t0, e0) = (thread_cpu(), super::compression::encoded_here());
         let out = retried(store, what, &mut job);
-        let mut by = BY_KIND.lock().expect("the writer's account");
+        let held = rerail_prof::code_rule_dsl::logic::profile::shared::<ByKind>();
+        let mut by = held.0.lock().expect("the writer's account");
         let e = by.entry(what).or_default();
         e.0 += 1;
         e.1 += bytes;

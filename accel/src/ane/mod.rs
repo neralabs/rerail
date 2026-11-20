@@ -102,14 +102,16 @@ fn hex(k: &[u8; 32]) -> String {
     k.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The process's model store, when its host has one (the engine's content store: compiled models are facts there,
-/// decision 0098 §3); `None` keeps them in memory.
-static STORE: std::sync::RwLock<Option<Arc<dyn ModelStore>>> = std::sync::RwLock::new(None);
+/// The caller's model store, when its host has one (the engine's content store: compiled models are facts there,
+/// decision 0098 §3); `None` keeps them in memory. Its caller's (decision 0442: `rerail_context::Shared`): a store is
+/// a caller's resource.
+#[derive(Default)]
+struct Store(std::sync::RwLock<Option<Arc<dyn ModelStore>>>);
 
 /// Makes `store` where this process's Neural Engine models are kept from now on: JIT-compiled models are written
 /// there and read back by later runs. AOT models are part of the executable and never stored.
 pub fn set_store(store: Arc<dyn ModelStore>) {
-    *STORE.write().unwrap() = Some(store);
+    *rerail_context::shared::<Store>().0.write().unwrap() = Some(store);
 }
 
 /// The host's store when set, else memory.
@@ -118,13 +120,13 @@ struct HostStore(MemoryStore);
 
 impl ModelStore for HostStore {
     fn get(&self, key: &[u8; 32]) -> Option<Arc<[u8]>> {
-        match STORE.read().unwrap().as_ref() {
+        match rerail_context::shared::<Store>().0.read().unwrap().as_ref() {
             Some(s) => s.get(key),
             None => self.0.get(key),
         }
     }
     fn put(&self, key: [u8; 32], archive: Arc<[u8]>) {
-        match STORE.read().unwrap().as_ref() {
+        match rerail_context::shared::<Store>().0.read().unwrap().as_ref() {
             Some(s) => s.put(key, archive),
             None => self.0.put(key, archive),
         }
@@ -557,12 +559,14 @@ impl Ane {
                             let (w0, w1) = t.pieces[p];
                             let k = t.k(p);
                             let mut buf = vec![0u16; t.m * k];
-                            buf.par_chunks_mut(k).enumerate().for_each(|(r, out)| {
-                                let g = tile * t.m + r;
-                                if g < total {
-                                    let (a, i) = row_of(g);
-                                    expand(&a.row(i)[w0..w1], out);
-                                }
+                            rerail_context::on_cores(|| {
+                                buf.par_chunks_mut(k).enumerate().for_each(|(r, out)| {
+                                    let g = tile * t.m + r;
+                                    if g < total {
+                                        let (a, i) = row_of(g);
+                                        expand(&a.row(i)[w0..w1], out);
+                                    }
+                                })
                             });
                             buf
                         })
@@ -589,10 +593,12 @@ impl Ane {
                 let tile = first + item;
                 let lo = tile * t.m;
                 let hi = (lo + t.m).min(total);
-                counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
-                    if !add_counts(out, &data[r * stride..r * stride + n]) {
-                        bad.store(true, Ordering::Relaxed);
-                    }
+                rerail_context::on_cores(|| {
+                    counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
+                        if !add_counts(out, &data[r * stride..r * stride + n]) {
+                            bad.store(true, Ordering::Relaxed);
+                        }
+                    })
                 });
                 Ok(())
             })?;

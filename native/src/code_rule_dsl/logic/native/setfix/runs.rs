@@ -209,8 +209,7 @@ pub(super) struct Sorted(Vec<(u32, u32, Arc<[usize]>)>);
 /// step's probes, an order sorted again). `RERAIL_KNOWN_SORTED=runs` (a measurement aid) keeps it to the runs
 /// (decision 0180); `off`, to nothing.
 pub(super) fn known_beyond_runs() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RERAIL_KNOWN_SORTED").map_or(true, |v| v != "runs" && v != "off"))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_KNOWN_SORTED").map_or(true, |v| v != "runs" && v != "off"))
 }
 
 /// Whether rows in the order on `have` (relation of `k` columns) are in the order on `want` of the same relation.
@@ -252,8 +251,7 @@ impl Sorted {
     /// The parts of rows `lo..hi` known to be in the order on `cols`, in row order.
     pub(super) fn within(&self, cols: &[usize], k: usize, lo: u32, hi: u32) -> Vec<(u32, u32)> {
         // `RERAIL_KNOWN_SORTED=off` (a measurement aid): nothing known, every run sorted.
-        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *OFF.get_or_init(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
             return Vec::new();
         }
         self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies(c, cols, k)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
@@ -261,8 +259,7 @@ impl Sorted {
     /// The parts of rows `lo..hi` known to be sorted by a key (`implies_key`: column `tag`'s hash tag first, when
     /// given, then the values of `cols`), in row order.
     pub(super) fn within_key(&self, k: usize, tag: Option<usize>, cols: &[usize], lo: u32, hi: u32) -> Vec<(u32, u32)> {
-        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *OFF.get_or_init(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
             return Vec::new();
         }
         self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies_key(c, k, tag, cols)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
@@ -429,8 +426,7 @@ impl Clone for Index {
 const GALLOP: usize = 16;
 /// `RERAIL_GALLOP=off`: every merge walks both runs, as before (to compare).
 fn gallop_on() -> bool {
-    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !matches!(std::env::var("RERAIL_GALLOP").as_deref(), Ok("off")));
-    *ON
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| !matches!(std::env::var("RERAIL_GALLOP").as_deref(), Ok("off")))
 }
 
 #[inline]
@@ -984,8 +980,7 @@ pub(super) const HINTS: usize = 8;
 /// Each field is ordered as its value, so the packed keys sort as the tuples do. `RERAIL_SORT_PACKED=off` keeps
 /// the tuple (a measurement aid).
 pub(super) fn sort_keyed(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, usize) -> i64, cmp: impl Fn(u32, u32) -> Ordering, tags: &mut impl Extend<u16>) {
-    static PACKED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *PACKED.get_or_init(|| std::env::var("RERAIL_SORT_PACKED").map_or(true, |v| v != "off"))
+    if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SORT_PACKED").map_or(true, |v| v != "off"))
         && sort_packed(ids, tagged, ncols, &val, &cmp, tags)
     {
         return;
@@ -1418,15 +1413,23 @@ pub mod presorted {
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     /// [derived input orders, component orders] × [runs, rows, runs wholly in order, rows in stretches of 64 or more
     /// in order, stretches of 64 or more].
-    static COUNTS: [[AtomicU64; 7]; 2] = [const { [const { AtomicU64::new(0) }; 7] }; 2];
-    /// Rows a run took in place, known sorted (decision 0180), into `COUNTS[_][6]`, when measuring.
+    /// And [other sorts' sites (`FRESH`, `SCAN`, `REORDER`)] × [sorts, rows, sorts wholly in order, rows in stretches
+    /// of 64 or more in order, rows taken as known sorted]. The run's (decision 0442).
+    #[derive(Default)]
+    struct Counts {
+        orders: [[AtomicU64; 7]; 2],
+        sites: [[AtomicU64; 5]; 3],
+    }
+    fn counts() -> std::sync::Arc<Counts> {
+        rerail_prof::code_rule_dsl::logic::profile::local::<Counts>()
+    }
+    /// Rows a run took in place, known sorted (decision 0180), into `orders[_][6]`, when measuring.
     pub(super) fn known(rows: u64, printed: bool) {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *ON.get_or_init(|| std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some()) {
-            COUNTS[usize::from(!printed)][6].fetch_add(rows, Relaxed);
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some()) {
+            counts().orders[usize::from(!printed)][6].fetch_add(rows, Relaxed);
         }
     }
-    /// A run's build time (ns), into `COUNTS[_][5]`, when measuring.
+    /// A run's build time (ns), into `orders[_][5]`, when measuring.
     pub(super) struct Timed(Option<(std::time::Instant, bool)>);
     impl Timed {
         pub(super) fn start(printed: bool) -> Timed {
@@ -1436,17 +1439,17 @@ pub mod presorted {
     impl Drop for Timed {
         fn drop(&mut self) {
             if let Some((t, printed)) = self.0 {
-                COUNTS[usize::from(!printed)][5].fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
+                counts().orders[usize::from(!printed)][5].fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
             }
         }
     }
     pub(super) fn note<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], lo: u32, hi: u32, printed: bool) {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         // `time`: the builds timed only, not counted (the count's pass over the rows would be timed too).
-        if !*ON.get_or_init(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time")) || hi <= lo {
+        if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time")) || hi <= lo {
             return;
         }
-        let c = &COUNTS[usize::from(!printed)];
+        let all = counts();
+        let c = &all.orders[usize::from(!printed)];
         let (mut start, mut long, mut stretches, mut whole) = (lo, 0u64, 0u64, true);
         let mut close = |start: u32, end: u32| if end - start >= 64 { long += u64::from(end - start); stretches += 1; };
         for id in lo + 1..hi {
@@ -1467,10 +1470,8 @@ pub mod presorted {
     pub const FRESH: usize = 0;
     pub const SCAN: usize = 1;
     pub const REORDER: usize = 2;
-    static SITES: [[AtomicU64; 5]; 3] = [const { [const { AtomicU64::new(0) }; 5] }; 3];
     fn counting() -> bool {
-        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time"))
+        rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time"))
     }
     /// A sort at `site` of `n` items, `descent(i)` telling item `i` is before item `i - 1` in the wanted order.
     pub fn site(site: usize, n: usize, descent: impl Fn(usize) -> bool) {
@@ -1486,21 +1487,23 @@ pub mod presorted {
             }
         }
         if n - start >= 64 { long += (n - start) as u64; }
+        let all = counts();
         for (i, v) in [1, n as u64, u64::from(whole), long].into_iter().enumerate() {
-            SITES[site][i].fetch_add(v, Relaxed);
+            all.sites[site][i].fetch_add(v, Relaxed);
         }
     }
     /// Rows a sort at `site` took as known sorted, not sorted.
     pub fn site_known(site: usize, rows: u64) {
         if counting() {
-            SITES[site][4].fetch_add(rows, Relaxed);
+            counts().sites[site][4].fetch_add(rows, Relaxed);
         }
     }
     pub fn report() -> String {
-        let row = |i: usize| COUNTS[i].iter().map(|a| a.load(Relaxed)).collect::<Vec<_>>();
+        let all = counts();
+        let row = |i: usize| all.orders[i].iter().map(|a| a.load(Relaxed)).collect::<Vec<_>>();
         let (d, o) = (row(0), row(1));
         let sites = ["wave batches", "scans for the next probe", "orders sorted again"].iter().enumerate().map(|(i, name)| {
-            let v: Vec<u64> = SITES[i].iter().map(|a| a.load(Relaxed)).collect();
+            let v: Vec<u64> = all.sites[i].iter().map(|a| a.load(Relaxed)).collect();
             format!("; {name}: {} sorts ({} wholly in order), {} rows, {} in order in stretches of 64+ ({:.0}%), {} known sorted", v[0], v[2], v[1], v[3], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[4])
         }).collect::<String>();
         let f = |v: &[u64]| format!("{} runs ({} wholly in order), {} rows, {} in order in {} stretches of 64+ ({:.0}%); built in {:.1} ms; {} rows taken in place, known sorted", v[0], v[2], v[1], v[3], v[4], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[5] as f64 / 1e6, v[6]);

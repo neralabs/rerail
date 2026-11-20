@@ -31,12 +31,21 @@ const BOT: i64 = i64::MIN;
 const BIG: i64 = 1 << 40;
 
 /// The tree in preorder: each node's parent, kind and descendant count (its subtree is `n+1..=n+size`).
-struct Tape { par: Vec<i32>, kind: Vec<u16>, size: Vec<u32>, kinds: HashMap<String, u16> }
-static TAPE: RwLock<Option<Arc<Tape>>> = RwLock::new(None);
+pub(super) struct Tape { par: Vec<i32>, kind: Vec<u16>, size: Vec<u32>, kinds: HashMap<String, u16> }
+
+/// The extension's state of one connection (decision 0442): `init` makes it, and every function and module it
+/// registers holds it.
+#[derive(Default)]
+struct Ext {
+    /// Fixpoint results kept in memory, by name, for `lattice_result`.
+    results: Mutex<Vec<(String, Arc<Vec<i64>>)>>,
+    /// The set engine's (`setfix`).
+    set: Arc<setfix::State>,
+}
 
 fn user_err(m: String) -> Error { Error::UserFunctionError(m.into()) }
 
-fn tape_load(conn: &Connection, schema: &str) -> Result<usize> {
+fn tape_load(ext: &Ext, conn: &Connection, schema: &str) -> Result<usize> {
     let mut kinds: HashMap<String, u16> = HashMap::new();
     let (mut par, mut kind) = (Vec::new(), Vec::new());
     let mut st = conn.prepare(&format!("SELECT n, kind FROM {schema}.node"))?;
@@ -58,7 +67,7 @@ fn tape_load(conn: &Connection, schema: &str) -> Result<usize> {
         size[n as usize] = z as u32;
     }
     let n = par.len();
-    *TAPE.write().unwrap() = Some(Arc::new(Tape { par, kind, size, kinds }));
+    *ext.set.tape.write().unwrap() = Some(Arc::new(Tape { par, kind, size, kinds }));
     Ok(n)
 }
 
@@ -82,7 +91,7 @@ impl Aggregate<i64, Option<i64>> for FlatJoin {
 
 /// Semi-naive waves over the component's graph: a wave re-evaluates the dependents of the nodes that changed in the
 /// previous one, each from all of its inputs (the seed, copy sources and binary transfers).
-fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<String> {
+fn lattice_fixpoint(ext: &Ext, conn: &Connection, p: &str, target: Option<&str>) -> Result<String> {
     let t = Instant::now();
     let pairs = |sql: String| -> Result<Vec<(i64, i64)>> {
         let mut st = conn.prepare(&sql)?;
@@ -105,7 +114,7 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<
         let mut st = conn.prepare(&format!("SELECT c0, c1 FROM {p}_kseed"))?;
         st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_>>()?
     } else { Vec::new() };
-    let tape = if kseed.is_empty() { None } else { Some(TAPE.read().unwrap().clone().ok_or_else(|| user_err("tape_load first".into()))?) };
+    let tape = if kseed.is_empty() { None } else { Some(ext.set.tape.read().unwrap().clone().ok_or_else(|| user_err("tape_load first".into()))?) };
     let mut n = seeds.iter().map(|r| r.0).chain(copies.iter().flat_map(|r| [r.0, r.1]))
         .chain(bins.iter().flat_map(|r| [r.0, r.2, r.3])).max().map_or(0, |m| m as usize + 1);
     if let Some(t) = &tape { n = n.max(t.kind.len()); }
@@ -166,7 +175,7 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<
     let solve = t.elapsed();
     if let Some(name) = target.and_then(|t| t.strip_prefix('@')) {
         let rows = val.iter().filter(|&&v| v != BOT).count();
-        let mut reg = RESULTS.lock().unwrap();
+        let mut reg = ext.results.lock().unwrap();
         reg.retain(|(n, _)| n != name);
         reg.push((name.to_string(), Arc::new(val)));
         return Ok(format!("{rows} {waves} {visits} {:.1} {:.1}", solve.as_secs_f64() * 1e3, t.elapsed().as_secs_f64() * 1e3));
@@ -188,18 +197,16 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<
     Ok(format!("{rows} {waves} {visits} {:.1} {:.1}", solve.as_secs_f64() * 1e3, t.elapsed().as_secs_f64() * 1e3))
 }
 
-/// Fixpoint results kept in memory, by name, for `lattice_result`.
-static RESULTS: Mutex<Vec<(String, Arc<Vec<i64>>)>> = Mutex::new(Vec::new());
 
 #[repr(C)]
 struct ResultTab { base: ffi::sqlite3_vtab, vals: Arc<Vec<i64>>, rows: usize }
 
 unsafe impl<'vtab> VTab<'vtab> for ResultTab {
-    type Aux = ();
+    type Aux = Arc<Ext>;
     type Cursor = ResultCursor;
-    fn connect(_: &mut VTabConnection, _: Option<&()>, _: &[u8], _: &[u8], _: &[u8], args: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
+    fn connect(_: &mut VTabConnection, ext: Option<&Arc<Ext>>, _: &[u8], _: &[u8], _: &[u8], args: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
         let name = std::str::from_utf8(args.last().copied().unwrap_or(b"")).unwrap_or("").trim().to_string();
-        let vals = RESULTS.lock().unwrap().iter().find(|(n, _)| *n == name).map(|r| r.1.clone())
+        let vals = ext.and_then(|ext| ext.results.lock().unwrap().iter().find(|(n, _)| *n == name).map(|r| r.1.clone()))
             .ok_or_else(|| Error::ModuleError(format!("no lattice result named {name:?}")))?;
         let rows = vals.iter().filter(|&&v| v != BOT).count();
         Ok((Cow::Borrowed(c"CREATE TABLE x(c0 INTEGER, c1 INTEGER)"), ResultTab { base: ffi::sqlite3_vtab::default(), vals, rows }))
@@ -267,13 +274,17 @@ pub unsafe extern "C" fn sqlite3_extension_init(db: *mut ffi::sqlite3, err: *mut
 
 fn init(db: Connection) -> Result<bool> {
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
-    db.create_scalar_function(c"tape_load", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+    // The connection's state, held by every function and module registered here.
+    let ext: Arc<Ext> = Default::default();
+    let x = Arc::clone(&ext);
+    db.create_scalar_function(c"tape_load", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let schema: String = ctx.get(0)?;
         let conn = unsafe { ctx.get_connection()? };
-        tape_load(&conn, &schema).map(|n| n as i64)
+        tape_load(&x, &conn, &schema).map(|n| n as i64)
     })?;
-    db.create_scalar_function(c"tape_nearest", 2, det, |ctx| {
-        let tape = TAPE.read().unwrap().clone().ok_or_else(|| user_err("tape_load first".into()))?;
+    let x = Arc::clone(&ext);
+    db.create_scalar_function(c"tape_nearest", 2, det, move |ctx| {
+        let tape = x.set.tape.read().unwrap().clone().ok_or_else(|| user_err("tape_load first".into()))?;
         let t2 = tape.clone();
         let set = ctx.get_or_create_aux(1, move |v| -> Result<Vec<bool>, Error> {
             let mut m = vec![false; t2.kinds.len()];
@@ -288,59 +299,67 @@ fn init(db: Connection) -> Result<bool> {
         }
         Ok(None)
     })?;
-    db.create_scalar_function(c"flat_bin", 3, det, |ctx| {
+    db.create_scalar_function(c"flat_bin", 3, det, move |ctx| {
         let o: String = ctx.get(0)?;
         Ok(flat_bin(&o, ctx.get(1)?, ctx.get(2)?))
     })?;
     db.create_aggregate_function(c"flat_join", 1, det, FlatJoin)?;
     for nargs in [1, 2] {
-        db.create_scalar_function(c"lattice_fixpoint", nargs, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let x = Arc::clone(&ext);
+        db.create_scalar_function(c"lattice_fixpoint", nargs, FunctionFlags::SQLITE_UTF8, move |ctx| {
             let p: String = ctx.get(0)?;
             let target: Option<String> = if ctx.len() > 1 { Some(ctx.get(1)?) } else { None };
             let conn = unsafe { ctx.get_connection()? };
-            lattice_fixpoint(&conn, &p, target.as_deref())
+            lattice_fixpoint(&x, &conn, &p, target.as_deref())
         })?;
     }
-    db.create_scalar_function(c"set_fixpoint_open", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+    let x = Arc::clone(&ext);
+    db.create_scalar_function(c"set_fixpoint_open", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let spec: String = ctx.get(0)?;
         let conn = unsafe { ctx.get_connection()? };
-        setfix::open(&conn, &spec)
+        setfix::open(&x.set, &conn, &spec)
     })?;
     for n in [1, 2] {
-        db.create_scalar_function(c"set_fixpoint_run", n, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let x = Arc::clone(&ext);
+        db.create_scalar_function(c"set_fixpoint_run", n, FunctionFlags::SQLITE_UTF8, move |ctx| {
             let name: String = ctx.get(0)?;
             let max_waves: i64 = if ctx.len() > 1 { ctx.get(1)? } else { 0 };
             let conn = unsafe { ctx.get_connection()? };
-            setfix::run(&conn, &name, max_waves as u32)
+            setfix::run(&x.set, &conn, &name, max_waves as u32)
         })?;
     }
-    db.create_scalar_function(c"set_fixpoint_materialize", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+    let x = Arc::clone(&ext);
+    db.create_scalar_function(c"set_fixpoint_materialize", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let table: String = ctx.get(0)?;
         let conn = unsafe { ctx.get_connection()? };
-        setfix::materialize(&conn, &table)
+        setfix::materialize(&x.set, &conn, &table)
     })?;
-    db.create_scalar_function(c"set_fixpoint_steps", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+    let x = Arc::clone(&ext);
+    db.create_scalar_function(c"set_fixpoint_steps", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let name: String = ctx.get(0)?;
-        setfix::steps(&name)
+        setfix::steps(&x.set, &name)
     })?;
-    db.create_scalar_function(c"set_fixpoint_loads", 0, FunctionFlags::SQLITE_UTF8, |_| Ok(setfix::loads()))?;
-    db.create_scalar_function(c"set_fixpoint_stats", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+    db.create_scalar_function(c"set_fixpoint_loads", 0, FunctionFlags::SQLITE_UTF8, move |_| Ok(setfix::loads()))?;
+    let x = Arc::clone(&ext);
+    db.create_scalar_function(c"set_fixpoint_stats", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let name: String = ctx.get(0)?;
-        setfix::stats(&name)
+        setfix::stats(&x.set, &name)
     })?;
-    db.create_scalar_function(c"set_fixpoint_reprobe", 4, FunctionFlags::SQLITE_UTF8, |ctx| {
+    let x = Arc::clone(&ext);
+    db.create_scalar_function(c"set_fixpoint_reprobe", 4, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let (name, i, kind, body): (String, i64, String, String) = (ctx.get(0)?, ctx.get(1)?, ctx.get(2)?, ctx.get(3)?);
         let conn = unsafe { ctx.get_connection()? };
-        setfix::reprobe(&conn, &name, i as usize, &kind, &body).map(|_| 1i64)
+        setfix::reprobe(&x.set, &conn, &name, i as usize, &kind, &body).map(|_| 1i64)
     })?;
-    db.create_scalar_function(c"set_fixpoint_close", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+    let x = Arc::clone(&ext);
+    db.create_scalar_function(c"set_fixpoint_close", 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
         let name: String = ctx.get(0)?;
-        setfix::close(&name).map(|_| 1i64)
+        setfix::close(&x.set, &name).map(|_| 1i64)
     })?;
     const SETREL: Module<setfix::RelTab> = Module::read_only_module();
-    db.create_module(c"set_rel", &SETREL, None)?;
+    db.create_module(c"set_rel", &SETREL, Some(Arc::clone(&ext.set)))?;
     const RESULT: Module<ResultTab> = Module::read_only_module();
-    db.create_module(c"lattice_result", &RESULT, None)?;
+    db.create_module(c"lattice_result", &RESULT, Some(ext))?;
     Ok(false)
 }
 

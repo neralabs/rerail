@@ -23,7 +23,7 @@ use rerail_accel::kernel::{JoinBy, Keys};
 use rerail_accel::{Batch, Kernel, Launch, Pairs};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// A relation's id for the run: what the executor's space keeps its forms by.
 #[derive(Debug)]
@@ -41,14 +41,12 @@ impl Default for Uid {
 const MIN_LEFT: usize = 4096;
 
 fn min_left() -> usize {
-    static MIN: OnceLock<usize> = OnceLock::new();
-    *MIN.get_or_init(|| std::env::var("RERAIL_LEVEL_JOIN_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(MIN_LEFT))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LEVEL_JOIN_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(MIN_LEFT))
 }
 
 /// Whether a level's seed joins are batched.
 pub fn on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RERAIL_LEVEL_JOINS").map_or(true, |v| v != "off"))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LEVEL_JOINS").map_or(true, |v| v != "off"))
 }
 
 /// A level's batch of seed joins, running until the first seed that reads it waits.
@@ -77,8 +75,14 @@ struct Pending {
     lids: Vec<u32>,
 }
 
-/// Pending pairs by the seed's spec.
-static PENDING: LazyLock<Mutex<HashMap<u64, Pending>>> = LazyLock::new(Default::default);
+/// Pending pairs by the seed's spec: the run's own (decision 0442).
+#[derive(Default)]
+struct Pendings(Mutex<HashMap<u64, Pending>>);
+
+/// The run's pending pairs.
+fn pendings() -> std::sync::Arc<Pendings> {
+    crate::code_rule_dsl::logic::run::local::<Pendings>()
+}
 
 /// A seed's pairs, taken: its first atom's row ids, and the pairs (an index into them, the second atom's row id).
 pub struct Paired {
@@ -149,7 +153,7 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
         }
         let key = digest(spec);
         // Sent already: twice in this batch, or by the level before (a chained join, decision 0100 §11).
-        if pending.iter().any(|(k, _): &(u64, Pending)| *k == key) || PENDING.lock().unwrap().contains_key(&key) {
+        if pending.iter().any(|(k, _): &(u64, Pending)| *k == key) || pendings().0.lock().unwrap().contains_key(&key) {
             continue;
         }
         let Ok(j) = super::join_rule(conn, spec, &mut syms) else { continue };
@@ -187,7 +191,7 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
         return Ok(0);
     }
     let n = launches.len();
-    SENT.fetch_add(n as u64, Ordering::Relaxed);
+    run_counts().sent.fetch_add(n as u64, Ordering::Relaxed);
     let ex = crate::code_rule_dsl::logic::lanes::executor();
     let running = ex.begin_as("level joins", Batch(launches)).map_err(err)?;
     // The values, while the lanes commit and schedule: then the gate opens, and the device starts (decision 0100
@@ -204,7 +208,8 @@ pub fn prefetch(conn: &rusqlite::Connection, specs: &[Arc<JoinSpec>]) -> Result<
     drop(fills);
     opener.open();
     let batch = Arc::new(LevelBatch { each: Some(running.each()) });
-    let mut all = PENDING.lock().unwrap();
+    let all = pendings();
+    let mut all = all.0.lock().unwrap();
     for (key, mut p) in pending {
         p.batch = Arc::clone(&batch);
         all.insert(key, p);
@@ -222,7 +227,7 @@ struct Fill {
 
 /// The pairs of `j`, if a level's batch made them from the relations it reads now.
 pub fn take(j: &super::JoinRule) -> Result<Option<Paired>> {
-    let Some(p) = PENDING.lock().unwrap().remove(&j.spec) else { return Ok(None) };
+    let Some(p) = pendings().0.lock().unwrap().remove(&j.spec) else { return Ok(None) };
     let Some((r0, r1, ..)) = qualifies(j) else { return Ok(None) };
     let pairs = p.batch.out(p.at)?;
     if ident(r0) != p.left || ident(r1) != p.right {
@@ -233,7 +238,7 @@ pub fn take(j: &super::JoinRule) -> Result<Option<Paired>> {
 
 /// Drops pairs no seed took (a stratum that ran in SQL, or declined), and what the lanes keep: the chunk's end.
 pub fn clear() {
-    let gone: Vec<Pending> = PENDING.lock().unwrap().drain().map(|(_, p)| p).collect();
+    let gone: Vec<Pending> = crate::code_rule_dsl::logic::run::local_if_any::<Pendings>().map(|p| p.0.lock().unwrap().drain().map(|(_, p)| p).collect()).unwrap_or_default();
     // A batch still running is waited for, so its lanes' buffers are not freed under it.
     for p in &gone {
         let _ = p.batch.out(p.at);
@@ -243,14 +248,25 @@ pub fn clear() {
 
 /// What the batches did so far: launches sent, seeds run from their pairs.
 pub fn counts() -> (u64, u64) {
-    (SENT.load(Ordering::Relaxed), USED.load(Ordering::Relaxed))
+    (run_counts().sent.load(Ordering::Relaxed), run_counts().used.load(Ordering::Relaxed))
 }
 
-pub(super) static SENT: AtomicU64 = AtomicU64::new(0);
-pub(super) static USED: AtomicU64 = AtomicU64::new(0);
 
 /// Checks a qualifying spec's shape the first two steps need (for a test).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn qualifying(j: &super::JoinRule) -> bool {
     qualifies(j).is_some()
+}
+
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct LevelCounts {
+    pub sent: AtomicU64,
+    pub used: AtomicU64,
+}
+
+/// The run's `LevelCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<LevelCounts> {
+    crate::code_rule_dsl::logic::run::local::<LevelCounts>()
 }

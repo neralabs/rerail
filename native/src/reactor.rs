@@ -44,13 +44,23 @@ pub unsafe extern "C" fn rerail_command(at: *const u8, len: usize) -> i32 {
     };
     let args: Vec<String> = line.split_terminator('\0').map(str::to_owned).collect();
     // The session the instance keeps from command to command (`RERAIL_SESSION`): this instance's, as its memory is.
+    // What its commands share by design (decision 0442): this instance's, the one caller it serves.
     thread_local! {
         static KEPT: std::cell::RefCell<crate::code_rule_dsl::logic::plan::corpus::session::Kept> = Default::default();
+        static SHARED: std::sync::Arc<crate::code_rule_dsl::logic::run::Shared> = crate::code_rule_dsl::logic::run::Shared::new();
     }
-    let code = match KEPT.with(|kept| crate::tools::cli_in(&args, &mut kept.borrow_mut())) {
+    let (out, incomplete) = KEPT.with(|kept| SHARED.with(|shared| crate::tools::cli_in(&args, &mut kept.borrow_mut(), shared)));
+    let code = match out {
         Ok(text) => {
             print!("{text}");
-            0
+            // Decision 0462: a relation cut at the width cap left the results incomplete.
+            match incomplete {
+                Some(message) => {
+                    eprintln!("rerail-engine: {message}");
+                    3
+                }
+                None => 0,
+            }
         }
         Err(error) => {
             eprintln!("rerail-engine: {error}");

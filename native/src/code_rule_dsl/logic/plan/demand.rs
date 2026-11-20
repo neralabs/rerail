@@ -66,34 +66,22 @@ use super::fields::Fields;
 
 mod over;
 
-thread_local! {
-    /// Set while a session evaluates its cross-file part (decision 0077): the rows it keeps are each relation's whole
-    /// rows, which delete-and-rederive maintains, so no relation is computed only for the keys its readers reach. A
-    /// relation kept for some keys would miss a key demanded later whose derivation no delta touches (spike O125).
-    static WHOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
+/// Bound while a session evaluates its cross-file part (decision 0077): the rows it keeps are each relation's whole
+/// rows, which delete-and-rederive maintains, so no relation is computed only for the keys its readers reach. A
+/// relation kept for some keys would miss a key demanded later whose derivation no delta touches (spike O125).
+#[derive(Clone, Copy, Default)]
+struct Whole(bool);
 
-/// Carries the setting to a job on another thread (`run_state`).
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.copy(&["WHOLE"], &WHOLE);
-}
-
-/// While the guard lives, `split_negations` splits nothing (`WHOLE`).
-pub(in crate::code_rule_dsl) fn whole_relations() -> impl Drop {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            WHOLE.with(|w| w.set(self.0));
-        }
-    }
-    Reset(WHOLE.with(|w| w.replace(true)))
+/// While the guard lives, `split_negations` splits nothing (`Whole`).
+pub(in crate::code_rule_dsl) fn whole_relations() -> crate::code_rule_dsl::logic::profile::Bound {
+    crate::code_rule_dsl::logic::profile::bind(Whole(true))
 }
 
 /// What was demanded, and the program's version `placed` with each demandable relation computed for the keys its
 /// readers reach (the module's split, an overlay of `placed`); `None` where nothing is, or where the split would not
 /// stratify or type. `placed` must be the whole program (t36 item 6: `over`).
 pub(super) fn split_negations(placed: &Placed, model: &super::Model) -> Option<(Vec<String>, Placed)> {
-    if WHOLE.with(|w| w.get()) {
+    if crate::code_rule_dsl::logic::profile::bound::<Whole>().0 {
         return None;
     }
     let Some(f) = Fields::of(placed) else {
@@ -217,9 +205,11 @@ fn overlaid(base: &Placed, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize,
         if own {
             rb = rb.atom(demand.as_str(), &own_args);
         }
-        for (i, l) in r.body().enumerate() {
-            if !s.cut.contains(&i) {
-                rb = rb.lit(v, r, l);
+        let body = super::body::Body::of(v, r);
+        let kept: Vec<usize> = (0..body.len()).filter(|i| !s.cut.contains(i)).collect();
+        for &i in &kept {
+            if !body.implied_read(i, &kept) {
+                rb = rb.lit(v, r, body.lit(i));
             }
         }
         if own {
@@ -274,4 +264,33 @@ fn demand_terms<'a>(v: &'a Version, r: RuleRef<'a>, fresh: &'a [String]) -> (Vec
         })
         .collect::<Vec<_>>();
     (args, computed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_demand_prefix_keeps_only_reads_not_already_proved() {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(
+            "
+            .decl relation(k: number, value: number, tag: number)
+            .decl veto(value: number)
+            .decl result(k: number, value: number)
+            .input relation, veto
+            .output result
+            result(k, value) :- relation(k, _, _), relation(k, value, _), relation(k, _, 1), !veto(value).
+            ",
+        )
+        .unwrap();
+        let base = Placed::whole(program);
+        let split = Split { pre: "pre_0".into(), vars: vec!["k".into(), "value".into()], cut: BTreeSet::from([3]) };
+        let decls = [("pre_0".into(), vec![("k".into(), "int".into()), ("value".into(), "int".into())])];
+        let actual = overlaid(&base, &BTreeSet::from(["veto"]), &BTreeMap::from([(0, split)]), &decls, &[]).unwrap();
+        let pre = actual.v.rules().find(|r| actual.v.rel_name(r.head().rel()) == "pre_0").map(|r| actual.v.show_rule(r)).unwrap();
+        assert_eq!(pre, "pre_0($k, $value) :- relation($k, $value, _), relation($k, _, 1)");
+
+        let body = super::super::body::Body::of(&base.v, base.v.rule(base.id(0)).unwrap());
+        assert!(!body.implied_read(0, &[0, 3]), "a cut read cannot prove a kept read");
+    }
 }

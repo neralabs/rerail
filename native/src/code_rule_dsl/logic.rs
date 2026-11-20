@@ -4,6 +4,7 @@
 
 pub mod crypto;
 pub mod derived;
+pub mod run;
 pub mod run_state;
 #[cfg(test)]
 pub mod facts_only;
@@ -21,6 +22,7 @@ mod test_load {
     static LOAD: extern "C" fn() = load;
 }
 pub mod analysis;
+pub mod bloom;
 // Nothing emits SQL through them until the planner (Phase 6) does.
 // Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "logic/front")]

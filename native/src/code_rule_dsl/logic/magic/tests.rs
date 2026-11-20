@@ -35,6 +35,23 @@ fn transformed(src: &str, mode: &str) -> Result<Arc<Version>, String> {
     Ok(v)
 }
 
+/// The adornment orders a nullary guard first: an existence test needs no binding, so the demanded body stays
+/// ready with it (on the version; the tree's `magic_adorn` was the first form).
+#[test]
+fn a_nullary_guard_is_ready_in_a_demanded_body() {
+    let v = transformed("
+        .decl rows(x: int)
+        .decl ready()
+        .input rows, ready
+        .decl answer(x: int)
+        .output answer
+        answer(x) :- rows(x), ready().
+    ", "adorn").unwrap();
+    let rules: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+    // A nullary relation is read with its unit column on the version (`ready(1)`).
+    assert!(rules.iter().any(|r| r.starts_with("answer(") && r.contains("ready(")), "{rules:#?}");
+}
+
 /// The program as the goldens print it (T's repr, and `json.dumps` with sorted keys for gates and the report).
 fn golden_text(p: &Version) -> String {
     let mut lines = Vec::new();

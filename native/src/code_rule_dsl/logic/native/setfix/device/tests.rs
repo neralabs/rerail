@@ -782,11 +782,11 @@
         assert_eq!((dev.rows, dev.cols), (n, 3));
         assert_eq!(place, [0, 1, 2], "each column at its own place");
         let cols = [StatColumn::Rel(&rel, 1), StatColumn::Rel(&rel, 2)];
-        let (read, in_place) = super::column_stats(&cols, 8).expect("the device");
+        let (read, in_place) = super::column_stats(&cols, 8, 0).expect("the device");
         assert_eq!(in_place, 2);
         for (c, got) in [1, 2].into_iter().zip(&read) {
             let values: Vec<i64> = (0..n).map(|i| src.value(i, c)).collect();
-            let (host, _) = super::column_stats(&[StatColumn::Values(&values)], 8).expect("the device");
+            let (host, _) = super::column_stats(&[StatColumn::Values(&values)], 8, 0).expect("the device");
             assert_eq!(*got, host[0], "column {c}");
         }
     }
@@ -811,19 +811,26 @@
         }
         let rel = InRel::from_flat(rows.clone(), n, vec![b'i'; 2]);
         let cols = [StatColumn::Rel(&rel, 0), StatColumn::Rel(&rel, 1)];
-        let (gathered, in_place) = super::column_stats(&cols, 16).expect("the device");
+        let (gathered, in_place) = super::column_stats(&cols, 16, 64).expect("the device");
         assert_eq!(in_place, 0);
         let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         // Both columns uploaded: a copy holds only the columns asked for (decision 0277).
         super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
-        let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
+        let (read, in_place) = super::column_stats(&cols, 16, 64).expect("the device");
         assert_eq!(in_place, 2);
         assert_eq!(read, gathered);
         let values: Vec<i64> = rows.iter().step_by(2).copied().collect();
-        let (of_values, _) = super::column_stats(&[StatColumn::Values(&values)], 16).expect("the device");
+        let (of_values, _) = super::column_stats(&[StatColumn::Values(&values)], 16, 64).expect("the device");
         assert_eq!(of_values[0], read[0]);
         assert_eq!(read[1].ndv, 18);
+        // Each column's filter (decision 0477), the second's base the span's on the device, 64 bits wide: the
+        // host's filter of the same values, word for word.
+        for (c, got) in read.iter().enumerate() {
+            let mut cpu = crate::code_rule_dsl::logic::bloom::Filter::new(64);
+            rows.iter().skip(c).step_by(2).for_each(|&v| cpu.add(v));
+            assert_eq!(*got.keys, *cpu.words, "column {c}'s filter");
+        }
     }
 
     /// Decision 0221 §4, through the device interface: the device's batch makes the CPU's heavy values.
@@ -848,6 +855,8 @@
             let counts_of = |h: &table::HeavyCol| { let mut c: Vec<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
             assert_eq!(counts_of(&g), counts_of(&cpu));
             assert!((table::heavy_fan(&g, &[&g, &g]).unwrap() / table::heavy_fan(&cpu, &[&cpu, &cpu]).unwrap() - 1.0).abs() < 1e-6);
+            // The device's filter is the host's, word for word (decision 0477).
+            assert_eq!(g.keys, cpu.keys, "the column's filter");
         }
     }
     /// The CPU's and the GPU's batch on columns of 1 M and 8 M rows, warm (a measure: `--ignored`).

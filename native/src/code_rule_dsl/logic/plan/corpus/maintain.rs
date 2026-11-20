@@ -102,15 +102,23 @@ pub fn by_levels_ran() {
     BY_LEVELS.with(|c| c.set(c.get() + 1));
 }
 
-/// What a run did that decision 0364's required shape (§ "Required shape") rules out, counted over the process: read
-/// by the requirement tests (`maintain_tests`), never by a run. nextest runs each test as a process of its own.
+/// What a run did that decision 0364's required shape (§ "Required shape") rules out, counted over the runs that
+/// share their caller's object (decision 0442: a test's runs, one after another): read by the requirement tests
+/// (`maintain_tests`), never by a run.
 pub mod shape {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
-    static ROWS_COPIED: AtomicUsize = AtomicUsize::new(0);
-    static MAINTENANCE_HELD: AtomicUsize = AtomicUsize::new(0);
-    static FRAMES_READ: AtomicUsize = AtomicUsize::new(0);
-    static RECHECKS_UNPRICED: AtomicUsize = AtomicUsize::new(0);
+    #[derive(Default)]
+    struct Counts {
+        rows_copied: AtomicUsize,
+        maintenance_held: AtomicUsize,
+        frames_read: AtomicUsize,
+        rechecks_unpriced: AtomicUsize,
+    }
+
+    fn counts() -> std::sync::Arc<Counts> {
+        crate::code_rule_dsl::logic::profile::shared::<Counts>()
+    }
 
     /// The counts so far.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -127,7 +135,8 @@ pub mod shape {
     }
 
     pub fn now() -> Shape {
-        Shape { rows_copied: ROWS_COPIED.load(Relaxed), maintenance_held: MAINTENANCE_HELD.load(Relaxed), frames_read: FRAMES_READ.load(Relaxed), rechecks_unpriced: RECHECKS_UNPRICED.load(Relaxed) }
+        let c = counts();
+        Shape { rows_copied: c.rows_copied.load(Relaxed), maintenance_held: c.maintenance_held.load(Relaxed), frames_read: c.frames_read.load(Relaxed), rechecks_unpriced: c.rechecks_unpriced.load(Relaxed) }
     }
 
     /// What happened between `before` and now.
@@ -137,18 +146,18 @@ pub mod shape {
     }
 
     pub fn rows_copied(n: usize) {
-        ROWS_COPIED.fetch_add(n, Relaxed);
+        counts().rows_copied.fetch_add(n, Relaxed);
     }
     pub fn frames_read(n: usize) {
-        FRAMES_READ.fetch_add(n, Relaxed);
+        counts().frames_read.fetch_add(n, Relaxed);
     }
     pub fn recheck_unpriced() {
-        RECHECKS_UNPRICED.fetch_add(1, Relaxed);
+        counts().rechecks_unpriced.fetch_add(1, Relaxed);
     }
     /// Notes a relation held under `name`, if it is a maintenance name.
     pub fn held(name: &str) {
         if is_maintenance_name(name) {
-            MAINTENANCE_HELD.fetch_add(1, Relaxed);
+            counts().maintenance_held.fetch_add(1, Relaxed);
             // `RERAIL_SHAPE_TRACE`: each one named, to find what still holds them.
             if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
                 eprintln!("RERAIL_SHAPE_TRACE held {name}");

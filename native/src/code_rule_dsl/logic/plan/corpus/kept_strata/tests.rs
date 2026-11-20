@@ -12,7 +12,7 @@
     #[test]
     fn cross_process_admission_batches_inputs_and_eligible_derived_frames() {
         use crate::code_rule_dsl::logic::profile;
-        let _run = profile::one_run();
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         profile::set(true);
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();

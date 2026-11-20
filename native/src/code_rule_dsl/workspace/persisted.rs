@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Weak};
+use std::sync::{Arc, Weak};
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -552,7 +552,8 @@ type CatalogMemo = (
     Vec<Weak<CompiledCodeRule>>,
     CandidateCatalogIdentity,
 );
-static CATALOGS: LazyLock<parking_lot::Mutex<Vec<CatalogMemo>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct Catalogs(parking_lot::Mutex<Vec<CatalogMemo>>);
 
 /// The result catalog of `code_rules`: every apply reads it, so it is hashed once per code-rule set.
 pub fn candidate_catalog(
@@ -568,11 +569,13 @@ pub fn candidate_catalog(
                 .all(|(known, code_rule)| std::ptr::eq(known.as_ptr(), Arc::as_ptr(code_rule)))
             && known.iter().all(|known| known.strong_count() > 0)
     };
-    if let Some((_, _, catalog)) = CATALOGS.lock().iter().find(|memo| same(memo)) {
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<Catalogs>();
+    if let Some((_, _, catalog)) = held_.0.lock().iter().find(|memo| same(memo)) {
         return Ok(*catalog);
     }
     let catalog = hash_candidate_catalog(engine, code_rules)?;
-    let mut catalogs = CATALOGS.lock();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<Catalogs>();
+    let mut catalogs = held_.0.lock();
     catalogs.retain(|(_, known, _)| known.iter().all(|known| known.strong_count() > 0));
     if catalogs.len() >= 16 {
         catalogs.remove(0);
@@ -655,96 +658,98 @@ pub(super) fn persist_files(
     // Each file's payloads (tape bytes, encoded and compressed local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
     let prepared = (|| {
-        paths
-            .par_iter()
-            .map(|path| {
-                let file = files
-                    .get(path)
-                    .ok_or_else(|| invalid(format!("missing file for persistence: {path}")))?;
-                let candidates = file
-                    .candidates
-                    .regex
-                    .iter()
-                    .chain(&file.candidates.ast)
-                    .map(candidate)
-                    .collect::<Vec<_>>();
-                let tape_bytes = {
-                    #[cfg(feature = "code-rule-profile")]
-                    let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
-                    file.tape
-                        .as_ref()
-                        .map(|(_, image)| {
-                            Ok::<_, String>((
-                                image.primary.to_bytes()?,
-                                image
-                                    .derived
-                                    .iter()
-                                    .map(DerivedBytes::of)
-                                    .collect::<std::result::Result<Vec<_>, String>>()?,
-                            ))
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            paths
+                .par_iter()
+                .map(|path| {
+                    let file = files
+                        .get(path)
+                        .ok_or_else(|| invalid(format!("missing file for persistence: {path}")))?;
+                    let candidates = file
+                        .candidates
+                        .regex
+                        .iter()
+                        .chain(&file.candidates.ast)
+                        .map(candidate)
+                        .collect::<Vec<_>>();
+                    let tape_bytes = {
+                        #[cfg(feature = "code-rule-profile")]
+                        let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
+                        file.tape
+                            .as_ref()
+                            .map(|(_, image)| {
+                                Ok::<_, String>((
+                                    image.primary.to_bytes()?,
+                                    image
+                                        .derived
+                                        .iter()
+                                        .map(DerivedBytes::of)
+                                        .collect::<std::result::Result<Vec<_>, String>>()?,
+                                ))
+                            })
+                            .transpose()
+                            .map_err(invalid)?
+                    };
+                    let local_result_ids = file
+                        .witnesses
+                        .keys()
+                        .chain(file.failures.keys())
+                        .chain(&file.candidates.regex)
+                        .chain(&file.candidates.ast)
+                        .copied()
+                        .collect::<BTreeSet<_>>();
+                    let context = file_context(&file.input);
+                    let stamped = CrossFileScheduler::stamped_context(file, context);
+                    let mut local_results = local_result_ids
+                        .iter()
+                        .filter(|id| {
+                            !file.transient_failure
+                                && !file.restored_result_ids.contains(id)
+                                && !file.unstored.contains(id)
                         })
-                        .transpose()
-                        .map_err(invalid)?
-                };
-                let local_result_ids = file
-                    .witnesses
-                    .keys()
-                    .chain(file.failures.keys())
-                    .chain(&file.candidates.regex)
-                    .chain(&file.candidates.ast)
-                    .copied()
-                    .collect::<BTreeSet<_>>();
-                let context = file_context(&file.input);
-                let stamped = CrossFileScheduler::stamped_context(file, context);
-                let mut local_results = local_result_ids
-                    .iter()
-                    .filter(|id| {
-                        !file.transient_failure
-                            && !file.restored_result_ids.contains(id)
-                            && !file.unstored.contains(id)
-                    })
-                    .filter_map(|id| {
-                        let context = if consumers.contains_key(id) {
-                            stamped?
-                        } else {
-                            context
-                        };
-                        Some((id, context))
-                    })
-                    .map(|(id, context)| {
-                        let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
-                        let bytes = encode_local_result(
-                            witnesses,
-                            file.failures.get(id).copied(),
-                            file.syntax.as_deref(),
-                        )?;
-                        let frame =
-                            compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
-                        Ok(LocalResultPublication {
-                            candidate: candidate(id),
-                            context,
-                            raw_length: bytes.len(),
-                            frame,
+                        .filter_map(|id| {
+                            let context = if consumers.contains_key(id) {
+                                stamped?
+                            } else {
+                                context
+                            };
+                            Some((id, context))
                         })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                if !file.transient_failure {
-                    local_results.extend(CrossFileScheduler::summary_publication(file)?);
-                }
-                let grammar_id = file_language(&file.input).map_or(0, grammar_id);
-                let aliases = clean_blob_alias(storage, file)
-                    .into_iter()
-                    .collect::<Vec<_>>();
-                Ok((
-                    file,
-                    candidates,
-                    tape_bytes,
-                    grammar_id,
-                    aliases,
-                    local_results,
-                ))
-            })
-            .collect::<Result<Vec<_>>>()
+                        .map(|(id, context)| {
+                            let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
+                            let bytes = encode_local_result(
+                                witnesses,
+                                file.failures.get(id).copied(),
+                                file.syntax.as_deref(),
+                            )?;
+                            let frame =
+                                compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
+                            Ok(LocalResultPublication {
+                                candidate: candidate(id),
+                                context,
+                                raw_length: bytes.len(),
+                                frame,
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    if !file.transient_failure {
+                        local_results.extend(CrossFileScheduler::summary_publication(file)?);
+                    }
+                    let grammar_id = file_language(&file.input).map_or(0, grammar_id);
+                    let aliases = clean_blob_alias(storage, file)
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                    Ok((
+                        file,
+                        candidates,
+                        tape_bytes,
+                        grammar_id,
+                        aliases,
+                        local_results,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()
+        })
     })()?;
     // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
     let documents = prepared

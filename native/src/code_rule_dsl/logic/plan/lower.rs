@@ -263,7 +263,8 @@ domains.iter().map(|(r, ds)| (r.as_str(), ds.iter().copied().map(Some).collect()
 }
 
 /// A program lowered for one dialect, as the run reads it (decision 0281's path, step 4): its version, with a
-/// maintained program's parts (decision 0215), and what the run reads beside it.
+/// maintained program's parts (decision 0215), and what the run reads beside it. No tree: one is made only by a
+/// caller that decodes the version (`Version::program`, counted: `run::Record::trees_decoded`).
 #[derive(Clone)]
 pub struct Lowered {
     pub version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,

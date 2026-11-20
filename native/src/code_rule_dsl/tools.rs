@@ -18,8 +18,9 @@ pub fn execute_sql_request(store_path: String, request_json: String) -> napi::Re
 /// A SQL extension request for the standalone tool. The same session serves the bindings,
 /// lowered rule program and subsequent SQL queries; no AST matcher is lowered to SQL.
 pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
+    // One run (decision 0442): the profile's records are its own.
+    let _run = super::logic::run::scope(super::logic::native::width::Settings::from_env);
     let profiling = super::logic::profile::on();
-    let _run = profiling.then(super::logic::profile::one_run);
     if profiling { super::logic::profile::reset(); }
     let span = super::logic::profile::span(||"SQL extension request".into());
     let result = sql_request(store,request);
@@ -269,6 +270,7 @@ pub fn run_rr(
     if !program.output_names().iter().any(|name| super::logic::rr::is_diagnostic(name)) {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
+    let _sources = rr::profile_join_sources(&[path]);
     run_program(program, &files, root, out, options)
 }
 
@@ -396,7 +398,7 @@ pub fn run_policies(
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
     // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
     // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
-    // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
+    // `RERAIL_BATCH_PACK=off` runs each policy alone. With `strict`, a failed group returns its error.
     let packed = std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
     let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
     let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
@@ -508,10 +510,20 @@ fn run_pack(
     use crate::code_rule_dsl::logic::plan::output;
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    let _sources = super::logic::profile::on().then(|| super::logic::rr::profile_join_sources(
+        &group.members.iter().map(|&k| paths[k].as_path()).collect::<Vec<_>>(),
+    ));
     let dir = out.join(format!("pack-{}", group.members[0]));
     crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
+    // A failed pack's run: its policies run alone (each with its own error), or with `RERAIL_BATCH_PACK=strict` the
+    // batch fails with it.
+    let fallback = |reason: String| {
+        if std::env::var("RERAIL_BATCH_PACK").as_deref() == Ok("strict") {
+            Err(format!("combined run of {} policies failed: {reason}", texts.len()))
+        } else { Ok(None) }
+    };
     // Each dialect's run and its directory, its language the dialect's (the `dialect` option, as `run_program` runs
     // a policy alone): one run as written where the language has one dialect.
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if group.dialects.is_empty() {
@@ -526,8 +538,9 @@ fn run_pack(
         if let Some(dialect) = dialect {
             options["dialect"] = serde_json::json!(dialect);
         }
-        let Ok(report) = corpus::run_with_options(&texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) else {
-            return Ok(None);
+        let report = match corpus::run_with_options(&texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) {
+            Ok(report) => report,
+            Err(error) => return fallback(error.to_string()),
         };
         files += report.files;
         outputs.push(output::Outputs::open(dir).map_err(|e| e.to_string())?);
@@ -539,7 +552,9 @@ fn run_pack(
     for run in &outputs {
         for rel in run.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
             for row in run.rows(rel) {
-                let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
+                let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else {
+                    return fallback(format!("{rel} produced a finding with an unknown policy id {:?}", row.get(0).text()));
+                };
                 each[at].push(diagnostic(&row)?);
                 rows[at].entry(rel.to_owned()).or_default().push(row);
             }
@@ -835,24 +850,33 @@ const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine du
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
 /// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063): `cli_in`, with the session
 /// it keeps.
-pub fn cli(args: &[String]) -> Result<String, String> {
+///
+/// Returns the command's result, and where it cut a relation at the width cap (decision 0462, `RERAIL_WIDEST=cut`) the
+/// message that its results are incomplete: the caller fails the process with it. So too where the engine read state
+/// outside any run (decision 0442, `rerail_context::misses`): a refused read, which took a value of its own.
+pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -> (Result<String, String>, Option<String>) {
     // Decision 0272 (O167): the process ends with its command, before any idle time, so each run serves its waiting
     // join searches at its end, within a share of its CPU (decision 0243). A long-lived caller of `cli_in` leaves
     // them to the idle job.
     crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
     // Decision 0288: the command's clocks, for its time before its run and after it.
     crate::code_rule_dsl::logic::profile::command_begins();
+    // The process's command, its own caller: what it shares by design is its own, on the machine its program made
+    // (decision 0442).
+    let shared = crate::code_rule_dsl::logic::profile::Shared::on(machine);
     // Decision 0395: a run never waits on a Metal compile of a kernel it has another form of; the kernels it went
-    // without are compiled by maintenance (below, upkeep, `kernels compile`).
+    // without are compiled by maintenance (below, upkeep, `kernels compile`). The kernel store is the machine's.
     #[cfg(target_os = "macos")]
     if args.first().is_none_or(|c| c != "kernels") {
+        let _on = crate::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&shared));
         rerail_accel::gpu::kernels::set_mode(rerail_accel::gpu::kernels::Mode::Defer);
     }
-    let out = cli_in(args, &mut Default::default());
+    let (out, incomplete) = cli_in(args, &mut Default::default(), &shared);
     // The kernels this run went without, compiled after it by the engine in a process of its own, at the
     // background priority (decision 0395; `RERAIL_METAL_MAINTENANCE=off`: not).
     #[cfg(target_os = "macos")]
     if let Ok(engine) = std::env::current_exe() {
+        let _on = crate::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&shared));
         rerail_accel::gpu::kernels::spawn_maintenance(&engine);
     }
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
@@ -863,11 +887,31 @@ pub fn cli(args: &[String]) -> Result<String, String> {
             c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
         );
     }
-    out
+    let misses = crate::code_rule_dsl::logic::profile::misses();
+    let refused = (!misses.is_empty()).then(|| {
+        format!("{} read(s) outside any run, refused (decision 0442; each with its backtrace above): {}", misses.len(), misses.join(", "))
+    });
+    let incomplete = match (incomplete, refused) {
+        (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
+        (a, b) => a.or(b),
+    };
+    (out, incomplete)
 }
 
-/// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
-pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
+/// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`), sharing by design what
+/// `shared` holds (decision 0442): the caller owns both.
+///
+/// The command is one run (decisions 0462, 0441): its limits are read as it starts, its runs share them and one
+/// record, and nothing of them outlives it. Beside the result: the message that it cut a relation, if it did.
+pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept, shared: &std::sync::Arc<crate::code_rule_dsl::logic::run::Shared>) -> (Result<String, String>, Option<String>) {
+    let own = crate::code_rule_dsl::logic::run::scope_in(Some(shared), crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let out = command(args, kept);
+    let incomplete = own.finish().and_then(|r| r.width.incomplete());
+    (out, incomplete)
+}
+
+/// A command of `cli_in`, within its limits.
+fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
     // Done as the library loaded, except where nothing runs then (the browser's build).
     crate::install_store_functions();
     let budgets = budget_options(args)?;
@@ -1021,7 +1065,7 @@ fn repeat_command(script: &str) -> Result<String, String> {
             _ => {
                 let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
                 let (u0, s0) = cpu();
-                let result = cli_in(&args, &mut kept);
+                let result = command(&args, &mut kept);
                 let (u1, s1) = cpu();
                 eprintln!(
                     "repeat line {n}: {:.2} s CPU ({:.2} user + {:.2} sys); footprint {} MB, at most {} MB; {}",
@@ -1161,6 +1205,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     // A directory: every `.rr` in it, run as one program (each file parsed once for all of them); each file's
     // `#include`s are read in.
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
+    let _sources;
     let programs = if Path::new(program.as_str()).is_dir() {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
@@ -1185,10 +1230,14 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
         timeline_mark("the program files listed");
         let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        _sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
         timeline_mark("the program texts read");
         texts
     } else {
-        vec![crate::tools::program_text(Path::new(program.as_str()))?]
+        let path = Path::new(program.as_str());
+        let text = crate::tools::program_text(path)?;
+        _sources = super::logic::rr::profile_join_sources(&[path]);
+        vec![text]
     };
     drop(reading);
     if programs.is_empty() {

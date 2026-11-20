@@ -298,13 +298,15 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = crate::code_rule_dsl::logic::rr::parse_version(src).map_err(|e| format!("unparsed: {e}"))?;
     let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
         let (_path, store, db) = fresh();
-        // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
+        // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it. The
+        // probe's run holds it (decision 0442).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
-        let was = placement::set_binding(binding);
+        let bound = placement::set_binding(binding);
         let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).map_err(|e| format!("stats: {e}"))?, BTreeSet::new(), modes);
-        placement::set_binding(was);
+        drop(bound);
         let got = got.map_err(|e| format!("error: {e}"))?;
         let ran = placement::recorded(rel);
         Ok((sorted(got.outputs.get(rel).map(|r| r.shown()).unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
@@ -589,16 +591,18 @@ fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
     CENSUS.get_or_init(|| {
         use rayon::prelude::*;
         let files = shipped();
-        let read: Vec<Option<BTreeMap<String, String>>> = files
-            .par_iter()
-            .map(|f| {
-                let text = std::fs::read_to_string(f).ok()?;
-                let file = crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(text).ok()?;
-                let mut used = BTreeMap::new();
-                ops_of(&file, &mut used, &f.display().to_string())?;
-                Some(used)
-            })
-            .collect();
+        let read: Vec<Option<BTreeMap<String, String>>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            files
+                .par_iter()
+                .map(|f| {
+                    let text = std::fs::read_to_string(f).ok()?;
+                    let file = crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(text).ok()?;
+                    let mut used = BTreeMap::new();
+                    ops_of(&file, &mut used, &f.display().to_string())?;
+                    Some(used)
+                })
+                .collect()
+        });
         let unread = read.iter().filter(|r| r.is_none()).count();
         let mut used: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for one in read.into_iter().flatten() {

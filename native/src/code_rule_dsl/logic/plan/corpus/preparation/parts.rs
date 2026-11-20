@@ -510,7 +510,7 @@ impl Prepared {
         let mut vocabulary = Vocabulary::from_specs(&self.tests, self.specs)?;
         vocabulary.matches = self.matches.iter().map(|m| regex::Regex::new(m).map(Arc::new).map_err(|e| e.to_string())).collect::<Result<_>>()?;
         vocabulary.markers = self.markers;
-        Ok(Front { reaches: self.reaches, demanded: self.demanded, demand: self.demand, undone: self.undone, matchers: self.matchers, vocabulary })
+        Ok(Front { reaches: self.reaches, demanded: self.demanded, demand: self.demand, undone: self.undone, matchers: self.matchers, vocabulary, cached: Vec::new() })
     }
 }
 
@@ -921,7 +921,7 @@ fn link_front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gr
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("prepare part {} ({} rules)", part.name, part.rules.len()));
         let input = program_of(&version, &rules, &heads[j], part)?;
         let had = names_of(&input);
-        let (v, f, _) = crate::code_rule_dsl::logic::profile::quiet(|| super::front_of(input, dialect, None, false))?;
+        let (v, f, _) = crate::code_rule_dsl::logic::profile::quiet(|| super::front_of(input, dialect, &super::Deferral::default(), None, false))?;
         let made_names: Vec<String> = names_of(&v).into_iter().filter(|r| !had.contains(r)).collect();
         let v = stripped(&v, &version)?;
         let p = Prepared::of(v, f, made_names);
@@ -1323,7 +1323,7 @@ fn link(version: &Version, parts: &[Part], prepared: &[(Own, Prepared)]) -> Resu
     let mut vocabulary = Vocabulary::from_specs(&tests, specs)?;
     vocabulary.matches = matches.iter().map(|m| regex::Regex::new(m).map(Arc::new).map_err(|e| e.to_string())).collect::<Result<_>>()?;
     vocabulary.markers = markers;
-    Ok((linked, Front { reaches, demanded, demand, undone, matchers, vocabulary }, renames))
+    Ok((linked, Front { reaches, demanded, demand, undone, matchers, vocabulary, cached: Vec::new() }, renames))
 }
 
 // -- Stage 2: the passes after lowering, per part (decision 0345 stage 2) --

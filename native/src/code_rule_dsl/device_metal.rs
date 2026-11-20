@@ -57,7 +57,7 @@ impl SolverDevice for Metal {
     }
 
     fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String> {
-        joins::own_texts(own_texts.to_vec(), || joins::compile(join, spec)).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+        joins::compile(join, spec, own_texts).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
     }
 
     fn refuse(&self, why: String) {
@@ -108,8 +108,8 @@ impl SolverDevice for Metal {
         packed::metal_sort::install_guard();
     }
 
-    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
-        joins::column_stats(cols, k).map_err(Refused::Failed)
+    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize, words: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
+        joins::column_stats(cols, k, words).map_err(Refused::Failed)
     }
 }
 

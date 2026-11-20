@@ -129,22 +129,6 @@ thread_local! {
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The slots of the rule being compiled whose values are arena texts (`mj::ROWTEXT`'s).
     static ARENA: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The component's own columns whose values are arena texts (decision 0307: a `shortlex_min` relation's value,
-    /// made by its rules' rounds into one arena), as (relation, column): set while its plans compile (`own_texts`).
-    static OWN_TEXTS: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Runs `f` (a component's plans compiled) with `cols` its own columns of arena texts (decision 0307).
-pub(in crate::code_rule_dsl) fn own_texts<T>(cols: Vec<(usize, usize)>, f: impl FnOnce() -> T) -> T {
-    let was = OWN_TEXTS.with_borrow_mut(|o| std::mem::replace(o, cols));
-    let out = f();
-    OWN_TEXTS.with_borrow_mut(|o| *o = was);
-    out
-}
-
-/// Whether column `c` of own relation `rel` holds arena texts (`own_texts`).
-fn own_text(rel: usize, c: usize) -> bool {
-    OWN_TEXTS.with_borrow(|o| o.contains(&(rel, c)))
 }
 
 /// Whether slot `x` of the rule being compiled holds an arena text (a text function's value).
@@ -407,8 +391,10 @@ fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
     Some(PStage { first: i, span: j.steps.len() - i, kind: Kind::Witness { rel: rel.clone(), cols, rest: probes }, desc: d, npassed: 0 })
 }
 
-/// `j`'s device plan, or the step the device cannot run.
-pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
+/// `j`'s device plan, or the step the device cannot run. `own_texts`: the component's own columns whose values are
+/// arena texts (decision 0307: a `shortlex_min` relation's value, made by its rules' rounds into one arena), as
+/// (relation, column).
+pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<Plan, String> {
     let mut bound = vec![false; j.nslots];
     // Where each slot's value came from: a column of an input relation (a text test's terms are its symbols).
     let mut origin: Vec<Option<(Arc<InRel>, usize)>> = vec![None; j.nslots];
@@ -467,8 +453,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 }
                 // An own column of arena texts (decision 0307) is read as the binding's text, never matched by value:
                 // one text made in two rounds has two values.
-                if let Some((rel, _)) = own && OWN_TEXTS.with_borrow(|o| o.iter().any(|&(r, _)| r == rel)) {
-                    let text = |c: usize| own_text(rel, c);
+                if let Some((rel, _)) = own && own_texts.iter().any(|&(r, _)| r == rel) {
+                    let text = |c: usize| own_texts.contains(&(rel, c));
                     if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || j.fused[i].is_some() || *neg {
                         return Err("a made text across rounds matched, tested or negated (decision 0307: read only as a text)".into());
                     }
@@ -1460,7 +1446,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
 /// (`rerail_accel::gpu::join::column_stats_of`). A relation this thread holds on the device, as it is now (its live
 /// rows), is read in place: its column of the resident upload. Any other's values are gathered on the host. Also how
 /// many columns were read in place.
-pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), String> {
+pub fn column_stats(cols: &[StatColumn<'_>], k: usize, words: usize) -> Result<(Vec<ColumnStats>, usize), String> {
     use rerail_accel::gpu::join::{StatCol, column_stats_of};
     // Each relation's upload and where the column is in it: a copy holds only the columns stages read, in its
     // owner's numbering (decision 0277), so a column it lacks is gathered on the host.
@@ -1495,9 +1481,9 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
             (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
         })
         .collect();
-    let made = column_stats_of(&stat, k)?;
+    let made = column_stats_of(&stat, k, words)?;
     let in_place = devs.iter().filter(|d| d.is_some()).count();
-    Ok((made.into_iter().map(|m| ColumnStats { rows: m.rows, ndv: m.ndv, sq: m.sq, cube: m.cube, top: m.top }).collect(), in_place))
+    Ok((made.into_iter().map(|m| ColumnStats { rows: m.rows, ndv: m.ndv, sq: m.sq, cube: m.cube, top: m.top, keys: m.keys }).collect(), in_place))
 }
 
 /// Column `col` of `rel`'s live rows, in row order (as the resident upload lays them out).
