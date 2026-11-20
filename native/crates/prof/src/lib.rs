@@ -584,33 +584,40 @@ pub mod heap {
         pub(super) fn record(at: usize) {
             let Some(t) = table() else { return };
             let row = &t[at * DEPTH..(at + 1) * DEPTH];
-            // Filled by the frame walk on Apple arm64; empty elsewhere.
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            let mut got = [0usize; DEPTH + SKIP];
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            let got = [0usize; DEPTH + SKIP];
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                let mut fp: usize;
-                unsafe { std::arch::asm!("mov {}, x29", out(reg) fp) };
-                let start = fp;
-                for slot in got.iter_mut() {
-                    // A frame record is (the caller's frame pointer, the return address); the stack grows down, so each
-                    // caller's record is higher, and a walk out of the stack stops.
-                    if fp == 0 || fp % 8 != 0 || fp < start || fp > start + (64 << 20) {
-                        break;
-                    }
-                    let (next, ret) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };
-                    *slot = ret & 0x0000_ffff_ffff_ffff;
-                    if next <= fp {
-                        break;
-                    }
-                    fp = next;
-                }
-            }
+            let got = walk();
             for (cell, v) in row.iter().zip(got[SKIP..].iter()) {
                 cell.store(*v, Relaxed);
             }
+        }
+
+        /// The return addresses of the frames calling `record`, outermost last, by the frame pointers' chain; none
+        /// where the chain is not read (only aarch64 macOS's is).
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        #[inline(always)]
+        fn walk() -> [usize; DEPTH + SKIP] {
+            let mut got = [0usize; DEPTH + SKIP];
+            let mut fp: usize;
+            unsafe { std::arch::asm!("mov {}, x29", out(reg) fp) };
+            let start = fp;
+            for slot in got.iter_mut() {
+                // A frame record is (the caller's frame pointer, the return address); the stack grows down, so each
+                // caller's record is higher, and a walk out of the stack stops.
+                if fp == 0 || fp % 8 != 0 || fp < start || fp > start + (64 << 20) {
+                    break;
+                }
+                let (next, ret) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };
+                *slot = ret & 0x0000_ffff_ffff_ffff;
+                if next <= fp {
+                    break;
+                }
+                fp = next;
+            }
+            got
+        }
+
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        fn walk() -> [usize; DEPTH + SKIP] {
+            [0usize; DEPTH + SKIP]
         }
 
         pub(super) fn of(at: usize) -> Option<Vec<usize>> {
@@ -680,7 +687,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
             #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
         }
         pub mod profile;
     }

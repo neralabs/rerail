@@ -486,7 +486,7 @@ lone(s) :- name(_, s), x = cat(s, "_[a-z]+"), !match(x, "load_async").
     let twin = sorted(names.iter().flat_map(|s| names.iter().filter(move |t| whole(&format!("{s}_[a-z]+"), t)).map(move |t| r![s, t])));
     assert_eq!(twin, [["load", "load_async"], ["load", "load_lazy"]]);
     let lone = sorted(names.iter().filter(|s| !whole(&format!("{s}_[a-z]+"), "load_async")).map(|s| r![s]));
-    let printed = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).unwrap()).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(program).unwrap()).unwrap();
     for program in [program, printed.as_str()] {
         assert_eq!(run(&dir, program, &["twin", "lone"]), [twin.clone(), lone.clone()], "{program}");
     }
@@ -874,10 +874,10 @@ first_stmt(p, l, c) :- kind(b, "expression_statement"), !next_sibling(_, b), at(
 before_return(p, l, c) :- kind(a, "expression_statement"), precedes(a, b), kind(b, "return_statement"), at(a, p, l, c).
 .output kinds, within_def, within_any, follows_stmt, first_stmt, before_return
 "#;
-    let parsed = crate::code_rule_dsl::logic::rr::parse(program).unwrap();
+    let parsed = crate::code_rule_dsl::logic::rr::parse_version(program).unwrap();
     // `within(n, a)` is the engine's tree relation (decision 0050), read as it is, not a kind set's axis.
     let within = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-    assert!(parsed.rules.iter().flat_map(|r| &r.body).any(|l| l.atom().is_some_and(|a| a.rel == within)), "{:?}", parsed.rules);
+    assert!(parsed.rules().flat_map(|r| r.body()).any(|l| l.atom().is_some_and(|a| parsed.rel_name(a.rel()) == within)), "{}", parsed.show());
     let got = run(&dir, program, &["kinds", "within_def", "within_any", "follows_stmt", "first_stmt", "before_return"]);
     let inside = json!({ "kind": "identifier", "inside": { "kind": "function_definition", "stopBy": "end" } });
     let want = [
@@ -1147,16 +1147,21 @@ fn a_copy_of_an_inputs_columns_is_a_view_of_it() {
                    .decl kinds(k: symbol)\nkinds(k) :- node(_, _, k, _, _).\n\
                    .decl calls(s: number, k: symbol)\ncalls(s, k) :- kind(n, \"call\"), node(_, n, _, s, _), kinds(k), k = \"call\".\n\
                    .output calls\n";
-    let before = crate::code_rule_dsl::logic::plan::input_views();
-    let viewed = run(&dir, program, &["calls"]);
-    let held = crate::code_rule_dsl::logic::plan::input_views() - before;
-    assert!(held >= 1, "kind is a view of node: {held}");
+    // Each run's own scope, held here: the views it held are the run's count (decision 0442), read before it ends.
+    let scope = || crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let viewed = {
+        let _run = scope();
+        let viewed = run(&dir, program, &["calls"]);
+        let held = crate::code_rule_dsl::logic::plan::input_views();
+        assert!(held >= 1, "kind is a view of node: {held}");
+        viewed
+    };
     let copied = {
         let _copy = super::switches::set(&[("RERAIL_COPY_VIEWS", "1")]);
-        let before = crate::code_rule_dsl::logic::plan::input_views();
+        let _run = scope();
         std::fs::remove_dir_all(dir.join(".out")).ok();
         let got = run(&dir, program, &["calls"]);
-        assert_eq!(crate::code_rule_dsl::logic::plan::input_views(), before, "RERAIL_COPY_VIEWS derives it");
+        assert_eq!(crate::code_rule_dsl::logic::plan::input_views(), 0, "RERAIL_COPY_VIEWS derives it");
         got
     };
     assert_eq!(viewed, copied);
@@ -1709,8 +1714,9 @@ fn str_answered_on_request_holds_the_eager_rows() {
     let dir = corpus("str-on-request", &[("a.py", "x = 'a'\ny = b\"by\"\nz = r'\\\\d'\nw = f'k{x}'\nv = f'plain'\nu = 'p' 'q'\nt = \"\"\"doc\"\"\"\n")]);
     let decls = ".decl node(d: node, n: node, k: symbol, s: number, e: number)\n.decl str(n: node, s: symbol)\n.input node, str\n.decl out(s: symbol)\n.output out\n";
     let asked = format!("{decls}out(s) :- node(_, n, \"string\", _, _), str(n, s).\n");
-    let lowered = crate::code_rule_dsl::logic::rr::parse(&asked).unwrap();
-    assert!(!lowered.inputs.iter().any(|i| i == "str") && lowered.rules.iter().any(|r| r.head.rel == "rr_str_req"), "str is answered on request");
+    let lowered = crate::code_rule_dsl::logic::rr::parse_version(&asked).unwrap();
+    let inputs = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::input_names(&*lowered);
+    assert!(!inputs.iter().any(|i| i == "str") && lowered.rules().any(|r| lowered.rel_name(r.head().rel()) == "rr_str_req"), "str is answered on request");
     let asked = run(&dir, &asked, &["out"]);
     let eager = run(&dir, &format!("{decls}.decl all(n: node, s: symbol)\nall(n, s) :- str(n, s).\nout(s) :- all(n, s), node(_, n, \"string\", _, _).\n"), &["out"]);
     assert_eq!(asked[0].len(), 7, "string rows: {:?}", asked[0]);

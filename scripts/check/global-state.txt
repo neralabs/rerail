@@ -126,7 +126,6 @@ native/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	stays	a ticket c
 native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counter: append-only, unique across threads
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/logic/plan.rs::RUNS	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid (RERAIL_REL_ROWS's dumps)
-native/src/code_rule_dsl/logic/plan/body.rs::NORMALIZED	stays	exists only in a test build (cfg test-hooks): a test's count of the programs normalized, never in a product build
 native/src/code_rule_dsl/logic/plan/corpus.rs::CROSS_FILE	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	stays	a hook registered once
 native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	stays	the default store's path, from the process's working directory (itself the process's), or a test process's tape cache

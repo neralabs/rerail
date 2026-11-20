@@ -105,7 +105,7 @@ fn numeric_call(b: &Body<'_>, t: TermRef<'_>) -> bool {
         && strings::functions::native_call(b.v.text(f)).is_some_and(|(_, _, k)| k == strings::functions::Kind::Number))
 }
 
-/// A test's patterns: one string, or a set `{a, b}` of strings (`strings::patterns`).
+/// A test's patterns: one string, or a set `{a, b}` of strings (as `preparation::text` reads one).
 fn patterns(b: &Body<'_>, t: TermRef<'_>) -> Option<Vec<String>> {
     match t {
         TermRef::Str(s) => Some(vec![b.v.text(s).to_owned()]),
@@ -222,8 +222,10 @@ impl<'a> Run<'a, '_> {
     ) -> Option<Arc<JoinSpec>> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
+            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`): another spec.
+            d.u64(u64::from(b.head_bound()));
             if bare {
-                // The tree's head of no terms, as `digest_atom` writes it.
+                // A head of no terms, as `Body::digest_atom` writes it.
                 d.str(b.rel(b.head()));
                 d.u64(0);
                 d.u64(0);

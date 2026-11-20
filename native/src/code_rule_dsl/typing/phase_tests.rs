@@ -42,7 +42,7 @@ r(f, a, d) :- types__rtype(f, a, d).
 v(s, d) :- types__vtype(s, _, d).
 .output b, k, a, s, r, v
 "#;
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
     let report = corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).unwrap();
     let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
     // Phase 1 (`sources`: the source files loaded, the imports resolved) runs first; every later phase reads it.
@@ -106,7 +106,7 @@ fl(f, k) :- struct__flag(f, k).
 sh(f, n, c, w) :- struct__shape(f, n, c, w).
 .output fl, sh
 "#;
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
     let report = corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).unwrap();
     let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, ["sources", "struct"]);
@@ -151,7 +151,7 @@ rg(f, k, j, y) :- types__rgen(f, k, j, y).
 ro(f) :- types__ropen(f).
 .output tp, tm, rv, rg, ro
 "#;
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
     corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).unwrap();
     let rows = |rel: &str| -> Vec<Vec<String>> { crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap() };
     // `Names(Map[str, T])`: its one parameter is T, at 0 (counted over the base's type variables only).
@@ -221,7 +221,7 @@ ann_miss(f, i, a) :- ann(f, i, a), !ann_ok(f, i, a).
 lib_attr(c, x) :- types__attr(c, x, _, _), types__owner(c, o), lib(o).
 .output ws, lib, imp, imp_ok, imp_lib, imp_miss, imp_absent, ann, ann_ok, ann_lib, ann_miss, lib_attr
 "#;
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let count = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).map_or(0, |t| t.len());
     let show = |what: &str, r: &corpus::Report| {

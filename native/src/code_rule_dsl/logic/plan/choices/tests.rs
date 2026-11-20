@@ -5,23 +5,24 @@
         let dir = std::env::temp_dir().join(format!("rerail-choices-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("store.sqlite");
-        let program = super::super::super::rr::parse(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(x) :- e(x).\n").unwrap();
-        let rewritten = super::super::super::rr::parse(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(1).\n").unwrap();
-        let placed = |p: &crate::code_rule_dsl::logic::front::Program| super::super::body::Placed::of_program(p).unwrap();
+        let program = super::super::super::rr::parse_version(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(x) :- e(x).\n").unwrap();
+        let rewritten = super::super::super::rr::parse_version(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(1).\n").unwrap();
+        let placed = |p: &Arc<crate::code_rule_dsl::logic::program_image::Version>| super::super::body::Placed::whole(p.clone());
         let key = key(&placed(&program));
         assert_ne!(key, super::key(&placed(&rewritten)), "the key is the program's");
         // A digest of the version (decision 0173 §7), a sum: the same rules in another order are the same program to
         // the rewrites, and take the same choices.
-        let two = |a: &str, b: &str| super::super::super::rr::parse(&format!(".decl e(x: int)\n.decl g(x: int)\n.decl f(x: int)\n.output f\ne(1).\ng(2).\n{a}\n{b}\n")).unwrap();
+        let two = |a: &str, b: &str| super::super::super::rr::parse_version(&format!(".decl e(x: int)\n.decl g(x: int)\n.decl f(x: int)\n.output f\ne(1).\ng(2).\n{a}\n{b}\n")).unwrap();
         let (ab, ba) = (two("f(x) :- e(x).", "f(x) :- g(x)."), two("f(x) :- g(x).", "f(x) :- e(x)."));
-        assert_ne!(format!("{:?}", ab.rules), format!("{:?}", ba.rules));
+        let shown = |v: &crate::code_rule_dsl::logic::program_image::Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>();
+        assert_ne!(shown(&ab), shown(&ba));
         assert_eq!(super::key(&placed(&ab)), super::key(&placed(&ba)), "the key does not see the rules' order");
         assert_ne!(super::key(&placed(&ab)), key, "nor is it the key of a program with a rule less");
         assert!(holds(1000.0, 10.0) && holds(1000.0, 2000.0) && !holds(1000.0, 2001.0));
         let prepared = [3u8; 32];
         {
-            let _durable = Durable::start(&db, prepared, Default::default(), Default::default());
-            remember(key, Chosen { version: Some(super::super::body::Placed::of_program(&rewritten).unwrap()), inlined: vec!["e".into()], demanded: vec![], nodes: 1000.0 });
+            let _durable = Durable::start(&db, prepared, Default::default());
+            remember(key, Chosen { version: Some(placed(&rewritten)), inlined: vec!["e".into()], demanded: vec![], nodes: 1000.0 });
         }
         // Another process: nothing kept in memory, the store's entry read back.
         kept().0.lock().unwrap().clear();
@@ -30,16 +31,15 @@
         // were schema 3, one of them, O-kept-strata-flake).
         store.collect_corpus_pass(&crate::content_store::CorpusPolicy::default(), 1_000).unwrap();
         let entry = read_all(&store, &prepared).unwrap().remove(&path(&key)).expect("kept in the store");
-        let texts = super::super::super::program_text::texts(&store, &[super::rewritten(&entry).expect("a rewritten program")]).unwrap().into_iter().map(|(d, (text, _))| (d, text)).collect();
-        let back = decode_chosen(&texts, &entry, &Default::default()).expect("decodes");
-        let lists = Default::default();
-        assert_eq!(format!("{:?}", back.version.as_ref().map(|v| v.program(&lists).unwrap())), format!("{:?}", Some(&rewritten)));
+        let images = super::super::super::program_text::stored(&store, &[super::rewritten(&entry).expect("a rewritten program")]).unwrap().into_iter().map(|(d, (bytes, _))| (d, bytes)).collect();
+        let back = decode_chosen(&images, &entry).expect("decodes");
+        assert_eq!(back.version.as_ref().map(|p| p.v.digest()), Some(rewritten.digest()));
         assert_eq!((back.inlined.clone(), back.nodes), (vec!["e".to_owned()], 1000.0));
         // Kept as its image, the program read back is its version too (t36 item 6, step 4): the run reads its rules
         // from it as they are, rule `k` the program's.
         let v = back.version.as_ref().expect("the image is the program's version");
-        let made = super::super::body::Placed::made(&rewritten.rules).unwrap();
-        for k in 0..rewritten.rules.len() {
+        let made = placed(&rewritten);
+        for k in 0..rewritten.rules().count() {
             let shown = |b: super::super::body::Body<'_>| (b.show_head(), (0..b.len()).map(|i| b.show(i)).collect::<Vec<_>>(), b.observed_key());
             assert_eq!(shown(v.body(k)), shown(made.body(k)), "rule {k}");
         }
@@ -48,7 +48,7 @@
         // Under another prepared program, nothing.
         assert!(read_all(&store, &[4u8; 32]).unwrap().is_empty());
         {
-            let _durable = Durable::start(&db, prepared, Default::default(), Default::default());
+            let _durable = Durable::start(&db, prepared, Default::default());
             assert!(lookup(&key, 10.0).is_some(), "a smaller run takes the choices");
             assert!(lookup(&key, 5000.0).is_none(), "a run over many more nodes chooses again");
         }
@@ -60,8 +60,8 @@
     #[test]
     fn kept_plans_read_back_from_the_store_by_rule_and_scale() {
         use super::super::{Kept, Mode, Priced, Step, StoredPlan, scale};
-        let prog = super::super::super::rr::parse(".decl e(x: int, y: int)\n.decl f(x: int)\n.decl g(x: int)\n.output g\ng(x) :- e(x, y), f(y), x != y.\n").unwrap();
-        let body = &prog.rules[0].body;
+        let prog = super::super::super::rr::parse_version(".decl e(x: int, y: int)\n.decl f(x: int)\n.decl g(x: int)\n.output g\ng(x) :- e(x, y), f(y), x != y.\n").unwrap();
+        let body = super::super::body::nth(&prog, 0);
         let order = vec![
             Step { at: 1, mode: None },
             Step { at: 0, mode: Some(Mode::Range) },
@@ -139,9 +139,12 @@
     fn a_message_setting_is_not_in_the_choices_key() {
         use crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE;
         let with = |settings: &[(&str, &str)]| {
-            let mut p = super::super::super::rr::parse(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(x) :- e(x).\n").unwrap();
-            p.settings = settings.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
-            key(&super::super::body::Placed::of_program(&p).unwrap())
+            use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
+            let p = super::super::super::rr::parse_version(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(x) :- e(x).\n").unwrap();
+            let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&p);
+            let settings: Vec<(String, String)> = settings.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
+            b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
+            key(&super::super::body::Freeze::freeze(b).unwrap())
         };
         let base = with(&[(MESSAGE, "f \"one\"")]);
         assert_eq!(base, with(&[(MESSAGE, "f \"two\"")]), "a message's edit keeps the key");

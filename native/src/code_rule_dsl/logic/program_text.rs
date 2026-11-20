@@ -1,292 +1,19 @@
-//! A `front::Program` as `.rr` text, and that text read back as the same program (decisions 0155, 0162).
+//! How a run keeps what it compiled (a prepared program, a plan choice, a combined program, a pipeline's steps and
+//! runs) in the content store: each program as its image (decision 0173), a source by its bytes' digest, and the
+//! facts that name them.
 //!
-//! This is how a run keeps what it compiled (a prepared program, a plan choice, a combined program): the program's
-//! own rules as text, read back into the program's parts by one walk over the lean parser's tape image
-//! (`from_tape`), with nothing lowered and nothing joined. `rr::print` is another thing: it prints a program as source to lower again.
-//!
-//! The text, in order:
-//!
-//! ```text
-//! .decl r(c: int, d: sym)            // each declaration, as written
-//! .input a, b                        // the inputs, then the outputs, in order
-//! .output r
-//! r(1, "x").                         // the program's facts, each relation's rows in order
-//! .rules
-//! r(x, y) :- a(x), !b(y), x < 3.     // the rules in order: an atom, `!` its negation, `@f(…)` a call,
-//! n = count : { a(x) }               //   an aggregate as `v = op over by (k, …) sep "s" : { atom }`,
-//! nearest(n, a, "set")               //   the nearest-ancestor and `ast` literals as atoms of those names
-//! ast(d, n, "matcher", "NAME", v)
-//! .about
-//! program("a").                      // what has no syntax, as `program_facts` rows of program "a" (`write_about`)
-//! gated(14, 2).                      // rule 14's literal 2 is a gated negation (-1: its head)
-//! ```
-//!
-//! Variables the parser reads as words (`top`, `count`, …) and relations named as the literals here (`nearest`,
-//! `ast`) are written with a trailing `_`, as is a name that is one of those with `_`s after it, so it reads back.
+//! A program was once kept as its `.rr` text too (decisions 0155, 0162), read back into a tree. The tree is gone
+//! (decision 0276 step 6), and so is that form: a program kept as text alone, by a store written before images, is
+//! not read, and the run that wanted it compiles it again.
 
-use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value};
+use super::front::Value;
 use super::program_facts::{self, Facts};
-use rerail_rr_syntax::syntax::quote;
 use crate::content_store::{ContentStore, HashKey, SourceId, StoreResult};
 use sha2::{Digest as _, Sha256};
-use std::fmt::Write as _;
-
-/// The program the `.about` rows are written as (`program_facts`).
-const ABOUT: &str = "a";
-
-pub mod from_tape;
-
-use from_tape::{Parts, REL_WORDS, VAR_WORDS};
 use crate::code_rule_dsl::logic::program_image::manager::VersionAnalyses as _;
 
 fn bad(what: impl std::fmt::Display) -> String {
     format!("program text: {what}")
-}
-
-fn ident(s: &str) -> bool {
-    let b = s.as_bytes();
-    !b.is_empty() && s != "_" && (b[0].is_ascii_alphabetic() || b[0] == b'_') && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_')
-}
-
-/// `name` as written: one more `_` when it is a word of `words` with `_`s after it, or none.
-fn escape(name: &str, words: &[&str]) -> Result<String, String> {
-    if !ident(name) {
-        return Err(bad(format!("{name:?} is no identifier")));
-    }
-    Ok(if words.contains(&name.trim_end_matches('_')) { format!("{name}_") } else { name.to_owned() })
-}
-
-fn var(v: &str) -> Result<String, String> {
-    escape(v, &VAR_WORDS)
-}
-
-fn int(n: i64, out: &mut String) {
-    // The lexer reads a number's digits as an `i64`, so the least one is written as a difference.
-    if n == i64::MIN {
-        out.push_str("(-9223372036854775807 - 1)");
-    } else {
-        write!(out, "{n}").expect("a string");
-    }
-}
-
-fn term(t: &Term, out: &mut String) -> Result<(), String> {
-    match t {
-        Term::Var(v) => out.push_str(&var(v)?),
-        Term::Wild => out.push('_'),
-        Term::Int(n) => int(*n, out),
-        // A lowered program's atom (decision 0270) is the store's: a lowered program is kept as its image.
-        Term::Branded(b) => return Err(bad(format!("the atom {b}: no text"))),
-        Term::Str(s) => out.push_str(&quote(s)),
-        Term::Top => out.push_str("top"),
-        Term::Call(f, args) => {
-            if !ident(f) {
-                return Err(bad(format!("function {f:?} is no identifier")));
-            }
-            write!(out, "@{f}(").expect("a string");
-            terms(args, out)?;
-            out.push(')');
-        }
-    }
-    Ok(())
-}
-
-fn terms(ts: &[Term], out: &mut String) -> Result<(), String> {
-    for (i, t) in ts.iter().enumerate() {
-        if i > 0 {
-            out.push_str(", ");
-        }
-        term(t, out)?;
-    }
-    Ok(())
-}
-
-fn atom(a: &Atom, out: &mut String) -> Result<(), String> {
-    if a.neg {
-        out.push('!');
-    }
-    out.push_str(&escape(a.rel.as_str(), &REL_WORDS)?);
-    out.push('(');
-    terms(&a.args, out)?;
-    out.push(')');
-    Ok(())
-}
-
-fn literal(l: &Literal, out: &mut String) -> Result<(), String> {
-    match l {
-        Literal::Atom(a) => atom(a, out)?,
-        Literal::Cmp { l, op, r } => {
-            if !matches!(*op, "=" | "!=" | "<" | "<=" | ">" | ">=") {
-                return Err(bad(format!("comparison {op:?}")));
-            }
-            term(l, out)?;
-            write!(out, " {op} ").expect("a string");
-            term(r, out)?;
-        }
-        Literal::Agg { var: v, op, over, atom: a } => {
-            write!(out, "{} = ", var(v)?).expect("a string");
-            let over = match over {
-                Some(o) => var(o)?,
-                None => "_".to_owned(),
-            };
-            match op {
-                AggOp::Count if over == "_" => out.push_str("count"),
-                AggOp::Count => return Err(bad("a count over a variable")),
-                AggOp::Min => write!(out, "min {over}").expect("a string"),
-                AggOp::Max => write!(out, "max {over}").expect("a string"),
-                AggOp::Sum => write!(out, "sum {over}").expect("a string"),
-                AggOp::Product => write!(out, "product {over}").expect("a string"),
-                AggOp::Join { by, sep } => {
-                    write!(out, "join {over}").expect("a string");
-                    if !by.is_empty() {
-                        let by = by.iter().map(|k| var(k)).collect::<Result<Vec<_>, _>>()?;
-                        write!(out, " by ({})", by.join(", ")).expect("a string");
-                    }
-                    write!(out, " sep {}", quote(sep)).expect("a string");
-                }
-            }
-            out.push_str(" : { ");
-            atom(a, out)?;
-            out.push_str(" }");
-        }
-        Literal::Nearest { n, a, kindset } => write!(out, "nearest({}, {}, {})", var(n)?, var(a)?, quote(kindset)).expect("a string"),
-        Literal::Ast { document, node, matcher, captures } => {
-            write!(out, "ast({}, {}, {}", var(document)?, var(node)?, quote(matcher)).expect("a string");
-            for (name, v) in captures {
-                write!(out, ", {}, {}", quote(name), var(v)?).expect("a string");
-            }
-            out.push(')');
-        }
-    }
-    Ok(())
-}
-
-fn value(v: &Value, out: &mut String) -> Result<(), String> {
-    match v {
-        Value::Int(n) => int(*n, out),
-        Value::Str(s) => out.push_str(&quote(s)),
-        Value::Branded(b) => return Err(bad(format!("the atom {b}: no text"))),
-    }
-    Ok(())
-}
-
-/// A fact `rel(values…).` on its own line.
-fn fact(rel: &str, row: &[Value], out: &mut String) -> Result<(), String> {
-    out.push_str(&escape(rel, &REL_WORDS)?);
-    out.push('(');
-    for (i, v) in row.iter().enumerate() {
-        if i > 0 {
-            out.push_str(", ");
-        }
-        value(v, out)?;
-    }
-    out.push_str(").\n");
-    Ok(())
-}
-
-/// `prog` as its text. Its shapes and layouts (0361) are `.about` rows (`program_facts`), as the image's: every part
-/// of a program has a form in the text.
-pub fn print(prog: &Program) -> Result<String, String> {
-    let mut out = String::new();
-    for (rel, cols) in &prog.decls {
-        write!(out, ".decl {}(", escape(rel, &REL_WORDS)?).expect("a string");
-        for (i, (c, t)) in cols.iter().enumerate() {
-            if !ident(c) || !ident(t) {
-                return Err(bad(format!("{rel}'s column {c:?}: {t:?}")));
-            }
-            write!(out, "{}{c}: {t}", if i > 0 { ", " } else { "" }).expect("a string");
-        }
-        out.push_str(")\n");
-    }
-    for (directive, names) in [("input", &prog.inputs), ("output", &prog.outputs)] {
-        if !names.is_empty() {
-            let names = names.iter().map(|n| escape(n, &REL_WORDS)).collect::<Result<Vec<_>, _>>()?;
-            writeln!(out, ".{directive} {}", names.join(", ")).expect("a string");
-        }
-    }
-    for (rel, rows) in &prog.facts {
-        for row in rows {
-            fact(rel, row, &mut out)?;
-        }
-    }
-    out.push_str(".rules\n");
-    let mut gated = Vec::new();
-    for (r, rule) in prog.rules.iter().enumerate() {
-        if rule.head.gated {
-            gated.push((r, -1));
-        }
-        atom(&rule.head, &mut out)?;
-        for (k, l) in rule.body.iter().enumerate() {
-            out.push_str(if k == 0 { " :- " } else { ", " });
-            literal(l, &mut out)?;
-            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && a.gated
-            {
-                gated.push((r, k as i64));
-            }
-        }
-        out.push_str(".\n");
-    }
-    out.push_str(".about\n");
-    let mut about = Facts::new();
-    program_facts::write_about(&mut about, ABOUT, prog);
-    for (rel, rows) in &about {
-        for row in rows {
-            fact(rel, row, &mut out)?;
-        }
-    }
-    for (r, k) in gated {
-        writeln!(out, "gated({r}, {k}).").expect("a string");
-    }
-    Ok(out)
-}
-
-/// The program `text` (`print`) holds: its tape image (the lean parser's) walked straight into the program's parts.
-/// Its lists are its own; a run reads with `read_in`, so that its programs share theirs.
-pub fn read(text: &str) -> Result<Program, String> {
-    read_in(text, &crate::code_rule_dsl::logic::front::Lists::default())
-}
-
-/// `read`, each list taken from the run's `lists` (decision 0172).
-pub fn read_in(text: &str, lists: &crate::code_rule_dsl::logic::front::Lists) -> Result<Program, String> {
-    assemble(from_tape::parts(text, &rerail_rr_syntax::tape(text), lists)?)
-}
-
-/// The program of `parts`: the gated atoms marked, the rest of it read from the `.about` rows.
-fn assemble(parts: Parts) -> Result<Program, String> {
-    let Parts { decls, inputs, outputs, facts, mut rules, mut about } = parts;
-    let gated = about.remove("gated").unwrap_or_default();
-    let mut prog = program_facts::program(&about, ABOUT)?;
-    for row in gated {
-        let [Value::Int(r), Value::Int(k)] = row.as_slice() else { return Err(bad("a gated row")) };
-        let rule = rules.get_mut(*r as usize).ok_or_else(|| bad(format!("gated: no rule {r}")))?;
-        let atom = match *k {
-            -1 => &mut rule.head,
-            k => match rule.body.make_mut().get_mut(k as usize) {
-                Some(Literal::Atom(a) | Literal::Agg { atom: a, .. }) => a,
-                _ => return Err(bad(format!("gated: rule {r} has no atom {k}"))),
-            },
-        };
-        atom.gated = true;
-    }
-    // The relations of facts `about` named, rows or none, with the rows read.
-    for (rel, rows) in facts {
-        prog.facts.entry(rel).or_default().extend(rows);
-    }
-    prog.decls = decls;
-    prog.inputs = inputs;
-    prog.outputs = outputs;
-    prog.rules = rules;
-    Ok(prog)
-}
-
-/// Whether stored programs are kept and read as images too (decision 0173): `RERAIL_PROGRAM_IMAGE=off` keeps and
-/// reads texts only; `require` reads images only, refusing a program kept as text alone (a validation aid).
-fn images() -> &'static str {
-    match std::env::var("RERAIL_PROGRAM_IMAGE").as_deref() {
-        Ok("off") => "off",
-        Ok("require") => "require",
-        _ => "on",
-    }
 }
 
 /// The alias the store keeps the image of the program whose text has sha256 `digest` under: the program's identity
@@ -297,38 +24,20 @@ pub fn image_key(digest: &[u8; 32]) -> HashKey {
     HashKey::sha256(&[format!("rerail program image {format}\0").as_bytes(), digest.as_slice()].concat())
 }
 
-/// What the store keeps of a program, as read: its image (decision 0173), or its text where it has no image.
-pub enum Stored {
-    Image(Vec<u8>),
-    Text(String),
-}
-
-/// The program `stored` holds, its lists taken from the run's `lists`.
-pub fn read_stored(stored: &Stored, lists: &crate::code_rule_dsl::logic::front::Lists) -> Result<Program, String> {
-    match stored {
-        Stored::Image(bytes) => crate::code_rule_dsl::logic::program_image::decode(bytes, lists),
-        Stored::Text(text) => read_in(text, lists),
-    }
-}
-
 /// A program as the store keeps it, made where the program is (the run's thread, decision 0306), kept by the store's
-/// writer (`store_encoded`): its image (decision 0173), or with `RERAIL_PROGRAM_IMAGE=off` its text, checked to read
-/// back as the program. The digest is of its bytes, which is the source's own hash.
+/// writer (`store_encoded`): its image (decision 0173). The digest is of its bytes, which is the source's own hash.
 pub struct Encoded {
     pub digest: [u8; 32],
-    /// Its image's bytes (else its text's).
+    /// Whether the bytes are an image: always, for what is made now. A record written before (`Packed`) can name a
+    /// text, which is kept as the source it was.
     pub image: bool,
     pub bytes: Vec<u8>,
 }
 
-/// A program's version as the store keeps it: a base's bytes as they are, with no encode of a tree (a prepared
-/// program's version, `Version::base_bytes`, decision 0281), any other version folded into one first (Typing-support's
-/// `store_version`, taken at the merge of e829e72a7); `None` where images are off (a version has no text form) or the
-/// fold fails.
+/// A program's version as the store keeps it: a base's bytes as they are (a prepared program's version,
+/// `Version::base_bytes`, decision 0281), any other version folded into one first (Typing-support's `store_version`,
+/// taken at the merge of e829e72a7); `None` where the fold fails.
 pub fn encode_version(v: &crate::code_rule_dsl::logic::program_image::Version) -> Option<Encoded> {
-    if images() == "off" {
-        return None;
-    }
     let folded;
     let bytes = match v.base_bytes() {
         Some(bytes) => bytes,
@@ -344,28 +53,7 @@ pub fn encode_version(v: &crate::code_rule_dsl::logic::program_image::Version) -
     Some(Encoded { digest, image: true, bytes: bytes.to_vec() })
 }
 
-/// `prog` encoded as the store keeps it (`Encoded`); `None` where its text does not read back as it (nothing is kept).
-pub fn encode(prog: &Program) -> Option<Encoded> {
-    // The stored form is the image (decision 0246 §6): encoded once, kept under the digest of its bytes. Not printed,
-    // read back, encoded and decoded again, and digested by `{:?}` to check each.
-    if images() != "off" {
-        let bytes = crate::code_rule_dsl::logic::program_image::encode(prog).ok()?;
-        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
-        let digest: [u8; 32] = Sha256::digest(&bytes).into();
-        // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships it.
-        crate::code_rule_dsl::logic::rr::images::export(image_key(&digest), &bytes);
-        return Some(Encoded { digest, image: true, bytes });
-    }
-    let text = print(prog).ok()?;
-    let want = program_facts::debug_digest(prog);
-    if !read(&text).is_ok_and(|back| program_facts::debug_digest(&back) == want) {
-        return None;
-    }
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, text.len() as u64);
-    Some(Encoded { digest: Sha256::digest(text.as_bytes()).into(), image: false, bytes: text.into_bytes() })
-}
-
-/// Programs `encode` made, and a facts entry after them, as a record's item carries them (decision 0306): their
+/// Programs `encode_version` made, and a facts entry after them, as a record's item carries them (decision 0306): their
 /// digests and kinds in its body, their bytes, then the entry's, in its byte area.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Packed {
@@ -414,78 +102,51 @@ pub fn store_encoded(store: &ContentStore, digest: &[u8; 32], image: bool, bytes
     Ok(vec![source])
 }
 
-/// What `store` keeps of the programs of sha256 `digests` (`store`), by digest, with their sources, in two reads: for
-/// a caller that must read before its run's waves (decision 0104) and parse later. Each is its image where it has
-/// one, else its text; one the store has lost is left out.
-pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::collections::HashMap<[u8; 32], (Stored, Vec<SourceId>)>> {
-    let mode = images();
+/// The images `store` keeps of the programs of sha256 `digests` (`store`), by digest, with their sources: for a caller
+/// that must read before its run's waves (decision 0104) and open them later. One the store has lost, or kept as text
+/// alone, is left out.
+pub fn stored(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::collections::HashMap<[u8; 32], (Vec<u8>, Vec<SourceId>)>> {
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
     let text_ids = store.sources_by_hashes(&hashes)?;
     let mut out = std::collections::HashMap::new();
-    let mut want_text = Vec::new();
     for (k, d) in digests.iter().enumerate() {
-        let image = if mode == "off" { None } else { store.source_by_alias(image_key(d))? };
-        match image {
+        match store.source_by_alias(image_key(d))? {
             Some(id) => {
                 let bytes = store.get_source(id)?;
-                // The image's digest is its bytes' (`store`), so it is its own text's source too: named once.
-                out.insert(*d, (Stored::Image(bytes), text_ids[k].into_iter().filter(|t| *t != id).chain([id]).collect()));
+                // The image's digest is its bytes' (`store`), so it is its own source too: named once.
+                out.insert(*d, (bytes, text_ids[k].into_iter().filter(|t| *t != id).chain([id]).collect()));
             }
             // A program the engine ships (decision 0264): its image from the bundle, kept by no source of the store.
-            None if let Some(bytes) = (mode != "off").then(|| crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(image_key(d)))).flatten() => {
-                out.insert(*d, (Stored::Image(bytes.to_vec()), text_ids[k].into_iter().collect()));
+            None if let Some(bytes) = crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(image_key(d))) => {
+                out.insert(*d, (bytes.to_vec(), text_ids[k].into_iter().collect()));
             }
-            None if mode != "require" => want_text.push(k),
             None => {}
         }
     }
-    let requests: Vec<(SourceId, HashKey)> = want_text.iter().filter_map(|&k| Some((text_ids[k]?, hashes[k]))).collect();
-    let mut bytes = store.get_sources_by_hash_bulk(&requests, usize::MAX)?;
-    for k in want_text {
-        let Some(id) = text_ids[k] else { continue };
-        let Some(text) = bytes.remove(&id).and_then(|b| String::from_utf8(b).ok()) else { continue };
-        out.insert(digests[k], (Stored::Text(text), vec![id]));
-    }
     Ok(out)
 }
 
-/// The program `store` keeps of sha256 `digest` (`store`), from its image where it has one, else its text, and the
-/// sources it is kept as; `None` when the store has lost it, or it no longer reads. Its lists are taken from the
-/// run's `lists`.
-/// The sources `texts` names for `digests` (each program's text and image), with none read: a run that holds the
-/// programs in memory names what it would have read (the manifest's), so collection keeps them while it keeps the run.
+/// The sources `stored` names for `digests` (each program's image, and a text a store written before images kept),
+/// with none read: a run that holds the programs in memory names what it would have read (the manifest's), so
+/// collection keeps them while it keeps the run.
 pub fn sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<SourceId>> {
-    let mode = images();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
     let mut out: Vec<SourceId> = store.sources_by_hashes(&hashes)?.into_iter().flatten().collect();
-    if mode != "off" {
-        for d in digests {
-            if let Some(id) = store.source_by_alias(image_key(d))? {
-                out.push(id);
-            }
+    for d in digests {
+        if let Some(id) = store.source_by_alias(image_key(d))? {
+            out.push(id);
         }
     }
     Ok(out)
 }
 
-pub fn load(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<SourceId>)>> {
-    let mut found = texts(store, &[*digest])?;
-    let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };
-    Ok(read_stored(&stored, lists).ok().map(|p| (p, sources)))
+/// The version of the program `store` keeps of sha256 `digest`, opened from its image, and the sources it is kept as;
+/// `None` when the store has lost it, keeps it as text alone, or its image does not open.
+pub fn load_image(store: &ContentStore, digest: &[u8; 32]) -> StoreResult<Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<SourceId>)>> {
+    let mut found = stored(store, &[*digest])?;
+    let Some((bytes, sources)) = found.remove(digest) else { return Ok(None) };
+    Ok(crate::code_rule_dsl::logic::program_image::Version::open(&bytes).ok().map(|v| (v, sources)))
 }
-
-/// The version of the program `store` keeps of sha256 `digest`, opened from its image with no tree decoded (a
-/// program kept as text, with images off, imaged from it), and the sources it is kept as; `None` as `load` gives.
-pub fn load_image(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<SourceId>)>> {
-    let mut found = texts(store, &[*digest])?;
-    let Some((stored, sources)) = found.remove(digest) else { return Ok(None) };
-    let version = match &stored {
-        Stored::Image(bytes) => crate::code_rule_dsl::logic::program_image::Version::open(bytes),
-        Stored::Text(text) => read_in(text, lists).and_then(|p| crate::code_rule_dsl::logic::program_image::Builder::of_program(&p)?.finish().map(|(v, _)| v)),
-    };
-    Ok(version.ok().map(|v| (v, sources)))
-}
-
 
 /// A keyed pipeline's steps (decision 0281 §6), kept in `store` as facts beside the program images they name. A
 /// step is two relations in 0103's form, its key and the step it names: `pipeline_step_key(key, pass, version)` (the
@@ -1021,11 +682,21 @@ pub struct Opened {
     pub rows_in_place: bool,
 }
 
-/// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
-/// same rows.
-pub fn document(facts: &super::program_facts::Facts, extra: &std::collections::BTreeMap<super::front::name::Name, crate::code_rule_dsl::logic::front::name::List<(super::front::name::Name, super::front::name::Name)>>) -> Result<String, String> {
-    let mut decls = super::program_facts::schema();
-    decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
-    let prog = super::front::ast::Program { decls, facts: facts.clone(), ..super::front::ast::Program::default() };
-    super::rr::print(&prog).map_err(|e| format!("program facts: {e:?}"))
+/// `facts` as a `.rr` document: the schema's declarations, `extra`'s, and every row as a fact. `rr::parse_version`
+/// reads it back as the same rows.
+pub fn document(facts: &Facts, extra: &[(&str, &[(&str, &str)])]) -> Result<String, String> {
+    use crate::code_rule_dsl::logic::program_image::{Builder, fields::FieldsMut as _};
+    let mut b = Builder::base();
+    for (rel, cols) in program_facts::schema() {
+        let cols: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+        b.fields().declare(rel.as_str(), &cols);
+    }
+    for (rel, cols) in extra {
+        b.fields().declare(rel, cols);
+    }
+    for (rel, rows) in facts {
+        b.fields().set_facts(rel, rows);
+    }
+    let (v, _) = b.finish()?;
+    super::rr::print_version(&v).map_err(|e| format!("program facts: {e:?}"))
 }

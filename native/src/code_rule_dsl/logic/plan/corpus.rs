@@ -93,8 +93,8 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_SCOPE_GUARDS",
     // The combine's tail kept or run whole (`=whole`), or checked against the whole (`=check`, decision 0393).
     "RERAIL_COMBINE_TAIL",
-    // The `.rr` lowering: source attributes answered eagerly (`sources_on_request`), node ids compared raw
-    // (`front::finish`'s `order_nodes`).
+    // The `.rr` lowering: source attributes answered eagerly (`on_request::SourcesOnRequest`), node ids compared raw
+    // (`lowering_tail::OrderNodes`).
     "RERAIL_NODE_SOURCES",
     "RERAIL_ORDER_RAW",
     // Node ids by definition or in preorder (`syntax::definition_ids`, read by `order_nodes`).
@@ -112,7 +112,6 @@ pub const PREPARING: &[&str] = &[
     // Lowering and its passes.
     "RERAIL_TEXT_NODES",
     "RERAIL_SPAN_PREFILTER",
-    "RERAIL_NODE_ANCHORS",
     "RERAIL_NEAREST_BUFFERS",
     "RERAIL_FACTORIZE",
     "RERAIL_EXPORT_DEMAND",
@@ -498,7 +497,7 @@ fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: 
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
     let masked = masked(programs);
-    Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read, &front::Lists::default())?.0)
+    Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read)?.0)
 }
 
 /// The workspace documents whose bytes changed since a run that consulted `consulted`, when nothing else it
@@ -654,7 +653,7 @@ fn external_inputs(prog: &mut Edit<'_>, shape: &shape::Shape, root: &Path) -> Re
     for (rel, what) in NOT_MADE {
         if prog.input_names().iter().any(|i| i == rel) {
             crate::code_rule_dsl::logic::profile::decision("relations not made yet (O76)", || format!("{rel} is empty: {what}"));
-            prog.b.retain_inputs(|i| i != rel);
+            prog.b.fields().retain_inputs(|i| i != rel);
         }
     }
     Ok(())
@@ -705,7 +704,7 @@ fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> 
         return Ok(None);
     }
     // A request rule (an attribute's, `Program::asked_by`, decision 0174) is taken only once one of the relations
-    // whose readers it serves is in the slice, as `front::prune` keeps it. A request relation is one for the whole
+    // whose readers it serves is in the slice, as `preparation::Prune` keeps it. A request relation is one for the whole
     // program (`rr_value_req`: every reader's request, never inlined since 0291), so the slice, following reads,
     // took every reader's request and what its body reads: 584 rules where 488 were (decision 0331).
     let asked = v.asked();
@@ -812,7 +811,7 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
 pub fn combine(programs: &[&str]) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let graphs: Vec<Option<[u8; 32]>> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::graph_digest(t).ok().flatten()).collect();
     let masked = masked(programs);
-    combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), &graphs, &added::Added::default(), None, &front::Lists::default()).map(|(program, _)| program)
+    combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), &graphs, &added::Added::default(), None).map(|(program, _)| program)
 }
 
 /// The run's program texts, each read once (`rr::read_seed`, in `run_with_options`): their include graphs' digests,
@@ -895,14 +894,14 @@ fn keep_combined(key: [u8; 32], edit: impl FnOnce(&mut Combined)) {
 /// digest. For the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn combine_handed(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>)> {
-    let text = crate::code_rule_dsl::logic::rr::print(&read.program(&front::Lists::default()).map_err(Error::Plan)?)?;
+    let text = crate::code_rule_dsl::logic::rr::print_version(read)?;
     let none = added::Added::default();
     let key = texts_digest(&[text.as_str()], &[None], &none);
-    let made = combine_stored_version(&[text.as_str()], &none, &key, &front::Lists::default(), Some(read))?;
+    let made = combine_stored_version(&[text.as_str()], &none, &key, Some(read))?;
     let hidden = combine_tail(&[text.as_str()], &none, Some(read), None)?.0;
     let kept = phases::reading_store().and_then(|store| {
         store.settle(&combined::queued(&key));
-        combined::lookup_version(&store, &key, &front::Lists::default()).ok().flatten()
+        combined::lookup_version(&store, &key).ok().flatten()
     });
     Ok((made, hidden, kept))
 }
@@ -912,7 +911,7 @@ pub fn combine_handed(read: &Arc<crate::code_rule_dsl::logic::program_image::Ver
 /// (`texts_digest`) it is kept by: a run keys what it prepares by the same digest. `read` is the program the one text
 /// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again. The image is made
 /// once per combined program and kept for the process (`COMBINED`).
-fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, lists: &front::Lists) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
+fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
     let key = texts_digest(masked, graphs, extra);
     if let Some(v) = combined_kept().0.lock().expect("the combined programs").get(&key).and_then(|k| k.version.clone()) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
@@ -922,7 +921,7 @@ fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]
     // is (decision 0275): the lowered program is the key, and hiding it again is the step a hit saves. The rows the
     // run adds (decision 0249) are in the key.
     let one = read.filter(|_| programs.len() == 1);
-    let v = combine_stored_version(programs, extra, &key, lists, one)?;
+    let v = combine_stored_version(programs, extra, &key, one)?;
     keep_combined(key, |k| k.version = Some(Arc::clone(&v)));
     Ok((v, key))
 }
@@ -930,7 +929,8 @@ fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]
 /// The programs linked into one (`combine_linked_as`), and the combine's tail run on it (`tail_version`), with the kept
 /// tail run it was made over or kept, if any (`tail_kept`).
 fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
-    let (v, tail) = combine_linked_as::<link::Versioned>(programs, extra, read, images_used)?;
+    let mut images_used = images_used;
+    let (v, tail) = combine_linked_as::<link::Versioned>(programs, extra, read, images_used.as_deref_mut())?;
     // `RERAIL_COMBINE_LINK=check`: the splice (decision 0373) against the programs linked whole.
     if combine_link_mode() == "check" {
         let (whole, whole_tail) = crate::code_rule_dsl::logic::profile::quiet(|| combine_linked_spliced::<link::Versioned>(programs, extra, read, None, false))?;
@@ -942,7 +942,7 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate
     let (v, run) = match &tail {
         Tail::Many { kept: Some(kept), .. } if combine_tail_mode() != "whole" => {
             let kept = *kept;
-            let (spliced, run) = tail_kept(v.clone(), &tail, kept)?;
+            let (spliced, run) = tail_kept(v.clone(), &tail, kept, images_used.as_deref_mut())?;
             // `RERAIL_COMBINE_TAIL=check`: the tail kept (decision 0393) against the tail run whole.
             if combine_tail_mode() == "check" {
                 let whole = crate::code_rule_dsl::logic::profile::quiet(|| tail_version(v, &tail))?;
@@ -960,7 +960,7 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate
 /// keyed by the texts and checked against the library files the combine read. The store's entry opened as a version
 /// (`combined::lookup_version`), or the combine's tail run on the version (`combine_tail`) and its image kept as the
 /// entry (`combined::record_version`).
-fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists: &front::Lists, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let store = if cfg!(feature = "tape-cache") && (programs.len() > 1 || read.is_some()) && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
@@ -971,7 +971,7 @@ fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32
     let found = {
         let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the combined program, from the store (decision 0094 §6)".into());
         store.settle(&combined::queued(key));
-        combined::lookup_version(&store, key, lists).map_err(|e| Error::Plan(e.to_string()))?
+        combined::lookup_version(&store, key).map_err(|e| Error::Plan(e.to_string()))?
     };
     if let Some(v) = found {
         crate::code_rule_dsl::prof::count("corpus.combined_stored", 1);
@@ -1047,7 +1047,7 @@ pub struct Prepared {
     pub vocabulary: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
     pub lowered: lower::Lowered,
     pub sets: Vec<(String, Vec<i64>)>,
-    /// The `ast` atoms' matchers, by relation (`matchers::lower`, decision 0106).
+    /// The `ast` atoms' matchers, by relation (`preparation::text::MatcherRelations`, decision 0106).
     pub matchers: Vec<(String, String, Vec<String>)>,
     pub demanded: Vec<String>,
     pub pushed: Vec<String>,
@@ -1426,7 +1426,9 @@ fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tai
 /// store, and where the link is an edit of its input (`manager::rebase`), the passes run again over the edit
 /// (`Pipeline::again`): each step's analyses carried across it, and a pass that can (`ProgramPass::again`) writing
 /// the edit onto its last output. The run is kept again, behind the run.
-fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: &Tail, kept: TailKept) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
+/// `used`: where the pointer to the tail's run (`keep_facts`) is named, read or kept, for the combined program's entry
+/// to name it (`combined::image_sources`): a run that reads the entry keeps it as the run that combined did.
+fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: &Tail, kept: TailKept, used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
     use crate::code_rule_dsl::logic::program_image::manager::{Delta, Pipeline, Runs as _, rebase};
     let Some(store) = crate::code_rule_dsl::logic::rr::image_store() else { return Ok((tail_version(v, tail)?, None)) };
     let key = {
@@ -1448,7 +1450,10 @@ fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: 
     };
     let last = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the combine's last tail run, from the store (decision 0393)".into());
-        let named = preparation::parts::kept_facts_alone(&store, &key).and_then(|f| f.get("anchor").and_then(|r| r.first()).and_then(|r| match r.first() {
+        if let Some(used) = used {
+            used.push(preparation::parts::kept_facts_hash(&key));
+        }
+        let named = preparation::parts::kept_facts_alone(&store, &key).and_then(|(f, _)| f.get("anchor").and_then(|r| r.first()).and_then(|r| match r.first() {
             Some(front::Value::Str(h)) => preparation::parts::unhex(h),
             _ => None,
         }));
@@ -1555,16 +1560,16 @@ fn tail_passes<'s>(mut p: crate::code_rule_dsl::logic::program_image::manager::P
 }
 
 /// A text's version with the library's cone it asks for (decision 0089 §3), as `rr::Text::lowered_in` makes it on
-/// the tree (decision 0281's path, step 7b): its answers on request undone (`link::undone_on_request`), the cone
+/// the tree (decision 0281's path, step 7b): its answers on request undone (`rr::lower::undone_on_request`), the cone
 /// copied from the library's version (`rr::with_cone_version`), and the attributes on request made again over both
 /// (`on_request::SourcesOnRequest`, decision 0174), its cone's readers asking too. No tree is decoded.
-pub(crate) fn cone_on_version(
+pub fn cone_on_version(
     own: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
     library: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
     asked: &BTreeSet<String>,
     declared: &BTreeSet<String>,
 ) -> std::result::Result<Arc<crate::code_rule_dsl::logic::program_image::Version>, String> {
-    let undone = link::undone_on_request(own).map_err(|e| e.to_string())?;
+    let undone = crate::code_rule_dsl::logic::rr::lower::undone_on_request(own)?;
     let coned = crate::code_rule_dsl::logic::rr::with_cone_version(&undone, library, asked, declared)?;
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("a text's cone", coned);
     for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
@@ -1577,7 +1582,7 @@ pub(crate) fn cone_on_version(
     Ok(p.finish()?.0)
 }
 
-/// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
+/// The requests `on_request::SourcesOnRequest` made, narrowed where the split finds them cross-file to the asked node's own
 /// document (`file_local::RequestsFileLocal`): a node's attribute is its document's, answered in its chunk while the
 /// chunk's batch holds the text (O-cross-file-answers). Then the answers still cross-file made eager
 /// (`answers_where_documents_are_version`). A program that answers no attribute on request is left as it is. Each a pass of `p`: a kept tail keeps them and the steps
@@ -1641,7 +1646,7 @@ impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for Answer
             return Ok(());
         }
         let b = w.on()?;
-        b.state_fields_as(&v, &out);
+        b.fields().state_fields_as(&v, &out);
         b.retain(|r| out.contains(r.id()));
         Ok(())
     }
@@ -1654,7 +1659,7 @@ impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for Answer
 /// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
 /// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
 /// cross-file reader asks for is eager. Each round whose function's answer a cross-file reader asks for is undone
-/// (`link::undone_with` over `undo_round`), by the version's file-local split (`FileLocal`), to a fixpoint
+/// (`rr::lower::undone_with` over `undo_round`), by the version's file-local split (`FileLocal`), to a fixpoint
 /// (decision 0281's path, step 7b).
 fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
@@ -1665,7 +1670,7 @@ fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::p
             return Ok(v);
         };
         crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
-        v = link::undone_with(&v, |head, rules| undo_round(head, rules, round))?;
+        v = crate::code_rule_dsl::logic::rr::lower::undone_with(&v, |head, rules| undo_round(head, rules, round)).map_err(Error::Plan)?;
     }
 }
 
@@ -1695,7 +1700,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     // (`front::declared_on`).
     let given_version = |v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>> {
         let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
-        extra.add_to(&mut b);
+        extra.add_to(&mut b.fields());
         let v = if b.is_empty() { v } else { b.finish().map_err(Error::Plan)?.0 };
         front::declared_on(&v)?;
         Ok(v)
@@ -1860,7 +1865,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
                 if let Some(library) = in_scope && let Some(k) = *scope_of {
                     let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
                     // Its library's relations are the library's, declared there, not in the program: it is handed the
-                    // run's rows (0249) but not checked for its own declarations (`front::declared`).
+                    // run's rows (0249) but not checked for its own declarations (`lowering_tail::Declared`).
                     return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), found, extra);
                 }
                 return P::of_version(given_version(read.lower_version(!own_only)?)?);
@@ -2096,7 +2101,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
 }
 
 /// `combine_linked_as` as a splice into the combine's last link (decision 0373): the programs whose image changed
-/// lowered and read as the merge reads each (`own_part`, the request, `undo_on_request`, the header's kind sets,
+/// lowered and read as the merge reads each (`own_part`, the request, `undone_on_request`, the header's kind sets,
 /// globals and policy), and where each one's interface is its slot's, its rules written in its slot's place and every
 /// other program's copied from the last link (`Part::spliced`). `None` where nothing is kept for the run's shape, or a
 /// program's interface changed: the programs are then linked whole, and the link kept again.
@@ -2186,49 +2191,6 @@ fn combine_spliced<P: link::Part>(
     Ok(Some((linked, Tail::Many { hide: rec.hide, policies: rec.policies, kept: Some(TailKept(*family)) })))
 }
 
-/// `simplify::merge_identical` between two `drop_repeated_rules`: the relations merged, the classes shared across
-/// programs, the rules dropped.
-pub fn merge_and_drop_repeats(prog: &mut front::Program) -> (usize, usize, usize) {
-    // One merge finds every class at once: its congruence is the greatest, and it compares a relation's rules as a
-    // set, so a repeated rule does not keep a relation from its twin. The merge's renaming can make rules repeat;
-    // they are dropped after it, and make nothing more mergeable. (A loop of merges until no rule repeated was 2-3
-    // congruences a call, 1.5 s of the dl1 batch's 13.8 s CPU.)
-    let mut repeated = drop_repeated_rules(prog);
-    let (merged, shared) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
-    repeated += drop_repeated_rules(prog);
-    (merged, shared, repeated)
-}
-
-/// Drops each rule equal to an earlier one: a relation is a set, so a second copy of a rule derives nothing, yet it
-/// was planned and run as a rule of its own. Hiding's clones made them (at O125 step 07, 407 of the cross part's
-/// 1,483 rules, `rr_in_annotation_0_bv`'s most). Returns how many it dropped.
-pub fn drop_repeated_rules(prog: &mut front::Program) -> usize {
-    use std::hash::{Hash, Hasher};
-    let before = prog.rules.len();
-    let mut seen: HashMap<u64, Vec<usize>> = HashMap::new();
-    // Each rule kept with the rules it stands for: itself and its repeats, whose readers it serves (the request
-    // record, `Program::set_rules_from`).
-    let mut kept: Vec<(usize, Vec<usize>)> = Vec::with_capacity(before);
-    for (i, r) in prog.rules.iter().enumerate() {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        r.hash(&mut h);
-        let at = seen.entry(h.finish()).or_default();
-        match at.iter().find(|&&k| prog.rules[kept[k].0] == *r) {
-            Some(&k) => kept[k].1.push(i),
-            None => {
-                at.push(kept.len());
-                kept.push((i, vec![i]));
-            }
-        }
-    }
-    if kept.len() == before {
-        return 0;
-    }
-    let rules: Vec<(front::Rule, Vec<usize>)> = kept.into_iter().map(|(i, from)| (prog.rules[i].clone(), from)).collect();
-    prog.set_rules_from(rules);
-    before - prog.rules.len()
-}
-
 /// What the converter gives an authored file to read (`logic::convert`, test-only): the scope, the report gate, the
 /// options, and the tape's syntax verdict (`tape_syntax_error(d)`: core.rr's `syntax_error` is the engine's, decision
 /// 0141). Here so the runner, which is not test-only, can tell them from unbound core relations.
@@ -2247,7 +2209,7 @@ fn bound(v: &crate::code_rule_dsl::logic::program_image::Version) -> std::result
     let world = |rel: &str| rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
     let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
     // core.rr's literal parts are made in core.rr's shape only (`syntax::core_rr`): a program that declares its base
-    // relations itself (T's shape, `syntax::Projection::of`: not every relation core.rr declares is declared) has none.
+    // relations itself (T's shape, `text_demand::projection_of`: not every relation core.rr declares is declared) has none.
     let core = crate::code_rule_dsl::facts::core::core_names();
     let t_shape = core.is_empty() || !core.iter().all(|r| v.decl_of(r.as_str()).is_some());
     let parts = |rel: &str| t_shape && rel.starts_with("str_part");
@@ -2506,7 +2468,7 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
                 return Some(p);
             }
             let mut b = Builder::on(&p);
-            b.set_answers(&kept);
+            b.fields().set_answers(&kept);
             b.finish_overlay().ok()
         });
         let made = made.expect("a part of a version by its relations is made");
@@ -2983,12 +2945,6 @@ pub(super) fn run_read_handing(
     run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options)
 }
 
-/// A program edited as a tree, as the run is handed it (`run_read`): encoded, until its readers edit its version
-/// (decision 0276 step 6).
-pub fn handed_version(prog: &front::Program) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    crate::code_rule_dsl::logic::program_image::Builder::of_program(prog).and_then(|b| b.finish()).map(|(v, _)| v).map_err(Error::Plan)
-}
-
 /// A handed program's key, in the place of a text: its version's digest (`choices::key`, decision 0173 §7), named so
 /// that it reads as no program. Every key a run makes of its texts is made of this.
 fn read_key(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<String> {
@@ -3292,9 +3248,6 @@ fn run_observed_within(
     // last as the run ends, and the store takes each in one transaction.
     let _waves = crate::content_store::write_back::run_waves();
     let programs = given.programs;
-    // The run's distinct lists (decision 0172): every program it reads from a stored text takes its lists from here,
-    // so the lists its programs have in common are made once. It goes with the run.
-    let lists = Arc::new(front::Lists::default());
     let process_cpu = || { let u = usage(); u.0 + u.1 };
     let process_started = process_cpu();
     // The store's writer held from the run's start to its end (decision 0102): the handles the run opens and closes on
@@ -3437,7 +3390,7 @@ fn run_observed_within(
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
     // The combined program as a version (decision 0281's path, step 7a): the readers before preparation read its
     // fields where they are (`fields`), and its rules' shape (`shape::Shape`); an edit of them is a version's edit.
-    let (mut v, mut texts) = combine_version(programs, masked, &given.graphs, &added, read, &lists)?;
+    let (mut v, mut texts) = combine_version(programs, masked, &given.graphs, &added, read)?;
     let mut shape = shape::Shape::of(&v);
     drop(combining);
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
@@ -3512,7 +3465,7 @@ fn run_observed_within(
     // The split takes them as constants of the run (`file_local::run_constant`).
     let add_phased = |prog: &mut Edit<'_>| {
         for rel in phased.keys() {
-            prog.b.add_input(rel);
+            prog.b.fields().add_input(rel);
         }
     };
     edit_fields(&mut v, |p| Ok(add_phased(p)))?;
@@ -3646,7 +3599,7 @@ fn run_observed_within(
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
             added = added.with("declared_ret", facts.into_iter().map(|(q, t)| vec![front::Value::Str(q.into()), front::Value::Str(t.into())]));
-            (v, texts) = combine_version(programs, masked, &given.graphs, &added, read, &lists)?;
+            (v, texts) = combine_version(programs, masked, &given.graphs, &added, read)?;
             edit_fields(&mut v, |p| Ok(add_phased(p)))?;
             (folded, constants_plans) = fold_constants(&mut v, &added)?;
             shape = shape::Shape::of(&v);
@@ -3687,7 +3640,7 @@ fn run_observed_within(
     let requests: Vec<&str> = guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|_| reads_guests).chain(world_requests).collect();
     edit_fields(&mut v, |p| {
         for &rel in requests.iter().filter(|rel| shape.made.contains(**rel)) {
-            p.b.add_output(rel);
+            p.b.fields().add_output(rel);
         }
         Ok(())
     })?;
@@ -3798,13 +3751,12 @@ fn run_observed_within(
     let prepared_key: [u8; 32] = {
         use sha2::Digest as _;
         let mut hash = sha2::Sha256::new();
-        hash.update(texts);
-        // The version's facts, inputs and outputs (its rules are the texts'), as values.
-        let facts: Vec<(String, Vec<front::List<front::Value>>)> = v.fact_names().into_iter().map(|rel| {
-            let rows = v.fact_values(&rel, &lists).unwrap_or_default();
-            (rel, rows)
-        }).collect();
-        hash.update(format!("{label}\0{facts:?}\0{:?}\0{:?}", v.input_names(), v.output_names()).as_bytes());
+        hash.update(b"rerail.prepared/v2\0");
+        // The linked program as the run prepares it (0276 §2): its version's identity, which holds its rules (in
+        // order), declarations, facts, inputs and outputs. Its messages are not in it (the combine is kept under the
+        // masked texts, decision 0225 §3), so an edit of a message's words finds it prepared.
+        hash.update(crate::code_rule_dsl::logic::program_image::manager::identity(&v));
+        hash.update(format!("{label}\0").as_bytes());
         // Whether exports are handed on factorized (decision 0099): another choice is another prepared program, and
         // another file-local part, so another per-file memo key.
         if !factorizing {
@@ -3895,7 +3847,7 @@ fn run_observed_within(
     }
     // The plans' whole-program choices (inline or store, demand), kept under the prepared program across processes
     // (`plan::choices`, decision 0090 §5); the manifest names their entries too.
-    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key, Arc::clone(&late_sources), Arc::clone(&lists)));
+    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key, Arc::clone(&late_sources)));
     if durable.is_some() {
         let (text, plan) = super::choices::named(&prepared_key);
         memo::named_source(store, text, true, None, &late_sources);
@@ -3938,7 +3890,7 @@ fn run_observed_within(
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the prepared program, from the store (decision 0073)".into());
             // One this process queued is read once written (`settle`; it is kept in memory, so this is rare).
             store.settle(&prepared::queued(&prepared_key));
-            let found = prepared::lookup(store, source, dialect, &prepared_key, &lists).map_err(|e| Error::Plan(e.to_string()))?;
+            let found = prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?;
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: {}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), match &found { None => "not in the store", Some((p, ..)) if !holds(p) => "in the store, its atoms not the store's", Some((_, _, prepared::Found::Moved)) => "read, its atoms moved to the store's", Some(_) => "read" });
             }
@@ -4016,7 +3968,7 @@ fn run_observed_within(
             // under its own key, and the parts linked; no pipeline run is kept (0333's P is the other answer to Q18).
             let by_parts = preparation::parts::on();
             let (version, preparation::Front { reaches: (reaches, throughs), demanded, demand, undone, matchers, vocabulary }, front_run) = if by_parts {
-                let (v, f, kept) = preparation::parts::front(version, dialect, store, durable.is_some(), &lists).map_err(Error::Plan)?;
+                let (v, f, kept) = preparation::parts::front(version, dialect, store, durable.is_some()).map_err(Error::Plan)?;
                 program_sources.extend(kept);
                 (v, f, None)
             } else {
@@ -4075,7 +4027,7 @@ fn run_observed_within(
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's passes".into());
             // By parts (decision 0345 stage 2): the rewriting passes per part against its interface, kept per part.
             let (version, found, prepared_run) = if by_parts {
-                let (v, f, kept) = preparation::parts::run(version, factorizing, dialect, store, durable.is_some(), &lists, bound).map_err(Error::Plan)?;
+                let (v, f, kept) = preparation::parts::run(version, factorizing, dialect, store, durable.is_some(), bound).map_err(Error::Plan)?;
                 program_sources.extend(kept);
                 (v, f, None)
             } else {
@@ -4475,8 +4427,8 @@ fn run_observed_within(
         let _ = shared_parts.set((once_made, (local.clone(), cross.clone(), run_constants.clone())));
     }
     if crate::code_rule_dsl::logic::version_trace::on() {
-        crate::code_rule_dsl::logic::version_trace::note_versions("run.local", &shared_split.versions.local, &local.version);
-        crate::code_rule_dsl::logic::version_trace::note_versions("run.cross", &shared_split.versions.cross, &cross.version);
+        crate::code_rule_dsl::logic::version_trace::note("run.local", &shared_split.versions.local, &local.version);
+        crate::code_rule_dsl::logic::version_trace::note("run.cross", &shared_split.versions.cross, &cross.version);
     }
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "guests and the tree's projection".into()));
     let slice = embed_slice(&prepared_placed.v)?.map(part_of);
@@ -4512,7 +4464,7 @@ fn run_observed_within(
         let p = head;
         let not_of_documents = |rel: &str| pf.derives(rel) || pf.facts(rel).is_some() || pf.native(rel).is_some() || phased.contains_key(rel);
         let needed = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::analyses::Needed>(&prepared_placed.v).map_err(Error::Plan)?;
-        // The outputs by name too, as `front::needed` has its roots (one no relation names is still read).
+        // The outputs by name too, as `analyses::needed` has its roots (one no relation names is still read).
         let needs: BTreeSet<&str> = needed.0.iter().map(|r| prepared_placed.v.rel_name(r)).chain(pf.outputs()).collect();
         let why: Option<String> = if t.is_some() {
             Some("T's facts".into())
@@ -5491,7 +5443,9 @@ fn run_observed_within(
         if let Some(maintained) = early_maintained.as_ref() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the cross part's strata identities".into());
             let progs = [cross.placed()?, maintained.placed()?];
-            let strata = retain::strata_kept(store, &[&progs[0], &progs[1]])?;
+            let mut named = Vec::new();
+            let strata = retain::strata_kept(store, &[&progs[0], &progs[1]], &mut named)?;
+            late_sources.lock().expect("the late sources").extend(named);
             cross_idents = progs.iter().map(super::body::Placed::digest).zip(strata).collect();
         }
         let spaces = {
@@ -5630,7 +5584,9 @@ fn run_observed_within(
                     }
                     match entry {
                         Some(entry) if has_base(&entry) && missing_of(&entry).is_empty() => return Ok(Some((b.content, Ok(entry)))),
-                        Some(entry) if missing_of(&entry).len() < memo_ids.len() => partial = Some(entry),
+                        // A partial hit's chunk keeps the entry's base rows (`cone`'s cut): an entry without some
+                        // the cross-file part reads now would lose them, so it is a miss.
+                        Some(entry) if has_base(&entry) && missing_of(&entry).len() < memo_ids.len() => partial = Some(entry),
                         _ => {}
                     }
                 }
@@ -9736,7 +9692,7 @@ fn run_observed_within(
                         }
                     }
                     if std::env::var_os("RERAIL_KEPT_BYTES").is_some() {
-                        // Decision 0364's required shape, so far in this process (`maintain::shape`).
+                        // Decision 0364's required shape, so far in this run (`maintain::shape`).
                         eprintln!("SHAPE {:?}", maintain::shape::now());
                         for (kind, rows, values, levels, index) in next.held() {
                             eprintln!("KEPT {kind}: {rows} rows, values {:.2} MB, levels {:.2} MB, sets and indexes {:.2} MB", values as f64 / 1e6, levels as f64 / 1e6, index as f64 / 1e6);
@@ -11705,7 +11661,7 @@ pub mod tests {
     #[test]
     fn the_totals_keep_per_value_counts_only_for_what_the_planner_reads() {
         use crate::code_rule_dsl::logic::plan::{Constant, Stats};
-        let p = crate::code_rule_dsl::logic::rr::parse(".decl e(a: number, b: number)\n.output e\n").unwrap();
+        let p = crate::code_rule_dsl::logic::plan::body::Placed::whole(crate::code_rule_dsl::logic::rr::parse_version(".decl e(a: number, b: number)\n.output e\n").unwrap());
         let many: Vec<i64> = (0..1000).map(|i| 100 + i % 500).collect();
         let few: Vec<i64> = (0..1000).map(|i| i % 3).collect();
         let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(many), Some(few)]);
@@ -11713,7 +11669,7 @@ pub mod tests {
         // Two chunks holding the same values: each value's rows are its total over both.
         totals.add_rows("e", 1000, source.as_ref(), &["number", "number"]);
         totals.add_rows("e", 1000, source.as_ref(), &["number", "number"]);
-        let mut stats = Stats::empty(&p);
+        let mut stats = Stats::empty_of(&p.fields().unwrap());
         totals.apply(&mut stats);
         let memo = &stats.memo["e"];
         let of = |col: &str| memo.keys().filter(|(c, _)| c == col).count();
@@ -12043,13 +11999,6 @@ fn stats_key(root: &str) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"corpus stats", root.as_bytes()])
 }
 
-/// An edit's version of a part (decision 0244): made wherever the part had one. In a debug build (every test's), an
-/// edit that made none is a fault, never a quiet fall back to an image of the tree.
-pub(super) fn made_from<T>(had: bool, made: Option<T>, edit: &str) -> Option<T> {
-    debug_assert!(!had || made.is_some(), "{edit}: no version was made from the part's");
-    made
-}
-
 /// The cone of requests of the cross-file part `cross`, answered inside the fixpoint (decision 0065 §2a): a load's
 /// answer is the loaded document's rows of every per-file relation the cone reads (an export, `exports`; a base
 /// relation, `base`, is refused), made by the chunk path as any file's are; the rest of the cross-file part reads the
@@ -12172,7 +12121,7 @@ fn maintained_cross(cross: &lower::Lowered) -> Result<lower::Lowered> {
         }
     })?;
     if crate::code_rule_dsl::logic::version_trace::on() {
-        crate::code_rule_dsl::logic::version_trace::note_versions("session.maintained", &cross.version, &stored.version);
+        crate::code_rule_dsl::logic::version_trace::note("session.maintained", &cross.version, &stored.version);
     }
     Ok(stored)
 }

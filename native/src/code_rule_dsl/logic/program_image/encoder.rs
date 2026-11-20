@@ -2,7 +2,6 @@
 //! numbers what it adds after its parent's id spaces, and finds what its parent holds by its parent's tables, so a
 //! delta holds only what it adds. Hashes are of texts, never of ids, so a rule or part hashes the same in any image.
 use super::{AtomId, Cell, R, RelId, Version, Writer, bad, csr, extents::Extents, kind, meta, strings::{self, Strings}};
-use crate::code_rule_dsl::logic::front::ast::{AggOp, Atom, Literal, Rule, Term};
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 
@@ -144,6 +143,8 @@ pub struct Encoder<'p> {
     rule_vars: Vec<u32>,
     vars: Vec<u32>,
     rule_hash: Vec<u64>,
+    /// How many big integers there were when the open rule began: what `abandon` keeps.
+    ints_at_rule: usize,
     heads: Vec<(u32, u32)>,
     /// (relation, read entry), with the entries' rules and nodes beside.
     reads: Vec<(u32, u32)>,
@@ -179,6 +180,7 @@ impl<'p> Encoder<'p> {
             rule_vars: vec![0],
             vars: Vec::new(),
             rule_hash: Vec::new(),
+            ints_at_rule: 0,
             heads: Vec::new(),
             reads: Vec::new(),
             read_rules: Vec::new(),
@@ -326,6 +328,7 @@ impl<'p> Encoder<'p> {
     pub fn begin_rule(&mut self) -> usize {
         self.slots.clear();
         self.slot_names.clear();
+        self.ints_at_rule = self.ints.len();
         let at = self.open(kind::RULE, 0);
         self.rule_node.push(at as u32);
         at
@@ -336,24 +339,79 @@ impl<'p> Encoder<'p> {
         let k = self.rule_node.len() as u32 - 1;
         self.vars.extend_from_slice(&self.slot_names);
         self.rule_vars.push(self.vars.len() as u32);
-        let end = self.kind.len();
-        let mut h = hasher();
+        self.index_rule(k, at, self.kind.len());
+        let h = self.hash_closed(at);
+        self.rule_hash.push(h);
+        self.from.push(super::NO_RULE);
+        k
+    }
+    /// Records local rule `k`'s head and reads (nodes `at..end`) in the relation index.
+    fn index_rule(&mut self, k: u32, at: usize, end: usize) {
         let head_at = at + 1;
         let head_end = head_at + self.size.get(head_at) as usize;
         for n in at..end {
+            let (kd, val) = (self.kind.get(n), self.val.get(n));
+            if kd & kind::MASK == kind::ATOM {
+                if n == head_at {
+                    self.heads.push((val, k));
+                } else if n >= head_end {
+                    let e = self.read_rules.len() as u32;
+                    self.reads.push((val, e));
+                    self.read_rules.push(k);
+                    self.read_nodes.push(n as u32);
+                }
+            }
+        }
+    }
+    /// Copies rules `ks` of `src` (consecutive locals, so one run of nodes) whole, when `src`'s ids are this image's:
+    /// their nodes as one range, each rule's variables and hash as `src` holds them (the hash is of texts and values,
+    /// so the same over the same ids), a big integer to this image's table. The local index of the first; 0276 §3's
+    /// range copy, as 0266 §3 copies a stratum.
+    pub fn copy_run(&mut self, src: &super::Image, ks: std::ops::Range<u32>) -> u32 {
+        let first = self.rule_node.len() as u32;
+        if ks.is_empty() {
+            return first;
+        }
+        let (a, b) = {
+            let last = ks.end - 1;
+            let at = src.rule_node(last);
+            (src.rule_node(ks.start), at + src.node(at).1)
+        };
+        let base = self.kind.len() as u32;
+        let (kinds, sizes, vals) = (&src.u8s(super::R::Kind)[a as usize..b as usize], &src.u32s(super::R::Size)[a as usize..b as usize], &src.u32s(super::R::Val)[a as usize..b as usize]);
+        self.kind.extend(kinds);
+        self.size.extend(sizes);
+        self.val.extend(vals);
+        // A big integer's value indexes `src`'s table: written to this one's.
+        for (i, &kd) in kinds.iter().enumerate() {
+            if kd & kind::MASK == kind::INT && kd & kind::BIG != 0 {
+                self.ints.push(src.big(vals[i]));
+                self.val.set(base as usize + i, self.ints.len() as u32 - 1);
+            }
+        }
+        for k in ks {
+            let at = (src.rule_node(k) - a + base) as usize;
+            let end = at + src.node(src.rule_node(k)).1 as usize;
+            let local = self.rule_node.len() as u32;
+            self.rule_node.push(at as u32);
+            self.vars.extend_from_slice(src.rule_vars(k));
+            self.rule_vars.push(self.vars.len() as u32);
+            self.index_rule(local, at, end);
+            self.rule_hash.push(src.rule_hash(k));
+            self.from.push(super::NO_RULE);
+        }
+        first
+    }
+    /// The hash of the rule begun at `at`, its nodes closed (`close`) and not yet ended: what `end_rule` records,
+    /// so a writer can leave out a rule it wrote before (`Builder::close_rule_once`).
+    pub fn hash_closed(&mut self, at: usize) -> u64 {
+        let mut h = hasher();
+        for n in at..self.kind.len() {
             let (kd, size, val) = (self.kind.get(n), self.size.get(n), self.val.get(n));
             h.write_u8(kd);
             h.write_u32(size);
             match kd & kind::MASK {
                 kind::ATOM => {
-                    if n == head_at {
-                        self.heads.push((val, k));
-                    } else if n >= head_end {
-                        let e = self.read_rules.len() as u32;
-                        self.reads.push((val, e));
-                        self.read_rules.push(k);
-                        self.read_nodes.push(n as u32);
-                    }
                     let a = self.rel_atom(val);
                     h.write_u64(self.text_hash(a));
                 }
@@ -366,122 +424,19 @@ impl<'p> Encoder<'p> {
             let a = self.slot_names[s];
             h.write_u64(self.text_hash(a));
         }
-        self.rule_hash.push(h.finish());
-        self.from.push(super::NO_RULE);
-        k
+        h.finish()
     }
     /// Records that local rule `k` came from rule `src` of the input (§9).
     pub fn set_from(&mut self, k: u32, src: super::RuleId) {
         self.from[k as usize] = src.0;
     }
 
-    // -- a rule from the tree --
-
-    fn term(&mut self, t: &Term) {
-        match t {
-            Term::Var(v) => self.var(v),
-            Term::Wild => self.leaf(kind::WILD, 0),
-            Term::Top => self.leaf(kind::TOP, 0),
-            Term::Int(i) => self.int(*i),
-            Term::Branded(b) => self.leaf(kind::BRANDED | super::brand_code(b.class) << 5, b.atom),
-            Term::Str(s) => {
-                let a = self.atom(s);
-                self.leaf(kind::STR, a)
-            }
-            Term::Call(f, args) => {
-                let a = self.atom(f);
-                let at = self.open(kind::CALL, a);
-                for x in args.iter() {
-                    self.term(x);
-                }
-                self.close(at);
-            }
-        }
-    }
-    fn tree_atom(&mut self, a: &Atom) {
-        let flags = if a.neg { kind::NEG } else { 0 } | if a.gated { kind::GATED } else { 0 };
-        let r = self.rel(&a.rel);
-        let at = self.open(kind::ATOM | flags, r);
-        for x in a.args.iter() {
-            self.term(x);
-        }
-        self.close(at);
-    }
-    fn literal(&mut self, l: &Literal) -> Result<(), String> {
-        match l {
-            Literal::Atom(a) => self.tree_atom(a),
-            Literal::Cmp { l, op, r } => {
-                let o = super::CmpOp::of(op).ok_or_else(|| bad(format!("comparison {op:?}")))? as u32;
-                let at = self.open(kind::CMP, o);
-                self.term(l);
-                self.term(r);
-                self.close(at);
-            }
-            Literal::Agg { var, op, over, atom } => {
-                let code = match op {
-                    AggOp::Count => 0,
-                    AggOp::Min => 1,
-                    AggOp::Max => 2,
-                    AggOp::Sum => 3,
-                    AggOp::Product => 4,
-                    AggOp::Join { .. } => 5,
-                };
-                let a = self.atom(var);
-                let s = self.slot_of(a);
-                let at = self.open(kind::AGG | code << 5, s);
-                match over {
-                    Some(v) => self.var(v),
-                    None => self.leaf(kind::WILD, 0),
-                }
-                if let AggOp::Join { by, sep } = op {
-                    for b in by {
-                        self.var(b);
-                    }
-                    let a = self.atom(sep);
-                    self.leaf(kind::STR, a);
-                }
-                self.tree_atom(atom);
-                self.close(at);
-            }
-            Literal::Nearest { n, a, kindset } => {
-                let k = self.atom(kindset);
-                let at = self.open(kind::NEAREST, k);
-                self.var(n);
-                self.var(a);
-                self.close(at);
-            }
-            Literal::Ast { document, node, matcher, captures } => {
-                let m = self.atom(matcher);
-                let at = self.open(kind::AST, m);
-                self.var(document);
-                self.var(node);
-                for (n, v) in captures {
-                    let a = self.atom(n);
-                    self.leaf(kind::STR, a);
-                    self.var(v);
-                }
-                self.close(at);
-            }
-        }
-        Ok(())
-    }
-    /// Appends `rule`, from the tree. Its local index.
-    pub fn tree_rule(&mut self, rule: &Rule) -> Result<u32, String> {
-        let at = self.begin_rule();
-        self.tree_atom(&rule.head);
-        for l in rule.body.iter() {
-            if let Err(e) = self.literal(l) {
-                self.abandon(at);
-                return Err(e);
-            }
-        }
-        Ok(self.end_rule(at))
-    }
     /// Drops the rule begun at `at` (a rule that failed to encode).
     pub fn abandon(&mut self, at: usize) {
         self.kind.truncate(at);
         self.size.truncate(at);
         self.val.truncate(at);
+        self.ints.truncate(self.ints_at_rule);
         self.rule_node.pop();
     }
 

@@ -37,7 +37,7 @@ impl Session {
         let marker = format!("# {name} {:?}\n", std::time::SystemTime::now());
         let rule = dir.join("program.rr");
         std::fs::write(&rule, program).unwrap();
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let handle = super::session::Handle::open(&dir.join("session")).unwrap();
         let s = Session { dir, marker, program, outputs: outputs.to_vec(), handle, fresh: 0 };
         for (file, body) in files {
@@ -65,6 +65,8 @@ impl Session {
         let out = self.dir.join("out");
         let _ = std::fs::remove_dir_all(&out);
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join("kept.sqlite")));
+        // The run's own scope, held here: its shape is the run's count (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let (before, levels) = (shape::now(), maintain::strata_by_levels());
         let report = {
             let _bound = self.handle.bind();

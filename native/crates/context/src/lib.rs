@@ -18,8 +18,6 @@ thread_local! {
 
 /// What the crates below `logic` tell the run under way, and read of it (`RUN`; decisions 0441, 0442).
 pub trait RunOwn: Send + Sync {
-    /// A tree decoded from a program's version, at `at`.
-    fn decoded(&self, at: &'static std::panic::Location<'static>);
     /// Its settings and its own values (`setting`, `local`).
     fn values(&self) -> &RunValues;
     /// What its caller shares by design with the other runs it hands the same object (`shared`).
@@ -243,7 +241,6 @@ pub fn within(shared: std::sync::Arc<Shared>) -> impl Drop {
 struct Bare(RunValues, std::sync::Arc<Shared>);
 
 impl RunOwn for Bare {
-    fn decoded(&self, _: &'static std::panic::Location<'static>) {}
     fn values(&self) -> &RunValues {
         &self.0
     }

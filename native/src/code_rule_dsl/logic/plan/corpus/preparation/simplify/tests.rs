@@ -711,3 +711,33 @@ fn reads_of_a_relation_the_stated_facts_emptied_are_decided() {
     let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&v).unwrap();
     assert!(split.local.contains("asked"), "{:?}\n{text:#?}", split.causes);
 }
+
+/// A relation whose every rule a fact test decides away is empty: a rule reading it goes, a negated read of it is
+/// dropped, to a fixpoint (a file scope the run's options rule out, read by a guest's copies). The tree simplify's test
+/// of 9a9b270ce, on the version's passes.
+#[test]
+fn a_relation_its_fact_tests_empty_takes_its_readers() {
+    let (_, v) = simplified(
+        r#"
+        .decl opt(k: symbol)
+        opt("a").
+        .decl base(n: number)
+        .input base
+        .decl scope(n: number)
+        scope(n) :- base(n), opt("b").
+        .decl reads(n: number)
+        reads(n) :- base(n), scope(n).
+        .decl again(n: number)
+        again(n) :- reads(n).
+        .decl apart(n: number)
+        apart(n) :- base(n), !scope(n).
+        .decl out(n: number)
+        .output out
+        out(n) :- again(n).
+        out(n) :- apart(n).
+        "#,
+    );
+    let heads: std::collections::BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
+    assert!(!heads.contains("scope") && !heads.contains("reads") && !heads.contains("again"), "{heads:?}");
+    assert!(rules(&v).iter().any(|r| r.contains("base(") && !r.contains("scope")), "{:?}", rules(&v));
+}

@@ -84,6 +84,17 @@ pub fn forget_streams() {
     fsevents::forget_streams();
 }
 
+/// An id every change under `root` made before now has (FSEvents'): the cookie id of a replay from `from`, which
+/// comes after each change's event (`fsevents::sync`), where `current_id` may be taken before a late event's id is
+/// given (`observe`'s Q189 test, on a loaded host).
+#[cfg(all(test, target_os = "macos"))]
+pub fn id_past(root: &Path, from: u64, cookie_dir: &Path) -> Option<u64> {
+    match fsevents::since(std::slice::from_ref(&root.to_path_buf()), Some(from), cookie_dir, std::time::Duration::from_secs(20)) {
+        Since::Changed { cursor, .. } | Since::Behind { cursor } => Some(cursor),
+        Since::Lost { .. } => None,
+    }
+}
+
 /// A new outermost run begins: a question asked after this is answered with every change made before it (each kept
 /// stream waits for a cookie once, `fsevents::sync`). Runs inside it share its answer.
 pub fn next_epoch() {
@@ -294,8 +305,12 @@ mod fsevents {
 
     unsafe extern "C" {
         fn dispatch_queue_create(label: *const c_char, attr: *const c_void) -> *mut c_void;
+        fn dispatch_queue_attr_make_with_qos_class(attr: *const c_void, qos: u32, relative: i32) -> *const c_void;
         fn dispatch_release(object: *mut c_void);
     }
+
+    /// `QOS_CLASS_USER_INITIATED`: work a caller waits on.
+    const QOS_USER_INITIATED: u32 = 0x19;
 
     /// The stream's own reference to `Shared` (its context's `retain`), given back when FSEvents frees the stream:
     /// what a callback reads lives as long as the stream, not only as long as `since`.
@@ -503,7 +518,15 @@ mod fsevents {
                 let _ = std::fs::remove_file(&shared.marker);
                 return Err("the journal refused the stream");
             }
-            let queue = dispatch_queue_create(c"rerail.journal".as_ptr(), std::ptr::null());
+            // The stream's callbacks run on a serial queue of their own at the QoS of a run that waits for them
+            // (Q223). On a loaded host a kept stream was told its cookie up to 4.8 s late, and one nothing for 20 s,
+            // while streams just started had theirs in 0.5 s: `fseventsd` was delivering, and the kept stream's
+            // handler was what waited. A queue made without a QoS runs it at none of its own (what the delivery
+            // carries), and `sync` waits on a condvar, which lends it no priority; under `nice` and a full machine
+            // it waits behind everything. `NULL` is a serial queue's attribute; the one made from it is the
+            // system's, never released.
+            let attr = dispatch_queue_attr_make_with_qos_class(std::ptr::null(), QOS_USER_INITIATED, 0);
+            let queue = dispatch_queue_create(c"rerail.journal".as_ptr(), attr);
             FSEventStreamSetDispatchQueue(stream, queue);
             if FSEventStreamStart(stream) == 0 {
                 FSEventStreamInvalidate(stream);

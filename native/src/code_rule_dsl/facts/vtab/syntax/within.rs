@@ -2,7 +2,7 @@
 //!
 //! - **`within(n, a)`** (`Mode::Tree`, the language's built-in, `core.rr`): `n` is strictly below `a`. The
 //!   containers of `n` are its ancestors; the nodes `a` holds are its subtree, a preorder interval.
-//! - **`span_within(inner, outer)`** (`Mode::Span`, what `simplify::span_containment` makes of two span
+//! - **`span_within(inner, outer)`** (`Mode::Span`, what `simplify::SpanContainment` makes of two span
 //!   comparisons): `outer`'s span holds `inner`'s, in one document. Exactly the pairs of `node(d, inner, _, s, e), node(d, outer, _, s2, e2),
 //! s2 <= s, e <= e2`, read off the tree instead of compared for every pair of a file's nodes:
 //!

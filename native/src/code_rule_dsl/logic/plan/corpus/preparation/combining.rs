@@ -386,12 +386,12 @@ impl Guards<'_> {
         // A check of a bound document, never a relation to start from: the documents out of the scope, negated.
         let at = |d: &str| Made::Atom { rel: outside.to_owned(), args: vec![Tm::Var(d.to_owned())], neg: true, gated: false };
         let of_node = |n: &str, fresh: &mut usize| -> Vec<Made> {
-            let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
+            let g = format!("{}{}", super::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
             vec![Made::Cmp { l: Tm::Var(g.clone()), op: CmpOp::Eq, r: Tm::Call("doc".into(), vec![Tm::Var(n.to_owned())]) }, at(&g)]
         };
         let of_span = |n: &str, fresh: &mut usize| -> Vec<Made> {
-            let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
+            let g = format!("{}{}", super::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
             vec![Made::Atom { rel: "docof".into(), args: vec![Tm::Var(n.to_owned()), Tm::Var(g.clone())], neg: false, gated: false }, at(&g)]
         };
@@ -484,7 +484,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn same_relations(p: &mut crat
 }
 
 /// The copies of `label`'s own guests folded into their originals (`FoldOwn`), and then the rules that repeat another
-/// dropped and the relations that are one merged, as `merge_and_drop_repeats` (decision 0058): the run's edit, once
+/// dropped and the relations that are one merged, as `preparation::run` merges (decision 0058): the run's edit, once
 /// its language is known.
 pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::sync::Arc<Version>, label: &str) -> Result<std::sync::Arc<Version>> {
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("fold own guests", v);
@@ -577,30 +577,30 @@ impl ProgramPass for FoldOwn<'_> {
         // The fields edited in the same derivation.
         let b = w.derive()?;
         for rel in folded.keys() {
-            b.undeclare(rel);
+            b.fields().undeclare(rel);
         }
         let named = |b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, c: Cell, gone: &dyn Fn(&str) -> bool| matches!(c, Cell::Str(a) if gone(b.text(a)));
         let qualifiers: Vec<Vec<Cell>> = b.about_rows("qualifier").into_iter().filter(|r| !named(b, r[1], &|x| folded.contains_key(x))).collect();
-        b.set_about_rows("qualifier", qualifiers);
+        b.fields().set_about_rows("qualifier", qualifiers);
         // The request record's readers (`hiding::fold_own`'s `rename_readers`, decision 0331).
         b.rename_asked_readers(&|r| folded.get(r).cloned());
         for about in ["kindset", "kindset_kind"] {
             let rows: Vec<Vec<Cell>> = b.about_rows(about).into_iter().filter(|r| !named(b, r[1], &|x| sets.contains_key(x))).collect();
-            b.set_about_rows(about, rows);
+            b.fields().set_about_rows(about, rows);
         }
         let renamed = |list: Vec<String>| -> Vec<String> { list.into_iter().map(|r| folded.get(&r).cloned().unwrap_or(r)).collect() };
         let inputs = renamed(f.inputs().map(str::to_owned).collect());
         let outputs = renamed(f.outputs().map(str::to_owned).collect());
         if f.inputs().any(|r| folded.contains_key(r)) {
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         if f.outputs().any(|r| folded.contains_key(r)) {
-            b.set_outputs(&outputs);
+            b.fields().set_outputs(&outputs);
         }
         if f.demand().any(|r| folded.contains_key(r)) {
             let p = super::demand::about_p(b);
             let rows: Vec<Vec<Cell>> = renamed(f.demand().map(str::to_owned).collect()).iter().enumerate().map(|(k, r)| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
-            b.set_about_rows("demand", rows);
+            b.fields().set_about_rows("demand", rows);
         }
         // The request record's readers renamed as the reads are (`Program::rename_readers`): a request of a folded
         // copy serves its original (decision 0331).
@@ -612,7 +612,7 @@ impl ProgramPass for FoldOwn<'_> {
             }
         }
         if asked != was {
-            b.set_asked(&asked);
+            b.fields().set_asked(&asked);
         }
         self.folded += folded.len() + sets.len();
         Ok(())

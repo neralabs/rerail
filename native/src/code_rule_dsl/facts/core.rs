@@ -961,7 +961,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],
         // An `ast` matcher's matched nodes (decision 0106).
         rel if rel.starts_with(ast_matches::PREFIX) => ast_matches::columns(rel),
-        // A `match_all` regex's matches (`logic::strings::as_relations`, `facts::vtab::syntax::Extra`).
+        // A `match_all` regex's matches (`preparation::text::TextRelations`, `facts::vtab::syntax::Extra`).
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::MATCHES) => &["sp", "m"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
         // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).

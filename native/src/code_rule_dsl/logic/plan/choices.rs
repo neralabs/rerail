@@ -120,9 +120,8 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     c.cloned(&["DURABLE"], &DURABLE);
 }
 
-/// The store, the prepared program's key, the entries by path, the programs' texts by digest (with the run's lists,
-/// which the programs read from them take theirs from).
-type Held = (ContentStore, [u8; 32], HashMap<String, Vec<u8>>, (HashMap<[u8; 32], program_text::Stored>, Arc<crate::code_rule_dsl::logic::front::Lists>));
+/// The store, the prepared program's key, the entries by path, the programs' images by digest.
+type Held = (ContentStore, [u8; 32], HashMap<String, Vec<u8>>, HashMap<[u8; 32], Vec<u8>>);
 
 /// While held, this thread's runs keep their choices in the store at `path`, under prepared program `prepared`.
 pub(in crate::code_rule_dsl) struct Durable;
@@ -130,23 +129,23 @@ pub(in crate::code_rule_dsl) struct Durable;
 impl Durable {
     /// Every entry kept under `prepared` is read here, at once, before the run's first wave (decision 0104): a
     /// lookup in the waves reads memory only.
-    pub(in crate::code_rule_dsl) fn start(path: &std::path::Path, prepared: [u8; 32], late: Arc<Mutex<Vec<crate::content_store::SourceId>>>, lists: Arc<crate::code_rule_dsl::logic::front::Lists>) -> Durable {
+    pub(in crate::code_rule_dsl) fn start(path: &std::path::Path, prepared: [u8; 32], late: Arc<Mutex<Vec<crate::content_store::SourceId>>>) -> Durable {
         let store = ContentStore::open(path).ok();
         DURABLE.with(|d| {
             *d.borrow_mut() = store.map(|s| -> Arc<Held> {
                 let stored = read_all(&s, &prepared).unwrap_or_default();
-                // The rewritten programs' texts too, in one read: parsed when looked up (`decode_chosen`).
+                // The rewritten programs' images too, in one read: opened when looked up (`decode_chosen`).
                 let digests: Vec<[u8; 32]> = stored.values().filter_map(|entry| rewritten(entry)).collect();
-                let texts = program_text::texts(&s, &digests).unwrap_or_default();
-                late.lock().expect("the late sources").extend(texts.values().flat_map(|(_, ids)| ids.iter().copied()));
-                let texts = texts.into_iter().map(|(d, (text, _))| (d, text)).collect();
+                let images = program_text::stored(&s, &digests).unwrap_or_default();
+                late.lock().expect("the late sources").extend(images.values().flat_map(|(_, ids)| ids.iter().copied()));
+                let images = images.into_iter().map(|(d, (bytes, _))| (d, bytes)).collect();
                 // And the plans of its rules (decision 0116 step 2), for this thread's run to take.
                 let _span = super::super::profile::span(|| "kept plans, read from the store".into());
                 let (plans, ready) = read_plans(&s, &prepared).unwrap_or_default();
                 super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans and {} versions' prepared plans read from the store", plans.len(), ready.len()));
                 super::take_stored_plans(Arc::new(plans));
                 super::take_stored_prepared(ready);
-                Arc::new((s, prepared, stored, (texts, lists)))
+                Arc::new((s, prepared, stored, images))
             })
         });
         Durable
@@ -190,8 +189,8 @@ pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
     // 0.07 s of an edit's).
     let found = DURABLE.with(|d| {
         let d = d.borrow();
-        let (_, _, entries, texts) = &**d.as_ref()?;
-        entries.get(&path(key)).and_then(|entry| decode_chosen(&texts.0, entry, &texts.1))
+        let (_, _, entries, images) = &**d.as_ref()?;
+        entries.get(&path(key)).and_then(|entry| decode_chosen(images, entry))
     })?;
     keep(*key, found.clone());
     holds(found.nodes, nodes).then_some(found)
@@ -374,8 +373,8 @@ fn rewritten(entry: &[u8]) -> Option<[u8; 32]> {
     }
 }
 
-/// A choice's entry: its facts, and the rewritten program (`REWRITTEN`, its digest) read off its text in `texts`.
-fn decode_chosen(texts: &HashMap<[u8; 32], program_text::Stored>, entry: &[u8], lists: &crate::code_rule_dsl::logic::front::Lists) -> Option<Chosen> {
+/// A choice's entry: its facts, and the rewritten program (`REWRITTEN`, its digest) opened from its image in `images`.
+fn decode_chosen(images: &HashMap<[u8; 32], Vec<u8>>, entry: &[u8]) -> Option<Chosen> {
     let Ok(facts) = program_facts::decode(entry) else { return None };
     let nodes = match facts.get(SCALE).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Int(n)]) => *n as f64,
@@ -396,14 +395,9 @@ fn decode_chosen(texts: &HashMap<[u8; 32], program_text::Stored>, entry: &[u8], 
     };
     let version = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Str(digest)]) => {
-            let stored = texts.get(&unhex(&digest)?)?;
-            // A program kept as its image is read as it is: the image is the program's version, its rules in order.
-            // One kept as its text alone is read, and its image made: a program with no image is not taken.
-            let placed = match stored {
-                program_text::Stored::Image(bytes) => super::body::Placed::whole(crate::code_rule_dsl::logic::program_image::Version::open(bytes).ok()?),
-                program_text::Stored::Text(_) => super::body::Placed::of_program(&program_text::read_stored(stored, lists).ok()?).ok().filter(|p| p.whole)?,
-            };
-            Some(placed)
+            // The image is the program's version, read as it is, its rules in order.
+            let bytes = images.get(&unhex(&digest)?)?;
+            Some(super::body::Placed::whole(crate::code_rule_dsl::logic::program_image::Version::open(bytes).ok()?))
         }
         Some(_) => return None,
         None => None,
@@ -422,14 +416,13 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-/// `chosen` as its record's item carries it: its rewritten program (decision 0155), decoded from the version, and its
-/// facts entry. `None` for a program that does not read back the same: nothing is kept, and the next run chooses again.
+/// `chosen` as its record's item carries it: its rewritten program's image, and its facts entry. `None` for a program
+/// whose image is not made: nothing is kept, and the next run chooses again.
 fn encode(chosen: &Chosen) -> Option<(program_text::Packed, Vec<u8>)> {
     let mut facts = Facts::new();
     let mut programs = Vec::new();
     if let Some(version) = &chosen.version {
-        let program = version.program(&Default::default()).ok()?;
-        let encoded = program_text::encode(&program)?;
+        let encoded = program_text::encode_version(&version.v)?;
         facts.insert(REWRITTEN.to_owned(), vec![[Value::Str(hex(&encoded.digest).into())].into()]);
         programs.push(encoded);
     }

@@ -45,7 +45,6 @@ logic::program_image::passes	rerail-logic
 
 # Logic
 logic	rerail-logic
-logic::rr::from_tape	rerail-logic
 typing	rerail-logic
 waves::owner	rerail-logic
 waves::schedule	rerail-logic
@@ -196,10 +195,12 @@ embed	rerail-lang
 logic::rr	rerail-logic
 logic::rr::lower	rerail-rr
 logic::rr::check	rerail-rr
+logic::rr::clause	rerail-rr
 logic::rr::print	rerail-rr
 logic::rr::translate	rerail-rr
 logic::rr::aggregate_demand	rerail-rr
 logic::rr::tape_type	rerail-rr
+logic::rr::from_tape	rerail-rr
 device_metal	rerail-device-metal
 logic::profile::report	rerail-logic
 logic::profile::watch	rerail-logic

@@ -21,8 +21,8 @@
 //! and profiles, with `timed_plan`, T's planning timer) and its 1 GB page caches (over the 500 MB budget; SQLite's
 //! defaults instead).
 
-use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, components_of, strata};
-use super::program_image::{AtomRef, CmpOp, Lit, Slot as VarSlot, TermRef};
+use super::front::Value;
+use super::program_image::{AtomRef, CmpOp, Lit, Slot as VarSlot, TermRef, Version};
 use body::{Body, RuleKey, VarSet};
 use fields::Fields;
 use super::native::TOP;
@@ -148,15 +148,6 @@ pub enum Constant {
     Str(String),
 }
 
-pub fn constant(t: &Term) -> Option<Constant> {
-    match t {
-        Term::Int(i) => Some(Constant::Int(*i)),
-        Term::Branded(a) => Some(Constant::Int(a.value())),
-        Term::Str(s) => Some(Constant::Str(s.to_string())),
-        _ => None,
-    }
-}
-
 fn sql_constant(v: &SqlValue) -> Option<Constant> {
     match v {
         SqlValue::Integer(i) => Some(Constant::Int(*i)),
@@ -265,36 +256,9 @@ fn expect_axis_lookups(db: impl crate::code_rule_dsl::facts::vtab::Scoped, plan:
 /// An atom's binding pattern: its relation, and which columns are bound, constants by value (T's `atom_sig`).
 pub type Sig = (String, Vec<(usize, Option<Constant>)>);
 
-/// The rule an observed fanout belongs to (`Stats::obs`): its head and body, digested. A fanout through a bound
-/// column depends on which values the rule's bindings bring: `docof($x, $d)` with `$d` bound reads a whole document,
-/// and one rule's bindings fall in 11-node documents while another's fall in documents of thousands of nodes. Pooled
-/// over rules, the first set the second's estimate (`up_once`: 1,285 rows a binding, priced at 10).
-pub fn obs_rule(head: &Atom, body: &[Literal]) -> u64 {
-    // The rule's digest (`digest_atom`, `digest_literal`), not its text written out: it is asked at every search.
-    let d = super::derived::digest(|d| {
-        digest_atom(d, head);
-        d.u64(body.len() as u64);
-        body.iter().for_each(|l| digest_literal(d, l));
-    });
-    (d as u64) ^ ((d >> 64) as u64)
-}
-
 /// The positive atoms of a body: a body of one has one order.
 fn positive_atoms(b: &Body<'_>) -> usize {
     (0..b.len()).filter(|&i| matches!(b.view(i), Lit::Atom(a) if !a.neg())).count()
-}
-
-fn atom_sig(a: &Atom, bound: &BTreeSet<String>) -> Sig {
-    let cols = a
-        .args
-        .iter()
-        .enumerate()
-        .filter_map(|(c, t)| match t {
-            Term::Var(v) if bound.contains(v.as_str()) => Some((c, None)),
-            _ => constant(t).map(|k| (c, Some(k))),
-        })
-        .collect();
-    (a.rel.to_string(), cols)
 }
 
 /// Bindings a step must have seen before its observed fanout replaces the estimate.
@@ -596,15 +560,12 @@ impl Stats {
         (nodes > 0.0).then(|| sizes / nodes)
     }
 
-    pub fn empty(prog: &Program) -> Self {
-        Stats::with_kindsets(prog.kindsets.clone())
-    }
-    /// `empty`, of a lowered program read through its version's fields.
+    /// No statistics, of a lowered program read through its version's fields.
     pub fn empty_of_lowered(l: &lower::Lowered) -> Result<Self> {
         let placed = l.placed()?;
         Ok(Stats::empty_of(&placed.fields()?))
     }
-    /// `empty`, of a program read through its fields (`Fields::kindsets`).
+    /// No statistics, of a program read through its fields (`Fields::kindsets`).
     pub fn empty_of(f: &fields::Fields<'_>) -> Self {
         Stats::with_kindsets(f.kindsets().iter().map(|(k, ks)| (f.text(*k).to_owned(), ks.iter().map(|&a| f.text(a).to_owned()).collect())).collect())
     }
@@ -1208,52 +1169,6 @@ fn small_batches(rel: &str) -> bool {
 fn levels_of(h: &str, scc: &BTreeSet<String>) -> Option<[String; 5]> {
     let names = ["cand", "chk", "held", "gone", "live"].map(|s| format!("{h}__{s}"));
     names.iter().all(|n| scc.contains(n)).then_some(names)
-}
-
-/// The variable `l = r` assigns from its right side: `r` an unbound variable and `l` a bound variable or a constant
-/// (`$s = $a` with `$s` bound reads as `$a = $s`). Without it, `p($s), q($a), $s = $a` could only be ordered as a
-/// cross product of `p` and `q` narrowed after by the test (decision 0099 item 4: `fl4317_typing_root`, 14 k rows,
-/// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
-fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) -> Option<&'t crate::code_rule_dsl::logic::front::Name> {
-    if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != "=" {
-        return None;
-    }
-    let Term::Var(y) = r else { return None };
-    let ready = match l {
-        Term::Var(x) => bound.contains(x.as_str()),
-        Term::Int(_) | Term::Branded(_) | Term::Str(_) => true,
-        _ => false,
-    };
-    (ready && !bound.contains(y.as_str())).then_some(y)
-}
-
-pub fn is_join(l: &Literal) -> bool {
-    matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. })
-}
-
-/// Whether a filter can run: `$x = e` assigns $x if it is unbound when `e`'s variables are bound (SQL and the native
-/// `cat`/`eq` steps bind an unbound left side); otherwise it is a test. An equality of a bound variable or constant
-/// with an unbound variable, `$s = $a`, assigns the right side as `$a = $s` would (`binds_right`).
-pub fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
-    match l {
-        Literal::Atom(a) if a.neg => a.vars().is_subset(bound),
-        Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some() || binds_right(l, op, r, bound).is_some(),
-        Literal::Agg { var, over, atom, op } => {
-            let mut need = atom.vars();
-            need.remove(var);
-            if let Some(o) = over {
-                need.remove(o);
-            }
-            if let AggOp::Join { by, .. } = op {
-                by.iter().for_each(|b| {
-                    need.remove(b);
-                });
-            }
-            need.is_subset(bound)
-        }
-        Literal::Nearest { n, a, .. } => bound.contains(n) || bound.contains(a),
-        _ => true,
-    }
 }
 
 /// CPython's iteration order over a `frozenset` of small ints (the subset in `plan_rule`'s DP, whose ties go to the
@@ -2316,25 +2231,21 @@ fn skew(rel: &str, c: usize, what: u64) -> f64 {
 pub type Plan = (Vec<Step>, f64, f64);
 
 impl Model {
-    /// `prog`'s logical key and scalar analysis (`analysis`), made the first time it is asked for; `prog` is the
-    /// program this model plans.
-    pub fn analysis(&self, prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
+    /// The logical key and scalar analysis (`analysis`) of `v`, the program this model plans, made the first time
+    /// it is asked for.
+    pub fn analysis(&self, v: &Version) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
         std::sync::Arc::clone(self.analysis.get_or_init(|| {
             let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
-            let analysis = program_analysis(prog);
+            let analysis = program_analysis(v);
             let _explain = super::profile::span(|| "explain analysis".into());
             analysis.explain();
             analysis
         }))
     }
 
-    /// `analysis` of program `p`, a version: decoded for it the first time it is asked for (the analysis reads the
-    /// tree).
+    /// `analysis` of program `p`.
     pub fn analysis_of(&self, p: &body::Placed) -> Result<std::sync::Arc<super::analysis::ProgramAnalysis>> {
-        if let Some(a) = self.analysis.get() {
-            return Ok(std::sync::Arc::clone(a));
-        }
-        Ok(self.analysis(&p.program(&Default::default())?))
+        Ok(self.analysis(&p.v))
     }
 
     fn card(&self, rel: &str) -> f64 {
@@ -5142,34 +5053,13 @@ fn first_columns(args: &[TermRef<'_>]) -> HashMap<VarSlot, usize> {
     src
 }
 
-/// A digest of what a program's analysis and its whole-program passes read: each relation's columns and lattice
-/// keys, the inputs, the relations with facts, the natives, and the rules in order.
-fn program_digest(prog: &Program) -> u128 {
+/// A digest of what a program's analysis reads: the version's digest (its declarations, inputs, facts and `.about`
+/// fields, and its rules as a sum), and the rules in order.
+fn program_digest(v: &Version) -> u128 {
     super::derived::digest(|d| {
-        d.u64(prog.decls.len() as u64);
-        for (rel, cols) in &prog.decls {
-            d.str(rel);
-            d.u64(cols.len() as u64);
-            cols.iter().for_each(|(_, t)| d.str(t));
-        }
-        d.u64(prog.lattice.len() as u64);
-        for (rel, l) in &prog.lattice {
-            d.str(rel);
-            d.u64(l.keys as u64);
-        }
-        d.u64(prog.inputs.len() as u64);
-        prog.inputs.iter().for_each(|r| d.str(r));
-        let facts: Vec<&String> = prog.facts.iter().filter(|(_, v)| !v.is_empty()).map(|(r, _)| r).collect();
-        d.u64(facts.len() as u64);
-        facts.iter().for_each(|r| d.str(r));
-        d.u64(prog.natives.len() as u64);
-        prog.natives.keys().for_each(|r| d.str(r));
-        d.u64(prog.rules.len() as u64);
-        for r in &prog.rules {
-            digest_atom(d, &r.head);
-            d.u64(r.body.len() as u64);
-            r.body.iter().for_each(|l| digest_literal(d, l));
-        }
+        d.u64(v.digest());
+        d.u64(v.rules().count() as u64);
+        v.rules().for_each(|r| d.u64(r.hash()));
     })
 }
 
@@ -5177,7 +5067,7 @@ fn program_digest(prog: &Program) -> u128 {
 /// same programs again (its file-local part every run, a maintained part while the same strata change), and the
 /// analysis is a function of what the digest reads (each relation's columns and lattice keys, the inputs, the
 /// relations with facts, the natives, and the rules in order).
-fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
+fn program_analysis(prog: &Version) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
     type Kept = Vec<(u128, std::sync::Arc<super::analysis::ProgramAnalysis>)>;
     /// The programs analysed last, newest at the end: a few, as each holds a result per rule.
     const KEEP: usize = 4;
@@ -5219,6 +5109,19 @@ fn input_stats(stats: &mut Stats, ndv: &mut table::ColMap<f64>, width: Option<us
         stats.fan.insert((rel.to_owned(), col), if rows != 0 { sq as f64 / rows as f64 } else { 1.0 });
     }
     Ok(())
+}
+
+/// The program's join shape directives (`.shape`), by text, as the model reads them.
+pub fn shapes_of(f: &fields::Fields<'_>) -> std::sync::Arc<Vec<super::front::Shape>> {
+    std::sync::Arc::new(f.shapes().iter().map(|s| super::front::Shape {
+        head: f.text(s.head).to_owned(),
+        lit: f.text(s.lit).to_owned(),
+        wait: match &s.wait {
+            super::program_image::ShapeWaitRef::After(a) => super::front::ShapeWait::After(f.text(*a).to_owned()),
+            super::program_image::ShapeWaitRef::Bound(vs) => super::front::ShapeWait::Bound(vs.iter().map(|&a| f.text(a).to_owned()).collect()),
+        },
+        text: f.text(s.text).to_owned(),
+    }).collect::<Vec<_>>())
 }
 
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes, for the
@@ -5314,15 +5217,7 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
             stats.dfreq.insert((rel.to_owned(), col), counts);
         }
     }
-    let shapes = std::sync::Arc::new(f.shapes().iter().map(|s| super::front::Shape {
-        head: f.text(s.head).to_owned(),
-        lit: f.text(s.lit).to_owned(),
-        wait: match &s.wait {
-            super::program_image::ShapeWaitRef::After(a) => super::front::ShapeWait::After(f.text(*a).to_owned()),
-            super::program_image::ShapeWaitRef::Bound(vs) => super::front::ShapeWait::Bound(vs.iter().map(|&a| f.text(a).to_owned()).collect()),
-        },
-        text: f.text(s.text).to_owned(),
-    }).collect::<Vec<_>>());
+    let shapes = shapes_of(&f);
     // Input indexes as column lists, each ending in the rowid column if the table has one (SQLite appends it). The
     // vtabs answer the same probes as T's tables' indexes (`facts::vtab::syntax`), so they are listed as T's.
     if inputs.atoms.is_some() {
@@ -5397,7 +5292,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
         rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &[&["n"], &["a"]],
-        // A text test's symbols (decision 0037, `logic::strings::as_relations`).
+        // A text test's symbols (decision 0037, `preparation::text::TextRelations`).
         rel if rel.starts_with(super::strings::RELATION) => &[&["s"]],
         // A `match_all` regex's matches, by span and by match (`facts::vtab::syntax::Extra`).
         rel if rel.starts_with(super::strings::MATCHES) => &[&["sp"], &["m"]],
@@ -5823,11 +5718,13 @@ mod complete_answer_tests {
         // Its load requests are already complete, so loaded is in a later stratum, not their SCC.
         // Exercise that execution path with a whole demand batch, both all-held and mixed answers.
         for immediate in [0, 1] {
-            let mut program = super::super::front::parse(".decl seed(x:int)\n.decl req(x:int)\n.decl got(x:int)\n.decl shown(x:int)\nreq($x) :- seed($x).\nshown($x) :- got($x).\n.output shown\n").unwrap();
-            program.facts.insert("seed".into(), (0..1000).map(|n| super::super::front::List::from(vec![Value::Int(n)])).collect());
-            program.answers.insert("req".into(), vec!["got".into()]);
-            let lowered = lower::Given { domains: lower::domains(&program).unwrap(), program,
-                ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python }.image().unwrap();
+            use super::super::program_image::fields::FieldsMut as _;
+            let read = super::super::rr::parse_version(".decl seed(x:int)\n.decl req(x:int)\n.decl got(x:int)\n.decl shown(x:int)\nreq(x) :- seed(x).\nshown(x) :- got(x).\n.output shown\n").unwrap();
+            let mut b = super::super::program_image::Builder::on(&read);
+            b.fields().set_facts("seed", &(0..1000).map(|n| super::super::front::List::from(vec![Value::Int(n)])).collect::<Vec<_>>());
+            b.fields().set_field(super::super::program_facts::Field::Answers(&BTreeMap::from([("req".to_owned(), vec!["got".to_owned()])])));
+            let (program, _) = b.finish().unwrap();
+            let lowered = lower::Lowered::of_placed(body::Placed::whole(program.clone()), lower::domains_of(&program).unwrap(), [0; 3], crate::code_rule_dsl::language::GrammarDialect::Python);
             let path = crate::code_rule_dsl::fixtures::temp();
             let _store = crate::content_store::ContentStore::open(&path).unwrap();
             let db = Connection::open(&path).unwrap();
@@ -5946,25 +5843,6 @@ pub fn input_views() -> u64 {
     run_counts().input_views.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The relations of `prog` whose one rule's body is a single atom of distinct variables and wildcards.
-pub fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
-    let mut by_head: HashMap<&str, Vec<&Rule>> = HashMap::new();
-    for r in &prog.rules {
-        by_head.entry(r.head.rel.as_str()).or_default().push(r);
-    }
-    by_head
-        .into_iter()
-        .filter_map(|(rel, rules)| {
-            let [r] = rules.as_slice() else { return None };
-            let [Literal::Atom(a)] = r.body.as_slice() else { return None };
-            let vars: Vec<&crate::code_rule_dsl::logic::front::Name> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
-            let plain = !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild | Term::Int(_) | Term::Branded(_))) && vars.iter().collect::<HashSet<_>>().len() == vars.len();
-            let eqs = a.args.iter().enumerate().filter_map(|(c, t)| match t { Term::Int(v) => Some((c, *v)), Term::Branded(a) => Some((c, a.value())), _ => None }).collect();
-            plain.then(|| (rel.to_owned(), eqs))
-        })
-        .collect()
-}
-
 /// A run's inputs: the program's, borrowed from its version, and those its maintained forms added (their old rows
 /// and the deltas they read), owned, since a form's version is the run's and moves with it.
 #[derive(Clone, Default)]
@@ -5985,13 +5863,6 @@ impl<'a> Run<'a, '_> {
     /// The current program's fields (`fields::Fields`), read from its version.
     fn fields(&self) -> Fields<'_> {
         self.versions.whole(self.version)
-    }
-    /// The tree of rule `k`, a rule of one of the run's versions, decoded: for the readers that still read the tree
-    /// (the fixpoints' made rules, the profile's rule text).
-    fn tree(&self, k: RuleKey) -> Rule {
-        let p = self.versions.placed(k.version());
-        let lists = super::front::Lists::default();
-        super::program_image::Tree::new(&p.v, &lists).rule(p.rule(k.index()))
     }
 
     /// A composite index on each derived relation for every bound-column pattern the plan probes it with.
@@ -6731,7 +6602,7 @@ impl<'a> Run<'a, '_> {
         let (texts, k) = match given {
             Some(found) => found,
             None => {
-                // The program's tests, as `as_relations` numbered them: one vocabulary for the run's every test.
+                // The program's tests, as `preparation::text::TextRelations` numbered them: one vocabulary for the run's every test.
                 let f = self.fields();
                 let mut specs: Vec<(String, Vec<String>)> = f.natives().iter().filter_map(|n| match &n.spec {
                     super::program_image::NativeSpec::TextTest { op, patterns, .. } => Some((f.text(*op).to_owned(), patterns.iter().map(|&p| f.text(p).to_owned()).collect())),
@@ -7373,107 +7244,56 @@ fn recursive<'v>(b: &Body<'v>, scc: &BTreeSet<String>) -> Vec<(usize, &'v str)> 
         .collect()
 }
 
-fn atom_of(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }
-}
-
-/// A native spec's token for a constant.
-/// A term, atom or literal written into a derived value's inputs (`logic::derived`), field by field: the same
-/// pieces in the same order as its text, without making the text.
-fn digest_term(d: &mut super::derived::Inputs, t: &Term) {
+/// Term `t` of `v`'s rule `r`, to write into a builder of another version: its names by their text.
+fn term_text<'v>(v: &'v Version, r: super::program_image::RuleRef<'v>, t: TermRef<'v>) -> super::program_image::T<'v> {
+    use super::program_image::T;
     match t {
-        Term::Var(v) => {
-            d.u64(0);
-            d.str(v);
-        }
-        Term::Wild => d.u64(1),
-        Term::Int(i) => {
-            d.u64(2);
-            d.u64(*i as u64);
-        }
-        Term::Str(s) => {
-            d.u64(3);
-            d.str(s);
-        }
-        Term::Top => d.u64(4),
-        Term::Call(f, args) => {
-            d.u64(5);
-            d.str(f);
-            d.u64(args.len() as u64);
-            args.iter().for_each(|a| digest_term(d, a));
-        }
-        Term::Branded(b) => {
-            d.u64(6);
-            d.u64(b.class as u64);
-            d.u64(u64::from(b.atom));
-        }
+        TermRef::Var(s) => T::Var(v.text(r.var(s))),
+        TermRef::Wild => T::Wild,
+        TermRef::Top => T::Top,
+        TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
+        TermRef::Str(a) => T::Str(v.text(a)),
+        TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| term_text(v, r, a)).collect()),
     }
 }
 
-fn digest_atom(d: &mut super::derived::Inputs, a: &Atom) {
-    d.str(&a.rel);
-    d.u64(u64::from(a.neg) | u64::from(a.gated) << 1);
-    d.u64(a.args.len() as u64);
-    a.args.iter().for_each(|t| digest_term(d, t));
+/// A rule a fixpoint makes of a part of one of the program's (`native_fixpoint`'s parts, an edge table's rest): its
+/// head, the atoms written before its body (`pre`), and its body, literals of `from`'s rule by place.
+struct Part<'v> {
+    rel: String,
+    head: Vec<super::program_image::T<'v>>,
+    pre: Vec<(&'static str, Vec<super::program_image::T<'v>>)>,
+    from: (&'v Version, super::program_image::RuleRef<'v>),
+    lits: Vec<usize>,
 }
 
-fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
-    match l {
-        Literal::Atom(a) => {
-            d.u64(0);
-            digest_atom(d, a);
+/// `parts`, rules of a version of their own (their literals copied by their names), in order: each planned alone.
+fn made_parts<'a, 'v: 'a>(parts: impl IntoIterator<Item = &'a Part<'v>>) -> Result<Arc<Version>> {
+    let mut b = super::program_image::Builder::base();
+    for p in parts {
+        let rel = b.rel(&p.rel);
+        let mut rule = b.rule().head(rel, &p.head);
+        for (pre, args) in &p.pre {
+            let pre = rule.builder().rel(pre);
+            rule = rule.atom(pre, args);
         }
-        Literal::Cmp { l, op, r } => {
-            d.u64(1);
-            d.str(op);
-            digest_term(d, l);
-            digest_term(d, r);
+        let (v, r) = p.from;
+        let lits: Vec<_> = r.body().collect();
+        for &i in &p.lits {
+            rule = rule.lit(v, r, lits[i]);
         }
-        Literal::Agg { var, op, over, atom } => {
-            d.u64(2);
-            d.str(var);
-            match op {
-                AggOp::Join { by, sep } => {
-                    d.u64(4);
-                    d.u64(by.len() as u64);
-                    by.iter().for_each(|b| d.str(b));
-                    d.str(sep);
-                }
-                // Each aggregate its own tag: `sum` and `product` over one atom are different values.
-                AggOp::Count => d.u64(0),
-                AggOp::Min => d.u64(1),
-                AggOp::Max => d.u64(2),
-                AggOp::Sum => d.u64(3),
-                AggOp::Product => d.u64(5),
-            }
-            d.str(over.as_deref().unwrap_or("\u{0}"));
-            digest_atom(d, atom);
-        }
-        Literal::Nearest { n, a, kindset } => {
-            d.u64(3);
-            d.str(n);
-            d.str(a);
-            d.str(kindset);
-        }
-        Literal::Ast { document, node, matcher, captures } => {
-            d.u64(4);
-            d.str(document);
-            d.str(node);
-            d.str(matcher);
-            d.u64(captures.len() as u64);
-            for (k, v) in captures {
-                d.str(k);
-                d.str(v);
-            }
-        }
+        rule.finish().map_err(Error::Plan)?;
     }
+    b.finish().map(|(v, _)| v).map_err(Error::Plan)
 }
 
-fn const_tok(t: &Term) -> Option<Tok> {
+/// A native spec's token for a constant term of `v`.
+fn const_tok(v: &Version, t: TermRef<'_>) -> Option<Tok> {
     match t {
-        Term::Int(i) => Some(Tok::Int(*i)),
-        Term::Branded(a) => Some(Tok::Int(a.value())),
-        Term::Str(s) => Some(Tok::Sym(s.to_string())),
+        TermRef::Int(i) => Some(Tok::Int(i)),
+        TermRef::Branded(a) => Some(Tok::Int(a.value())),
+        TermRef::Str(s) => Some(Tok::Sym(v.text(s).to_owned())),
         _ => None,
     }
 }
@@ -8427,12 +8247,14 @@ impl<'a> Run<'a, '_> {
             // Its recheck: the rule run once per candidate row, its head's variables bound before its first step. The
             // planner prices its orders from that binding and one row, and keeps the order chosen under the recheck's
             // own key (`Body::with_head_bound`, Q208), taken or priced again as the other lines' are.
-            // Where that order has no native join (a step that runs one way only, `docof` from its node), the rule's
-            // own order: correct with the head bound too, its binds then tests.
+            // Its spec is written with the head's variables bound, as the order was priced (`join_spec_made`): a step
+            // that runs one way only (`docof` from its node) reads its bound side. Where no native join is made, the
+            // rule's own order: correct with the head bound too, its binds then tests (0364 R7 counts it).
             let bound = b.with_head_bound();
             self.model.late(pf, &bound, None, false)?;
             plan_site("the maintain mode's recheck");
             let priced = match self.model.plan_rule_reused(pf, &bound, None) {
+                // The spec of the order as priced: its head's variables bound before its first step (`with_head_bound`).
                 Ok(((order, _, _), _)) => self.whole_join_spec(&bound, &order, None, &ri, scc, &native_rels).map(|spec| (spec, self.model.reused_key(&bound, None))),
                 Err(_) => None,
             };
@@ -9166,7 +8988,7 @@ impl<'a> Run<'a, '_> {
         if let Some(dir) = std::env::var_os("RERAIL_SPIKE_SPECS") {
             let cpu = { let (u, s) = corpus::thread_usage(); u + s };
             eprintln!("O125 stratum {name} ({} relations, {} rules) at {:.1} s CPU", rels.len(), rules.len(), cpu);
-            let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|&r| self.tree(r).to_string()).collect::<Vec<_>>().join("\n"), spec.to_text()));
+            let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|&r| { let (v, rule) = self.versions.rule_at(r); v.show_rule(rule) }).collect::<Vec<_>>().join("\n"), spec.to_text()));
         }
         let started = std::time::Instant::now();
         // Where it runs (decision 0095 §7, §8). A stratum the placement puts on the device says so in its spec
@@ -10389,66 +10211,69 @@ impl<'a> Run<'a, '_> {
         if !fields.lattice(rel) || fields.width(rel) != 2 {
             return Ok(false);
         }
-        let mut parts: Vec<(&str, Atom, Vec<Literal>)> = Vec::new();
+        let mut parts: Vec<(&str, Part<'_>)> = Vec::new();
         for &k in rules {
-            // The parts are made rules, trees (`Literal`s cloned from the rule's).
-            let r = self.tree(k);
-            let (h, body) = (&r.head, &r.body);
-            let rec: Vec<&Atom> = body.iter().filter_map(|l| if let Literal::Atom(a) = l && a.rel == *rel { Some(a) } else { None }).collect();
-            let rest: Vec<Literal> = body.iter().filter(|l| !matches!(l, Literal::Atom(a) if a.rel == *rel)).cloned().collect();
-            if rec.iter().any(|a| a.neg) {
+            let (v, r) = vs.rule_at(k);
+            let lits: Vec<super::program_image::LitRef<'_>> = r.body().collect();
+            let rec: Vec<AtomRef<'_>> = lits.iter().filter_map(|l| match l.view() {
+                Lit::Atom(a) if v.rel_name(a.rel()) == rel.as_str() => Some(a),
+                _ => None,
+            }).collect();
+            let rest: Vec<usize> = (0..lits.len()).filter(|&i| !matches!(lits[i].view(), Lit::Atom(a) if v.rel_name(a.rel()) == rel.as_str())).collect();
+            if rec.iter().any(|a| a.neg()) {
                 return Ok(false);
             }
-            let rvals: BTreeSet<&crate::code_rule_dsl::logic::front::Name> = rec.iter().filter_map(|a| if let Term::Var(v) = &a.args[1] { Some(v) } else { None }).collect();
-            if rvals.len() != rec.len() || rest.iter().any(|l| l.vars().iter().any(|v| rvals.iter().any(|r| r.as_str() == v.as_str()))) {
+            fn arg(a: AtomRef<'_>, c: usize) -> TermRef<'_> {
+                a.args().nth(c).expect("a column")
+            }
+            let rvals: BTreeSet<VarSlot> = rec.iter().filter_map(|&a| arg(a, 1).var()).collect();
+            if rvals.len() != rec.len() || rest.iter().any(|&i| rvals.iter().any(|&s| body::lit_vars(lits[i]).contains(s))) {
                 return Ok(false);
             }
-            let (key, val) = (&h.args[0], &h.args[1]);
-            let kinds: Vec<usize> = body
-                .iter()
-                .enumerate()
-                .filter(|(_, l)| {
-                    matches!(l, Literal::Atom(a) if !a.neg && a.rel == "kind" && matches!((key, &a.args[0]), (Term::Var(k), Term::Var(x)) if k == x))
-                })
-                .map(|(i, _)| i)
+            let mut head = r.head().args();
+            let (key, val) = (head.next().expect("a key"), head.next().expect("a value"));
+            let kinds: Vec<usize> = (0..lits.len())
+                .filter(|&i| matches!(lits[i].view(), Lit::Atom(a) if !a.neg() && v.rel_name(a.rel()) == "kind" && key.var().is_some() && arg(a, 0).var() == key.var()))
                 .collect();
-            let mut val_vars = BTreeSet::new();
-            val.vars(&mut val_vars);
-            let kseed = match (key, kinds.as_slice()) {
-                (Term::Var(kn), [ki]) if rec.is_empty() && native.contains("kseed") => {
-                    let Literal::Atom(ka) = &body[*ki] else { unreachable!() };
-                    matches!(&ka.args[1], Term::Var(_))
-                        && body.iter().enumerate().all(|(i, l)| i == *ki || !l.vars().contains(kn.as_str()))
-                        && !val_vars.contains(kn.as_str())
+            let mut val_vars = VarSet::new();
+            body::term_vars(val, &mut val_vars);
+            let kseed = match (key.var(), kinds.as_slice()) {
+                (Some(kn), [ki]) if rec.is_empty() && native.contains("kseed") => {
+                    let Lit::Atom(ka) = lits[*ki].view() else { unreachable!() };
+                    arg(ka, 1).var().is_some() && (0..lits.len()).all(|i| i == *ki || !body::lit_vars(lits[i]).contains(kn)) && !val_vars.contains(kn)
                 }
                 _ => false,
             };
+            let t = |t| term_text(v, r, t);
+            let part = |rel: String, head, lits: Vec<usize>| Part { rel, head, pre: Vec::new(), from: (v, r), lits };
             if kseed {
                 // A per-kind default (`R($n, v) :- kind($n, $k), <tests of $k>`): evaluated over the distinct kinds,
                 // and the native side seeds every node of those kinds from the tape. No row per node.
-                let Literal::Atom(ka) = &body[kinds[0]] else { unreachable!() };
-                let k = ka.args[1].clone();
-                let mut b = vec![Literal::Atom(atom_of("rdl_kinds".to_owned(), vec![k.clone()]))];
-                b.extend(body.iter().enumerate().filter(|(i, _)| *i != kinds[0]).map(|(_, l)| l.clone()));
-                parts.push(("kseed", atom_of(format!("lfx_{rel}_kseed"), vec![k, val.clone()]), b));
+                let Lit::Atom(ka) = lits[kinds[0]].view() else { unreachable!() };
+                let k = t(arg(ka, 1));
+                let mut seed = part(format!("lfx_{rel}_kseed"), vec![k.clone(), t(val)], (0..lits.len()).filter(|&i| i != kinds[0]).collect());
+                seed.pre.push(("rdl_kinds", vec![k]));
+                parts.push(("kseed", seed));
             } else if rec.is_empty() {
-                parts.push(("seed", atom_of(format!("lfx_{rel}_seed"), vec![key.clone(), val.clone()]), body.to_vec()));
-            } else if rec.len() == 1 && matches!((val, &rec[0].args[1]), (Term::Var(v), Term::Var(x)) if v == x) {
-                parts.push(("copy", atom_of(format!("lfx_{rel}_copy"), vec![key.clone(), rec[0].args[0].clone()]), rest));
-            } else if let Term::Call(f, a) = val
+                parts.push(("seed", part(format!("lfx_{rel}_seed"), vec![t(key), t(val)], (0..lits.len()).collect())));
+            } else if rec.len() == 1 && val.var().is_some() && val.var() == arg(rec[0], 1).var() {
+                parts.push(("copy", part(format!("lfx_{rel}_copy"), vec![t(key), t(arg(rec[0], 0))], rest)));
+            } else if let TermRef::Call(f, a) = val
                 && rec.len() == 2
-                && f == "flat_bin"
-                && matches!((&a[1], &rec[0].args[1]), (Term::Var(v), Term::Var(x)) if v == x)
-                && matches!((&a[2], &rec[1].args[1]), (Term::Var(v), Term::Var(x)) if v == x)
+                && v.text(f) == "flat_bin"
+                && let [op, l, right, ..] = a.collect::<Vec<_>>()[..]
+                && l.var().is_some()
+                && l.var() == arg(rec[0], 1).var()
+                && right.var().is_some()
+                && right.var() == arg(rec[1], 1).var()
             {
-                let head = atom_of(format!("lfx_{rel}_bin"), vec![key.clone(), a[0].clone(), rec[0].args[0].clone(), rec[1].args[0].clone()]);
-                parts.push(("bin", head, rest));
+                parts.push(("bin", part(format!("lfx_{rel}_bin"), vec![t(key), t(op), t(arg(rec[0], 0)), t(arg(rec[1], 0))], rest)));
             } else {
                 return Ok(false);
             }
         }
         let schema = self.model.inputs.facts.trim_end_matches('.').to_owned();
-        let has_kseed = parts.iter().any(|(k, _, _)| *k == "kseed");
+        let has_kseed = parts.iter().any(|(k, _)| *k == "kseed");
         if has_kseed && !self.views.contains("rdl_kinds") {
             self.db.execute(&format!("CREATE TEMP VIEW rdl_kinds AS SELECT kind AS c0 FROM {}stat_kind", self.model.inputs.stats), [])?;
             Arc::make_mut(&mut self.views).insert("rdl_kinds".to_owned());
@@ -10467,14 +10292,13 @@ impl<'a> Run<'a, '_> {
             }
         }
         // Each part a rule of its own, planned as any rule is.
-        let part_rules: Vec<Rule> = parts.iter().map(|(_, head, body)| Rule { head: head.clone(), body: body.clone().into() }).collect();
-        let made = body::made(&part_rules)?;
-        for (k, (_, head, _)) in parts.iter().enumerate() {
-            let part = body::nth(&made, k);
-            let (order, _, _) = self.model.plan_rule(pf, &part, None)?;
-            self.ensure_indexes(Order::new(&part, &order))?;
-            let select = self.model.sql_select(pf, &part, &order, None, None)?;
-            self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&head.rel)), [])?;
+        let made = made_parts(parts.iter().map(|(_, p)| p))?;
+        for (k, (_, part)) in parts.iter().enumerate() {
+            let b = body::nth(&made, k);
+            let (order, _, _) = self.model.plan_rule(pf, &b, None)?;
+            self.ensure_indexes(Order::new(&b, &order))?;
+            let select = self.model.sql_select(pf, &b, &order, None, None)?;
+            self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&part.rel)), [])?;
         }
         // Over atoms a transfer's operator is its name atom; `lattice_fixpoint` reads the operator's text.
         if let Some([plus, minus, times]) = self.model.inputs.atoms {
@@ -10529,40 +10353,44 @@ impl<'a> Run<'a, '_> {
             let card = prior_stats(&mut self.model, pf, r).map_or(rows.max(1.0), |n| n.max(rows.max(1.0)));
             self.model.stats.card.insert((*r).clone(), card);
         }
-        let var_type = |v: &str, body: &[Literal]| -> Option<char> {
-            body.iter().find_map(|l| match l {
-                Literal::Atom(a) if !a.neg => a
-                    .args
-                    .iter()
-                    .position(|t| matches!(t, Term::Var(x) if x == v))
-                    .map(|c| sym_char(&self.model.inputs, fields.types(a.rel.as_str())[c])),
+        // The type the first positive atom of literals `rest` of `v`'s rule `r` that names variable `x` gives it.
+        let var_type = |v: &Version, r: super::program_image::RuleRef<'_>, x: &str, rest: &[usize]| -> Option<char> {
+            let lits: Vec<_> = r.body().collect();
+            rest.iter().find_map(|&i| match lits[i].view() {
+                Lit::Atom(a) if !a.neg() => a
+                    .args()
+                    .position(|t| t.var().is_some_and(|s| v.text(r.var(s)) == x))
+                    .map(|c| sym_char(&self.model.inputs, fields.types(v.rel_name(a.rel()))[c])),
                 _ => None,
             })
         };
         let tables: HashMap<String, (String, String)> = rels.iter().map(|r| ((*r).clone(), (format!("sfx_f_{r}"), format!("sfx_d_{r}")))).collect();
         let types = |r: &str| fields.types(r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
         let mut lines: Vec<SpecLine> = rels.iter().map(|r| SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::Rows }).collect();
-        let mut edges: Vec<(Atom, Vec<Literal>, Vec<Step>, Arc<super::program_image::Version>)> = Vec::new();
+        // Each edge table: its name, its width, the plan of the rest that fills it, and the rest as a version.
+        let mut edges: Vec<(String, usize, Vec<Step>, Arc<Version>)> = Vec::new();
         let mut probes: Vec<(RuleKey, Vec<Step>, usize, usize)> = Vec::new();
         for (j, &k) in rules.iter().enumerate() {
-            // The edge's parts are made rules, trees (`Literal`s cloned from the rule's).
-            let r = self.tree(k);
-            let (h, body) = (&r.head, &r.body);
             let rec = recursive(&vs.at(k), scc);
             if rec.is_empty() {
                 continue;
             }
-            // The rule's recursive atom, as the tree (the edge's parts are trees, t36 item 7, step 5).
+            let (v, r) = vs.rule_at(k);
+            let lits: Vec<super::program_image::LitRef<'_>> = r.body().collect();
             if let [(ai, _)] = rec[..]
-                && let Literal::Atom(a) = &body[ai]
+                && let Lit::Atom(a) = lits[ai].view()
             {
-                let rest: Vec<Literal> = body.iter().enumerate().filter(|(i, _)| *i != ai).map(|(_, l)| l.clone()).collect();
+                let rest: Vec<usize> = (0..lits.len()).filter(|&i| i != ai).collect();
+                let name = |s: VarSlot| v.text(r.var(s));
+                let names = |vars: &VarSet| vars.iter().map(name).map(str::to_owned).collect::<BTreeSet<String>>();
                 // The spec line and edge plan of a linear rule, or the reason it is a probe.
-                let edge_rule = || -> Result<std::result::Result<(SpecLine, Option<(Atom, Vec<Literal>, Vec<Step>, Arc<super::program_image::Version>)>), String>> {
-                    let restvars: BTreeSet<String> = rest.iter().flat_map(|l| l.vars()).collect();
-                    let mut hvars = BTreeSet::new();
-                    h.args.iter().for_each(|t| t.vars(&mut hvars));
-                    let avars = a.vars();
+                let edge_rule = || -> Result<std::result::Result<(SpecLine, Option<(String, usize, Vec<Step>, Arc<Version>)>), String>> {
+                    let mut rv = VarSet::new();
+                    rest.iter().for_each(|&i| rv.extend(&body::lit_vars(lits[i])));
+                    let (mut hv, mut av) = (VarSet::new(), VarSet::new());
+                    r.head().args().for_each(|t| body::term_vars(t, &mut hv));
+                    a.args().for_each(|t| body::term_vars(t, &mut av));
+                    let (restvars, hvars, avars) = (names(&rv), names(&hv), names(&av));
                     let key: Vec<String> = avars.intersection(&restvars).cloned().collect();
                     let ecols: Vec<String> = hvars.intersection(&restvars).filter(|v| !avars.contains(*v)).cloned().collect();
                     if hvars.iter().any(|v| !avars.contains(v) && !restvars.contains(v)) {
@@ -10570,38 +10398,39 @@ impl<'a> Run<'a, '_> {
                     }
                     let slot: HashMap<&str, usize> = avars.iter().chain(&ecols).enumerate().map(|(i, v)| (v.as_str(), i)).collect();
                     let mut pat = Vec::new();
-                    for t in &a.args {
+                    for t in a.args() {
                         pat.push(match t {
-                            Term::Wild => Tok::Wild,
-                            Term::Var(v) => Tok::Slot(slot[v.as_str()]),
-                            Term::Int(_) | Term::Branded(_) | Term::Str(_) => const_tok(t).expect("a constant"),
+                            TermRef::Wild => Tok::Wild,
+                            TermRef::Var(s) => Tok::Slot(slot[name(s)]),
+                            TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => const_tok(v, t).expect("a constant"),
                             _ => return Ok(Err("pattern term".to_owned())),
                         });
                     }
                     let mut head = Vec::new();
-                    for t in &h.args {
+                    for t in r.head().args() {
                         head.push(match t {
-                            Term::Var(v) => HeadTok::Tok(Tok::Slot(slot[v.as_str()])),
-                            Term::Int(_) | Term::Branded(_) | Term::Str(_) => HeadTok::Tok(const_tok(t).expect("a constant")),
-                            Term::Call(f, xs) if f == "cat" && xs.iter().all(|x| matches!(x, Term::Var(_))) => {
-                                let (Term::Var(x0), Term::Var(x1)) = (&xs[0], &xs[1]) else { unreachable!() };
-                                HeadTok::Cat(slot[x0.as_str()], slot[x1.as_str()])
-                            }
+                            TermRef::Var(s) => HeadTok::Tok(Tok::Slot(slot[name(s)])),
+                            TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => HeadTok::Tok(const_tok(v, t).expect("a constant")),
+                            TermRef::Call(f, xs) if v.text(f) == "cat" => match xs.collect::<Vec<_>>()[..] {
+                                [TermRef::Var(x0), TermRef::Var(x1), ..] => HeadTok::Cat(slot[name(x0)], slot[name(x1)]),
+                                _ => return Ok(Err("head term".to_owned())),
+                            },
                             _ => return Ok(Err("head term".to_owned())),
                         });
                     }
                     let mut edge = None;
                     let src = if !rest.is_empty() {
-                        if !rest.iter().any(|l| matches!(l, Literal::Atom(x) if !x.neg)) {
+                        if !rest.iter().any(|&i| matches!(lits[i].view(), Lit::Atom(x) if !x.neg())) {
                             return Ok(Err("rest has no atom".to_owned()));
                         }
                         // A rest sharing no variable (a constant test) has no edge table to keep.
                         if key.is_empty() && ecols.is_empty() {
                             return Ok(Err("rest binds no variable".to_owned()));
                         }
-                        let ehead = atom_of(format!("sfx_{}_{j}", h.rel), key.iter().chain(&ecols).map(|v| Term::Var(v.clone().into())).collect());
+                        let ehead = format!("sfx_{}_{j}", v.rel_name(r.head().rel()));
+                        let cols: Vec<&str> = key.iter().chain(&ecols).map(String::as_str).collect();
                         // The rest, a rule of its own under the edge table's head.
-                        let made = body::made(&[Rule { head: ehead.clone(), body: rest.clone().into() }])?;
+                        let made = made_parts([&Part { rel: ehead.clone(), head: cols.iter().map(|c| super::program_image::T::Var(c)).collect(), pre: Vec::new(), from: (v, r), lits: rest.clone() }])?;
                         let Ok((order, work, _)) = self.model.plan_rule(pf, &body::nth(&made, 0), None) else {
                             return Ok(Err("rest cannot be planned alone".to_owned()));
                         };
@@ -10612,15 +10441,15 @@ impl<'a> Run<'a, '_> {
                         if work > delta {
                             return Ok(Err(format!("edges cost {work:.0} > one delta pass {delta:.0}")));
                         }
-                        let t: String = key.iter().chain(&ecols).map(|v| var_type(v, &rest).unwrap_or('i')).collect();
-                        let src = Some((ehead.rel.to_string(), t));
-                        edge = Some((ehead, rest.clone(), order, made));
+                        let t: String = cols.iter().map(|x| var_type(v, r, x, &rest).unwrap_or('i')).collect();
+                        let src = Some((ehead.clone(), t));
+                        edge = Some((ehead, cols.len(), order, made));
                         src
                     } else {
                         None
                     };
                     let vs = |vs: &[String]| vs.iter().map(|v| slot[v.as_str()]).collect::<Vec<_>>();
-                    let line = SpecLine::Edge(EdgeSpec { head: ri[h.rel.as_str()], src: ri[a.rel.as_str()], edge: src, key: vs(&key), ecols: vs(&ecols), pat, out: head });
+                    let line = SpecLine::Edge(EdgeSpec { head: ri[v.rel_name(r.head().rel())], src: ri[v.rel_name(a.rel())], edge: src, key: vs(&key), ecols: vs(&ecols), pat, out: head });
                     Ok(Ok((line, edge)))
                 };
                 if let Ok((line, edge)) = edge_rule()? {
@@ -10641,14 +10470,14 @@ impl<'a> Run<'a, '_> {
             let select = self.model.sql_select(pf, b, order, None, None)?;
             self.insert_rows(h, &select)?;
         }
-        for (ehead, _, order, made) in &edges {
+        for (ehead, width, order, made) in &edges {
             let b = body::nth(made, 0);
             self.ensure_indexes(Order::new(&b, order))?;
-            let cols = (0..ehead.args.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-            self.db.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TEMP TABLE {0}({cols});", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)))?;
-            if !ehead.args.is_empty() {
+            let cols = (0..*width).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
+            self.db.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TEMP TABLE {0}({cols});", crate::code_rule_dsl::logic::sql::ident(ehead)))?;
+            if *width > 0 {
                 let select = self.model.sql_select(pf, &body::nth(made, 0), order, None, None)?;
-                self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)), [])?;
+                self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(ehead)), [])?;
             }
         }
         let join = self.model.inputs.native.contains("join");
@@ -10721,22 +10550,22 @@ impl<'a> Run<'a, '_> {
 
 }
 
-/// Evaluates `prog` over the facts database at `facts` (T's `run_sql`, pure SQL mode): views for projections of
+/// Evaluates program `v` over the facts database at `facts` (T's `run_sql`, pure SQL mode): views for projections of
 /// one input, typed tables for the rest, then each stratum planned from the statistics and the counts of the strata
 /// before it, non-recursive ones once and recursive ones semi-naively.
-pub fn run_sql(prog: &Program, facts: &Path) -> Result<Outcome> {
+pub fn run_sql(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, facts: &Path) -> Result<Outcome> {
     let db = Connection::open_in_memory()?;
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
     // (DISTINCT, sorts, materialized subqueries) in memory.
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
-    run(&body::Placed::of_program(prog)?, &db, Inputs::file(), None, Hooks::default())
+    run(&body::Placed::whole(v), &db, Inputs::file(), None, Hooks::default())
 }
 
 /// `run_sql` with T's `RDL_NATIVE` modes (`native_modes`). `load` registers T's extension functions on the run's
 /// connection before anything runs, as T's `run_sql` loads `RDL_EXT`.
 pub fn run_sql_native(
-    prog: &Program,
+    v: Arc<crate::code_rule_dsl::logic::program_image::Version>,
     facts: &Path,
     modes: &str,
     load: impl FnOnce(&Connection) -> rusqlite::Result<()>,
@@ -10745,7 +10574,7 @@ pub fn run_sql_native(
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
     load(&db)?;
-    run(&body::Placed::of_program(prog)?, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, Hooks::default())
+    run(&body::Placed::whole(v), &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, Hooks::default())
 }
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
@@ -10771,7 +10600,7 @@ pub fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Resu
 
 /// `run_atoms` with T's native modes (O13): the components a mode takes run in `logic::native` (registered on
 /// `db`) over atoms, the rest in SQL. T's `nearest` and `kseed` modes read a per-run copy of the tree
-/// (`tape_load`), which is not kept: `nearest` is the transducer's (`Lowered::transduce_nearest`), so those two
+/// (`tape_load`), which is not kept: `nearest` is the transducer's (`preparation::nearest`), so those two
 /// modes are dropped from `modes`.
 pub fn run_atoms_native(lowered: &lower::Lowered, db: &Connection, stats: &str, modes: &str) -> Result<Outcome> {
     let mut native = native_modes(modes);
@@ -10813,7 +10642,7 @@ pub struct Hooks<'a> {
     pub unload: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Answers the requests a component makes, inside the fixpoint (decision 0065 §2a).
     pub answer: Option<Answer<'a>>,
-    /// The run's text tests (`strings::as_relations`): a test over strings the run answers (`front::Native::TextTest`)
+    /// The run's text tests (`preparation::text::TextRelations`): a test over strings the run answers (`front::Native::TextTest`)
     /// tests them with every other test at once, each string once a run, as the batches do. Without it the run
     /// makes its own from the program's tests.
     pub texts: Option<Arc<super::strings::Vocabulary>>,
@@ -11062,25 +10891,26 @@ fn view_digest(reads: Option<&[(String, u64)]>, members: &[(String, Option<u64>)
 /// changes when any rule it is derived from does. A relation no rule derives (an input, the program's facts) is
 /// named by its name, its declaration and its facts. `sccs` in the order the strata run.
 ///
-/// Read from the program's version: `f` its fields, its rules (`by_stratum`'s) by their handles in `vs`. The digest
-/// is of the tree's text (`tree_text`), written from the handles, so it is the one the tree's gave.
+/// Read from the program's version (0173 step 6): `f` its fields, its rules (`by_stratum`'s) by their handles in `vs`,
+/// each in the digest by its image hash (`RuleRef::hash`, of its texts and values, the same in every process), and
+/// each relation by its parts' (`identity_parts`).
 pub fn identities(f: Fields<'_>, vs: &body::Versions, sccs: &[BTreeSet<String>], by_stratum: &[Vec<RuleKey>]) -> HashMap<String, [u8; 32]> {
     use sha2::{Digest as _, Sha256};
     let leaf = |rel: &str| leaf_identity(f, rel);
     let mut out: HashMap<String, [u8; 32]> = HashMap::new();
     for (scc, rules) in sccs.iter().zip(by_stratum) {
         let mut h = Sha256::new();
-        h.update(b"rerail.relation/v1\0");
+        h.update(b"rerail.relation/v2\0");
         h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
         for rel in scc {
             h.update(rel.as_bytes());
-            h.update(format!("\0{}\0", tree_text::shape(&f, rel)).as_bytes());
-        }
-        let mut texts: Vec<String> = rules.iter().map(|&r| tree_text::rule(&vs.at(r))).collect();
-        texts.sort();
-        for t in &texts {
-            h.update(t.as_bytes());
             h.update(b"\0");
+            identity_parts::put(&mut h, &f, rel, true);
+        }
+        let mut hashes: Vec<u64> = rules.iter().map(|&r| vs.at(r).rule.hash()).collect();
+        hashes.sort_unstable();
+        for x in &hashes {
+            h.update(x.to_le_bytes());
         }
         for r in stratum_reads(f, vs, scc, rules) {
             if !scc.contains(&r) {
@@ -11099,48 +10929,31 @@ pub fn identities(f: Fields<'_>, vs: &body::Versions, sccs: &[BTreeSet<String>],
     out
 }
 
-/// `identities` of a program the caller holds as a tree: its version made for them (`Placed::of_program`).
-pub fn identities_of(prog: &Program, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&Rule>]) -> Result<HashMap<String, [u8; 32]>> {
-    Leaves::of(prog).identities(sccs, by_stratum)
-}
-
 /// The identity of a relation no rule of `prog` derives (an input, the program's facts): its name, its declaration
 /// and its facts (`identities`).
 pub fn leaf_identity(f: Fields<'_>, rel: &str) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut h = Sha256::new();
-    h.update(b"rerail.relation/v1\0leaf\0");
+    h.update(b"rerail.relation/v2\0leaf\0");
     h.update(rel.as_bytes());
-    h.update(tree_text::leaf(&f, rel).as_bytes());
+    h.update(b"\0");
+    identity_parts::put(&mut h, &f, rel, false);
     h.finalize().into()
 }
 
-/// `leaf_identity` of the relations of a program a caller holds as a tree, read from its version, made at the first
-/// ask (`Placed::of_program`); `None` for a program with no image.
-pub struct Leaves<'p> {
-    /// The tree, where the caller holds the program as one (`of`); `None` for one held as its version (`of_placed`).
-    prog: Option<&'p Program>,
-    placed: std::cell::OnceCell<std::result::Result<body::Placed, String>>,
+/// `leaf_identity` of the relations of a program, read from its version.
+pub struct Leaves {
+    placed: body::Placed,
 }
 
-impl<'p> Leaves<'p> {
-    pub fn of(prog: &'p Program) -> Leaves<'p> {
-        Leaves { prog: Some(prog), placed: std::cell::OnceCell::new() }
+impl Leaves {
+    pub fn of_placed(placed: body::Placed) -> Leaves {
+        Leaves { placed }
     }
-    /// The leaves of a program the caller holds as its version: none is made.
-    pub fn of_placed(placed: body::Placed) -> Leaves<'static> {
-        let cell = std::cell::OnceCell::new();
-        let _ = cell.set(Ok(placed));
-        Leaves { prog: None, placed: cell }
-    }
-    /// The program's version, made at the first ask and shared by every identity read after it.
-    fn placed(&self) -> Result<&body::Placed> {
-        self.placed.get_or_init(|| body::Placed::of_program(self.prog.expect("a tree or its version")).map_err(|e| e.to_string())).as_ref().map_err(|e| Error::Plan(e.clone()))
-    }
-    /// `identities` of the program, each stratum's rules found by their heads in the version (`front::rules_by_stratum`'s
-    /// order, the program's): for a caller that holds no tree.
+    /// `identities` of the program, each stratum's rules found by their heads in the version (the order of each stratum's
+    /// rules in the program).
     pub fn identities_by_heads(&self, sccs: &[BTreeSet<String>]) -> Result<HashMap<String, [u8; 32]>> {
-        let p = self.placed()?;
+        let p = &self.placed;
         let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
         let mut keys: Vec<Vec<body::RuleKey>> = vec![Vec::new(); sccs.len()];
         for k in 0..p.len() {
@@ -11153,15 +10966,7 @@ impl<'p> Leaves<'p> {
         Ok(identities(f, &vs, sccs, &keys))
     }
     pub fn identity(&self, rel: &str) -> Option<[u8; 32]> {
-        Some(leaf_identity(self.placed().ok()?.fields().ok()?, rel))
-    }
-    /// `identities` of the program, read from the same version as its leaves. Its strata's rules are trees the caller
-    /// holds, the program's: their keys are found once, here.
-    pub fn identities(&self, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&Rule>]) -> Result<HashMap<String, [u8; 32]>> {
-        let vs = body::Versions::with(self.prog.ok_or_else(|| Error::Plan("the program's rules are its version's: `identities_by_heads`".into()))?, self.placed()?.clone());
-        let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its identities are read from its version".into()))?;
-        let keys = by_stratum.iter().map(|rules| vs.keys_of(rules)).collect::<Result<Vec<_>>>()?;
-        Ok(identities(f, &vs, sccs, &keys))
+        Some(leaf_identity(self.placed.fields().ok()?, rel))
     }
 }
 
@@ -11609,30 +11414,6 @@ impl Drop for TempLeft {
     }
 }
 
-/// Each relation of `prog` with rules and stated facts gets its facts apart, in `rel__stated`, and the rule
-/// `rel(x…) :- rel__stated(x…)` (a lattice relation keeps them): the pairs `(rel, rel__stated)`.
-pub fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
-    let ruled: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let moved: Vec<String> = prog.facts.iter().filter(|(r, f)| !f.is_empty() && ruled.contains(*r) && !prog.lattice.contains_key(*r)).map(|(r, _)| r.clone()).collect();
-    let mut out = Vec::new();
-    for rel in moved {
-        let apart = format!("{rel}__stated");
-        let facts = prog.facts.remove(&rel).expect("stated facts");
-        let cols = prog.decls[rel.as_str()].clone();
-        let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("rr_s{i}").into())).collect();
-        prog.decls.insert(apart.clone().into(), cols);
-        prog.facts.insert(apart.clone(), facts);
-        prog.rules.push(Rule {
-            head: Atom { rel: rel.clone().into(), args: args.clone().into(), neg: false, gated: false },
-            body: [Literal::Atom(Atom { rel: apart.clone().into(), args: args.into(), neg: false, gated: false })].into(),
-        });
-        out.push((rel, apart));
-    }
-    out
-}
-
-
-
 /// Runs program `program`, its version (a whole image: decision 0173, t36 item 7 step 8), over `db`: `lowering` the
 /// lowering's domains where the program is lowered (decision 0009).
 pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Option<lower::Lowering<'_>>, hooks: Hooks<'_>) -> Result<Outcome> {
@@ -11653,30 +11434,15 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // (`passes::normalize`, `stated_apart`), which the planner reads its rules and fields from, and the passes below
     // edit.
     // Normalized once a program (`lower::Lowered::normalized`) where the caller holds it, so every run of it (a
-    // corpus run's chunks) reads one version and the analyses it holds (Q203 item 3 (ii)).
-    let (normal_v, sentinels, stated) = {
-        let _span = super::profile::span(|| "the program's version".into());
-        match hooks.normalized.take() {
-            Some(n) => (n.placed.clone(), n.sentinels.clone(), n.stated.clone()),
-            None => {
-                let body::Normalized { placed, sentinels, stated } = program.normalized(apart)?;
-                (placed, sentinels, stated)
-            }
-        }
+    // corpus run's chunks) reads one version and the analyses it holds (Q203 item 3 (ii)); else here, as a pass.
+    let ((sentinels, stated), normal_v) = match hooks.normalized.take() {
+        Some(n) => ((n.sentinels.clone(), n.stated.clone()), n.placed.clone()),
+        None => body::pass("plan.normalize", "the program's version", program, |p| {
+            let body::Normalized { placed, sentinels, stated } = p.normalized(apart)?;
+            Ok::<_, Error>(Some(((sentinels, stated), placed)))
+        })?
+        .expect("normalizing makes a version"),
     };
-    // The normalized program as the tree, decoded only for the version trace (a measurement aid).
-    let lists = super::front::Lists::default();
-    let normal_tree: std::cell::OnceCell<Program> = std::cell::OnceCell::new();
-    let normal_tree = || -> Result<&Program> {
-        if let Some(t) = normal_tree.get() {
-            return Ok(t);
-        }
-        let t = normal_v.program(&lists)?;
-        Ok(normal_tree.get_or_init(|| t))
-    };
-    if super::version_trace::on() {
-        super::version_trace::note("plan.normalize", &program.program(&lists)?, normal_tree()?);
-    }
     // The lowering's domains, with the columns normalizing added: a sentinel's presence column first, and a relation's
     // stated facts apart under its own domains.
     let domains = lowering.map(|l| {
@@ -11811,22 +11577,17 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             // What each derived relation keeps (decision 0099): stored, or inlined into its readers, from this plan's
             // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
             let mut inlined_names = Vec::new();
-            let chose = super::profile::span(|| "inline or store".into());
             // The program's version: each pass edits the one before as an overlay.
-            let choice = if corpus { keeps::choose(&normal_v, &mut model).map_err(Error::Plan)? } else { None };
-            drop(chose);
+            let choice = if corpus { body::pass("plan.inline", "inline or store", &normal_v, |p| keeps::choose(p, &mut model)).map_err(Error::Plan)? } else { None };
             let inlined = match choice {
                 Some((done, v)) => {
-                    if super::version_trace::on() {
-                        super::version_trace::note("plan.inline", normal_tree()?, &v.program(&lists)?);
-                    }
                     super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
                     // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
                     if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
                         use std::io::Write;
                         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                            for r in &v.program(&lists)?.rules {
-                                let _ = writeln!(f, "{r}");
+                            for r in v.v.rules() {
+                                let _ = writeln!(f, "{}", v.v.show_rule(r));
                             }
                         }
                     }
@@ -11840,18 +11601,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             // Relations computed for every node that rules only negate, computed for the keys those rules reach
             // (decision 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
             let mut demanded_names = Vec::new();
-            let splitting = super::profile::span(|| "negation split".into());
-            let split_neg = if corpus { demand::split_negations(inlined.as_ref().unwrap_or(&normal_v), &model) } else { None };
-            drop(splitting);
+            let Ok(split_neg) = body::pass("plan.demand", "negation split", inlined.as_ref().unwrap_or(&normal_v), |p| Ok::<_, std::convert::Infallible>(if corpus { demand::split_negations(p, &model) } else { None }));
             let split = match split_neg {
                 Some((demanded, v)) => {
-                    if super::version_trace::on() {
-                        let from = match &inlined {
-                            Some(i) => i.program(&lists)?,
-                            None => normal_tree()?.clone(),
-                        };
-                        super::version_trace::note("plan.demand", &from, &v.program(&lists)?);
-                    }
                     super::profile::decision("demand (decision 0048)", || {
                         format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
                     });
@@ -11888,12 +11640,12 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     if let Some(path) = std::env::var_os("RERAIL_RUN_DUMP") {
         use std::io::Write as _;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let prog = p0.program(&lists)?;
-            let _ = writeln!(f, "== run of {} rules", prog.rules.len());
+            let v = &p0.v;
+            let _ = writeln!(f, "== run of {} rules", v.rules().count());
             for scc in sccs.iter() {
                 let _ = writeln!(f, "-- stratum {scc:?}");
-                for r in prog.rules.iter().filter(|r| scc.contains(r.head.rel.as_str())) {
-                    let _ = writeln!(f, "{r}");
+                for r in v.rules().filter(|r| scc.contains(v.rel_name(r.head().rel()))) {
+                    let _ = writeln!(f, "{}", v.show_rule(r));
                 }
             }
         }
@@ -12778,8 +12530,8 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
         let mut why = if native.contains("program") { String::new() } else { format!("the native engine is off (modes: {native:?})") };
         if super::profile::on() {
             for &r in &rules {
-                // The rule's text is the tree's (`Display`).
-                super::profile::note(format!("rule #{:04}", rule_no(r)), || run.tree(r).to_string());
+                // The rule's text, as its version shows it.
+                super::profile::note(format!("rule #{:04}", rule_no(r)), || { let (v, rule) = run.versions.rule_at(r); v.show_rule(rule) });
             }
         }
         // Python operators consume completed demands, not their synthetic locality-proof rules. Keep native
@@ -13677,7 +13429,7 @@ pub mod fields;
 pub mod acyclic;
 pub mod estimates;
 pub mod sql_kernel;
-pub mod tree_text;
+pub mod identity_parts;
 
 // cratify: `tests` is rerail-engine's (it mounts it)
 
@@ -13797,11 +13549,15 @@ mod search_tests {
     /// generated programs.
     #[test]
     fn cyclic_relations_are_those_that_reach_themselves() {
-        let walked = |scc: &BTreeSet<String>, rules: &[&Rule]| -> BTreeSet<String> {
+        let walked = |scc: &BTreeSet<String>, v: &Version| -> BTreeSet<String> {
             let mut next: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-            for r in rules {
-                for a in r.body.iter().filter_map(Literal::atom).filter(|a| scc.contains(a.rel.as_str())) {
-                    next.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
+            for r in v.rules() {
+                for l in r.body() {
+                    if let super::super::program_image::Lit::Atom(a) = l.view()
+                        && scc.contains(v.rel_name(a.rel()))
+                    {
+                        next.entry(v.rel_name(a.rel())).or_default().insert(v.rel_name(r.head().rel()));
+                    }
                 }
             }
             scc.iter().filter(|start| {
@@ -13828,13 +13584,12 @@ mod search_tests {
                 }
             }
             text.push_str(&format!(".output {}\n", (0..n).map(|i| format!("r{i}")).collect::<Vec<_>>().join(",")));
-            let p = super::super::rr::parse(&text).unwrap();
+            let p = super::super::rr::parse_version(&text).unwrap();
             // The relations taken as one part (a superset of each strongly connected part), with base outside it.
             let scc: BTreeSet<String> = (0..n).map(|i| format!("r{i}")).collect();
-            let rules: Vec<&Rule> = p.rules.iter().collect();
-            let vs = body::Versions::of_placed(body::Placed::of_program(&p).unwrap());
-            let keys: Vec<RuleKey> = body::Versions::keys(0, p.rules.len()).collect();
-            assert_eq!(cyclic_relations(&vs, &scc, &keys), walked(&scc, &rules), "{text}");
+            let vs = body::Versions::of_placed(body::Placed::whole(p.clone()));
+            let keys: Vec<RuleKey> = body::Versions::keys(0, p.rules().count()).collect();
+            assert_eq!(cyclic_relations(&vs, &scc, &keys), walked(&scc, &p), "{text}");
         }
     }
 
@@ -13891,10 +13646,11 @@ mod search_tests {
     }
 
     /// A model of `prog` whose inputs have the rows and distinct values by column given.
-    fn model_with(prog: &Program, inputs: &[(&str, f64, &[f64])]) -> Model {
+    fn model_with(prog: &body::Placed, inputs: &[(&str, f64, &[f64])]) -> Model {
         let given = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
-        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(prog), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
+        let v = &prog.v;
+        let derived: HashSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&prog.fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
         model.stats.nodes = 1_000_000.0;
         for &(rel, rows, ndv) in inputs {
             model.stats.card.insert(rel.to_owned(), rows);
@@ -13911,7 +13667,7 @@ mod search_tests {
     /// which priced every unplaced join again (15% of `keeps::choose`).
     #[test]
     fn a_plans_step_rows_are_its_explain_records() {
-        let prog = crate::code_rule_dsl::logic::rr::parse(
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(
             ".decl a(x: number)\n.decl b(x: number, y: number)\n.decl c(y: number, z: number)\n.decl d(z: number, w: number)\n\
              .input a\n.input b\n.input c\n.input d\n.decl o(x: number, w: number)\n\
              o(x, w) :- a(x), b(x, y), c(y, z), d(z, w), !a(w), z != 3.\n\
@@ -13919,14 +13675,15 @@ mod search_tests {
              o(x, w) :- d(z, w), c(y, z), b(x, y), a(x).\n.output o\n",
         )
         .unwrap();
-        let model = model_with(&prog, &[("a", 50.0, &[50.0]), ("b", 100_000.0, &[1_000.0, 5_000.0]), ("c", 20_000.0, &[5_000.0, 300.0]), ("d", 9_000.0, &[300.0, 700.0])]);
+        let placed = body::Placed::whole(prog.clone());
+        let model = model_with(&placed, &[("a", 50.0, &[50.0]), ("b", 100_000.0, &[1_000.0, 5_000.0]), ("c", 20_000.0, &[5_000.0, 300.0]), ("d", 9_000.0, &[300.0, 700.0])]);
         let was = explaining(true);
-        for r in &prog.rules {
-            let made = body::alone(r).unwrap();
-            let b = body::nth(&made, 0);
+        for (k, rule) in prog.rules().enumerate() {
+            let b = body::nth(&prog, k);
+            let r = prog.show_rule(rule);
             for first in [None, Some(1)] {
-                let (plan, x) = model.plan_rule_explained(body::Placed::of_program(&prog).unwrap().fields().unwrap(), &b, first).unwrap();
-                let (lean, rows) = model.plan_rule_step_rows(body::Placed::of_program(&prog).unwrap().fields().unwrap(), &b, first).unwrap();
+                let (plan, x) = model.plan_rule_explained(placed.fields().unwrap(), &b, first).unwrap();
+                let (lean, rows) = model.plan_rule_step_rows(placed.fields().unwrap(), &b, first).unwrap();
                 let recorded: Vec<f64> = x.expect("explained").steps.iter().map(|s| s.rows).collect();
                 assert_eq!((b.shown(&lean.0), lean.1, lean.2), (b.shown(&plan.0), plan.1, plan.2), "{r}");
                 assert_eq!(rows, recorded, "{r} from {first:?}");
@@ -14726,6 +14483,9 @@ pub struct PlanCounts {
     pub answer_calls: std::sync::atomic::AtomicU64,
     /// The strata the process held as views of a bound input's columns (`Run::input_view`, Q37), not derived.
     pub input_views: std::sync::atomic::AtomicU64,
+    /// Tests: the programs the run normalized (`Placed::normalized`).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub normalized: std::sync::atomic::AtomicU64,
     /// Strata the evaluator's maintain mode maintained (decision 0364 stage 3), over the process.
     pub mode_strata: std::sync::atomic::AtomicU64,
     /// How often strata suspended on requests, and for how long in all (`RERAIL_STRATA_COUNTS`, the profile).

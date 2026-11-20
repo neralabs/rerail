@@ -445,10 +445,10 @@ mod tests {
     use super::super::super::body::Placed;
     use super::super::super::fields::Fields;
 
-    /// Whether rule `k` of `text` falls apart once its reads of `cut` are cut.
+    /// Whether rule `k` of `text` falls apart once its reads of `cut` are cut. Its variables are written `$x`, as the
+    /// planner shows them; the `.rr` text names them without the `$`.
     fn apart(text: &str, k: usize, cut: &str) -> bool {
-        let prog = super::super::super::super::front::parse(text).unwrap();
-        let p = Placed::of_program(&prog).unwrap();
+        let p = Placed::whole(super::super::super::super::rr::parse_version(&text.replace('$', "")).unwrap());
         let r = R::of(&p, k);
         disconnected(&r, &|j| r.plain(j).is_some_and(|a| r.rel(a) == cut))
     }
@@ -506,8 +506,7 @@ mod tests {
             named($o, $c) :- kind($o, 7), field($o, 3, $c).
             out($o) :- named($o, _).
             "#;
-        let prog = super::super::super::super::front::parse(p).unwrap();
-        let placed = Placed::of_program(&prog).unwrap();
+        let placed = Placed::whole(super::super::super::super::rr::parse_version(&p.replace('$', "")).unwrap());
         let f = Fields::of(&placed).unwrap();
         let k = (0..placed.len()).find(|&k| R::of(&placed, k).head() == "named").unwrap();
         let r = R::of(&placed, k);

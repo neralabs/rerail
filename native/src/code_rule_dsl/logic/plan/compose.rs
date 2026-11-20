@@ -104,7 +104,7 @@ pub fn accepts(p: &Placed) -> Result<bool> {
     Ok(true)
 }
 
-/// What `roots` read, directly or through rules or natives, the roots included (`front::needed`), over `f`'s version
+/// What `roots` read, directly or through rules or natives, the roots included (`analyses::needed`), over `f`'s version
 /// (`analyses::needed`).
 pub(super) fn needed<'a>(f: Fields<'_>, roots: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
@@ -127,7 +127,7 @@ fn head(p: &Placed, k: usize) -> &str {
     p.v.rel_name(p.rule(k).head().rel())
 }
 
-/// `p`'s composed query: its rules read by their handles, its fields from its version (`Placed::of_program`, or an
+/// `p`'s composed query: its rules read by their handles, its fields from its version (`Placed::whole`, or an
 /// edit of one).
 pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
     let pf = p.fields()?;

@@ -35,7 +35,7 @@
 //! The image is read through handles (`handles`: rules, atoms, literals, terms), versions (`version`: lookups by
 //! id and by name, rules by head and by reader) and written through `build::Builder`, never by indexing regions:
 //! the regions and their layout are this module's.
-use super::front::{ast::{Program, Value}, name::{Lists, Name}};
+use super::front::{ast::Value, name::{Lists, Name}};
 use super::program_facts::{self, Facts};
 use std::collections::BTreeMap;
 
@@ -49,16 +49,14 @@ pub mod grouped;
 pub mod handles;
 pub mod show;
 pub mod strings;
-pub mod tree;
 pub mod version;
 
 pub use about::{About, GateRef, LatticeRef, NativeKind, NativeRef, NativeSpec, ShapeRef, ShapeWaitRef};
-pub use build::{Builder, PartFields, Rel, Rewrite, RuleBuilder, Site, T, t_of};
+pub use build::{Builder, Open, PartFields, Rel, Rewrite, RuleBuilder, Site, T, t_of};
 pub use extents::Extents;
 pub use grouped::Grouped;
 pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 pub use strings::Strings;
-pub use tree::Tree;
 pub use version::{DeclRef, FactsRef, Layer, Made, Version, differences, same_program};
 
 pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x05";
@@ -871,36 +869,3 @@ impl Writer {
 }
 
 // ---- a program to and from its image ----
-
-/// The image of `prog`: a base, every part its own. Refuses what the image has no form for (maintenance's parts,
-/// which the text refuses too) and a comparison it does not know.
-pub fn encode(prog: &Program) -> Result<Vec<u8>, String> {
-    Builder::of_program(prog)?.finish_bytes()
-}
-
-/// The program image `bytes` holds, its lists taken from the run's `lists`.
-pub fn decode(bytes: &[u8], lists: &Lists) -> Result<Program, String> {
-    Version::open(bytes)?.program(lists)
-}
-
-/// The program of a version's parts and rules, assembled as the text's reader assembles it: the `.about` rows give
-/// the program's other fields; its facts are the facts' own (the rows' `fact_rel` restates their names).
-pub fn assemble(rules: Vec<super::front::ast::Rule>, decls: BTreeMap<Name, super::front::name::List<(Name, Name)>>, facts: BTreeMap<String, Vec<super::front::name::List<Value>>>, about: Facts, inputs: Vec<String>, outputs: Vec<String>) -> Result<Program, String> {
-    let mut prog = program_facts::program(&about, ABOUT)?;
-    prog.facts = facts;
-    prog.decls = decls;
-    prog.inputs = inputs;
-    prog.outputs = outputs;
-    prog.rules = rules;
-    Ok(prog)
-}
-
-/// The `.about` rows of `prog`: its fields besides rules, declarations, facts, inputs and outputs, as facts.
-pub fn about_of(prog: &Program) -> Facts {
-    let mut about = Facts::new();
-    program_facts::write_about(&mut about, ABOUT, prog);
-    // The image holds each fact relation itself (`assemble` reads them from there), so `fact_rel` is not kept: a
-    // pass that adds a fact relation states it once, and its version's about rows are the result's own.
-    about.remove("fact_rel");
-    about
-}

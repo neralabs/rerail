@@ -1,7 +1,8 @@
 //! The data-layer rules in Rerail logic (t17): the hand-written programs, in `.rr`, go through the front end.
 
 use super::*;
-use crate::code_rule_dsl::logic::rr::parse;
+use crate::code_rule_dsl::logic::program_image::{Lit, Version, about::About, analyses, fields::ProgramFields};
+use crate::code_rule_dsl::logic::rr::parse_version as parse;
 use std::path::{Path, PathBuf};
 
 fn programs() -> PathBuf {
@@ -47,16 +48,19 @@ fn data_layer_programs_parse() {
         }
         let text = std::fs::read_to_string(&path).unwrap();
         let expect = text.lines().next().and_then(|l| l.strip_prefix("// expect: ")).map(str::trim);
-        let result = parse(&format!("{prelude}\n{text}")).and_then(|p| strata(&p).map(|_| p));
+        let result = parse(&format!("{prelude}\n{text}")).and_then(|p| analyses::components_by_name(&p, &About::of(&p)).map(|_| p));
         let failure = match (expect, result) {
             (None, Ok(p)) => {
-                let atoms = p.rules.iter().flat_map(|r| std::iter::once(&r.head).chain(r.body.iter().filter_map(Literal::atom)));
-                let undeclared = atoms.into_iter().find(|a| p.decls.get(a.rel.as_str()).is_none_or(|c| c.len() != a.args.len()));
-                let fact = p.facts.iter().find(|(rel, rows)| rows.iter().any(|row| p.decls.get(rel.as_str()).is_none_or(|c| c.len() != row.len())));
-                let undeclared = undeclared.map(|a| a.to_string()).or_else(|| fact.map(|(rel, _)| format!("a fact of {rel}")));
+                let p: &Version = &p;
+                let arity = |rel: &str| p.columns_of(rel).map(|c| c.len());
+                let atoms = p.rules().flat_map(|r| std::iter::once(r.head()).chain(r.reads()).map(move |a| (r, a)));
+                let undeclared = atoms.into_iter().find(|(_, a)| arity(p.rel_name(a.rel())) != Some(a.args().count()));
+                let facts = p.fact_names();
+                let fact = facts.iter().find(|rel| ProgramFields::fact_rows(p, rel).iter().any(|row| arity(rel) != Some(row.len())));
+                let undeclared = undeclared.map(|(r, a)| p.show_atom(r, a)).or_else(|| fact.map(|rel| format!("a fact of {rel}")));
                 undeclared.map(|a| format!("{a}: undeclared, or not the declared arity")).or_else(|| {
-                    p.rules.iter().flat_map(|r| &r.body).find_map(|l| match l {
-                        Literal::Ast { matcher, .. } => serde_json::from_str::<serde_json::Value>(matcher).err().map(|e| format!("matcher {matcher}: {e}")),
+                    p.rules().flat_map(|r| r.body()).find_map(|l| match l.view() {
+                        Lit::Ast { matcher, .. } => serde_json::from_str::<serde_json::Value>(p.text(matcher)).err().map(|e| format!("matcher {}: {e}", p.text(matcher))),
                         _ => None,
                     })
                 })

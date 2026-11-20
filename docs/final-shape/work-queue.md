@@ -3168,6 +3168,40 @@ racy), and a sync kept within an epoch answers a later run that did not advance 
 kept). Find which run's epoch the second run's questions carried when it asked for none: a missed edit, if a run
 reuses another's sync.
 
+- **Found** (2026-11-19, Typing-support): the merge 9a522e124 says "the cookie's wait is the caller's bound, else
+  `WAIT.max(settle)`", but `fsevents::since_within` calls `sync(.., WAIT.max(settle))` and never reads `wait` (the
+  build's `unused variable: wait`, journal.rs). So Q184/Q221's bound is not applied. On an M-series farm host at
+  HEAD, 6 of the 40 journal/observe tests fail, `the_journal_names_what_changed_since_its_cursor` among them. With
+  `wait.unwrap_or(WAIT.max(settle))` that one passes, but four others fail (`a_watched_root_is_not_statted_..`: 6
+  stats, the cookie later than the tests' 2 s `wait_least`, so the root is `Lost`). The bound and the tests' floor
+  have to be settled together; not changed there.
+- **Fixed, the header edit** (2026-11-19, Typing-support): the test's root is small, so it is checked by its
+  listings (decision 0400), not by the journal. Two faults there:
+  - A directory whose listing changed (a header made in `ws/`) was named in the change log, and a named path
+    means it and all under it (`forget`, the cone's `still`): every unit under `ws/` was asked again. The listing
+    check now names the entries the listing gained or lost (`listing_named`'s `entered`), and forgets the
+    directory's own answer as before.
+  - An answer recorded inside the racy window (a header written just before the run that read it) was named
+    changed without being read. It is now read again (`racy_holds`): the same bytes hold.
+  The header-edit test passes in every run since.
+- **Fixed, the bound**: `fsevents::since_within` applies the caller's `wait` (Q221), with a test's settle budget
+  as its least. The journal tests' budget is 20 s (`JOURNAL_TEST_BUDGET`), and Q189's test hides its edit behind a
+  live stream's sync (`journal::id_past`), not `current_id`, which a loaded host can give before the edit's event
+  has its id.
+- **Still open, the journal tests on a loaded host**: on the M3 (load 20-55), `fseventsd` was seen to deliver a
+  stream's cookie up to 4.8 s late, and one stream delivered no event for 20 s while new ones had their cookies in
+  0.5 s. The root is then `Lost` and checked by `stat`, which is correct, but the journal tests assert the journal's
+  answer. 1 to 4 of the 34 fail in a run (Q189's test, `rerails_own_files_are_outside_the_observer`,
+  `a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change`,
+  `an_inner_root_is_answered_by_the_root_above_it`); 34 of 34 passed in one run. Waiting at most 2 s per stream
+  and starting another was tried, and is worse: slow but live streams were dropped, and every new one was slow too.
+- **Found, the late streams** (2026-11-19, by reading `journal.rs`): the lateness is a stream's own, not
+  `fseventsd`'s: a new stream had its cookie in 0.5 s while a kept one was told nothing for 20 s. What schedules a
+  stream's delivery is the dispatch queue its callbacks run on, and `start` made it with no QoS
+  (`dispatch_queue_create(.., NULL)`): the handler ran at none of its own, and `sync` waits on a condvar, which lends
+  it no priority. Under `nice -n 19` on a machine at load 20–55 it waited behind everything. The queue is now made
+  at `QOS_CLASS_USER_INITIATED` (`dispatch_queue_attr_make_with_qos_class`), the QoS of a run that waits on it.
+  Still to see: 20 of 20 on a Mac at load (none was usable to run it when this was written).
 - **Done when**: the test passes 20 of 20 on a host at load, or names why a run cannot answer.
 - **Record**: —
 
@@ -3237,6 +3271,19 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   come to 25 µs a run. 1.4–3.2 MB of arena a run caps a 512 MB batch at about 128–170 runs.
 - **Waits on the user:** 5b–5e (a complete `clif_msl`, rounds as batches) build out a shape the
   numbers say loses to one core. Question 3 below.
+
+### Q249. A rerun over an edit that adds a request rule states one more about part than a run from scratch
+
+- **Found**: merging the hub (65e368a0b) into Typing-support. The hub's new
+  `program_image::tests::a_request_record_over_an_edit_is_a_run_from_scratchs` failed at its third edit. That edit
+  adds `q`'s second rule and kept `q`'s one-entry record. `AskedByRule::of` carries a record of another length as
+  no record (identical code on both sides), so a run from scratch stated none. The fixture now states the record
+  again, an entry a rule, as a lowering would. The records then agree, but the rerun's output holds one more
+  `about program` part (one row) than the run from scratch: same size, another digest.
+- **Keep**: decision 0393 (a rerun over an edit states a run from scratch's record and program); the record gates
+  nothing where its length is not the rule count.
+- **Done when**: the rerun's whole-step path writes the record into the same parts that a run from scratch does,
+  and the test runs again (its `#[ignore]` removed).
 
 ## Questions for the user
 
@@ -6036,6 +6083,13 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   test's `since` calls without `settle`, and the replay's wait took `WAIT.max(settle)` in place of the caller's
   bound; both fixed on CUDA-support, as here.
 
+- **Fixed** (2026-11-19, Typing-support): Q189's settle window (`JOURNAL_SETTLE_NS`, 120 s) was applied to every
+  root, also one checked by its listings, whose answers the listing check compared by `stat` that run and which
+  never goes by the journal's silence. Every answer recorded in the last 120 s was then `stat`ed again (the tests'
+  7 and 9 stats). `trusted` and `missing` now skip the window under a listed root. All four pass on the M3, in every
+  run since.
+
+
 ### Q293. (Q262 on benchmarks-on-integration) The settle-window test's first leg can no longer miss an edit
 
 - **Found** (2026-11-18, running the store's journal tests after restoring Q221's caller bound): failed before that
@@ -6478,3 +6532,84 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
     statics 0442 had removed, a break that only `--features generated` showed. Without a run, `options()` is a fresh
     value each call, so the IR was not kept ("tier 1: no entry"). `aot`'s flags now end with its run, and the
     restore of `bit_test` is gone.
+
+### Q318. (Q251 on Typing-support-final-shape) 0364 R7 is red: after a use is added, two recheck lines are unpriced
+
+Seen 2026-11-19 on an M-series farm host, at this branch's a9c6b3b62 and on the hub (django-bugs' 2e9d16bc8 names it
+failing at 24740af51): `maintain_tests::r7_the_recheck_order_is_priced` fails at maintain_tests.rs:327, "R7: after a
+use added, every recheck line is priced" (left 2, right 0). R7 is an agreed requirement (0364 R1-R10), so this is a
+regression of the maintain mode's plans (0328 §4), not a stale test.
+
+- **Done when**: the two lines are priced as the others are, and R7 passes.
+- **Record** (2026-11-19, Typing-support): fixed. The planner priced each recheck's order with its head bound
+  (`Body::with_head_bound`, Q208), but its native join spec was written from the rule with nothing bound, so an
+  order whose first step reads a bound variable one way (`docof` from its node) could not be written, and the line
+  fell back to the rule's own order, unpriced. The spec writer now starts a head-bound body with the head's
+  variables in their slots (`join_spec_made`; the executor binds them from the candidate, `join_rule_bound`), the
+  recheck's spec is written from the head-bound body, and the spec's cache key says which it is. R7 passes; the 139
+  maintain, session, recheck and plan tests pass.
+
+### Q319. (Q252 on Typing-support-final-shape) CPython ran on the product's path: `value::python_ast` started `python3.13` for each demand batch
+
+Seen 2026-11-19 (Typing-support), on a Linux farm host without CPython 3.13: 9 of `rerail-lang-python`'s tests
+failed, "Canonical Python AST facts require CPython 3.13". The relational producer
+(`residency::admission::relational::python_ast`, installed as the AST producer) ran W's `pythonAst` worker in a
+Python process for every batch, though `code_rule_dsl::cpython` computes the same facts natively and the SQL path
+(`facts/vtab/syntax/cpython.rs`) reads them from there.
+
+- **Fixed**: `batch_with_metrics` computes every field the producer asks (`FIELDS`) and the text fields natively, a
+  node found as the worker found it (`printed::located`, `of_kind`, `by_start`), with the worker's counts of parses
+  and walks and its failures. `dumps_and_signed_fingerprints_match_cpython_3_13` (30 cases recorded from CPython)
+  and the other python_ast tests pass on Linux; 117 of the python AST consumers' tests pass.
+- **Still open**: a module's `syntax_error` field, the whole `SyntaxError` (`offset`, `text`, `end_lineno`,
+  `end_offset` besides `msg` and `lineno`), which only the gate's conformance replay asks for
+  (`batch-nine.ts`, `pythonAstBatch`), still runs the worker: the native verdict is the line and message alone,
+  and CPython's offsets differ by the kind of error. Its test is ignored with that reason.
+- **Done when**: `cpython::syntax` gives the error's span as CPython 3.13 does, checked by `parity` against CPython
+  on a box, and the worker is deleted.
+- **Record**: —
+
+### Q320. Roll-up 10 (Typing-support-final-shape onto rr-align): what the merge chose, and what stays open
+
+Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 are Q318 and Q319 here.
+- **Chosen**:
+  - Theirs' 0276: the tree forms are gone (`front::Program`, `rr::parse`, `rr::print`, `Placed::of_program`,
+    `Builder::of_program`, `tree_text`). Ours' code that still read them reads versions now:
+    - `import_closure::add_to` reads `components.rr` as a version. `taken` returns the heads it takes.
+    - The cover's taped literals (decision 0431 §8, `rr::lower`) are `LitAt`s.
+    - Ours' tests moved to `parse_version`, `Placed::whole` and `matcher_relations`.
+  - Ours' 0450: `cross_memo` and `bridge` stay removed, and theirs' edits to them are dropped.
+  - Ours' 0456: kept facts stay. Theirs' 09dc8acfd5 names the kept facts a run reads in its manifest. Here,
+    `strata_kept` adds them to the run's late sources.
+  - The observer: both sides fixed Q250 and Q223, each its own way. Ours stays (`trusting_root`, `dir_named`'s
+    `stale`), with theirs' test budget for the settle-window test. Theirs' `budget`, which made the settle window
+    the least a replay waits, is dropped. Ours' caller bound holds (Q221, Q293).
+  - The tree-decode counter (`decoded`, `Record.trees_decoded`) is removed: nothing decodes a tree now.
+- **Fixed**: tests found red after the merge. Each cause was on ours' side. At 08e2de78c4 (before the merge),
+  `a_copy_of_an_inputs_columns_is_a_view_of_it` and R8 failed the same way.
+  - Counts read outside any run, where `local()` is fresh on every call (0442): the maintain mode's strata
+    (2 tests) and the input views. Each test now holds its run's scope.
+  - `NORMALIZED` was a process static. It is now the run's count (`PlanCounts::normalized`).
+  - 0364's shape counts lived on the shared object, so tests running beside one another counted each other's runs.
+    R1 and R8 failed under 4 threads and passed under 1. They are now the run's own counts.
+  - A part was a view, then Q180's restated record as an overlay, then its fields' overlay. `part` now runs in
+    `Pipeline::stating_record`, since its last step states the record.
+  - The stored-run test still expected an image held inline. Since store floor 7, every source is in a segment
+    from its write.
+  - `every_switch_lowering_reads_is_classified` now ends its region where theirs does.
+  - `check_rr` knows the import closure's relations (`rr_cx_*`). That removes 800 of its 802 problems.
+- **Open** (red at 08e2de78c4 too; none comes from this merge):
+  - `rdl_programs_translate_to_the_same_program`: `typing/programs/calls.rr` and `calls_rust.rr` are no longer
+    their `.rdl`'s translation.
+  - `a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone`: `ruff-c408` places its findings at a tape value's
+    node (decision 0431's refusal).
+  - `rule_syntax_files_pass_check_rr`: 2 problems remain, in `lib/c/includes.rr` (`c_inc_from` and `c_resolved`
+    each depend on a relation through `!` in a cycle).
+  - `fresh_and_restored_programs_have_identical_relation_identities` failed once in three 4-thread runs. Its restored
+    child held a prepared program that the fresh one did not. It passes alone.
+- **Checked** (M3): the workspace's tests and bins check with no warnings. These pass:
+  - the corpus modules (102, plus `corpus::tests`' 128);
+  - the image and manager tests (55);
+  - the kept tests, the import closure and the cross views;
+  - the store's observer and journal tests (35);
+  - the rr tests other than the open three.

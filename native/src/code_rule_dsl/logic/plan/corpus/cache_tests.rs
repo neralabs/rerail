@@ -41,14 +41,14 @@ impl Corpus {
         std::fs::create_dir_all(dir.join("ws")).unwrap();
         let rule = dir.join("cache.rr");
         std::fs::write(&rule, program).unwrap();
-        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         Corpus { dir, marker: format!("# {:?}\n", std::time::SystemTime::now()), text }
     }
     /// The program again, with the key rule's version tag `version`.
     fn bump(&mut self, version: &str) {
         let rule = self.dir.join("cache.rr");
         std::fs::write(&rule, program(version)).unwrap();
-        self.text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        self.text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     }
     fn write(&self, file: &str, body: &str) {
         std::fs::write(self.dir.join("ws").join(file), format!("{}{body}", self.marker)).unwrap();

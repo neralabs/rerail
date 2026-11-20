@@ -13,7 +13,7 @@
         super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let program = |name: &str| {
             let text = format!("#include \"core.rr\"\n.decl {name}(s: symbol)\n{name}(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output {name}\n");
-            crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(&text).unwrap()).unwrap()
+            crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(&text).unwrap()).unwrap()
         };
         let options = serde_json::json!({ "reuse": true });
         let run = |text: &str| super::super::run_with_options(&[text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
@@ -49,7 +49,7 @@
         // A policy file the program reads (`.input … filename=`) is consulted: its edit runs it again.
         std::fs::write(src.join("allow.txt"), "a\n").unwrap();
         let reads = "#include \"core.rr\"\n.decl entry(n: number, e: symbol)\n.input entry(IO=lines, filename=\"allow.txt\")\n.decl listed(e: symbol)\nlisted(e) :- entry(_, e).\n.output listed\n";
-        let reads = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reads).unwrap()).unwrap();
+        let reads = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reads).unwrap()).unwrap();
         run(&reads);
         assert!(kept(&run(&reads)));
         std::fs::write(src.join("allow.txt"), "a\nb\n").unwrap();
@@ -168,7 +168,7 @@
         super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let text = {
             let text = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
-            crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(text).unwrap()).unwrap()
+            crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(text).unwrap()).unwrap()
         };
         let options = serde_json::json!({ "reuse": true });
         let run = || super::super::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();

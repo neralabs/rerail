@@ -58,11 +58,10 @@
 //! becomes `pre_i($n) :- m126($n)`, `demand_m131($n) :- pre_i($n)`, `m131` over `demand_m131`, and
 //! `m132($n) :- pre_i($n), m131($n)`. Corpus runs only, so the golden plans are unchanged.
 
-use super::super::front::{Atom, Literal, Program, Rule, Term};
 use super::super::program_image::{Builder, CmpOp, RuleId, RuleRef, T, TermRef, Version};
-use super::keeps::inline::{named, renumbered};
+use super::keeps::inline::named;
 use std::collections::{BTreeMap, BTreeSet};
-use super::body::Placed;
+use super::body::{Freeze as _, Placed};
 use super::fields::Fields;
 
 mod over;
@@ -176,16 +175,16 @@ fn overlaid(base: &Placed, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize,
     let mut b = Builder::on(&base.v);
     // The splits' and the demands' declarations, and the flags, so the version stays the whole program.
     for (rel, cols) in decls {
-        b.declare(rel, &cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect::<Vec<_>>());
+        b.fields().declare(rel, &cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect::<Vec<_>>());
     }
     for rel in candidates {
         if let Some(d) = v.decl_of(rel) {
             let cols: Vec<(&str, &str)> = d.cols().map(|(n, t)| (v.text(n), v.text(t))).collect();
-            b.declare(&format!("demand_{rel}"), &cols);
+            b.fields().declare(&format!("demand_{rel}"), &cols);
         }
     }
-    b.add_nullary(nullary);
-    let (mut seq, mut removed, mut added, mut demands) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    b.fields().add_nullary(nullary);
+    let (mut seq, mut demands) = (Vec::new(), Vec::new());
     for ri in 0..base.len() {
         let id = base.id(ri);
         let r = v.rule(id).expect("a program rule");
@@ -200,7 +199,6 @@ fn overlaid(base: &Placed, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize,
                 continue;
             }
             b.remove(id);
-            removed.push(id);
             let mut rb = b.rule().head_from(v, r, r.head()).atom(demand.as_str(), &own_args);
             for l in r.body() {
                 rb = rb.lit(v, r, l);
@@ -210,11 +208,9 @@ fn overlaid(base: &Placed, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize,
             }
             let n = rb.finish()?;
             seq.push(n);
-            added.push(n);
             continue;
         };
         b.remove(id);
-        removed.push(id);
         // A split sharing no variable with its reads is a flag: one unit column.
         let pre_args: Vec<T<'_>> = if s.vars.is_empty() { vec![T::Int(1)] } else { s.vars.iter().map(|x| T::Var(x)).collect() };
         let mut rb = b.rule().head(s.pre.as_str(), &pre_args);
@@ -251,22 +247,16 @@ fn overlaid(base: &Placed, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize,
         }
         let reader = rb.finish()?;
         seq.extend([pre, reader]);
-        added.extend([pre, reader]);
         for &i in &s.cut {
             let read = r.body().nth(i).and_then(|l| l.atom()).expect("a cut read");
             let name = format!("demand_{}", v.rel_name(read.rel()));
             let args: Vec<T<'_>> = read.args().map(|t| named(v, t, &|x| v.text(r.var(x)))).collect();
             let d = b.rule().head(name.as_str(), &args).atom(s.pre.as_str(), &pre_args).finish()?;
             demands.push(d);
-            added.push(d);
         }
     }
-    let (out, made) = b.finish()?;
     seq.extend(demands);
-    if let Some(order) = renumbered(&base.v, &removed, &added, made) {
-        seq.iter_mut().for_each(|id| *id = order[id]);
-    }
-    Ok(Placed::new(out, seq, base.whole))
+    b.freeze_placed(seq, base.whole)
 }
 
 /// `demand_atom`'s arguments over the version: the head's, each computed one a fresh variable, and the checks that
@@ -294,23 +284,18 @@ mod tests {
 
     #[test]
     fn a_demand_prefix_keeps_only_reads_not_already_proved() {
-        let program = crate::code_rule_dsl::logic::front::parse(
-            "
-            .decl relation(k: number, value: number, tag: number)
-            .decl veto(value: number)
-            .decl result(k: number, value: number)
-            .input relation, veto
-            .output result
-            result($k, $value) :- relation($k, _, _), relation($k, $value, _), relation($k, _, 1), !veto($value).
-            ",
+        let program = crate::code_rule_dsl::logic::rr::parse_version(
+            ".decl relation(k: number, value: number, tag: number)\n.decl veto(value: number)\n.decl result(k: number, value: number)\n\
+             .input relation\n.input veto\n.output result\n\
+             result(k, value) :- relation(k, _, _), relation(k, value, _), relation(k, _, 1), !veto(value).\n",
         )
         .unwrap();
-        let base = Placed::of_program(&program).unwrap();
+        let base = Placed::whole(program);
         let split = Split { pre: "pre_0".into(), vars: vec!["k".into(), "value".into()], cut: BTreeSet::from([3]) };
         let decls = [("pre_0".into(), vec![("k".into(), "int".into()), ("value".into(), "int".into())])];
         let actual = overlaid(&base, &BTreeSet::from(["veto"]), &BTreeMap::from([(0, split)]), &decls, &[]).unwrap();
-        let pre = actual.v.program(&Default::default()).unwrap().rules.into_iter().find(|rule| rule.head.rel == "pre_0").unwrap();
-        assert_eq!(pre.to_string(), "pre_0($k, $value) :- relation($k, $value, _), relation($k, _, 1)");
+        let pre = actual.v.rules().find(|r| actual.v.rel_name(r.head().rel()) == "pre_0").unwrap();
+        assert_eq!(actual.v.show_rule(pre), "pre_0($k, $value) :- relation($k, $value, _), relation($k, _, 1)");
 
         let body = super::super::body::Body::of(&base.v, base.v.rule(base.id(0)).unwrap());
         assert!(!body.implied_read(0, &[0, 3]), "a cut read cannot prove a kept read");

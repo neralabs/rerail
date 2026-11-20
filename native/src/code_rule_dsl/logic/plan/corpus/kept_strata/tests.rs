@@ -2,8 +2,12 @@
     use crate::code_rule_dsl::logic::{native, plan, rr};
     use crate::code_rule_dsl::logic::plan::lower;
     /// A program's version, as a run reads it (t36 item 7).
-    fn pl(p: &crate::code_rule_dsl::logic::front::Program) -> crate::code_rule_dsl::logic::plan::body::Placed { crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap() }
-    fn st(p: &crate::code_rule_dsl::logic::front::Program) -> Vec<std::collections::BTreeSet<String>> { crate::code_rule_dsl::logic::front::strata(p).unwrap().0 }
+    type V = std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>;
+    fn pl(p: &V) -> crate::code_rule_dsl::logic::plan::body::Placed { crate::code_rule_dsl::logic::plan::body::Placed::whole(p.clone()) }
+    fn st(p: &V) -> Vec<std::collections::BTreeSet<String>> {
+        let s = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::Strata>(p).unwrap();
+        s.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r).to_owned()).collect()).collect()
+    }
     /// An entry of one integer row.
     fn one(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, v: i64) -> KeptPut { flat_put(rel, digest, reads, vec![b'i'], vec![v], 1) }
     fn gone(rel: &KeptRel) -> KeptPut { KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest: 0, reads: vec![], types: vec![], what: KeptWhat::Gone } }
@@ -21,7 +25,7 @@
             text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x).\n.output result{i}\n");
             inputs.push((format!("input{i}"), native::component::columns_source(vec!["c0".into()], vec![Some(vec![i])])));
         }
-        let prog = rr::parse(&text).unwrap();
+        let prog = rr::parse_version(&text).unwrap();
         let now: HashMap<_, _> = inputs.iter().map(|(r, s)| (r.clone(), super::super::retain::digest(s.as_ref(), &crate::code_rule_dsl::logic::plan::Cells::plain(s.columns().len())))).collect();
         let (_, part) = load(&store, dir.path(), [7; 32], [7; 32], &pl(&prog), &Default::default(), &st(&prog), &inputs, &now).unwrap();
         let puts: Vec<_> = part.frames.iter().map(|(name, (rel, _))| {
@@ -64,7 +68,7 @@
             for deleted in [false, true] {
                 let dir = tempfile::tempdir().unwrap();
                 let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
-                let prog = rr::parse(".decl input(x:number)\n.input input\n.decl result(x:number)\nresult(x) :- input(x).\n.output result\n").unwrap();
+                let prog = rr::parse_version(".decl input(x:number)\n.input input\n.decl result(x:number)\nresult(x) :- input(x).\n.output result\n").unwrap();
                 let inputs = vec![("input".to_owned(), native::component::columns_source(vec!["c0".into()], vec![Some(vec![42])]))];
                 let now = HashMap::from([("input".to_owned(), super::super::retain::digest(inputs[0].1.as_ref(), &crate::code_rule_dsl::logic::plan::Cells::plain(inputs[0].1.columns().len())))]);
                 let (_, part) = load(&store, dir.path(), [7; 32], [7; 32], &pl(&prog), &Default::default(), &st(&prog), &inputs, &now).unwrap();
@@ -145,14 +149,14 @@
     fn a_kept_relations_kind_column_is_no_atom() {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
-        let p = rr::parse(
+        let p = rr::parse_version(
             ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
              .input node, text\n.decl kinded(n: node, k: symbol, s: symbol)\n.output kinded\n\
              kinded(n, k, s) :- node(_, n, k, _, _), text(n, s).\n",
         )
         .unwrap();
-        let domains = lower::domains(&p).unwrap();
-        let mut kept = Kept::new(&store, [42; 32], &[], HashMap::new()).typed(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).unwrap(), &domains);
+        let domains = lower::domains_of(&p).unwrap();
+        let mut kept = Kept::new(&store, [42; 32], &[], HashMap::new()).typed(&crate::code_rule_dsl::logic::plan::body::Placed::whole(p.clone()), &domains);
         kept.program(&HashMap::from([("kinded".into(), [1; 32])]));
         kept.ran("kinded", Some((7, vec![b's', b's', b's'], vec![1, 1132, 5], 1, vec![])));
         assert_eq!(kept.puts[0].types, b"iis", "the node and the kind are no atoms, the text is");

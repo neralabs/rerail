@@ -58,7 +58,7 @@ impl Corpus {
         let marker = format!("# {name} {:?}\n", std::time::SystemTime::now());
         let rule = dir.join("program.rr");
         std::fs::write(&rule, PROGRAM).unwrap();
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let c = Corpus { dir, marker, program, runs: 0 };
         for (file, body) in FILES {
             c.write(file, body);

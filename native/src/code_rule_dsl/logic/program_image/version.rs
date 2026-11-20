@@ -9,7 +9,7 @@
 //! less what the edit removes or replaces, plus what it adds.
 use super::handles::{AtomRef, RuleRef};
 use super::{AtomId, Cell, Image, RelId, RuleId, bad};
-use crate::code_rule_dsl::logic::front::{ast::Program, name::Lists};
+use crate::code_rule_dsl::logic::front::name::Lists;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
@@ -497,19 +497,6 @@ impl Version {
     }
     pub fn outputs_hash(&self) -> u64 {
         self.owner(2).outputs_hash()
-    }
-
-    /// The program this version is, as the tree: a decode, counted in the run's record (`run::Record::trees_decoded`)
-    /// and, when profiling, named by the caller's place (the decision "a tree decoded from its version"), so what still
-    /// reads a tree is seen.
-    #[track_caller]
-    pub fn program(&self, lists: &Lists) -> Result<Program, String> {
-        let at = std::panic::Location::caller();
-        if let Some(run) = crate::code_rule_dsl::logic::profile::run_own() {
-            run.decoded(at);
-        }
-        crate::code_rule_dsl::logic::profile::decision("a tree decoded from its version", || format!("{}:{}", at.file(), at.line()));
-        super::Tree::new(self, lists).program()
     }
 
     /// A new base of this version's program, keeping its atom and relation ids (rule ids are renumbered from 0).

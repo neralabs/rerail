@@ -102,12 +102,13 @@ pub fn by_levels_ran() {
     BY_LEVELS.with(|c| c.set(c.get() + 1));
 }
 
-/// What a run did that decision 0364's required shape (§ "Required shape") rules out, counted on the shared object: read
-/// by the requirement tests (`maintain_tests`), never by a run. nextest runs each test as a process of its own.
+/// What a run did that decision 0364's required shape (§ "Required shape") ruled out, counted by the run: read by the
+/// requirement tests (`maintain_tests`), each in its run's scope, never by a run itself.
 pub mod shape {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
-    /// The counts, on the shared object (decision 0442): over the runs that share it, as a test reads them.
+    /// The counts, the run's own (decision 0442). On the shared object, tests running beside one another in a process
+    /// counted each other's runs (R8 read another test's frames).
     #[derive(Default)]
     struct Counts {
         rows_copied: AtomicUsize,
@@ -117,7 +118,7 @@ pub mod shape {
     }
 
     fn counts() -> std::sync::Arc<Counts> {
-        crate::code_rule_dsl::logic::profile::shared::<Counts>()
+        crate::code_rule_dsl::logic::run::local::<Counts>()
     }
 
     /// The counts so far.

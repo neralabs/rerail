@@ -359,10 +359,6 @@ impl Seen {
     }
 }
 
-/// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
-/// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
-/// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
-/// against the widened bound, and the other guests (other grammars, values) never.
 /// The tape tags of the grammars `v`'s requests name (decision 0431 R6: the tags whose tapes a run reads before its
 /// first wave); `None` where a request's grammar is not a constant, so any grammar may be asked.
 pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Version) -> Option<std::collections::BTreeSet<i64>> {
@@ -386,6 +382,10 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
     Some(tags)
 }
 
+/// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
+/// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
+/// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
+/// against the widened bound, and the other guests (other grammars, values) never.
 pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
     use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};

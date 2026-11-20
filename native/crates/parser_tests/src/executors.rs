@@ -6,9 +6,9 @@
 //! Public so the engine's tests of its own block programs (`packed::regex_block`) use them too.
 
 use rerail_compiler::program::Words as Program;
-use rerail_compiler::{block, native_cpu_block, native_ir};
 #[cfg(target_os = "macos")]
 use rerail_compiler::{Error, block_native};
+use rerail_compiler::{block, native_cpu_block, native_ir};
 #[cfg(target_os = "macos")]
 use rerail_metal as metal_program_backend;
 
@@ -62,7 +62,7 @@ pub fn runs() -> Vec<Vec<u8>> {
 /// A program's first block program, lowered and compiled once, for runs over many inputs.
 pub struct Executors<'a> {
     block: &'a block::BlockProgram,
-    /// The lowered program Metal's generated MSL and forward carry run.
+    /// What the Metal executors run.
     #[cfg(target_os = "macos")]
     native: block_native::BlockNative,
     cranelift: native_cpu_block::CompiledBlock,
@@ -92,34 +92,40 @@ impl<'a> Executors<'a> {
     /// executor whose run would take more launches than the budget (`metal_launch_budget`):
     /// those are named in the second list.
     pub fn run(&self, bytes: &[u8], metal: bool) -> (Vec<(String, Vec<Vec<u64>>)>, Vec<String>) {
-        let out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
-        let skipped = Vec::new();
-        #[cfg(target_os = "macos")]
-        let (mut out, mut skipped) = (out, skipped);
-        #[cfg(target_os = "macos")]
-        if metal {
-            use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
-            let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
-                Ok(got) => out.push((name, got)),
-                Err(Error::BackendLaunchLimit) => skipped.push(name),
-                Err(e) => panic!("{name} runs: {e:?}"),
-            };
-            for width in LaneWidth::ALL {
-                let w = width.bytes();
-                keep(format!("metal interpreter, {w}-byte lanes"), interpret(self.block, bytes, width));
-                for strategy in ClassStrategy::ALL {
-                    keep(format!("generated msl, {w}-byte lanes, {strategy:?}"), run_generated_with(&self.native, bytes, width, strategy).map(|(got, _)| got));
-                }
-            }
-            // The forward carry (`metal_block_serial`): segments of three blocks, so that a file of
-            // a few blocks has segments that speculate their start and run again.
-            use metal_program_backend::block_program::serial::{Segments, run_serial_split};
-            let file = [block::BatchFile { bytes, program: 0 }];
-            keep("metal forward carry, segments of 3".to_owned(), run_serial_split(&[&self.native], &file, Segments { blocks: 3, warm: 1 }).map(|mut r| r.run.files.remove(0).outputs));
-        }
-        #[cfg(not(target_os = "macos"))]
-        let _ = metal;
+        let mut out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
+        let skipped = if metal { self.metal(bytes, &mut out) } else { Vec::new() };
         (out, skipped)
+    }
+
+    /// The Metal executors' outputs over `bytes`, added to `out`; those over the launch budget, named.
+    #[cfg(target_os = "macos")]
+    fn metal(&self, bytes: &[u8], out: &mut Vec<(String, Vec<Vec<u64>>)>) -> Vec<String> {
+        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
+        let mut skipped = Vec::new();
+        let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
+            Ok(got) => out.push((name, got)),
+            Err(Error::BackendLaunchLimit) => skipped.push(name),
+            Err(e) => panic!("{name} runs: {e:?}"),
+        };
+        for width in LaneWidth::ALL {
+            let w = width.bytes();
+            keep(format!("metal interpreter, {w}-byte lanes"), interpret(self.block, bytes, width));
+            for strategy in ClassStrategy::ALL {
+                keep(format!("generated msl, {w}-byte lanes, {strategy:?}"), run_generated_with(&self.native, bytes, width, strategy).map(|(got, _)| got));
+            }
+        }
+        // The forward carry (`metal_block_serial`): segments of three blocks, so that a file of
+        // a few blocks has segments that speculate their start and run again.
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        let file = [block::BatchFile { bytes, program: 0 }];
+        keep("metal forward carry, segments of 3".to_owned(), run_serial_split(&[&self.native], &file, Segments { blocks: 3, warm: 1 }).map(|mut r| r.run.files.remove(0).outputs));
+        skipped
+    }
+
+    /// No Metal executors off macOS.
+    #[cfg(not(target_os = "macos"))]
+    fn metal(&self, _: &[u8], _: &mut Vec<(String, Vec<Vec<u64>>)>) -> Vec<String> {
+        Vec::new()
     }
 }
 

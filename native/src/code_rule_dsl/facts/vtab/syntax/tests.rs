@@ -395,7 +395,7 @@ fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, Arc::new(file))), guest: None, module: None }
 }
 
-/// `core.rr`'s relations of `docs` for a program that includes `core.rr` and reads them (`Projection::of`'s shape
+/// `core.rr`'s relations of `docs` for a program that includes `core.rr` and reads them (`text_demand::projection_of`'s shape
 /// and reads), each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself. The relations made
 /// for what a program reads are the batch's (`Extra`'s W's values, source lines and places, `tree`'s `op_at` and
 /// `visit_index`), the others `core_rr`'s.
@@ -536,10 +536,10 @@ fn core_rr_relations_hold_what_core_rr_says() {
 #[test]
 fn programs_that_include_core_rr_read_its_shape() {
     let core = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
-    let with = crate::code_rule_dsl::logic::rr::parse(&format!("{core}\n.decl q(n: node)\nq(n) :- comment(n, _).\n.output q\n")).unwrap();
-    assert_eq!(Projection::of(&with, BTreeSet::new()).shape, Shape::Core);
-    let without = crate::code_rule_dsl::logic::rr::parse(".decl text(n: number, s: symbol)\n.input text\n.decl q(n: number)\nq(n) :- text(n, _).\n.output q\n").unwrap();
-    assert_eq!(Projection::of(&without, BTreeSet::new()).shape, Shape::T);
+    let with = crate::code_rule_dsl::logic::rr::parse_version(&format!("{core}\n.decl q(n: node)\nq(n) :- comment(n, _).\n.output q\n")).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::projection_of(&with, BTreeSet::new()).shape, Shape::Core);
+    let without = crate::code_rule_dsl::logic::rr::parse_version(".decl text(n: number, s: symbol)\n.input text\n.decl q(n: number)\nq(n) :- text(n, _).\n.output q\n").unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::projection_of(&without, BTreeSet::new()).shape, Shape::T);
 }
 
 /// End to end through the corpus runner, a program that includes `core.rr`: its options, `@dot` with an empty head,
@@ -878,8 +878,8 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
         ("out(\"missing\") :- source(_, sp), !text(sp, _).", true, false),
         ("out(t) :- source(_, sp), match_all(\"(?<hit>items)\", sp), text(hit, t).", false, false),
     ] {
-        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
-        let projection = Projection::of(&program, ["source", "src_line", "text", "rx_span"].into_iter().map(str::to_owned).collect());
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let projection = crate::code_rule_dsl::logic::plan::text_demand::projection_of(&program, ["source", "src_line", "text", "rx_span"].into_iter().map(str::to_owned).collect());
         let rows = shaped(&store, vec![doc.clone()], &projection).unwrap();
         let relation = |name| &rows.iter().find(|(n, _)| *n == name).unwrap().1;
         let text = relation("text");
@@ -1306,10 +1306,11 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
         ("out(t) :- field(_, \"attribute\", n), text(n, t).", 0),
         ("out(\"doc\") :- node(_, n, _, _, _), text(n, \"doc\").", 0),
     ] {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
-        assert_eq!(long_text_twins(&mut program, &[]), twins, "{body}");
-        assert!(text_kind_demand(&program, &[]).any.is_empty(), "{body}: every text is read");
-        assert_eq!(long_text_twins(&mut program, &[]), 0, "{body}: twinned once");
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(program, &Vec::new()).unwrap();
+        assert_eq!(made, twins, "{body}");
+        assert!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).any.is_empty(), "{body}: every text is read");
+        assert_eq!(crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(program, &Vec::new()).unwrap().1, 0, "{body}: twinned once");
     }
 }
 
@@ -1338,9 +1339,9 @@ fn text_only_for_the_nodes_read() {
         (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$N"}]}}]}"#)), some(&["identifier"], &[])),
         (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"inside": {"pattern": "$N", "field": "body"}}]}"#)), None),
     ] {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
-        let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
-        assert_eq!(text_kind_demand(&program, &matchers).read, read, "{body}");
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let (program, matchers) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(program).unwrap();
+        assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &matchers).read, read, "{body}");
     }
 }
 
@@ -1363,14 +1364,14 @@ fn a_derived_base_name_narrows_no_text() {
         // `node`'s projection and a rule of the program's own: `kind` is the program's.
         ("kind(n, k) :- node(_, n, k, _, _).\nkind(n, \"call\") :- edge(n, _).", "out(t) :- kind(n, \"call\"), text(n, t)."),
     ] {
-        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}{derives}\n{body}\n")).unwrap();
-        let demand = text_kind_demand(&program, &[]);
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{decls}{derives}\n{body}\n")).unwrap();
+        let demand = crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]);
         assert_eq!(demand.read, None, "{derives} / {body}: every node's text");
         assert!(!demand.any.is_empty(), "{derives} / {body}: a text of a node of any kind");
     }
     // `node`'s projection alone (the lowering's, `rr::lower` `projections`) is `kind` itself: it narrows.
-    let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}kind(n, k) :- node(_, n, k, _, _).\nout(t) :- kind(n, \"call\"), text(n, t).\n")).unwrap();
-    assert_eq!(text_kind_demand(&program, &[]).read, Some(TextNodes { kinds: BTreeSet::from(["call".to_owned()]), ..TextNodes::default() }));
+    let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{decls}kind(n, k) :- node(_, n, k, _, _).\nout(t) :- kind(n, \"call\"), text(n, t).\n")).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).read, Some(TextNodes { kinds: BTreeSet::from(["call".to_owned()]), ..TextNodes::default() }));
 }
 
 /// `node_text` (a node's exact text, at any length) is answered on request (decision 0174): each reader asks for the
@@ -1383,11 +1384,12 @@ fn a_derived_base_name_narrows_no_text() {
 fn node_text_answered_on_request() {
     let decls = ".decl node(d: number, n: node, k: symbol, a: number, b: number)\n.decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl node_text(n: node, s: symbol)\n.input node, child, field, node_text\n.decl out(s: symbol)\n.output out\n.decl named(n: node, s: symbol)\n";
     let requests = |body: &str| -> Option<Vec<String>> {
-        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}{body}\n")).unwrap();
-        if program.inputs.iter().any(|i| i == "node_text") {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{decls}{body}\n")).unwrap();
+        if program.input_names().iter().any(|i| i == "node_text") {
             return None;
         }
-        let mut out: Vec<String> = program.rules.iter().filter(|r| r.head.rel.starts_with("rr_node_text_req") || r.head.rel.starts_with("rr_wide_")).map(|r| format!("{}.", r.to_string().replace('$', ""))).collect();
+        let head = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| program.rel_name(r.head().rel());
+        let mut out: Vec<String> = program.rules().filter(|&r| head(r).starts_with("rr_node_text_req") || head(r).starts_with("rr_wide_")).map(|r| format!("{}.", program.show_rule(r).replace('$', ""))).collect();
         out.sort();
         Some(out)
     };
@@ -1495,9 +1497,8 @@ fn a_phase_projects_the_subtrees_its_rules_start_from() {
         (phase("out(i) :- kind(i, \"import_statement\").", "i: node"), Err(String::new())),
         (format!("{prelude}\n.decl out(t: symbol)\nout(t) :- kind(i, \"import_statement\"), text(i, t).\n.output out\n"), Err(String::new())),
     ] {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(&src).unwrap();
-        let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
-        let got = node_anchors(&program, &matchers);
+        let (program, matchers) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(crate::code_rule_dsl::logic::rr::parse_version(&src).unwrap()).unwrap();
+        let got = crate::code_rule_dsl::logic::plan::text_demand::node_anchors(&program, &program.settings().unwrap(), &matchers);
         let body = src.rsplit(".decl out").next().unwrap_or("");
         match &want {
             Ok(k) => assert_eq!(got.as_ref().ok(), Some(k), "{body}: {got:?}"),
@@ -1513,10 +1514,10 @@ fn a_phase_projects_the_subtrees_its_rules_start_from() {
 fn a_long_text_twin_keeps_its_phases_anchors() {
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
     let src = format!("{prelude}\n.phase p\n.export out\n.decl out(t: symbol)\nout(t) :- kind(i, \"import_from_statement\"), field(i, \"name\", n), text(n, t).\n.output out\n");
-    let mut program = crate::code_rule_dsl::logic::rr::parse(&src).unwrap();
-    let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
-    assert!(long_text_twins(&mut program, &matchers) > 0, "the rule reads the text of a node no kind fixes");
-    let got = node_anchors(&program, &matchers);
+    let (program, matchers) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(crate::code_rule_dsl::logic::rr::parse_version(&src).unwrap()).unwrap();
+    let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(program, &matchers).unwrap();
+    assert!(made > 0, "the rule reads the text of a node no kind fixes");
+    let got = crate::code_rule_dsl::logic::plan::text_demand::node_anchors(&program, &program.settings().unwrap(), &matchers);
     assert_eq!(got, Ok(["import_from_statement".to_owned()].into_iter().collect::<BTreeSet<String>>()));
 }
 

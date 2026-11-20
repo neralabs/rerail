@@ -2751,12 +2751,8 @@ pub fn open_spans() -> String {
     r
 }
 
-/// Record why expensive input relations are requested, before projection planning.
-pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads: &std::collections::BTreeSet<String>) {
-    if on() { analysis_report::projection(prog, reads); }
-}
-
-/// `projection_plan` from the relations' readers and the outputs (`analysis_report::projection_of`).
+/// Records why expensive input relations are requested, before projection planning: from the relations' readers and
+/// the outputs (`analysis_report::projection_of`).
 pub fn projection_plan_of(users: impl FnOnce() -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>>, outputs: &std::collections::BTreeSet<String>, reads: &std::collections::BTreeSet<String>) {
     if on() { analysis_report::projection_of(&users(), outputs, reads); }
 }

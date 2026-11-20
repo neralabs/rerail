@@ -501,20 +501,20 @@ fn git_revisions(program: &mut Edit<'_>, shape: &super::shape::Shape, root: &Pat
     if !shape.read.contains("git_rev") {
         return;
     }
-    program.b.retain_inputs(|n| n != "git_rev");
+    program.b.fields().retain_inputs(|n| n != "git_rev");
     let key = format!("{}\t{}", root.display(), base.unwrap_or(""));
     match crate::code_rule_dsl::logic::strings::git::revisions(root, base) {
         Ok((rows, _)) => {
             consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
-            program.b.add_facts("git_rev", &rows.into_iter().map(|(n, id)| [Value::Str(n.into()), Value::Str(id.into())].into()).collect::<Vec<_>>());
+            program.b.fields().add_facts("git_rev", &rows.into_iter().map(|(n, id)| [Value::Str(n.into()), Value::Str(id.into())].into()).collect::<Vec<_>>());
             if base.is_none() {
                 return;
             }
         }
         Err(detail) => {
             consulted.push(("git_rev".to_owned(), key, String::new()));
-            program.b.retain_inputs(|n| n != "input_error");
-            program.b.add_facts("input_error", &[[Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())].into()]);
+            program.b.fields().retain_inputs(|n| n != "input_error");
+            program.b.fields().add_facts("input_error", &[[Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone().into())].into()]);
             let withheld = withhold(program, &BTreeMap::from([("git_rev".to_owned(), "git_rev unreadable".to_owned())]));
             for (output, why) in withheld.unknown {
                 eprintln!("unknown: {} ({why}): rows may be missing", output.strip_prefix("rr_place_").unwrap_or(&output));
@@ -622,9 +622,9 @@ fn populate_with(
             }
             let data = artifacts.entry(name.clone()).or_insert_with(|| artifact(name));
             let result = data.as_ref().map_err(Clone::clone).and_then(|data| json_rows(data, pointer, records, Vec::new(), columns));
-            program.b.retain_inputs(|n| n != rel);
+            program.b.fields().retain_inputs(|n| n != rel);
             match result {
-                Ok(rows) => program.b.add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
+                Ok(rows) => program.b.fields().add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
                 Err(error) => {
                     let row = vec![Value::Str(format!("artifact:{name}").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                     if !errors.contains(&row) {
@@ -666,9 +666,9 @@ fn populate_with(
         } else if at_base {
             base_readers.rows(path, io, pointer, records, Vec::new(), columns, base)
         } else { readers.rows(path, io, pointer, records, Vec::new(), columns, read) };
-        program.b.retain_inputs(|name| name != rel);
+        program.b.fields().retain_inputs(|name| name != rel);
         match result {
-            Ok(rows) => program.b.add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
+            Ok(rows) => program.b.fields().add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
             Err(error) if at_base => {
                 let row = vec![Value::Str(format!("{path}@base").into()), Value::Str(error.kind.to_owned().into()), Value::Str(error.detail.clone().into())];
                 if !errors.contains(&row) {
@@ -680,8 +680,8 @@ fn populate_with(
         }
     }
     if !errors.is_empty() {
-        program.b.retain_inputs(|name| name != "input_error");
-        program.b.add_facts("input_error", &errors.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>());
+        program.b.fields().retain_inputs(|name| name != "input_error");
+        program.b.fields().add_facts("input_error", &errors.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>());
     }
     if !incomplete.is_empty() {
         let withheld = withhold(program, &incomplete);
@@ -831,11 +831,7 @@ grew(e) :- now_entry(e), !was(_, e).
 
     /// The version of program `text`.
     fn version(text: &str) -> V {
-        image(&crate::code_rule_dsl::logic::rr::parse(text).unwrap())
-    }
-
-    fn image(p: &front::Program) -> V {
-        crate::code_rule_dsl::logic::program_image::Builder::of_program(p).unwrap().finish().unwrap().0
+        crate::code_rule_dsl::logic::rr::parse_version(text).unwrap()
     }
 
     /// `v` with its inputs read (`populate_with`).
@@ -928,8 +924,8 @@ grew(e) :- now_entry(e), !was(_, e).
 
     #[test]
     fn artifact_declarations_are_parsed_and_must_agree() {
-        let program = crate::code_rule_dsl::logic::rr::parse(".artifact \"test_collection\" inputs \"**/*.py\", \"pyproject.toml\"\n").unwrap();
-        let declared = artifacts(&program.settings).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::parse_version(".artifact \"test_collection\" inputs \"**/*.py\", \"pyproject.toml\"\n").unwrap();
+        let declared = artifacts(&crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&*program)).unwrap();
         assert_eq!(declared["test_collection"], vec!["**/*.py".to_owned(), "pyproject.toml".to_owned()]);
         let twice = vec![
             ("artifact".to_owned(), "\"a\" inputs \"*.py\"".to_owned()),
