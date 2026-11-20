@@ -1,4 +1,4 @@
-//! Decision 0426 §6: what 16z's block sink needs of its compressor. The engine's format 16 tape of each file
+//! Decision 0434 §6: what 16z's block sink needs of its compressor. The engine's format 16 tape of each file
 //! (`f16::write_from`, the shipped tables), cut into 16z's pieces as its writer cuts them (a block's column at its
 //! rows, then that block's side-list part), each piece stored as 16z stores it (LZ4 when that shrinks it by a
 //! tenth, else raw; repeats left out, the same for every compressor), by each compressor: LZ4 HC at a level, or
@@ -118,7 +118,7 @@ pub fn print(title: &str, r: &Report) {
     println!();
 }
 
-/// Decision 0426 §6, R13 at scale: each file's format 16 and 16z tapes by the writer (the ops in CLIF, through
+/// Decision 0434 §6, R13 at scale: each file's format 16 and 16z tapes by the writer (the ops in CLIF, through
 /// their Rust) and by the reference writer, byte for byte; each writer's time.
 #[derive(Default)]
 pub struct Ops {
@@ -177,7 +177,7 @@ pub fn print_ops(title: &str, r: &Ops) {
     println!("instructions/node: 16 reference {:.0}, ops {:.0}; 16z reference {:.0}, ops {:.0}\n", per(r.in_ref[0]), per(r.in_ops[0]), per(r.in_ref[1]), per(r.in_ops[1]));
 }
 
-/// Decision 0426 §5 (step 5), measured before it is built: 16z's pieces as LZ4 sequences whose matches are node
+/// Decision 0434 §5 (step 5), measured before it is built: 16z's pieces as LZ4 sequences whose matches are node
 /// ranges. A subtree is contiguous in every column, so a block's column at a subtree's rows can match the same
 /// column at an earlier subtree's rows in the block: (a) the whole subtree, or (b) its descendants alone (the root's
 /// cell, an edge cell, being a literal). At each row the parse takes (a), else (b), else a literal; a match then

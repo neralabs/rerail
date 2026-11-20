@@ -17,7 +17,7 @@ pub struct AnalysisOwner {
     acquired_at: i64,
     #[serde(default)]
     pub(super) acquisition: i64,
-    /// A run's owner (decision 0494): whether its first write creates the scope's generation (`generation`, its
+    /// A run's owner (decision 0514): whether its first write creates the scope's generation (`generation`, its
     /// lease's), none being there when it started. A run writes nothing as it starts; each of its writes acquires
     /// first (`acquire`).
     #[serde(default)]
@@ -62,7 +62,7 @@ impl AnalysisOwner {
     /// `current`, as it will be once the owner has acquired (`planned`): a run that has written nothing yet reads
     /// the generation its first write would create.
     fn current_as(&self, tx: &rusqlite::Connection, planned: bool) -> rusqlite::Result<bool> {
-        // A run's staging key closes as it finishes: a worker's late write finds its lease gone (decision 0494).
+        // A run's staging key closes as it finishes: a worker's late write finds its lease gone (decision 0514).
         if self.pending.is_some() && !tx.path().is_some_and(|p| super::scope_lease::live(Path::new(p), Some(self.acquisition))) {
             return Ok(false);
         }
@@ -84,7 +84,7 @@ impl AnalysisOwner {
     }
 
     /// A run's acquisition, written by its first write (and again, idempotently, by each later one): what its start
-    /// read and planned (decision 0494). An owner that acquired as it began (`begin_analysis_scope_at`) has nothing
+    /// read and planned (decision 0514). An owner that acquired as it began (`begin_analysis_scope_at`) has nothing
     /// to write.
     pub(super) fn acquire(&self, tx: &rusqlite::Connection) -> rusqlite::Result<()> {
         if self.pending.is_none() {
@@ -152,7 +152,7 @@ fn delivered(file: &Path, id: &str) -> bool {
 }
 
 /// Runs `release` in a deletion of `file`'s scopes that fails while a run that it would revoke holds its lease
-/// (decision 0494). The runs it leaves have their acquisitions written first, as their own first writes would: a
+/// (decision 0514). The runs it leaves have their acquisitions written first, as their own first writes would: a
 /// stop keeps a later writer's generation by what that writer acquired.
 fn deleting<T>(file: &Path, what: &str, scope: &str, subtree: Option<&str>, legacy: Option<&str>, before: Option<i64>,
     release: impl FnOnce(&dyn Fn(&rusqlite::Connection) -> rusqlite::Result<()>) -> StoreResult<T>) -> StoreResult<T> {
@@ -188,7 +188,7 @@ pub struct AnalysisRun {
     scope_value: String,
     source: Option<RunSource>,
     pub publication: Option<Publication>,
-    /// What another process sees of the run until it finishes (decision 0494).
+    /// What another process sees of the run until it finishes (decision 0514).
     scope_lease: Option<super::scope_lease::ScopeLease>,
 }
 
@@ -269,7 +269,7 @@ impl AnalysisRun {
         Ok(run)
     }
 
-    /// A run of `scope` (decision 0494): it reads, and writes nothing. Its lease names it to other processes; its
+    /// A run of `scope` (decision 0514): it reads, and writes nothing. Its lease names it to other processes; its
     /// acquisition is written by its first write, which the store's writer applies behind the run (its manifest's,
     /// then its publication's, `finish`).
     pub fn begin_at(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
@@ -304,7 +304,7 @@ impl AnalysisRun {
     }
 
     /// The run's outcome, published by the store's writer after the run's own writes (its manifests and their
-    /// staged memberships), as an item of its own (decision 0494). This waits for the writer: the outcome is the
+    /// staged memberships), as an item of its own (decision 0514). This waits for the writer: the outcome is the
     /// caller's answer. A failed publication leaves the run open, to be finished again.
     pub fn finish(&mut self, succeeded: bool) -> StoreResult<()> {
         if self.lease.is_none() {
@@ -490,7 +490,7 @@ pub fn acquisition_time() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |t| t.as_micros() as i64)
 }
 
-/// An acquisition the store numbers itself: above its counter and above every run's lease (decision 0494).
+/// An acquisition the store numbers itself: above its counter and above every run's lease (decision 0514).
 pub(super) fn next_acquisition(tx: &rusqlite::Connection) -> rusqlite::Result<i64> {
     let leased = tx.path().map_or(0, |p| super::scope_lease::highest(Path::new(p)));
     tx.query_row_cached("UPDATE store_state SET analysis_acquisitions=max(analysis_acquisitions,?1)+1
@@ -678,7 +678,7 @@ impl<'a> DirectoryRelease<'a> {
     }
 
     /// Releases `path`'s scopes in `file`, through `run` (a transaction of it); fails while a run it would revoke
-    /// is running (decision 0494).
+    /// is running (decision 0514).
     fn apply_in<T>(&self, file: &Path, path: &str, run: impl FnOnce(&dyn Fn(&rusqlite::Connection) -> StoreResult<usize>) -> StoreResult<T>) -> StoreResult<T> {
         let scope = recorded_directory(path, self.home);
         let subtree = scope_prefix(&scope);
@@ -722,7 +722,7 @@ pub fn named_acquisition_state(file: &Path, name: &str, identity: i64, acquisiti
     let db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let scope = named(name).ok_or_else(|| super::StoreError::Invalid("analysis scope name must not be empty".into()))?;
     let pending = format!("pending:{identity}:{acquisition}:{scan}");
-    // A run's lease is its pending state (decision 0494); a pending row, an older writer's.
+    // A run's lease is its pending state (decision 0514); a pending row, an older writer's.
     let leased = super::scope_lease::live(file, Some(acquisition));
     let state = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM analysis_scope_pending WHERE id=?2),
@@ -796,7 +796,7 @@ impl ContentStore {
         Ok(store)
     }
 
-    /// Deletes `scope`; fails while a run of it is running (decision 0494).
+    /// Deletes `scope`; fails while a run of it is running (decision 0514).
     pub fn delete_analysis_scope(&self, scope: &str) -> StoreResult<usize> {
         deleting(self.database_path(), "a scope's deletion", scope, None, None, None, |acquire_others| self.immediate_transaction(|tx| {
             acquire_others(tx)?;

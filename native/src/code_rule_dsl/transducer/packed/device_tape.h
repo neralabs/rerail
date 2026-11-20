@@ -84,10 +84,10 @@ UKL_INLINE bool code_admits(UKL_GLOBAL const uint32_t* rule,UKL_GLOBAL const Dev
  return true;
 }
 // The kind a presence records for a node of kind `kind`: an ERROR node's (0xffff) is ERROR_CODE (0), the tape's folded
-// code (decision 0426 §4; the host's `tape::presence_kind`).
+// code (decision 0434 §4; the host's `tape::presence_kind`).
 UKL_INLINE uint32_t presence_kind(uint32_t kind){return kind==0xffffu?0u:kind;}
 // Whether block `block` of document `d` (its nodes 1024*block ..) may hold a node a rule over codes admits, by the
-// tape's presence in its home (decision 0426 §4, step 6), read where it lies by `tape_has_kind`, the read the host's
+// tape's presence in its home (decision 0434 §4, step 6), read where it lies by `tape_has_kind`, the read the host's
 // planners and walks make too (`Roots::may_in`): one of its kinds, and each kind its tests name. A tape that holds no
 // presence admits every block.
 UKL_INLINE bool rule_may_in(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* rule,uint32_t block){

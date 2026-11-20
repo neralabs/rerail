@@ -200,7 +200,7 @@ fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
 /// store path), so the inputs' deltas are read from them, not every document hashed. (A few still are: 0364's open
 /// item.)
 #[test]
-#[ignore = "R2, Q360: at the cycle cut no input the session asks is read from the entries (`child`, a semi-join's; `edge_at`, rows of other documents' nodes)"]
+#[ignore = "R2, Q405: at the cycle cut no input the session asks is read from the entries (`child`, a semi-join's; `edge_at`, rows of other documents' nodes)"]
 fn r2_a_session_reads_its_inputs_deltas_from_the_changed_entries() {
     let mut s = kinds("r2-entries");
     s.run();
@@ -449,7 +449,7 @@ fn r7_the_recheck_order_is_priced() {
 
 /// R8: a session's kept rows stay in place between its runs (0328 §5): an edit's run reads no kept frame back.
 #[test]
-#[ignore = "R8, Q360: a phase's run is in memory (a429546488), no session's, and binds its kept part from the store at each edit"]
+#[ignore = "R8, Q405: a phase's run is in memory (a429546488), no session's, and binds its kept part from the store at each edit"]
 fn r8_a_session_edit_reads_no_kept_frame() {
     let mut s = kinds("r8");
     s.run();

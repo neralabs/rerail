@@ -370,7 +370,7 @@ pub(super) fn restore_persisted_file(
             })
         })
         .collect::<Option<Vec<_>>>();
-    // The presence stored with the file's tape decides where it can (decision 0426 step 6), else the search index.
+    // The presence stored with the file's tape decides where it can (decision 0434 step 6), else the search index.
     let by_presence = presence_selects(store, source_id, grammar_id, file, code_rules);
     file.selector_skipped = by_presence.unwrap_or_else(|| lookups.is_some_and(|lookups| {
         !lookups.is_empty()
@@ -392,7 +392,7 @@ pub(super) fn restore_persisted_file(
     Ok(())
 }
 
-/// Whether the presence stored after the file's tape (decision 0426 §4, step 6), read in place in the tape's stored
+/// Whether the presence stored after the file's tape (decision 0434 §4, step 6), read in place in the tape's stored
 /// frame by the tape's read (`tape_has_kind`, the kernels' too), rules out every candidate clause: none of a clause's
 /// root kinds is in the tape, as the search index's `Absent` says. A tape with an error node (its kind `ERROR_CODE`'s
 /// bit) rules out none, as the index's syntax errors do not. `None` where the presence cannot tell and the search index

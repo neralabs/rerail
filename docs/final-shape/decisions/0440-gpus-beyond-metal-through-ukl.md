@@ -883,7 +883,7 @@ Progress (2026-11-18):
     `reads.rs`, `relation.rs`, `view.rs`, `view_reads.rs` and `rust.rs`. Its generated reads are:
     - block-major format 16 (0399);
     - 16z read through a cache (0353 steps 4a and 4b), which removes `decode16z.metal`;
-    - reads proven to stay within the tape's bytes (0427).
+    - reads proven to stay within the tape's bytes (0463).
 
     It also changes the label passes (`metal_label_passes.metal`, +211 lines), the relation reads, and the blocks'
     `atoms.rs` and `kept.rs`.
@@ -922,7 +922,7 @@ source (the label patterns, the program backend, `metal_backend`, `block_program
 
 **A: done (2026-11-19, merge 3f701ec4e).** `Native-and-GPU-strata` merged at ef9c3dcf2. Its emitter changes (each
 read's 16z body called apart, 64-bit offsets for every family but the tape's) are in `ukl.rs`, and its reads
-(block-major format 16, 0426; 16z through a cache, 0353 step 4b; reads within the tape's bytes, 0427) are the
+(block-major format 16, 0434; 16z through a cache, 0353 step 4b; reads within the tape's bytes, 0463) are the
 library's `<ukl/reads/*.h>`, written again from the merged emitter. A read is cold where 0310's policy says so and
 for every 16z body called apart. This record was 0400 there; the branch's 0400 (a small root checked by its
 listings) kept the number. The writer (`<ukl/writer.h>`) waits for oscar, which is not on the branch at the pin.
@@ -934,7 +934,7 @@ listings) kept the number. The writer (`<ukl/writer.h>`) waits for oscar, which 
   read 0. The runtime now runs a one-thread write into host pages when it opens a device, and refuses one whose
   write is not there (0353). OpenCL on NVIDIA needs SVM, which is not written. Three of the branch's tests failed
   under parallel runs and were fixed in the merge (the merge commit says how): the writer's tail outgrew its room
-  (0426 R4), and two tests read process-wide counts that the tests beside them move.
+  (0434 R4), and two tests read process-wide counts that the tests beside them move.
 
 **B: the device layer's part (2026-11-19).** The engine's Metal uses five things the device layer lacked. Each is a
 primitive of it now, on every backend, with a test (`gpu/src/device_tests.rs`) that passes on Metal, the CPU and
@@ -998,7 +998,7 @@ the program backend) include it as before, preprocessed for Metal.
   order: the label passes, the sweep, then the batch runtime.
 - Found on the way: `rerail-store`'s tests did not compile after a merge, and the journal's replay ignored the
   caller's bound (Q184) for the settle window's wait (Q179). Both fixed. Four observer tests that fail with or
-  without the fix are Q323.
+  without the fix are Q402.
 
 **C: the engine's lane on the device layer, and the first family on it (2026-11-19).** What every ported family
 stands on:

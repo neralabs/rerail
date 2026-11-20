@@ -1,4 +1,4 @@
-//! Format 16 written by the writer's ops in CLIF (decision 0426 §6), through their Rust (`generated_writer`): the
+//! Format 16 written by the writer's ops in CLIF (decision 0434 §6), through their Rust (`generated_writer`): the
 //! host's region, each part its own buffer, named in the state by its offset from the state's address. Before each
 //! op the host reserves what the op can need, as a `Vec` reserves before a push, so an op never finds a part full:
 //! a full part is the device's failure, whose document is parsed again on the host.
@@ -20,7 +20,7 @@ macro_rules! call {
     }};
 }
 
-/// The ops compiled by the JIT (decision 0426 §6, R15), a test's: what `Writer` calls in place of their Rust.
+/// The ops compiled by the JIT (decision 0434 §6, R15), a test's: what `Writer` calls in place of their Rust.
 #[cfg(test)]
 pub(super) struct Jit {
     _module: rerail_clif::jit::Writer,
@@ -66,7 +66,7 @@ const ZBLOCK_MAX: usize = 4 * PIECE_MAX + w::lz4_bound(PIECE_MAX as u64) as usiz
 /// What a fresh byte of the tape's buffer holds: in tests not zero, so a byte the ops do not write shows.
 const FRESH: u8 = if cfg!(test) { 0xa5 } else { 0 };
 
-/// Format 16 or 16z written in one pass as a parser goes (decision 0426 §2), by the writer's ops in CLIF (§6)
+/// Format 16 or 16z written in one pass as a parser goes (decision 0434 §2), by the writer's ops in CLIF (§6)
 /// through their Rust: `f16::Writer`. Its API and its bytes are the hand-written reference writer's
 /// (`reference::Writer`, whose doc says what each op writes where), which the tests check it against (R13, R16).
 pub struct Writer {
@@ -283,7 +283,7 @@ impl Writer {
     }
 
     /// Room for a run of up to `nodes` nodes, `depth` open at once, whose ops code calls itself, with no host
-    /// between them to reserve (tier 2's words, decision 0426 §6, R17): each block's share as `open` reserves it,
+    /// between them to reserve (tier 2's words, decision 0434 §6, R17): each block's share as `open` reserves it,
     /// and room for every block made final as `reserve_final` does. A part found full after it is the run's
     /// failure (`fail::FULL`), and the run goes again with more room.
     pub fn reserve_run(&mut self, nodes: usize, depth: usize) {
@@ -378,7 +378,7 @@ impl Writer {
         i
     }
 
-    /// The nodes so far final but for the open ones (`w_commit`): no edit reaches before them (decision 0426 §2).
+    /// The nodes so far final but for the open ones (`w_commit`): no edit reaches before them (decision 0434 §2).
     pub fn commit(&mut self) {
         let blocks = (self.state.n as usize / Z).saturating_sub(self.state.frontier as usize / Z);
         self.reserve_final(blocks);
@@ -497,7 +497,7 @@ impl Lz {
     }
 }
 
-/// The ops in UKL on the process's device (decision 0426 §6, R15; decision 0440), a test's: the calls are recorded, then replayed by one
+/// The ops in UKL on the process's device (decision 0434 §6, R15; decision 0440), a test's: the calls are recorded, then replayed by one
 /// thread of a kernel over the region in one buffer, the state at its start and each part at its offset from it, as
 /// the host names them. The device's region does not grow: each part gets the room the host's run of the same calls
 /// reserved (sizing it from bounds is tier 2's, R17).

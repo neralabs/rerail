@@ -121,7 +121,7 @@ fn a_tape_past_two_byte_columns_is_read_at_four() {
     assert!(wide >= 10, "{wide} documents written at 4-byte offsets");
 }
 
-/// Decision 0426 §6, R17: tier 2 writes format 16 (and 16z) as it parses, passing its nodes to the writer's ops at
+/// Decision 0434 §6, R17: tier 2 writes format 16 (and 16z) as it parses, passing its nodes to the writer's ops at
 /// its commit points (`Parser::image16`), with no format 15 image made, and its tape is the one the writer makes of
 /// tier 2's format 15 tape (`f16::write_from`), byte for byte: on every ladder step's documents, long ones (blocks
 /// past the first, deep nesting) and ones with 70,000 blanks in them.

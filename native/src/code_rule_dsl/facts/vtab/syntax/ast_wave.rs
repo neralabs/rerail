@@ -55,7 +55,7 @@ pub(crate) struct Matcher {
     pub(crate) captures: Vec<String>,
     pub(in crate::code_rule_dsl) captor: Arc<crate::code_rule_dsl::waves::policies::Captor>,
     /// The matchers (by place in the wave) whose roots hold every node this one's rows are read at
-    /// (`matchers::demanded_by_roots`, decision 0424): its rows are made only there. `None`: at every root.
+    /// (`matchers::demanded_by_roots`, decision 0459): its rows are made only there. `None`: at every root.
     pub(crate) demanded_by: Option<Vec<usize>>,
 }
 
@@ -238,7 +238,7 @@ fn matched(
         (found, run.limited)
     };
     profile::work(profile::Unit::Node, nodes);
-    // A matcher read only where other matchers' roots are (decision 0424): its roots there alone, before any capture.
+    // A matcher read only where other matchers' roots are (decision 0459): its roots there alone, before any capture.
     let mut demanded: Vec<Option<Vec<BTreeSet<u32>>>> = matchers
         .list
         .iter()

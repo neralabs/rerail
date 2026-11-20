@@ -1,5 +1,5 @@
 //! Format 16 (decision 0156 §1), written and read in place (decision 0293), block-major and written in one pass
-//! (decision 0426). Ported from the lab (`native/lab/tape16`: `f16`, `f16w`, `code8`, `repeat`), which measured it.
+//! (decision 0434). Ported from the lab (`native/lab/tape16`: `f16`, `f16w`, `code8`, `repeat`), which measured it.
 //!
 //! A tape is five arrays over a document's nodes in preorder, at widths fixed for the language, in blocks of `Z`
 //! nodes at a fixed stride (each block its own five columns, the last block at its own rows):
@@ -39,7 +39,7 @@ pub struct Lang {
     /// Slots, gaps, lengths, in bytes.
     widths: [usize; 3],
     revision: u8,
-    /// Each number's kind and field: what a presence's bits are (decision 0426 §4).
+    /// Each number's kind and field: what a presence's bits are (decision 0434 §4).
     kind_field: Vec<(u16, u16)>,
 }
 
@@ -149,7 +149,7 @@ mod tables {
 }
 
 /// A stored format 16 tape's magic (its first 6 bytes are every stored tape's: the store reads the language tag
-/// after them, `LANGUAGE`). Block-major (decision 0426).
+/// after them, `LANGUAGE`). Block-major (decision 0434).
 pub const MAGIC16: &[u8; 8] = b"TMPTAPB6";
 /// A stored 16z tape's magic.
 pub const MAGIC16Z: &[u8; 8] = b"TMPTAPBZ";
@@ -222,7 +222,7 @@ fn stride_of(w: [usize; 3], cw: usize) -> usize {
     Z * before(w, 4) + Z / K * cw
 }
 
-/// One document's format 16 tape, held as stored (`as_bytes`) and read where it lies (decision 0426): the header,
+/// One document's format 16 tape, held as stored (`as_bytes`) and read where it lies (decision 0434): the header,
 /// blocks of `Z` nodes at a fixed stride (each its codes, slots, gaps, lengths and checkpoints, the last block at
 /// its own rows), then the tail: the four side lists (codes' low parts, then escaped slots, gaps, lengths), their
 /// part starts, and the newline index. The last block, each side list and the newline index are followed by 8 bytes
@@ -327,7 +327,7 @@ impl Tape16 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placement {
     pub n: usize,
-    /// The source's length its header states: a view's spans are held to it (decision 0427).
+    /// The source's length its header states: a view's spans are held to it (decision 0463).
     pub source_len: u64,
     pub cw: usize,
     pub widths: [usize; 3],
@@ -391,7 +391,7 @@ impl Placement {
     /// (0: the tape's own bytes).
     pub fn view(&self, lang: &Lang, base: usize) -> Result<TapeView, String> {
         // Each block's columns at `lang`'s widths: the tape's own, which its stride and blocks were checked against
-        // when it was read in (`header`, `fits`), so a read of a node of the tape lies in its block (decision 0427;
+        // when it was read in (`header`, `fits`), so a read of a node of the tape lies in its block (decision 0463;
         // its walks give only nodes of the tape).
         let (_, _, w) = lang.device();
         if w != self.widths {
@@ -574,12 +574,12 @@ fn mask(w: usize) -> u64 {
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
-/// The writer whose ops are the CLIF ones (decision 0426 §6).
+/// The writer whose ops are the CLIF ones (decision 0434 §6).
 pub mod ops;
 #[cfg(any(test, feature = "reference"))]
 pub mod reference;
 
-/// The writer: the ops in CLIF, through their Rust (decision 0426 §6, R16).
+/// The writer: the ops in CLIF, through their Rust (decision 0434 §6, R16).
 pub use ops::Writer;
 
 /// A node's cells as `write` takes them: its code's number in the language's table, its span, and one past its
@@ -631,7 +631,7 @@ impl<'a> StoredPresence<'a> {
     }
 }
 
-/// What a writer's `finish` gives: the tape, its presence laid in its home after it (decision 0426 §4, step 6).
+/// What a writer's `finish` gives: the tape, its presence laid in its home after it (decision 0434 §4, step 6).
 pub struct Finished {
     pub tape: Written,
 }
@@ -658,7 +658,7 @@ impl Written {
     }
 }
 
-/// A tape's presence in its home (decision 0426 §4, step 6): after the tape, at its end rounded up to 8 bytes, a
+/// A tape's presence in its home (decision 0434 §4, step 6): after the tape, at its end rounded up to 8 bytes, a
 /// header of four u32s (its kinds' words, its fields' words, its presences, 0), then the document's words (kinds',
 /// then fields') and each block's after them. Not the tape's layout: the tape's reads never reach it, and its stored
 /// bytes (`as_bytes`) end before it. Read in place by `tape_has_kind` (decision 0310), on the host and the device.
@@ -732,7 +732,7 @@ pub mod presence {
 }
 
 /// The kinds and fields a tape's nodes have, as bitmaps over its language's kinds and fields (`Lang::presence_words`):
-/// the document's, and, where the writer was asked for them, each block's (decision 0426 §4). Not part of the tape:
+/// the document's, and, where the writer was asked for them, each block's (decision 0434 §4). Not part of the tape:
 /// the store keeps it beside the document, to leave out what an anchor cannot touch before the tape is read.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Presence {
@@ -772,7 +772,7 @@ fn bit(words: &[u64], k: u16) -> bool {
 /// Format 16, or 16z where `z`, written over a document's `n` nodes in preorder by the writer's ops (`Writer`):
 /// `node(i)` is node `i`'s cells, asked once each, in order; a node closes when the pass reaches its subtree's end.
 /// `Err` where a node's values break the tape's bounds: no tape is made of it.
-/// A tape writer's ops (decision 0426 §2): the writer's (`Writer`, the ops in CLIF), or the reference writer's.
+/// A tape writer's ops (decision 0434 §2): the writer's (`Writer`, the ops in CLIF), or the reference writer's.
 pub(crate) trait WriterOps: Sized {
     fn open(&mut self, number: u32, start: u64) -> usize;
     fn close(&mut self, end: u64);
@@ -1114,7 +1114,7 @@ const ZLENS: usize = 4;
 const ZKINDS: usize = 5;
 const ZEND: usize = 6;
 
-/// One document's format 16 tape stored in fixed blocks of `Z` nodes (0156 §2.1; decision 0426 §3), held as
+/// One document's format 16 tape stored in fixed blocks of `Z` nodes (0156 §2.1; decision 0434 §3), held as
 /// stored (`as_bytes`):
 ///
 /// - the header of the format 16 tape it decodes to, its magic `MAGIC16Z`, and where its own regions lie;
@@ -1227,7 +1227,7 @@ impl Tape16Z {
                 RAW => bytes.len() == want,
                 // Within what LZ4 decodes its bytes to (255 bytes a byte at most): the side lengths the part starts
                 // state size every cache entry, so they are bounded by the bytes stored, not taken on trust
-                // (decision 0427).
+                // (decision 0463).
                 LZ4 => !bytes.is_empty() && want as u64 <= 255 * bytes.len() as u64 + 64,
                 REPEAT => {
                     let other = if bytes.len() == 4 { u32_at(bytes, 0) as usize } else { usize::MAX };
@@ -1592,7 +1592,7 @@ fn decode_block(buf: &[u8], from: usize, to: usize, dst: &mut [u8], len: usize) 
     if n as usize == len { Ok(()) } else { Err(format!("a 16z piece decodes to {n} bytes, not {len}")) }
 }
 
-/// LZ4's block format (`lz4-sys`), compressed: HC level 4 in the reference writer (0156 §2.1 chose 9; decision 0426
+/// LZ4's block format (`lz4-sys`), compressed: HC level 4 in the reference writer (0156 §2.1 chose 9; decision 0434
 /// §6 takes 4, which the writer's ops in CLIF port exactly, and write by). Decoded by `decode_block`.
 #[cfg(any(test, feature = "reference"))]
 mod lz4 {
@@ -1657,7 +1657,7 @@ mod tests {
         plain
     }
 
-    /// Block-major (decision 0426, R3): block 0 past the header, the blocks at their stride, the last at its own
+    /// Block-major (decision 0434, R3): block 0 past the header, the blocks at their stride, the last at its own
     /// rows and no padding, the tail right after it.
     fn compact(p: &Placement) {
         assert_eq!((p.blocks, p.stride), (HEAD16, Z * (1 + p.widths[0] + p.widths[1] + p.widths[2]) + Z / K * p.cw));
@@ -2129,7 +2129,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// Decision 0427: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
+    /// Decision 0463: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
     /// what its block's bytes decode to is refused when the tape is read in. A block whose literals claim more
     /// bytes than it has is decoded no further than its own: the tape lies against a page no read may touch, and
     /// every node is read. A node past the tape's last reads the cache's dead entry, a failure counted. The cache
@@ -2147,7 +2147,7 @@ DEFINE_KERNEL2(tests, t_reads,
         let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
         let (n, blocks) = (z.len(), z.len().div_ceil(Z));
         // A piece that states more bytes decoded than its stored bytes can give: refused. Its decoded length is
-        // its column's and its side part's, which size every cache entry (decision 0427).
+        // its column's and its side part's, which size every cache entry (decision 0463).
         let packed = (0..PIECES * blocks).rev().find(|&j| z.kind(j) == LZ4).expect("an LZ4 piece");
         let mut stated = z.as_bytes().to_vec();
         let at = z.zat[ZLENS] + 4 * packed;
@@ -2243,7 +2243,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// Decision 0427: a node's span, from the tape's gaps and lengths, is held to the source its header states:
+    /// Decision 0463: a node's span, from the tape's gaps and lengths, is held to the source its header states:
     /// a tape whose spans claim more than its source reads none past it, in format 16 or 16z, and none reversed.
     #[test]
     fn a_tapes_spans_stay_within_its_source() {
@@ -2379,7 +2379,7 @@ DEFINE_KERNEL2(tests, t_reads,
         assert!(t.reader(&other).is_err());
     }
 
-    /// A tape of one block is the regions end to end (decision 0426, R2): each column at the node count's offset
+    /// A tape of one block is the regions end to end (decision 0434, R2): each column at the node count's offset
     /// from the header, the tail after.
     #[test]
     fn one_block_is_the_regions() {
@@ -2417,7 +2417,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0426, R5); with the nodes
+    /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0434, R5); with the nodes
     /// hinted, the format 16 tape is the writer's own room, the last block moved down and the tail appended in
     /// place (R4); the presence is the nodes' kinds and fields, each block's and the document's (R10).
     #[test]
@@ -2500,7 +2500,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// The edits that reach a node before the window (decision 0426 §2): each inner node opened with another code
+    /// The edits that reach a node before the window (decision 0434 §2): each inner node opened with another code
     /// and the node before's start, then retagged and its start set once its first child is open, gives the tape of
     /// the nodes written right, in 16 and 16z, escaped codes and gaps among them (R6).
     #[test]
@@ -2553,7 +2553,7 @@ DEFINE_KERNEL2(tests, t_reads,
 
     /// A 16z writer's block is final once its nodes are closed, the node after it has opened and the frontier is
     /// past it: the blocks under the open root finish as the parse leaves them, the root's last, and a final block's
-    /// room serves the next (decision 0426, R9).
+    /// room serves the next (decision 0434, R9).
     #[test]
     fn blocks_finish_when_closed() {
         let entries: Vec<Entry> = (0..4u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
@@ -2652,7 +2652,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// Decision 0426 §6, R16: the crate's writer is the ops in CLIF, the hand-written one the tests' oracle: a node
+    /// Decision 0434 §6, R16: the crate's writer is the ops in CLIF, the hand-written one the tests' oracle: a node
     /// that breaks the tape's bounds is the ops' failure, kept as its code and node (the reference keeps a message),
     /// and `write_from` writes the reference's tape, in 16 and 16z.
     #[test]
@@ -2680,7 +2680,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// Decision 0426 §6, R13: the writer's ops in CLIF, through their Rust, write the reference writer's tape and
+    /// Decision 0434 §6, R13: the writer's ops in CLIF, through their Rust, write the reference writer's tape and
     /// presence from the same ops: escaped codes and values, late closes, a commit at every node or none, `retag`
     /// and `set_start`, a presence a block; and a tape of one node, and of none.
     #[test]
@@ -2688,7 +2688,7 @@ DEFINE_KERNEL2(tests, t_reads,
         writes_the_references_tape(|lang, source, z, blocks, nodes| Writer::new(lang, source, 3, z, blocks, nodes / 3));
     }
 
-    /// Decision 0426 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:
+    /// Decision 0434 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:
     /// R13's cases.
     #[test]
     fn the_jit_ops_write_the_references_tape() {
@@ -2700,7 +2700,7 @@ DEFINE_KERNEL2(tests, t_reads,
         });
     }
 
-    /// Decision 0426 §6, R15: the writer's ops in UKL (decision 0440), on the process's device, write the reference
+    /// Decision 0434 §6, R15: the writer's ops in UKL (decision 0440), on the process's device, write the reference
     /// writer's tape and presence: R13's cases.
     #[test]
     fn the_device_writes_the_references_tape() {
@@ -2790,7 +2790,7 @@ DEFINE_KERNEL2(tests, t_reads,
         assert!(kinds.iter().all(|&k| k > 0), "16z's pieces of every kind (raw, LZ4, repeat): {kinds:?}");
     }
 
-    /// Decision 0426 §6, R14: an op that breaks the tape's bounds fails in the ops as in the reference, and the
+    /// Decision 0434 §6, R14: an op that breaks the tape's bounds fails in the ops as in the reference, and the
     /// writer makes no tape: `broken_nodes_make_no_tape`'s cases, and an edit of a final block.
     #[test]
     fn the_clif_ops_fail_as_the_reference() {
@@ -2833,7 +2833,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// Decision 0426 §6, R14: a part with no room fails its op as full, naming the part, and the op writes nothing
+    /// Decision 0434 §6, R14: a part with no room fails its op as full, naming the part, and the op writes nothing
     /// past the part's capacity and its 8 bytes of room: the tape's blocks, the open nodes, a block's entries, the
     /// laid side lists, the side areas given back.
     #[test]
@@ -2858,7 +2858,7 @@ DEFINE_KERNEL2(tests, t_reads,
         assert_eq!(cases, 7);
     }
 
-    /// Decision 0426 §6: the writer's LZ4 compressor in CLIF writes liblz4's `LZ4_compress_HC(.., 4)` bytes, for
+    /// Decision 0434 §6: the writer's LZ4 compressor in CLIF writes liblz4's `LZ4_compress_HC(.., 4)` bytes, for
     /// pieces of every kind (empty, short, random, runs, a tape's columns, longer than a chain's 64 KB reach), each
     /// through one compressor whose tables earlier pieces left, as the writer reuses them.
     #[test]

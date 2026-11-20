@@ -496,9 +496,9 @@ Each step ends with:
          thread's two blocks, then reads them with the generated format 16 reads. `lz4_sys` only compresses (the
          writer). The Rust backend checks a load against the tape's bytes when it is read-only and not aligned (the
          tape's own); the decoder's loads of its slot (a match's copies) are bounded by the decoder itself
-         (decision 0427), and a read that takes an address (`tape_lz4`'s destination) is `unsafe`. The kernels'
-         UKL leaves `tape_lz4` out (`HOST_ONLY`). Taken out once (f9451f0dd's first form) while 0426 rewrote
-         16z, and redone on 0426's form (rr-align's roll-up 7, merged here 2026-11-19). Check:
+         (decision 0463), and a read that takes an address (`tape_lz4`'s destination) is `unsafe`. The kernels'
+         UKL leaves `tape_lz4` out (`HOST_ONLY`). Taken out once (f9451f0dd's first form) while 0434 rewrote
+         16z, and redone on 0434's form (rr-align's roll-up 7, merged here 2026-11-19). Check:
          `the_reads_decoder_decodes_what_lz4_compressed` (400 blocks of literals and matches at every offset, a
          block cut short); hogql 16z, findings 1,629.
        - The device's views read a 16z batch in place (2026-11-18; `views.refused.z_on_device` gone): the join
@@ -693,7 +693,7 @@ Each step ends with:
        cut: containment's room 8 rows a node), it filled the budget: refusals rose from 5–38 to 23–52 a run.
      - On the device: `axis_count` and the scan (one submission), the total read, then `axis_write` writes each row's
        two ids (`global_of`) through `view_put`, the writer written once, bounded by the relation's chunks
-       (decision 0427). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
+       (decision 0463). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
        relation.
      - On the CPU: the climb counts, then writes `batch.id` of each side into the same kind of relation.
      - Every reader reads it in place: `value` and `documents_of` through `Part::get`, the device through

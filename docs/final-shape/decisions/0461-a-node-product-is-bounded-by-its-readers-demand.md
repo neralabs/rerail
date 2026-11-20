@@ -1,7 +1,7 @@
-# 0473. A node product is bounded by its readers' demand, or refused
+# 0461. A node product is bounded by its readers' demand, or refused
 
 Status: accepted (2026-11-18); ported from the Release-debugging branch (11a0326b9 and its uncommitted work).
-Numbered 0393 on cost-classifier-metal-rf and 0461 on final-rerail-shape-rr-align (the sync branch's 0461 is "a
+Numbered 0393 on cost-classifier-metal-rf and 0474 on final-rerail-shape-rr-align (the sync branch's 0474 is "a
 level's formulas as phases"), renumbered past the highest in any worktree in the sync branch's roll-up.
 
 ## Intro
@@ -46,4 +46,4 @@ Profiling build, on the M3:
 
 ## Open
 
-- The rewrite still reads the tree. A version-native port is open (Q335).
+- The rewrite still reads the tree. A version-native port is open (Q292).

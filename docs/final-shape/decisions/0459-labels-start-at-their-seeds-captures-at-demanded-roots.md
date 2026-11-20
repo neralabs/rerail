@@ -1,6 +1,6 @@
-# 0424. Labels start at their seeds; a matcher's captures are bound only where its readers join
+# 0459. Labels start at their seeds; a matcher's captures are bound only where its readers join
 
-Status: accepted (2026-11-18). Numbered 0396 where it was written, then 0401 on this branch and on q178 until the hub merge, and 0459 on final-rerail-shape-rr-align until the sync branch's roll-up of it.
+Status: accepted (2026-11-18). Numbered 0396 where it was written, then 0401 on this branch and on q178 until the hub merge, and 0473 on final-rerail-shape-rr-align until the sync branch's roll-up of it.
 
 ## Intro
 
@@ -131,9 +131,9 @@ And a pass still visits every 64-node group to read its mask, whether the group 
   run) and 2.0 s on Metal, and items 2+3 took another 2.2 s natively. Both are generic: item 1 reads only the rules' joins, and item 2 only
   the pattern's shape.
 - The device's steps fell 3.3× and 2.6×. Its time is now set by its dispatches and its scans of every group,
-  not by the walks (Q325, numbered Q187 here; decision 0425).
+  not by the walks (Q288, numbered Q187 here; decision 0460).
 
 ## Open
 
-- Q325 (numbered Q187 here; 0425 took its seed levels): the label kernels' time follows dispatches and group scans now. The next lever is launching a pass over
+- Q288 (numbered Q187 here; 0460 took its seed levels): the label kernels' time follows dispatches and group scans now. The next lever is launching a pass over
   only the groups its domain has members in, and merging the levels a seed adds.

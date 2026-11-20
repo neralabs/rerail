@@ -391,7 +391,7 @@ pub fn stored_presence(bytes: &[u8], tag: u8) -> Option<StoredPresence<'_>> {
 }
 
 /// The kind a presence records for a node of kind `kind`: its own, an ERROR node's `ERROR_CODE` (the tape's folded
-/// code, decision 0426 §4). The kernels' `presence_kind`.
+/// code, decision 0434 §4). The kernels' `presence_kind`.
 pub fn presence_kind(kind: u16) -> u16 {
     if kind == ERROR_SYMBOL { ERROR_CODE } else { kind }
 }
@@ -999,7 +999,7 @@ pub struct Visit {
     pub kind_alias: Option<(String, bool)>,
 }
 
-/// Where the cursor walk writes a tree's nodes, in preorder (decision 0426 §2): format 15's pending nodes
+/// Where the cursor walk writes a tree's nodes, in preorder (decision 0434 §2): format 15's pending nodes
 /// (`Pendings`), or format 16's ops (`formats::TreeOps`). The walk is the same for both.
 pub trait TreeOut {
     /// Node `v` under `parent` (an index this gave), open, a member of the supertypes `classes`: its index.
@@ -1226,7 +1226,7 @@ impl TapeImage {
     fn emit(&self, put: &mut dyn FnMut(&[u8])) -> Result<(), String> {
         match &self.held {
             Held::F15(c) => self.emit15(c, put),
-            // The tape's home: the tape, and its presence after it (decision 0426 §4, step 6), stored and placed as one.
+            // The tape's home: the tape, and its presence after it (decision 0434 §4, step 6), stored and placed as one.
             Held::F16(t) => {
                 put(t.extent());
                 Ok(())
@@ -1238,7 +1238,7 @@ impl TapeImage {
         }
     }
 
-    /// Whether the tape's home holds its presence (decision 0426 §4, step 6).
+    /// Whether the tape's home holds its presence (decision 0434 §4, step 6).
     pub fn has_presence(&self) -> bool {
         match &self.held {
             Held::F15(_) => false,
@@ -1668,7 +1668,7 @@ impl TapeImage {
         Self::walked(grammar, source, count, budget, |out| rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, out, budget)))
     }
 
-    /// The tape `walk` writes in preorder, in the run's format (decision 0426 §2): by format 16's ops where the run
+    /// The tape `walk` writes in preorder, in the run's format (decision 0434 §2): by format 16's ops where the run
     /// stores 16 or 16z and the language has a table, no format 15 node made; else format 15's nodes, packed at
     /// `finish`. `nodes` is about the nodes `walk` writes. Where format 16 cannot hold the nodes (a code the table
     /// lacks, said once a language), `walk` runs again for format 15.
@@ -2813,7 +2813,7 @@ impl TapeDoc {
     }
 
     /// Whether a node of the document may have kind `kind` (`transducer_kind`'s), by its image's presence (decision
-    /// 0426 §4), read before any node is: `false` only where the writer saw no node of that kind. An error node's
+    /// 0434 §4), read before any node is: `false` only where the writer saw no node of that kind. An error node's
     /// kind is `ERROR_SYMBOL`, which no presence holds, so it is always possible.
     pub fn may_have_kind(&self, kind: u16) -> bool {
         use rerail_tape_format::tape::Tape;
@@ -2840,7 +2840,7 @@ impl TapeDoc {
         });
     }
 
-    /// Whether the tape's home holds its presence (decision 0426 §4, step 6): a format 16 or 16z writer's.
+    /// Whether the tape's home holds its presence (decision 0434 §4, step 6): a format 16 or 16z writer's.
     pub fn has_presence(&self) -> bool {
         self.image.has_presence()
     }

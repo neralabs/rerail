@@ -61,7 +61,7 @@ thread_local! {
 
 /// The writer's ops (`writer::OPS`) as Rust: `translate_reads` of a relation's family, but each load a plain one.
 /// The ops' loads are of the region's parts, each in its part by the host's reservations before the op (decision
-/// 0426 §6); the parts are buffers of their own, so no one span bounds them as `ld` bounds a tape's.
+/// 0434 §6); the parts are buffers of their own, so no one span bounds them as `ld` bounds a tape's.
 pub fn translate_ops(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)]) -> Result<String, String> {
     CHECKED.with(|c| c.set(false));
     let out = translate_reads(funcs, entries, crate::reads::Family::Relation);
@@ -808,7 +808,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         }
         // A read's load of the tape: checked against its bytes (`translate_reads`).
         // The tape's loads are read-only and not marked aligned (the view's fields are); a load that may be written
-        // (a 16z block's slot, which the decoder bounds itself, decision 0427) is not the tape's.
+        // (a 16z block's slot, which the decoder bounds itself, decision 0463) is not the tape's.
         Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32
             if read_style(u32::MAX).is_some() && CHECKED.with(std::cell::Cell::get) && data.memflags().is_some_and(|m| m.readonly() && !m.aligned()) =>
         {

@@ -369,7 +369,7 @@ impl<'a> P<'a> {
         loop {
             let paragraph = after_paragraph.take();
             // A document's blocks so far are final, unless a setext underline may follow the paragraph just read:
-            // their nodes are committed (passed to format 16's ops; decision 0426 §2).
+            // their nodes are committed (passed to format 16's ops; decision 0434 §2).
             if ctx == Ctx::Document && paragraph.is_none() {
                 self.w.commit();
             }

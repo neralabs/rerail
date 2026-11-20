@@ -559,7 +559,7 @@ pub const NO_ROW: u32 = u32::MAX;
 impl B<'_, '_> {
     /// The `child` row of the first numbered node from tape node `c` on, `c` and each sibling after it within
     /// `end` (`tape_next_in`), or `NO_ROW`: numbered node `l`'s row is `l - 1`. The loop ends: each sibling is past
-    /// the last, and `tape_next_in` gives none at `end` (decision 0427's reads stay within the tape).
+    /// the last, and `tape_next_in` gives none at `end` (decision 0463's reads stay within the tape).
     fn numbered_from(&mut self, c: Value, end: Value) -> Value {
         let (head, test, step, found, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
         self.f.append_block_param(head, I32);

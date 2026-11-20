@@ -7683,7 +7683,7 @@ fn the_lean_parsers_write_each_format_directly() {
     let python: String = (0..300).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
     let js: String = (0..200).map(|i| format!("const x{i} = (a) => a?.b ?? {i};\nfunction f{i}(y) {{ return y + 1; }}\n")).collect();
     // Each language's file: a few hundred top-level items, so that the writer commits many times and its window
-    // (decision 0426 §2) holds a small part of the tape. `{i}` is the item's number.
+    // (decision 0434 §2) holds a small part of the tape. `{i}` is the item's number.
     let many = |item: &str| -> String { (0..200).map(|i| item.replace("{i}", &i.to_string())).collect() };
     let cases: Vec<(GrammarDialect, String, Encode)> = vec![
         (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
@@ -7701,7 +7701,7 @@ fn the_lean_parsers_write_each_format_directly() {
         (GrammarDialect::Markdown, many("# Title {i}\n\nSome *text* here.\n\nSetext {i}\n---\n\n- a\n- b\n\n    code {i}\n\n"), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
         (GrammarDialect::MarkdownInline, many("Some *text* and `code` {i} [a](b) "), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
         (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
-        // simdjson's kernel (decision 0426): strict JSON, and JSONC with its comments and a trailing comma.
+        // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma.
         (GrammarDialect::Json, format!("[{}{{}}]", many("{\"k{i}\": [{i}, \"s\\n{i}\", true, null, {}, []], \"\": \"\"},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
         (GrammarDialect::Json, format!("// head\n[{}1,]", many("/* {i} */ {\"k\": {i}, // c\n\"v\": {/* in */}},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
     ];
@@ -7759,7 +7759,7 @@ fn the_lean_parsers_write_each_format_directly() {
     eprintln!("written directly: {direct:?}");
 }
 
-/// Decision 0426 §2 (step 3): tree-sitter's cursor walk, in a run of format 16 or 16z, writes that format by format
+/// Decision 0434 §2 (step 3): tree-sitter's cursor walk, in a run of format 16 or 16z, writes that format by format
 /// 16's ops as it walks (`formats::TreeOps`), never format 15's nodes. The tape is the bytes format 15's image
 /// converts to: supertypes, contextual aliases, extras and error nodes among its codes.
 #[test]
@@ -7805,11 +7805,11 @@ fn the_cursor_walk_writes_each_format_directly() {
     eprintln!("written directly: {direct:?}");
 }
 
-/// Decision 0426, R12: in a run of format 16 or 16z, every parser writes the run's format itself (the lean parsers
+/// Decision 0434, R12: in a run of format 16 or 16z, every parser writes the run's format itself (the lean parsers
 /// through their `Sink`, tree-sitter's cursor walk, Blade's Forte tree, the format strings' trees and the embedded
 /// programs' documents through `TapeImage::walked`): a file's documents are never format 15's first, converted
 /// (`formats::converted`). JSON's simdjson kernels give their walk's events to the ops; tier 2 writes format 15
-/// until its words call them (0426 step 3).
+/// until its words call them (0434 step 3).
 #[test]
 fn no_intermediate_tape() {
     use super::formats::{Format, as_run, converted};

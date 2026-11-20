@@ -832,6 +832,6 @@ the steps built on the frames:
   (`Layered::then`, `session_ranges`). 0458's open item stands: a session holds no corpus batch.
 - The frames' measure-key filter on gathered rows (`held_nodes`) is not taken. No rows are gathered, and measure
   keys stay where 0458 puts them (`stored`, `semijoin`).
-- **Open (Q360)**: R8 and step 13's entries check fail on this line. A phase's run is in memory here (a429546488),
+- **Open (Q405)**: R8 and step 13's entries check fail on this line. A phase's run is in memory here (a429546488),
   no session's, and binds its kept part from the store at each edit. At the cycle cut, no input the session asks
-  is read from the entries. Both tests are ignored with Q360.
+  is read from the entries. Both tests are ignored with Q405.

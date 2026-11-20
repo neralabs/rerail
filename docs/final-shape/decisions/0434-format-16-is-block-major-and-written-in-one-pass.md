@@ -1,8 +1,8 @@
-# 0426. Format 16 is block-major and written in one pass, with a presence structure beside it
+# 0434. Format 16 is block-major and written in one pass, with a presence structure beside it
 
 Status: accepted (2026-11-18)
 
-Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token"), 0434 on the sync branch and on final-rerail-shape-rr-align until 2026-11-19, and 0426 on django-bugs.
+Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token"), 0434 on the sync branch and on final-rerail-shape-rr-align until 2026-11-19, and 0434 on django-bugs.
 
 ## Intro
 
@@ -189,7 +189,7 @@ tail        the four side lists (each block's part, as today), their part starts
   (2.0 M nodes). LZ4's fast compressor is +2–4% there (+12–13% on JSON and rr). Node ranges are a subset of the
   matches HC 9 finds (a block's column is at most 8 KB, inside LZ4's 64 KB window, and HC 9 searches every
   position), so they cannot be smaller; they could only be faster, and the fast compressor is both faster and
-  smaller than them. 16z keeps HC 9 (decision 0426 §3).
+  smaller than them. 16z keeps HC 9 (decision 0434 §3).
 
 ### 6. The ops in CLIF (step 4, 2026-11-18)
 

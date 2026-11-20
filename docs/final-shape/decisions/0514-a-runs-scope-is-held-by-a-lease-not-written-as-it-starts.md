@@ -1,4 +1,4 @@
-# 0494. A run's analysis scope is held by a lease, not written as it starts
+# 0514. A run's analysis scope is held by a lease, not written as it starts
 
 Status: accepted (2026-11-20, the user: "do this … Deletions that are concurrent with runs should be handled by
 making the delete wait, or making it fail and need to be retried after"). Follows 0104 (one read before the first

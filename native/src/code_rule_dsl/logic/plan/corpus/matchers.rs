@@ -27,7 +27,7 @@ pub(in crate::code_rule_dsl) fn compiled(
 }
 
 /// Per matcher, the other matchers whose roots hold every node its rows are read at, where the rules say so
-/// (decision 0424): each rule that reads its relation joins its node with a column that only other matchers' roots
+/// (decision 0459): each rule that reads its relation joins its node with a column that only other matchers' roots
 /// fill (`raw_module_name(w, …)`, made from `rr_ast_11(w)`, beside `rr_ast_14(w, f)`). The wave knows every
 /// matcher's roots before it binds any capture, so a matcher's captures are bound only at the nodes in those roots:
 /// internal_dead_code's `mn_function` bound 737,806 roots for the 27,849 its join keeps (t45 §2). The magic rule of

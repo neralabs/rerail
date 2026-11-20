@@ -343,7 +343,7 @@ inline uint doc_of_node(device const ChunkDoc* docs, uint ndocs, uint row) {
 
 // Row `r`'s value `v` in column `c` of the relation `out` makes (decision 0325 step 5: a relation in its block, its
 // rows' descriptor at `rows_at`), through the writer written once: a row past its chunks is counted, not written
-// (decision 0427).
+// (decision 0463).
 static inline void view_put(device uchar* out, ulong rows_at, uint r, uint c, long v) {
     clif_rows_put((device const uchar*)out, rows_at, r, c, ulong(v));
 }
@@ -1840,7 +1840,7 @@ struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uin
 
 // The relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
 // (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`; written through the writer written
-// once, bounded by its chunks (decision 0427).
+// once, bounded by its chunks (decision 0463).
 static inline long lat_r(device const uchar* R, constant LatP& p, uint row, uint c) {
     return long(clif_rel_get(R, p.r_at, row, c));
 }
@@ -2131,11 +2131,11 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
             pass.run(&write, &[&whole, &starts, &out], &p, &[], groups(n));
             batch.finish().map_err(|e| format!("{e:?}"))?;
         }
-        // Bounded by the relation's chunks (decision 0427): what the writer refused fails the solve, which the host
+        // Bounded by the relation's chunks (decision 0463): what the writer refused fails the solve, which the host
         // then makes.
         let now = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
         if now != needed {
-            return Err(format!("the axis's writer refused {} rows past its relation's chunks (decision 0427)", now.wrapping_sub(needed)));
+            return Err(format!("the axis's writer refused {} rows past its relation's chunks (decision 0463)", now.wrapping_sub(needed)));
         }
     }
     // SAFETY: the writes completed, every row below the total written.
@@ -2774,7 +2774,7 @@ pub(in crate::code_rule_dsl) struct Batch {
     arena_cap: usize,
     /// The indexes its work builds, marked built when it is done.
     building: Vec<Building>,
-    /// The relations its work writes in their blocks, each with its rows' `needed` before (decision 0427): a row
+    /// The relations its work writes in their blocks, each with its rows' `needed` before (decision 0463): a row
     /// its kernels could not write, past the chunks its relation holds, fails the batch, named.
     written: Vec<Written>,
 }
@@ -2810,7 +2810,7 @@ impl Batch {
         self.written.push(Written { home: home.clone(), _holds: rel.holder(), at: rel.at, rows: rel.rows, needed, what });
     }
 
-    /// The relations its kernels wrote whose rows counted one they could not write (decision 0427): each named.
+    /// The relations its kernels wrote whose rows counted one they could not write (decision 0463): each named.
     fn overran(&self) -> Vec<String> {
         self.written
             .iter()
@@ -3831,11 +3831,11 @@ impl Batch {
         let pplaces = (2 * n).next_power_of_two().max(16);
         let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32,
                                 hmask: (map.places - 1) as u32, level: level.unwrap_or(0), omask: 0, pad: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 0 };
-        // Its rows are written by the fold, through the writer (decision 0427): checked when the batch is done.
+        // Its rows are written by the fold, through the writer (decision 0463): checked when the batch is done.
         self.writes(r, "a lattice's held rows");
         // The map's block as it is now (reaching its slots), kept until the work completes.
         let hb = bound(map.home)?;
-        // Its rows written in place, bounded by their chunks (decision 0427): checked when the work completes.
+        // Its rows written in place, bounded by their chunks (decision 0463): checked when the work completes.
         self.writes(r, "a lattice's held rows");
         if !matches!(first, MapFirst::Ready) {
             let hclear = pipeline("join", "lat_hclear", || SOURCE.to_owned())?;

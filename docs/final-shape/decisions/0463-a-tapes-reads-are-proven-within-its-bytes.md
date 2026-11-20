@@ -1,7 +1,7 @@
-# 0427: A tape's reads are proven within its bytes, whatever the bytes hold
+# 0463: A tape's reads are proven within its bytes, whatever the bytes hold
 
 Numbered 0403 where it was written (the sync branch's 0403 is "a `prev` reads the chunk before, chunk 0
-included"); 0462 on the sync branch and 0463 on final-rerail-shape-rr-align until 2026-11-19, and 0427 on django-bugs.
+included"); 0462 on the sync branch and 0475 on final-rerail-shape-rr-align until 2026-11-19, and 0463 on django-bugs.
 
 Status: decided (2026-11-18), by the user, on Q265: "That's not just a correctness issue but a security issue too.
 That means both identifying and fixing the root-cause for corruption, and ensuring that (at least behind a flag)
@@ -37,12 +37,12 @@ A walk over the tree must also *end*, whatever the bytes hold: a kernel that loo
 
 | Structure | Check | Where |
 |---|---|---|
-| 16z piece index (decision 0426 §3: each piece's start in the payload and its length, u32s, then its kind, a byte; four pieces a block) | each piece within the payload; a raw piece exactly its decoded length; a repeat names another piece, itself no repeat, of the same decoded length; the tape's own regions (part starts, checkpoints, newline index, piece index) where its header says, the last ending at the tape's end | `Tape16Z::from_bytes` |
+| 16z piece index (decision 0434 §3: each piece's start in the payload and its length, u32s, then its kind, a byte; four pieces a block) | each piece within the payload; a raw piece exactly its decoded length; a repeat names another piece, itself no repeat, of the same decoded length; the tape's own regions (part starts, checkpoints, newline index, piece index) where its header says, the last ending at the tape's end | `Tape16Z::from_bytes` |
 | 16z header | its nodes fit a u32 (the device's ids); its blocks fit the cache key's 22 bits | `Tape16Z::from_bytes` |
 | 16z pieces' decoded lengths (a piece's column in its block and its side list's part, from the part starts, which are sorted and end at each list's length) | an LZ4 piece's at most 255 bytes a stored byte, plus 64: what LZ4 can decode its bytes to. They size every cache entry, so they are bounded by the stored bytes, not taken on trust | `Tape16Z::from_bytes` |
 | 16z cache entry | sized for the largest block decoded as the reads lay it (`Tape16Z::entry_bytes`, `z_decode`); every read of an entry is masked to it, so a node of a block, past the block's last too, reads in its entry | `Tape16Z::view` |
 | Format 16 part tables | sorted, each list's last start its length (already, `placement`) | `f16::placement` |
-| Format 16 blocks (block-major, decision 0426) | the blocks' start and stride as the widths give them, and the tail where its lengths put it (`header`, `fits`); the language's widths the tape's own, so each block's columns hold its rows at the widths the reads take | `f16::placement`, `Placement::view` |
+| Format 16 blocks (block-major, decision 0434) | the blocks' start and stride as the widths give them, and the tail where its lengths put it (`header`, `fits`); the language's widths the tape's own, so each block's columns hold its rows at the widths the reads take | `f16::placement`, `Placement::view` |
 | Format 15 columns | each exactly its nodes × its width, read by bounds-checked slices (already) | `f15_columns` |
 | A tape's source length (its header's) | the source the document holds: a resident document whose header states another is refused | `residency::slabs::planned` |
 | The 16z cache | `Spec::init` lays out the generations, the index, the entries, the dead entry, 256 bytes of slack and a 256-byte guard. Its words (generations, entries, shift, slots, stride, first entry, dead entry) are the only inputs of its addresses | `view::cache::Spec` |
@@ -61,7 +61,7 @@ The reads are the CLIF ones (`crates/clif/src/reads.rs`). Each line is why one k
   stop at the destination's end plus 40 bytes: each piece decodes into its column's place with 16 bytes of room
   after it (the wild copies go 8 bytes past), and the side parts' starts are written after the checkpoints. A raw
   piece is copied no further than its place; a repeat names a piece below the tape's count, else it is read as
-  itself (decision 0426 §3's pieces, at the merge with oscar, 2026-11-18).
+  itself (decision 0434 §3's pieces, at the merge with oscar, 2026-11-18).
 - **The decoder's source.**
   - A sequence's literals must lie in the source as well as in the destination. They were checked against the
     destination only: a literal length past the block's bytes read past the tape's end.

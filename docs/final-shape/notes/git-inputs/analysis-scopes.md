@@ -70,7 +70,7 @@ The scan still checks other requested paths whose trees it can read.
 
 ## Retention and invalidation
 
-A run's start only reads (decision 0494). Its lease, a locked file in `<store>.scopes/` named by its acquisition, is its pending state; its first write acquires. A successful publication, applied by the store's writer after the run's manifests, records the scope, run, and snapshot memberships.
+A run's start only reads (decision 0514). Its lease, a locked file in `<store>.scopes/` named by its acquisition, is its pending state; its first write acquires. A successful publication, applied by the store's writer after the run's manifests, records the scope, run, and snapshot memberships.
 The scope supplies the stop ancestors. An insertion trigger indexes those ancestors, and deleting the scope removes its index rows.
 A failed publication rolls back those rows together. The run keeps its lease and can then retry or abort.
 The object and frame segment tables identify the storage files that hold fact payloads.
@@ -127,7 +127,7 @@ If Rerail cannot read the registry, pruning keeps the recorded checkout.
 The native `scanRrPoliciesAsync` call acquires one run for a durable batch when the caller omits the run handle.
 The batch publishes once all policies and required source reads succeed. A failed batch preserves the earlier owners of its scope.
 An explicit run handle lets the caller group several evaluations before publication.
-The home registry records a pending route for each named scan. A deletion that reaches a scan while it runs fails, and is retried once the scan has finished (decision 0494).
+The home registry records a pending route for each named scan. A deletion that reaches a scan while it runs fails, and is retried once the scan has finished (decision 0514).
 Successful publication promotes the route. An abort removes only that acquisition's route.
 After an interrupted update, deletion checks the acquisition in the identified content store. An offline store keeps its route until it can answer.
 When a process exits during a scan, its lease's lock is freed and the lease is removed by whoever finds it; cache collection discards abandoned staging rows. It also checks the pending routes for that store.
@@ -179,7 +179,7 @@ The collector retains data reachable from any live owner. Deleting a scope
 deletes its ownership rows. Shared sources, tapes, and cache frames remain
 reachable through the other owners. Active run leases protect data during
 publication and collection. A scan stages ownership and publishes it after the
-whole report succeeds and every cache write succeeds. A deletion or stop that would revoke a running scan fails until the scan has finished (decision 0494). If a cache write fails,
+whole report succeeds and every cache write succeeds. A deletion or stop that would revoke a running scan fails until the scan has finished (decision 0514). If a cache write fails,
 the report keeps its findings and reports a cache warning. Collection releases
 abandoned staged rows after their process drops the lease. A scope deletion
 advances the scope's generation. Each run has its own staging key in the store where it started.
@@ -245,7 +245,7 @@ The store allocates a fresh generation when a caller reuses the name. A writer w
 Older stores can contain generation rows without evidence of whether a scope is still active. The next explicit release removes such a row.
 For each new directory scope, the store records the highest control generation that any caller acquired.
 A numbered parent stop can remove a child's generation row when its cutoff covers this value.
-It must keep the row if a writer already acquired a later control generation, even before that writer publishes: the stop writes the acquisitions of the live runs it leaves first (decision 0494).
+It must keep the row if a writer already acquired a later control generation, even before that writer publishes: the stop writes the acquisitions of the live runs it leaves first (decision 0514).
 A late acquisition below the cutoff cannot recreate the removed row. A new watch gets a fresh store generation.
 Older stores and older writers can leave a directory without a known upper bound.
 A numbered stop preserves that generation row. An unconditional release of the same scope removes it and revokes its writers.

@@ -69,4 +69,4 @@ took 16.0 and 16.4 ms, 1,024 took 19.7 and 22.4 ms.
 ## What is left
 
 - **`label_leaves` is now most of the GPU time:** 32.2 ms of internal_dead_code's 50.7 ms, in 12 encoders of about
-  2.7 ms each (Q326).
+  2.7 ms each (Q281).

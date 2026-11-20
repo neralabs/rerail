@@ -122,7 +122,7 @@ pub enum Domain {
     Kinds(Vec<u16>),
     Label(u16),
     /// The nodes of these kinds (any kind, `None`) within a node set: where a label made inside an `all` is read, the
-    /// `all`'s demand (decision 0425). The set is read where the pass's anchor is (`anchor_bits`, `device_anchor`),
+    /// `all`'s demand (decision 0460). The set is read where the pass's anchor is (`anchor_bits`, `device_anchor`),
     /// within it; elsewhere the kinds alone, a superset.
     Within(Option<Vec<u16>>, super::compile_sets::Set),
 }
@@ -225,7 +225,7 @@ pub enum Label {
     Empty,
 }
 
-/// Each fact's rows on each tape, made before any pass: written once, where they are found, into one block (Q317), and
+/// Each fact's rows on each tape, made before any pass: written once, where they are found, into one block (Q289), and
 /// read there by the CPU's label passes and the device's (bound whole). By (fact, tape source) addresses.
 #[derive(Clone)]
 pub struct FactRows {
@@ -413,7 +413,7 @@ impl Labels {
         };
         let starts = |domain: &Domain| domain.labels();
         match self.def(id) {
-            // A pattern's starts read labels where it is made inside an `all` that demands them (0425): it waits for them.
+            // A pattern's starts read labels where it is made inside an `all` that demands them (0460): it waits for them.
             Label::Pattern(_, domain) => starts(domain),
             Label::Empty => Vec::new(),
             Label::Constrained(_, domain, constraints) => constraints.iter().map(|(_, label)| *label).chain(starts(domain)).collect(),
@@ -2737,7 +2737,7 @@ fn from_outputs(label: &Label, views: &[TapeDoc], outputs: Vec<Vec<Found>>) -> V
 /// A label `unknown` names (a recursive group's own, Q133) is read as every node: the anchor holds whatever the label
 /// settles to, and in every round before.
 ///
-/// A pass that starts within a demand's set (`Domain::demand`, decision 0425) has it in its anchor.
+/// A pass that starts within a demand's set (`Domain::demand`, decision 0460) has it in its anchor.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::code_rule_dsl) fn anchor_bits(
     program: &Program,
@@ -2896,7 +2896,7 @@ struct Builder<'a> {
 struct Demand {
     /// The kinds the node can have (`None`: any).
     kinds: Option<BTreeSet<u16>>,
-    /// A node set the node is in wherever it matters (decision 0425): an `all` with a conjunct that tests a
+    /// A node set the node is in wherever it matters (decision 0460): an `all` with a conjunct that tests a
     /// neighbor (`inside X` or `has X` by `neighbor`) holds only at X's children or parents, the image of X's set by
     /// one step (`Builder::neighbor`). A label made here starts within it: a formula its pass's anchor holds, not a
     /// label of its own, so its readers wait for no more than X.
@@ -2904,7 +2904,7 @@ struct Demand {
 }
 
 /// Whether an `all`'s labels start where the kinds allow alone (`RERAIL_DEMAND_SETS=off`, a measurement switch: as
-/// before decision 0424).
+/// before decision 0459).
 fn demand_sets_off() -> bool {
     crate::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEMAND_SETS").is_ok_and(|mode| mode == "off"))
 }
@@ -3009,7 +3009,7 @@ impl<'a> Builder<'a> {
     /// set of the nodes where it holds: X's children (through the field, where one is named) or
     /// X's parents, the image of X's set by one step. The `all` holds only there, so its labels
     /// start there (`Demand::set`). A pass that started at every node for `inside module` (877,007
-    /// at s1000) starts at 10,274 (t45 §1). Decision 0424 made the set a label of its own (a seed),
+    /// at s1000) starts at 10,274 (t45 §1). Decision 0459 made the set a label of its own (a seed),
     /// one more level its readers waited for; here it is the formula that label's pass evaluated.
     fn neighbor(&mut self, all: &[MatchTree]) -> Result<Option<(usize, super::compile_sets::Set)>, Error> {
         if demand_sets_off() {

@@ -2153,7 +2153,7 @@ process.stdout.write(JSON.stringify(visited));`,
     expect(existsSync(unrelated)).toBe(false);
   }, 30_000);
 
-  // Decision 0494: a release of a scope a scan holds fails until the scan has finished; retried, it removes the run.
+  // Decision 0514: a release of a scope a scan holds fails until the scan has finished; retried, it removes the run.
   it("refuses a release between evaluation and publication, and the retried release removes the published run", async () => {
     const root = checkout(), home = root + "-home", databasePath = join(home, "rerail.sqlite"), store = join(home, "scope.sqlite");
     const engine = loadNativeBinding(), prototype = engine.AnalysisScopeRun.prototype, finish = prototype.finish;

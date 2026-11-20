@@ -42,7 +42,7 @@ slow-timeout = { period = "60s", terminate-after = 8 }
 
 # The FSEvents tests (the store's journal and observer, the engine's tree watch): each waits on the journal's cookies,
 # which `fseventsd` tells every stream of the machine in turn. Run at once, they push one another's notices past their
-# waits (Q253: 11 of 51 failed together on an M3, none alone): one at a time, beside everything else.
+# waits (Q320: 11 of 51 failed together on an M3, none alone): one at a time, beside everything else.
 [test-groups]
 fsevents = { max-threads = 1 }
 
@@ -52,7 +52,7 @@ filter = "test(/^(content_store::(observe|journal)|tree_watch)::/)"
 test-group = "fsevents"
 
 # Linking every pack's library from its modules derives phase 0's graphs, whose runs wait on the store's msync of
-# 460-630 MB of kept facts on Linux: 217-251 s on a DGX Spark, 87 s of it CPU (Q331).
+# 460-630 MB of kept facts on Linux: 217-251 s on a DGX Spark, 87 s of it CPU (Q361).
 [[profile.default.overrides]]
 filter = "test(=code_rule_dsl::logic::rr::tests::library_modules_link_to_the_lowering_of_them_together)"
 slow-timeout = { period = "60s", terminate-after = 8 }

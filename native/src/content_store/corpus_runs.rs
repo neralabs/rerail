@@ -494,7 +494,7 @@ impl ContentStore {
         hash.update(&blob);
         let digest: [u8; 32] = hash.finalize().into();
         self.immediate_transaction(|tx| {
-            // A run's first write acquires (decision 0494): the manifest's, applied by the writer behind the run.
+            // A run's first write acquires (decision 0514): the manifest's, applied by the writer behind the run.
             if let Some(owner) = owner {
                 owner.acquire(tx)?;
                 if !owner.current(tx)? {

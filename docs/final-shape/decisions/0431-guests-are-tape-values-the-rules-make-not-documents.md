@@ -7,8 +7,8 @@ the facts that the program produces and not changed next time it's run?". On a g
 parsed string is named by its tape ("do a"); and the split below ("okay, I agree with that"). Supersedes 0055's guest
 documents (§4, "What was built" 3–4) and 0391 (guest keys) but for a file's programs (§4). On a program's node ids,
 §4's second choice, a key of its own from 0391's registry (2026-11-19, the user: "okay, let's try b"). Keeps 0055's model of a tape as content, 0058 (hiding,
-normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0426 (format 16, unchanged).
-Work queue Q347.
+normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0434 (format 16, unchanged).
+Work queue Q306.
 
 ## Intro
 
@@ -93,7 +93,7 @@ code may be named by which rules asked for it, or in what order.
    A key of its own cannot be both stable and collision-free without a stored allocation (settled per chunk, it moves
    when the chunk does, and kept facts name it). Either way a program stays a tape of its own (0353 step 4c's reads,
    0399's per-tape presence), made by the host's parse at load, its `docof`, lines and findings the file's.
-5. **Format 16 does not change** (0426): a tape is one text, one tree, one grammar. A file's programs are each a tape of
+5. **Format 16 does not change** (0434): a tape is one text, one tree, one grammar. A file's programs are each a tape of
    their own grammar; a tape value is a tape. Around them:
    - a file's record of its programs (each one's tape key, host node, grammar, first id, the map from its text to the
      host's bytes), a derived fact stored beside the file's tape and loaded with it;
@@ -181,7 +181,7 @@ code may be named by which rules asked for it, or in what order.
    - A source that grew is bound again: the device's resident copy of a source is reused only while its rows are the
      same (or the source is made on lookup).
    - Left: an input a constant filters (`parsed(s, "annotation", r)`, and the `child` and `node` filters in
-     `html/embeds.rerail`) is uploaded, the batch's and a value's alike (Q351). R8's test allows exactly `parsed`'s rows
+     `html/embeds.rerail`) is uploaded, the batch's and a value's alike (Q310). R8's test allows exactly `parsed`'s rows
      for it.
 
 ## Requirements, each with its test
@@ -195,7 +195,7 @@ code may be named by which rules asked for it, or in what order.
 | R5 | The batch is built once a chunk and grows by the rest (§6; `Report::batch_grown` counts the documents added): a file's programs, and the rows read are a rebuilt batch's. A tape value no longer grows it (§8, R10, which supersedes `tape_values_build_no_second_batch`) | `a_files_programs_build_no_second_batch` |
 | R6 | A text a run parsed is not parsed again: after an edit elsewhere in its file, in a new file, after a rule's edit (`Report::guest_parses`) | `an_edit_elsewhere_parses_no_text_the_last_run_parsed`, `a_new_file_with_a_text_parsed_before_parses_nothing`, `an_edited_rule_parses_no_text_the_last_run_parsed`; guard `equal_texts_are_parsed_once_a_run` |
 | R7 | A file read from the memo has its programs and tape values for a cross-file rule: a value's rows are base rows of each file that asked for it (`owners`, `askers`), kept in its entry and restored with it | `a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule` |
-| R8 | CPU and Metal give the same rows, the device reading the same tapes: a value's rows read where they lie, none uploaded (but Q351's filtered inputs) | `cpu_and_metal_read_the_same_tape_values`, with both kinds |
+| R8 | CPU and Metal give the same rows, the device reading the same tapes: a value's rows read where they lie, none uploaded (but Q310's filtered inputs) | `cpu_and_metal_read_the_same_tape_values`, with both kinds |
 | R9 | A finding placed at a tape value's node is refused: the lowering derives `rr_unplaced(clause)`, and the run fails naming the clauses | `a_finding_at_a_tape_values_node_is_refused` |
 | R10 | A string a rule parses is parsed in the program's fixpoint (§8): no slice and no round runs for it, the batch never grows by a value, each value is admitted once at its first lookup (`Report::values_admitted`), a string inside a value too; no scan lists a hidden value's nodes, and a shown one's are read after the request (§8, as built) | `tape_values_are_read_in_the_fixpoint` |
 
@@ -204,7 +204,7 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
 
 ## Steps
 
-1. The record, its tests, Q347.
+1. The record, its tests, Q306.
 2. Tape values: node ids by tape key and preorder, `guest_of`, findings placed through the string (R2, R3, R9); the
    packs' `docof(n, d), guest(d, _, s, _)` over parsed strings rewritten (14 uses in 2 files; the `guest` rows left
    are the grammar's programs, step 3's).

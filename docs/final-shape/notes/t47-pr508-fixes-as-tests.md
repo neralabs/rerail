@@ -168,4 +168,4 @@ conflicts:
 
 Not in the ledger before the tip, and not taken: 819e672b6 and 80e74acd2 (compile time: the token census read in
 place as `&'static str`, the automata a kind at a time), which change the census's types under the hub's token
-tests. Q294 (Q251 on pr508-fixes-as-tests).
+tests. Q401 (Q251 on pr508-fixes-as-tests).

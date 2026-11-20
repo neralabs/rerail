@@ -1,4 +1,4 @@
-//! A run's hold on its analysis scope (decision 0494): a file beside the store, named by the run's acquisition and
+//! A run's hold on its analysis scope (decision 0514): a file beside the store, named by the run's acquisition and
 //! locked while the run lives. It is what another process sees of a run that has not yet written anything: a
 //! deletion or a stop of a scope a running analysis holds fails (`StoreError::InUse`), to be retried once the run
 //! has finished, and the acquisition's number is taken here, not by a write to the store.

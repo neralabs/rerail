@@ -355,7 +355,7 @@ const ROOT_RETAGGED: &str = "program -
   0020 ACCEPT 0
 ";
 
-/// A format 16 run (decision 0426 §6, R17) of a program that edits nodes it passed to the ops: `FOLDED_CLOSED`
+/// A format 16 run (decision 0434 §6, R17) of a program that edits nodes it passed to the ops: `FOLDED_CLOSED`
 /// folds a leaf before the commit point, which the ops take a commit point behind; `ROOT_RETAGGED` retags the
 /// root, which the ops hold open, after they took it. Each tape is the one the writer makes of tier 2's format 15
 /// image, which is the interpreter's nodes' (the folded leaf's code taken back and numbered again), in 16 and 16z.

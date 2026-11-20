@@ -8,7 +8,7 @@ use super::super::super::PackedPattern;
 use std::fmt::Write as _;
 
 pub(super) const KERNEL: &str = "clause_patterns";
-/// The item pattern of a fact's findings on one file (`Pass::Fact`), read in the fact block (`facts`, Q317): its first
+/// The item pattern of a fact's findings on one file (`Pass::Fact`), read in the fact block (`facts`, Q289): its first
 /// constraint is (file, whether the findings are bits), then a (0, label) per slot; `root` is the findings' first u32.
 pub(super) const FACT: u32 = u32::MAX;
 /// The threads a pattern pass's item (a group of 64 nodes) takes, each finding the roots among 16 of them; a fact's

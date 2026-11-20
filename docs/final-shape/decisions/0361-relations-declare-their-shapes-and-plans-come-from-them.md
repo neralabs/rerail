@@ -458,15 +458,15 @@ relation only an estimate sized, and a run takes it only while those relations, 
 With it: 1,020 -> 1,024 billion instructions (off -> on), 463 findings, d067ec2ebf6f; 3,193 lines taken, 2,870
 refused, 14,565 searched against 15,146. Planning is 1-3% of the run's CPU (search 0.3 s, statistics about 2.7 s
 of 94 s); a wrong order costs ten times that. The criterion "a run plans none of the relations that have shapes"
-is met for the relations whose facts size them; for the rest it waits on estimates good enough to keep (Q333).
+is met for the relations whose facts size them; for the rest it waits on estimates good enough to keep (Q290).
 
 **A later run on the same store** (2026-11-18). The measurement above gave each run a new store. A second run on
 the store of a first, over the corpus edited so that nothing is reused, searches about 5,000 lines with prepared plans
 or without: the kept plans (decision 0038) answer the rest. Instructions: 963 billion off, 987 with prepared plans
 (+2.5%, within the runs' spread), 967 with derived estimates off. Making a version's plans again from the sizes a
-run saw (Q333) cost 31% and was dropped. So on a warm store prepared plans save no planning, and on a cold one they
+run saw (Q290) cost 31% and was dropped. So on a warm store prepared plans save no planning, and on a cold one they
 save little (planning is 1-3% of the run). The criterion that a run plans none of the relations with shapes is met
-where facts size them; for derived relations it is open (Q333), as is reading plans across stores (Q334).
+where facts size them; for derived relations it is open (Q290), as is reading plans across stores (Q291).
 
 **Taken by default; a slow one searched where it runs** (2026-11-18, the user's design). A prepared plan is taken
 as it is, estimates and all: the run's planning stays lean for the plans that are right, approximations are
@@ -492,7 +492,7 @@ instructions 1,039 billion off, 1,075-1,090 on (+3.5-5%, spread over many spans,
 70% longer. Still to come from the design: the background learning that improves the wrongly planned and the
 critical path's plans through the classifier (O166, decision 0203 §5).
 
-**A constant on a `values` column is planned at run time** (2026-11-18, work queue Q338). A `values(c, …)` fact gives
+**A constant on a `values` column is planned at run time** (2026-11-18, work queue Q297). A `values(c, …)` fact gives
 column `c`'s distinct values, not how many rows hold a given one, and kinds and field names are far from even. On
 PostHog (M3, cold, 157 chunks), `param(…) :- kind($p, #k1025), child($ps, $p, _), field($f, #f65559, $ps), text($p,
 $x)` was prepared with `kind` first (one kind in 200; this one, an identifier, is 16 % of the nodes): 10.4 M rows,

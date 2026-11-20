@@ -495,7 +495,7 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0426 §4, step 6: a run's parses are stored with their presences after them, each tape's home as one: a
+/// Decision 0434 §4, step 6: a run's parses are stored with their presences after them, each tape's home as one: a
 /// tape read back from the store holds its document's kinds.
 #[test]
 fn a_runs_tapes_are_stored_with_their_presences() {
@@ -1259,7 +1259,7 @@ fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
 /// Each test's store is its own: a copy of the template (the library's phase 0 in it), with an identity of its own,
 /// and closed and removed when the test ends (`test_store`). Two tests at once have two stores.
 #[test]
-#[ignore = "Q363: an object segment of the first probe's store (`.objects/<n>.seg`) stays open after its thread ends"]
+#[ignore = "Q408: an object segment of the first probe's store (`.objects/<n>.seg`) stays open after its thread ends"]
 fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
     if std::env::var_os("RERAIL_TAPE_CACHE").is_some() {
         return;
@@ -2315,7 +2315,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
     // chunk's and its values', are read where they are (copy 0353 step 6 is not taken for them): a run with values
     // uploads no more than the same program over a file with none (whose uploads are the engine's, its empty versions
     // and the like), but for `parsed`: the grammar its atoms give is a filter of the input, and an input a constant
-    // filters is uploaded still (Q351), its rows' three columns.
+    // filters is uploaded still (Q310), its rows' three columns.
     let q266 = |rows: u64| 8 * 3 * rows;
     let uploaded = || rerail_prof::copies::sites().into_iter().filter(|(site, _)| site.name.contains("DevRel::upload")).map(|(_, t)| t.bytes).sum::<u64>();
     let on_device = |name: &str, files: &[(&str, &str)], program: &str, output: &str| {
@@ -2346,7 +2346,7 @@ calls(x, d, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p),
 "#;
     let (_, on_cpu) = batch_run_on("r8-programs-cpu", &[("a.html", html)], programs, "calls", Binding::Cpu);
     // The programs' library (`html/embeds.rerail`) filters `child` and `node` by constants: those inputs are uploaded
-    // (Q351), so the uploads here say nothing of the programs' rows.
+    // (Q310), so the uploads here say nothing of the programs' rows.
     let ((_, on_metal), _) = on_device("r8-programs-metal", &[("a.html", html)], programs, "calls");
     assert_eq!(on_cpu.len(), 2, "both scripts' calls: {on_cpu:?}");
     assert_eq!(on_cpu[0][1], on_cpu[1][1], "both scripts are the file's: {on_cpu:?}");

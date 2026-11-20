@@ -259,7 +259,7 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
             _ => rerail_clif::view::F16Z_FORMAT,
         };
         assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
-        // The device reads the presence where the tape's home holds it (decision 0426 §4, step 6), 16 and 16z alike.
+        // The device reads the presence where the tape's home holds it (decision 0434 §4, step 6), 16 and 16z alike.
         assert!(table.views.iter().all(|view| (view.presence != 0) == (format != Format::F15)), "{format:?}: the views name the presence");
         assert_eq!(table.cache.is_some(), format == Format::F16Z, "a cache for 16z tapes alone");
         if format != Format::F15 {

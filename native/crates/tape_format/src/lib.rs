@@ -23,7 +23,7 @@ pub mod home;
 pub mod newlines;
 /// The tape's reads as Rust, written from their CLIF (decision 0310; `rerail_clif::reads::rust_source`).
 mod generated_reads;
-/// The tape's writer's ops as Rust, from CLIF (decision 0426 §6): `rerail_clif::writer::rust_source`.
+/// The tape's writer's ops as Rust, from CLIF (decision 0434 §6): `rerail_clif::writer::rust_source`.
 mod generated_writer;
 
 
@@ -271,17 +271,17 @@ pub struct Writer<L: Layout = Widths> {
     held: Vec<Held>,
     tag: u8,
     /// Where the run writes format 16 or 16z (`to`): the nodes before `passed` are given to its ops, and an edit
-    /// reaches before them only to retag a node or set an open node's start (decision 0426 §2). 0 for format 15.
+    /// reaches before them only to retag a node or set an open node's start (decision 0434 §2). 0 for format 15.
     sixteen: Option<Box<Passing>>,
     passed: usize,
     /// The node the columns' first cells are: the nodes before it were passed to format 16's ops, and their cells
-    /// given back (the window, decision 0426 §2). 0 for format 15.
+    /// given back (the window, decision 0434 §2). 0 for format 15.
     base: usize,
     /// The most nodes the window has held at a commit: the sizes its cells held.
     widest: usize,
 }
 
-/// Where a lean parser's writer writes (decision 0426 §2): format 15's columns, finished at the end, or format 16
+/// Where a lean parser's writer writes (decision 0434 §2): format 15's columns, finished at the end, or format 16
 /// or 16z, each node given to `f16::Writer`'s ops as it is committed. The writer's columns are then the edit window.
 #[derive(Clone, Default)]
 pub enum Target {
@@ -480,7 +480,7 @@ impl<L: Layout> Writer<L> {
     }
 
     /// The writer writing to `target` for the source `src`: format 16's nodes passed to its ops as they are
-    /// committed (decision 0426 §2). Before the first push.
+    /// committed (decision 0434 §2). Before the first push.
     pub fn to(mut self, target: Target, src: &[u8]) -> Self {
         assert_eq!(self.n, 0, "a target before the first node");
         if let Target::F16(t) = target {
@@ -1222,7 +1222,7 @@ impl<L: Layout> Writer<L> {
         self.codes.iter().map(|&(key, _)| key).collect()
     }
 
-    /// The tape in format 16 or 16z and its presence, where the writer writes it (`to`; decision 0426 §2): the nodes
+    /// The tape in format 16 or 16z and its presence, where the writer writes it (`to`; decision 0434 §2): the nodes
     /// not yet passed on given to the ops, then their `finish`. Format 15's columns are not made. `Redo` where the
     /// writer's widths did not keep every size and end exactly (format 15's offsets do not matter here); `Ok(Err)`
     /// where the nodes are not a format 16 tape (a code the language's table lacks, an edit before a commit, a node
@@ -1719,7 +1719,7 @@ mod tests {
     /// A parser's writer writing format 16 or 16z (`to`, `finish_16`) gives the tree it finishes in format 15, after
     /// the edits a parse makes: a rewind, a node put before its first child, a key changed. Committed as it goes, the
     /// nodes are passed to the format 16 writer's ops before the edits that reach them: a close, a retag (decision
-    /// 0426 §2).
+    /// 0434 §2).
     #[test]
     fn a_parsers_writer_finishes_in_format_16_as_in_format_15() {
         use crate::tape::{CodeTable, Entry, F15, Tape, f15_columns};
@@ -1783,7 +1783,7 @@ mod tests {
     /// A format 16 writer's columns hold the window, the nodes since the last commit: a file of many statements
     /// keeps them at `WINDOW` cells, and its tape is format 15's tree. The parse reads its open ancestors after a
     /// commit; a read of a node given back, or an edit before the window, says the tape is not format 16's
-    /// (`finish_16`'s reason), and `holds_all` says the parse must run again for format 15 (decision 0426 §2).
+    /// (`finish_16`'s reason), and `holds_all` says the parse must run again for format 15 (decision 0434 §2).
     #[test]
     fn a_format_16_writers_columns_are_the_window() {
         use crate::tape::{CodeTable, F15, Tape, f15_columns};

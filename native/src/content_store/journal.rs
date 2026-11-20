@@ -394,7 +394,7 @@ mod fsevents {
                 continue;
             }
             // `RERAIL_JOURNAL_TRACE`: each event's flags as delivered, to tell a metadata-only change from a write
-            // (Q359).
+            // (Q404).
             if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
                 eprintln!("journal flags {id} {flag:#x} {path}");
             }

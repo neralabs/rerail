@@ -77,7 +77,7 @@ findings in every run, no Metal stop:
   (462 MB of it the GPU pool's leases); the footprint's rise past it is the first command buffer and GPU-written pages.
 - Choices the measures made:
   - a first chunk of 4,096 nodes cost the CPU 1-5 B (92.5-93.7 B against 88.8-92.0 B at 65,536), with 20-30 distinct
-    negation-split strata (`pre_k`) against 11; the cause is not yet known (Q322), so the first is 65,536;
+    negation-split strata (`pre_k`) against 11; the cause is not yet known (Q314), so the first is 65,536;
   - doubling from 4,096 ran 36 chunks; growth up to eight times ran 20-23 and 2-4 B fewer on Metal (79.0/76.2 B
     against 75.7/74.0 B), measured together with the peak sampler, so not apart from it. An earlier "8 B" in the code
     and fe2007e38's message was written before it was measured, and was wrong;
@@ -86,6 +86,6 @@ findings in every run, no Metal stop:
 ## Supersedes
 
 - 0342's `Device::May` slab while the budget has room spare (`lease_block_spare`).
-- Q321's checks by the driver's count (`make_device_room`, `idle_room`'s driver term): by §2 the driver is not
+- Q313's checks by the driver's count (`make_device_room`, `idle_room`'s driver term): by §2 the driver is not
   weighed.
 - 47785e475's sizing by the run's most bytes a node, and its credible-growth threshold.

@@ -3294,7 +3294,7 @@ fn bodies_by_head(placed: &body::Placed) -> Vec<(String, usize)> {
 /// the program, from the facts alone; its order covers its literals. A rule reading a relation with no size (`part`)
 /// is not: it is planned at run time. A recursive rule over a declared relation is planned for its delta too. A rule
 /// that tests a constant on a column a `values` fact answers (`kind2(p, "x")`) is not either: the fact gives the
-/// column's distinct values, not this one's rows, and the order turns on them (PostHog's `param`, work queue Q338).
+/// column's distinct values, not this one's rows, and the order turns on them (PostHog's `param`, work queue Q297).
 #[test]
 fn a_rule_over_shaped_relations_is_planned_with_the_program() {
     let p = prepared_program();

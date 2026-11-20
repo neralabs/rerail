@@ -58,7 +58,7 @@ The calls cost the kernels nothing the runs show.
 On the resident interpreter (`lowered_clauses_find_the_same_roots_on_the_resident_interpreter`, M3, 2026-11-20) the
 results are the same with and without this decision: 103 of 123 clauses equal, 20 refused at the launch bound, and
 the same five runs that needed more chain levels. Four clauses had failed with `BackendFailure` there, with or
-without it. That was not the reads: an interpreted run whose chain outgrew `label_phase`'s first level (0463) failed,
+without it. That was not the reads: an interpreted run whose chain outgrew `label_phase`'s first level (0475) failed,
 where a micro walk's run doubled the levels. It now doubles them too (`metal_label_passes`, the label sweep's retry
 loop). A command buffer the GPU fails is now said where it is waited on (`rerail_metal::launch::wait_checked`), once a
 run, as the joins' are.

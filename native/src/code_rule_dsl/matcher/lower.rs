@@ -72,7 +72,7 @@ pub struct Fact {
     pub kinds: Option<BTreeSet<u16>>,
 }
 
-/// A fact's findings on one file, in its batch's fact block (Q317): rows with their slots' targets, or (a fact with no
+/// A fact's findings on one file, in its batch's fact block (Q289): rows with their slots' targets, or (a fact with no
 /// slot) its nodes as bits. Written once where they are found (`Fact::found`), and read there by the CPU's label
 /// passes and the device's (`Pass::Fact`, the block bound whole).
 #[derive(Clone, Copy, Debug)]
@@ -179,7 +179,7 @@ impl Fact {
     }
 
     /// The findings of `file` (`rows`), as bits where they are a node set (`nth_bits`), written into `block` (the
-    /// batch's fact block, Q317). A row is at most a node of the file, so its region is the file's nodes', and what is
+    /// batch's fact block, Q289). A row is at most a node of the file, so its region is the file's nodes', and what is
     /// left is given back where no other allocation came after it (the rest is address space, never written). `None` where the block cannot hold them.
     pub fn found(
         &self,

@@ -9,7 +9,7 @@ description = "The engine's tape as bytes: format 15 (v9np), its constants and a
 # The tests' shared object for reads outside a run (decision 0442).
 test-hooks = ["rerail-clif/test-hooks"]
 # The hand-written reference writer of format 16 (`f16::reference`), which the writer's ops are checked against: the
-# tests', and the lab's (decision 0426 §6, R16). No build of the engine turns it on.
+# tests', and the lab's (decision 0434 §6, R16). No build of the engine turns it on.
 reference = []
 
 [dependencies]

@@ -101,5 +101,5 @@ farm host at load 35–53), at a282371e9:
 | warm, second | 3.3 G | 3.3 G |
 
 So the batch costs no more than before. The two columns are many commits apart, so the difference is not this
-decision's alone. Q294 records the one test that got slower on Linux, which waits on the store's msync, not on an
+decision's alone. Q401 records the one test that got slower on Linux, which waits on the store's msync, not on an
 image.

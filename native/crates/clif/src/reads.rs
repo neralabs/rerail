@@ -382,7 +382,7 @@ fn family_funcs(keep: impl Fn(&Read) -> bool) -> Vec<(u32, Function, &'static Re
 /// A relation's reads as Rust (decision 0325): `rerail_blocks`' `generated_reads.rs`, which its `Rows` and
 /// `Relation` read through, made again by `the_blocks_reads_are_these`.
 pub fn relation_rust_source() -> Result<String, String> {
-    // `rows_put` is the device's writer (decision 0427): the host writes rows through `Rows::put`, which checks them.
+    // `rows_put` is the device's writer (decision 0463): the host writes rows through `Rows::put`, which checks them.
     let funcs: Vec<_> = relation_funcs().into_iter().filter(|(_, _, read)| read.name != "rows_put").collect();
     let entries: Vec<(u32, &str)> = funcs.iter().map(|(k, _, read)| (*k, read.name)).collect();
     let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, read)| (k, f, read.hot)).collect();
@@ -592,7 +592,7 @@ impl B<'_, '_> {
         )
     }
     /// `by_format` for a read of the tape's whole, not of a node (its newline index): a 16z tape holds it raw, where
-    /// its view names it, so a 16z tape's body is format 16's, read in place of the stored bytes (decision 0426).
+    /// its view names it, so a 16z tape's body is format 16's, read in place of the stored bytes (decision 0434).
     fn by_format_whole(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
         let sixteen = &sixteen;
         self.by_formats(ty, |b| sixteen(b), |b| sixteen(b), fifteen)
@@ -699,7 +699,7 @@ impl B<'_, '_> {
         let ok = self.f.ins().band(ok, some);
         // Tries spent: the dead entry is read, a failure counted (another thread holds the block). Never the entry
         // as it is, which may hold two blocks' bytes: a kernel that went on with such a value (an index, a span)
-        // would reach anywhere before its run is refused (decision 0427); the dead entry's reads are its zeros.
+        // would reach anywhere before its run is refused (decision 0463); the dead entry's reads are its zeros.
         let (gave_up, give_up) = (self.f.create_block(), self.f.create_block());
         let yes = self.c32(1);
         self.f.ins().brif(ok, read, &[entry.into(), yes.into()], gave_up, &[]);
@@ -829,7 +829,7 @@ impl B<'_, '_> {
     /// Format 16's column `r` (0 codes, 1 slots, 2 gaps, 3 lengths, 4 checkpoints) in block `b`: where it
     /// starts. Blocks are `F16_PART` nodes at the view's stride from block 0's start, each its columns end to
     /// end at its rows (the last block's are fewer: `nodes - b * F16_PART`), column `r` at `rows *
-    /// columns[r]` (decision 0426).
+    /// columns[r]` (decision 0434).
     fn block_column(&mut self, r: i32, b: Value) -> Value {
         let blocks = self.column(0);
         let stride = self.view(at::STRIDE);
@@ -916,7 +916,7 @@ fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
     let p4 = b.f.ins().imul_imm(p, 4);
     let start = b.u32(parts, p4);
     // The part's end (the next one's start, the last the list's length: both checked where the tape is placed):
-    // every offset into the part is held to it, whatever its bytes state (decision 0427).
+    // every offset into the part is held to it, whatever its bytes state (decision 0463).
     let next4 = b.f.ins().iadd_imm(p4, 4);
     let limit = b.u32(parts, next4);
     let nodes = b.view(at::NODES);
@@ -1000,7 +1000,7 @@ fn size(b: &mut B<'_, '_>) -> Value {
             let inner = b.f.ins().ushr_imm(v, 1);
             let inner = b.f.ins().ireduce(I32, inner);
             let one = b.c32(1);
-            // At least 1 (a subtree holds its root), whatever the slot holds: every hop by sizes moves on (0427).
+            // At least 1 (a subtree holds its root), whatever the slot holds: every hop by sizes moves on (0463).
             let inner = b.f.ins().umax(inner, one);
             b.f.ins().select(leaf, one, inner)
         },
@@ -1052,14 +1052,14 @@ fn number(b: &mut B<'_, '_>) -> Value {
 /// The node's start (a document-local byte).
 fn start(b: &mut B<'_, '_>) -> Value {
     // Held to the source (the view's `source_len`, the source its reader reads): a span from the tape reads no
-    // byte past it, whatever the tape's gaps hold (decision 0427).
+    // byte past it, whatever the tape's gaps hold (decision 0463).
     let i = b.arg(0);
     let start = b.call("tape_start_stated", &[i]);
     let source = b.view(at::SOURCE_LEN);
     b.f.ins().umin(start, source)
 }
 
-/// The node's end, held between its start and the source's end (decision 0427): a reader's span is never
+/// The node's end, held between its start and the source's end (decision 0463): a reader's span is never
 /// reversed and never past the source.
 fn end(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
@@ -1225,7 +1225,7 @@ fn parent16(b: &mut B<'_, '_>, i: Value, z: bool) -> Value {
     b.f.switch_to_block(sibling);
     let step = b.f.ins().ushr_imm(v, 2);
     let step = b.f.ins().ireduce(I32, step);
-    // A step of 1 to `j` back: else the slot is no tape's, and the walk ends (each step moves back, decision 0427).
+    // A step of 1 to `j` back: else the slot is no tape's, and the walk ends (each step moves back, decision 0463).
     let less = b.f.ins().iadd_imm(step, -1);
     let moves = b.f.ins().icmp(IntCC::UnsignedLessThan, less, j);
     let stepped = b.f.create_block();
@@ -1360,7 +1360,7 @@ fn z_block(b: &mut B<'_, '_>) -> Value {
     let size = b.column(3);
     let size = b.f.ins().uextend(I64, size);
     // A block past the tape's last (a node read that is no node of it): the dead entry, a failure counted, so the
-    // read stays in the cache and its run is refused (decision 0427). The block index is read only below its end.
+    // read stays in the cache and its run is refused (decision 0463). The block index is read only below its end.
     let nodes = b.view(at::NODES);
     let blocks = b.f.ins().iadd_imm(nodes, i64::from(F16Z_BLOCK - 1));
     let blocks = b.f.ins().ushr_imm(blocks, i64::from(F16Z_BLOCK.trailing_zeros()));
@@ -1807,7 +1807,7 @@ fn cache_take(
 }
 
 /// Block `block` of the reader's 16z tape decoded into the cache entry `slot` (`size` bytes), as a format 16 tape
-/// of one block (decision 0426 §3's stored form read through 0353 step 4b's cache): each of its `F16Z_PIECES`
+/// of one block (decision 0434 §3's stored form read through 0353 step 4b's cache): each of its `F16Z_PIECES`
 /// pieces (codes, slots, gaps, lengths) decoded where its view places it, the array's column then its side list's
 /// part (an LZ4 piece by `z_lz4`, a raw one copied, a repeat as the piece it names), its checkpoints copied, each
 /// side list's one part's starts after them, and its view. Column `q` lies at `nb * C[q]` (`nb` its nodes), `C[q]`
@@ -1837,7 +1837,7 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
             let from = b.u32(parts, at);
             let next = b.f.ins().iadd_imm(at, 4);
             let to = b.u32(parts, next);
-            // Held to its list's order (checked where the tape is read in, decision 0427): never past it.
+            // Held to its list's order (checked where the tape is read in, decision 0463): never past it.
             let to = b.f.ins().umax(to, from);
             b.f.ins().isub(to, from)
         })
@@ -2002,7 +2002,7 @@ fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Val
     let lit = b.f.ins().uextend(I64, lit);
     let d_lit = b.f.ins().iadd(d, lit);
     // The literals within the destination and the source both: a length the block states past its own bytes
-    // reads nothing after them (decision 0427).
+    // reads nothing after them (decision 0463).
     let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d_lit, dst_end);
     let s_lit = b.f.ins().iadd(s, lit);
     let held = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, s_lit, src_end);
@@ -2170,7 +2170,7 @@ fn end_of(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `c + size`, past `c` however `size` wraps, and no further than the tape's nodes: a walk by sizes ends whatever
-/// the tape holds, and every node it gives is one of the tape's (decision 0427).
+/// the tape holds, and every node it gives is one of the tape's (decision 0463).
 fn hop(b: &mut B<'_, '_>, c: Value, size: Value) -> Value {
     let to = b.f.ins().iadd(c, size);
     let past = b.f.ins().iadd_imm(c, 1);
@@ -2468,7 +2468,7 @@ fn line(b: &mut B<'_, '_>) -> Value {
 }
 
 /// Whether the tape's block `block` (its nodes `F16_PART * block ..`; `NONE`: the whole document) has a node of kind
-/// `kind`, by its presence (the view's `presence`, decision 0426 §4, step 6): 1 where the tape has none to tell by
+/// `kind`, by its presence (the view's `presence`, decision 0434 §4, step 6): 1 where the tape has none to tell by
 /// (format 15, or one stored without it), and the document's answer where its blocks' presences are not held. The
 /// host's planners and the kernels ask this one read.
 fn has_kind(b: &mut B<'_, '_>) -> Value {

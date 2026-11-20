@@ -324,7 +324,7 @@ pub enum StoreError {
     /// A row a publication had resolved vanished before the publication used it, under a
     /// concurrent collection. Never a reason to proceed without the store.
     Vanished(&'static str),
-    /// A deletion or stop of an analysis scope that a running analysis holds (`scope_lease`, decision 0494): retry
+    /// A deletion or stop of an analysis scope that a running analysis holds (`scope_lease`, decision 0514): retry
     /// once that run has finished.
     InUse(String),
 }

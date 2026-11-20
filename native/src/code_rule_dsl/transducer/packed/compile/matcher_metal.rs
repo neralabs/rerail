@@ -103,11 +103,11 @@ fn metal<'a>(
     // A pass's roots: its domain's nodes. A label domain's program tests the label first. On Metal
     // the label is not known before the command buffer runs, so the rule names the kinds the label
     // can have (`Labels::bound`); the walk's anchor, which reads the label (its first test), keeps
-    // the walks to the label's members (decision 0365, 0424). They are a rule over each document's
+    // the walks to the label's members (decision 0365, 0459). They are a rule over each document's
     // codes (`Roots::Codes`, decision 0033), not a list: the device reads each root in place.
     // Shared by (domain, entry, the tapes the clause is active on), so passes of one domain have
     // one rule (06 S7: 605 passes, 70 M roots as lists, of 264 such keys).
-    // A demand's set (`Domain::Within`, decision 0425) is not a rule over codes: the rule names its kinds, and the
+    // A demand's set (`Domain::Within`, decision 0460) is not a rule over codes: the rule names its kinds, and the
     // pass's anchor holds the set (`demands`, by the roots it keys, read below).
     let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>), Arc<Roots>>::new();
     let mut demands = HashMap::<usize, compile_sets::Set>::new();
@@ -139,7 +139,7 @@ fn metal<'a>(
         Ok(match clause.labels.def(id) {
             Label::Fact(fact, labels) => {
                 let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
-                // Where each active file's findings are in the fact block, which the device reads in place (Q317).
+                // Where each active file's findings are in the fact block, which the device reads in place (Q289).
                 let found = tapes
                     .iter()
                     .enumerate()

@@ -19,7 +19,7 @@ pub struct TapeView {
     /// measured from the node's own start. Format 16: the slot, gap and length widths at bits 0, 4
     /// and 8, the checkpoints' at 12, and the four side lists' value widths at 16, 20, 24 and 28.
     pub widths: u32,
-    /// Format 15's columns (code, size, base, off, tail). Format 16 (block-major, decision 0426): block
+    /// Format 15's columns (code, size, base, off, tail). Format 16 (block-major, decision 0434): block
     /// 0's start, then the bytes a row holds before the slots, the gaps, the lengths and the checkpoints
     /// (a block of R rows holds column r at `R * columns[r]` from its start).
     pub columns: [u32; 5],
@@ -47,7 +47,7 @@ pub struct TapeView {
     pub line_base: u32,
     /// Where the stored tape starts.
     pub tape: u32,
-    /// Format 16 and 16z: the tape's presence (decision 0426 §4, step 6), in its home after the tape: `[u32 kind words,
+    /// Format 16 and 16z: the tape's presence (decision 0434 §4, step 6), in its home after the tape: `[u32 kind words,
     /// u32 field words, u32 presences, u32 0]`, then the document's words and each block's (`tape_has_kind`). 0 where
     /// it has none (format 15, or a tape stored without one).
     pub presence: u32,
@@ -101,7 +101,7 @@ pub const F16_BLOCK: u32 = 256;
 pub const F16_PART: u32 = 1024;
 pub const F16_SUB: u32 = F16_PART / F16_BLOCK;
 /// A 16z tape's format in its view (decision 0353 step 4b): format 16 stored a block of `F16Z_BLOCK` nodes at a
-/// time in `F16Z_PIECES` pieces (decision 0426 §3), read in place, a block decoded where a read falls into an entry
+/// time in `F16Z_PIECES` pieces (decision 0434 §3), read in place, a block decoded where a read falls into an entry
 /// of a rolling cache (`cache`). Its view's `columns` are the piece index's offset (each piece's start in the
 /// payload, a u32; then each one's length; then each one's kind, a byte), the side lists' part starts' (list `k`'s
 /// `blocks + 1` u32s, list after list), the checkpoints' (raw, `F16Z_BLOCK / F16_K` a block), the cache's entry
@@ -111,7 +111,7 @@ pub const F16_SUB: u32 = F16_PART / F16_BLOCK;
 /// per are format 16's.
 pub const F16Z_FORMAT: u32 = 1016;
 pub const F16Z_BLOCK: u32 = 1024;
-/// The pieces a 16z block is stored in (decision 0426 §3): codes, slots, gaps, lengths, each its array's column in
+/// The pieces a 16z block is stored in (decision 0434 §3): codes, slots, gaps, lengths, each its array's column in
 /// the block then its side list's part.
 pub const F16Z_PIECES: u32 = 4;
 
@@ -187,7 +187,7 @@ pub mod cache {
     pub const NUMBER: u32 = (1 << TAG_SHIFT) - 1;
     /// The room past the dead entry: an entry's masked loads reach at most an entry and a word past it.
     pub const SLACK: usize = 256;
-    /// A guard after the slack, of `GUARD_BYTE`s: no read or write of the cache reaches it (decision 0427), and
+    /// A guard after the slack, of `GUARD_BYTE`s: no read or write of the cache reaches it (decision 0463), and
     /// `Spec::check` finds it as `init` wrote it, else a writer missed its own memory.
     pub const GUARD: usize = 256;
     pub const GUARD_BYTE: u8 = 0xA5;
@@ -253,7 +253,7 @@ pub mod cache {
             self.dead() + self.entry_bytes() + SLACK + GUARD
         }
 
-        /// The cache in `buf` checked as `init` made it (decision 0427): its shape's words, from which every
+        /// The cache in `buf` checked as `init` made it (decision 0463): its shape's words, from which every
         /// address its reads take is made, and its guard. A cache whose threads are done (or a sample while they
         /// run). `Err` says what was overwritten: a write that missed its own memory, never one of the cache's.
         pub fn check(buf: &[u8]) -> Result<Spec, String> {
@@ -319,10 +319,10 @@ pub mod cache {
 
     impl Counts {
         /// The counts of the cache `buf` (a whole cache), checked first (`Spec::check`): a cache found overwritten
-        /// panics, naming what was (decision 0427): memory a writer missed is no state to go on from.
+        /// panics, naming what was (decision 0463): memory a writer missed is no state to go on from.
         pub fn checked(buf: &[u8]) -> Counts {
             if let Err(e) = Spec::check(buf) {
-                panic!("a 16z block cache (decision 0427): {e}");
+                panic!("a 16z block cache (decision 0463): {e}");
             }
             // SAFETY: a cache's header, checked just now, in `buf`.
             unsafe { Counts::read(buf.as_ptr()) }
@@ -395,12 +395,12 @@ impl Reader {
 
 impl Drop for Reader {
     fn drop(&mut self) {
-        // A 16z reader's cache checked as its reads leave it (decision 0427).
+        // A 16z reader's cache checked as its reads leave it (decision 0463).
         if 16 * self.len > READER_CACHE {
             // SAFETY: the cache's bytes after the view, in the buffer `new` made, which no read uses now.
             let cache = unsafe { std::slice::from_raw_parts(self.words.cast::<u8>().add(READER_CACHE), 16 * self.len - READER_CACHE) };
             if let Err(e) = cache::Spec::check(cache) {
-                panic!("a 16z reader's block cache (decision 0427): {e}");
+                panic!("a 16z reader's block cache (decision 0463): {e}");
             }
         }
         // SAFETY: the buffer `new` made, of `len` words.

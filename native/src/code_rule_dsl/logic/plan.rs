@@ -4312,7 +4312,7 @@ impl Model {
             raw: f64,
             tail: Option<(f64, f64)>,
             /// Its rows as its steps make them, the cut past the head's binding aside (`rows` is what the walk passes
-            /// on): how many of the tail's rows are witnesses, which `witnessed` scales its work by (Q240 with Q357
+            /// on): how many of the tail's rows are witnesses, which `witnessed` scales its work by (Q240 with Q354
             /// item 5). Cut, the tail never had more rows than bindings, and every read past the head stayed priced.
             full: f64,
         }

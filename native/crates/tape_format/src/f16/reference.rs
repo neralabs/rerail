@@ -1,4 +1,4 @@
-//! The reference writer of format 16 and 16z (decision 0426 §2), written by hand: the tests' oracle (R16), and the
+//! The reference writer of format 16 and 16z (decision 0434 §2), written by hand: the tests' oracle (R16), and the
 //! lab's, which turns on the `reference` feature. The engine's writer is the ops in CLIF (`f16::Writer`), which
 //! write its bytes.
 
@@ -13,7 +13,7 @@ struct Open {
     start: u64,
 }
 
-/// 16z's output as blocks become final (decision 0426 §3): the header's room then the payload, each piece's start
+/// 16z's output as blocks become final (decision 0434 §3): the header's room then the payload, each piece's start
 /// in the payload, its length and its kind (by piece: `PIECES` a block, in block order, whatever order the blocks
 /// finish in), the checkpoints (raw, in node order), and each block's side-list parts' lengths.
 struct ZOut {
@@ -128,7 +128,7 @@ impl ZOut {
     }
 }
 
-/// Format 16 or 16z written in one pass as a parser goes (decision 0426 §2): its ops (`open`, `close`, `leaf`,
+/// Format 16 or 16z written in one pass as a parser goes (decision 0434 §2): its ops (`open`, `close`, `leaf`,
 /// `commit`, `finish`) write each cell once, at its final place in its block. A node's code, gap and checkpoint (a
 /// `K`-th node's) as it opens; its length, and an inner node's slot (`size << 1`), at its close; a leaf's slot as
 /// the node after it opens (the distance to that node's previous sibling, or on a `K`-th sibling to its parent).
@@ -327,7 +327,7 @@ impl<'l> Writer<'l> {
     }
 
     /// Node `i`'s code given again (a kind or field found after it opened): `number` in the language's table. Its
-    /// block is not final (decision 0426 §2: an edit that reaches a node before the window).
+    /// block is not final (decision 0434 §2: an edit that reaches a node before the window).
     pub fn retag(&mut self, i: usize, number: u32) {
         if !self.changeable(i, "code") {
             return;
@@ -442,7 +442,7 @@ impl<'l> Writer<'l> {
         i
     }
 
-    /// The nodes so far are final but for the open ones: no edit reaches before them (decision 0426 §2).
+    /// The nodes so far are final but for the open ones: no edit reaches before them (decision 0434 §2).
     pub fn commit(&mut self) {
         let was = self.frontier / Z;
         self.frontier = self.n;

@@ -1,6 +1,6 @@
-# 0425. A pass starts within its demand: one formula read in its anchor, not a seed label
+# 0460. A pass starts within its demand: one formula read in its anchor, not a seed label
 
-Status: accepted (2026-11-18). Numbered 0406 until the hub merge (on q178 too), and 0460 on final-rerail-shape-rr-align until the sync branch's roll-up of it. Supersedes 0424 item 5's seed labels. Follows Q325 (numbered Q187 where it was
+Status: accepted (2026-11-18). Numbered 0406 until the hub merge (on q178 too), and 0460 on final-rerail-shape-rr-align until the sync branch's roll-up of it. Supersedes 0459 item 5's seed labels. Follows Q288 (numbered Q187 where it was
 written; the hub's Q187 is another item).
 
 ## Intro
@@ -15,24 +15,24 @@ mechanism:
 | 0365 | within its anchor, a superset of the starts that emit | a node-set formula (`Set::anchor`), evaluated on the CPU (`anchor_bits`) and on the device (`label_formula`) |
 | 0390 | within the kinds where its reader can hold | a kinds list carried by the builder (`Demand::kinds`) |
 | 0396 | a recursive group's passes, within anchors reading the group's labels as every node | the anchor formula again, `labels_unknown` |
-| 0424 item 5 | inside an `all` that tests a neighbor, at a seed label of X's children or parents | a `Targets` label pass of its own, read as `Domain::Label` |
+| 0459 item 5 | inside an `all` that tests a neighbor, at a seed label of X's children or parents | a `Targets` label pass of its own, read as `Domain::Label` |
 
-The user asked for Q187 (now Q325) and added: "we also seem to be re-solving this problem over and over, so please
+The user asked for Q187 (now Q288) and added: "we also seem to be re-solving this problem over and over, so please
 survey the sibling worktrees and work on solving it more generically" (2026-11-18).
 
 The survey: no sibling worktree has a decision on starts, anchors, domains, demand or seeds that this branch lacks.
 The only hits were 0107 ("a search is demand rules"), the old number of this branch's 0144. Every one of the five
 lives on this line.
 
-Four of the five are node-set formulas, or could be. 0424's seed was not: it was a label made by a pass. A label is a
-level its readers wait for, so each seeded `all` added a level and its dispatches (0424, "What this tells us").
+Four of the five are node-set formulas, or could be. 0459's seed was not: it was a label made by a pass. A label is a
+level its readers wait for, so each seeded `all` added a level and its dispatches (0459, "What this tells us").
 
 ## Decision
 
 1. **Demand is a formula.** While lowering an `all`, the builder carries a `Demand { kinds, set }`. `set` is a node
    set (`compile_sets::Set`) that the node under test is in wherever the `all` can hold. For a conjunct `inside X`
    or `has X` by `neighbor`, through a field or not, it is the image of X's set by that one step:
-   `Set::targets` of the same one-step program 0424's seed walked, from `Domain::set` of X's starts. An `all`
+   `Set::targets` of the same one-step program 0459's seed walked, from `Domain::set` of X's starts. An `all`
    inside an `all` conjoins its set with the outer one.
 2. **A pass made there starts within it** (`Domain::Within(kinds, set)`). Its kinds are 0390's. Its set is read
    where the pass's anchor is read, ANDed into it:
@@ -52,7 +52,7 @@ level its readers wait for, so each seeded `all` added a level and its dispatche
    reads). A pass waits for X's label where X walks, as the seed did, but not for a seed made from it. Renaming in a
    wave renames them (`Domain::relabelled`, `Set::relabelled`).
 6. **`RERAIL_DEMAND_SETS=off`** is the measurement switch: an `all`'s labels start where the kinds allow alone, as
-   before 0424 item 5. It replaces `RERAIL_SEEDS`.
+   before 0459 item 5. It replaces `RERAIL_SEEDS`.
 
 What is left of where a pass starts is two things. Its domain says where its value is needed: the kinds, and a
 formula. Its anchor says where it can emit. The two are ANDed, and one evaluator reads them on each side (decision
@@ -61,7 +61,7 @@ formula. Its anchor says where it can emit. The two are ANDed, and one evaluator
 ## Measured
 
 The s1000 corpus: 339 files, 877,007 nodes. Engine `dm` is this decision. Engine `ms` is the hub merge plus
-`cd3d2214d`, with 0424's seeds. Metal runs are pinned (`RERAIL_LANE_PIN=gpu`), with t45's probe relations
+`cd3d2214d`, with 0459's seeds. Metal runs are pinned (`RERAIL_LANE_PIN=gpu`), with t45's probe relations
 (`tmp/bench/pp`). Load was 13–21, alternating runs. The GPU kernels' times are from the command buffers' timestamps.
 The runs were under the default memory line (`RUN_MB`), which cut s1000 into 14–17 chunks; the times are those
 chunks' (0419).
@@ -91,7 +91,7 @@ and not used for the verdict.
 
 ## What this tells us
 
-- Q325's premise is gone. 0424 saw `label_micro_8` + `label_micro` at 66.7 ms and their dispatches rising with the
+- Q288's premise is gone. 0459 saw `label_micro_8` + `label_micro` at 66.7 ms and their dispatches rising with the
   seeds. On this line (with 0365's anchors from the hub) the micro walks are 8–13 ms, and `label_micro`, the loop
   tier, no longer runs. Launching a pass over only the groups its domain has members in would save at most those
   8–13 ms. It is not built.
@@ -100,13 +100,13 @@ and not used for the verdict.
   fewer targets labels in the pack's wave (1,886 → 291, `wave.rir`).
 - The label passes' GPU time is now `label_formula`, 90–130 ms: the anchors' and formula passes' evaluation, about
   5 µs per (file, formula) pair. Each pair is word-wide set operations over the file's nodes. The kernel's time
-  follows how many formulas there are and how large they are, not dispatches. Q325 now names that.
+  follows how many formulas there are and how large they are, not dispatches. Q288 now names that.
 
 ## Open
 
-- Q325: `label_formula` evaluates each (file, formula) pair apart. Formulas of one level share their tests (the
+- Q288: `label_formula` evaluates each (file, formula) pair apart. Formulas of one level share their tests (the
   same kinds, the same neighbor sets), and each pair evaluates them again.
-- Q317: a level's fact constraints (the fact rows' `(node, label)` pairs, made on the host) were uploaded once per
+- Q289: a level's fact constraints (the fact rows' `(node, label)` pairs, made on the host) were uploaded once per
   pattern kernel group, the same buffer each time. 32 MB (8.1 M words) went up on 15 fixtures. They are uploaded
   once a level now (`Runner::level`). That one upload is still a copy of the facts' rows (AGENTS.md, 0353): the
   device should read the fact's relation in its block.
