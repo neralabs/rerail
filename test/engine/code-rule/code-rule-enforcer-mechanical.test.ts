@@ -1447,7 +1447,7 @@ describe("mechanical code rule regressions", () => {
     await writeFile(capabilitiesPath, await readFile(join(bundledCodeRuleDslDirectory(), "capabilities.json")));
     const json = testCodeRuleCatalog([needleCodeRule(1)], capabilitiesPath);
     const rerailRule: RerailRuleEntry = {
-      id: "rr-lib-rule", path: join(root, "rr-lib-rule.rerail"), placement: [{ folder: "", mode: "steer" }],
+      id: "rr-lib-rule", path: join(root, "rr-lib-rule.rerail"), placement: [{ folder: "", mode: "steer" }], files: [],
       scope: { include: ["lib/**/*.py"], exclude: [] }, language: "python",
       provenance: { ruleId: "rr-lib-rule", revision: 1, payloadHash: "hash", source: { kind: "pack", id: "rr", packId: "rr" }, repositoryKey: "repository", checkoutPath: root, placement: [] },
     };

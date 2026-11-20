@@ -12,6 +12,7 @@ import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
 import type { RrRun, RrRunOutcome } from "./rr-runner.js";
 import { leftRun } from "./rr-run-queue.js";
 import { runInTurn } from "./rr-run-slots.js";
+import { unchangedRules } from "./rr-rule-files.js";
 import { insideAny } from "./rr-rule-scope.js";
 import { rrRunFailures, rrStoppedFailures, rrViolations } from "./rr-violations.js";
 
@@ -37,31 +38,43 @@ function isOn(rule: RerailRuleEntry): boolean {
   return rule.placement.some(entry => entry.mode !== null);
 }
 
+/** The outcome of a run with no rule left to run: nothing found, no child started. */
+const NOTHING_RUN: RrRunOutcome = { status: "completed", findings: [], failures: [], files: 0, wallMs: 0, peakRssBytes: 0 };
+
 export class RrAuditRun {
   readonly #request: RrAuditRequest;
+  /** The rules on somewhere in the checkout: what the audit carries. */
+  readonly #placed: readonly RerailRuleEntry[];
+  /** Of those, the rules whose files are as the catalog read them: what the child runs. */
   readonly #rules: readonly RerailRuleEntry[];
+  /** A failure for each rule left out because a file of it changed (`rr-rule-files.ts`). */
+  readonly #changed: readonly AuditFailure[];
   readonly #run: (run: RrRun) => Promise<RrRunOutcome>;
   readonly #controller = new AbortController();
   #outcome: Promise<RrRunOutcome> | undefined;
 
   constructor(request: RrAuditRequest, run: (run: RrRun) => Promise<RrRunOutcome> = runInTurn) {
     this.#request = request;
-    this.#rules = request.rules.filter(isOn);
+    this.#placed = request.rules.filter(isOn);
+    const unchanged = unchangedRules(this.#placed);
+    this.#rules = unchanged.rules;
+    this.#changed = unchanged.failures;
     this.#run = run;
   }
 
-  /** Whether the audit has any `.rerail` rule to run. */
+  /** Whether the audit carries no `.rerail` rule. */
   get empty(): boolean {
-    return this.#rules.length === 0;
+    return this.#placed.length === 0;
   }
 
-  /** The provenance of the rules the run carries, recorded with the audit. */
+  /** The provenance of the rules the audit carries, recorded with it. */
   get provenance(): RepositoryAuditRuleProvenance[] {
-    return this.#rules.map(rule => rule.provenance);
+    return this.#placed.map(rule => rule.provenance);
   }
 
-  /** Starts the run; once only. */
+  /** Starts the run, once only; with no rule left to run, no child starts. */
   start(): void {
+    if (this.#rules.length === 0) this.#outcome ??= Promise.resolve(NOTHING_RUN);
     this.#outcome ??= this.#run({ root: this.#request.root, policies: this.#rules.map(rule => rule.path), signal: this.#controller.signal })
       .catch((error: unknown): RrRunOutcome => ({ status: "failed", message: String(error) }));
   }
@@ -72,16 +85,17 @@ export class RrAuditRun {
   }
 
   /**
-   * The run's violations in the audited files and its rules' failures, once it has ended. Throws for a run stopped
-   * because its session closed: it has no results, and its audit ends interrupted, not completed.
+   * The run's violations in the audited files and its rules' failures (those left out for a changed file first), once
+   * it has ended. Throws for a run stopped because its session closed: it has no results, and its audit ends
+   * interrupted, not completed.
    */
   async results(): Promise<RrAuditResults> {
     this.start();
     const outcome = await this.#outcome!;
     if (leftRun(outcome)) throw new Error("The .rerail run was stopped: its session closed");
-    if (outcome.status !== "completed") return { violations: [], failures: rrStoppedFailures(outcome, this.#rules, undefined) };
+    if (outcome.status !== "completed") return { violations: [], failures: [...this.#changed, ...rrStoppedFailures(outcome, this.#rules, undefined)] };
     const violations = rrViolations(outcome.findings, this.#rules, path => this.#audits(path));
-    return { violations, failures: rrRunFailures(outcome.failures, this.#rules) };
+    return { violations, failures: [...this.#changed, ...rrRunFailures(outcome.failures, this.#rules)] };
   }
 
   /** Whether the audit covers `path`: in a folder it was given, and in no checkout nested in this one. */

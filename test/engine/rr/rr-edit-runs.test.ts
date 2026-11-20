@@ -1,4 +1,5 @@
-import { mkdtempSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -132,6 +133,22 @@ describe("a session's .rerail runs after its edits", () => {
     expect(finished[0]).toMatchObject({ status: "failed", violations: [], failures: [{ ruleId: "rr-sample-assert", code: "budget-exceeded" }] });
     expect(finished[0]!.failures?.[0]?.message).toContain("RERAIL_RR_DEADLINE_MS");
     expect(steers).toEqual([]);
+  });
+
+  it("leaves out a rule whose file changed since the catalog read it, with a failure naming the file, and runs the others", async () => {
+    const library = join(root, "changed-lib.rerail");
+    writeFileSync(library, "// as approved\n");
+    const approved = createHash("sha256").update("// as approved\n").digest("hex");
+    const changed = { ...rule("rr-changed", [{ folder: "", mode: "steer" }]), files: [{ path: library, sha256: approved }] };
+    const assert = rule("rr-sample-assert", [{ folder: "", mode: "steer" }]);
+    writeFileSync(library, "// edited after approval\n");
+    const { runs, finished, write } = session([changed, assert]);
+    write(1, written("a.py"));
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    expect(runs[0]!.run.policies).toEqual([assert.path]);
+    runs[0]!.end(completed([]));
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]).toMatchObject({ status: "failed", failures: [{ ruleId: "rr-changed", message: expect.stringContaining(`${library} changed since Rerail read it`) }] });
   });
 
   it("gathers only the writes some rule takes: in its placement, its scope and its language", async () => {
