@@ -240,7 +240,8 @@ A snapshot records what a commit holds; a workspace's overlay records what it ev
 
 Discovery skips:
 
-- built-in ignores (`BUILTIN_IGNORE`: `.git/`, `node_modules/`, `target/`, `tmp/`, `__pycache__/`);
+- built-in ignores (`BUILTIN_IGNORE`: `.git/`, `node_modules/`, `target/`, `tmp/`, `__pycache__/`, and Rerail's
+  session records folder `.rerail/sessions/` in any folder);
 - `.rerailignore` paths, in Git ignore syntax with negation. A negation cannot restore a built-in
   ignore.
 

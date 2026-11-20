@@ -21,13 +21,17 @@ use std::{
     os::unix::fs::MetadataExt,
 };
 
-const BUILTIN_IGNORE: &[u8] = b".git/\nnode_modules/\ntarget/\ntmp/\n__pycache__/\n";
+/// Rerail's records folder (`records_folder`) is among them: Git status leaves a file tracked there
+/// unread, which another account sharing the checkout may not read, and the walk never enters it.
+const BUILTIN_IGNORE: &[u8] =
+    b".git/\nnode_modules/\ntarget/\ntmp/\n__pycache__/\n**/.rerail/sessions/\n";
 const STATUS_EXCLUDES: &[&str] = &[
     ":(glob,exclude)**/.git/**",
     ":(glob,exclude)**/node_modules/**",
     ":(glob,exclude)**/target/**",
     ":(glob,exclude)**/tmp/**",
     ":(glob,exclude)**/__pycache__/**",
+    ":(glob,exclude)**/.rerail/sessions/**",
 ];
 /// The index entry flags with which gix status skips an entry without comparing it to the
 /// worktree (gix-status `index_as_worktree`).
@@ -1505,6 +1509,59 @@ mod tests {
                 ("??", "new.py")
             ]
             .map(|(code, path)| (code.to_owned(), path.to_owned()))
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Takes away this account's right to read `file`'s attributes, as another account has it on a
+    /// file in a records folder after the folder's repair; on Unix its folder's mode does that.
+    #[cfg(windows)]
+    fn deny_attributes(file: &Path) {
+        icacls_for_this_user(file, "/deny", ":(RA)");
+    }
+
+    #[cfg(windows)]
+    fn allow_attributes(file: &Path) {
+        icacls_for_this_user(file, "/remove:d", "");
+    }
+
+    #[cfg(unix)]
+    fn deny_attributes(file: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = file.parent().unwrap();
+        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o000)).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn allow_attributes(file: &Path) {
+        allow_listing(file.parent().unwrap());
+    }
+
+    #[test]
+    fn a_records_folder_git_made_whose_file_this_account_may_not_read_is_left_out() {
+        let root = fixture_directory("unreadable-records");
+        initialize_repository(&root, &[("kept.py", b"kept\n")]);
+        let records = root.join(".rerail").join("sessions");
+        std::fs::create_dir_all(&records).unwrap();
+        std::fs::write(records.join("notes.md"), b"kept\n").unwrap();
+        run_git(&root, &["add", "--", ".rerail/sessions/notes.md"]);
+        run_git(&root, &["commit", "-m", "a file in the records folder"]);
+        std::fs::write(records.join(".gitignore"), b"*\n").unwrap();
+        std::fs::write(root.join("new.py"), b"new\n").unwrap();
+        let status = porcelain(&root);
+
+        deny_attributes(&records.join("notes.md"));
+        let discovered = discover(&root);
+        allow_attributes(&records.join("notes.md"));
+
+        let workspace = discovered.unwrap();
+        assert_eq!(overlay_codes(&workspace), status);
+        assert_eq!(status, [("??".to_owned(), "new.py".to_owned())]);
+        assert!(
+            workspace
+                .base_files
+                .iter()
+                .all(|file| !file.path.starts_with(".rerail/"))
         );
         std::fs::remove_dir_all(root).unwrap();
     }
