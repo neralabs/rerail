@@ -394,6 +394,11 @@ pub mod heap {
         let _ = SPAN.try_with(|s| s.set(id));
     }
 
+    /// The span this thread's allocations are charged to now (0 none): a refused device lease's (Q203).
+    pub fn span() -> u32 {
+        SPAN.try_with(Cell::get).unwrap_or(0)
+    }
+
     fn slot(ptr: usize) -> usize {
         // In 64 bits on every target (wasm32's pointers are 32): the same slot for the same address.
         ((ptr as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 13) as usize & (SLOTS - 1)

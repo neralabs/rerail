@@ -198,7 +198,9 @@ pub(super) fn sample() {
             // Q203 (c): what holds the device's budget when a lease is refused, by the span that leased it (the first
             // few refusals of a process).
             rerail_accel::gpu::shared::set_refusal_hook(|why| {
+                // Every refusal by the span that asked (one line), the holdings for the first few.
                 static TOLD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                eprintln!("rerail: refused in {}: {why}", rerail_prof::heap::name(rerail_prof::heap::span()));
                 if TOLD.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 6 {
                     return;
                 }

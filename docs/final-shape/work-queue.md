@@ -3054,7 +3054,35 @@ submitted" now hold device memory at once.
   454 MB (949), since strata a keyed `has` kept on the CPU now run on the device and upload their other inputs. So the walk
   removes no refusals: what remains of (c) is what admission counts. Its `fits` counts every live lease, held rows too,
   so the refusals are leases a stratum makes past its own reservation (uploads, sorts' scratch, rows put in spare slabs)
-  that `expected()` does not estimate. Next: the refused leases at 1 GB by kind against the reservation they came under.
+  that `expected()` does not estimate.
+  Measured (ab99-ab103, 2026-11-20, the M3, 300 files, strict, `--metal`, 1 GB so a 512 MB Metal budget, profiled with
+  the heap sampler, load 8-38; working-data/bench-1120/ab99*.txt..ab103.txt). Each refusal now names the span that asked
+  and the admission it came under. Who asks: every refused lease is a device join's (329 of 349 in ab99's three runs
+  `device joins`, 20 `to the wave`). Under what: 173 after the thread's admission was spent, 92 with none (rules with no
+  estimate reserve 0 MB), 84 larger than what was left. Who holds, at the first refusals (18 snapshots, ~500 MB each):
+  about ten strata at once, 8-113 MB each: the wave's joins ~146 MB a snapshot, the device fixpoint ~107 MB (never
+  admitted, its leases never bounded: live leases reached 576-588 MB of the 512), the tape residency's slab 64 MB, the
+  joins ~51 MB; 0 MB reserved in all. The measure that matters is in the profile, not the lease count: the runs placed
+  on the device and run on the CPU instead, 446-674 a run, 12.9-17 ms each, 7.5-10.2 s of CPU (t84).
+  Tried, by instructions against t84 in alternation, each kept out:
+  - A lease past its admission waiting for room until the admission's deadline: run inside the stratum's encoding, the
+    wait ran pool jobs that borrowed its thread's state again (`RefCell already borrowed`, 2 of 3 runs); waiting
+    without helping, no fewer refusals (103 vs 103) and 623 G vs 579 G.
+  - The fixpoint admitted, its leases bounded: 10-22 fixpoints a run refused in their rounds, which threw the rounds
+    away; with admission by held bytes (next), 182-377 runs to the CPU (from 663-674) but 37-58 ms each: 596-627 G vs
+    536-582 G.
+  - Admission for the most a stratum's rules held when they last ran in the run (by the rules' spec digests), the
+    fixpoint admitted unbounded: 428-523 runs to the CPU against 446-670, but 21-27 ms each (10.7-11.5 s against
+    7.5-8.6 s), 587-595 G against 548-563 G (two pairs; the M3's connection dropped in the third). Admitted for their
+    whole footprint, the large strata wait and, past what waiting is worth (114-190 ms), run on the CPU whole; they are
+    the dear ones. The patch is in the worktree's `tmp/parked/q203c-held-admission.patch`.
+  So what admission counts stays the planner's estimate of a stratum's tables: at a 512 MB budget the strata's working
+  set does not fit, and counting more of it moves larger strata to the CPU than the refusals it saves. The refusals
+  left are small strata, cheap on the CPU (~14 ms a run, ~9 s a run in all). What would remove them is room (the
+  budget is the user's: half the memory limit), or a stratum that splits its work when a lease is refused rather than
+  going to the CPU whole (0334's replanning, for the device joins). Kept from this: the refusal's span and admission in
+  its message (the profile's hook), and a lease's release through its own memory (a buffer dropped as its thread ends
+  read the run's context after it was gone: `cannot access a Thread Local Storage value during or after destruction`).
   The interpreter's compile: done (decision 0507). `run_batch` builds in 7.1 s, not 44.7 s, with the six largest
   tape reads written `UKL_COLD`. The resident interpreter's results are the same with and without it. Its four
   `BackendFailure` clauses were the interpreted runs' chain levels (0463), never doubled; they are doubled now.
