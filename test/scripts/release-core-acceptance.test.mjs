@@ -1,8 +1,26 @@
 // scripts/release/core.mjs: the core releases a pack's rules are checked against, and the oldest release
 // from which every release accepts them all, which the Release pull request raises the pack's core range to.
 
-import { describe, expect, it } from "vitest";
-import { acceptedFloor, newerFloor, releasedCoreVersions } from "../../scripts/release/core.mjs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { acceptedFloor, coreRefusals, newerFloor, packRuleDocuments, releasedCoreVersions } from "../../scripts/release/core.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
+
+const folders = [];
+afterEach(() => {
+  for (const folder of folders.splice(0)) removeFolderSync(folder);
+});
+const temporary = () => {
+  const folder = mkdtempSync(join(tmpdir(), "rerail-core-acceptance-"));
+  folders.push(folder);
+  return folder;
+};
+const write = (path, text) => {
+  mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(path, text);
+};
 
 describe("releasedCoreVersions", () => {
   it("lists each plain core version npm has that can check a rule (0.1.5 and later), oldest first", () => {
@@ -46,3 +64,35 @@ describe("newerFloor", () => {
     expect(newerFloor(undefined, undefined)).toBeUndefined();
   });
 });
+
+describe("packRuleDocuments", () => {
+  it("reads each code rule under rules/, nested ones by their path, and leaves out a conversation rule and a file that is not JSON", () => {
+    const pack = temporary();
+    write(join(pack, "rules", "a.json"), JSON.stringify({ format: "rerail.policy/v1", id: "a" }));
+    write(join(pack, "rules", "group", "b.json"), JSON.stringify({ format: "rerail.policy/v1", id: "b" }));
+    write(join(pack, "rules", "conversation.json"), JSON.stringify({ id: "talk", text: "Ask before deleting a branch." }));
+    write(join(pack, "rules", "broken.json"), "{");
+    write(join(pack, "rules", "notes.md"), "not a rule");
+    expect(packRuleDocuments(pack)).toEqual({ a: { format: "rerail.policy/v1", id: "a" }, "group/b": { format: "rerail.policy/v1", id: "b" } });
+  });
+});
+
+describe("coreRefusals", () => {
+  it("hands a released core every document as written, multi-byte text across stdin's chunks included, and returns the ids it refuses", () => {
+    const cores = temporary();
+    const core = join(cores, "9.9.9", "node_modules", "@neralabs", "rerail");
+    write(join(core, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "9.9.9", type: "module", exports: { "./rules": "./rules.js" } }));
+    // A stand-in core that accepts a document only when its text arrived intact.
+    write(join(core, "rules.js"), 'export const validateCodeRule = (document) => ({ ok: document.text === "é".repeat(200000) && document.refuse !== true });\n');
+    const text = "é".repeat(200000);
+    const previous = process.env.RERAIL_RELEASE_CORES;
+    process.env.RERAIL_RELEASE_CORES = cores;
+    try {
+      expect(coreRefusals("9.9.9", { python: { kept: { text }, refused: { text, refuse: true } }, react: { other: { text } } })).toEqual({ python: ["refused"], react: [] });
+    } finally {
+      if (previous === undefined) delete process.env.RERAIL_RELEASE_CORES;
+      else process.env.RERAIL_RELEASE_CORES = previous;
+    }
+  });
+});
+

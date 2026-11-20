@@ -440,9 +440,13 @@ export function newerFloor(a, b) {
   return semver.gt(a, b) ? a : b;
 }
 
+/** The `format` of a code-rule document (CODE_RULE_FORMAT in src/engine/code-rule/code-rule-schema.ts). */
+const CODE_RULE_FORMAT = "rerail.policy/v1";
+
 /**
- * The rule documents under `<directory>/rules`, parsed, by their path under it without `.json`. A document that is not
- * JSON is left out: the pack validation's check 1 reports it.
+ * The code-rule documents under `<directory>/rules`, parsed, by their path under it without `.json`. A conversation rule
+ * is left out: a core reads it as one, not through validateCodeRule (src/engine/catalog/rule-documents.ts). So is a
+ * document that is not JSON: the pack validation's check 1 reports it.
  */
 export function packRuleDocuments(directory) {
   const rules = join(directory, "rules");
@@ -452,7 +456,8 @@ export function packRuleDocuments(directory) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     const path = join(entry.parentPath, entry.name);
     try {
-      documents[relative(rules, path).replace(/\.json$/u, "").replaceAll("\\", "/")] = JSON.parse(readFileSync(path, "utf8"));
+      const document = JSON.parse(readFileSync(path, "utf8"));
+      if (document?.format === CODE_RULE_FORMAT) documents[relative(rules, path).replace(/\.json$/u, "").replaceAll("\\", "/")] = document;
     } catch {
       // Not JSON: check 1 reports it.
     }
@@ -476,6 +481,8 @@ function installedCore(version) {
 /** Run in a released core's own folder: reads `{ pack: { rule id: document } }` on stdin, prints each pack's refused rule ids. */
 const CHECK = `
 import { validateCodeRule } from "@neralabs/rerail/rules";
+// Decoded as one stream, so a character split across two chunks arrives whole.
+process.stdin.setEncoding("utf8");
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const refused = {};
