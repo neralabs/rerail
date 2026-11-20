@@ -5143,12 +5143,26 @@ after the phases went on the run path (0083).
     documents. Where they do not add up to the view's rows it is counted when first planned with, as before.
   - A text test's input delta in a maintained stratum is empty (its probe tests the string probed, whatever holds
     it): diffed by the rules, it listed every string of the batch, every document made.
-- **Still open**: after a one-file edit, the unchanged files' documents are still made (`a_warm_edit_builds_no_*`,
-  `a_warm_edit_makes_*`, `a_warm_edits_own_batch_*` fail):
-  - In the main run, by a join: the maintained `named` probes `text(b, t)` by its string, and no index of a base
-    relation by a column other than its document's is kept (0458 keeps a base relation as its digest), so the probe
-    makes every document (`MadeRows::target`). Open: what keeps that index, or answers it without the documents.
-  - In phase 1, by `doc`'s and `tape_of`'s statistics: its documents are what `sources.rerail`'s loads make in its
+  - A cross-file join by a value is pushed file by file (`PushLocalJoins`, `by_node_group`). `named`'s rule joined
+    two files' identifiers by their string, `text(a, t), text(b, t)`. The component it made had two independent node
+    groups and was skipped, so the cross part read `text` and `docof` as base relations, and its maintained probe of
+    `text(b, t)` by the string made every document (`MadeRows::target`). Now each node group, with the atoms over
+    its variables alone (`t != "self"`), is a file-local helper of the chunks (`fl<hash>_<head>`, kept per file in
+    the memo entries). The cross part joins the two helpers by the string and reads no base relation, so an edit
+    redoes the edited file's helper rows only. An equality across the groups stays in the rule (unclosed: the
+    `dr = ds` of `tree_digests_compare_subtrees_without_positions`). Two halves of one content are one helper.
+    `typing::file_local::tests::a_cross_file_join_by_a_value_pushes_each_files_part`; the main run's batch makes no
+    document in an edit (`a_warm_edits_own_batch_makes_the_changed_document_alone`). PostHog (`len-_py`, cold, CPU,
+    m3-linux): 29,747 findings, digest fa0efeaed6ff, with the split and without it.
+  - Found on the way: the kept-inputs route installed the kept exports before it checked the base relations, and a
+    refusal (a text test has no versions: it needs none) then fell back to the whole decode, which added the hits'
+    rows to exports the cross part had read (a panic, "added to after the cross-file part read it"). The check now
+    runs before the exports are installed and passes a text test. `made_batch_tests` R5 and R6 read base relations
+    through a join the push now takes into the chunks: R5 runs over R6's program (it reads `field` and `within`
+    whole), R6's `pair` is an output (inlined into `twins`, its file's part would be pushed).
+- **Still open**: after a one-file edit, phase 1's unchanged files' documents are still made (`a_warm_edit_builds_no_*`,
+  `a_warm_edit_makes_*` fail on `sources`):
+  - By `doc`'s and `tape_of`'s statistics: its documents are what `sources.rerail`'s loads make in its
     waves, where no old source is read, so they have no version and no total (0494 step 4, part 2).
 
 ### Q383. (Q354 here until 2026-11-20; Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)

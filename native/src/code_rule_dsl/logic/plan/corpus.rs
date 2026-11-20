@@ -9394,6 +9394,19 @@ fn run_observed_within(
                     let (rows, owners, same) = t.iter().fold((0, 0, 0), |(r, o, s), x| (r + x.0, o + x.1, s + x.2));
                     eprintln!("rerail: kept inputs patched: {real} documents evaluated; {owners} owners read ({same} unchanged), {rows} kept rows read; most: {:?}", &t[..t.len().min(6)]);
                 }
+                // Decision 0458: each base relation is the corpus batch's, read in place; its versions were made from
+                // the changed files' documents (`base_versions`), none where no file changed. Without the documents'
+                // table, or with a changed file's versions missing, the kept route is not taken: found before any input
+                // is the run's (the exports installed below, which the route not taken adds every hit's rows to). A
+                // text test has no version, nothing of it changing with an edit (decision 0494): its delta is none.
+                for (rel, _) in &stored {
+                    let source = corpus_sources.get(rel).ok_or_else(|| format!("{rel} is not in the corpus batch (it holds {:?})", corpus_sources.keys().collect::<BTreeSet<_>>()))?;
+                    let text_test = cross_vocabulary.tests.iter().any(|(t, _)| t == rel);
+                    if !text_test && old_base.as_ref().is_none_or(|(changed, _)| !changed.is_empty() && !base_versions.contains_key(rel)) {
+                        return Err(format!("{rel}: no versions of its changed files' documents"));
+                    }
+                    base_layered.insert(rel.clone(), Arc::clone(source));
+                }
                 // Every input made: only now are they the run's, so a failure above leaves the run as it was.
                 drop(_s2);
                 let _s3 = crate::code_rule_dsl::logic::profile::span(|| "the inputs adopted".into());
@@ -9418,16 +9431,6 @@ fn run_observed_within(
                         crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_from_owners();
                     }
                     exports.borrow_mut().install(&rel, width, source);
-                }
-                // Decision 0458: each base relation is the corpus batch's, read in place; its versions were made from
-                // the changed files' documents (`base_versions`), none where no file changed. Without the documents'
-                // table, or with a changed file's versions missing, the kept route is not taken.
-                for (rel, _) in &stored {
-                    let source = corpus_sources.get(rel).ok_or_else(|| format!("{rel} is not in the corpus batch (it holds {:?})", corpus_sources.keys().collect::<BTreeSet<_>>()))?;
-                    if old_base.as_ref().is_none_or(|(changed, _)| !changed.is_empty() && !base_versions.contains_key(rel)) {
-                        return Err(format!("{rel}: no versions of its changed files' documents"));
-                    }
-                    base_layered.insert(rel.clone(), Arc::clone(source));
                 }
                 drop(kept);
                 kept_loaded = Some(adopted);
