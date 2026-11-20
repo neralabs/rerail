@@ -125,6 +125,59 @@ describe("engine service answers a hook no longer waits for", () => {
     expect(await service.deliveriesOf(STEER)).toBe(1);
   });
 
+  it("tells the steer a session owed when it opened again at its next hook while its rules still open, when the hook whose answer took it gave up", async () => {
+    const reopening = Promise.withResolvers<void>();
+    const service = await owingService(reopening);
+    await unheardReopen(service);
+    // Its rules still open: the steer it owed does not wait for them.
+    expect(contents(await ingestEngineEvent(service.engine, prompt("prompt-3")))).toEqual([STEER]);
+    reopening.resolve();
+    await service.reopened;
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-4"))).toEqual([]);
+    expect(await service.deliveriesOf(STEER)).toBe(1);
+  });
+
+  it("tells the steer a session owed when it opened again once when the hook whose answer took it gave up and its rules then failed to open", async () => {
+    const reopening = Promise.withResolvers<void>();
+    const service = await owingService(reopening);
+    await unheardReopen(service);
+    reopening.reject(new Error("the rules could not open"));
+    // The turn's end of a session opened again waits for its rules, which have failed to open by its answer.
+    expect(contents(await ingestEngineEvent(service.engine, turnEnd("stop-3", service.root)))).toEqual([STEER]);
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-4"))).toEqual([]);
+    expect(await service.deliveriesOf(STEER)).toBe(1);
+  });
+
+  it("keeps the steer a session owed when it opened again through its next close and a restart, recorded once, when the hook whose answer took it gave up", async () => {
+    const reopening = Promise.withResolvers<void>();
+    const first = await owingService(reopening);
+    await unheardReopen(first);
+    // Quiet past the limit again: the close keeps the steer it was given back, which its ledger already counts.
+    await first.closeQuiet();
+    await first.close();
+    const second = await checkingService({ root: first.root });
+    expect(contents(await ingestEngineEvent(second.engine, prompt("prompt-3", SESSION, second.root)))).toEqual([STEER]);
+    expect(await ingestEngineEvent(second.engine, prompt("prompt-4"))).toEqual([]);
+    expect(await second.deliveriesOf(STEER)).toBe(1);
+  });
+
+  it("tells the steer a session owed when it opened again and the one it found since once each, the owed one first, when the hook whose answer took both gave up", async () => {
+    const reopening = Promise.withResolvers<void>();
+    const service = await owingService(reopening, SECOND_STEER);
+    reopening.resolve();
+    // The turn's end that opens the session again waits for its rules, then for its edit checks, which find `STEER`:
+    // its answer carries the steer the session owed and the one it found, and its hook goes as that answer is written.
+    const responses = serverResponses(1);
+    const gone = hook(service.socketPath, turnEnd("stop-2", service.root));
+    atItsAnswer((await responses)[0], gone.destroy);
+    await service.checking;
+    service.finishCheck();
+    await gone.closed;
+    expect(contents(await ingestEngineEvent(service.engine, prompt("prompt-3")))).toEqual([SECOND_STEER, STEER]);
+    expect(await ingestEngineEvent(service.engine, prompt("prompt-4"))).toEqual([]);
+    expect({ owed: await service.deliveriesOf(SECOND_STEER), found: await service.deliveriesOf(STEER) }).toEqual({ owed: 1, found: 1 });
+  });
+
   it("records a steer once when the daemon restarts between the answer no hook read and the session's next hook", async () => {
     const first = await checkingService();
     await first.steer(SESSION, STEER);
@@ -333,13 +386,44 @@ interface ServiceOptions {
   now?: () => number;
   /** A folder an earlier service of the test ran in: this one runs over its records, as a daemon started again does. */
   root?: string;
+  /** The rules of a session opened again open once this settles, and fail to when it rejects; a close settles it. */
+  reopening?: PromiseWithResolvers<void>;
+}
+
+type CheckingService = Awaited<ReturnType<typeof checkingService>>;
+
+/**
+ * A service whose session `gone` went quiet while it owed `owed` and closed, its ledger keeping the steer owed. The
+ * session's rules open again as `reopening` says. `closeQuiet` has the session go quiet past the limit again and closes
+ * it.
+ */
+async function owingService(reopening: PromiseWithResolvers<void>, owed = STEER): Promise<CheckingService & { closeQuiet: () => Promise<void> }> {
+  let clock = 1_000;
+  const service = await checkingService({ now: () => clock, idleSessionMs: 1_000, reopening });
+  // Quiet past the limit for a session that owes a steer: it closes all the same.
+  const closeQuiet = async (): Promise<void> => {
+    clock += 2 * 24 * 60 * 60_000;
+    await service.closeIdleSessions();
+  };
+  await service.steer(SESSION, owed);
+  await closeQuiet();
+  return { ...service, closeQuiet };
+}
+
+/** The session's next hook opens it again and goes as its answer, which takes the steer the session owed, is written. */
+async function unheardReopen(service: CheckingService): Promise<void> {
+  const responses = serverResponses(1);
+  const gone = hook(service.socketPath, prompt("prompt-2", SESSION, service.root));
+  atItsAnswer((await responses)[0], gone.destroy);
+  await gone.closed;
 }
 
 /**
  * An engine service in a folder of its own with the Claude Code session `gone` started and its evaluator open. The
  * session's edit checks hold until `finishCheck`, and the first that ends then steers `STEER`: `checking` resolves
- * once a boundary waits for them, `steered` once the steer is asked for. `start` starts another session there, and
- * `steer` asks for a steer in a session as its evaluator would.
+ * once a boundary waits for them, `steered` once the steer is asked for, `reopened` once the rules of a session opened
+ * again have opened (`reopening`). `start` starts another session there, and `steer` asks for a steer in a session as
+ * its evaluator would.
  */
 async function checkingService(options: ServiceOptions = {}): Promise<{
   root: string;
@@ -347,6 +431,7 @@ async function checkingService(options: ServiceOptions = {}): Promise<{
   engine: { socketPath: string };
   checking: Promise<void>;
   steered: Promise<void>;
+  reopened: Promise<void>;
   finishCheck: () => void;
   start: (sessionId: string) => Promise<void>;
   steer: (sessionId: string, content: string) => Promise<void>;
@@ -355,7 +440,7 @@ async function checkingService(options: ServiceOptions = {}): Promise<{
   deliveriesOf: (content: string) => Promise<number>;
   close: () => Promise<void>;
 }> {
-  const { root: earlier, ...serviceOptions } = options;
+  const { root: earlier, reopening, ...serviceOptions } = options;
   const root = earlier ?? await mkdtemp(join(tmpdir(), "rerail-unheard-"));
   const socketPath = testEngineEndpoint(root);
   const databasePath = join(root, "rerail.sqlite");
@@ -366,6 +451,10 @@ async function checkingService(options: ServiceOptions = {}): Promise<{
     opens.set(sessionId, open);
     return open;
   };
+  const opened = new Set<string>();
+  const reopened = Promise.withResolvers<void>();
+  // Its rejection is the open's to report.
+  reopening?.promise.catch(() => undefined);
   let delivery: RuleSteerDelivery | undefined;
   const checking = Promise.withResolvers<void>();
   const check = Promise.withResolvers<void>();
@@ -380,6 +469,11 @@ async function checkingService(options: ServiceOptions = {}): Promise<{
     createAuditor: ({ steerDelivery }) => ({
       openWorkspace: async sessionId => {
         delivery = steerDelivery;
+        if (opened.has(sessionId) && reopening !== undefined) {
+          await reopening.promise;
+          reopened.resolve();
+        }
+        opened.add(sessionId);
         openOf(sessionId).resolve();
       },
       // No file of the folder is a source, so no walk moves the session's revision past the steer's.
@@ -400,6 +494,7 @@ async function checkingService(options: ServiceOptions = {}): Promise<{
     if (!open) return;
     open = false;
     check.resolve();
+    reopening?.resolve();
     await service.close();
   };
   onTestFinished(async () => {
@@ -415,6 +510,8 @@ async function checkingService(options: ServiceOptions = {}): Promise<{
   if (earlier === undefined) await start(SESSION);
   return {
     root, socketPath, engine: { socketPath }, checking: checking.promise, steered: steered.promise, finishCheck: () => check.resolve(), start,
+    // As `start` waits: the runtime takes the open in after it.
+    reopened: reopened.promise.then(async () => await new Promise<void>(done => setImmediate(done))),
     openRuntimes: () => service.openRuntimes(),
     closeIdleSessions: () => service.closeIdleSessions(),
     deliveriesOf: content => deliveryEntries(join(root, "state"), content),

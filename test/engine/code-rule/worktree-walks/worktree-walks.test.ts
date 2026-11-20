@@ -759,12 +759,13 @@ describe("a walk of the other worktrees with change notices", () => {
     const { main, worktrees, checkouts } = await repository();
     const watch = new StampTreeWatch();
     const watching = await session(worktrees[0]!, checkouts, noticedWalks(watch));
-    await writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n");
+    // The write's notice is lost: no take hands it, and the next says notices were lost.
+    await watch.unnoticed(worktrees[2]!, () => writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n"));
     watch.lose(worktrees[2]!);
     stats.length = 0;
     await turn(watching);
     expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([0, 0, 3]);
-    await writeFile(join(worktrees[1]!, "src", "a.py"), "old\nmine\n");
+    await watch.unnoticed(worktrees[1]!, () => writeFile(join(worktrees[1]!, "src", "a.py"), "old\nmine\n"));
     watch.end(worktrees[1]!);
     stats.length = 0;
     await turn(watching);
@@ -833,9 +834,10 @@ describe("what a walk looks at in a watched worktree that no notice tells of", (
     const watch = new StampTreeWatch();
     const watching = await session(worktrees[0]!, checkouts, noticedWalks(watch));
     const w3 = worktrees[2]!;
-    await rename(w3, `${w3}-moved`);
-    await cp(`${w3}-moved`, w3, { recursive: true });
-    watch.silence(w3);
+    await watch.unnoticed(w3, async () => {
+      await rename(w3, `${w3}-moved`);
+      await cp(`${w3}-moved`, w3, { recursive: true });
+    });
     stats.length = 0;
     await turn(watching);
     expect(statsUnder(main, worktrees[1]!, w3)).toEqual([0, 0, 3]);
@@ -989,8 +991,7 @@ describe("the reread of a worktree no notice told of a change in", () => {
       return await audit(sessionId, batch);
     });
     // A write through a hard link: the system tells of none.
-    await writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n");
-    watch.silence(worktrees[2]!);
+    await watch.unnoticed(worktrees[2]!, () => writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n"));
     // No event of the session's asks for a walk from here on.
     await delivered.promise;
     expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]);

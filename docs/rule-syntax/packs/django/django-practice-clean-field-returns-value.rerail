@@ -1,0 +1,148 @@
+.policy "django-practice-clean-field-returns-value" revision 1
+.description "A Django form's clean_<field>() must return the field's cleaned value on every path that does not raise."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Form._clean_fields stores whatever clean_<field>() returns as
+// cleaned_data[<field>], so a path that falls off the end of the method, or a bare `return`, replaces the value
+// with None. It matches a method `clean_<x>(self)` written directly in a form class: a subclass, through the run's
+// classes in any file, of a django.forms form class (Form, ModelForm, BaseForm, ...) or of a `*Form` class from
+// another package's `forms` module (django.contrib.auth.forms.UserCreationForm, allauth, wagtail). A path that
+// raises is not a way out: a method whose every path returns or raises is fine. `return None` is a value written
+// on purpose and is left alone; so are clean_<x> methods taking more arguments (Django calls them with none) and
+// helpers: a clean_<x> the class calls itself, or whose x is a method or property of the class.
+//   class SignupForm(forms.Form):
+//       def clean_email(self):                         reported: falls off the end
+//           if User.objects.filter(email=...).exists():
+//               raise ValidationError("taken")
+//       def clean_name(self):
+//           if not self.cleaned_data["name"]:
+//               return                                 reported: bare return
+//           return self.cleaned_data["name"].strip()
+//       def clean_code(self):                          not reported: returns or raises on every path
+//           code = self.cleaned_data["code"]
+//           if not code.isdigit():
+//               raise ValidationError("digits only")
+//           return code
+
+#include "python/django.rerail"
+#include "python/flow-return.rerail"   // fn_return, bare_return
+
+.violation CleanFieldFallsOff(at: node, m: symbol, x: symbol) "`{m}()` can reach its end without returning: Django stores its return value as cleaned_data[\"{x}\"], so on that path the field's value becomes None. Return the cleaned value (`return self.cleaned_data[\"{x}\"]`, or the normalised one) on every path that does not raise ValidationError."
+CleanFieldFallsOff(n, m, x) :- cfr_clean(f, m, x), field(f, "body", b), cfr_open(b), field(f, "name", n).
+
+.violation CleanFieldBareReturn(at: node, m: symbol, x: symbol) "This bare `return` in `{m}()` makes cleaned_data[\"{x}\"] None: Django stores the method's return value as the field's cleaned value. Return the cleaned value instead (`return self.cleaned_data[\"{x}\"]`), or raise ValidationError."
+CleanFieldBareReturn(r, m, x) :- cfr_clean(f, m, x), fn_return(f, r), bare_return(r).
+
+// cfr_form_base(q): a form class outside the run: django.forms' own, or a `…Form` class of another package's
+// `forms` module (UserCreationForm, allauth's SignupForm, wagtail's WagtailAdminModelForm).
+.decl cfr_form_base(q: symbol)
+cfr_form_base(q) :- class_base(_, q), !class_def(_, q), split_dot(q, m, x), suffix("Form", x),
+    (m = "django.forms" ; prefix("django.forms.", m) ; suffix(".forms", m) ; contains(".forms.", m)).
+.decl cfr_form(c: node)
+cfr_form(c) :- class_def(c, q), subclass(q, b), cfr_form_base(b).
+
+// cfr_clean(f, m, x): f is the method m = `clean_<x>(self)` of a form class, outside test code, and not a helper.
+.decl cfr_clean(f: node, m: symbol, x: symbol)
+cfr_clean(f, m, x) :- cfr_form(c), kind(f, "function_definition"), nearest(f, c, scope), def_name(f, m),
+    match("clean_(?<x>.+)", m), param(f, "self", 0), !param(f, _, 1), !cfr_helper(c, m, x), docof(f, d),
+    !dj_test_doc(d).
+// cfr_helper(c, m, x): clean_<x> in form c is a helper, not a field's hook: c or one of its bases in the run calls
+// `self.clean_<x>()` (Django needs no such call), or c defines a method or property named x (a field would shadow
+// it).
+.decl cfr_helper(c: node, m: symbol, x: symbol)
+cfr_helper(c, m, x) :- cfr_form(c), cfr_self_call(c, m), match("clean_(?<x>.+)", m).
+cfr_helper(c, m, x) :- cfr_form(c), class_def(c, q), subclass(q, b), class_def(a, b), cfr_self_call(a, m),
+    match("clean_(?<x>.+)", m).
+cfr_helper(c, m, x) :- cfr_form(c), kind(g, "function_definition"), nearest(g, c, scope), def_name(g, x),
+    m = cat("clean_", x).
+.decl cfr_self_call(c: node, m: symbol)
+cfr_self_call(c, m) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, m), prefix("clean_", m),
+    text(o, "self"), nearest(k, c, "class_definition").
+
+// cfr_open(b): block b can run to its end: its last statement can. Statements after a return or raise are
+// unreachable and not looked at.
+.decl cfr_open(b: node)
+cfr_open(b) :- cfr_block(b), j = max i : { child(b, s0, i), !kind(s0, "comment") }, child(b, s, j), cfr_s_open(s).
+// cfr_block(b) / cfr_stmt(s): the blocks of clean_<x> methods, and their statements: the only ones followed.
+.decl cfr_block(b: node)
+cfr_block(b) :- cfr_clean(f, _, _), field(f, "body", b).
+cfr_block(b) :- cfr_clean(f, _, _), field(f, "body", fb), within(b, fb), kind(b, "block").
+.decl cfr_stmt(s: node)
+cfr_stmt(s) :- cfr_block(b), child(b, s, _), !kind(s, "comment").
+// cfr_s_open(s): statement s can complete normally. A simple statement can; return and raise cannot; an if, try or
+// with can when one of its ways through can; a for or while loop can unless it has an else that cannot and no
+// break (`while True` only by a break); a match can when a case body can or no case catches every value.
+.decl cfr_compound(k: symbol)
+cfr_compound("return_statement"). cfr_compound("raise_statement"). cfr_compound("if_statement").
+cfr_compound("try_statement"). cfr_compound("with_statement"). cfr_compound("while_statement").
+cfr_compound("for_statement"). cfr_compound("match_statement").
+.decl cfr_s_open(s: node)
+cfr_s_open(s) :- cfr_stmt(s), kind(s, k), !cfr_compound(k).
+cfr_s_open(s) :- cfr_stmt(s), kind(s, "if_statement"), field(s, "consequence", b), cfr_open(b).
+cfr_s_open(s) :- cfr_stmt(s), kind(s, "if_statement"), !cfr_has_else(s).
+cfr_s_open(s) :- cfr_stmt(s), kind(s, "if_statement"), field(s, "alternative", a), kind(a, "elif_clause"),
+    field(a, "consequence", b), cfr_open(b).
+cfr_s_open(s) :- cfr_stmt(s), kind(s, "if_statement"), field(s, "alternative", a), kind(a, "else_clause"),
+    field(a, "body", b), cfr_open(b).
+cfr_s_open(s) :- cfr_stmt(s), kind(s, "with_statement"), field(s, "body", b), cfr_open(b).
+// A loop's else runs when the loop ends without a break; `while True` never ends that way.
+cfr_s_open(s) :- cfr_stmt(s), cfr_ending_loop(s), !cfr_has_else(s).
+cfr_s_open(s) :- cfr_stmt(s), cfr_ending_loop(s), field(s, "alternative", a), kind(a, "else_clause"),
+    field(a, "body", b), cfr_open(b).
+cfr_s_open(s) :- cfr_stmt(s), (kind(s, "while_statement") ; kind(s, "for_statement")), kind(k, "break_statement"),
+    nearest(k, s, cfr_loop).
+cfr_s_open(s) :- cfr_stmt(s), kind(s, "match_statement"), within(b, s), kind(b, "block"), child(cc, b, _),
+    kind(cc, "case_clause"), nearest(cc, s, "match_statement"), cfr_open(b).
+cfr_s_open(s) :- cfr_stmt(s), kind(s, "match_statement"), !cfr_match_total(s).
+.decl cfr_ending_loop(s: node)
+cfr_ending_loop(s) :- kind(s, "for_statement").
+cfr_ending_loop(s) :- kind(s, "while_statement"), field(s, "condition", c), !kind(c, "true").
+// cfr_match_total(s): some case of match s catches every value: `case _:` or a bare capture name, with no guard.
+.decl cfr_match_total(s: node)
+cfr_match_total(s) :- kind(s, "match_statement"), child(s, mb, _), kind(mb, "block"), child(mb, cc, _),
+    kind(cc, "case_clause"), !field(cc, "guard", _), child(cc, p, _), kind(p, "case_pattern"), text(p, t),
+    match("[A-Za-z_][A-Za-z0-9_]*", t), t != "None", t != "True", t != "False", !cfr_multi_pattern(cc).
+.decl cfr_multi_pattern(cc: node)
+cfr_multi_pattern(cc) :- kind(cc, "case_clause"), child(cc, p, i), kind(p, "case_pattern"), child(cc, q, j),
+    kind(q, "case_pattern"), i != j.
+// A try completes when its finally (if any) does, and its body (then else) or some handler does.
+cfr_s_open(s) :- cfr_stmt(s), kind(s, "try_statement"), cfr_try_tail_open(s), cfr_try_main_open(s).
+.decl cfr_try_tail_open(t: node)
+cfr_try_tail_open(t) :- kind(t, "try_statement"), !cfr_clause(t, "finally_clause", _).
+cfr_try_tail_open(t) :- cfr_clause(t, "finally_clause", b), cfr_open(b).
+.decl cfr_try_main_open(t: node)
+cfr_try_main_open(t) :- kind(t, "try_statement"), field(t, "body", b), cfr_open(b), !cfr_clause(t, "else_clause", _).
+cfr_try_main_open(t) :- cfr_clause(t, "else_clause", b), cfr_open(b).
+cfr_try_main_open(t) :- (cfr_clause(t, "except_clause", b) ; cfr_clause(t, "except_group_clause", b)), cfr_open(b).
+// cfr_clause(t, k, b): try statement t has a clause of kind k whose block is b.
+.decl cfr_clause(t: node, k: symbol, b: node)
+cfr_clause(t, k, b) :- kind(t, "try_statement"), child(t, c, _), kind(c, k), child(c, b, _), kind(b, "block").
+.decl cfr_has_else(s: node)
+cfr_has_else(s) :- field(s, "alternative", a), kind(a, "else_clause").
+.decl cfr_loop(k: symbol)
+cfr_loop("while_statement"). cfr_loop("for_statement"). cfr_loop("function_definition"). cfr_loop("class_definition").
+
+// The cases, `cases/django-practice-clean-field-returns-value/`, read as one repository: each line ending in `# caught`
+// is reported, and no other line.
+.test cases exactly
+    .fixture "accounts/__init__.py" from "cases/django-practice-clean-field-returns-value/accounts/__init__.py"
+    .fixture "accounts/base.py" from "cases/django-practice-clean-field-returns-value/accounts/base.py"
+    .fixture "accounts/forms.py" from "cases/django-practice-clean-field-returns-value/accounts/forms.py"
+    .fixture "accounts/models.py" from "cases/django-practice-clean-field-returns-value/accounts/models.py"
+    .fixture "accounts/tests/__init__.py" from "cases/django-practice-clean-field-returns-value/accounts/tests/__init__.py"
+    .fixture "accounts/tests/test_forms.py" from "cases/django-practice-clean-field-returns-value/accounts/tests/test_forms.py"
+    .expect _ at "accounts/forms.py":24
+    .expect _ at "accounts/forms.py":31
+    .expect _ at "accounts/forms.py":34
+    .expect _ at "accounts/forms.py":60
+    .expect _ at "accounts/forms.py":82
+    .expect _ at "accounts/forms.py":95
+    .expect _ at "accounts/forms.py":108
+    .expect _ at "accounts/forms.py":155
+    .expect _ at "accounts/forms.py":169
+    .expect _ at "accounts/forms.py":177
+    .expect _ at "accounts/forms.py":192
+    .expect _ at "accounts/forms.py":206
+    .expect _ at "accounts/forms.py":214
+.end
