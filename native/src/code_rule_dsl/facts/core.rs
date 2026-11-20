@@ -686,6 +686,12 @@ pub fn text(source: Arc<String>) -> Facts {
     Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
+/// The text document of parsed file `f` (decision 0512: a file the run reads for its programs): its source and line
+/// table, shared, and no tree.
+pub fn text_of(f: &Facts) -> Facts {
+    Facts { tag: TEXT, source: Arc::clone(&f.source), lines: Arc::clone(&f.lines), tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+}
+
 /// Counts a read of the facts' `$part` of node `$node` (E17, `tape::reads`); nothing without `tape-reads`.
 macro_rules! watched {
     ($part:literal, $node:expr) => {

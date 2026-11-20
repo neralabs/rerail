@@ -497,13 +497,16 @@ pub(crate) struct Valued {
 /// `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`.
 pub const GUEST_POLICY: &str = "guest_policy";
 
-/// The first guest document's key: files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), code guests in the run's
-/// language `GUEST_KEYS..ANNOTATION_KEYS`, annotations (type expressions, Python's in a Python run)
-/// `ANNOTATION_KEYS..HIDDEN_KEYS`, and every other document (a guest in another grammar, a value) `HIDDEN_KEYS..2^31`
-/// (decision 0058 §1: what a rule sees is a bound on these keys). A rule that does not name a guest sees files and code
-/// guests; a relation an annotation's rows reach (`corpus::preparation::combining::FoldOwn`) sees annotations too.
+/// The first guest document's key. A key's range is what the document is to the run, by role and grammar, never by
+/// language (decisions 0058 §1, 0512): files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), a file read for its
+/// programs among them (its text); code guests in the run's language (programs) `GUEST_KEYS..RUN_VALUE_KEYS`; tape
+/// values in the run's language (a string a rule parses in it: Python's string annotations in a Python run, any
+/// language's in its own) `RUN_VALUE_KEYS..HIDDEN_KEYS`; and every other document (a guest in another grammar, a file's
+/// own tree in another grammar, a value) `HIDDEN_KEYS..2^31`. What a rule sees is a bound on these keys: a rule that
+/// does not name a guest sees files and code guests; a relation a run value's rows reach
+/// (`corpus::preparation::combining::FoldOwn`) sees run values too.
 pub const GUEST_KEYS: u32 = 1 << 30;
-pub const ANNOTATION_KEYS: u32 = (1 << 30) + (1 << 28);
+pub const RUN_VALUE_KEYS: u32 = (1 << 30) + (1 << 28);
 pub const HIDDEN_KEYS: u32 = (1 << 30) + (1 << 29);
 
 /// A guest document's place (decision 0055): the host document and the node or span it stands at, its grammar and
@@ -535,7 +538,7 @@ impl Guest {
     /// The key `node`'s and `docof`'s document column gives a node of document `key` that is this guest (decision
     /// 0431 §4): a program's file, in either shape; any other guest's own key, for it is no file's.
     pub fn file_key(guest: Option<&Guest>, key: u32) -> u32 {
-        guest.filter(|g| g.made == Made::Host && g.file != 0).map_or(key, |g| g.file)
+        guest.filter(|g| matches!(g.made, Made::Host | Made::File) && g.file != 0).map_or(key, |g| g.file)
     }
 }
 
@@ -544,6 +547,10 @@ impl Guest {
 pub enum Made {
     /// The code at `at` in its host (`embed`, `parsed`, `sub_tape`).
     Host,
+    /// A file's own tree, where the run reads the file for its programs (decision 0512): the file is a text document
+    /// under its own key, shown, and this, its tree in its grammar, a guest of it under a hidden key, standing at its
+    /// whole text. It is no program: no `rr_program`, `sub_tape` or `parsed` row. Its programs are guests of it.
+    File,
     /// `@parse(grammar, text)`: a value document, with no host; its places are its own text's.
     Parse { text: String },
     /// `@splice(tape, node, with)`: tape `tape` with node `node`'s text replaced by tape `with`'s, parsed in its
@@ -1351,7 +1358,7 @@ impl Projected {
             }
             // Raw file text remains valid when its tree is withheld. Guests have no own text spans.
             let own_text = guest.is_none();
-            let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
+            let host = guest.filter(|(g, _)| matches!(g.made, Made::Host | Made::File)).map(|(g, lines)| (lines, g.in_file.clone()));
             p.extra = Some(Box::new(Locs { lines, tokens, ends: 0, own_text, host }));
         } else if definition_ids() && let Some(dialect) = dialect {
             // T's shape has no token spans: its nodes alone are numbered per definition.
@@ -2884,9 +2891,9 @@ impl Batch {
             };
             let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
-            // A guest's lines are its file's. A file that a run reads for its programs (decision 0470 step 2) has a hidden
-            // key, past its programs', so a program may come first: its file's lines are built then, from the file's
-            // document, and the file's projection takes them.
+            // A guest's lines are its file's: a file's own tree's too, where the run reads the file for its programs
+            // (decision 0512). A guest of a guest may come before its host: its file's lines are built then, from the
+            // file's document, and the file's projection takes them.
             let placed = match guest {
                 Some(g) => {
                     let file = file_of(g.host);

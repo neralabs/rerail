@@ -522,7 +522,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct FoldOwn<'a> {
 impl ProgramPass for FoldOwn<'_> {
     const NAME: &'static str = "fold own guests' copies";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
-        use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+        use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, HIDDEN_KEYS};
         let v = cx.v();
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
@@ -580,10 +580,10 @@ impl ProgramPass for FoldOwn<'_> {
         if folded.is_empty() && sets.is_empty() {
             return Ok(());
         }
-        // An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
+        // An original holds its copies' rows: its rules' bounds take the annotations in (`RUN_VALUE_KEYS` to
         // `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
         let originals: BTreeSet<String> = folded.values().cloned().collect();
-        let (narrow, wide) = (i64::from(ANNOTATION_KEYS), i64::from(HIDDEN_KEYS));
+        let (narrow, wide) = (i64::from(RUN_VALUE_KEYS), i64::from(HIDDEN_KEYS));
         let plain = format!("{label}:");
         let mut rules = Folding { folded: &folded, axes: &axes, sets: &sets, originals: &originals, narrow, wide, plain: &plain };
         w.derive()?;

@@ -2,13 +2,14 @@
 //! rule reached it from a guest.
 //!
 //! A run's documents are, by key (`syntax::GUEST_KEYS`, `syntax::HIDDEN_KEYS`):
-//! - files, `1..2^30`;
-//! - guests of code in the run's language (Python in a Python string, embedded by a library), `2^30..2^30 + 2^28`:
+//! - files, `1..2^30`, a file read for its programs among them (its text, decision 0512);
+//! - programs in the run's language (a `<script>` in an HTML file, a JSON object in a rule file), `2^30..2^30 + 2^28`:
 //!   shown (decision 0494: always);
-//! - annotations (a type expression, Python's in a Python run), `..2^30 + 2^29`: not shown to a rule that does not
-//!   name them, but kept in a relation they reach once its copies for them are folded into it (`combining::FoldOwn`);
-//! - every other document (a guest in another grammar, a value `@parse` or `@splice` made), up to `2^31`: never
-//!   shown.
+//! - tape values in the run's language (a string a rule parses in it: a type expression, Python's string annotations
+//!   in a Python run), `..2^30 + 2^29` (`syntax::RUN_VALUE_KEYS`): not shown to a rule that does not name them, but
+//!   kept in a relation they reach once its copies for them are folded into it (`combining::FoldOwn`);
+//! - every other document (a guest in another grammar, a file's own tree in another grammar, a value `@parse` or
+//!   `@splice` made), up to `2^31`: never shown.
 //!
 //! A node's id is its document's key `<< 32` and its index, so "shown" is one bound on a location value.
 //!
@@ -50,7 +51,7 @@ pub(super) fn dialect_label(grammar: &str) -> &str {
 
 /// The bound of a program's shown documents: files, and the run language's code guests (decision 0494: `.guests` is
 /// retired; what a run reads of other languages' files is `.embedded`'s).
-pub(super) const BOUND: u32 = crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
+pub(super) const BOUND: u32 = crate::code_rule_dsl::facts::vtab::syntax::RUN_VALUE_KEYS;
 
 /// What the analysis knows of a variable: scoped, and its grammar (`Some("")` when two disagree). `definite`: it is
 /// a guest's node, not only maybe one (O110). A variable read from a derived column that host rows fill too is

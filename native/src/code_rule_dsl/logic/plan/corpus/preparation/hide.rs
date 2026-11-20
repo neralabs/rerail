@@ -1458,7 +1458,7 @@ mod tests {
     /// its rule. In another language's run the copies stay.
     #[test]
     fn copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals() {
-        use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+        use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, HIDDEN_KEYS};
         let text = |g: &str| {
             format!(concat!(
                 ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
@@ -1472,7 +1472,7 @@ mod tests {
         let folded = |grammar: &str, label: &str| -> (usize, usize, Vec<String>) {
             let read = crate::code_rule_dsl::logic::rr::parse_version(&text(grammar)).unwrap();
             let mut p = Pipeline::new("test", read);
-            p.program(&mut super::Hide::new(ANNOTATION_KEYS));
+            p.program(&mut super::Hide::new(RUN_VALUE_KEYS));
             let (v, _) = p.finish().unwrap();
             let made = v.declared_names().iter().filter(|r| r.starts_with("rr_in_")).count();
             let mut p = Pipeline::new("test", v);
@@ -1494,7 +1494,7 @@ mod tests {
         let (made, n, rules) = folded("annotation", "python");
         assert!(made > 0 && n == made, "{made} made, {n} folded");
         let wide = (i64::from(HIDDEN_KEYS) << 32).to_string();
-        let narrow = (i64::from(ANNOTATION_KEYS) << 32).to_string();
+        let narrow = (i64::from(RUN_VALUE_KEYS) << 32).to_string();
         assert!(rules.iter().any(|r| r.starts_with("asg(") && r.contains(&wide)), "{rules:#?}");
         assert!(rules.iter().any(|r| r.starts_with("out(") && r.contains(&narrow)) || rules.iter().filter(|r| r.starts_with("out(")).all(|r| !r.contains(&wide)), "{rules:#?}");
     }
@@ -1505,7 +1505,7 @@ mod tests {
     /// for every node, below S too (the Django rules' `within_stop` over a block found through `sym_of`; main's #862).
     #[test]
     fn an_axis_over_a_folded_kind_set_reads_the_original_set() {
-        use crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
+        use crate::code_rule_dsl::facts::vtab::syntax::RUN_VALUE_KEYS;
         use crate::code_rule_dsl::logic::front::{axis, is_axis};
         let v = hidden(
             concat!(
@@ -1515,7 +1515,7 @@ mod tests {
                 ".decl out(t: node)\n.output out\n",
                 "out(t) :- attempt(t), body(b), within(t, b), !inside(t, _, \"function_definition\").\n",
             ),
-            ANNOTATION_KEYS,
+            RUN_VALUE_KEYS,
         );
         let axes = |v: &Version| -> Vec<String> { v.rules().flat_map(|r| v.show_rule(r).split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| is_axis(w)).map(str::to_owned).collect::<Vec<_>>()).collect() };
         assert!(axes(&v).iter().any(|r| r.contains("rr_in_annotation_")), "the clone reads the annotation's axis: {:?}", axes(&v));

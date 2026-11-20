@@ -7301,7 +7301,7 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   `typing::oracle_tests::a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered` ("unbounded
   node Cartesian product in `base`") fail at 11d32e9f0 too, before step 7 (Q249's kind for the second).
 
-### Q385. A host file's own nodes are shown under `.embedded on`
+### Q385. (done) A host file's own nodes are shown under `.embedded on`
 
 - **Seen** (2026-11-20, decision 0495 step 3): a JSON run under `.embedded on` sees a rule file's own nodes
   (`source_file`, `clause`), and an HTML run a Python file's `module`. 0470 step 2 meant them hidden: a host file takes
@@ -7316,6 +7316,10 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   file takes a shown document key, and its own nodes ids under a hidden key, as an annotation's are the other way
   round. That changes how a file's nodes are numbered: the user's call.
 - **Test**: `a_host_files_own_nodes_are_not_shown` (ignored, naming this item).
+- **Done** (2026-11-20, decision 0512, the user: "go ahead"): a host file keeps its own key as its text's document
+  (`doc`, `source`, `src_line` shown: the user, "rules need to know line numbers and text in the host so that they can
+  report properly"), and its tree is a guest of it (`Made::File`) under the hidden key, the host of its programs.
+  Hiding runs for `.embedded on`. The test runs, and asks for the host's lines and text too.
 
 ### Q272. The store crate's tests: five fail on a farm host, one flakes
 

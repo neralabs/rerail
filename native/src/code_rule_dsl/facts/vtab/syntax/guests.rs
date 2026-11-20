@@ -54,6 +54,8 @@ impl GuestRows {
         // A value document has no host: what made it is its row.
         match &g.made {
             Made::Host => {}
+            // A file's own tree (decision 0512): the file itself, no program of it.
+            Made::File => return,
             // A tape value (decision 0431): a row of each relation for each place, and no `rr_program` row: it is
             // no file's program.
             Made::Tape { places } => {

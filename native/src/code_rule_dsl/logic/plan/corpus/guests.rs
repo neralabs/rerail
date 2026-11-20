@@ -161,15 +161,15 @@ fn tape_tag_of(label: &str, fragment: Option<core::Fragment>) -> Option<i64> {
 
 /// A document's key past every file's (`memo::doc_keys` gives files keys below `GUEST_KEYS`), with `key << 32`
 /// positive: a function of what it is (a guest's host path, place and grammar), so a memoised row's guest nodes keep
-/// their ids. A code guest in the run's language takes `GUEST_KEYS..ANNOTATION_KEYS`, which a policy shows; an
-/// annotation `ANNOTATION_KEYS..HIDDEN_KEYS`; every other document `HIDDEN_KEYS..2^31` (decision 0058 §1).
+/// their ids. A code guest in the run's language takes `GUEST_KEYS..RUN_VALUE_KEYS`, which a policy shows; a
+/// tape value in it `RUN_VALUE_KEYS..HIDDEN_KEYS`; every other document `HIDDEN_KEYS..2^31` (decisions 0058 §1, 0512).
 /// A key's range (its base and span), the place in it its parts hash to, and the guest's identity (decision 0391):
 /// a SHA-256 of the range and the parts.
 fn first_key(parts: &[&[u8]], range: Range) -> (u32, u32, u32, [u8; 32]) {
-    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, HIDDEN_KEYS};
+    use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, GUEST_KEYS, HIDDEN_KEYS};
     let (base, end) = match range {
-        Range::Code => (GUEST_KEYS, ANNOTATION_KEYS),
-        Range::Annotation => (ANNOTATION_KEYS, HIDDEN_KEYS),
+        Range::Code => (GUEST_KEYS, RUN_VALUE_KEYS),
+        Range::RunValue => (RUN_VALUE_KEYS, HIDDEN_KEYS),
         Range::Hidden => (HIDDEN_KEYS, 1u32 << 31),
     };
     let span = end - base;
@@ -183,18 +183,43 @@ fn first_key(parts: &[&[u8]], range: Range) -> (u32, u32, u32, [u8; 32]) {
     (base, span, u32::from_le_bytes(hash[..4].try_into().expect("4 bytes")) % span, identity)
 }
 
-/// The key of a file of another grammar that a run reads for its programs (decision 0470 step 2): a hidden one, by
-/// its path, claimed as a guest's is, so no guest takes it.
+/// The key of the tree of a file of another grammar that a run reads for its programs (decisions 0470 step 2, 0512):
+/// a hidden one, by its path, claimed as a guest's is, so no guest takes it.
 pub(super) fn hidden_file_key(keys: &GuestKeys, path: &str) -> u32 {
     let (base, span, first, identity) = first_key(&[b"host-file", path.as_bytes()], Range::Hidden);
     keys.key(identity, base, span, first, path)
+}
+
+/// A file the run reads for its programs (decision 0512), parsed in its own grammar as `parsed`, as the two documents
+/// it is to the run: the file, a text document under its own key (its `doc` row, its lines and their text, shown as
+/// any file's), and its tree, a guest of the file (`Made::File`) under a hidden key (`hidden_file_key`), standing at
+/// the file's whole text. Both read the one source and line table (`core::text_of`).
+pub(super) fn file_and_tree(parsed: Document, keys: &GuestKeys) -> [Document; 2] {
+    let text = Arc::new(core::text_of(&parsed.facts));
+    let file = parsed.key;
+    let whole = Placement::Copied { delta: 0, within: [0, u32::try_from(parsed.facts.source.len()).unwrap_or(u32::MAX)] };
+    let grammar = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&parsed.facts)).and_then(crate::code_rule_dsl::language::label).unwrap_or_default().to_owned();
+    let text_doc = Document { key: file, path: parsed.path.clone(), core: parsed.core.clone(), digest: core::digest(&text), facts: text, tape: None, guest: None, module: parsed.module.clone(), unpackaged: parsed.unpackaged };
+    let tree = Document {
+        key: hidden_file_key(keys, &parsed.path),
+        core: format!("{}#file:{grammar}", parsed.core),
+        // No row reads a file tree's `at` (`Made::File` has no `sub_tape` or `parsed` row): its file's first position.
+        guest: Some(Arc::new(Guest { host: file, file, at: i64::from(file) << 32, grammar, role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File })),
+        ..parsed
+    };
+    [text_doc, tree]
+}
+
+/// Whether `d` is a file the run reads for its programs, as parsed and not yet split (`file_and_tree`).
+pub(super) fn unsplit_host(d: &Document, host: &dyn Fn(&str) -> bool) -> bool {
+    d.guest.is_none() && host(&d.path) && core::facts_tag(&d.facts) != core::TEXT
 }
 
 /// Which keys a document takes (`key`).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Range {
     Code,
-    Annotation,
+    RunValue,
     Hidden,
 }
 
@@ -328,7 +353,7 @@ impl Seen {
     fn sees(self, range: Range) -> bool {
         match range {
             Range::Code => true,
-            Range::Annotation => self >= Seen::Annotations,
+            Range::RunValue => self >= Seen::Annotations,
             Range::Hidden => self == Seen::All,
         }
     }
@@ -356,15 +381,15 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
     Some(tags)
 }
 
-/// Whether `t` is a document bound `combining::FoldOwn` widened to take the annotations in (above `ANNOTATION_KEYS`):
+/// Whether `t` is a document bound `combining::FoldOwn` widened to take the annotations in (above `RUN_VALUE_KEYS`):
 /// a rule compared with it reads the annotations' documents, which only their requests (`DEMAND`) make.
 pub(super) fn widened(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>) -> bool {
-    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
-    matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32))
+    use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, HIDDEN_KEYS};
+    matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Int(n) if n > i64::from(RUN_VALUE_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(RUN_VALUE_KEYS) << 32))
 }
 
 /// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
-/// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
+/// `hiding`): every other base read is bounded below `RUN_VALUE_KEYS`, or below `HIDDEN_KEYS` where an annotation's
 /// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
 /// against the widened bound, and the other guests (other grammars, values) never.
 pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
@@ -505,10 +530,10 @@ impl Guests {
         }
         let Some((label, fragment)) = grammar(grammar_name) else { return Ok(Got::Not) };
         // A tape value is never code to rules that do not name it: its nodes are no file's, so a finding on one has no
-        // place. In the run's language it is in the annotations' range (a type expression, Python's in a Python run);
+        // place. In the run's language it is in the run values' range (a type expression, Python's in a Python run);
         // shown, a string the demand asked for only because its rule's inputs hold it (every string, for `type_ctx`)
         // was code to every rule: `"--host"` was `--host`, a doubled minus (B002 on 157 argparse lines).
-        let range = if label == self.run { Range::Annotation } else { Range::Hidden };
+        let range = if label == self.run { Range::RunValue } else { Range::Hidden };
         if !self.seen.sees(range) {
             self.unseen += 1;
             return Ok(Got::Not);
@@ -585,7 +610,11 @@ impl Guests {
     /// `embed` of the same place and grammar finds it made.
     pub(super) fn programs(&mut self, docs: &[Document]) -> Result<Vec<Document>, String> {
         let mut out = Vec::new();
-        for host in docs.iter().filter(|d| d.guest.is_none()) {
+        // A file's own tree is a host of its programs (decision 0512), whose file is the file's.
+        for host in docs.iter().filter(|d| d.guest.as_ref().is_none_or(|g| g.made == Made::File)) {
+            if let Some(g) = host.guest.as_ref() {
+                self.host_of.insert(i64::from(host.key), i64::from(g.file));
+            }
             // Made at its parse, or read with its stored tape: placed, with no embedder run and nothing parsed.
             if let Some(record) = host.facts.programs.as_ref() {
                 for image in record.iter() {
@@ -661,7 +690,8 @@ impl Guests {
         let file = self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key));
         self.host_of.insert(i64::from(key), file);
         let file = file as u32;
-        let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
+        // A file's own tree stands at its file's bytes as they are (decision 0512): its program's are its own place's.
+        let in_file = host.guest.as_ref().filter(|h| h.made != Made::File).map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
         Ok(Some(Document {
             key,
             path: host.path.clone(),
@@ -746,7 +776,7 @@ impl Guests {
 
 /// Each program's file among `docs` (`Guests::host_of`'s, for a chunk that makes no guest of its own).
 pub(super) fn hosts_of(docs: &[Document]) -> HashMap<i64, i64> {
-    docs.iter().filter_map(|d| d.guest.as_ref().filter(|g| g.made == Made::Host && g.file != 0 && g.file != d.key).map(|g| (i64::from(d.key), i64::from(g.file)))).collect()
+    docs.iter().filter_map(|d| d.guest.as_ref().filter(|g| matches!(g.made, Made::Host | Made::File) && g.file != 0 && g.file != d.key).map(|g| (i64::from(d.key), i64::from(g.file)))).collect()
 }
 
 /// The programs `build` makes from `host`'s tape, read in place where its facts hold it (whichever parser wrote it,
@@ -892,13 +922,13 @@ mod tests {
             .map(|i| format!("f{i}.py"))
             .find_map(|p| {
                 let [x, y, z] = parts(&p);
-                let k = first_key(&[&x, &y, &z], Range::Annotation).2;
+                let k = first_key(&[&x, &y, &z], Range::RunValue).2;
                 seen.insert(k, p.clone()).map(|q| (q, p))
             })
             .expect("a pair");
         let key = |g: &mut Guests, p: &str| {
             let [x, y, z] = parts(p);
-            g.key_for(&[&x, &y, &z], Range::Annotation, p)
+            g.key_for(&[&x, &y, &z], Range::RunValue, p)
         };
         let keys = GuestKeys::in_memory();
         let chunk = || Guests::new("python", syntax::Shape::default(), Arc::clone(&keys));

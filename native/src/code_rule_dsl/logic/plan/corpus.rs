@@ -1805,8 +1805,9 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     }
     drop(parsing);
     // A program makes guests where it asks for one, or reads a guest relation: a file's programs are its grammar's
-    // (decision 0431 §4), made whatever a rule asks.
-    let guests_of: Vec<bool> = parsed.iter().map(|p| guests::REQUESTS.iter().any(|r| p.has_head(r)) || reads_guests(p.rules())).collect();
+    // (decision 0431 §4), made whatever a rule asks. And under `.embedded on`: it reads other languages' files, whose
+    // trees are guests of theirs it is not shown (decision 0512).
+    let guests_of: Vec<bool> = parsed.iter().map(|p| guests::REQUESTS.iter().any(|r| p.has_head(r)) || reads_guests(p.rules()) || embedded_on(p.head())).collect();
     let makes_guests = guests_of.iter().any(|&g| g);
     // The libraries once (decision 0089): two or more programs name theirs as modules. Every program is read under one
     // bound of the documents it shows (decision 0494), so the library's relations are the same for each.
@@ -3480,7 +3481,8 @@ fn run_observed_within(
     let library_paths: std::collections::HashSet<&str> = libraries.iter().map(|(p, _)| p.as_str()).collect();
     let text_document = |path: &str, label: &str| text_document(path, label) && !library_paths.contains(path);
     // A file the run reads for the programs it holds (`.embedded on`, decision 0470 step 2): parsed in its own grammar,
-    // under a hidden key, so the run's rules see its programs in their language and none of its own nodes.
+    // its tree a guest of its text's document (decision 0512), so the run's rules see the file and its programs in
+    // their language and none of its own nodes.
     let embedded = embedded_on(&*v);
     let host = |path: &str| embedded && embeds_label(path, label);
     // Taken once the files are listed: phase 1, run while they are, is a run of its own, with its session and plans.
@@ -3636,13 +3638,8 @@ fn run_observed_within(
         Some(cache) => cache.guest_keys().map_err(|e| Error::Plan(e.to_string()))?,
         None => crate::content_store::guest_keys::GuestKeys::in_memory(),
     };
-    // A host file the run reads for its programs takes a hidden key (decision 0470 step 2): none of its own nodes is
-    // shown, as no document of another grammar is (0058).
-    for (key, path) in docs.iter_mut() {
-        if host(path) {
-            *key = i64::from(guests::hidden_file_key(&guest_keys, path));
-        }
-    }
+    // A file the run reads for its programs keeps its own key, as every file: it is its text's document, shown, and
+    // its tree a guest of it under a hidden key (`guests::file_and_tree`, decision 0512).
     // `shortlex_min<>` orders the run's symbols by their text: the store's atoms (decision 0108).
     crate::code_rule_dsl::logic::native::declare("shortlex_min", Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
     let db = {
@@ -5774,6 +5771,11 @@ fn run_observed_within(
                 Some(wanted) => guests::guests_seen(&Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted)))).version),
                 None => local_seen,
             };
+            // A file read for its programs is its text's document and its tree, a guest of it (decision 0512).
+            if docs.iter().any(|d| guests::unsplit_host(d, &host)) {
+                docs = docs.into_iter().flat_map(|d| if guests::unsplit_host(&d, &host) { guests::file_and_tree(d, &guest_keys).to_vec() } else { vec![d] }).collect();
+                docs.sort_by_key(|d| d.key);
+            }
             let programs = if keep_docs {
                 let _programs = crate::code_rule_dsl::logic::profile::span(|| "the files' programs".into());
                 let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys)).seeing(seen);
@@ -8082,18 +8084,20 @@ fn run_observed_within(
     // chunk reads its own. The evaluated chunks handed theirs on; a memo hit's is made from its stored tape (parsed
     // again, in memory, where the store has none), its guests from the requests its entry kept. Nothing is read from
     // SQL here (decision 0104): the tapes were read with the misses'.
-    // A document of `source` made from its tape `frame` (parsed in memory where there is none); `None` for a text file
-    // that is not UTF-8, which is no document.
-    let doc_of = |key: i64, path: &str, module: Option<Arc<str>>, source: String, frame: Option<&crate::content_store::TapeFrame>| -> Result<Option<syntax::Document>> {
+    // The documents of `source` made from its tape `frame` (parsed in memory where there is none): a file's, or a file
+    // read for its programs' text and tree (decision 0512); none for a text file that is not UTF-8, which is no
+    // document.
+    let doc_of = |key: i64, path: &str, module: Option<Arc<str>>, source: String, frame: Option<&crate::content_store::TapeFrame>| -> Result<Vec<syntax::Document>> {
         let _doc = crate::code_rule_dsl::logic::profile::span(|| "a document from its tape (decision 0458)".into());
         let document = |facts: Arc<core::Facts>, tape| {
             let digest = core::digest(&facts);
             syntax::Document { key: key as u32, path: path.to_owned(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape, unpackaged: unpackaged.contains(path) }
         };
-        if text_document(path, label) {
-            return Ok(Some(document(Arc::new(core::text(Arc::new(source))), None)));
+        if text_document(path, label) && !host(path) {
+            return Ok(vec![document(Arc::new(core::text(Arc::new(source))), None)]);
         }
-        let file = core::Source { language: label.to_owned(), source: Arc::new(source) };
+        let own = if host(path) { crate::code_rule_dsl::language::label_of_path(path).unwrap_or(label) } else { label };
+        let file = core::Source { language: own.to_owned(), source: Arc::new(source) };
         let built = match (&tapes, frame) {
             (Some(cache), Some(frame)) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, None, Some(frame), true, keep_tapes),
             _ => core::build_with_tape(&file, keep_tapes),
@@ -8104,7 +8108,8 @@ fn run_observed_within(
             Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
         };
         let tape = tape.filter(|_| keep_tapes).map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
-        Ok(Some(document(facts, tape)))
+        let d = document(facts, tape);
+        Ok(if guests::unsplit_host(&d, &host) { guests::file_and_tree(d, &guest_keys).to_vec() } else { vec![d] })
     };
     // A run that listed its files as it went compares them with the table now, from the contents its chunks found:
     // unless it runs inside another run's waves (a phase's), where the store is not read (decision 0104).
@@ -8127,11 +8132,11 @@ fn run_observed_within(
         // The run on each job's thread (`run_state::Carry`, decision 0442): without it a job's tape took a residency
         // (and a 64 MB slab) of a machine of its own.
         let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-        let hit_doc = |h: &CorpusHit| -> Result<Option<syntax::Document>> {
+        let hit_doc = |h: &CorpusHit| -> Result<Vec<syntax::Document>> {
             let _in = carry.enter();
             let source = match std::fs::read_to_string(root.join(&h.path)) {
                 Ok(source) => source,
-                Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(&h.path, label) => return Ok(None),
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(&h.path, label) => return Ok(Vec::new()),
                 Err(e) => return Err(Error::Plan(format!("{}: {e}", h.path))),
             };
             doc_of(h.key, &h.path, h.module.clone(), source, tapes_of.get(&h.path))

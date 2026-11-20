@@ -5245,18 +5245,20 @@ fn a_rule_files_patterns_are_programs_of_its_language() {
     assert!(off.is_empty(), "{off:?}");
 }
 
-/// Decision 0470 step 2: a run under `.embedded on` reads a host file for its programs and sees none of the file's
-/// own nodes. It sees them (work queue Q385): hiding runs only for a program that makes guests, and bounding a
-/// program's document then hides the programs too, since a program's node's document is its host file's hidden key
-/// (Q324), while an annotation's nodes need that document bound.
+/// Decision 0470 step 2, as 0512 builds it: a run under `.embedded on` reads a host file for its programs and sees
+/// none of the file's own nodes (the file's tree is a guest of the file in its own grammar, in the hidden keys), but
+/// the file itself is shown as any file is: its `doc` row, its lines and their text, so a finding at a program's node
+/// is reported at the file's line, and a rule can read the line it is on (Q385).
 #[test]
-#[ignore = "Q385: a host file's own nodes are shown under `.embedded on`"]
 fn a_host_files_own_nodes_are_not_shown() {
     let rr = ".decl a(x: symbol)\na({\"k\": 1}).\n";
-    let rule = ".language json\n.embedded on\n.decl pairs(x: symbol, p: symbol)\npairs(x, p) :- kind(n, \"pair\"), text(n, x), docof(n, d), doc(d, p, _).\n.decl own(k: symbol)\nown(k) :- kind(_, k), (k = \"source_file\" ; k = \"clause\").\n.output pairs, own\n";
-    let [pairs, own] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("host-own-nodes", &[("rules/r.rerail", rr)], rule, &["pairs", "own"])).unwrap();
-    assert_eq!(pairs, [["\"k\": 1", "rules/r.rerail"]], "the program is shown, at its file");
+    let rule = ".language json\n.embedded on\n.decl pairs(x: symbol, p: symbol, l: number)\npairs(x, p, l) :- kind(n, \"pair\"), text(n, x), docof(n, d), doc(d, p, _), line(n, l).\n.decl own(k: symbol)\nown(k) :- kind(_, k), (k = \"source_file\" ; k = \"clause\").\n.decl lines(p: symbol, l: number, t: symbol)\nlines(p, l, t) :- src_line(d, l, sp), text(sp, t), doc(d, p, _).\n.output pairs, own, lines\n";
+    let [pairs, own, lines] = <[Vec<Vec<String>>; 3]>::try_from(guests_run("host-own-nodes", &[("rules/r.rerail", rr)], rule, &["pairs", "own", "lines"])).unwrap();
+    assert_eq!(pairs, [["\"k\": 1", "rules/r.rerail", "2"]], "the program is shown, at its file's line");
     assert!(own.is_empty(), "the host file's own nodes are not: {own:?}");
+    // The run's own rule file (`g.rerail`) is a file of another grammar in its root too, shown as this one is.
+    let lines: Vec<&Vec<String>> = lines.iter().filter(|r| r[0] == "rules/r.rerail").collect();
+    assert_eq!(lines, [&["rules/r.rerail", "1", ".decl a(x: symbol)"], &["rules/r.rerail", "2", "a({\"k\": 1})."]], "the host file's lines and their text are shown");
 }
 
 /// Q324 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes
