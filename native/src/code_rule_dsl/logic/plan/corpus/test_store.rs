@@ -79,10 +79,13 @@ fn make(path: &Path) {
     std::fs::create_dir_all(&staging).expect("the template's staging directory");
     let store = staging.join("store.sqlite");
     let filling = store.clone();
+    // The thread fills it for its starter, on its starter's object (decision 0442; a test's: the tests' one).
+    let shared = crate::code_rule_dsl::logic::profile::shared_here();
     let filled = std::thread::Builder::new()
         .name("store template".into())
         // Test plumbing, not a run's SQL: the strict mode (`RERAIL_SQL_STRICT`) leaves it alone.
         .spawn(move || {
+            let _within = crate::code_rule_dsl::logic::profile::within(shared);
             // Its runs skip `ready` (they fill the template), and take nothing the thread that waits on them holds.
             FILLING.with(|f| f.set(true));
             crate::code_rule_dsl::logic::profile::behind(|| fill(&filling))

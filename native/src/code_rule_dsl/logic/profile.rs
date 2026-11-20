@@ -1254,7 +1254,7 @@ pub struct Carry {
 
 /// The run under way here, for the items a pool thread takes: their records are the run's (decision 0442).
 pub fn carry() -> Carry {
-    Carry { under: here(), run: run_own(), on: on() }
+    Carry { under: here(), run: job_run(), on: on() }
 }
 
 impl Carry {
@@ -1297,8 +1297,10 @@ impl InRun {
 impl Drop for InRun {
     fn drop(&mut self) {
         if let Some((run, on)) = self.0.take() {
-            RUN.with(|r| *r.borrow_mut() = run);
+            let left = RUN.with(|r| r.replace(run));
             ON.with(|o| o.set(on));
+            drop(left);
+            left_run();
         }
     }
 }
@@ -1510,7 +1512,7 @@ thread_local! {
     pub static STAGE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
 
-pub use rerail_context::{AnyArc, Machine, RUN, RunOwn, RunValues, Shared, default_shared, enter, local, local_if_any, machine, run_own, setting, shared, shared_here, shared_object, with_local, with_shared, within};
+pub use rerail_context::{AnyArc, Caller, Machine, caller, job_run, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
 /// waves, until the guard drops.

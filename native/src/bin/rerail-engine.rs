@@ -34,7 +34,7 @@ fn main() -> ExitCode {
         Ok(text) => {
             print!("{text}");
             // Decision 0394: the command cut a relation at the width cap (`RERAIL_WIDEST=cut`): its results are
-            // incomplete.
+            // incomplete. Decision 0442: it read state outside any run, which was refused.
             match incomplete {
                 Some(message) => {
                     eprintln!("rerail-engine: {message}");

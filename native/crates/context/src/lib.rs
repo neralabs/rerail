@@ -107,36 +107,79 @@ pub fn default_shared() -> std::sync::Arc<Shared> {
     Shared::new()
 }
 
-/// The shared object a read of `what` outside any run takes. A product build's entry points, and every thread the
-/// engine makes, hold a run or a shared object (`enter`, `within`), so such a read is a miss: it takes one of its own,
-/// which nothing keeps. A test build takes the tests' one.
+/// The shared object a read of `what` outside any run takes. Decision 0442 refuses such a read: every entry point and
+/// every thread the engine makes holds a run or a shared object (`enter`, `within`), so it is a miss (`missed`). In a
+/// product build it takes an object of its own, which reaches nothing of any caller's and which nothing keeps. In a
+/// test build, a test's thread (one the engine did not make: `on_a_tests_thread`) is a caller with no entry point
+/// (it calls the engine's parts directly), whose object is the tests' one (`TESTS`).
 #[cold]
 fn outside_a_run(what: &'static str) -> std::sync::Arc<Shared> {
-    missed(what);
     #[cfg(feature = "test-hooks")]
-    return std::sync::Arc::clone(&TESTS);
-    #[cfg(not(feature = "test-hooks"))]
+    if on_a_tests_thread() {
+        return std::sync::Arc::clone(&TESTS);
+    }
+    missed(what);
     Shared::new()
 }
 
-/// A read of `what` (a type's name) outside any run: with `RERAIL_STRICT_RUN=1`, said once a type on stderr, so that
-/// one run lists every miss (a check that a product path holds its run everywhere: a pool's parallel loop that does
-/// not carry it, a thread started without it).
+/// Whether this thread is a test's (test builds): one the engine did not make (`engine_thread`). A test's own thread,
+/// and every thread a test starts itself, is a caller's; the engine's threads (its pools, its services) run its jobs,
+/// which carry their caller's run (`job_run`), so a read outside any run there is a job that lost it.
+#[cfg(feature = "test-hooks")]
+fn on_a_tests_thread() -> bool {
+    !ENGINE.with(std::cell::Cell::get)
+}
+
+#[cfg(feature = "test-hooks")]
+thread_local! {
+    /// Whether the engine made this thread (`engine_thread`): test builds, for `on_a_tests_thread`.
+    static ENGINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks this thread as one the engine made (its pools' threads as they start, each service's): in a test build, a
+/// read outside any run on it is refused (`missed`), as every read is in a product build. A no-op in a product build.
+pub fn engine_thread() {
+    #[cfg(feature = "test-hooks")]
+    ENGINE.with(|e| e.set(true));
+}
+
+/// A read of `what` (a type's name) outside any run, refused (decision 0442). In a test build (`test-hooks`) it panics
+/// on the engine's threads (a test's take the tests' object: `outside_a_run`): a job runs in its caller's run, and a
+/// thread holds its starter's object. In a product build it is said once a type on stderr, with its backtrace, and kept (`misses`): the command
+/// fails at its end (`tools::cli`), with its output written, as a run cut at the width cap does.
 #[cold]
+#[track_caller]
 fn missed(what: &'static str) {
-    if !std::env::var_os("RERAIL_STRICT_RUN").is_some_and(|v| v == "1") {
-        return;
-    }
-    // The types said so far: a check's report, never read by the engine.
-    static SAID: parking_lot::Mutex<Vec<&'static str>> = parking_lot::Mutex::new(Vec::new());
-    let mut said = SAID.lock();
-    if !said.contains(&what) {
-        said.push(what);
-        eprintln!("rerail: outside any run: {what} (RERAIL_STRICT_RUN=1)\n{}", std::backtrace::Backtrace::force_capture());
+    #[cfg(feature = "test-hooks")]
+    panic!(
+        "rerail: a read of {what} outside any run, on thread {:?} (decision 0442): a job runs in its caller's run, and a thread holds its starter's object (`within`)",
+        std::thread::current().name()
+    );
+    #[cfg(not(feature = "test-hooks"))]
+    {
+        let mut said = MISSES.lock();
+        if !said.contains(&what) {
+            said.push(what);
+            eprintln!("rerail: a read of {what} outside any run (decision 0442)\n{}", std::backtrace::Backtrace::force_capture());
+        }
     }
 }
 
-/// The tests' shared object (`default_shared`, `outside_a_run`): test builds only.
+/// The types read outside any run in this process (`missed`): an error's report, never read by the engine. The
+/// process's, as its stderr is: a read outside any run is no run's.
+#[cfg(not(feature = "test-hooks"))]
+static MISSES: parking_lot::Mutex<Vec<&'static str>> = parking_lot::Mutex::new(Vec::new());
+
+/// The types read outside any run so far in this process (`missed`), for the command's error at its end. A test build
+/// has none: a miss panics there.
+pub fn misses() -> Vec<&'static str> {
+    #[cfg(not(feature = "test-hooks"))]
+    return MISSES.lock().clone();
+    #[cfg(feature = "test-hooks")]
+    Vec::new()
+}
+
+/// The tests' shared object (`default_shared`): test builds only.
 #[cfg(feature = "test-hooks")]
 static TESTS: std::sync::LazyLock<std::sync::Arc<Shared>> = std::sync::LazyLock::new(Shared::new);
 
@@ -214,6 +257,17 @@ pub fn shared_object() -> Option<std::sync::Arc<Shared>> {
     run_own().map(|r| std::sync::Arc::clone(r.shared()))
 }
 
+/// The object a thread started here holds (a service: `within` there): the run's; with no run, on a test's thread,
+/// the tests' one (a caller with no entry point: `outside_a_run`); else none (a thread that holds no caller's state:
+/// the process's signal watcher, started by `main`).
+pub fn starter_object() -> Option<std::sync::Arc<Shared>> {
+    #[cfg(feature = "test-hooks")]
+    if run_own().is_none() && on_a_tests_thread() {
+        return Some(std::sync::Arc::clone(&TESTS));
+    }
+    shared_object()
+}
+
 /// The shared object a thread reads by: its run's, else `outside_a_run`'s (for a thread that hands it on: a service
 /// it starts, a machine's own thread).
 pub fn shared_here() -> std::sync::Arc<Shared> {
@@ -226,10 +280,35 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
     impl Drop for Back {
         fn drop(&mut self) {
             let was = self.0.take().flatten();
-            let _ = RUN.try_with(|r| *r.borrow_mut() = was);
+            // The run that leaves, dropped here: if it was the last holder, the run has ended.
+            let left = RUN.try_with(|r| r.replace(was)).ok().flatten();
+            drop(left);
+            left_run();
         }
     }
     Back(Some(RUN.try_with(|r| r.replace(run)).ok().flatten()))
+}
+
+/// A run has left this thread (a guard that put it there dropped, `RUN` back as it was): if it has ended (nothing
+/// holds it), this thread's copy of its values (`SEEN`) is dropped now, outside the copy's borrow (a value's drop may
+/// read a run). Kept, they would live until the thread next enters a run or exits, where a value's drop can find the
+/// thread's other locals gone.
+pub fn left_run() {
+    let dead = SEEN
+        .try_with(|seen| {
+            let mut seen = seen.borrow_mut();
+            seen.run.as_ref().is_some_and(|w| w.strong_count() == 0).then(|| std::mem::take(&mut *seen))
+        })
+        .ok()
+        .flatten();
+    drop(dead);
+}
+
+/// The run under way on this thread has ended (its outermost scope, on its own thread): this thread's copy of its
+/// values (`SEEN`) is dropped now (`left_run`).
+pub fn run_ended() {
+    let held = SEEN.try_with(|seen| std::mem::take(&mut *seen.borrow_mut())).ok();
+    drop(held);
 }
 
 /// Puts a run of its own on this thread, on `shared`, until the guard drops: for a thread that outlives the run that
@@ -237,6 +316,29 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
 /// no run alive.
 pub fn within(shared: std::sync::Arc<Shared>) -> impl Drop {
     enter(Some(std::sync::Arc::new(Bare(RunValues::default(), shared))))
+}
+
+/// The run a job of this thread's runs in, on whichever thread takes it (`enter` there): the run under way, else a run
+/// of its own on this thread's object (`shared_here`: on a test's thread, the tests' one). A job runs as its caller
+/// does (decision 0442), whether or not the caller holds a run.
+pub fn job_run() -> Option<std::sync::Arc<dyn RunOwn>> {
+    Some(run_own().unwrap_or_else(|| std::sync::Arc::new(Bare(RunValues::default(), shared_here()))))
+}
+
+/// What a thread holds for its caller (`caller`): `job_run`'s run.
+#[derive(Clone)]
+pub struct Caller(Option<std::sync::Arc<dyn RunOwn>>);
+
+/// What this thread holds, for a thread it starts (`Caller::enter` there): `job_run`.
+pub fn caller() -> Caller {
+    Caller(job_run())
+}
+
+impl Caller {
+    /// Puts the caller's run on this thread until the guard drops.
+    pub fn enter(&self) -> impl Drop {
+        enter(self.0.clone())
+    }
 }
 
 /// A run with nothing of its own but its values and its shared object (`within`, `test_run`).
@@ -313,6 +415,11 @@ pub fn local<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
 #[cold]
 fn local_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
     let Some(run) = run_own() else {
+        // A test's own thread takes a value of its own, as a caller with no run does (`outside_a_run`).
+        #[cfg(feature = "test-hooks")]
+        if on_a_tests_thread() {
+            return std::sync::Arc::new(T::default());
+        }
         missed(std::any::type_name::<T>());
         return std::sync::Arc::new(T::default());
     };

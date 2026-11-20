@@ -88,7 +88,7 @@ by any caller in the process, so two callers of different trust could not be kep
     crate. A run handed none has one of its own, as apart from every other run as one in another process (the store
     is already safe across processes: its lease).
   - The CLI's command makes one (`tools::cli`), the reactor one per instance, its one caller. A caller of
-    `tools::cli_in` passes its own. Node's entry points have none yet: each run they start has its own.
+    `tools::cli_in` passes its own. Node's entry points had none at first; they have one now (the Node host, below).
   - Outside a run, `shared::<T>()` gives a value nothing keeps. That is wrong for an interner or a per-file registry,
     whose ids must agree wherever they are read, so those move only once every reader is inside a run or holds the
     object (each group's move says which).
@@ -127,8 +127,8 @@ by any caller in the process, so two callers of different trust could not be kep
     data, and each workspace it makes is on a `Shared` of its own on that machine, so an environment's workspaces
     share one pool, one CPU slot and one learned model. A worker thread's environment has its own. A Rust caller with
     no environment (`CodeRuleDslWorkspace::new`) takes `default_shared`.
-  - The strict run (`RERAIL_STRICT_RUN=1`) logs each read outside any run once, by type, with its backtrace, to the
-    engine's stderr. The B-now policy run (corpus0) logs none, with its 463 findings unchanged (2026-11-19: a Linux
+  - The strict run (`RERAIL_STRICT_RUN=1`, now every product run: the refusal below) logs each read outside any run
+    once, by type, with its backtrace, to the engine's stderr. The B-now policy run (corpus0) logs none, with its 463 findings unchanged (2026-11-19: a Linux
     profiling build, and the Metal path on an M3 Max). On Metal the last were a pooled device buffer's return,
     dropped outside any run: a lease keeps its machine's device memory and budgets, and its return trims the pool to
     those (`gpu::shared::Pooled`). The other last reads were the ones on threads that took a job
@@ -136,8 +136,24 @@ by any caller in the process, so two callers of different trust could not be kep
     cores' launches (`exec`'s pool threads), the keeps' per-relation pricing (`plan::keeps`, a `par_iter`), and the
     services' list of a service started outside any run (the signal watcher, which is now listed in no machine).
 - Step 5, the departures:
-  - A read outside any run is not refused, as Decision 2 says. In a product build it takes an object of its own that
-    nothing keeps; in a test build, the tests' one. The strict run names each such read.
+  - A read outside any run was not refused at first (2026-11-19, before the strict runs below). It is now
+    (2026-11-19, after them), as Decision 2 says, by build:
+    - **A product build:** the read takes a value of its own, which reaches nothing of any caller's and which nothing
+      keeps, and is said once a type on stderr with its backtrace. The command fails at its end (`tools::cli`,
+      exit 3), its output written, as a run cut at the width cap does. These readers return values, not results, so
+      the refusal is the command's.
+    - **A test build (`test-hooks`):** the read panics on a thread the engine made (its pools' workers, the cost
+      model's pool, `exec`'s services: each marks itself, `rerail_context::engine_thread`), where a miss is a job or
+      service that lost its caller. On any other thread the reader is a test calling the engine's parts directly, a
+      caller with no entry point, and its object is the tests' one (`TESTS`; a thread value is a fresh default).
+      The first quick tier with a blanket panic failed 2,361 tests, nearly all a test's own reads; the rest were on
+      threads the tests started (each now holds its starter's object or run: `profile::caller`) and on the engine's
+      pools, where a job of a caller with no run carried none, or a parallel loop carried nothing (the demand
+      walks and workspace sizes, the GPU's prewarm: each now carries its caller).
+    - **A run that has ended leaves no values behind** on a thread that ran a part of it: a thread's copy of a run's
+      values (`SEEN`) is dropped when the run leaves the thread and nothing holds it (`left_run`, `run_ended`), not
+      when the thread next enters a run or exits. Kept, a finished run's values (its device leases, its blocks) were
+      pinned on an idle pool thread until it ran another run's job.
   - The CPU job pool is rayon's global pool, the process's. A job carries its caller's run and object, so nothing
     crosses between callers through it, but two machines in one process share its threads. So the threads' CPU
     accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) stay with the threads, the process's, and do not move into

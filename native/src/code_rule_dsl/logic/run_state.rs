@@ -153,6 +153,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/profile.rs", "ON", Carried, "whether the caller's runs are profiled (decision 0442)"),
     ("src/code_rule_dsl/logic/profile.rs", "DIR", Carried, "where the caller's next profile is written (decision 0442)"),
     ("src/code_rule_dsl/logic/profile.rs", "COMMAND", Outermost, "the command's clocks, on the thread that runs it and its outermost run"),
+    ("crates/context/src/lib.rs", "ENGINE", Thread, "whether the engine made this thread (test builds: a read outside any run on it is refused, decision 0442)"),
     ("crates/context/src/lib.rs", "SEEN", Thread, "this thread's copy of the settings its run under way read, held with that run (decision 0442)"),
     ("src/code_rule_dsl/logic/profile.rs", "WARM_SCOPE", Thread, "the warm check's mark of the transaction a store writer has open on this thread; its commit hook runs on it"),
     ("src/code_rule_dsl/logic/rr.rs", "READS", Call, "the libraries read while `recording` runs; a job records its own and hands them back (`rr::recorded_on_worker`)"),

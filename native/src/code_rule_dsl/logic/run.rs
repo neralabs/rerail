@@ -74,8 +74,9 @@ pub struct Record {
 
 /// Carries the run to a job on another thread (`run_state`). Its thread-local is `profile::RUN`, so the crates below
 /// this one reach it (`profile::RunOwn`).
+/// A caller with no run (a test's thread) hands its jobs a run of its own on its object (`profile::job_run`).
 pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
-    c.cloned(&["RUN"], &super::profile::RUN);
+    c.part(&["RUN"], super::run_state::Shared(super::profile::job_run(), super::profile::enter));
 }
 
 /// The run under way on this thread, if one holds a scope.
@@ -129,6 +130,7 @@ impl Drop for Scope {
             self.run.ended.store(true, Relaxed);
             let was = self.was.take();
             super::profile::RUN.with(|r| *r.borrow_mut() = was);
+            super::profile::run_ended();
         }
     }
 }

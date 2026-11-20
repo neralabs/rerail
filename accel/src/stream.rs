@@ -144,7 +144,7 @@ impl<'s> Stream<'s, '_> {
             *to.lock().unwrap_or_else(|p| p.into_inner()) = Some(r);
         });
         let ticket = st.board.queue(Lane::Cpu, vec![Item { form: st.name, units: 0.0, estimate, host: estimate }]);
-        st.queue.lock().unwrap_or_else(|p| p.into_inner()).push(Queued { id, estimate, rank, job, ticket, run: rerail_context::run_own() });
+        st.queue.lock().unwrap_or_else(|p| p.into_inner()).push(Queued { id, estimate, rank, job, ticket, run: rerail_context::job_run() });
         self.start_workers();
         Handle { id, slot }
     }
