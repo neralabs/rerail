@@ -729,12 +729,14 @@ describe("a walk of the other worktrees with change notices", () => {
     stats.length = 0;
     await turn(watching);
     expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([0, 0, 3]);
+    // The count starts before the write, while no walk runs and no notice waits: a walk the notice pump begins for the
+    // write reads `w2` whole inside the count, never partly before it. An ended watch has `w2` read whole on every walk
+    // until it is watched again, so a walk the pump asks for on a loaded machine reads it once more; the other
+    // worktrees stay unread.
+    stats.length = 0;
     await writeFile(join(worktrees[1]!, "src", "a.py"), "old\nmine\n");
     watch.end(worktrees[1]!);
-    stats.length = 0;
     await turn(watching);
-    // An ended watch has `w2` read whole on every walk until it is watched again, so a walk the notice pump asks for
-    // on a loaded machine reads it once more; the other worktrees stay unread.
     const [mainStats, w2Stats, w3Stats] = statsUnder(main, worktrees[1]!, worktrees[2]!);
     expect({ mainStats, w3Stats, w2ReadWhole: w2Stats! >= 3 && w2Stats! % 3 === 0 }).toEqual({ mainStats: 0, w3Stats: 0, w2ReadWhole: true });
     expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"], [["written ../w2/src/a.py"], "log"]]);
