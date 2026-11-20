@@ -3235,6 +3235,28 @@ Call(c) :- kind(c, "call").
     ], "{outcome:?}");
 }
 
+/// A file the report is given by name is read, tests or none: one that is not there, or that does not parse, is an
+/// error. The files a directory holds are read only when they may hold a test, so a directory's other files pass unread.
+#[test]
+fn a_named_rule_file_is_read_with_or_without_tests() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-named");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (missing, junk, rule) = (dir.join("missing.rerail"), dir.join("junk.rerail"), dir.join("rule.rerail"));
+    std::fs::write(&junk, "garbage here (\n").unwrap();
+    std::fs::write(&rule, ".decl r(x: symbol)\nr(\"a\").\n").unwrap();
+    let missing_report = super::testing::report(std::slice::from_ref(&missing), None);
+    let junk_report = super::testing::report(std::slice::from_ref(&junk), None);
+    let rule_rows = super::testing::report(std::slice::from_ref(&rule), None);
+    let walked = super::testing::report(std::slice::from_ref(&dir), None);
+    let _ = std::fs::remove_dir_all(&dir);
+    let missing_error = missing_report.unwrap_err();
+    let junk_error = junk_report.unwrap_err();
+    assert!(missing_error.contains("missing.rerail"), "{missing_error}");
+    assert!(junk_error.contains("junk.rerail"), "{junk_error}");
+    assert_eq!(rule_rows, Ok(serde_json::json!([])));
+    assert_eq!(walked, Ok(serde_json::json!([])));
+}
+
 /// A file's tests run again add no corpus root to the store: each test runs in the same directory every run
 /// (`testing::in_work`), so the store's root for it, and the frames kept by its path, are the last run's. A directory
 /// of each run's own made the store a root and its frames more on every run of the same tests.
