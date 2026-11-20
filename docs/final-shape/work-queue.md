@@ -7359,7 +7359,7 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   count into `used` and the plan bound reads the ledger, so the batch is split before it runs.
 - **Done when**: both cases are equal on Metal, and the retry loop's plan bound is the ledger's.
 
-### Q337. (Q262 on Native-GPU-strata) On Metal a hogql run can lose a whole chunk's findings — one cause fixed (a freeze's pages); format 16 open
+### Q337. (Q262 on Native-GPU-strata) On Metal a hogql run can lose a whole chunk's findings — done (a freeze's pages; then 20 of 20 at format 16 under the ledger)
 
 - **Seen** (2026-11-19, decision 0478 5b-5e): a cold hogql run under the Metal binding, profiling build, format 15,
   sometimes gives fewer than its 1,629 findings (1,358, 1,375 and 1,487 seen), with no error and exit 0. The files
@@ -7414,6 +7414,21 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   differ, the device read stale bytes; if they agree, the index build read them early.
 - **Also seen:** `bound_in` gives 60,278-60,281 rows between good runs (the findings the same): a smaller
   nondeterminism, not looked into.
+- **Measured under the ledger** (2026-11-20, after Q378 and 0491 steps 2-5: every lease and bound block is held
+  until its command buffer completes, and the GPU's queued uses are checked by the CPU's writers): format 16 (the
+  default), profiling build, an M-series Mac at load 20-57, 20 cold runs of hogql: 1,629 findings each, 91-97 B
+  instructions. Not shown: that these runs made the `line` view on the device (the trace patch was not applied), so
+  the made view's own cause is closed by these runs, not by a run caught failing. Each run printed at most a few
+  device budget refusals ("a lease past the Metal budget of 512 MB"), which go to the CPU (`BackendFailure`).
+  The probe now includes `python/names.rerail` (the rule files were renamed); its rules changed with #898 (sym_of
+  names an attribute of a class of the run), so the instruction counts are not comparable with the 75-78 B above.
+- **Two crashes found on the way, fixed:**
+  - With `RERAIL_PROFILE` set, `look_up`'s stat and read loops opened profile spans on pool threads that held no
+    run (decision 0442's check aborts there). Each item now enters the run (`run_state::Carry`).
+  - 1 run in 20 aborted: the cores' launch job dropped its captured `Claims` (the batch's kernels, their columns
+    and device leases) after its run's guard. A lease going back to its pool read the Metal runtime's ledger
+    outside any run, under the pool's lock: a panic, the lock poisoned, an abort. `rerail_context::in_run` runs a
+    job and ends its captures inside the run (`a_jobs_captures_are_dropped_inside_its_run`).
 
 ### Q378. (Q264 on Native-GPU-strata) One ledger owns a block's memory, for the CPU and the GPU (decision 0487) — steps 1-2 built
 
@@ -7434,12 +7449,30 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (nothing to move: a `Part` is the handle), the device's buffers (done: every pooled lease is held by
   the ledger, `Tracked`; every bind, library calls too, is held by its pass; `Batch`'s lists are gone); the block
   itself as the root region, binds pinned by the kernels' declared access, and memory domains (0491 steps 3 to 5,
-  done 2026-11-20). Left: a pooled lease as a region of a slab block (0491 step 3 says why it waits). Seen on the way, outside this change (the JIT's compile, which it does not touch):
-  `regex_block::tests::a_patterns_block_program_runs_alike_on_every_executor` fails, the CPU JIT refusing a shape
-  ("region 0's value %87 on the vectors made outside its branch", decision 0423). And on a Linux host with a CUDA
-  device (a Spark, 2026-11-20), 9 of accel's 124 tests fail: 8 ask for a macOS backend ("this machine has a Metal
-  device", "no device") and `an_exact_device_block_in_a_joins_budget_is_its_size` expects no device block. They came
-  with the CUDA merge and do not reach the ledger.
+  done 2026-11-20). Left: a pooled lease as a region of a slab block (0491 step 3 says why it waits).
+- **Fixed on the way** (2026-11-20, failures that came with the hub merge):
+  - `regex_block::tests::a_patterns_block_program_runs_alike_on_every_executor`: the CPU JIT refused its own output
+    ("region 0's value %87 on the vectors made outside its branch", decision 0423). The ASCII split
+    (`ascii_split`) kept gated regions' members out of the values it makes behind its branch, but not their values
+    on the vectors (`Region::vectors`). So a value on the vectors only region 0 reads was made on every non-ASCII
+    block (33 instructions, in `[\p{Alphabetic}\p{N}]+`'s program), left the split as a word nothing read, and was
+    made again in the region's branch. Now the split takes neither.
+  - `a_copy_of_an_inputs_columns_is_a_view_of_it` read the plan's counts outside a run, where 0442 batch 1 made them
+    a run's: it now holds a run that the corpus runs join, as the policy-run test does.
+  - `every_switch_lowering_reads_is_classified` ended its region of `corpus.rs` at `merge_and_drop_repeats`, which
+    #508 removed; it now ends at the runner's `GIVEN`.
+- **Seen, not fixed (not this branch's):**
+  - `a_partial_hit_makes_only_the_guests_its_cone_can_see` (Q77, done before) fails: an edit of `ids` does not see
+    the annotations' identifiers (`Bar`). It fails without this branch's corpus change too, so it came in with
+    the hub.
+  - `programs_hidden_alone_keep_their_attribute_copies_declared` reads the data-layer pack's rule files, which
+    are not in git (`npm run fixtures:pull`).
+  - `scm_quantified_runs_preserve_each_distinct_middle_capture` bounds the JIT's run at 2 s of wall time. In a test
+    build it takes 0.94-1.17 s, with this branch's JIT change or without it, against 77-96 ms for the interpreter,
+    so it fails at load 40 and over. The JIT being slower than the interpreter is a finding of its own. The Linux failures of accel's
+  tests (they came with the CUDA merge) are fixed: two device-block tests were gated on macOS where the pool is the
+  GPU lane's (CUDA's too), and the GPU tests failed on a host whose device was absent; off macOS they now skip
+  without one, as the blocks tests do (64 of 64 on a Linux host with a device and on one without).
 
 ### Q338. (Q263 on Native-GPU-strata) A relation's statistics kept by delta are on the heap (0478 R5) — done (0478 step 6f)
 

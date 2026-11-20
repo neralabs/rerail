@@ -1143,6 +1143,8 @@ fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
 #[test]
 fn a_copy_of_an_inputs_columns_is_a_view_of_it() {
     let dir = corpus("input-view", &[TREE]);
+    // The counts are a run's (decision 0442): read in a run the test holds, which the corpus runs join.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let program = ".decl kind(n: node, k: symbol)\nkind(n, k) :- node(_, n, k, _, _).\n\
                    .decl kinds(k: symbol)\nkinds(k) :- node(_, _, k, _, _).\n\
                    .decl calls(s: number, k: symbol)\ncalls(s, k) :- kind(n, \"call\"), node(_, n, _, s, _), kinds(k), k = \"call\".\n\
