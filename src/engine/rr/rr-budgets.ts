@@ -65,7 +65,7 @@ const RR_STORE = "RERAIL_RR_STORE";
 export function rrBudgets(deadlineMs?: number, environment: NodeJS.ProcessEnv = process.env): RrBudgets {
   const memoryMb = positive(environment, "RERAIL_RR_MEMORY_MB");
   return {
-    deadlineMs: positive(environment, "RERAIL_RR_DEADLINE_MS") ?? deadlineMs ?? DEADLINE_MS,
+    deadlineMs: positive(environment, "RERAIL_RR_DEADLINE_MS") ?? Math.min(deadlineMs ?? DEADLINE_MS, MAX_OVERRIDE),
     threads: positive(environment, "RERAIL_RR_THREADS") ?? defaultThreads(),
     memoryBytes: memoryMb === undefined ? defaultMemoryBytes() : memoryMb * 1024 ** 2,
     store: keepsStore(environment),
@@ -80,11 +80,16 @@ function keepsStore(environment: NodeJS.ProcessEnv): boolean {
   throw new Error(`${RR_STORE} is ${JSON.stringify(text)}: it takes "off" or "checkout"`);
 }
 
-/** The positive integer `name` holds, or undefined when it is unset. */
+/** The largest value an override takes: Node runs a timer set for longer at once, so a deadline past it would end every run. */
+const MAX_OVERRIDE = 2_147_483_647;
+
+/** The whole number from 1 to `MAX_OVERRIDE` that `name` holds, or undefined when it is unset. */
 function positive(environment: NodeJS.ProcessEnv, name: string): number | undefined {
   const text = environment[name];
   if (text === undefined || text === "") return undefined;
   const value = Number(text);
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} is ${JSON.stringify(text)}: it takes a positive whole number`);
+  if (!Number.isInteger(value) || value <= 0 || value > MAX_OVERRIDE) {
+    throw new Error(`${name} is ${JSON.stringify(text)}: it takes a whole number from 1 to ${MAX_OVERRIDE}`);
+  }
   return value;
 }

@@ -370,17 +370,26 @@ impl<'p> TextReads<'p> {
     }
 
     /// The text past the inline bound that `text` of `v` reads. None for a negation of a constant within the bound: a
-    /// longer text is not that constant, row or no row. `v`'s kinds where they are `fixed`; none for a token's text, a
-    /// constant within the bound, or a rule whose twin reads `v`'s; else every node's: positive, by a twin (`any`),
-    /// negated, made at any length (`negated_any`), since a twin cannot stand in for a negation.
+    /// longer text is not that constant, row or no row. `v`'s kinds where they are `fixed`; else `long_unfixed`'s.
     fn long(&self, d: &mut TextDemand, at: (usize, usize), rule: &Rule, v: &str, fixed: Option<BTreeSet<String>>, text: &Atom) {
         match fixed {
             _ if text.neg && short_constant(text) => {}
             Some(k) => d.long.extend(k),
-            None if self.within_bound(&rule.body, v, text) => {}
-            None if text.neg => d.negated_any += 1,
-            None if self.twinned(rule.head.rel.as_str(), v) => {}
-            None => d.any.push(at),
+            None => self.long_unfixed(d, at, rule, v, text),
+        }
+    }
+
+    /// `long` of a node whose kinds no body fixes: none for a token's text, a constant within the bound, or a rule
+    /// whose twin reads `v`'s; else every node's: positive, by a twin (`any`), negated, made at any length
+    /// (`negated_any`), since a twin cannot stand in for a negation.
+    fn long_unfixed(&self, d: &mut TextDemand, at: (usize, usize), rule: &Rule, v: &str, text: &Atom) {
+        if self.within_bound(&rule.body, v, text) {
+            return;
+        }
+        if text.neg {
+            d.negated_any += 1;
+        } else if !self.twinned(rule.head.rel.as_str(), v) {
+            d.any.push(at);
         }
     }
 

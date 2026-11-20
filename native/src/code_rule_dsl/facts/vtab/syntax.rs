@@ -33,7 +33,7 @@ use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
 use crate::code_rule_dsl::logic::front::ast::Value;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock};
 use cells::{Block, Cells};
 
@@ -283,7 +283,7 @@ impl TextNodes {
 /// What the rules read of `text` (`text_kind_demand`).
 pub struct TextDemand {
     /// The kinds whose text is read at any length.
-    long: BTreeSet<String>,
+    pub long: BTreeSet<String>,
     /// The positive text atoms (rule, body position) of a node of any kind, no twin reading its long text.
     pub any: Vec<(usize, usize)>,
     /// The negated text atoms of a node of any kind that is not compared with a constant within the bound: no twin
@@ -1446,6 +1446,11 @@ pub struct Locs {
 }
 
 impl Locs {
+    /// The document's lines as its run counts them: by its family's terminators (`core_rr::Lines`), as `line`,
+    /// `end_line` and `col` read them.
+    pub fn lines(&self) -> &core_rr::Lines {
+        &self.lines
+    }
     /// The document's spans past its nodes: its tokens, then (its own text) the whole source and each line.
     fn positions(&self) -> u32 { self.ends_from() + self.ends }
     /// The first end point's position: past the tokens, the whole source and the lines.

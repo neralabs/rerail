@@ -15,11 +15,10 @@ use crate::code_rule_dsl::lines::Span;
 use std::path::Path;
 use std::sync::Arc;
 
-/// A file's tree as a run projects it, and its lines as the run counts them.
+/// A file's tree as a run projects it, with its lines as the run counts them (the projection's own).
 pub struct FileSpans {
     facts: Arc<Facts>,
     projected: Projected,
-    lines: Lines,
     /// Whether the tree has errors: a run may withhold such a file's tree, and with it its token positions.
     errors: bool,
 }
@@ -29,7 +28,6 @@ impl FileSpans {
     /// no grammar of its own); `None` where it cannot be read.
     pub fn read(root: &Path, path: &str, label: Option<&str>) -> Option<FileSpans> {
         let source = Arc::new(std::fs::read_to_string(root.join(path)).ok()?);
-        let lines = Lines::new(&source, label == Some("python"));
         let parsed = label.and_then(|label| parse(label, &source));
         let (facts, dialect) = match parsed {
             Some((facts, dialect)) => (facts, Some(dialect)),
@@ -41,13 +39,18 @@ impl FileSpans {
             extra.ends = projected.core.len() as u32;
         }
         let errors = !facts.errors().is_empty();
-        Some(FileSpans { facts, projected, lines, errors })
+        Some(FileSpans { facts, projected, errors })
     }
 
     /// The span of the finding at line `line` (1-based; 0 for the file as a whole) whose `at` is the file's node or
     /// position `node` (`doc << 32 | low`), or no node of the file.
     pub fn span(&self, node: Option<i64>, line: i64) -> Option<Span> {
         node.and_then(|value| self.at((value & 0xffff_ffff) as u32, line)).or_else(|| self.line(line))
+    }
+
+    /// The file's lines as the run counts them: the projection's (`Shape::Core` always has them).
+    fn lines(&self) -> Option<&Lines> {
+        self.projected.extra.as_ref().map(|extra| extra.lines())
     }
 
     /// Node or position `low`'s span, where it starts on line `line`.
@@ -58,14 +61,15 @@ impl FileSpans {
             return None;
         }
         let [start, end] = p.span(local);
-        (i64::from(self.lines.line(start)) == line).then(|| self.facts.lines.span(start as usize, end as usize))
+        (i64::from(self.lines()?.line(start)) == line).then(|| self.facts.lines.span(start as usize, end as usize))
     }
 
     /// Line `line`'s text, before its terminator; the file's start for line 0.
     fn line(&self, line: i64) -> Option<Span> {
+        let lines = self.lines()?;
         let [start, end] = match usize::try_from(line) {
             Ok(0) => [0, 0],
-            Ok(l) if l <= self.lines.count() => self.lines.span(l),
+            Ok(l) if l <= lines.count() => lines.span(l),
             _ => return None,
         };
         Some(self.facts.lines.span(start as usize, end as usize))

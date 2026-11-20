@@ -21,24 +21,6 @@ pub fn configure(this_thread: bool) {
     rerail_accel::exec::configure(this_thread);
 }
 
-/// Whether this is the process's main thread.
-pub fn is_main_thread() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: no arguments.
-        unsafe { libc::pthread_main_np() == 1 }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
-        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        false
-    }
-}
-
 /// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
 /// handed the scope again, to start more.
 pub struct Jobs<'s, 'r>(
@@ -98,17 +80,27 @@ pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
     rayon::spawn(move || drop(value));
 }
 
-/// Starts `f` beside the caller ([`Beside`]).
+/// Starts `f` beside the caller ([`Beside`]), on a stack the size of a pool thread's.
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
+    beside_on(name, rerail_accel::exec::POOL_STACK, f)
+}
+
+/// [`beside`], on a thread with `stack` bytes of stack. A thread that cannot be started is the job's result, an `Err`
+/// that names it, so [`Beside::join`] reports it: nothing else would ever end its wait. It is not run on the caller's
+/// thread instead: it waits for the caller, so there it would never end.
+fn beside_on<T: Send + 'static>(name: &'static str, stack: usize, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     let slot = std::sync::Arc::new(parking_lot::Mutex::new(None));
     let held = std::sync::Arc::clone(&slot);
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-    let _ = rerail_accel::exec::service(name, Some(rerail_accel::exec::POOL_STACK), move || {
+    let started = rerail_accel::exec::service(name, Some(stack), move || {
         let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
         *held.lock() = Some(r);
     });
+    if let Err(e) = started {
+        *slot.lock() = Some(Err(Box::new(format!("cannot start {name}: {e}"))));
+    }
     Beside { name, slot }
 }
 
@@ -172,5 +164,15 @@ pub mod tests {
             answer.send(i * 2).unwrap();
         }
         assert_eq!(job.join().unwrap(), (0..20).map(|i| i * 2).sum::<u32>());
+    }
+
+    /// A job whose thread cannot be started (a stack larger than the address space) ends at once, as an `Err` that
+    /// names it: its caller's wait for it ends.
+    #[test]
+    fn a_job_beside_that_cannot_start_is_an_error() {
+        let job = super::beside_on("a test's unstartable job", 1 << 60, || ());
+        assert!(job.slot.lock().is_some(), "the failed start is the job's result");
+        let e = job.join().expect_err("a job that never started");
+        assert!(e.downcast_ref::<String>().is_some_and(|m| m.starts_with("cannot start a test's unstartable job: ")));
     }
 }

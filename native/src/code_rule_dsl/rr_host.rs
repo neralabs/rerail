@@ -6,6 +6,8 @@ mod describe;
 mod findings;
 mod run;
 mod spans;
+#[cfg(test)]
+mod tests;
 
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::json::{invalid, json_error};
