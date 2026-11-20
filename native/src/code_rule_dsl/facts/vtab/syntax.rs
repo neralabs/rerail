@@ -4509,7 +4509,12 @@ impl Grower {
             let mut out: Vec<(String, Arc<dyn Source>)> = made_sources(&batch).into_iter().map(|(name, _, source)| (name.to_owned(), source)).collect();
             // The text tests' relations (decision 0037): each a test of a string, which a probe asks of the probed
             // strings and a scan of the batch's (decision 0494), each string tested once a run.
-            let tested: Vec<Arc<made::TextTest>> = (0..tests.tests.len()).map(|k| Arc::new(made::TextTest::new(&batch, k, tests, store.atoms_handle(), self.tested.get(k).map(|t| &**t)))).collect();
+            let answers = match self.tested.first() {
+                Some(t) if t.tested().of(tests) => Arc::clone(t.tested()),
+                _ => Arc::new(made::Tested::new(tests, store.atoms_handle())),
+            };
+            let scanned = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let tested: Vec<Arc<made::TextTest>> = (0..tests.tests.len()).map(|k| Arc::new(made::TextTest::new(&batch, k, &answers, &scanned))).collect();
             out.extend(tests.tests.iter().zip(&tested).map(|((name, _), t)| (name.clone(), Arc::clone(t) as Arc<dyn Source>)));
             self.tested = tested;
             return Ok((out, batch));

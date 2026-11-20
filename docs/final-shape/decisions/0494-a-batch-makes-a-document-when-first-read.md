@@ -147,4 +147,21 @@ Each has its test before the code that meets it.
    - the store's places of every object held in memory (a read of every place each process start, for this one
      reader);
    - the read as work behind the run, through 0298 §5's exception (a second exception to 0104).
-5. Measured. R7.
+5. Measured. R7. Done (2026-11-20), on this Mac (M5 Max), the CPU only (no Metal, `RERAIL_METAL_MAINTENANCE=off`), the
+   57 data-layer rule files over the 50 files, against 0458's binary (4289403855) on the same inputs that day:
+   - 589 outputs equal across the cold run, the edit, the warm run after it and the edited tree's cold run; 48
+     findings, 0458's.
+   - The run first stopped twice: the gate refused an aggregate inside the parse demand's component (gated per key
+     now, the user's choice: decision 0065 §2a, Q388), and a key of no columns (`Key([])`, 0361 step 6).
+   - A cold run first took 378 G instructions, 28.6 s CPU, to 0458's 213.6 G, 18.9 s: each of the 301 text tests
+     ran every test over each chunk's strings and kept its own (`TextTest::whole`, step 2's). Now each string is
+     tested once against every test (`made::Tested`): 208.3 G (232.1 G repeated), 20.2 s CPU; 826 MB at most to
+     0458's 743 MB.
+   - The edit: 45.0 G to 0458's 35.2 G, but 3.64 s CPU to 3.59 s. Instructions and CPU part here: retired
+     instructions vary by ~10% between runs of one binary, the pool's waits among them, so the CPU is what
+     compares.
+   Still above 0458, open: a cold run's +1.3 s CPU (the local part's `document rows / digests` under each chunk's
+   measure, 0.21 s; the text tests and the transducer's matchers under it, 0.36 s; joins, +0.84 s); its 83 MB more
+   at most; the edit's 0.21 s of well-founded proofs over the whole program for the measures' keys (0364 R6, not in
+   0458: the cross part's own proofs find no key, so they are not the same). The prepare span is split so these
+   show (`the measures' keys`, `the memo's program and digests`, …).

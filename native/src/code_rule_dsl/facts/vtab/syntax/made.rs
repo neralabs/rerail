@@ -933,64 +933,107 @@ impl Source for MadeRows {
 }
 
 /// A text test's relation (decision 0037) over a batch (decision 0494): a test of a string. A probe tests the probed
-/// strings (each once a run, `Vocabulary::rows`); a scan lists the batch's strings that pass, every document made.
-/// Nothing of it changes with an edit. In a batch whose documents are made by probes (`Batch::lazy`) a join probes it.
+/// strings and a scan the batch's strings, every document made; each string is tested once a run, against every test
+/// at once (`Tested`). Nothing of it changes with an edit. In a batch whose documents are made by probes
+/// (`Batch::lazy`) a join probes it.
 pub(super) struct TextTest {
     batch: Arc<Batch>,
     k: usize,
-    tests: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
-    atoms: Arc<crate::content_store::atoms::Atoms>,
-    /// The strings probed: shared with the text test of the batch it grows into (decision 0431 §6), so that each
-    /// string is tested once a run.
-    probed: Arc<parking_lot::Mutex<Probed>>,
+    tested: Arc<Tested>,
+    /// Whether a scan has tested the batch's strings: shared by the batch's tests, so it is scanned once for them all.
+    scanned: Arc<std::sync::atomic::AtomicBool>,
     /// Every string of the batch that passes, the probed first (their rows kept): made by the first scan.
     whole: OnceLock<Relation>,
 }
 
-/// A text test's probes: the strings that passed, in row order, each one's row, and every string tested.
+/// The text tests' answers over a run's strings (decision 0037): shared by every test of a batch and of the batches
+/// it grows into (decision 0431 §6). A string probed or scanned is tested against every test at once
+/// (`Vocabulary::rows`), and each test's passing strings kept in its own rows.
+pub(super) struct Tested {
+    tests: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
+    atoms: Arc<crate::content_store::atoms::Atoms>,
+    state: parking_lot::Mutex<TestedState>,
+}
+
+/// Every string tested, and each test's passing strings in row order with each one's row.
+struct TestedState {
+    tested: HashSet<i64>,
+    passed: Vec<Passed>,
+}
+
 #[derive(Default)]
-struct Probed {
+struct Passed {
     rows: Vec<i64>,
     at: HashMap<i64, usize>,
-    tested: HashSet<i64>,
+}
+
+impl Tested {
+    pub(super) fn new(tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>, atoms: Arc<crate::content_store::atoms::Atoms>) -> Self {
+        let passed = (0..tests.tests.len()).map(|_| Passed::default()).collect();
+        Self { tests: Arc::clone(tests), atoms, state: parking_lot::Mutex::new(TestedState { tested: HashSet::new(), passed }) }
+    }
+    /// Whether these are the answers of `tests`.
+    pub(super) fn of(&self, tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>) -> bool {
+        Arc::ptr_eq(&self.tests, tests)
+    }
+    /// Test the strings not tested yet against every test, outside the lock, and keep each test's passing ones.
+    fn test(&self, strings: Vec<String>, symbols: Vec<u32>) {
+        let (strings, symbols): (Vec<String>, Vec<u32>) = {
+            let s = self.state.lock();
+            strings.into_iter().zip(symbols).filter(|(_, sym)| !s.tested.contains(&i64::from(*sym))).unzip()
+        };
+        if strings.is_empty() {
+            return;
+        }
+        let passing = self.tests.rows(&strings, &symbols);
+        let mut s = self.state.lock();
+        s.tested.extend(symbols.iter().map(|&sym| i64::from(sym)));
+        for (p, rows) in s.passed.iter_mut().zip(passing) {
+            for v in rows {
+                if !p.at.contains_key(&v) {
+                    p.at.insert(v, p.rows.len());
+                    p.rows.push(v);
+                }
+            }
+        }
+    }
+    /// Scan `batch`'s strings, every document made, unless `scanned` says a scan has.
+    fn scan(&self, batch: &Batch, scanned: &std::sync::atomic::AtomicBool) {
+        if scanned.load(Ordering::Acquire) {
+            return;
+        }
+        let (strings, symbols) = batch.vocabulary();
+        self.test(strings, symbols);
+        scanned.store(true, Ordering::Release);
+    }
 }
 
 impl TextTest {
-    /// Test `k` of `tests` over `batch`; `prior`: the same test of the batch it grew from, whose probes it keeps.
-    pub(super) fn new(batch: &Arc<Batch>, k: usize, tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>, atoms: Arc<crate::content_store::atoms::Atoms>, prior: Option<&TextTest>) -> Self {
-        let probed = prior.map_or_else(Default::default, |p| Arc::clone(&p.probed));
-        Self { batch: Arc::clone(batch), k, tests: Arc::clone(tests), atoms, probed, whole: OnceLock::new() }
+    /// Test `k` of `tested`'s tests over `batch`; `scanned`, the batch's tests' one flag.
+    pub(super) fn new(batch: &Arc<Batch>, k: usize, tested: &Arc<Tested>, scanned: &Arc<std::sync::atomic::AtomicBool>) -> Self {
+        Self { batch: Arc::clone(batch), k, tested: Arc::clone(tested), scanned: Arc::clone(scanned), whole: OnceLock::new() }
+    }
+    /// The answers it shares.
+    pub(super) fn tested(&self) -> &Arc<Tested> {
+        &self.tested
     }
     /// The batch's passing strings, made outside the cell (they make documents on the pool, decision 0494's
-    /// `ensure`), then kept: those a probe or an earlier batch's scan tested as tested then, the others tested now.
+    /// `ensure`), then kept.
     fn whole(&self) -> &Relation {
         if let Some(w) = self.whole.get() {
             return w;
         }
-        let (strings, symbols) = self.batch.vocabulary();
-        let untested: (Vec<String>, Vec<u32>) = {
-            let probed = self.probed.lock();
-            strings.into_iter().zip(symbols).filter(|(_, sym)| !probed.tested.contains(&i64::from(*sym))).unzip()
-        };
-        let passing = if untested.0.is_empty() { Vec::new() } else { self.tests.rows(&untested.0, &untested.1).swap_remove(self.k) };
-        let mut probed = self.probed.lock();
-        probed.tested.extend(untested.1.iter().map(|&sym| i64::from(sym)));
-        for s in passing {
-            if !probed.at.contains_key(&s) {
-                let row = probed.rows.len();
-                probed.rows.push(s);
-                probed.at.insert(s, row);
-            }
-        }
-        let r = Relation::from_rows(&["s"], &mut probed.rows.iter().map(|&s| vec![s]));
-        drop(probed);
+        self.tested.scan(&self.batch, &self.scanned);
+        let s = self.tested.state.lock();
+        let r = Relation::from_rows(&["s"], &mut s.passed[self.k].rows.iter().map(|&v| vec![v]));
+        drop(s);
         self.whole.get_or_init(|| r)
     }
     /// The rows of the probed strings that pass, each tested once.
     fn probe(&self, values: &[i64]) -> Vec<usize> {
         let fresh: Vec<i64> = {
-            let probed = self.probed.lock();
-            let mut fresh: Vec<i64> = values.iter().copied().filter(|v| !probed.tested.contains(v)).collect();
+            let s = self.tested.state.lock();
+            let mut fresh: Vec<i64> = values.iter().copied().filter(|v| !s.tested.contains(v)).collect();
             fresh.sort_unstable();
             fresh.dedup();
             fresh
@@ -998,23 +1041,18 @@ impl TextTest {
         let (mut strings, mut symbols) = (Vec::new(), Vec::new());
         for &v in &fresh {
             if let Ok(sym) = u32::try_from(v)
-                && let Ok(Some(text)) = self.atoms.value(sym)
+                && let Ok(Some(text)) = self.tested.atoms.value(sym)
             {
                 strings.push(text);
                 symbols.push(sym);
             }
         }
-        let passing = if strings.is_empty() { Vec::new() } else { self.tests.rows(&strings, &symbols).swap_remove(self.k) };
-        let mut probed = self.probed.lock();
-        probed.tested.extend(fresh);
-        for s in passing {
-            if !probed.at.contains_key(&s) {
-                let row = probed.rows.len();
-                probed.rows.push(s);
-                probed.at.insert(s, row);
-            }
-        }
-        values.iter().filter_map(|v| probed.at.get(v).copied()).collect()
+        self.tested.test(strings, symbols);
+        let mut s = self.tested.state.lock();
+        // A value no atom names is tested too: it passes nothing.
+        s.tested.extend(fresh);
+        let at = &s.passed[self.k].at;
+        values.iter().filter_map(|v| at.get(v).copied()).collect()
     }
 }
 
@@ -1028,14 +1066,14 @@ impl Source for TextTest {
     fn estimated_len(&self) -> usize {
         match self.whole.get() {
             Some(w) => w.len(),
-            None if self.batch.lazy() => self.probed.lock().rows.len().max(1),
+            None if self.batch.lazy() => self.tested.state.lock().passed[self.k].rows.len().max(1),
             None => self.whole().len(),
         }
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         match self.whole.get() {
             Some(w) => Source::value(w, row, column),
-            None => self.probed.lock().rows[row],
+            None => self.tested.state.lock().passed[self.k].rows[row],
         }
     }
     fn indexed(&self, column: usize) -> bool {
