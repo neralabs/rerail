@@ -14,9 +14,9 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, rerailRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, rerailRangeFailure, ruleKeyRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
-import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, shippedLanguages } from "../../../scripts/release/core.mjs";
+import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../../../scripts/release/core.mjs";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -224,6 +224,37 @@ describe("validatePack", () => {
 
     it("passes check 5 when the rule is only a candidate", async () => {
       const validation = await validatePack(changed("valid", withJavaRule(join("candidates", "rules"))), { coreVersion: since });
+      expect(validation.checks.package).toEqual([]);
+    });
+  });
+
+  // As for a language: an ast rule key an older core does not read holds the pack's core range from that release on.
+  describe("with a rule whose ast rule uses stored, core at the release that first reads it", () => {
+    const since = RULE_KEY_SINCE.get("stored")!;
+    const withStoredRule =
+      (folder: string, range = ">=0.1.0-0") =>
+      (directory: string): void => {
+        mkdirSync(join(directory, folder), { recursive: true });
+        writeJson(join(directory, folder, "stored-rule.json"), {
+          clauses: [{ forbid: { ast: { language: "python", rule: { kind: "tuple", has: { regex: "^,$", stored: "the tape keeps the comma" } } } } }],
+        });
+        editJson(join(directory, "package.json"), manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": range } }));
+      };
+
+    it("fails check 5 when the rule ships and the core range admits older cores", async () => {
+      const validation = await validatePack(changed("valid", withStoredRule("rules")), { coreVersion: since });
+      expect(validation.checks.package).toEqual([
+        `package.json: the core range >=0.1.0-0 admits Rerail older than ${since}, which reads no ast rule using \`stored\`; raise it to >=${since}-0`,
+      ]);
+    });
+
+    it("passes check 5 when the core range leaves older cores out", async () => {
+      const validation = await validatePack(changed("valid", withStoredRule("rules", `>=${since}-0`)), { coreVersion: since });
+      expect(validation.checks.package).toEqual([]);
+    });
+
+    it("passes check 5 when the rule is only a candidate", async () => {
+      const validation = await validatePack(changed("valid", withStoredRule(join("candidates", "rules"))), { coreVersion: since });
       expect(validation.checks.package).toEqual([]);
     });
   });
@@ -1069,6 +1100,30 @@ describe("languageRangeFailure", () => {
   });
 });
 
+// An ast rule key core first reads in a later release is the same hazard again: an older core refuses the rule document
+// and drops the pack whole.
+describe("ruleKeyRangeFailure", () => {
+  const since = RULE_KEY_SINCE.get("stored")!;
+
+  it.each([
+    ["a core before the release that reads stored passes the old range", ">=0.1.0-0", ["stored"], "0.1.5", false],
+    ["the release that reads it fails a range admitting older cores", ">=0.1.0-0", ["stored"], since, true],
+    ["a prerelease of the release that reads filePath fails it too", ">=0.1.0-0", ["filePath"], `${RULE_KEY_SINCE.get("filePath")}-next.0`, true],
+    ["a later release fails it too", ">=0.1.0-0", ["stored"], "1.0.0", true],
+    ["a range starting at its prereleases passes", `>=${since}-0`, ["stored"], since, false],
+    ["a range starting at the release passes", `>=${since}`, ["stored"], since, false],
+    ["a pack whose ast rules use no key added since passes", ">=0.1.0-0", [], since, false],
+  ])("%s", (_, range, ruleKeys, core, fails) => {
+    expect(ruleKeyRangeFailure(range, ruleKeys, core) !== undefined).toBe(fails);
+  });
+
+  it("names the keys and the range to raise to", () => {
+    expect(ruleKeyRangeFailure(">=0.1.0-0", ["filePath", "stored"], since)).toBe(
+      `package.json: the core range >=0.1.0-0 admits Rerail older than ${since}, which reads no ast rule using \`filePath\` or \`stored\`; raise it to >=${since}-0`,
+    );
+  });
+});
+
 // The Release pull request raises a pack's core range with the same rule check 5 judges it by (scripts/release/core.mjs): the
 // range it writes must pass both checks, for every pack an older core refuses.
 describe("the core range the release writes", () => {
@@ -1077,20 +1132,31 @@ describe("the core range the release writes", () => {
     const packJson: unknown = JSON.parse(readFileSync(join(directory, "pack.json"), "utf8"));
     const heldOff = heldOffRules(packJson);
     const languages = shippedLanguages(directory);
+    const ruleKeys = shippedRuleKeys(directory);
     const rerail = rerailRules(packJson);
-    const floor = coreFloor(heldOff, languages, rerail);
-    return floor === undefined ? [] : [{ id, heldOff, languages, rerail, floor }];
+    const floor = coreFloor(heldOff, languages, ruleKeys, rerail);
+    return floor === undefined ? [] : [{ id, heldOff, languages, ruleKeys, rerail, floor }];
   });
 
-  it("is due for the packs holding a rule off, shipping a rule in a language added since, or shipping a .rerail rule", () => {
-    expect(floors.map(({ id }) => id)).toEqual(["complexity", "django", "python"]);
+  // react ships a utility named `stored`, which is no rule key: its range stays.
+  it("is due for the packs holding a rule off, shipping a rule in a language or with an ast rule key added since, or shipping a .rerail rule", () => {
+    expect(floors.map(({ id }) => id)).toEqual(["complexity", "django", "javascript", "python", "typescript"]);
+    expect(floors.filter(({ ruleKeys }) => ruleKeys.length > 0).map(({ id, ruleKeys }) => [id, ruleKeys])).toEqual([
+      ["javascript", ["stored"]],
+      ["python", ["stored"]],
+      ["typescript", ["stored"]],
+    ]);
   });
 
-  it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, rerail, floor }) => {
-    const failures = (range: string): (string | undefined)[] =>
-      [heldOffRangeFailure(range, heldOff, floor), languageRangeFailure(range, languages, floor), rerailRangeFailure(range, rerail, floor)];
+  it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, ruleKeys, rerail, floor }) => {
+    const failures = (range: string): (string | undefined)[] => [
+      heldOffRangeFailure(range, heldOff, floor),
+      languageRangeFailure(range, languages, floor),
+      ruleKeyRangeFailure(range, ruleKeys, floor),
+      rerailRangeFailure(range, rerail, floor),
+    ];
     expect(failures(">=0.1.0-0").some(failure => failure !== undefined)).toBe(true);
-    expect(failures(raisedCoreRange(floor))).toEqual([undefined, undefined, undefined]);
+    expect(failures(raisedCoreRange(floor))).toEqual([undefined, undefined, undefined, undefined]);
   });
 });
 

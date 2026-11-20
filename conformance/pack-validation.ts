@@ -38,7 +38,7 @@ import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type
 import { reportFailures, runPack } from "./languages/runner.js";
 import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, PUBLISH_DIRECTORY, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
 import { isPrivatePack } from "../scripts/release/packs.mjs";
-import { admitsRefusingCore, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, shippedLanguages } from "../scripts/release/core.mjs";
+import { admitsRefusingCore, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../scripts/release/core.mjs";
 import { describeListed, includedPackFiles, rerailExamplePairFailures, rerailListed, rerailProofFailures, rerailTestFailures } from "./rerail-pack-rules.js";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
@@ -92,7 +92,8 @@ export interface ValidatePackOptions {
    */
   fixtures?: boolean;
   /**
-   * The core version check 5 holds the pack's core range to (`heldOff`, and a language core first reads after 0.1.0).
+   * The core version check 5 holds the pack's core range to (`heldOff`, a language core first reads after 0.1.0, and
+   * an ast rule key core first reads after 0.1.5).
    * Default: the repository's package.json version.
    */
   coreVersion?: string;
@@ -515,13 +516,34 @@ export function heldOffRangeFailure(range: string, heldOff: readonly string[], c
  * pack as invalid; before then the range stays, so this checkout's core still loads the pack.
  */
 export function languageRangeFailure(range: string, languages: readonly string[], coreVersion: string): string | undefined {
-  const refused = languages.flatMap(language => {
-    const since = LANGUAGE_SINCE.get(language);
-    return since !== undefined && admitsRefusingCore(range, since, coreVersion) ? [{ language, since }] : [];
+  const refused = refusedSince(range, languages, LANGUAGE_SINCE, coreVersion);
+  if (refused === undefined) return undefined;
+  return `package.json: the core range ${range} admits Rerail older than ${refused.since}, which reads no ${refused.names.join(" or ")} rule; raise it to ${raisedCoreRange(refused.since)}`;
+}
+
+/**
+ * Why a pack's core range `range` admits a core that refuses one of its rule documents' ast rules, or undefined.
+ * `ruleKeys` are the ast rule keys its shipped documents use. As for languages: once core is at the release that first
+ * reads one of them (`RULE_KEY_SINCE`), the pack must leave out every older core, which refuses the key and would drop
+ * the whole pack as invalid; before then the range stays, so this checkout's core still loads the pack.
+ */
+export function ruleKeyRangeFailure(range: string, ruleKeys: readonly string[], coreVersion: string): string | undefined {
+  const refused = refusedSince(range, ruleKeys, RULE_KEY_SINCE, coreVersion);
+  if (refused === undefined) return undefined;
+  return `package.json: the core range ${range} admits Rerail older than ${refused.since}, which reads no ast rule using ${refused.names.map(name => `\`${name}\``).join(" or ")}; raise it to ${raisedCoreRange(refused.since)}`;
+}
+
+/**
+ * Of `names` (languages or rule keys), each that core at `coreVersion` reads while `range` admits an older core that
+ * does not (`releases`: the release that first reads each), and the newest of those releases; undefined for none.
+ */
+function refusedSince(range: string, names: readonly string[], releases: ReadonlyMap<string, string>, coreVersion: string): { names: string[]; since: string } | undefined {
+  const refused = names.flatMap(name => {
+    const since = releases.get(name);
+    return since !== undefined && admitsRefusingCore(range, since, coreVersion) ? [{ name, since }] : [];
   });
   const since = refused.map(entry => entry.since).sort(semver.rcompare)[0];
-  if (since === undefined) return undefined;
-  return `package.json: the core range ${range} admits Rerail older than ${since}, which reads no ${refused.map(entry => entry.language).join(" or ")} rule; raise it to ${raisedCoreRange(since)}`;
+  return since === undefined ? undefined : { names: refused.map(entry => entry.name), since };
 }
 
 /**
@@ -1192,6 +1214,7 @@ function checkCoreRange({ directory, options, fail }: Validation, manifest: Pack
   const failures = [
     heldOffRangeFailure(range, heldOffRules(pack), coreVersion),
     languageRangeFailure(range, shippedLanguages(directory), coreVersion),
+    ruleKeyRangeFailure(range, shippedRuleKeys(directory), coreVersion),
     rerailRangeFailure(range, rerailRules(pack), coreVersion),
   ];
   for (const failure of failures) if (failure !== undefined) fail("package", failure);
