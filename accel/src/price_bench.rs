@@ -133,7 +133,7 @@ fn cpu() {
     println!("load after: {}", load());
 }
 
-#[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
+#[cfg(sme_lane)]
 #[test]
 #[ignore = "prices: release build, run alone with --ignored --nocapture"]
 fn sme() {

@@ -1219,7 +1219,7 @@ impl Executor {
         // SME and the Neural Engine are macOS's; the GPU lane is any device's (decision 0440 step E).
         #[cfg_attr(not(any(target_os = "macos", gpu_lane)), allow(unused_mut))]
         let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(crate::sql::SqlBackend)];
-        #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
+        #[cfg(sme_lane)]
         if present[Lane::Sme.index()] {
             backends.extend(crate::sme::backend());
         }
