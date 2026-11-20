@@ -515,6 +515,8 @@ describe("gitHeadReader", () => {
    * How a checkout's `gitdir:` line or `commondir` text names its folder through a link, `hop`, before a `..`: at first
    * `hop` leads to a folder beside it, so the text and Git name one folder; `elsewhere` is where it then leads, where Git
    * follows `hop` before the `..` and reads another Git folder, and cancelling `hop/..` as text names the first still.
+   * Both lie in the worktree's Git folder: `git worktree prune` removes a folder of `.git/worktrees` that holds no
+   * `gitdir` file, and Git 2.54 and later prune at a commit's maintenance.
    */
   const throughLinks: Array<[string, (root: string, main: string, worktree: string) => Promise<{ hop: string; elsewhere: string }>]> = [
     ["a commondir", async (root, main) => {
@@ -527,16 +529,15 @@ describe("gitHeadReader", () => {
       return { hop: join(gitDir, "hop"), elsewhere: join(root, "other.git", "worktrees", "w", "beside") };
     }],
     ["a gitdir: line", async (root, main, worktree) => {
-      const worktrees = join(main, ".git", "worktrees");
-      await mkdir(join(worktrees, "beside"));
-      await symlink(join(worktrees, "beside"), join(worktrees, "hop"), "dir");
-      await writeFile(join(worktree, ".git"), `gitdir: ${worktrees}/hop/../w\n`);
-      // Another Git folder for the worktree, on branch main, in the same repository.
-      await cp(join(worktrees, "w"), join(root, "other", "w"), { recursive: true });
+      const gitDir = join(main, ".git", "worktrees", "w");
+      await mkdir(join(gitDir, "beside"));
+      // Another Git folder for the worktree, on branch main, in the same repository, its `beside` copied too.
+      await cp(gitDir, join(root, "other", "w"), { recursive: true });
       await writeFile(join(root, "other", "w", "commondir"), `${join(main, ".git")}\n`);
       await writeFile(join(root, "other", "w", "HEAD"), "ref: refs/heads/main\n");
-      await mkdir(join(root, "other", "beside"));
-      return { hop: join(worktrees, "hop"), elsewhere: join(root, "other", "beside") };
+      await symlink(join(gitDir, "beside"), join(gitDir, "hop"), "dir");
+      await writeFile(join(worktree, ".git"), `gitdir: ${gitDir}/hop/../../w\n`);
+      return { hop: join(gitDir, "hop"), elsewhere: join(root, "other", "w", "beside") };
     }],
   ];
 
@@ -544,6 +545,8 @@ describe("gitHeadReader", () => {
   it.skipIf(process.platform === "win32").each(throughLinks)("names HEAD as Git does where %s holds a link before a `..`, before and after the branch moves and the link leads elsewhere", async (_name, arrange) => {
     const { root, main, worktree } = await repository();
     const { hop, elsewhere } = await arrange(root, main, worktree);
+    // What Git 2.54 and later do at the commit below: the layout holds through it with every Git.
+    git(main, "worktree", "prune");
     const reader = filesReader();
     const first = await read(reader, worktree);
     expect(first.head).toBe(git(worktree, "rev-parse", "HEAD"));
@@ -560,5 +563,22 @@ describe("gitHeadReader", () => {
       const answer = await read(reader, worktree);
       expect(answer.head, `read ${time} once the link leads elsewhere`).toBe(there);
     }
+  });
+
+  // A link a `gitdir:` line holds in `.git/worktrees`, which `git worktree prune` removes with its target, as folders
+  // there with no `gitdir` file: Git then finds no repository at the checkout, and the reader asks Git rather than
+  // answer from the files it read before.
+  it.skipIf(process.platform === "win32")("names no commit, as Git, once git worktree prune removed the link a gitdir: line holds before a `..`", async () => {
+    const { main, worktree } = await repository();
+    const worktrees = join(main, ".git", "worktrees");
+    await mkdir(join(worktrees, "beside"));
+    await symlink(join(worktrees, "beside"), join(worktrees, "hop"), "dir");
+    await writeFile(join(worktree, ".git"), `gitdir: ${worktrees}/hop/../w\n`);
+    const reader = filesReader();
+    expect((await read(reader, worktree)).head).toBe(git(worktree, "rev-parse", "HEAD"));
+    git(main, "worktree", "prune");
+    const pruned = await read(reader, worktree);
+    expect(pruned.expected).toBeUndefined();
+    expect(pruned.head).toBeUndefined();
   });
 });
