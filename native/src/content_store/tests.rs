@@ -3050,3 +3050,206 @@ fn a_save_forgets_at_most_a_batch_of_old_worktrees() {
     store.written().unwrap();
     assert_eq!(verified_worktrees_stored(&path), 1);
 }
+
+/// Another process's handle on `path`'s store: the same file by another name, so a writer of its
+/// own. Its folder goes with the database's once `release_other_store` closed it.
+fn other_store(path: &std::path::Path) -> (std::path::PathBuf, ContentStore) {
+    let another = path.parent().unwrap().join("another");
+    fs::create_dir_all(&another).unwrap();
+    let other_path = another.join("..").join(path.file_name().unwrap());
+    let other = ContentStore::open(&other_path).unwrap();
+    (other_path, other)
+}
+
+/// Closes `other_store`'s handle and its connections.
+fn release_other_store(other_path: &std::path::Path, other: ContentStore) {
+    drop(other);
+    connection::release_all_at(other_path);
+}
+
+/// Saves `files` of `worktree` at `now` through `store`, in another thread, whose writes join no
+/// wave, and waits for its write: a save of another process landing while this thread's wave
+/// holds its own writes.
+fn save_landing_now(
+    store: ContentStore,
+    worktree: &'static str,
+    files: Vec<VerifiedWorktreeFile>,
+    now: i64,
+) -> ContentStore {
+    thread::spawn(move || {
+        store
+            .remember_verified_worktree_files(worktree, &files, now)
+            .unwrap();
+        store.written().unwrap();
+        store
+    })
+    .join()
+    .unwrap()
+}
+
+/// A save that read another worktree's write time as 30 days old forgets that worktree's files
+/// only while its write time is the one the save read: a save of that worktree from another
+/// process, landing between the read and the write, keeps its files.
+#[test]
+fn a_worktree_saved_after_a_save_read_it_as_old_keeps_its_files() {
+    let (path, store) = store("verified-files-read-old");
+    let (other_path, other) = other_store(&path);
+    let file = [remembered_file("x.py", 1)];
+    store
+        .remember_verified_worktree_files("/b", &file, 100 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    let other = {
+        // /c's save reads /b's write time; its write waits for the wave's end.
+        let _waves = write_back::run_waves();
+        store
+            .remember_verified_worktree_files("/c", &[], 131 * DAY)
+            .unwrap();
+        save_landing_now(other, "/b", file.to_vec(), 131 * DAY)
+    };
+    store.written().unwrap();
+    assert_eq!(
+        store.verified_worktree_files("/b", 131 * DAY).unwrap(),
+        file.to_vec(),
+        "/b, saved after the read that found it old, keeps its files"
+    );
+    release_other_store(&other_path, other);
+}
+
+/// Two saves of one worktree from two processes, each reading the worktree's part before the
+/// other's write lands: the write that lands last holds the part whole, the rows its save read
+/// and the files it verified, and a file only the other save verified is read again.
+#[test]
+fn two_saves_of_one_worktree_leave_the_part_the_last_write_holds() {
+    let (path, store) = store("verified-files-same");
+    let (other_path, other) = other_store(&path);
+    let sorted = |mut files: Vec<VerifiedWorktreeFile>| {
+        files.sort_by_key(|file| file.path);
+        files
+    };
+    store
+        .remember_verified_worktree_files("/a", &[remembered_file("x.py", 1)], 100 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    let other = {
+        let _waves = write_back::run_waves();
+        store
+            .remember_verified_worktree_files("/a", &[remembered_file("y.py", 2)], 101 * DAY)
+            .unwrap();
+        save_landing_now(other, "/a", vec![remembered_file("z.py", 3)], 101 * DAY)
+    };
+    store.written().unwrap();
+    assert_eq!(
+        sorted(store.verified_worktree_files("/a", 101 * DAY).unwrap()),
+        sorted(vec![remembered_file("x.py", 1), remembered_file("y.py", 2)]),
+        "the write that landed last holds the part whole"
+    );
+    release_other_store(&other_path, other);
+}
+
+/// A worktree no restore wrote for 30 days, saved again, keeps what its save writes: a save
+/// forgets only other worktrees.
+#[test]
+fn a_worktree_saved_again_after_30_days_keeps_what_its_save_writes() {
+    let (_path, store) = store("verified-files-again");
+    store
+        .remember_verified_worktree_files("/a", &[remembered_file("x.py", 1)], 100 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    let file = [remembered_file("y.py", 2)];
+    store
+        .remember_verified_worktree_files("/a", &file, 131 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    assert_eq!(
+        store.verified_worktree_files("/a", 131 * DAY).unwrap(),
+        file.to_vec()
+    );
+}
+
+/// The frames this space's earlier relations (other columns, so other identities) left go at a
+/// save, at most `MAX_COLLECTION_BATCH` a save: nothing else reads or forgets them.
+#[test]
+fn a_save_forgets_the_frames_of_earlier_relations_a_batch_at_a_time() {
+    use sha2::Digest as _;
+    let (path, store) = store("verified-files-earlier");
+    let space: [u8; 32] =
+        sha2::Sha256::digest(b"rerail.space/v1\0verified worktree files\0").into();
+    // The files' relation as the space's first form named it: its columns in one string.
+    let mut ident = sha2::Sha256::new();
+    ident.update(b"rerail.relation/v1\0verified_worktree_file\0");
+    ident.update(
+        b"path key, volume, file id (2), change time, blob algorithm, blob lanes (4), verified at",
+    );
+    let earlier = frames::Rel {
+        name: "verified_worktree_file".to_owned(),
+        ident: ident.finalize().into(),
+    };
+    let frame = |part: i64| frames::Put {
+        rel: earlier.clone(),
+        part,
+        digest: 1,
+        reads: Vec::new(),
+        rows: frames::Rows {
+            types: vec![b'i'],
+            rows: vec![part],
+            n: 1,
+        },
+    };
+    let batch = i64::try_from(MAX_COLLECTION_BATCH).unwrap();
+    let earlier_frames = (1..=batch + 1).map(frame).collect();
+    store.queue_frames(space, earlier_frames, Vec::new(), None);
+    store.written().unwrap();
+    store
+        .remember_verified_worktree_files("/a", &[], 100 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    assert_eq!(
+        verified_worktrees_stored(&path),
+        2,
+        "one earlier frame is left for the next save, beside /a's"
+    );
+    store
+        .remember_verified_worktree_files("/a", &[], 100 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    assert_eq!(verified_worktrees_stored(&path), 1);
+}
+
+/// A worktree whose files' frame is there but does not decode proves no file, and its next save
+/// writes its part again.
+#[test]
+fn a_worktree_whose_files_frame_does_not_decode_is_written_again_at_its_save() {
+    let (path, store) = store("verified-files-undecodable");
+    store
+        .remember_verified_worktree_files("/a", &[remembered_file("x.py", 1)], 100 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    drop(store);
+    forget_frames_snapshot(path.to_str().unwrap());
+    // The frame's bytes inline: one byte that starts a value and ends before it does.
+    Connection::open(&path)
+        .unwrap()
+        .execute(
+            "UPDATE frames SET seg = 0, seg_at = 0, seg_len = 0, data = x'ff' \
+             WHERE rel = 'verified_worktree_file'",
+            [],
+        )
+        .unwrap();
+    let store = ContentStore::open(&path).unwrap();
+    assert!(
+        store
+            .verified_worktree_files("/a", 100 * DAY)
+            .unwrap()
+            .is_empty()
+    );
+    let file = [remembered_file("y.py", 2)];
+    store
+        .remember_verified_worktree_files("/a", &file, 101 * DAY)
+        .unwrap();
+    store.written().unwrap();
+    assert_eq!(
+        store.verified_worktree_files("/a", 101 * DAY).unwrap(),
+        file.to_vec()
+    );
+}

@@ -4,14 +4,18 @@
 //! (`git_workspace::VerifiedFiles`).
 //!
 //! They are the rows of two relations in one space of the store's frames, written by the store's
-//! writer (`queue_frames`), with no table of their own. Whether a row still proves its file is
-//! decided in Rust, by `git_workspace::VerifiedFiles`. Each worktree has its own part of each
-//! relation: its files in `verified_worktree_file`, and when a restore last wrote them in
-//! `verified_worktree`. A save writes only its own worktree's parts, so two saves of two
-//! worktrees, from one process or two, keep each other's, and it forgets the parts of worktrees
-//! no restore wrote for 30 days, found among the parts the store holds.
+//! writer (`queue_frames_guarded`), with no table of their own. A row older than
+//! `VERIFIED_FILE_SECONDS` proves nothing and is dropped here (`verified_rows`);
+//! `git_workspace::VerifiedFiles` matches a younger row's change stamp and blob with the file's.
+//! Each worktree has its own part of each relation: its files in `verified_worktree_file`, and
+//! when a restore last wrote them in `verified_worktree`. A save writes only its own worktree's
+//! parts, so two saves of two worktrees, from one process or two, keep each other's. It forgets
+//! the parts of worktrees no restore wrote for 30 days, found among the parts the store holds,
+//! each only while its `verified_worktree` frame is the one the save read: a save of that
+//! worktree landing first keeps them. It forgets too the frames this space's earlier relations
+//! (other columns, so other identities) left in the store.
 
-use super::frames::{Admitted, Put, Rel, Rows};
+use super::frames::{Admitted, GoneIf, Put, Rel, Rows};
 use super::{ContentStore, HashKey, MAX_COLLECTION_BATCH, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
@@ -91,8 +95,10 @@ impl ContentStore {
     /// Remembers `files` of the worktree whose root is `worktree`, verified at `now` (Unix
     /// seconds), each replacing the row of its path. The worktree's rows older than
     /// `VERIFIED_FILE_SECONDS` are forgotten, and so are the parts of at most
-    /// `MAX_COLLECTION_BATCH` worktrees not written for that long. Handed to the store's writer:
-    /// the restore does not wait for the write.
+    /// `MAX_COLLECTION_BATCH` worktrees not written for that long and at most
+    /// `MAX_COLLECTION_BATCH` frames of earlier relations: a save's write stays small, and an
+    /// earlier relation left one frame a worktree (and one list), so a store's are gone after a
+    /// few saves. Handed to the store's writer: the restore does not wait for the write.
     pub fn remember_verified_worktree_files(
         &self,
         worktree: &str,
@@ -108,12 +114,10 @@ impl ContentStore {
             put(&FILES, part, files_rows.collect()),
             put(&WORKTREES, part, vec![now]),
         ];
+        let relations = [rel(&FILES), rel(&WORKTREES)];
+        let earlier = self.stored_frames_not_of(&space(), &relations, MAX_COLLECTION_BATCH)?;
         let old = self.old_worktrees(part, since)?;
-        let gone = old
-            .into_iter()
-            .flat_map(|old| [(rel(&FILES), old), (rel(&WORKTREES), old)])
-            .collect();
-        self.queue_frames(space(), puts, gone, None);
+        self.queue_frames_guarded(space(), puts, earlier, old);
         Ok(())
     }
 
@@ -132,31 +136,46 @@ impl ContentStore {
             .collect())
     }
 
-    /// The parts of at most `MAX_COLLECTION_BATCH` worktrees other than `part`'s that the store
-    /// holds and no restore wrote at `since` or later. A part whose write time cannot be read
+    /// The frames of at most `MAX_COLLECTION_BATCH` worktrees other than `part`'s that the store
+    /// holds and no restore wrote at `since` or later, each gone only while the worktree's
+    /// `verified_worktree` frame has the digest read here. A part whose write time cannot be read
     /// (its frame's bytes are gone) is among them: no restore can read its files either.
-    fn old_worktrees(&self, part: i64, since: i64) -> StoreResult<Vec<i64>> {
+    fn old_worktrees(&self, part: i64, since: i64) -> StoreResult<Vec<GoneIf>> {
         let worktrees = rel(&WORKTREES);
         let parts = self.stored_frame_parts(&space(), &worktrees)?;
-        let written = self.admit_parts_stored(&space(), &worktrees, &parts)?;
-        let old = |other: &&i64| **other != part && written_at(written.get(other)) < since;
+        let keys: Vec<i64> = parts.iter().map(|(other, _)| *other).collect();
+        let written = self.admit_parts_stored(&space(), &worktrees, &keys)?;
+        let old = |(other, _): &&(i64, u64)| {
+            *other != part && written_at(written.get(other)) < since
+        };
         Ok(parts
             .iter()
             .filter(old)
             .take(MAX_COLLECTION_BATCH)
-            .copied()
+            .flat_map(|(other, digest)| worktree_frames(*other, *digest))
             .collect())
     }
 
     /// The rows of `relation`'s part `part`, flat, as queued or stored: none when it has no
-    /// frame there or its bytes cannot be read.
+    /// frame there or its bytes cannot be read or decoded.
     fn stored_rows(&self, relation: &Relation, part: i64) -> StoreResult<Vec<i64>> {
         let frame = self.admit_parts_stored(&space(), &rel(relation), &[part])?;
         let Some(frame) = frame.get(&part) else {
             return Ok(Vec::new());
         };
-        Ok(frame.rows()?.rows)
+        Ok(frame.rows().map(|rows| rows.rows).unwrap_or_default())
     }
+}
+
+/// The frames of the worktree at part `part`, each gone only while its `verified_worktree` frame
+/// has `digest`.
+fn worktree_frames(part: i64, digest: u64) -> [GoneIf; 2] {
+    [&FILES, &WORKTREES].map(|relation| GoneIf {
+        rel: rel(relation),
+        part,
+        guard: rel(&WORKTREES),
+        digest,
+    })
 }
 
 /// When a restore last wrote a worktree's files, as its `verified_worktree` frame holds it: the
