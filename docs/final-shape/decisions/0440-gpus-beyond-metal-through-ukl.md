@@ -1360,6 +1360,50 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
   any `.commit()` in the engine's device files, and since then they commit accel's `Pass`, the checked submission.
   It now refuses a commit in a file that makes a Metal command buffer.
 
+**Intel GPUs: OpenCL on an Arc 140V, and what Intel's own stack would add (2026-11-19).**
+
+- **The machine:** a Lunar Lake laptop's Arc 140V (Xe2, device 0x64a0, 64 vector engines, 16 GB shared with the
+  host), under WSL2. Its OpenCL is Intel's compute-runtime (NEO) 26.40: OpenCL 3.0, sub-groups of 16 or 32, 128 KB of
+  local memory, work-groups of up to 1,024.
+- **Setting it up:** WSL2 passes the GPU through (`/dev/dxg`), but Ubuntu 24.04's `intel-opencl-icd` (23.43) predates
+  Xe2. Intel's release packages (compute-runtime 26.40, IGC 2.42.6, gmmlib 22.10.2, checked against their published
+  sums) and Ubuntu's ICD loader, unpacked without root into a directory of the farm's, run it: the loader finds the
+  driver through `OCL_ICD_VENDORS`, the libraries through `LD_LIBRARY_PATH` (with `/usr/lib/wsl/lib`'s). Intel
+  tested WSL against Windows driver 101.9030; the machine's 101.8826 works.
+- **Validated under OpenCL:** `rerail-gpu`'s 19 (the library: loads, stores, bits, SIMD-group operations, scans,
+  compaction, histograms, radix sorts, LZ4, the work queue, hash tables) and the forest's 40, its device training,
+  bagging and prediction tests among them. `rerail-accel` does not build on Linux yet (its `rerail-blocks`
+  dependency is macOS's alone): that is step E, and the Arc is its second Linux target, beside CUDA.
+- **Intel has no kernel language of its own.** Its native runtime is Level Zero (oneAPI's driver API, as CUDA's is
+  NVIDIA's), which loads SPIR-V or native binaries. Those come from OpenCL C, through IGC (`ocloc`, also a library),
+  or from SYCL's C++ (DPC++, with ESIMD for explicit SIMD). For UKL, Intel's path is the OpenCL shim's C either way:
+  through OpenCL, or compiled by `ocloc` for Level Zero.
+- **What Level Zero would be wanted for, Intel's OpenCL has already.** The backend uses none of it yet:
+  - **Sub-groups:** `cl_khr_subgroups` with ballot, shuffle, relative shuffles and rotate, and
+    `cl_intel_required_subgroup_size` to fix 32 lanes a kernel. The shim emulates every SIMD-group operation in
+    local memory with two work-group barriers (`UKL_OPENCL_EMULATED_SG`). Native ones remove those barriers, and the
+    work-group-wide waits a SIMD group's operation now costs, on every device that has them.
+  - **Device addresses:** `cl_intel_unified_shared_memory` (pointers, `clSetKernelArgMemPointerINTEL`). The backend
+    reports no buffer addresses (`has_addresses`, OpenCL 1.2's limit), so code that follows pointers takes the
+    offset-from-a-base form (`pp_on`'s `NO_ADDRESS`). With USM, an Intel device has them, and block pool slabs can
+    be host USM allocations, as CUDA's are `cudaHostAlloc`'s (E1).
+  - 64-bit atomics (`cl_khr_int64_base_atomics`, `_extended_atomics`) and SPIR-V input (`cl_khr_il_program`).
+- **Order, cheapest first:**
+  1. Native sub-groups in the OpenCL shim and backend, where the device has them at 32 lanes (Intel's, and any
+     OpenCL 3.0 device with `cl_khr_subgroups`): the shim's SIMD-group operations as `sub_group_*`, kernels
+     declared at 32 lanes, the backend choosing by the device's extensions. The shim's emulation stays for
+     OpenCL 1.2. Measured against the emulation on the Arc.
+  2. Intel's USM in the OpenCL backend: buffers with addresses, and slabs from host USM.
+  3. A Level Zero backend, only if a measurement finds OpenCL's launch or submission costs matter after 1 and 2: a
+     device of the trait's, as large as CUDA's (about 900 lines), with `ocloc` to compile and Level Zero's loader
+     (which Intel ships apart from the compute-runtime). It would add immediate command lists, indirect launches,
+     explicit residency and device timestamps. The engine's fixed handful of launches per evaluation leaves
+     launch cost little room.
+  4. Windows itself (the OpenCL loader opens `OpenCL.dll`; today it opens only `libOpenCL.so`) comes with the
+     workspace's Windows build, last.
+- **Xe2 is SIMD16 in hardware.** A 32-lane sub-group runs as two halves. Code written for any width (the library's,
+  the radix sort's rank groups since step D) also runs at 16, which may be faster there: to be measured after 1.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
