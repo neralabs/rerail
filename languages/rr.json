@@ -7,7 +7,9 @@
     {
       "label": "rr",
       "variant": "Rr",
-      "suffixes": [".rr"],
+      "suffixes": [
+        ".rr"
+      ],
       "parser": "rr",
       "grammar": "native:rr",
       "tapeTag": 13
@@ -20,5 +22,11 @@
     "calls": "refused",
     "formatArgs": "refused"
   },
-  "suppressions": []
+  "suppressions": [],
+  "embeds": [
+    {
+      "language": "json",
+      "via": "json-object"
+    }
+  ]
 }

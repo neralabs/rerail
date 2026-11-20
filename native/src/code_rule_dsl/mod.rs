@@ -4698,6 +4698,8 @@ pub(crate) fn install_languages() {
         (language::Via::CallArgument, &embed::call_argument::CallArgument),
         #[cfg(feature = "lang-markdown")]
         (language::Via::InlineContent, &embed::inline_content::InlineContent),
+        #[cfg(all(feature = "lang-rr", feature = "lang-json"))]
+        (language::Via::JsonObject, &embed::json_object::JsonObject),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
         #[cfg(any(test, feature = "test-hooks"))]

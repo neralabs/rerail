@@ -328,7 +328,13 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "calls": "refused",
       "formatArgs": "refused"
     },
-    "suppressions": []
+    "suppressions": [],
+    "embeds": [
+      {
+        "language": "json",
+        "via": "json-object"
+      }
+    ]
   },
   {
     "format": "rerail.language/v1",

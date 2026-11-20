@@ -35,6 +35,8 @@
 // cratify: `call_argument` is rerail-lang-python's (it mounts it: it reads the scope table)
 pub mod host;
 pub mod inline_content;
+// cratify: `json_object` is rerail-rr's (the rule-file language's, decision 0495)
+pub mod json_object;
 pub mod raw_text;
 pub mod segments;
 #[cfg(any(test, feature = "test-hooks"))]

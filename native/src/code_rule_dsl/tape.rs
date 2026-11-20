@@ -1601,9 +1601,10 @@ impl TapeImage {
                 Err(TemplateError::Encode(error)) => Some(Err(error)),
             };
         }
-        // A `.rr` file: the rule engine's own parser builds its tree (decision 0061).
+        // A `.rr` file: the rule engine's own parser builds its tree (decision 0061), and its embedders the programs it
+        // holds (decision 0495: its JSON objects, regexes and patterns).
         if grammar.lang == GrammarDialect::Rr {
-            return Some(Self::encode_rr(grammar, source, budget).map(|image| FileImage::single(image, source)));
+            return Some(Self::encode_rr(grammar, source, budget).and_then(|image| FileImage::embedding(image, grammar, source, budget)));
         }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {

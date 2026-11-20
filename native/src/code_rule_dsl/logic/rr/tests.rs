@@ -4779,6 +4779,20 @@ fn a_run_reads_the_files_holding_its_programs_only_when_asked() {
     assert!(off.is_empty(), "by default: {off:?}");
 }
 
+/// Decision 0495 R1: a rule file's JSON objects are JSON programs (`json-object`). A JSON run that says `.embedded on`
+/// reads them at the rule file's lines; without it, it reads its own files alone (here none).
+#[test]
+fn a_rule_files_json_objects_are_json_programs() {
+    let rr = "// rules\n.decl a(x: symbol)\na({\"k\": 1,\n  \"m\": 2}).\n";
+    let pairs = |embedded: &str| format!(".language json\n{embedded}\n.decl pairs(x: symbol, p: symbol, l: number)\npairs(x, p, l) :- kind(n, \"pair\"), text(n, x), docof(n, d), doc(d, p, _), line(n, l).\n.output pairs\n");
+    let [on] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("rr-json-on", &[("rules/r.rr", rr)], &pairs(".embedded on"), &["pairs"])).unwrap();
+    let on: BTreeSet<Vec<String>> = on.into_iter().collect();
+    let want: BTreeSet<Vec<String>> = [["\"k\": 1", "rules/r.rr", "3"], ["\"m\": 2", "rules/r.rr", "4"]].iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect();
+    assert_eq!(on, want);
+    let [off] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("rr-json-off", &[("rules/r.rr", rr)], &pairs(""), &["pairs"])).unwrap();
+    assert!(off.is_empty(), "{off:?}");
+}
+
 /// Q267 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes
 /// as T's programs do, it is `node`'s projection, and `node`'s document column is a program's file, so `docof` of a
 /// script's node is the HTML file that holds it, as core.rr's `docof` is.
