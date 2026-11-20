@@ -8518,6 +8518,13 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   SLF001 on PostHog bounded as Release-debugging measured.
 - **State** (2026-11-20, the merge into Typing-support): the rewrite is a step on the version there (0500, item 1):
   the tree forms are gone, so it was ported, its five tests with it. Its pricing is as open as before.
+- **State** (2026-11-20, cost-classifier-metal-rf merged into Typing-support): `auto` is the default here too, with
+  that branch's fixes ported to the version's passes: the cross-file guard (`Plans::cross`, read from the version's
+  file-local split), no pair cache whose readers' cone reads a document's answer (`passes/factorize.rs`), a view's
+  change since its mark, the made step's request record. The kept filters, join-size counters and screens came with
+  it; the device's screens (the sort's `screen_bloom`, the probes', the fused probe's and the stages') were MSL there
+  and are UKL here, compiled but not yet run on a device: the Metal hold of 2026-11-20, and no OpenCL host usable.
+  Open as before: the pricer of the rewrite against the join as written, and its done-when.
 
 
 ### Q392. The hub's merge of final-rerail-shape-rr-align (roll-ups 19-21): what the merge chose, and what stays open

@@ -103,7 +103,7 @@ impl<'a> Executors<'a> {
 
     /// The device's executors' outputs over `bytes` into `out`, those over the launch budget into `skipped`.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn device(&self, bytes: &[u8], out: &mut Vec<(String, Vec<Vec<u64>>)>, skipped: &mut Vec<String>) {
+    fn device(&self, bytes: &[u8], out: &mut Runs, skipped: &mut Vec<String>) {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
         use rerail_compiler::Error;
         let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
@@ -129,6 +129,6 @@ impl<'a> Executors<'a> {
 
     /// No device executors but on a Mac.
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    fn device(&self, _bytes: &[u8], _out: &mut Vec<(String, Vec<Vec<u64>>)>, _skipped: &mut Vec<String>) {}
+    fn device(&self, _bytes: &[u8], _out: &mut Runs, _skipped: &mut Vec<String>) {}
 }
 

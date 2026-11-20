@@ -10,7 +10,8 @@
 //!   holds (`fz_a(f, p) :- …, fzk_b(p)`): every row stored then joins, so a part never holds more rows than the
 //!   product it replaces. The keys are chained, the parts of fewest atoms first: `fzk_a(p) :- …`, then
 //!   `fzk_b(p) :- bound_in(p, x), fzk_a(p)`, so a part that is itself a join is made only for the keys the parts
-//!   before it hold, and the last key is every part's.
+//!   before it hold, and the last key is every part's. A part of one atom stores no key: the key is the atom itself,
+//!   probed after the keys before it (`fzk_b(p) :- bound_in(p, x), parent(_, p)` for the part `parent(e, p)`).
 //! - **When:** decided from the program alone, before the first chunk: the per-file memo's key is a digest of the
 //!   file-local part (`corpus::memo::program_digest`), which names the exports, so the choice must not depend on a
 //!   chunk's rows. A changed choice (another engine, `RERAIL_FACTORIZE=off`) is another key, a memo miss.

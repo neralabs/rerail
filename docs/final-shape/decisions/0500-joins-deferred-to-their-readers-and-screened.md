@@ -323,7 +323,7 @@ cost more than the whole difference, each now removed:
 | Producer | Off | Auto | Request | What it was | Now |
 |---|---|---|---|---|---|
 | `exc_call` | 42 k | 118 k | 1.23 M | `PT010` asks for every call (`field(c, "function", _)`, in `exc_call`'s rule too): the request, a union over 14 readers, restricted nothing | a request whose key atoms the producer's rule reads, with their constants, and whose other atoms are constant-free, is not made (`void_request`) |
-| `str_lit` | 32 k | factors | (464 k key) | the key of the part `unparen(e, m)`, every node, stored to reduce a part of 16 k | a part of one atom is its own key, probed by the others, not stored (the tree's `factorize` and the version's pass alike) |
+| `str_lit` | 32 k | factors | (464 k key) | the key of the part `unparen(e, m)`, every node, stored to reduce a part of 16 k | a part of one atom is its own key, probed by the others, not stored: in the version's pass, the keys after it probe it (its chained keys, 0276 step 6) |
 | `lambda_arg` | 1.6 k | 171 k | 83 k | the request was forced to lead its producer (`demand_first`): 14,360 calls' arguments walked where `kind($g, "lambda")` reads 229 | the request bounds its producer as a demand does (Q59, `own_demand`): an atom a constant restricts may lead |
 | `kind`, heavy values | | 107 counts | | the forks of a wave counted each chunk's `kind` view apart; each took its own back only as it retired | the forks of a model share what they made, each with its relation's mark (`Stats::heavy_shared`): 18 counts |
 

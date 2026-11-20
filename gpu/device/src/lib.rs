@@ -1,5 +1,5 @@
-//! The device layer (decision 0440): one interface over the backends, Metal on macOS and CUDA on Linux, an OpenCL
-//! GPU when `RERAIL_GPU=opencl`, or the CPU when `RERAIL_GPU=cpu` (`device`); MLDB's compute-kernel runtime (the
+//! The device layer (decision 0440): one interface over the backends, Metal on macOS, CUDA on Linux and OpenCL on Windows,
+//! an OpenCL GPU when `RERAIL_GPU=opencl`, or the CPU when `RERAIL_GPU=cpu` (`device`); MLDB's compute-kernel runtime (the
 //! argument types, the grid launcher that binds a kernel's parameters by name, and each backend's runtime, at their
 //! upstream paths under `mldb/`); and the process's shared device (`shared`).
 //!
@@ -7,7 +7,7 @@
 //! and the library's calls are `rerail-gpu`'s, which re-exports this crate. So the blocks (`rerail-blocks`), below
 //! the preprocessor, bind their memory through it (decision 0440 step B).
 
-#![cfg(any(target_os = "macos", target_os = "linux"))]
+#![cfg(any(target_os = "macos", target_os = "linux", windows))]
 
 #[path = "mldb/block/compute_kernel.rs"]
 pub mod compute_kernel;
@@ -26,6 +26,7 @@ pub mod compute_kernel_opencl;
 pub mod device;
 mod rows;
 pub mod store;
+mod sys;
 
 /// A plain value a buffer can be viewed as: any bit pattern is a value, no padding read as data, no pointers.
 ///
@@ -115,6 +116,12 @@ pub mod shared {
             let waiting = QueueRoot::Native(device.new_command_queue());
             Some(Shared { device: Device::Native(device), queue, waiting })
         })
+    }
+
+    /// Windows' GPU is OpenCL's: the default device and `RERAIL_GPU=opencl` are one.
+    #[cfg(windows)]
+    fn open() -> Option<Shared> {
+        open_opencl()
     }
 
     #[cfg(target_os = "linux")]

@@ -734,9 +734,10 @@ pub struct Keyed {
 }
 
 /// A screen (`Keyed::screen`): a blocked Bloom filter, the host's own format and reads (`rerail_blocks::bloom`: the
-/// hash, the mask and the test written once in CLIF, `clif_bloom_*` in `RELATION_READS`), its descriptor `at` bytes
-/// into `held`'s buffer. The device's own, made from a sort's runs (descriptor at 0, words at 64), or a block's: a
-/// column's kept filter, which the host's sketch keeps and the device reads where it lies.
+/// hash, the mask and the test written once in CLIF, `clif_bloom_*` in `<ukl/reads/relation.h>`, read by
+/// `join_common.h`'s `screen_may_hold`), its descriptor `at` bytes into `held`'s buffer. The device's own, made from a
+/// sort's runs (descriptor at 0, words at 64), or a block's: a column's kept filter, which the host's sketch keeps and
+/// the device reads where it lies.
 pub struct Screen {
     held: Held,
     at: u32,
@@ -749,7 +750,8 @@ impl Screen {
     /// The device's own of `words` words (a power of two), zeroed, its descriptor written.
     fn own(words: usize) -> Result<Screen, String> {
         let held = Held::zeroed(64 + 8 * words)?;
-        // SAFETY: the buffer's first 16 bytes, a `bloom::Bloom`'s span: its words 64 bytes on, `words` of them.
+        // SAFETY: the buffer's first 16 bytes, a `bloom::Bloom`'s span: its words 64 bytes on, `words` of them; the
+        // host's alone until the sort's submission is committed.
         unsafe {
             let p = held.buffer.contents().cast::<u64>();
             *p = 64;
@@ -1339,12 +1341,12 @@ impl ProbeJob {
         let inputs = Self::inputs(left, right);
         let mut with = inputs.clone();
         with.push(&counts.buffer);
-        let words = Self::screen(right);
-        pass.run(&count, &with, &[nl as u32, words], &bases, groups(nl));
+        let screen = Self::screen(right);
+        pass.run(&count, &with, &[nl as u32, screen], &bases, groups(nl));
         scan.encode(pass, &counts.buffer)?;
         let mut with = inputs;
         with.extend([&counts.buffer, &space.buffer]);
-        pass.run(&scatter, &with, &[nl as u32, cap as u32, words], &bases, groups(nl));
+        pass.run(&scatter, &with, &[nl as u32, cap as u32, screen], &bases, groups(nl));
         Ok(ProbeJob { nl, cap, counts: Some(counts), scan: Some(scan), space: Some(space), bases, scatter: Some(scatter), empty: false })
     }
 
@@ -1823,9 +1825,7 @@ mod tests {
     /// sort's own screen.
     #[test]
     fn the_devices_screen_is_the_hosts_filter() {
-        if device().is_err() {
-            return;
-        }
+        let Ok(dev) = device() else { return };
         use rerail_blocks::bloom::{Bloom, hash};
         let right: Vec<i64> = (0..20_000i64).map(|i| i * 6 - 50_000).collect();
         let left: Vec<i64> = (0..60_000i64).map(|i| i * 3 - 80_000).collect();
@@ -1841,12 +1841,12 @@ mod tests {
             host.add_hashed(hash(k));
         }
         let f = own.screen.as_ref().expect("a screened sort");
-        // SAFETY: the screen's words, 64 bytes on, written by its sort's command buffer, which completed.
-        let dev = unsafe { std::slice::from_raw_parts(f.held.buffer.contents().cast::<u8>().add(64).cast::<u64>(), words) };
-        assert!((0..words).all(|i| dev[i] == host.word(i)), "the device's screen is the host's filter");
+        // SAFETY: the screen's words, 64 bytes on, written by its sort's submission, which completed.
+        let on_device = unsafe { std::slice::from_raw_parts(f.held.buffer.contents().cast::<u8>().add(64).cast::<u64>(), words) };
+        assert!((0..words).all(|i| on_device[i] == host.word(i)), "the device's screen is the host's filter");
         // copy: not block data (a test's literal keys)
         let mut kept = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
-        kept.screen_by(block.device_buffer(device().unwrap()).unwrap(), at, Box::new(block.clone()));
+        kept.screen_by(block.device_buffer(dev).unwrap(), at, Box::new(block.clone()));
         let mut want = crate::rows::join(&[&left], &[&right]);
         want.sort_unstable();
         assert!(!want.is_empty());
@@ -1875,7 +1875,7 @@ mod tests {
     /// Decision 0500: a sort of `SCREENED_ROWS` rows or more is screened by its runs' filter, made on the device from
     /// its runs. A probe whose keys mostly miss (2,000,000 left keys, 1% of them among 200,000 or 4,000,000 right
     /// ones, the others between them; 16 and 64-bit sorts) finds the host join's pairs with the filter and without
-    /// it; its GPU time is printed for both.
+    /// it; its device time is printed for both.
     #[test]
     fn a_screened_probe_finds_the_hosts_pairs() {
         if device().is_err() {
@@ -1914,6 +1914,30 @@ mod tests {
             assert_eq!(b, want);
             println!("{nr} right rows, modulus {modulus}: {} pairs; probe GPU (median of {times}) with the filter {:.0} us, without {:.0} us", want.len(), median(&mut gpu_with), median(&mut gpu_without));
         }
+        // Two keys, the second of another span on each side; a left key no right row has.
+        let (a0, a1) = (rows(9000, 1, 2000, 1 << 32), rows(9000, 2, 3, 0));
+        let (b0, b1) = (rows(7000, 3, 2000, 1 << 32), rows(7000, 4, 5, -1));
+        let right = Keyed::sort(vec![Column::upload(&b0).unwrap(), Column::upload(&b1).unwrap()]).unwrap();
+        let got = probe(&[Column::upload(&a0).unwrap(), Column::upload(&a1).unwrap()], &right, 0).unwrap();
+        assert_eq!(got.submissions, 1);
+        // On key 0 alone, about 3.5 pairs a left row: past the space a probe expects unless told more, so a second
+        // scatter; told, one submission. The same pairs.
+        let alone = Keyed::sort(vec![Column::upload(&b0).unwrap()]).unwrap();
+        let over = probe(&[Column::upload(&a0).unwrap()], &alone, 0).unwrap();
+        let told = probe(&[Column::upload(&a0).unwrap()], &alone, 1 << 16).unwrap();
+        assert_eq!((over.submissions, told.submissions), (2, 1));
+        assert_eq!(over.pairs, told.pairs);
+        let mut want0 = crate::rows::join(&[&a0], &[&b0]);
+        want0.sort_unstable();
+        let mut over = over.pairs;
+        over.sort_unstable();
+        assert_eq!(over, want0);
+        let mut got = got.pairs;
+        got.sort_unstable();
+        let mut want = crate::rows::join(&[&a0, &a1], &[&b0, &b1]);
+        want.sort_unstable();
+        assert!(!want.is_empty());
+        assert_eq!(got, want);
     }
 }
 

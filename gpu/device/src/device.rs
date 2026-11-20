@@ -56,6 +56,27 @@ mod native {
     }
 }
 
+/// Windows has no GPU interface of its own here: its GPU is OpenCL's (`OpenCL.dll`, every driver's ICD loader), which
+/// the default device opens as `Device::OpenCl`, the variant each OpenCL check matches (`shared::get`). The native
+/// variants are typed as OpenCL's so the backends' matches stay one shape, and are never made on Windows.
+#[cfg(windows)]
+mod native {
+    pub use crate::compute_kernel_opencl::{
+        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, ClBindContext as BindContext,
+        ClBuffer as Buffer, ClComputeEvent as Event, ClComputeFunction as Function, ClComputeFunctionLibrary as Library, ClComputeQueue as Queue,
+        ClDevice as Device, ClQueueRoot as QueueRoot, ClSharedEvent as SharedEvent,
+    };
+    /// The kernels' address of a buffer's first byte.
+    pub fn device_address(b: &Buffer) -> Option<u64> {
+        b.address()
+    }
+    pub const NAME: &str = "OpenCL";
+    /// The device's own name.
+    pub fn device_name(d: &Device) -> String {
+        d.name().to_owned()
+    }
+}
+
 /// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", or "" for the target's GPU.
 fn chosen() -> &'static str {
     static CHOSEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -537,6 +558,8 @@ pub enum BindContext<'a> {
     Native(crate::compute_kernel_metal::MetalBindContext),
     #[cfg(target_os = "linux")]
     Native(crate::compute_kernel_cuda::CudaBindContext<'a>),
+    #[cfg(windows)]
+    Native(native::BindContext<'a>),
     Cpu(cpu::CpuBindContext<'a>),
     OpenCl(cl::ClBindContext<'a>),
 }
