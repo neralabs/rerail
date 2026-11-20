@@ -262,3 +262,48 @@ table's tokens end as the table says.
 
 **Stage 1:** `three` is gone from the token-level probe. The block program went from 1,564
 operations to 1,559.
+
+## What stage 1 still computes, by reader (2026-11-19)
+
+A count over the generated `masks()` after step 3. It follows each stored output back through
+the values it reads.
+
+| Reader | Values reached | Only this reader's | Outputs |
+|---|---|---|---|
+| Marks' masks (`mark_acc`, `mark_recv`, `mark_generic`, …) | 512 | 232 | 13 |
+| Refusals (escapes and errors, `total*`; untaken bytes) | 475 | 217 | 11 |
+| Tier 2's masks (`tier2_*`) | 418 | 104 | 31 |
+| Token rules (`*_last`, `*_run`) | 309 | 49 | 6 |
+| Regions, tags, checks | about 290 | about 55 | 39 |
+
+The largest single cones are `acc`'s (104 values of its own), then three escape classes (83, 73
+and 27), then `recv` (29) and `generic` (17). The lean lexer makes none of them. It asks the
+marks' questions in the parser at a token (`accessor_ahead`, `receiver_end`,
+`type_args_end`). It finds the escapes' constructs in its readers, at the token that has them.
+In this order, these are the differences left:
+
+1. **The refusals as one flag.** Done below.
+2. **The masks named by the grammar.** Done below for the marks.
+3. **The marks' masks at the token.** `acc`, `recv`, `generic`, `dotted`, `fn_recv` and `named`
+   are context fills (`decl_run`, `after_ty`, `acc_word`) at every byte. In the lean parser each
+   is a question at one token. This is 0429's step 2, the keyword marks into the token loop.
+4. **The escapes at the token.** Each escape is a byte mask of a construct that a token's
+   reader meets: a number's suffix, a string's `$`, a `\u`. Each moves into its token's reader
+   or check, as the lean lexer's readers refuse.
+5. **Tier 2's masks.** Tier 2 still reads 31 of tier 1's mask words (the drops, the lost
+   comments, `token_all_x`). The lean parser reads only tokens.
+
+## The refusals: one word, as the lean lexer's error flag (2026-11-19)
+
+Six totals and five untaken-byte masks were each stored as a `Vec<u64>` a block, and `lex` ran
+`.any()` over each. Nothing else read them. Now stage 1 ORs them into one word:
+`refused |= (…) & within(i, len, d)`, one term for each delay, cut at the file's ends. `Masks`
+holds `refused: bool`. A total that another reader has (a mark or a tier 2 mask) stays a mask.
+`aot_tapes_are_the_jits` passes.
+
+## The marks named by the grammar
+
+`Names::marks` (text `name mark K "N"`) names each mark in the records' code by its bit: a
+grammar mark's name, or `K_start` for an extra's starts. `rust_block` names a mark's output
+`mark_{name}`, so `mark_acc` replaces `mark6`. The tapes are unchanged: the compiler (130), Kotlin
+(52) and `kotlin_aot` (4) tests pass.

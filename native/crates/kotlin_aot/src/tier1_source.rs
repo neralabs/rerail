@@ -8,6 +8,7 @@
         layout: c.parser.tier1.records.as_ref().map(|t| t.layout).unwrap_or_default(),
         lazy: rerail_compiler::native_cpu_block::lazy_code_bits(&native),
         token_names: &c.program.names.tokens,
+        mark_names: &c.program.names.marks,
         unmade: native.records_made(),
     };
     rerail_compiler::rust_block::rust_source(&inputs)

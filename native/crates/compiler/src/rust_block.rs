@@ -22,12 +22,14 @@ use std::fmt::Write as _;
 
 /// What the harness gives the generated tier 1 besides the program: the record layout its
 /// `Batch` holds (`native_cpu_block::RecordTables::layout`), the code bits it leaves to tier 2,
-/// and the grammar's token names by record kind (`program::Names::tokens`).
+/// and the grammar's token names by record kind (`program::Names::tokens`) and mark names by bit
+/// (`program::Names::marks`).
 pub struct Inputs<'a> {
     pub program: &'a BlockProgram,
     pub layout: crate::records::RecordLayout,
     pub lazy: u32,
     pub token_names: &'a [(u8, String)],
+    pub mark_names: &'a [(u8, String)],
     /// The outputs the CPU's tier 1 does not make (`BlockNative::records_made`): of tier 2's
     /// masks, those tier 2 on the CPU reads from the bytes itself.
     pub unmade: Vec<usize>,
@@ -60,6 +62,9 @@ struct Gen<'a> {
     inputs: &'a Inputs<'a>,
     /// Each stored output's name (an index into the program's outputs).
     stored: Vec<(usize, String)>,
+    /// The outputs only the refusal reads (the totals, the untaken bytes): no mask each, but
+    /// one word stage 1 ORs them into, as the lean lexer keeps one error flag.
+    refusals: Vec<(usize, String)>,
     /// Each value's name in stage 1.
     value_names: Vec<String>,
     /// The token names by record kind.
@@ -156,7 +161,7 @@ impl<'a> Gen<'a> {
             }
         }
         let tokens: HashMap<u8, String> = inputs.token_names.iter().map(|(k, n)| (*k, rust_name(n))).collect();
-        let mut g = Gen { p, r, inputs, stored: Vec::new(), value_names: Vec::new(), tokens, walk: p.walks.first(), reader_names: Vec::new() };
+        let mut g = Gen { p, r, inputs, stored: Vec::new(), refusals: Vec::new(), value_names: Vec::new(), tokens, walk: p.walks.first(), reader_names: Vec::new() };
         let mut names: Vec<String> = Vec::new();
         for i in 0..r.readers.len() {
             let n = g.rule_token(g.reader_rule(i));
@@ -221,25 +226,41 @@ impl<'a> Gen<'a> {
         }
         for (k, &(o, _)) in r.marks.iter().enumerate() {
             if o != WORD_ALONE {
-                add(usize::from(o), format!("mark{k}"));
+                let n = self.inputs.mark_names.iter().find(|x| usize::from(x.0) == k).map_or_else(|| format!("{k}"), |x| rust_name(&x.1));
+                add(usize::from(o), format!("mark_{n}"));
             }
         }
         for (i, c) in r.checks.iter().enumerate() {
             add(usize::from(c.o), format!("check{i}"));
         }
-        for (i, &o) in r.untaken.iter().enumerate() {
-            add(usize::from(o), format!("untaken{i}"));
-        }
         for (i, o) in self.tier2_masks().into_iter().enumerate() {
             add(o, format!("tier2_{i}"));
-        }
-        for (i, o) in self.p.total_outputs().into_iter().enumerate() {
-            add(o, format!("total{i}"));
         }
         let starts_lasts: Vec<usize> = self.p.extract_outputs().iter().enumerate().filter(|(e, _)| *e == usize::from(r.starts) || *e == usize::from(r.lasts)).map(|(_, &o)| o).collect();
         for (e, o) in self.p.extract_outputs().into_iter().enumerate() {
             if !starts_lasts.contains(&o) || (e != usize::from(r.starts) && e != usize::from(r.lasts)) {
                 add(o, format!("extract{e}"));
+            }
+        }
+        // What only the refusal reads: the untaken bytes and the totals no other reader has,
+        // named after every other reader's.
+        let mut rest: Vec<(usize, String)> = Vec::new();
+        for (i, &o) in r.untaken.iter().enumerate() {
+            rest.push((usize::from(o), format!("untaken{i}")));
+        }
+        for (i, o) in self.p.total_outputs().into_iter().enumerate() {
+            rest.push((o, format!("total{i}")));
+        }
+        let totals = self.p.total_outputs();
+        let mut refusals: Vec<(usize, String)> = Vec::new();
+        for (o, n) in rest {
+            if named.iter().any(|x| x.0 == o) || refusals.iter().any(|x| x.0 == o) {
+                continue;
+            }
+            if totals.contains(&o) {
+                refusals.push((o, n));
+            } else {
+                named.push((o, n));
             }
         }
         // Distinct names, in order.
@@ -252,6 +273,7 @@ impl<'a> Gen<'a> {
             }
         }
         self.stored = named;
+        self.refusals = refusals;
     }
 
     /// Each value's name: a stored output's, a byte compare's (`is_quote`), a class's, a
@@ -276,7 +298,7 @@ impl<'a> Gen<'a> {
                 }
             }
         }
-        for (o, n) in &self.stored {
+        for (o, n) in self.stored.iter().chain(&self.refusals) {
             let v = usize::from(p.outputs[*o]);
             if names[v].starts_with('v') {
                 names[v] = n.clone();
@@ -350,7 +372,7 @@ impl<'a> Gen<'a> {
         for (o, n) in &self.stored {
             let _ = writeln!(out, "    /// Output {o}.\n    pub {n}: Vec<u64>,");
         }
-        out.push_str("}\n\n");
+        out.push_str("    /// Whether a byte of the file is refused (the totals, the untaken bytes).\n    pub refused: bool,\n}\n\n");
     }
 
     /// The values a block computes for `roots`, stopping at `stop` (made elsewhere): in order.
@@ -516,7 +538,7 @@ impl<'a> Gen<'a> {
     /// Stage 1b: the masks.
     fn stage1(&self, out: &mut String) -> Result<(), String> {
         let made = self.made();
-        let roots: Vec<u16> = self.stored.iter().map(|(o, _)| self.p.outputs[*o]).collect();
+        let roots: Vec<u16> = self.stored.iter().chain(&self.refusals).map(|(o, _)| self.p.outputs[*o]).collect();
         let values = self.cone(&roots, &made);
         let made_names: Vec<usize> = made.iter().map(|&m| usize::from(m)).collect();
         let loaded = |x: usize| made_names.contains(&x).then(|| format!("regions.{}[i]", self.value_names[x]));
@@ -526,19 +548,38 @@ impl<'a> Gen<'a> {
         if self.walk.is_some() {
             out.push_str("    let regions = regions(src);\n");
         }
-        let _ = writeln!(out, "    let mut raw = Masks {{ {} }};", self.stored.iter().map(|(_, n)| format!("{n}: Vec::with_capacity(blocks)")).collect::<Vec<_>>().join(", "));
+        let _ = writeln!(out, "    let mut raw = Masks {{ {}refused: false }};", self.stored.iter().map(|(_, n)| format!("{n}: Vec::with_capacity(blocks), ")).collect::<String>());
+        if !self.refusals.is_empty() {
+            out.push_str("    let mut refused = 0u64;\n");
+        }
         out.push_str(&decls);
         out.push_str("    for i in 0..blocks {\n        let block = block_at(src, i);\n        // SAFETY: the dispatcher runs this on a backend the CPU has.\n        unsafe {\n");
         out.push_str(&indent(&body, 2));
         for (o, n) in &self.stored {
             let _ = writeln!(out, "            raw.{n}.push({});", self.v(self.p.outputs[*o]));
         }
+        // Each refusal's bits inside the file (`within`, by its delay), into the one word.
+        if !self.refusals.is_empty() {
+            let mut delays: Vec<u8> = self.refusals.iter().map(|(o, _)| self.p.output_delay(*o)).collect();
+            delays.sort_unstable();
+            delays.dedup();
+            let terms: Vec<String> = delays
+                .iter()
+                .map(|&d| {
+                    let of: Vec<&str> = self.refusals.iter().filter(|(o, _)| self.p.output_delay(*o) == d).map(|(o, _)| self.v(self.p.outputs[*o])).collect();
+                    let or = if of.len() > 1 { format!("({})", of.join(" | ")) } else { of[0].to_owned() };
+                    format!("{or} & within(i, len, {d})")
+                })
+                .collect();
+            let _ = writeln!(out, "            refused |= {};", terms.join("\n                | "));
+        }
         out.push_str(&indent(&after, 2));
         out.push_str("        }\n    }\n");
         let _ = writeln!(
             out,
-            "    Masks {{ {} }}\n}}\n",
-            self.stored.iter().map(|(o, n)| format!("{n}: undelay(&raw.{n}, {}, len)", self.p.output_delay(*o))).collect::<Vec<_>>().join(", ")
+            "    Masks {{ {}refused: {} }}\n}}\n",
+            self.stored.iter().map(|(o, n)| format!("{n}: undelay(&raw.{n}, {}, len), ", self.p.output_delay(*o))).collect::<String>(),
+            if self.refusals.is_empty() { "false" } else { "refused != 0" }
         );
         out.push_str("rerail_simd8::dispatch! {\n    fn masks_best(src: &[u8]) -> Masks = masks, on masks_on;\n}\n\n");
         Ok(())
@@ -554,8 +595,9 @@ impl<'a> Gen<'a> {
              /// file goes to the fallback.\npub struct Lexed {\n    pub masks: Masks,\n    pub starts: Vec<u32>,\n    pub lasts: Vec<u32>,\n    pub codes: Vec<u32>,\n    pub refused: bool,\n}\n\n\
              /// Tier 1 over `src`: stage 1, then the token loop.\npub fn lex(src: &[u8]) -> Lexed {\n    let m = masks_best(src);\n    let mut t = Tokens::new(src.len());\n    t.run(src, &m);\n",
         );
-        let totals = self.p.total_outputs();
-        let any_total = if totals.is_empty() { "false".to_owned() } else { totals.iter().map(|&o| format!("m.{}.iter().any(|&w| w != 0)", self.name_of(o))).collect::<Vec<_>>().join(" || ") };
+        // A total another reader has is a mask; the others are stage 1's one word (`refused`).
+        let totals: Vec<usize> = self.p.total_outputs().into_iter().filter(|o| !self.refusals.iter().any(|x| x.0 == *o)).collect();
+        let any_total = totals.iter().map(|&o| format!("m.{}.iter().any(|&w| w != 0) || ", self.name_of(o))).chain(std::iter::once("m.refused".to_owned())).collect::<String>();
         let untaken = if r.untaken.is_empty() { "false" } else { "t.untaken" };
         let _ = writeln!(out, "    let refused = {any_total} || {untaken} || t.read || t.checked || t.bad || t.unplaced(&m, src.len());");
         out.push_str("    Lexed { masks: m, starts: t.starts, lasts: t.lasts, codes: t.codes, refused }\n}\n\n");

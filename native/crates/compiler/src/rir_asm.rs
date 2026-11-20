@@ -479,7 +479,12 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
                     parts.names.tokens.push((k, n));
                 }
-                w => return Err(format!("`name {w}`: a name is a rule's, a kind's or a token's")),
+                "mark" => {
+                    let k = line.number("")?;
+                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
+                    parts.names.marks.push((k, n));
+                }
+                w => return Err(format!("`name {w}`: a name is a rule's, a kind's, a token's or a mark's")),
             }
         }
         "markword" => {

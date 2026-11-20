@@ -4474,6 +4474,19 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
     }
     names.tokens.sort();
+    // Each mark in the code by its bit: a grammar mark's name, or an extra's starts.
+    for (j, _) in records.marks.iter().enumerate() {
+        let n = if Some(j as u8) == records.extra {
+            low.extra.first().map(|k| format!("{k}_start"))
+        } else if let Some((k, _)) = extra_kind_bits.iter().find(|x| usize::from(x.1) == j) {
+            Some(format!("{k}_start"))
+        } else {
+            marks.get(j).and_then(|m| low.marks.get(usize::from(m.mask))).map(|m| m.0.clone())
+        };
+        if let Some(n) = n {
+            names.marks.push((j as u8, n));
+        }
+    }
     let mut text = lowered.text;
     crate::rir_text::name_rows(&mut text, &names);
     Ok((grammar::text(&states, &arms), text, takes_last, mark_masks, records))
