@@ -468,6 +468,14 @@ async function headText(gitDir: string): Promise<string | undefined> {
   return await fileText(join(gitDir, "HEAD"));
 }
 
+/**
+ * What Git's includes depend on of the branch: `HEAD`'s text where an `includeIf "onbranch:"` is set, else nothing;
+ * undefined where that text is needed and `HEAD` could not be read.
+ */
+function branchOf(included: Included, head: string | undefined): string | undefined {
+  return included.byBranch ? head : "";
+}
+
 /** Whether `files` hold, in order, the stamps `stamps` holds. */
 function sameStamps(files: readonly StampedFile[] | undefined, stamps: readonly string[]): files is readonly StampedFile[] {
   return files !== undefined && files.length === stamps.length && files.every((file, at) => file.stamp === stamps[at]);
@@ -517,12 +525,12 @@ function configReader(settleMs: number): (cwd: string, layout: Layout, signal: A
    */
   const askedIncludes = async (cwd: string, gitDir: string, base: readonly StampedFile[], signal: AbortSignal | undefined) => {
     const head = await headText(gitDir);
-    const asked = await askIncludes(cwd, signal);
-    const included = asked?.byBranch === true && head === undefined ? undefined : asked;
-    const files = included === undefined ? undefined : await stampedFiles(included.paths, settleMs);
+    const included = await askIncludes(cwd, signal);
+    const branch = included === undefined ? undefined : branchOf(included, head);
+    if (included === undefined || branch === undefined) return undefined;
+    const files = await stampedFiles(included.paths, settleMs);
     if (files === undefined) return undefined;
-    const branch = included!.byBranch ? head! : "";
-    if (allSettled([...base, ...files])) includes.set(cwd, { base: filesKey(base), included: included!, stamps: files.map(file => file.stamp), branch });
+    if (allSettled([...base, ...files])) includes.set(cwd, { base: filesKey(base), included, stamps: files.map(file => file.stamp), branch });
     return { files, branch };
   };
 
