@@ -396,6 +396,11 @@ impl Pass {
     }
 
     fn launch(&self, pipe: &Pipe, buffers: &[&Buffer], bytes: &[u8], grid: Grid<'_>) {
+        self.launch_at(pipe, &buffers.iter().map(|b| (*b, 0)).collect::<Vec<_>>(), bytes, grid);
+    }
+
+    /// `launch`, each buffer bound at its offset.
+    fn launch_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], grid: Grid<'_>) {
         if self.error.borrow().is_some() {
             return;
         }
@@ -404,8 +409,8 @@ impl Pass {
                 return Err(format!("the kernel {} takes {} buffers, given {}", pipe.name, pipe.buffers.len(), buffers.len()));
             }
             let mut l = rerail_gpu::kernels::launch(&self.queue, &pipe.function);
-            for (name, b) in pipe.buffers.iter().zip(buffers) {
-                l = l.buffer(name, b);
+            for (name, (b, at)) in pipe.buffers.iter().zip(buffers) {
+                l = l.buffer_at(name, b, *at);
             }
             if pipe.args {
                 l = l.bytes("a", bytes);
@@ -438,10 +443,25 @@ impl Pass {
         self.launch(pipe, buffers, bytes, Grid::Groups(groups, simd_group() as u64));
     }
 
+    /// `run_bytes`, each buffer bound at its offset (a structure inside a block: decision 0478 step 2c).
+    pub fn run_bytes_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], groups: usize) {
+        self.launch_at(pipe, buffers, bytes, Grid::Groups(groups, GROUP));
+    }
+
+    /// `run_bytes_simd`, each buffer bound at its offset.
+    pub fn run_bytes_simd_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], groups: usize) {
+        self.launch_at(pipe, buffers, bytes, Grid::Groups(groups, simd_group() as u64));
+    }
+
     /// `run_bytes`, its threadgroups the three words at `offset` of `grid` (written by the device before it), at
     /// most `most`.
     pub fn run_bytes_indirect(&self, pipe: &Pipe, buffers: &[&Buffer], bytes: &[u8], grid: &Buffer, offset: u64, most: usize) {
         self.launch(pipe, buffers, bytes, Grid::Indirect { grid, offset, most });
+    }
+
+    /// `run_bytes_indirect`, each buffer bound at its offset.
+    pub fn run_bytes_indirect_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], grid: &Buffer, offset: u64, most: usize) {
+        self.launch_at(pipe, buffers, bytes, Grid::Indirect { grid, offset, most });
     }
 
     /// `run` of `params`, its threadgroups the three words at `offset` of `grid`, at most `most`.

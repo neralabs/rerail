@@ -202,8 +202,14 @@ fn split_at_pos(mut lo: usize, mut hi: usize, less: impl Fn(usize) -> bool) -> u
 /// (`cmp_vals`, tagged when they are every column). Its writer records them: a wave's new rows are written sorted by
 /// the first order (`Fresh::settle`). A relation's rows are only appended (deleted ones stay in place, marked), so a
 /// range stays true. Ranges in an order on columns `c` are in the order on any prefix of `c` too, untagged.
+///
+/// A frozen relation's ranges are in its block (`Relation::known`, decision 0478 step 5c): `base` reads them there,
+/// holding its part. `own` are the ranges noted since (a relation's waves while it is derived), after `base`'s.
 #[derive(Clone, Default)]
-pub(super) struct Sorted(Vec<(u32, u32, Arc<[usize]>)>);
+pub(super) struct Sorted {
+    base: Option<crate::code_rule_dsl::facts::rows::Part>,
+    own: Vec<(u32, u32, Arc<[usize]>)>,
+}
 
 /// Whether the sorts past a run's own use what is known sorted (decision 0187: a wave's batch, a scan for the next
 /// step's probes, an order sorted again). `RERAIL_KNOWN_SORTED=runs` (a measurement aid) keeps it to the runs
@@ -236,7 +242,7 @@ impl Sorted {
     /// dedup order, which leads with a hash (`tagged`), and these lead with the values.
     pub(super) fn whole(n: u32, k: usize, cols: &[usize]) -> Sorted {
         let cols = if tagged(cols, k) { &cols[..k - 1] } else { cols };
-        Sorted(if n > 0 && !cols.is_empty() { vec![(0, n, cols.into())] } else { Vec::new() })
+        Sorted { base: None, own: if n > 0 && !cols.is_empty() { vec![(0, n, cols.into())] } else { Vec::new() } }
     }
     /// Rows `lo..hi` of `data` are in the order on `cols`: joined to the range before when it ends at `lo` in the
     /// same order and its last row is not past row `lo`.
@@ -245,7 +251,7 @@ impl Sorted {
             return;
         }
         debug_assert!((lo + 1..hi).all(|id| cmp_ids(data, k, cols, tagged(cols, k), id - 1, id).is_le()), "rows {lo}..{hi} said sorted on {cols:?} are not");
-        if let Some((_, end, c)) = self.0.last_mut()
+        if let Some((_, end, c)) = self.own.last_mut()
             && *end == lo
             && **c == *cols
             && cmp_ids(data, k, cols, tagged(cols, k), lo - 1, lo).is_le()
@@ -253,7 +259,61 @@ impl Sorted {
             *end = hi;
             return;
         }
-        self.0.push((lo, hi, cols.into()));
+        self.own.push((lo, hi, cols.into()));
+    }
+
+    /// Every range, `base`'s then `own`'s, each given to `f` (lo, hi, its columns) until it says to stop.
+    fn each(&self, f: &mut dyn FnMut(u32, u32, &[usize])) {
+        if let Some(p) = &self.base {
+            for kn in p.rel().known() {
+                let mut c = [0usize; rerail_blocks::relation::MAX_KEY];
+                let n = kn.ncols as usize;
+                for (d, &s) in c.iter_mut().zip(&kn.cols[..n]) {
+                    *d = s as usize;
+                }
+                f(kn.lo, kn.hi, &c[..n]);
+            }
+        }
+        for (a, b, c) in &self.own {
+            f(*a, *b, c);
+        }
+    }
+
+    /// The ranges written in `part`'s relation's block (decision 0478 step 5c), and read there from now on: true when
+    /// they are (they were already, or there are none), false when its block keeps others or has no room (they then
+    /// stay as they were).
+    pub(super) fn into_block(&mut self, part: &crate::code_rule_dsl::facts::rows::Part) -> bool {
+        if self.own.is_empty() && self.base.as_ref().is_some_and(|b| std::ptr::eq(b.rel(), part.rel())) {
+            return true;
+        }
+        if self.own.is_empty() && self.base.is_none() {
+            return true;
+        }
+        let mut all: Vec<(u32, u32, Vec<u16>)> = Vec::new();
+        let mut wide = false;
+        self.each(&mut |a, b, c| {
+            wide |= c.len() > rerail_blocks::relation::MAX_KEY;
+            all.push((a, b, c.iter().map(|&x| x as u16).collect()));
+        });
+        if wide {
+            return false;
+        }
+        let ranges: Vec<(u32, u32, &[u16])> = all.iter().map(|(a, b, c)| (*a, *b, &c[..])).collect();
+        let written = {
+            let _g = part.facts().ix.lock().unwrap_or_else(|e| e.into_inner());
+            // SAFETY: under its block's index lock, at the relation's freeze: nothing else writes its descriptor.
+            unsafe { part.rel().try_set_known(&part.facts().block, &ranges) }
+        };
+        if written {
+            self.base = Some(part.clone());
+            self.own = Vec::new();
+        }
+        written
+    }
+
+    /// Whether every range is read in a block (none noted since).
+    pub(super) fn in_block(&self) -> bool {
+        self.own.is_empty()
     }
     /// The parts of rows `lo..hi` known to be in the order on `cols`, in row order.
     pub(super) fn within(&self, cols: &[usize], k: usize, lo: u32, hi: u32) -> Vec<(u32, u32)> {
@@ -261,7 +321,9 @@ impl Sorted {
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
             return Vec::new();
         }
-        self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies(c, cols, k)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
+        let mut out = Vec::new();
+        self.each(&mut |a, b, c| if a < hi && b > lo && implies(c, cols, k) { out.push((a.max(lo), b.min(hi))) });
+        out
     }
     /// The parts of rows `lo..hi` known to be sorted by a key (`implies_key`: column `tag`'s hash tag first, when
     /// given, then the values of `cols`), in row order.
@@ -269,11 +331,15 @@ impl Sorted {
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
             return Vec::new();
         }
-        self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies_key(c, k, tag, cols)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
+        let mut out = Vec::new();
+        self.each(&mut |a, b, c| if a < hi && b > lo && implies_key(c, k, tag, cols) { out.push((a.max(lo), b.min(hi))) });
+        out
     }
     /// Rows known sorted, over every range.
     pub(super) fn rows(&self) -> u64 {
-        self.0.iter().map(|&(a, b, _)| u64::from(b - a)).sum()
+        let mut n = 0;
+        self.each(&mut |a, b, _| n += u64::from(b - a));
+        n
     }
 }
 
@@ -426,7 +492,83 @@ fn cmp_rows<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: u32, b: 
     cmp_ids(data, k, cols, tagged(cols, k), a, b).then_with(|| a.cmp(&b))
 }
 
+/// A run given to its relation's block (`Relation::try_add_order`): its rows listed or a range, its fences, tags and
+/// prints, each a chunk of the block.
+pub(super) struct GivenRun {
+    pub(super) ids: Option<rerail_blocks::relation::Given>,
+    pub(super) range: Option<(u32, u32)>,
+    pub(super) fences: rerail_blocks::relation::Given,
+    pub(super) tags: rerail_blocks::relation::Given,
+    pub(super) prints: rerail_blocks::relation::Given,
+}
+
+impl GivenRun {
+    /// The run again, its chunks its own (no directory took them).
+    pub(super) fn into_run(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, life: crate::code_rule_dsl::facts::rows::Life) -> Run {
+        let ids = match (self.ids, self.range) {
+            (_, Some((lo, hi))) => Ids::Rows(lo, hi),
+            (g, None) => Ids::List(BlockVec::from_chunk(facts, life, g.unwrap_or_default())),
+        };
+        Run { ids, fences: BlockVec::from_chunk(facts, life, self.fences), tags: BlockVec::from_chunk(facts, life, self.tags), prints: BlockVec::from_chunk(facts, life, self.prints) }
+    }
+}
+
 impl Run {
+    /// Its arrays handed on to `facts`' block, where they lie (decision 0478 step 5b), or itself when any lies
+    /// elsewhere or is not its own.
+    pub(super) fn give(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<GivenRun, Run> {
+        let ids_ok = match &self.ids {
+            Ids::List(v) => v.can_give(facts),
+            Ids::Rows(..) => true,
+        };
+        if !(ids_ok && self.fences.can_give(facts) && self.tags.can_give(facts) && self.prints.can_give(facts)) {
+            return Err(self);
+        }
+        fn take<T: rerail_blocks::Pod>(v: BlockVec<T>, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> rerail_blocks::relation::Given {
+            v.into_chunk(facts).unwrap_or_else(|_| unreachable!("checked"))
+        }
+        let Run { ids, fences, tags, prints } = self;
+        let (ids, range) = match ids {
+            Ids::List(v) => (Some(take(v, facts)), None),
+            Ids::Rows(lo, hi) => (None, Some((lo, hi))),
+        };
+        Ok(GivenRun { ids, range, fences: take(fences, facts), tags: take(tags, facts), prints: take(prints, facts) })
+    }
+
+    /// The run order `i` of `owner`'s relation's directory is, read where it lies (borrowed: `BlockVec::shared`).
+    ///
+    /// # Safety
+    /// Order `i` is built in `owner`'s relation's directory, which `owner` keeps.
+    pub(super) unsafe fn in_block(owner: &crate::code_rule_dsl::facts::rows::Part, i: usize) -> Run {
+        use rerail_blocks::relation::ORDER_ROWS;
+        let block = &owner.facts().block;
+        let ix = owner.rel().index(i);
+        let at = |p: *const u8| block.offset_of(p);
+        // SAFETY: the caller's: each span is written in `owner`'s block, which its relation keeps.
+        unsafe {
+            let ids = if ix.ordered == ORDER_ROWS {
+                Ids::Rows((ix.mask >> 32) as u32, (ix.mask & 0xffff_ffff) as u32)
+            } else {
+                Ids::List(BlockVec::shared(owner, at(ix.rows.as_ptr().cast()), ix.rows.len()))
+            };
+            let span = |len: usize, p: *const u8| if len == 0 { 0 } else { at(p) };
+            Run {
+                ids,
+                fences: BlockVec::shared(owner, span(ix.fences.len(), ix.fences.as_ptr().cast()), ix.fences.len()),
+                tags: BlockVec::shared(owner, span(ix.tags.len(), ix.tags.as_ptr().cast()), ix.tags.len()),
+                prints: BlockVec::shared(owner, span(ix.prints.len(), ix.prints.as_ptr().cast()), ix.prints.len()),
+            }
+        }
+    }
+
+    /// Whether its ids are read where its relation's directory keeps them (`in_block`).
+    fn in_place_of_block(&self) -> bool {
+        match &self.ids {
+            Ids::List(v) => v.is_shared(),
+            Ids::Rows(..) => self.fences.is_shared() || self.tags.is_shared() || self.fences.is_empty(),
+        }
+    }
+
     fn fenced<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], ids: Ids) -> Run {
         let home = data.home();
         if tagged(cols, k) {
@@ -1136,6 +1278,39 @@ fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, us
 impl Index {
     pub(super) fn new(cols: Vec<usize>) -> Index {
         Index { cols, runs: Vec::new(), rent: AtomicU64::new(0), printed: false }
+    }
+
+    /// Its runs as one run, merged where they are several (decision 0478 step 5b: a frozen relation's order is one
+    /// sorted order in its block), with its columns and whether it is printed; `None` with no runs.
+    pub(super) fn into_one<D: RowData + ?Sized>(mut self, data: &D, k: usize) -> Option<(Vec<usize>, bool, Run)> {
+        let run = match self.runs.len() {
+            0 => return None,
+            1 => {
+                let (r, _) = self.runs.pop().expect("a run");
+                Arc::try_unwrap(r).unwrap_or_else(|r| (*r).clone())
+            }
+            n => self.merged_of(data, k, n),
+        };
+        Some((self.cols, self.printed, run))
+    }
+
+    /// An order of one run, `run` (one read in its relation's block: `Run::in_block`).
+    pub(super) fn of_run(cols: Vec<usize>, printed: bool, run: Run) -> Index {
+        Index { cols, runs: vec![(Arc::new(run), 0)], rent: AtomicU64::new(0), printed }
+    }
+
+    /// Whether every run is read where its relation's directory keeps it (`Run::in_block`).
+    pub(super) fn borrowed(&self) -> bool {
+        self.runs.iter().all(|(r, _)| r.in_place_of_block())
+    }
+
+    /// Its first run's first id's address (none: null), to tell where its ids lie.
+    #[cfg(test)]
+    pub(super) fn first_ids(&self) -> *const u32 {
+        match self.runs.first().map(|(r, _)| &r.ids) {
+            Some(Ids::List(v)) => v.as_ptr(),
+            _ => std::ptr::null(),
+        }
     }
 
     /// An order its probes give whole keys to (a derived input's own index, decision 0112): a byte a row more, each

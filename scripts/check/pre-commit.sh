@@ -52,3 +52,5 @@ python3 scripts/check/check_no_block_copies.py
 python3 scripts/check/check_no_global_state.py
 # A job pool per machine (decision 0442): parallel work outside the machine's pool reaches rayon's global one.
 python3 scripts/check/check_machine_pool.py
+# Nor kept beside its block in a thread's or the process's map (decision 0478, R7): a commit that adds one is refused.
+python3 scripts/check/check_no_relation_maps.py

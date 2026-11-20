@@ -29,7 +29,6 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 uploads: u64::from(d.uploads),
                 upload_bytes: d.upload_bytes,
                 upload_by: d.upload_by,
-                resident: u64::from(d.resident_hits),
                 in_place: u64::from(d.in_place),
                 sorts: u64::from(d.sorts),
                 sort_hits: u64::from(d.sort_hits),

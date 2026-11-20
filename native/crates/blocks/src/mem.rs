@@ -23,6 +23,8 @@ pub fn reserve(len: usize) -> *mut u8 {
     RESERVED.fetch_add(len, Relaxed);
     #[cfg(unix)]
     {
+        // Address space, not a commitment (`RESERVE_ONLY`): Linux's overcommit accounting would refuse a large
+        // reservation (a block of relations reserves 16 GiB, decision 0445) that is never written whole.
         let p = unsafe {
             libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | crate::RESERVE_ONLY, -1, 0)
         };

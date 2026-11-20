@@ -225,7 +225,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
     ("code_rule_dsl/logic/lanes.rs", "QUEUED"),
     // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
-    ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
     // pending atoms no committed row may hold yet, not a result kept.
     ("content_store/atoms.rs", "RESERVING"),
@@ -235,7 +234,6 @@ const STATE: &[(&str, &str)] = &[
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
-    ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     // core.rerail's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
     // This thread's zstd decompression context (RER-131): an open thing, not a result.
@@ -301,10 +299,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
-    // The device's automata and test tables for regex and text stages, held while the thread runs (a command buffer
-    // may read them).
-    ("code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA"),
-    ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus.rs", "UseStore"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.

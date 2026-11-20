@@ -205,7 +205,8 @@ fn nearest_costs(cap: usize) {
         }
     }
     let one_pass = t.elapsed();
-    std::hint::black_box(&one);
+    // Both timed results held (the device's runs, macOS only, are compared with `cpu`).
+    std::hint::black_box((&cpu, &one));
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
     #[cfg(target_os = "macos")]
     use crate::code_rule_dsl::transducer::packed::metal_nearest;

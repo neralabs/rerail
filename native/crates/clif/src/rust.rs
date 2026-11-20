@@ -869,6 +869,26 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Istore8 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u8, {} as u8) }};", addr(&args[1]), args[0]),
         Opcode::Istore16 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u16, {} as u16) }};", addr(&args[1]), args[0]),
         Opcode::Istore32 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u32, {} as u32) }};", addr(&args[1]), args[0]),
+        // A rolling cache's words (decision 0353 step 4b, 0478 step 2d), shared with other threads and the device: u32s,
+        // sequentially consistent as CLIF's atomics are.
+        Opcode::AtomicLoad | Opcode::AtomicStore | Opcode::AtomicRmw | Opcode::AtomicCas if u != "u32" && op != Opcode::AtomicStore => {
+            return Err(format!("an atomic of {u}"));
+        }
+        Opcode::AtomicLoad => set(format!("unsafe {{ (*({} as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) }}", addr(&args[0]))),
+        Opcode::AtomicStore => format!("unsafe {{ (*({} as *const core::sync::atomic::AtomicU32)).store({} as u32, core::sync::atomic::Ordering::SeqCst) }};", addr(&args[1]), args[0]),
+        Opcode::AtomicRmw => {
+            let how = match data {
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } => "fetch_add",
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Or, .. } => "fetch_or",
+                _ => return Err("an atomic other than an add or an or".into()),
+            };
+            set(format!("unsafe {{ (*({} as *const core::sync::atomic::AtomicU32)).{how}({}, core::sync::atomic::Ordering::SeqCst) }}", addr(&args[0]), args[1]))
+        }
+        Opcode::AtomicCas => set(format!(
+            "unsafe {{ match (*({} as *const core::sync::atomic::AtomicU32)).compare_exchange({}, {}, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) {{ Ok(x) | Err(x) => x }} }}",
+            addr(&args[0]), args[1], args[2]
+        )),
+        Opcode::Fence => "core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);".to_owned(),
         Opcode::GetPinnedReg if read_style(u32::MAX).is_some() => return Err("a read takes no pinned register".into()),
         Opcode::GetPinnedReg => set("pin".to_string()),
         Opcode::SetPinnedReg => format!("pin = {};", args[0]),

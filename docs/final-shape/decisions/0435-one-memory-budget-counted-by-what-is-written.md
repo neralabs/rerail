@@ -35,12 +35,20 @@ This decision makes the budget one, counted by what the engine wrote, and lets c
    ledger (`rerail_accel::budget::written`). Its limit is the run's budget and Metal's together (0126's two numbers,
    summed). The Metal budget stays a bound on the device's own buffers within it.
 4. **Chunks grow from small.** The first chunk is 65,536 nodes (at most the caller's). Each next is up to eight times
-   the last, held to what the latest chunk added a node to §3's count at its peak (sampled every 10 ms), against three
-   quarters of what the limit leaves. While chunks grow, one evaluates at a time; once the size holds, as many as the
-   room holds at it. Nothing is sized from a prior or from the run's worst measure. A wave that does not fit the
-   device splits by documents (0334). (`plan/corpus/sizing.rs`.)
+   the last, held to what the latest chunk's blocks wrote a node (§6; until 2026-11-19, §3's count at its peak),
+   against three quarters of what the limit leaves. While chunks grow, one evaluates at a time; once the size holds,
+   as many as the room holds at it. Nothing is sized from a prior or from the run's worst measure. A wave that does
+   not fit the device splits by documents (0334). (`plan/corpus/sizing.rs`.)
 5. **The footprint stays a report.** The profile prints the count and the footprint side by side, so a part of
    memory the count misses (a C library's own allocator) shows as their gap.
+6. **The same chunks on every run** (Q314, 2026-11-19). Chunk `n`'s size is decided from the chunks filed before
+   it, in their order (`sizing::Schedule`): while chunks grow, by chunk `n - 1`; once the size holds, by chunk
+   `n - window` (the plans' window of Q88, never fewer than the chunks at once). The builder holds a cut until its
+   size is decided. The measure is what the chunk's own blocks wrote (`rows::in_chunk_measured`: every block it made,
+   at its most, and the part still held when it ends), not the process's count, which other chunks and threads
+   move. The room is three quarters of the limit, less the count when the chunks begin (in 64 MB steps) and the rows
+   the filed chunks hold. Before, the builder cut documents by the size last stored while it worked ahead: two runs
+   at one setting cut 16 and 20 chunks, and planned from different chunks (Q88's plans follow the cuts).
 
 ## Requirements, each locked by a test
 
@@ -53,6 +61,9 @@ This decision makes the budget one, counted by what the engine wrote, and lets c
 - **R4** The chunk sizing is a function of measures alone: from a first chunk it grows while the latest chunk's
   growth a node fits what the limit leaves, holds when it does not, and never passes the caller's most.
 - **R5** hogql gives its 1,629 findings at the default sizing and with chunks growing, on the CPU and Metal bindings.
+- **R6** Every run of one corpus cuts the same chunks: the sizes are a function of the chunks' measures in their
+  order, whatever the timing (`the_sizes_are_the_same_whatever_the_timing`), and a chunk's measure is the same on
+  every run of it (`a_chunk_measures_what_its_blocks_wrote_the_same_every_time`).
 
 ## Steps
 
@@ -82,6 +93,17 @@ findings in every run, no Metal stop:
     against 75.7/74.0 B), measured together with the peak sampler, so not apart from it. An earlier "8 B" in the code
     and fe2007e38's message was written before it was measured, and was wrong;
   - the count read at a chunk's end missed its peak (its relations already given back), so a sampler keeps its most.
+
+## Measured (2026-11-19, §6)
+
+hogql cold, CPU binding, warm binary, load 16-47: every run cut the same 12 chunks (127 strata, 659 stratum runs),
+1,629 findings, 87.0-88.8 B. Metal: the same 12 chunks, 70.9-72.1 B. The first run of a new binary cut 15 and ran the
+cone's rounds (its CoreML models compiled at first launch; not yet explained, Q314).
+
+What still differs between those runs is the joins' memo (decisions 0203, 0208): lines noted by the measured
+critical path (by wall time) and flagged slow, in one process-wide memo every chunk reads as it runs, outside Q88's
+order. A noted line is searched again, so the plans follow the timing (one run in five inlined differently). With
+`RERAIL_JOINS=off` four runs planned alike and retired 78.6-79.1 B, against 87-89 B with it.
 
 ## Supersedes
 

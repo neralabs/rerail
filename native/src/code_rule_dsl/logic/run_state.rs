@@ -46,7 +46,6 @@ use Class::*;
 /// Every thread-local outside the tests: `(file under native/, name, class, why)` (Carried ones need no why: they
 /// are carried).
 pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
-    ("crates/blocks/src/block.rs", "ZEROED_HERE", Thread, "the bytes this thread's block allocations zeroed, a count a test reads apart from its neighbours'"),
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
     ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
@@ -105,14 +104,10 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/native/setfix/closure.rs", "SEMI_NAIVE_HERE", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/runs.rs", "INLINE", Call, "a lazy order's build under way on this thread (`runs::inline`): its sorts stay on the thread, never handed to the pool"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "ARENA", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA", Thread, "device automata by pattern: any thread's gives the same"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "BINDER", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "GROWTH", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "LAST", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "TESTS", Thread, "device text tests by pattern: any thread's gives the same"),
     ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANNED", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "SEED", Call, "the last priced body's cheapest start, read by the same pricing"),

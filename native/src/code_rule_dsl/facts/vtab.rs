@@ -60,6 +60,9 @@ pub struct DeviceView<'a> {
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
     #[cfg(target_os = "macos")]
     pub in_place: Option<ViewInPlace>,
+    /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
+    /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
+    pub home: Option<crate::code_rule_dsl::facts::rows::Part>,
 }
 
 /// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in

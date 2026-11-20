@@ -214,6 +214,8 @@ pub mod tests {
 
     #[test]
     fn commits_and_paths_are_answered_from_the_object_store() {
+        // A run of its own (decision 0442): the root is the run's (`GitState`), and outside a run each read is fresh.
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
         let dir = std::env::temp_dir().join(format!("rerail-git-fn-{}", std::process::id()));
         let root = dir.join("sub");
         std::fs::create_dir_all(root.join("docs")).unwrap();

@@ -4701,6 +4701,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-prof",
  "rerail-store",
  "rusqlite",

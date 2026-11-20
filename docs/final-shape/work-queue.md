@@ -5951,6 +5951,11 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   word; its first bytes compared there), `metal_read` returns the device's error, and the corpus test fails on
   it: 3,075 files the same, 60 refused, Metal differs on 0. Every ladder step runs on Metal (0 refused, was 14
   and 15). `parser_tests`' `a_files_start_on_metal_is_the_interpreters`.
+- **Done on Native-GPU-strata too** (2026-11-19, the same classification): none is a cache. `frame_segments`, `object_segments` (segment files), `guest_keys` (0391)
+  and `observed_changes` (0400 §4, the observer's journal) are the store's own; the 14 maps are state (open things,
+  registries, switches, profiling, a test's log). Entries gone are cut: `WAVE`, guests.rs's `KEPT` (moved to the run
+  by 7c273bdd8; the maps' pin 24 to 22, one move before it had left the pin over), run_state's `WAVES`, `TICKETS`
+  and `TOGETHER`. The three guards and `run_state`'s pass.
 
 ### Q234. (Q213 on Swift-Kotlin-Scala-support) The engine keeps the grammars' proof answers as it keeps images (0414)
 
@@ -5998,6 +6003,9 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   `logical_line_predicates_and_aliases_use_the_vocabulary_batch` (the strings' relations numbered in another order
   than the tests expect, after 0281 step 6c named them by content). None reads `finish` or a version's fields.
 - **Done when**: each list names what it lists once, and the strings tests assert by content, not number.
+- **Done** (2026-11-19, with 0478 step 2e's CPU texts): the strings tests name each test by what it matches; the
+  lists' other entries had been cut meanwhile, and `device.rs`'s `AUTOMATA` and `TESTS` (gone with 0478 steps 2c and
+  2d) are cut from `facts_only::STATE` and `run_state::STATE`. All five pass.
 
 ### Q238. (Q106 on Typing-support-final-shape at 4ea96a066) Relax's JIT refuses `sha2`'s `sha512h` inline asm
 
@@ -6760,10 +6768,50 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Done** (decision 0435, 2026-11-18): 1 and 3. A `Device::May` block is host memory, the Metal checks weigh only
   the device's own buffers, one count (`rerail_accel::budget::written`) against one limit, chunks sized by
   `plan/corpus/sizing.rs`. hogql: Metal 79-82 B to 72-73 B (16-19 chunks, no stop), the CPU unchanged at 87 B.
-- **Open**: why a 4,096-node first chunk makes 20-30 negation-split strata (`pre_k`) where 65,536 makes 11, and
-  1-5 B more on the CPU (the two first-chunk runs at one size also differ, 127 against 154 strata); 2 (row blocks
-  reserved large and grown in place, tails released); the Metal peak footprint at big chunks
-  (1.36-1.47 GB, the count's most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
+- **Found** (2026-11-19): the noise in hogql's measures had three causes. (a) The builder cut chunks by the size
+  last stored while it worked ahead, so runs cut different chunks (16 against 20) and Q88's plans followed: fixed by
+  0435 §6 (every warm run now cuts the same 12). (b) The joins' memo (0203, 0208): lines noted by wall time, in one
+  memo every chunk reads as it runs; with `RERAIL_JOINS=off` runs plan alike and retire 78.6-79.1 B against 87-89 B.
+  (c) Threads' coordination: 3-7 B more than one thread's 80.1-80.3 B, rising with load. The first-chunk `pre_k`
+  difference was (a).
+- **Done** (decision 0444, 2026-11-19): (b). The joins' memo and the planning choices (inline or store, demand:
+  found with the memo off, one run in three inlined differently, the first chunk to plan a program choosing for all)
+  follow the chunks' order as Q88's plans do; lines are noted by work; exploration draws from a fixed seed. hogql
+  CPU: 81.9-83.1 B, the same inline choices in 6 of 6 runs; Metal 76.6-81.1 B, 3 of 3.
+- **Done** (decision 0445, 2026-11-19): 2. Row blocks reserve 16 GiB of address space and grow in place, so no
+  tail moves (WASI keeps sized blocks); the device's wrap still grows with the used extent (0266 §12); the count
+  and a chunk's held bytes leave out free lists. hogql Metal 70.9-72.6 B (one 75.5 B), device refusals 2-6 stratum
+  runs a run, against 76.6-81.1 B and 14-49.
+- **Explained** (2026-11-19): a new binary's first run is the build's image store cold (decision 0264, `rr::images::
+  store`, one store a build): the first run prepares the rules' images, phase 0 over the rules (the cone's rounds,
+  chunks of 675, 1,400 and 6,898 nodes, the relation `kind` inlined), and later runs read them. With a store of its
+  own a run (`RERAIL_IMAGE_STORE=project`) every run is that first run: the same 15 chunks and inline choices in 3
+  of 3, the corpus's own choices as a warm run's. Measurements set it (the harness did not).
+- **Found** (2026-11-19, the django-bugs merge abaecb14a): three warnings. `content_store/journal.rs`
+  `since_within` takes a `wait` it never reads (an unfinished option?); `phases.rs:380` reads `sources.rr` into a
+  `src` it never uses; `rr/testing.rs:371` imports `ProgramFields` unused in a build without test-hooks. Left to
+  that track's owner to say which are unfinished. The merge also left `the_journal_names_what_changed_since_its_cursor`
+  not compiling: two of its calls lacked the `settle` argument the other side added; given `SETTLE`, as the calls
+  beside them (0478 step 2a's commit). It and `an_answer_recorded_within_the_settle_window_is_checked_though_the_
+  journal_names_nothing` then fail: each expects `since_within`'s `wait` bound to act, and nothing reads it.
+- **Found** (2026-11-19, 0478 step 2d's device runs): one hogql Metal run in five of that build stopped with
+  `the ast matcher wave failed on Metal: BackendCapacity` (0382 §6 stops the run; peak 1,539 MB against 1,474-1,497 MB
+  in the others); none in five interleaved runs of step 2c's build. The ast wave does not run text tests; the verdict
+  stage's device memory is a few KB a stage (a directory block, wraps of blocks the run holds). Not yet known whether
+  it is the change or the device's room at that moment; next: run the two builds ten times each and read the wave's
+  refusal (what it asked, what the count held). That build also wrote a zero into slot 0 after each verdict stage
+  (fixed in the same commit); five runs after the fix, at load 57-69, had no stop.
+- **Partly done** (fa53bc6a6): a chunk's held bytes leave out a device run's own blocks, and the chunk drops the
+  device's copies of its dead relations on its thread as it ends; `FLUSHED` no longer keeps every wave.
+- **Open**: on Metal, a chunk's held bytes still differ between runs (one chunk 19-50 MB): a chunk's device strata
+  run in pool jobs on ~18 threads, and each thread's `RESIDENT` entry of a relation read in place holds its `Part`
+  until that thread's next device stratum. The user asked (2026-11-19) why the device caches relations at all, and
+  set the rule: decision 0478 (one block structure for the CPU and the GPU, no pointer-chasing Rust structure).
+  Step 1 done: the held bytes are the same in every run. Still differing: a chunk's bytes written on Metal
+  (`GROWTH`, 0478 step 7; refusals by device room). (c), the threads'
+  coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
+  most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
+
 
 ### Q315. Roll-up 8 (CUDA-support's 0440 onto rr-align): what the merge chose, and what stays open
 
@@ -6993,3 +7041,36 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   measures a group's nesting; or the kernel writes the levels it needed, so one rerun suffices; or the retries
   count into `used` and the plan bound reads the ledger, so the batch is split before it runs.
 - **Done when**: both cases are equal on Metal, and the retry loop's plan bound is the ledger's.
+
+### Q337. (Q262 on Native-GPU-strata) On Metal a hogql run can lose a whole chunk's findings
+
+- **Seen** (2026-11-19, decision 0478 5b-5e): a cold hogql run under the Metal binding, profiling build, format 15,
+  sometimes gives fewer than its 1,629 findings (1,358, 1,375 and 1,487 seen), with no error and exit 0. The files
+  that lose findings lose all of them, and they are a different set each time (one chunk's). Step 7's build
+  (d8f645ce4), made before 5b, did it too: 1 of 4 runs at load 20 (1,487). Before that its build gave 12 of 12 at
+  load 31-38. The CPU binding has given 1,629 in every run.
+- **Suspect, not shown:** the stages run again after an overflow. Their number differs between runs (96-103, R6 of
+  0478), so a rerun that drops or overwrites rows would lose output by timing.
+- **Do:** find the stratum whose rows differ in a bad run (a per-chunk count of each head's rows, compared with a
+  good run's), then the cause; a test that hits it; the fix.
+- **Done when:** 20 Metal runs of hogql give 1,629 each.
+
+- **Lead** (2026-11-19, step 6b's runs: one good, one at 1,358): comparing each stratum's rows, host plus device
+  (`prof/native.tsv`'s last step, `prof/placement.tsv`'s `gpu_rows_made`), only 11 strata differ. In the bad run each
+  of them has one stratum run fewer on the device (`on_gpu` 5 of 6, 11 of 12), so that chunk's run went to the host.
+  For all but one, the host made the rows the device did not, and the totals match. The exception is
+  `xd_fz3398261162_..._rr_diagnostic`: 53,226 rows against 65,468, and 53,226 is exactly what its sibling
+  `xd_fz2220395310_..._violation` made on the device in that run. The diagnostic's host run read an input that the
+  refused chunk had not finished writing. **Next:** in the chunk that fell back, check which input the diagnostic's
+  host run read, and when that input was filled.
+
+### Q338. (Q263 on Native-GPU-strata) A relation's statistics kept by delta are on the heap (0478 R5) — done (0478 step 6f)
+
+- **Seen** (2026-11-19, closing 0478 step 6): `InRel::stats` and `Rel::stats` (`KeptStats`, decision 0096,
+  `plan::statkeep::RelStats`) keep, per column, an exact map of value to count (`FxHashMap`, at most 256 values) and
+  the planner's sketches (`plan::sketch::Sketch`: an AMS array and levels). They were not in 0478's inventory, so
+  steps 5-6 left them on the heap.
+- **Do:** their arrays in blocks, as step 6c did for setfix's sketches: the exact map as open addressing in a block,
+  the sketch's arrays as block arrays. Their numbers stay the same (the statkeep tests).
+- **Done when:** `RelStats` keeps no heap collection, its tests pass, and hogql gives its 1,629 findings at the same
+  instructions.
