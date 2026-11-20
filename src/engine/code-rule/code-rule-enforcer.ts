@@ -18,7 +18,7 @@ import {
   type NativePackageFactsReader,
   type NativeRepositoryIndexOptions,
 } from "../native/native.js";
-import type { CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
+import type { CodeRuleDslCatalog, CompiledCodeRuleDslEntry } from "./code-rule-dsl-catalog.js";
 import {
   buildSteer,
   type CodeRuleEdit,
@@ -285,6 +285,8 @@ type PreparedWorkspace = {
   workspace: NativeCodeRuleDslWorkspace;
   version: string;
   provenance: readonly AuditRuleProvenance[];
+  /** The snapshot's compiled rules, whose titles a steer from this workspace names its rules by (`#steerSourceOf`). */
+  codeRules: readonly CompiledCodeRuleDslEntry[];
   /** The storage attach, settled before the workspace's first apply; true when a Git store attached (repository audits then index natively). */
   storage: Promise<boolean>;
   /** Whether a rule's finding in one file can depend on another file (`CompiledCodeRuleDslEntry.crossFile`). */
@@ -1250,7 +1252,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#workspaceEvaluations.set(workspace, emptyEvaluation());
     this.#workspacePackages.set(workspace, new Map());
     const crossFile = snapshot.codeRules.some(rule => rule.crossFile);
-    return { workspace, version: snapshot.version, provenance: snapshot.provenance, storage, crossFile };
+    return { workspace, version: snapshot.version, provenance: snapshot.provenance, codeRules: snapshot.codeRules, storage, crossFile };
   }
 
   #disposeWorkspace(workspace: NativeCodeRuleDslWorkspace): void {
@@ -2504,7 +2506,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    */
   #steerSourceOf(): SteerSourceOf {
     const provenance = this.#workspace?.provenance ?? this.#catalog.provenance();
-    const codeRules = this.#catalog.snapshot().codeRules;
+    const codeRules = this.#workspace?.codeRules ?? this.#catalog.snapshot().codeRules;
     return ruleId => {
       const recorded = provenance.find(entry => entry.ruleId === ruleId);
       if (recorded === undefined || !("source" in recorded)) return undefined;
