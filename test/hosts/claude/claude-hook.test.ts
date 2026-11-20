@@ -11,7 +11,7 @@ import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/c
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
 import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
-import { answering, countingDaemon, hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
+import { answering, countingDaemon, type CountingDaemon, hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
@@ -501,7 +501,7 @@ describe("Claude Code one-shot hook", () => {
     vi.stubEnv("RERAIL_HOME", join(root, "home"));
     try {
       const common = { session_id: "claude-session", cwd: root };
-      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const dashboard = `${daemon.origin}?repository=clone%3Aapp&checkout=%2Fwork%2Fapp`;
       const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
       const storageRoot = join(root, "sessions");
       await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, answering(scriptedLoop({ "turn-end": steer }), { dashboard }), storageRoot);
@@ -515,6 +515,30 @@ describe("Claude Code one-shot hook", () => {
     } finally {
       vi.unstubAllEnvs();
       await daemon.close();
+    }
+  });
+
+  it("links a held steer again from the daemon that answers when the daemon restarted at another origin", async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, "home");
+    const before = await countingDaemon(home);
+    vi.stubEnv("RERAIL_HOME", home);
+    let after: CountingDaemon | undefined;
+    try {
+      const common = { session_id: "claude-session", cwd: root };
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      const storageRoot = join(root, "sessions");
+      await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, answering(scriptedLoop({ "turn-end": steer }), { dashboard: before.origin }), storageRoot);
+      // The daemon restarts on another port: its state file names the new origin, and the old one listens no more.
+      after = await countingDaemon(home);
+      await before.close();
+      const call = await handleClaudeEvent({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} }, scriptedLoop({}), storageRoot);
+      expect(JSON.stringify(call)).toContain(`${after.origin}#rule/acme%3Ano-print`);
+      expect(JSON.stringify(call)).not.toContain(before.origin);
+    } finally {
+      vi.unstubAllEnvs();
+      await before.close();
+      await after?.close();
     }
   });
 

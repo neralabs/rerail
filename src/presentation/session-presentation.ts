@@ -283,11 +283,43 @@ export async function presentedSessionStartNote(session: AdapterSession, answere
 export async function linkDeliveries<Delivery extends AdapterDelivery>(
   deliveries: readonly Delivery[], cwd: string | undefined, answered: EventAnswerFacts = {},
 ): Promise<Delivery[]> {
+  if (cwd === undefined) return deliveries.map(delivery => ({ ...delivery }));
   // Hooks call this on every event, and most events deliver nothing: only a rule or a conflict still to link is worth
-  // asking the daemon. A steer a hook held keeps the links of the answer that found it (`linkedByAnswer`).
-  const dashboard = cwd === undefined || !deliveries.some(unlinked) ? undefined : await steerDashboard(cwd, answered);
-  if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
-  return deliveries.map(delivery => linked(delivery, dashboard));
+  // asking the daemon. A steer a hook held keeps the links of the answer that found it (`linkedByAnswer`) while the
+  // daemon still listens where they point.
+  const current = await currentLinks(deliveries, cwd);
+  const dashboard = current.some(unlinked) ? await steerDashboard(cwd, answered) : undefined;
+  if (dashboard === undefined) return current.map(delivery => ({ ...delivery }));
+  return current.map(delivery => linked(delivery, dashboard));
+}
+
+/**
+ * `deliveries` with each link a held steer kept dropped where the Rerail home's state file names a daemon at another
+ * origin (one restarted that could not get its port back), so `linkDeliveries` links it again from the daemon that
+ * answers. The state file is read only when a delivery holds a link, and nothing is asked of the daemon; where it names
+ * no daemon a hook may link to, or cannot be read, nothing says the links moved and they stay.
+ */
+async function currentLinks<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string): Promise<readonly Delivery[]> {
+  if (!deliveries.some(holdsLink)) return deliveries;
+  const daemon = await verifyDaemon(cwd).catch(() => "daemon unavailable");
+  if (typeof daemon === "string") return deliveries;
+  return deliveries.map(delivery => linksAt(delivery, daemon.origin.origin));
+}
+
+/** Whether `delivery` holds a rule or a conflict linked already. */
+function holdsLink(delivery: AdapterDelivery): boolean {
+  return delivery.rules.some(rule => rule.url !== undefined) || delivery.conflict?.url !== undefined;
+}
+
+/** `delivery` with each link it holds kept only where it points at `origin`. */
+function linksAt<Delivery extends AdapterDelivery>(delivery: Delivery, origin: string): Delivery {
+  const at = (url: string | undefined): string | undefined => url !== undefined && URL.canParse(url) && new URL(url).origin === origin ? url : undefined;
+  const { conflict } = delivery;
+  return {
+    ...delivery,
+    rules: delivery.rules.map(rule => ({ ...rule, url: at(rule.url) })),
+    ...(conflict === undefined ? {} : { conflict: { ...conflict, url: at(conflict.url) } }),
+  };
 }
 
 /**
