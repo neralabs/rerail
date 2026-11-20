@@ -25,33 +25,12 @@ pub struct TextProbe {
 }
 
 impl TextProbe {
-    /// `pattern`'s probe, derived once a process (`KEPT`): an anchor plan derives one for every regex term it
-    /// reaches, and a pack's shared utilities are compiled again for each grammar and `languageOptions`
-    /// (`compile::shared`), so the same patterns come back rule after rule. A probe is its pattern's alone.
     pub fn compile(pattern: &str) -> Self {
         // Parsing and extraction are optional optimizations. Bound their work,
         // and leave authoritative syntax/size validation to the actual matcher.
         if pattern.len() > MAX_PATTERN_BYTES {
             return Self::default();
         }
-        /// Past this many, a probe is derived and not kept: a daemon that compiles rule after rule keeps a
-        /// bounded set.
-        const KEPT: usize = 1 << 14;
-        static DERIVED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<Box<str>, TextProbe>>> =
-            std::sync::LazyLock::new(Default::default);
-        if let Some(probe) = DERIVED.lock().ok().and_then(|derived| derived.get(pattern).cloned()) {
-            return probe;
-        }
-        let probe = Self::derive(pattern);
-        if let Ok(mut derived) = DERIVED.lock()
-            && derived.len() < KEPT
-        {
-            derived.insert(pattern.into(), probe.clone());
-        }
-        probe
-    }
-
-    fn derive(pattern: &str) -> Self {
         let Ok(hir) = regex_syntax::ParserBuilder::new()
             .nest_limit(64)
             .build()

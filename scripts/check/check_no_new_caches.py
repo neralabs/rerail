@@ -20,8 +20,10 @@ import subprocess
 import sys
 
 FACTS_ONLY = "native/src/code_rule_dsl/logic/facts_only.rs"
-MAP_DIRS = ("native/src/code_rule_dsl/logic/", "native/src/content_store/", "native/src/code_rule_dsl/text.rs")
-TABLE_DIRS = MAP_DIRS[:2] + ("native/src/code_rule_dsl/stats", "native/src/code_rule_dsl/slice")
+# The whole engine: PR #508's pattern, probe and literal memos (2026-11-19) sat in `language.rs`, `prefilter/` and
+# `matcher/`, outside the run's directories this once read, and came in unseen.
+MAP_DIRS = ("native/src/code_rule_dsl/", "native/src/content_store/")
+TABLE_DIRS = ("native/src/code_rule_dsl/logic/", "native/src/content_store/", "native/src/code_rule_dsl/stats", "native/src/code_rule_dsl/slice")
 HEAD = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+([A-Z_][A-Z_0-9]*)\s*:")
 HELD = re.compile(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<")
 PLAIN = re.compile(

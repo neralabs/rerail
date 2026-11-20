@@ -8,8 +8,6 @@
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::{block, native_cpu_block, native_ir};
 #[cfg(target_os = "macos")]
-use rerail_compiler::{Error, block_native};
-#[cfg(target_os = "macos")]
 use rerail_metal as metal_program_backend;
 
 /// Inputs that put every byte value at every position of a block, and lengths around every
@@ -62,9 +60,9 @@ pub fn runs() -> Vec<Vec<u8>> {
 /// A program's first block program, lowered and compiled once, for runs over many inputs.
 pub struct Executors<'a> {
     block: &'a block::BlockProgram,
-    /// The lowered program Metal's generated MSL and forward carry run.
+    /// The lowered form the generated MSL runs (the Metal executors').
     #[cfg(target_os = "macos")]
-    native: block_native::BlockNative,
+    native: rerail_compiler::block_native::BlockNative,
     cranelift: native_cpu_block::CompiledBlock,
 }
 
@@ -94,11 +92,13 @@ impl<'a> Executors<'a> {
     pub fn run(&self, bytes: &[u8], metal: bool) -> (Vec<(String, Vec<Vec<u64>>)>, Vec<String>) {
         let out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
         let skipped = Vec::new();
+        // The Metal executors add to both (macOS only).
         #[cfg(target_os = "macos")]
         let (mut out, mut skipped) = (out, skipped);
         #[cfg(target_os = "macos")]
         if metal {
             use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
+            use rerail_compiler::Error;
             let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
                 Ok(got) => out.push((name, got)),
                 Err(Error::BackendLaunchLimit) => skipped.push(name),

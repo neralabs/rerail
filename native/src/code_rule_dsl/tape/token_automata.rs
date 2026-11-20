@@ -1,7 +1,7 @@
 //! A grammar's token automata (`tokens`), built from its `grammar.json`. The lang crate's build script includes this
-//! file and builds every vendored grammar's automata with the build (`GRAMMARS`), so a process decodes them
-//! (`decode`) and never determinizes: building Python's took 20 ms of a small run's 0.3 s, every process. Nothing
-//! here names the crate: the build script mounts it as a module of its own.
+//! file and builds every vendored grammar's automata with the build (`GRAMMARS`), so a process reads them (`index`,
+//! then `decode_automaton` for each kind it walks) and never determinizes: building Python's took 20 ms of a small
+//! run's 0.3 s, every process. Nothing here names the crate: the build script mounts it as a module of its own.
 
 use rustc_hash::FxHashMap;
 use serde_json::Value;
@@ -589,7 +589,7 @@ pub(crate) fn encode(built: &Built) -> Vec<u8> {
 
 struct Reader<'b>(&'b [u8]);
 
-impl Reader<'_> {
+impl<'b> Reader<'b> {
     fn u(&mut self) -> Option<u32> {
         let (head, rest) = self.0.split_first_chunk::<4>()?;
         self.0 = rest;
@@ -599,10 +599,14 @@ impl Reader<'_> {
         self.u().map(|v| v as usize)
     }
     fn text(&mut self) -> Option<String> {
+        self.str().map(str::to_owned)
+    }
+    /// A text, read where it lies.
+    fn str(&mut self) -> Option<&'b str> {
         let n = self.n()?;
         let (text, rest) = (self.0.get(..n)?, self.0.get(n..)?);
         self.0 = rest;
-        String::from_utf8(text.to_vec()).ok()
+        std::str::from_utf8(text).ok()
     }
     fn label(&mut self) -> Option<Label> {
         Some(Label { token: self.u()? != 0, name: self.u()?, field: self.u()? })
@@ -613,10 +617,87 @@ impl Reader<'_> {
     fn texts<T: FromIterator<String>>(&mut self) -> Option<T> {
         (0..self.n()?).map(|_| self.text()).collect()
     }
+    /// Texts, read where they lie.
+    fn strs<T: FromIterator<&'b str>>(&mut self) -> Option<T> {
+        (0..self.n()?).map(|_| self.str()).collect()
+    }
+    /// Past `n` bytes, unread.
+    fn skip(&mut self, n: usize) -> Option<()> {
+        self.0 = self.0.get(n..)?;
+        Some(())
+    }
+    /// Past a word (`word`), unread.
+    fn skip_word(&mut self) -> Option<()> {
+        let n = self.n()?;
+        self.skip(n.checked_mul(LABEL_BYTES)?)
+    }
+    /// Past a kind's automaton (`automaton`), unread: the bytes it lies in.
+    fn skip_automaton(&mut self) -> Option<&'b [u8]> {
+        let start = self.0;
+        let states = self.n()?;
+        for _ in 0..states {
+            self.u()?;
+            let n = self.n()?;
+            self.skip(n.checked_mul(LABEL_BYTES + 4)?)?;
+        }
+        for _ in 0..self.n()? {
+            self.skip(4 + LABEL_BYTES)?;
+            self.skip_word()?;
+        }
+        for _ in 0..states {
+            if self.u()? != 0 {
+                self.skip_word()?;
+            }
+        }
+        let kept = self.n()?;
+        self.skip(kept.checked_mul(LABEL_BYTES)?)?;
+        let fields = self.n()?;
+        self.skip(fields.checked_mul(4)?)?;
+        Some(&start[..start.len() - self.0.len()])
+    }
+    /// A kind's automaton, as `encode` wrote it after its symbol.
+    fn automaton(&mut self) -> Option<Automaton> {
+        let states = self.n()?;
+        let (mut moves, mut accepting) = (Vec::with_capacity(states), Vec::with_capacity(states));
+        for _ in 0..states {
+            accepting.push(self.u()? != 0);
+            let n = self.n()?;
+            let mut out = FxHashMap::with_capacity_and_hasher(n, Default::default());
+            for _ in 0..n {
+                let label = self.label()?;
+                out.insert(label, self.u()?);
+            }
+            moves.push(out);
+        }
+        let implied = self.n()?;
+        let mut to = FxHashMap::with_capacity_and_hasher(implied, Default::default());
+        for _ in 0..implied {
+            let from = self.u()?;
+            let label = self.label()?;
+            to.insert((from, label), self.word()?);
+        }
+        let end = (0..states).map(|_| if self.u()? != 0 { self.word().map(Some) } else { Some(None) }).collect::<Option<Vec<_>>>()?;
+        let kept = (0..self.n()?).map(|_| self.label()).collect::<Option<_>>()?;
+        let fields = (0..self.n()?).map(|_| self.u()).collect::<Option<_>>()?;
+        Some(Automaton { moves, accepting, implied: Implied { to, end }, kept, fields })
+    }
 }
 
-/// The automata `encode` wrote; `None` for bytes it did not write.
-pub(crate) fn decode(bytes: &[u8]) -> Option<Built> {
+/// A label's bytes (`Writer::label`): token, name and field.
+const LABEL_BYTES: usize = 12;
+
+/// What `encode` wrote, each kind's automaton left in its bytes (`decode_automaton` reads it): a grammar holds
+/// hundreds of kinds, and a process reads a few of them (a rule's patterns, a file's kinds).
+pub(crate) struct Index<'b> {
+    pub(crate) texts: Vec<String>,
+    /// Each kind's symbol, and the bytes its automaton lies in.
+    pub(crate) kinds: Vec<(Sym, &'b [u8])>,
+    pub(crate) unsupported: BTreeSet<String>,
+    pub(crate) extras: BTreeSet<String>,
+}
+
+/// The automata `encode` wrote, indexed (`Index`); `None` for bytes it did not write.
+pub(crate) fn index(bytes: &[u8]) -> Option<Index<'_>> {
     let mut r = Reader(bytes);
     if r.u()? != FORMAT {
         return None;
@@ -624,33 +705,20 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<Built> {
     let texts: Vec<String> = r.texts()?;
     let unsupported = r.texts()?;
     let extras = r.texts()?;
-    let mut kinds = Vec::with_capacity(r.0.len().min(1 << 16) / 64);
-    for _ in 0..r.n()? {
+    let count = r.n()?;
+    let mut kinds = Vec::with_capacity(count.min(1 << 16));
+    for _ in 0..count {
         let sym = r.u()?;
-        let states = r.n()?;
-        let (mut moves, mut accepting) = (Vec::with_capacity(states), Vec::with_capacity(states));
-        for _ in 0..states {
-            accepting.push(r.u()? != 0);
-            let n = r.n()?;
-            let mut out = FxHashMap::with_capacity_and_hasher(n, Default::default());
-            for _ in 0..n {
-                let label = r.label()?;
-                out.insert(label, r.u()?);
-            }
-            moves.push(out);
-        }
-        let mut to = FxHashMap::default();
-        for _ in 0..r.n()? {
-            let from = r.u()?;
-            let label = r.label()?;
-            to.insert((from, label), r.word()?);
-        }
-        let end = (0..states).map(|_| if r.u()? != 0 { r.word().map(Some) } else { Some(None) }).collect::<Option<Vec<_>>>()?;
-        let kept = (0..r.n()?).map(|_| r.label()).collect::<Option<_>>()?;
-        let fields = (0..r.n()?).map(|_| r.u()).collect::<Option<_>>()?;
-        kinds.push((sym, Automaton { moves, accepting, implied: Implied { to, end }, kept, fields }));
+        kinds.push((sym, r.skip_automaton()?));
     }
-    r.0.is_empty().then_some(Built { texts, kinds, unsupported, extras })
+    r.0.is_empty().then_some(Index { texts, kinds, unsupported, extras })
+}
+
+/// A kind's automaton from the bytes `index` found it in.
+pub(crate) fn decode_automaton(bytes: &[u8]) -> Option<Automaton> {
+    let mut r = Reader(bytes);
+    let automaton = r.automaton()?;
+    r.0.is_empty().then_some(automaton)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -708,15 +776,24 @@ pub(crate) fn encode_census(census: &Census) -> Vec<u8> {
     w.0
 }
 
-/// The census `encode_census` wrote; `None` for bytes it did not write.
-pub(crate) fn decode_census(bytes: &[u8]) -> Option<Census> {
+/// A census as `encode_census` wrote it, its names read where they lie (`decode_census`).
+pub(crate) struct CensusIn<'b> {
+    pub(crate) implied: BTreeMap<&'b str, BTreeSet<(&'b str, &'b str)>>,
+    pub(crate) parents: BTreeMap<&'b str, BTreeSet<&'b str>>,
+    pub(crate) tokens: BTreeSet<&'b str>,
+    pub(crate) extras: BTreeSet<&'b str>,
+}
+
+/// The census `encode_census` wrote, its names read in place, not copied (it is read once a dialect, as a rule of
+/// it first compiles); `None` for bytes it did not write.
+pub(crate) fn decode_census(bytes: &[u8]) -> Option<CensusIn<'_>> {
     let mut r = Reader(bytes);
     if r.u()? != FORMAT {
         return None;
     }
-    let implied = (0..r.n()?).map(|_| Some((r.text()?, (0..r.n()?).map(|_| Some((r.text()?, r.text()?))).collect::<Option<_>>()?))).collect::<Option<_>>()?;
-    let parents = (0..r.n()?).map(|_| Some((r.text()?, r.texts()?))).collect::<Option<_>>()?;
-    let tokens = r.texts()?;
-    let extras = r.texts()?;
-    r.0.is_empty().then_some(Census { implied, parents, tokens, extras })
+    let implied = (0..r.n()?).map(|_| Some((r.str()?, (0..r.n()?).map(|_| Some((r.str()?, r.str()?))).collect::<Option<_>>()?))).collect::<Option<_>>()?;
+    let parents = (0..r.n()?).map(|_| Some((r.str()?, r.strs()?))).collect::<Option<_>>()?;
+    let tokens = r.strs()?;
+    let extras = r.strs()?;
+    r.0.is_empty().then_some(CensusIn { implied, parents, tokens, extras })
 }

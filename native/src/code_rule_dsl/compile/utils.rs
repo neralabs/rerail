@@ -263,6 +263,7 @@ impl<'a> UtilScope<'a> {
             documents: self.documents,
             instances: None,
             side,
+            patterns: self.patterns,
         }
     }
 }
@@ -294,6 +295,22 @@ pub struct UtilScope<'a> {
     pub instances: Option<&'a Instances>,
     /// The document the rule being compiled reads.
     pub side: Side,
+    /// The patterns the query's compilation has compiled (`language::Patterns`); `None` compiles each where asked.
+    pub patterns: Option<&'a crate::code_rule_dsl::language::Patterns>,
+}
+
+impl UtilScope<'_> {
+    /// A rule's pattern for `language`, compiled once for the query where it has a table of them.
+    pub fn pattern(
+        &self,
+        source: crate::code_rule_dsl::language::PatternSource<'_>,
+        language: crate::code_rule_dsl::language::GrammarDialect,
+    ) -> std::result::Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError> {
+        match self.patterns {
+            Some(patterns) => patterns.get(source, language),
+            None => crate::code_rule_dsl::language::rule_pattern(source, language),
+        }
+    }
 }
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

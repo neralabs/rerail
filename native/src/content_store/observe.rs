@@ -2405,7 +2405,9 @@ mod tests {
         o.list_max = 0;
         o.journal_settle = std::time::Duration::from_secs(5);
         // Trust at once: these runs follow each other within the settle window, as no test can wait it out; and the
-        // journal's answer whatever it costs.
+        // journal's answer whatever it costs: the cookie waited for up to 30 s, past the replay's settle window (a busy
+        // host's `fseventsd` takes seconds, Q221; 2 s failed four of these on a loaded host, 7ab606e746). The wait ends
+        // when the cookie comes.
         o.settle_ns = 0;
         o.wait_least_ns = 30_000_000_000;
         o

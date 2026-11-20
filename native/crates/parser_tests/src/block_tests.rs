@@ -993,13 +993,16 @@ fn fnv(indexes: &[u32]) -> u64 {
 /// Every executor's run with the extract pass: the outputs and each extract's positions.
 fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
     let block = &p.block_programs[0];
-    let native = native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0);
-    let mut out = vec![
+    let out = vec![
         // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
         ("cpu interpreter".to_owned(), block.run(bytes)),
     ];
+    // The Metal executors' runs (macOS only).
+    #[cfg(target_os = "macos")]
+    let mut out = out;
     #[cfg(target_os = "macos")]
     {
+        let native = native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0);
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret_extract, run_generated_extract};
         for width in LaneWidth::ALL {
             let w = width.bytes();
@@ -1150,7 +1153,9 @@ fn stage1_equals_simdjson_on_every_executor() {
         let runs: Vec<(String, BlockRun)> = if len < 200_000 {
             extract_executors(&p, &bytes)
         } else {
-            let mut runs = vec![("cranelift".to_owned(), compiled.extract(&bytes))];
+            let runs = vec![("cranelift".to_owned(), compiled.extract(&bytes))];
+            #[cfg(target_os = "macos")]
+            let mut runs = runs;
             #[cfg(target_os = "macos")]
             {
                 use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_extract};

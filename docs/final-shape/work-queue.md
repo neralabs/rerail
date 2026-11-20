@@ -6006,3 +6006,92 @@ Open:
   `required_text.rs`, `language.rs`, `probes.rs` and `lib.rs` hunks came with the merge; token_census.rs,
   token_automata.rs, tokens.rs and tokens_tests.rs are the hub's.
 - **Done when**: the four are ported onto the hub's token tests, or measured on the hub and judged not worth it.
+- **Done** (2026-11-19): ported, without their process-wide memo maps (decision 0104: a repeat is fixed by flow).
+  - Taken: the census read in place (`decode_census`'s `&'static str`, `Lang::distinct`); the automata indexed and a
+    kind's read when a walk first needs it (`token_automata::index`, `tokens::Kind`); the token-test walk reading
+    the document in place, recording each relation and asking `gap_test` only where a token test reads it
+    (`Walk::lowered`), utilities keyed by their context; a test's whole-token regex compiled only where it reaches a
+    token, its gaps read from the set it reached (`Reach`, `Lang::implied_where`).
+  - Not as memos: `rule_pattern`'s process table became `language::Patterns`, one compilation of a query's
+    (`compile_query_as`, through `UtilScope::pattern`), gone with it; `Reach` is found per test; `TextProbe::compile`
+    and `regex_clause` derive again where asked, as before #508. The repeat those two met is the shared utilities
+    compiled again for each grammar and `languageOptions` (`compile::shared`), to fix there.
+  - The three memos had come in with the merge (clean hunks outside the check's directories):
+    `check_no_new_caches.py` now reads all of `code_rule_dsl/`.
+  - Hub-side answers kept: `lowered` is `gap_test` alone (Tim's also counts `gap_split` and the token's own
+    `follows`/`precedes`, RER-131 work the hub has not taken).
+  - Tests (Linux): the token, census, automata, pattern, compile, prefilter and anchors filter, 520 of 528, the same 8
+    failing at c2365d280 without the port (Q254).
+
+### Q252. Two Metal parity tests fail at the hub's tip on the M3
+
+- **Seen** (2026-11-19, the M3, both at the pre-merge hub 5fbc02057 and after #508's merge, so not the merge's):
+  - `rr_parser::tests::a_refused_files_records_stop_on_metal`: `"x = 1.2.3."` is not refused on both (Metal and
+    the CPU disagree on the refusal); `"\u{1}"` and `` "````a````." `` code 0 tokens on Metal, 5 on the CPU.
+  - `parser_tests::metal_tests::every_step_on_metal_equals_the_interpreter`: 182 of 2,206 files differ over the 13
+    steps Metal runs (step `01-vrai`'s mutations first: `"vra^"`, `"\nvra="`), where Q183 left none.
+- **Done when**: both pass on a Mac with Metal.
+- **Read** (2026-11-19, from the source; not yet run, the M3 at load 84–118 with no cores to spare):
+  - Both pass at 572ff69db (a hub commit after Q183), so the change is the hub's, after it.
+  - `a_refused_files_…`: its third input reads now. Q40 (98c9f82ab, decision 0413) has tier 1 read `1.2.3` as `1.2`,
+    `.`, `3`; a clause's chain is refused by tier 2, so neither tier 1's totals refuses it. The token the record pass
+    still refuses is an integer of 19 digits or more (0413's `all(E) at least N`): the input to test with.
+  - `every_step_on_metal_…`: the 182 files are step 01's mutations (`vra^`), files the step refuses; the candidates
+    are 0411 (the CPU's record pass makes the outputs in `records_made`, and tier 1's runs are compared `without`
+    them) and Q200 (a refused file's records stop at the refusal). Check which by one run of the test, then compare
+    as `compile_tests` does.
+- **Done** (2026-11-19): both pass on the M3 (one nextest run with Q253's set).
+  - `a_refused_files_…`: its token refusal is a 19-digit integer (0413: a float chain is read now).
+  - `every_step_on_metal_…`: where the interpreter makes a token's records itself (the loop's starts and lasts,
+    0177 stage 2a; the lasts by the gaps, 0411), a refused file's starts and lasts extracts are excused, as those
+    decisions prove them only where the file is taken. Every other output and extract is compared, a difference
+    named by its index with the file's refusal; the excused differences are counted and printed.
+
+### Q253. The journal's wait bound (Q221) is gone, and the FSEvents tests disturb each other
+
+- **Seen** (2026-11-19): `fsevents::since_within` takes the caller's `wait` and never reads it (a warning on macOS):
+  89f4abfec waited `wait.unwrap_or(WAIT)` and answered `Late::Slower` as a `Lost` keeping the stream; 718434dca
+  (rr-align, after a hub merge) made it `WAIT.max(settle)`. Putting the bound back (`min` of the two) fails 4 observer
+  tests on the M3 one at a time (`a_canonical_path_…`, `a_watched_root_…`, `an_inner_root_…`,
+  `rerails_own_files_…`), which expect the journal's answer within the bound's 2 ms floor.
+- **Also seen**: run in one nextest process set, the 20 `tree_watch` tests (main's, new to the hub) and the 31
+  observer tests fail each other's notices on the M3 (11 failed); each set alone passes, the observer's at `-j 1`
+  (at `-j 4` one to three of its own fail, a different set each run, also at 5fbc02057).
+- **Done when**: Q221's bound reads `wait` again with the observer tests passing, and the FSEvents tests pass
+  together (a test group of their own, or streams that do not share `fseventsd`'s latency).
+- **Done** (2026-11-19) but one, on the M3: the store's journal and observer tests and the engine's `tree_watch`
+  tests in one run, the group one at a time: 54 of 56. A symlinked root's test passed alone. The cap's
+  (`more_entries_than_the_cap_lose_the_root`, 16,385 files written) fails alone too: FSEvents told 665 of them in its
+  20 s (33 a second; the assertion counts them now), with `fseventsd` at 100% of a core and 18.5 GB resident after
+  172 days up. The host's daemon, not the adapter (the cap's own test, over `Notices`, passes); a restart of
+  `fseventsd` is the host owner's. The changes:
+  - `fsevents::since_within` waits the caller's bound again, else `WAIT` (or a journal test's settle):
+    `wait.unwrap_or(WAIT.max(settle))`.
+  - `journal_observer` asks for the journal's answer within the same 5 s it lets the replay settle (it asked 2 s,
+    under a busy host's cookie): the four observer tests.
+  - `.config/nextest.toml`: the store's journal and observer tests and the engine's `tree_watch` tests are a test
+    group, one at a time, on macOS (`show-config test-groups` reads it; Linux matches none).
+
+### Q254. Eight token and anchor tests fail at the hub's tip on Linux
+
+- **Seen** (2026-11-19, spark, c2365d280 and with Q251's port alike): `anchors::tests::all_catalog_ast_rules_select_
+  identically_on_native_and_restored_tape`, `compare::tests::tokens_compare_reads_the_tokens_a_tape_leaves_out`,
+  `prefilter::lab::a_capture_replays_to_the_candidates_of_its_statement` (a replay store without its atoms blocks),
+  `compile_matcher_tests::ast_pattern_captures_are_pinned` and `…verdicts_reuse_their_bindings` (`pyflakes/F601.py`:
+  pack test data), `violations::tests::a_token_neighbour_is_not_the_stored_node_past_an_implied_token`,
+  `…gap_test_groups_anchor_at_the_implied_token`, `token_readers::no_rule_reads_a_token_the_tape_may_leave_out`.
+- **Done when**: each passes.
+- **Done** (2026-11-19), six of eight; the two `compile_matcher_tests` read ruff's fixtures, which no checkout here
+  holds at their lock (`npm run fixtures:pull`).
+  - The four RER-131 tests and the two pack rules (`ruff-fast001`'s lone trailing comma, `ruff-sim118`'s `in`) needed
+    t47's pending 48bf01694/241c19955 and c00a1d9f0, which stage 2 left out with the hub's token files. Ported onto
+    the hub's gap index, not Tim's per-call item sequence: `gap_split` with a `Stored` token condition; a gap test's
+    token conditions on a node's own tokens (`has`); a neighbour walk's `stored` test (no implied token between it and
+    the stored node) and a capture's span (`GapTest::token`), read from the parent's cached gaps by Tim's sequence
+    (`found_items`), the hub's `holds` and `implied_count` unchanged; `comparison.implied` set for `tokens`.
+  - The replay lab copied a capture's database without its atoms blocks (0401): it copies them now.
+  - Linux: the token, gap, matcher, violations, compare, compile, prefilter and anchors tests 1,102 of 1,104.
+  - The two `compile_matcher_tests` (2026-11-19): the farm never sends gitignored files (its mirror lists
+    `git ls-files --cached --others --exclude-standard`), so the fixtures stay here. The six files they read are
+    upstream ruff copies, byte-equal at 236fc98d2~1 and in the hub's worktree (#191 added Rerail's own fixtures,
+    not these): placed from git history, sent with `--tree packs/python/upstream/ruff/fixtures`, both pass on Linux.

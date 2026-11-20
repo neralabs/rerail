@@ -41,7 +41,7 @@ use super::model::{
 use super::soundness::sound_under_errors;
 use super::violations;
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
-use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
+use crate::code_rule_dsl::language::{GrammarDialect, PatternSource};
 pub use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
 use compare::{binding_site_index, bound_elsewhere, compare_sites, frame_scope};
@@ -731,6 +731,8 @@ fn compile_query_as(
     seed: bool,
 ) -> Result<Query> {
     let query = object(value, path)?;
+    // Each pattern compiled once for this query, whoever asks (`language::Patterns`).
+    let patterns = crate::code_rule_dsl::language::Patterns::default();
     reject_unknown(query, &["regex", "ast", "select_when", "file"], path)?;
     let forms = ["regex", "ast", "select_when", "file"]
         .into_iter()
@@ -1003,13 +1005,13 @@ fn compile_query_as(
             if let Some(transform) = &transform {
                 let languages = all_dialects.clone();
                 let mut declared = Vec::new();
-                declared_captures(rule, &rule_path, &languages, &mut declared);
+                declared_captures(rule, &rule_path, &languages, &patterns, &mut declared);
                 for util in utils.values().filter(|util| util.params.is_empty()) {
-                    declared_captures(util.rule, &util.rule_path, &languages, &mut declared);
+                    declared_captures(util.rule, &util.rule_path, &languages, &patterns, &mut declared);
                 }
                 for (name, constraint) in &constraints {
                     let constraint_path = format!("{constraints_path}/{name}");
-                    declared_captures(constraint, &constraint_path, &languages, &mut declared);
+                    declared_captures(constraint, &constraint_path, &languages, &patterns, &mut declared);
                 }
                 for name in transform.names() {
                     if let Some((_, at)) = declared.iter().find(|(known, _)| known == name) {
@@ -1144,6 +1146,7 @@ fn compile_query_as(
                     documents: documents.as_ref(),
                     instances: reach.as_ref().map(|reach| &reach.instances),
                     side,
+                    patterns: Some(&patterns),
                 };
                 let other_scopes = others
                     .iter()
@@ -1410,7 +1413,7 @@ fn compile_query_as(
                                     .unwrap_or_default(),
                             },
                         };
-                        rule_pattern(source, *language).ok().map(|compiled| {
+                        patterns.get(source, *language).ok().map(|compiled| {
                             compiled
                                 .defined_vars()
                                 .into_iter()
@@ -1737,6 +1740,7 @@ fn declared_captures(
     value: &Value,
     path: &str,
     languages: &[GrammarDialect],
+    patterns: &crate::code_rule_dsl::language::Patterns,
     found: &mut Vec<(String, String)>,
 ) {
     match value {
@@ -1759,7 +1763,7 @@ fn declared_captures(
                                         .unwrap_or_default(),
                                 },
                             };
-                            rule_pattern(source, *language).ok().map(|compiled| {
+                            patterns.get(source, *language).ok().map(|compiled| {
                                 compiled
                                     .defined_vars()
                                     .into_iter()
@@ -1778,7 +1782,7 @@ fn declared_captures(
                         if let Some(Value::String(name)) = count.get("as") {
                             found.push((name.clone(), format!("{at}/as")));
                         }
-                        declared_captures(item, &at, languages, found);
+                        declared_captures(item, &at, languages, patterns, found);
                     }
                     ("matches", Value::Object(calls)) => {
                         for (util, arguments) in calls {
@@ -1795,13 +1799,13 @@ fn declared_captures(
                             }
                         }
                     }
-                    _ => declared_captures(item, &at, languages, found),
+                    _ => declared_captures(item, &at, languages, patterns, found),
                 }
             }
         }
         Value::Array(items) => {
             for (index, item) in items.iter().enumerate() {
-                declared_captures(item, &format!("{path}/{index}"), languages, found);
+                declared_captures(item, &format!("{path}/{index}"), languages, patterns, found);
             }
         }
         _ => {}
