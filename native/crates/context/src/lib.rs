@@ -433,6 +433,15 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
     Back(Some(was_run), was_context)
 }
 
+/// Runs `f` in `run` (a job's handle, `job_run`) on this thread, and ends it there: `f` and everything it captured
+/// are dropped before the run leaves the thread. A job written `move || { let _in = enter(run); … }` drops its
+/// captures after its body, when the run has left: a capture's drop that reads the run (a device lease's going back
+/// to its pool reads the machine's) then reads outside any run (Q337).
+pub fn in_run<R>(run: Option<std::sync::Arc<dyn RunOwn>>, f: impl FnOnce() -> R) -> R {
+    let _in = enter(run);
+    f()
+}
+
 /// Whether this thread holds `job`'s run and context already (a pool's item run inline on its caller's thread).
 pub fn holds(job: &Option<std::sync::Arc<dyn RunOwn>>) -> bool {
     let (run, context) = match job.as_ref().map(|j| (j, j.with_context())) {
@@ -833,6 +842,37 @@ pub fn test_run() -> impl Drop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Q337: a job's captures end inside its run (`in_run`); with the run's guard in the job's body, a capture's drop
+    /// comes after the guard's and is outside the run.
+    #[test]
+    fn a_jobs_captures_are_dropped_inside_its_run() {
+        struct Says(std::sync::Arc<std::sync::Mutex<Option<bool>>>);
+        impl Drop for Says {
+            fn drop(&mut self) {
+                *self.0.lock().unwrap() = Some(run_own().is_some());
+            }
+        }
+        let _t = test_run();
+        let job = |seen: &std::sync::Arc<std::sync::Mutex<Option<bool>>>, carried: bool| {
+            let (says, run) = (Says(seen.clone()), job_run());
+            std::thread::spawn(move || {
+                if carried {
+                    in_run(run, move || drop(&says));
+                } else {
+                    let _in = enter(run);
+                    let _ = &says;
+                }
+            })
+            .join()
+            .unwrap();
+        };
+        let (bare, carried) = (std::sync::Arc::new(std::sync::Mutex::new(None)), std::sync::Arc::new(std::sync::Mutex::new(None)));
+        job(&bare, false);
+        assert_eq!(*bare.lock().unwrap(), Some(false), "the guard's pattern: the capture outlives the run");
+        job(&carried, true);
+        assert_eq!(*carried.lock().unwrap(), Some(true), "in_run: the capture ends inside the run");
+    }
 
     #[derive(Clone, Default, PartialEq, Debug)]
     struct Depth(usize);
