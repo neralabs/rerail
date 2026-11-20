@@ -506,14 +506,16 @@ fn asking(prog: &Program) -> BTreeSet<String> {
 }
 
 /// Folds the copies hiding made for guests in the run's own language back into their originals, once the run's
-/// language (`label`) is known (decision 0058). Such a guest's documents are shown (`GUEST_KEYS..HIDDEN_KEYS`, a
-/// guest whose grammar's label is the run's: `guests::key`) and its kinds are the run's (`python:x` resolves as `x`),
-/// so a copy specialized to it holds its original's rows: its rules differ only by the seeded column's bound, which
-/// those documents are under, and by the qualified kinds. Its readers read the original, its rules go, and a
-/// qualified kind of `label` is written plainly; a copied kind set goes with its readers, `nearest`'s and the tree
-/// axes' (`rr_inside_rr_in_<g>_<set>` reads `rr_inside_<set>`); a clone (O110) is then its rule again, dropped as a
-/// repeat by `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the
-/// copies folded. `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
+/// language (`label`) is known (decision 0058). A code guest's documents are shown (`GUEST_KEYS..ANNOTATION_KEYS`,
+/// `guests::key`) and its kinds are the run's (`python:x` resolves as `x`), so a copy specialized to it holds its
+/// original's rows: its rules differ only by the seeded column's bound, which those documents are under, and by the
+/// qualified kinds. An annotation's documents are not shown (decision 0165): the original of a copy made for one is
+/// widened to take them in, and the rules that read it and are not its own read it as hiding left it (`keep_narrow`).
+/// Its readers read the original, its rules go, and a qualified kind of `label` is written plainly; a copied kind set
+/// goes with its readers, `nearest`'s and the tree axes' (`rr_inside_rr_in_<g>_<set>` reads `rr_inside_<set>`); a clone
+/// (O110) is then its rule again, dropped as a repeat by `merge_and_drop_repeats`. With guests not shown (`bound`,
+/// `.guests off`) nothing is folded. Gives the copies folded. `RERAIL_SHOWN_COPIES=on` keeps them (to measure what
+/// they cost).
 pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
     use crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
     if bound != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {
@@ -557,6 +559,7 @@ impl Fold {
 
     fn apply(&self, prog: &mut Program, label: &str) {
         prog.rules.retain(|r| !self.folded.contains_key(r.head.rel.as_str()));
+        keep_narrow(prog, &self.annotated());
         self.widen_originals(prog);
         let plain = format!("{label}:");
         for rule in &mut prog.rules {
@@ -574,10 +577,20 @@ impl Fold {
         self.fold_axes(prog);
     }
 
-    /// An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
+    /// The originals of copies made for an annotation. A copy for a code guest of the run's language holds rows under
+    /// the narrow bound already; one for an annotation holds an annotation's, which its original takes in once widened.
+    fn annotated(&self) -> BTreeSet<&str> {
+        let for_annotation = |copy: &str, orig: &str| {
+            let mid = &copy["rr_in_".len()..copy.len() - orig.len()];
+            mid.starts_with("annotation_") || mid.contains("_annotation_")
+        };
+        self.folded.iter().filter(|(copy, orig)| for_annotation(copy, orig)).map(|(_, orig)| orig.as_str()).collect()
+    }
+
+    /// An original holds its copies' rows: the bounds of an annotation's take the annotations in (`ANNOTATION_KEYS` to
     /// `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
     fn widen_originals(&self, prog: &mut Program) {
-        let originals: BTreeSet<&str> = self.folded.values().map(String::as_str).collect();
+        let originals = self.annotated();
         for rule in prog.rules.iter_mut().filter(|r| originals.contains(r.head.rel.as_str())) {
             for l in &mut rule.body {
                 widen(l);
@@ -639,6 +652,116 @@ impl Fold {
                 list[i] = orig.clone();
             }
         }
+    }
+}
+
+/// The name of `orig` as hiding left it, for the rules that read it and are not its own (`keep_narrow`).
+fn narrow_name(orig: &str) -> String {
+    format!("rr_narrow_{orig}")
+}
+
+/// Keeps the originals `widened` as hiding left them for the rules that read them and are not their own (decision
+/// 0165 §3). Such a rule reached no annotation (it would read a copy), so it reads the original under the narrow
+/// bound, `rr_narrow_<orig>`: the original's rules before they are widened, each reading the others' narrow ones too.
+/// Without it a rule's rows depended on what else the run held: a program whose rules read a copy widened the original
+/// another program's rule read, and that rule saw the annotations (RUF060 found `x: "1 in []"` beside C417 only).
+fn keep_narrow(prog: &mut Program, widened: &BTreeSet<&str>) {
+    let narrowing = Narrowing { widened, asking: asking(prog) };
+    let read = narrowing.reads(prog);
+    let reads = |r: &crate::code_rule_dsl::logic::front::Rule| r.body.iter().filter_map(Literal::atom).any(|a| read.contains(a.rel.as_str()));
+    let narrow: Vec<_> = prog.rules.iter().filter(|r| read.contains(r.head.rel.as_str())).cloned().collect();
+    prog.rules.extend(narrow.into_iter().map(|mut r| {
+        r.head.rel = narrow_name(&r.head.rel).into();
+        r
+    }));
+    for rule in prog.rules.iter_mut().filter(|r| narrowing.sees(r.head.rel.as_str()) && reads(r)) {
+        for l in &mut rule.body {
+            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+                && read.contains(a.rel.as_str())
+            {
+                a.rel = narrow_name(&a.rel).into();
+            }
+        }
+    }
+    for orig in &read {
+        declare_narrow(prog, orig);
+    }
+}
+
+/// Which rules read the widened originals narrow (`keep_narrow`).
+struct Narrowing<'w> {
+    widened: &'w BTreeSet<&'w str>,
+    /// The guest demand and the contexts only it reads (`asking`).
+    asking: BTreeSet<String>,
+}
+
+impl Narrowing<'_> {
+    /// Whether the rules of `head` read the originals narrow: not a widened original's own, and not asking for what
+    /// every reader is answered from.
+    fn sees(&self, head: &str) -> bool {
+        !self.widened.contains(head) && !self.asks(head)
+    }
+
+    /// Whether `rel` is kept narrow for the rules that read it narrow.
+    fn narrowed(&self, rel: &str) -> bool {
+        self.widened.contains(rel) && !self.asks(rel)
+    }
+
+    /// Whether `rel` asks for what every reader is answered from, so it reads the originals widened: a guest request
+    /// and the contexts only it reads (`guests::REQUESTS`, `asking`; asking is not seeing, decision 0165 §4), or the
+    /// on-request rewrite's attributes, their requests, eager halves and widened copies (decision 0174). Read narrow, a
+    /// request asks too little for the widened original's readers.
+    fn asks(&self, rel: &str) -> bool {
+        use crate::code_rule_dsl::logic::rr::lower::{made_on_request, on_request_rule};
+        self.asking.contains(rel) || super::guests::REQUESTS.contains(&rel) || on_request_rule(rel) || made_on_request(rel)
+    }
+
+    /// The originals kept narrow that a rule reading them narrow reads, and those their rules read in turn.
+    fn reads(&self, prog: &Program) -> BTreeSet<String> {
+        let mut rules_of: HashMap<&str, Vec<&crate::code_rule_dsl::logic::front::Rule>> = HashMap::default();
+        for r in &prog.rules {
+            rules_of.entry(r.head.rel.as_str()).or_default().push(r);
+        }
+        let mut todo: Vec<_> = prog.rules.iter().filter(|r| self.sees(r.head.rel.as_str())).collect();
+        let mut read = BTreeSet::new();
+        while let Some(rule) = todo.pop() {
+            for rel in rule.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()).filter(|r| self.narrowed(r)) {
+                if read.insert(rel.to_owned()) {
+                    todo.extend(rules_of.get(rel).into_iter().flatten().copied());
+                }
+            }
+        }
+        read
+    }
+}
+
+/// What the program says of `orig` by name, said of `rr_narrow_<orig>` too: its declaration, qualifiers, tape
+/// columns, lattice, facts, native operator, join shapes, demand and the request rules that serve its readers.
+fn declare_narrow(prog: &mut Program, orig: &str) {
+    let name = narrow_name(orig);
+    copy_entry(&mut prog.decls, orig, &name);
+    copy_entry(&mut prog.qualifiers, orig, &name);
+    copy_entry(&mut prog.tapes, orig, &name);
+    copy_entry(&mut prog.lattice, orig, &name);
+    copy_entry(&mut prog.facts, orig, &name);
+    copy_entry(&mut prog.natives, orig, &name);
+    if prog.nullary.contains(orig) {
+        prog.nullary.insert(name.clone());
+    }
+    if prog.demand.iter().any(|d| d == orig) {
+        prog.demand.push(name.clone());
+    }
+    let shapes: Vec<_> = prog.shapes.iter().filter(|s| s.head == orig).map(|s| crate::code_rule_dsl::logic::front::Shape { head: name.clone(), ..s.clone() }).collect();
+    prog.shapes.extend(shapes);
+    for by in prog.asked_by.values_mut().flatten().filter(|by| by.contains(orig)) {
+        by.insert(name.clone());
+    }
+}
+
+/// `map`'s entry of `from`, copied to `to`.
+fn copy_entry<K: Ord + std::borrow::Borrow<str> + From<String>, V: Clone>(map: &mut BTreeMap<K, V>, from: &str, to: &str) {
+    if let Some(v) = map.get(from).cloned() {
+        map.insert(to.to_owned().into(), v);
     }
 }
 

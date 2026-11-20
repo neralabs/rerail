@@ -29,7 +29,8 @@ Against main on the full shape (300 files, 317 rules), Datalog reported 615 find
 3. A rule that does not name a guest is bounded below `ANNOTATION_KEYS`: it never sees an annotation. A relation
    that annotations reach is copied for them (0058 §2), and `fold_own` folds those copies back into their originals,
    as it did when annotations were shown. A folded original's bounds are widened to `HIDDEN_KEYS`, so it holds what
-   its copies held. A rule nothing annotated reaches keeps the narrow bound.
+   its copies held. A rule nothing annotated reaches keeps the narrow bound, and reads such an original as hiding left
+   it, `rr_narrow_<orig>` (below, "A rule's rows are its own").
 4. What `parsed` asks for is not bounded: `rr_embed_req` and the context helpers (`rr_ctx<k>`) that only it reads
    range over every document. Asking is not seeing: a string inside an annotation (`"Opt['Baz']"`'s `'Baz'`) is asked
    for in the next round, and the rules that walk the annotation reach it.
@@ -54,3 +55,25 @@ Datalog's alone: B110 ×2 (main's quirk, t34 "Findings against main") and PYI046
 Tests: `findings_keep_their_columns_and_an_annotation_is_not_code`, `string_annotations_are_guests_at_their_host_lines`
 (round 2 reached through the annotation), `copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals`
 (an annotation's copies fold and widen their originals' bounds).
+
+## A rule's rows are its own
+
+Added 2026-11-20. Folding widened an original for every reader, not only for its copies' readers. A pack's programs
+share the library's relations (decision 0089), so a program whose rules reached an original from an annotation widened
+it for another program's rules too: alone, RUF060 found `1 in []` in no string annotation; beside C417, whose dict
+clause reads `list_like` from one, it found `x: "1 in []"` through `empty_literal`. A program's own readers leaked the
+same way: C408 found seven calls inside string type definitions, alone and in a pack, and Ruff reports one of them.
+
+- Only the original of a copy made for an annotation is widened: a code guest's documents are under the narrow bound.
+- A rule that reads such an original and is not its own reads `rr_narrow_<orig>`: the original's rules before they
+  are widened, each reading the others' narrow copies, declared as the original is (`hiding::keep_narrow`).
+- A rule that asks for what every reader is answered from reads the widened original: the guest demand and its
+  contexts (4), and the on-request rewrite's attributes, requests and widened copies (decision 0174). Read narrow, a
+  request asks too little for the widened original's readers (UP031 lost 61 of 67 findings beside PYI009).
+
+Measured on the Python fixtures (536 rules, 1,953 files; release build, a Linux build box, two runs each): the pack
+finds what each rule finds alone but for RUF034, which fails alone (0174 §6), and B032 and PYI025 (decision 0168), as
+before. Against main, the pack loses RUF060's two string annotations and C408's seven type definitions. Wall 72–74 s
+to 83–85 s, peak 5.8 GB to 6.4 GB: 88 narrow copies are evaluated beside their originals.
+
+Test: `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone`.
