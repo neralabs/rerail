@@ -768,6 +768,31 @@ describe("rerail rules test on a .rerail file", () => {
     expect(text.stdout).toContain("1 passed, 1 failed");
   });
 
+  it("fails on a .rerail path that is not there, with --json too, instead of passing with no tests", async () => {
+    const repo = await repository();
+    const file = join(repo, "nonexist.rerail");
+
+    await expect(run("test", [file])).rejects.toThrow("nonexist.rerail: cannot read the file");
+    await expect(run("test", [file, "--json"])).rejects.toThrow("nonexist.rerail: cannot read the file");
+  });
+
+  it("fails on a .rerail file that does not parse, though it holds no test", async () => {
+    const repo = await repository();
+    const file = join(repo, "junk.rerail");
+    writeFileSync(file, "garbage here (\n");
+
+    await expect(run("test", [file])).rejects.toThrow("junk.rerail: line 1:");
+  });
+
+  it("fails on a .rerail file that holds no tests, saying so, as it runs nothing", async () => {
+    const repo = await repository();
+    const file = join(repo, "no-tests.rerail");
+    writeFileSync(file, RR_WITH_TESTS.slice(0, RR_WITH_TESTS.indexOf(".test ")));
+
+    await expect(run("test", [file])).rejects.toThrow("no-tests.rerail holds no tests (.test ... .end)");
+    await expect(run("test", [file, "--json"])).rejects.toThrow("no-tests.rerail holds no tests (.test ... .end)");
+  });
+
   it("says it needs a Rerail checkout, as from an installed package, instead of running the tests without one", async () => {
     const repo = await repository();
     const file = join(repo, "no-print.rerail");

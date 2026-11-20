@@ -1,0 +1,31 @@
+.policy "rerail-conformance-boundary" revision 2
+.description "Keep conformance independent of the authoring path: run programs through its command runner, import nothing from the pack-data or upstream scripts or pack generators, and hold no recorders."
+.mode steer
+.scope include "conformance/**/recorders/**"
+.scope exclude "conformance/process.ts", "conformance/languages/shards.ts", "conformance/**/*.generated.ts", "conformance/**/*.ts", "conformance/**/*.mts", "conformance/**/*.cts", "conformance/**/*.tsx", "conformance/**/*.js", "conformance/**/*.mjs", "conformance/**/*.cjs", "conformance/**/*.jsx"
+.scope text "conformance/**/recorders/**"
+// rerail-conformance-boundary's recorder clause for the files under a recorders/ folder in conformance that are not
+// TypeScript or JavaScript (rerail-conformance-boundary.rerail holds those): a recorder or an expected-findings
+// generator in any language, or its data, belongs on the authoring path.
+//   conformance/languages/recorders/record.py            RECORDER_IN_CONFORMANCE (the file, at no line)
+//   conformance/languages/fixtures/expected.json         not reported
+
+.violation RECORDER_IN_CONFORMANCE(at: loc) "Recorders and expected-findings generators live on the authoring path: put this in scripts/pack-data/ or the pack's upstream/<tool>/ folder, not under conformance/."
+RECORDER_IN_CONFORMANCE(@place(p, 0)) :- doc(_, p, _), match("conformance/(?:.*/)?recorders/(?s:.*)", p).
+
+.test recorders_in_any_language_are_reported exactly
+    .fixture "conformance/languages/recorders/record.py" ```
+        print("recording")
+        ```
+    .fixture "conformance/recorders/README.md" ```
+        # Recorders
+        ```
+    .expect RECORDER_IN_CONFORMANCE at "conformance/languages/recorders/record.py":0
+    .expect RECORDER_IN_CONFORMANCE at "conformance/recorders/README.md":0
+.end
+
+.test other_files_pass exactly
+    .fixture "conformance/languages/fixtures/expected.json" ```
+        {}
+        ```
+.end
