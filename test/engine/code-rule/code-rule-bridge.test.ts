@@ -4325,10 +4325,10 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
-  // A walk of a worktree the session already knew, run while `git worktree remove` deletes it, finds each file it saw
-  // there deleted, and, with no checkout left for Git to read them against, recorded every deletion. Inside the
-  // session's folder the Git of the checkout around the worktree answers, and its `HEAD`, which lacks those files, took
-  // them as Git's.
+  // A walk of a worktree the session already knew that reads Git once `git worktree remove` has deleted the worktree's
+  // files and its `.git` entry finds each file it saw there deleted, and, with no checkout left for Git to read them
+  // against, recorded every deletion. Inside the session's folder the Git of the checkout around the worktree answers,
+  // and its `HEAD`, which lacks those files, took them as Git's.
   it("records nothing of a worktree the session knew whose files and `.git` entry went before its walk read Git", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
@@ -4339,6 +4339,20 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  // The look for the `.git` entry finds it, so Git's verdicts judge the deletion as any other.
+  it("records a deletion in a worktree the session knew whose `.git` entry stays", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await rm(join(worktree, "src", "a.py"));
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([[[{
+      path: repositoryPath(root, join(worktree, "src", "a.py")), language: "python",
+      previousReadError: "Source was deleted without a captured preimage", deleted: true,
+    }], "log"]]);
   });
 
   // A walk shows the session first each file of a folder the last walk could not read, as of a worktree new to it.
@@ -4353,6 +4367,20 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("records a write a walk that first reads a folder of a worktree finds there, its `.git` entry kept", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    await mkdir(join(worktree, "deep"));
+    discovery.directories.set(join(worktree, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await writeFile(join(worktree, "deep", "new.py"), "violation\n");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode])).toEqual([
+      [[repositoryPath(root, join(worktree, "deep", "new.py"))], "log"],
+    ]);
   });
 
   it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {
