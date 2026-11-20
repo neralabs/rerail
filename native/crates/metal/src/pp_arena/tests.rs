@@ -190,7 +190,8 @@ fn the_source_is_opencl_c_1_2() {
 }
 
 /// §4 of decision 0460: the grid is the device's resident count at the grid kernels' threadgroup
-/// memory (`Device::resident_groups`), and `GROUPS_UNKNOWN` on a device that gives no cores.
+/// memory (`Device::resident_groups`), at most `GROUPS_MOST`, and `GROUPS_UNKNOWN` on a device
+/// that gives no cores.
 #[test]
 fn the_grid_is_the_devices_resident_count() {
     let device = lane::device().unwrap();
@@ -198,8 +199,9 @@ fn the_grid_is_the_devices_resident_count() {
     match device.gpu_cores() {
         Some(cores) => {
             eprintln!("{cores} GPU cores, {local} bytes of threadgroup memory a group: {} groups", groups());
-            assert_eq!(Some(groups()), device.resident_groups(TG as u32, local));
-            assert!(groups() >= cores as u64, "a core holds a group at least");
+            let resident = device.resident_groups(TG as u32, local).unwrap();
+            assert_eq!(groups(), resident.min(GROUPS_MOST), "the resident count, capped");
+            assert!(resident >= cores as u64, "a core holds a group at least");
         }
         None => assert_eq!(groups(), GROUPS_UNKNOWN),
     }

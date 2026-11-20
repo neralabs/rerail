@@ -465,3 +465,8 @@ with the unit, because each primitive's number of levels was chosen by its capac
     fails its bound in 1.4 s without hanging. The library's other 18 tests pass on the CPU, all
     23 on Metal, and `rerail-ukl`'s 8 under cargo.
   - The CPU run of the grid tests takes 123 s (10^6-key sorts on coroutines).
+- **G is capped at 32 (the user, 2026-11-19: "just cap it").** `pp_arena::groups()` is the
+  device's resident count at most `GROUPS_MOST` (32). A preprocessor unit is small, and each
+  barrier costs more with every group. On the M5 Max G is 32: the corpus at 3,132 units equal, 4
+  launches each, 149.6 ms of GPU time over the three slices (load 15 to 20). The library's grid
+  tests still run at the uncapped count.
