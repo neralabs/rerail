@@ -391,14 +391,16 @@ typedef struct PpNode { uint32_t file, parent, pdir, depth, unit; } PpNode;
 #define L_COUNTER (0xfffffff4u)
 // A test the configuration answers (`__has_feature`, `__is_identifier`…): function-like.
 #define L_FEATURE (0xfffffff3u)
-#define L_IDENT (0xfffffff2u)
-#define L_DEFS (0xfffffff2u)
+// `_Pragma`: function-like.
+#define L_PRAGMA (0xfffffff2u)
+#define L_IDENT (0xfffffff1u)
+#define L_DEFS (0xfffffff1u)
 // A built-in that expands to one token, a use of it an object-like call.
 UKL_INLINE bool px_one_token(uint32_t m) { return m >= L_COUNTER && m <= L_FILE; }
 // A name a call is made of: a definition's, or a configuration's test.
-UKL_INLINE bool px_callable(uint32_t m) { return m < L_DEFS || m == L_FEATURE; }
+UKL_INLINE bool px_callable(uint32_t m) { return m < L_DEFS || m == L_FEATURE || m == L_PRAGMA; }
 // A callable name whose call takes arguments.
-UKL_INLINE bool px_fnlike(UKL_GLOBAL const PpDef* defs, uint32_t m) { return m == L_FEATURE || (m < L_DEFS && (defs[m].flags & D_FNLIKE) != 0u); }
+UKL_INLINE bool px_fnlike(UKL_GLOBAL const PpDef* defs, uint32_t m) { return m == L_FEATURE || m == L_PRAGMA || (m < L_DEFS && (defs[m].flags & D_FNLIKE) != 0u); }
 #define WALK (64u)
 
 // Each instance's directive `j`'s row, where it makes one (a flag, then its place by a scan).
@@ -646,6 +648,9 @@ UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint
 #define X_BARRIER (4096u)
 // `__COUNTER__` in a directive's line: its value would count text not expanded yet.
 #define X_COUNTER (8192u)
+// A `_Pragma` that would make a row (`once`, `push_macro`, `pop_macro`), or whose operand is
+// a macro's (its string is known only expanded).
+#define X_PRAGMA (16384u)
 // A token's flags: painted (never a candidate again); space before it (or a line's start).
 #define T_NOEXP (1u)
 #define T_SPACE (2u)
@@ -1428,7 +1433,52 @@ UKL_INLINE void px_feature(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
     px_done(a, l, lane __UKL_ARGS);
 }
 
+// Whether `p[i..n)` starts with the word of `m` bytes (at most 16) `w0`, `w1` hold (little-endian),
+// not followed by a name's character.
+UKL_INLINE bool px_word_at(UKL_GLOBAL const uint8_t* p, uint32_t i, uint32_t n, uint64_t w0, uint64_t w1, uint32_t m) {
+    if (i + m > n) return false;
+    for (uint32_t k = 0u; k < m; k++) {
+        uint8_t c = (uint8_t)((k < 8u ? w0 >> (8u * k) : w1 >> (8u * (k - 8u))) & 0xfful);
+        if (p[i + k] != c) return false;
+    }
+    if (i + m == n) return true;
+    uint8_t c = p[i + m];
+    return !((c >= ((uint8_t)('a')) && c <= ((uint8_t)('z'))) || (c >= ((uint8_t)('A')) && c <= ((uint8_t)('Z'))) || (c >= ((uint8_t)('0')) && c <= ((uint8_t)('9'))) || c == ((uint8_t)('_')));
+}
+
+// `_Pragma ( operand )` called, list `l` (`Pp::builtin`'s `Pragma`): no tokens (its pragma goes to
+// the sink, not the output). A string operand's pragma (destringized: its first word) that makes
+// a row is refused, as is an operand that is a macro's (`_Pragma` expands its operand first).
+UKL_INLINE void px_pragma(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
+    UKL_GLOBAL PxList* L = &a.lists[l];
+    if (lane == 0u) {
+        uint32_t p = L->src, open = L->at + 1u, close = L->end;
+        bool names = false;
+        for (uint32_t k = open + 1u; k < close; k++) names = names || ref_kind(u, par_ref(u, a, p, k)) == K_IDENTIFIER;
+        if (names) {
+            px_refuse(a.ctl, X_PRAGMA);
+        } else if (close == open + 2u) {
+            Span r = ref_span(u, par_ref(u, a, p, open + 1u));
+            uint32_t q = 0u;
+            while (q < r.len && q < 4u && r.p[q] != ((uint8_t)('"')) && r.p[q] != ((uint8_t)('\''))) q++;
+            if (r.kind == K_LITERAL && q < r.len && r.p[q] == ((uint8_t)('"'))) {
+                uint32_t i = q + 1u, n = r.len > 0u ? r.len - 1u : 0u;
+                while (i < n && (r.p[i] == ((uint8_t)(' ')) || r.p[i] == ((uint8_t)('\t')))) i++;
+                // `once`, `push_macro`, `pop_macro`.
+                if (px_word_at(r.p, i, n, 0x65636e6ful, 0x0ul, 4u) || px_word_at(r.p, i, n, 0x63616d5f68737570ul, 0x6f72ul, 10u) || px_word_at(r.p, i, n, 0x7263616d5f706f70ul, 0x6ful, 9u)) px_refuse(a.ctl, X_PRAGMA);
+            }
+        }
+        L->first = 0u;
+        L->len = 0u;
+    }
+    px_done(a, l, lane __UKL_ARGS);
+}
+
 UKL_INLINE void px_call(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
+    if (a.lists[l].def == L_PRAGMA) {
+        px_pragma(u, a, l, lane __UKL_ARGS);
+        return;
+    }
     if (a.lists[l].def == L_FEATURE) {
         px_feature(u, a, l, lane __UKL_ARGS);
         return;

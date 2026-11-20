@@ -354,11 +354,12 @@ pub const L_INCLUDE_LEVEL: u32 = 0xffff_fff5;
 pub const L_COUNTER: u32 = 0xffff_fff4;
 /// A test the configuration answers, function-like in text.
 pub const L_FEATURE: u32 = 0xffff_fff3;
-pub const L_IDENT: u32 = 0xffff_fff2;
+pub const L_PRAGMA: u32 = 0xffff_fff2;
+pub const L_IDENT: u32 = 0xffff_fff1;
 
 /// A built-in's lookup value, by its name.
 fn builtin_value(key: u64) -> u32 {
-    let named: [(&[u8], u32); 12] = [
+    let named: [(&[u8], u32); 13] = [
         (b"__LINE__", L_LINE),
         (b"__FILE__", L_FILE),
         (b"__DATE__", L_DATE),
@@ -368,6 +369,7 @@ fn builtin_value(key: u64) -> u32 {
         (b"__BASE_FILE__", L_BASE_FILE),
         (b"__INCLUDE_LEVEL__", L_INCLUDE_LEVEL),
         (b"__COUNTER__", L_COUNTER),
+        (b"_Pragma", L_PRAGMA),
         (b"__has_include", L_IDENT),
         (b"__has_include_next", L_IDENT),
         (b"__has_embed", L_IDENT),
@@ -773,6 +775,9 @@ pub const X_SPLICE: u32 = 2048;
 pub const X_BARRIER: u32 = 4096;
 /// `__COUNTER__` in a directive's line (its value would count text not expanded yet).
 pub const X_COUNTER: u32 = 8192;
+/// A `_Pragma` that would make a row (`once`, `push_macro`, `pop_macro`), or whose operand is a
+/// macro's.
+pub const X_PRAGMA: u32 = 16384;
 
 /// The expansion's rungs: rung `k`'s arena holds `2^(k+1)` tokens a top token.
 pub const EXP_RUNGS: u32 = 5;

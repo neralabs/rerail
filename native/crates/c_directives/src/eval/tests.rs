@@ -319,6 +319,9 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
     if r.answer & X_COUNTER != 0 {
         return Err("__COUNTER__ in a directive");
     }
+    if r.answer & X_PRAGMA != 0 {
+        return Err("a _Pragma that makes a row");
+    }
     if r.answer != 0 {
         return Err("an #if's expansion");
     }
@@ -330,7 +333,7 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
 /// against `Vis::at`'s. `None` where P1 refuses it (the reason counted).
 fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool, what: &str) -> Result<[usize; 3], &'static str> {
     use rerail_c_pp::stream::parallel::Lookup;
-    use rerail_metal::pp_expand::{L_BASE_FILE, L_BUILTIN, L_COUNTER, L_DATE, L_FILE, L_FEATURE, L_FILE_NAME, L_IDENT, L_INCLUDE_LEVEL, L_LINE, L_NONE, L_NOT_NAME, L_TIME, L_TIMESTAMP, lookups};
+    use rerail_metal::pp_expand::{L_BASE_FILE, L_BUILTIN, L_COUNTER, L_DATE, L_PRAGMA, L_FILE, L_FEATURE, L_FILE_NAME, L_IDENT, L_INCLUDE_LEVEL, L_LINE, L_NONE, L_NOT_NAME, L_TIME, L_TIMESTAMP, lookups};
     let (d, p1) = unit_of(cfg, io, path, cpp)?;
     let p1 = p1?;
     let (ev, got, out) = lookups(&d.unit, &d.lay).unwrap();
@@ -374,7 +377,7 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
         let g = match g {
             L_NOT_NAME => Lookup::NotName,
             L_NONE => Lookup::None,
-            L_BUILTIN | L_LINE | L_FILE | L_DATE | L_TIME | L_TIMESTAMP | L_FILE_NAME | L_BASE_FILE | L_INCLUDE_LEVEL | L_COUNTER | L_FEATURE | L_IDENT => Lookup::Builtin,
+            L_BUILTIN | L_LINE | L_FILE | L_DATE | L_TIME | L_TIMESTAMP | L_FILE_NAME | L_BASE_FILE | L_INCLUDE_LEVEL | L_COUNTER | L_FEATURE | L_PRAGMA | L_IDENT => Lookup::Builtin,
             r => {
                 let f = ev.dir_bases.partition_point(|&b| b <= r) - 1;
                 // By path: the device's files are in its rounds' order, the spike's in its own.
@@ -508,7 +511,9 @@ fn expanded_include_names_are_the_spikes() {
 }
 
 /// R7 of decision 0467: each case §6 lists, refused until step 7, gives the serial pass's
-/// tokens on the device, in C and C++, a round of 4 launches. Built so far: `__COUNTER__` (in
+/// tokens on the device, in C and C++, a round of 4 launches. Built so far: `_Pragma` (no
+/// tokens: a string, spaced, prefixed, stringized in a macro, named by a macro, malformed, across
+/// lines, in an `#if`), `__COUNTER__` (in
 /// object-like and function-like bodies, arguments expanded once at their first plain use, one
 /// unused, stringized, pasted, nested calls, a call whose `(` follows its name's list, a header),
 /// the configuration's
@@ -521,6 +526,15 @@ fn expanded_include_names_are_the_spikes() {
 fn the_refused_cases_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
     let shapes: &[(&str, &[(&str, &str)])] = &[
+        (
+            "_Pragma",
+            &[(
+                "main.c",
+                "a _Pragma(\"GCC diagnostic push\") b _Pragma ( \"message(\\\"hi\\\")\" ) c\n#define DO(x) _Pragma(#x) x\nDO(GCC warning) d _Pragma(L\"x\") e\n\
+                 #define P _Pragma\nP(\"x\") f _Pragma(1) g _Pragma() h _Pragma\ni _Pragma\n(\"y\") j\n#define C __COUNTER__\n_Pragma(\"z\") C\n\
+                 #if _Pragma(\"w\") 1\nk\n#endif\n",
+            )],
+        ),
         (
             "__COUNTER__ in the serial reading's order",
             &[
@@ -565,11 +579,20 @@ fn the_refused_cases_are_the_serial_passes() {
     }
     // `__COUNTER__` in a directive's line is refused by name: its value would count text the
     // device expands after the directives.
-    for main in ["#if __COUNTER__ == 0\n#endif\n", "#define C __COUNTER__\nC\n#if C\n#endif\n"] {
+    for (main, why) in [
+        ("#if __COUNTER__ == 0\n#endif\n", "__COUNTER__ in a directive"),
+        ("#define C __COUNTER__\nC\n#if C\n#endif\n", "__COUNTER__ in a directive"),
+    ] {
         let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), main.as_bytes().to_vec())].into_iter().collect();
         let mut io = rerail_c_pp::files::Search::new(Vec::new(), move |p: &str| m.get(p).cloned());
         let cfg = rerail_c_pp::Config::new(crate::pp::options(false));
-        same(unit_of(cfg, &mut io, "main.c", false).err(), Some("__COUNTER__ in a directive"), format!("{main:?}"));
+        same(unit_of(cfg, &mut io, "main.c", false).err(), Some(why), format!("{main:?}"));
+    }
+    // A `_Pragma` that makes a row would need the text expanded inside P1's iterations: the
+    // text's expansion refuses it by name.
+    for main in ["_Pragma(\"once\")\n", "_Pragma(\" push_macro(\\\"X\\\")\")\n", "#define S \"pop_macro(\\\"X\\\")\"\n_Pragma(S)\n"] {
+        let (got, _, _, _) = expanded(&[("main.c", main)], false, 0);
+        same(got.err().map(|r| r & rerail_metal::pp_expand::X_PRAGMA), Some(rerail_metal::pp_expand::X_PRAGMA), format!("{main:?}"));
     }
 }
 
@@ -1045,6 +1068,7 @@ fn the_corpus_expands_on_the_device() {
         (X_RELEX, "a paste the relexer refuses"),
         (X_SPLICE, "# or ## of a token with a line splice"),
         (X_COUNTER, "__COUNTER__ in a directive"),
+        (X_PRAGMA, "a _Pragma that makes a row"),
         (X_BARRIER, "a grid barrier"),
     ];
     let (mut same_units, mut tokens, mut launches, mut rounds) = (0, 0, 0, 0);
