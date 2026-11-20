@@ -202,6 +202,8 @@ describe("the dashboard following the daemon's change stream", () => {
     // 5 s from its end.
     await after(400);
     expect(readsOf("/api/repositories")).toBe(3);
+    // That read answers before the next case: the page holds one read out at a time, across cases.
+    await after(400);
   });
 
   it("renders at a beat that brings nothing new and reads nothing, nor moves the poll's time views read more after", async () => {
