@@ -1142,8 +1142,6 @@ fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
 /// A rule that drops the input's key, or filters it, is still a stratum.
 #[test]
 fn a_copy_of_an_inputs_columns_is_a_view_of_it() {
-    // The run's counts are the run's (decision 0442): the test's scope holds them across its runs.
-    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let dir = corpus("input-view", &[TREE]);
     let program = ".decl kind(n: node, k: symbol)\nkind(n, k) :- node(_, n, k, _, _).\n\
                    .decl kinds(k: symbol)\nkinds(k) :- node(_, _, k, _, _).\n\

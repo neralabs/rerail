@@ -5342,7 +5342,7 @@ fn run_observed_within(
     // The documents' table and the statistics kept beside it, read before the first wave in every run that keeps
     // them (decision 0104), a run inside another's waves too: they name no file of this run.
     // With them, the corpus batch's documents' views' counts (decision 0504).
-    let (base_table, mut base_stats_kept, base_counts): (Option<Vec<retain::BaseDocument>>, BaseStatsKept, retain::BaseCounts) = match (base_binds, memo, looking) {
+    let (base_table, mut base_stats_kept, base_counts): (Option<Vec<retain::PlacedDocument>>, BaseStatsKept, retain::BaseCounts) = match (base_binds, memo, looking) {
         (Some(binds), Some(memo::Memo::Stored(_)), true) => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' table and statistics (decision 0458)".into());
             let counted: Vec<String> = stored.iter().map(|(r, _)| r.clone()).filter(|r| !semijoin.contains(r)).collect();
@@ -5359,18 +5359,26 @@ fn run_observed_within(
         let found = (|| -> Result<std::result::Result<(BTreeSet<String>, HashMap<String, OldBase>), String>> {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "the base relations' documents (decision 0458)".into());
             let Some(mut table) = base_table.clone() else { return Ok(Err("no documents' table kept".into())) };
+            // Inside another run's waves (a load's run, phase 1's) the store is not read (decision 0104): the table's
+            // places are (decision 0504 step 4 part 2). Before the first wave a document without them is read
+            // through the store.
+            let in_waves = crate::code_rule_dsl::logic::profile::inside_waves();
             let mut now_of = now_of;
             // A content written after the table was is found by its digest, as the keeper's are (`Keeper::resolve`);
             // so is a file read in this run (its stat changed, or is too recent to trust), whose source, where the
-            // store holds it, is what the table names.
-            let unstored: Vec<(Option<usize>, Option<String>, [u8; 32])> = table.iter().enumerate().filter_map(|(i, (_, _, c))| match c { memo::Content::Unstored(d) => Some((Some(i), None, *d)), _ => None })
-                .chain(now_of.iter().filter_map(|(p, (_, c))| match c { Some(memo::Content::Unstored(d)) => Some((None, Some(p.clone()), *d)), _ => None }))
-                .collect();
+            // store holds it, is what the table names. Inside the waves the digests are compared instead (`same`).
+            let unstored: Vec<(Option<usize>, Option<String>, [u8; 32])> = if in_waves {
+                Vec::new()
+            } else {
+                table.iter().enumerate().filter_map(|(i, ((_, _, c), _))| match c { memo::Content::Unstored(d) => Some((Some(i), None, *d)), _ => None })
+                    .chain(now_of.iter().filter_map(|(p, (_, c))| match c { Some(memo::Content::Unstored(d)) => Some((None, Some(p.clone()), *d)), _ => None }))
+                    .collect()
+            };
             if !unstored.is_empty() {
                 let ids = store.sources_by_hashes(&unstored.iter().map(|(_, _, d)| crate::content_store::HashKey::from_sha256_digest(*d)).collect::<Vec<_>>()).map_err(|e| Error::Plan(e.to_string()))?;
                 for ((at, path, _), id) in unstored.into_iter().zip(ids) {
                     match (at, path, id) {
-                        (Some(i), _, Some(id)) => table[i].2 = memo::Content::Stored(id),
+                        (Some(i), _, Some(id)) => table[i].0.2 = memo::Content::Stored(id),
                         (Some(_), _, None) => return Ok(Err("a content of the table is no longer stored".into())),
                         (None, Some(p), Some(id)) => {
                             if let Some(now) = now_of.get_mut(&p) {
@@ -5381,24 +5389,66 @@ fn run_observed_within(
                     }
                 }
             }
-            let same = |path: &str, key: i64, was: memo::Content| matches!(now_of.get(path), Some(&(d, Some(c))) if keptstats::same((was, key), (c, d)));
-            let olds: Vec<(String, i64, crate::content_store::SourceId)> = table.iter().filter(|(p, k, c)| !same(p, *k, *c)).filter_map(|(p, k, c)| c.stored().map(|id| (p.clone(), *k, id))).collect();
-            let in_table: std::collections::HashSet<&str> = table.iter().map(|(p, _, _)| p.as_str()).collect();
-            let changed: BTreeSet<String> = olds.iter().map(|(p, _, _)| p.clone()).chain(now_of.keys().filter(|p| !in_table.contains(p.as_str())).cloned()).collect();
-            let ids: Vec<crate::content_store::SourceId> = olds.iter().map(|(_, _, id)| *id).collect();
-            let texts = store.get_sources_bulk(&ids).map_err(|e| Error::Plan(e.to_string()))?;
-            let frames = match (tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")), crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag)) {
+            // As the table has it: the same content (as the store names it, or by the sha256 the table keeps of it,
+            // against a file's digest now) under the same key.
+            let same = |path: &str, key: i64, was: memo::Content, places: Option<&crate::content_store::DocumentPlaces>| match now_of.get(path) {
+                Some(&(d, Some(c))) => {
+                    keptstats::same((was, key), (c, d))
+                        || (d == key && matches!((c, places), (memo::Content::Unstored(x) | memo::Content::Held(x), Some(pl)) if x == pl.sha256))
+                }
+                _ => false,
+            };
+            let olds: Vec<(String, i64, memo::Content, Option<crate::content_store::DocumentPlaces>)> =
+                table.iter().filter(|((p, k, c), pl)| !same(p, *k, *c, pl.as_ref())).map(|((p, k, c), pl)| (p.clone(), *k, *c, *pl)).collect();
+            let in_table: std::collections::HashSet<&str> = table.iter().map(|((p, _, _), _)| p.as_str()).collect();
+            let changed: BTreeSet<String> = olds.iter().map(|(p, _, _, _)| p.clone()).chain(now_of.keys().filter(|p| !in_table.contains(p.as_str())).cloned()).collect();
+            // Each old source and tape where the table's places name them, checked by the hashes kept; else, before
+            // the first wave, read through the store.
+            let tape_tag = crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag).filter(|_| tapes.is_some() && cfg!(feature = "tape-cache"));
+            let placed: Vec<(Option<Arc<crate::content_store::CachedBytes>>, Option<crate::content_store::TapeFrame>)> = olds
+                .iter()
+                .map(|(_, _, _, pl)| match pl {
+                    Some(pl) => (store.placed_source(pl), tape_tag.and_then(|_| store.placed_tape(pl))),
+                    None => (None, None),
+                })
+                .collect();
+            let through: Vec<(usize, crate::content_store::SourceId)> =
+                if in_waves { Vec::new() } else { olds.iter().zip(&placed).enumerate().filter(|(_, (_, (b, _)))| b.is_none()).filter_map(|(i, ((_, _, c, _), _))| c.stored().map(|id| (i, id))).collect() };
+            let ids: Vec<crate::content_store::SourceId> = through.iter().map(|(_, id)| *id).collect();
+            let texts = if ids.is_empty() { HashMap::new() } else { store.get_sources_bulk(&ids).map_err(|e| Error::Plan(e.to_string()))? };
+            let frames = match (tapes.as_ref().filter(|_| cfg!(feature = "tape-cache") && !ids.is_empty()), tape_tag) {
                 (Some(cache), Some(tag)) => cache
                     .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
                     .map_err(|e| Error::Plan(e.to_string()))?,
                 _ => vec![None; ids.len()],
             };
-            // Each old entry, for its guests' requests (a program with guests only).
-            let keys: Vec<(memo::Content, &str)> = olds.iter().map(|(p, _, id)| (memo::Content::Stored(*id), world::store_path(p))).collect();
-            let found: Vec<Option<memo::Found>> = if slice.is_some() { memo.found_all(&memo_plan, &keys).map_err(|e| Error::Plan(e.to_string()))? } else { keys.iter().map(|_| None).collect() };
+            let mut read: HashMap<usize, (Arc<crate::content_store::CachedBytes>, Option<crate::content_store::TapeFrame>)> = HashMap::new();
+            for ((i, id), frame) in through.iter().zip(frames) {
+                if let Some(bytes) = texts.get(id) {
+                    read.insert(*i, (Arc::clone(bytes), frame));
+                }
+            }
+            // Each old entry, for its guests' requests (a program with guests only): by its content's id, or inside
+            // the waves by the sha256 kept, in the snapshot (each path's newest entry under the plan: the old one).
+            let keys: Vec<(memo::Content, &str)> = olds
+                .iter()
+                .map(|(p, _, c, pl)| (match (in_waves, pl) { (true, Some(pl)) => memo::Content::Unstored(pl.sha256), _ => *c }, world::store_path(p)))
+                .collect();
+            let found: Vec<Option<memo::Found>> = match slice {
+                None => keys.iter().map(|_| None).collect(),
+                Some(_) if in_waves && !store.memo_admitted(&crate::content_store::local_space(&memo::plan_digest(&memo_program))) => {
+                    return Ok(Err("the old entries are not held: the plan's entries were not read before the waves".into()));
+                }
+                Some(_) => memo.found_all(&memo_plan, &keys).map_err(|e| Error::Plan(e.to_string()))?,
+            };
             let mut out = HashMap::new();
-            for (((path, key, id), frame), found) in olds.into_iter().zip(frames).zip(found) {
-                let Some(bytes) = texts.get(&id) else { return Ok(Err(format!("{path}: its old source is no longer stored"))) };
+            for (i, (((path, key, _, _), (source, tape)), found)) in olds.into_iter().zip(placed).zip(found).enumerate() {
+                let (bytes, frame) = match (source, read.remove(&i)) {
+                    (Some(bytes), _) => (bytes, tape),
+                    (None, Some((bytes, frame))) => (bytes, frame),
+                    (None, None) if in_waves => return Ok(Err(format!("{path}: its old source's place is not kept, or holds other bytes, and the store is not read inside the waves (decision 0104)"))),
+                    (None, None) => return Ok(Err(format!("{path}: its old source is no longer stored"))),
+                };
                 let entry = match (slice.is_some(), found) {
                     (false, _) => None,
                     (true, Some(found)) => match found.entry(key).map_err(|e| Error::Plan(e.to_string()))? {
@@ -5407,7 +5457,7 @@ fn run_observed_within(
                     },
                     (true, None) => return Ok(Err(format!("{path}: its old entry is not in the memo"))),
                 };
-                out.insert(path, OldBase { key, bytes: Arc::clone(bytes), frame, entry });
+                out.insert(path, OldBase { key, bytes, frame, entry });
             }
             Ok(Ok((changed, out)))
         })()?;
@@ -8332,11 +8382,10 @@ fn run_observed_within(
         }
         Ok(())
     };
-    // A run that listed its files as it went compares them with the table now, from the contents its chunks found:
-    // unless it runs inside another run's waves (a phase's), where the store is not read (decision 0104).
-    if !base_known && base_binds.is_some() && crate::code_rule_dsl::logic::profile::inside_waves() {
-        crate::code_rule_dsl::logic::profile::decision("the base relations' old documents (decision 0458)", || "none: the run's files were listed inside the waves, where their old sources are not read (decision 0104); what reads a base relation runs again".into());
-    } else if !base_known {
+    // A run that listed its files as it went compares them with the table now, from the contents its chunks found.
+    // Inside another run's waves (a load's run, phase 1's), where the store is not read (decision 0104), it reads the
+    // old documents where the table's places name them (decision 0504 step 4 part 2).
+    if !base_known {
         let now_of: HashMap<String, (i64, Option<memo::Content>)> = run_docs_held.lock().expect("the run's documents").iter().map(|(p, (c, k))| (p.clone(), (*k, Some(*c)))).collect();
         old_base = base_compare(now_of)?;
     }
@@ -9816,7 +9865,13 @@ fn run_observed_within(
                             table.sort_by(|a, b| a.0.cmp(&b.0));
                             // Written with the digests it is the documents of: when one changed (or none was kept).
                             let unchanged = digest_only.iter().all(|r| was.input_digest(r).is_some() && was.input_digest(r) == digests.get(r).copied());
-                            if !unchanged && !retain::put_base_documents(store, was, binds, &table, corpus_digest) {
+                            // Its documents' tapes in the run's grammar, whose places the writer keeps with them (decision
+                            // 0504 step 4 part 2), as the compare reads them (`tape_frames_for`'s key).
+                            let tape = crate::code_rule_dsl::language::dialect_by_label(label)
+                                .and_then(crate::code_rule_dsl::language::tape_tag)
+                                .filter(|_| cfg!(feature = "tape-cache"))
+                                .map(|tag| [i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version())]);
+                            if !unchanged && !retain::put_base_documents(store, was, binds, &table, corpus_digest, tape) {
                                 crate::code_rule_dsl::logic::profile::decision("the base relations' documents (decision 0458)", || "not kept: a content held in memory alone, or a path with no atom; the next run reads its base relations' readers again".into());
                             }
                         }
