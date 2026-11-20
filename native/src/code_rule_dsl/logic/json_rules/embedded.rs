@@ -2,20 +2,20 @@
 //! read over a program's node.
 //!
 //! A file that embeds a program (a Vue component's view: its scripts and template expressions as one ECMAScript
-//! program) has it as a guest document (`vue/view.rerail` asks for it; `corpus::guests` builds it with main's view
-//! builder). The program is parsed in the dialect its file chose (a `<script lang="ts">`'s TypeScript), so a rule over
-//! it is written once per dialect the embedding may give, as main compiles an `embedded` rule once per dialect: each
-//! copy enters the program through `guest` with its dialect named, and its kinds are that grammar's (decision 0058
-//! §2).
+//! program) has it as its file's program (the Vue language declares it, decision 0431 §4; `corpus::guests` builds
+//! it with main's view builder at the file's load). The program is parsed in the dialect its file chose (a
+//! `<script lang="ts">`'s TypeScript), so a rule over it is written once per dialect the embedding may give, as main
+//! compiles an `embedded` rule once per dialect: each copy enters the program through `parsed` with its dialect
+//! named, and its kinds are that grammar's (decision 0058 §2).
 //!
 //! ```text
 //! // ast: { language: vue, embedded: script-block, rule: { kind: arrow_function } }
-//! f(n) :- docof(n, g), (guest(g, _, _, "typescript") ; guest(g, _, _, "tsx") ; guest(g, _, _, "javascript")),
+//! f(n) :- (parsed(_, "typescript", g) ; parsed(_, "tsx", g) ; parsed(_, "javascript", g)), (n = g ; within(n, g)),
 //!     kind(n, "arrow_function").
 //! // { host: { kind: template_element } } on a program node x: the construct x stands for
 //! host_node(x, h), kind(h, "template_element")
 //! // { embedded: R } on a file node v: a program node standing for bytes inside v matches R
-//! embedded_1(n) :- host_node(y, h), (h = n ; within(h, n)), docof(y, g), guest(g, _, _, "typescript"), R(y).
+//! embedded_1(n) :- host_node(y, h), (h = n ; within(h, n)), parsed(_, "typescript", g), (y = g ; within(y, g)), R(y).
 //! ```
 
 use super::lower::{R, lower};
@@ -79,8 +79,8 @@ pub(super) fn entry(lang: &str, via: &str, v: &str, vs: &mut Vars) -> R<String> 
         return Err(format!("a {lang} file embeds no program through `{via}`"));
     }
     let g = vs.fresh("g");
-    let guests: Vec<String> = labels.iter().map(|l| format!("guest({g}, _, _, \"{l}\")")).collect();
-    Ok(format!("docof({v}, {g}), ({})", guests.join(" ; ")))
+    let roots: Vec<String> = labels.iter().map(|l| format!("parsed(_, \"{l}\", {g})")).collect();
+    Ok(format!("({}), ({v} = {g} ; within({v}, {g}))", roots.join(" ; ")))
 }
 
 /// `host` over program node `v`: the innermost file node over the bytes v stands for, matching `rule`.
@@ -104,7 +104,7 @@ pub(super) fn term(px: &Patterns, prog: &mut Program, rule: &Value, v: &str) -> 
     for l in labels {
         let mut vs = Vars::default();
         let (y, h, g) = (vs.fresh("y"), vs.fresh("h"), vs.fresh("g"));
-        let mut lits = vec![format!("host_node({y}, {h})"), format!("({h} = n ; within({h}, n))"), format!("docof({y}, {g})"), format!("guest({g}, _, _, \"{l}\")")];
+        let mut lits = vec![format!("host_node({y}, {h})"), format!("({h} = n ; within({h}, n))"), format!("parsed(_, \"{l}\", {g})"), format!("({y} = {g} ; within({y}, {g}))")];
         lits.extend(lower(px, prog, rule, &y, &mut vs, &[])?);
         prog.add_rule(format!("{name}(n)"), lits);
     }

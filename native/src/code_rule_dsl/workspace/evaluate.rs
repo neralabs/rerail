@@ -1374,7 +1374,7 @@ fn encode_own_image(
     let parse_started = Instant::now();
     #[cfg(any(test, feature = "test-hooks"))]
     pause_at_test_phase("native-tree", &file.input.source);
-    let parsed = parser.parse(grammar, &file.input.source, interrupted);
+    let parsed = tape::parse_own(parser, grammar, &file.input.source, interrupted);
     #[cfg(feature = "code-rule-profile")]
     drop(parse_timer);
     metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;

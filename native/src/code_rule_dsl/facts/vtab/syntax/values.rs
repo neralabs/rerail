@@ -212,7 +212,9 @@ struct Made {
 pub struct Layered {
     name: String,
     base: Arc<dyn Source>,
-    base_len: usize,
+    /// The batch's rows, counted when a value's rows are first numbered past them: a source the chunk binds is
+    /// layered whether or not a rule reads it, and a count of one made on lookup (`within`) makes every row.
+    base_len: std::sync::OnceLock<usize>,
     values: Arc<Values>,
     /// For a base made on lookup, whose rows grow as it is read: the parts' rows, made as they are looked up.
     made: Option<parking_lot::Mutex<Made>>,
@@ -221,10 +223,14 @@ pub struct Layered {
 
 impl Layered {
     pub fn new(name: &str, base: Arc<dyn Source>, values: Arc<Values>) -> Self {
-        let base_len = base.len();
         let made = base.made_on_lookup().then(|| parking_lot::Mutex::new(Made::default()));
         let width = base.columns().len();
-        Layered { name: name.to_owned(), base, base_len, values, made, width }
+        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width }
+    }
+    /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
+    /// rows are at `MADE_AT`).
+    fn base_len(&self) -> usize {
+        *self.base_len.get_or_init(|| self.base.len())
     }
     /// The batch's source.
     pub fn base(&self) -> &Arc<dyn Source> {
@@ -305,7 +311,7 @@ impl Source for Layered {
         if self.made.is_some() {
             return self.base.len();
         }
-        self.base_len + self.values.total(&self.name)
+        self.base_len() + self.values.total(&self.name)
     }
     fn estimated_len(&self) -> usize {
         self.base.estimated_len()
@@ -369,7 +375,7 @@ impl Source for Layered {
         self.parts(|p| {
             for &v in values {
                 p.of(v, &mut |part| {
-                    let at = self.base_len + part.start;
+                    let at = self.base_len() + part.start;
                     match part.src.lookup(column, &[v]) {
                         Some(rows) => out.extend(rows.into_iter().map(|r| at + r)),
                         // A part that keeps no index of `column` is read whole: a value's rows are few.
@@ -399,10 +405,10 @@ impl Source for Layered {
             }
             return made.lock().rows.get((row - MADE_AT) * self.width + column).copied().unwrap_or(0);
         }
-        if row < self.base_len {
+        if row < self.base_len() {
             return self.base.value(row, column);
         }
-        self.parts(|p| p.at(row - self.base_len).map(|(part, r)| part.src.value(r, column))).flatten().unwrap_or(0)
+        self.parts(|p| p.at(row - self.base_len()).map(|(part, r)| part.src.value(r, column))).flatten().unwrap_or(0)
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
         if self.made.is_some() {
@@ -414,11 +420,11 @@ impl Source for Layered {
             }
             return;
         }
-        if row < self.base_len {
+        if row < self.base_len() {
             return self.base.row_at(row, columns, out);
         }
         self.parts(|p| {
-            if let Some((part, r)) = p.at(row - self.base_len) {
+            if let Some((part, r)) = p.at(row - self.base_len()) {
                 part.src.row_at(r, columns, out);
             }
         });
@@ -430,7 +436,7 @@ impl Source for Layered {
         }
         self.parts(|p| {
             for part in &p.list {
-                let at = self.base_len + part.start;
+                let at = self.base_len() + part.start;
                 part.src.for_rows(columns, &mut |r, row| each(at + r, row));
             }
         });
@@ -439,7 +445,7 @@ impl Source for Layered {
         if self.made.is_some() {
             return self.base.for_rows_in(range, columns, each);
         }
-        let base = range.start.min(self.base_len)..range.end.min(self.base_len);
+        let base = range.start.min(self.base_len())..range.end.min(self.base_len());
         let mut going = true;
         if !base.is_empty() {
             self.base.for_rows_in(base, columns, &mut |r, row| {
@@ -447,11 +453,11 @@ impl Source for Layered {
                 going
             });
         }
-        if !going || range.end <= self.base_len {
+        if !going || range.end <= self.base_len() {
             return;
         }
         let mut row = vec![0i64; columns.len()];
-        for r in range.start.max(self.base_len)..range.end.min(self.len()) {
+        for r in range.start.max(self.base_len())..range.end.min(self.len()) {
             self.row_at(r, columns, &mut row);
             if !each(r, &row) {
                 return;
@@ -465,7 +471,7 @@ impl Source for Layered {
         }
         self.parts(|p| {
             for part in &p.list {
-                let at = self.base_len + part.start;
+                let at = self.base_len() + part.start;
                 part.src.documents_of(column, &mut |r, d| each(at + r, d));
             }
         });
@@ -490,5 +496,54 @@ impl Source for Layered {
             return None;
         }
         self.view_over()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A source whose rows are made when counted, as `within`'s are, counting its counts.
+    struct Counted(AtomicUsize, bool);
+    impl Source for Counted {
+        fn columns(&self) -> Vec<String> {
+            vec!["n".into(), "a".into()]
+        }
+        fn len(&self) -> usize {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            3
+        }
+        fn estimated_matches(&self, _: usize, _: bool) -> usize {
+            1
+        }
+        fn indexed(&self, _: usize) -> bool {
+            true
+        }
+        fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+            Some(Vec::new())
+        }
+        fn value(&self, row: usize, _: usize) -> i64 {
+            row as i64
+        }
+        fn made_on_lookup(&self) -> bool {
+            self.1
+        }
+    }
+
+    /// Every source a chunk binds is layered (decision 0431 §8), read or not: layering one counts none of its rows,
+    /// and a source made on lookup is counted only by a scan's own `len` (PostHog: `within` made every row at each
+    /// layering, 44 s of 246 s).
+    #[test]
+    fn layering_a_source_counts_none_of_its_rows() {
+        for made_on_lookup in [false, true] {
+            let base = Arc::new(Counted(AtomicUsize::new(0), made_on_lookup));
+            let layered = Layered::new("r", Arc::clone(&base) as Arc<dyn Source>, Arc::new(Values::default()));
+            assert_eq!(base.0.load(Ordering::Relaxed), 0, "made on lookup: {made_on_lookup}");
+            assert_eq!(layered.value(1, 0), 1);
+            let lookup = layered.lookup(0, &[1]);
+            assert_eq!(lookup, Some(Vec::new()));
+            assert_eq!(base.0.load(Ordering::Relaxed), usize::from(!made_on_lookup), "made on lookup: {made_on_lookup}");
+        }
     }
 }

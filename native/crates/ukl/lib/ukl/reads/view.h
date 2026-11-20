@@ -132,7 +132,7 @@ UKL_INLINE uint64_t clif_view_node(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_G
  v5=a5;
  uint8_t v6=((uint8_t)((uint32_t)(v5)==(uint32_t)(((uint32_t)(0ul)))));
  if(v6!=0){
-  uint32_t v8=((uint32_t)(*(UKL_GLOBAL const uint32_t*)(t+v0)));
+  uint32_t v8=((uint32_t)(*(UKL_GLOBAL const uint32_t*)(t+(v0+((uint64_t)(((int64_t)(116))))))));
   uint64_t v9=((uint64_t)(v8));
   {uint64_t t0=v9;v7=t0;}
  }else{

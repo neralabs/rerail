@@ -38,6 +38,10 @@ A fragment is its dialect parsed from a start symbol. `expression` is the one st
 written `( … )`, whose root is the expression inside (0055 §2's wrapper). Tree-sitter has no start symbols, so a
 new one is a wrapper the engine knows, added to the closed list beside `expression`.
 
+> **Superseded by 0466** (2026-11-19): a fragment names a node kind of its dialect as its start (`type`,
+> `jsx_element`, `element`) and a tape tag of its own. Its dialect's hand-written parser parses from that kind, and
+> the root is that node. The `( … )` wrapper, the closed list and `wrapped_root` are gone.
+
 - `native/build.rs` validates fragments: a name is unique among every dialect label and fragment, its dialect is
   the entry's own, and its start is known. It generates `FRAGMENTS`. The host's schema
   (`scripts/generate/languages/registry.ts`) accepts the field and emits nothing for it.

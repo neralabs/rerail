@@ -1855,7 +1855,7 @@ impl Embedding {
         let &[host] = dialects else {
             return None;
         };
-        let via = host.1.embeds().first()?.0;
+        let via = host.1.program_embeds().first()?.0;
         Some(Self {
             via,
             host,

@@ -1537,9 +1537,8 @@ impl LibraryFile {
 /// The lowered program is a derivation of those files (0044 §4): it is kept for the process and
 /// reused while every file it read hashes the same, so only an edit to a file it read (or a
 /// file appearing where an include looked) reads and lowers it again.
-/// The relations `core.rerail` declares for libraries to derive: the engine reads them (decision 0055's embeds).
-/// And the documents they load (t21 E2).
-pub const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
+/// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
+pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 
@@ -1769,7 +1768,7 @@ fn lits(body: &[syntax::Lit], out: &mut BTreeSet<String>) {
 /// `unreached_dropped` of statements held elsewhere (`read_shared`'s): only the kept are copied.
 fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statement>)]) -> Files {
     let whole: Vec<PathBuf> = ["core.rerail"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| library().join(f).canonicalize().ok()).chain(std::iter::once(own.to_owned())).collect();
-    // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: embeds, loads) are reached: no rule
+    // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: loads) are reached: no rule
     // reads them, and the corpus run makes them outputs (`corpus::run_observed`'s requests). Dropped, a library's
     // `load(…)` asked for no document, and no import was resolved.
     let mut reached: BTreeSet<String> = LIBRARY_DERIVED.iter().map(|r| (*r).to_owned()).collect();

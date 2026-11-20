@@ -514,6 +514,16 @@ impl DocTape {
         &self.reader
     }
 
+    /// The image, shared: a document over the same tape holds it (`TapeDoc::over`).
+    pub fn image_arc(&self) -> &Arc<TapeImage> {
+        &self.image
+    }
+
+    /// The source the tape is over.
+    pub fn source(&self) -> &Arc<String> {
+        &self.source
+    }
+
     pub fn image(&self) -> &TapeImage {
         &self.image
     }

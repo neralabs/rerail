@@ -2167,8 +2167,9 @@ fn batch_run_on(name: &str, files: &[(&str, &str)], program: &str, output: &str,
     (report, rows)
 }
 
-/// Decision 0431 R5: a chunk's batch is built once: an HTML file's scripts, which a rule reads, are added to it (§6),
-/// and every script's calls are read. (Step 3 makes them with the file, at its parse.)
+/// Decision 0431 R5: a chunk's batch is built once: an HTML file's scripts are its grammar's programs (§4), made from
+/// its tape at its load, so the batch is built with them; no slice round asks for them, the batch never grows, and
+/// every script's calls are read.
 #[test]
 fn a_files_programs_build_no_second_batch() {
     let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
@@ -2179,7 +2180,7 @@ fn a_files_programs_build_no_second_batch() {
 calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x).
 .output calls
 "#, "calls");
-    assert!(report.batch_grown >= 2, "a.html's batch grew by its scripts: {}", report.batch_grown);
+    assert_eq!((report.slice_runs, report.batch_grown), (0, 0), "no slice round, no batch grown");
     assert_eq!(calls, [["f(1)"], ["g(2)"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "both scripts' calls");
 }
 
@@ -2265,9 +2266,11 @@ calls(x, d, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p),
 .output calls
 "#;
     let (_, on_cpu) = batch_run_on("r8-programs-cpu", &[("a.html", html)], programs, "calls", Binding::Cpu);
-    // The programs' library (`html/embeds.rerail`) filters `child` and `node` by constants: those inputs are uploaded
-    // (Q310), so the uploads here say nothing of the programs' rows.
-    let ((_, on_metal), _) = on_device("r8-programs-metal", &[("a.html", html)], programs, "calls");
+    // The programs are the grammar's, made with the batch (§4): their rows are read where they lie, as the file's are,
+    // and a run uploads no more than over a file with no script, but for `parsed`'s rows (Q310), one a script.
+    let ((_, on_metal), bytes) = on_device("r8-programs-metal", &[("a.html", html)], programs, "calls");
+    let (_, base) = on_device("r8-programs-none", &[("a.html", "<!doctype html>\n<p>x</p>\n")], programs, "calls");
+    assert!(bytes <= base + q266(2), "a file's programs are read where they lie ({bytes} bytes uploaded, {base} with none)");
     assert_eq!(on_cpu.len(), 2, "both scripts' calls: {on_cpu:?}");
     assert_eq!(on_cpu[0][1], on_cpu[1][1], "both scripts are the file's: {on_cpu:?}");
     assert_eq!(on_metal, on_cpu, "a file's programs: the device's rows are the CPU's");

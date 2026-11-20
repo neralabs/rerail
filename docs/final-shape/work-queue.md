@@ -6035,6 +6035,9 @@ Open:
   `imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order`. The planner refuses the typing
   program (`typing/programs/calls.rr`'s `base`, which reads no guest relation) before any batch is built, so it is
   not decision 0431's.
+- **Also** (Q263 on django-bugs, 2026-11-19, with 0431 step 3 in the tree): `python_calls_program_agrees_with_the_runtime`
+  and `rules_read_the_python_program_through_lib_calls` failed there ("the read in `res` has no connected demand").
+  Both pass on the hub at roll-up 4 (rr-align's merge, the M3).
 
 ### Q250. Four observer tests fail at the hub's tip
 
@@ -6464,6 +6467,9 @@ Open:
 - **Design** (the user, 2026-11-18): strings the rules parse are tape values, their nodes named by the tape ("do
   a"); programs the grammar holds are part of their file ("okay, I agree with that"); format 16 unchanged.
 - **Steps**: 0431's five. Step 1 (the record and the R1–R4 tests, ignored, each failing for its reason) is done.
+  Steps 2 to 5 done (2026-11-19); leftovers in Q268.
+- **Measured after** (PostHog cold, M3, step 5): guests 0.16 s (CPU binding) and 0.33 s (Metal); instructions 2,421 G
+  and 1,800 G (1ca497070: 2,476 G and 2,071 G); findings 29,747, fa0efeaed6ff (0431, "Measured (step 5)").
 - **Done when**: R1–R8 hold, their tests pass unignored, no guest document, key range, embed slice or batch rebuild
   is left, and PostHog's findings are unchanged on CPU and Metal.
 
@@ -6651,3 +6657,58 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
     statics 0442 had removed, a break that only `--features generated` showed. Without a run, `options()` is a fresh
     value each call, so the IR was not kept ("tier 1: no entry"). `aot`'s flags now end with its run, and the
     restore of `bit_test` is gone.
+
+### Q324. (Q267 on django-bugs) `docof` lowered as `node`'s projection gives a program's own key
+
+- **Seen** (2026-11-19, 0431 step 3): core.rr's `docof(n, d)` of a program's node is its file (`Projected::file`,
+  `ViewDoc::file`, `ChunkDoc::file`), but `node(d, n, …)`'s `d` stays the program's own key, which `doc_role`,
+  `doc_root` and `guest` name it by. Where a program's `docof` is `node`'s projection (T's programs over nodes,
+  `rr::lower::projections`; `whole::Projected` in a combined part), a program's node has its own key for `docof`.
+- **Decided** (2026-11-19, the user: "pick a for the decision"): the guest relations name a program by its file and
+  place (`parsed(at, grammar, root)`), so `node`'s `d` is the file (0431 §4).
+- **Done when**: `docof` of a program's node is its file in a T program too, with a test.
+
+### Q325. (Q268 on django-bugs) 0431's leftovers after step 3
+
+- **Seen** (2026-11-19, 0431 step 3 done):
+  - `@parse(g, x)` and `@splice` values are still made by the slice's rounds (`embed_slice`, `guests::DEPTH`), which
+    grow the batch: 0431 §1 has no rounds outside the engine. A string a rule parses is already asked in the
+    fixpoint (§8, R10); a computed text's value is to be one too.
+  - The rule-file language declares no embeds (`rr/embeds.rr`): its patterns need the pattern grammars, its `match`
+    regexes the regex grammar, and no embedder reads a JSON object. Before, the library's rules made nothing either
+    (no grammar registered), and no program included them.
+  - A fresh host parse builds its programs (`TapeImage::encode` → `FileImage::embedding`) and `build_with_tape`
+    drops them; `Guests::programs` runs the embedders again from the tape (a stored host's has no programs). The
+    programs are to be kept with the file's tape (0431 §7) and read there.
+  - `.guests off` hides the run language's code guests: under 0431 a tape value is never code and a program is code
+    only in a run of its own grammar's label, so the setting has nearly nothing left to hide
+    (`combined_programs_see_guests_by_their_own_policy`).
+- **Done when**: no round outside the fixpoint; a file's programs read from its stored tape; the setting's meaning
+  decided.
+
+### Q326. (Q269 on django-bugs) A fragment is parsed from a node kind (decision 0466)
+
+- **Asked** (2026-11-19, the user): "we need to allow a parse to start from a given node type ... a Python annotation
+  is not a module. It's a type. A JSX document doesn't start with a <html> tag"; tree-sitter-only dialects: "Hand-written
+  parsers only". Before 0431's language-declared embeds at known places (the user's choice 2 for HTML in a string).
+- **Steps**: R1–R7's tests; the parsers' `STARTS` and `parse_from` (Python `type`, TSX `jsx_element`, HTML
+  `element`); the registry's fragment start and tag; the engine's fragment parse (no wrapper, no `wrapped_root`); the
+  libraries' rules over a `type` root; PostHog's findings.
+- **Done when**: R1–R7 hold and PostHog's findings are unchanged or each change is named.
+- **Done** (2026-11-19). R1–R7 hold (0466 "Tests"). The three parsers start at `type`, `jsx_element` /
+  `jsx_self_closing_element` and `element`. A refused text is one `ERROR` node, so `.on guest_error` still sees it.
+  The libraries' rules needed no change: `annotation`, `parsed_in` and `ann_strip` already read a `type` root.
+  PostHog on the CPU is unchanged: 29,747 findings, fa0efeaed6ff.
+
+### Q327. (Q270 on django-bugs) A language declares the places its strings embed code (decision 0470)
+
+- **Asked** (2026-11-19, the user): choice 2 for "a string we know is HTML": a language declares the embeds at known
+  places. After 0466.
+- **Steps**: R1–R6's tests; the registry's `places` (schema, checks, generated table); the `call-argument` embedder
+  over the batch's tape document (scope table, plain strings, segments); Python's places; an HTML rule over a
+  program; PostHog's findings.
+- **Done when**: R1–R6 hold and PostHog's findings are unchanged or each change is named.
+- **Step 1 done** (2026-11-19): R1–R4, R5 for a Python rule, R6 (PostHog unchanged, 29,747). Open, step 2: a run of
+  the embedded language reads the files holding its programs (0470 "Steps"); an HTML run sees no Python file's
+  program, nor a JavaScript run an HTML file's `<script>`.
+

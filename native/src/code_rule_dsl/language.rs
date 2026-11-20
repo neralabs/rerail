@@ -546,13 +546,26 @@ fn dialect(lang: GrammarDialect) -> Option<&'static Dialect> {
 }
 
 /// The dialect a file label names (`FileInput.language`, the store's file language).
-/// A fragment grammar the registry declares (decision 0082): its dialect, and its start symbol (`expression`: the
-/// text inside a written `( … )`).
+/// A fragment grammar the registry declares (decisions 0082, 0466): its dialect, and the node kind its parse starts
+/// at (Python's `annotation`: a `type`).
 pub fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
+    FRAGMENTS.iter().find(|(n, ..)| *n == name).map(|(_, dialect, start, _)| (*dialect, *start))
+}
+
+/// A fragment's tape tag (decision 0466): its tapes are stored under it, never under its dialect's.
+pub fn fragment_tag(name: &str) -> Option<u8> {
+    FRAGMENTS.iter().find(|(n, ..)| *n == name).map(|(.., tag)| *tag)
+}
+
+/// Every fragment the registry declares: name, dialect, start kind, tape tag.
+pub fn fragments() -> &'static [(&'static str, GrammarDialect, &'static str, u8)] {
     FRAGMENTS
-        .iter()
-        .find(|(n, _, _)| *n == name)
-        .map(|(_, dialect, start)| (*dialect, *start))
+}
+
+/// The grammar a guest's kinds are named in: a fragment's dialect's label, else the grammar itself (a dialect's
+/// label).
+pub fn kinds_label(grammar: &str) -> &str {
+    fragment(grammar).and_then(|(dialect, _)| label(dialect)).unwrap_or(grammar)
 }
 
 /// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, a
@@ -632,12 +645,14 @@ pub fn tape_tag(lang: GrammarDialect) -> Option<u8> {
     tag
 }
 
-/// The dialect a persisted tape tag names.
+/// The dialect a persisted tape tag names: a dialect's, or a fragment's (whose tapes are its dialect's kinds,
+/// decision 0466).
 pub fn from_tape_tag(tag: u8) -> Option<GrammarDialect> {
     let lang = DIALECTS
         .iter()
         .find(|dialect| dialect.tape_tag == tag)
-        .map(|dialect| dialect.lang);
+        .map(|dialect| dialect.lang)
+        .or_else(|| FRAGMENTS.iter().find(|(.., t)| *t == tag).map(|(_, dialect, ..)| *dialect));
     #[cfg(any(test, feature = "test-hooks"))]
     let lang = lang.or_else(|| {
         TEST_TAPE_TAGS

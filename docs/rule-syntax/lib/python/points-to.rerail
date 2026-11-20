@@ -361,10 +361,12 @@ pt_anc(c, b) :- pt_anc(c, m), pt_base(m, b).
 // bound. A quoted annotation (`x: "Node"`, `list["Node"]`) is its code, parsed as an annotation (decision 0055).
 .decl pt_ann(t: node, e: node)
 pt_ann(t, e) :- kind(t, "type"), child(t, e, 0).
-// pt_qann(s, e): string s is an annotation's whole expression, and e is its code's expression: core.rerail's guest of
-// grammar "annotation" is rooted at the expression (T's shape rooted it at a module of one statement, `(…)`).
+// pt_qann(s, e): string s is an annotation's whole expression, and e is its code's expression: the fragment
+// "annotation" is rooted at a `type`, as tree-sitter writes an annotation (decision 0466), whose child is the
+// expression (T's shape rooted it at a module of one statement, `(…)`; before 0466 the root was the expression).
 .decl pt_qann(s: node, e: node)
-pt_qann(s, e) :- kind(t, "type"), child(t, s, 0), kind(s, "string"), parsed(s, "annotation", e).
+pt_qann(s, e) :- kind(t, "type"), child(t, s, 0), kind(s, "string"), parsed(s, "annotation", r),
+    (kind(r, "type"), child(r, e, 0) ; !kind(r, "type"), e = r).
 .decl pt_union_q(q: symbol)
 pt_union_q("typing.Optional"). pt_union_q("typing.Union"). pt_union_q("typing_extensions.Optional"). pt_union_q("typing_extensions.Union").
 .decl pt_uhead(e: node)

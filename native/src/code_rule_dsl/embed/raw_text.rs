@@ -59,9 +59,13 @@ impl Embedder for RawText {
             segments.push(0, text.len(), range, true, false);
             segments.index();
             let Some(parse) = super::Parse::read(dialect, &text, budget) else { continue };
-            programs.push(Program { dialect, parse, text, segments, host_errors: Vec::new() });
+            programs.push(Program { dialect, parse, text, segments, host_errors: Vec::new(), at: None });
         }
         programs
+    }
+
+    fn per_place(&self) -> bool {
+        true
     }
 }
 
