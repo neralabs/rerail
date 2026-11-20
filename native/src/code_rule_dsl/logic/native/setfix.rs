@@ -79,6 +79,8 @@ mod maintain_mode_tests;
 #[cfg(test)]
 mod cut_tests;
 #[cfg(test)]
+mod index_order_tests;
+#[cfg(test)]
 mod view_tests;
 #[cfg(test)]
 mod base_probe;
@@ -6666,6 +6668,15 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                         Src::In(rel, ix)
                     }
                 };
+                // An input's index is kept by its set of key columns (`InRel::index`), in the column order of the join
+                // that asked for it first. A probe reads its key in that order (the index's lead, its table, the
+                // order's columns, `candidates`): the step's keys go in it. In the step's own order, a second join on
+                // the same columns looked a node up in a constant's chain and found nothing (t50 step 1: `rf_ref` by
+                // `[0, 1, 2, 3]` through an index made for `[1, 0, 2, 3]`, a handoff's replacement that derived none
+                // of its 295 rows).
+                if let Src::In(_, ix) = &src && ix.cols.len() == keys.len() && ix.cols.iter().zip(&keys).any(|(&c, &(k, _))| c != k) {
+                    keys.sort_by_key(|&(c, _)| ix.cols.iter().position(|&x| x == c).unwrap_or(usize::MAX));
+                }
                 match item {
                     JoinItem::StrJoin { x, by, sep, out: o, .. } => {
                         let Some(Key::Const(sep)) = tok(sep, syms) else { return Err(err("a strjoin's separator is a constant")) };
