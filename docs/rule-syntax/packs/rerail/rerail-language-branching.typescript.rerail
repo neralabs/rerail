@@ -1,0 +1,64 @@
+.policy "rerail-language-branching" revision 2
+.description "Branch on a language, family or embedding only in its Engine Adapter, embedder, the registry or the family's own modules; elsewhere ask the adapter or read the registry."
+.language typescript
+.mode log
+.scope include "src/**/*.ts"
+.scope exclude "**/tests/**", "**/*.test.ts", "**/*.generated.ts"
+// rerail-language-branching for the host: a choice by code-rule language reads the language registry
+// (code-rule-languages.ts) or is left to the engine. The engine's Rust half is rerail-language-branching.rerail.
+//   if (language === "python") …                     HOST_LANGUAGE_BRANCH (a label against a language's name)
+//   if (family !== PYTHON_FAMILY) …                  HOST_LANGUAGE_BRANCH (against a *_FAMILY constant)
+//   switch (rule.language) { case "sql": … }         HOST_LANGUAGE_BRANCH (a label case on a language)
+//   ["php", "blade"].includes(dialect)               HOST_LANGUAGE_BRANCH
+//   if (ecosystem === "python") …                    not reported: not named for a language
+// Named for a language: language, lang, dialect, family, or a name like sourceLanguage, dialectOf(…), ruleFamilyFor(…).
+
+// A label: "python", 'tsx', … .
+.decl label(n: node)
+label(n) :- kind(n, "string"), match("[\"'](?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)[\"']", n).
+.decl nameish(n: node)
+nameish(n) :- compare(e), child(e, n, _), !kind(n, "string"),
+    match("(?s:.*)(?:(?:^|[^A-Za-z0-9_$])(?:language|lang|dialect|family)(?:\\([^)]*\\))?$|[a-z](?:Language|Dialect|Family)(?:(?:For|Of)[A-Z][A-Za-z0-9_]*)?(?:\\([^)]*\\))?$)(?s:.*)", n).
+.decl compare(e: node)  // ===, !==, ==, !=
+compare(e) :- kind(e, "binary_expression"), (op(e, "===") ; op(e, "!==") ; op(e, "==") ; op(e, "!=")).
+
+.violation HOST_LANGUAGE_BRANCH(at: node) "Read this from the language registry (code-rule-languages.ts) or leave the choice to the engine. If this name is not a Rerail code-rule language (a lint plugin, an ecosystem), leave it."
+HOST_LANGUAGE_BRANCH(n) :- compare(n), child(n, l, _), label(l), child(n, x, _), nameish(x).
+HOST_LANGUAGE_BRANCH(n) :- compare(n), child(n, c, _), kind(c, "identifier"), match("[A-Z][A-Z0-9]*_FAMILY", c).
+HOST_LANGUAGE_BRANCH(n) :- kind(n, "switch_case"), field(n, "value", l), label(l), inside(n, s, "switch_statement"),
+    field(s, "value", x),
+    match("(?s:.*)(?:(?:^|[^A-Za-z0-9_$])(?:language|lang|dialect|family)\\b|[a-z](?:Language|Dialect|Family)(?:(?:For|Of)[A-Z][A-Za-z0-9_]*)?\\b)(?s:.*)", x).
+HOST_LANGUAGE_BRANCH(n) :- kind(n, "call_expression"),
+    match("\\[[^\\]]*[\"'](?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)[\"'][^\\]]*\\]\\s*\\.includes\\(\\s*[^)]*(?:language|lang|dialect|family|Language|Dialect|Family)[^)]*\\)", n).
+
+.test language_choices_are_reported exactly
+    .fixture "src/engine/code-rule/run.ts" ```
+        if (language === "python") run();
+        if (family !== PYTHON_FAMILY) skip();
+        switch (rule.language) {
+          case "sql":
+            break;
+        }
+        const templated = ["php", "blade"].includes(dialect);
+        if (rule.sourceLanguage == 'tsx') run();
+        ```
+    .expect HOST_LANGUAGE_BRANCH at "src/engine/code-rule/run.ts":1
+    .expect HOST_LANGUAGE_BRANCH at "src/engine/code-rule/run.ts":2
+    .expect HOST_LANGUAGE_BRANCH at "src/engine/code-rule/run.ts":4
+    .expect HOST_LANGUAGE_BRANCH at "src/engine/code-rule/run.ts":7
+    .expect HOST_LANGUAGE_BRANCH at "src/engine/code-rule/run.ts":8
+.end
+
+.test other_names_and_tests_pass exactly
+    .fixture "src/engine/lint/plugins.ts" ```
+        if (ecosystem === "python") run();
+        if (language === "markdown") skip();
+        switch (kind) {
+          case "sql":
+            break;
+        }
+        ```
+    .fixture "src/engine/code-rule/run.test.ts" ```
+        if (language === "python") run();
+        ```
+.end

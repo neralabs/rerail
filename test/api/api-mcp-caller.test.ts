@@ -3,6 +3,8 @@ import { type EncodingOption, mkdirSync, type PathLike, realpathSync, writeFileS
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
@@ -460,6 +462,14 @@ describe("MCP callers and the agent guard", () => {
     // Ongoing audit settings outlast the session, so an agent cannot set its checkout to log-only for everyone after it.
     expect((await call("audit_settings_update", { sessionId: "in-app", mode: "log" }, caller)).result).toMatch(/^agent-not-permitted: .*rerail settings/u);
     expect((await call("audit_settings_get", { sessionId: "in-app" }, caller)).result).toMatchObject({ settings: { mode: "steer" } });
+    // A place a turn end's walk could not check: the agent gets the count, never the place, as it gets no payload of it.
+    const place = { path: ".secrets", reason: "EACCES: permission denied, opendir '/repo/.secrets'" };
+    sessions.recordDiscoveryGap({ host: "codex", sessionId: "in-app", cwd: parent }, { boundary: "turn", ...place, key: JSON.stringify([".secrets", "EACCES"]) });
+    const agentGaps = ((await call("sessions_get", { sessionId: "in-app" }, caller)).result as { gaps: Record<string, unknown> }).gaps;
+    expect(agentGaps).toMatchObject({ discoveryGaps: 1 });
+    expect(agentGaps).not.toHaveProperty("discoveryGapPlaces");
+    expect(((await (await person.request("/api/sessions/in-app")).json()) as { gaps: unknown }).gaps)
+      .toMatchObject({ discoveryGaps: 1, discoveryGapPlaces: [{ ...place, boundary: "turn", observedAt: expect.any(Number) }] });
 
     // Naming another repository is refused; its sessions and audits answer exactly as ones that do not exist.
     for (const name of ["sessions_list", "violations_list", "audits_list", "repository_audits_list", "rules_activity"]) {
@@ -486,6 +496,36 @@ describe("MCP callers and the agent guard", () => {
       events: [{ payload: { text: `cat ${nested}/.env` } }, { payload: { input: { command: `cat ${nested}/.env` } } }, { payload: { output: "API_KEY=hunter2" } }, {}],
     });
     expect((await app.request(`/api/repository-audits/${repositoryAuditIds.get("in-lib")}/entries`)).status).toBe(200);
+  });
+
+  it("answers a coding agent's MCP client sessions_get within the output its tool declares, whether the walks met more among it", async () => {
+    const sessions = stores.sessionStore();
+    const session = { host: "codex" as const, sessionId: "in-app", cwd: parent };
+    sessions.openSession(session, 1_000, parentKey);
+    const place = { path: ".secrets", reason: "EACCES: permission denied, opendir '/repo/.secrets'" };
+    sessions.recordDiscoveryGap(session, { boundary: "turn", ...place, key: JSON.stringify([".secrets", "EACCES"]) });
+    const more = { boundary: "turn" as const, reason: "The walks could not check more than 1000 places; the rest are not recorded", more: true as const };
+    sessions.recordDiscoveryGap(session, { ...more, key: JSON.stringify(["", more.reason]) });
+    // The SDK's client checks each answer against the output schema its tool declared in `tools/list`, which allows no
+    // field it does not name, as an MCP client that checks answers does.
+    const client = new Client({ name: "rerail-test", version: "0.0.0" });
+    const transport = new StreamableHTTPClientTransport(new URL("http://localhost:4737/mcp"), {
+      fetch: async (url, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set("host", "localhost:4737");
+        headers.set(CALLER_CWD_HEADER, from(parent));
+        return await mcp(new Request(url, { ...init, headers }));
+      },
+    });
+    await client.connect(transport as Parameters<Client["connect"]>[0]);
+    try {
+      await client.listTools();
+      const answer = await client.callTool({ name: "sessions_get", arguments: { sessionId: "in-app" } });
+      expect(answer.structuredContent).toMatchObject({ gaps: { discoveryGaps: 1, discoveryGapsMore: true } });
+      expect(answer.structuredContent).not.toHaveProperty(["gaps", "discoveryGapPlaces"]);
+    } finally {
+      await client.close();
+    }
   });
 
   it("shows an agent a stored call that names a web URL without looking its host and path up on another machine", async () => {

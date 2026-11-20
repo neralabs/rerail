@@ -1,0 +1,57 @@
+.policy "rerail-pack-package-names" revision 2
+.description "Build and parse rule pack npm package names and install folders through the rule pack catalog's naming helpers instead of spelling out the pack name prefix in code."
+.language typescript
+.mode steer
+.scope include "src/**/*.ts"
+.scope exclude "src/engine/catalog/rule-packs.ts", "src/**/*.generated.ts", "**/*.test.ts"
+// Rule pack npm names (`@neralabs/rerail-pack-<id>`) and their node_modules folders are built and parsed by the
+// catalog's helpers in src/engine/catalog/rule-packs.ts. A literal that spells the prefix as a name, a path or a
+// pattern is reported; prose that merely mentions it (two words in a row) is not.
+//   `rerail-pack-${id}`                          PACK_NAME_LITERAL (a template)
+//   "@neralabs/rerail-pack-python"               PACK_NAME_LITERAL (a string)
+//   /^@neralabs\/rerail-pack-(.+)$/              PACK_NAME_LITERAL (a regex literal)
+//   type Name = `rerail-pack-${string}`          PACK_NAME_LITERAL (a template literal type)
+//   "install the rerail-pack-python package"     not reported (prose)
+// The JSON's `regex` searches the literal's whole text, quotes included, as ast-grep's does; `$` is its end.
+
+.violation PACK_NAME_LITERAL(at: node) "Build Rerail's own pack name with rulePackPackageName, and its node_modules folder from that; read any pack name and id with packIdOfPackage or RULE_PACK_PACKAGE_NAME in engine/catalog/rule-packs.ts."
+PACK_NAME_LITERAL(n) :- name_literal(n), match("(?s:.*)(?:rerail-pack(?:-[a-z0-9-]*)?(?:[\"'`$/(\\[\\\\]|$))(?s:.*)", n),
+    !match("(?s:.*)(?:[A-Za-z]{2,} [a-z]{2,})(?s:.*)", n).
+.decl name_literal(n: node)
+name_literal(n) :- kind(n, "string") ; kind(n, "template_string") ; kind(n, "regex") ; kind(n, "template_literal_type").
+
+// The pack's example (packs/rerail/pack.json).
+.test a_spelled_folder_is_reported exactly
+    .fixture "src/setup/rule-pack-store.ts" ```
+        const dir = join(into, "node_modules", "@neralabs", `rerail-pack-${id}`);
+        ```
+    .expect PACK_NAME_LITERAL at "src/setup/rule-pack-store.ts":1
+.end
+
+.test names_paths_and_patterns_are_reported exactly
+    .fixture "src/setup/names.ts" ```
+        const name = "@neralabs/rerail-pack-python";
+        const id = /^@neralabs\/rerail-pack-(.+)$/.exec(name);
+        type Name = `rerail-pack-${string}`;
+        const bare = "rerail-pack";
+        const prose = "install the rerail-pack-python package";
+        const other = "rerail-packs";
+        ```
+    .expect PACK_NAME_LITERAL at "src/setup/names.ts":1
+    .expect PACK_NAME_LITERAL at "src/setup/names.ts":2
+    .expect PACK_NAME_LITERAL at "src/setup/names.ts":3
+    .expect PACK_NAME_LITERAL at "src/setup/names.ts":4
+.end
+
+// The pack's passing example, and the files the scope leaves out.
+.test the_helpers_pass exactly
+    .fixture "src/setup/rule-pack-store.ts" ```
+        const dir = join(into, "node_modules", rulePackPackageName(id));
+        ```
+    .fixture "src/engine/catalog/rule-packs.ts" ```
+        export const RULE_PACK_PACKAGE_PREFIX = "@neralabs/rerail-pack-";
+        ```
+    .fixture "src/setup/rule-pack-store.test.ts" ```
+        const dir = `rerail-pack-${id}`;
+        ```
+.end
