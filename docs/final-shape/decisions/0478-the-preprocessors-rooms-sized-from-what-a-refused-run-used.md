@@ -80,8 +80,12 @@ Boost.Preprocessor's 64 test files (C as C, the rest as C++), each its own unit:
   places write it out: every list's tokens stay. Boost's recursions (`BOOST_PP_WHILE`, `REPEAT`,
   `SEQ_FOR_EACH`) copy their state through an argument at each level, so the stores hold the sum of
   every level's copy: 5 million tokens for `array.c`, more than the device's room. The serial pass
-  frees each level as it goes. The fix is a design of its own: reclaim a list's tokens once its
-  parent holds them.
+  frees each level as it goes. Where `array.c`'s tokens come from at rung 0 (1.32M), counted by
+  allocation site: an argument's raw tokens copied to scan it alone (`px_call`) 409k; its
+  expansion flattened (`px_final`) 345k; bodies with their arguments substituted (`px_subst`)
+  537k; exits' joins 44k. So most of it is copies of the same tokens, all kept to the end. The fix
+  is a design of its own: an argument read in place in its call's list instead of copied, and a
+  list's tokens reclaimed once its parent holds them.
 - **The last round's run is done twice.** Since 0475 the last round's run does the text pass
   inside P1's iterations: it is the expansion. The expansion's run (`expand_many`, a batch of
   units) does it all again. A batch's rounds run unit by unit, and the batch's run repeats them.
