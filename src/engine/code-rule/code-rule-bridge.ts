@@ -268,6 +268,10 @@ interface EditPreimages {
   readonly reported: ReportedPreimage | undefined;
   readonly notFromCapture: Set<string>;
 }
+/** What the tool's result reports of the source at `path` before the call, when it reports that source. */
+function reportedFor(preimages: EditPreimages, path: string): ReportedPreimage | undefined {
+  return preimages.reported?.path === path ? preimages.reported : undefined;
+}
 /**
  * `edit`, of a call whose start captured nothing of its file, with the text it was made on as its "before" where that is
  * certain (`certainEdit`), else as read, over the whole text it left. A rebuilt "before" is no capture of the call's,
@@ -2327,9 +2331,8 @@ export class CodeRuleBridge {
     const source = await this.#readSource(root, configuredPath);
     if (source === undefined) return undefined;
     this.#touchSource(discovery, source.path);
-    const reported = preimages.reported?.path === source.path ? preimages.reported : undefined;
     const captured = preimages.captured.get(source.path);
-    const preimage = editPreimage(source, captured, reported);
+    const preimage = editPreimage(source, captured, reportedFor(preimages, source.path));
     if (!readAsCaptured(preimage, captured)) preimages.notFromCapture.add(source.path);
     const sight = this.#observedSource(source.path)?.digest;
     const edit = this.#readEdit(source, preimage);
