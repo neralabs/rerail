@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -67,6 +68,22 @@ describe("hook launcher started by the recorded node", () => {
     await writeFile(hook, "process.stdout.write(JSON.stringify({ pid: process.pid, argv1: process.argv[1] }));");
     // Set-up writes the recorded node as the command where `node` on PATH is another one.
     const result = spawnSync(process.execPath, ["--import", "tsx", LAUNCHER, process.execPath, hook], { input: "{}", encoding: "utf8" });
+    expect(JSON.parse(result.stdout), result.stderr).toEqual({ pid: result.pid, argv1: hook });
+    expect(result.status).toBe(0);
+  }, 30_000);
+
+  // A launcher started under another node starts itself under the recorded node with `--here` in that node's place. The
+  // word itself, not the lack of a file of that name, makes the second launcher run the hook, so it never starts a
+  // third, even from a project folder that holds a file named `--here`.
+  it("runs the hook in its own process when another launcher started it, even beside a file named --here", async () => {
+    const base = await mkdtemp(join(tmpdir(), "rerail-hook-launcher-"));
+    temporaryDirectories.push(base);
+    const hook = join(base, "claude-hook.mjs");
+    await writeFile(hook, "process.stdout.write(JSON.stringify({ pid: process.pid, argv1: process.argv[1] }));");
+    await writeFile(join(base, "--here"), "not a program\n");
+    // From that folder, as Claude Code runs a hook from the project's, so tsx comes by its path.
+    const tsx = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+    const result = spawnSync(process.execPath, ["--import", tsx, LAUNCHER, "--here", hook], { cwd: base, input: "{}", encoding: "utf8" });
     expect(JSON.parse(result.stdout), result.stderr).toEqual({ pid: result.pid, argv1: hook });
     expect(result.status).toBe(0);
   }, 30_000);
