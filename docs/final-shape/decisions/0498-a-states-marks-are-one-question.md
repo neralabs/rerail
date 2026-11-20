@@ -44,5 +44,5 @@ A state's chain of two or more mark tests is one question, in the generated Rust
   `gaps_N()` tests and `lose()`) are still statements before the match. In the lean parser they are
   part of `asi()`'s answer (its `lost` comments). Next: fold them into the question, so that it
   returns the lost extras with its answer.
-- **The memo.** `asi()` is asked once per position. Ours is asked once per state that reaches the
-  token, which is mostly once.
+- **The memo.** `asi()` is asked once per position, with a memo. Ours is asked by each state that
+  reaches the token.

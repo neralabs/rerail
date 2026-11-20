@@ -59,8 +59,7 @@ from 689.
 ## What is still apart from the lean parser
 
 - **Seven operand functions.** The lean parser has one `expr(min)`, its minimum level a
-  parameter. Ours has one loop for each minimum level: the same shape, specialised at compile
-  time. One function would need the call to carry the level, and the loop's arms to test it.
+  parameter. Ours has one function for each minimum level.
 
 - **Word numbering.** The lean words are numbered by class (hard keywords, then `SOFT` and up), so
   `ident_word` is one compare. Ours are numbered in grammar order, so one class is several runs.
