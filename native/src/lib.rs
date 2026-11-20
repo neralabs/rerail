@@ -38,12 +38,14 @@ pub mod git_access {
     #[cfg(test)]
     mod tests;
 }
+pub mod git_start;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
 pub use rerail_w::git_ignore;
 mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;
+mod path_owner;
 pub mod process;
 pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).

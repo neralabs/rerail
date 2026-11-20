@@ -168,6 +168,13 @@ struct Violation {
     tag: Option<usize>,
 }
 
+impl Violation {
+    /// Whether its findings are at a tool call: its `at` is the call's id (`.scope tool_calls`).
+    fn call(&self) -> bool {
+        self.columns.first().is_some_and(|(_, ty)| ty == "symbol")
+    }
+}
+
 /// A finding's code: the violation's name, a column's value, or a constant.
 #[derive(Clone, Debug)]
 enum FindingCode {
@@ -358,6 +365,26 @@ impl Written {
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
 /// names one occurrence made inside it do not tell it from another).
 type HelperKey = (String, Vec<String>, Vec<String>);
+
+/// The relations of the tool calls a run is given (`docs/rule-syntax/tool-calls.md`), core.rerail's: `tool_call(call,
+/// tool)` and `tool_input(call, key, value)`. A run's `toolCalls` option is their rows (`corpus::added`).
+pub const TOOL_CALLS: [&str; 2] = ["tool_call", "tool_input"];
+
+/// `.scope tool_calls`: the policy reads the tool calls a run is given ([`TOOL_CALLS`]) and no file, and its findings
+/// are at a call.
+pub fn reads_tool_calls(settings: &[(String, String)]) -> bool {
+    settings.iter().any(|(k, t)| k == "scope" && t.trim() == "tool_calls")
+}
+
+/// Whether a `.violation`'s `at` is a node; a span, a loc and a tool call's id (a symbol, in a `.scope tool_calls`
+/// policy: `findings::tool_call_findings`) are not, and anything else is no `at`.
+fn at_is_node(name: &str, at: &str) -> Result<bool, Error> {
+    match at {
+        "node" => Ok(true),
+        "span" | "loc" | "symbol" => Ok(false),
+        _ => Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span, a loc or a tool call (symbol), not a {at}"))),
+    }
+}
 
 /// The globs a program's `.scope` settings select documents by: (within, out), `dirs` and `include` within, `exclude`
 /// and `tests false` out. `None` for no scope and for `.scope given` (the files are a caller's, a test's, not found
@@ -1378,11 +1405,15 @@ fn renamed_fields(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
 }
 
 /// The scope's own declarations taken out of a module's program linked in it (`rr::link_seeded_version`), but for
-/// `core`'s.
-pub fn unseed(program: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), seeds: &Seeds, core: &BTreeSet<String>) {
+/// `core`'s, and but for those the run's library part does not declare (`library`, its linked version): a seeded
+/// relation is the library's only where that part holds it. `core.rerail`'s `within`, which the library's linking
+/// keeps only where a library rule reads it, was read by the program and declared by no part of the run (`no
+/// declaration of within`), so a policy reading it ran alone (main's #863). A relation no part holds stays with the
+/// program, as `corpus::own_part` leaves a base relation it reads.
+pub fn unseed(program: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), seeds: &Seeds, core: &BTreeSet<String>, library: Option<&crate::code_rule_dsl::logic::program_image::Version>) {
     use crate::code_rule_dsl::logic::program_facts::Field;
     let seeded = &seeds.seeded;
-    let gone = |r: &str| !core.contains(r);
+    let gone = |r: &str| !core.contains(r) && library.is_none_or(|l| l.declares(r));
     for r in program.declared_names() {
         if seeded.decls.contains(&r) && gone(&r) {
             program.undeclare(&r);
@@ -1493,6 +1524,8 @@ pub struct RulesSeen {
     pub place_values: bool,
     /// Whether a rule reads `guest_policy`.
     pub reads_guest_policy: bool,
+    /// The first tool call's relation a rule reads (`TOOL_CALLS`), refused outside `.scope tool_calls`.
+    pub reads_tool_call: Option<&'static str>,
 }
 
 impl RulesSeen {
@@ -1500,6 +1533,7 @@ impl RulesSeen {
         RulesSeen {
             place_values: rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place)),
             reads_guest_policy: rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == GUEST_POLICY),
+            reads_tool_call: rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).find_map(|a| TOOL_CALLS.into_iter().find(|t| a.rel == *t)),
         }
     }
 }
@@ -2125,10 +2159,7 @@ impl Lowerer {
     #[allow(clippy::too_many_arguments)]
     fn violation(&mut self, name: String, cols: Vec<(String, String)>, code: Option<Code>, code_in: Option<String>, tag: Option<String>, suppress: Vec<Suppress>, fixes: Vec<Fix>, message: String) -> Result<(), Error> {
         let Some((_, at)) = cols.first() else { return Err(Error::Syntax(format!(".violation {name} has no `at` column"))) };
-        if !matches!(at.as_str(), "node" | "span" | "loc") {
-            return Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span or a loc, not a {at}")));
-        }
-        let node = at == "node";
+        let node = at_is_node(&name, at)?;
         let column = |c: &String| cols.iter().position(|(n, _)| n == c).ok_or_else(|| Error::Syntax(format!(".violation {name}: no column {c}")));
         let tag = tag.as_ref().map(column).transpose()?;
         let code = match code {
@@ -2136,6 +2167,16 @@ impl Lowerer {
             Some(Code::Column(c)) => FindingCode::Column(column(&c)?),
             Some(Code::Constant(c)) => FindingCode::Constant(c),
         };
+        self.finding_settings(&name, suppress, fixes, code_in);
+        self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false, columns: cols.clone(), message, tag });
+        self.decl(name.clone(), cols, &[])?;
+        self.prog.add_output(&name);
+        Ok(())
+    }
+
+    /// A `.violation`'s `suppress` and `fix` lines and `code {c} in "re"`, as the findings layer's settings
+    /// (`violation`).
+    fn finding_settings(&mut self, name: &str, suppress: Vec<Suppress>, fixes: Vec<Fix>, code_in: Option<String>) {
         for s in suppress {
             let rules = s.rules.iter().map(|r| quote(r)).collect::<Vec<_>>().join(", ");
             let over = s.over.map(|c| format!(" over {{{c}}}")).unwrap_or_default();
@@ -2147,10 +2188,6 @@ impl Lowerer {
         if let Some(re) = code_in {
             self.prog.push_setting("code_in".to_owned(), format!("{name} {}", quote(&re)));
         }
-        self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false, columns: cols.clone(), message, tag });
-        self.decl(name.clone(), cols, &[])?;
-        self.prog.add_output(&name);
-        Ok(())
     }
 
     fn clause(&mut self, heads: &[Head], body: &[Lit]) -> Result<(), Error> {

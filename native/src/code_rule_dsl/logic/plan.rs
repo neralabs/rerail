@@ -1156,7 +1156,9 @@ fn plan_site(site: &'static str) {
 /// §7).
 static SEARCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 /// Decision 0123 §9's probes in this process: left unplanned when their stratum opened, and planned later (when their
-/// delta came, or when the device took their stratum). Never reset, so a test reads its own run's by difference.
+/// delta came, or when the device took their stratum). Process-wide by design, read only by tests and the
+/// `RERAIL_PLAN_CACHE_COUNTS` line, and never reset: a reader takes a run's by difference, so it owns its process
+/// (`test_support::alone`), since another run beside it plans probes it left before the difference's window began.
 static LAZY: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub fn lazy_probes_counted() -> (u64, u64) {

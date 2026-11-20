@@ -1482,6 +1482,42 @@ mod tests {
         assert!(rules.iter().any(|r| r.starts_with("asg(") && r.contains(&wide)), "{rules:#?}");
         assert!(rules.iter().any(|r| r.starts_with("out(") && r.contains(&narrow)) || rules.iter().filter(|r| r.starts_with("out(")).all(|r| !r.contains(&wide)), "{rules:#?}");
     }
+
+    /// A tree axis read over a node that may be an annotation's is the clone's copy of the axis, over a copy of its kind
+    /// set (`rr_inside_rr_in_annotation_<set>`). Folding the copied set folds the axis too: before, the set went and
+    /// the axis stayed, naming no set, so the transducer made it with no rows, and the clone's `!inside(t, _, S)` held
+    /// for every node, below S too (the Django rules' `within_stop` over a block found through `sym_of`; main's #862).
+    #[test]
+    fn an_axis_over_a_folded_kind_set_reads_the_original_set() {
+        use crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
+        use crate::code_rule_dsl::logic::front::{axis, is_axis};
+        let v = hidden(
+            concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl body(b: node)\nbody(b) :- e(b).\nbody(r) :- parsed(_, \"annotation\", r).\n",
+                ".decl attempt(t: node)\nattempt(t) :- e(t).\n",
+                ".decl out(t: node)\n.output out\n",
+                "out(t) :- attempt(t), body(b), within(t, b), !inside(t, _, \"function_definition\").\n",
+            ),
+            ANNOTATION_KEYS,
+        );
+        let axes = |v: &Version| -> Vec<String> { v.rules().flat_map(|r| v.show_rule(r).split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| is_axis(w)).map(str::to_owned).collect::<Vec<_>>()).collect() };
+        assert!(axes(&v).iter().any(|r| r.contains("rr_in_annotation_")), "the clone reads the annotation's axis: {:?}", axes(&v));
+        let mut p = Pipeline::new("test", v);
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        let (mut merge, mut repeats) = (super::super::merge::MergeIdentical::default(), super::super::merge::DropRepeated::default());
+        p.program(&mut fold).program(&mut repeats).program(&mut merge).program(&mut repeats);
+        let (v, _) = p.finish().unwrap();
+        assert!(fold.folded > 0);
+        let sets = ProgramFields::kindsets(&*v);
+        let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).filter(|r| is_axis(r)).collect();
+        for rel in axes(&v).iter().chain(&inputs) {
+            let (set, _) = axis(rel).unwrap();
+            assert!(sets.contains_key(set), "{rel} names no kind set of the program: {sets:?}");
+        }
+        let outs = rules_of(&v, "out");
+        assert!(!outs.is_empty() && outs.iter().all(|r| r.contains("!rr_inside_rr_kind_function_definition(") && !r.contains("rr_in_")), "{outs:#?}");
+    }
 }
 
 /// Declares `rel` with `cols` on the staged fields.

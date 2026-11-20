@@ -1058,7 +1058,7 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     let lower::Linked { lowered, stated, own_stated, .. } = linked;
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered, library)?;
     let mut b = Builder::on(&v);
-    lower::unseed(&mut b, seeds, core);
+    lower::unseed(&mut b, seeds, core, library.map(|l| &*l.version));
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
 

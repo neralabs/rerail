@@ -283,6 +283,7 @@ pub fn compile_document(document: &Value, capabilities: &Capabilities) -> Result
             "id",
             "revision",
             "mode",
+            "title",
             "description",
             "scope",
             "clauses",

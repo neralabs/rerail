@@ -13,6 +13,7 @@ example on this page is a complete draft for `rerail rules test`, and Rerail's t
     "id": "local:<short-kebab-name>",
     "revision": 1,
     "mode": "steer",
+    "title": "<The rule in the person's own words>",
     "description": "One imperative sentence: what the rule wants; a short reason if it isn't obvious.",
     "scope": { "include": ["src/**/*.ts"], "exclude": ["**/*.test.ts"] },
     "clauses": [
@@ -35,6 +36,8 @@ example on this page is a complete draft for `rerail rules test`, and Rerail's t
   rule covers" and passes: use one to show the scope works, but never as a caught case.
 - **`folder`** (optional, at the top level of the draft beside `kind`) adds the rule at one folder of the repository instead of
   at the whole of it.
+- **`title`** is the rule as the person would say it. The dashboard leads the rule's row and panel with it; the agent never
+  reads it. `rules add` refuses a rule without one. See [Writing the title](#writing-the-title).
 - **`description`** is for people reading the rule later in the dashboard. See [Writing the description](#writing-the-description).
 - **`violation.message`** is the steer the agent reads. See [Writing the message](#writing-the-message).
 - **Raise `revision`** every time you change a rule that has been added.
@@ -45,11 +48,12 @@ example on this page is a complete draft for `rerail rules test`, and Rerail's t
 |---|---|---|
 | `regex` over `file.content` | the thing is a token, an import line, a path, or a comment marker, in any text file, named by suffix or not (`Justfile`, `LICENSE`, `*.lock`) | cheapest; it can match inside strings and comments |
 | `regex` over `file.path`, or `{ "file": {} }` | the file itself is wrong: its name or place (`*.orig` left behind), or, with `file`, every file the scope holds should not exist | never reads the file; a match is the file's path, with no line, so no `fix` and no `capture.*` anchor |
-| `ast` with `pattern` | a call, an expression or a statement in Python, JavaScript, TypeScript, PHP, Blade, Rust, SQL, Vue or Java | needs the file to parse; ignores strings and comments |
+| `ast` with `pattern` | a call, an expression or a statement in Python, JavaScript, TypeScript, PHP, Blade, Rust, SQL, Vue, Java, C, C++ or Go | needs the file to parse; ignores strings and comments |
 | `ast` with `inside` / `has` / `not` | the thing is wrong only in some context: inside an `async def`, a loop, or a component | as above; the clearest way to state an exception |
 
-Rerail parses Python, JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.tsx`), PHP, Blade, Rust, SQL, Vue and Java. It reads every other
-text file, whatever its name, for `regex` and `file` clauses only, and never reads a binary file (one holding a NUL byte).
+Rerail parses Python, JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.tsx`), PHP, Blade, Rust, SQL, Vue,
+Java, C (`.c`), C++ (`.cpp`, `.cc`, `.h` and the like) and Go. It reads every other text file, whatever its name, for
+`regex` and `file` clauses only, and never reads a binary file (one holding a NUL byte).
 
 ### Regex
 
@@ -64,7 +68,7 @@ Patterns use the Rust `regex` dialect. In JSON, write every backslash twice.
 ### Syntax (ast)
 
 The `ast` query is an [ast-grep](https://ast-grep.github.io) rule with `language` set to `python`, `javascript`, `typescript`,
-`php`, `blade`, `rust`, `sql`, `vue` or `java`.
+`php`, `blade`, `rust`, `sql`, `vue`, `java`, `c`, `cpp` or `go`.
 
 - **`pattern`** is code with metavariables. `$X` matches one node and `$$$ARGS` matches any number of them:
   `console.log($$$A)`, `requests.get($URL, $$$REST)`.
@@ -76,6 +80,28 @@ The `ast` query is an [ast-grep](https://ast-grep.github.io) rule with `language
 - **A metavariable in the message:** `"message": "Use the logger, not console.$M."` fills in what `$M` matched.
 
 When a case does not parse, `rules test` reports it as `not checked`, never as passed. Fix the case's code or switch to `regex`.
+
+## Writing the title
+
+The title names the rule in the dashboard's list of rules and at the top of its panel. Without one the dashboard would show
+the first clause's message, which is advice written for the agent ("Take this shadow off; use a 1 px border…"), not the rule
+the person asked for.
+
+1. **The person's own words** when they gave the rule: what they wrote or said, cut down to the rule itself. Keep their
+   wording; never turn it into advice to the agent.
+2. **Without their words** (a rule from evidence, a standards file or the code), one plain sentence a developer here would
+   write in a list of house rules.
+3. **A statement of the rule,** not a step for one edit: "No shadows except the sheet's", not "Take this shadow off".
+4. **No code syntax:** no backticks, regexes, globs, metavariables or JSON; the dashboard shows it as plain text. Naming the
+   API, file or folder the rule is about is fine ("console.log", "tokens.ts", "src/db").
+5. **Short enough for a list:** under about 80 characters, at most 200. The panel header shows two lines.
+6. **No trailing period** and no rule id.
+
+| Field | Reader | Example |
+|---|---|---|
+| `title` | the person, in the rule list | `No shadows except the sheet's` |
+| `description` | the person, in the rule's panel | `Leave shadows off everything but the bottom sheet; cards use a 1 px border instead.` |
+| `violation.message` | the agent, at the line it broke | ``Take this shadow off; use a 1 px `border border-border` if it needs an edge.`` |
 
 ## Writing the description
 
@@ -94,7 +120,7 @@ The description is for people browsing the rules in the dashboard. The agent nev
 9. A reason only when it isn't obvious.
 10. Name the language or file type when a sibling rule covers another one.
 11. Keep thresholds that matter ("more than 5 parameters"); drop implementation trivia.
-12. Don't just repeat the message.
+12. Don't just repeat the message or the title.
 
 What it deliberately lets through can go after the semicolon when it fits and matters to a reader: `Log through logger in
 application code, not console.log; scripts and tests may print.`
@@ -149,6 +175,7 @@ UI components must not reach into the database layer.
     "id": "local:no-db-imports-in-components",
     "revision": 1,
     "mode": "steer",
+    "title": "UI components don't reach into the database",
     "description": "Read data in components under src/components through the hooks in src/data, not by importing src/db; type-only imports are fine.",
     "scope": { "include": ["src/components/**/*.ts", "src/components/**/*.tsx"], "exclude": ["**/*.test.*"] },
     "clauses": [
@@ -192,6 +219,7 @@ The repo logs through its logger; agents reach for `console.log`.
     "id": "local:use-the-logger",
     "revision": 1,
     "mode": "steer",
+    "title": "Log through the logger, not console.log",
     "description": "Log through logger in application code, not console.log; scripts and tests may print.",
     "scope": { "include": ["src/**/*.ts", "src/**/*.tsx"], "exclude": ["**/*.test.*", "src/scripts/**"] },
     "clauses": [
@@ -229,6 +257,7 @@ The string mentioning `console.log(x)` passes. A regex would have caught it.
     "id": "local:no-blocking-sleep-in-async",
     "revision": 1,
     "mode": "steer",
+    "title": "No time.sleep in async code",
     "description": "Use await asyncio.sleep instead of time.sleep inside async functions; time.sleep blocks the event loop.",
     "scope": { "include": ["**/*.py"], "exclude": ["**/.venv/**"] },
     "clauses": [

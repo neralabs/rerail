@@ -558,7 +558,7 @@ fn shipped() -> Vec<PathBuf> {
             let p = e.path();
             if p.is_dir() {
                 walk.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 out.push(p);
             }
         }

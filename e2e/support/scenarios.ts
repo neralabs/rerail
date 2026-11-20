@@ -34,6 +34,7 @@ import {
   setRuleSetting,
   setUpRepository,
   SqliteAuditStore,
+  steerFeedback,
   upsertLibraryRule,
   approve,
   ruleSubject,
@@ -178,6 +179,24 @@ const NO_RAW_FETCH = regexRule(
   "Call the API through the generated client in src/api/generated.",
 );
 
+const NO_INNER_HTML = regexRule(
+  "storefront-no-inner-html",
+  "steer",
+  "Storefront renders text through React, never by writing HTML strings into the page.",
+  "\\.innerHTML\\s*=",
+  "STOREFRONT-HTML",
+  "Render the text through React instead of assigning innerHTML.",
+);
+
+const NO_DEFAULT_EXPORT = regexRule(
+  "storefront-no-default-export",
+  "log",
+  "Storefront modules use named exports, so renames show up in every import.",
+  "export\\s+default\\b",
+  "STOREFRONT-EXPORT",
+  "Export it by name instead of as the default.",
+);
+
 /** A rule in the storefront checkout's own `.rerail/rules`: the pack `worktree`, there and nowhere else. */
 const NO_LEGACY_CLIENT = regexRule(
   "storefront-no-legacy-client",
@@ -195,6 +214,14 @@ const NO_LEGACY_CLIENT = regexRule(
 interface RuleSchedule {
   readonly ruleId: string;
   readonly count: (index: number, daysAgo: number) => number;
+}
+
+/** A steer the coding agent declined, and the line it recorded with `rerail feedback` a minute after the steer. */
+interface Decline {
+  /** The session's index in its repository's plan (0-based, oldest first). */
+  readonly index: number;
+  readonly ruleId: string;
+  readonly reason: string;
 }
 
 interface SessionPlan {
@@ -285,15 +312,17 @@ interface HistoryContext {
 /**
  * Records one session the way a coding agent's hooks do: it opens, a prompt and a write are recorded, the touched file
  * is audited against the rules on in the checkout at that instant (each violation carries the mode its rule had then),
- * the violations of rules on Steer or Block are steered, and the session ends, except the open one, which gets a second
- * prompt two minutes before the seed clock so it reads live.
+ * the violations of rules on Steer or Block are steered, the agent records why it declined any of `declines` it was
+ * steered on, and the session ends, except the open one, which gets a second prompt two minutes before the seed clock
+ * so it reads live.
  */
-function recordSession(context: HistoryContext, plan: SessionPlan, schedules: readonly RuleSchedule[], violating: Set<string>): void {
+function recordSession(
+  context: HistoryContext, plan: SessionPlan, schedules: readonly RuleSchedule[], declines: readonly Decline[], violating: Set<string>,
+): void {
   const { sessions, audits, repositoryKey, checkoutPath } = context;
   const session = { host: plan.host, sessionId: plan.sessionId, cwd: checkoutPath };
   const rules = listRepositoryRules(context.db, context.catalog, repositoryKey, { checkoutPath }).rules
     .filter(rule => rule.document.kind === "code" && rule.on);
-  const byId = new Map(rules.map(rule => [rule.document.rule.id, rule]));
   const path = TOUCHED_FILES[plan.index % TOUCHED_FILES.length]!;
   const at = (offset: number): number => plan.startedAt + offset;
 
@@ -302,43 +331,8 @@ function recordSession(context: HistoryContext, plan: SessionPlan, schedules: re
   sessions.append({ sessionId: plan.sessionId, eventId: `${plan.sessionId}-prompt`, kind: "user-prompt", observedAt: at(MINUTE), payload: { text: PROMPTS[plan.index % PROMPTS.length] } });
   sessions.append({ sessionId: plan.sessionId, eventId: `${plan.sessionId}-write`, kind: "call", observedAt: at(4 * MINUTE), payload: { toolName: "write", args: { path } } });
 
-  const violations: CodeRuleViolation[] = [];
-  for (const schedule of schedules) {
-    const count = schedule.count(plan.index, plan.daysAgo);
-    if (count === 0) continue;
-    const rule = byId.get(schedule.ruleId);
-    if (rule === undefined) throw new Error(`${plan.sessionId}: ${schedule.ruleId} is not on in ${repositoryKey} at ${new Date(plan.startedAt).toISOString()}`);
-    const { clauseId, code, message } = reportingClause(rule);
-    for (let ordinal = 0; ordinal < count; ordinal += 1) {
-      const line = 3 + plan.index * 4 + ordinal * 2;
-      violations.push({
-        id: `sha256:${createHash("sha256").update(`${plan.sessionId}\0${schedule.ruleId}\0${ordinal}`).digest("hex")}`,
-        ruleId: schedule.ruleId,
-        clauseId,
-        code,
-        mode: rule.mode,
-        message,
-        path,
-        span: { startByte: line * 40, endByte: line * 40 + 12, startLine: line, startColumn: 3, endLine: line, endColumn: 15 },
-        captures: {},
-        variables: {},
-      });
-    }
-    violating.add(schedule.ruleId);
-  }
-
-  const provenance: NonNullable<AuditInput["ruleProvenance"]> = rules.map(rule => ({
-    ruleId: rule.document.rule.id,
-    revision: rule.revision,
-    payloadHash: rule.payloadHash,
-    source: { ...rule.source },
-    repositoryKey,
-    checkoutPath,
-    placement: [{
-      folder: rule.attachmentFolder, on: rule.on, mode: rule.mode, onFrom: rule.decidedBy.on, modeFrom: rule.decidedBy.mode,
-      suppressions: rule.suppressions, suppressionsFrom: rule.decidedBy.suppressions,
-    }],
-  }));
+  const violations = scheduledViolations(context, plan, schedules, rules, path, violating);
+  const provenance = ruleProvenance(rules, repositoryKey, checkoutPath);
   const auditAt = at(5 * MINUTE);
   const auditId = atTime(auditAt, () => audits.start({
     sessionId: plan.sessionId,
@@ -355,14 +349,94 @@ function recordSession(context: HistoryContext, plan: SessionPlan, schedules: re
 
   const steered = [...new Set(violations.filter(violation => violation.mode !== "log").map(violation => violation.ruleId))];
   if (steered.length > 0) atTime(auditAt + 3_000, () => sessions.recordSteer(session, `${plan.sessionId}-steer`, steered));
+  recordDeclines(context, plan, declines.filter(entry => entry.index === plan.index && steered.includes(entry.ruleId)), auditAt + MINUTE);
   sessions.append({ sessionId: plan.sessionId, eventId: `${plan.sessionId}-turn`, kind: "turn-end", observedAt: at(6 * MINUTE), payload: { turn: 1 } });
-  if (plan.endedAt !== null) sessions.closeSession(plan.sessionId, plan.endedAt);
-  else {
-    sessions.append({
-      sessionId: plan.sessionId, eventId: `${plan.sessionId}-prompt-2`, kind: "user-prompt", observedAt: context.now - 2 * MINUTE,
-      payload: { text: "Now add a test for it." },
-    });
+  endSession(context, plan);
+}
+
+/**
+ * The violations `schedules` give session `plan` in `path`, each carrying the mode its rule has at the session's start;
+ * every rule that reports one is added to `violating`.
+ */
+function scheduledViolations(
+  context: HistoryContext, plan: SessionPlan, schedules: readonly RuleSchedule[], rules: readonly EffectiveRule[], path: string, violating: Set<string>,
+): CodeRuleViolation[] {
+  const byId = new Map(rules.map(rule => [rule.document.rule.id, rule]));
+  const violations: CodeRuleViolation[] = [];
+  for (const schedule of schedules) {
+    const count = schedule.count(plan.index, plan.daysAgo);
+    if (count === 0) continue;
+    const rule = byId.get(schedule.ruleId);
+    if (rule === undefined) throw new Error(`${plan.sessionId}: ${schedule.ruleId} is not on in ${context.repositoryKey} at ${new Date(plan.startedAt).toISOString()}`);
+    for (let ordinal = 0; ordinal < count; ordinal += 1) violations.push(scheduledViolation(plan, rule, path, ordinal));
+    violating.add(schedule.ruleId);
   }
+  return violations;
+}
+
+/** The `ordinal`th violation of `rule` in session `plan`, on a line of its own in `path`. */
+function scheduledViolation(plan: SessionPlan, rule: EffectiveRule, path: string, ordinal: number): CodeRuleViolation {
+  const ruleId = rule.document.rule.id;
+  const { clauseId, code, message } = reportingClause(rule);
+  const line = 3 + plan.index * 4 + ordinal * 2;
+  return {
+    id: `sha256:${createHash("sha256").update(`${plan.sessionId}\0${ruleId}\0${ordinal}`).digest("hex")}`,
+    ruleId,
+    clauseId,
+    code,
+    mode: rule.mode,
+    message,
+    path,
+    span: { startByte: line * 40, endByte: line * 40 + 12, startLine: line, startColumn: 3, endLine: line, endColumn: 15 },
+    captures: {},
+    variables: {},
+  };
+}
+
+/** Each rule's provenance as an audit records it: where it is attached and the mode and suppressions it has there. */
+function ruleProvenance(rules: readonly EffectiveRule[], repositoryKey: string, checkoutPath: string): NonNullable<AuditInput["ruleProvenance"]> {
+  return rules.map(rule => ({
+    ruleId: rule.document.rule.id,
+    revision: rule.revision,
+    payloadHash: rule.payloadHash,
+    source: { ...rule.source },
+    repositoryKey,
+    checkoutPath,
+    placement: [{
+      folder: rule.attachmentFolder, on: rule.on, mode: rule.mode, onFrom: rule.decidedBy.on, modeFrom: rule.decidedBy.mode,
+      suppressions: rule.suppressions, suppressionsFrom: rule.decidedBy.suppressions,
+    }],
+  }));
+}
+
+/** The agent's `rerail feedback` notes on the steers it declined in session `plan`, recorded at `recordedAt`. */
+function recordDeclines(context: HistoryContext, plan: SessionPlan, declines: readonly Decline[], recordedAt: number): void {
+  for (const decline of declines) {
+    context.db.insert(steerFeedback).values({
+      id: `${plan.sessionId}-decline-${decline.ruleId}`, ruleId: decline.ruleId, host: plan.host, sessionId: plan.sessionId,
+      repositoryId: context.repositoryKey, reason: decline.reason, rerailVersion: "0.0.0-e2e", recordedAt,
+    }).run();
+  }
+}
+
+/**
+ * Ends session `plan`, except the open one: it reads a pull request through an MCP server after the audit (so no card
+ * is on that call) and gets a second prompt two minutes before the seed clock, so it reads live.
+ */
+function endSession(context: HistoryContext, plan: SessionPlan): void {
+  const { sessions } = context;
+  if (plan.endedAt !== null) {
+    sessions.closeSession(plan.sessionId, plan.endedAt);
+    return;
+  }
+  sessions.append({
+    sessionId: plan.sessionId, eventId: `${plan.sessionId}-mcp`, kind: "call", observedAt: plan.startedAt + 5.5 * MINUTE,
+    payload: { toolName: "mcp__github__get_pull_request", toolCallId: `${plan.sessionId}-mcp`, input: { pullNumber: 398 } },
+  });
+  sessions.append({
+    sessionId: plan.sessionId, eventId: `${plan.sessionId}-prompt-2`, kind: "user-prompt", observedAt: context.now - 2 * MINUTE,
+    payload: { text: "Now add a test for it." },
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -375,6 +449,8 @@ interface RepositoryPlan {
   readonly changes: readonly Change[];
   readonly sessions: readonly SessionPlan[];
   readonly schedules: readonly RuleSchedule[];
+  /** Steers the coding agent declined, with its reasons; none when absent. */
+  readonly declines?: readonly Decline[];
   /** Merge Assist turned on by a person, with the checkout's in-flight conflicts; off when absent. */
   readonly mergeAssist?: MergeAssistPlan;
 }
@@ -508,6 +584,16 @@ function addLibraryRule(rule: CodeRule, catalog: () => RuleCatalog, approved = t
   };
 }
 
+/** An edited copy of By Rerail rule `sourceId`, stored as editing one stores it: `<id>-copy`, added where the original is, unapproved. */
+function addRerailRuleCopy(sourceId: string, catalog: () => RuleCatalog): Change["apply"] {
+  return (db, repositoryKey, at) => {
+    const original = catalog().documents.get(sourceId)!.rule as CodeRule;
+    const copy = { ...original, id: `${sourceId}-copy`, revision: original.revision + 1 };
+    upsertLibraryRule(db, catalog(), copy, "code", { copiedFromRuleId: sourceId, now: at, createdAt: at });
+    addAttachment(db, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: copy.id }, at);
+  };
+}
+
 function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: number): RepositoryPlan[] {
   const dayAt = dayClock(now);
   const noSessions = { sessions: [], schedules: [] };
@@ -525,13 +611,17 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
         ...noSessions,
       }];
     case "awaiting-approval":
-      // A rule a coding agent wrote into the library, and one in the checkout's own .rerail/rules: neither approved.
+      // Three rules a coding agent wrote into the library (as /rerail-create adds the rules it finds), an edited copy of
+      // a By Rerail rule, and one in the checkout's own .rerail/rules: none approved.
       return [{
         checkout: { ...STOREFRONT, files: { ...STOREFRONT_FILES, ".rerail/rules/no-legacy-client.json": JSON.stringify(NO_LEGACY_CLIENT) } },
         recordedAt: now - HOUR,
         changes: [
           { at: now - HOUR, apply: setUpAndStart(["typescript"]) },
           { at: now - 30 * MINUTE, apply: addLibraryRule(NO_RAW_FETCH, catalog, false) },
+          { at: now - 29 * MINUTE, apply: addLibraryRule(NO_INNER_HTML, catalog, false) },
+          { at: now - 28 * MINUTE, apply: addLibraryRule(NO_DEFAULT_EXPORT, catalog, false) },
+          { at: now - 27 * MINUTE, apply: addRerailRuleCopy("typescript-eslint-no-explicit-any", catalog) },
         ],
         ...noSessions,
       }];
@@ -590,6 +680,12 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
           { ruleId: NO_RAW_FETCH.id, count: (index, daysAgo) => (daysAgo <= 6 && index % 3 !== 0 ? 1 : 0) },
           { ruleId: "eslint-no-debugger", count: (_, daysAgo) => (daysAgo === 0 ? 1 : 0) },
         ],
+        // The open session's agent declines its non-null assertion steer and says why.
+        declines: [{
+          index: 29,
+          ruleId: "typescript-eslint-no-non-null-assertion",
+          reason: "The cart is checked for null two lines above; the assertion only narrows a type the compiler cannot follow there.",
+        }],
       }];
     case "multi-repo":
       return [
@@ -656,7 +752,7 @@ export async function seedScenario(scenario: ScenarioName, folder: string, now: 
       const violating = new Set<string>();
       const steps = [
         ...plan.changes.map(change => ({ at: change.at, run: () => atTime(change.at, () => change.apply(db, recorded.repositoryKey, change.at)) })),
-        ...plan.sessions.map(session => ({ at: session.startedAt, run: () => recordSession(context, session, plan.schedules, violating) })),
+        ...plan.sessions.map(session => ({ at: session.startedAt, run: () => recordSession(context, session, plan.schedules, plan.declines ?? [], violating) })),
       ].sort((left, right) => left.at - right.at);
       for (const step of steps) step.run();
       const listing = listRepositories(db).find(repository => repository.repositoryKey === recorded.repositoryKey)!;

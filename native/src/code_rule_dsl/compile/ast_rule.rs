@@ -313,9 +313,25 @@ fn validate_relation<'a>(
 }
 
 /// Whether `kind` resolves to a grammar supertype (`expression`, `statement`, ...), which tree-sitter
-/// never assigns to a node.
+/// never assigns to a node. Asking `kind_to_id` walks the grammar's symbols, and every rule's `kind`
+/// asks this: only a name some supertype has (`supertype_names`) is looked up.
 fn is_supertype(kind: &str, language: GrammarDialect) -> bool {
-    language.kind_is_supertype(language.kind_to_id(kind))
+    supertype_names(language).contains(kind)
+        && language.kind_is_supertype(language.kind_to_id(kind))
+}
+
+/// The names of `language`'s grammar's supertypes, found once a process (its kind catalog read once:
+/// each `GrammarDialect` call finds the catalog again).
+fn supertype_names(language: GrammarDialect) -> &'static BTreeSet<&'static str> {
+    static BY_DIALECT: [std::sync::OnceLock<BTreeSet<&'static str>>; 256] =
+        [const { std::sync::OnceLock::new() }; 256];
+    BY_DIALECT[language as usize].get_or_init(|| {
+        let kinds = language.kinds();
+        let ids = 0..u16::try_from(kinds.kind_count()).unwrap_or(u16::MAX);
+        ids.filter(|&id| kinds.kind_is_supertype(id))
+            .filter_map(|id| kinds.kind_name(id))
+            .collect()
+    })
 }
 
 /// In Python and PHP patterns, a leaf that ast-grep's preprocessing turned into the expando

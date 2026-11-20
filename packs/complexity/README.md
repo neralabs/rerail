@@ -21,7 +21,8 @@ Every document has `mode: "steer"`: a rule that runs steers the agent and never 
 | `complexity-cyclomatic-vue` | `.vue` |
 | `complexity-cyclomatic-java` | `.java` |
 
-A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds 6, so 7 or more.
+A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds the ceiling, 6
+unless the repository sets another (see "Setting the ceiling"), so at the default 7 or more.
 The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported. The
 message names the function and its number, as slapkit's advisory does: `` `grade` has cyclomatic complexity 7, over the
 ceiling of 6. Decompose it into smaller functions. `` (code `CYCLOMATIC_COMPLEXITY`). A TypeScript, JavaScript or Vue function with no name of its own takes the variable, class field or object key it is assigned
@@ -29,7 +30,8 @@ to, and a PHP or Blade closure the variable it is assigned to (`` `$format` ``);
 function" (the `too-complex-anonymous` clause). Every Python and Rust function has a name, and so has every Java
 method; a Java constructor takes its class's name. The number comes from the
 count's `as`/`offset` binding: the rule counts decision points with `count.has` (`stopBy` the function boundary, so a
-nested function is not entered), binds the count plus 1 as `$CCN`, and fires at `min: 6` decisions.
+nested function is not entered), binds the count plus 1 as `$CCN`, and fires at `min` decisions: the ceiling, read
+with `{ "$option": "ceiling" }`, as the message reads it. Each rule's title and description name the default, 6.
 
 Test files are out of scope: Python `**/test_*.py`, `**/*_test.py`, `**/tests/**`, `**/conftest.py`; TypeScript,
 JavaScript and Vue `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`; PHP `**/test/**`, `**/tests/**`, `**/Test/**`,
@@ -40,6 +42,28 @@ JavaScript and Vue `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`; PHP `**/test
 (`node_modules`, `vendor`, `.venv`, `target`, `dist`, `build`, `.nuxt`, `generated`, ...). The Java rule leaves out
 generated-source directories and no directory by a bare name: `build` and `target` are package names there (see its
 rule details).
+
+## Setting the ceiling
+
+Every rule declares one option, `ceiling` (an integer, default 6): the highest cyclomatic complexity a function may
+have. A repository that lists its packs in `.rerail/packs.json` sets it on the pack's entry, and it applies to all 8
+rules:
+
+```json
+{
+  "schema": "rerail.packs/1",
+  "packs": [
+    { "id": "complexity", "version": "0.1.9", "config": { "ceiling": 10 } }
+  ]
+}
+```
+
+A function at 10 then passes, one at 11 fails, and the message reads "over the ceiling of 10". The file is read from
+the commit the scan's rules come from, so a scan with `--rules-ref` runs the ceiling that ref's file sets, and a change
+under review cannot raise the ceiling it is judged by (`docs/repository-packs.md`). A ceiling that is not a whole
+number of 1 or more (`0`, `1.5`, `"10"`) fails the scan, naming the file, the pack and the option. The same option can
+be set for one rule with a rule setting's `config` (`docs/rule-scoping.md`). Without either, every rule flags what it
+flagged before the option existed: a function over 6.
 
 ## What counts
 
