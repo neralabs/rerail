@@ -29,6 +29,8 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct Plans {
     pub one_sided: Vec<String>,
     pub factors: Vec<String>,
     pub shared: Vec<String>,
+    /// The joins left as written: the chunks make them, and a cross-file reader would state their requests.
+    pub cross: Vec<String>,
     pub cached: bool,
     pub author: Vec<Join>,
 }
@@ -89,6 +91,62 @@ fn reader_binds(v: &Version, rule: RuleRef<'_>, j: usize, cols: &[usize]) -> boo
     }
     let rel = v.rel_name(read.rel());
     bound.is_empty() || lits.iter().any(|l| matches!(l.view(), Lit::Atom(a) if v.rel_name(a.rel()) != rel && !a.neg() && !a.gated() && bound.is_subset(&atom_vars(a))))
+}
+
+/// Whether a reader's request (`proof`, of a read of `rel` at its key columns `cols`) asks for every key the
+/// producer makes, so the request, a union over the readers, restricts nothing and costs a join of its own: each atom
+/// naming a key appears in the producer's rule too, at the key's columns and with its constants (the producer may
+/// hold more constants), and every other literal is a positive atom of no constant, reached from those. `PT010(g, x)
+/// :- exc_call(c, "pytest.raises"), .., field(c, "function", g0), unparen(g0, g), text(g, x)` asks for `exc_call`'s
+/// every call through `field(c, "function", _)`, which `exc_call`'s rule reads: corpus0's request made 1.23 M rows of
+/// work to guard a join of 42 k (decision 0500). A cost guess, never a matter of rows: a join left as written is
+/// always right.
+fn void_request(v: &Version, rel: &str, cols: &[usize], proof: &upstream::Proof) -> bool {
+    use super::Part;
+    use crate::code_rule_dsl::logic::program_image::AtomRef;
+    let producers: Vec<RuleRef<'_>> = v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).collect();
+    let [producer] = producers.as_slice() else { return false };
+    let producer = *producer;
+    let Some(reader) = v.rule(proof.rule) else { return false };
+    let Some(read) = reader.body().nth(proof.read).and_then(|l| l.atom()) else { return false };
+    let name = |rule: RuleRef<'_>, t: TermRef<'_>| match t {
+        TermRef::Var(s) => Some(v.text(rule.var(s)).to_owned()),
+        _ => None,
+    };
+    // The reader's variable, and the producer's, at each of the key's columns.
+    let at = |rule: RuleRef<'_>, args: Vec<TermRef<'_>>| -> Option<Vec<String>> { cols.iter().map(|&c| args.get(c).and_then(|t| name(rule, *t))).collect() };
+    let (Some(key), Some(own)) = (at(reader, read.args().collect()), at(producer, producer.head().args().collect())) else { return false };
+    let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_));
+    let keyed_at = |t: TermRef<'_>| name(reader, t).and_then(|x| key.iter().position(|k| *k == x));
+    let covered = |a: AtomRef<'_>| {
+        producer.body().filter_map(|l| l.atom()).any(|b| {
+            !b.neg()
+                && b.rel() == a.rel()
+                && b.args().count() == a.args().count()
+                && a.args().zip(b.args()).all(|(x, y)| match keyed_at(x) {
+                    Some(i) => name(producer, y).is_some_and(|w| w == own[i]),
+                    None if constant(x) => same(x, y),
+                    None => true,
+                })
+        })
+    };
+    let mut keyed = false;
+    for part in &proof.parts {
+        let Part::Lit(j) = *part else { return false };
+        let Some(Lit::Atom(a)) = reader.body().nth(j).map(|l| l.view()) else { return false };
+        if a.neg() || a.gated() {
+            return false;
+        }
+        if a.args().any(|t| keyed_at(t).is_some()) {
+            if !covered(a) {
+                return false;
+            }
+            keyed = true;
+        } else if a.args().any(|t| constant(t) || matches!(t, TermRef::Call(..))) {
+            return false;
+        }
+    }
+    keyed
 }
 
 /// The pass over `p` (its input `input`): which restrictions the readers give each binary join (the module comment),
@@ -197,12 +255,27 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn rewrite(p: &mut Program<'_>
                 broad.insert(rel.to_owned());
             }
         }
+        // A producer the chunks make (`file_local::split`) restricted by a request a cross-file reader states: the
+        // request's rows are the chunk's own, so a reader joining another file's rows asks nothing of this one
+        // (`remark(x, ..) :- noted(c, x), defined(_, x), ..`: b.py's comment names a.py's function, and a.py's chunk,
+        // asked only by its own comments, made no `defined` row). Such a join is left as written.
+        if !pairs.is_empty() {
+            let current = p.made.clone().unwrap_or_else(|| Arc::clone(input));
+            let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&current)?;
+            pairs.retain(|(rel, _, _)| {
+                let cross = split.local.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.local.contains(p.head_rel(rules[i])));
+                if cross {
+                    plans.cross.push(rel.clone());
+                }
+                !cross
+            });
+        }
         (pairs, guarded, broad, open_readers, recursive)
     };
     // The requests installed, once every read is classified.
     let mut no_inline = Vec::new();
     for (rel, cols, positive) in pairs {
-        if !upstream::install_named(p, &rel, cols, &BTreeSet::new(), false, DEFERRED_PAIRS)? {
+        if !upstream::install_named(p, &rel, cols, &BTreeSet::new(), false, DEFERRED_PAIRS, &|v, proofs| !proofs.iter().any(|r| void_request(v, &rel, cols, r)))? {
             continue;
         }
         no_inline.push(rel.clone());
@@ -382,7 +455,7 @@ impl ProgramPass for DeferJoins {
         let mut program = Program::of(version);
         let plans = rewrite(&mut program, version, self.deferral.adaptive, self.deferral.cache_pairs)?;
         cx.decide("deferred joins", || {
-            format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared)
+            format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross)
         });
         for mut join in plans.author {
             if let Access::Factors { cache: None } = &join.access {
@@ -558,6 +631,92 @@ mod tests {
             assert_eq!(rows["lefts"].iter().cloned().collect::<BTreeSet<_>>(), expected(size));
             assert_eq!(rows["rights"].iter().cloned().collect::<BTreeSet<_>>(), expected(64));
         }
+    }
+
+    /// A reused product whose readers, or the rules over them, read an answer only a node's document gives (`value`)
+    /// is factorized but not cached: a cache's readers are the cross-file part's, which has no documents to answer
+    /// it from. Decided from the program, so a run is never prepared again to find it (decision 0500).
+    #[test]
+    fn a_product_read_with_a_documents_answer_is_not_cached() {
+        let src = |reader: &str| format!("
+            .decl lhs(a: number, k: number)
+            .decl rhs(b: number, k: number)
+            .decl wide(a: number, b: number)
+            .decl value(n: number, v: symbol)
+            .decl lefts(a: number)
+            .decl rights(b: number)
+            .decl over(a: number)
+            .output rights, over
+            wide(a,b) :- lhs(a,k), rhs(b,k).
+            {reader}
+            rights(b) :- wide(_,b).
+            over(a) :- lefts(a).
+        ");
+        let cached = |reader: &str| {
+            let (made, plan) = rewritten(&parse(&src(reader)));
+            assert_eq!(plan.factors.len(), 1, "{reader}: factorized");
+            made.nullary_names().unwrap().into_iter().any(|r| r.starts_with("rr_pair_cache_"))
+        };
+        assert!(cached("lefts(a) :- wide(a,_)."), "a plain reader keeps its cache");
+        assert!(!cached("lefts(a) :- wide(a,_), value(a, _)."), "a reader of `value`");
+        assert!(!cached("lefts(a) :- wide(a,_).\n over(a) :- lefts(a), value(a, _)."), "a rule over a reader reads `value`");
+    }
+
+    /// A producer the chunks make is not restricted by a cross-file reader's requests: its rows are another file's
+    /// (b.py's comment names a.py's function), and a chunk's request holds only its own. A reader within one
+    /// document (its comment in the function's body) still drives it.
+    #[test]
+    fn a_cross_file_reader_does_not_restrict_a_file_local_producer() {
+        let deferred = |reader: &str| {
+            let v = parse(&format!(r#"
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl text(n: node, x: symbol)
+.decl comment(c: node, x: symbol)
+.decl line(n: node, l: number)
+.decl col(n: node, k: number)
+.input kind, field, text, comment, line, col
+.decl defined(d: node, x: symbol)
+defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
+.decl noted(c: node, x: symbol)
+noted(c, x) :- comment(c, x).
+.decl remark(x: symbol, l: number, k: number)
+{reader}
+.output remark
+"#));
+            let (made, plan) = rewritten(&v);
+            (F::declared_names(&*made).into_iter().any(|r| r.starts_with(DEFERRED_PAIRS)), plan.cross)
+        };
+        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(_, x), line(c, l), col(c, k)."), (false, vec!["defined".to_owned()]), "across files");
+        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), line(c, l), col(c, k)."), (true, Vec::new()), "within one document");
+    }
+
+    /// A reader that asks for every key the producer makes (through an atom of the producer's own rule) makes the
+    /// request, a union over the readers, restrict nothing: the join is left as written. Readers that each narrow
+    /// the keys still drive it.
+    #[test]
+    fn a_reader_asking_for_every_key_leaves_the_join_as_written() {
+        let requested = |readers: &str| {
+            let v = parse(&format!(r#"
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl text(n: node, x: symbol)
+.decl marked(n: node)
+.input kind, field, text, marked
+.decl exc_call(c: node, q: symbol)
+exc_call(c, q) :- kind(c, "call"), field(c, "function", f), text(f, q).
+.decl a(c: node)
+a(c) :- marked(c), exc_call(c, _).
+.decl b(x: symbol)
+{readers}
+.output a, b
+"#));
+            let (made, _) = rewritten(&v);
+            F::columns_of(&*made, &format!("{DEFERRED_PAIRS}exc_call")).is_some()
+        };
+        assert!(requested("b(x) :- marked(c), exc_call(c, \"p\"), field(c, \"body\", g), text(g, x)."), "every reader narrows the calls");
+        assert!(!requested("b(x) :- exc_call(c, \"p\"), field(c, \"function\", g), text(g, x)."), "b asks for every call");
+        assert!(requested("b(x) :- exc_call(c, \"p\"), field(c, \"function\", g), text(g, \"f\"), text(g, x)."), "b's constant narrows them");
     }
 
     #[test]

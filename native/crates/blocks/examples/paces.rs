@@ -25,7 +25,7 @@
 //!
 //! Usage: `paces [docs] [runs] [dir]`.
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_blocks::block::Block;
 use rerail_blocks::block::kind;
 use rerail_blocks::chunk::{self, DocIn};

@@ -2178,7 +2178,7 @@ pub mod f16 {
     }
 
     #[inline(never)]
-    unsafe fn f54(len: u64, a0: u64, a1: u64, a2: u32, a3: u32, a4: u64, a5: u64) -> u64 {
+    unsafe fn f57(len: u64, a0: u64, a1: u64, a2: u32, a3: u32, a4: u64, a5: u64) -> u64 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -2597,7 +2597,7 @@ pub mod f16 {
     #[inline(always)]
     pub unsafe fn tape_lz4(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32, a3: u32, a4: u64, a5: u64) -> u64 {
         // SAFETY: the caller's for the addresses; each load of the tape is checked against `tape` (`ld`).
-        unsafe { f54(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3, a4, a5) }
+        unsafe { f57(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3, a4, a5) }
     }
 
 }
@@ -3512,4 +3512,4 @@ pub mod f15 {
 }
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0xf95ceeeef3e6c7f6;
+pub const SOURCE: u64 = 0xca032e262e70dbf2;

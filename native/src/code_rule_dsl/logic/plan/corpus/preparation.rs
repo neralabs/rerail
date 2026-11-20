@@ -122,10 +122,11 @@ pub struct Front {
 }
 
 /// How the deferred joins pass (`product_demand::deferred`) runs for one prepared program. `RERAIL_DEFERRED_JOINS`:
-/// `off` (the default) leaves the joins as written; `auto` and `adaptive` share a frequently requested endpoint's work
-/// and admit small pair caches; `on` makes the static rewrites alone. Off by default (decision 0500): on corpus0 x
-/// B-now `auto` took 7-12% more instructions for the same findings, and nothing prices the rewrite yet. A run that loads (`world::wanted`) keeps them:
-/// a load hands exports back by location, which a new factor has none of.
+/// `auto` (the default) and `adaptive` share a frequently requested endpoint's work and admit small pair caches; `on`
+/// makes the static rewrites alone; `off` leaves the joins as written. On by default (decision 0500): an insurance
+/// against a join over-long for its readers' demand, at 0.27% more instructions on corpus0 x B-now (955.9 G against
+/// 953.3 G, the same findings). A run that loads (`world::wanted`) keeps them: a load hands exports back by location,
+/// which a new factor has none of.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Deferral {
     pub on: bool,
@@ -142,7 +143,7 @@ pub struct Deferral {
 impl Deferral {
     /// The setting for a program, from `RERAIL_DEFERRED_JOINS`, and what the run's earlier tries changed (`Replans`).
     pub fn of(loading_run: bool, key: &[u8; 32]) -> Deferral {
-        let mode = crate::code_rule_dsl::logic::profile::bound::<DeferredJoins>().0.map_or_else(|| std::env::var("RERAIL_DEFERRED_JOINS").unwrap_or_else(|_| "off".into()), str::to_owned);
+        let mode = crate::code_rule_dsl::logic::profile::bound::<DeferredJoins>().0.map_or_else(|| std::env::var("RERAIL_DEFERRED_JOINS").unwrap_or_else(|_| "auto".into()), str::to_owned);
         let on = !loading_run && matches!(mode.as_str(), "auto" | "on" | "adaptive");
         let adaptive = mode != "on";
         let base = Deferral { on, adaptive, cache_pairs: adaptive, ..Default::default() };

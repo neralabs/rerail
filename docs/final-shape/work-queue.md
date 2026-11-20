@@ -8470,6 +8470,10 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Found** (2026-11-19, 0500): `RERAIL_DEFERRED_JOINS=auto` took 7-12% more instructions on corpus0 x B-now for the
   same findings, so it is off by default. It rewrote pair demand into many rules (`c4_elt`, `c4_comp`, `exc_call`,
   ...), each a few more strata, where the joins were cheap as written.
+- **On by default** (2026-11-20, 0500 "On by default"): a replan that ran the sources program twice (23.5 G) and a
+  view's heavy values counted at every stratum removed; `auto` 961.8 G against `off` 952.7 G on corpus0 (one thread, +1.0%); then four producers that cost more than
+  the whole difference removed (0500 "What `auto` made of its own"): 955.9 G against 953.3 G (+0.27%). Left: the pass
+  itself (0.09 s, the tree decoded, Q292) and a few requests of about even cost.
 - **Next**: offer each rewrite as an alternative the pricer scores against the join as written, from the readers'
   distinct requests and the factors' sizes (the lab's design, `scripts/profiling/deferred_joins/README.md`, "Where
   the classifier belongs"), and keep it only where it wins.
@@ -8515,7 +8519,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   `a_demand_split_stays_linear_in_the_modules`, `a_patterns_block_program_runs_alike_on_every_executor` (0423's
   refusal) and `the_backends_find_the_same_keys_on_real_files` (`BackendLaunchLimit`). Three failed only under the
   tier's load and pass alone. `rule_files_pass_their_own_tests` takes 167 s here and 166 s at HEAD.
-- **Open**: Q367 (the grid evaluation on the M1 Max), Q386, Q390, Q330's device writer and setfix's closures; the
+- **Open**: Q367 (the grid evaluation on the M1 Max; resolved since, see Q367), Q386, Q390, Q330's device writer and setfix's closures; the
   seven tests red at HEAD.
 
 
@@ -8641,7 +8645,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   - ours' 0503 lines on `X_UNSETTLED` and the twice-run last round: superseded by 0503 §7 (496eade3c2).
   - the picked commits' own lines are all in the result, but for the numbers renumbered, the wording later
     commits replaced, and ours' `Bound` and `merged` names.
-- **Open**: Q397; Q367; the eval tests on a Mac once Metal runs are allowed again;
+- **Open**: Q397; the eval tests on a Mac once Metal runs are allowed again;
   `the_search_prices_the_steps_past_a_bound_head_as_one_witness` and
   `a_constant_counted_none_when_planned_is_growth_when_it_has_rows`, red at the hub before this merge (Q392).
 

@@ -334,11 +334,48 @@ fn round<'v>(
     let mut program: Vec<Made<'v>> = rules.iter().map(|&r| Made { src: r, head: None, body: r.body().map(BodyItem::Orig).collect(), kept: true }).collect();
     // Per relation, per rule: the head's variables and the parts' atoms (relation, interface).
     let mut stands: BTreeMap<String, Vec<(Vec<String>, Vec<(String, Vec<String>)>)>> = BTreeMap::new();
+    // A cached relation's readers read its guard, which is the cross-file part's: they, and every rule over them, are
+    // made there. Where one of those reads an answer only its node's document gives (`ON_REQUEST`'s functions:
+    // `value`, `str`, `node_text`), that answer is drawn into the cross-file part, which has no documents to answer
+    // it from. Such a relation is not cached, decided from the program, so a run never prepares again to find it
+    // (`Deferral::after_placement`, decision 0500: on corpus0 that replan ran the sources' phase 1 twice, 23 G
+    // instructions, and turned every cache off for one).
+    let documents_answer: BTreeSet<&str> = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST
+        .iter()
+        .flat_map(|r| r.iter())
+        .filter(|a| matches!(a.answer, crate::code_rule_dsl::logic::rr::lower::Answer::Function(_)))
+        .map(|a| a.rel)
+        .collect();
+    let mut readers_of: BTreeMap<&str, Vec<RuleRef<'v>>> = BTreeMap::new();
+    for &r in rules {
+        for l in r.body() {
+            if let L::Atom(a) = l.view() {
+                readers_of.entry(v.rel_name(a.rel())).or_default().push(r);
+            }
+        }
+    }
+    let drawn_across = |rel: &str| {
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut todo = vec![rel];
+        while let Some(r) = todo.pop() {
+            if !seen.insert(r) {
+                continue;
+            }
+            for &reader in readers_of.get(r).into_iter().flatten() {
+                if reader.body().any(|l| matches!(l.view(), L::Atom(a) if documents_answer.contains(v.rel_name(a.rel())))) {
+                    return true;
+                }
+                todo.push(head_of(reader));
+            }
+        }
+        false
+    };
     // A reader is split at most once, so a cached relation's readers read no other chosen relation.
     let cacheable: BTreeSet<&String> = chosen
         .iter()
         .filter(|(rel, plan)| {
             cache_reused
+                && !drawn_across(rel)
                 && plan.len() == 1
                 && plan[0].1.len() == 2
                 && reads[rel.as_str()].len() > 1
@@ -370,7 +407,9 @@ fn round<'v>(
                 })
             };
             let mut atoms: Vec<(String, Vec<String>)> = Vec::new();
-            let mut knames: Vec<String> = Vec::new();
+            // Each part's key, as its readers read it: a stored relation (`fzk…`, true), or the first part's atom
+            // itself (false, below).
+            let mut knames: Vec<(String, Vec<NOwned<'v>>, bool)> = Vec::new();
             let mut bodies: Vec<Vec<LitRef<'_>>> = Vec::new();
             // The parts in the order their keys are chained (below): the fewest positive atoms first, so a part that is
             // itself a join (`mf_def($c, $f), mf_def($a, $f)`) has its keys found within the keys of the parts before
@@ -395,13 +434,39 @@ fn round<'v>(
                 if intermediates && !no_inline.contains(&pname) {
                     no_inline.push(pname.clone());
                 }
-                let kname = format!("fzk{}", &pname["fz".len()..]);
-                declare(kname.clone(), vec![cols.last().cloned().expect("the key")]);
-                if !no_inline.contains(&kname) {
-                    no_inline.push(kname.clone());
+                // The first part, where it is one atom, is its own key: the next part's key and every part read that
+                // atom by the key, a probe of its index, and nothing is stored for it (decision 0500:
+                // `str_lit(e, v) :- unparen(e, m), plain_str(m, v)` stored `unparen`'s key, every node, 464 k rows on
+                // corpus0, to reduce a part of 16 k). A later part's key is the keys it holds among the chain's, so it
+                // is stored whatever its atoms.
+                let one = match part.as_slice() {
+                    [l] if knames.is_empty() => match l.view() {
+                        L::Atom(a) if !a.neg() && !a.gated() => Some((
+                            v.rel_name(a.rel()).to_owned(),
+                            a.args()
+                                .map(|t| match t {
+                                    TermRef::Var(s) if name(v, rule, s) == *key => NOwned::V(key.clone()),
+                                    TermRef::Var(_) => NOwned::T(TermRef::Wild),
+                                    t => NOwned::T(t),
+                                })
+                                .collect::<Vec<_>>(),
+                        )),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                match one {
+                    Some((krel, kargs)) => knames.push((krel, kargs, false)),
+                    None => {
+                        let kname = format!("fzk{}", &pname["fz".len()..]);
+                        declare(kname.clone(), vec![cols.last().cloned().expect("the key")]);
+                        if !no_inline.contains(&kname) {
+                            no_inline.push(kname.clone());
+                        }
+                        knames.push((kname, vec![NOwned::V(key.clone())], true));
+                    }
                 }
                 atoms.push((pname, iface));
-                knames.push(kname);
                 bodies.push(part);
             }
             if !ok {
@@ -421,16 +486,25 @@ fn round<'v>(
                 // last is the keys every part holds. Each made apart from its own part alone, a part that is a join
                 // was made whole for its keys: every pair of nodes in a def, 4 s of one stratum over 91 files, where
                 // the product it replaced held a few rows.
-                let mut keyed = orig.clone();
-                if i > 0 {
-                    keyed.push(BodyItem::New(knames[i - 1].clone(), vec![var(key)]));
+                let (kname, _, stored) = &knames[i];
+                if *stored {
+                    let mut keyed = orig.clone();
+                    if i > 0 {
+                        let (before, bargs, _) = &knames[i - 1];
+                        keyed.push(BodyItem::New(before.clone(), bargs.clone()));
+                    }
+                    program.push(Made { src: rule, head: Some((kname.clone(), vec![var(key)])), body: keyed, kept: false });
                 }
-                program.push(Made { src: rule, head: Some((knames[i].clone(), vec![var(key)])), body: keyed, kept: false });
                 // Reduced by the keys every part holds: the others' keys, as before, and its own.
                 let mut reduced = orig;
-                reduced.push(BodyItem::New(knames.last().expect("a part").clone(), vec![var(key)]));
+                let (last, largs, _) = knames.last().expect("a part");
+                reduced.push(BodyItem::New(last.clone(), largs.clone()));
                 program.push(Made { src: rule, head: Some((pname.clone(), iface.iter().map(var).collect())), body: reduced, kept: false });
-                made.entry(rel.clone()).or_default().extend([pname.clone(), knames[i].clone()]);
+                let made = made.entry(rel.clone()).or_default();
+                made.push(pname.clone());
+                if *stored {
+                    made.push(kname.clone());
+                }
             }
             shown.push(format!(
                 "by ${key}: {}",
