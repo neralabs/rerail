@@ -413,10 +413,12 @@ describe("WorktreeNotices", () => {
     subject.retain(new Set());
     reads[1]!("a");
     expect([await changed, watch.calls]).toEqual([true, ["watch /w []"]]);
-    // A session watches it again: no failed watch is held over from before.
+    // A session watches it again: no failed watch is held over from before, so its path is read and it is watched.
     subject.retain(new Set(["/w"]));
     watch.refused.delete("/w");
-    expect(await states(subject, ["/w"])).toEqual([[true, true]]);
+    const again = subject.changed("/w");
+    reads[2]?.("a");
+    expect([await again, subject.watching("/w")]).toEqual([true, true]);
   });
 
   it.skipIf(process.platform === "win32")("asks the engine once per retry, not on every walk, to watch a worktree whose folder is there and cannot be read", async context => {
