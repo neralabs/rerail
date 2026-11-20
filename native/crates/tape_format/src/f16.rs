@@ -689,7 +689,7 @@ pub mod presence {
     /// accumulated.
     pub fn lay(out: &mut Vec<u8>, p: &Presence) {
         let words = p.kind_words + p.field_words;
-        let count = 1 + if words == 0 { 0 } else { p.blocks.len() / words };
+        let count = 1 + p.blocks.len().checked_div(words).unwrap_or(0);
         lay_words(out, (p.kind_words, p.field_words), count, &mut p.doc.iter().chain(&p.blocks).copied());
     }
 

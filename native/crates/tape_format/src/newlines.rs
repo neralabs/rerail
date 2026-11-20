@@ -87,7 +87,7 @@ pub fn index_of(out: &mut Vec<u8>, u: u64, m: u64, offsets: impl Iterator<Item =
     let sample = SAMPLE as u64;
     for w in 0..words {
         let x = word_at(out, high_at + 8 * w);
-        let valid = if (w + 1) * 64 <= bits as usize { 64 } else { bits as u64 - 64 * w as u64 };
+        let valid = if (w + 1) * 64 <= bits as usize { 64 } else { bits - 64 * w as u64 };
         let set = u64::from(x.count_ones());
         let (z_here, o_here) = (valid - set, set);
         while kz * sample < zeros + z_here && kz * sample < buckets {

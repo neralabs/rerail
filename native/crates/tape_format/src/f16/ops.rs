@@ -1,13 +1,13 @@
-//! Format 16 written by the writer's ops in CLIF (decision 0434 §6), through their Rust (`generated_writer`): the
+//! Format 16 written by the writer (decision 0434 §6), its Rust written directly (`writer16`, decision 0505): the
 //! host's region, each part its own buffer, named in the state by its offset from the state's address. Before each
 //! op the host reserves what the op can need, as a `Vec` reserves before a push, so an op never finds a part full:
 //! a full part is the device's failure, whose document is parsed again on the host.
 
 use super::{Finished, K, Lang, Tape16, Tape16Z, Written, Z, before, bytes_for, mask, stride_of};
-use crate::generated_writer as ops;
+use crate::writer16 as ops;
 use rerail_clif::writer::{self as w, LAID_AT, OPEN, Part, SIDE_AREA, State, TABLE, part};
 
-/// An op called by its generated Rust; in a test, by the JIT's where the writer has it (`Jit`).
+/// An op called in its Rust (`writer16`); in a test, by the JIT's where the writer has it (`Jit`).
 macro_rules! call {
     ($w:expr, $op:ident($($a:expr),*)) => {{
         #[cfg(test)]
@@ -708,6 +708,116 @@ kernel void replay(device uchar* r [[buffer(0)]], device const ulong* c [[buffer
             let count = (state.n as usize).div_ceil(Z);
             let presence = &bytes[state.presence.at as usize..][..self.host.parts[part::PRESENCE as usize].len()];
             finished(bytes[at..at + len].to_vec(), presence, self.made.presence_words, self.made.keep_blocks.then_some(count), self.made.z)
+        }
+    }
+}
+
+/// The writer's Rust reads the state the JIT's and the device's ops read: the same layout, the same constants.
+#[cfg(test)]
+mod layout {
+    use crate::writer16 as d;
+    use rerail_clif::writer as c;
+    use std::mem::{offset_of, size_of};
+
+    #[test]
+    fn the_writers_state_is_the_ops() {
+        assert_eq!(size_of::<d::State>(), size_of::<c::State>());
+        assert_eq!(size_of::<d::Part>(), size_of::<c::Part>());
+        let pairs = [
+            (offset_of!(d::State, esc), offset_of!(c::State, esc)),
+            (offset_of!(d::State, source_len), offset_of!(c::State, source_len)),
+            (offset_of!(d::State, prev_start), offset_of!(c::State, prev_start)),
+            (offset_of!(d::State, w), offset_of!(c::State, w)),
+            (offset_of!(d::State, cw), offset_of!(c::State, cw)),
+            (offset_of!(d::State, vw), offset_of!(c::State, vw)),
+            (offset_of!(d::State, cut), offset_of!(c::State, cut)),
+            (offset_of!(d::State, per), offset_of!(c::State, per)),
+            (offset_of!(d::State, stride), offset_of!(c::State, stride)),
+            (offset_of!(d::State, at), offset_of!(c::State, at)),
+            (offset_of!(d::State, flags), offset_of!(c::State, flags)),
+            (offset_of!(d::State, kw), offset_of!(c::State, kw)),
+            (offset_of!(d::State, fw), offset_of!(c::State, fw)),
+            (offset_of!(d::State, tag), offset_of!(c::State, tag)),
+            (offset_of!(d::State, mark), offset_of!(c::State, mark)),
+            (offset_of!(d::State, newlines), offset_of!(c::State, newlines)),
+            (offset_of!(d::State, n), offset_of!(c::State, n)),
+            (offset_of!(d::State, frontier), offset_of!(c::State, frontier)),
+            (offset_of!(d::State, bad), offset_of!(c::State, bad)),
+            (offset_of!(d::State, bad_node), offset_of!(c::State, bad_node)),
+            (offset_of!(d::State, open_len), offset_of!(c::State, open_len)),
+            (offset_of!(d::State, blocks), offset_of!(c::State, blocks)),
+            (offset_of!(d::State, zbuckets), offset_of!(c::State, zbuckets)),
+            (offset_of!(d::State, zbase), offset_of!(c::State, zbase)),
+            (offset_of!(d::State, zprev), offset_of!(c::State, zprev)),
+            (offset_of!(d::State, znext), offset_of!(c::State, znext)),
+            (offset_of!(d::State, zoff), offset_of!(c::State, zoff)),
+            (offset_of!(d::State, zback), offset_of!(c::State, zback)),
+            (offset_of!(d::State, parts), offset_of!(c::State, kinds)),
+            (offset_of!(d::State, parts) + d::part::LZ * size_of::<d::Part>(), offset_of!(c::State, lz)),
+            (offset_of!(d::Part, at), offset_of!(c::Part, at)),
+            (offset_of!(d::Part, cap), offset_of!(c::Part, cap)),
+            (offset_of!(d::Part, len), offset_of!(c::Part, len)),
+        ];
+        for (k, (a, b)) in pairs.into_iter().enumerate() {
+            assert_eq!(a, b, "field {k}");
+        }
+        let parts = [
+            (d::part::KINDS, c::part::KINDS),
+            (d::part::OPEN, c::part::OPEN),
+            (d::part::OUT, c::part::OUT),
+            (d::part::TABLE, c::part::TABLE),
+            (d::part::SIDES, c::part::SIDES),
+            (d::part::FREE, c::part::FREE),
+            (d::part::LAID, c::part::LAID),
+            (d::part::LAID_AT, c::part::LAID_AT),
+            (d::part::PRESENCE, c::part::PRESENCE),
+            (d::part::LINES, c::part::LINES),
+            (d::part::ROOMS, c::part::ROOMS),
+            (d::part::ROOM_FREE, c::part::ROOM_FREE),
+            (d::part::PIECES, c::part::PIECES),
+            (d::part::SEEN, c::part::SEEN),
+            (d::part::CKPT, c::part::CKPT),
+            (d::part::LZ, c::part::LZ),
+        ];
+        for (a, b) in parts {
+            assert_eq!(a, b as usize);
+        }
+        assert_eq!(d::part::COUNT, c::part::COUNT);
+        let consts = [
+            (u64::from(d::Z), u64::from(c::Z)),
+            (u64::from(d::K), u64::from(c::K)),
+            (u64::from(d::BLOCK), u64::from(c::BLOCK)),
+            (d::HEAD16, u64::from(c::HEAD16)),
+            (u64::from(d::MAX_NODES), u64::from(c::MAX_NODES)),
+            (u64::from(d::NONE), u64::from(c::NONE)),
+            (d::MAGIC16, c::MAGIC16),
+            (d::MAGIC16Z, c::MAGIC16Z),
+            (d::OPEN, u64::from(c::OPEN)),
+            (d::TABLE, u64::from(c::TABLE)),
+            (d::LAID_AT, u64::from(c::LAID_AT)),
+            (d::SIDE_LIST, u64::from(c::SIDE_LIST)),
+            (d::SIDE_AREA, u64::from(c::SIDE_AREA)),
+            (d::PIECE, u64::from(c::PIECE)),
+            (u64::from(d::RAW), u64::from(c::RAW)),
+            (u64::from(d::LZ4), u64::from(c::LZ4)),
+            (u64::from(d::REPEAT), u64::from(c::REPEAT)),
+            (d::REPEAT_MIN, u64::from(c::REPEAT_MIN)),
+            (d::LZ4_MIN, u64::from(c::LZ4_MIN)),
+            (u64::from(d::LZ_HASH_LOG), u64::from(c::LZ_HASH_LOG)),
+            (u64::from(d::LZ_TABLES), u64::from(c::LZ_TABLES)),
+            (d::LZ_ATTEMPTS as u64, u64::from(c::LZ_ATTEMPTS)),
+            (u64::from(d::fail::BOUNDS), u64::from(c::fail::BOUNDS)),
+            (u64::from(d::fail::OUTSIDE), u64::from(c::fail::OUTSIDE)),
+            (u64::from(d::fail::FINAL), u64::from(c::fail::FINAL)),
+            (u64::from(d::fail::NOT_OPEN), u64::from(c::fail::NOT_OPEN)),
+            (u64::from(d::fail::NO_OPEN), u64::from(c::fail::NO_OPEN)),
+            (u64::from(d::fail::UNCLOSED), u64::from(c::fail::UNCLOSED)),
+            (u64::from(d::fail::NUMBER), u64::from(c::fail::NUMBER)),
+            (u64::from(d::fail::PASSED), u64::from(c::fail::PASSED)),
+            (u64::from(d::fail::FULL), u64::from(c::fail::FULL)),
+        ];
+        for (k, (a, b)) in consts.into_iter().enumerate() {
+            assert_eq!(a, b, "constant {k}");
         }
     }
 }

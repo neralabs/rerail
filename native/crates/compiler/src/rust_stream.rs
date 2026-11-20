@@ -476,49 +476,16 @@ fn w16(out: &mut String, x: &Facts<'_>) {
         out.push_str("/// No direct format 16 run: no writer.\nstruct W16;\n\n");
         return;
     }
-    use rerail_clif::writer::{K, MAX_NODES, NONE, OPEN, Part, SIDE_AREA, State, TABLE, Z, at, fail, part};
-    let part_at = |k: u32| std::mem::offset_of!(State, kinds) + k as usize * std::mem::size_of::<Part>() + std::mem::offset_of!(Part, at);
-    let part_cap = |k: u32| std::mem::offset_of!(State, kinds) + k as usize * std::mem::size_of::<Part>() + std::mem::offset_of!(Part, cap);
-    let consts = [
-        ("WS_N", at::N as usize),
-        ("WS_PREV", at::PREV_START as usize),
-        ("WS_LEN", at::SOURCE_LEN as usize),
-        ("WS_OPEN_LEN", at::OPEN_LEN as usize),
-        ("WS_FRONTIER", at::FRONTIER as usize),
-        ("WS_CUT", at::CUT as usize),
-        ("WS_W", at::W as usize),
-        ("WS_ESC", at::ESC as usize),
-        ("WS_AT", at::AT as usize),
-        ("WS_CW", at::CW as usize),
-        ("WS_FLAGS", at::FLAGS as usize),
-        ("WS_OPEN_AT", part_at(part::OPEN)),
-        ("WS_OPEN_CAP", part_cap(part::OPEN)),
-        ("WS_OUT_AT", part_at(part::OUT)),
-        ("WS_ROOMS_AT", part_at(part::ROOMS)),
-        ("WS_TABLE_AT", part_at(part::TABLE)),
-        ("WS_SIDES_AT", part_at(part::SIDES)),
-    ];
-    for (name, v) in consts {
-        writeln!(out, "const {name}: usize = {v};").unwrap();
-    }
-    writeln!(
-        out,
-        "const WZ: u32 = {Z};\nconst WK: u32 = {K};\nconst W_FRAME: usize = {OPEN};\nconst W_ENTRY: usize = {TABLE};\nconst W_SIDE_AREA: usize = {SIDE_AREA};\nconst W_MAX_NODES: u32 = {MAX_NODES};\nconst W_NONE: u32 = {NONE:#x};\nconst F_BOUNDS: u32 = {};\nconst F_OUTSIDE: u32 = {};\nconst F_NO_OPEN: u32 = {};\nconst F_FULL_OPEN: u32 = {};",
-        fail::BOUNDS,
-        fail::OUTSIDE,
-        fail::NO_OPEN,
-        fail::FULL + part::OPEN
-    )
-    .unwrap();
     out.push_str(W16_SRC);
 }
 
 /// `W16`, as `w16` writes it.
 const W16_SRC: &str = r#"
 /// The format 16 writer of a direct run, held by the walk as the lean parser's `Walk` holds its columns: the nodes
-/// so far, the last start, the open nodes' frames (the writer's own part, as simdjson's `open_containers`), the
-/// current block's room and side area, and the document's layout, read once from the writer's state. Each cell is
-/// a store at its column's offset from its block.
+/// so far, the last start, the open nodes' frames (the run's one stack, as simdjson's `open_containers`: the
+/// writer's node, children, last child and start, and the walk's slot at byte 12), the current block's room, and
+/// the document's layout, read once from the writer's state. Each cell is a store at its column's offset from its
+/// block.
 struct W16 {
     state: *mut u8,
     n: u32,
@@ -532,7 +499,6 @@ struct W16 {
     room: *mut u8,
     rooms: *mut u8,
     table: *mut u8,
-    sides: *mut u8,
     cut: u32,
     /// Each array's (slots, gaps, lengths) cell width and escape (its widest value), each column's offset in a
     /// room; the checkpoints' width and its mask.
@@ -572,32 +538,30 @@ impl W16 {
     /// The writer's state at `state`, read once for the run.
     unsafe fn begin(state: *mut u8) -> W16 {
         unsafe {
-            let part = |at: usize| state.offset(rd64(state, at) as isize);
-            let z = rd32(state, WS_FLAGS) & 2 != 0;
-            let w = [rd32(state, WS_W) as usize, rd32(state, WS_W + 4) as usize, rd32(state, WS_W + 8) as usize];
-            let cw = rd32(state, WS_CW) as usize;
+            let s = &*(state as *const w::State);
+            let part = |k: usize| state.offset(s.parts[k].at as isize);
+            let cw = s.cw as usize;
             let mut wr = W16 {
                 state,
-                n: rd32(state, WS_N),
-                prev: rd64(state, WS_PREV),
-                len: rd64(state, WS_LEN),
-                open: part(WS_OPEN_AT),
-                open_len: rd32(state, WS_OPEN_LEN),
-                open_cap: rd64(state, WS_OPEN_CAP),
+                n: s.n,
+                prev: s.prev_start,
+                len: s.source_len,
+                open: part(w::part::OPEN),
+                open_len: s.open_len,
+                open_cap: s.parts[w::part::OPEN].cap,
                 block: 0,
                 room: core::ptr::null_mut(),
-                rooms: if z { part(WS_ROOMS_AT) } else { part(WS_OUT_AT) },
-                table: part(WS_TABLE_AT),
-                sides: part(WS_SIDES_AT),
-                cut: rd32(state, WS_CUT),
-                w,
-                esc: [rd64(state, WS_ESC), rd64(state, WS_ESC + 8), rd64(state, WS_ESC + 16)],
-                at: core::array::from_fn(|r| rd32(state, WS_AT + 4 * r) as usize),
+                rooms: if s.flags & 2 != 0 { part(w::part::ROOMS) } else { part(w::part::OUT) },
+                table: part(w::part::TABLE),
+                cut: s.cut,
+                w: s.w.map(|w| w as usize),
+                esc: s.esc,
+                at: s.at.map(|a| a as usize),
                 cw,
                 cmask: if cw >= 8 { u64::MAX } else { (1u64 << (8 * cw)) - 1 },
             };
             if wr.n != 0 {
-                wr.block = (wr.n - 1) / WZ;
+                wr.block = (wr.n - 1) / w::Z;
                 wr.room = wr.room_of(wr.block);
             }
             wr
@@ -609,17 +573,18 @@ impl W16 {
     #[inline(always)]
     unsafe fn store(&self, frontier: u32) {
         unsafe {
-            wr32(self.state, WS_N, self.n);
-            wr64(self.state, WS_PREV, self.prev);
-            wr32(self.state, WS_OPEN_LEN, self.open_len);
-            wr32(self.state, WS_FRONTIER, frontier);
+            let s = &mut *(self.state as *mut w::State);
+            s.n = self.n;
+            s.prev_start = self.prev;
+            s.open_len = self.open_len;
+            s.frontier = frontier;
         }
     }
 
     /// Block `b`'s room, from its table entry.
     #[inline(always)]
     unsafe fn room_of(&self, b: u32) -> *mut u8 {
-        unsafe { self.rooms.add(rd32(self.table, b as usize * W_ENTRY) as usize) }
+        unsafe { self.rooms.add(rd32(self.table, b as usize * w::TABLE as usize) as usize) }
     }
 
     /// The first failure kept (`w_fail`).
@@ -629,7 +594,7 @@ impl W16 {
         unsafe { w::w_fail(self.state as *const u8, code, node) };
     }
 
-    /// Block `b`'s room made (`w_new_block`): once every `WZ` nodes. Whether it was.
+    /// Block `b`'s room made (`w_new_block`): once every `w::Z` nodes. Whether it was.
     #[cold]
     #[inline(never)]
     unsafe fn new_block(&mut self, b: u32) -> bool {
@@ -683,19 +648,19 @@ impl W16 {
     #[inline(always)]
     unsafe fn open_node(&mut self, number: u32, start: u64, push: bool) -> Option<u32> {
         let i = self.n;
-        if start < self.prev || start > self.len || i + 1 >= W_MAX_NODES {
-            unsafe { self.fail(F_BOUNDS, i) };
+        if start < self.prev || start > self.len || i + 1 >= w::MAX_NODES {
+            unsafe { self.fail(w::fail::BOUNDS, i) };
             return None;
         }
         if i != 0 && self.open_len == 0 {
-            unsafe { self.fail(F_OUTSIDE, i) };
+            unsafe { self.fail(w::fail::OUTSIDE, i) };
             return None;
         }
-        if (self.open_len as u64 + 1) * W_FRAME as u64 > self.open_cap {
-            unsafe { self.fail(F_FULL_OPEN, W_NONE) };
+        if (self.open_len as u64 + 1) * w::OPEN > self.open_cap {
+            unsafe { self.fail(w::fail::FULL + w::part::OPEN as u32, w::NONE) };
             return None;
         }
-        let (b, j) = (i / WZ, i % WZ);
+        let (b, j) = (i / w::Z, i % w::Z);
         unsafe {
             if j == 0 && !self.new_block(b) {
                 return None;
@@ -703,12 +668,12 @@ impl W16 {
             let room = self.room;
             // The node before is a leaf unless it is the parent: its slot describes this node.
             if self.open_len != 0 {
-                let t = self.open.add((self.open_len as usize - 1) * W_FRAME);
+                let t = self.open.add((self.open_len as usize - 1) * w::OPEN as usize);
                 let (p, idx, last) = (rd32(t, 0), rd32(t, 4), rd32(t, 8));
                 wr32(t, 4, idx + 1);
                 wr32(t, 8, i);
                 if i - 1 != p {
-                    let v = if idx % WK == 0 { u64::from(i - p) << 2 | 3 } else { u64::from(i - last) << 2 | 1 };
+                    let v = if idx % w::K == 0 { u64::from(i - p) << 2 | 3 } else { u64::from(i - last) << 2 | 1 };
                     let ok = if j == 0 { self.put_side(0, i - 1, v) } else { self.put(room, 0, i - 1, j - 1, v) };
                     if !ok {
                         return None;
@@ -724,16 +689,17 @@ impl W16 {
             if !self.put(room, 1, i, j, gap) {
                 return None;
             }
-            if j % WK == 0 {
-                cell(room.add(self.at[4] + (j / WK) as usize * self.cw), self.cmask, start);
+            if j % w::K == 0 {
+                cell(room.add(self.at[4] + (j / w::K) as usize * self.cw), self.cmask, start);
             }
             self.prev = start;
             self.n = i + 1;
             if push {
-                let t = self.open.add(self.open_len as usize * W_FRAME);
+                let t = self.open.add(self.open_len as usize * w::OPEN as usize);
                 wr32(t, 0, i);
                 wr32(t, 4, 0);
-                wr32(t, 8, W_NONE);
+                wr32(t, 8, w::NONE);
+                wr32(t, 12, 0);
                 wr64(t, 16, start);
                 self.open_len += 1;
             }
@@ -745,24 +711,39 @@ impl W16 {
         Some(j)
     }
 
-    /// A node at the end, open (`w_open`).
+    /// A node at the end, open (`w_open`). Whether it was (else the writer's failure is kept).
     #[inline(always)]
-    unsafe fn open(&mut self, number: u32, start: u64) {
-        unsafe { self.open_node(number, start, true) };
+    unsafe fn open(&mut self, number: u32, start: u64) -> bool {
+        unsafe { self.open_node(number, start, true).is_some() }
     }
 
     /// A closed node with no children (`w_leaf`): opened, then its length; never on the open nodes.
     #[inline(always)]
-    unsafe fn leaf(&mut self, number: u32, start: u64, end: u64) {
+    unsafe fn leaf(&mut self, number: u32, start: u64, end: u64) -> bool {
         unsafe {
-            let Some(j) = self.open_node(number, start, false) else { return };
+            let Some(j) = self.open_node(number, start, false) else { return false };
             let i = self.n - 1;
             if end < start || end > self.len {
-                self.fail(F_BOUNDS, i);
-                return;
+                self.fail(w::fail::BOUNDS, i);
+                return false;
             }
-            self.put(self.room, 2, i, j, end - start);
+            self.put(self.room, 2, i, j, end - start)
         }
+    }
+
+    /// Whether the writer failed: the walk stops there, the host reads its failure.
+    fn failed(&self) -> bool {
+        unsafe { (*(self.state as *const w::State)).bad != 0 }
+    }
+
+    /// The innermost open node's slot: the walk's, in its frame.
+    #[inline(always)]
+    unsafe fn slot(&self) -> u32 {
+        unsafe { rd32(self.open.add((self.open_len as usize - 1) * w::OPEN as usize), 12) }
+    }
+    #[inline(always)]
+    unsafe fn set_slot(&mut self, k: u32) {
+        unsafe { wr32(self.open.add((self.open_len as usize - 1) * w::OPEN as usize), 12, k) }
     }
 
     /// The innermost open node's end (`w_close`): its length, and an inner node's slot; its block made final
@@ -771,17 +752,17 @@ impl W16 {
     unsafe fn close(&mut self, end: u64) {
         unsafe {
             if self.open_len == 0 {
-                self.fail(F_NO_OPEN, self.n);
+                self.fail(w::fail::NO_OPEN, self.n);
                 return;
             }
             self.open_len -= 1;
-            let t = self.open.add(self.open_len as usize * W_FRAME);
+            let t = self.open.add(self.open_len as usize * w::OPEN as usize);
             let (i, start) = (rd32(t, 0), rd64(t, 16));
             if end < start || end > self.len {
-                self.fail(F_BOUNDS, i);
+                self.fail(w::fail::BOUNDS, i);
                 return;
             }
-            let (b, j) = (i / WZ, i % WZ);
+            let (b, j) = (i / w::Z, i % w::Z);
             let room = if b == self.block { self.room } else { self.room_of(b) };
             if !self.put(room, 2, i, j, end - start) {
                 return;
@@ -790,7 +771,7 @@ impl W16 {
             if size > 1 && !self.put(room, 0, i, j, u64::from(size) << 1) {
                 return;
             }
-            if self.n > (b + 1) * WZ {
+            if self.n > (b + 1) * w::Z {
                 self.settle(b, self.n);
             }
         }
@@ -808,19 +789,8 @@ fn prelude(out: &mut String, x: &Facts<'_>) -> Result<(), String> {
     writeln!(out, "const COUNTS: usize = {};", counts.max(1)).unwrap();
     writeln!(out, "const DEPTH: u32 = {};", crate::native_cpu_stream::DEPTH).unwrap();
     if x.sixteen {
-        // The writer's state, as its ops lay it (`rerail_clif::writer::State`): the open nodes' count and part.
-        use rerail_clif::writer::{OPEN, Part, State, fail};
-        writeln!(
-            out,
-            "const W_BAD: usize = {};\nconst W_BAD_NODE: usize = {};\nconst NUMBER: u32 = {};\nconst PASSED: u32 = {};\nconst W_OPEN_LEN: usize = {};\nconst W_OPEN_AT: usize = {};\nconst W_OPEN: usize = {OPEN};",
-            std::mem::offset_of!(State, bad),
-            std::mem::offset_of!(State, bad_node),
-            fail::NUMBER,
-            fail::PASSED,
-            std::mem::offset_of!(State, open_len),
-            std::mem::offset_of!(State, open) + std::mem::offset_of!(Part, at)
-        )
-        .unwrap();
+        // The failures of a run's own (the writer's `fail`).
+        out.push_str("const NUMBER: u32 = w::fail::NUMBER;\nconst PASSED: u32 = w::fail::PASSED;\n");
     }
     w16(out, x);
     out.push_str(STATE);
@@ -854,7 +824,10 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
         .replace("$W16_BEGIN", begin),
     );
     let args = if x.context { ", 0, 0" } else { "" };
-    writeln!(out, "    match r0(&mut s{args}) {{\n        Ok(_) => 0,\n        Err(true) => u64::MAX,\n        Err(false) => REFUSED,\n    }}\n}}\n").unwrap();
+    // A direct run stops at the writer's failure (its stack is the walk's, D2), which the host reads, as the JIT's
+    // run, which goes on to the end, leaves it (`write16`: a full open part is a run again, deeper).
+    let failed = if x.sixteen && x.coded { "        _ if s.wr.failed() => 0,\n" } else { "" };
+    writeln!(out, "    match r0(&mut s{args}) {{\n{failed}        Ok(_) => 0,\n        Err(true) => u64::MAX,\n        Err(false) => REFUSED,\n    }}\n}}\n").unwrap();
 
     out.push_str("impl S {\n");
     // The room: the most a token's path writes (`Bounds`), a call open's pops where returns chain.
@@ -1819,7 +1792,10 @@ $COMMIT_CLOSE        Ok(())
     if x.sixteen {
         out.push_str(&PASS16.replace("$CLASS_FIRST", &first).replace("$CLASS_BITS", &bits).replace("$CLASS_ALL", &all));
         let (open16, leaf16) = if x.coded {
-            ("self.wr.open(number, u64::from(self.start));", "self.wr.leaf(number, u64::from(self.start), u64::from(end))")
+            (
+                "if !self.wr.open(number, u64::from(self.start)) {\n                return Err(false);\n            }",
+                "if !self.wr.leaf(number, u64::from(self.start), u64::from(end)) {\n                return Err(false);\n            }",
+            )
         } else {
             ("w::w_open(self.writer, number, u64::from(self.start));\n            w::w_commit(self.writer);", "w::w_leaf(self.writer, number, u64::from(self.start), u64::from(end));\n            w::w_commit(self.writer);")
         };
@@ -1848,11 +1824,8 @@ $COMMIT_CLOSE        Ok(())
         // SAFETY: the writer's state, its room reserved for the run (`f16::Writer::reserve_run`); the
         // stack's room is the bound's.
         unsafe {
-            $OPEN16
-            *Self::col(self.open, self.nopen) = 0;
-        }
-        self.nopen += 1;
-        self.nodes += 1;
+            $OPEN16$PUSH16
+        }$COUNT16
         Ok(())
     }
 
@@ -1863,13 +1836,18 @@ $COMMIT_CLOSE        Ok(())
         let number = self.number16(kf, classes)?;
         self.pending = 0;
         // SAFETY: as `open16`'s.
-        unsafe { $LEAF16 };
-        self.nodes += 1;
+        unsafe {
+            $LEAF16
+        }$NODES16
         Ok(())
     }
 "
             .replace("$OPEN16", open16)
-            .replace("$LEAF16", leaf16),
+            .replace("$LEAF16", leaf16)
+            // A direct run's one stack is the writer's (D2): its frames hold the walk's slot, and its count the nodes.
+            .replace("$PUSH16", if x.coded { "" } else { "\n            *Self::col(self.open, self.nopen) = 0;" })
+            .replace("$COUNT16", if x.coded { "" } else { "\n        self.nopen += 1;\n        self.nodes += 1;" })
+            .replace("$NODES16", if x.coded { "" } else { "\n        self.nodes += 1;" }),
         );
     } else if x.coded {
         out.push_str(
@@ -2036,18 +2014,19 @@ const PASS16: &str = "    /// Nodes `from..to` passed to the writer's ops in pre
         if self.bad16() {
             return;
         }
-        // SAFETY: the writer's state (`rerail_clif::writer::State`, its open part at `W_OPEN_AT`), its room reserved
-        // for the run; the rows and sizes of the nodes made.
+        // SAFETY: the writer's state (`w::State`), its room reserved for the run; the rows and sizes of the nodes
+        // made.
         unsafe {$CLASS_FIRST
             let mut i = from;
             loop {
                 loop {
-                    let len = *(self.writer.add(W_OPEN_LEN) as *const u32);
+                    let st = self.writer as *const w::State;
+                    let len = (*st).open_len;
                     if len <= keep {
                         break;
                     }
-                    let opens = self.writer.offset(*(self.writer.add(W_OPEN_AT) as *const i64) as isize);
-                    let j = *(opens.add((len as usize - 1) * W_OPEN) as *const u32);
+                    let opens = self.writer.offset((*st).parts[w::part::OPEN].at as isize);
+                    let j = *(opens.add((len as usize - 1) * w::OPEN as usize) as *const u32);
                     if j + *self.size_c.add(j as usize) as u32 > i {
                         break;
                     }
@@ -2095,24 +2074,18 @@ const PASS16: &str = "    /// Nodes `from..to` passed to the writer's ops in pre
         }
     }
 
-    /// Whether an op failed (`rerail_clif::writer::State::bad`).
+    /// Whether an op failed (`w::State::bad`).
     #[inline(always)]
     fn bad16(&self) -> bool {
         // SAFETY: the writer's state.
-        unsafe { *(self.writer.add(W_BAD) as *const u32) != 0 }
+        unsafe { (*(self.writer as *const w::State)).bad != 0 }
     }
 
-    /// The run's failure where none came before (`w_fail`): its code (`rerail_clif::writer::fail`) and node.
+    /// The run's failure where none came before (`w_fail`): its code (`w::fail`) and node.
     #[cold]
     fn fail16(&mut self, code: u32, node: u32) {
         // SAFETY: the writer's state.
-        unsafe {
-            let bad = self.writer.add(W_BAD) as *mut u32;
-            if *bad == 0 {
-                *bad = code;
-                *(self.writer.add(W_BAD_NODE) as *mut u32) = node;
-            }
-        }
+        unsafe { w::w_fail(self.writer, code, node) };
     }
 
 ";
@@ -2166,12 +2139,17 @@ fn cells16(x: &Facts<'_>, t: &str) -> String {
     ] {
         out = out.replace(line, "");
     }
-    // A call's number in its container's slot on the stack, not in a row.
-    out.replace(
-        "unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end = k };",
-        "unsafe { *Self::col(self.open, self.nopen - 1) = k };",
-    )
-    .replace("unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end }", "unsafe { *Self::col(self.open, self.nopen - 1) }")
+    // One stack of open nodes, the writer's (D2): a call's number in its container's frame, not in a row; the
+    // open nodes and the nodes made the writer's counts.
+    for (from, to) in [
+        ("unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end = k };", "unsafe { self.wr.set_slot(k) };"),
+        ("unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end }", "unsafe { self.wr.slot() }"),
+        ("        if !SURE && self.nopen == 0 {\n            return Err(false);\n        }\n        self.nopen -= 1;\n", "        if !SURE && self.wr.open_len == 0 {\n            return Err(false);\n        }\n"),
+        ("|| self.nopen != 1 {\n            return Err(false);\n        }\n        let nodes = self.nodes;\n", "|| self.wr.open_len != 1 {\n            return Err(false);\n        }\n        let nodes = self.wr.n;\n"),
+    ] {
+        out = out.replace(from, to);
+    }
+    out
 }
 
 /// `RETAG m=3`: reading `i` over the node made last at the innermost level and the nodes inside

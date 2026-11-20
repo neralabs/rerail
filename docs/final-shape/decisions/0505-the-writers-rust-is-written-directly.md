@@ -24,7 +24,7 @@ writer's had to be too.
      column's offset, the checkpoints' width;
    - `open`, `leaf` and `close` are `#[inline(always)]`, each cell a store at its column's offset from its block.
    Their rules are the reference writer's (`f16/reference.rs`).
-2. **The cold paths still call the ops, for now**, each `#[cold] #[inline(never)]`, the state stored first:
+2. **The cold paths still call the ops, for now** (written directly since, 0508), each `#[cold] #[inline(never)]`, the state stored first:
    - a block's room, once every 1,024 nodes (`w_new_block`);
    - a value past its cell's width (`w_put`), a code past the cut (`w_put_code`);
    - a block made final (`w_settle`), a failure (`w_fail`).

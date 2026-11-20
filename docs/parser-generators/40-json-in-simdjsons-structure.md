@@ -593,6 +593,32 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 40, done: one writer in Rust written directly, one stack (decision 0508)
+
+Order items 2, 3 and 5 of step 38, and D2. The writer is one Rust source written directly,
+`tape_format/src/writer16.rs`, in simdjson's `tape_builder` and `tape_writer` shape:
+
+- its state's named fields;
+- the block switch, the side lists, `settle`, `finish` and 16z's pieces and LZ4 as plain functions;
+- each cell a store at its column's offset.
+
+The host's writer runs it, and a generated tier 2 holds the same text as its module `w`. No Rust is translated
+from the writer's CLIF any more; the CLIF is the JIT's and the device's.
+
+A direct run has one stack of open nodes, the writer's frames, as simdjson has `open_containers`. The walk's slot
+for a call's number is the frame's free word, and `close` and `accept` read the writer's counts. Next to the
+references:
+
+| | simdjson / the lean parser | before | now |
+|---|---|---|---|
+| D2. The open nodes | one stack | tier 2's (`S::open`, `nopen`, `nodes`) and the writer's frames | the writer's frames; the walk's slot at byte 12 |
+| D5. Calls | `allocate` out of line | the cold paths through the translated ops | the cold paths plain Rust functions, `#[cold] #[inline(never)]` at their calls |
+| D8. The source's form | named fields, expressions | the translation's `let mut vN`, offsets from `desc` | named fields, expressions, everywhere in the writer |
+
+Left: D7, the kinds' numbers as constants. A number is the language's code table's, given at run time (the tests
+make one per file from format 15's first-use table), so constants need one table per language, known when the
+Rust is generated.
+
 ## Step 39, done: the writer's per-node work written directly (decision 0505)
 
 Order item 1 of step 38. `rust_stream` writes `W16`, a direct run's writer, in the lean parser's `Walk` shape. Its
@@ -1064,7 +1090,7 @@ it out (merged from the hub's tape branch, 664c1f8411), has no such copy: its ta
 writer moves only the last block's columns down and lays the side lists (`w_finish`).
 
 0434's writer is a set of ops written once in CLIF (`w_open`, `w_leaf`, `w_close`, `w_commit`,
-…), with Rust generated from them (`tape_format`'s `generated_writer`). The JIT's tier 2 writes
+…), with Rust generated from them (`tape_format`'s `generated_writer`; since step 40, decision 0508, the writer's Rust is written directly, `writer16.rs`). The JIT's tier 2 writes
 format 16 through them (0434's R17), but from its working rows: at each top-level close, a pass
 over the nodes since the last one opens each in the ops (`native_cpu_tape::pass`). That is a
 second walk over every node.
