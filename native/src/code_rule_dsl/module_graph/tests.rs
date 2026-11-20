@@ -942,6 +942,8 @@ fn a_source_whose_data_is_offline_keeps_the_summary_of_its_last_write_with_no_re
     crate::git_workspace::set_attributes(&source, FILE_ATTRIBUTE_OFFLINE);
     parsed("the offline source is not read", 0);
     crate::git_workspace::set_attributes(&source, FILE_ATTRIBUTE_NORMAL);
+    // The change time the clearing gave, as a later walk sees it: one the clock has left.
+    crate::git_workspace::set_change_time(&source, settled + Duration::from_secs(60));
     parsed("the source back on disk is read once", 1);
     parsed("and then taken from the cache", 0);
     std::fs::remove_dir_all(&root).unwrap();
