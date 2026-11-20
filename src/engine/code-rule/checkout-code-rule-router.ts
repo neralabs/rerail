@@ -81,6 +81,8 @@ function folderHolds(folder: string, path: string): boolean {
 export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #options: CheckoutCodeRuleRouterOptions;
   readonly #sessionRoot: string;
+  /** Where Git registers the worktrees, as `worktreeRoots` last read them (`worktreeRegistry`). */
+  #registryFolder: string | undefined;
   readonly #lanes = new Map<string, Lane>();
   readonly #eligibility = new Map<string, CheckoutEligibility>();
   /** The daemon's Git ignore matchers (`gitIgnoreMatchers`), or the router's own. */
@@ -440,9 +442,16 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    */
   worktreeRoots(): string[] {
     const starting = this.#options.startingCheckout;
-    return (worktreeRegistry(starting)?.worktrees ?? [])
+    const registry = worktreeRegistry(starting);
+    this.#registryFolder = registry === undefined ? undefined : join(registry.commonDirectory, "worktrees");
+    return (registry?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
       .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+  }
+
+  /** The folder where Git registers the worktrees `worktreeRoots` last named (`worktrees` in the common Git folder). */
+  worktreeRegistry(): string | undefined {
+    return this.#registryFolder;
   }
 
   /**
