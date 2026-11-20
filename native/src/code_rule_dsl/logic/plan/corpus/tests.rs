@@ -1784,7 +1784,8 @@ fn programs_hidden_alone_keep_their_attribute_copies_declared() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "def f(x: int) -> int:\n    if x is not None:\n        return 1\n    return 0\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog/authored");
+    // Pack test data (`packs/data-layer/upstream/lint/`, not in git since 5e0b69a104): pulled, or the test says so.
+    let rules = crate::code_rule_dsl::test_support::pack_test_data("packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog/authored");
     let programs: Vec<String> = ["data-layer-schema-bootstrap-contracts.rerail", "data-layer-unresolved-forward-refs.rerail", "data-layer-versioned-merged-identity.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
