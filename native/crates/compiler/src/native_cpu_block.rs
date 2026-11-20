@@ -4558,6 +4558,14 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     f.switch_to_block(content);
     let len = f.ins().isub(pos, at);
     let code = code_at(f, at, len);
+    // Its content's own kind (`Reader::content`), its word kept.
+    let code = match reader.content {
+        Some(k) => {
+            let rest = f.ins().band_imm(code, !0xff);
+            f.ins().bor_imm(rest, i64::from(k))
+        }
+        None => code,
+    };
     let last = f.ins().iadd_imm(pos, -1);
     write_record(f, c, stores, kc, Some(at), Some(last), code);
     let k2 = c.step(f, kc);
@@ -4577,6 +4585,17 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             f.ins().bor_imm(rest, i64::from(k))
         }
         None => code,
+    };
+    // A closer's own kind (`Reader::closers`), by its first byte's: its word kept.
+    let closer_own = |f: &mut FunctionBuilder<'_>, mut code: Value| {
+        for &(b, k) in &reader.closers {
+            let kind = f.ins().band_imm(code, 0xff);
+            let is = f.ins().icmp_imm(IntCC::Equal, kind, i64::from(r.kinds[usize::from(b)]));
+            let rest = f.ins().band_imm(code, !0xff);
+            let tagged = f.ins().bor_imm(rest, i64::from(k));
+            code = f.ins().select(is, tagged, code);
+        }
+        code
     };
     for (j, (x, off, part, to_last, kind)) in checks.into_iter().enumerate() {
         let (this, other) = (f.create_block(), if j + 1 < n { Some(f.create_block()) } else { None });
@@ -4622,6 +4641,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let len = f.ins().iadd_imm(len, 1);
             let code = code_at(f, pos, len);
             let code = own(f, code, kind);
+            let code = if part.is_none() { closer_own(f, code) } else { code };
             write_record(f, c, stores, kc, Some(pos), Some(l), code);
             let k2 = c.step(f, kc);
             let at2 = f.ins().iadd_imm(l, 1);
@@ -4636,6 +4656,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let len = f.ins().iconst(types::I64, off + 1);
         let code = code_at(f, pos, len);
         let code = own(f, code, kind);
+        let code = if part.is_none() { closer_own(f, code) } else { code };
         write_record(f, c, stores, kc, Some(pos), Some(l), code);
         let k2 = c.step(f, kc);
         match part {
@@ -7920,6 +7941,45 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     }
     let (mut code, mut pending) = (cv[STATE_WORDS], cv[3]);
     let (mut from, mut word_before) = (cv[4], cv[5]);
+    // A token's own kind by its start, where no reader gives it (`Records::retags`: a `0x` beside
+    // a number, a `.5` beside the operators, decision 0509): its kind and marks, and no word, as
+    // `records::pass` gives them and the lean lexer's `T`.
+    let own: Vec<&crate::records::Retag> = r.retags.iter().filter(|t| crate::records::own_retag(r, t)).collect();
+    if !own.is_empty() && fixed.is_none() {
+        let native = rd.bytes.map(|(b, _)| b.native);
+        for t in own {
+            // Tested where its start can hold (`needs_by_offset`): at the token's first bytes
+            // the start mask may have (a `0`, a `.`), its word read there, as the lean lexer's
+            // number arm reads what follows; another token's code is its first byte's.
+            let at0 = native.and_then(|b| crate::native_cpu_bytes::needs_by_offset(b, t.o)).and_then(|v| v.into_iter().find(|&(d, _)| d == 0).map(|x| x.1));
+            let firsts: Vec<i64> = (0..=255u8).filter(|&b| at0.is_none_or(|x| x[usize::from(b >> 6)] >> (b & 63) & 1 == 1)).map(i64::from).collect();
+            let (test, join) = (f.create_block(), f.create_block());
+            f.append_block_param(join, types::I64);
+            if firsts.len() < 256 {
+                let b = f.ins().band_imm(raw, 0xff);
+                let mut is = f.ins().icmp_imm(IntCC::Equal, b, firsts[0]);
+                for &x in &firsts[1..] {
+                    let e = f.ins().icmp_imm(IntCC::Equal, b, x);
+                    is = f.ins().bor(is, e);
+                }
+                f.ins().brif(is, test, &[], join, &[code.into()]);
+            } else {
+                f.ins().jump(test, &[]);
+            }
+            f.switch_to_block(test);
+            let q = f.ins().ushr_imm(s, 6);
+            let x = rd.word(f, c, q, t.o, heads);
+            let sh = f.ins().band_imm(s, 63);
+            let bit = f.ins().ushr(x, sh);
+            let bit = f.ins().band_imm(bit, 1);
+            let rest = f.ins().band_imm(code, !((1i64 << crate::records::MARK_SHIFT) - 1));
+            let tagged = f.ins().bor_imm(rest, i64::from(t.kind) | i64::from(t.marks) << crate::records::MARK_SHIFT);
+            let tagged = f.ins().select(bit, tagged, code);
+            f.ins().jump(join, &[tagged.into()]);
+            f.switch_to_block(join);
+            code = f.block_params(join)[0];
+        }
+    }
     let base = f.ins().band_imm(s, !63);
     let in_regs = regs.as_ref().map(|g| (g, base));
     // The marks at a token's first byte the loop sets (`loop_marks`): its word's bit there. On

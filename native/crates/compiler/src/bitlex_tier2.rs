@@ -53,6 +53,12 @@ pub struct Row {
 }
 
 impl Row {
+    /// Whether tier 2 reads the two rows alike: one kind, its first bytes, its words, its end and
+    /// its check (decision 0509: the rows of one kind in each reader's region, a string's text).
+    fn alike(&self, o: &Row) -> bool {
+        self.kind == o.kind && self.one_byte == o.one_byte && self.first == o.first && self.keywords == o.keywords && self.soft == o.soft && self.check == o.check && self.moved == o.moved
+    }
+
     /// Its tokens' ends are the stream's last bytes (`SPAN m=1`): every row but one of one-byte
     /// tokens. A row of keywords only is no exception: its token runs to its last byte whatever
     /// the word, and `truee` is not `true` (the word's bytes are compared over the whole token).
@@ -1194,6 +1200,21 @@ impl Emit<'_> {
             taken.sort_unstable();
             taken.dedup();
             let met: Vec<usize> = (0..self.rows.len()).filter(|&r| has(&self.rows[r].first, b) && self.meets[s][r]).collect();
+            // Rows tier 2 reads alike (`Row::alike`, one kind's in several regions): one row, its
+            // arms taken together, as the lean lexer's one `T` a kind.
+            if met.len() > 1 && met.iter().all(|&r| self.rows[r].alike(&self.rows[met[0]]) && cs.iter().any(|c| c.row == r)) {
+                let mut one: Vec<Cand> = Vec::new();
+                for mut c in cs {
+                    c.row = met[0];
+                    if !one.iter().any(|o| o.arm == c.arm && o.word == c.word) {
+                        one.push(c);
+                    }
+                }
+                // As a row tested would be (`target`): a moved row's words its own switch's.
+                let pc = self.target(b, 0, one)?;
+                self.switches[t].targets[usize::from(b)] = pc;
+                continue;
+            }
             // Rows of keywords only beside at most one other: the record's word tells them apart,
             // as the lean parser's `peek()` gives the token's kind (a `.` or a `.5`).
             if met.len() > 1 && met.iter().filter(|&&r| self.rows[r].kind != 0).count() <= 1 {
@@ -1208,9 +1229,10 @@ impl Emit<'_> {
                     let these: Vec<Cand> = cs.iter().filter(|c| c.row == r).cloned().collect();
                     tos.push(self.target(b, 0, these)?);
                 }
-                // Every row it can meet there it takes, to one place: no test tells them apart.
-                if all && tos.iter().all(|&t| t == tos[0]) {
-                    self.switches[t].targets[usize::from(b)] = tos[0];
+                // Every row it can meet there it takes, to one place: no test tells them apart. So
+                // too where the rows it takes go where the others do.
+                if all && tos.iter().all(|&t| t == tos[0]) || !all && tos.iter().all(|&t| t == default) {
+                    self.switches[t].targets[usize::from(b)] = if all { tos[0] } else { default };
                     continue;
                 }
                 let key = (self.rule, taken.clone(), all, default, tos.clone());

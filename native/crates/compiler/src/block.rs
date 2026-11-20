@@ -1884,6 +1884,12 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     let kind = p.kind.map_or(String::new(), |k| format!(" kind {k}"));
                     let _ = writeln!(out, "  block {at} recpart {k} {} {}{last}{kind}", p.start, p.bytes);
                 }
+                if let Some(kind) = rd.content {
+                    let _ = writeln!(out, "  block {at} reccontent {k} {kind}");
+                }
+                for &(b, kind) in &rd.closers {
+                    let _ = writeln!(out, "  block {at} recclose {k} {b} {kind}");
+                }
                 if rd.quiet {
                     let _ = writeln!(out, "  block {at} recquiet {k}");
                 }

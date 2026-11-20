@@ -3905,6 +3905,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut moved: Vec<(usize, u8)> = Vec::new();
     // The parts' own bytes, by their kinds (`ReadPart::kind`).
     let mut part_bytes: HashMap<String, u8> = HashMap::default();
+    // The closers moved (`Reader::closers`): each reader's kind, its row and its byte.
+    let mut closer_rows: Vec<(String, usize, u8)> = Vec::new();
     if looped {
         // A row read inside a region (`inside`) is its reader's, met only in the region's mode
         // (`row_modes`): it begins no token at a byte's dispatch, so it takes no byte here.
@@ -3912,12 +3914,18 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let starts = |r: usize, b: usize| !inside(r) && real_first[r][b / 64] >> (b % 64) & 1 == 1;
         let mut free: Vec<u8> = (0..256usize).rev().filter(|&b| !(0..rows.len()).any(|r| starts(r, b))).map(|b| b as u8).collect();
         let mut byte_of: HashMap<String, u8> = HashMap::default();
+        let width = |r: usize| real_first[r].iter().map(|w| w.count_ones()).sum::<u32>();
         for r in 0..rows.len() {
             let kind = &token_rows[r].0;
-            if !low.token_reads.contains_key(kind) {
-                continue;
-            }
-            let shared = (0..256).any(|b| starts(r, b) && (0..rows.len()).any(|q| token_rows[q].0 != *kind && starts(q, b)));
+            let shares = |q: usize| token_rows[q].0 != *kind && (0..256).any(|b| starts(r, b) && starts(q, b));
+            // A reader's kind, and a token's kind that shares a first byte with a wider one's (a
+            // `0x` beside a number, a `.5` beside the operators): its own kind, which its start
+            // gives the record, as the lean lexer's `T` (decision 0509). The widest keeps its bytes.
+            let shared = if low.token_reads.contains_key(kind) {
+                (0..rows.len()).any(shares)
+            } else {
+                (0..rows.len()).any(|q| shares(q) && !low.token_reads.contains_key(&token_rows[q].0) && (width(q), std::cmp::Reverse(q)) > (width(r), std::cmp::Reverse(r)))
+            };
             if !shared {
                 continue;
             }
@@ -3937,14 +3945,19 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         // A part of a region read in parts that begins with a byte another of the region's
         // tokens of another kind begins with (a `$name` and the string's text): a kind of its own
         // (`ReadPart::kind`, `Retag::part`), as the lean lexer's string reader says what it read.
-        // The region's content keeps its byte's kind, and so do its closers.
+        // The region's closers keep their bytes' kinds.
         let mut readers_in_parts: Vec<&String> = low.token_part_names.keys().collect();
         readers_in_parts.sort();
         for reader in readers_in_parts {
             let (parts, content) = low.token_part_names[reader].clone();
             let of = |r: usize| low.inside_of.get(r).cloned().flatten().filter(|(k, _)| k == reader);
             let ins: Vec<usize> = (0..rows.len()).filter(|&r| of(r).is_some()).collect();
+            // The content too, where it shares a first byte with a closer or a part (a string's text
+            // and its `"`), in a token loop (decision 0509): the walk gives each token its kind.
             let mut names: Vec<&String> = parts.iter().filter(|p| **p != content).collect();
+            if low.skip.is_some() {
+                names.push(&content);
+            }
             names.sort();
             names.dedup();
             for p in names {
@@ -3962,11 +3975,38 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 part_bytes.insert(p.clone(), f);
                 moved.extend(these.iter().map(|&r| (r, f)));
             }
+            // A closer that begins with a byte a token outside the regions begins with (a
+            // template's `"` and a string's opener), in a token loop: a kind of its own
+            // (`Reader::closers`, decision 0509), as the lean lexer's string reader knows its end.
+            if low.skip.is_some() {
+                let outside = |q: usize| !low.inside.get(q).copied().unwrap_or(false);
+                for r in ins.iter().copied().filter(|&r| of(r).is_some_and(|(_, closes)| closes)) {
+                    if !(0..rows.len()).any(|q| outside(q) && (0..4).any(|i| real_first[r][i] & real_first[q][i] != 0)) {
+                        continue;
+                    }
+                    let key = format!("{} closes", token_rows[r].0);
+                    let f = match part_bytes.get(&key) {
+                        Some(&f) => f,
+                        None if free.is_empty() => return Err(format!("`{key}`: no byte left that no token begins with, for its closer's kind")),
+                        None => free.remove(0),
+                    };
+                    part_bytes.insert(key, f);
+                    moved.push((r, f));
+                    closer_rows.push((reader.clone(), r, f));
+                }
+            }
         }
         for &(r, f) in &moved {
             rows[r].first = [0; 4];
             rows[r].first[usize::from(f) / 64] |= 1 << (f % 64);
             rows[r].moved = true;
+        }
+        // The rows of one kind end alike: at their records' last bytes (`Span::Last`), a one-byte
+        // token's its first, so no state tells them apart by how they end (decision 0509).
+        for &(r, f) in &moved {
+            if moved.iter().any(|&(q, g)| g == f && !rows[q].one_byte) {
+                rows[r].one_byte = false;
+            }
         }
         // A moved kind's byte is its alone: tier 2 switches on a record's kind (its least
         // byte's target), so a row read inside a region, whose bytes may be any, never meets
@@ -4129,6 +4169,22 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         rows[r].first = real_first[r];
     }
     let starts_kind = |name: &str, b: usize| (0..rows.len()).any(|r| token_rows[r].0 == name && rows[r].first[b / 64] >> (b % 64) & 1 == 1);
+    // A kind's record kinds, for the token marks' and the gap patterns' sets: a moved row's own
+    // (its records' kind, decision 0509), another row's first bytes'. A row inside a region is not
+    // the token's.
+    let inside_rows = low.inside.clone();
+    let name_kinds = |kinds: &[u8], name: &str| -> Vec<u8> {
+        let mut v: Vec<u8> = Vec::new();
+        for r in (0..rows.len()).filter(|&r| token_rows[r].0 == name && !inside_rows.get(r).copied().unwrap_or(false)) {
+            match moved.iter().find(|&&(m, _)| m == r) {
+                Some(&(_, f)) => v.push(kinds[usize::from(f)]),
+                None => v.extend((0..256).filter(|&b| rows[r].first[b / 64] >> (b % 64) & 1 == 1).map(|b| kinds[b])),
+            }
+        }
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
     // A row read inside a region (`inside`, a string's content) is left out: its tokens are only
     // inside the region, whose rule takes no mark, so a mark that holds there is skipped (hidden)
     // or refuses the file, and never reads a token otherwise.
@@ -4262,8 +4318,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                             except.push(s as u16);
                         }
                     }
-                    for b in (0..256).filter(|&b| starts_kind(name, b)) {
-                        let k = kinds[b];
+                    for k in name_kinds(&kinds, name) {
                         if k >= 64 {
                             return Err(format!("a token mark's kind `{name}` is kind {k} of the records, past 64"));
                         }
@@ -4331,11 +4386,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                                     except.push(lowered.strings.iter().position(|x| x == w).ok_or("a keyword not among the words")? as u16);
                                 }
                             }
-                            for b in (0..256).filter(|&b| starts_kind(name, b)) {
-                                if kinds[b] >= 64 {
-                                    return Err(format!("a gap pattern's kind `{name}` is kind {} of the records, past 64", kinds[b]));
+                            for k in name_kinds(&kinds, name) {
+                                if k >= 64 {
+                                    return Err(format!("a gap pattern's kind `{name}` is kind {k} of the records, past 64"));
                                 }
-                                set |= 1 << kinds[b];
+                                set |= 1 << k;
                             }
                         }
                         kind_set = set;
@@ -4494,7 +4549,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     }
                 };
                 // Its kind's own, where its rows were moved (above).
-                let retag_of = |k: &String| moved.iter().find(|&&(r, _)| token_rows[r].0 == *k).map(|&(_, f)| (kinds[usize::from(f)], extra_marks(k)));
+                // A token's own rows: a row inside a region of the same name (a closer `"`) is not its.
+                let inside_rows = low.inside.clone();
+                let retag_of = |k: &String| moved.iter().find(|&&(r, _)| token_rows[r].0 == *k && !inside_rows.get(r).copied().unwrap_or(false)).map(|&(_, f)| (kinds[usize::from(f)], extra_marks(k)));
                 let retag = retag_of(&kind);
                 // An output of its own: one shared with a mark's may be the token loop's alone
                 // (`loop_marks`), not stored.
@@ -4531,7 +4588,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 // from there, as simdjson's stage 2 reads a string. In a token loop, tier 1's
                 // (decision 0323's lowering A; B is a compile option).
                 let split = if low.skip.is_none() && !parts.is_empty() { crate::records::Split::Tier2 } else { crate::records::Split::Tier1 };
-                let reader = crate::records::Reader { arms, other, retag, parts, split, quiet: false };
+                // Its content's own kind, where its rows were moved (above).
+                let content = low.token_part_names.get(&kind).and_then(|p| moved.iter().find(|&&(r, _)| token_rows[r].0 == p.1 && low.inside_of.get(r).cloned().flatten().is_some_and(|(k, _)| k == kind))).map(|&(_, f)| kinds[usize::from(f)]);
+                let mut closers: Vec<(u8, u8)> = closer_rows.iter().filter(|c| c.0 == kind).flat_map(|&(_, r, f)| { let first = real_first[r]; (0..=255u8).filter(move |&b| first[usize::from(b >> 6)] >> (b & 63) & 1 == 1).map(move |b| (b, f)) }).map(|(b, f)| (b, kinds[usize::from(f)])).collect();
+                closers.sort_unstable();
+                closers.dedup();
+                let reader = crate::records::Reader { arms, other, retag, parts, content, closers, split, quiet: false };
                 let at = match readers.iter().position(|x| *x == reader) {
                     Some(at) => at,
                     None => {

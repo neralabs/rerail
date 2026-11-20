@@ -337,6 +337,14 @@ pub struct Reader {
     /// and bytes. Its tokens are the opener's byte, each part, each run of the bytes between,
     /// and the closer (`read_parts`). None: the region is one token.
     pub parts: Vec<ReadPart>,
+    /// The kind of its region's bytes between its parts (`else K`), where it is one of its own (a
+    /// string's text beside its closer `"`, decision 0509); None: each token's first byte's. Its
+    /// rows' start masks give it too (`Records::retags`, `part`).
+    pub content: Option<u8>,
+    /// Its closers' own kinds (decision 0509): a closer that begins with byte `.0` has kind `.1`,
+    /// where its byte begins a token outside (a template's `"` and a string's opener). Their rows'
+    /// start masks give them too (`Records::retags`, `part`).
+    pub closers: Vec<(u8, u8)>,
     /// Where its parts are split (decision 0323): by tier 1's token loop (`Split::Tier1`, its
     /// records the parts'), or by tier 2's token fetch (`Split::Tier2`, tier 1's record the
     /// whole region, as a reader without parts gives it).
@@ -408,6 +416,12 @@ impl Reader {
     pub fn tag(&self) -> Option<(u8, u32)> {
         self.retag.filter(|&t| self.arms.iter().all(|a| a.retag.is_none_or(|x| x == t)))
     }
+}
+
+/// Whether retag `t` is a token's own kind that no reader gives and no part is (a `0x` beside a
+/// number, a `.5` beside the operators, decision 0509): the token loop reads its mask.
+pub fn own_retag(r: &Records, t: &Retag) -> bool {
+    !t.part && !r.readers.iter().any(|rd| rd.tags().any(|(k, _)| k == t.kind))
 }
 
 /// A part of a region read in parts (`Reader::parts`): at a bit of output `start`, `bytes`

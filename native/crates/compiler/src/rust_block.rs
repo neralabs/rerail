@@ -133,7 +133,7 @@ impl<'a> Gen<'a> {
         for rd in readers {
             // `retag` and the arms' are the CPU's form of the retags (`Records::retags`), which
             // the token's record reads; `quiet` is a proved hint; a split by tier 2 is refused.
-            let crate::records::Reader { arms, other: _, retag: _, parts, split, quiet: _ } = rd;
+            let crate::records::Reader { arms, other: _, retag: _, parts, content: _, closers: _, split, quiet: _ } = rd;
             if !parts.is_empty() && *split != crate::records::Split::Tier1 {
                 return Err("a region tier 2 splits (0323): not written yet".into());
             }

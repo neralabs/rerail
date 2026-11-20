@@ -65,6 +65,18 @@ fn aot_tapes_are_the_jits() {
             a.positions == j.positions
         };
         if !masks || !positions || a.counts != j.counts {
+            if tier1_differ.is_empty() {
+                let at = a.positions.iter().zip(&j.positions).position(|(x, y)| x != y);
+                let near = |p: &[u32], k: usize| p[k.saturating_sub(4)..(k + 4).min(p.len())].iter().map(|x| format!("{x:#x}")).collect::<Vec<_>>().join(" ");
+                eprintln!("file {i}: tier 1 masks {masks}, counts {:?} and {:?}, positions from {at:?}", a.counts, j.counts);
+                if let Some(k) = at {
+                    eprintln!("  generated: {}\n  JIT:       {}", near(&a.positions, k), near(&j.positions, k));
+                    let mut pairs: Vec<(u32, u32, u8)> = a.positions.chunks(3).zip(j.positions.chunks(3)).filter(|(x, y)| x != y).map(|(x, y)| (x[2], y[2], f.as_bytes().get(x[0] as usize).copied().unwrap_or(0))).collect();
+                    pairs.sort_unstable();
+                    pairs.dedup();
+                    eprintln!("  differing (generated, JIT, first byte): {:x?}", &pairs[..pairs.len().min(20)]);
+                }
+            }
             tier1_differ.push(i);
         }
         match (aot.parser.image(f.as_bytes()), jit.parser.image(f.as_bytes())) {
@@ -74,6 +86,8 @@ fn aot_tapes_are_the_jits() {
                     if differ.is_empty() {
                         let at = a.iter().zip(&j).position(|(x, y)| x != y).unwrap_or(a.len().min(j.len()));
                         eprintln!("file {i}: the tapes differ from byte {at} ({} and {} bytes)", a.len(), j.len());
+                        let w = |t: &[u8]| t[at.saturating_sub(16)..(at + 48).min(t.len())].iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+                        eprintln!("  generated: {}\n  JIT:       {}", w(&a), w(&j));
                     }
                     differ.push(i);
                 }

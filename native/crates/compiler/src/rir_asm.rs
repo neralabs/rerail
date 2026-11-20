@@ -778,7 +778,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
                     _ => None,
                 };
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), split: crate::records::Split::Tier1, quiet: false });
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false });
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
@@ -819,6 +819,18 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 }
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recpart {k}: no such reader"))?;
                 rd.parts.push(crate::records::ReadPart { start, bytes, last, kind });
+            } else if first == "reccontent" {
+                // `reccontent K KIND`: reader K's content's own kind (`Reader::content`).
+                let r = program.records.as_mut().ok_or(format!("block {at} reccontent before its records"))?;
+                let k: usize = line.number("")?;
+                let kind: u8 = line.number("")?;
+                r.readers.get_mut(k).ok_or(format!("block {at} reccontent {k}: no such reader"))?.content = Some(kind);
+            } else if first == "recclose" {
+                // `recclose K BYTE KIND`: reader K's closer at BYTE has its own kind (`Reader::closers`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recclose before its records"))?;
+                let k: usize = line.number("")?;
+                let (b, kind): (u8, u8) = (line.number("")?, line.number("")?);
+                r.readers.get_mut(k).ok_or(format!("block {at} recclose {k}: no such reader"))?.closers.push((b, kind));
             } else if first == "recquiet" {
                 // `recquiet K`: reader K's region holds no mask mark (`Reader::quiet`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recquiet before its records"))?;
