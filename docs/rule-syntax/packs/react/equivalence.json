@@ -44,8 +44,8 @@
           "translationOnly": 2
         },
         "samples-react": {
-          "originalOnly": 8,
-          "translationOnly": 32
+          "originalOnly": 0,
+          "translationOnly": 33
         }
       }
     },
@@ -78,7 +78,7 @@
       "right": "unknown",
       "counts": {
         "samples-react": {
-          "originalOnly": 5,
+          "originalOnly": 4,
           "translationOnly": 4
         }
       }
@@ -154,7 +154,7 @@
       "right": "unknown",
       "counts": {
         "samples-react": {
-          "originalOnly": 4,
+          "originalOnly": 0,
           "translationOnly": 36
         }
       }
@@ -169,16 +169,6 @@
         }
       }
     },
-    "react-jsx-no-leaked-render": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 3,
-          "translationOnly": 0
-        }
-      }
-    },
     "react-jsx-no-target-blank": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -188,7 +178,7 @@
           "translationOnly": 5
         },
         "samples-react": {
-          "originalOnly": 1,
+          "originalOnly": 0,
           "translationOnly": 1
         }
       }
@@ -222,8 +212,8 @@
       "right": "unknown",
       "counts": {
         "samples-react": {
-          "originalOnly": 2,
-          "translationOnly": 7
+          "originalOnly": 0,
+          "translationOnly": 8
         }
       }
     },
@@ -296,7 +286,7 @@
       "right": "unknown",
       "counts": {
         "samples-react": {
-          "originalOnly": 10,
+          "originalOnly": 0,
           "translationOnly": 20
         }
       }
@@ -306,7 +296,7 @@
       "right": "unknown",
       "counts": {
         "samples-react": {
-          "originalOnly": 2,
+          "originalOnly": 0,
           "translationOnly": 24
         }
       }
@@ -325,16 +315,6 @@
         },
         "samples-react": {
           "originalOnly": 21,
-          "translationOnly": 0
-        }
-      }
-    },
-    "react-self-closing-comp": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-react": {
-          "originalOnly": 1,
           "translationOnly": 0
         }
       }
