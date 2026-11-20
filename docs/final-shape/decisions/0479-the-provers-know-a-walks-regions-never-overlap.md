@@ -88,9 +88,11 @@ The four changes were measured together, not one by one.
 
 - Kotlin's 47 tests against the lean parser pass. The corpus (495 files) gives 429 the same,
   62 refused, 0 differ, as with the walk lemmas off and no runs.
-- `kotlin_parser::tests::a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes` checks
-  three things on step 09: the step compiles twice to the same program; the lemmas make it
-  smaller; and with the lemmas off (`bitlex_masks::NO_WALK_LEMMAS`) it reads each text the same.
+- `kotlin_parser::tests::the_grammar_compiles_to_one_program`: the grammar compiles twice to the
+  same program.
+- `kotlin_parser::tests::walk_lemmas_keep_the_tapes` (run by hand: without the lemmas the
+  grammar takes minutes to compile) checks that the lemmas make the program smaller, and that
+  with them off (`bitlex_masks::NO_WALK_LEMMAS`) it reads each text the same.
 - The compiler's prover, SAT and grammar tests pass, as do `parser_tests`' compile, JSON, block
   and `.rr` tests.
 
@@ -102,3 +104,11 @@ The four changes were measured together, not one by one.
   Step 22's Cranelift compile takes 23.6 s of it.
   `rr_tests::rr_steps_parse_as_the_reference_and_the_engine` takes 173 s: 59 s of Bitlex compile, 42 s of Cranelift.
   Both tests are in the quick tier, past its 20 s line.
+
+## Kotlin's ladder removed
+
+The user, 2026-11-20: "stop keeping the whole ladder ... I said stop keeping them at all". Steps
+01 to 34 are deleted. The last step is the grammar, `kotlin_parser/kotlin.bitlex`. The AOT test
+takes it as Kotlin's only step: 82 s, most of it rustc's build. The nine
+`what_step_N_does_not_read_is_refused` tests are one, `what_the_grammar_does_not_read_is_refused`.
+The step timings above are from before the removal.

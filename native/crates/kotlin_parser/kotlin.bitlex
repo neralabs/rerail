@@ -1,30 +1,33 @@
-# Kotlin, step 25: a class's delegate before its body.
+# Kotlin.
 #
-#   class A(d: C) : C by d {
-#   }
+# Reads headers, comments, declarations, types, statements, expressions, strings with
+# templates, raw strings with templates, characters, backtick names, callable references,
+# trailing commas, lambdas with destructured parameters, annotations, numbers, a class's
+# members, `when`, `;`, `try`, `as`, receivers, generic functions, delegation, object literals,
+# secondary constructors, destructuring, type arguments, enum classes, jumps to labels, `as?`,
+# reified type parameters, spread arguments, named function type parameters, parenthesized
+# types, type aliases, collection literals, strings in templates' code, a class's delegate
+# before its body, variance, `get` and `set` as names and a local delegate with dots, function
+# types with a receiver or `suspend`, annotated `if` and `when`, a `when` entry's trailing comma,
+# swallowed block comments, soft keywords after a template's `$`, `constructor` after modifiers
+# at a line's start, modifier words after a `.`, and `constructor` and `by` as names.
 #
-# The delegate's expression ends before the body's `{`, as the lean parser's does, where a name
-# and a `{` would be a call with a trailing lambda: the `{` has the mark that a class body
-# takes (`dotted`).
-#
-# Steps 1 to 24 read headers, comments, declarations, types, statements, expressions, strings
-# with templates, raw strings, characters, backtick names, callable references, trailing
-# commas, lambdas with destructured parameters, annotations, numbers, a class's members, `when`,
-# `;`, `try`, `as`, receivers, generic functions, delegation, object literals, secondary
-# constructors, destructuring, type arguments, enum classes, jumps to labels, `as?`, reified
-# type parameters, spread arguments, named function type parameters, parenthesized types, type
-# aliases, collection literals and strings in templates' code (`01-headers.bitlex` to
-# `24-strings-in-templates.bitlex`).
+# A raw string closes at its `"""` or at a template's `$` (`or t_dollar`: its closer is three
+# bytes, the `$` one). After the template's `}`, the string goes on as the kind of string the
+# template is in: a tail (`tail`) after a string, a raw tail (`rtail`) after a raw string. A
+# region kind's `after` says which: it opens only where the last region opened before, of the
+# kinds with no `after`, is one it names. A raw tail is read as the raw string's bytes are:
+# a run of them that reaches a quote first is a part of its own.
 #
 # A template's code ends at the first `}` on its line, found from the bytes before the
 # regions. A string or a character in the code is a region of its own, as anywhere in code.
 # Where that `}` is inside one (`"${f("}")}"`), it opens no tail: refused.
 #
 # The reference is the lean parser (`rerail_kotlin_lean`), whose tapes are tree-sitter-kotlin's
-# (decision 0305). What this step does not read is refused, and goes to the lean parser: a
-# template's code holding a brace, a template or a line break; `fun interface`, `suspend`
-# function types, an annotated expression, a function type's receiver, labels' definitions,
-# and more.
+# (decision 0305). What the grammar does not read is refused, and goes to the lean parser: a
+# template's code holding a brace, a template or a line break; a string, a character or a
+# backtick name in a raw string's template's code, a raw string in a template's code;
+# `fun interface`, labels' definitions, and more.
 
 lexer kotlin
 
@@ -86,14 +89,15 @@ mask rclose     = dq3 & ~next(dq, 3)
 regions hidden {
   line  = line_open .. lf outside
   block = block_open .. block_end
-  rstr  = dq3 .. rclose bytes 3
+  rstr  = dq3 .. rclose bytes 3 or t_dollar
   str   = dq & ~dq3 .. dq_close | t_dollar
-  tail  = t_close .. dq_close | t_dollar
   chr   = sq .. sq_close
   tick  = bt .. bt
+  tail  = t_close .. dq_close | t_dollar after str chr tick
+  rtail = t_close .. rclose bytes 3 or t_dollar after rstr
 }
 # Where a token in a region starts: a string's, a character's or a backtick name's opener.
-mask opens      = o_str | o_chr | o_tick | o_tail | o_rstr
+mask opens      = o_str | o_chr | o_tick | o_tail | o_rstr | o_rtail
 mask region     = hidden | o_line | o_block | opens
 # A template's `{`: its `$`'s token's, not code.
 mask t_brace    = t_lex & prev(hidden) & ~hidden
@@ -104,12 +108,19 @@ mask code       = ~region & ~t_brace
 # the `}` the bytes end the code at opens the tail, unless it is inside one of them.
 mask t_code     = fill(prev(t_brace), rbrace)
 escape "a `${…}` template with a brace, a template, a comment or a line break" when t_code & (lbrace | lf | line_open | block_open | dollar & next(lbrace))
-escape "a `${…}` template whose `}` is in a string of its code" when rbrace & prev(t_code) & ~o_tail
+escape "a `${…}` template whose `}` is in a string of its code" when rbrace & prev(t_code) & ~o_tail & ~o_rtail
+# A raw string's template: its `$` closed a raw string or a raw tail. A string, a character or a
+# backtick name in its code would make its `}` a tail's; a raw string in a string's template's
+# code, a raw tail's.
+mask rt_brace   = t_brace & prev(f_rstr | f_rtail, 2)
+mask rt_code    = fill(prev(rt_brace), rbrace)
+escape "a string, a character or a backtick name in a raw string's template" when rt_code & (o_str | o_chr | o_tick)
+escape "a raw string in a template's code" when t_code & o_rstr
 escape "an empty `${}`" when prev(t_brace) & rbrace
 escape "a `$` outside a string" when code & dollar
 
 error "a block comment open at the end of the file" by tokens when f_block & last_byte
-error "a string open at the end of the file" by tokens when (f_str | f_tail | f_rstr) & last_byte
+error "a string open at the end of the file" by tokens when (f_str | f_tail | f_rstr | f_rtail) & last_byte
 error "a character open at the end of the file" by tokens when f_chr & last_byte
 error "a backtick name open at the end of the file" by tokens when f_tick & last_byte
 # None of them goes over a line in Kotlin: one that does is not read.
@@ -117,11 +128,8 @@ escape "a string, a character or a backtick name over a line" when (f_str | f_ta
 
 # --- Strings -----------------------------------------------------------------------------------
 
-# A raw string's closer's first byte.
-mask rc1        = prev(f_rstr) & ~f_rstr
-# A raw string's bytes after its `"""`. No backslash escapes in it: a `\$` is not read yet.
-mask rbody      = f_rstr & ~o_rstr & ~prev(o_rstr) & ~prev(o_rstr, 2)
-escape "a `${…}` template in a raw string" when rbody & dollar & next(lbrace)
+# A raw string's bytes after its `"""`, and a raw tail's after its `}`. No backslash escapes in it: a `\$` is not read yet.
+mask rbody      = f_rstr & ~o_rstr & ~prev(o_rstr) & ~prev(o_rstr, 2) | f_rtail & ~o_rtail
 escape "a backslash before `$` in a raw string" when rbody & dollar & prev(backslash)
 # The lean parser keeps the quotes of a closing run past three as none of the string's leaves.
 escape "a raw string closed by four quotes or more" when rbody & dq & next(rclose)
@@ -135,9 +143,6 @@ escape "a `$` before a backtick" when s_dollar & next(bt)
 # `$name`: the `$`, then the name to its last word byte.
 mask id_dollar  = s_dollar & next(alpha)
 mask id_last    = s_word & ~next(s_word)
-# The lean parser gives a soft keyword after `$` a token of its own inside the
-# `interpolated_identifier`: not read yet.
-escape "a soft keyword after `$`" when prev(id_dollar) & (text("expect") & ~next(s_word, 6) | text("data") & ~next(s_word, 4) | text("inner") & ~next(s_word, 5) | text("value") & ~next(s_word, 5) | text("actual") & ~next(s_word, 6) | text("set") & ~next(s_word, 3) | text("get") & ~next(s_word, 3) | text("override") & ~next(s_word, 8) | text("suspend") & ~next(s_word, 7) | text("annotation") & ~next(s_word, 10) | text("sealed") & ~next(s_word, 6) | text("lateinit") & ~next(s_word, 8) | text("tailrec") & ~next(s_word, 7) | text("operator") & ~next(s_word, 8) | text("infix") & ~next(s_word, 5) | text("inline") & ~next(s_word, 6) | text("external") & ~next(s_word, 8) | text("public") & ~next(s_word, 6) | text("private") & ~next(s_word, 7) | text("internal") & ~next(s_word, 8) | text("protected") & ~next(s_word, 9) | text("abstract") & ~next(s_word, 8) | text("final") & ~next(s_word, 5) | text("open") & ~next(s_word, 4) | text("const") & ~next(s_word, 5) | text("vararg") & ~next(s_word, 6) | text("noinline") & ~next(s_word, 8) | text("crossinline") & ~next(s_word, 11) | text("reified") & ~next(s_word, 7) | text("field") & ~next(s_word, 5) | text("property") & ~next(s_word, 8) | text("receiver") & ~next(s_word, 8) | text("param") & ~next(s_word, 5) | text("setparam") & ~next(s_word, 8) | text("delegate") & ~next(s_word, 8) | text("companion") & ~next(s_word, 9) | text("constructor") & ~next(s_word, 11) | text("init") & ~next(s_word, 4) | text("dynamic") & ~next(s_word, 7) | text("where") & ~next(s_word, 5) | text("catch") & ~next(s_word, 5) | text("finally") & ~next(s_word, 7) | text("enum") & ~next(s_word, 4))
 # A `$` before no name: a content token of its own, the content after it another.
 mask lone       = s_dollar & ~next(alpha)
 
@@ -222,8 +227,11 @@ mask arrow_next = back_fill(code & text("->"), solid)
 # A class's header, from `class` to its `(`, `{` or `=`: the scanner's `constructor` context, where
 # a line starting with `constructor` goes on the one before (a primary constructor). In a class
 # body it starts a member: a secondary constructor.
-mask class_kw   = kw_start & text("class") & ~next(w, 5)
-mask class_head = fill(class_kw, code & (lbrace | text("(") | text("=") | semicolon))
+mask class_kw   = kw_start & text("class") & ~next(w, 5) & ~prev(text("::"), 2)
+# A class's header, and the run back from `constructor`, stop at a declaration's keyword: in `class A` then `internal
+# class B private constructor(…)`, A's header ends at its line.
+mask head_stop  = class_kw | kw_start & (text("fun") & ~next(w, 3) | text("val") & ~next(w, 3) | text("var") & ~next(w, 3) | text("object") & ~next(w, 6) | text("interface") & ~next(w, 9))
+mask class_head = fill(class_kw, code & (lbrace | text("(") | text("=") | semicolon) | head_stop)
 # `class A : I by d {`: the lean parser ends the delegate's expression before the body's `{`,
 # where a name followed by `{` is a call with a trailing lambda. That `{` (after a `by` in the
 # header, or an object's) has the mark a class body takes (`dotted`), which ends the
@@ -235,7 +243,8 @@ mask obj_decl   = fill(object_w, code & lbrace)
 mask del_brace  = head_brace & prev(fill(by_w & class_decl, lbrace)) | code & lbrace & prev(obj_decl) & prev(fill(by_w & obj_decl, lbrace))
 # A line of a class's header that starts with an annotation (no arguments) before its
 # `constructor`, on that line or the ones after: the primary constructor's modifiers.
-mask ctor_ann   = code & at_sign & class_head & back_fill(ctor_w & class_head, ~(code & (word | ws | dot | at_sign)))
+mask vis_w      = kw_start & (text("private") & ~next(w, 7) | text("protected") & ~next(w, 9) | text("internal") & ~next(w, 8) | text("public") & ~next(w, 6))
+mask ctor_ann   = code & (at_sign | vis_w) & class_head & back_fill(ctor_w & class_head, ~(code & (word | ws | dot | at_sign)) | head_stop)
 mask goes       = code & goes_on | code & text("!=") | else_w & ~next(arrow_next, 4) | as_w | where_w | catch_w | finally_w | by_w | ctor_w & class_head | ctor_ann
 # A line break in code where the next token does not go on the line: the statement's end. Before
 # a `}`, a mark of its own: a block's statements may end with one, a class body's members must.
@@ -259,15 +268,34 @@ mask asked_blk  = fill(o_block & prev(fill(ends_line & prev(fill(solid, lf)), so
 # After a token's line, before another comment, the scanner reads it through and the tree keeps a comment of no width
 # where the next one starts: not read yet.
 escape "a block comment that starts a line, before a comment" when block_end & prev(asked_blk) & next(back_fill(o_line | o_block, ~ws))
-escape "a block comment before a word with `a`, `e` or `w`" when block_end & prev(asked_blk) & next(back_fill(code & word & ~prev(w) & (text("a") | text("e") | text("w")), solid))
+# Swallowed where a semicolon may come: after a line that ends with a word, `)`, `]`, `}` or a
+# quote (`sw_blk`), and that is no header's (a header holds its semicolon, so its node would end
+# at the word), before no `else` (a `when` entry holds its line break the same way). After a `{` (`br_blk`) none may, and the comment is read as any other. After
+# any other line end, not read yet.
+mask awe_word   = code & word & ~prev(w) & (text("a") | text("e") | text("w")) & ~goes
+mask sw_word    = awe_word & ~else_w
+mask hdr_line   = fill(kw_start & (prev(fill(lf & code, solid)) | ~prev(~empty)) & (text("package") | text("import")), lf)
+mask hdr_gap    = fill(prev(hdr_line) & lf, solid)
+# (A fill holds at its start even where that is a stop: `& ~solid`, so that the last solid
+# byte before the line break is the one named.)
+mask ok_lf      = lf & fill(prev(code & (word | text(")") | text("]") | rbrace) | dq | text("'")) & ~solid, solid) & ~hdr_gap
+mask brace_lf   = lf & fill(prev(code & lbrace) & ~solid, solid)
+mask sw_blk     = fill(o_block & prev(fill(ends_line & prev(fill(solid, lf)) & ok_lf, solid)), block_end)
+mask br_blk     = fill(o_block & prev(fill(ends_line & brace_lf, solid)), block_end)
+escape "a block comment before a word with `a`, `e` or `w`" when block_end & prev(asked_blk) & ~prev(sw_blk) & ~prev(br_blk) & next(back_fill(awe_word, solid))
+escape "a block comment before `else`" when block_end & prev(sw_blk) & next(back_fill(awe_word & else_w, solid))
+mask swallow_end = block_end & prev(sw_blk) & next(back_fill(sw_word, solid))
+mask swallow_open = o_block & back_fill(next(swallow_end), ~sw_blk)
+mask swallowed  = sw_blk & back_fill(swallow_end, ~sw_blk) | swallow_end
 # The first token of each line, and the bytes of a line from an `@` or a visibility modifier
 # that starts it: `constructor` there may be a primary constructor's (the scanner's
 # `check_modifier_then_constructor`), not read yet.
 mask line_first = solid & prev(fill(lf & code, solid))
 escape "a `;` that starts a line" when code & semicolon & line_first
 escape "a `;` that ends the file" when code & semicolon & ~next(back_fill(solid, solid))
-mask line_mod   = fill(line_first & (at_sign | text("private") | text("protected") | text("internal") | text("public")), lf)
-escape "`constructor` after modifiers at a line's start" when ctor_w & line_mod
+mask line_mod   = fill(line_first & (at_sign | text("private") | text("protected") | text("internal") | text("public")), lf | head_stop)
+mask ctor_line  = fill(line_first & ctor_ann, lf)
+escape "`constructor` after modifiers at a line's start" when ctor_w & line_mod & class_head & ~ctor_line
 # `@Test // c` before a declaration: the annotation takes the line's semicolon, so the comment
 # would be the annotation's, where the lean parser keeps it the declaration's: not read yet.
 mask at_line    = fill(line_first & at_sign, lf)
@@ -286,7 +314,8 @@ mask decl_kw    = kw_start & (text("fun") | text("val") | text("var")) & ~next(w
 mask after_kw   = prev(decl_kw, 3)
 mask first_tok  = solid & (after_kw | prev(fill(after_kw & ~solid, solid)))
 mask tp_body    = fill(first_tok & text("<"), text(">"))
-mask decl_stop  = code & (text("(") | text(":") & ~tp_body | text("=") | lbrace | lf)
+# And the byte after a `by` (from its `b` the run would wait on the bytes after it).
+mask decl_stop  = code & (text("(") | text(":") & ~tp_body | text("=") | lbrace | lf) | prev(by_w, 2)
 mask decl_run   = fill(after_kw, decl_stop)
 mask rdot_at    = code & dot & decl_run & ~next(back_fill(code & dot & decl_run, ~decl_run))
 mask after_tp   = prev(text(">") & prev(tp_body))
@@ -300,7 +329,8 @@ escape "a nullable receiver" when rdot_at & prev(text("?"))
 mask as_kw      = kw_start & text("as") & ~next(w, 2)
 mask as_run     = fill(prev(as_kw, 2), ~(code & (word | dot | text(" ") | text("?"))))
 escape "a dotted type after `as` before a `<`" when code & text("<") & prev(fill(as_run & dot, ~as_run))
-mask acc_at     = code & (line_first | line_mod & acc_vis) & (text("get") | text("set")) & ~next(w, 3)
+mask get_call   = text("get") & next(back_fill(code & text("(") & ~text("()"), solid), 3)
+mask acc_at     = code & (line_first | line_mod & acc_vis) & (text("get") | text("set")) & ~next(w, 3) & ~next(back_fill(code & (dot | text(":")), solid), 3) & ~get_call
 
 # A name before `::` (`cref`).
 mask this_w     = kw_start & text("this") & ~next(w, 4)
@@ -322,7 +352,7 @@ mask lam_bare_at = lam_open & next(back_fill(code & text("->"), solid))
 # --- Tokens ------------------------------------------------------------------------------------
 
 token line_comment = start slash & o_line read line
-token multiline_comment = start slash & o_block read block
+token multiline_comment = start slash & o_block & ~swallow_open read block
 # A word and the `@` it touches: `return@` (`break@`, `continue@`, `this@`, `super@`), or a
 # label's definition (`loop@`). `as?`, and `enum` before `class`: one token each.
 mask at_after   = code & at_sign & prev(w)
@@ -369,12 +399,14 @@ token '"'       = start o_str | o_rstr read str | rstr parts {
                   } else string_content closes {
                     interpolation_expression_start = t_dollar bytes 2
                   }
-token interpolation_expression_end = start o_tail read tail parts {
+token interpolation_expression_end = start o_tail | o_rtail read tail | rtail parts {
+                    string_content = q_start last r_q
                     interpolation_identifier_start = id_dollar bytes 1
                     interpolated_identifier = prev(id_dollar) last id_last
                     string_content = lone bytes 1
                   } else string_content closes {
-                    '"' = dq_close bytes 1
+                    '"' = dq_close & prev(f_tail) bytes 1
+                    '"' = rclose & prev(f_rtail) bytes 3
                     interpolation_expression_start = t_dollar bytes 2
                   }
 # `\uXXXX`: tree-sitter keeps its `\u` as a token under the escape's node, its digits none.
@@ -390,20 +422,22 @@ mask p_start    = code & punct & ~second & ~nb & ~jat_last & ~prev(asq, 2) & ~th
 token punct     = start p_start pair two_start
 token op3       = start three last prev(three, 2)
 
-# The hard keywords: no name. `by` and `constructor` too (soft in tree-sitter-kotlin; a file that
-# names something so goes to the lean parser).
+# The hard keywords: no name. (`by` and `constructor` are soft, as in tree-sitter-kotlin.)
 keywords simple_identifier {
   "as" "break" "class" "continue" "do" "else" "false" "for" "fun" "if" "in" "interface" "is"
   "null" "object" "return" "super" "this" "throw" "true" "try" "typealias" "val" "var" "when"
-  "while" "by" "constructor" "return@" "break@" "continue@" "this@" "super@" "as?" "vararg" "noinline" "crossinline" "L" "u" "U" "uL" "UL"
+  "while" "return@" "break@" "continue@" "this@" "super@" "as?" "vararg" "noinline" "crossinline" "L" "u" "U" "uL" "UL"
 } soft {
-  "package" "import"
-  "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "init" "dynamic" "where" "catch" "finally" "enum" "file"
+  "package" "import" "by" "constructor"
+  "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "init" "dynamic" "where" "catch" "finally" "enum" "file" "out"
 }
+keywords interpolated_identifier { } soft { "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "vararg" "noinline" "crossinline" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "constructor" "init" "dynamic" "where" "catch" "finally" "enum" "out" }
 keywords op3 { "===" "!==" "..<" } required
 keywords punct { "." "*" "/" "," ":" "(" ")" "{" "}" "[" "]" ";" "<" ">" "=" "+" "-" "!" "?" "%" "@" "->" "==" "!=" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "?." "?:" ".." "!!" "::" } required
 
 skip ws
+# A swallowed comment's bytes: no token's.
+skip swallowed
 
 # A line break that ends a statement, or the file's end: the scanner's semicolon. The comments
 # before it are the statement's (`settles`).
@@ -419,9 +453,15 @@ mask wild_at    = code & dot & next(back_fill(code & star, solid))
 mask comp_w     = kw_start & text("companion") & ~next(w, 9)
 mask after_comp = fill(prev(comp_w, 9), solid)
 mask obj_at     = kw_start & text("object") & ~next(w, 6) & next(back_fill(code & (text(":") | lbrace), solid), 6) & ~prev(after_comp)
-mark dotted     = wild_at | recv_at | obj_at | del_brace
+# A function type's receiver's `.`: the next solid byte is a `(` (no expression has `.(`).
+mask ft_dot     = code & dot & next(back_fill(code & text("("), solid))
+# An annotation's `@` before an `if` or a `when`: back from the `)` before it to the `@`.
+mask ann_go     = kw_start & (text("if") & ~next(w, 2) | text("when") & ~next(w, 4))
+mask ann_tail   = code & text(")") & next(back_fill(ann_go, solid))
+mask ann_expr   = code & at_sign & next(back_fill(ann_tail, code & (at_sign | lf | lbrace | text(";"))))
+mark dotted     = wild_at | recv_at | obj_at | del_brace | ft_dot
 # A modifier word where a declaration follows it, not a name.
-mark decl_mod   = tokens "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "get" | "set" | "companion" | "constructor" | "enum" | "typealias" | "@"
+mark decl_mod   = tokens after ~("." | "?." | "::") "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "get" | "set" | "companion" | "constructor" | "enum" | "typealias" | "@"
 # A parameter's modifier word, before its name.
 mark acc        = acc_at
 # A name before `::`, but `this` (a navigation's receiver): a callable reference's receiver, at
@@ -439,7 +479,7 @@ mark lam_bare   = lam_bare_at
 mark use_site   = tokens after "@" "field" | "property" | "get" | "set" | "receiver" | "param" | "setparam" | "delegate" ":"
 mark file_at    = tokens "@" "file" ":"
 # A list's trailing comma, before its closer.
-mark trail      = tokens "," ")" | ">" | "]" | "}"
+mark trail      = tokens "," ")" | ">" | "]" | "}" | "->"
 # A name and `=` (or an assignment's operator): an assignment to it, or a named argument.
 mask asg_op     = code & (text("=") & ~text("==") | text("+=") | text("-=") | text("*=") | text("/=") | text("%="))
 mask aid_at     = word_start & back_fill(w & ~next(w) & next(back_fill(asg_op, solid)), ~w)
@@ -448,7 +488,9 @@ mask aid_at     = word_start & back_fill(w & ~next(w) & next(back_fill(asg_op, s
 # name and `:`, and no function type's parameter a name and `=`.
 mask colon_one  = code & text(":") & ~text("::") & ~prev(text(":"))
 mask pname_at   = word_start & back_fill(w & ~next(w) & next(back_fill(colon_one, solid)), ~w)
-mark named      = aid_at | pname_at
+# And a `!` that starts a line before `in` or `is`: a `when` entry's negated test.
+mask bang_test  = code & text("!") & prev(fill(lf & code, solid)) & next(text("in") & ~next(w, 2) | text("is") & ~next(w, 2))
+mark named      = aid_at | pname_at | bang_test
 # A `<` that opens type arguments in an expression (the lean parser's `type_args_end`): the bytes
 # from it are a type's (words, blanks, `, . ? * @ : < > [ ] & -`) up to a `>` that `(`, `{`, `.`,
 # `?.` or `::` follows. It touches the name before it, as a comparison's `<` seldom does (the lean
@@ -461,17 +503,22 @@ mask gen_lt     = code & text("<") & ~text("<=") & prev(w) & back_fill(gt_ok, ~t
 # no type starts with `<`, and no type arguments with `(`.
 mask colon_ty   = code & text(":") & ~text("::") & ~prev(text(":")) & ~prev(text("?"))
 mask ptype_at   = code & text("(") & prev(fill(prev(colon_ty), solid)) & next(back_fill(code & text("("), solid))
-mark generic    = gen_lt | ptype_at
+# And a function type's receiver's first name (`frecv`), back from its `ft_dot` over names,
+# dots and type arguments without blanks, and a `suspend` after a `:` before a `(`.
+mask ft_run     = back_fill(ft_dot, ~(w | dot | text("<") | text(">")))
+mask frecv      = w & ft_run & ~prev(ft_run)
+mask suspend_ty = code & text("suspend") & ~next(w, 7) & prev(fill(prev(colon_ty), solid)) & next(back_fill(code & text("("), solid), 7)
+mark generic    = gen_lt | ptype_at | frecv | suspend_ty | ann_expr
 
 tree kotlin {
   node source_file whole = (file_at file_annotation semi)* [package_header] [import_list] (statement (semi | ';'))*
   # A name: a word, or a soft keyword, which tree-sitter keeps as a leaf under the name's node.
   # `file` is a keyword for `@file:` alone: as a name, the lean parser's plain one (no word leaf).
-  choice name           = simple_identifier | backtick_name as simple_identifier | soft_name | 'file' as simple_identifier
+  choice name           = simple_identifier | backtick_name as simple_identifier | soft_name | 'file' as simple_identifier | 'out' as simple_identifier | 'by' as simple_identifier
   node soft_name        = retag simple_identifier soft_word
   choice type_name      = simple_identifier as type_identifier | backtick_name as type_identifier | soft_type_name | 'file' as type_identifier
   node soft_type_name   = retag type_identifier soft_word
-  choice soft_word      = 'expect' | 'data' | 'inner' | 'value' | 'actual' | 'set' | 'get' | 'override' | 'suspend' | 'annotation' | 'sealed' | 'lateinit' | 'tailrec' | 'operator' | 'infix' | 'inline' | 'external' | 'public' | 'private' | 'internal' | 'protected' | 'abstract' | 'final' | 'open' | 'const' | 'field' | 'property' | 'receiver' | 'param' | 'setparam' | 'delegate' | 'companion' | 'init' | 'dynamic' | 'where' | 'catch' | 'finally' | 'enum'
+  choice soft_word      = 'constructor' | 'expect' | 'data' | 'inner' | 'value' | 'actual' | 'set' | 'get' | 'override' | 'suspend' | 'annotation' | 'sealed' | 'lateinit' | 'tailrec' | 'operator' | 'infix' | 'inline' | 'external' | 'public' | 'private' | 'internal' | 'protected' | 'abstract' | 'final' | 'open' | 'const' | 'field' | 'property' | 'receiver' | 'param' | 'setparam' | 'delegate' | 'companion' | 'init' | 'dynamic' | 'where' | 'catch' | 'finally' | 'enum'
   node package_header   = 'package' identifier (semi | ';')
   node identifier       = name ('.' name)*
   node import_list      = import_header+
@@ -545,7 +592,7 @@ tree kotlin {
   node constructor_delegation_call = ('this' | 'super') value_arguments
   node type_parameters  = [generic] '<' type_parameter (',' type_parameter)* (trail_angle | '>')
   node type_parameter   = [type_parameter_modifiers] type_name [':' type]
-  node type_parameter_modifiers = (reification_modifier)+
+  node type_parameter_modifiers = (reification_modifier | variance_modifier)+
   node reification_modifier = 'reified'
 
   # Modifiers: an annotation, or a word a declaration follows (`decl_mod`).
@@ -569,13 +616,21 @@ tree kotlin {
   # --- Types -------------------------------------------------------------------------------------
 
   choice type nested    = user_type [wrap nullable_type _ ('?' as quest)+] | function_type
-                        | generic parenthesized_type [wrap nullable_type _ ('?' as quest)+]
+                        | generic (parenthesized_type [wrap nullable_type _ ('?' as quest)+] | recv_function_type | type_modifiers function_type)
+  node recv_function_type = retag function_type receiver: fn_receiver dotted '.' function_type_parameters '->' type
+  node fn_receiver      = retag receiver_type fn_receiver_type
+  # Its first name is no soft word, which `suspend` would be (a soft word's receiver is refused).
+  node fn_receiver_type = retag user_type fn_name [type_arguments] ('.' type_name [type_arguments])*
+  choice fn_name        = simple_identifier as type_identifier | backtick_name as type_identifier
+  node type_modifiers   = 'suspend'
   node parenthesized_type = '(' type ')'
   choice receiver       = dotted receiver: receiver_type dotted '.'
   node receiver_type    = type
   node user_type        = type_name [type_arguments] ('.' type_name [type_arguments])*
   node type_arguments   = [generic] '<' type_projection (',' type_projection)* (trail_angle | '>')
-  node type_projection  = type | '*'
+  node type_projection  = [type_projection_modifiers] type | '*'
+  node type_projection_modifiers = variance_modifier+
+  node variance_modifier = 'in' | 'out'
   node function_type    = function_type_parameters '->' type
   node function_type_parameters = '(' [ft_parameter (',' ft_parameter)*] (trail_paren | ')')
   choice ft_parameter   = named parameter | type
@@ -620,7 +675,7 @@ tree kotlin {
   # generic call's type arguments there over the whole operation (`a to f<T>()` is
   # `call(infix(a, f), <T>())`), not read yet. Its `generic` mark is taken by no rule: refused.
   choice unary_tight nested = prefix_expression | primary_tight (postfix_op)*
-  node prefix_expression = ('!' | '-' | '+' | '++' | '--') unary_level
+  node prefix_expression = ('!' | '-' | '+' | '++' | '--') unary_level | generic args_annotation (if_expression | when_expression)
   choice postfix_op     = wrap call_expression _ call_suffix
                         | wrap navigation_expression _ navigation_suffix
                         | wrap indexing_expression _ indexing_suffix
@@ -652,9 +707,11 @@ tree kotlin {
   node uni_escape       = retag character_escape_seq "\\u" uni_digits
   # An integer and its suffix: the suffix's node wraps the integer, and keeps no leaf of it.
   choice number_literal nested = (integer_literal | hex_literal | bin_literal) [wrap long_literal _ 'L' | wrap unsigned_literal _ ('u' | 'U' | 'uL' | 'UL')] | real_literal
-  node string_literal   = '"' ('""' (string_content | interpolation_identifier_start interpolated_identifier)*
-                          | (string_content | interpolation_identifier_start interpolated_identifier
-                          | interpolation_expression_start interpolated_expression interpolation_expression_end)*) '"'
+  choice interp_id      = interpolated_identifier | soft_interp
+  node soft_interp      = retag interpolated_identifier interp_soft
+  choice interp_soft    = 'expect' | 'data' | 'inner' | 'value' | 'actual' | 'set' | 'get' | 'override' | 'suspend' | 'annotation' | 'sealed' | 'lateinit' | 'tailrec' | 'operator' | 'infix' | 'inline' | 'external' | 'public' | 'private' | 'internal' | 'protected' | 'abstract' | 'final' | 'open' | 'const' | 'vararg' | 'noinline' | 'crossinline' | 'reified' | 'field' | 'property' | 'receiver' | 'param' | 'setparam' | 'delegate' | 'companion' | 'constructor' | 'init' | 'dynamic' | 'where' | 'catch' | 'finally' | 'enum' | 'out'
+  node string_literal   = '"' ['""'] (string_content | interpolation_identifier_start interp_id
+                          | interpolation_expression_start interpolated_expression interpolation_expression_end)* '"'
   node interpolated_expression = expression
   node this_expression  = 'this' | 'this@' type_name
   node object_literal   = 'object' [':' delegation_specifier (',' delegation_specifier)*] [class_body]
@@ -671,15 +728,23 @@ tree kotlin {
   # a comment before the break is the entry's.
   node when_expression  = 'when' [when_subject blk] '{' (when_entry)* '}'
   node when_subject     = '(' ['val' variable_declaration '='] expression ')'
-  node when_entry       = (when_condition (',' when_condition)* | 'else') '->' control_structure_body (semi | semi_close)
-  node when_condition   = range_test | type_test | expression
+  node when_entry       = (when_condition (',' when_condition)* [when_trail] | 'else') '->' control_structure_body (semi | semi_close)
+  node when_condition   = named neg_test | range_test | type_test | expression
+  # One node from the `!`: a `range_test`, retagged a `type_test` at an `is`.
+  node neg_test         = retag range_test '!' ('in' expression | neg_is)
+  choice neg_is         = retag type_test 'is' type
   node range_test       = 'in' expression
   node type_test        = 'is' type
   node if_expression    = 'if' '(' condition: expression ')' consequence: control_structure_body ['else' alternative: control_structure_body]
+  # An annotated `if` or `when`'s annotation. Its arguments are not optional: a `(` after the
+  # name could begin the operand too.
+  node args_annotation  = retag annotation '@' user_type (wrap constructor_invocation _ value_arguments) [semi]
 
   # A trailing comma: the lean parser leaves a list's tokens out only where they are the ones the
   # grammar implies, so after one the `,` and the closer are leaves.
   choice trail_paren    = trail ',' ')'
+  # A `when` entry's: its own choice, so that `when_entry`'s implied `,` is not this one.
+  choice when_trail     = trail ','
   choice trail_angle    = trail ',' '>'
   choice trail_bracket  = trail ',' ']'
   choice trail_brace    = trail ',' [semi_close] '}'
@@ -721,9 +786,11 @@ tree kotlin {
   implied init_rest 'init'
   implied type_parameters '<' '>' ','
   implied user_type '.'
+  implied fn_receiver_type '.'
   implied as_user_type '.'
   implied type_arguments '<' '>' ','
   implied function_type '->'
+  implied recv_function_type '.' '->'
   implied function_type_parameters '(' ')' ','
   implied elvis_op '?:'
   implied conj_op '&&'

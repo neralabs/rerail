@@ -627,6 +627,10 @@ load about 18): 420 s wall, the Rust's build 69 s of it; the Bitlex compile 165 
 Step 35's tier 2 is 15,424 words, down from 23,146. Kotlin's tests against the lean parser all
 pass. The corpus is unchanged: 429 the same, 62 refused, 0 differ.
 
+Then Kotlin's ladder was removed (the user: "stop keeping them at all"). Steps 01 to 34 are
+deleted, and the grammar is `kotlin_parser/kotlin.bitlex`, the last step. The AOT test runs it as
+Kotlin's one step, in 82 s.
+
 ## Step 32, done: the commit point moved back by an edit, shown to be unobservable in format 16
 
 Step 28 left one mutation uncovered: an edit before the commit point not moving it back (`uncode`:

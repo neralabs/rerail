@@ -404,14 +404,61 @@ fn raw_templates_are_the_lean_parsers() {
     same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+/// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
-fn what_step_35_does_not_read_is_refused() {
+fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
         // A string, a character or a backtick name in a raw string's template: its `}` would
         // open a tail; a raw string in a template, a raw tail.
         "val h = \"\"\"${f(\"a\")}\"\"\"\n",
         "val h = \"\"\"${f('a')}\"\"\"\n",
         "val h = \"${f(\"\"\"a\"\"\")}\"\n",
+        // The lean parser's `fun` leaf: a function's `fun` is implied, and the `interface`
+        // after it comes too late to keep it.
+        "fun interface A {\n    fun f()\n}\n",
+        "package a\n\n/* c */\nabstract class A\n",
+        "package a\n/* c */\nabstract class A\n",
+        "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
+        "fun f() {\n    a +\n    /* c */\n    abstract()\n}\n",
+        "fun f() {\n    g(\n        a(),\n        /* c */ eq(false),\n    )\n}\n",
+        "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
+        "val s = \"${f(\"}\")}\"\n",
+        "val s = \"${f(\"${x}\")}\"\n",
+        "val s = \"${if (a) { 1 } else 2}\"\n",
+        "fun interface P {\n    fun f()\n}\n",
+        "fun f(g: ((Int) -> Int) -> Int) {}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
+        "fun <T : Comparable<T>> B.f() {}\n",
+        "val <T : Any> List<T>.second: T get() = this[1]\n",
+        "val h = \"\"\"\"a\"\"\"\n",
+        "val h = \"\"\"a\"\"\"\"\n",
+        "val h = \"\"\"\\$a\"\"\"\n",
+        "val a = b to f<T>()\n",
+        "val a = x + f<T>(1)\n",
+        "val a = x < f<T>(1)\n",
+        "import a.b import c\n",
+        "val s = 'x\n",
+        "val s = \"a\nb\"\n",
+        "val s = \"${ {x} }\"\n",
+        "val s = \"${}\"\n",
+        "val s = \"open\n",
+        "/* /* nested */ */\npackage a\n",
+        "/* open\n",
+        "val f = { a, -> a }\n",
+        "val x = when (y) { else -> 1 }\n",
+        "val x = 1d\n",
+        "val x = 1.5L\n",
+        "val x = 1_\n",
+        "val x = 0x\n",
+        "class A { val x = 1 }\n",
+        "val x: Int\n    get() = 1\n",
+        "fun f(noinline: Int) {}\n",
+        "fun String?.h() = 1\n",
+        "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
+        "val a = b as java.util.List<Int>\n",
+        "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
+        "fun f() {\n    a\n    /* c */ .b()\n}\n",
     ]);
 }
 
@@ -507,34 +554,6 @@ fn delegates_and_names_are_the_lean_parsers() {
 }
 
 #[test]
-fn what_step_34_does_not_read_is_refused() {
-    refused(&[
-        // The lean parser's `fun` leaf: a function's `fun` is implied, and the `interface`
-        // after it comes too late to keep it.
-        "fun interface A {\n    fun f()\n}\n",
-    ]);
-}
-
-#[test]
-fn what_step_30_does_not_read_is_refused() {
-    refused(&[
-        "package a\n\n/* c */\nabstract class A\n",
-        "package a\n/* c */\nabstract class A\n",
-        "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
-        "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
-        "fun f() {\n    a +\n    /* c */\n    abstract()\n}\n",
-        "fun f() {\n    g(\n        a(),\n        /* c */ eq(false),\n    )\n}\n",
-    ]);
-}
-
-#[test]
-fn what_step_27_does_not_read_is_refused() {
-    refused(&[
-        "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
-    ]);
-}
-
-#[test]
 fn variance_and_accessors_are_the_lean_parsers() {
     same(&[
         "fun f(a: Array<out Any>) {}\n",
@@ -562,72 +581,6 @@ fn class_delegates_are_the_lean_parsers() {
         "class A(d: C) : C by d\n",
         "class A {\n    val b by lazy { 1 }\n}\n",
         "fun f() = object : I by itr {\n    override fun g() = 1\n}\n",
-    ]);
-}
-
-#[test]
-fn what_step_24_does_not_read_is_refused() {
-    refused(&[
-        "val s = \"${f(\"}\")}\"\n",
-        "val s = \"${f(\"${x}\")}\"\n",
-        "val s = \"${if (a) { 1 } else 2}\"\n",
-    ]);
-}
-
-#[test]
-fn what_step_23_does_not_read_is_refused() {
-    refused(&[
-        "fun interface P {\n    fun f()\n}\n",
-        "fun f(g: ((Int) -> Int) -> Int) {}\n",
-    ]);
-}
-
-#[test]
-fn what_step_22_does_not_read_is_refused() {
-    refused(&[
-        "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
-        "fun <T : Comparable<T>> B.f() {}\n",
-        "val <T : Any> List<T>.second: T get() = this[1]\n",
-    ]);
-}
-
-#[test]
-fn what_step_21_does_not_read_is_refused() {
-    refused(&[
-        "val h = \"\"\"\"a\"\"\"\n",
-        "val h = \"\"\"a\"\"\"\"\n",
-        "val h = \"\"\"\\$a\"\"\"\n",
-    ]);
-}
-
-#[test]
-fn what_step_20_does_not_read_is_refused() {
-    refused(&[
-        "val a = b to f<T>()\n",
-        "val a = x + f<T>(1)\n",
-        "val a = x < f<T>(1)\n",
-        "import a.b import c\n",
-        "val s = 'x\n",
-        "val s = \"a\nb\"\n",
-        "val s = \"${ {x} }\"\n",
-        "val s = \"${}\"\n",
-        "val s = \"open\n",
-        "/* /* nested */ */\npackage a\n",
-        "/* open\n",
-        "val f = { a, -> a }\n",
-        "val x = when (y) { else -> 1 }\n",
-        "val x = 1d\n",
-        "val x = 1.5L\n",
-        "val x = 1_\n",
-        "val x = 0x\n",
-        "class A { val x = 1 }\n",
-        "val x: Int\n    get() = 1\n",
-        "fun f(noinline: Int) {}\n",
-        "fun String?.h() = 1\n",
-        "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
-        "val a = b as java.util.List<Int>\n",
-        "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
-        "fun f() {\n    a\n    /* c */ .b()\n}\n",
     ]);
 }
 
@@ -687,7 +640,7 @@ fn corpus() {
 }
 
 /// The lean parser's tape for each file in `RERAIL_KOTLIN_SHOW` (paths, `:`-separated), and the
-/// grammar's or why it refuses: the reference a ladder step is written against.
+/// grammar's or why it refuses: the reference the grammar is written against.
 #[test]
 #[ignore = "a tool: set RERAIL_KOTLIN_SHOW"]
 fn show() {
@@ -787,7 +740,7 @@ fn show() {
 }
 
 /// The tier 2 program's size, by its words' opcodes (`RERAIL_KOTLIN_GRAMMAR`: another grammar
-/// file than the ladder's last).
+/// file than the crate's).
 #[test]
 #[ignore = "a measurement: run by hand"]
 fn program_size() {
@@ -845,21 +798,26 @@ fn tier1_records() {
     }
 }
 
-/// One grammar compiles to one program, each time (the compiler's maps hash with a fixed seed), and the walk lemmas
-/// (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap) change only what tier 2 is proved to need: a
-/// step whose walk they speak of reads each text as without them, the same tape or the same refusal.
+/// One grammar compiles to one program, each time: the compiler's maps hash with a fixed seed.
 #[test]
-fn a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder/09-numbers.bitlex")).expect("step 09");
-    let with = compile_text(&source).expect("step 09 compiles");
-    assert!(!with.program.block_programs[0].walks.is_empty(), "step 09 has no walk for the lemmas");
-    let again = compile_text(&source).expect("step 09 compiles");
-    assert!(with.words == again.words && with.program.words == again.program.words, "step 09 compiles to two programs");
+fn the_grammar_compiles_to_one_program() {
+    let with = super::compiled().expect("the grammar compiles");
+    let again = compile_text(GRAMMAR).expect("the grammar compiles");
+    assert!(with.words == again.words && with.program.words == again.program.words, "the grammar compiles to two programs");
+}
+
+/// The walk lemmas (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap) change only what tier 2 is proved
+/// to need: the grammar reads each text as without them, the same tape or the same refusal.
+#[test]
+#[ignore = "compiles the grammar without the walk lemmas: minutes"]
+fn walk_lemmas_keep_the_tapes() {
+    let with = super::compiled().expect("the grammar compiles");
+    assert!(!with.program.block_programs[0].walks.is_empty(), "the grammar has no walk for the lemmas");
     bitlex_compile::NO_WALK_LEMMAS.set(true);
-    let without = compile_text(&source);
+    let without = compile_text(GRAMMAR);
     bitlex_compile::NO_WALK_LEMMAS.set(false);
-    let without = without.expect("step 09 compiles without the walk lemmas");
-    assert!(with.program.words.len() < without.program.words.len(), "the walk lemmas prove nothing in step 09: {} words either way", with.program.words.len());
+    let without = without.expect("the grammar compiles without the walk lemmas");
+    assert!(with.program.words.len() < without.program.words.len(), "the walk lemmas prove nothing: {} words either way", with.program.words.len());
     let texts = [
         "package a\n\nimport b.c\n",
         "val s = \"a // b\" // c \"d\"\n",
