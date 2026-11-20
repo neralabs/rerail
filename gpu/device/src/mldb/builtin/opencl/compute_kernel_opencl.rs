@@ -958,7 +958,14 @@ struct Enqueue<'a> {
     /// The device's host allocations' entry points (`usm`).
     usm: Option<&'a Usm>,
     q: Ptr,
-    kernels: Vec<Event>,
+    kernels: Vec<Launched>,
+}
+
+/// A command of a submission (a kernel's launch, a copy, a fill): its event (its device time, and its status when
+/// the work fails) and what it is.
+struct Launched {
+    event: Event,
+    name: String,
 }
 
 /// An operation of a queue: work to enqueue, or a wait for a host-signalled event that holds what follows.
@@ -969,6 +976,16 @@ enum Op {
 
 /// A flush's work not yet enqueued, with what its event will hold.
 impl Enqueue<'_> {
+    /// A command `enqueue` makes, its event kept as `what` (a failed submission names the command that failed).
+    fn command(&mut self, what: String, call: &str, enqueue: impl FnOnce(&Api, Ptr, *mut Ptr) -> ClInt) -> Result<(), String> {
+        let mut ev = std::ptr::null_mut();
+        check(call, enqueue(self.a, self.q, &mut ev))?;
+        if !ev.is_null() {
+            self.kernels.push(Launched { event: Event(ev), name: what });
+        }
+        Ok(())
+    }
+
     /// A copy of `n` bytes at `src` to `dst`, one a host allocation, in the queue's order.
     fn memcpy(&self, dst: usize, src: usize, n: usize) -> Result<(), String> {
         let u = self.usm.ok_or("OpenCL: a host allocation's copy on a device without them")?;
@@ -978,7 +995,7 @@ impl Enqueue<'_> {
 
 struct Pending {
     ops: std::collections::VecDeque<Op>,
-    kernels: Vec<Event>,
+    kernels: Vec<Launched>,
     error: Option<String>,
     done: Arc<Done>,
 }
@@ -989,7 +1006,7 @@ struct Pending {
 struct DoneState {
     enqueued: bool,
     marker: Option<Event>,
-    kernels: Vec<Event>,
+    kernels: Vec<Launched>,
     error: Option<String>,
     keep: Vec<Box<dyn std::any::Any + Send>>,
     seconds: Option<f64>,
@@ -1005,8 +1022,12 @@ impl Drop for Done {
     fn drop(&mut self) {
         // The kept buffers go with the last holder: not before the work that reads them has completed.
         let d = self.state.get_mut().unwrap();
-        if let (Some(m), Ok(a)) = (&d.marker, api()) {
-            unsafe { (a.wait_for_events)(1, &m.0) };
+        if let (Some(m), Ok(a)) = (&d.marker, api())
+            && unsafe { (a.wait_for_events)(1, &m.0) } != CL_SUCCESS
+        {
+            // Work no one awaited failed: said here, as no caller will see it (the commands after it then fail).
+            let what = failed_kernel(a, &d.kernels).unwrap_or_else(|| format!("none of its {} commands says it failed", d.kernels.len()));
+            eprintln!("rerail: OpenCL work dropped before it was awaited failed: {what}");
         }
     }
 }
@@ -1049,8 +1070,8 @@ impl ClComputeQueue {
         self.keep(dst.clone());
         self.keep(bytes);
         self.push(move |c| match d {
-            Mem::Cl(d) => check("clEnqueueWriteBuffer", unsafe {
-                (c.a.enqueue_write_buffer)(c.q, d as Ptr, CL_FALSE, dst_offset as usize, b.len(), b.as_ptr().cast(), 0, std::ptr::null(), std::ptr::null_mut())
+            Mem::Cl(d) => c.command(format!("a write of {} bytes from the host", b.len()), "clEnqueueWriteBuffer", |a, q, ev| unsafe {
+                (a.enqueue_write_buffer)(q, d as Ptr, CL_FALSE, dst_offset as usize, b.len(), b.as_ptr().cast(), 0, std::ptr::null(), ev)
             }),
             Mem::Usm(d) => c.memcpy(d + dst_offset as usize, b.as_ptr() as usize, b.len()),
         });
@@ -1092,8 +1113,8 @@ impl ClComputeQueue {
                         check("clSetKernelArg", unsafe { (c.a.set_kernel_arg)(k.0, 1 + i as ClUint, 4, (v as *const u32).cast()) })?;
                     }
                     let global = args[1] as usize;
-                    check("the fill kernel", unsafe {
-                        (c.a.enqueue_nd_range_kernel)(c.q, k.0, 1, std::ptr::null(), &global, std::ptr::null(), 0, std::ptr::null(), std::ptr::null_mut())
+                    c.command(format!("the fill kernel ({} words)", args[1]), "the fill kernel", |a, q, ev| unsafe {
+                        (a.enqueue_nd_range_kernel)(q, k.0, 1, std::ptr::null(), &global, std::ptr::null(), 0, std::ptr::null(), ev)
                     })
                 });
             }
@@ -1115,16 +1136,16 @@ impl ClComputeQueue {
         self.keep(dst.clone());
         let (so, dof, n) = (src_offset as usize, dst_offset as usize, length as usize);
         self.push(move |c| match (s, d) {
-            (Mem::Cl(s), Mem::Cl(d)) => check("clEnqueueCopyBuffer", unsafe {
-                (c.a.enqueue_copy_buffer)(c.q, s as Ptr, d as Ptr, so, dof, n, 0, std::ptr::null(), std::ptr::null_mut())
+            (Mem::Cl(s), Mem::Cl(d)) => c.command(format!("a copy of {n} bytes"), "clEnqueueCopyBuffer", |a, q, ev| unsafe {
+                (a.enqueue_copy_buffer)(q, s as Ptr, d as Ptr, so, dof, n, 0, std::ptr::null(), ev)
             }),
             (Mem::Usm(s), Mem::Usm(d)) => c.memcpy(d + dof, s + so, n),
             // A host allocation's pages are host memory: the buffer's own write or read of them, in the queue's order.
-            (Mem::Usm(s), Mem::Cl(d)) => check("clEnqueueWriteBuffer", unsafe {
-                (c.a.enqueue_write_buffer)(c.q, d as Ptr, CL_FALSE, dof, n, (s + so) as *const c_void, 0, std::ptr::null(), std::ptr::null_mut())
+            (Mem::Usm(s), Mem::Cl(d)) => c.command(format!("a write of {n} bytes from a host allocation"), "clEnqueueWriteBuffer", |a, q, ev| unsafe {
+                (a.enqueue_write_buffer)(q, d as Ptr, CL_FALSE, dof, n, (s + so) as *const c_void, 0, std::ptr::null(), ev)
             }),
-            (Mem::Cl(s), Mem::Usm(d)) => check("clEnqueueReadBuffer", unsafe {
-                (c.a.enqueue_read_buffer)(c.q, s as Ptr, CL_FALSE, so, n, (d + dof) as *mut c_void, 0, std::ptr::null(), std::ptr::null_mut())
+            (Mem::Cl(s), Mem::Usm(d)) => c.command(format!("a read of {n} bytes into a host allocation"), "clEnqueueReadBuffer", |a, q, ev| unsafe {
+                (a.enqueue_read_buffer)(q, s as Ptr, CL_FALSE, so, n, (d + dof) as *mut c_void, 0, std::ptr::null(), ev)
             }),
         });
     }
@@ -1155,14 +1176,23 @@ pub struct ClComputeEvent {
     done: Arc<Done>,
 }
 
-fn kernel_seconds(kernels: &[Event]) -> f64 {
+fn kernel_seconds(kernels: &[Launched]) -> f64 {
     let Ok(a) = api() else { return 0.0 };
     let at = |e: &Event, p| {
         let mut t = 0u64;
         unsafe { (a.get_event_profiling_info)(e.0, p, 8, (&mut t as *mut u64).cast(), std::ptr::null_mut()) };
         t
     };
-    kernels.iter().map(|k| at(k, CL_PROFILING_COMMAND_END).saturating_sub(at(k, CL_PROFILING_COMMAND_START))).sum::<u64>() as f64 * 1e-9
+    kernels.iter().map(|k| at(&k.event, CL_PROFILING_COMMAND_END).saturating_sub(at(&k.event, CL_PROFILING_COMMAND_START))).sum::<u64>() as f64 * 1e-9
+}
+
+/// The first of `kernels` whose command failed, with its status: the command a failed submission names.
+fn failed_kernel(a: &Api, kernels: &[Launched]) -> Option<String> {
+    kernels.iter().find_map(|k| {
+        let mut status: ClInt = CL_COMPLETE;
+        unsafe { (a.get_event_info)(k.event.0, CL_EVENT_COMMAND_EXECUTION_STATUS, 4, (&mut status as *mut ClInt).cast(), std::ptr::null_mut()) };
+        (status < 0).then(|| format!("{} failed ({status})", k.name))
+    })
 }
 
 impl ClComputeEvent {
@@ -1173,8 +1203,14 @@ impl ClComputeEvent {
         while !d.enqueued {
             d = self.done.cv.wait(d).unwrap();
         }
-        if let Some(m) = &d.marker {
-            check("clWaitForEvents", unsafe { (a.wait_for_events)(1, &m.0) })?;
+        if let Some(m) = &d.marker
+            && let Err(e) = check("clWaitForEvents", unsafe { (a.wait_for_events)(1, &m.0) })
+        {
+            // The command that failed, of the submission's: what the error names.
+            return Err(match failed_kernel(a, &d.kernels) {
+                Some(k) => format!("{e}: {k}"),
+                None => format!("{e}: none of its {} commands says it failed", d.kernels.len()),
+            });
         }
         d.keep.clear();
         if d.seconds.is_none() {
@@ -1331,7 +1367,7 @@ impl ClBindContext<'_> {
             check(&format!("{name}: launch"), unsafe {
                 (c.a.enqueue_nd_range_kernel)(c.q, k.0, 3, std::ptr::null(), global.as_ptr(), block.as_ptr(), 0, std::ptr::null(), &mut ev)
             })?;
-            c.kernels.push(Event(ev));
+            c.kernels.push(Launched { event: Event(ev), name: name.clone() });
             Ok(())
         });
         Ok(())
