@@ -43,6 +43,12 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static A: Counting = Counting;
 
+/// Instructions retired by this process: macOS's `proc_pid_rusage`; none counted elsewhere.
+#[cfg(not(target_vendor = "apple"))]
+fn retired() -> u64 {
+    0
+}
+#[cfg(target_vendor = "apple")]
 fn retired() -> u64 {
     let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
     let ok = unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };

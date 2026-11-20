@@ -3910,6 +3910,8 @@ native join it falls back to the planner's whole-rule order.
 - **Found** (2026-11-19, 0477): `RERAIL_DEFERRED_JOINS=auto` took 7-12% more instructions on corpus0 x B-now for the
   same findings, so it is off by default. It rewrote pair demand into many rules (`c4_elt`, `c4_comp`, `exc_call`,
   ...), each a few more strata, where the joins were cheap as written.
+- **On by default** (2026-11-20, 0477 "On by default"): a replan that ran the sources program twice (23.5 G) and a
+  view's heavy values counted at every stratum removed; `auto` 961.8 G against `off` 952.7 G on corpus0 (one thread, +1.0%).
 - **Next**: offer each rewrite as an alternative the pricer scores against the join as written, from the readers'
   distinct requests and the factors' sizes (the lab's design, `scripts/profiling/deferred_joins/README.md`, "Where
   the classifier belongs"), and keep it only where it wins.

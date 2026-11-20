@@ -7934,7 +7934,10 @@ impl<'a> Run<'a, '_> {
                         let fan = self.model.stats.fan.at(rel, c).copied().unwrap_or(rows / ndv.max(1.0));
                         ndv > table::HEAVY as f64 && fan * ndv / rows.max(1.0) > 2.0
                     };
-                    if wanted { want.entry(rel.to_owned()).or_default().insert(c); }
+                    if wanted {
+                        joins::log(|| format!("heavy values wanted {rel}.{c}: kept {:?} rows, card {:?}, held {}, mark {}", self.model.stats.heavy.at(rel, c).map(|h| h.rows), self.model.stats.card.get(rel), super::native::component::held(self.db, rel).is_some(), self.model.stats.heavy_mark.get(rel).is_some()));
+                        want.entry(rel.to_owned()).or_default().insert(c);
+                    }
                 }
             }
         }

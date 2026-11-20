@@ -18,6 +18,8 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct Plans {
     pub one_sided: Vec<String>,
     pub factors: Vec<String>,
     pub shared: Vec<String>,
+    /// The joins left as written: the chunks make them, and a cross-file reader would state their requests.
+    pub cross: Vec<String>,
     pub cached: bool,
     pub author: Vec<Join>,
 }
@@ -203,6 +205,20 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn rewrite(
         {
             broad.insert(rel.to_owned());
         }
+    }
+    // A producer the chunks make (`file_local::split`) restricted by a request a cross-file reader states: the
+    // request's rows are the chunk's own, so a reader joining another file's rows asks nothing of this one
+    // (`remark(x, ..) :- noted(c, x), defined(_, x), ..`: b.py's comment names a.py's function, and a.py's chunk,
+    // asked only by its own comments, made no `defined` row). Such a join is left as written.
+    if !pairs.is_empty() {
+        let local = file_local::split(p);
+        pairs.retain(|(name, _, _)| {
+            let cross = local.contains(name.as_str()) && readers[name].iter().any(|&(i, _)| !local.contains(p.rules[i].head.rel.as_str()));
+            if cross {
+                plans.cross.push(name.to_string());
+            }
+            !cross
+        });
     }
     // Inserting a guard shifts the literal positions. Classify all reads before changing any rule.
     for (name, cols, positive) in pairs {
@@ -541,6 +557,35 @@ mod tests {
         assert!(cached("lefts(a) :- wide(a,_)."), "a plain reader keeps its cache");
         assert!(!cached("lefts(a) :- wide(a,_), value(a, _)."), "a reader of `value`");
         assert!(!cached("lefts(a) :- wide(a,_).\n over(a) :- lefts(a), value(a, _)."), "a rule over a reader reads `value`");
+    }
+
+    /// A producer the chunks make is not restricted by a cross-file reader's requests: its rows are another file's
+    /// (b.py's comment names a.py's function), and a chunk's request holds only its own. A reader within one
+    /// document (its comment in the function's body) still drives it.
+    #[test]
+    fn a_cross_file_reader_does_not_restrict_a_file_local_producer() {
+        let deferred = |reader: &str| {
+            let mut p = parse(&format!(r#"
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl text(n: node, x: symbol)
+.decl comment(c: node, x: symbol)
+.decl line(n: node, l: number)
+.decl col(n: node, k: number)
+.input kind, field, text, comment, line, col
+.decl defined(d: node, x: symbol)
+defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
+.decl noted(c: node, x: symbol)
+noted(c, x) :- comment(c, x).
+.decl remark(x: symbol, l: number, k: number)
+{reader}
+.output remark
+"#)).unwrap();
+            let plan = rewrite(&mut p, true, true);
+            (p.decls.keys().any(|r| r.starts_with(DEFERRED_PAIRS)), plan.cross)
+        };
+        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(_, x), line(c, l), col(c, k)."), (false, vec!["defined".to_owned()]), "across files");
+        assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), line(c, l), col(c, k)."), (true, Vec::new()), "within one document");
     }
 
     #[test]

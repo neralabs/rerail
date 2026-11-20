@@ -4945,9 +4945,10 @@ unsafe impl VTabCursor for DerivedCursor {
 /// is not counted again from its rows there (decision 0096 step 4). Columns named `c0`, `c1`, … until read.
 #[derive(Clone)]
 pub struct KeptStats(crate::code_rule_dsl::logic::plan::statkeep::RelStats);
-/// A relation as `InRel::mark` saw it: enough to find its change later (`delta_since_mark`).
+/// A relation as `InRel::mark` saw it: enough to find its change later (`delta_since_mark`). A view's mark holds its
+/// source's allocation (`src`, weakly: none of its rows), so a view made later at the same address is not taken for it.
 #[derive(Clone, Debug)]
-pub struct RelMark { at: usize, n: usize, k: usize, dead: Vec<u64> }
+pub struct RelMark { at: usize, n: usize, k: usize, dead: Vec<u64>, src: Option<std::sync::Weak<dyn crate::code_rule_dsl::facts::vtab::Source>> }
 
 impl KeptStats {
     fn of(k: usize) -> KeptStats {
@@ -5092,12 +5093,20 @@ impl InRel {
     }
 
     pub fn mark(&self) -> RelMark {
-        RelMark { at: self as *const InRel as usize, n: self.n, k: self.k, dead: self.dead.clone() }
+        RelMark { at: self as *const InRel as usize, n: self.n, k: self.k, dead: self.dead.clone(), src: self.view.as_ref().map(|v| Arc::downgrade(&v.src)) }
     }
     /// `delta_since`, from a mark of the relation it started as (`mark`), not the relation itself: decision 0216's
     /// heavy values merge a relation's change without keeping its old rows alive (O172).
     pub fn delta_since_mark(&self, old: &RelMark) -> Option<(Vec<i64>, Vec<i64>)> {
-        if self.k != old.k || self.view.is_some() {
+        // A view is a read of its source, which does not change while it is held: the same view over the same source
+        // and rows has no change (corpus0's `kind` view had its heavy values counted again 594 times, decision 0477).
+        // Any other view's change is not known.
+        if let Some(v) = &self.view {
+            let same = self as *const InRel as usize == old.at && self.k == old.k && self.n == old.n
+                && old.src.as_ref().is_some_and(|w| std::ptr::addr_eq(w.as_ptr(), Arc::as_ptr(&v.src)));
+            return same.then(|| (Vec::new(), Vec::new()));
+        }
+        if self.k != old.k {
             return None;
         }
         if self as *const InRel as usize == old.at && self.n == old.n && self.dead == old.dead {
@@ -7888,6 +7897,32 @@ pub mod posted_tests {
             }
             assert_eq!(*got.starts.last().unwrap() as usize, col.len());
         }
+    }
+
+    /// A view's mark (`InRel::mark`) finds it unchanged while it reads the same source (decision 0477: heavy values
+    /// over a view were counted again at every stratum); another source, or another relation, is not known.
+    #[test]
+    fn a_views_mark_finds_it_unchanged_over_its_source() {
+        let source = |rows: i64| {
+            let mut input = Rel::new("kind", b"ii");
+            for i in 0..rows { input.push(&[i, i % 5]); } // copy: not block data (a test's input rows)
+            Derived::new(Arc::new(InRel::moved(input)), None)
+        };
+        let viewing = |src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| {
+            let (flat, _) = view_rows(src.as_ref(), &[0, 1]);
+            let n = flat.len() / 2;
+            let mut v = Arc::into_inner(InRel::from_flat(flat, n, vec![b'i'; 2])).expect("a new relation");
+            v.view = Some(View { src: Arc::clone(src), cols: vec![0, 1], ids: None, eqs: Vec::new() });
+            v
+        };
+        let a: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = source(40);
+        let mut view = Box::new(viewing(&a));
+        let mark = view.mark();
+        assert_eq!(view.delta_since_mark(&mark), Some((Vec::new(), Vec::new())), "the same view: unchanged");
+        assert_eq!(Box::new(viewing(&a)).delta_since_mark(&mark), None, "another relation over the source");
+        // The same relation, rows and address, now over another source: its change is not known.
+        view.view = Some(View { src: source(40), cols: vec![0, 1], ids: None, eqs: Vec::new() });
+        assert_eq!(view.delta_since_mark(&mark), None, "another source");
     }
 
     /// A view of a source's columns (`hold_view`, Q37) has the live statistics a stratum's copy of them has: each

@@ -127,10 +127,11 @@ pub fn reader_demand() -> bool {
 }
 
 /// How the deferred joins pass (`product_demand::deferred`) runs for one prepared program. `RERAIL_DEFERRED_JOINS`:
-/// `off` (the default) leaves the joins as written; `auto` and `adaptive` share a frequently requested endpoint's work
-/// and admit small pair caches; `on` makes the static rewrites alone. Off by default (decision 0477): on corpus0 x
-/// B-now `auto` took 7-12% more instructions for the same findings, and nothing prices the rewrite yet. A run that loads (`world::wanted`) keeps them:
-/// a load hands exports back by location, which a new factor has none of.
+/// `auto` (the default) and `adaptive` share a frequently requested endpoint's work and admit small pair caches; `on`
+/// makes the static rewrites alone; `off` leaves the joins as written. On by default (decision 0477): an insurance
+/// against a join over-long for its readers' demand, at 1.0% more instructions on corpus0 x B-now (961.8 G against
+/// 952.7 G, the same findings). A run that loads (`world::wanted`) keeps them: a load hands exports back by location,
+/// which a new factor has none of.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Deferral {
     pub on: bool,
@@ -147,7 +148,7 @@ pub struct Deferral {
 impl Deferral {
     /// The setting for a program, from `RERAIL_DEFERRED_JOINS`, and what the run's earlier tries changed (`Replans`).
     pub fn of(loading_run: bool, key: &[u8; 32]) -> Deferral {
-        let mode = crate::code_rule_dsl::logic::profile::bound::<DeferredJoins>().0.map_or_else(|| std::env::var("RERAIL_DEFERRED_JOINS").unwrap_or_else(|_| "off".into()), str::to_owned);
+        let mode = crate::code_rule_dsl::logic::profile::bound::<DeferredJoins>().0.map_or_else(|| std::env::var("RERAIL_DEFERRED_JOINS").unwrap_or_else(|_| "auto".into()), str::to_owned);
         let on = !loading_run && matches!(mode.as_str(), "auto" | "on" | "adaptive");
         let adaptive = mode != "on";
         let base = Deferral { on, adaptive, cache_pairs: adaptive, ..Default::default() };
@@ -214,7 +215,7 @@ pub fn defer_joins(prog: &mut crate::code_rule_dsl::logic::front::Program, d: &D
     }
     let plans = super::product_demand::deferred::rewrite(prog, d.adaptive, d.cache_pairs);
     let pass = std::borrow::Cow::Borrowed("joins deferred to their readers' requests");
-    let mut decided = vec![manager::Decided { pass: pass.clone(), what: "deferred joins".into(), detail: format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared) }];
+    let mut decided = vec![manager::Decided { pass: pass.clone(), what: "deferred joins".into(), detail: format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross) }];
     let mut cached = Vec::new();
     for mut join in plans.author {
         match &join.access {

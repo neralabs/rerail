@@ -60,10 +60,11 @@ What changes from Release-debugging:
      the pricer). The SQL functions' crate cannot name the pricer, so the pricer is installed as a closure on the
      machine. It is not a static hook;
    - the authored clauses' locations are bound in the run's context (`author_joins::Sources`), not a thread-local.
-4. `RERAIL_DEFERRED_JOINS` (`off` by default, `auto` and `adaptive` the same, `on` the static rewrites only) and
+4. `RERAIL_DEFERRED_JOINS` (`auto` by default since 2026-11-20, `adaptive` the same, `on` the static rewrites
+   only, `off` the control) and
    `RERAIL_JOIN_CACHE_ROWS` are among the variables a prepared program is keyed by. A caller binds a mode for its
    runs with `preparation::DeferredJoins`.
-5. **The rewrite is off by default.** corpus0 x B-now, profiling build on the M1 Max, cold, two runs a mode in
+5. **The rewrite was off by default** until 2026-11-20 ("On by default", below). corpus0 x B-now, profiling build on the M1 Max, cold, two runs a mode in
    alternating order: `off` 989.3 and 993.2 G instructions, `auto` 1,109.4 and 1,064.5 G (+7-12%), findings 463
    `d067ec2ebf6f` in all four. `auto` prepared 19% more lines (2,995 against 2,518): the main program's front dump
    shows pair demand on many rules (`c4_elt` 25 rules, `c4_comp` 23, `exc_call` 18, `c4_call` 17, `returns` 13, ...).
@@ -281,6 +282,35 @@ So the counters through several atoms would fix one step of 74 rows, and the blo
 was priced to make, a blow-up whatever the sample. corpus0, two runs on the M3: 0 lines blown up (was 6), 1 and 0
 over-estimated; findings 463 `d067ec2ebf6f`; 951.6 and 961.5 G instructions (950.8 and 952.4 G before): the false
 flags cost little (an exact pair pass and a replan each), and the planner no longer acts on them.
+
+## On by default (2026-11-20)
+
+The rewrite is an insurance against a join over-long for its readers' demand, so it is on (`auto`), and its cost
+was found and cut. corpus0 x B-now, one thread, profiling build, the M1 Max, `RERAIL_TIMELINE=sections` (instructions
+by section): `auto` 1,013.8 G against `off` 976.2 G (+3.9%), the same findings.
+
+- **A replan ran the sources program twice: 23.5 G.** A pair cache's readers read its guard, the cross-file
+  part's, so they and every rule over them are made there; on corpus0 one of them read `value`, answered only in a
+  document. Preparation found it after the split, the run returned a replan error, and `run_observed` ran again:
+  phase 1 of the sources (19.3 G of constants) twice, and every pair cache off for the one. Now `factorize` admits
+  no cache whose readers' cone reads an `ON_REQUEST` function answer (`value`, `str`, `node_text`), decided from the
+  program: no replan, the other caches kept (990.4 G).
+- **A view's heavy values were counted again at every stratum: 594 times.** `kind` is a view of its source;
+  `InRel::delta_since_mark` gave no change for a view, so its heavy values were never current. A view's mark now
+  holds its source weakly and finds the same view over the same source unchanged (985.8 G).
+- **Two faults the default exposed**, both fixed:
+  - **a made step lost the request record** (`Pipeline::made`, the deferred and node-product steps): the record was
+    carried by the input's rule ids, and the made version numbers its rules anew, so the next rule step read every
+    request rule as serving only its own relation (12 corpus tests' debug parity checks);
+  - **a cross-file reader restricted a file-local producer** (`remark(x, ..) :- noted(c, x), defined(_, x), ..`):
+    the request's rows were the chunk's own, so a.py's chunk, asked only by its own comments, made no `defined` row
+    for b.py's comment, and the run lost the finding. Such a join is now left as written (`Plans::cross`).
+
+On this build, measured again: `off` 952.7 G, `auto` 961.8 G (+1.0%), findings 463 `d067ec2ebf6f` in both, the host at
+load 3.5.
+
+Left: `auto` still runs about 300 strata of its own (`pre_*`, `fz*`, `rr_deferred_pairs_*`), and 107 heavy-value
+counts of `kind` a fork made and no model kept.
 
 ## Open
 
