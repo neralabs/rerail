@@ -3,6 +3,12 @@
 //! counters, about 9% off), and, while it holds at most `SMALL` values or a bounded integer page, each value's exact count (then the distinct
 //! values and the sum are exact too). Compact labels use a 16 KiB page; sparse label sets retain at most 1,024 counters.
 //! Identity columns keep the fixed-size fallback. Exact counts are updated as rows arrive, never by a planning-time scan.
+//! Past `SMALL` values it keeps its column's keys in a blocked Bloom filter too (`bloom::Kept`, decision 0477), set
+//! from the same hash as each row is counted, and made again larger from the column where its keys outgrow it.
+//! The screens test probes against it, and the planner counts the keys two columns share by it.
+
+use crate::code_rule_dsl::logic::bloom::{self, Keys, Kept, Reading, Sample, Words};
+use std::sync::Arc;
 
 /// The values a column holds at most for its exact counts.
 const SMALL: usize = 64;
@@ -37,7 +43,6 @@ impl Sparse {
     }
 }
 
-#[derive(Clone)]
 pub(super) struct Sketch {
     registers: Box<[u8; REGISTERS]>,
     counters: Box<[i32; REGISTERS]>,
@@ -46,15 +51,31 @@ pub(super) struct Sketch {
     small: Option<Vec<(i64, u32)>>,
     dense: Option<Dense>,
     sparse: Option<Sparse>,
+    /// Its keys' filter, once it holds more than `SMALL` values (while `small` holds them, they are its keys). This
+    /// sketch is its one writer; the planner's statistics and the screens read it where it is.
+    keys: Option<Arc<Kept>>,
+    /// Whether it writes `keys`: a clone reads the filter it was cloned with until it first adds a key, then writes a
+    /// copy of its own (a filter has one writer; the one it shares keeps all of the clone's keys until then).
+    own_keys: bool,
+    /// A sample of its distinct keys (`bloom::Sample`), offered each key its filter takes as new.
+    sample: Sample,
 }
 
 impl Default for Sketch {
     fn default() -> Sketch {
-        Sketch { registers: Box::new([0; REGISTERS]), counters: Box::new([0; REGISTERS]), rows: 0, small: Some(Vec::new()), dense:None, sparse:None }
+        Sketch { registers: Box::new([0; REGISTERS]), counters: Box::new([0; REGISTERS]), rows: 0, small: Some(Vec::new()), dense:None, sparse:None, keys: None, own_keys: true, sample: Sample::default() }
     }
 }
 
-#[inline]
+/// A clone shares the filter until it adds to it (`own_keys`): a kept relation reopened to be maintained copies its
+/// columns' filters only where its rows change them.
+impl Clone for Sketch {
+    fn clone(&self) -> Sketch {
+        Sketch { registers: self.registers.clone(), counters: self.counters.clone(), rows: self.rows, small: self.small.clone(), dense: self.dense.clone(),
+                 sparse: self.sparse.clone(), keys: self.keys.clone(), own_keys: false, sample: self.sample.clone() }
+    }
+}
+
 /// The keys' hash: the Bloom filters' too (`logic::bloom`), so a filter and a sketch see the same keys alike.
 #[inline]
 pub(super) fn mix(v: i64) -> u64 {
@@ -72,6 +93,15 @@ impl Sketch {
         let c = ((h >> 8) & 0xff) as usize;
         self.counters[c] += if h & 1 == 0 { 1 } else { -1 };
         self.rows += 1;
+        if let Some(keys) = &mut self.keys {
+            if !self.own_keys {
+                *keys = Arc::new(Kept::clone(keys));
+                self.own_keys = true;
+            }
+            if keys.add_hashed(h) {
+                self.sample.offer(h);
+            }
+        }
         if let Some(sparse)=&mut self.sparse {
             if !sparse.add(v) {self.sparse=None;}
         } else if let Some(dense) = &mut self.dense {
@@ -99,6 +129,14 @@ impl Sketch {
                 } else if (0..LABEL_LIMIT).contains(&v) && small.iter().all(|(x,_)|(0..LABEL_LIMIT).contains(x)) {
                     let mut sparse=Sparse::from_counts(small.iter().copied());sparse.add(v);self.sparse=Some(sparse);
                 }
+                // Its keys from here on in a filter, from the values it held and this one.
+                let keys = Kept::new(bloom::kept_words_for(4 * SMALL));
+                for h in small.iter().map(|&(x, _)| mix(x)).chain([h]) {
+                    keys.add_hashed(h);
+                    self.sample.offer(h);
+                }
+                self.keys = Some(Arc::new(keys));
+                self.own_keys = true;
                 self.small = None;
             }
         }
@@ -156,8 +194,38 @@ impl Sketch {
         self.dense.as_ref().map(|d|std::borrow::Cow::Owned(d.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|(d.base+i as i64,n)).collect()))
     }
 
+    /// Its filter made again at twice its keys where they outgrew it (`Kept::outgrown`), from `all`: every value it
+    /// was given (a dead row's too: a filter may hold more keys than its column, never fewer). The filters double,
+    /// so a column's values are read again a few times at most, and only by a column of many distinct values.
+    pub(super) fn grow<I: Iterator<Item = i64>>(&mut self, all: impl FnOnce() -> I) {
+        let Some(keys) = &self.keys else { return };
+        if !keys.outgrown() {
+            return;
+        }
+        let made = Kept::new(bloom::kept_words_for(2 * self.ndv().max(Words::keys(&**keys) as usize)));
+        for v in all() {
+            made.add_hashed(mix(v));
+        }
+        self.keys = Some(Arc::new(made));
+        self.own_keys = true;
+    }
+
+    /// Its keys, as the statistics read them: its few values, else its filter (held where it is) as read now.
+    pub(super) fn keys(&self) -> Keys {
+        match (&self.small, &self.keys) {
+            (Some(small), _) => Keys::Few(small.iter().map(|&(v, _)| v).collect()),
+            (None, Some(k)) => Keys::Filter(Arc::new(Reading::new(Arc::clone(k), self.sample.hashes()))),
+            (None, None) => unreachable!("a sketch past its few values keeps their filter"),
+        }
+    }
+
+    /// Its keys' filter, where it keeps one (past its few values); else its few values are its keys.
+    pub(super) fn filter(&self) -> Option<&Arc<Kept>> {
+        self.keys.as_ref()
+    }
+
     pub(super) fn bytes(&self) -> usize {
-        self.sparse.as_ref().map_or(0,|s|s.counts.capacity()*24) + self.dense.as_ref().map_or(0,|_|DENSE_WIDTH*4) + REGISTERS * 5 + self.small.as_ref().map_or(0, |s| s.capacity() * 16)
+        self.keys.as_ref().map_or(0, |k| k.bytes()) + self.sample.hashes().len() * 8 + self.sparse.as_ref().map_or(0,|s|s.counts.capacity()*24) + self.dense.as_ref().map_or(0,|_|DENSE_WIDTH*4) + REGISTERS * 5 + self.small.as_ref().map_or(0, |s| s.capacity() * 16)
     }
 }
 
@@ -188,5 +256,35 @@ pub mod tests {
         // One value of 50,000 rows dominates: about 2.5e9.
         let sq = skewed.sq() as f64;
         assert!((sq / 2.5e9 - 1.0).abs() < 0.2, "{sq}");
+    }
+
+    /// Past its few values a sketch keeps its keys' filter: every key added is held as it grows from 256 to
+    /// 100,000 keys, and a clone writes a copy of its own once it adds.
+    #[test]
+    fn a_sketch_keeps_a_filter_of_its_keys_as_they_grow() {
+        let mut sk = Sketch::default();
+        assert!(matches!(sk.keys(), Keys::Few(_)));
+        let values = |n: i64| (0..n).map(|i| i * 7_919);
+        for v in values(256) {
+            sk.add(v);
+        }
+        let first = Arc::clone(sk.filter().expect("past its few values"));
+        for v in values(100_000).skip(256) {
+            sk.add(v);
+            if v % 1_024 == 0 {
+                sk.grow(|| values(100_000).take_while(|&x| x <= v));
+            }
+        }
+        sk.grow(|| values(100_000));
+        let Keys::Filter(reading) = sk.keys() else { panic!("a filter") };
+        let grown = Arc::clone(&reading.filter);
+        assert!(grown.len() > first.len() && values(100_000).all(|v| grown.may_hold(v)), "{} words", grown.len());
+        assert_eq!(reading.sample.len(), bloom::SAMPLE);
+        let distinct = sk.keys().distinct();
+        assert!((distinct / 100_000.0 - 1.0).abs() < 0.1, "{distinct}");
+        let absent = (1..).map(|i| -i).find(|&v| !grown.may_hold(v)).unwrap();
+        let mut copy = sk.clone();
+        copy.add(absent);
+        assert!(copy.keys().may_hold(absent) && !sk.keys().may_hold(absent), "a clone's key is in its own filter only");
     }
 }

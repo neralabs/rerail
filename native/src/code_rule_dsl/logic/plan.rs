@@ -474,6 +474,9 @@ pub struct Stats {
     /// (rel, col) → its heavy values (decision 0209 §4), made for the columns a line raised (`Run::heavy_for`).
     /// Shared, not copied, by a component's model.
     pub heavy: ColMap<std::sync::Arc<table::HeavyCol>>,
+    /// (derived rel, col) → its keys (decision 0477: the native relation's sketch's few values, or its filter), read
+    /// where the engine keeps them: the keys two columns share price a probe's hits (`atom_rows`).
+    pub keys: ColMap<super::bloom::Keys>,
     /// rel → the engine's relation as its heavy values were made or last merged over (`InRel::mark`): its change
     /// since is merged into them, not counted again (O172).
     pub heavy_mark: table::RelMap<std::sync::Arc<super::native::component::RelMark>>,
@@ -614,6 +617,7 @@ impl Stats {
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
+            keys: Default::default(),
             heavy_mark: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
@@ -829,6 +833,7 @@ impl Stats {
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
+            keys: Default::default(),
             heavy_mark: Default::default(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
@@ -1012,6 +1017,7 @@ impl Model {
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
+            keys: Default::default(),
             heavy_mark: Default::default(),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: BTreeSet::new(),
@@ -1041,6 +1047,7 @@ impl Model {
             stats.fan.share_from(&st.fan, r, w);
             stats.dfreq.share_from(&st.dfreq, r, w);
             stats.heavy.share_from(&st.heavy, r, w);
+            stats.keys.share_from(&st.keys, r, w);
         }
         stats.solve(BTreeSet::new());
         let analysis = std::sync::OnceLock::new();
@@ -1076,6 +1083,7 @@ impl Model {
             self.ndv.take_from(&mut fork.ndv, r, w);
             self.stats.fan.take_from(&mut fork.stats.fan, r, w);
             self.stats.dfreq.take_from(&mut fork.stats.dfreq, r, w);
+            self.stats.keys.take_from(&mut fork.stats.keys, r, w);
             if fork.stats.prior_later.contains(r) { self.stats.prior_later.insert(r.clone()); } else { self.stats.prior_later.remove(r); }
         }
         for rule in rules {
@@ -3940,14 +3948,24 @@ impl Model {
                 for &c in &cols {
                     let TermRef::Var(v) = args[c] else { continue };
                     let Some(here) = t.col(c, b, i, self).ndv else { continue };
-                    let from = binding_domains
+                    let (from, at) = binding_domains
                         .iter()
                         .filter_map(|(d, vars, domains)| {
                             if *d == i || !vars.is_subset(bound) { return None; }
-                            b.args(*d).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v)).and_then(|c2| domains[c2])
+                            b.args(*d).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v)).and_then(|c2| Some((domains[c2]?, (*d, c2))))
                         })
-                        .fold(f64::INFINITY, f64::min);
-                    if from.is_finite() && from > here.max(1.0) {
+                        .fold((f64::INFINITY, None), |m, (n, at)| if n < m.0 { (n, Some(at)) } else { m });
+                    // Where both columns' keys are kept (decision 0477), the bindings that hit are the share of the
+                    // domain's keys this column holds too, whichever has more: two columns of disjoint values
+                    // (a node's ids against another kind's) hit nothing, which distinct counts cannot tell.
+                    let kept = at.and_then(|(d, c2)| {
+                        let (mine, theirs) = (self.stats.keys.at(rel, c)?, self.stats.keys.at(b.rel(b.atom(d)?), c2)?);
+                        let of = theirs.distinct();
+                        (of >= 1.0).then(|| Some((mine.shared(theirs)? / of).clamp(0.5 / of, 1.0))).flatten()
+                    });
+                    if let Some(share) = kept {
+                        hit = hit.min(share);
+                    } else if from.is_finite() && from > here.max(1.0) {
                         hit = hit.min(here.max(1.0) / from);
                     }
                 }
@@ -5429,7 +5447,7 @@ impl Fx<'_> {
         if self.direct {
             return Ok(super::native::component::live(self.db, name)?
                 .into_iter()
-                .map(|l| LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
+                .map(|l| LiveRel::of_native(l))
                 .collect());
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
@@ -5448,7 +5466,7 @@ impl Fx<'_> {
         }
         Ok(super::native::component::live_changed(self.db, name, seen)?
             .into_iter()
-            .map(|l| l.map(|l| LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() }))
+            .map(|l| l.map(|l| LiveRel::of_native(l)))
             .collect())
     }
     fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
@@ -6239,6 +6257,7 @@ impl<'a> Run<'a, '_> {
                 ndv: stats.iter().map(|s| s.2).collect(),
                 sq: stats.iter().map(|s| s.3).collect(),
                 freq: Vec::new(),
+                keys: Vec::new(),
             });
             super::profile::decision("native fact result", || format!("{rel}: retained rows={}", source.len()));
             return Ok(source.len());
@@ -6288,6 +6307,7 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6348,6 +6368,7 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6406,6 +6427,7 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6432,7 +6454,7 @@ impl<'a> Run<'a, '_> {
             }
         }
         super::native::component::hold_view_in_place(self.db, rel, Arc::clone(src), cols.to_vec(), types);
-        Some(LiveRel { n, delta: n, ndv, sq, freq })
+        Some(LiveRel { n, delta: n, ndv, sq, freq, keys: Vec::new() })
     }
 
     /// The reach index (decision 0119, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
@@ -6485,6 +6507,7 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
         });
         super::profile::note(format!("{rel} index bytes"), || bytes.to_string());
         Ok(Some((n, why)))
@@ -6641,6 +6664,7 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
         });
         Ok(Some(source.len()))
     }
@@ -6774,6 +6798,7 @@ impl<'a> Run<'a, '_> {
             ndv: stats.iter().map(|s| s.2).collect(),
             sq: stats.iter().map(|s| s.3).collect(),
             freq: Vec::new(),
+            keys: Vec::new(),
         });
         Ok(Some(made.len()))
     }
@@ -7051,8 +7076,14 @@ pub struct LiveRel {
     pub ndv: Vec<i64>,
     pub sq: Vec<i64>,
     pub freq: Vec<(usize, HashMap<Constant, i64>)>,
+    /// Each column's keys, where the native engine keeps them (decision 0477), else none.
+    pub keys: Vec<super::bloom::Keys>,
 }
 impl LiveRel {
+    /// The native engine's (`setfix::live`): its values are integers.
+    fn of_native(l: super::native::component::Live) -> LiveRel {
+        LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect(), keys: l.keys }
+    }
     /// From T's extension's text line (`set_fixpoint_stats`); `text(c)`: column `c` holds symbols as text.
     fn parse(line: &str, text: &dyn Fn(usize) -> bool) -> LiveRel {
         let mut parts = line.split(" |");
@@ -7076,7 +7107,7 @@ impl LiveRel {
                 Some((c, freq))
             })
             .collect();
-        LiveRel { n, delta: n, ndv: rest[..k].to_vec(), sq: rest[k..].to_vec(), freq }
+        LiveRel { n, delta: n, ndv: rest[..k].to_vec(), sq: rest[k..].to_vec(), freq, keys: Vec::new() }
     }
 }
 
@@ -7129,6 +7160,10 @@ pub fn live_stats(model: &mut Model, r: &str, live: LiveRel) -> Vec<usize> {
     let card = (live.n as f64).max(1.0);
     if model.stats.card.insert(r.to_owned(), card) != Some(card) { changed.push(0); }
     let mut freq: HashMap<_, _> = live.freq.into_iter().collect();
+    // Its keys change with its rows, as its distinct values do: a change of them alone replans nothing.
+    for (c, keys) in live.keys.into_iter().enumerate().filter(|_| super::bloom::kept_keys_read()) {
+        model.stats.keys.insert((r.to_owned(), c), keys);
+    }
     for (c, (&ndv, &sq)) in live.ndv.iter().zip(&live.sq).enumerate() {
         let key = (r.to_owned(), c);
         let ndv = ndv.max(1) as f64;
@@ -8800,7 +8835,7 @@ impl<'a> Run<'a, '_> {
                 None => {
                     let _span = super::profile::span(|| "a view of an input's columns: its rows".into());
                     let l = super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes());
-                    ("read into flat rows", LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
+                    ("read into flat rows", LiveRel::of_native(l))
                 }
             };
             live_stats(&mut self.model, rel, live);

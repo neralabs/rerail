@@ -652,6 +652,9 @@ impl Rel {
                     sk.add(old.rows.value(id, k, c));
                 }
             }
+            for (c, sk) in sketches.iter_mut().enumerate() {
+                sk.grow(|| (0..old.n as u32).map(|id| old.rows.value(id, k, c)));
+            }
             (ix, sketches)
         });
         let orders: Vec<Index> = match &made { Some((ix, _)) => vec![ix.clone()], None => old.chains.clone() };
@@ -886,7 +889,10 @@ impl Rel {
     fn indexed_to_n(&mut self) {
         let _s = (self.n - self.indexed >= SPANNED_ROWS).then(|| crate::code_rule_dsl::logic::profile::span(|| "rows sketched and counted (indexed_to_n)".into()));
         let (data, k, lo, hi) = (&self.data, self.k, self.indexed, self.n);
-        let sketch = |c: usize, sk: &mut Sketch| for id in lo..hi { sk.add(data.value(id as u32, k, c)); };
+        let sketch = |c: usize, sk: &mut Sketch| {
+            for id in lo..hi { sk.add(data.value(id as u32, k, c)); }
+            sk.grow(|| (0..hi).map(|id| data.value(id as u32, k, c)));
+        };
         let count = |stats: &mut Option<KeptStats>| if let Some(stats) = stats { stats.0.delta(&data.to_vec(lo, hi, k), &[], k); };
         // Many rows: each column's sketch, and the statistics, a job of its own (decision 0294). A sketch takes its
         // column's values in the rows' order, as one thread gives them (its exact counts give way in that order).
@@ -3166,7 +3172,8 @@ pub fn keep_trial_rows(conn: impl Scoped, name: &str) -> Result<u64> {
 
 /// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,
 /// and each value's postings when a bounded exact histogram is available.
-pub struct Live { pub n: i64, pub delta: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)> }
+/// `keys`: each column's keys (`Sketch::keys`, decision 0477), read where they are kept.
+pub struct Live { pub n: i64, pub delta: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)>, pub keys: Vec<crate::code_rule_dsl::logic::bloom::Keys> }
 pub fn live(conn: impl Scoped, name: &str) -> Result<Vec<Live>> {
     let conn = conn.db();
     let comp = component(conn, name)?;
@@ -3206,6 +3213,7 @@ fn live_from(n: usize, delta: usize, cols: &[Sketch]) -> Live {
         ndv: cols.iter().map(|sk| sk.ndv() as i64).collect(),
         sq: cols.iter().map(|sk| sk.sq() as i64).collect(),
         freq,
+        keys: cols.iter().map(Sketch::keys).collect(),
     }
 }
 
@@ -4129,7 +4137,10 @@ fn view_rows(src: &dyn crate::code_rule_dsl::facts::vtab::Source, cols: &[usize]
     // Each column's sketch, its values in row order, as a stratum's relation sketches its rows (`indexed_to_n`):
     // many rows, a job a column.
     let mut sketches = vec![Sketch::default(); k];
-    let sketch = |c: usize, sk: &mut Sketch| for row in flat.chunks_exact(k) { sk.add(row[c]); };
+    let sketch = |c: usize, sk: &mut Sketch| {
+        for row in flat.chunks_exact(k) { sk.add(row[c]); }
+        sk.grow(|| flat.chunks_exact(k).map(|row| row[c]));
+    };
     if src.len() >= SPANNED_ROWS && k > 1 && crate::threads::max() > 1 {
         crate::threads::scope(|jobs| {
             for (c, sk) in sketches.iter_mut().enumerate() {
@@ -6565,6 +6576,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      /// a row whose rest of the body fails before reaching `upto` fails by those values alone.
                      factor: Vec<Option<Factor>>,
                      screen: Option<&'a join_filter::JoinFilter>,
+                     /// This walk's (morsel's) tests of `screen`, added to its counts as it ends.
+                     screening: join_filter::Screening,
                      /// The deepest step entered (`go`), so a factored step knows where its row's descent stopped.
                      deep: usize,
                      /// Per such step, in its current probe, the values of those slots the rest of the body failed for,
@@ -6884,7 +6897,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         match step {
             Step::Atom { src, neg, keys, binds, tests } => {
                 // A screened probe (`join_filter`) whose key the filter refuses has no rows: a negated one holds.
-                if let Some(f) = cx.screen && i == f.step && f.rejects(slots) {
+                if let Some(f) = cx.screen && i == f.step && cx.screening.refuses(f, slots) {
                     if f.neg { go(cx, i + 1, slots); }
                     return;
                 }
@@ -7331,7 +7344,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap, pending: Vec::new(),
                                       scratch: j.steps.iter().map(|_| rowcode::Scratch::default()).collect(), texts: Vec::new(),
                                       collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
-                                      factor, screen, failed, snap: Vec::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
+                                      factor, screen, screening: Default::default(), failed, snap: Vec::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
                                       only_step: usize::MAX, only: None, list0: None, cut_from,
                                       counts: j.counts.iter().map(|_| Default::default()).collect(), first: Some((rows_of_first(src, store), first)),
                                       left0: None, clock: StepClock::start(j.steps.len()) };
@@ -7344,6 +7357,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         list[at..].to_vec()
                     }));
                     let counts = w.counts.iter().map(|[a, b]| [a.get(), b.get()]).collect();
+                    if let Some(f) = w.screen { f.record(&w.screening); }
                     // Its own thread's CPU, by step: added to the join's as it ends (the counts go by the walk's).
                     if let Some(clock) = w.clock.take() { clock.end(j); }
                     drop(w);
@@ -7531,7 +7545,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         join_filter::JoinFilter::choose(j, store)
     } else { None };
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
-                       factor, screen: screen.as_ref(), failed, snap: Vec::new(), skipped: 0, deep: 0,
+                       factor, screen: screen.as_ref(), screening: Default::default(), failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
                        cut_from: usize::MAX, counts: j.counts.iter().map(|_| Default::default()).collect(), first: None, left0: None,
@@ -7579,6 +7593,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     }
     // The walk's counts, into the join's, and its CPU by step.
     for (c, l) in j.counts.iter().zip(&cx.counts) { c[0].add(l[0].get()); c[1].add(l[1].get()); }
+    if let Some(f) = cx.screen { f.record(&cx.screening); }
     if let Some(clock) = cx.clock.take() { clock.end(j); }
     scalars::explain(&j.steps,store);
     // Each passed-over row was read and tested against a hash set, as a probe is.

@@ -119,6 +119,56 @@ What changes from Release-debugging:
   as the binary loads): `the_gpu_batch_makes_the_cpu_batch_heavy_values` and
   `column_statistics_read_a_resident_relation_in_place`, word for word, both widths.
 
+## Kept with each column: insurance that pays for itself (2026-11-20)
+
+The user: the filters are an insurance policy against over-long joins and pathological cases. They have to be cheap
+enough to be on all the time, and they pay for themselves by improving the join statistics of the joins there are.
+The measurement above asked the wrong question (does the screen speed up corpus0); this section answers that one.
+
+- **Each column's sketch keeps its keys' filter** (`Sketch::keys`, `bloom::Kept`) once it holds more than its 64
+  exact values (while it holds them, they are its keys). The sketch sets a key's bits from the hash it computes for
+  the HyperLogLog already, as each row is counted: a load, an OR and a store. 8 bits a distinct key (about 3% of
+  absent keys pass), at most 1 MiB. Where its keys outgrow it, it is made again at twice them from the column
+  (`Sketch::grow`): it doubles, so a column is read again a few times at most, and only one of many distinct values.
+  A clone (a kept relation reopened) shares it until it adds a key, then writes a copy of its own: a filter has one
+  writer. Its words are relaxed atomics, read where they are by the planner and the screens: not copied.
+- **And a sample of its distinct keys** (`bloom::Sample`, the 128 of least rank, a bottom-k sketch), offered only the
+  keys the filter takes as new. Two filters of very different sizes cannot be compared by their bits: folded to the
+  smaller's words, the larger's fill them. The fewer keys' sample tested against the other's filter can be, at any
+  sizes.
+- **The planner prices a probe's hits by the keys two columns share** (`atom_rows`, `Stats::keys`, from the live
+  statistics): the share of the binding domain's keys the probed column holds. Containment took every value of the
+  column with fewer distinct values as present in the other, so two columns of disjoint values (a node's ids against
+  another kind's) were priced as if every probe hit. An estimate costs the sample's tests or, between filters of at
+  most 256 words, their bits (`shared`, which tells a few shared keys best), never a pass over a filter's words: a
+  column's bits set are counted as its statistics are read (`bloom::Reading`). Test:
+  `kept_keys_price_a_probe_by_the_keys_two_columns_share`.
+- **The screens borrow the probe side's filter** where its rows are all in it (a relation fully indexed, a delta, a
+  held relation's sketches), and build nothing; the old bounds (a quarter of the scan, 8,192 keys) hold only for a
+  side without one. It is chosen from 256 scan rows, where 8 of 64 samples are refused (the pricer can overrule,
+  `BloomProbeInput::kept`). A walk (each morsel) counts its tests and backs off where a window of 1,024 refuses under
+  1/16: untested for 1,024 probes, then twice that each time, up to 1 M, reset by a window that pays. Tests:
+  `a_probe_side_with_kept_keys_is_screened_by_its_own_filter`, `a_screen_that_refuses_little_backs_off`,
+  `a_sketch_keeps_a_filter_of_its_keys_as_they_grow`, `kept_filters_of_two_sizes_estimate_the_keys_they_share`.
+- `RERAIL_KEPT_KEYS=off` (a measurement aid): kept still, read by neither.
+
+Measured, corpus0 x B-now, profiling build, cold, the screens on and traced, on the M3 at load 40-90 (busy), one
+thread (`RERAIL_THREADS=1`: the pool's threads spin on a busy host, and a run of several threads moved 2-8% between
+two runs of one mode):
+
+| order | kept keys read | instructions | user CPU | searched once heavy | blown up | screens (on kept filters) | probes tested / refused |
+|---|---|---|---|---|---|---|---|
+| 1 | on | 995.0 G | 77.1 s | 15 | 8 | 368 (276) | 2.60 M / 2.47 M |
+| 2 | off | 1,039.9 G | 78.9 s | 27 | 13 | 151 (0) | 1.92 M / 1.89 M |
+| 1 | off | 1,023.2 G | 78.8 s | 26 | - | 151 (0) | 1.93 M / 1.90 M |
+| 2 | on | 1,003.6 G | 74.2 s | 15 | - | 391 (298) | 2.60 M / 2.47 M |
+
+Findings 463 `d067ec2ebf6f` in all four, peak RSS 1,672-1,679 MB in all four. Read, the kept keys take 2-4% fewer
+instructions: fewer of the planner's lines go wrong and are searched again once heavy. Keeping them costs nothing
+measured: with them unread, the M1 Max's runs (all threads) were 1,002.4-1,017.7 G, the commit before's 1,011.9 and
+1,016.8 G. The multi-threaded runs read the other way (on 1,024.7-1,096.6 G, off 1,002.4-1,017.7 G), within their
+spread under load.
+
 ## Open
 
 - **A morsel or device screen**: hash a block of keys and test them, or a pass over the scan's column in its block
@@ -126,8 +176,10 @@ What changes from Release-debugging:
   measurable share of its run. None measured here is (see above).
 - **Walks driven by a key** (the first step a probe): a screen there belongs to the caller's loop, the scan that
   drives the walks.
-- **The screen does not use the statistics' filters yet.** Where the build side's column has a `HeavyCol` filter,
-  the screen can take it, not build its own.
+- **The heavy values' filters (`HeavyCol::keys`, 2,048 words) are made apart from the columns' kept ones.** A derived
+  relation's column has one kept now: the heavy values could take it, and compare by `Keys::shared` at any sizes.
+- **What the screens count is not fed back yet.** A screened walk measures its probe's hit share exactly (up to the
+  filter's false hits): the planner could take it in place of its estimate for that pair of columns.
 - **The AMS counters (0096)** share one hash across columns, so two columns' counters estimate a join's size
   (Σₖ L[k]·R[k]). They are not used yet.
 - **The deferred step decodes the tree** for every program it runs on (Q186).

@@ -2632,7 +2632,7 @@ fn a_probe_on_several_columns_reads_a_combinations_rows() {
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse(".decl a(x:number,y:number)\n").unwrap();
     let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
-    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))]};
+    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))],keys:Vec::new()};
     assert_eq!(live_stats(&mut model,"a",sample(1)),vec![0,1,2]);
     assert!(live_stats(&mut model,"a",sample(1)).is_empty());
     assert_eq!(live_stats(&mut model,"a",sample(2)),vec![2],"equal counts and fanouts with new keys must invalidate");
@@ -3403,4 +3403,36 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     assert!(prep.0.contains_key(&line("o", 0, None)), "`o` reads the inputs alone");
     assert!(prep.0.contains_key(&line("r", 0, None)), "`o`'s inferred facts size it");
     assert!(!prep.0.contains_key(&line("z", 0, None)), "`anc` is not sized: `z` is not prepared");
+}
+
+/// Decision 0477: where both columns' keys are kept, a probe hits as often as the keys they share say. Containment
+/// takes the probed column's values as all present where it has as many distinct values as the binding (1,000
+/// each here), so a join of disjoint values was priced as if each probe hit; their filters say none does.
+#[test]
+fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
+    use crate::code_rule_dsl::logic::bloom::Keys;
+    let p = parse(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl c(z:number,w:number)\n.decl out(x:number,w:number)\nout(x,w) :- a(x,y), b(y,z), c(z,w).\n.output out\n").unwrap();
+    let derived: HashSet<String> = ["a", "b", "c", "out"].into_iter().map(str::to_owned).collect();
+    let work = |keys: Option<(Keys, Keys)>| {
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.clone().into()};
+        for (rel, rows, ndv, fan) in [("a", 10_000.0, [10_000.0, 1_000.0], [1.0, 10.0]), ("b", 1_000.0, [1_000.0, 1_000.0], [1.0, 1.0]), ("c", 1_000.0, [1_000.0, 1_000.0], [1.0, 1.0])] {
+            model.stats.card.insert(rel, rows);
+            for (c, (ndv, fan)) in ndv.into_iter().zip(fan).enumerate() {
+                model.ndv.insert((rel, c), ndv);
+                model.stats.fan.insert((rel, c), fan);
+            }
+        }
+        if let Some((a, b)) = keys {
+            model.stats.keys.insert(("a", 1), a);
+            model.stats.keys.insert(("b", 0), b);
+        }
+        let r = &p.rules[0];
+        let ((_, work, _), _) = model.plan_rule_explained(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+        work
+    };
+    let containment = work(None);
+    let same = work(Some((Keys::of(0..1_000), Keys::of(0..1_000))));
+    let apart = work(Some((Keys::of(0..1_000), Keys::of(5_000..6_000))));
+    assert!((same / containment - 1.0).abs() < 0.1, "the same keys price as containment does: {same} against {containment}");
+    assert!(apart < 0.5 * containment, "keys two columns do not share are probes that miss: {apart} against {containment}");
 }

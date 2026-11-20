@@ -669,6 +669,9 @@ pub struct BloomProbeInput {
     pub distinct_overlap: Option<f64>,
     pub sampled: usize,
     pub rejected: usize,
+    /// Whether the filter is the probe side's own (kept with its column, decision 0477): nothing was built for it,
+    /// and a walk backs off where it stops paying, so an eighth of the samples refused is enough.
+    pub kept: bool,
 }
 
 /// A batch prediction of the candidates' work (decision 0203 §2): one call per round, a price per candidate. The
@@ -697,7 +700,7 @@ pub(crate) fn use_bloom(input: BloomProbeInput) -> bool {
         let pricer = pricer().0.read().clone();
         if let Some(choice) = pricer.and_then(|p| p.use_bloom(input)) { return choice; }
     }
-    input.rejected * 2 >= input.sampled
+    if input.kept { input.rejected * 8 >= input.sampled } else { input.rejected * 2 >= input.sampled }
 }
 
 pub fn set_pricer(p: Option<Arc<dyn Pricer>>) {
