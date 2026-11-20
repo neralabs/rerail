@@ -233,8 +233,6 @@ hosts, and everything compiles and tests here, as without the farm.
 | `local_min_free_gb` | this Mac's floor: under it, `free-local` removes Rerail's least recently built builds here (default 200) |
 | `floor_free_gb` | the free disk left to the host's own work: under it the host is not used (default 20) |
 | `max_target_gb` | the most a host's test target directories hold together (default 150 GB; per host too) |
-| `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
-| `min_mbps` | the least throughput to it, MB/s (default 8; a host's entry may set its own, for a slow link still worth using), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh: the round trip is the least of three (each starts an ssh process, which a loaded Mac delays), and the throughput is 32 MB written through a plain pipe (Python's `run(input=)` writes 512 bytes at a time and read 57 MB/s on a Thunderbolt link that does 270 through ssh and 800 raw). They still fall when either Mac is busy: a low figure is no proof of a slow link |
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
 
 A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and
@@ -259,7 +257,10 @@ a Linux run of the tests, as a `test-remote` one is.
 first, and two Macs ran loads of 44 and 88 while the Linux hosts' 150 cores sat idle). Hosts on a
 link of 8 MB/s or more through ssh go first (a slower one, such as a remote site's tunnel, costs
 minutes a send), then slower links, then VMs on this Mac; within those, the
-most free slots, then the most spare cores. Each command gets its share of its host
+most free slots, then the most spare cores. A slow link only puts a host later; it never takes it
+out ("Health"). Both figures are measured through ssh: the round trip is the least of three (each
+starts an ssh process, which a loaded Mac delays), and the throughput 32 MB through a plain pipe,
+every 10 minutes. They fall when either machine is busy, so a low one is no proof of a slow link. Each command gets its share of its host
 (`farm.cpu_share`: twice the cores over the test slots) as CARGO_BUILD_JOBS, NEXTEST_TEST_THREADS
 and RUST_TEST_THREADS. A command that names Metal, sends a `--tree` (a program built here is a macOS
 one) or fetches a program back (`--fetch`, a build for this Mac) runs on a Mac only; `--os` chooses
@@ -578,8 +579,13 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   down) the host is not used, and is tried again every 60 s, not backed off. A route that stops
   answering is dropped, and the host is reached by name, then recovered again.
 - **Cache and back-off.** A healthy record holds 30 s, shared by every worktree (one caller probes,
-  the others read). A host that does not answer is not probed again for 30 s, doubling to 5
-  minutes, so a sleeping host costs little. A back-off ends at once when this Mac's network
+  the others read). A host is down only when two connections in a row fail, the second with
+  10 s to connect and 20 s to answer: one lost or slow probe (this Mac at a load of 90 can take
+  seconds to start ssh) is not a host gone. A host that is down is not probed again for 30 s,
+  doubling to 2 minutes, so a sleeping host costs little. A slow round trip or link never makes a
+  host unusable: it only orders the hosts (`test-remote`, "Linux hosts"). Until farm 50 one
+  probe over 150 ms or under 8 MB/s took a reachable host out, with the back-off up to 5 minutes,
+  while commands queued here. A back-off ends at once when this Mac's network
   changes (its addresses, `scutil --nwi`), and when `test-remote` finds no usable host it asks
   every backed-off host again, together, before it runs the command here. `status` probes every
   host now, whatever its back-off. Until farm 33 the back-off doubled to 30 minutes and outlived

@@ -112,7 +112,8 @@ the result. There are no benchmark leases.
 `native/` (or `--dir`), in a warm target directory of its own on that host. A host can be asleep, gone,
 on a slow link, or short of disk, or its copy can have been cleaned. The scripts check for this
 themselves: a host reached over the wrong link is moved back to its fast one when it can
-be, a host that fails a probe is skipped, with a growing back-off, and a lost connection
+be, a host whose connection fails twice in a row is skipped, with a back-off of up to 2
+minutes (a slow link only puts a host later, never out), and a lost connection
 reruns the command here at `nice -n 19`. Don't work around a host that is down. Run
 `status` to see why, and go on locally. Never wait for a host to be idle or less loaded: a
 usable host takes the command whatever its load, and `test-remote` itself waits only for a

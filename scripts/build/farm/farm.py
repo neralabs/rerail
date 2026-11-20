@@ -23,7 +23,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 49
+VERSION = 50
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -964,8 +964,7 @@ DEFAULTS = {
     "hosts": [],
     # Under `min_free_gb` free, the farm frees its own data on a host at once (`free_host`), and says
     # so when that is not enough; the host stays in use down to `floor_free_gb`, which is left to the
-    # host's own work. A host is used only while its round trip is this short and the link carries
-    # this much: a host that dropped to WiFi or a busy network is no faster than here.
+    # host's own work.
     "min_free_gb": 40,
     "floor_free_gb": 20,
     # This Mac's floor: under it, Rerail's builds here go, least recently built first (free-local).
@@ -973,16 +972,16 @@ DEFAULTS = {
     # The most a host's test targets hold together (GB): over it, the least recently used that no
     # command holds go (farm-agent, `keep_to_budget`).
     "max_target_gb": 150,
-    "max_rtt_ms": 150,
-    "min_mbps": 8,
 }
 # How long a host's health is believed: an answer that it is usable, and the first wait after it was
 # not (doubled each time it is still not, up to the last). The last was 30 minutes: hosts that
 # had failed all evening at home stayed "unreachable" for half an hour at the office, while ssh
-# reached them, and agents ran everything here (2026-11-18). A change of this Mac's network ends a
-# back-off at once too (`network_now`).
+# reached them, and agents ran everything here (2026-11-18). Then it was 5 minutes, and a host that
+# missed probes while this Mac was booting stayed out for minutes after it answered (2026-11-20):
+# now 2. A change of this Mac's network ends a back-off at once too (`network_now`). A host is down
+# only when two connections in a row fail (`probe`), never on one slow or lost probe.
 HEALTHY_SECONDS = 30
-DOWN_SECONDS = (30, 300)
+DOWN_SECONDS = (30, 120)
 # A host that answers, but over another link than its own (it fell back to WiFi), is tried again
 # this often, not backed off: its own link may be back at any time (`recover`).
 OFF_LINK_SECONDS = 60
@@ -1132,10 +1131,19 @@ def probe(host, cfg, fell_back=False, recovered=False):
         # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
         script = ('echo "fleet $(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin '
                   'docker ps -q --filter label=fleet.job 2>/dev/null | wc -l)"; ' + script)
-    try:
-        out = subprocess.run(ssh(name, script, "health"), capture_output=True, text=True, timeout=10)
-    except subprocess.TimeoutExpired:
-        out = None
+    # Asked twice before it counts as down, the second time with longer to answer: one lost or slow
+    # connection (this Mac at a load of 90 can take seconds to start ssh) is not a host gone.
+    for timeout in (10, 20):
+        command = ssh(name, script, "health")
+        if timeout > 10:
+            # (ssh keeps an option's first value: this one, over ssh()'s 3 s)
+            command = command[:1] + ["-o", "ConnectTimeout=10"] + command[1:]
+        try:
+            out = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            out = None
+        if out is not None and out.returncode == 0 and len(out.stdout.splitlines()) >= 5:
+            break
     if out is None or out.returncode != 0 or len(out.stdout.splitlines()) < 5:
         if route(name) and not fell_back:
             # The address that reached it over its link is gone (it was renumbered, or the link
@@ -1182,9 +1190,7 @@ def probe(host, cfg, fell_back=False, recovered=False):
             break
     h["rtt_ms"] = min(rtts)
     link = link_of(host)
-    # A host's own floor (`min_mbps` in its entry: a slower link it is still worth using over), else the farm's.
-    min_mbps = host.get("min_mbps", cfg["min_mbps"])
-    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < min_mbps:
+    if time.time() - h["mbps_at"] > PROBE_SECONDS:
         data = os.urandom(PROBE_BYTES)  # made before the clock starts: 70 ms on a loaded Mac
         # A plain pipe: `run(input=, capture_output=True)` writes stdin 512 bytes at a time while
         # it reads, and measured itself (57 MB/s where the pipe does 270).
@@ -1212,14 +1218,10 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = f"not on its link: reached over its {arrival or '?'}, not {link}"
     elif h["free_gb"] < cfg["floor_free_gb"]:
         h["why"] = f"{h['free_gb']} GB free, under {cfg['floor_free_gb']}: {short_of_disk(host, h, cfg)}"
-    # The round trip and throughput stand in for the link when none is configured (a host that fell
-    # back to WiFi is slow). With `link` confirmed they are only reported: an ssh command's round
-    # trip measures how fast both machines schedule ssh, and a loaded build machine (a load of 70
-    # and more) pushed it past the limits on the fast link, taking healthy hosts out mid-build.
-    elif not link and h["rtt_ms"] > cfg["max_rtt_ms"]:
-        h["why"] = f"a {h['rtt_ms']} ms round trip, over {cfg['max_rtt_ms']}"
-    elif not link and (h["mbps"] or 0) < min_mbps:
-        h["why"] = f"{h['mbps']} MB/s, under {min_mbps}"
+    # The round trip and throughput are never a refusal, only an order (test-remote puts the
+    # faster links first). One sample of either is how busy both machines were scheduling ssh as
+    # much as how fast the link is: a refusal on one took reachable hosts out for minutes, so
+    # commands queued here at a load of 90 while those hosts sat idle (until farm 50).
     else:
         h["ok"], h["why"], h["failures"] = True, "", 0
         if h["free_gb"] < cfg["min_free_gb"]:
