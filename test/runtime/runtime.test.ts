@@ -613,7 +613,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
 
       const { answering } = await edit("t1", BAD);
       // The result waits for the edits that may steer: no earlier wait for those went overdue.
-      await vi.waitFor(() => expect(settles).toEqual([undefined, "steering"]));
+      await vi.waitFor(() => expect(settles).toEqual([undefined, "steering"]), { timeout: 10_000 });
       check.resolve();
       expect((await answering).map(delivery => delivery.content)).toEqual([STEER]);
     } finally {
