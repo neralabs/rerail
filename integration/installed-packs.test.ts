@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { RULE_PACK_LIST } from "../src/engine/catalog/pack-list.generated.js";
+import { RULE_PACK_LIST } from "../src/engine/index.js";
 
 const NPM = process.env.RERAIL_INSTALLED_PACKS_NPM === "1";
 /** A registry round trip per pack, several per test. */
