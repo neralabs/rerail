@@ -104,6 +104,18 @@ impl Bloom {
         unsafe { crate::generated_reads::bloom_may(std::ptr::from_ref(self).cast(), h) != 0 }
     }
 
+    /// Which of `keys` (at most 64) may be in: bit `i` for key `i`. The block's hashes in one loop (no loads, so the
+    /// compiler may keep several in flight, or vectorize them), then one test each (`bloom_may`): a screen's selection
+    /// pass over a block of a scan's keys, as the device's is over a grid of them.
+    pub fn may_hold_each(&self, keys: &[i64]) -> u64 {
+        assert!(keys.len() <= 64, "a block of 64 keys at most");
+        let mut h = [0u64; 64];
+        for (o, &k) in h.iter_mut().zip(keys) {
+            *o = hash(k);
+        }
+        h[..keys.len()].iter().enumerate().fold(0u64, |m, (i, &h)| m | u64::from(self.may_hold_hashed(h)) << i)
+    }
+
     /// Adds the key whose hash is `h`, and says whether it was new (not every one of its bits set before). Its one
     /// writer only: a load and a store, no read-modify-write.
     #[inline(always)]
@@ -136,6 +148,10 @@ mod tests {
             f.add_hashed(hash(k));
         }
         assert!((0..2_000i64).all(|i| f.may_hold_hashed(hash(i * 7919))));
+        let keys: Vec<i64> = (0..64i64).map(|i| i * 7919 + i % 2).collect();
+        let each = f.may_hold_each(&keys);
+        assert!((0..64).all(|i| (each >> i & 1 != 0) == f.may_hold_hashed(hash(keys[i]))), "a block's test is each key's");
+        assert!((0..64).step_by(2).all(|i| each >> i & 1 != 0));
         let passed = (0..20_000i64).filter(|i| f.may_hold_hashed(hash(i * 7919 + 1))).count();
         assert!(passed < 2_000, "{passed} of 20,000 absent keys passed");
         let free = block.free_bytes();

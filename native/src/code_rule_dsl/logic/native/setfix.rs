@@ -6948,6 +6948,21 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         cands = Cands::Owned(order);
                     }
                 }
+                // A screened scan (decision 0477): its candidates selected by the screen a block of keys at a time
+                // (`Screening::select`), so only the rows it passes go on, and none is tested again at the screened
+                // step. A view's rows read as the probe found them (`Cands::Read`) are tested a binding at a time.
+                if i == 0 && keys.is_empty() && let Some(f) = cx.screen && let Some(c) = f.scan_col() {
+                    let key = |id: u32| rows.row_need(id, 1 << c).at(c);
+                    let selected = match &cands {
+                        Cands::Range(lo, hi) => Some(cx.screening.select(f, *lo..*hi, key)),
+                        Cands::Slice(ids) => Some(cx.screening.select(f, ids.iter().copied(), key)),
+                        Cands::Owned(ids) => Some(cx.screening.select(f, ids.iter().copied(), key)),
+                        _ => None,
+                    };
+                    if let Some(ids) = selected {
+                        cands = Cands::Owned(ids);
+                    }
+                }
                 if i == 0 && cx.budget != u64::MAX {
                     let mut list = Vec::new();
                     cands.any(|id| { if only.as_ref().is_none_or(|o| o.has(id)) { list.push(id) } false });

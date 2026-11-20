@@ -3876,7 +3876,9 @@ impl Model {
                     // values, the binding is drawn value by value through those atoms, so a value common in all is
                     // drawn as often as it is. A fanout (sq / rows) is that for one atom placed; a three-way
                     // self-join on a skewed key wants the third moment (0.51 of its size from sq on the fixture).
-                    if let Some(here) = self.heavy_of(rel, c) {
+                    // Each column priced with its kept keys (decision 0477), read where the engine keeps them.
+                    let priced = |r: &str, c: usize| self.heavy_of(r, c).map(|h| table::PricedCol::new(h, self.stats.keys.at(r, c)));
+                    if let Some(here) = priced(rel, c) {
                         let mut by = Vec::new();
                         let mut all = true;
                         for (d, vars, _) in &binding_domains {
@@ -3891,7 +3893,7 @@ impl Model {
                             if joined_else { all = false; }
                             for (dc, t) in b.args(*d).iter().enumerate() {
                                 if matches!(t, TermRef::Var(x) if *x == v) {
-                                    match self.heavy_of(dr, dc) { Some(h) => by.push(h), None => all = false }
+                                    match priced(dr, dc) { Some(h) => by.push(h), None => all = false }
                                 }
                             }
                         }

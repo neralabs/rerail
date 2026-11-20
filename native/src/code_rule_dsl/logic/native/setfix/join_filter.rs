@@ -29,6 +29,9 @@ pub(super) struct JoinFilter {
     pub(super) step: usize,
     pub(super) neg: bool,
     slot: usize,
+    /// The scan's column the probe's key is bound from: a screen of a probe that is not negated selects the scan's
+    /// rows by it (`Screening::select`).
+    scan: usize,
     keys: Arc<Kept>,
     /// The allowance a filter built for its walk takes; none for a column's own.
     _reservation: Option<super::join_cache::Reservation>,
@@ -57,21 +60,71 @@ pub(super) struct Screening {
     mark: u64,
     skip: u64,
     backoff: u64,
+    /// The scan's rows were selected (`select`): every binding at the screened step passed, or went untested while
+    /// the screen backed off.
+    scanned: bool,
 }
 
+/// The keys a selection pass tests at once (`Bloom::may_hold_each`).
+const BLOCK: usize = 64;
+
 impl Screening {
-    /// Whether `f` refuses the probe `slots` bind: then it has no rows.
+    /// Whether `f` refuses the probe `slots` bind: then it has no rows. None once the scan's rows were selected.
     #[inline]
     pub(super) fn refuses(&mut self, f: &JoinFilter, slots: &[i64]) -> bool {
+        if self.scanned {
+            return false;
+        }
         if self.skip > 0 {
             self.skip -= 1;
             return false;
         }
         let refused = !f.keys.may_hold(slots[f.slot]);
-        self.tested += 1;
-        self.refused += u64::from(refused);
-        if self.tested % WINDOW == 0 {
-            if (self.refused - self.mark) * PAYS < WINDOW {
+        self.count(1, u64::from(refused));
+        refused
+    }
+
+    /// A screened scan's candidates `ids` (decision 0477), the ones `f` passes, in order: their keys (`key`, the
+    /// scan's column `JoinFilter::scan_col`) a block of 64 at a time, each block hashed in one loop and tested
+    /// (`Kept::may_hold_each`). A selection pass, the device's shape, in place of a test a binding at the screened
+    /// step. While the screen backs off, ids pass unread and untested.
+    pub(super) fn select(&mut self, f: &JoinFilter, ids: impl Iterator<Item = u32>, key: impl Fn(u32) -> i64) -> Vec<u32> {
+        self.scanned = true;
+        let mut out = Vec::new();
+        let (mut bid, mut bkey, mut n) = ([0u32; BLOCK], [0i64; BLOCK], 0);
+        for id in ids {
+            if self.skip > 0 {
+                self.skip -= 1;
+                out.push(id);
+                continue;
+            }
+            bid[n] = id;
+            bkey[n] = key(id);
+            n += 1;
+            if n == BLOCK {
+                self.block(f, &bid, &bkey[..n], &mut out);
+                n = 0;
+            }
+        }
+        if n > 0 {
+            self.block(f, &bid, &bkey[..n], &mut out);
+        }
+        out
+    }
+
+    fn block(&mut self, f: &JoinFilter, ids: &[u32; BLOCK], keys: &[i64], out: &mut Vec<u32>) {
+        let held = f.keys.may_hold_each(keys);
+        out.extend((0..keys.len()).filter(|&b| held >> b & 1 != 0).map(|b| ids[b]));
+        self.count(keys.len() as u64, keys.len() as u64 - u64::from(held.count_ones()));
+    }
+
+    /// `tested` more tests, `refused` of them refused; at each window's end, whether to back off.
+    fn count(&mut self, tested: u64, refused: u64) {
+        let window = self.tested / WINDOW;
+        self.tested += tested;
+        self.refused += refused;
+        if self.tested / WINDOW != window {
+            if (self.refused - self.mark) * PAYS < self.tested - window * WINDOW {
                 self.backoff = (self.backoff * 2).clamp(WINDOW, WINDOW << 10);
                 self.skip = self.backoff;
             } else {
@@ -79,7 +132,6 @@ impl Screening {
             }
             self.mark = self.refused;
         }
-        refused
     }
 }
 
@@ -220,7 +272,7 @@ impl JoinFilter {
             }
             return Ok(None);
         }
-        Ok(Some(Self { step, neg: *neg, slot, keys: filter, _reservation: reservation, tested: AtomicU64::new(0), refused: AtomicU64::new(0),
+        Ok(Some(Self { step, neg: *neg, slot, scan: left_col, keys: filter, _reservation: reservation, tested: AtomicU64::new(0), refused: AtomicU64::new(0),
                        trace: trace.then(what) }))
     }
 
@@ -240,6 +292,13 @@ impl JoinFilter {
     }
 
     /// A walk's (a morsel's) counts, added as it ends.
+    /// The scan's column a selection pass reads its keys by (`Screening::select`): a screen of a probe that is not
+    /// negated, whose refused rows have no bindings past it. A negated probe's are tested a binding at a time: a
+    /// refused key holds it.
+    pub(super) fn scan_col(&self) -> Option<usize> {
+        (!self.neg).then_some(self.scan)
+    }
+
     pub(super) fn record(&self, s: &Screening) {
         if s.tested > 0 {
             self.tested.fetch_add(s.tested, Relaxed);
@@ -256,7 +315,7 @@ impl JoinFilter {
     fn build(slot: usize, inner: usize, key: impl Fn(usize) -> i64, outer: usize, probe: impl Fn(usize) -> i64) -> Option<(Self, usize)> {
         let filter = Self::built(bloom::words_for(inner), inner, key);
         let rejects = Self::sampled(&filter, outer, probe);
-        Some((Self { step: 1, neg: false, slot, keys: Arc::new(filter), _reservation: None, tested: AtomicU64::new(0), refused: AtomicU64::new(0), trace: None }, rejects))
+        Some((Self { step: 1, neg: false, slot, scan: 0, keys: Arc::new(filter), _reservation: None, tested: AtomicU64::new(0), refused: AtomicU64::new(0), trace: None }, rejects))
     }
 }
 
@@ -421,5 +480,26 @@ mod tests {
         let mut s = Screening::default();
         let refused = (0..probes).filter(|&i| s.refuses(&f, &[1_000_000 + i])).count() as u64;
         assert!(s.tested == probes as u64 && refused > s.tested * 9 / 10, "{refused} of {}", s.tested);
+    }
+
+    /// A screened scan's selection pass (`Screening::select`) keeps, in order, exactly the rows whose keys a test a
+    /// key at a time passes, a block of 64 at a time and over a last part block; it backs off where it refuses little,
+    /// passing rows untested; and once it ran, the screened step tests no binding again.
+    #[test]
+    fn a_scans_selection_pass_keeps_the_rows_the_screen_passes() {
+        let (f, _) = JoinFilter::build(0, 3000, |i| 2 * i as i64, 4096, |i| i as i64).unwrap();
+        let key = |id: u32| i64::from(id) * 3;
+        let mut s = Screening::default();
+        let got = s.select(&f, 0..10_001u32, key);
+        let want: Vec<u32> = (0..10_001u32).filter(|&id| !f.rejects(&[key(id)])).collect();
+        assert_eq!(got, want);
+        assert!(got.len() < 6_000 && got.len() > 1_000, "{} rows kept", got.len());
+        assert_eq!(s.tested, 10_001);
+        assert!(!s.refuses(&f, &[1]), "no binding tested after the scan's selection");
+        // Every key held: after the first windows it passes rows untested.
+        let mut s = Screening::default();
+        let got = s.select(&f, 0..1_000_000u32, |id| 2 * i64::from(id % 3000));
+        assert_eq!(got.len(), 1_000_000);
+        assert!(s.tested < 1_000_000 / 8, "{} tested", s.tested);
     }
 }

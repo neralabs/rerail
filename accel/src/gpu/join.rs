@@ -1136,19 +1136,15 @@ pub struct ColStats {
     pub sq: u64,
     pub cube: u64,
     pub top: Vec<(i64, u64)>,
-    /// The column's distinct values as a blocked Bloom filter of the words asked for (none where none were), the
-    /// format of the engine's `logic::bloom`: `col_bloom`.
-    pub keys: Vec<u64>,
 }
 
 /// The kernels of `column_stats` for a sort word `key`.
 fn col_stats_source(key: Width) -> String {
     let k = key.ty();
-    let reads = rerail_blocks::RELATION_READS;
     format!(
         r#"#include <metal_stdlib>
 using namespace metal;
-{reads}
+
 // Each run's length (0 past the runs), 1,024 a threadgroup, four a thread; the group's sums of lengths squared and
 // cubed into `part` (two words a group).
 kernel void col_stats(device const uint* starts [[buffer(0)]], device const uint* nruns [[buffer(1)]], device uint* lens [[buffer(2)]],
@@ -1205,21 +1201,6 @@ kernel void col_top(device const uint* perm [[buffer(0)]], device const uint* le
     out[3 + k + t] = len;
 }}
 
-// The column's distinct values into a blocked Bloom filter (`logic::bloom`): a thread a run (one a distinct value),
-// its key less the base back to the value, five bits of one 64-bit word, set as the word's two 32-bit halves with
-// atomics (the same bytes as the host's words). `words` zeroed; `p[1]` its 64-bit words, a power of two; the base the
-// host's (`base[0]`) or, with `p[2]`, the span's (`span[0]`).
-kernel void col_bloom(device const {k}* rkeys [[buffer(0)]], device const uint* nruns [[buffer(1)]], device const long* span [[buffer(2)]],
-                      device atomic_uint* words [[buffer(3)]], constant uint* p [[buffer(4)]], constant long* base [[buffer(5)]],
-                      uint r [[thread_position_in_grid]]) {{
-    if (r >= p[0] || r >= nruns[0]) return;
-    ulong h = clif_bloom_hash((device const uchar*)words, 0ul, ulong(rkeys[r]) + ulong(p[2] != 0 ? span[0] : base[0]));
-    ulong m = clif_bloom_mask((device const uchar*)words, 0ul, h);
-    uint w = uint(h >> 32) & (p[1] - 1);
-    uint lo = uint(m), hi = uint(m >> 32);
-    if (lo != 0) atomic_fetch_or_explicit(&words[2 * w], lo, memory_order_relaxed);
-    if (hi != 0) atomic_fetch_or_explicit(&words[2 * w + 1], hi, memory_order_relaxed);
-}}
 "#
     )
 }
@@ -1314,33 +1295,30 @@ kernel void col_narrow(device const long* src [[buffer(0)]], device const long* 
 "#;
 
 /// Decision 0209 §6, the GPU batch over host columns (`column_stats_of`).
-pub fn column_stats(cols: &[&[i64]], k: usize, words: usize) -> Result<Vec<ColStats>, String> {
+pub fn column_stats(cols: &[&[i64]], k: usize) -> Result<Vec<ColStats>, String> {
     let cols: Vec<StatCol<'_>> = cols.iter().map(|c| StatCol::Host(c)).collect();
-    column_stats_of(&cols, k, words)
+    column_stats_of(&cols, k)
 }
 
 /// Decision 0209 §6, the GPU batch: each column's statistics (`ColStats`) and its `k` most common values, all in one
 /// command buffer. Per column: the radix sort with its runs (`encode_sort`), a value's count its run's length;
 /// `col_stats` reduces the lengths a tile a threadgroup, `col_sum` the tiles'; a second sort of the lengths gives
-/// the longest runs (`col_top`). The host reads one small buffer a column. Exact, as the CPU's batch is.
+/// the longest runs (`col_top`). The host reads one small buffer a column. Exact, as the CPU's batch is. A column's
+/// keys are not made here: the statistics read the column's own (`logic::bloom::Keys`, decision 0477).
 ///
 /// A column the device holds (`StatCol::Device`) is not read by the host: its span is found on the device
 /// (`COL_SPAN_SOURCE`), and its keys sorted 32 bits wide. A column whose span passes 32 bits is made again in a second
 /// command buffer, 64 bits wide.
-///
-/// With `words` (a power of two; 0 for none), each column's distinct values as a blocked Bloom filter of that many
-/// 64-bit words too (`col_bloom`, over the sort's runs: one atomic a distinct value).
-pub fn column_stats_of(cols: &[StatCol<'_>], k: usize, words: usize) -> Result<Vec<ColStats>, String> {
+pub fn column_stats_of(cols: &[StatCol<'_>], k: usize) -> Result<Vec<ColStats>, String> {
     device()?;
-    assert!(words == 0 || words.is_power_of_two(), "a filter's words are a power of two");
-    let mut got = stats_round(cols, k, words, false)?;
+    let mut got = stats_round(cols, k, false)?;
     let wide: Vec<usize> = got.iter().enumerate().filter(|(_, g)| g.is_none()).map(|(i, _)| i).collect();
     if !wide.is_empty() {
         let again: Vec<StatCol<'_>> = wide.iter().map(|&i| match &cols[i] {
             StatCol::Device { buffer, at, rows, col } => StatCol::Device { buffer, at: *at, rows: *rows, col: *col },
             StatCol::Host(v) => StatCol::Host(v),
         }).collect();
-        for (i, g) in wide.into_iter().zip(stats_round(&again, k, words, true)?) {
+        for (i, g) in wide.into_iter().zip(stats_round(&again, k, true)?) {
             got[i] = g;
         }
     }
@@ -1348,14 +1326,14 @@ pub fn column_stats_of(cols: &[StatCol<'_>], k: usize, words: usize) -> Result<V
 }
 
 /// One command buffer of `column_stats_of`; a device column whose span passes 32 bits is `None` unless `wide`.
-fn stats_round(cols: &[StatCol<'_>], k: usize, words: usize, wide: bool) -> Result<Vec<Option<ColStats>>, String> {
+fn stats_round(cols: &[StatCol<'_>], k: usize, wide: bool) -> Result<Vec<Option<ColStats>>, String> {
     let queue = queue()?;
     let command = queue.new_command_buffer();
     let pass = Pass::new(command);
     let mut keep: Vec<Held> = Vec::new();
     let mut reads: Vec<Column> = Vec::new();
     // Per column: its statistics' words, and its base (on the host, or the device's span buffer).
-    let mut outs: Vec<Option<(Held, Result<i64, Held>, Option<Held>)>> = Vec::new();
+    let mut outs: Vec<Option<(Held, Result<i64, Held>)>> = Vec::new();
     for col in cols {
         let n = col.rows();
         if n == 0 {
@@ -1404,20 +1382,7 @@ fn stats_round(cols: &[StatCol<'_>], k: usize, words: usize, wide: bool) -> Resu
         keep.push(part);
         let by_len = encode_sort(&pass, &lens.buffer, Width::W32, 32, n)?;
         pass.run(&top, &[&by_len.perm.buffer, &lens.buffer, &parts.rkeys.buffer, &out.buffer], &[nn, k as u32], &[], groups(k));
-        // The filter, over the runs' keys: the base the host's, or the span's on the device.
-        let filter = if words > 0 {
-            let bloom = pipeline(&variant, "col_bloom", || col_stats_source(parts.key))?;
-            let f = Held::zeroed(8 * words)?;
-            let (span, on_device, host_base) = match &base {
-                Ok(b) => (&parts.nruns.buffer, 0u32, *b),
-                Err(span) => (&span.buffer, 1u32, 0),
-            };
-            pass.run(&bloom, &[&parts.rkeys.buffer, &parts.nruns.buffer, span, &f.buffer], &[nn, words as u32, on_device], &[host_base], groups(n));
-            Some(f)
-        } else {
-            None
-        };
-        outs.push(Some((out, base, filter)));
+        outs.push(Some((out, base)));
         keep.extend([lens, parts.perm, parts.starts, parts.rkeys, parts.nruns, by_len.perm, by_len.starts, by_len.rkeys, by_len.nruns]);
     }
     pass.end();
@@ -1429,7 +1394,7 @@ fn stats_round(cols: &[StatCol<'_>], k: usize, words: usize, wide: bool) -> Resu
         .into_iter()
         .zip(cols)
         .map(|(o, col)| {
-            let Some((out, base, filter)) = o else { return Some(ColStats { keys: vec![0; words], ..ColStats::default() }) };
+            let Some((out, base)) = o else { return Some(ColStats::default()) };
             let base = match base {
                 Ok(b) => b,
                 Err(span) => {
@@ -1445,9 +1410,7 @@ fn stats_round(cols: &[StatCol<'_>], k: usize, words: usize, wide: bool) -> Resu
             let w = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u64>(), 3 + 2 * k) };
             let ndv = w[0];
             let top = (0..k.min(ndv as usize)).map(|i| ((w[3 + i] as i64).wrapping_add(base), w[3 + k + i])).collect();
-            // SAFETY: `words` words, zeroed and written by `col_bloom`; the command buffer completed.
-            let keys = filter.map_or_else(Vec::new, |f| unsafe { std::slice::from_raw_parts(f.buffer.contents().cast::<u64>(), words) }.to_vec());
-            Some(ColStats { rows: col.rows() as u64, ndv, sq: w[1], cube: w[2], top, keys })
+            Some(ColStats { rows: col.rows() as u64, ndv, sq: w[1], cube: w[2], top })
         })
         .collect())
 }

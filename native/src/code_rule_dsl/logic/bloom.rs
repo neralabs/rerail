@@ -11,18 +11,18 @@
 //!
 //! A test is one hash, one load and one compare. A miss is certain; a hit is a candidate an exact probe checks.
 //!
-//! Two kinds hold the words:
-//! - `Filter`, made whole at once: a screen's own, the heavy values' (`plan::table::HeavyCol`) and the device's;
-//! - `Kept`, a column's filter kept as its rows come (`native::setfix::sketch::Sketch`), grown from the column as its
-//!   keys pass what it is sized for. Its sketch adds to it, and the planner and the screens read it where it is.
+//! One kind holds the words, `Kept`: a column's filter kept as its rows come (`native::setfix::sketch::Sketch`), in a
+//! block, grown from the column as its keys pass what it is sized for. Its sketch adds to it, and the planner's
+//! statistics (`Keys`, the heavy values' too), the screens and the device read it where it is. A screen of a probe side
+//! too small to keep one builds its own, of the same kind (`words_for`).
 //!
 //! A filter of `2w` words folds to `w` (word `i` is words `i` and `i + w` OR-ed): the words a key takes are the low
 //! bits of the same field. So any two filters compare at the smaller one's size (`shared`).
 /// Bits of a word a key sets.
 pub const K: u32 = 5;
-/// The bits a filter is sized to give each distinct key.
+/// The bits a screen's own filter (a probe side without a kept one) gives each distinct key.
 pub const BITS_PER_KEY: usize = 16;
-/// The fewest and most words a filter has (256 B to 16 KiB).
+/// The fewest and most words a screen's own filter has (256 B to 16 KiB).
 pub const MIN_WORDS: usize = 32;
 pub const MAX_WORDS: usize = 2048;
 /// The bits a kept filter gives each distinct key: a byte, about 3% of absent keys passing. It is held for as long
@@ -44,7 +44,7 @@ pub fn place(h: u64, words: usize) -> (usize, u64) {
     rerail_blocks::bloom::place(h, words)
 }
 
-/// The words for `keys` distinct keys: `BITS_PER_KEY` each, a power of two within the bounds.
+/// The words of a screen's own filter for `keys` distinct keys: `BITS_PER_KEY` each, a power of two within the bounds.
 pub fn words_for(keys: usize) -> usize {
     (keys.saturating_mul(BITS_PER_KEY) / 64).next_power_of_two().clamp(MIN_WORDS, MAX_WORDS)
 }
@@ -54,7 +54,7 @@ pub fn kept_words_for(keys: usize) -> usize {
     (keys.saturating_mul(KEPT_BITS_PER_KEY) / 64).next_power_of_two().clamp(MIN_WORDS, MAX_KEPT_WORDS)
 }
 
-/// A filter's words, read one at a time: both kinds' (`Filter`, `Kept`), for the estimates.
+/// A filter's words, read one at a time, for the estimates.
 pub trait Words {
     fn len(&self) -> usize;
     fn word(&self, i: usize) -> u64;
@@ -168,57 +168,6 @@ impl Sample {
     }
 }
 
-/// A filter's words. Its bytes are the device's, as built (`place`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Filter {
-    pub words: Box<[u64]>,
-}
-
-impl Filter {
-    /// An empty filter of `words` words (a power of two).
-    pub fn new(words: usize) -> Filter {
-        assert!(words.is_power_of_two(), "a filter's words are a power of two");
-        Filter { words: vec![0; words].into_boxed_slice() }
-    }
-
-    #[inline]
-    pub fn add(&mut self, key: i64) {
-        let (w, m) = place(hash(key), self.words.len());
-        self.words[w] |= m;
-    }
-
-    /// Whether `key` may be in: false is certain.
-    #[inline]
-    pub fn may_hold(&self, key: i64) -> bool {
-        let (w, m) = place(hash(key), self.words.len());
-        self.words[w] & m == m
-    }
-
-    /// The bits set.
-    pub fn ones(&self) -> u64 {
-        Words::ones(self)
-    }
-
-    /// The distinct keys added, estimated (`Words::keys`).
-    pub fn keys(&self) -> f64 {
-        Words::keys(self)
-    }
-
-    /// The distinct keys both filters hold, estimated (`shared`).
-    pub fn shared(&self, other: &dyn Words) -> Option<f64> {
-        shared(self, other)
-    }
-}
-
-impl Words for Filter {
-    fn len(&self) -> usize {
-        self.words.len()
-    }
-    fn word(&self, i: usize) -> u64 {
-        self.words[i]
-    }
-}
-
 /// A column's filter kept as its rows come (decision 0477). One writer adds to it, the column's sketch, while it is
 /// read where it is: by the planner's statistics, the screens and the device's joins, which hold it (`Arc`) and never
 /// copy it. It lies in a block of the run's relations (`facts::rows::FactsBloom`, a `rerail_blocks::bloom::Bloom`):
@@ -256,6 +205,12 @@ impl Kept {
     #[inline(always)]
     pub fn may_hold_hashed(&self, h: u64) -> bool {
         self.bloom.may_hold_hashed(h)
+    }
+
+    /// Which of `keys` (at most 64) may be in, a bit each (`Bloom::may_hold_each`: the block hashed in one loop).
+    #[inline]
+    pub fn may_hold_each(&self, keys: &[i64]) -> u64 {
+        self.bloom.may_hold_each(keys)
     }
 
     /// Whether it holds more keys than it is sized for and may grow (`kept_words_for`).
@@ -367,6 +322,15 @@ impl Keys {
         }
     }
 
+    /// Whether both are one column's keys (a self-join), or the same few values: their shared keys are all of them.
+    pub fn same(&self, other: &Keys) -> bool {
+        match (self, other) {
+            (Keys::Few(a), Keys::Few(b)) => a == b,
+            (Keys::Filter(a), Keys::Filter(b)) => std::sync::Arc::ptr_eq(&a.filter, &b.filter),
+            _ => false,
+        }
+    }
+
     /// The distinct keys: exact, or the reading's estimate.
     pub fn distinct(&self) -> f64 {
         match self {
@@ -417,14 +381,14 @@ mod tests {
     /// Every key added is held; keys not added are mostly refused, near the rate the size gives.
     #[test]
     fn a_filter_holds_its_keys_and_refuses_most_others() {
-        let mut f = Filter::new(words_for(1659));
+        let f = Kept::new(words_for(1659));
         for k in 0..1659 {
-            f.add(k * 7919);
+            f.add_hashed(hash(k * 7919));
         }
         assert!((0..1659).all(|k| f.may_hold(k * 7919)));
         let passed = (0..100_000).filter(|&k| f.may_hold(-1 - k)).count();
         assert!(passed < 3_000, "{passed} of 100000 passed");
-        let keys = f.keys();
+        let keys = Words::keys(&f);
         assert!((keys / 1659.0 - 1.0).abs() < 0.1, "{keys}");
     }
 
@@ -432,14 +396,14 @@ mod tests {
     #[test]
     fn two_filters_estimate_the_keys_they_share() {
         let words = words_for(8000);
-        let (mut a, mut b) = (Filter::new(words), Filter::new(words));
+        let (a, b) = (Kept::new(words), Kept::new(words));
         for k in 0..7650 {
-            a.add(k);
-            b.add(k + 7650 - 626);
+            a.add_hashed(hash(k));
+            b.add_hashed(hash(k + 7650 - 626));
         }
-        let shared = a.shared(&b).unwrap();
-        assert!((shared / 626.0 - 1.0).abs() < 0.2, "{shared}");
-        assert_eq!(Filter::new(words).shared(&Filter::new(words * 2)), Some(0.0));
+        let both = shared(&a, &b).unwrap();
+        assert!((both / 626.0 - 1.0).abs() < 0.2, "{both}");
+        assert_eq!(shared(&Kept::new(words), &Kept::new(words * 2)), Some(0.0));
     }
 
     /// Kept filters of different sizes compare folded: a column of 300 keys against one of 40,000 that holds 100 of
