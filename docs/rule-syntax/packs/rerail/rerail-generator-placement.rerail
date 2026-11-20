@@ -1,0 +1,65 @@
+.policy "rerail-generator-placement" revision 2
+.description "Keep scripts in packs or the engine sources that write committed files under scripts/generate, not beside their output; fixtures, upstream oracles and tests are exempt."
+.language typescript
+.mode steer
+.scope include "packs/**/*.mjs", "packs/**/*.cjs", "packs/**/*.js", "packs/**/*.ts", "packs/**/*.mts", "packs/**/*.cts", "native/src/**/*.mjs", "native/src/**/*.cjs", "native/src/**/*.js", "native/src/**/*.ts", "native/src/**/*.mts", "native/src/**/*.cts"
+.scope exclude "packs/*/upstream/**", "**/fixtures/**", "**/*.test.*", "**/*.spec.*"
+// A script under packs/ or native/src/ that writes a committed file belongs in scripts/generate/<area>/, listed in
+// its README, not beside what it writes. Each language's write calls are reported at the call:
+//   writeFileSync(new URL("../rules/x.json", import.meta.url), text)     GENERATOR_BESIDE_OUTPUT
+//   fsp.appendFile(p, line); Bun.write(p, text); fs.cpSync(a, b)          GENERATOR_BESIDE_OUTPUT
+//   readFileSync(new URL("./specs.json", import.meta.url), "utf8")        not reported
+// The JSON's scope spans four languages: this is its JavaScript and TypeScript policy; rerail-generator-placement
+// .python, .php and .shell are the others. Fixtures, upstream oracles and tests are out of scope.
+
+// write_call(c): a call whose callee names a write of Node's fs (fs., fsp., fse., fsExtra., promises.,
+// fs.promises., or imported bare), fs-extra's output and JSON writers, Deno's or Bun's, exactly as written.
+.decl write_call(c: node)
+write_call(c) :- kind(c, "call_expression"), field(c, "function", f),
+    glob("{{fs,fsp,fse,fsPromises,fsExtra,promises}{.promises,}.,}{writeFileSync,writeFile,appendFileSync,appendFile,createWriteStream,copyFileSync,copyFile,cpSync,cp,outputFileSync,outputFile,outputJsonSync,outputJson,writeJsonSync,writeJson}", f).
+write_call(c) :- kind(c, "call_expression"), field(c, "function", f), glob("{Deno.{writeTextFile,writeFile},Bun.write}", f).
+
+.violation GENERATOR_BESIDE_OUTPUT(at: node) "If what it writes is committed, move this script to scripts/generate/<area>/, re-root its paths and imports, and add its row to scripts/generate/README.md. Leave temporary output."
+GENERATOR_BESIDE_OUTPUT(c) :- write_call(c).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_rule_builder_beside_its_rules_is_reported exactly
+    .fixture "packs/next/candidates/build-rules.mjs" ```
+        import { writeFileSync } from "node:fs";
+
+        writeFileSync(new URL("../rules/next-no-img-element.json", import.meta.url), `${JSON.stringify(rule, null, 2)}\n`);
+        ```
+    .expect GENERATOR_BESIDE_OUTPUT at "packs/next/candidates/build-rules.mjs":3
+.end
+
+.test other_writers_are_reported exactly
+    .fixture "native/src/tools/emit.ts" ```
+        await fs.promises.writeFile(out, text);
+        fsp.appendFile(log, line);
+        await Bun.write(out, text);
+        fse.outputJsonSync(out, table);
+        ```
+    .expect GENERATOR_BESIDE_OUTPUT at "native/src/tools/emit.ts":1
+    .expect GENERATOR_BESIDE_OUTPUT at "native/src/tools/emit.ts":2
+    .expect GENERATOR_BESIDE_OUTPUT at "native/src/tools/emit.ts":3
+    .expect GENERATOR_BESIDE_OUTPUT at "native/src/tools/emit.ts":4
+.end
+
+// The pack's passing example, a write of another name, and the scope's exemptions.
+.test readers_tests_fixtures_and_oracles_pass exactly
+    .fixture "packs/react/candidates/specs.mjs" ```
+        import { readFileSync } from "node:fs";
+
+        export const SPECS = JSON.parse(readFileSync(new URL("./specs.json", import.meta.url), "utf8"));
+        stream.write(chunk);
+        ```
+    .fixture "packs/react/candidates/specs.test.mjs" ```
+        writeFileSync(out, text);
+        ```
+    .fixture "packs/react/fixtures/make.js" ```
+        writeFileSync(out, text);
+        ```
+    .fixture "packs/react/upstream/build.js" ```
+        writeFileSync(out, text);
+        ```
+.end

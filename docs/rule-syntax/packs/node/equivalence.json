@@ -1,0 +1,47 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "node",
+  "equivalent": false,
+  "untranslated": {
+    "n-hashbang": "failed: fixtures, rerail-typescript: the translation failed: rerail-engine: docs/rule-syntax/packs/node/n-hashbang.rerail: no columns for npm_ignored (exit 1)",
+    "n-no-extraneous-require": "failed: fixtures, rerail-typescript: the translation failed: rerail-engine: docs/rule-syntax/packs/node/n-no-extraneous-require.rerail: tsconfig_for is read, and nothing derives it or binds it: the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md) (exit 1)",
+    "n-no-missing-import": "failed: fixtures, rerail-typescript: the translation failed: rerail-engine: docs/rule-syntax/packs/node/n-no-missing-import.rerail: no columns for spec_resolved (exit 1)",
+    "n-no-missing-require": "failed: fixtures, rerail-typescript: the translation failed: rerail-engine: docs/rule-syntax/packs/node/n-no-missing-require.rerail: no columns for spec_resolved (exit 1)",
+    "n-no-top-level-await": "failed: fixtures, rerail-typescript: the translation failed: rerail-engine: docs/rule-syntax/packs/node/n-no-top-level-await.rerail: no columns for npm_ignored (exit 1)",
+    "n-no-unpublished-bin": "failed: fixtures, rerail-typescript: the translation failed: rerail-engine: docs/rule-syntax/packs/node/n-no-unpublished-bin.rerail: no columns for npm_ignored (exit 1)",
+    "n-no-unpublished-import": "failed: fixtures, rerail-typescript: the translation failed: rerail-engine: docs/rule-syntax/packs/node/n-no-unpublished-import.rerail: no columns for npm_ignored (exit 1)",
+    "n-no-unpublished-require": "failed: fixtures, rerail-typescript: the translation failed: rerail-engine: docs/rule-syntax/packs/node/n-no-unpublished-require.rerail: no columns for npm_ignored (exit 1)"
+  },
+  "different": {
+    "n-callback-return": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "rerail-typescript": {
+          "originalOnly": 2,
+          "translationOnly": 0
+        }
+      }
+    },
+    "n-no-deprecated-api": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
+    "n-prefer-promises-fs": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    }
+  }
+}
