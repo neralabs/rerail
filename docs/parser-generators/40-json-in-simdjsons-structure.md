@@ -593,6 +593,18 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 36, done: the newline index from tier 1's bits (decision 0493)
+
+The second of step 34's three changes. Tier 1 now outputs the stream's `\n` bytes (`BlockProgram::newlines`), and the
+format 16 writer makes the newline index from those words (`newlines::index_of`, through `Writer::begin_with`), not by
+scanning the source again. The index is the scan's, byte for byte.
+
+Instructions a byte are unchanged (`twitter.json` 48.7, `numbers.json` 45.0): `memchr` cost few instructions, but its
+pass over the source cost time. In a `twitter.json` profile the index went from about 13% of the parse to about 4%.
+Tier 1 went from 4.35 to 4.58 instructions a byte, for the one output more.
+
+Left from step 34: the writer's ops, which are most of what remains, against simdjson's tape writes.
+
 ## Step 35, done: one writer from one document to the next (decision 0480)
 
 The first of step 34's three changes. Tier 2's format 16 run now writes into a writer the caller keeps, as simdjson's

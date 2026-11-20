@@ -66,6 +66,17 @@ const ZBLOCK_MAX: usize = 4 * PIECE_MAX + w::lz4_bound(PIECE_MAX as u64) as usiz
 /// What a fresh byte of the tape's buffer holds: in tests not zero, so a byte the ops do not write shows.
 const FRESH: u8 = if cfg!(test) { 0xa5 } else { 0 };
 
+/// What a writer writes a tape of (`Writer::begin_with`): a document of `source` in `lang`, of about `nodes` nodes,
+/// the producer's `tag`, in 16z where `z`, with each block's presence where `blocks`.
+pub struct Document<'a> {
+    pub lang: &'a Lang,
+    pub source: &'a [u8],
+    pub tag: u8,
+    pub z: bool,
+    pub blocks: bool,
+    pub nodes: usize,
+}
+
 /// Format 16 or 16z written in one pass as a parser goes (decision 0434 §2), by the writer's ops in CLIF (§6)
 /// through their Rust: `f16::Writer`. Its API and its bytes are the hand-written reference writer's
 /// (`reference::Writer`, whose doc says what each op writes where), which the tests check it against (R13, R16).
@@ -107,10 +118,19 @@ impl Writer {
     /// the next. A buffer's bytes are the last document's: the ops write each byte before they read it (in tests every
     /// part kept is filled with `FRESH`, so a byte read before it is written shows).
     pub fn begin(&mut self, lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) {
+        self.begin_with(&Document { lang, source, tag, z, blocks, nodes }, |out| crate::newlines::index_into(out, source));
+    }
+
+    /// `begin`, the newline index written into its part by `lines` (`newlines::index_of`), in the part's own buffer: a
+    /// producer that has the source's newlines (tier 1's bits) makes it with no scan of the source.
+    pub fn begin_with(&mut self, doc: &Document<'_>, lines: impl FnOnce(&mut Vec<u8>)) {
+        let &Document { lang, source, tag, z, blocks, nodes } = doc;
         let source_len = source.len() as u64;
         let wd = lang.widths;
         let cw = bytes_for(source_len);
-        let lines = crate::newlines::index(source);
+        let mut index = std::mem::take(&mut self.parts[part::LINES as usize]);
+        lines(&mut index);
+        let lines = index;
         let newlines = crate::newlines::count(&lines).unwrap_or(0);
         let (kind_words, field_words) = lang.presence_words();
         let w3 = [wd[0] as u32, wd[1] as u32, wd[2] as u32];

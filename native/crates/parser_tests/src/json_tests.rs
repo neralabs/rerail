@@ -196,6 +196,9 @@ fn tree_inputs() -> Vec<Vec<u8>> {
         br#"[01]"#.to_vec(),
         br#"  "s"  "#.to_vec(),
         b"\xef\xbb\xbf[1]".to_vec(),
+        // Newlines after a stripped prefix: the tape's newline index from tier 1's bits, offset by it.
+        b"\xef\xbb\xbf[1,\n2,\n\n\"a\"]\n".to_vec(),
+        b"\n\n{\"k\":\n[true,\nnull]}\n\n".to_vec(),
         // Atoms as simdjson tests them (page 40, step 3): at the file's end, a run longer than
         // the word, a word cut short, before a structural and before whitespace.
         br#"true"#.to_vec(),

@@ -22,6 +22,8 @@ pub struct BlockNative {
     pub totals: Vec<usize>,
     /// The outputs (indexes into `outputs`) tier 2 reads as masks (`block::BlockProgram::masks`).
     pub masks: Vec<usize>,
+    /// The output (an index into `outputs`) of the stream's newlines (`block::BlockProgram::newlines`).
+    pub newlines: Option<usize>,
     /// How many bytes past the stream the program runs (`block::BlockProgram::delay`).
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
@@ -164,6 +166,7 @@ impl BlockNative {
             extracts: program.extract_outputs(),
             totals: program.total_outputs(),
             masks: program.mask_outputs(),
+            newlines: program.newline_output(),
             delay: program.delay,
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
             groups: crate::block::groups(&program.ops, &program.rounds).expect("a verified program"),
@@ -311,6 +314,7 @@ impl BlockNative {
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
             masks: self.masks.clone(),
+            newlines: self.newlines,
             delay: self.delay,
             output_delays: self.output_delays.clone(),
             records: self.records.clone(),
@@ -532,6 +536,7 @@ impl BlockNative {
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
             masks: self.masks.clone(),
+            newlines: self.newlines,
             delay: self.delay,
             output_delays: self.output_delays.clone(),
             records: self.records.clone(),
@@ -789,6 +794,7 @@ impl BlockNative {
                 extracts: if last { self.extracts.clone() } else { Vec::new() },
                 totals: if last { self.totals.clone() } else { Vec::new() },
                 masks: if last { self.masks.clone() } else { Vec::new() },
+                newlines: if last { self.newlines } else { None },
                 delay: self.delay,
                 groups: groups.clone(),
                 records: if last { self.records.clone() } else { None },

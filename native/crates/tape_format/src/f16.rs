@@ -580,7 +580,7 @@ pub mod ops;
 pub mod reference;
 
 /// The writer: the ops in CLIF, through their Rust (decision 0434 §6, R16).
-pub use ops::Writer;
+pub use ops::{Document, Writer};
 
 /// A node's cells as `write` takes them: its code's number in the language's table, its span, and one past its
 /// subtree's last node.

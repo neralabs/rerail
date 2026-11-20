@@ -68,6 +68,9 @@ pub struct CompiledBlock {
     /// them out.
     pub pad: usize,
     pub extracts: Vec<usize>,
+    /// The output of the stream's newlines (`BlockNative::newlines`): the format 16 tape's newline index is made from
+    /// its words.
+    pub newlines: Option<usize>,
     totals: Vec<usize>,
     /// The outputs with a running count, extracts' and totals' together.
     counted: Vec<usize>,
@@ -2760,6 +2763,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         delay: native.delay,
         pad: usize::from(native.pad),
         extracts: native.extracts.clone(),
+        newlines: native.newlines,
         totals: native.totals.clone(),
         counted: counted(native),
         ascii_branch: last.ascii_branch,
