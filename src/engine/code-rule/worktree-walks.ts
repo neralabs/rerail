@@ -411,7 +411,11 @@ export class WorktreeWalks {
   readonly #kept = new Map<string, Kept>();
   /** Worktrees a walk began to read and has not kept findings of: the next walk reads them whatever the notices say. */
   readonly #owed = new Set<string>();
-  /** The refusals each worktree's reads withdrew (`WorktreeScan.withdrawn`), by its path, while a session watches it. */
+  /**
+   * The refusals each worktree's reads withdrew (`WorktreeScan.withdrawn`), by its path, dropped with what was kept of it
+   * (`#forget`). A read begun while a session watched it can put back an empty set as the session closes, which no read
+   * through a closed session fills (`WatcherWalk.scan`), until the next walk or close drops it.
+   */
   readonly #withdrawn = new Map<string, Set<string>>();
   readonly #readUnmerged = gitUnmergedReader();
   readonly #readTrackedIgnored = gitTrackedIgnoredReader();
