@@ -227,6 +227,7 @@ impl ContentStore {
                     &mut prepared,
                     &current_objects,
                     &self.database_path,
+                    self.connection.flush(),
                 )?;
                 let object_pass = prepare_object_pass(
                     &prepared,
@@ -369,7 +370,7 @@ impl ContentStore {
         run_publication_test_hook(&BEFORE_RELATIONSHIP_WRITE_HOOK);
         // The results' bytes, as they are, in one segment of the pass's (decision 0450 step 2): numbered in its
         // transaction, named once it commits; a pass that does not commit leaves no file.
-        let mut placing = Placing::write(&self.database_path, &relationship_pass.result_bytes())?;
+        let mut placing = Placing::write(&self.database_path, &relationship_pass.result_bytes(), self.connection.flush())?;
         let (elapsed, statement_count, current, seg) = retry_busy(busy, || {
             if cancelled() {
                 return Err(StoreError::Invalid(
@@ -517,6 +518,7 @@ fn place_missing_objects(
     prepared: &mut [PreparedOverlayPublication<'_>],
     stored_objects: &[(Option<SourceId>, Option<TapeId>)],
     database: &std::path::Path,
+    flush: rerail_blocks::block::Flush,
 ) -> StoreResult<Placing> {
     // (file, which: 0 source, 1 tape, 2 + document), in the order written.
     let mut bytes: Vec<&[u8]> = Vec::new();
@@ -542,7 +544,7 @@ fn place_missing_objects(
             }
         }
     }
-    let placing = Placing::write(database, &bytes)?;
+    let placing = Placing::write(database, &bytes, flush)?;
     let mut at = 0;
     for (index, which) in slots {
         let item = &mut prepared[index];

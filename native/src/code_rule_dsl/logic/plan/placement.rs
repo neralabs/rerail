@@ -788,18 +788,33 @@ pub(crate) fn device_joins_off() -> bool {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use crate::code_rule_dsl::logic::plan::Step;
+    use crate::code_rule_dsl::logic::program_image::{Builder, CmpOp, T};
 
-    fn atom(rel: &str, neg: bool) -> Literal {
-        Literal::Atom(Atom { rel: rel.into(), args: [Term::Var("x".into())].into(), neg, gated: false })
+    /// A body literal of a test's rule: an atom over `x`, or `l = r`.
+    #[derive(Clone)]
+    enum Literal {
+        Atom(&'static str, bool),
+        Eq(T<'static>, T<'static>),
     }
 
-    /// Adds `lits`, planned in their order, to `shape`.
-    fn adds(shape: &mut Shape, lits: &[Literal], head: &[Term], work: f64, recursive: bool) {
+    fn atom(rel: &'static str, neg: bool) -> Literal {
+        Literal::Atom(rel, neg)
+    }
+
+    /// Adds `out(head…) :- lits`, planned in their order, to `shape`.
+    fn adds(shape: &mut Shape, lits: &[Literal], head: &[T<'_>], work: f64, recursive: bool) {
         let steps: Vec<Step> = (0..lits.len()).map(|at| Step { at, mode: None }).collect();
-        let head = Atom { rel: "out".into(), args: head.to_vec().into(), neg: false, gated: false };
-        let made = crate::code_rule_dsl::logic::plan::body::alone(&Rule { head, body: lits.to_vec().into() }).expect("a rule");
+        let mut b = Builder::base();
+        let mut r = b.rule().head("out", head);
+        for l in lits {
+            r = match l {
+                Literal::Atom(rel, neg) => r.atom_with(*rel, &[T::Var("x")], *neg, false),
+                Literal::Eq(lt, rt) => r.cmp(lt.clone(), CmpOp::Eq, rt.clone()),
+            };
+        }
+        r.finish().expect("a rule");
+        let made = b.finish().expect("a version").0;
         let b = crate::code_rule_dsl::logic::plan::body::nth(&made, 0);
         shape.add(Order::new(&b, &steps), work, recursive, false);
     }
@@ -809,7 +824,7 @@ pub mod tests {
         // A large join with a negation, a text test and a computed head: the GPU's price is lower, and the computed
         // term is the form it lacks.
         let mut big = Shape::default();
-        let len = Term::Call("sha256".into(), [Term::Var("x".into())].into());
+        let len = T::Call("sha256", vec![T::Var("x")]);
         adds(&mut big, &[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[len], 4e6, false);
         assert_eq!(big.forms, [Form::Join, Form::Negation, Form::Computed, Form::TextTest].into_iter().collect());
         let p = place(&big);
@@ -818,7 +833,7 @@ pub mod tests {
         assert!(p.why().contains("no computed term"), "{}", p.why());
         // Without the computed head, under the Metal binding, the device takes it; under the CPU binding it does not.
         let mut plain = Shape::default();
-        adds(&mut plain, &[atom("kind", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
+        adds(&mut plain, &[atom("kind", false), atom("within", true)], &[T::Var("x")], 4e6, false);
         assert!(plain.missing_none());
         let device = set_device(true);
         let p = place(&plain);
@@ -828,21 +843,21 @@ pub mod tests {
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
         // `sha256(x)` is not, nor a cat or `lower(x)` in a recursive stratum (its rounds would join the text before it
         // is a symbol); `lower(x)` is (a text the device makes into its arena).
-        let cmp = |l: Term, r: Term| Literal::Cmp { l, op: "=", r };
-        let doc = |v: &str| Term::Call("doc".into(), [Term::Var(v.into())].into());
+        let cmp = |l: T<'static>, r: T<'static>| Literal::Eq(l, r);
+        let doc = |v: &'static str| T::Call("doc", vec![T::Var(v)]);
         let mut docs = Shape::default();
         adds(&mut docs, &[atom("kind", false), cmp(doc("x"), doc("y"))], &[], 1.0, false);
         assert!(docs.forms.contains(&Form::Comparison) && !docs.forms.contains(&Form::Computed));
-        let made = || cmp(Term::Var("z".into()), Term::Call("cat".into(), [Term::Var("x".into()), Term::Var("y".into())].into()));
+        let made = || cmp(T::Var("z"), T::Call("cat", vec![T::Var("x"), T::Var("y")]));
         let mut cat = Shape::default();
         adds(&mut cat, &[atom("kind", false), made()], &[], 1.0, false);
         assert!(cat.forms.contains(&Form::Comparison) && !cat.forms.contains(&Form::Computed), "{:?}", cat.forms);
         let mut rec = Shape::default();
         adds(&mut rec, &[atom("kind", false), made()], &[], 1.0, true);
         assert!(rec.forms.contains(&Form::Computed));
-        let lower = || cmp(Term::Var("z".into()), Term::Call("lower".into(), [Term::Var("x".into())].into()));
+        let lower = || cmp(T::Var("z"), T::Call("lower", vec![T::Var("x")]));
         let mut len = Shape::default();
-        adds(&mut len, &[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("sha256".into(), [Term::Var("x".into())].into()))], &[], 1.0, false);
+        adds(&mut len, &[atom("kind", false), cmp(T::Var("z"), T::Call("sha256", vec![T::Var("x")]))], &[], 1.0, false);
         assert!(len.forms.contains(&Form::Computed));
         let mut low = Shape::default();
         adds(&mut low, &[atom("kind", false), lower()], &[], 1.0, false);
@@ -915,7 +930,7 @@ pub mod tests {
         assert!(many.probes.is_empty());
         // Recursion and computed terms are forms too.
         let mut rec = Shape::default();
-        adds(&mut rec, &[atom("edge", false)], &[Term::Call("add".into(), vec![].into())], 1.0, true);
+        adds(&mut rec, &[atom("edge", false)], &[T::Call("add", vec![])], 1.0, true);
         assert!(rec.forms.contains(&Form::Recursion) && rec.forms.contains(&Form::Computed));
     }
 }

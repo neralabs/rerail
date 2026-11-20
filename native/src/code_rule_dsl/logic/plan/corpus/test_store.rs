@@ -140,7 +140,7 @@ fn fill(store: &Path) -> std::result::Result<(), String> {
     seeds.extend(modules.into_iter().map(super::phase0::Seed::File));
     super::phase0::graphs(&seeds).map_err(|e| e.to_string())?;
     let program = "#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let corpus = templates().join("corpus");
     std::fs::create_dir_all(&corpus).map_err(|e| e.to_string())?;
     let out = store.with_extension("out");

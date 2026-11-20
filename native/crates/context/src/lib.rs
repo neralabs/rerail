@@ -21,8 +21,6 @@ thread_local! {
 
 /// What the crates below `logic` tell the run under way, and read of it (`RUN`; decisions 0441, 0442).
 pub trait RunOwn: Send + Sync {
-    /// A tree decoded from a program's version, at `at`.
-    fn decoded(&self, at: &'static std::panic::Location<'static>);
     /// A job's handle (`job_run`): the run, and the context it was taken in. `enter` puts both on the job's thread.
     fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
         None
@@ -492,9 +490,6 @@ pub fn job_run() -> Option<std::sync::Arc<dyn RunOwn>> {
 struct InContext(std::sync::Arc<dyn RunOwn>, Context);
 
 impl RunOwn for InContext {
-    fn decoded(&self, at: &'static std::panic::Location<'static>) {
-        self.0.decoded(at)
-    }
     fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
         Some((&self.0, &self.1))
     }
@@ -553,7 +548,8 @@ impl Context {
         Context(Some(std::sync::Arc::new(Link { key: std::any::TypeId::of::<T>(), value: Box::new(value), up: self.clone(), here })))
     }
 
-    /// The nearest link a guard made, past those `bind_here` made above it.
+    /// The nearest link a guard made, past those `bind_here` made above it: a test build's check of the guards' order.
+    #[cfg(feature = "test-hooks")]
     fn guarded(&self) -> Option<&std::sync::Arc<Link>> {
         let mut at = self.0.as_ref();
         while let Some(link) = at.filter(|l| l.here) {
@@ -581,15 +577,22 @@ pub fn with_bound<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R
 /// Binds `value` in the run's context on this thread, and in every job taken here, until the guard drops; then the
 /// context is as it was.
 pub fn bind<T: Send + Sync + 'static>(value: T) -> Bound {
-    let was = CONTEXT.try_with(|c| {
+    let mut bound = Bound {
+        was: None,
+        #[cfg(feature = "test-hooks")]
+        made: 0,
+        on_thread: std::marker::PhantomData,
+    };
+    // No context on this thread (it is being torn down): the guard puts nothing back.
+    let _ = CONTEXT.try_with(|c| {
         let next = c.borrow().with(value, false);
-        let made = next.0.as_ref().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize);
-        (c.replace(next), made)
+        #[cfg(feature = "test-hooks")]
+        {
+            bound.made = next.0.as_ref().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize);
+        }
+        bound.was = Some(c.replace(next));
     });
-    match was {
-        Ok((was, made)) => Bound(Some(was), made, std::marker::PhantomData),
-        Err(_) => Bound(None, 0, std::marker::PhantomData),
-    }
+    bound
 }
 
 /// Binds `value` for the rest of the extent under way on this thread (an extent's guard dropping takes it with it): a
@@ -613,18 +616,25 @@ pub fn bind_here<T: Send + Sync + 'static>(value: T) {
 /// A binding (`bind`): dropped, the run's context on this thread is as it was before. It stays on its thread (not
 /// `Send`): dropped on another, it would set that thread's context.
 #[must_use = "the binding ends when the guard drops"]
-pub struct Bound(Option<Context>, usize, std::marker::PhantomData<*const ()>);
+pub struct Bound {
+    /// The context it replaced, put back when it drops.
+    was: Option<Context>,
+    /// The link it made, by address: a test build checks it is the nearest a guard made when it drops.
+    #[cfg(feature = "test-hooks")]
+    made: usize,
+    on_thread: std::marker::PhantomData<*const ()>,
+}
 
 impl Drop for Bound {
     fn drop(&mut self) {
         // A test build checks that guards drop in the reverse of their order: this guard's link is the nearest a guard
         // made. Dropped out of order, an inner binding would outlive its guard.
         #[cfg(feature = "test-hooks")]
-        if self.0.is_some() && !std::thread::panicking() {
-            let nearest = CONTEXT.try_with(|c| c.borrow().guarded().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize)).unwrap_or(self.1);
-            assert_eq!(nearest, self.1, "rerail: a binding of the run's context dropped out of order (decision 0442): guards drop in the reverse of their order");
+        if self.was.is_some() && !std::thread::panicking() {
+            let nearest = CONTEXT.try_with(|c| c.borrow().guarded().map_or(0, |l| std::sync::Arc::as_ptr(l) as usize)).unwrap_or(self.made);
+            assert_eq!(nearest, self.made, "rerail: a binding of the run's context dropped out of order (decision 0442): guards drop in the reverse of their order");
         }
-        let left = self.0.take().and_then(|was| CONTEXT.try_with(|c| c.replace(was)).ok());
+        let left = self.was.take().and_then(|was| CONTEXT.try_with(|c| c.replace(was)).ok());
         drop(left);
     }
 }
@@ -649,7 +659,6 @@ impl Caller {
 struct Bare(RunValues, std::sync::Arc<Shared>);
 
 impl RunOwn for Bare {
-    fn decoded(&self, _: &'static std::panic::Location<'static>) {}
     fn values(&self) -> &RunValues {
         &self.0
     }

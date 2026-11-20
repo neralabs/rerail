@@ -186,8 +186,8 @@ pub const CAPABILITIES: &str = include_str!("capabilities.json");
 /// Read a public `.rerail` file, including its core prelude and libraries. The CLI and migration
 /// harness use the same reader as the engine; they never strip directives or run a lab interpreter.
 pub fn read_rr(path: &std::path::Path) -> Result<String, String> {
-    let program = super::logic::rr::parse_file(path).map_err(|e| e.to_string())?;
-    super::logic::rr::print(&program).map_err(|e| e.to_string())
+    let program = super::logic::rr::parse_file_version(path).map_err(|e| e.to_string())?;
+    super::logic::rr::print_version(&program).map_err(|e| e.to_string())
 }
 
 /// Convert whole AST policies for review. Unsupported clauses refuse the entire candidate.
@@ -620,9 +620,8 @@ pub fn flatten(path: &std::path::Path) -> Result<String, String> {
 /// `.rerail`. Its size is the lowering's (rules, helper relations), before the run adds its libraries and plans it.
 /// (02439e9145, which an earlier merge into the hub lost, restored at the merge of main 6ec384ad9.)
 pub fn flatten_lowered(path: &std::path::Path) -> Result<String, String> {
-    let (read, _) = super::logic::rr::read_file(path).map_err(|e| e.to_string())?;
-    let program = read.program(&super::logic::front::Lists::default())?;
-    super::logic::rr::print(&program).map_err(|e| e.to_string())
+    let (program, _) = super::logic::rr::read_file(path).map_err(|e| e.to_string())?;
+    super::logic::rr::print_version(&program).map_err(|e| e.to_string())
 }
 
 /// `programs` (`.rerail` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
@@ -655,8 +654,8 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
         let named = line.and_then(|i| text.lines().nth(i)).map(|l| l.trim_start()[".language ".len()..].trim().trim_matches('"').to_owned());
         let several = named.as_deref().is_some_and(|n| CodeRuleLanguage::ALL.into_iter().any(|l| l.name() == n && l.dialects().len() > 1));
         let labels = if several {
-            let prog = super::logic::rr::parse_own(text).map_err(|e| e.to_string())?;
-            corpus::run_dialects_in(&files, &prog, options).map_err(|e| e.to_string())?
+            let prog = super::logic::rr::parse_own_version(text).map_err(|e| e.to_string())?;
+            corpus::run_dialects_in(&files, &*prog, options).map_err(|e| e.to_string())?
         } else {
             Vec::new()
         };
@@ -1701,13 +1700,16 @@ mod settings_tests {
         // Rows given to a program that declares `env`, and to no other (decision 0249).
         use crate::code_rule_dsl::logic::front::Value;
         let added = crate::code_rule_dsl::logic::plan::corpus::added::Added::settings(&settings);
-        let mut declares = crate::code_rule_dsl::logic::rr::parse(".decl env(key: symbol, value: symbol)\n").unwrap();
-        added.add_to(&mut declares);
-        let rows: Vec<Vec<Value>> = declares.facts["env"].iter().map(|r| r.to_vec()).collect();
+        use crate::code_rule_dsl::logic::program_image::{Builder, fields::ProgramFields};
+        let mut declares = Builder::base();
+        declares.fields().declare("env", &[("key", "symbol"), ("value", "symbol")]);
+        added.add_to(&mut declares.fields());
+        let rows: Vec<Vec<Value>> = declares.fact_rows("env").iter().map(|r| r.to_vec()).collect();
         assert_eq!(rows, [vec![Value::Str("quote".into()), Value::Str("a\"b".into())], vec![Value::Str("python.version".into()), Value::Str("3.13".into())]]);
-        let mut not = crate::code_rule_dsl::logic::rr::parse(".decl envy(x: symbol)\n").unwrap();
-        added.add_to(&mut not);
-        assert!(!not.facts.contains_key("env"));
+        let mut not = Builder::base();
+        not.fields().declare("envy", &[("x", "symbol")]);
+        added.add_to(&mut not.fields());
+        assert!(!not.has_fact_rows("env"));
     }
 
     #[test]

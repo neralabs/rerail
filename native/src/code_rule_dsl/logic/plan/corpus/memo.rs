@@ -1186,7 +1186,7 @@ pub mod tests {
         use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
         let read = crate::code_rule_dsl::logic::rr::parse_version(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
         let mut b = Builder::on(&read);
-        b.set_facts("a", &[]);
+        b.fields().set_facts("a", &[]);
         let (v, _) = b.finish().unwrap();
         // Stored as an image, and opened again.
         let back = Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();

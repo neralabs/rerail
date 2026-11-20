@@ -32,11 +32,10 @@ pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {
         pub mod front;
-        pub mod magic;
         pub mod plan {
             pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, strata};
+            use crate::code_rule_dsl::logic::front::{AggOp, Value};
             #[allow(unused_imports)]
             use std::sync::Arc;
             #[allow(unused_imports)]
@@ -61,6 +60,8 @@ pub mod code_rule_dsl {
         pub mod rr {
             pub mod aggregate_demand;
             pub mod check;
+            pub mod clause;
+            pub mod from_tape;
             pub mod lower;
             pub mod print;
             pub mod tape_type;
@@ -76,18 +77,14 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::Error;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::Program;
-            #[allow(unused_imports)]
             #[cfg(any(test, feature = "test-hooks"))]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::drop_unread_core;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::aggregate_demand::retype_helpers;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::is_core;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::WORLD;
             #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::print::print;
+            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::print::print_version;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use syntax::quote;
             #[allow(unused_imports)]

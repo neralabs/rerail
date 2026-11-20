@@ -498,8 +498,8 @@ mod tests {
 "#;
 
     fn check_of(text: &str, comp: &[&str]) -> Result<Measure, String> {
-        let p = crate::code_rule_dsl::logic::rr::parse(&format!("{DECLS}{text}")).expect("parses");
-        let placed = super::super::body::Placed::of_program(&p).expect("placed");
+        let p = crate::code_rule_dsl::logic::rr::parse_version(&format!("{DECLS}{text}")).expect("parses");
+        let placed = super::super::body::Placed::whole(p.clone());
         let f = placed.fields().expect("fields");
         let comp: BTreeSet<String> = comp.iter().map(|s| (*s).to_owned()).collect();
         check(&placed.v, &|r: &str| f.types(r).into_iter().map(str::to_owned).collect(), &comp)
@@ -571,12 +571,12 @@ mod tests {
     /// The program's proofs answer for its components, and for no set that is not one.
     #[test]
     fn the_programs_proofs_answer_by_component() {
-        let p = crate::code_rule_dsl::logic::rr::parse(&format!(
+        let p = crate::code_rule_dsl::logic::rr::parse_version(&format!(
             "{DECLS}.decl below(a: node, c: node)\nbelow(a, c) :- child(a, c, _).\nbelow(a, c) :- below(a, b), child(b, c, _).\n\
              .decl reach(a: symbol, b: symbol)\nreach(a, b) :- edge(a, b).\nreach(a, c) :- reach(a, b), edge(b, c).\n.output below\n.output reach\n"
         ))
         .expect("parses");
-        let placed = super::super::body::Placed::of_program(&p).expect("placed");
+        let placed = super::super::body::Placed::whole(p.clone());
         let proofs = crate::code_rule_dsl::logic::program_image::manager::analysis::<Proofs>(&placed.v).expect("proofs");
         let set = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
         assert_eq!(proofs.counts(), (1, 1));

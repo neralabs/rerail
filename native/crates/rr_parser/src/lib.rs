@@ -1924,7 +1924,7 @@ pub mod tests {
     }
 
     /// Each of `short`'s position lists a prefix of `long`'s: a refused file's records, cut at
-    /// the token that refused.
+    /// the token that refused. Metal's check against the CPU's reads it.
     #[cfg(target_os = "macos")]
     fn prefix_of(short: &[Vec<u32>], long: &[Vec<u32>]) -> bool {
         short.len() == long.len() && short.iter().zip(long).all(|(s, l)| l.starts_with(s))
@@ -2384,8 +2384,6 @@ pub mod tests {
     /// alike, with the token across a block's edge and longer than a block.
     #[test]
     fn a_numbers_checks_are_at_its_token() {
-        #[cfg(target_os = "macos")]
-        use rerail_compiler::block;
         let c = crate::compiled().expect("compiles");
         let r = c.native.records.as_ref().expect("records");
         assert_eq!(r.checks.iter().filter(|c| c.then == rerail_compiler::records::CheckThen::Escape).count(), 1, "a run, the number rule's");
@@ -2408,17 +2406,25 @@ pub mod tests {
             assert_eq!(interp.is_ok(), *taken, "{src:?}: the interpreter");
             assert_eq!(c.parser.image(src.as_bytes()).is_ok(), *taken, "{src:?}: the CPU");
         }
-        #[cfg(target_os = "macos")]
-        {
-            use rerail_metal::block_program::serial::{Segments, run_serial_split};
-            let want = c.parser.tier1.run_files(&refs);
-            let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
-            let got = run_serial_split(&[&c.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
-            for ((g, w), (src, _)) in got.run.files.iter().zip(&want).zip(&cases) {
-                assert_eq!(g.totals.iter().any(|&t| t != 0), w.totals.iter().any(|&t| t != 0), "{src:?}: Metal refuses as the CPU");
-            }
+        metal_refuses_as_the_cpu(c, &refs, &cases);
+    }
+
+    /// Metal's tier 1 refuses each of `cases` where the CPU's does (`a_numbers_checks_are_at_its_token`).
+    #[cfg(target_os = "macos")]
+    fn metal_refuses_as_the_cpu(c: &crate::Compiled, refs: &[&[u8]], cases: &[(String, bool)]) {
+        use rerail_compiler::block;
+        use rerail_metal::block_program::serial::{Segments, run_serial_split};
+        let want = c.parser.tier1.run_files(refs);
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        let got = run_serial_split(&[&c.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+        for ((g, w), (src, _)) in got.run.files.iter().zip(&want).zip(cases) {
+            assert_eq!(g.totals.iter().any(|&t| t != 0), w.totals.iter().any(|&t| t != 0), "{src:?}: Metal refuses as the CPU");
         }
     }
+
+    /// No Metal off macOS.
+    #[cfg(not(target_os = "macos"))]
+    fn metal_refuses_as_the_cpu(_: &crate::Compiled, _: &[&[u8]], _: &[(String, bool)]) {}
 
     /// A line break after a `,` is none (`mark newline = lf unless after ","`): a list goes on
     /// over lines, comments between, as the engine reads it; a break after any other token ends

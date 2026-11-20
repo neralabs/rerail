@@ -32,6 +32,18 @@ pub enum Since<C = String> {
     Behind { cursor: C },
 }
 
+/// Why the journal could not say where it was later than the question's wait (`Since::Lost`'s `why`): the cookie
+/// written to mark "now" came after the wait (`SLOWER`), or not in it (`COOKIE_LATE`). The journal holds the changes; it
+/// had not told them yet. Seen on a loaded host (Q223): `fseventsd`, one thread at a full core, delivers the machine's
+/// file events in order, and a cookie waits behind all of them, up to 20 s and more.
+pub const SLOWER: &str = "the journal is slower than checking what is kept";
+pub const COOKIE_LATE: &str = "the cookie's event did not arrive";
+
+/// Whether `why` is the journal's lateness (`SLOWER`, `COOKIE_LATE`), not a loss of track.
+pub fn late(why: &str) -> bool {
+    why == SLOWER || why == COOKIE_LATE
+}
+
 /// The journal a process asks: macOS's FSEvents (the system's, no daemon), else Watchman where it is installed (a
 /// daemon outside rerail, its history kept while it runs), else none. `RERAIL_JOURNAL` = `fsevents`, `watchman` or
 /// `off` chooses; `RERAIL_WATCHMAN` names the Watchman binary.
@@ -82,6 +94,17 @@ pub fn current_id() -> u64 {
 #[cfg(all(test, target_os = "macos"))]
 pub fn forget_streams() {
     fsevents::forget_streams();
+}
+
+/// An id every change under `root` made before now has (FSEvents'): the cookie id of a replay from `from`, which
+/// comes after each change's event (`fsevents::sync`), where `current_id` may be taken before a late event's id is
+/// given (`observe`'s Q189 test, on a loaded host).
+#[cfg(all(test, target_os = "macos"))]
+pub fn id_past(root: &Path, from: u64, cookie_dir: &Path) -> Option<u64> {
+    match fsevents::since(std::slice::from_ref(&root.to_path_buf()), Some(from), cookie_dir, std::time::Duration::from_secs(20)) {
+        Since::Changed { cursor, .. } | Since::Behind { cursor } => Some(cursor),
+        Since::Lost { .. } => None,
+    }
 }
 
 /// A new outermost run begins: a question asked after this is answered with every change made before it (each kept
@@ -553,7 +576,7 @@ mod fsevents {
             return Err(Late::Lost(why));
         }
         let Some((id, at)) = done else {
-            return Err(if bounded { Late::Slower(last) } else { Late::Lost("the cookie's event did not arrive") });
+            return Err(if bounded { Late::Slower(last) } else { Late::Lost(super::COOKIE_LATE) });
         };
         live.synced = Some((epoch, id));
         live.syncs.push((id, at));
@@ -715,7 +738,7 @@ mod fsevents {
                     return Since::Lost { cursor: Some(now()), why };
                 }
                 // Every change before the latest id told has come; the caller checks what it keeps from there.
-                Err(Late::Slower(last)) => return Since::Lost { cursor: Some(last.max(cursor)), why: "the journal is slower than checking what is kept" },
+                Err(Late::Slower(last)) => return Since::Lost { cursor: Some(last.max(cursor)), why: super::SLOWER },
             };
             // A stream's first answer is its history's: trusted only with the marker written before it in it.
             if first && !all[at].shared.seen.lock().map(|s| s.marker_in_history).unwrap_or(false) {
@@ -870,9 +893,11 @@ mod tests {
         let (paths, _) = changed!(base, since(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE));
         assert!(paths.is_empty(), "nothing since: {paths:?}");
         // A journal slower than the caller's bound (Q221; nothing is slower than none) answers `Lost`, with a cursor
-        // no earlier than the one asked, which every change before has reached; the stream is kept for the next.
+        // no earlier than the one asked, which every change before has reached; the stream is kept for the next. No
+        // settle budget: a test's is the least a question waits (`since_within`'s `budget`), and 5 s of it made this
+        // question unbounded, answered whenever the cookie came in time (Q223).
         next_epoch();
-        match super::fsevents::since_within(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE, Some(std::time::Duration::ZERO)) {
+        match super::fsevents::since_within(std::slice::from_ref(&root), Some(settled), &cookies, std::time::Duration::ZERO, Some(std::time::Duration::ZERO)) {
             Since::Lost { cursor: Some(c), why } => assert!(why.contains("slower") && c >= settled, "{why}: {c} against {settled}"),
             other => panic!("a bound of nothing is slower than any journal: {other:?}"),
         }
@@ -883,11 +908,11 @@ mod tests {
         std::fs::File::options().write(true).open(&kept).unwrap().set_times(std::fs::FileTimes::new().set_accessed(std::time::SystemTime::now()).set_modified(mtime)).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(500));
         next_epoch();
-        let Since::Changed { paths, cursor: touched } = since(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE) else { panic!("a replay") };
+        let (paths, touched) = changed!(base, since(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE));
         assert!(!paths.contains(&kept), "an access time set is no change: {paths:?}");
         std::fs::write(&kept, "x = 2\n").unwrap();
         next_epoch();
-        let Since::Changed { paths, .. } = since(std::slice::from_ref(&root), Some(touched), &cookies, SETTLE) else { panic!("a replay") };
+        let (paths, _) = changed!(base, since(std::slice::from_ref(&root), Some(touched), &cookies, SETTLE));
         assert!(paths.contains(&kept), "a write is named: {paths:?}");
         // A root under one asked is answered by the same stream, kept for the process: a change made since the
         // run's question is told to the next run.

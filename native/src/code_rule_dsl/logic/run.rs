@@ -20,8 +20,6 @@ use super::native::width;
 /// A run's own state.
 pub struct Run {
     pub width: width::Width,
-    /// The trees decoded from versions: a count, and the place of the last.
-    decoded: parking_lot::Mutex<(usize, Option<&'static std::panic::Location<'static>>)>,
     /// Set as the run ends: what watches it (its memory watch) ends too.
     ended: AtomicBool,
     /// Its settings and its own values (`setting`, `local`).
@@ -31,10 +29,6 @@ pub struct Run {
 }
 
 impl super::profile::RunOwn for Run {
-    fn decoded(&self, at: &'static std::panic::Location<'static>) {
-        let mut d = self.decoded.lock();
-        *d = (d.0 + 1, Some(at));
-    }
     fn values(&self) -> &super::profile::RunValues {
         &self.values
     }
@@ -48,7 +42,7 @@ impl super::profile::RunOwn for Run {
 
 impl Run {
     fn new(settings: width::Settings, shared: Arc<super::profile::Shared>) -> Run {
-        Run { width: width::Width::new(settings), decoded: Default::default(), ended: AtomicBool::new(false), values: Default::default(), shared }
+        Run { width: width::Width::new(settings), ended: AtomicBool::new(false), values: Default::default(), shared }
     }
     /// Whether the run has ended.
     pub fn ended(&self) -> bool {
@@ -56,8 +50,7 @@ impl Run {
     }
     /// What the run met and did, so far.
     pub fn record(&self) -> Record {
-        let (n, at) = *self.decoded.lock();
-        Record { width: self.width.record(), trees_decoded: (n, at.map(|l| format!("{}:{}", l.file(), l.line()))) }
+        Record { width: self.width.record() }
     }
 }
 
@@ -68,8 +61,6 @@ pub use super::profile::{Machine, Shared, local, local_if_any, machine, setting,
 pub struct Record {
     /// Its limits and what it met of them: the relations cut at the cap, the widest it held.
     pub width: width::Record,
-    /// The trees it decoded from versions, and where the last was (`file:line`).
-    pub trees_decoded: (usize, Option<String>),
 }
 
 /// Carries the run to a job on another thread (`run_state`). Its thread-local is `profile::RUN`, so the crates below
@@ -149,7 +140,6 @@ mod tests {
     fn each_run_has_its_own_record() {
         let a = scope(cutting(10));
         a.run().width.note_cut_by("x", "x(1).".into());
-        super::super::profile::RunOwn::decoded(&**a.run(), std::panic::Location::caller());
         let nested = scope(|| unreachable!("a nested run takes the outer run's settings"));
         assert_eq!(nested.run().width.cap(), 10);
         nested.run().width.note_cut_by("y", "y(1).".into());
@@ -157,11 +147,10 @@ mod tests {
         let record = a.finish().expect("the outermost run's record");
         assert_eq!(record.width.cuts.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["x", "y"]);
         assert!(record.width.incomplete().is_some_and(|m| m.contains("`x`") && m.contains("derived by x(1).")));
-        assert_eq!(record.trees_decoded.0, 1);
         assert!(current().is_none(), "the run ended with its scope");
         let b = scope(cutting(10));
         let later = b.finish().expect("a new run");
-        assert!(later.width.cuts.is_empty() && later.trees_decoded.0 == 0, "a later run starts with nothing of the last");
+        assert!(later.width.cuts.is_empty(), "a later run starts with nothing of the last");
         assert!(!width::Limits::here().cutting(), "a walk with no run stops at the cap");
     }
 

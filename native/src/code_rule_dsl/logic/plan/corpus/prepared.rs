@@ -132,7 +132,7 @@ fn rest_of(prepared: &Prepared) -> Facts {
     let s = |x: &str| Value::Str(x.to_owned().into());
     let n = |x: usize| Value::Int(x as i64);
     let mut row = |rel: &str, values: Vec<Value>| facts.entry(rel.to_owned()).or_default().push(values.into());
-    for (rel, domains) in &prepared.lowered.domains {
+    for (rel, domains) in prepared.lowered.domains.iter() {
         for (i, d) in domains.iter().enumerate() {
             row("prepared_domain", vec![s(rel), n(i), s(domain_name(*d))]);
         }
@@ -380,7 +380,7 @@ pub fn prepared_of(
         source,
         vocabulary: Arc::new(vocabulary),
         // Its stored image alone: the tree read is the split's, made above, and dropped.
-        lowered: lower::Lowered { version, domains, ops, dialect, normal: Default::default() },
+        lowered: lower::Lowered { version, domains: Arc::new(domains), ops, dialect, normal: Default::default() },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,
@@ -440,7 +440,7 @@ pub(super) enum Found {
 /// The program `key` names, prepared for `dialect`, as an earlier process stored it under `source`, or else as the
 /// engine ships it; `None` when neither has it, or when what is kept no longer reads. With it, the sources of its
 /// programs' texts, and whether its atoms moved.
-pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: GrammarDialect, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Prepared, Vec<SourceId>, Found)>> {
+pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, Vec<SourceId>, Found)>> {
     super::memo::off();
     let start = std::time::Instant::now();
     let set = pointer_plan(key);
@@ -471,13 +471,13 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
     // split's parts are views of the lowered one.
     let source = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "open the program's image before lowering".into());
-        let Some((version, sources)) = program_text::load_image(store, source, lists)? else { return Ok(None) };
+        let Some((version, sources)) = program_text::load_image(store, source)? else { return Ok(None) };
         documents.extend(sources);
         version
     };
     let version = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "open the lowered program's image".into());
-        let Some((version, sources)) = program_text::load_image(store, lowered, lists)? else { return Ok(None) };
+        let Some((version, sources)) = program_text::load_image(store, lowered)? else { return Ok(None) };
         documents.extend(sources);
         version
     };
@@ -486,7 +486,7 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
     // Its atoms this store's, the version is read as opened; another store's (decision 0270), its tree is decoded
     // once to move them and imaged again (the one tree a lookup reads, and only on a move: work queue Q43).
     let mut version = version;
-    let found = match relocate(store, &mut facts, &version, lists) {
+    let found = match relocate(store, &mut facts, &version) {
         Some(None) => Found::Kept,
         Some(Some(moved)) => {
             version = moved;
@@ -512,7 +512,6 @@ pub fn relocate(
     store: &ContentStore,
     facts: &mut Facts,
     version: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
-    lists: &crate::code_rule_dsl::logic::front::Lists,
 ) -> Option<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's atoms, in this store".into());
     let rows = facts.get_mut("prepared_interned_atom")?;
@@ -523,15 +522,10 @@ pub fn relocate(
         return Some(None);
     }
     let to: rustc_hash::FxHashMap<u32, u32> = old.iter().copied().zip(new.iter().copied()).collect();
-    let mut lowered = version.program(lists).ok()?;
-    if !lower::relocate(&mut lowered, &to) {
-        return None;
-    }
-    // Its image made again of the moved program: the run reads it in place.
+    // The moved program, a version of its own: the run reads it in place.
     let moved = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the moved program's image".into());
-        let bytes = crate::code_rule_dsl::logic::program_image::encode(&lowered).ok()?;
-        crate::code_rule_dsl::logic::program_image::Version::open(&bytes).ok()?
+        lower::relocate(version, &to).ok()??
     };
     crate::code_rule_dsl::logic::profile::decision("the prepared program's atoms (decision 0270)", || format!("prepared by another store: its {} names moved to this store's atoms", strings.len()));
     for (row, &a) in rows.iter_mut().zip(&new) {
@@ -581,9 +575,8 @@ pub(super) fn record(store: &ContentStore, source: Option<SourceId>, text: Strin
     let mut facts = rest_of(prepared);
     let mut programs = Vec::new();
     for (name, version) in [("source", &prepared.source), ("lowered", &prepared.lowered.version)] {
-        // Each program's image is its version's, taken as it is (no encode of a tree, decision 0281). With images
-        // off (`RERAIL_PROGRAM_IMAGE=off`) it is not kept, as a version has no text form: the program is prepared
-        // again.
+        // Each program's image is its version's, taken as it is (decision 0281). One whose image is not made is not
+        // kept: the program is prepared again.
         let Some(encoded) = program_text::encode_version(version) else { return };
         facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&encoded.digest).into())].into());
         programs.push(encoded);
@@ -591,10 +584,10 @@ pub(super) fn record(store: &ContentStore, source: Option<SourceId>, text: Strin
     let entry = program_facts::encode(&facts);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
     // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships the pointer; its programs'
-    // images ship with `program_text::encode`.
+    // images ship with `program_text::encode_version`.
     crate::code_rule_dsl::logic::rr::images::export(shipped_key(key), &entry);
-    let (packed, bytes) = program_text::pack(programs, entry);
-    store.record("the prepared program", vec![queued(key)], &(source, text, *key, packed), Some(bytes), apply);
+    let (packed, pieces) = program_text::pack(programs, entry);
+    store.record_held("the prepared program", vec![queued(key)], &(source, text, *key, packed), pieces, apply);
 }
 
 fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
@@ -607,7 +600,7 @@ fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_stor
             id
         }
     };
-    let (documents, entry) = program_text::store_packed(cx.store, &packed, cx.bytes)?;
+    let (documents, entry) = program_text::store_packed(cx.store, &packed, cx.pieces)?;
     cx.name(documents);
     let set = pointer_plan(&key);
     cx.store.put_facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.to_vec() }], &[]).map(drop)

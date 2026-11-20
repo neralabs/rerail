@@ -1,4 +1,4 @@
-//! `front::prune` on the version (decision 0281's path, step 6d): the rules of relations no output reads, directly
+//! T's `prune` on the version (decision 0281's path, step 6d): the rules of relations no output reads, directly
 //! or through other rules, dropped, and the request rules none of whose readers is read (decision 0174). The record
 //! of each request's readers follows the rules kept; a native nothing reads is dropped with them. Facts stay. A
 //! reader outside the version (another part's, decision 0345) keeps its ask.
@@ -126,10 +126,10 @@ impl ProgramPass for Prune {
         let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).chain(revived.iter().cloned()).collect();
         let b = w.on()?;
         if !revived.is_empty() {
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         if asked_after != asked {
-            b.set_asked(&asked_after);
+            b.fields().set_asked(&asked_after);
         }
         // The natives' rows (each names its native in column 1).
         if !dropped_natives.is_empty() {
@@ -155,9 +155,10 @@ mod tests {
         let text = ".decl k(x: number)\n.input k\n.decl req(x: number)\n.decl dead(x: number)\n.decl o(x: number)\n.output o\n\
                     req(x) :- k(x).\no(x) :- req(x).\n";
         let pruned = |reader: &str| {
-            let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-            tree.asked_by.insert("req".into(), vec![BTreeSet::from([reader.to_owned()])]);
-            let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+            let read = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+            let mut b = Builder::on(&read);
+            b.fields().set_asked(&std::collections::BTreeMap::from([("req".to_owned(), vec![BTreeSet::from([reader.to_owned()])])]));
+            let (v, _) = b.finish().unwrap();
             let mut p = Pipeline::new("test", v);
             let mut prune = super::Prune::default();
             p.program(&mut prune);

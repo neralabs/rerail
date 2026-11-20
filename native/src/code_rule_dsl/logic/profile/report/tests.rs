@@ -127,7 +127,7 @@
         let _lock = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         super::super::reset();
         super::super::set(true);
-        let p = crate::code_rule_dsl::logic::rr::parse(
+        let p = crate::code_rule_dsl::logic::rr::parse_version(
             r#"
 #include "core.rerail"
 .decl selected(n:node)
@@ -138,7 +138,8 @@ result(n) :- selected(n).
 "#,
         )
         .unwrap();
-        super::super::analysis_report::projection(&p, &std::collections::BTreeSet::from(["text".into()]));
+        // The program's projection records it, as a run's does (`text_demand::projection_of`).
+        let _ = crate::code_rule_dsl::logic::plan::text_demand::projection_of(&p, std::collections::BTreeSet::from(["text".into()]));
         let decisions = super::super::decisions();
         super::super::set(false);
         assert!(

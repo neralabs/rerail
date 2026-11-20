@@ -92,7 +92,7 @@ impl ContentStore {
         let page_count = pages.len() as i64;
         // The pages' bytes, as they are, in one segment, numbered in the transaction below (`seg` 0 in the rows,
         // resolved there) and named once it commits.
-        let mut placing = Placing::write(&self.database_path, &pages.iter().map(|page| &page.bytes[..]).collect::<Vec<_>>())?;
+        let mut placing = Placing::write(&self.database_path, &pages.iter().map(|page| &page.bytes[..]).collect::<Vec<_>>(), self.connection.flush())?;
         let mut plans = Vec::new();
         let mut index = 0_i64;
         for chunk in pages.chunks(256) {

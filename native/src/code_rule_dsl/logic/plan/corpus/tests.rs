@@ -57,7 +57,7 @@ def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
 calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
 .output calls
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |chunk_nodes: usize, store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(format!("store-{store}.sqlite"))));
@@ -98,7 +98,7 @@ fn a_program_reading_the_import_closure_has_its_rules() {
     let program = |text: &str| {
         let rule = dir.join("uses.rerail");
         std::fs::write(&rule, text).unwrap();
-        crate::code_rule_dsl::logic::rr::parse_file(&rule).map(|p| crate::code_rule_dsl::logic::rr::print(&p).unwrap())
+        crate::code_rule_dsl::logic::rr::parse_file_version(&rule).map(|p| crate::code_rule_dsl::logic::rr::print_version(&p).unwrap())
     };
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
@@ -152,7 +152,7 @@ bound(p, x) :- kind(p, "function_definition"), child(p, b, _), kind(b, "block"),
 outer(f, x) :- named(x), encl(f, p), bound(p, x).
 .output outer
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let store = dir.join("store.sqlite");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.clone()));
@@ -467,7 +467,7 @@ unused(f) :- def(f, _), !used(f).
 .output uses
 .output unused
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -516,7 +516,7 @@ used(f) :- imp(_, q), def(f, q).
 finding("unused", q, f) :- def(f, q), !used(f).
 .output finding
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -580,7 +580,7 @@ fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
     std::fs::write(ws.join("main.py"), "import a\n").unwrap();
     let rule = dir.join("p.rerail");
     std::fs::write(&rule, "#include \"python/modules.rerail\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -637,7 +637,7 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     std::fs::write(ws.join("pkg/m.py"), "import b\n").unwrap();
     let rule = dir.join("p.rerail");
     std::fs::write(&rule, "#include \"python/modules.rerail\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let fresh = std::cell::Cell::new(0);
     let run = |store: &str| {
@@ -697,7 +697,7 @@ fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
         "#include \"core.rerail\"\nload(p, \"f\", \"python\") :- file_line(\"later.txt\", 1, p).\nload(p, \"b\", \"python\") :- dir_entry(\"{lib}\", \"b.pyi\", 0), p = cat(\"{lib}\", \"/b.pyi\").\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n",
         lib = lib.display()
     )).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let (out, store) = (dir.join("out"), dir.join("store.sqlite"));
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -749,7 +749,7 @@ uses(t, n, p) :- c_pp_expansion(t, _, _, n, p, _, _, _, _).
 active(t, p, e) :- c_pp_active(t, _, p, _, e).
 .output entered, uses, active
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -804,7 +804,7 @@ used(f) :- uses(_, f).
 unused(f) :- def(f, _), !used(f).
 .output unused
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -828,9 +828,8 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0173 (t36 item 7): a maintained run reads its programs as versions. The maintained part is a tree of
-/// its version (`maintain::rewrite`), decoded by no reader, and the run's copy of the prepared split shares the
-/// parts' trees, copying none. The outputs are a run's with an empty store.
+/// Decision 0173 (t36 item 7): a maintained run reads its programs as versions, in place: there is no tree form to
+/// decode one into (`front::tests::no_tree_program_comes_back`). The outputs are a run's with an empty store.
 #[test]
 fn a_maintained_run_decodes_and_copies_no_tree() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
@@ -854,23 +853,19 @@ used(f) :- uses(_, f).
 unused(f) :- def(f, _), !used(f).
 .output unused
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let decoded = report.run.expect("the test's run is the outermost").trees_decoded;
-        (report.cross_maintained.0, crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap(), decoded)
+        (report.cross_maintained.0, crate::code_rule_dsl::logic::plan::output::shown(&out, "unused").unwrap())
     };
     run("kept.sqlite");
     write("c.py", "def h():\n    pass\n");
-    // The run's program is a version (`lower::Lowered`): no tree to copy or read beside it. A tree is made only by
-    // decoding one (`Version::program`), counted in the run's record, on any of its threads.
-    let (maintained, rows, decoded) = run("kept.sqlite");
-    let (_, fresh, _) = run("fresh.sqlite");
+    let (maintained, rows) = run("kept.sqlite");
+    let (_, fresh) = run("fresh.sqlite");
     assert_eq!(rows, fresh);
     assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
-    assert_eq!(decoded.0, 0, "the maintained run decoded trees from their versions, the last at {:?}", decoded.1);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -906,7 +901,7 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
 .output unused
 .output lone
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run_on = |store: &str, binding: Binding| {
@@ -978,7 +973,7 @@ reach(a, a) :- side(a), never(a).
 .output reach
 .output side
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -1029,7 +1024,7 @@ named(n, @dot(q, q)) :- uses(n, f), def(f, q).
 .output most
 .output named
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -1085,7 +1080,7 @@ uses(n, f) :- imp(n, q), def(f, q).
     let run = |extra: &str| {
         let rule = dir.join("p.rerail");
         std::fs::write(&rule, format!("{shared}{extra}")).unwrap();
-        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         report.cross_kept.expect("a run with a tape cache keeps its cross-file strata")
     };
@@ -1277,7 +1272,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
         std::thread::Builder::new().name(format!("corpus::tests::probe{n}")).spawn(move || {
             let dir = tempfile::tempdir().unwrap();
             std::fs::write(dir.path().join("a.py"), "def f():\n    return 1\n").unwrap();
-            let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
+            let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version("#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
             let out = dir.path().join("out");
             super::run(&text, dir.path(), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
             assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "defs").unwrap(), [["f"]]);
@@ -1478,7 +1473,7 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
 fn a_runs_output_directory_is_rerails_own() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.py"), "def f():\n    return 1\n").unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version("#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
     let out = dir.path().join("out");
     super::run(&text, dir.path(), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     // One output image, no csv (decision 0239): the run wrote its rows there.
@@ -1780,7 +1775,7 @@ uses(n, f) :- imp(n, q), def(f, q).
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
 .output passes
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run = |store: &str| {
@@ -1831,7 +1826,7 @@ uses(n, f) :- imp(n, q), def(f, q).
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
 .output passes
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -1986,7 +1981,8 @@ fn every_switch_lowering_reads_is_classified() {
     // `choices::key`, which holds the switches those read (`RERAIL_INLINE`, `RERAIL_INLINE_ONLY`,
     // `RERAIL_OBSERVED_STEPS`).
     let mut preparing = sources(&[
-        "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
+        // The tree passes that were `logic/simplify.rs` and `logic/magic.rs` are the preparation's now (0276 step 6).
+        "logic/strings.rs", "logic/reach_form.rs", "logic/magic", "logic/plan/lower.rs",
         "logic/plan/corpus/import_closure.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
         // Its passes, on the version (`preparation`): the front's, the lowering's, `FoldOwn`'s and the merges, and
         // the combine's fact spaces.
@@ -2009,7 +2005,7 @@ fn every_switch_lowering_reads_is_classified() {
     }
     assert!(unlisted.is_empty(), "switches read in combining or preparing, in neither its list nor NOT_PREPARING: {unlisted:?}");
     // And the other way: a listed switch keys what it changes, read in combining or preparing, or after them by what
-    // hangs off the prepared key (the run's extraction: `with_long_text`'s text nodes and anchors, the span
+    // hangs off the prepared key (the run's extraction: `with_long_text_parts`'s text nodes and anchors, the span
     // prefilter, both in `facts/vtab/syntax.rs`; the rest of `run_observed`). One read nowhere there keys nothing it
     // changes: a session's next run cold for nothing.
     for text in sources(&["facts/vtab/syntax.rs"]).into_iter().map(|(_, t)| t).chain([region("\nfn run_observed(", "\n}\n")]) {
@@ -2105,7 +2101,7 @@ fn cross_file_values_run(dir: &std::path::Path) -> (super::Report, Vec<Vec<Strin
     crate::install_store_functions();
     let rule = dir.join("program.rerail");
     std::fs::write(&rule, CROSS_FILE_VALUES).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
@@ -2159,7 +2155,7 @@ fn batch_run_on(name: &str, files: &[(&str, &str)], program: &str, output: &str,
     }
     let rule = dir.join("program.rerail");
     std::fs::write(&rule, program).unwrap();
-    let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let report = super::run(&flat, &ws, None, &dir.join("out"), "program", binding, 1 << 18).unwrap();
     let rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get(output).map(|r| r.shown()).unwrap_or_default();
@@ -2315,4 +2311,88 @@ fn an_edited_rule_parses_no_text_the_last_run_parsed() {
     assert_eq!(run("").guest_parses, 2);
     assert_eq!(run(", x != \"r6\"").guest_parses, 0, "the annotations' tapes are the last run's");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The prepared program is keyed by the linked program's version (0276 §2): an edit of a finding's words alone finds
+/// it prepared (decision 0225 §3: the words are the writer's), and an edit of a rule prepares another.
+#[test]
+fn a_message_edit_finds_the_program_prepared_and_a_rule_edit_does_not() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-key");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "assert x\nwhile y:\n    pass\n").unwrap();
+    let policy = |words: &str, kind: &str| {
+        format!(".policy \"p\" revision 1\n.language python\n.violation P(at: node) \"{words}\"\nP(n) :- kind(n, \"{kind}\").\n")
+    };
+    let keys = |text: &str| {
+        super::run(text, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        super::with_prepared(|kept| kept.keys().copied().collect::<std::collections::BTreeSet<_>>())
+    };
+    super::with_prepared(|kept| kept.clear());
+    let first = keys(&policy("one", "assert_statement"));
+    assert!(!first.is_empty(), "the run kept its prepared program");
+    assert_eq!(keys(&policy("two words", "assert_statement")), first, "the words alone changed: the same key");
+    let edited = keys(&policy("one", "while_statement"));
+    assert_eq!(edited.difference(&first).count(), 1, "a rule edit prepares another program");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0431 R9 (django-bugs' 2e9d16bc8, ported): a finding's lowering derives `rr_unplaced(clause)` for a finding
+/// at a node whose document is no file's, an output; a run whose `rr_unplaced` holds rows is refused, naming the
+/// clauses. A finding at a file's node derives none, and its run is not refused.
+#[test]
+fn a_finding_no_file_holds_is_refused_naming_its_clause() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unplaced");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.py"), "assert x\n").unwrap();
+    let text = ".policy \"p\" revision 1\n.language python\n.violation Assert(at: node) \"an assert\"\nAssert(n) :- kind(n, \"assert_statement\").\n";
+    let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+    let shown = v.show();
+    assert!(shown.contains("rr_unplaced(\"Assert\") :- Assert(") && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
+    assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
+    let out = dir.join("out");
+    let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    run(text, &out).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap().len(), 1, "a file's node: found");
+    assert!(crate::code_rule_dsl::logic::plan::output::shown(&out, crate::code_rule_dsl::logic::rr::UNPLACED).unwrap().is_empty(), "and placed");
+    // A run whose `rr_unplaced` holds a row (here derived outright) is refused, naming the clause.
+    // Its rule reads `kind(_, "assert_statement")`, merged into `Assert`: an export now, the first run's output alone.
+    // The file's memo entry holds no exported rows of it, so the file is a miss, not a hit with none.
+    let second = format!("{text}rr_unplaced(\"Assert\") :- kind(_, \"assert_statement\").\n");
+    let out2 = dir.join("out2");
+    let err = run(&second, &out2).err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(err.contains("Assert") && err.contains("tape value"), "{err:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A rule whose head holds no variable, over a file's nodes (`zz("A") :- kind(_, "assert_statement")`), holds its row
+/// when a node matches, as one with a variable does, in a language's run (its program split by file).
+#[test]
+fn a_constant_head_over_a_files_nodes_holds_its_row() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("constant-head");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.py"), "assert x\n").unwrap();
+    let text = "\
+.policy \"p\" revision 1
+.language python
+.violation Assert(at: node) \"an assert\"
+Assert(n) :- kind(n, \"assert_statement\").
+.decl c1(c: symbol)
+c1(\"A\") :- kind(_, \"assert_statement\").
+.decl c2(c: symbol)
+c2(c) :- kind(_, \"assert_statement\"), c = \"A\".
+.decl c3(c: symbol)
+c3(\"A\") :- kind(n, \"assert_statement\"), n = n.
+.decl v(n: node)
+v(n) :- kind(n, \"assert_statement\").
+.output c1, c2, c3, v
+";
+    let out = dir.join("out");
+    super::run(text, &dir.join("ws"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let got: Vec<(String, usize)> = ["c1", "c2", "c3", "v"].iter().map(|r| (r.to_string(), crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().len())).collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(got, [("c1".to_owned(), 1), ("c2".to_owned(), 1), ("c3".to_owned(), 1), ("v".to_owned(), 1)]);
 }

@@ -254,7 +254,7 @@ errors(l, m) :- syntax_error(_, l, m).
 "#;
     let path = root.with_extension("rule.rerail");
     std::fs::write(&path, rule).unwrap();
-    let program = print(&parse_file(&path).unwrap()).unwrap();
+    let program = print_version(&parse_file_version(&path).unwrap()).unwrap();
     let out = root.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let rows = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
@@ -561,9 +561,40 @@ fn a_policy_refused_its_kept_inputs_runs_again_over_its_store() {
 }
 
 /// Decision 0062: the statements lowering reads come off the tape. For every `.rerail` file in the repository they are
-/// the parser's own, statement for statement, and a file that does not parse gives the parser's error.
+/// the parser's, statement for statement: the same kind, name and line, a block's statements too, and each clause
+/// one the clause reads take (`clause::Reads::check_clause`), with the parser's heads. A file that does not parse
+/// gives the parser's error. (The tape is no longer made into the parser's form to compare them whole: the lowering
+/// reads the tape itself, and the print-back tests pin what it lowers.)
 #[test]
 fn statements_from_the_tape_are_the_parsers() {
+    use super::clause::Reads;
+    use super::from_tape::{RrFile, S, Stmt};
+    use super::syntax::{Item, Statement};
+    fn same(path: &Path, parsed: &[Statement], taped: &[Stmt]) {
+        assert_eq!(parsed.len(), taped.len(), "{}", path.display());
+        for ((item, line), st) in parsed.iter().zip(taped) {
+            let at = format!("{}:{line}", path.display());
+            assert_eq!(*line, st.line(), "{at}");
+            let what = st.read().unwrap_or_else(|e| panic!("{at}: {e:?}"));
+            match (item, what) {
+                (Item::Include(p), S::Include(t)) => assert_eq!(*p, t, "{at}"),
+                (Item::Decl { name, .. }, S::Decl(t)) | (Item::Edit { name }, S::Edit(t)) | (Item::Functor { name }, S::Functor(t)) | (Item::Type { name }, S::Type(t)) | (Item::Lattice { name, .. }, S::Lattice(t)) | (Item::Violation { name, .. }, S::Violation(t)) => assert_eq!(name, t, "{at}"),
+                (Item::Io { output, .. }, S::Io { output: t }) => assert_eq!(*output, t, "{at}"),
+                (Item::Pragma(_), S::Pragma) | (Item::Policy(_), S::Policy) => {}
+                (Item::Setting { key, text }, S::Setting { key: k, text: t }) => assert_eq!((key.as_str(), text.as_str()), (k, t), "{at}"),
+                (Item::Clause { heads, .. }, S::Clause) => {
+                    st.file().check_clause(st.node()).unwrap_or_else(|e| panic!("{at}: {e:?}"));
+                    assert_eq!(heads.iter().map(|h| h.rel.as_str()).collect::<Vec<_>>(), st.heads(), "{at}");
+                }
+                (Item::Test { items, .. } | Item::Fixtures { items, .. }, S::Test | S::Fixtures) => {
+                    let (t, n) = st.tape();
+                    let (_, _, _, body) = t.block(n).unwrap();
+                    same(path, items, &body.into_iter().map(|c| Stmt::at(st.file(), c)).collect::<Vec<_>>());
+                }
+                (item, what) => panic!("{at}: parser {item:?}, tape {what:?}"),
+            }
+        }
+    }
     // The rule library and packs, and the engine's own programs (typing's, and the pinned golden ones).
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut pending = vec![manifest.join("../docs/rule-syntax"), manifest.join("src/code_rule_dsl/typing/programs"), manifest.join("src/code_rule_dsl/logic/plan/golden/programs")];
@@ -575,21 +606,15 @@ fn statements_from_the_tape_are_the_parsers() {
                 pending.push(path);
                 continue;
             }
-            if path.extension().is_none_or(|e| e != "rerail") {
+            if !path.extension().is_some_and(|e| e == "rerail") {
                 continue;
             }
             let src = std::fs::read_to_string(&path).unwrap();
             let parsed = syntax::Parser::new(&src).and_then(|mut p| p.statements());
-            let taped = from_tape::statements(&src, &crate::code_rule_dsl::logic::rr::nodes(&src));
-            match (parsed, taped) {
-                (Ok(parsed), Ok(taped)) => {
-                    assert_eq!(parsed.len(), taped.len(), "{}", path.display());
-                    for (p, t) in parsed.iter().zip(&taped) {
-                        assert_eq!(p, t, "{}", path.display());
-                    }
-                }
+            match (parsed, RrFile::read(src.as_str())) {
+                (Ok(parsed), Ok(file)) => same(&path, &parsed, &file.statements()),
                 (Err(p), Err(t)) => assert_eq!(format!("{p:?}"), format!("{t:?}"), "{}", path.display()),
-                (p, t) => panic!("{}: parser {:?}, tape {:?}", path.display(), p.map(|s| s.len()), t.map(|s| s.len())),
+                (p, t) => panic!("{}: parser {:?}, tape {:?}", path.display(), p.map(|s| s.len()), t.map(|f| f.statements().len())),
             }
             checked += 1;
         }

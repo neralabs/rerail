@@ -124,34 +124,10 @@ pub fn report(state: &State) -> (String, serde_json::Value) {
     (text, json)
 }
 
-/// Explain scalar inputs using actual dependency edges, including native contracts.
-/// Keep one shortest consumer path per requested scalar relation, with cycle guards.
-/// Public for the report's tests, which sit in the crate above (`logic::profile::report`).
-pub fn projection(
-    prog: &crate::code_rule_dsl::logic::front::Program,
-    reads: &BTreeSet<String>,
-) {
-    use crate::code_rule_dsl::logic::front::Literal;
-    let mut users: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for rule in &prog.rules {
-        for a in rule.body.iter().filter_map(Literal::atom) {
-            users
-                .entry(a.rel.to_string())
-                .or_default()
-                .insert(rule.head.rel.to_string());
-        }
-    }
-    for (name, native) in &prog.natives {
-        for read in native.reads() {
-            users.entry(read.into()).or_default().insert(name.clone());
-        }
-    }
-    let outputs: BTreeSet<_> = prog.outputs.iter().cloned().collect();
-    projection_of(&users, &outputs, reads);
-}
-
-/// `projection` from the relations' readers (a relation's, or a native's) and the outputs, found by its caller (over
-/// a version, `logic::plan::text_demand`).
+/// Explains each scalar input read (`reads`) by one shortest path of readers to an output, with cycle guards: the
+/// relations' readers (a relation's, or a native's, native contracts included) and the outputs found by its caller
+/// (over a version, `logic::plan::text_demand`). Public for the report's tests, which sit in the crate above
+/// (`logic::profile::report`).
 pub fn projection_of(users: &BTreeMap<String, BTreeSet<String>>, outputs: &BTreeSet<String>, reads: &BTreeSet<String>) {
     for scalar in analysis::SCALARS.iter().filter(|r| reads.contains(**r)) {
         let mut queue = VecDeque::from([vec![(*scalar).to_owned()]]);

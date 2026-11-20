@@ -363,18 +363,18 @@ impl ProgramPass for Hide {
             touched = edited.into_iter().chain(first_copy..rules.len()).collect();
             delta.changed(&rules, &touched);
             for (name, cols) in decls {
-                declare_columns(&mut prog.b, &name, &cols);
+                declare_columns(&mut prog.b.fields(), &name, &cols);
             }
             all_kindsets.extend(kindsets);
             for (name, orig, kinds) in kind_facts {
                 if let Some(d) = prog.columns_of(orig.as_str()) {
-                    declare_columns(&mut prog.b, &name, &d);
+                    declare_columns(&mut prog.b.fields(), &name, &d);
                 }
                 let rows: Vec<front::List<Value>> = kinds.iter().map(|k| [Value::Str(k.as_str().into())].into()).collect();
-                prog.b.set_facts(&name, &rows);
+                prog.b.fields().set_facts(&name, &rows);
             }
             for axis in axes {
-                prog.b.add_input(&axis);
+                prog.b.fields().add_input(&axis);
             }
             if !changed {
                 break;
@@ -468,13 +468,13 @@ impl ProgramPass for Hide {
         });
         for h in &helpers {
             let cols: Vec<(&str, &str)> = h.vars.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            prog.b.declare(&h.name, &cols);
+            prog.b.fields().declare(&h.name, &cols);
         }
         // The version: every rule copied from its source with its edits, then the helpers, then the fields.
         let b = w.derive()?;
-        b.state_fields_of(&prog.b);
+        b.fields().state_fields_of(&prog.b);
         if all_kindsets != v.kindsets() {
-            b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&all_kindsets));
+            b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&all_kindsets));
         }
         let asked = asked_after(v, &rules);
         for (rule, fin) in rules.iter().zip(&finals) {
@@ -503,7 +503,7 @@ impl ProgramPass for Hide {
             out.finish()?;
         }
         if let Some(asked) = asked {
-            b.set_asked(&asked);
+            b.fields().set_asked(&asked);
         }
         self.kept = plan_rows(&reached, &made, &specialized, &asking, &carried);
         Ok(())
@@ -1477,7 +1477,7 @@ mod tests {
                 read
             } else {
                 let mut b = Builder::on(&read);
-                b.set_facts(GUEST_POLICY, &[[Value::Str("library".into()), Value::Str("off".into())].into()]);
+                b.fields().set_facts(GUEST_POLICY, &[[Value::Str("library".into()), Value::Str("off".into())].into()]);
                 b.finish().unwrap().0
             };
             let mut p = Pipeline::new("test", read);

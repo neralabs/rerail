@@ -10,6 +10,7 @@
 //! Every load here reads the tape or its view, which no code writes while it is read (`readonly`).
 //! Format 16's arrays have 8 bytes of room past their last value, so a value is one word's load.
 
+use crate::view::cache::{NOT_KEPT, PENDING, TAKEN};
 use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, z};
 use cranelift_codegen::ir::{
     self, AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName, Value,
@@ -1433,15 +1434,6 @@ fn cache_count(b: &mut B<'_, '_>, cache: Value, offset: i32) {
 pub(crate) fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, size: Value, fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
     cache_lookup(b, cache, key, size, Some(fill))
 }
-
-/// What an open lookup (`cache_lookup` with no fill) found, in its result's low bits (an entry is `ALIGN`-aligned).
-pub const FOUND: i64 = 0;
-/// An entry of the size asked taken, being written: the caller writes its payload, then `cache_done`.
-pub const TAKEN: i64 = 1;
-/// None kept, none taken (a size of 0 asked, past the most, or no room): the dead entry.
-pub const NOT_KEPT: i64 = 2;
-/// Another thread writes the key's entry: the dead entry; read again after that writer's pass.
-pub const PENDING: i64 = 3;
 
 /// `cache_get`, or with no `fill` an open lookup: it waits for no writer, and on a miss takes an entry of `size`
 /// bytes (none for 0) that its caller writes and completes (`cache_done`); its result an entry and what it found

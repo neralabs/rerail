@@ -22,6 +22,9 @@ mod code_rule_dsl;
 mod executors_guard_tests;
 #[cfg(test)]
 mod test_watchdog;
+// The test binary's stores flush nothing (`RERAIL_FLUSH=none`, decision 0481) unless the environment says otherwise.
+#[cfg(test)]
+mod test_flush;
 #[cfg(test)]
 mod text_readers_guard_tests;
 #[cfg(all(test, not(windows)))]

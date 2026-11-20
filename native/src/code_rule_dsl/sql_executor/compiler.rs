@@ -5,16 +5,16 @@ impl CodeRuleSqlExecutor {
     /// returned beside the program, each with the session inputs its query reads.
     pub fn compile(
         &mut self,
-        mut program: front::Program,
+        program: Arc<Version>,
         dialect: &str,
     ) -> Result<(plan::emit::Emitted, BTreeMap<String, Vec<String>>)> {
-        let producers = producers::take(&mut program)?;
+        let (program, producers) = producers::take(program)?;
         let _scope = profiling::scope(&self.db, "compile");
-        for name in &program.inputs {
+        for name in &program.input_names() {
             if let Some((arity, types)) = self.input_shapes.get(name)
-                && let Some(cols) = program.decls.get(name.as_str())
+                && let Some(cols) = program.columns_of(name)
             {
-                if program::logical_arity(&program, name) != *arity {
+                if program::logical_arity(&*program, name) != *arity {
                     return Err(error(format!(
                         "{name}: input logical arity differs from its declaration"
                     )));
@@ -36,33 +36,28 @@ impl CodeRuleSqlExecutor {
                 }
             }
         }
-        program::physical(&mut program);
         // The file front end includes all of core.rerail. An extension needs bindings only for
         // inputs its retained rules or outputs actually read, not every possible core family.
         let read: BTreeSet<String> = program
-            .rules
-            .iter()
-            .flat_map(|r| {
-                r.body
-                    .iter()
-                    .filter_map(front::Literal::atom)
-                    .map(|a| a.rel.to_string())
-            })
-            .chain(program.outputs.iter().cloned())
+            .rules()
+            .flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| program.rel_name(a.rel()).to_owned()).collect::<Vec<_>>())
+            .chain(program.output_names())
             .collect();
-        let unused: Vec<String> = program
-            .inputs
-            .iter()
-            .filter(|name| !read.contains(*name))
-            .cloned()
-            .collect();
-        for name in unused {
-            program.inputs.retain(|input| *input != name);
-            program.decls.remove(name.as_str());
-            program.facts.remove(&name);
-        }
+        let inputs = program.input_names();
+        let program = if inputs.iter().all(|name| read.contains(name)) {
+            program
+        } else {
+            let mut b = Builder::on(&program);
+            for name in inputs.iter().filter(|name| !read.contains(*name)) {
+                b.fields().undeclare(name);
+                b.fields().drop_facts(name);
+            }
+            b.fields().set_inputs(&inputs.iter().filter(|name| read.contains(*name)).collect::<Vec<_>>());
+            b.finish().map_err(error)?.0
+        };
+        let lattices = ProgramFields::lattice(&*program);
         let mut lattice_operations = BTreeMap::new();
-        for (name, lattice) in &program.lattice {
+        for (name, lattice) in &lattices {
             if lattice.lattice() == "flat" {
                 continue;
             }
@@ -83,34 +78,29 @@ impl CodeRuleSqlExecutor {
             }
             lattice_operations.insert(name.clone(), ops);
         }
-        let tops = program
-            .lattice
-            .iter()
-            .map(|(name, l)| {
-                (
-                    name.clone(),
-                    (
-                        l.keys,
-                        lattice_operations
-                            .get(name)
-                            .map_or(crate::code_rule_dsl::logic::native::TOP, |ops| ops.top),
-                    ),
-                )
-            })
+        // Each relation of no columns, or lattice of no keys, gets its presence column (`program::physical`'s), and
+        // each `top` is its lattice's value (`program::tops`'): the version normalized as the SQL kernel reads it.
+        let given: BTreeMap<String, i64> = lattices
+            .keys()
+            .map(|name| (name.clone(), lattice_operations.get(name).map_or(crate::code_rule_dsl::logic::native::TOP, |ops| ops.top)))
             .collect();
-        program::tops(&mut program, &tops)?;
+        let (program, _) = crate::code_rule_dsl::logic::program_image::passes::normalize_with_tops(&program, given).map_err(error)?;
+        // The lattices' value columns after the presence column, for the transfers.
+        let tops: BTreeMap<String, (usize, i64)> = ProgramFields::lattice(&*program)
+            .iter()
+            .map(|(name, l)| (name.clone(), (l.keys, lattice_operations.get(name).map_or(crate::code_rule_dsl::logic::native::TOP, |ops| ops.top))))
+            .collect();
         let dialect = crate::code_rule_dsl::language::dialect_by_label(dialect)
             .ok_or_else(|| error(format!("unknown dialect: {dialect}")))?;
-        let lowered = plan::lower::lower_tree(&program, dialect, &mut |names| {
+        let lowered = plan::lower::lowered(Arc::clone(&program), dialect, &mut |names| {
             self.store
                 .intern_atoms(names)
                 .map_err(|e| plan::Error::Plan(e.to_string()))
         })
         .map_err(error)?;
-        // The SQL emitter's program is the lowered tree `lower::lower_tree` gives (`emit::emit`), never a version's.
-        let tree = &lowered.program;
+        let lowered_inputs = lowered.version.input_names();
         let mut batch = HashMap::new();
-        let has_wave_stats: bool = if tree.inputs.iter().all(|name| {
+        let has_wave_stats: bool = if lowered_inputs.iter().all(|name| {
             self.inputs.contains_key(name)
                 || self.executions.iter().any(|e| e.counts.contains_key(name))
         }) {
@@ -126,7 +116,7 @@ impl CodeRuleSqlExecutor {
                 )
                 .map_err(error)?
         };
-        for name in &tree.inputs {
+        for name in &lowered_inputs {
             if !identifier(name) || reserved(name) {
                 return Err(error(format!("invalid input relation: {name}")));
             }
@@ -135,7 +125,7 @@ impl CodeRuleSqlExecutor {
                 .prepare(&format!("SELECT * FROM {}", quote(name)))
                 .map_err(error)?;
             let columns: Vec<&str> = statement.column_names().collect();
-            if columns.len() != tree.decls[name.as_str()].len() {
+            if columns.len() != lowered.version.columns_of(name).map_or(0, |c| c.len()) {
                 return Err(error(format!(
                     "{name}: input arity differs from its declaration"
                 )));
@@ -168,10 +158,10 @@ impl CodeRuleSqlExecutor {
             batch.insert(name.clone(), (source, rows));
         }
         let mut emitted =
-            plan::emit::emit(&lowered.image().map_err(error)?, &self.db, "main", "sql-extension", None, &batch)
+            plan::emit::emit(&lowered, &self.db, "main", "sql-extension", None, &batch)
                 .map_err(error)?;
         use sha2::Digest;
-        let key = crate::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(format!("{program:?}:{dialect:?}")));
+        let key = crate::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(format!("{:016x}:{}:{dialect:?}", program.digest(), program.size())));
         lattices::transfers(&mut emitted, &tops);
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
         walks::optimize(&mut emitted);

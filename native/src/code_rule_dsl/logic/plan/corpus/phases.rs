@@ -415,7 +415,7 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
             use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
             let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&program);
             for e in &declared.exports {
-                b.add_output(e);
+                b.fields().add_output(e);
             }
             b.finish().map_err(Error::Plan)?.0
         };
@@ -512,9 +512,9 @@ pub(super) fn sources(
         let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&program);
         let mut settings = ProgramFields::settings(&*program);
         settings.push(("language".to_owned(), label.to_owned()));
-        b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
+        b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
         for e in &declared.exports {
-            b.add_output(e);
+            b.fields().add_output(e);
         }
         b.finish().map_err(Error::Plan)?.0
     };

@@ -1,6 +1,7 @@
 //! Per-thread SQLite connections, connection pragmas, and the busy retry every store write runs
 //! under.
 
+use rerail_blocks::block::Flush;
 use super::{ContentStore, StoreError, StoreResult};
 use parking_lot::{ArcMutexGuard, Mutex as ParkingMutex, RawMutex};
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
@@ -284,6 +285,8 @@ pub(super) struct ThreadConnection {
     /// The store's identity when opened: a thread's connection to a store since created again at the path is not
     /// this store's.
     identity: i64,
+    /// How the store's writes reach the disk (decision 0481): each connection's `synchronous`.
+    flush: Flush,
 }
 
 /// A locked thread connection, reopened if an idle release closed it.
@@ -303,10 +306,15 @@ impl std::ops::DerefMut for ConnectionGuard {
 }
 
 impl ThreadConnection {
-    pub(super) fn new(database_path: PathBuf, identity: i64) -> Self {
+    pub(super) fn new(database_path: PathBuf, identity: i64, flush: Flush) -> Self {
         let connections = connections();
         *connections.handles.lock().entry(database_path.clone()).or_default() += 1;
-        Self { database_path, connections, identity }
+        Self { database_path, connections, identity, flush }
+    }
+
+    /// How the store's writes reach the disk.
+    pub(super) fn flush(&self) -> Flush {
+        self.flush
     }
 
     /// The store's identity when this handle opened it (a sibling handle shares it).
@@ -355,7 +363,7 @@ impl ThreadConnection {
             // Its configuring reads (`page_count`, `journal_mode`) wait for another process's writer as a write
             // does: busy past one wait, they are tried again, not failed (every caller expects its connection).
             let opened = retry_busy(&mut BusyRetries::default(), || {
-                open_runtime_connection(&self.database_path)
+                open_runtime_connection(&self.database_path, self.flush)
             })
             .map_err(|error| error.to_string())?;
             // The file at the path is this handle's store only while its identity is: a store deleted and created
@@ -482,7 +490,35 @@ pub fn set_connection_functions(install: fn(&Connection) -> rusqlite::Result<()>
     let _ = CONNECTION_FUNCTIONS.set(install);
 }
 
-pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
+/// The store's flush mode (decision 0481): how a write reaches the disk, for SQLite (`synchronous`) and for the
+/// blocks the store's rows name, which follow it. `RERAIL_FLUSH` (`synced`, `os`, `none`) names it; by default
+/// `os`, and `none` in the store's own tests (the engine's test binary sets `none` too, `test_flush`).
+pub fn store_flush() -> StoreResult<Flush> {
+    Flush::from_env_or(if cfg!(test) { Flush::None } else { Flush::Os }).map_err(StoreError::Invalid)
+}
+
+/// SQLite's `synchronous` for `flush`: `FULL` waits for the disk at each commit, as `Synced` blocks do; `NORMAL` (in
+/// WAL) syncs only at checkpoints; `OFF` never.
+fn synchronous(flush: Flush) -> &'static str {
+    match flush {
+        Flush::Synced => "FULL",
+        Flush::Os => "NORMAL",
+        Flush::None => "OFF",
+    }
+}
+
+/// The flush mode of `connection`'s store, as its `synchronous` says (`configure_connection`): what code that holds
+/// only a connection (the atoms, the kept facts) writes its blocks back by. A connection the store did not configure
+/// (SQLite's default, `FULL`) reads as `Synced`.
+pub fn flush_of(connection: &Connection) -> Flush {
+    match connection.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0)) {
+        Ok(0) => Flush::None,
+        Ok(1) => Flush::Os,
+        _ => Flush::Synced,
+    }
+}
+
+pub(super) fn configure_connection(connection: &mut Connection, flush: Flush) -> StoreResult<()> {
     trace_for_hazards(connection);
     connection.set_prepared_statement_cache_capacity(256);
     connection.busy_handler(Some(wait_for_writer))?;
@@ -496,7 +532,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     // Readers never block the writer, nor it them: every worker thread reads while one apply
     // publishes.
     let _: String = connection.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
-    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    connection.pragma_update(None, "synchronous", synchronous(flush))?;
     // A store may be opened by each of Rerail's worker threads. Keep their aggregate page-cache
     // residency bounded; active reads still use the decompressed cache above.
     connection.pragma_update(None, "cache_size", -CACHE_KIB)?;
@@ -612,14 +648,14 @@ pub fn sqlite_on_jemalloc() {
     });
 }
 
-fn open_runtime_connection(path: &Path) -> StoreResult<Connection> {
+fn open_runtime_connection(path: &Path, flush: Flush) -> StoreResult<Connection> {
     #[cfg(not(any(windows, target_family = "wasm")))]
     sqlite_on_jemalloc();
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
     let mut connection = Connection::open_with_flags(path, flags)?;
-    configure_connection(&mut connection)?;
+    configure_connection(&mut connection, flush)?;
     Ok(connection)
 }
 
@@ -643,7 +679,7 @@ impl ContentStore {
     /// A new connection to this store's file, configured as the store's own: for an owner that
     /// keeps its own temp schema and modules (the waves' SQL owner).
     pub fn open_connection(&self) -> StoreResult<Connection> {
-        open_runtime_connection(&self.database_path)
+        open_runtime_connection(&self.database_path, self.connection.flush())
     }
 
     /// The store's file.

@@ -537,10 +537,10 @@ mod tests {
     use super::super::super::body::Placed;
     use super::super::super::fields::Fields;
 
-    /// Whether rule `k` of `text` falls apart once its reads of `cut` are cut.
+    /// Whether rule `k` of `text` falls apart once its reads of `cut` are cut. Its variables are written `$x`, as the
+    /// planner shows them; the `.rerail` text names them without the `$`.
     fn apart(text: &str, k: usize, cut: &str) -> bool {
-        let prog = super::super::super::super::front::parse(text).unwrap();
-        let p = Placed::of_program(&prog).unwrap();
+        let p = Placed::whole(super::super::super::super::rr::parse_version(&text.replace('$', "")).unwrap());
         let r = R::of(&p, k);
         disconnected(&r, &|j| r.plain(j).is_some_and(|a| r.rel(a) == cut))
     }
@@ -560,14 +560,14 @@ mod tests {
             .decl near(n: node, o: node)
             .input node, kind, rr_nearest_ks1
             .output def, ctor, by_def, near
-            up($n, $o) :- node(_, $n, _, _, _), kind($o, "def").
-            def($n, $f) :- up($n, $f), kind($f, "function_definition").
-            ctor($c) :- up($c, _), kind($c, "call").
-            by_def($f, $n) :- def($n, $f).
-            near($n, $o) :- rr_nearest_ks1($n, $o), !kind($o, "decorator").
+            up(n, o) :- node(_, n, _, _, _), kind(o, "def").
+            def(n, f) :- up(n, f), kind(f, "function_definition").
+            ctor(c) :- up(c, _), kind(c, "call").
+            by_def(f, n) :- def(n, f).
+            near(n, o) :- rr_nearest_ks1(n, o), !kind(o, "decorator").
         "#;
-        let prog = super::super::super::super::front::parse(p).unwrap();
-        let placed = Placed::of_program(&prog).unwrap();
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(p).unwrap();
+        let placed = Placed::whole(prog.clone());
         let rules: Vec<R<'_>> = (0..placed.len()).map(|k| R::of(&placed, k)).collect();
         let got = per_node_relations(&rules);
         assert!(got.contains("up") && got.contains("def") && got.contains("near"), "{got:?}");
@@ -627,8 +627,7 @@ mod tests {
             named($o, $c) :- kind($o, 7), field($o, 3, $c).
             out($o) :- named($o, _).
             "#;
-        let prog = super::super::super::super::front::parse(p).unwrap();
-        let placed = Placed::of_program(&prog).unwrap();
+        let placed = Placed::whole(super::super::super::super::rr::parse_version(&p.replace('$', "")).unwrap());
         let f = Fields::of(&placed).unwrap();
         let k = (0..placed.len()).find(|&k| R::of(&placed, k).head() == "named").unwrap();
         let r = R::of(&placed, k);

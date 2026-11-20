@@ -583,7 +583,8 @@ pub mod heap {
         pub(super) fn record(at: usize) {
             let Some(t) = table() else { return };
             let row = &t[at * DEPTH..(at + 1) * DEPTH];
-            // Off macOS on Apple silicon no frame is walked: the row stays empty.
+            // The return addresses of the frames calling it, outermost last, by the frame pointers' chain, read in
+            // its own frame. Off macOS on Apple silicon no frame is walked: the row stays empty.
             #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
             let got = [0usize; DEPTH + SKIP];
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -679,7 +680,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
             #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
         }
         pub mod profile;
     }

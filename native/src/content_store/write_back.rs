@@ -100,7 +100,7 @@ pub struct Work(pub(super) Kind);
 
 pub(super) enum Kind {
     /// A record (decision 0306): its string and byte area, applied by its items' registered kinds.
-    Record { text: String, bytes: Vec<u8> },
+    Record { text: String, bytes: Vec<super::record::Bytes> },
     /// A space's memo entries in their segments (`queue_memo_segments`).
     Memo(Box<super::held::memo_pack::MemoWrite>),
     /// A space's next kept file (`queue_kept`, decisions 0401 F6, 0456 K4).
@@ -116,7 +116,7 @@ pub(super) enum Kind {
 
 impl Work {
     /// A record's string and byte area (`record`).
-    pub(super) fn record(text: String, bytes: Vec<u8>) -> Work {
+    pub(super) fn record(text: String, bytes: Vec<super::record::Bytes>) -> Work {
         Work(Kind::Record { text, bytes })
     }
 

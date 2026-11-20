@@ -45,7 +45,7 @@ impl Session {
         let marker = format!("# {name} {:?}\n", std::time::SystemTime::now());
         let rule = dir.join("program.rerail");
         std::fs::write(&rule, program).unwrap();
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let handle = super::session::Handle::open(&dir.join("session")).unwrap();
         let s = Session { _one: one, dir, marker, program, outputs: outputs.to_vec(), handle, fresh: 0 };
         for (file, body) in files {

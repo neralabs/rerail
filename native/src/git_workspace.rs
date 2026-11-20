@@ -1007,9 +1007,21 @@ mod tests {
     use super::*;
     use crate::content_store::test_support::TemporaryDatabase;
 
+    /// A repository is discovered from a directory inside it, with no `git` process: its files in order, its
+    /// ignored ones left out, an edit an overlay of the clean trees, a source read and aliased to its blob, and its
+    /// snapshot published once. Over a repository of its own: the checkout the test was built in need not be one (a
+    /// farm host's copy of the tree has no `.git`).
     #[test]
-    fn discovers_current_repository_without_a_git_process() {
-        let workspace = discover(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+    fn discovers_a_repository_from_inside_it_without_a_git_process() {
+        let root = fixture_directory("discovery");
+        initialize_repository(
+            &root,
+            &[(".gitignore", b"tmp/\n"), ("native/src/lib.rs", b"pub fn f() {}\n"), ("native/build.rs", b"fn main() {}\n"), ("native/src/edited.rs", b"pub fn g() {}\n")],
+        );
+        std::fs::create_dir_all(root.join("tmp")).unwrap();
+        std::fs::write(root.join("tmp/scratch.rs"), b"ignored\n").unwrap();
+        std::fs::write(root.join("native/src/edited.rs"), b"pub fn g() { let _ = 1; }\n").unwrap();
+        let workspace = discover(&root.join("native")).unwrap();
         assert!(workspace.worktree_root.is_absolute());
         assert!(workspace.common_directory.is_absolute());
         assert!(!workspace.trees.is_empty());
@@ -1074,6 +1086,8 @@ mod tests {
         );
         let source_id = workspace.store_source(&store, "native/build.rs").unwrap();
         assert_eq!(store.source_by_alias(alias).unwrap(), Some(source_id));
+        assert!(workspace.overlays.iter().any(|overlay| overlay.path == "native/src/edited.rs"), "the edit is an overlay");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn run_git(directory: &Path, arguments: &[&str]) {
@@ -1101,7 +1115,9 @@ mod tests {
         run_git(root, &["config", "user.email", "rerail-tests@example.com"]);
         run_git(root, &["config", "user.name", "Rerail tests"]);
         for (path, contents) in files {
-            std::fs::write(root.join(path), contents).unwrap();
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents).unwrap();
         }
         let mut paths = vec!["add", "--"];
         paths.extend(files.iter().map(|(path, _)| *path));
