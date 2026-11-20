@@ -4,7 +4,7 @@
 //!
 //! A command holds its launches until it is committed: each is charged to the evaluation's budget when it is asked
 //! for (a launch past the budget is not encoded), and a command whose evaluation is past its budget at the commit
-//! runs none of them. That is Metal's rule (`commit_checked`), kept on backends whose queue starts a launch as it is
+//! runs none of them: the rule Metal's command buffers kept, kept on backends whose queue starts a launch as it is
 //! enqueued. A kernel's arguments are bound by their names in its rows (`DEFINE_KERNEL2`).
 //!
 //! Kernels come from the engine's kernel store (`rerail_accel::gpu::kernels::function`): on Metal its pipelines
@@ -31,7 +31,34 @@ pub type Kernel = Arc<ComputeFunction>;
 
 /// The process's device in the device layer, or `UnsupportedBackend` without one.
 pub fn device() -> Result<&'static Device, Error> {
+    crate::pool_hooks();
     rerail_accel::gpu::shared::layer().map(|l| l.device).ok_or(Error::UnsupportedBackend)
+}
+
+/// A compiled kernel's limits as its pipeline reports them: the most threads a group its registers allow, its SIMD
+/// width, and its static threadgroup memory. Metal's pipeline reports them; elsewhere none (`None`), and a caller
+/// takes the device's (`Device::max_threadgroup`, `Device::simd_width`).
+#[derive(Clone, Copy, Debug)]
+pub struct Limits {
+    pub threads: u64,
+    pub simd: u64,
+    pub threadgroup_memory: u64,
+}
+
+/// `kernel`'s [`Limits`], where its backend reports them.
+pub fn limits(kernel: &ComputeFunction) -> Option<Limits> {
+    #[cfg(target_os = "macos")]
+    {
+        kernel.metal().map(|m| {
+            let p = &m.compute_pipeline_state;
+            Limits { threads: p.max_total_threads_per_threadgroup(), simd: p.thread_execution_width(), threadgroup_memory: p.static_threadgroup_memory_length() }
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = kernel;
+        None
+    }
 }
 
 /// The kernel `name` of `source` (UKL), with `constant` at specialization constant 0 (`UKL_CONSTANT_U32`).
@@ -187,6 +214,13 @@ impl Launch<'_> {
         self
     }
 
+    /// A buffer row, where the kernel has a row of that name: for callers that bind one set of buffers to several
+    /// kernels, each declaring the rows it reads (the block programs' passes, as Metal's kernels declared the
+    /// buffer indices they took).
+    pub fn buffer_if(self, name: &str, buffer: &Buffer) -> Self {
+        if self.kernel.get_argument_info().iter().any(|a| a.name == name) { self.buffer(name, buffer) } else { self }
+    }
+
     /// A buffer row bound from byte `offset` of `buffer`.
     pub fn buffer_at(mut self, name: &str, buffer: &Buffer, offset: u64) -> Self {
         self.args.push(Arg::Buffer(name.to_owned(), buffer.clone(), offset));
@@ -207,10 +241,22 @@ impl Launch<'_> {
         self
     }
 
+    /// A value row, where the kernel has a row of that name (as [`Launch::buffer_if`]).
+    pub fn value_if<T: rerail_device::Pod>(self, name: &str, v: &T) -> Self {
+        if self.kernel.get_argument_info().iter().any(|a| a.name == name) { self.value(name, v) } else { self }
+    }
+
     /// A value row (`ARGS`, `LITERAL`): a `#[repr(C)]` value laid out as the kernel's.
     pub fn value<T: rerail_device::Pod>(mut self, name: &str, v: &T) -> Self {
         // SAFETY: a Pod value's bytes, all initialized.
         let bytes = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(v).cast::<u8>(), size_of::<T>()) };
+        self.args.push(Arg::Value(name.to_owned(), bytes.to_vec()));
+        self
+    }
+
+    /// A value row given as its bytes, laid out as the kernel's (a row whose type the caller reads from the
+    /// kernel's reflection).
+    pub fn bytes(mut self, name: &str, bytes: &[u8]) -> Self {
         self.args.push(Arg::Value(name.to_owned(), bytes.to_vec()));
         self
     }
@@ -300,7 +346,7 @@ impl Committed {
             return Err(Error::BackendFailure);
         }
         crate::launch::mark(std::ptr::from_ref::<u8>(&self.key) as usize, true);
-        let host = self.event.metal().map_or([0.0; 3], crate::launch::command_times);
+        let host = crate::launch::command_times(&self.event);
         Ok(Times { device: self.event.gpu_seconds(), wall: crate::launch::host_seconds() - self.started, committed: self.started, host })
     }
 }

@@ -251,25 +251,25 @@ pub fn native(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bou
     })
 }
 
-/// The words' compiled code as MSL (`native_cpu_pp::msl_source`, decision 0348 stage 5), made
-/// once a process: the device runs the same IR as the CPU.
-pub fn msl() -> Result<&'static str, String> {
-    static MSL: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
-    MSL.get_or_init(|| rerail_compiler::native_cpu_pp::msl_source(program()?)).as_deref().map_err(Clone::clone)
+/// The words' compiled code as UKL (`native_cpu_pp::ukl_source`, decisions 0348 stage 5, 0440 step D), made once a
+/// process: the device runs the same IR as the CPU.
+pub fn ukl() -> Result<&'static str, String> {
+    static UKL: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    UKL.get_or_init(|| rerail_compiler::native_cpu_pp::ukl_source(program()?)).as_deref().map_err(Clone::clone)
 }
 
-/// The words on the device, a TU a batch (`rerail_metal::pp_on`).
-#[cfg(target_os = "macos")]
-pub fn on_metal(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> {
-    on_metal_batch(&[(program, files, env, bounds)]).pop().expect("one result")
+/// The words on the process's device, a TU a batch (`rerail_metal::pp_on`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn on_device(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> {
+    on_device_batch(&[(program, files, env, bounds)]).pop().expect("one result")
 }
 
 /// The words on the device over a batch of TUs' rounds, a TU a thread (0408, L3): the batch
 /// runner of `expand_tus_with`.
-#[cfg(target_os = "macos")]
-pub fn on_metal_batch(jobs: &[Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> {
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn on_device_batch(jobs: &[Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> {
     let refused = |why: &'static str| jobs.iter().map(|_| Err(pp_words::Refused { pc: 0, why })).collect();
-    let Ok(source) = msl() else { return refused("the words do not translate to MSL") };
+    let Ok(source) = ukl() else { return refused("the words do not translate to UKL") };
     match rerail_metal::pp_on::run_batch(source, jobs, jobs.len()) {
         Ok(ran) => ran.results,
         Err(_) => refused("the device refused the batch"),

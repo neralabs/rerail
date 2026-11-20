@@ -167,7 +167,7 @@ fn directives_read_as_the_lean_scan_reads_them() {
         assert_eq!(Facts::of(&got, b), lean_facts(b, false), "{src:?}\n{}", text());
         assert_eq!(c.interpreter_read(b).as_ref(), Some(&got), "the interpreter, {src:?}");
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         let files: Vec<&[u8]> = cases.iter().map(|s| s.as_bytes()).collect();
         let metal = c.metal_read(&files).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}"));
@@ -206,7 +206,7 @@ fn the_corpus_reads_the_same_or_is_refused() {
             if c.interpreter_read(&src) != cl {
                 interp.push(p.display().to_string());
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             if c.metal_read(&[&src]).unwrap_or_else(|e| panic!("the device runs {}: {e:?}", p.display()))[0] != cl {
                 metal.push(p.display().to_string());
             }
@@ -264,7 +264,7 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
         assert_eq!(got.rows, lean(src.as_bytes(), false));
         assert!(same(&got, src.as_bytes(), false));
         assert_eq!(c.interpreter_read(src.as_bytes()), Some(got.clone()), "the interpreter");
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_eq!(c.metal_read(&[src.as_bytes()]).unwrap_or_else(|e| panic!("the device runs it: {e:?}"))[0], Some(got), "Metal");
     }
 }

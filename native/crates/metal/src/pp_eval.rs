@@ -13,7 +13,6 @@
 //! rows: a file pass, a prefix sum and a file pass) and their names (`evaluate`).
 
 use crate::Error;
-use crate::launch::{commit_checked, wait_checked};
 use crate::pp_blocks::{Arena, Bound, Buf, Enc, Grid, Scan, TG};
 
 /// The passes' source, preprocessed for Metal (`crate::pp_blocks::source`).
@@ -157,8 +156,8 @@ impl Unit {
     }
 
     /// The first document's slab, as the kernels bind it (`None`: no documents).
-    pub fn data(&self) -> Option<&metal::BufferRef> {
-        self.documents.first().map(|d| &**d.slab.buffer())
+    pub fn data(&self) -> Option<&crate::lane::Buffer> {
+        self.documents.first().map(|d| d.slab.device_buffer())
     }
 }
 
@@ -340,25 +339,15 @@ pub fn run_over(unit: &Unit, f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> R
 }
 
 fn run_reading(resident: &[Arc<crate::slabs::Slab>], f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error> {
-    let device = crate::device()?;
+    crate::lane::device()?;
     let scope = crate::launch::LaunchScope::enter();
-    let queue = crate::pool::queue(&device)?;
-    let command = queue.new_command_buffer();
-    command.set_label("Rerail pp evaluator");
-    let encoded = f(&Enc { command, source: source()?, resident });
-    if let Err(e) = encoded {
-        command.commit();
-        command.wait_until_completed();
-        return Err(e);
-    }
-    if let Err(refused) = commit_checked(command) {
-        crate::launch::release_refused(command);
-        return Err(refused);
-    }
-    wait_checked(command)?;
-    // R9 of decision 0448: every pass in this one command buffer, so the host reads nothing
-    // between passes (it reads only after the whole buffer completed). An encoding that put a
-    // dispatch in another buffer is refused.
+    let enc = Enc::new("Rerail pp evaluator", source()?, resident);
+    // An encoding refused part way runs none of it.
+    f(&enc)?;
+    enc.into_command().run()?;
+    // R9 of decision 0448: every pass in this one command, so the host reads nothing between
+    // passes (it reads only after the whole command completed). An encoding that put a dispatch
+    // in another command is refused.
     let records = scope.snapshot();
     if records.iter().any(|r| r.command != records[0].command) {
         return Err(Error::BackendFailure);

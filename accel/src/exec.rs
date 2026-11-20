@@ -1206,14 +1206,14 @@ impl Executor {
     pub fn new() -> Self {
         configure();
         let present = lanes::present();
-        // The device lanes are macOS's: elsewhere the two are all.
-        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        // SME and the Neural Engine are macOS's; the GPU lane is any device's (decision 0440 step E).
+        #[cfg_attr(not(any(target_os = "macos", gpu_lane)), allow(unused_mut))]
         let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(crate::sql::SqlBackend)];
         #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
         if present[Lane::Sme.index()] {
             backends.extend(crate::sme::backend());
         }
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[cfg(gpu_lane)]
         if present[Lane::Gpu.index()] {
             backends.extend(crate::gpu::backend());
         }
@@ -1456,7 +1456,7 @@ impl Executor {
             self.board.plan(lane, per_lane[lane.index()] as i64, est);
         }
         // The engine's launch budget, checked on the submitting thread (decision 0100 §2).
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[cfg(gpu_lane)]
         if per_lane[Lane::Gpu.index()] > 0 {
             crate::gpu::shared::guard().map_err(|e| format!("gpu lane: {e}"))?;
         }

@@ -614,7 +614,7 @@ struct Kid {
 }
 
 // SAFETY: `#[repr(C)]`, three `u32`s: every byte a named field, no address.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 unsafe impl rerail_blocks::Pod for Kid {}
 
 impl Table {

@@ -97,6 +97,8 @@ rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
+# The device layer's buffers, as a view read in place names them for the stages (`vtab::ViewInPlace`).
+rerail-device = { path = "../../../gpu/device" }
 rerail-compiler = { path = "../compiler" }
 rerail-rr-parser = { path = "../rr_parser" }
 

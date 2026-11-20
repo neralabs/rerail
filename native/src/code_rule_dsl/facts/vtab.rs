@@ -51,33 +51,35 @@ pub trait RowCells: Send+Sync {
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
 /// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub struct DeviceView<'a> {
     pub block: &'a rerail_blocks::Block,
     pub root: usize,
     pub view: u32,
     pub rows: usize,
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub in_place: Option<ViewInPlace>,
 }
 
 /// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in
-/// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address, and what keeps them.
+/// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address (the device layer's, as
+/// the stages bind them), and what keeps them. Made where the process's device is Metal: the directory is of Metal's
+/// addresses (`device_chunk::views_in_place`).
 /// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
 /// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[derive(Clone)]
 pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
-    pub buffers: Vec<metal::Buffer>,
-    pub cache: Option<metal::Buffer>,
+    pub buffers: Vec<rerail_device::device::Buffer>,
+    pub cache: Option<rerail_device::device::Buffer>,
     pub failed: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl ViewInPlace {
     /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
     pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
@@ -225,7 +227,7 @@ pub trait Source: Send + Sync {
     }
     /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
     /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         None
     }

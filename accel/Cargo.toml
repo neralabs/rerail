@@ -24,28 +24,33 @@ rerail-forest = { path = "../forest" }
 # The join model's name tables (`join_model`): a short name's lookup is 150 ns under std's SipHash.
 rustc-hash = "=2.1.3"
 # The one block policy (`blocks`, decision 0342) on every target: host blocks everywhere, blocks leased from the
-# GPU pool on macOS (`gpu::shared::lease_block_within`, decision 0266 §12).
+# GPU pool where the device layer is (`gpu::shared::lease_block_within`, decision 0266 §12).
 rerail-blocks = { path = "../native/crates/blocks" }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-metal = "0.33.0"
-objc = "0.2.7"
-block = "0.1.6"
-core-foundation-sys = "0.8.7"
 # A kernel that takes UKL's library (the reads written once in CLIF) preprocessed before the Metal front end
 # (`gpu::kernels::msl`, decision 0440 §3.3).
 rerail-ukl = { path = "../native/crates/ukl" }
+
+# The device layer, where it is (macOS and Linux): the GPU lane's targets (`gpu_lane`, `build.rs`).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 # The pool's buffers and the blocks' wraps: the device layer's (decision 0440 step B).
 rerail-device = { path = "../gpu/device" }
 # Kernels on a device other than Metal, compiled from UKL by the device layer (`gpu::kernels::function`, 0440 step C).
 rerail-gpu = { path = "../gpu" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Metal's own tier: its pipelines and binary archives, its command buffers' timeline (decision 0440 step E).
+metal = "0.33.0"
+objc = "0.2.7"
+block = "0.1.6"
+core-foundation-sys = "0.8.7"
 
 [build-dependencies]
 cc = "=1.10.0"
 
 [lints.rust]
 # objc 0.2's `msg_send!` tests a `cargo-clippy` feature in the calling crate.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+# `gpu_lane`: the `gpu` feature on a target with the device layer (`build.rs`).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))', 'cfg(gpu_lane)'] }
 
 [dev-dependencies]
 rerail-context = { path = "../native/crates/context", features = ["test-hooks"] }

@@ -11,9 +11,7 @@
 //! §3, `Arena`): leased once a run within the one budget, and bound at each store's offset.
 
 use crate::Error;
-use crate::launch::CheckedComputeEncoder;
-use crate::runtime::pipeline_named_constant;
-use metal::{BufferRef, CommandBufferRef, MTLSize};
+use crate::lane::{self, Buffer};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -38,7 +36,7 @@ struct Inner {
 
 struct Leased {
     _block: rerail_blocks::Block,
-    buffer: metal::Buffer,
+    buffer: Buffer,
     /// The stores' first byte in the block (past its header), and in the host's mapping.
     base: usize,
     host: *mut u8,
@@ -92,12 +90,12 @@ impl Arena {
             return Ok(());
         }
         let bytes = self.bytes().max(ALIGN);
-        let device = crate::device()?;
+        let device = lane::device()?;
         let block = rerail_accel::gpu::shared::lease_block_within(rerail_blocks::block::kind::SCRATCH, bytes + 2 * ALIGN + 4096)
             .map_err(|_| Error::BackendCapacity)?;
         // Zeroed: a pooled slab may hold an earlier block's bytes.
         let base = block.try_alloc(bytes, ALIGN).ok_or(Error::BackendCapacity)?;
-        let buffer = block.gpu_buffer(&device);
+        let buffer = block.device_buffer(device).map_err(|_| Error::BackendCapacity)?;
         let host = block.base_ptr();
         for (at, words) in self.0.init.borrow_mut().drain(..) {
             // SAFETY: the store's range lies inside the block's allocation `base..base + bytes`.
@@ -129,30 +127,24 @@ impl Buf {
 
 /// What a pass binds: a buffer, at a byte offset.
 pub trait Bound {
-    fn bound(&self) -> (&BufferRef, u64);
+    fn bound(&self) -> (&Buffer, u64);
 }
 
 impl Bound for Buf {
-    fn bound(&self) -> (&BufferRef, u64) {
+    fn bound(&self) -> (&Buffer, u64) {
         let l = self.arena.leased();
         (&l.buffer, (l.base + self.at) as u64)
     }
 }
 
 impl<T: Bound + ?Sized> Bound for &T {
-    fn bound(&self) -> (&BufferRef, u64) {
+    fn bound(&self) -> (&Buffer, u64) {
         (**self).bound()
     }
 }
 
-impl Bound for BufferRef {
-    fn bound(&self) -> (&BufferRef, u64) {
-        (self, 0)
-    }
-}
-
-impl Bound for metal::Buffer {
-    fn bound(&self) -> (&BufferRef, u64) {
+impl Bound for Buffer {
+    fn bound(&self) -> (&Buffer, u64) {
         (self, 0)
     }
 }
@@ -189,44 +181,53 @@ pub const TG: u64 = 256;
 /// A scan block's elements.
 const BLOCK: usize = 1024;
 
-/// Encodes passes of `source` into a command buffer.
+/// Encodes passes of `source` into one command (`lane::Command`, decision 0440 step C): every
+/// pass of an evaluation in it, so the host reads nothing between them (0448 R9).
 pub struct Enc<'a> {
-    pub command: &'a CommandBufferRef,
+    command: RefCell<lane::Command>,
     pub source: &'a str,
     /// The slabs each pass makes resident: a unit's documents past the bound one (`pp_eval::Unit`).
     pub resident: &'a [std::sync::Arc<crate::slabs::Slab>],
 }
 
-impl Enc<'_> {
+impl<'a> Enc<'a> {
+    pub fn new(label: &str, source: &'a str, resident: &'a [std::sync::Arc<crate::slabs::Slab>]) -> Enc<'a> {
+        Enc { command: RefCell::new(lane::Command::new(label)), source, resident }
+    }
+
+    /// The command its passes made, to commit.
+    pub fn into_command(self) -> lane::Command {
+        self.command.into_inner()
+    }
+
     /// Kernel `name` (with `constant` at function constant 0) over `buffers`, then the words
     /// `words` each at the next index.
     pub fn run(&self, name: &str, constant: Option<u32>, buffers: &[&dyn Bound], words: &[u32], grid: Grid<'_>) -> Result<(), Error> {
-        let pipe = pipeline_named_constant(self.source, name, constant)?;
-        let e = self.command.new_compute_command_encoder();
-        // The checked dispatch records the kernel by its encoder's label.
-        e.set_label(name);
-        e.set_compute_pipeline_state(&pipe);
-        let bound: Vec<(&BufferRef, u64)> = buffers.iter().map(|b| b.bound()).collect();
-        e.checked_set_buffers_at(self.command, &bound);
+        let kernel = lane::kernel(self.source, name, constant);
+        let mut command = self.command.borrow_mut();
+        let mut launch = command.launch(&kernel, name);
+        for (i, b) in buffers.iter().enumerate() {
+            let (b, at) = b.bound();
+            launch = launch.slot(i as u64, b, at);
+        }
         for slab in self.resident {
-            e.use_resource(slab.buffer(), metal::MTLResourceUsage::Read);
+            launch = launch.uses(slab.device_buffer());
         }
         for (k, w) in words.iter().enumerate() {
-            e.set_bytes((buffers.len() + k) as u64, 4, std::ptr::from_ref(w).cast());
+            launch = launch.slot_value((buffers.len() + k) as u64, w);
         }
-        let group = MTLSize::new(TG, 1, 1);
+        let group = [TG, 1, 1];
         match grid {
-            Grid::Groups(g) => e.checked_dispatch_thread_groups(self.command, MTLSize::new(g.max(1), 1, 1), group),
+            Grid::Groups(g) => launch.groups([g.max(1), 1, 1], group),
             Grid::Indirect(b, at) => {
                 let (b, base) = b.bound();
-                e.checked_dispatch_thread_groups_indirect(self.command, b, base + at, group)
+                // The counts are read when it runs, on Metal, these passes' one backend: no most.
+                launch.indirect(b, base + at, [u64::from(u32::MAX), 1, 1], group)
             }
         }
-        e.end_encoding();
         Ok(())
     }
 }
-
 
 /// An exclusive scan of up to `capacity` u32s, its total in `total`. Only the levels the
 /// capacity needs are encoded: 1 launch to 1,024 elements, 3 to 2^20, 5 past it. Level 0 is

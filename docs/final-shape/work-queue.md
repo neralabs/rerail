@@ -7569,6 +7569,50 @@ on an M3 or M5:
 - **Done when**: a test with two runs' loops in one pool at once reads each run's own value in every item, and a
   profiled corpus0 x B-now run completes.
 
+### Q349. Roll-up 20 (CUDA-support onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): CUDA-support at b28525e9c3b. It brings no new decision or Q number: only 0440 changed.
+- **Taken from theirs** (0440):
+  - every launch is a lane command (`lane::Command`), and every kernel is UKL. These are gone: Metal's checked
+    encoder, `pipeline_named*`, `MappedBuffer`, `PrivateInputUpload` and the `.metal` block programs.
+  - the device crates build on Linux too: the device paths' `cfg`s are macOS or Linux.
+  - the moved MSL: `chunk_views.uglykl` and `join_stages.uglykl` replace `metal_join.rs`'s inline sources.
+- **Kept from ours, ported onto theirs**:
+  - 0442 objects in place of theirs' new statics: the block interpreter's source, `poll_rmw`, the serial kernels,
+    the join pipes and the pool's hooks are machine objects.
+  - block program ops 14, 17 (early) and 18 (prefix), in `block_program.uglykl` and the generated arms.
+  - 0408 L2: the context's slots are rows of the batch's table (`PpBatch.cs`, `clif_ukl`'s `place`).
+  - 0477 (b): `col_bloom`, in `join_sort.uglykl`.
+  - 0431 §4 and §8 in the chunk views: `docof` and `node`'s file column are the file's key (`d->file`), and an
+    axis over several chunks writes one relation, each chunk from its first row (`p5`).
+  - the device runners' explicit errors (`metal_read`, `metal_images`: `Result`), and the batch of TUs a round
+    (`on_device_batch`, 0408 L3).
+  - Q203's evictor.
+  - the view probe's thread per (local, slot). Theirs unrolled the slots, which the comment says compiled for
+    minutes on an M3.
+- **Made to fit**:
+  - `pp_blocks::Enc` encodes into one `lane::Command`: slots for the MSL buffer indices, `uses` for the unit's
+    slabs. `pp_eval::run_reading` commits that one command, so 0448 R9 holds. The pp passes are MSL, so their
+    modules are macOS only until 0468 §5.
+  - `UklGridSortLocal` has theirs' `digits` scratch. `view.h` keeps ours' layout (192 bytes, `file`), with
+    theirs' `UKL_OFFSETOF`.
+  - 0427 is 0463 here, in theirs' text too.
+  - `rerail-blocks` was listed twice in the facts and device_metal manifests.
+  - the slab test reads `device_address()`.
+- **Fixed on the way**:
+  - a lattice's rows were noted twice as written (`self.writes`).
+  - the device_metal crate's tests had no Python embedder since 0470 step 1 (`test_languages` registers it).
+  - `views_made_on_the_device_are_the_hosts_rows` still expected a guest's `docof` to be its own key: since 0431
+    §4 it is its host file's.
+- **Checked** on an M1 Max:
+  - The engine, metal, accel, c_directives, parser_tests, rr_parser, device_metal, facts and compiler libs and
+    tests compile with no warning.
+  - Tests that pass: clif_ukl (2); metal's pp_blocks, including R9 (5); accel's column statistics (2);
+    c_directives' device words, eval and tokens (8); rr_parser's numbers (1); device_metal's fork, chunk views,
+    in-place stats and in-block rows (4); rerail-engine's view reads, placed tape, supertype backends and slab
+    batch (4); parser_tests' executors, totals and extract (4).
+- **Open**: Q330's device expansion on the M1 Max (still ignored).
+
 ### Q348. Roll-up 19 (cost-classifier-metal-rf onto rr-align): what the merge chose, and what stays open
 
 - **Merged** (2026-11-20): cost-classifier-metal-rf at 6a9a5fb6231, renumbered on a commit of its own first

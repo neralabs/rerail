@@ -13,8 +13,14 @@
 //!   over all platforms). It must share the host's memory (`CL_DEVICE_HOST_UNIFIED_MEMORY`): a buffer is host
 //!   memory the device reads in place (`CL_MEM_USE_HOST_PTR`), never a copy (decision 0353). A discrete device
 //!   would stage it, so it needs SVM, which is not written; it is refused.
-//! - **The SIMD group**: no OpenCL device we can test has subgroups, so they are emulated through threadgroup
-//!   memory at 32 lanes (`ukl_opencl_shim.h`), or a group is one lane (`RERAIL_OPENCL_SIMD_WIDTH=1`).
+//! - **Addresses:** with `RERAIL_OPENCL_USM=1`, where the device has Intel's unified shared memory, a buffer it
+//!   allocates is a host allocation of it (`clHostMemAllocINTEL`), whose address kernels follow from a table
+//!   (`ClBuffer::address`; the fused sorts and probes). It is bound and copied as itself
+//!   (`clSetKernelArgMemPointerINTEL`, `clEnqueueMemcpyINTEL`): Intel's driver keeps an OpenCL buffer made over it
+//!   apart from its pages. Memory wrapped in place has no address.
+//! - **The SIMD group** is the device's sub-group where it has OpenCL 3.0's with 32 lanes (`native_subgroups`: Intel's
+//!   GPUs), else emulated through threadgroup memory at 32 lanes (`ukl_opencl_shim.h`, Apple's OpenCL 1.2), or one
+//!   lane (`RERAIL_OPENCL_SIMD_WIDTH=1`).
 //! - **A queue** holds its operations until a flush, which enqueues them in order on its root's in-order command
 //!   queue, then a marker: the event. A queue's work never interleaves with another's, as with Metal's command
 //!   buffers. A wait for a host-signalled event holds the rest on the host, and the root's later flushes behind it,
@@ -41,6 +47,14 @@ const CL_DEVICE_MAX_WORK_GROUP_SIZE: ClUint = 0x1004;
 const CL_DEVICE_HOST_UNIFIED_MEMORY: ClUint = 0x1035;
 const CL_DEVICE_MEM_BASE_ADDR_ALIGN: ClUint = 0x1019;
 const CL_DEVICE_MAX_MEM_ALLOC_SIZE: ClUint = 0x1010;
+const CL_DEVICE_EXTENSIONS: ClUint = 0x1030;
+/// `cl_intel_required_subgroup_size`: the sub-group sizes a kernel may require (`size_t`s).
+const CL_DEVICE_SUB_GROUP_SIZES_INTEL: ClUint = 0x4108;
+/// `cl_intel_unified_shared_memory`: what host allocations support (a bit field; bit 0, access).
+const CL_DEVICE_HOST_MEM_CAPABILITIES_INTEL: ClUint = 0x4190;
+/// `cl_intel_unified_shared_memory`: the host allocations a launch reaches through addresses that buffers hold, not
+/// its arguments (Metal's `useResource`).
+const CL_KERNEL_EXEC_INFO_USM_PTRS_INTEL: ClUint = 0x4203;
 const CL_BUFFER_CREATE_TYPE_REGION: ClUint = 0x1220;
 const CL_MEM_READ_WRITE: u64 = 1;
 const CL_MEM_USE_HOST_PTR: u64 = 1 << 3;
@@ -78,6 +92,7 @@ struct Api {
     set_kernel_arg: unsafe extern "C" fn(Ptr, ClUint, usize, *const c_void) -> ClInt,
     enqueue_nd_range_kernel: unsafe extern "C" fn(Ptr, Ptr, ClUint, *const usize, *const usize, *const usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_write_buffer: unsafe extern "C" fn(Ptr, Ptr, ClUint, usize, usize, *const c_void, ClUint, *const Ptr, *mut Ptr) -> ClInt,
+    enqueue_read_buffer: unsafe extern "C" fn(Ptr, Ptr, ClUint, usize, usize, *mut c_void, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_copy_buffer: unsafe extern "C" fn(Ptr, Ptr, Ptr, usize, usize, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_marker_with_wait_list: unsafe extern "C" fn(Ptr, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     wait_for_events: unsafe extern "C" fn(ClUint, *const Ptr) -> ClInt,
@@ -86,6 +101,45 @@ struct Api {
     release_event: unsafe extern "C" fn(Ptr) -> ClInt,
     flush: unsafe extern "C" fn(Ptr) -> ClInt,
     finish: unsafe extern "C" fn(Ptr) -> ClInt,
+    get_extension_function_address_for_platform: unsafe extern "C" fn(Ptr, *const c_char) -> Ptr,
+    /// OpenCL 2.0's; absent from Apple's 1.2.
+    set_kernel_exec_info: Option<unsafe extern "C" fn(Ptr, ClUint, usize, *const c_void) -> ClInt>,
+}
+
+/// `cl_intel_unified_shared_memory`'s entry points (the platform's extension functions): host allocations, which
+/// have an address kernels follow.
+#[allow(clippy::type_complexity)]
+struct Usm {
+    /// `clHostMemAllocINTEL(context, properties, size, alignment, errcode)`.
+    host_mem_alloc: unsafe extern "C" fn(Ptr, *const u64, usize, ClUint, *mut ClInt) -> Ptr,
+    /// `clMemBlockingFreeINTEL(context, ptr)`: frees once the device's work with it has completed.
+    mem_blocking_free: unsafe extern "C" fn(Ptr, Ptr) -> ClInt,
+    set_kernel_exec_info: unsafe extern "C" fn(Ptr, ClUint, usize, *const c_void) -> ClInt,
+    /// `clSetKernelArgMemPointerINTEL(kernel, index, ptr)`: an argument that is a host allocation.
+    set_kernel_arg_mem_pointer: unsafe extern "C" fn(Ptr, ClUint, *const c_void) -> ClInt,
+    /// `clEnqueueMemcpyINTEL(queue, blocking, dst, src, size, waits, wait list, event)`.
+    enqueue_memcpy: unsafe extern "C" fn(Ptr, ClUint, Ptr, *const c_void, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
+}
+
+/// What a kernel's argument or a copy names of a buffer: an OpenCL buffer, or a host allocation's address (`Usm`),
+/// as an integer, which a queue's operations carry to their enqueue.
+#[derive(Clone, Copy)]
+enum Mem {
+    Cl(usize),
+    Usm(usize),
+}
+
+/// Sets argument `i` of kernel `k` to the buffer `m`.
+///
+/// # Safety
+/// `k` is a kernel of the device whose host allocations `usm` names, and `m` is alive.
+unsafe fn set_buffer_arg(a: &Api, usm: Option<&Usm>, k: Ptr, i: ClUint, m: Mem) -> ClInt {
+    match (m, usm) {
+        (Mem::Cl(mem), _) => unsafe { (a.set_kernel_arg)(k, i, std::mem::size_of::<Ptr>(), (&(mem as Ptr) as *const Ptr).cast()) },
+        (Mem::Usm(p), Some(u)) => unsafe { (u.set_kernel_arg_mem_pointer)(k, i, p as *const c_void) },
+        // CL_INVALID_VALUE: a host allocation on a device without them.
+        (Mem::Usm(_), None) => -30,
+    }
 }
 
 unsafe impl Send for Api {}
@@ -141,6 +195,7 @@ fn api() -> Result<&'static Api, String> {
             set_kernel_arg: f!("clSetKernelArg"),
             enqueue_nd_range_kernel: f!("clEnqueueNDRangeKernel"),
             enqueue_write_buffer: f!("clEnqueueWriteBuffer"),
+            enqueue_read_buffer: f!("clEnqueueReadBuffer"),
             enqueue_copy_buffer: f!("clEnqueueCopyBuffer"),
             enqueue_marker_with_wait_list: f!("clEnqueueMarkerWithWaitList"),
             wait_for_events: f!("clWaitForEvents"),
@@ -149,6 +204,9 @@ fn api() -> Result<&'static Api, String> {
             release_event: f!("clReleaseEvent"),
             flush: f!("clFlush"),
             finish: f!("clFinish"),
+            get_extension_function_address_for_platform: f!("clGetExtensionFunctionAddressForPlatform"),
+            // SAFETY: OpenCL 2.0's function of that name, where the library has it.
+            set_kernel_exec_info: sym("clSetKernelExecInfo").ok().map(|p| unsafe { std::mem::transmute::<Ptr, _>(p) }),
         })
     })
     .as_ref()
@@ -173,15 +231,67 @@ fn device_info_string(a: &Api, d: Ptr, param: ClUint) -> String {
     String::from_utf8_lossy(&v).trim_end_matches('\0').trim().to_string()
 }
 
-/// The SIMD groups' lanes of the OpenCL device's kernels: `RERAIL_OPENCL_SIMD_WIDTH` (1 or 32), else 32, emulated.
+/// The SIMD groups' lanes of the OpenCL device's kernels: `RERAIL_OPENCL_SIMD_WIDTH` (1 or 32), else 32 (the device's
+/// sub-groups or emulated, `native_subgroups`).
 pub fn simd_width() -> u32 {
     match std::env::var("RERAIL_OPENCL_SIMD_WIDTH") {
         Err(_) => 32,
         Ok(w) => match w.parse::<u32>() {
             Ok(n @ (1 | 32)) => n,
-            _ => panic!("RERAIL_OPENCL_SIMD_WIDTH={w}: 1 or 32 (native subgroups are not written)"),
+            _ => panic!("RERAIL_OPENCL_SIMD_WIDTH={w}: 1 or 32"),
         },
     }
+}
+
+/// Whether the device's sub-groups are the SIMD groups its kernels want (decision 0440, the Intel plan's step 1):
+/// OpenCL 3.0's sub-groups with their shuffles, relative shuffles and ballot (`cl_khr_subgroups`,
+/// `_subgroup_shuffle`, `_subgroup_shuffle_relative`, `_subgroup_ballot`), and a kernel may require 32 lanes
+/// (`cl_intel_required_subgroup_size`, 32 among its sizes). Otherwise, or with `RERAIL_OPENCL_SUBGROUPS=0` (to
+/// measure one against the other), the shim emulates them in threadgroup memory.
+fn native_subgroups(a: &Api, device: Ptr) -> bool {
+    if std::env::var("RERAIL_OPENCL_SUBGROUPS").is_ok_and(|v| v == "0") || simd_width() != 32 {
+        return false;
+    }
+    let ext = device_info_string(a, device, CL_DEVICE_EXTENSIONS);
+    let has = |e: &str| ext.split_ascii_whitespace().any(|x| x == e);
+    let wanted = ["cl_khr_subgroups", "cl_khr_subgroup_shuffle", "cl_khr_subgroup_shuffle_relative", "cl_khr_subgroup_ballot", "cl_intel_required_subgroup_size"];
+    if !wanted.iter().all(|e| has(e)) {
+        return false;
+    }
+    let sizes = device_info_bytes(a, device, CL_DEVICE_SUB_GROUP_SIZES_INTEL);
+    sizes.chunks_exact(8).any(|c| u64::from_ne_bytes(c.try_into().unwrap()) == 32)
+}
+
+/// The device's host allocations, with `RERAIL_OPENCL_USM=1`, where it has Intel's unified shared memory with host
+/// allocations it can access (`cl_intel_unified_shared_memory`, `CL_DEVICE_HOST_MEM_CAPABILITIES_INTEL`). Checked
+/// again by a kernel at the device's opening (`follows_addresses`). Not the default: on the Arc 140V under WSL2 the
+/// radix sort's wall is 3-5 times the heap buffers' from 20,000 rows, its kernels' own time unchanged (decision
+/// 0440, the Intel plan's step 2).
+fn usm(a: &Api, platform: Ptr, device: Ptr) -> Option<Usm> {
+    if !std::env::var("RERAIL_OPENCL_USM").is_ok_and(|v| v == "1") {
+        return None;
+    }
+    let ext = device_info_string(a, device, CL_DEVICE_EXTENSIONS);
+    if !ext.split_ascii_whitespace().any(|x| x == "cl_intel_unified_shared_memory") {
+        return None;
+    }
+    let caps = device_info_bytes(a, device, CL_DEVICE_HOST_MEM_CAPABILITIES_INTEL);
+    if caps.len() < 8 || u64::from_ne_bytes(caps[..8].try_into().unwrap()) & 1 == 0 {
+        return None;
+    }
+    let f = |name: &str| {
+        let c = CString::new(name).unwrap();
+        let p = unsafe { (a.get_extension_function_address_for_platform)(platform, c.as_ptr()) };
+        (!p.is_null()).then_some(p)
+    };
+    // SAFETY: each is the extension's function of that name, with the signature its field declares.
+    Some(Usm {
+        host_mem_alloc: unsafe { std::mem::transmute::<Ptr, _>(f("clHostMemAllocINTEL")?) },
+        mem_blocking_free: unsafe { std::mem::transmute::<Ptr, _>(f("clMemBlockingFreeINTEL")?) },
+        set_kernel_exec_info: a.set_kernel_exec_info?,
+        set_kernel_arg_mem_pointer: unsafe { std::mem::transmute::<Ptr, _>(f("clSetKernelArgMemPointerINTEL")?) },
+        enqueue_memcpy: unsafe { std::mem::transmute::<Ptr, _>(f("clEnqueueMemcpyINTEL")?) },
+    })
 }
 
 struct DeviceInner {
@@ -189,10 +299,14 @@ struct DeviceInner {
     context: Ptr,
     name: String,
     max_group: usize,
+    /// Whether its kernels' SIMD groups are the device's sub-groups (`native_subgroups`), else emulated.
+    subgroups: bool,
     /// The alignment of a sub-buffer's origin, in bytes (`CL_DEVICE_MEM_BASE_ADDR_ALIGN`, given in bits).
     base_align: u64,
     /// The largest buffer (`CL_DEVICE_MAX_MEM_ALLOC_SIZE`).
     max_alloc: u64,
+    /// Where its buffers are host allocations with an address (`usm`).
+    usm: Option<Usm>,
 }
 
 unsafe impl Send for DeviceInner {}
@@ -224,10 +338,10 @@ impl ClDevice {
             }
             let mut ds = vec![std::ptr::null_mut(); nd as usize];
             unsafe { (a.get_device_ids)(p, CL_DEVICE_TYPE_GPU, nd, ds.as_mut_ptr(), std::ptr::null_mut()) };
-            gpus.extend(ds);
+            gpus.extend(ds.into_iter().map(|d| (p, d)));
         }
         let k: usize = std::env::var("RERAIL_OPENCL_DEVICE").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-        let device = *gpus.get(k).ok_or_else(|| format!("no OpenCL GPU {k} ({} found)", gpus.len()))?;
+        let (platform, device) = *gpus.get(k).ok_or_else(|| format!("no OpenCL GPU {k} ({} found)", gpus.len()))?;
         let name = format!("{} ({})", device_info_string(a, device, CL_DEVICE_NAME), device_info_string(a, device, CL_DEVICE_VERSION));
         let unified = device_info_bytes(a, device, CL_DEVICE_HOST_UNIFIED_MEMORY);
         if unified.len() < 4 || u32::from_ne_bytes(unified[..4].try_into().unwrap()) == 0 {
@@ -242,9 +356,18 @@ impl ClDevice {
         let base_align = (u32::from_ne_bytes(ba[..4].try_into().unwrap()) as u64 / 8).max(1);
         let ma = device_info_bytes(a, device, CL_DEVICE_MAX_MEM_ALLOC_SIZE);
         let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, base_align, max_alloc }));
+        let subgroups = native_subgroups(a, device);
+        // Heap buffers first: memory wrapped in place (a block, a mapped tape) is read through one.
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None }));
         d.reads_host_pages_in_place()?;
-        Ok(d)
+        let Some(usm) = usm(a, platform, device) else { return Ok(d) };
+        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, base_align, max_alloc, usm: Some(usm) }));
+        // Without the check's pass its buffers stay the heap's, with no address (one context; nothing releases it).
+        if let Err(e) = with.follows_addresses() {
+            eprintln!("rerail-device: {e}: OpenCL buffers without addresses");
+            return Ok(d);
+        }
+        Ok(with)
     }
 
     /// Whether a kernel's write into a buffer over host pages is in those pages once it completes, with no map: a
@@ -261,7 +384,7 @@ impl ClDevice {
         let q = unsafe { (a.create_command_queue)(self.0.context, self.0.device, 0, &mut e) };
         check("clCreateCommandQueue", e)?;
         let r = (|| {
-            check("clSetKernelArg", unsafe { (a.set_kernel_arg)(k.0, 0, std::mem::size_of::<Ptr>(), (&out.0.mem as *const Ptr).cast()) })?;
+            check("clSetKernelArg", unsafe { set_buffer_arg(a, self.0.usm.as_ref(), k.0, 0, out.mem()) })?;
             let one = 1usize;
             check("the in-place probe", unsafe { (a.enqueue_nd_range_kernel)(q, k.0, 1, std::ptr::null(), &one, &one, 0, std::ptr::null(), std::ptr::null_mut()) })?;
             check("clFinish", unsafe { (a.finish)(q) })
@@ -279,6 +402,50 @@ impl ClDevice {
         Ok(())
     }
 
+    /// Whether a kernel follows a host allocation's address that a buffer holds, and its writes there are in the
+    /// host's pages: a table in one allocation names a second, the kernel writes through it. A driver whose buffer
+    /// over a host allocation is not that allocation (another address, or a copy) fails it.
+    fn follows_addresses(&self) -> Result<(), String> {
+        const SEEN: u32 = 0x0440_05E1;
+        let lib = ClComputeFunctionLibrary::compile_from_source(
+            self,
+            "__kernel void ukl_follows(__global const ulong* t) { __global uint* p = (__global uint*)t[0]; p[3] = 0x044005E1u; }",
+            "the address probe",
+        )?;
+        let a = api()?;
+        let k = lib.kernel("ukl_follows")?;
+        let u = self.0.usm.as_ref().ok_or("no host allocations")?;
+        let table = alloc_uninitialized_array_sync::<u64>(self, 4);
+        let out = alloc_uninitialized_array_sync::<u32>(self, 4);
+        let at = out.address().ok_or("a host allocation without an address")?;
+        check("clSetKernelExecInfo", unsafe { (u.set_kernel_exec_info)(k.0, CL_KERNEL_EXEC_INFO_USM_PTRS_INTEL, 8, (&at as *const u64).cast()) })?;
+        // SAFETY: the table's host pages, which no kernel uses yet.
+        unsafe { table.contents().cast::<u64>().write_volatile(at) };
+        let mut e = 0;
+        let q = unsafe { (a.create_command_queue)(self.0.context, self.0.device, 0, &mut e) };
+        check("clCreateCommandQueue", e)?;
+        let r = (|| {
+            check("clSetKernelArg", unsafe { set_buffer_arg(a, self.0.usm.as_ref(), k.0, 0, table.mem()) })?;
+            let one = 1usize;
+            check("the address probe", unsafe { (a.enqueue_nd_range_kernel)(q, k.0, 1, std::ptr::null(), &one, &one, 0, std::ptr::null(), std::ptr::null_mut()) })?;
+            check("clFinish", unsafe { (a.finish)(q) })
+        })();
+        unsafe { (a.release_command_queue)(q) };
+        r?;
+        // SAFETY: the buffer's host pages, which no kernel uses now.
+        let seen = unsafe { std::ptr::read_volatile(out.contents().cast::<u32>().add(3)) };
+        if seen != SEEN {
+            return Err(format!("OpenCL device {}: a kernel's write through a host allocation's address is not in its pages", self.0.name));
+        }
+        Ok(())
+    }
+
+    /// Whether its buffers made here (not memory wrapped in place) have an address kernels follow: host
+    /// allocations of Intel's unified shared memory (`usm`), checked by a kernel at the opening.
+    pub fn allocations_have_addresses(&self) -> bool {
+        self.0.usm.is_some()
+    }
+
     pub fn name(&self) -> &str {
         &self.0.name
     }
@@ -293,9 +460,19 @@ impl ClDevice {
         self.0.max_group.min(1024)
     }
 
-    /// The defines its kernels' preprocessing takes: the SIMD width and the largest threadgroup.
+    /// The defines its kernels' preprocessing takes: the SIMD width, the largest threadgroup, and whether the SIMD
+    /// groups are the device's sub-groups (`UKL_OPENCL_SUBGROUPS`, `native_subgroups`).
     pub fn defines(&self) -> Vec<(&'static str, String)> {
-        vec![("UKL_SIMD_WIDTH", format!("{}u", simd_width())), ("UKL_TG_MAX", format!("{}u", self.max_group()))]
+        let mut d = vec![("UKL_SIMD_WIDTH", format!("{}u", simd_width())), ("UKL_TG_MAX", format!("{}u", self.max_group()))];
+        if self.0.subgroups {
+            d.push(("UKL_OPENCL_SUBGROUPS", "1".into()));
+        }
+        d
+    }
+
+    /// Whether its kernels' SIMD groups are the device's sub-groups (`native_subgroups`), not emulated.
+    pub fn subgroups(&self) -> bool {
+        self.0.subgroups
     }
 
     pub fn new_shared_event(&self) -> ClSharedEvent {
@@ -303,12 +480,23 @@ impl ClDevice {
     }
 }
 
+/// Whose a buffer's host pages are, and so how they are freed.
+enum Owner {
+    /// The process's heap.
+    Heap(std::alloc::Layout),
+    /// A host allocation of the device's unified shared memory (`usm`), whose address kernels follow.
+    Usm(ClDevice),
+    /// Memory wrapped in place (`wrap_host_memory`), its owner's; or a sub-buffer's, its buffer's.
+    Borrowed,
+}
+
 /// A buffer's memory: host pages, and the OpenCL buffer made over them.
 struct Allocation {
     ptr: *mut u8,
     len: u64,
-    /// `None`: memory wrapped in place (`wrap_host_memory`), its owner's.
-    layout: Option<std::alloc::Layout>,
+    owner: Owner,
+    /// Whether kernels follow `ptr` as an address: a host allocation's, or a region of one.
+    addressed: bool,
     mem: Ptr,
     /// A sub-buffer's buffer (`set_buffer_at`): kept while the region is.
     _parent: Option<ClBuffer>,
@@ -321,10 +509,18 @@ impl Drop for Allocation {
     fn drop(&mut self) {
         // A queue's work keeps the buffers it uses until it has completed, so no kernel reads these pages now.
         if let Ok(a) = api() {
-            unsafe { (a.release_mem_object)(self.mem) };
+            if !self.mem.is_null() {
+                unsafe { (a.release_mem_object)(self.mem) };
+            }
         }
-        if let Some(layout) = self.layout {
-            unsafe { std::alloc::dealloc(self.ptr, layout) };
+        match &self.owner {
+            Owner::Heap(layout) => unsafe { std::alloc::dealloc(self.ptr, *layout) },
+            Owner::Usm(d) => {
+                if let Some(u) = &d.0.usm {
+                    unsafe { (u.mem_blocking_free)(d.0.context, self.ptr.cast()) };
+                }
+            }
+            Owner::Borrowed => {}
         }
     }
 }
@@ -347,26 +543,59 @@ impl ClBuffer {
     pub fn length(&self) -> u64 {
         self.0.len
     }
+
+    /// The address kernels follow to its first byte: a host allocation's (`ClDevice::allocations_have_addresses`),
+    /// else none (memory wrapped in place, or a device without unified shared memory).
+    pub fn address(&self) -> Option<u64> {
+        self.0.addressed.then_some(self.0.ptr as u64)
+    }
+
+    /// What arguments and copies name of it: a host allocation (or a region of one) has no OpenCL buffer.
+    fn mem(&self) -> Mem {
+        if self.0.mem.is_null() { Mem::Usm(self.0.ptr as usize) } else { Mem::Cl(self.0.mem as usize) }
+    }
 }
 
 /// `allocUninitializedArraySync`: memory for `length` elements (at least 16 bytes), zeroed, page-aligned and a whole
 /// number of cache lines: what drivers ask of host memory they use in place (Intel's: 4,096-aligned, a multiple of
-/// 64 bytes). A host write after a buffer's first use is seen by the next launch (the armed prediction's test).
+/// 64 bytes). A host write after a buffer's first use is seen by the next launch (the armed prediction's test). On a
+/// device with unified shared memory it is a host allocation of it, whose address kernels follow (`ClBuffer::address`);
+/// the buffer over it is that allocation, not a copy (`ClDevice::follows_addresses`).
 pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> ClBuffer {
     let len = (length * std::mem::size_of::<T>()).max(16);
     let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
     let layout = std::alloc::Layout::from_size_align(len.next_multiple_of(64), page).unwrap();
-    // SAFETY: a non-zero size.
-    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
-    assert!(!ptr.is_null(), "out of memory for a {len}-byte buffer");
-    let a = api().expect("an OpenCL device without its library");
-    let mut e = 0;
-    let mem = unsafe { (a.create_buffer)(device.0.context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, layout.size(), ptr.cast(), &mut e) };
-    if e != CL_SUCCESS {
-        unsafe { std::alloc::dealloc(ptr, layout) };
-        panic!("OpenCL: clCreateBuffer of {len} bytes failed ({e})");
+    let (ptr, owner) = match &device.0.usm {
+        Some(u) => {
+            let mut e = 0;
+            let p = unsafe { (u.host_mem_alloc)(device.0.context, std::ptr::null(), layout.size(), page as ClUint, &mut e) };
+            assert!(e == CL_SUCCESS && !p.is_null(), "OpenCL: clHostMemAllocINTEL of {len} bytes failed ({e})");
+            // SAFETY: the allocation's `layout.size()` bytes, no other user yet.
+            unsafe { std::ptr::write_bytes(p.cast::<u8>(), 0, layout.size()) };
+            (p.cast::<u8>(), Owner::Usm(device.clone()))
+        }
+        None => {
+            // SAFETY: a non-zero size.
+            let p = unsafe { std::alloc::alloc_zeroed(layout) };
+            assert!(!p.is_null(), "out of memory for a {len}-byte buffer");
+            (p, Owner::Heap(layout))
+        }
+    };
+    let addressed = matches!(owner, Owner::Usm(_));
+    // A host allocation is bound and copied as itself: an OpenCL buffer over it would be a copy (Intel's driver
+    // keeps one apart from its pages).
+    let mut held = Allocation { ptr, len: len as u64, owner, addressed, mem: std::ptr::null_mut(), _parent: None };
+    if !addressed {
+        let a = api().expect("an OpenCL device without its library");
+        let mut e = 0;
+        held.mem = unsafe { (a.create_buffer)(device.0.context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, layout.size(), ptr.cast(), &mut e) };
+        if e != CL_SUCCESS {
+            held.mem = std::ptr::null_mut();
+            drop(held);
+            panic!("OpenCL: clCreateBuffer of {len} bytes failed ({e})");
+        }
     }
-    ClBuffer(Arc::new(Allocation { ptr, len: len as u64, layout: Some(layout), mem, _parent: None }))
+    ClBuffer(Arc::new(held))
 }
 
 /// A buffer over `len` bytes of the host's memory at `ptr`, read in place (decision 0353; the device reads host
@@ -384,7 +613,7 @@ pub unsafe fn wrap_host_memory(device: &ClDevice, ptr: *mut u8, len: usize) -> R
     let mut e = 0;
     let mem = unsafe { (a.create_buffer)(device.0.context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, len, ptr.cast(), &mut e) };
     check("clCreateBuffer", e)?;
-    Ok(ClBuffer(Arc::new(Allocation { ptr, len: len as u64, layout: None, mem, _parent: None })))
+    Ok(ClBuffer(Arc::new(Allocation { ptr, len: len as u64, owner: Owner::Borrowed, addressed: false, mem, _parent: None })))
 }
 
 /// `transferToDeviceImmutable`: memory holding `data`.
@@ -475,11 +704,12 @@ impl ClComputeFunctionLibrary {
     /// Builds OpenCL C (UKL preprocessed for OpenCL) with the device's driver.
     pub fn compile_from_source(device: &ClDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = api()?;
-        const OPTIONS: &str = "-cl-std=CL1.2";
-        let options = CString::new(OPTIONS).unwrap();
+        // OpenCL C 3.0 where the kernels use the device's sub-groups (its `sub_group_*` functions are 3.0's), else 1.2.
+        let options_text = if device.subgroups() { "-cl-std=CL3.0" } else { "-cl-std=CL1.2" };
+        let options = CString::new(options_text).unwrap();
         // The store's binary (`crate::store`), keyed by the device's name, version and driver beside the source.
         let driver = device_info_string(a, device.0.device, CL_DRIVER_VERSION);
-        let key = crate::store::key(&[b"opencl", device.name().as_bytes(), driver.as_bytes(), OPTIONS.as_bytes(), preprocessed_source.as_bytes()]);
+        let key = crate::store::key(&[b"opencl", device.name().as_bytes(), driver.as_bytes(), options_text.as_bytes(), preprocessed_source.as_bytes()]);
         if let Some(bin) = crate::store::load("opencl", &key, "bin") {
             let (n, p) = (bin.len(), bin.as_ptr());
             let (mut status, mut e) = (0, 0);
@@ -542,7 +772,7 @@ impl ClComputeFunctionLibrary {
         let q = unsafe { (a.create_command_queue)(device.0.context, device.0.device, 0, &mut e) };
         check("clCreateCommandQueue", e)?;
         let r = (|| {
-            check("clSetKernelArg", unsafe { (a.set_kernel_arg)(k.0, 0, std::mem::size_of::<Ptr>(), (&out.0.mem as *const Ptr).cast()) })?;
+            check("clSetKernelArg", unsafe { set_buffer_arg(a, device.0.usm.as_ref(), k.0, 0, out.mem()) })?;
             let one = 1usize;
             check(name, unsafe { (a.enqueue_nd_range_kernel)(q, k.0, 1, std::ptr::null(), &one, &one, 0, std::ptr::null(), std::ptr::null_mut()) })?;
             check("clFinish", unsafe { (a.finish)(q) })
@@ -683,12 +913,13 @@ impl ClQueueRoot {
         let a = api().expect("an OpenCL queue without its library");
         let mut root = self.0.lock().unwrap();
         let q = root.q;
+        let device = root.device.clone();
         while let Some(p) = root.backlog.front_mut() {
             while let Some(op) = p.ops.pop_front() {
                 match op {
                     Op::Run(f) => {
                         if p.error.is_none() {
-                            let mut c = Enqueue { a, q, kernels: Vec::new() };
+                            let mut c = Enqueue { a, usm: device.0.usm.as_ref(), q, kernels: Vec::new() };
                             p.error = f(&mut c).err();
                             p.kernels.extend(c.kernels);
                         }
@@ -724,6 +955,8 @@ impl ClQueueRoot {
 /// What an operation enqueues into, and what it leaves for the event: its kernels' events (their device time).
 struct Enqueue<'a> {
     a: &'a Api,
+    /// The device's host allocations' entry points (`usm`).
+    usm: Option<&'a Usm>,
     q: Ptr,
     kernels: Vec<Event>,
 }
@@ -735,6 +968,14 @@ enum Op {
 }
 
 /// A flush's work not yet enqueued, with what its event will hold.
+impl Enqueue<'_> {
+    /// A copy of `n` bytes at `src` to `dst`, one a host allocation, in the queue's order.
+    fn memcpy(&self, dst: usize, src: usize, n: usize) -> Result<(), String> {
+        let u = self.usm.ok_or("OpenCL: a host allocation's copy on a device without them")?;
+        check("clEnqueueMemcpyINTEL", unsafe { (u.enqueue_memcpy)(self.q, CL_FALSE, dst as Ptr, src as *const c_void, n, 0, std::ptr::null(), std::ptr::null_mut()) })
+    }
+}
+
 struct Pending {
     ops: std::collections::VecDeque<Op>,
     kernels: Vec<Event>,
@@ -789,7 +1030,7 @@ impl ClComputeQueue {
         let mut params = vec![None; function.param_sizes.len() + 2];
         let n = function.param_sizes.len();
         (params[n], params[n + 1]) = (Some(Param::Null), Some(Param::Bytes(0u32.to_ne_bytes().to_vec())));
-        ClBindContext { queue: self, function, params }
+        ClBindContext { queue: self, function, params, used: Vec::new() }
     }
 
     fn push(&self, op: impl FnOnce(&mut Enqueue) -> Result<(), String> + Send + 'static) {
@@ -804,13 +1045,14 @@ impl ClComputeQueue {
     pub fn enqueue_copy_from_host(&self, dst: &ClBuffer, dst_offset: u64, bytes: &[u8]) {
         assert!(dst_offset + bytes.len() as u64 <= dst.length(), "a copy past its buffer's end");
         let bytes = Arc::new(bytes.to_vec());
-        let (d, b) = (dst.0.mem as usize, bytes.clone());
+        let (d, b) = (dst.mem(), bytes.clone());
         self.keep(dst.clone());
         self.keep(bytes);
-        self.push(move |c| {
-            check("clEnqueueWriteBuffer", unsafe {
+        self.push(move |c| match d {
+            Mem::Cl(d) => check("clEnqueueWriteBuffer", unsafe {
                 (c.a.enqueue_write_buffer)(c.q, d as Ptr, CL_FALSE, dst_offset as usize, b.len(), b.as_ptr().cast(), 0, std::ptr::null(), std::ptr::null_mut())
-            })
+            }),
+            Mem::Usm(d) => c.memcpy(d + dst_offset as usize, b.as_ptr() as usize, b.len()),
         });
     }
 
@@ -841,12 +1083,11 @@ impl ClComputeQueue {
                 w[..words.len()].copy_from_slice(&words);
                 let mut args = vec![(start / 4) as u32, (bytes / 4) as u32, words.len() as u32];
                 args.extend_from_slice(&w);
-                let d = dst.0.mem as usize;
+                let d = dst.mem();
                 self.keep(dst.clone());
                 self.push(move |c| {
                     let k = kernel.lock().unwrap();
-                    let mem = d as Ptr;
-                    check("clSetKernelArg", unsafe { (c.a.set_kernel_arg)(k.0, 0, std::mem::size_of::<Ptr>(), (&mem as *const Ptr).cast()) })?;
+                    check("clSetKernelArg", unsafe { set_buffer_arg(c.a, c.usm, k.0, 0, d) })?;
                     for (i, v) in args.iter().enumerate() {
                         check("clSetKernelArg", unsafe { (c.a.set_kernel_arg)(k.0, 1 + i as ClUint, 4, (v as *const u32).cast()) })?;
                     }
@@ -869,13 +1110,22 @@ impl ClComputeQueue {
         if length == 0 {
             return;
         }
-        let (s, d) = (src.0.mem as usize, dst.0.mem as usize);
+        let (s, d) = (src.mem(), dst.mem());
         self.keep(src.clone());
         self.keep(dst.clone());
-        self.push(move |c| {
-            check("clEnqueueCopyBuffer", unsafe {
-                (c.a.enqueue_copy_buffer)(c.q, s as Ptr, d as Ptr, src_offset as usize, dst_offset as usize, length as usize, 0, std::ptr::null(), std::ptr::null_mut())
-            })
+        let (so, dof, n) = (src_offset as usize, dst_offset as usize, length as usize);
+        self.push(move |c| match (s, d) {
+            (Mem::Cl(s), Mem::Cl(d)) => check("clEnqueueCopyBuffer", unsafe {
+                (c.a.enqueue_copy_buffer)(c.q, s as Ptr, d as Ptr, so, dof, n, 0, std::ptr::null(), std::ptr::null_mut())
+            }),
+            (Mem::Usm(s), Mem::Usm(d)) => c.memcpy(d + dof, s + so, n),
+            // A host allocation's pages are host memory: the buffer's own write or read of them, in the queue's order.
+            (Mem::Usm(s), Mem::Cl(d)) => check("clEnqueueWriteBuffer", unsafe {
+                (c.a.enqueue_write_buffer)(c.q, d as Ptr, CL_FALSE, dof, n, (s + so) as *const c_void, 0, std::ptr::null(), std::ptr::null_mut())
+            }),
+            (Mem::Cl(s), Mem::Usm(d)) => check("clEnqueueReadBuffer", unsafe {
+                (c.a.enqueue_read_buffer)(c.q, s as Ptr, CL_FALSE, so, n, (d + dof) as *mut c_void, 0, std::ptr::null(), std::ptr::null_mut())
+            }),
         });
     }
 
@@ -961,6 +1211,8 @@ pub struct ClBindContext<'a> {
     queue: &'a ClComputeQueue,
     function: &'a ClComputeFunction,
     params: Vec<Option<Param>>,
+    /// The host allocations the launch reaches through addresses buffers hold (`use_buffer`).
+    used: Vec<u64>,
 }
 
 #[derive(Clone)]
@@ -994,14 +1246,20 @@ impl ClBindContext<'_> {
         if offset % align != 0 || offset >= buffer.length() {
             return Err(format!("{}: argument {arg_num} at byte {offset} of a {}-byte buffer: OpenCL binds a region at a multiple of {align} bytes", self.function.name, buffer.length()));
         }
-        let a = api()?;
-        let region = [offset as usize, (buffer.length() - offset) as usize];
-        let mut e = 0;
-        let mem = unsafe { (a.create_sub_buffer)(buffer.0.mem, CL_MEM_READ_WRITE, CL_BUFFER_CREATE_TYPE_REGION, region.as_ptr().cast(), &mut e) };
-        check("clCreateSubBuffer", e)?;
+        let mem = if buffer.0.mem.is_null() {
+            // A region of a host allocation is its address there.
+            std::ptr::null_mut()
+        } else {
+            let a = api()?;
+            let region = [offset as usize, (buffer.length() - offset) as usize];
+            let mut e = 0;
+            let mem = unsafe { (a.create_sub_buffer)(buffer.0.mem, CL_MEM_READ_WRITE, CL_BUFFER_CREATE_TYPE_REGION, region.as_ptr().cast(), &mut e) };
+            check("clCreateSubBuffer", e)?;
+            mem
+        };
         // SAFETY: inside the buffer, which the region keeps.
         let ptr = unsafe { buffer.0.ptr.add(offset as usize) };
-        let sub = ClBuffer(Arc::new(Allocation { ptr, len: buffer.length() - offset, layout: None, mem, _parent: Some(buffer.clone()) }));
+        let sub = ClBuffer(Arc::new(Allocation { ptr, len: buffer.length() - offset, owner: Owner::Borrowed, addressed: buffer.0.addressed, mem, _parent: Some(buffer.clone()) }));
         self.set_buffer(arg_num, &sub);
         Ok(())
     }
@@ -1011,8 +1269,11 @@ impl ClBindContext<'_> {
         self.params[arg_num as usize] = Some(Param::Local((n_bytes as usize).max(16)));
     }
 
+    /// A buffer the launch reaches through an address another holds: kept until the work completes, and a host
+    /// allocation named to the driver (`CL_KERNEL_EXEC_INFO_USM_PTRS_INTEL`), which makes it the launch's.
     pub fn use_buffer(&mut self, buffer: &ClBuffer) {
         self.queue.keep(buffer.clone());
+        self.used.extend(buffer.address());
     }
 
     /// OpenCL 1.2 has no indirect launch: `max_groups` are launched, and those past the counts return first (the
@@ -1047,12 +1308,20 @@ impl ClBindContext<'_> {
         }
         let global = [grid[0] * block[0], grid[1] * block[1], grid[2] * block[2]];
         let (kernel, name) = (f.kernel.clone(), f.name.clone());
+        let used = std::mem::take(&mut self.used);
         self.queue.push(move |c| {
             let k = kernel.lock().unwrap();
+            // The list is the kernel's until the next is set: a kernel that follows addresses names them at each
+            // launch (the fused sorts' and probes').
+            if let (Some(u), false) = (c.usm, used.is_empty()) {
+                check(&format!("{name}: its host allocations"), unsafe {
+                    (u.set_kernel_exec_info)(k.0, CL_KERNEL_EXEC_INFO_USM_PTRS_INTEL, 8 * used.len(), used.as_ptr().cast())
+                })?;
+            }
             for (i, p) in params.iter().enumerate() {
                 let e = match p {
                     Param::Bytes(b) => unsafe { (c.a.set_kernel_arg)(k.0, i as u32, b.len(), b.as_ptr().cast()) },
-                    Param::Buffer(b) => unsafe { (c.a.set_kernel_arg)(k.0, i as u32, std::mem::size_of::<Ptr>(), (&b.0.mem as *const Ptr).cast()) },
+                    Param::Buffer(b) => unsafe { set_buffer_arg(c.a, c.usm, k.0, i as u32, b.mem()) },
                     Param::Local(n) => unsafe { (c.a.set_kernel_arg)(k.0, i as u32, *n, std::ptr::null()) },
                     Param::Null => unsafe { (c.a.set_kernel_arg)(k.0, i as u32, std::mem::size_of::<Ptr>(), (&std::ptr::null_mut::<c_void>() as *const Ptr).cast()) },
                 };
@@ -1131,7 +1400,7 @@ DEFINE_KERNEL2(t, t_count,
     /// map: the fill zeroes what the host wrote before, then the kernel's write lands on the zero.
     #[test]
     fn a_fill_then_a_kernel_are_in_the_host_pages() {
-        let Some((device, lib)) = compile("fill.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("fill.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_write").unwrap();
         let root = ClQueueRoot::new(&device).unwrap();
         let out = alloc_uninitialized_array_sync::<u32>(&device, 1);
@@ -1170,7 +1439,7 @@ DEFINE_KERNEL2(t, t_count,
     /// and both run, in order, at the signal.
     #[test]
     fn a_wait_holds_the_roots_later_work_until_the_signal() {
-        let Some((device, lib)) = compile("hold.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("hold.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_write").unwrap();
         assert_eq!(f.get_argument_info().iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["args", "out"]);
         let root = ClQueueRoot::new(&device).unwrap();

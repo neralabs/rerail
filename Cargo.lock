@@ -3178,7 +3178,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-context",
  "rerail-device",
- "rerail-ukl",
+ "rerail-gpu",
 ]
 
 [[package]]
@@ -3224,6 +3224,7 @@ dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",
+ "cranelift-jit-wasm",
  "cranelift-module",
  "rerail-blocks",
  "rerail-clif",
@@ -3331,6 +3332,7 @@ dependencies = [
  "rerail-accel",
  "rerail-blocks",
  "rerail-compiler",
+ "rerail-device",
  "rerail-device-metal",
  "rerail-facts",
  "rerail-lang",
@@ -3527,6 +3529,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-device",
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",
@@ -4264,7 +4267,6 @@ dependencies = [
 name = "rerail-metal"
 version = "0.1.0"
 dependencies = [
- "block",
  "libc",
  "metal",
  "rerail-accel",

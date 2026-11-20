@@ -149,7 +149,7 @@ fn the_wave_finds_ws_matches_from_the_prefilters_candidates() {
 
 /// On Metal: the labels in one command buffer, the roots through `demand(batch)` on Metal's
 /// compiled kernel, or in the background mode its interpreter until the kernel is built.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn the_wave_finds_ws_matches_on_metal() {
     gate(8, Limits::default(), ExecutionBackend::MetalJit);
@@ -330,7 +330,7 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
 
 /// On Metal the wave is one evaluation: every clause's passes and root programs, from the same
 /// prefilter candidates, in one command buffer, with W's matches.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn the_wave_is_one_evaluation_on_metal() {
     let (store, paths) = ingested(15);

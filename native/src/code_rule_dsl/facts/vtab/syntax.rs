@@ -59,7 +59,7 @@ mod cells;
 /// A projection's numbering's reads, written once in CLIF (`rerail_clif::id_reads`, decision 0353 step 2).
 #[rustfmt::skip]
 pub mod id_reads;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod device_chunk;
 pub mod view_docs;
 use guests::GuestRows;
@@ -1682,7 +1682,7 @@ pub struct Batch {
     /// (`device_chunk`) is nested in it, so the device reads the projections where the host does.
     block: Arc<Block>,
     /// The batch's chunk (decision 0289): its views' arrays, made on the device's first read of a view.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     chunk: OnceLock<device_chunk::Chunk>,
 }
 
@@ -3222,7 +3222,7 @@ impl Batch {
             families: bound,
             made: grown.made.clone(),
             block,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             chunk: OnceLock::new(),
         });
         #[cfg(any(test, feature = "test-hooks"))]
@@ -3231,7 +3231,7 @@ impl Batch {
     }
 
     /// The batch's chunk block (decision 0289), made on first use.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn chunk(&self) -> &device_chunk::Chunk {
         self.chunk.get_or_init(|| device_chunk::build(self))
     }
@@ -3435,15 +3435,18 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
 
 impl Source for Viewed {
     fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
         let view = device_chunk::device_view(self.view)?;
         let chunk = self.batch.chunk();
         // The views the views' reads answer are read in place where every tape (and for `line`, every document's
         // lines) is on the device.
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let loc = matches!(self.view, View::Loc(_));
-        let in_place = (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE))
+        // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
+        // none where its buffers have none (`views_in_place`).
+        let on_device = rerail_accel::gpu::join::device().is_ok();
+        let in_place = (on_device && (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE)))
             .then(|| device_chunk::views_in_place(&self.batch, chunk))
             .flatten()
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
@@ -3452,7 +3455,7 @@ impl Source for Viewed {
                 in_place.failed = in_place.cache_failed();
                 in_place
             });
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let in_place: Option<()> = None;
         if matches!(self.view, View::Loc(_)) && in_place.is_none() && !device_chunk::fill_locs(&self.batch, chunk) {
             return None;
@@ -3465,7 +3468,7 @@ impl Source for Viewed {
             root: chunk.root,
             view,
             rows: self.len(),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             in_place,
         })
     }

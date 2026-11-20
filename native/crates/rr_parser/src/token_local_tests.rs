@@ -167,7 +167,7 @@ fn rr_sparse_marks_bound() {
         let compiled = rerail_compiler::native_cpu_block::compile(&native).expect("compiles");
         let ms = compiled.batch_cpu_seconds(&files, 9) * 1e3;
         eprintln!("  tier 1 alone: {ms:.2} ms CPU over {mb:.2} MB");
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             use rerail_metal::block_program::serial::{Segments, run_serial_split};
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = files.iter().map(|&bytes| rerail_compiler::block::BatchFile { bytes, program: 0 }).collect();

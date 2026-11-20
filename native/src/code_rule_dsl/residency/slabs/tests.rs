@@ -173,7 +173,8 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
         assert_eq!(table.slabs.iter().map(|slab| slab.id).collect::<Vec<_>>(), vec![rest[0].slab.id], "{format:?}: the other slab, made resident");
         for (document, (held, view)) in documents.iter().zip(table.documents.iter().zip(&table.views)) {
             assert!(Arc::ptr_eq(document, held), "{format:?}: the document itself, not a copy");
-            let apart = (document.slab.buffer().gpu_address() as i64).wrapping_sub(block.buffer().gpu_address() as i64);
+            let address = |slab: &Slab| slab.device_buffer().device_address().expect("a slab's device address") as i64;
+            let apart = address(&document.slab).wrapping_sub(address(block));
             assert_eq!(view.offset(), apart + i64::from(document.view.at), "{format:?}: the view counts from the bound slab");
             // Past the batch's numbering, and a 16z view's cache (its address, its entry size), set for the batch.
             let rest_of = |view: &DocView| {
@@ -203,7 +204,7 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
 fn the_device_reads_every_format_as_the_document_does() {
     use crate::code_rule_dsl::tape::formats::Format;
     use rerail_metal::lane;
-    let tape = format!("{}{}{}", msl(), "#include <ukl/reads/tape_z.h>\n", include_str!("../../transducer/packed/device_tape.h"));
+    let tape = format!("{}{}{}", ukl(), "#include <ukl/reads/tape_z.h>\n", include_str!("../../transducer/packed/device_tape.h"));
     const FIELDS: usize = 14;
     // UKL, on the process's device through the lane (decision 0440 step C).
     const KERNEL: &str = r#"

@@ -555,46 +555,49 @@ pub mod heap {
             if !on() {
                 return None;
             }
-            let mut t = TABLE.load(Relaxed);
-            if t.is_null() {
-                #[cfg(unix)]
-                {
-                    let len = SLOTS * DEPTH * std::mem::size_of::<usize>();
-                    let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
-                    if p == libc::MAP_FAILED {
-                        STATE.store(1, Relaxed);
-                        return None;
-                    }
-                    let p = p.cast::<AtomicUsize>();
-                    t = match TABLE.compare_exchange(std::ptr::null_mut(), p, Relaxed, Relaxed) {
-                        Ok(_) => p,
-                        Err(other) => {
-                            unsafe { libc::munmap(p.cast(), len) };
-                            other
-                        }
-                    };
-                }
-                #[cfg(not(unix))]
+            let t = TABLE.load(Relaxed);
+            let t = if t.is_null() { made()? } else { t };
+            Some(unsafe { std::slice::from_raw_parts(t, SLOTS * DEPTH) })
+        }
+
+        /// The table, mapped by the first thread to ask (another's, where two race); `None` where it cannot be.
+        #[cfg(unix)]
+        fn made() -> Option<*mut AtomicUsize> {
+            let len = SLOTS * DEPTH * std::mem::size_of::<usize>();
+            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
+            if p == libc::MAP_FAILED {
+                STATE.store(1, Relaxed);
                 return None;
             }
-            Some(unsafe { std::slice::from_raw_parts(t, SLOTS * DEPTH) })
+            let p = p.cast::<AtomicUsize>();
+            Some(match TABLE.compare_exchange(std::ptr::null_mut(), p, Relaxed, Relaxed) {
+                Ok(_) => p,
+                Err(other) => {
+                    unsafe { libc::munmap(p.cast(), len) };
+                    other
+                }
+            })
+        }
+        #[cfg(not(unix))]
+        fn made() -> Option<*mut AtomicUsize> {
+            None
         }
 
         #[inline(never)]
         pub(super) fn record(at: usize) {
             let Some(t) = table() else { return };
             let row = &t[at * DEPTH..(at + 1) * DEPTH];
-            let got = walk();
+            let got = frames();
             for (cell, v) in row.iter().zip(got[SKIP..].iter()) {
                 cell.store(*v, Relaxed);
             }
         }
 
-        /// The return addresses of the frames calling `record`, outermost last, by the frame pointers' chain; none
-        /// where the chain is not read (only aarch64 macOS's is).
+        /// The calling frames' return addresses, innermost first, by the frame pointers' chain. Inlined, so the
+        /// frames are `record`'s caller's (`SKIP` drops the profiler's own).
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         #[inline(always)]
-        fn walk() -> [usize; DEPTH + SKIP] {
+        fn frames() -> [usize; DEPTH + SKIP] {
             let mut got = [0usize; DEPTH + SKIP];
             let mut fp: usize;
             unsafe { std::arch::asm!("mov {}, x29", out(reg) fp) };
@@ -615,9 +618,10 @@ pub mod heap {
             got
         }
 
+        /// Elsewhere no walk: no frames.
         #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-        fn walk() -> [usize; DEPTH + SKIP] {
-            [0usize; DEPTH + SKIP]
+        fn frames() -> [usize; DEPTH + SKIP] {
+            [0; DEPTH + SKIP]
         }
 
         pub(super) fn of(at: usize) -> Option<Vec<usize>> {

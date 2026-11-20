@@ -62,14 +62,14 @@ pub fn aligned(length: usize) -> usize {
 /// A document as the device reads it: its first byte in the batch's chunk block (`at`, decision 0289 §4), and its
 /// parts as byte offsets from there, so a copy into another block changes `at` alone. It is the view the reads
 /// written once take (`rerail_clif::view::TapeView`, decision 0310), one definition for the device, the JIT and the
-/// tape crate, and its MSL is written from it (`msl`), with every field's offset asserted. `node_base` is the
+/// tape crate, and its UKL struct is written from it (`ukl`), with every field's offset asserted. `node_base` is the
 /// document's first node in a batch's numbering, set by the batch's document table (`DocTable`). The tape is read
 /// where it lies, format 15's columns or format 16's arrays (decision 0293): nothing per node is derived beside it.
 pub use rerail_clif::view::TapeView as DocView;
 const _: () = assert!(std::mem::size_of::<DocView>() == 128);
 
-/// The MSL of `DocView`, for the kernels that read documents in place (`device_tape.h`).
-pub fn msl() -> String {
+/// The UKL struct of `DocView`, for the kernels that read documents in place (`device_tape.h`).
+pub fn ukl() -> String {
     rerail_clif::view::ukl()
 }
 
@@ -129,11 +129,6 @@ impl Slab {
         assert!(at + len <= self.byte_length(), "a part inside its slab");
         // SAFETY: inside the mapping; a table is written once before it is held, and never again.
         unsafe { std::slice::from_raw_parts(self.host().add(at), len) }
-    }
-
-    /// Its buffer, as Metal's kernels not yet on the device layer bind it (decision 0440 step C moves each).
-    pub fn buffer(&self) -> &metal::Buffer {
-        self.buffer.metal().expect("a slab's buffer is Metal's while the residency is")
     }
 
     /// Its buffer in the device layer, as UKL kernels bind it on every backend.
@@ -764,7 +759,7 @@ mod tests {
         // An object past `SLAB_BYTES` gets a class of its own: 64 MiB + 1 MiB is in the 80 MiB class.
         let big = vec![0xA5_u8; SLAB_BYTES + (1 << 20)];
         let first = admit_sources(&[&big]).unwrap();
-        let address = first[0].slab.buffer().gpu_address();
+        let address = first[0].slab.device_buffer().device_address();
         assert_eq!(first[0].bytes(), &big[..]);
         drop(first);
         assert!(evict(), "the residency's slab retired");
@@ -772,7 +767,7 @@ mod tests {
         // A smaller source, of the same class: the buffer comes back, dirty, and its room reads zero past the bytes.
         let small = vec![0x11_u8; SLAB_BYTES + (1 << 19)];
         let again = admit_sources(&[&small]).unwrap();
-        assert_eq!(again[0].slab.buffer().gpu_address(), address, "the evicted slab's buffer served the next lease");
+        assert_eq!(again[0].slab.device_buffer().device_address(), address, "the evicted slab's buffer served the next lease");
         assert_eq!(again[0].bytes(), &small[..]);
         // SAFETY: the room's margin, inside the slab, written by no one but the zeroing.
         let margin = unsafe { std::slice::from_raw_parts(again[0].slab.host().add(again[0].offset + small.len()), SOURCE_MARGIN) };

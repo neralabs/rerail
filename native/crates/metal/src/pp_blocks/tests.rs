@@ -2,8 +2,8 @@
 //! level edges.
 
 use super::*;
-use crate::launch::{LaunchScope, commit_checked, wait_checked};
-use crate::runtime::MappedBuffer;
+use crate::launch::LaunchScope;
+use crate::runtime::HostMapped;
 
 /// Sizes that cross a SIMD group (32), a group (256), a scan block (1024) and a second level
 /// (1024 blocks).
@@ -20,16 +20,15 @@ impl Rng {
     }
 }
 
-fn buf<T: Copy>(v: &[T]) -> MappedBuffer {
-    let device = crate::device().unwrap();
-    if v.is_empty() { MappedBuffer::zeroed::<T>(&device, 1).unwrap() } else { MappedBuffer::from_slice(&device, v).unwrap() }
+fn buf<T: Copy>(v: &[T]) -> HostMapped {
+    if v.is_empty() { HostMapped::zeroed::<T>(1).unwrap() } else { HostMapped::from_slice(v).unwrap() }
 }
 
 /// A store the host reads after a run: a test's own buffer, or one of an arena's.
 trait Host {
     fn host_bytes(&self) -> *mut u8;
 }
-impl Host for MappedBuffer {
+impl Host for HostMapped {
     fn host_bytes(&self) -> *mut u8 {
         self.host()
     }
@@ -44,15 +43,12 @@ fn read<T: Copy>(b: &impl Host, n: usize) -> Vec<T> {
     unsafe { std::slice::from_raw_parts(b.host_bytes().cast::<T>(), n).to_vec() }
 }
 
-/// Runs `f`'s encoding in one command buffer, and waits.
+/// Runs `f`'s encoding in one command, and waits.
 fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) {
-    let device = crate::device().unwrap();
     let _scope = LaunchScope::enter();
-    let queue = crate::pool::queue(&device).unwrap();
-    let command = queue.new_command_buffer();
-    f(&Enc { command, source: source().unwrap(), resident: &[] }).unwrap();
-    commit_checked(command).unwrap();
-    wait_checked(command).unwrap();
+    let enc = Enc::new("pp blocks test", source().unwrap(), &[]);
+    f(&enc).unwrap();
+    enc.into_command().run().unwrap();
 }
 
 #[test]
@@ -60,11 +56,11 @@ fn the_scan_equals_the_host() {
     let mut r = Rng(7);
     for &n in &SIZES {
         let input: Vec<u32> = (0..n).map(|_| (r.next() % 5) as u32).collect();
-        let (inb, out, count) = (buf(&input), MappedBuffer::zeroed::<u32>(&crate::device().unwrap(), n.max(1)).unwrap(), buf(&[0u32, n as u32]));
+        let (inb, out, count) = (buf(&input), HostMapped::zeroed::<u32>(n.max(1)).unwrap(), buf(&[0u32, n as u32]));
         let arena = Arena::new();
         let scan = Scan::new(&arena, n).unwrap();
         arena.lease().unwrap();
-        run(|e| scan.encode(e, &count.buffer, 1, &inb.buffer, &out.buffer));
+        run(|e| scan.encode(e, count.buffer(), 1, inb.buffer(), out.buffer()));
         let mut acc = 0u32;
         let want: Vec<u32> = input.iter().map(|&x| { let a = acc; acc += x; a }).collect();
         assert_eq!(read::<u32>(&out, n), want, "n = {n}");
@@ -79,12 +75,11 @@ fn the_segmented_scans_equal_the_host() {
         for (op, sparse) in [(SegOp::Add, 3u64), (SegOp::Max, 3), (SegOp::Add, 5000), (SegOp::Max, 100_000)] {
             let input: Vec<u32> = (0..n).map(|_| (r.next() % 1000) as u32).collect();
             let heads: Vec<u32> = (0..n).map(|_| u32::from(r.next() % sparse == 0)).collect();
-            let dev = crate::device().unwrap();
-            let (inb, hb, out, count) = (buf(&input), buf(&heads), MappedBuffer::zeroed::<u32>(&dev, n.max(1)).unwrap(), buf(&[n as u32]));
+            let (inb, hb, out, count) = (buf(&input), buf(&heads), HostMapped::zeroed::<u32>(n.max(1)).unwrap(), buf(&[n as u32]));
             let arena = Arena::new();
             let seg = SegScan::new(&arena, n).unwrap();
             arena.lease().unwrap();
-            run(|e| seg.encode(e, op, &count.buffer, 0, &inb.buffer, &hb.buffer, &out.buffer));
+            run(|e| seg.encode(e, op, count.buffer(), 0, inb.buffer(), hb.buffer(), out.buffer()));
             let mut acc = 0u32;
             let want: Vec<u32> = input
                 .iter()
@@ -110,7 +105,7 @@ fn the_sort_is_stable_and_equals_the_host() {
             let arena = Arena::new();
             let sort = Sort::new(&arena, n).unwrap();
             arena.lease().unwrap();
-            run(|e| sort.encode(e, &count.buffer, 0, &kb.buffer, bits));
+            run(|e| sort.encode(e, count.buffer(), 0, kb.buffer(), bits));
             let (got_k, got_v) = if Sort::in_input(bits) { (read::<u64>(&kb, n), read::<u32>(&sort.vals_a, n)) } else { (read::<u64>(&sort.keys_b, n), read::<u32>(&sort.vals_b, n)) };
             let mut want: Vec<(u64, u32)> = keys.iter().enumerate().map(|(i, &k)| (k, i as u32)).collect();
             want.sort_by_key(|&(k, _)| k);
@@ -123,13 +118,12 @@ fn the_sort_is_stable_and_equals_the_host() {
 #[test]
 fn search_and_expand_equal_the_host() {
     let mut r = Rng(17);
-    let dev = crate::device().unwrap();
     for &n in &SIZES[..10] {
         let mut sorted: Vec<u64> = (0..n).map(|_| r.next() % 5000).collect();
         sorted.sort_unstable();
         let queries: Vec<u64> = (0..n.max(1) * 2).map(|_| r.next() % 5100).collect();
-        let (sb, qb, out, counts) = (buf(&sorted), buf(&queries), MappedBuffer::zeroed::<u32>(&dev, queries.len()).unwrap(), buf(&[n as u32, queries.len() as u32]));
-        run(|e| e.run("pb_search", None, &[&sb.buffer, &counts.buffer, &qb.buffer, &counts.buffer, &out.buffer], &[0, 1], Grid::Groups((queries.len() as u64).div_ceil(TG))));
+        let (sb, qb, out, counts) = (buf(&sorted), buf(&queries), HostMapped::zeroed::<u32>(queries.len()).unwrap(), buf(&[n as u32, queries.len() as u32]));
+        run(|e| e.run("pb_search", None, &[sb.buffer(), counts.buffer(), qb.buffer(), counts.buffer(), out.buffer()], &[0, 1], Grid::Groups((queries.len() as u64).div_ceil(TG))));
         let want: Vec<u32> = queries.iter().map(|&q| sorted.partition_point(|&s| s < q) as u32).collect();
         assert_eq!(read::<u32>(&out, queries.len()), want, "search, n = {n}");
         // Expand: items with counts 0 to 3, their offsets an exclusive scan.
@@ -138,8 +132,8 @@ fn search_and_expand_equal_the_host() {
         let offsets: Vec<u32> = item_counts.iter().map(|&c| { let a = acc; acc += c; a }).collect();
         let total = acc as usize;
         let (ob, nb, tb) = (buf(&offsets), buf(&[n as u32]), buf(&[acc]));
-        let (item, rank) = (MappedBuffer::zeroed::<u32>(&dev, total.max(1)).unwrap(), MappedBuffer::zeroed::<u32>(&dev, total.max(1)).unwrap());
-        run(|e| e.run("pb_expand", None, &[&ob.buffer, &nb.buffer, &tb.buffer, &item.buffer, &rank.buffer], &[0], Grid::Groups((total as u64).div_ceil(TG))));
+        let (item, rank) = (HostMapped::zeroed::<u32>(total.max(1)).unwrap(), HostMapped::zeroed::<u32>(total.max(1)).unwrap());
+        run(|e| e.run("pb_expand", None, &[ob.buffer(), nb.buffer(), tb.buffer(), item.buffer(), rank.buffer()], &[0], Grid::Groups((total as u64).div_ceil(TG))));
         let mut want = Vec::new();
         for (k, &c) in item_counts.iter().enumerate() {
             for j in 0..c {
@@ -156,19 +150,16 @@ fn search_and_expand_equal_the_host() {
 /// refuses one that used a second buffer.
 #[test]
 fn an_evaluation_is_one_command_buffer() {
-    let device = crate::device().unwrap();
     let n = buf(&[5u32]);
     let args = buf(&[0u32; 3]);
-    let one = crate::pp_eval::run(|enc| enc.run("pb_args", None, &[&n.buffer, &args.buffer], &[0], Grid::Groups(1)));
+    let one = crate::pp_eval::run(|enc| enc.run("pb_args", None, &[n.buffer(), args.buffer()], &[0], Grid::Groups(1)));
     assert_eq!(one.unwrap(), 1);
     let two = crate::pp_eval::run(|enc| {
-        enc.run("pb_args", None, &[&n.buffer, &args.buffer], &[0], Grid::Groups(1))?;
-        // A second buffer, waited on mid-evaluation: a host read between passes.
-        let queue = crate::pool::queue(&device)?;
-        let other = queue.new_command_buffer();
-        Enc { command: other, source: source()?, resident: &[] }.run("pb_args", None, &[&n.buffer, &args.buffer], &[0], Grid::Groups(1))?;
-        commit_checked(other)?;
-        wait_checked(other)
+        enc.run("pb_args", None, &[n.buffer(), args.buffer()], &[0], Grid::Groups(1))?;
+        // A second command, waited on mid-evaluation: a host read between passes.
+        let other = Enc::new("a second command", source()?, &[]);
+        other.run("pb_args", None, &[n.buffer(), args.buffer()], &[0], Grid::Groups(1))?;
+        other.into_command().run().map(|_| ())
     });
     assert!(two.is_err(), "a second command buffer in one evaluation");
 }

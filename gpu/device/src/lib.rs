@@ -39,6 +39,8 @@ pod!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64);
 
 // Pairs of floats (a row's weights to false and true, in the forest).
 unsafe impl Pod for [f32; 2] {}
+// Four words (a launch's parameters, a block program's segment).
+unsafe impl Pod for [u32; 4] {}
 
 /// The process's one device and command queue. They are made here, in the lowest crate that uses the device, so
 /// that the forest's training and prediction and the engine's every submission (`rerail_accel::gpu::shared`, which
@@ -119,9 +121,9 @@ pub mod shared {
     fn open() -> Option<Shared> {
         use crate::compute_kernel_cuda::{CudaDevice, CudaQueueRoot};
         let device = CudaDevice::system_default()?;
-        // The waiting root first: its one stream is the only one an armed wait holds (`CudaQueueRoot`).
-        let waiting = QueueRoot::Native(CudaQueueRoot::new(device, 1));
-        let queue = QueueRoot::Native(CudaQueueRoot::new(device, 16));
+        // The waiting root first: its stream is the only one an armed wait holds (`CudaQueueRoot`).
+        let waiting = QueueRoot::Native(CudaQueueRoot::new(device));
+        let queue = QueueRoot::Native(CudaQueueRoot::new(device));
         Some(Shared { device: Device::Native(device), queue, waiting })
     }
 }

@@ -19,7 +19,7 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::compile;
     pub use rerail_w::code_rule_dsl::crypto;
     pub use rerail_transducer::code_rule_dsl::demand;
-    #[cfg(target_os="macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub mod device_metal;
     pub use rerail_lang::code_rule_dsl::embed;
     pub use rerail_w::code_rule_dsl::eval;
@@ -164,7 +164,7 @@ pub mod code_rule_dsl {
             #[cfg_attr(target_os = "macos", path = "setfix")]
             pub mod setfix {
                 pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
-                #[cfg(target_os="macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 pub mod device;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
@@ -383,9 +383,7 @@ pub mod code_rule_dsl {
     #[cfg_attr(target_os = "macos", path = "residency")]
     pub mod residency {
         pub use rerail_transducer::code_rule_dsl::residency::*;
-        #[cfg(target_os="macos")]
-        pub mod metal;
-        #[cfg(target_os="macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         pub mod slabs;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::residency::admission::relational::ast_stage::install_ast_producer;
@@ -446,13 +444,13 @@ pub mod code_rule_dsl {
             pub use rerail_transducer::code_rule_dsl::transducer::packed::*;
             #[cfg(test)]
             pub mod block_rows_tests;
-            #[cfg(target_os="macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             #[path = "verify/bounded_repeat_proof.rs"]
             pub mod bounded_repeat_proof;
             #[cfg_attr(target_os = "macos", path = "compile")]
             pub mod compile_matcher {
                 pub use rerail_transducer::code_rule_dsl::transducer::packed::compile_matcher::*;
-                #[cfg(target_os="macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 pub mod matcher_metal;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::transducer::packed::*;
@@ -463,15 +461,15 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as LABEL_BASE;
             }
-            #[cfg(target_os="macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             pub mod metal_backend;
-            #[cfg(target_os="macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             pub mod metal_join;
-            #[cfg(target_os="macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             pub mod metal_program_backend;
-            #[cfg(target_os="macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             pub mod metal_rows;
-            #[cfg(target_os="macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             pub mod metal_sort;
             #[cfg(all(any(test, feature = "test-hooks"),target_os="macos",target_arch="aarch64"))]
             pub mod regex_relocation_tests;
@@ -504,21 +502,21 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::transducer::packed::literal_anchors::*;
             #[allow(unused_imports)]
-            #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
             pub(super) use crate::code_rule_dsl::transducer::packed::metal_backend::launch::LaunchScope as MetalTestScope;
             #[allow(unused_imports)]
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::set_steps;
             #[allow(unused_imports)]
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::lattice as metal_lattice;
             #[allow(unused_imports)]
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::nearest as metal_nearest;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::device::{RootJobs, RootsFound};
             #[allow(unused_imports)]
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::compile_matcher::matcher_metal;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave, WaveRun};
@@ -630,14 +628,22 @@ pub use rerail_logic::threads;
 
 /// The language packs this crate's tests read through the load-time registry (`language::base`), registered once:
 /// the engine registers them as it loads (`install_languages`), and a test of this crate runs without it (work
-/// queue Q23). The first registration holds, so a test may call it at any point.
-#[cfg(all(test, target_os = "macos"))]
+/// queue Q23). The first registration holds, so a test may call it at any point. `.rr` text is read too (the parity
+/// cases' programs, on the CPU pool's workers): without its pack a worker panicked, intermittently, by which test ran
+/// first. And Python's embedder, as the engine's load registers it.
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(crate) fn test_languages() {
     use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
+    use crate::code_rule_dsl::language::adapter::rr::Rr;
     use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         register(Family::Python, &Pack::<Python>::NEW);
         language::register_base(Family::Python, &Pack::<Python>::NEW);
+        register(Family::Rr, &Pack::<Rr>::NEW);
+        language::register_base(Family::Rr, &Pack::<Rr>::NEW);
+        // Python's strings embed code as call arguments (decision 0470): a document's batch reads them through its
+        // embedder, which the engine registers as it loads.
+        crate::code_rule_dsl::embed::install_embedders(vec![(language::Via::CallArgument, &rerail_lang_python::code_rule_dsl::embed::call_argument::CallArgument)]);
     });
 }

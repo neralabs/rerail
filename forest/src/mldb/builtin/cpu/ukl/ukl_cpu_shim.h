@@ -1,5 +1,6 @@
 /** ukl_cpu_shim.h                                     -*- C++ -*-
     Copyright (c) Jeremy Barnes.  All rights reserved.
+    Used here under the Apache License, Version 2.0: MLDB's license is https://github.com/mldbai/mldb/blob/e3caed6fa44782d08eb640702fd60e9a2576d939/LICENSE
     This file is part of MLDB.
 
     UKL's shim for the CPU: a UKL kernel as C++ for the host's compiler, run a threadgroup at a time with each of
@@ -36,8 +37,8 @@
 #include "ukl_auto_macros.h"
 #include "ukl_macros.h"
 
-// 32 lanes, as on Metal and CUDA; another power of two up to 32 (`RERAIL_CPU_SIMD_WIDTH`) runs a kernel as a narrower
-// device would.
+// 32 lanes, as on Metal and CUDA; another power of two up to 64 (`RERAIL_CPU_SIMD_WIDTH`) runs a kernel as a narrower
+// device would, or a 64-lane one (AMD's).
 #ifndef UKL_SIMD_WIDTH
 #define UKL_SIMD_WIDTH 32
 #endif
@@ -141,6 +142,9 @@ struct __ukl_cpu_launch {
     uint64_t stack_bytes;
     char* error;               // where a failure is described, `error_bytes` at most
     uint64_t error_bytes;
+    unsigned char* sched;      // the scheduler's storage (`__ukl_cpu_sched`), `sched_bytes` of it, the host thread's
+    uint64_t sched_bytes;
+    void* (*tls)(void);        // the host thread's slot for the running scheduler and thread (`__ukl_cpu_tls`)
 };
 
 enum { __UKL_RUN = 0, __UKL_AT_TG = 1, __UKL_AT_SG = 2, __UKL_DONE = 3 };
@@ -167,8 +171,16 @@ struct __ukl_cpu_sched {
     uint64_t slots[__UKL_CPU_MAX_THREADS];
 };
 
-static thread_local __ukl_cpu_sched* __ukl_sched;
-static thread_local __ukl_cpu_thread* __ukl_self;
+// The running scheduler and thread: in the host thread's one slot (`__ukl_cpu_launch::tls`), never a thread-local of
+// the library's. macOS gives each loaded image's thread-locals a pthread key of their own, and a process runs out of
+// them (about 512) after a few hundred kernel libraries: a thread-local's first use then aborts.
+struct __ukl_cpu_tls {
+    __ukl_cpu_sched* sched;
+    __ukl_cpu_thread* self;
+};
+static void* (*__ukl_cpu_tls_of)(void);  // the launch's: the same function in every launch
+#define __ukl_sched (((__ukl_cpu_tls*)__ukl_cpu_tls_of())->sched)
+#define __ukl_self (((__ukl_cpu_tls*)__ukl_cpu_tls_of())->self)
 
 extern "C" __attribute__((used, visibility("hidden"))) void __ukl_cpu_entry(__ukl_cpu_thread* t)
 {
@@ -327,7 +339,12 @@ template <typename G> static int __ukl_cpu_run(const __ukl_cpu_launch* L, G&& gr
         __ukl_cpu_say(L, "more threads in a threadgroup than the CPU backend runs (1024)");
         return 1;
     }
-    static thread_local __ukl_cpu_sched sched;
+    if (L->sched_bytes < sizeof(__ukl_cpu_sched)) {
+        __ukl_cpu_say(L, "the host gave the scheduler too little storage");
+        return 1;
+    }
+    __atomic_store_n(&__ukl_cpu_tls_of, L->tls, __ATOMIC_RELAXED);
+    __ukl_cpu_sched& sched = *(__ukl_cpu_sched*)L->sched;
     __ukl_cpu_sched* outer = __ukl_sched;
     __ukl_cpu_thread* outer_self = __ukl_self;
     __ukl_sched = &sched;
@@ -362,17 +379,18 @@ static inline uint64_t __ukl_cpu_exchange(uint64_t v, uint32_t from_lane)
     return r;
 }
 
-static inline uint32_t __ukl_cpu_ballot(bool b)
+// The lanes whose `b` holds, lane `l` at bit `l` (64 bits: the widest group).
+static inline uint64_t __ukl_cpu_ballot(bool b)
 {
     __ukl_cpu_thread* t = __ukl_self;
     __ukl_cpu_sched* s = __ukl_sched;
     s->slots[t->index] = b;
     __ukl_cpu_wait(__UKL_AT_SG);
-    uint32_t m = 0;
+    uint64_t m = 0;
     for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
         uint32_t i = t->simd * UKL_SIMD_WIDTH + l;
         if (i < s->n && s->threads[i].state != __UKL_DONE && s->slots[i])
-            m |= 1u << l;
+            m |= (uint64_t)1 << l;
     }
     __ukl_cpu_wait(__UKL_AT_SG);
     return m;
@@ -469,10 +487,11 @@ static inline float reinterpretIntAsFloat(int32_t val)
     return r;
 }
 
-// Upstream's SIMD-group operations (`simd_lane` and `tmp` are the signature Metal's and the CPU's share).
+// Upstream's SIMD-group operations (`simd_lane` and `tmp` are the signature Metal's and the CPU's share), written for
+// groups of 32 lanes at most: their ballot is 32 bits.
 static inline uint32_t ukl_simdgroup_ballot(bool val, uint16_t simd_lane, atomic_uint * tmp)
 {
-    return __ukl_cpu_ballot(val);
+    return (uint32_t)__ukl_cpu_ballot(val);
 }
 
 static inline uint32_t ukl_simdgroup_sum(uint32_t val, uint16_t simd_lane, atomic_uint * tmp)
@@ -489,13 +508,13 @@ static inline uint32_t ukl_prefix_exclusive_sum_bitmask(uint32_t bits, uint16_t 
 
 static inline uint32_t ukl_simdgroup_prefix_exclusive_sum_bools(bool val, uint16_t simd_lane, atomic_uint * tmp)
 {
-    return ukl_prefix_exclusive_sum_bitmask(__ukl_cpu_ballot(val), simd_lane);
+    return ukl_prefix_exclusive_sum_bitmask((uint32_t)__ukl_cpu_ballot(val), simd_lane);
 }
 
 static inline uint32_t ukl_simdgroup_broadcast_first(uint32_t val, uint16_t simd_lane, atomic_uint * tmp)
 {
-    uint32_t live = __ukl_cpu_ballot(true);
-    return (uint32_t)__ukl_cpu_exchange(val, __builtin_ctz(live));
+    uint64_t live = __ukl_cpu_ballot(true);
+    return (uint32_t)__ukl_cpu_exchange(val, (uint32_t)__builtin_ctzll(live));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

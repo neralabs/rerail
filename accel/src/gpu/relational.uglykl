@@ -131,7 +131,7 @@ DEFINE_KERNEL2(relational, ct_count,
                ROBUFFER, uint32_t, roff,    "[parts + 1]",
                RWBUFFER, uint32_t, counts,  "[loff[parts]]",
                SHARED,   uint32_t, T,       REL_TABLE,
-               SHARED,   uint32_t, scratch, 32,
+               SHARED,   uint32_t, scratch, REL_TG / UKL_SIMD_WIDTH,
                TGID0,    uint32_t, p,       ,
                LID0,     uint32_t, t,       )
 {

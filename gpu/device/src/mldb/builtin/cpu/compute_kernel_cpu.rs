@@ -17,6 +17,9 @@
 //!   event holds the root's later work, as on Metal.
 //! - **Each thread of a threadgroup has a stack of its own** (`STACK_BYTES`, a guard page below it), from a region the
 //!   root's thread keeps across launches.
+//! - **No thread-local in a kernel library**: the running scheduler and thread are in one thread-local of the host's
+//!   (`tls`), which each launch names; the scheduler's storage is the root thread's (`SCHED_BYTES`). macOS gives each
+//!   loaded image's thread-locals a pthread key, and a process ran out of them after a few hundred libraries.
 //! - **Arguments without reflection**, as on CUDA (`rows.rs`): the shim's rows and layouts, read from the library's
 //!   symbols, and each `ARGS` structure's layout function called on the host.
 
@@ -45,8 +48,8 @@ pub fn simd_width() -> u32 {
     match std::env::var("RERAIL_CPU_SIMD_WIDTH") {
         Err(_) => 32,
         Ok(w) => match w.parse::<u32>() {
-            Ok(n) if n.is_power_of_two() && n <= 32 => n,
-            _ => panic!("RERAIL_CPU_SIMD_WIDTH={w}: a power of two from 1 to 32"),
+            Ok(n) if n.is_power_of_two() && n <= 64 => n,
+            _ => panic!("RERAIL_CPU_SIMD_WIDTH={w}: a power of two from 1 to 64"),
         },
     }
 }
@@ -339,6 +342,23 @@ struct Launch {
     stack_bytes: u64,
     error: *mut c_char,
     error_bytes: u64,
+    sched: *mut u8,
+    sched_bytes: u64,
+    tls: extern "C" fn() -> *mut c_void,
+}
+
+/// The scheduler's storage a root's thread gives each launch: more than the shim's (`__ukl_cpu_sched`, which checks).
+const SCHED_BYTES: usize = 256 << 10;
+
+std::thread_local! {
+    /// The running launch's scheduler and thread (`__ukl_cpu_tls`): the one thread-local every kernel library uses. A
+    /// library has none of its own: macOS gives each loaded image's thread-locals a pthread key, and a process runs
+    /// out of them after a few hundred libraries.
+    static TLS: std::cell::UnsafeCell<[*mut c_void; 2]> = const { std::cell::UnsafeCell::new([std::ptr::null_mut(); 2]) };
+}
+
+extern "C" fn tls() -> *mut c_void {
+    TLS.with(|t| t.get().cast())
 }
 
 /// A kernel's entry: a pointer to each argument's bytes, and the launch; 0, or 1 with the launch's error written.
@@ -378,6 +398,7 @@ struct Worker {
     stacks: *mut u8,
     stacks_len: usize,
     page: usize,
+    sched: Vec<u64>,
 }
 
 impl Worker {
@@ -414,7 +435,7 @@ impl CpuQueueRoot {
             .stack_size(8 << 20)
             .spawn(move || {
                 let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
-                let mut w = Worker { stacks: std::ptr::null_mut(), stacks_len: 0, page };
+                let mut w = Worker { stacks: std::ptr::null_mut(), stacks_len: 0, page, sched: vec![0; SCHED_BYTES / 8] };
                 for b in rx {
                     let t = std::time::Instant::now();
                     let mut r = Ok(());
@@ -631,6 +652,9 @@ impl CpuBindContext<'_> {
                 stack_bytes: stride as u64,
                 error: error.as_mut_ptr(),
                 error_bytes: error.len() as u64,
+                sched: w.sched.as_mut_ptr().cast(),
+                sched_bytes: SCHED_BYTES as u64,
+                tls,
             };
             if entry(ptrs.as_ptr(), &launch) != 0 {
                 let e = unsafe { CStr::from_ptr(error.as_ptr()) }.to_string_lossy().into_owned();
@@ -715,7 +739,7 @@ DEFINE_KERNEL2(t, t_divergent,
     /// Threadgroup memory, a barrier and SIMD-group shuffles give each thread what a GPU gives it.
     #[test]
     fn a_threadgroup_runs_as_on_a_gpu() {
-        let Some((device, lib)) = compile("t.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_group").unwrap();
         let (grid, block) = (3u32, 64u32);
         let out = alloc_uninitialized_array_sync::<u32>(&device, (grid * block) as usize);
@@ -734,7 +758,7 @@ DEFINE_KERNEL2(t, t_divergent,
     /// A barrier no thread can pass is an error that says who waits where, not a hang.
     #[test]
     fn a_barrier_no_thread_can_pass_is_an_error() {
-        let Some((device, lib)) = compile("t.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_divergent").unwrap();
         let out = alloc_uninitialized_array_sync::<u32>(&device, 1);
         let e = run(&device, &f, &out, None, 1, 64).unwrap_err();

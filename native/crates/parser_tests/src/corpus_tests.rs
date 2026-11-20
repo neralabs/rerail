@@ -26,7 +26,7 @@ use rerail_compiler::*;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
 use rerail_compiler::bitlex_masks as bitlex_compile;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_metal as metal_program_backend;
 use ::bitlex::syntax::{Stmt, parse};
 use std::collections::HashMap;
@@ -633,7 +633,7 @@ fn executors_equal_the_interpreter(metal: bool) {
 
 /// The Metal executors' runs of the corpus' batch (`executors_equal_the_interpreter`): each lane width's interpreter
 /// and generated MSL, in chunks of programs.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::BatchFile<'_>], t: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
     let mut runs = Vec::new();
@@ -669,7 +669,7 @@ fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::Batc
 }
 
 /// No Metal executors off macOS.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn metal_corpus_runs(_: &[block_native::BlockNative], _: &[block::BatchFile<'_>], _: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
     Vec::new()
 }
@@ -914,7 +914,7 @@ fn a_file_on_every_executor() {
 
 /// Generated MSL's outputs over `bytes` where they differ from the interpreter's (`want`), each lane width's, for
 /// the outputs `checked` names; `RERAIL_DUMP_MSL=<file>` writes the 16-byte lanes' source.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: &[(String, usize)], want: &[Vec<u64>]) {
     use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with, run_generated_with};
     if let Some(dump) = std::env::var_os("RERAIL_DUMP_MSL") {
@@ -931,5 +931,5 @@ fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: 
 }
 
 /// No Metal executors off macOS.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn metal_differences(_: &block_native::BlockNative, _: &[u8], _: &[(String, usize)], _: &[Vec<u64>]) {}

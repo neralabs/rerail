@@ -51,18 +51,40 @@ DEFINE_KERNEL2(tests, t_stores,
     out[i * 3u + 2u] = ukl_ldc_u64(t, base + 16u + i % 9u % 8u);
 }
 
+// The word stores (`ukl_stw_*`) into each thread's own 32 bytes, as `t_stores`, and a byte at the end, read back
+// through the word loads (`ukl_ldw_*`).
+DEFINE_KERNEL2(tests, t_word_stores,
+               ARGS,     TestArgs, args,  ,
+               RWBUFFER, uint8_t,  bytes, "[n * 32]",
+               RWBUFFER, uint64_t, out,   "[n * 4]",
+               GID0,     uint32_t, i,     )
+{
+    if (i >= args.n)
+        return;
+    uint64_t base = (uint64_t)i * 32u;
+    uint64_t v = ((uint64_t)i * 0x9e3779b97f4a7c15ul) ^ 0x0123456789abcdeful;
+    ukl_stw_u16(bytes, base + i % 7u, v);
+    ukl_stw_u32(bytes, base + 8u + i % 5u, v >> 7);
+    ukl_stw_u64(bytes, base + 16u + i % 9u % 8u, v >> 3);
+    ukl_stw_u8(bytes, base + 31u, v >> 11);
+    out[i * 4u + 0u] = ukl_ldw_u16(bytes, base + i % 7u);
+    out[i * 4u + 1u] = ukl_ldw_u32(bytes, base + 8u + i % 5u);
+    out[i * 4u + 2u] = ukl_ldw_u64(bytes, base + 16u + i % 9u % 8u);
+    out[i * 4u + 3u] = ukl_ldw_u8(bytes, base + 31u);
+}
+
 // ukl/bits.h on one word a thread.
 DEFINE_KERNEL2(tests, t_bits,
                ARGS,     TestArgs, args,  ,
                ROBUFFER, uint64_t, words, "[n]",
-               RWBUFFER, uint64_t, out,   "[n * 12]",
+               RWBUFFER, uint64_t, out,   "[n * 15]",
                GID0,     uint32_t, i,     )
 {
     if (i >= args.n)
         return;
     uint64_t w = words[i];
     uint32_t lo = (uint32_t)w;
-    RWBUFFER(uint64_t) o = out + i * 12u;
+    RWBUFFER(uint64_t) o = out + i * 15u;
     o[0] = ukl_popcount32(lo);
     o[1] = ukl_popcount64(w);
     o[2] = ukl_clz32(lo);
@@ -75,6 +97,9 @@ DEFINE_KERNEL2(tests, t_bits,
     o[9] = ukl_select64(w, i % 65u);
     o[10] = ukl_bits64(w, i % 64u, i * 7u % 65u);
     o[11] = ukl_bits32(lo, i % 33u, i * 5u % 33u);
+    o[12] = ukl_reverse32(lo);
+    o[13] = ukl_reverse64(w);
+    o[14] = ukl_umulhi64(w, words[(i + 1u) % args.n]);
 }
 
 // The first set bit at or after `i`, in a bitset of `w` bits.
@@ -104,12 +129,12 @@ DEFINE_KERNEL2(tests, t_bitset_set,
 DEFINE_KERNEL2(tests, t_simd,
                ARGS,     TestArgs, args, ,
                ROBUFFER, uint32_t, in,   "[n]",
-               RWBUFFER, uint32_t, out,  "[n * 16]",
+               RWBUFFER, uint32_t, out,  "[n * 18]",
                GID0,     uint32_t, i,    ,
                LANE,     uint16_t, lane, )
 {
     uint32_t v = in[i];
-    RWBUFFER(uint32_t) o = out + i * 16u;
+    RWBUFFER(uint32_t) o = out + i * 18u;
     o[0] = ukl_sg_sum(v __UKL_ARGS);
     o[1] = ukl_sg_sum_ref(v __UKL_ARGS);
     o[2] = ukl_sg_min(v __UKL_ARGS);
@@ -124,8 +149,12 @@ DEFINE_KERNEL2(tests, t_simd,
     o[11] = ukl_sg_count((v & 1u) != 0u __UKL_ARGS);
     o[12] = ukl_sg_first(v % 5u == 0u __UKL_ARGS);
     o[13] = ukl_sg_broadcast(v, (i / UKL_SIMD_WIDTH) % UKL_SIMD_WIDTH __UKL_ARGS);
-    o[14] = ukl_sg_match(v % 4u __UKL_ARGS);
-    o[15] = ukl_sg_match_ref(v % 4u __UKL_ARGS);
+    // The masks as two words, low first (a 64-lane group's).
+    uint64_t m = (uint64_t)ukl_sg_match(v % 4u __UKL_ARGS), r = (uint64_t)ukl_sg_match_ref(v % 4u __UKL_ARGS);
+    o[14] = (uint32_t)m;
+    o[15] = (uint32_t)(m >> 32);
+    o[16] = (uint32_t)r;
+    o[17] = (uint32_t)(r >> 32);
 }
 
 // ukl/group.h: the group's sum, and each thread's exclusive scan and the total.

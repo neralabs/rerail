@@ -335,9 +335,9 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
 }
 
 fn metal() -> bool {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     return crate::code_rule_dsl::transducer::packed::metal_join::available();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     false
 }
 

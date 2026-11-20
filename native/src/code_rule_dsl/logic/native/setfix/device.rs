@@ -1441,7 +1441,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     res.entries.len() - 1
                 } else if let Some(d) = made {
                     let device = rerail_accel::gpu::join::device()?;
-                    let block = d.block.gpu_buffer(device);
+                    let block = d.block.device_buffer(device)?;
                     let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
                     batch.expand_view(&block, d.root, d.view, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
                     rep.uploads += 1;
@@ -1980,7 +1980,7 @@ impl<'p> Run<'p> {
             return Some(format!("its texts past the device's text arena of {} bytes", arena_max()));
         }
         // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b).
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if self.rels.iter().flatten().filter_map(|(r, _)| r.view.as_ref()).any(|v| v.cache_failed() > v.failed) {
             return Some("a 16z block found no room in its batch's cache".to_owned());
         }

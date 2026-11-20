@@ -3179,7 +3179,7 @@ mod tests {
         assert_eq!(report.backend_invocations, 1);
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn metal_uses_one_command_buffer_and_one_packed_dispatch() {
         use crate::code_rule_dsl::transducer::packed::{

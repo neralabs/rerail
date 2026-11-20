@@ -209,9 +209,9 @@ fn nearest_costs(cap: usize) {
     let one_pass = t.elapsed();
     std::hint::black_box(&one);
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     for how in [metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks, metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks] {
         let target: Vec<u32> = parent.clone();
         let done: Vec<u8> = parent.iter().map(|&p| u8::from(p == NONE || sets[0].contains(&kind[p as usize]))).collect();
@@ -234,7 +234,7 @@ fn nearest_costs(cap: usize) {
             assert_eq!(solved.targets, one);
         }
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     for round in 0..3 {
         use crate::code_rule_dsl::transducer::packed::metal_lattice;
         let device = metal_lattice::System { seeds: &sys.seeds, copies: &sys.copies, bins: &[] };

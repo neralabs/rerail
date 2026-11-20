@@ -21,7 +21,13 @@ pub fn reserve(len: usize) -> *mut u8 {
     RESERVED.fetch_add(len, Relaxed);
     #[cfg(unix)]
     {
-        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
+        // Address space only: on Linux without the overcommit check, which refuses a reservation past memory and swap
+        // (a block's 64 GiB on a 20 GiB machine) though nothing of it is resident until written.
+        #[cfg(target_os = "linux")]
+        let flags = libc::MAP_ANON | libc::MAP_PRIVATE | libc::MAP_NORESERVE;
+        #[cfg(not(target_os = "linux"))]
+        let flags = libc::MAP_ANON | libc::MAP_PRIVATE;
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, flags, -1, 0) };
         assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed");
         p.cast()
     }

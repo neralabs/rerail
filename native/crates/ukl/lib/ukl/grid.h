@@ -252,12 +252,14 @@ UKL_INLINE bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHE
 #define UKL_RADIX_SPACE UKL_COHERENT
 #include <ukl/body/radix_tile.h>
 
-// The threadgroup memory a grid sort takes: `h`, `counts`, `before`, `base` (`ukl_radix_*_tile`'s).
+// The threadgroup memory a grid sort takes: `h`, `counts`, `before`, `base`, `digits` (`ukl_radix_*_tile`'s;
+// `digits` is `UKL_RADIX_SPILL` words).
 typedef struct UklGridSortLocal {
     UKL_LOCAL uint32_t* h;
     UKL_LOCAL uint32_t* counts;
     UKL_LOCAL uint32_t* before;
     UKL_LOCAL uint32_t* base;
+    UKL_LOCAL uint32_t* digits;
 } UklGridSortLocal;
 
 // A stable LSD sort of `keys`' first `n` by their low `bits` bits (a multiple of 8), with `values` (`iota`: each
@@ -294,7 +296,7 @@ UKL_INLINE bool ukl_grid_sort_u64(UklGrid g, uint32_t n, uint32_t bits, bool iot
         if (!ukl_grid_scan_n(g, UKL_RADIX_DIGITS * tiles, hist, hist, hist + UKL_RADIX_DIGITS * tiles, sums, scratch, flag __UKL_ARGS))
             return false;
         for (uint32_t tile = first; tile < end; tile++)
-            ukl_radix_scatter_tile_u64_grid(ki, vi, hist, ko, vo, args, l.counts, l.before, l.base, tile, g.lid __UKL_ARGS);
+            ukl_radix_scatter_tile_u64_grid(ki, vi, hist, ko, vo, args, l.counts, l.before, l.base, l.digits, tile, g.lid __UKL_ARGS);
         if (!ukl_grid_barrier(g, flag))
             return false;
     }

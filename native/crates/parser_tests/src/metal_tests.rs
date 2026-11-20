@@ -32,8 +32,23 @@ fn every_step_on_metal_equals_the_interpreter() {
     for (f, got) in files.iter().zip(&run.files) {
         let k = run_on[f.program];
         let want = compiled[k].program.block_programs[0].run_files(&[f.bytes]).remove(0);
-        if got.outputs != want.outputs || got.positions != want.positions {
-            differ.push(format!("{}: {:?}", steps[k].0, String::from_utf8_lossy(f.bytes)));
+        // A token's last by its gap (decision 0411): the interpreter makes it from the next start, Metal keeps the
+        // lasts' extract, and the proof that makes them equal holds where tier 1 accepts the file. Past a fallback
+        // bit (a total set: the file goes to the fallback, never to tier 2) the two may differ.
+        let gap_lasts = all[k].records.as_ref().filter(|r| r.gap.is_some()).map(|r| usize::from(r.lasts));
+        let refused = want.totals.iter().any(|&t| t != 0);
+        let positions = got.positions.len() == want.positions.len()
+            && got.positions.iter().zip(&want.positions).enumerate().all(|(e, (a, b))| (refused && Some(e) == gap_lasts) || a == b);
+        if got.outputs != want.outputs || !positions {
+            // The first output (or extract) that differs, and its first word (or position) that does.
+            let first = |g: &[Vec<u64>], w: &[Vec<u64>]| g.iter().zip(w).enumerate().find(|(_, (a, b))| a != b).map(|(o, (a, b))| {
+                let at = a.iter().zip(b).position(|(x, y)| x != y).unwrap_or(a.len().min(b.len()));
+                format!("output {o} word {at}: {:x?} against {:x?}", a.get(at), b.get(at))
+            });
+            let positions: Vec<Vec<u64>> = got.positions.iter().map(|p| p.iter().map(|&x| u64::from(x)).collect()).collect();
+            let wanted: Vec<Vec<u64>> = want.positions.iter().map(|p| p.iter().map(|&x| u64::from(x)).collect()).collect();
+            let at = first(&got.outputs, &want.outputs).or_else(|| first(&positions, &wanted).map(|d| format!("positions: {d}"))).unwrap_or_else(|| "a count".into());
+            differ.push(format!("{}: {:?}: {at}", steps[k].0, String::from_utf8_lossy(f.bytes)));
         }
     }
     eprintln!("{} files over {} steps on Metal, {} refused", files.len(), run_on.len(), refused.len());

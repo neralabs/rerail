@@ -32,6 +32,10 @@ mod native {
     pub type QueueRoot = metal::CommandQueue;
     pub type SharedEvent = metal::SharedEvent;
     pub const NAME: &str = "Metal";
+    /// The device's own name (the GPU's model).
+    pub fn device_name(d: &Device) -> String {
+        d.name().to_owned()
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -46,6 +50,10 @@ mod native {
         Some(b.device_address())
     }
     pub const NAME: &str = "CUDA";
+    /// The device's own name: the backend's until the driver's is read (step E).
+    pub fn device_name(_d: &Device) -> String {
+        NAME.to_owned()
+    }
 }
 
 /// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", or "" for the target's GPU.
@@ -101,6 +109,16 @@ pub enum Device {
 pub type DeviceRef = Device;
 
 impl Device {
+    /// The device's name, as a machine's samples are keyed: the GPU's model on the target's GPU, its backend and
+    /// its own name on OpenCL, "CPU" on the CPU's.
+    pub fn name(&self) -> String {
+        match self {
+            Device::Native(d) => native::device_name(d),
+            Device::Cpu(_) => "CPU".to_owned(),
+            Device::OpenCl(d) => format!("OpenCL {}", d.name()),
+        }
+    }
+
     /// The Metal device, when the process's is Metal (the engine's own Metal kernels need it).
     #[cfg(target_os = "macos")]
     pub fn metal(&self) -> Option<&metal::Device> {
@@ -128,9 +146,19 @@ impl Device {
         }
     }
 
-    /// Whether its buffers have a kernels' address (`Buffer::device_address`): every backend's but OpenCL 1.2's.
+    /// Whether every buffer has a kernels' address (`Buffer::device_address`), memory wrapped in place too: every
+    /// backend's but OpenCL's.
     pub fn has_addresses(&self) -> bool {
         !matches!(self, Device::OpenCl(_))
+    }
+
+    /// Whether the buffers it allocates have a kernels' address (not memory wrapped in place): every backend's, and
+    /// OpenCL's where it has Intel's unified shared memory (`ClDevice::allocations_have_addresses`).
+    pub fn allocations_have_addresses(&self) -> bool {
+        match self {
+            Device::OpenCl(d) => d.allocations_have_addresses(),
+            _ => true,
+        }
     }
 
     /// The most threads a threadgroup can have: 1,024 on Metal, CUDA and the CPU; an OpenCL device's own (256 on
@@ -214,13 +242,14 @@ impl Buffer {
     }
 
     /// The kernels' address of the buffer's first byte, for a pointer that a buffer holds (a directory of tapes, a
-    /// view's rows): Metal's GPU address, CUDA's device pointer, the host's on the CPU. `None` on OpenCL 1.2, whose
-    /// kernels follow no pointer a buffer holds (that is SVM's, not written).
+    /// view's rows): Metal's GPU address, CUDA's device pointer, the host's on the CPU, an OpenCL host allocation's
+    /// (Intel's unified shared memory). `None` for other OpenCL buffers: memory wrapped in place, or a device without
+    /// it, whose kernels follow no pointer a buffer holds.
     pub fn device_address(&self) -> Option<u64> {
         match self {
             Buffer::Native(b) => native::device_address(b),
             Buffer::Cpu(b) => Some(b.device_address()),
-            Buffer::OpenCl(_) => None,
+            Buffer::OpenCl(b) => b.address(),
         }
     }
 

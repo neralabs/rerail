@@ -2601,7 +2601,7 @@ pub(super) fn execute_batch_packed_with_result_limits(
     )
 }
 
-#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
 pub fn execute_terminal_reference_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],

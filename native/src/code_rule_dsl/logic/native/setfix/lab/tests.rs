@@ -49,7 +49,7 @@
         let mut captures: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "sqlite") && p.file_name().is_some_and(|n| n != "atoms.sqlite")).collect();
         captures.sort();
         let (mut same, mut all) = (0, 0);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let mut device = Device::default();
         println!("{:>9} {:>9} {:>10}  {:<5} capture", "cpu ms", "solve ms", "rows", "rows");
         for path in captures {
@@ -85,7 +85,7 @@
             let outs: Vec<&String> = tables.iter().filter(|t| t.starts_with("out")).collect();
             // The same stratum on the device (decision 0095, step 4), first: its rows against the run's, row for row,
             // or the reason the device refuses it. Then the relations as they were, for the CPU's run.
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
                 let dspec = spec.replacen('\n', "\ndevice\n", 1);
                 super::super::open(&db, &dspec).unwrap();
@@ -124,17 +124,17 @@
             }
             super::super::open(&db, &spec).unwrap();
             // `RERAIL_RELATIONAL_LAB_HOST_ONLY`: the captures alone, no device work (the run's own CPU and memory).
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             if std::env::var_os("RERAIL_RELATIONAL_LAB_HOST_ONLY").is_none() {
                 device.add(&super::super::scans(&db, &name).unwrap());
                 device.tiles(&super::super::tiles(&db, &name).unwrap());
             }
             let c0 = thread_cpu();
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             let p0 = process_cpu();
             let result = super::super::run(&db, &name, 0).unwrap();
             let cpu = (thread_cpu() - c0) * 1e3;
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
                 device.strata_cpu_host += (process_cpu() - p0) * 1e3;
             }
@@ -158,13 +158,13 @@
             let _ = std::fs::remove_file(&store);
         }
         println!("{same} of {all} captures give the run's rows");
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         device.report();
         assert_eq!(same, all);
     }
 
     /// The process's CPU seconds, user and system (every thread's: Metal's completion threads too).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn process_cpu() -> f64 {
         let mut u: libc::rusage = unsafe { std::mem::zeroed() };
         // SAFETY: a valid rusage out.
@@ -175,17 +175,17 @@
 
     /// The captures' fused filters over input relations (`setfix::scans`), each run on Metal over its rows in the
     /// 16-bit layout (`metal_rows`) and checked against the CPU's rows.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[derive(Default)]
     struct Device { strata: usize, strata_same: usize, strata_refused: usize, strata_cpu: f64, strata_cpu_host: f64, strata_gpu: f64, strata_submissions: usize, probe: Probe, sort_cpu: f64, sort_same: usize, joins: usize, joins_same: usize, pairs: usize, tile_pairs: usize, compared: u64, join_cpu: f64, join_gpu: f64, tile_host: f64, cases: usize, same: usize, unsupported: usize, rows: usize, passed: usize, cpu: f64, gpu: f64, bytes: usize, wide: usize, forms: [usize; 3] }
 
     /// The device's sort and probe joins: joins run and right, sorts and the joins that found theirs resident, GPU and
     /// host CPU (the uploads, the sorts' and probes' encoding and the pairs' read), and the keys' bytes.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[derive(Default)]
     struct Probe { upload: f64, submissions: usize, joins: usize, same: usize, off: usize, sorts: usize, resident: usize, sort_gpu: f64, probe_gpu: f64, host: f64, right_host: f64, bytes: usize, wide: usize }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     impl Device {
         fn add(&mut self, cases: &[super::super::ScanCase]) {
             use crate::code_rule_dsl::logic::native::setfix::rowcode::Word;

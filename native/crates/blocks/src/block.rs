@@ -413,11 +413,11 @@ impl Block {
         b
     }
 
-    /// Lets go of the no-copy wrap `gpu_buffer` kept; the device must be done with it. It does not let the OS write
+    /// Lets go of the no-copy wrap `device_buffer` kept; the device must be done with it. It does not let the OS write
     /// back a file block's pages a kernel wrote: the driver holds them wired until the range is unmapped (decision
     /// 0295 §1 and §7, measured by `examples/deferrable`).
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    pub fn release_gpu_buffer(&self) {
+    pub fn release_device_buffer(&self) {
         self.gpu.lock().unwrap().take();
     }
 
@@ -445,14 +445,6 @@ impl Block {
         let b = unsafe { rerail_device::device::wrap_host_memory(device, self.base, len)? };
         *kept = Some((b.clone(), len));
         Ok(b)
-    }
-
-    /// `device_buffer` for the engine's Metal kernels not yet on the device layer (decision 0440 step C moves each
-    /// with its kernel): the block's buffer as Metal's.
-    #[cfg(target_os = "macos")]
-    pub fn gpu_buffer(&self, device: &metal::DeviceRef) -> metal::Buffer {
-        let b = self.device_buffer(&rerail_device::device::Device::Native(device.to_owned())).unwrap_or_else(|e| panic!("a block's device buffer: {e}"));
-        b.metal().expect("a block bound to a Metal kernel has a Metal buffer").clone()
     }
 
     fn init(&self, kind: u32) {
@@ -610,7 +602,7 @@ impl Block {
             f.set_len(len as u64).expect("truncate a journal block");
         } else if self.backing.is_none() {
             // A free-listed block's reservation past its length goes back: nothing is written there now.
-            // Whole MBs, and never under a device buffer made over it (`gpu_buffer`'s extent).
+            // Whole MBs, and never under a device buffer made over it (`device_buffer`'s extent).
             #[allow(unused_mut)]
             let mut keep = round_up(len.max(1 << 20), 1 << 20);
             #[cfg(any(target_os = "macos", target_os = "linux"))]

@@ -411,13 +411,14 @@ fn the_compiled_words_are_the_interpreters() {
     assert!(differ.is_empty(), "{} of {} differ:\n{}", differ.len(), same + differ.len(), differ.join("\n"));
 }
 
-/// The words on Metal (`clif_msl`'s MSL of the same IR, decision 0348 stage 5) are the
-/// interpreter's, on every example and TU, in C and C++: all of them one batch a round
-/// (`expand_tus_with`, 0408 L3), and the host evaluates nothing meanwhile (`host_runs`).
-#[cfg(target_os = "macos")]
+/// The words on the process's device (`clif_ukl`'s UKL of the same IR, decisions 0348 stage 5,
+/// 0440 step D) are the interpreter's, on every example and TU, in C and C++, on Metal, OpenCL
+/// and the CPU's backend (`RERAIL_GPU`): all of them one batch a round (`expand_tus_with`, 0408
+/// L3), and the host evaluates nothing meanwhile (`host_runs`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
-fn the_metal_words_are_the_interpreters() {
-    if rerail_metal::METAL_DEVICE.is_none() {
+fn the_device_words_are_the_interpreters() {
+    if rerail_metal::lane::device().is_err() {
         return;
     }
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
@@ -427,7 +428,7 @@ fn the_metal_words_are_the_interpreters() {
     let mut io: Vec<_> = all.iter().map(|(_, (_, files))| search(files, &dirs)).collect();
     let mut batch: Vec<(&str, &mut _, bool)> = all.iter().zip(io.iter_mut()).map(|((cpp, (_, files)), io)| (files[0].0, io, *cpp)).collect();
     let runs = pp_words::host_runs();
-    let metal = crate::expand::expand_tus_with(&mut batch, &INTERPRETED, &crate::expand::on_metal_batch);
+    let metal = crate::expand::expand_tus_with(&mut batch, &INTERPRETED, &crate::expand::on_device_batch);
     assert_eq!(pp_words::host_runs(), runs, "the host ran the words during the device's batches");
     let (mut same, mut differ) = (0, Vec::new());
     for ((cpp, (name, files)), got) in all.iter().zip(metal) {
@@ -445,7 +446,7 @@ fn the_metal_words_are_the_interpreters() {
                     (Ok(g), Ok(w)) => g.iter().zip(w).position(|(a, b)| a != b).unwrap_or(g.len().min(w.len())),
                     _ => 0,
                 };
-                differ.push(format!("{name} (cpp {cpp}): Metal {}\n interpreter {}", show(&got, at), show(&want, at)));
+                differ.push(format!("{name} (cpp {cpp}): device {}\n interpreter {}", show(&got, at), show(&want, at)));
             }
         }
     }
@@ -506,7 +507,7 @@ fn the_compiled_words_code_counted() {
 /// The words' code built ahead of time (`clif_rust`, the `generated` feature) gives the
 /// interpreter's tokens on every example and TU, for each build; each build is the source the
 /// words translate to now (its fingerprint), so it is the JIT's code compiled by rustc.
-#[cfg(feature = "generated")]
+#[cfg(all(feature = "generated", target_arch = "aarch64"))]
 #[test]
 #[ignore = "Q330: overflows its 2 MB test stack in `rust_source`, as at Go-C-and-C-support's own ce2c4019c83"]
 fn the_aot_words_are_the_interpreters() {
@@ -819,22 +820,25 @@ fn the_compiled_ifs_have_the_interpreters_values() {
 /// The device's rungs (0348, stage L1): a TU whose expansion outgrows the smallest rung's rooms
 /// (a macro of 8 macros of 8 macros: 4,096 tokens from 60) is run again at larger rungs, and
 /// its tokens are the interpreter's.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
-fn the_metal_rungs_run_a_tu_again_past_its_room() {
+fn the_device_rungs_run_a_tu_again_past_its_room() {
+    if rerail_metal::lane::device().is_err() {
+        return;
+    }
     let src = "#define A x x x x x x x x\n#define B A A A A A A A A\n#define C B B B B B B B B\nC C C C C C C C\n";
     let files = [("main.c", src.as_bytes())];
     let rungs = std::cell::Cell::new([0usize; pp_words::RUNGS]);
-    let source = crate::expand::msl().unwrap();
-    let metal = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
+    let source = crate::expand::ukl().unwrap();
+    let device = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
         let ran = rerail_metal::pp_on::run_batch(source, &[(w, f, e, b)], 1).expect("the batch");
         rungs.set(ran.rungs);
         ran.results.into_iter().next().expect("one result")
     };
     let want = expand_tu_with("main.c", &mut search(&files, &[]), false, &INTERPRETED, &pp_words::run).unwrap();
-    let got = expand_tu_with("main.c", &mut search(&files, &[]), false, &INTERPRETED, &metal).unwrap();
+    let got = expand_tu_with("main.c", &mut search(&files, &[]), false, &INTERPRETED, &device).unwrap();
     assert_eq!(want.len(), 4096);
-    assert!(got == want, "Metal's tokens differ");
+    assert!(got == want, "the device's tokens differ");
     assert_eq!(rungs.get()[0], 0, "the smallest rung held it: {:?}", rungs.get());
 }
 
@@ -842,9 +846,9 @@ fn the_metal_rungs_run_a_tu_again_past_its_room() {
 /// of itself, against the Cranelift JIT on one core. It prints; it asserts nothing.
 #[test]
 #[ignore = "a measurement: run alone, on an idle Mac"]
-fn the_metal_words_time_against_the_jit() {
+fn the_device_words_time_against_the_jit() {
     let t0 = std::time::Instant::now();
-    let src = crate::expand::msl().expect("msl");
+    let src = crate::expand::ukl().expect("ukl");
     let translate = t0.elapsed();
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
     let ns = [1usize, 32, 64, 128];
@@ -893,7 +897,7 @@ fn the_metal_words_time_against_the_jit() {
     }
     let g = gpu.borrow();
     eprintln!("SPIKE CPU (Cranelift JIT, one core, least of 5, prepare and complete included): {:.3} ms total, {:.1} us a run", cpu.get() * 1e3, cpu.get() * 1e6 / calls.get() as f64);
-    eprintln!("SPIKE msl {} lines, translate {:?}, first batch (pipeline compile) {:?}", src.lines().count(), translate, first.get().unwrap());
+    eprintln!("SPIKE ukl {} lines, translate {:?}, first batch (pipeline compile) {:?}", src.lines().count(), translate, first.get().unwrap());
     eprintln!("SPIKE {} runs ({} TUs), largest arena {} bytes", calls.get(), TUS.len(), bytes.get());
     for (k, &n) in ns.iter().enumerate() {
         let done = calls.get() - skipped.borrow()[k];
@@ -1027,7 +1031,7 @@ struct OnMetal {
 #[cfg(target_os = "macos")]
 fn counted_batch<'a>(totals: &'a std::cell::RefCell<OnMetal>) -> impl Fn(&[crate::expand::Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> + 'a {
     move |jobs| {
-        let ran = rerail_metal::pp_on::run_batch(crate::expand::msl().unwrap(), jobs, jobs.len()).expect("the device's batch");
+        let ran = rerail_metal::pp_on::run_batch(crate::expand::ukl().unwrap(), jobs, jobs.len()).expect("the device's batch");
         let mut t = totals.borrow_mut();
         (t.gpu, t.dispatches, t.arena, t.jobs, t.batches) = (t.gpu + ran.gpu_seconds, t.dispatches + ran.dispatches, t.arena.max(ran.arena_bytes), t.jobs + jobs.len(), t.batches + 1);
         for (r, n) in ran.rungs.iter().enumerate() {

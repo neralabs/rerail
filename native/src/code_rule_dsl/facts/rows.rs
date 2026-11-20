@@ -623,13 +623,13 @@ fn room_for(k: usize, rows: usize) -> usize {
 /// refusal running it on the CPU). Without Metal, anonymous memory.
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
     use rerail_blocks::alloc::{Budget, Device, Need, Size, Writes};
-    let device = if cfg!(target_os = "macos") && life == Life::Device { Device::Must } else { Device::No };
+    let device = if cfg!(any(target_os = "macos", target_os = "linux")) && life == Life::Device { Device::Must } else { Device::No };
     rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Once, device, size: Size::Exact, budget: Budget::Join })
 }
 
 /// A relation of `k` columns holding `vals` (row by row), alone in a block of anonymous memory, as a run's block is
 /// when the device's spare budget refuses it a slab: bound on the device by a wrap of its used extent
-/// (`Block::gpu_buffer`), which what is added to the block after that wrap lies past.
+/// (`Block::device_buffer`), which what is added to the block after that wrap lies past.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     let rows = vals.len() / k;
