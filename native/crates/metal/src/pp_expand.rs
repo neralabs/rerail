@@ -1007,8 +1007,8 @@ impl Vis {
 /// The tokens' pool's heads (`<ukl/pool.h>`'s `UKL_POOL_CLASSES`, rounded up).
 const POOL_HEADS: usize = 128;
 
-/// A list (`PxList` in the UKL): 34 words; an argument (`PxArg`): 3.
-const LIST_WORDS: usize = 34;
+/// A list (`PxList` in the UKL): 36 words; an argument (`PxArg`): 3.
+const LIST_WORDS: usize = 36;
 const ARG_WORDS: usize = 3;
 
 /// Why a unit is refused (`pp_expand.uglykl`'s `X_*`). `X_ROOM` reruns it at the next rung.
