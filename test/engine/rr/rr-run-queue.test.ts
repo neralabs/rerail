@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { editRunTiming } from "../../../src/engine/rr/rr-edit-runs.js";
 import { type RrClaim, type RrRunOwner, RrRunQueue } from "../../../src/engine/rr/rr-run-queue.js";
+import { RrRunSlots } from "../../../src/engine/rr/rr-run-slots.js";
 import type { RrRun, RrRunOutcome } from "../../../src/engine/rr/rr-runner.js";
 
 const QUIET_MS = 10_000;
@@ -129,5 +131,61 @@ describe("a checkout's queue of .rerail runs after edits", () => {
     queue.leave(second);
     expect(signal.aborted).toBe(true);
     expect(second.outcomes).toHaveLength(1);
+  });
+});
+
+describe("a checkout's queue when an owner fails", () => {
+  it("settles every other owner's claim when one owner's settle throws, and leaves no rejection unhandled", async () => {
+    const runner = heldRunner();
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.run);
+    const failing: RrRunOwner = { claim: () => ({ policies: ["/rules/a.rerail"], settle: () => { throw new Error("the audit store is closed"); } }) };
+    const other = new Owner("/rules/b.rerail");
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      queue.want(failing);
+      other.write(queue, "b.py");
+      queue.flush();
+      await vi.advanceTimersByTimeAsync(0);
+      runner.runs[0]!.end(COMPLETED);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(other.outcomes).toEqual([COMPLETED]);
+      // The next write runs: the queue is not left holding a run that never ended.
+      other.write(queue, "c.py");
+      queue.flush();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.runs).toHaveLength(2);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
+  });
+});
+
+describe("the .rerail runs of one process", () => {
+  it("start one child at a time, the next once the one before ends, and drop a run aborted while it waits", async () => {
+    const runner = heldRunner();
+    const slots = new RrRunSlots(runner.run);
+    const first = slots.run({ root: "/a", policies: ["/rules/a.rerail"] });
+    const waiting = new AbortController();
+    const dropped = slots.run({ root: "/b", policies: ["/rules/b.rerail"], signal: waiting.signal });
+    const third = slots.run({ root: "/c", policies: ["/rules/c.rerail"] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.runs.map(({ run }) => run.root)).toEqual(["/a"]);
+    waiting.abort();
+    expect(await dropped).toEqual({ status: "killed", reason: "aborted", wallMs: 0, peakRssBytes: 0 });
+    runner.runs[0]!.end(COMPLETED);
+    expect(await first).toEqual(COMPLETED);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runner.runs.map(({ run }) => run.root)).toEqual(["/a", "/c"]);
+    runner.runs[1]!.end(COMPLETED);
+    expect(await third).toEqual(COMPLETED);
+  });
+});
+
+describe("the quiet period's setting", () => {
+  it("refuses a value past the longest delay a timer keeps, which would start every run at once", () => {
+    expect(() => editRunTiming({ RERAIL_RR_QUIET_MS: "9999999999" })).toThrow(/RERAIL_RR_QUIET_MS is "9999999999": .* from 1 to 2147483647/u);
+    expect(editRunTiming({ RERAIL_RR_QUIET_MS: "2147483647" }).quietMs).toBe(2_147_483_647);
   });
 });

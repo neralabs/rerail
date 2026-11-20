@@ -104,7 +104,9 @@ export class CheckoutRerailRuns {
 
   /**
    * The audit's results with its `.rerail` run's, once that run has ended: a paged audit gets them as one more page
-   * (`appendPage`), any other in its `violations`; both count their failures.
+   * (`appendPage`), any other in its `violations`; both count their failures. The run stays this object's until it
+   * ends, so `close()` stops it while the audit waits for it; the audit then ends interrupted (`RrAuditRun.results`
+   * throws).
    */
   async withAuditResults<T extends StreamedAuditResults>(
     auditId: string | undefined,
@@ -113,15 +115,18 @@ export class CheckoutRerailRuns {
   ): Promise<T> {
     const run = auditId === undefined ? undefined : this.#audits.get(auditId);
     if (run === undefined) return streamed;
-    this.#audits.delete(auditId!);
-    const added = await run.results();
+    let added: RrAuditResults;
+    try {
+      added = await run.results();
+    } finally {
+      this.#audits.delete(auditId!);
+    }
     const failures = [...streamed.failures, ...added.failures];
     const violationCount = streamed.violationCount + added.violations.length;
     if (!streamed.paged) return { ...streamed, violations: [...streamed.violations, ...added.violations], failures, violationCount };
     appendPage(streamed.pageCount, added);
     return { ...streamed, failures, violationCount, pageCount: streamed.pageCount + 1 };
   }
-
   /** The audit ended without its results (it failed): its `.rerail` run is killed. */
   abandonAudit(auditId: string | undefined): void {
     if (auditId === undefined) return;

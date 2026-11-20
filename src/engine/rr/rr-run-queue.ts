@@ -9,7 +9,8 @@
  * newer edits made stale: the run reads its owners' edits only when it starts.
  */
 import { resolve } from "node:path";
-import { type RrRun, type RrRunOutcome, runRerailPolicies } from "./rr-runner.js";
+import type { RrRun, RrRunOutcome } from "./rr-runner.js";
+import { runInTurn } from "./rr-run-slots.js";
 
 /** What an owner hands a run as it starts: the policies its files need, and where the run's outcome goes. */
 export interface RrClaim {
@@ -54,7 +55,7 @@ export class RrRunQueue {
   /** Set when the turn ended with work waiting: the next run starts without waiting for quiet. */
   #flushed = false;
 
-  constructor(root: string, timing: RrRunTiming, run: (run: RrRun) => Promise<RrRunOutcome> = runRerailPolicies) {
+  constructor(root: string, timing: RrRunTiming, run: (run: RrRun) => Promise<RrRunOutcome> = runInTurn) {
     this.#root = root;
     this.#timing = timing;
     this.#run = run;
@@ -106,28 +107,52 @@ export class RrRunQueue {
   /** Starts a run with the claims of every waiting owner that still has work; none when no owner has. */
   #startNext(): void {
     this.#timer = undefined;
-    const claims = new Map<RrRunOwner, RrClaim>();
-    for (const owner of this.#waiting) {
-      const claim = owner.claim();
-      if (claim !== undefined) claims.set(owner, claim);
-    }
+    const claims = this.#claims();
     this.#waiting.clear();
     this.#flushed = false;
     if (claims.size === 0) return;
     const running = { claims, controller: new AbortController() };
     this.#running = running;
-    void this.#runOnce(running).finally(() => {
-      this.#running = undefined;
-      this.#schedule();
-    });
+    void this.#runOnce(running)
+      .catch(error => report("a .rerail run after edits failed", error))
+      .finally(() => {
+        this.#running = undefined;
+        this.#schedule();
+      });
+  }
+
+  /** What each waiting owner hands the run; an owner whose claim throws is left out of it, its error logged. */
+  #claims(): Map<RrRunOwner, RrClaim> {
+    const claims = new Map<RrRunOwner, RrClaim>();
+    for (const owner of this.#waiting) {
+      try {
+        const claim = owner.claim();
+        if (claim !== undefined) claims.set(owner, claim);
+      } catch (error) {
+        report("a session's edits could not join a .rerail run", error);
+      }
+    }
+    return claims;
   }
 
   async #runOnce(running: Running): Promise<void> {
     const policies = [...new Set([...running.claims.values()].flatMap(claim => claim.policies))].sort();
     const run = { root: this.#root, policies, deadlineMs: this.#timing.deadlineMs, signal: running.controller.signal };
     const outcome = await this.#run(run).catch((error: unknown): RrRunOutcome => ({ status: "failed", message: String(error) }));
-    for (const claim of running.claims.values()) claim.settle(outcome);
+    // Each claim settles on its own: one that throws leaves the others' audits to finish.
+    for (const claim of running.claims.values()) {
+      try {
+        claim.settle(outcome);
+      } catch (error) {
+        report("a .rerail run's outcome was not recorded", error);
+      }
+    }
   }
+}
+
+/** Writes `what` and `error` to the daemon's log. */
+function report(what: string, error: unknown): void {
+  process.stderr.write(`rerail: ${what}: ${error instanceof Error ? error.message : String(error)}\n`);
 }
 
 const queues = new Map<string, RrRunQueue>();

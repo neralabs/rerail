@@ -15,6 +15,7 @@ import { isSourceGap, type AuditRecorder, type AuditInput, type AuditResult } fr
 import { defaultRerailDatabasePath } from "../../../src/engine/storage/database.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type { CodeRuleEdit, SteerMetadata } from "../../../src/engine/code-rule/code-rule.js";
+import type { CodeRuleDslCatalog, RerailRuleEntry } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { AUDIT_MAX_SOURCE_BYTES, MAX_SOURCE_BYTES, modulePath, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { SOURCE_LANGUAGES } from "../../../src/engine/code-rule/code-rule-languages.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
@@ -1435,6 +1436,44 @@ describe("mechanical code rule regressions", () => {
       expect(ongoing.map(auditId => audits.get(auditId)?.origin)).toEqual(ongoing.map(() => "ongoing"));
       expect([repositoryScan, pathScan].map(auditId => audits.get(auditId!)?.origin)).toEqual(["scan", "scan"]);
       expect(audits.get(pathScan!)?.result?.violations).toEqual([expect.objectContaining({ path: "api/a.py", code: "NEEDLE" })]);
+    } finally { await enforcer.close(); }
+  });
+
+  it("starts no repository audit for a write only a .rerail rule takes, in repository scope", async () => {
+    const { recorder, audits } = recordingAudits();
+    const root = await mkdtemp(join(tmpdir(), "rerail-enforcer-"));
+    roots.push(root);
+    const capabilitiesPath = join(root, "capabilities.json");
+    await writeFile(capabilitiesPath, await readFile(join(bundledCodeRuleDslDirectory(), "capabilities.json")));
+    const json = testCodeRuleCatalog([needleCodeRule(1)], capabilitiesPath);
+    const rerailRule: RerailRuleEntry = {
+      id: "rr-lib-rule", path: join(root, "rr-lib-rule.rerail"), placement: [{ folder: "", mode: "steer" }],
+      scope: { include: ["lib/**/*.py"], exclude: [] }, language: "python",
+      provenance: { ruleId: "rr-lib-rule", revision: 1, payloadHash: "hash", source: { kind: "pack", id: "rr", packId: "rr" }, repositoryKey: "repository", checkoutPath: root, placement: [] },
+    };
+    // The JSON rule reads `api/**`; the `.rerail` rule alone takes `lib/**`.
+    const catalog: CodeRuleDslCatalog = {
+      get status() { return json.status; },
+      snapshot: () => ({ ...json.snapshot(), rerailRules: [rerailRule] }),
+      provenance: () => json.provenance(),
+      quarantined: () => json.quarantined(),
+      refresh: () => json.refresh(),
+    };
+    const enforcer = new NativeCodeRuleEnforcer(catalog, {
+      workspaceRoot: root, steerDelivery: { requestSteer: async () => undefined }, audits: recorder, scope: "repository", mode: "steer",
+    });
+    try {
+      await mkdir(join(root, "lib"));
+      await writeFile(join(root, "lib", "report.py"), "assert True\n");
+      await enforcer.openWorkspace("rerail-only-write");
+      expect(enforcer.acceptsPath("lib/report.py")).toBe(true);
+      await enforcer.auditGeneratedEdits("rerail-only-write", {
+        revision: 1,
+        checkpoints: ["edit"],
+        edits: [{ path: "lib/report.py", language: "python", generatedText: "assert True\n" }],
+      });
+      await enforcer.settleGeneratedEdits();
+      expect([...audits.values()].filter(audit => audit.scope === "repository" && audit.origin === "ongoing")).toEqual([]);
     } finally { await enforcer.close(); }
   });
 

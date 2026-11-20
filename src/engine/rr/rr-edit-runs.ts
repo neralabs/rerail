@@ -34,12 +34,19 @@ const EDIT_RUN_DEADLINE_MS = 5 * 60_000;
  */
 const EDIT_RUN_QUIET_MS = 10_000;
 
-/** When the runs after edits start and how long each may take; `RERAIL_RR_QUIET_MS` (milliseconds) replaces the quiet period. Throws for a value that is no positive whole number. */
+/** The longest delay a Node timer keeps (2^31 - 1 ms, about 24.8 days); a longer one fires at once. */
+const LONGEST_TIMER_MS = 2_147_483_647;
+
+/**
+ * When the runs after edits start and how long each may take; `RERAIL_RR_QUIET_MS` (milliseconds) replaces the quiet
+ * period. Throws for a value that is no whole number from 1 to `LONGEST_TIMER_MS`.
+ */
 export function editRunTiming(environment: NodeJS.ProcessEnv = process.env): RrRunTiming {
   const text = environment.RERAIL_RR_QUIET_MS;
   if (text === undefined || text === "") return { deadlineMs: EDIT_RUN_DEADLINE_MS, quietMs: EDIT_RUN_QUIET_MS };
   const quietMs = Number(text);
-  if (!Number.isSafeInteger(quietMs) || quietMs <= 0) throw new Error(`RERAIL_RR_QUIET_MS is ${JSON.stringify(text)}: it takes a positive whole number`);
+  if (!Number.isSafeInteger(quietMs) || quietMs <= 0 || quietMs > LONGEST_TIMER_MS)
+    throw new Error(`RERAIL_RR_QUIET_MS is ${JSON.stringify(text)}: it takes a whole number of milliseconds from 1 to ${LONGEST_TIMER_MS}`);
   return { deadlineMs: EDIT_RUN_DEADLINE_MS, quietMs };
 }
 

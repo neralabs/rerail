@@ -6,6 +6,10 @@ import { availableParallelism, totalmem } from "node:os";
  *
  * The figures below are the Django pack's (27 rules) with no store, on 16 threads, a full run each time: 15 s and
  * 0.8 GB on a 229-file project, 123 s and 4.7 GB on a 1,300-file one, 251 s and 7.7 GB on a 4,500-file one.
+ *
+ * The budgets are one child's, and one child runs at a time in a process (`rr-run-slots.ts`): every checkout's runs
+ * after edits and every audit's run take turns. So a process's `.rerail` runs take at most half the memory and half
+ * the cores together. A headless `rerail scan` is a process of its own, beside the daemon's.
  */
 export interface RrBudgets {
   /** Wall time, from the child's start. */

@@ -193,4 +193,20 @@ describe("an audit's .rerail run", () => {
     run.start();
     expect((await run.results()).violations.map(violation => violation.path)).toEqual(["src/a.py"]);
   });
+
+  it("kills its child when stopped while the audit waits for it, and gives the audit no results to record as complete", async () => {
+    const assert = rule("rr-sample-assert", [{ folder: "", mode: "steer" }]);
+    let signal: AbortSignal | undefined;
+    const run = new RrAuditRun({ root, rules: [assert], paths: undefined, nestedCheckouts: [] }, request => {
+      signal = request.signal;
+      const { promise, resolve } = Promise.withResolvers<RrRunOutcome>();
+      request.signal?.addEventListener("abort", () => resolve({ status: "killed", reason: "aborted", wallMs: 1, peakRssBytes: 1 }));
+      return promise;
+    });
+    run.start();
+    const results = run.results();
+    run.abort();
+    expect(signal?.aborted).toBe(true);
+    await expect(results).rejects.toThrow("its session closed");
+  });
 });

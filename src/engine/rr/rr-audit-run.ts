@@ -9,7 +9,9 @@ import type { AuditFailure, RepositoryAuditRuleProvenance } from "../audit/audit
 import { folderContains } from "../catalog/repository-model.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
-import { type RrRun, type RrRunOutcome, runRerailPolicies } from "./rr-runner.js";
+import type { RrRun, RrRunOutcome } from "./rr-runner.js";
+import { leftRun } from "./rr-run-queue.js";
+import { runInTurn } from "./rr-run-slots.js";
 import { insideAny } from "./rr-rule-scope.js";
 import { rrRunFailures, rrStoppedFailures, rrViolations } from "./rr-violations.js";
 
@@ -42,7 +44,7 @@ export class RrAuditRun {
   readonly #controller = new AbortController();
   #outcome: Promise<RrRunOutcome> | undefined;
 
-  constructor(request: RrAuditRequest, run: (run: RrRun) => Promise<RrRunOutcome> = runRerailPolicies) {
+  constructor(request: RrAuditRequest, run: (run: RrRun) => Promise<RrRunOutcome> = runInTurn) {
     this.#request = request;
     this.#rules = request.rules.filter(isOn);
     this.#run = run;
@@ -69,10 +71,14 @@ export class RrAuditRun {
     this.#controller.abort();
   }
 
-  /** The run's violations in the audited files and its rules' failures, once it has ended. */
+  /**
+   * The run's violations in the audited files and its rules' failures, once it has ended. Throws for a run stopped
+   * because its session closed: it has no results, and its audit ends interrupted, not completed.
+   */
   async results(): Promise<RrAuditResults> {
     this.start();
     const outcome = await this.#outcome!;
+    if (leftRun(outcome)) throw new Error("The .rerail run was stopped: its session closed");
     if (outcome.status !== "completed") return { violations: [], failures: rrStoppedFailures(outcome, this.#rules, undefined) };
     const violations = rrViolations(outcome.findings, this.#rules, path => this.#audits(path));
     return { violations, failures: rrRunFailures(outcome.failures, this.#rules) };

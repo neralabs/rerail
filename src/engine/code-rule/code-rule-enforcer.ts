@@ -1055,10 +1055,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return withinCheckout(this.#workspaceRoot, resolve(this.#workspaceRoot, path)) && !this.ignoresPath(path, false);
   }
 
-  /** In repository scope, a batch with edits audits the whole checkout again. */
+  /**
+   * In repository scope, a batch with an edit a code rule of the native workspace reads audits the whole checkout
+   * again. An edit only a `.rerail` rule takes starts no native audit: its run after edits covers it.
+   */
   #auditRepositoryEdits(batch: CodeRuleEditBatch, mode: AuditMode): CodeRuleResponse {
-    if (batch.edits.length > 0) {
-      for (const edit of batch.edits) this.#versions.set(edit.path, batch.revision);
+    for (const edit of batch.edits) this.#versions.set(edit.path, batch.revision);
+    if (batch.edits.some(edit => this.#readsPath(edit.path))) {
       const task = this.#runScopeAudit({ scope: "repository", mode, paths: [], generatedEdit: true, reached: [], origin: "ongoing" });
       this.#trackAudit(task, true);
     }
