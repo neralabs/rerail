@@ -606,6 +606,13 @@ impl Found<'_> {
                             let last = lines.count().max(line);
                             let (body, end) = lines.text(source, last);
                             Span::NoColumn(last, body.len() + end.len().max(1))
+                        } else if let Some(next) = dedented_next(tokens, self.at) {
+                            // The `!INDENT` lookahead read a `DEDENT` (no column): the cursor past the next line's
+                            // indentation, on the line of its first token (blank lines and comments are no line to
+                            // the tokenizer's indentation).
+                            let next_line = lines.line(next);
+                            let (body, _) = lines.text(source, next_line);
+                            Span::NoColumn(next_line, body.len() - body.trim_start_matches([' ', '\t', '\x0c']).len())
                         } else {
                             Span::token(tokens, self.at, self.end)
                         };
@@ -620,6 +627,31 @@ impl Found<'_> {
                         let (body, _) = lines.text(source, line);
                         let span = Span::NoColumn(line, body.len() - body.trim_start_matches([' ', '\t', '\x0c']).len());
                         named(span, if kind == TokenKind::Indent { "unexpected indent" } else { "unexpected unindent" }.into())
+                    }
+                    // `invalid_try_stmt`'s `RAISE_SYNTAX_ERROR`, at the last token read (`p->tokens[p->fill - 1]`): the
+                    // `DEDENT` before the statement after the block, or the end of the file, neither with a column.
+                    None if msg == "Expected `except` or `finally` after `try` block" => {
+                        let msg = "expected 'except' or 'finally' block".to_owned();
+                        // Ruff's `DEDENT`s start where the next statement does: any since the last line end, up to `at`.
+                        let dedented = tokens
+                            .iter()
+                            .take_while(|t| t.start() <= self.at)
+                            .filter(|t| !t.kind().is_trivia())
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .take_while(|t| t.kind() != TokenKind::Newline)
+                            .any(|t| t.kind() == TokenKind::Dedent);
+                        if at_eof {
+                            let last = lines.count().max(line);
+                            let (body, end) = lines.text(source, last);
+                            named(Span::NoColumn(last, body.len() + end.len().max(1)), msg)
+                        } else if dedented {
+                            let (body, _) = lines.text(source, line);
+                            named(Span::NoColumn(line, body.len() - body.trim_start_matches([' ', '\t', '\x0c']).len()), msg)
+                        } else {
+                            named(node, msg)
+                        }
                     }
                     None => match other_message(msg) {
                         Some(m) => named(node, m.into()),
@@ -989,8 +1021,6 @@ fn other_message(ruff: &str) -> Option<&'static str> {
         | "Only one '*' parameter allowed"
         | "Keyword-only parameter separator not allowed after '*' parameter" => "* argument may appear only once",
         "'/' parameter must appear before '*' parameter" => "/ must be ahead of *",
-        // `invalid_try_stmt`: a `try` block with no handler after it.
-        "Expected `except` or `finally` after `try` block" => "expected 'except' or 'finally' block",
         "Only single target (not tuple) can be annotated" => "only single target (not tuple) can be annotated",
         "Only single target (not list) can be annotated" => "only single target (not list) can be annotated",
         _ => return None,
@@ -998,6 +1028,14 @@ fn other_message(ruff: &str) -> Option<&'static str> {
 }
 
 /// Whether the token before `at` is a function's name: `def NAME` (`async def` too).
+/// Where the header at `at` is followed by a `DEDENT`: the start of the first token after it.
+fn dedented_next(tokens: &Tokens, at: TextSize) -> Option<TextSize> {
+    let mut after = tokens.iter().filter(|t| t.start() >= at && !t.kind().is_trivia() && t.kind() != TokenKind::NonLogicalNewline);
+    after.find(|t| t.kind() == TokenKind::Newline)?;
+    let mut after = after.peekable();
+    (after.peek()?.kind() == TokenKind::Dedent).then(|| after.find(|t| t.kind() != TokenKind::Dedent)).flatten().map(|t| t.start())
+}
+
 /// Whether the statement `at` is in forces its `:` (`def`, `for`, `try`, `finally`, `else`; `async` passed over): its
 /// first token after the last line boundary (`Newline`, `Indent`, `Dedent`) before `at`.
 fn colon_forced(tokens: &Tokens, at: TextSize) -> bool {

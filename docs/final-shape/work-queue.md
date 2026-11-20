@@ -8218,7 +8218,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **State** (2026-11-20, the merge into Typing-support): the rewrite is a step on the version there (0506, item 1):
   the tree forms are gone, so it was ported, its five tests with it. Its pricing is as open as before.
 
-### Q391. (Q389 on Typing-support until 2026-11-20) `cpython::syntax`'s line and message where Ruff recovers otherwise than CPython
+### Q391. Done: (Q389 on Typing-support until 2026-11-20) `cpython::syntax`'s line and message where Ruff recovers otherwise than CPython
 
 - **Found** (2026-11-20, Q360): on 1,680 seeded mutants of corpus0's Python files (truncated, a character dropped,
   a bracket, quote, backslash, `$`, tab or newline put in, a line's indentation changed), CPython 3.13 rejects 851.
@@ -8230,3 +8230,25 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   and follow CPython's choice in each class of difference, as `syntax_error` already does for tokenizer errors and
   brackets left open.
 - **Done when**: line and message agree on the mutants but for differences named APPROX with their count.
+- **Done** (2026-11-20, Typing-support): on the same 1,680 mutants (851 CPython 3.13 rejects) the line agrees on
+  844 (792), the message on 821 (746), and offset, text and end on 816 of the 820 where both agree; the fixtures
+  stay 152 of 152 on every field. Each change follows CPython 3.13's parser:
+  - `_PyPegen_set_syntax_error`'s scan after any parser error: a later tokenizer error wins only if it raises (not a
+    bad dedent or a line continuation's, which end the scan); a bracket open since an earlier line wins over named
+    errors too; an INDENT or DEDENT the first pass failed at ("unexpected indent", "unexpected unindent", a
+    decorator's line among them) has no scan.
+  - Forced tokens: `def NAME` without `(` is "expected '('"; "expected ':'" only in `def`, `for`, `try`,
+    `finally`, `else`, or where a NEWLINE follows the header.
+  - Places: a missing block after a header the next line dedents from, and a `try` without a handler, are at the
+    `DEDENT` (no column) or the file's end; a mismatched closing bracket names its opening's line.
+- **APPROX** (the 30 messages and 7 lines left, each a single file or a few): f-string errors CPython's tokenizer
+  names (`f-string: expecting '}'`, `f-string: unmatched ')'`) where Ruff reports an unterminated f-string or a
+  bracket (8 messages); a number CPython's tokenizer refuses where Ruff reads on (`invalid decimal literal`,
+  `leading zeros in decimal integer literals`: 3 messages, 3 lines); Ruff's "Perhaps you forgot a comma?" or
+  "positional argument follows keyword argument" where CPython's first pass fails earlier or a bracket wins
+  (7); `'(' was never closed` against `invalid syntax` either way (5), at a bracket CPython's scan reads otherwise;
+  an `expected ':'` CPython's forced token gives at a `$` or after a missing expression (5); a dict's missing
+  value (`expression expected after dictionary key and ':'`, 1); a generator expression in a bracket never closed
+  (1). Offsets: 4 (a text's line end, two columns of a `,` and a comment).
+- **Next, if wanted**: the numbers (CPython's `verify_end_of_number` and its leading-zero check) are tokenizer
+  errors, and the f-string ones are its f-string mode's: both are the tokenizer's own, as `Brackets::scan` is.
