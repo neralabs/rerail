@@ -1,5 +1,9 @@
 #[path = "../../../src/code_rule_dsl/logic/native/setfix/sketch.rs"]
 mod sketch;
+/// The block arrays a sketch keeps (decision 0450 step 6c).
+mod rows {
+    pub use rerail_facts::code_rule_dsl::facts::rows::BlockVec;
+}
 #[test]
 fn compact_integer_domains_keep_exact_counts_past_64_distinct_values() {
     let mut s=sketch::Sketch::default();

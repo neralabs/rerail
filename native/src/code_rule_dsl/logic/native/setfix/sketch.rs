@@ -8,8 +8,17 @@
 const SMALL: usize = 64;
 const REGISTERS: usize = 256;
 const DENSE_WIDTH: usize = 4096;
+use super::rows::BlockVec;
+
+/// `n` zeros in a block (decision 0450 step 6c: a sketch's arrays are block arrays, not the heap's).
+fn zeros<T: rerail_blocks::Pod + Copy + Default>(n: usize) -> BlockVec<T> {
+    let mut v = BlockVec::new();
+    v.resize(n, T::default());
+    v
+}
+
 #[derive(Clone)]
-struct Dense { base:i64, counts:Box<[u32;DENSE_WIDTH]>, ndv:usize, sq:u64 }
+struct Dense { base:i64, counts:BlockVec<u32>, ndv:usize, sq:u64 }
 impl Dense {
     fn add(&mut self, v:i64)->bool {
         let Some(i)=v.checked_sub(self.base).and_then(|n|usize::try_from(n).ok()).filter(|&i|i<DENSE_WIDTH) else {return false};
@@ -23,34 +32,79 @@ impl Dense {
 
 const LABEL_LIMIT:i64=1_i64<<32;
 const SPARSE_LIMIT:usize=1024;
+/// Slots of a sparse sketch's counts at most: twice its values, a power of two. It starts at `SPARSE_FIRST` and
+/// doubles while its values pass half its slots.
+const SPARSE_SLOTS:usize=2*SPARSE_LIMIT;
+const SPARSE_FIRST:usize=128;
+/// An empty slot's value (a sparse sketch's values are in `0..LABEL_LIMIT`).
+const NO_VALUE:i64=-1;
+/// A label set's exact counts, open addressing in a block: each slot `[value, rows]`, `[NO_VALUE, 0]` for none.
 #[derive(Clone)]
-struct Sparse { counts:std::collections::HashMap<i64,u32>, sq:u64 }
+struct Sparse { slots:BlockVec<[i64;2]>, len:usize, sq:u64 }
 impl Sparse {
+    fn slot(&self, v:i64)->usize {
+        let m=self.slots.len()-1;
+        let mut at=(mix(v) as usize)&m;
+        while self.slots[at][0]!=NO_VALUE && self.slots[at][0]!=v {at=(at+1)&m;}
+        at
+    }
+    /// Room for one more value: its slots doubled, each entry placed again, while its values pass half of them.
+    fn room(&mut self) {
+        if 2*(self.len+1)<=self.slots.len() || self.slots.len()>=SPARSE_SLOTS {return;}
+        let mut grown=Self {slots:BlockVec::new(),len:0,sq:self.sq};
+        grown.slots.resize(self.slots.len()*2,[NO_VALUE,0]);
+        for e in self.slots.iter().filter(|e| e[0]!=NO_VALUE) {
+            let at=grown.slot(e[0]);
+            grown.slots[at]=*e;
+            grown.len+=1;
+        }
+        *self=grown;
+    }
     fn from_counts(values:impl IntoIterator<Item=(i64,u32)>)->Self {
-        let counts:std::collections::HashMap<_,_>=values.into_iter().collect();
-        let sq=counts.values().map(|&n|u64::from(n).pow(2)).sum();
-        Self {counts,sq}
+        let mut s=Self {slots:BlockVec::new(),len:0,sq:0};
+        s.slots.resize(SPARSE_FIRST,[NO_VALUE,0]);
+        for (v,n) in values {
+            s.room();
+            let at=s.slot(v);
+            if s.slots[at][0]==NO_VALUE {s.len+=1;}
+            s.slots[at]=[v,i64::from(n)];
+            s.sq+=u64::from(n).pow(2);
+        }
+        s
     }
     fn add(&mut self,v:i64)->bool {
-        if !(0..LABEL_LIMIT).contains(&v) || (self.counts.len()>=SPARSE_LIMIT && !self.counts.contains_key(&v)) {return false;}
-        let n=self.counts.entry(v).or_default();self.sq+=2*u64::from(*n)+1;*n+=1;true
+        if !(0..LABEL_LIMIT).contains(&v) {return false;}
+        if self.len>=SPARSE_LIMIT && self.slots[self.slot(v)][0]==NO_VALUE {return false;}
+        self.room();
+        let at=self.slot(v);
+        if self.slots[at][0]==NO_VALUE {
+            self.slots[at]=[v,0];
+            self.len+=1;
+        }
+        let n=self.slots[at][1] as u64;
+        self.sq+=2*n+1;
+        self.slots[at][1]+=1;
+        true
+    }
+    fn counts(&self)->impl Iterator<Item=(i64,u32)>+'_ {
+        self.slots.iter().filter(|e| e[0]!=NO_VALUE).map(|e|(e[0],e[1] as u32))
     }
 }
 
 #[derive(Clone)]
 pub(super) struct Sketch {
-    registers: Box<[u8; REGISTERS]>,
-    counters: Box<[i32; REGISTERS]>,
+    registers: BlockVec<u8>,
+    counters: BlockVec<i32>,
     rows: u64,
-    /// Each value's rows while there are at most `SMALL` values.
-    small: Option<Vec<(i64, u32)>>,
+    /// Each value's rows (`[value, rows]`) while there are at most `SMALL` values.
+    small: Option<BlockVec<[i64; 2]>>,
     dense: Option<Dense>,
     sparse: Option<Sparse>,
 }
 
 impl Default for Sketch {
     fn default() -> Sketch {
-        Sketch { registers: Box::new([0; REGISTERS]), counters: Box::new([0; REGISTERS]), rows: 0, small: Some(Vec::new()), dense:None, sparse:None }
+        Sketch { registers: zeros(REGISTERS), counters: zeros(REGISTERS), rows: 0, small: Some(BlockVec::new()), dense:None, sparse:None }
     }
 }
 
@@ -86,21 +140,21 @@ impl Sketch {
                 self.dense=None;
             }
         } else if let Some(small) = &mut self.small {
-            if let Some(e) = small.iter_mut().find(|(x, _)| *x == v) {
-                e.1 += 1;
+            if let Some(e) = small.iter_mut().find(|e| e[0] == v) {
+                e[1] += 1;
             } else if small.len() < SMALL {
-                small.push((v, 1));
+                small.push([v, 1]);
             } else {
                 // Retain bounded label domains beyond SMALL without linear searches.
                 // Large identity columns retain the fixed-size sketch fallback.
                 let base=v & !((DENSE_WIDTH as i64)-1);
-                if (0..LABEL_LIMIT).contains(&v) && small.iter().all(|(x,_)| *x>=base && *x-base<DENSE_WIDTH as i64) {
-                    let mut dense=Dense {base,counts:Box::new([0;DENSE_WIDTH]),ndv:small.len(),sq:0};
-                    for &(x,n) in small.iter() {dense.counts[(x-base) as usize]=n;dense.sq+=u64::from(n).pow(2);}
+                if (0..LABEL_LIMIT).contains(&v) && small.iter().all(|e| e[0]>=base && e[0]-base<DENSE_WIDTH as i64) {
+                    let mut dense=Dense {base,counts:zeros(DENSE_WIDTH),ndv:small.len(),sq:0};
+                    for &[x,n] in small.iter() {dense.counts[(x-base) as usize]=n as u32;dense.sq+=(n as u64).pow(2);}
                     dense.add(v);
                     self.dense=Some(dense);
-                } else if (0..LABEL_LIMIT).contains(&v) && small.iter().all(|(x,_)|(0..LABEL_LIMIT).contains(x)) {
-                    let mut sparse=Sparse::from_counts(small.iter().copied());sparse.add(v);self.sparse=Some(sparse);
+                } else if (0..LABEL_LIMIT).contains(&v) && small.iter().all(|e|(0..LABEL_LIMIT).contains(&e[0])) {
+                    let mut sparse=Sparse::from_counts(small.iter().map(|e|(e[0],e[1] as u32)));sparse.add(v);self.sparse=Some(sparse);
                 }
                 self.small = None;
             }
@@ -109,7 +163,7 @@ impl Sketch {
 
     /// Distinct values.
     pub(super) fn ndv(&self) -> usize {
-        if let Some(s)=&self.sparse {return s.counts.len();}
+        if let Some(s)=&self.sparse {return s.len;}
         if let Some(d)=&self.dense {return d.ndv;}
         if let Some(small) = &self.small {
             return small.len();
@@ -127,27 +181,41 @@ impl Sketch {
         if let Some(s)=&self.sparse {return s.sq;}
         if let Some(d)=&self.dense {return d.sq;}
         if let Some(small) = &self.small {
-            return small.iter().map(|&(_, n)| u64::from(n) * u64::from(n)).sum();
+            return small.iter().map(|e| (e[1] as u64) * (e[1] as u64)).sum();
         }
         let est: f64 = self.counters.iter().map(|&c| (c as f64) * (c as f64)).sum();
         // At least a row a value, at most every row one value.
         (est.round() as u64).clamp(self.rows, self.rows * self.rows)
     }
 
-    pub(super) fn exact_counts(&self) -> Option<std::borrow::Cow<'_,[(i64,u32)]>> {
-        if let Some(s)=&self.small {return Some(std::borrow::Cow::Borrowed(s));}
-        if let Some(s)=&self.sparse {return Some(std::borrow::Cow::Owned(s.counts.iter().map(|(&v,&n)|(v,n)).collect()));}
-        self.dense.as_ref().map(|d|std::borrow::Cow::Owned(d.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|(d.base+i as i64,n)).collect()))
+    /// Each value's rows, while they are exact: read from the sketch's arrays.
+    pub(super) fn exact_counts(&self) -> Option<Vec<(i64,u32)>> {
+        if let Some(s)=&self.small {return Some(s.iter().map(|e|(e[0],e[1] as u32)).collect());}
+        if let Some(s)=&self.sparse {return Some(s.counts().collect());}
+        self.dense.as_ref().map(|d|d.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|(d.base+i as i64,n)).collect())
     }
 
     pub(super) fn bytes(&self) -> usize {
-        self.sparse.as_ref().map_or(0,|s|s.counts.capacity()*24) + self.dense.as_ref().map_or(0,|_|DENSE_WIDTH*4) + REGISTERS * 5 + self.small.as_ref().map_or(0, |s| s.capacity() * 16)
+        self.sparse.as_ref().map_or(0,|s|s.slots.len()*16) + self.dense.as_ref().map_or(0,|_|DENSE_WIDTH*4) + REGISTERS * 5 + self.small.as_ref().map_or(0, |s| s.capacity() * 16)
     }
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// Decision 0450 step 6c: a sketch's arrays (registers, counters, exact counts in each form) are block arrays.
+    #[test]
+    fn a_sketchs_arrays_are_in_blocks() {
+        let mut s = Sketch::default();
+        assert!(s.registers.facts().is_some() && s.counters.facts().is_some());
+        for i in 0..100 { s.add(i); }
+        assert!(s.dense.as_ref().is_some_and(|d| d.counts.facts().is_some()), "a page of counts");
+        let mut t = Sketch::default();
+        for i in 0..100 { t.add(i * 9_999); }
+        assert!(t.sparse.as_ref().is_some_and(|x| x.slots.facts().is_some() && x.len == 100), "a label set's slots");
+        assert_eq!(t.ndv(), 100);
+    }
 
     #[test]
     fn sketches_estimate_distinct_values_and_squares() {

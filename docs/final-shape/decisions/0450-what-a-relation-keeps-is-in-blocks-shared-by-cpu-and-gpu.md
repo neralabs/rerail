@@ -519,3 +519,16 @@ sort again).
   scalar summaries' memo answers its count first, decision 0100, open).
 - hogql builds no count table. CPU 83.7-87.1 B against 6a's 84.6-88.9 B at load 39-59 (noisy). Metal 75.5-77.1 B;
   one run of 3 lost a chunk (1,487: Q262, older than this work).
+
+## Built (2026-11-19, step 6c: the sketches' arrays in blocks)
+
+- A column's sketch (`setfix::sketch::Sketch`, decision 0112) keeps its arrays in blocks (`BlockVec`), not on the
+  heap: the HyperLogLog registers, the count sketch's counters, the small exact counts (`[value, rows]`), and a
+  compact label page's counts. A sparse label set's counts were a `HashMap`. They are now open addressing in a block
+  (`[value, rows]` slots, `-1` empty), starting at 128 slots and doubling to at most 2,048 (1,024 values), so a
+  sketch stays within `bounded_histograms`' bound. A sketch's numbers are the same as before.
+- A maintained relation (`Rel::based`) still starts from a clone of the old relation's sketches. A clone writes its
+  arrays again in a block, as the heap's clone did before, because the new relation adds to them.
+- Tests: `a_sketchs_arrays_are_in_blocks`; the sketch tests (`sketch::tests`, `bounded_histograms`) pass unchanged.
+- hogql cold, profiling, format 15, load 27-38: CPU 83.6-84.8 B against 6b's 83.7-84.8 B; peak 372-410 MB against
+  326-401 MB. Metal 74.9-78.6 B, 1,629 in each of 3 runs.
