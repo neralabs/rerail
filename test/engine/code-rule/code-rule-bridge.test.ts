@@ -4902,6 +4902,41 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(recorded()).toEqual([[[repositoryPath(root, join(worktree, "src", "a.py"))], "log", "repository"]]);
   });
 
+  // A read that gave up on a path (one gone as it looked, perhaps moved) saw none of what was written there: the call
+  // that wrote it claims it at the read that tries again.
+  it("steers the session on its call's shell write in another worktree that the walk at its result gave up on", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const file = join(worktree, "src", "a.py");
+    let gone = false;
+    const view = {
+      acceptsPath: () => true,
+      ignoresPath: (path: string) => {
+        if (gone && resolve(root, path) === file) {
+          gone = false;
+          throw Object.assign(new Error(`ENOENT: gone, lstat '${file}'`), { code: "ENOENT", syscall: "lstat", path: file });
+        }
+        return false;
+      },
+    };
+    const { bridge, auditGeneratedEdits } = await opened(root, { ...extra, walkView: () => view });
+    const recorded = () => auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => `${edit.deleted === true ? "deleted" : "written"} ${edit.path}`), batch.mode, batch.owner]);
+    await bridge.begin("shell-w", "Bash", { command: "./w.sh" }, undefined, worktree);
+    await writeFile(file, "old\nviolation\nother\n");
+    gone = true;
+    await bridge.finish("shell-w");
+    await bridge.settleWorktreeWalk();
+    expect(gone).toBe(false);
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    // The read that gave up took the file as gone, with no stamp of its folder to credit: a deletion no session made.
+    // The read that tries again finds it written while the session's call ran there.
+    expect(recorded()).toEqual([
+      [[`deleted ${repositoryPath(root, file)}`], "log", "repository"],
+      [[`written ${repositoryPath(root, file)}`], undefined, undefined],
+    ]);
+  });
+
   it("records once for the repository, in Log, a shell write in another worktree made by a call that ran elsewhere", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));

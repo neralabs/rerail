@@ -73,6 +73,11 @@ export interface WorktreeFindings {
   readonly listed: ReadonlyMap<string, readonly string[] | undefined>;
   /** Subtrees the walk could not read. */
   readonly failedRoots: ReadonlySet<string>;
+  /**
+   * Whether the read gave up on a path it met (`SourceScan.gaveUp`): a write there may be found only by the read that
+   * tries again, so this one answers for no call's writes.
+   */
+  readonly gaveUp: boolean;
   readonly errors: readonly ScanError[];
   /** The unlisted files it found too large to read, with their stamps. */
   readonly unread: ReadonlyMap<string, { readonly stamp: string; readonly readError: string }>;
@@ -1063,7 +1068,8 @@ export class WorktreeWalks {
       const listed = await listedFor(this.#git, root, begun.firstSeen, scan.checkouts);
       const findings = {
         snapshot, texts, head: read.head, unmerged: read.unmerged, checkouts: scan.checkouts, listed,
-        failedRoots: scan.failedRoots, errors: scan.errors, unread: scan.unread, readFrom: read.observedAt, changes,
+        failedRoots: scan.failedRoots, gaveUp: scan.gaveUp === true, errors: scan.errors, unread: scan.unread, readFrom: read.observedAt,
+        changes,
       };
       return { findings, scan };
     }

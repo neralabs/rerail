@@ -1121,8 +1121,8 @@ interface WalkStart {
   readonly observedAt: number;
   /**
    * Of the walk of the other worktrees, when the read each worktree's findings come from began (`WorktreeFindings.readFrom`),
-   * by the worktree as the session names it: it saw every write of a call that ran there and ended before. Empty for the
-   * session folder's walk.
+   * by the worktree as the session names it: it saw every write of a call that ran there and ended before. None for a
+   * read that gave up on a path (`WorktreeFindings.gaveUp`), and empty for the session folder's walk.
    */
   readonly readFrom: ReadonlyMap<string, number>;
   /**
@@ -3007,7 +3007,7 @@ export class CodeRuleBridge {
     // This read of the session's checkout answers for its calls outside the session folder. It comes only while another
     // session watches the checkout and a read of it finds a change: else such a call waits for the oldest calls to go
     // (`MAX_FINISHED_CALLS`), which costs only its memory, and comes only of a session opened below its checkout's top.
-    if (!watched && findings.failedRoots.size === 0) {
+    if (!watched && findings.failedRoots.size === 0 && !findings.gaveUp) {
       discovery.toolCalls.answeredIn(REST_OF_CHECKOUT, { at: findings.readFrom }, this.#callPlaces(discovery));
     }
     return claimed;
@@ -3080,7 +3080,8 @@ export class CodeRuleBridge {
       const worktree = sessionPath(discovery.root, root);
       if (!start.worktrees.has(worktree)) continue;
       snapshots.set(worktree, findings.snapshot);
-      readFrom.set(worktree, findings.readFrom);
+      // A read that gave up on a path answers for no call's writes there (`#finishWorktreeWalk`).
+      if (!findings.gaveUp) readFrom.set(worktree, findings.readFrom);
       takeCheckouts(root, findings, { heads, unmerged, passed: scan.unmerged });
       this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
     }
