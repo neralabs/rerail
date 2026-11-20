@@ -1077,7 +1077,9 @@ fn token_level_probe() {
     use ::bitlex::syntax::{Arg, Expr, Stmt};
     use rerail_compiler::bitlex_masks as bitlex_compile;
     use std::collections::{HashMap, HashSet};
-    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+    // The crate's grammar, or `RERAIL_KOTLIN_GRAMMAR`'s file (a variant measured without a build).
+    let text = std::env::var("RERAIL_KOTLIN_GRAMMAR").map_or_else(|_| crate::GRAMMAR.to_owned(), |p| std::fs::read_to_string(p).expect("the grammar file"));
+    let stmts = ::bitlex::syntax::parse(&text).expect("parses");
     let mut defs: HashMap<String, Expr> = HashMap::new();
     let mut classes: HashSet<String> = HashSet::new();
     fn walk(s: &[Stmt], defs: &mut HashMap<String, Expr>, classes: &mut HashSet<String>) {
