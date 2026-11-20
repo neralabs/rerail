@@ -6111,16 +6111,17 @@ impl InRel {
         let i = if build { ib.own_index(&key) } else { ib.found_index(&key) }?;
         Some((ib, i))
     }
-    /// An index on `cols` of this view's rows in a block: a home of no columns and the view's row count (as the
-    /// device's view home, `Part::for_device`), its index built from each row's key read through the view. Dead rows
-    /// are in it, as in every block index; a probe skips them by their bits.
+    /// An index on `cols` of this view's rows in a block: a home of no columns and the view's row count, in the run's
+    /// own memory (`Part::for_host`: the CPU builds and probes it, and a host with no device makes it too), its index
+    /// built from each row's key read through the view. Dead rows are in it, as in every block index; a probe skips
+    /// them by their bits.
     fn view_index(&self, cols: &[usize]) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
         if self.view.is_none() || cols.is_empty() || self.len() == 0 {
             return None;
         }
         assert!(cols.len() <= rerail_blocks::relation::MAX_KEY, "a view's key of {} columns", cols.len());
         let n = self.len();
-        let home = crate::code_rule_dsl::facts::rows::Part::for_device(0, n).unwrap_or_else(|e| panic!("a view's index home of {n} rows: {e}"));
+        let home = crate::code_rule_dsl::facts::rows::Part::for_host(0, n).unwrap_or_else(|e| panic!("a view's index home of {n} rows: {e}"));
         let ib = home.in_block(n as u32);
         let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
         let hash = |i: u32| {

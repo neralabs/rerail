@@ -77,7 +77,7 @@ pub struct Region {
     /// region in a block without a free list (its bytes go with the block).
     kept: usize,
     root: Option<Arc<Region>>,
-    name: String,
+    name: &'static str,
     frozen: AtomicBool,
     version: AtomicU64,
     access: Mutex<Access>,
@@ -114,8 +114,8 @@ impl Region {
         self.len == 0
     }
 
-    pub fn name(&self) -> &str {
-        &self.top().name
+    pub fn name(&self) -> &'static str {
+        self.top().name
     }
 
     pub fn is_frozen(&self) -> bool {
@@ -138,7 +138,7 @@ impl Region {
             len: end - start,
             kept: 0,
             root: Some(root),
-            name: String::new(),
+            name: "",
             frozen: AtomicBool::new(false),
             version: AtomicU64::new(0),
             access: Mutex::default(),
@@ -273,6 +273,13 @@ impl Region {
             } else {
                 a.gpu_reads.push((id, op));
             }
+            // Its block's ledger holds the chunk too (0487 R4, one place): a writer by raw offset is checked there.
+            let bytes = self.len.max(1);
+            if write {
+                fence.writes_chunk(&self.block, self.at, bytes);
+            } else {
+                fence.reads_chunk(&self.block, self.at, bytes);
+            }
             let held = self.clone();
             fence.on_complete(Box::new(move || {
                 let mut a = held.lock();
@@ -396,7 +403,7 @@ impl<T: crate::Pod> Clone for Frozen<T> {
 impl<T: crate::Pod> Mutable<T> {
     /// `n` zeroed `T`s in `block`, named `name` for what fails: a chunk of its free list (given back when the last
     /// handle goes), or from its front. `None` when it has no room.
-    pub fn alloc(block: &Arc<Block>, n: usize, name: impl Into<String>) -> Option<Mutable<T>> {
+    pub fn alloc(block: &Arc<Block>, n: usize, name: &'static str) -> Option<Mutable<T>> {
         let bytes = (n * size_of::<T>()).max(1);
         let align = align_of::<T>().max(8);
         let (at, kept) = if block.has_free_list() { block.try_alloc_chunk_fit_zeroed(bytes, align)? } else { (block.try_alloc(bytes, align)?, 0) };
@@ -406,13 +413,56 @@ impl<T: crate::Pod> Mutable<T> {
             len: n * size_of::<T>(),
             kept,
             root: None,
-            name: name.into(),
+            name,
             frozen: AtomicBool::new(false),
             version: AtomicU64::new(0),
             access: Mutex::default(),
             mirror: std::sync::OnceLock::new(),
         };
         Some(Mutable { r: Arc::new(r), _t: PhantomData })
+    }
+
+    /// The chunk of `kept` bytes at `at` of `block`, which its caller took from the block's free list
+    /// (`try_alloc_chunk_fit`), held as `n` `T`s: given back when the last handle goes, as `alloc`'s is. For an owner
+    /// that places its chunks itself (a relation's arrays, near their relation).
+    ///
+    /// # Safety
+    /// The chunk is the caller's, taken and not freed, and holds `n` `T`s.
+    pub unsafe fn adopt(block: &Arc<Block>, at: usize, n: usize, kept: usize, name: &'static str) -> Mutable<T> {
+        debug_assert!(n * size_of::<T>() <= kept.max(1));
+        let r = Region {
+            block: block.clone(),
+            at,
+            len: n * size_of::<T>(),
+            kept,
+            root: None,
+            name,
+            frozen: AtomicBool::new(false),
+            version: AtomicU64::new(0),
+            access: Mutex::default(),
+            mirror: std::sync::OnceLock::new(),
+        };
+        Mutable { r: Arc::new(r), _t: PhantomData }
+    }
+
+    /// Its chunk handed on, to an owner that frees it itself (a relation's directory): (offset, kept bytes). Nothing
+    /// else may hold it.
+    #[track_caller]
+    pub fn into_chunk(mut self) -> (usize, usize) {
+        let Some(r) = Arc::get_mut(&mut self.r) else {
+            fail(&self.r, format!("a hand-on from {} while another handle, range or GPU use holds it", Location::caller()));
+        };
+        if r.root.is_some() {
+            fail(r, "a hand-on of a range".into());
+        }
+        let kept = std::mem::take(&mut r.kept);
+        (r.at, kept)
+    }
+
+    /// Its first `T`, for its owner's own writes through `&mut` (a relation's array's pushes): no guard, the ledger's
+    /// check (0487 R4) is the owner's.
+    pub fn as_mut_ptr(&mut self) -> *mut T {
+        self.r.block.ptr::<T>(self.r.at)
     }
 
     /// Writes it: no other write, no read (CPU or GPU) may be live, and none may begin until the guard goes.
@@ -451,6 +501,25 @@ impl<T: crate::Pod> Mutable<T> {
     pub fn buffer_write(&self, fence: &Arc<Fence>, op: &'static str, device: &rerail_device::device::Device) -> Result<(rerail_device::device::Buffer, u64), String> {
         self.r.pin(fence, op, true);
         self.r.buffer(device)
+    }
+
+    /// Keeps its first `n` `T`s and gives back the rest: to its block when it was the block's last allocation from
+    /// the front. A chunk of a free list keeps its whole chunk (the ledger frees chunks whole, 0487 R2). Nothing else
+    /// may hold it: no other handle, range or GPU use.
+    #[track_caller]
+    pub fn truncate(&mut self, n: usize) {
+        let keep = n * size_of::<T>();
+        let Some(r) = Arc::get_mut(&mut self.r) else {
+            fail(&self.r, format!("a truncate from {} while another handle, range or GPU use holds it", Location::caller()));
+        };
+        if keep > r.len {
+            fail(r, format!("a truncate from {} to {keep} bytes, past its length", Location::caller()));
+        }
+        if r.kept == 0 {
+            // `alloc` took at least a byte from the front.
+            r.block.shrink_last(r.at, r.len.max(1), keep);
+        }
+        r.len = keep;
     }
 
     /// Freezes it: no CPU read or write may be live, and no GPU write queued; GPU reads may be.
@@ -692,6 +761,72 @@ mod tests {
         assert_ne!(Mutable::<u64>::alloc(&b, 512, "x").unwrap().region().at(), at, "the range holds it");
         assert!(fails(|| drop(part.range(5, 11))), "past its end");
         assert_eq!(part.region().name(), "rows");
+    }
+
+    /// A region truncated to what was written gives its tail back: from the front of its block, the next allocation
+    /// lands in it. A truncate while another handle holds it, or past its length, fails.
+    #[test]
+    fn a_truncated_region_gives_back_its_tail() {
+        let b = Arc::new(Block::anon(kind::FACTS, 8 << 20));
+        let mut m = Mutable::<u32>::alloc(&b, 1000, "cells").unwrap();
+        let at = m.region().at();
+        m.write()[..10].copy_from_slice(&[1; 10]);
+        let s = m.share();
+        assert!(fails(|| m.truncate(10)), "another handle holds it");
+        drop(s);
+        assert!(fails(|| m.truncate(1001)), "past its length");
+        m.truncate(10);
+        assert_eq!(m.len(), 10);
+        let next = Mutable::<u32>::alloc(&b, 4, "next").unwrap();
+        assert!(next.region().at() < at + 4 * 1000, "the tail went back: {} after {at}", next.region().at());
+        let f = m.freeze();
+        assert_eq!(&f[..], &[1; 10]);
+    }
+
+    /// A region's GPU pin is its block's chunk use too: the ledger's CPU check, which writers by raw offset take, sees
+    /// it (0487 R4, one place).
+    #[test]
+    fn a_regions_gpu_pin_is_its_ledgers_chunk_use() {
+        let b = block();
+        let m = Mutable::<u64>::alloc(&b, 64, "rows").unwrap();
+        let (at, len) = (m.region().at(), m.region().len());
+        let f = Fence::new();
+        m.bind_write(&f, "kernel");
+        assert!(fails(|| b.ledger().cpu_read(at, 8)), "the ledger sees the GPU write");
+        f.complete();
+        b.ledger().cpu_write(at, len);
+        let s = m.share();
+        let g = Fence::new();
+        s.bind_read(&g, "kernel");
+        assert!(fails(|| b.ledger().cpu_write(at + 8, 8)), "the ledger sees the GPU read");
+        b.ledger().cpu_read(at, len);
+        g.complete();
+    }
+
+    /// An adopted chunk goes back to its block's free list with its last handle; one handed on stays taken, and a
+    /// hand-on while shared fails.
+    #[test]
+    fn an_adopted_chunk_is_freed_with_its_region_and_kept_when_handed_on() {
+        let b = block();
+        let (at, kept) = b.try_alloc_chunk_fit(800, 8).unwrap();
+        let free = b.free_bytes();
+        // SAFETY: the chunk is ours, 800 bytes.
+        let mut m = unsafe { Mutable::<u64>::adopt(&b, at, 100, kept, "index") };
+        assert_eq!(m.as_mut_ptr() as usize, b.ptr::<u64>(at) as usize);
+        drop(m);
+        assert!(b.free_bytes() > free, "freed with its region");
+        let (at, kept) = b.try_alloc_chunk_fit(800, 8).unwrap();
+        let m = unsafe { Mutable::<u64>::adopt(&b, at, 100, kept, "index") };
+        let s = m.share();
+        let m = std::panic::catch_unwind(AssertUnwindSafe(move || m.into_chunk()));
+        assert!(m.is_err(), "a hand-on while shared");
+        drop(s);
+        let (at2, kept2) = b.try_alloc_chunk_fit(800, 8).unwrap();
+        let m = unsafe { Mutable::<u64>::adopt(&b, at2, 100, kept2, "index") };
+        let free = b.free_bytes();
+        assert_eq!(m.into_chunk(), (at2, kept2));
+        assert_eq!(b.free_bytes(), free, "handed on: still taken");
+        b.free_chunk_fit(at2, kept2);
     }
 
     /// A device with memory of its own (a discrete GPU's), simulated: its copy, and what crossed the bus.

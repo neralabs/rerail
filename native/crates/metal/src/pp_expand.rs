@@ -190,6 +190,8 @@ pub const NOT_FOUND: u32 = u32::MAX;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Request {
     pub key: u64,
+    /// The batch's unit that made it, and its file there (the unit's file index).
+    pub unit: u32,
     pub file: u32,
     /// The name, as the device spelled it (phase 2: a literal's bytes, or an expansion's).
     pub name: Vec<u8>,
@@ -344,6 +346,10 @@ pub struct Caps {
     pub dirs: usize,
     pub gaps: usize,
     pub top: usize,
+    /// The requests a round makes, and their names' bytes: few (a round's includes not yet
+    /// in the file table), so their own rooms, not the directive words'.
+    pub reqs: usize,
+    pub names: usize,
     /// The runs refused for room so far (P1's rungs, bounded by `P1_RUNGS`).
     pub rung: u32,
 }
@@ -358,7 +364,31 @@ impl Caps {
         let k = 2usize << rung.min(P1_RUNGS - 1);
         let nodes = lay.nodes.len() + unit.len() * k + 2;
         let dirs = unit.dir_bound * k + 16;
-        Caps { nodes, dirs, gaps: dirs + nodes, top: unit.node_bound * k + 16, rung }
+        Caps { nodes, dirs, gaps: dirs + nodes, top: unit.node_bound * k + 16, reqs: dirs / 8 + 64, names: dirs * 8 + 4096, rung }
+    }
+
+    /// The rooms of a run after one whose P1 used `need` (its high water), on a unit whose first
+    /// rooms were `was` and are now `now`: twice what it used, and for the files added since
+    /// their first rooms' share at twice the use the last run measured over its first rooms.
+    /// The first rooms are a bound by the tapes' nodes (a directive is two at least, a top token
+    /// one), far past the use where most nodes are directives (Boost's headers: 126 top tokens
+    /// used of 169k). A room past them grows from its count (`grown`).
+    pub fn from_use(need: [u32; NEEDS], was: Caps, now: Caps, rung: u32) -> Caps {
+        let n = |k: usize| need[k] as usize;
+        // The added files' first rooms (`a - b`) at the measured use (`used` of `of`), twice.
+        let more = |a: usize, b: usize| a.saturating_sub(b);
+        let share = |a: usize, b: usize, used: usize| (more(a, b) as u128 * (2 * used).min(b.max(1)) as u128 / b.max(1) as u128) as usize;
+        let nodes = 2 * n(NEED_NODES) + share(now.nodes, was.nodes, n(NEED_NODES)) + 16;
+        let mut dirs = 2 * n(NEED_DIRS) + share(now.dirs, was.dirs, n(NEED_DIRS)) + 16;
+        if 2 * n(NEED_GROUPS) > dirs + nodes {
+            dirs = 2 * n(NEED_GROUPS);
+        }
+        let gaps = (2 * n(NEED_GAPS) + share(now.gaps, was.gaps, n(NEED_GAPS)) + 16).max(dirs + nodes);
+        let t = n(NEED_IF_TOP).max(n(NEED_TEXT_TOP));
+        let top = 2 * t + share(now.top, was.top, t) + 4096;
+        let reqs = 2 * n(NEED_REQS) + more(now.reqs, was.reqs) + 64;
+        let names = 2 * n(NEED_NAMES) + more(now.names, was.names) + 4096;
+        Caps { nodes, dirs, gaps, top, reqs, names, rung }
     }
 
     /// The next run's rooms after one refused for room that needed `need`: each room past its
@@ -373,20 +403,18 @@ impl Caps {
         c.rung += 1;
         let past = |want: usize, cap: usize| if want > cap { want * 2 } else { cap };
         c.nodes = past(n(NEED_NODES), c.nodes);
-        c.dirs = past(n(NEED_DIRS).max(n(NEED_REQS)), c.dirs);
+        c.dirs = past(n(NEED_DIRS), c.dirs);
+        c.reqs = past(n(NEED_REQS), c.reqs);
+        c.names = past(n(NEED_NAMES), c.names);
         c.top = past(n(NEED_IF_TOP).max(n(NEED_TEXT_TOP)), c.top);
         // The stretch words are the directives' and the instances' at least.
         c.gaps = past(n(NEED_GAPS), c.gaps).max(c.dirs + c.nodes);
-        // The groups (`dirs + nodes`) and the requests' names (64 bytes a directive word).
+        // The groups: `dirs + nodes`.
         if n(NEED_GROUPS) > c.dirs + c.nodes {
             c.dirs = n(NEED_GROUPS) * 2;
             c.gaps = c.gaps.max(c.dirs + c.nodes);
         }
-        if n(NEED_NAMES) > c.dirs * 64 + 4096 {
-            c.dirs = n(NEED_NAMES) / 32;
-            c.gaps = c.gaps.max(c.dirs + c.nodes);
-        }
-        if c.nodes == self.nodes && c.dirs == self.dirs && c.gaps == self.gaps && c.top == self.top {
+        if c.nodes == self.nodes && c.dirs == self.dirs && c.gaps == self.gaps && c.top == self.top && c.reqs == self.reqs && c.names == self.names {
             return Caps::of(unit, lay, self.rung + 1);
         }
         c
@@ -414,11 +442,14 @@ pub struct XCaps {
 
 impl XCaps {
     /// Every room at rung `rung` over a top level of `top` tokens.
+    ///
+    /// The shares are from the corpus's most use over its top level's tokens (decision 0503
+    /// §8): tokens 0.39, lists and arguments 0.02, queue items 0.05, the output 0.64, scratch
+    /// bytes 0.34; a room past them grows from its own count.
     pub fn at(top: usize, rung: u32) -> XCaps {
         let tok = (top + 4096) << (rung + 1);
-        // The scratch's bytes: a paste's or a `#`'s spelling, 2 bytes a token's room.
-        let lists = top / 2 + tok / 4 + 256;
-        XCaps { tok, lists, args: tok / 2 + 256, out: top + tok, sb: ((64usize << 10) << rung).max(2 * tok), st: tok / 4 + 256, q: 2 * lists + 64, rung }
+        let lists = tok / 16 + 1024;
+        XCaps { tok, lists, args: tok / 16 + 1024, out: top + tok / 4 + 4096, sb: ((64usize << 10) << rung).max(tok / 2), st: tok / 4 + 256, q: 2 * lists + 64, rung }
     }
 
     fn max(self, a: XCaps) -> XCaps {
@@ -432,16 +463,16 @@ impl XCaps {
     }
 
     /// The next run's rooms after one refused for room that used `room` (`Exp::room`): each
-    /// room that ran out grows by twice its lack, at least doubling, and one more than half used
-    /// doubles; the others stay. A room
-    /// `room` does not name (the output, the counters) grows them all a rung.
-    pub fn grown(self, top: usize, room: [(u32, u32); 6]) -> XCaps {
+    /// room that ran out grows by twice its lack, at least fourfold (its count stopped where it
+    /// ran out), and the others double where their use is past their room's half. A room `room` does not name (the counters) grows them all a rung.
+    pub fn grown(self, top: usize, room: [(u32, u32); ROOMS]) -> XCaps {
         // A run refused for room stops where the first room ran out: the others' counts are
-        // lower bounds, so a room more than half used grows with it.
+        // lower bounds, so a room more than half used grows with it, to twice its use.
         let out = room.iter().any(|&(used, cap)| used > cap);
         let up = |(used, cap): (u32, u32), now: usize| {
             if used > cap {
-                (now + 2 * (used - cap) as usize).max(2 * now)
+                // Its count stopped where it ran out: what it needs is past it, unknown.
+                (now + 2 * (used - cap) as usize).max(4 * now)
             } else if out && used as usize * 2 > cap as usize {
                 2 * now
             } else {
@@ -450,19 +481,18 @@ impl XCaps {
         };
         let mut c = self;
         c.rung += 1;
-        let [tok, lists, args, sb, st, q] = room;
+        let [tok, lists, args, sb, st, q, out] = room;
         c.tok = up(tok, c.tok);
         c.lists = up(lists, c.lists);
         c.args = up(args, c.args);
         c.sb = up(sb, c.sb);
         c.st = up(st, c.st);
         c.q = up(q, c.q);
-        if c.tok == self.tok && c.lists == self.lists && c.args == self.args && c.sb == self.sb && c.st == self.st && c.q == self.q {
+        c.out = up(out, c.out);
+        if c.tok == self.tok && c.lists == self.lists && c.args == self.args && c.sb == self.sb && c.st == self.st && c.q == self.q && c.out == self.out {
             let a = XCaps::at(top, self.rung + 1);
             return XCaps { rung: a.rung, ..self.fit(top) }.max(a);
         }
-        // The output holds the top level's and the expansion's tokens.
-        c.out = c.out.max(top + c.tok);
         c
     }
 }
@@ -475,19 +505,26 @@ pub struct Sizes {
     pub p1: Caps,
     pub x: XCaps,
     pub defs: u32,
+    /// What the last run's P1 used (`NEED_*`, its rooms' high water), and the first rooms of the
+    /// unit it ran on: the next round's are sized from them (decision 0503 §8).
+    pub used: Option<([u32; NEEDS], Caps)>,
 }
 
 impl Sizes {
     pub fn first(unit: &Unit, lay: &Layout) -> Sizes {
         let p1 = Caps::first(unit, lay);
-        Sizes { p1, x: XCaps::at(p1.top, 0), defs: 0 }
+        Sizes { p1, x: XCaps::at(p1.top, 0), defs: 0, used: None }
     }
 
-    /// These rooms for `unit` (laid out as `lay`), at least its first.
+    /// These rooms for `unit` (laid out as `lay`): from what the last run used where it says,
+    /// else at least its first.
     pub fn fit(self, unit: &Unit, lay: &Layout) -> Sizes {
         let (a, b) = (self.p1, Caps::first(unit, lay));
-        let p1 = Caps { nodes: a.nodes.max(b.nodes), dirs: a.dirs.max(b.dirs), gaps: a.gaps.max(b.gaps), top: a.top.max(b.top), rung: a.rung };
-        Sizes { p1, x: self.x.fit(p1.top), defs: self.defs }
+        let p1 = match self.used {
+            Some((need, was)) => Caps::from_use(need, was, b, a.rung),
+            None => Caps { nodes: a.nodes.max(b.nodes), dirs: a.dirs.max(b.dirs), gaps: a.gaps.max(b.gaps), top: a.top.max(b.top), reqs: a.reqs.max(b.reqs), names: a.names.max(b.names), rung: a.rung },
+        };
+        Sizes { p1, x: self.x.fit(p1.top), defs: self.defs, used: None }
     }
 }
 
@@ -547,6 +584,8 @@ pub struct Vis {
     ft_files: Buf,
     found_by: Buf,
     unit_file: Buf,
+    /// The same, on the host: a request's unit and its file there.
+    unit_files: Vec<u32>,
     max_depth: u32,
     live: Buf,
     // The tests' lines (decision 0501 §4): by directive word, its tokens, its first node, its
@@ -579,6 +618,7 @@ pub struct Vis {
     rnames: Buf,
     rntop: Buf,
     rn_cap: u32,
+    rq_cap: u32,
     if_at: Buf,
     if_scan: Scan,
     if_nodes: Buf,
@@ -709,6 +749,8 @@ impl Vis {
         feats.sort_unstable();
         let mut found_by = lay.found_by.clone();
         found_by.resize(unit.len().max(1), NOT_FOUND);
+        // Each unit's first file: its predefines root's.
+        let unit_files: Vec<u32> = (0..lay.units()).map(|u| lay.nodes.iter().find(|n| n.unit == u && n.pdir == 0).map_or(0, |n| n.file)).collect();
         // The built-ins' rows, at slot 0: the configuration's, written before the passes.
         let mut sk = vec![0u64; rows.max(1)];
         let mut nk = vec![0u64; rows.max(1)];
@@ -730,7 +772,8 @@ impl Vis {
             ft_files: words(&if table.is_empty() { vec![0] } else { table.iter().map(|t| t.1).collect() })?,
             found_by: words(&found_by)?,
             // Each unit's first file: its predefines root's.
-            unit_file: words(&(0..lay.units()).map(|u| lay.nodes.iter().find(|n| n.unit == u && n.pdir == 0).map_or(0, |n| n.file)).collect::<Vec<_>>())?,
+            unit_file: words(&unit_files)?,
+            unit_files,
             max_depth: lay.max_depth,
             if_count: zeroed(nd)?,
             if_first: zeroed(nd)?,
@@ -752,9 +795,10 @@ impl Vis {
             run_end: zeroed(ng)?,
             slinen: zeroed(ng)?,
             lctl: zeroed(4)?,
-            rnames: arena.zeroed::<u8>(nd * 64 + 4096)?,
+            rnames: arena.zeroed::<u8>(caps.names.max(1))?,
             rntop: zeroed(1)?,
-            rn_cap: (nd * 64 + 4096) as u32,
+            rn_cap: caps.names as u32,
+            rq_cap: caps.reqs as u32,
             if_at: zeroed(nd)?,
             if_scan: Scan::new(arena)?,
             if_nodes: zeroed(top)?,
@@ -777,7 +821,7 @@ impl Vis {
             newf: zeroed(nd)?,
             newat: zeroed(nd)?,
             nnew: zeroed(1)?,
-            reqs: arena.zeroed::<[u32; 6]>(nd.max(1))?,
+            reqs: arena.zeroed::<[u32; 6]>(caps.reqs.max(1))?,
             nreq: zeroed(1)?,
             flags: zeroed(1)?,
             need: zeroed(NEEDS)?,
@@ -857,7 +901,7 @@ impl Vis {
         l.at("P1_LIVE", &self.live);
         l.at("IF_COUNT", &self.if_count).at("IF_FIRST", &self.if_first).at("IF_KIND", &self.if_kind).at("IF_INST", &self.if_inst)
             .at("LDELTA", &self.ldelta).at("LKEY", &self.lkey).at("LVAL", &self.lval).at("LVALN", &self.lvaln).at("LHEAD", &self.lhead).at("LATEST", &self.latest).at("LATESTN", &self.latestn)
-            .at("ILINE", &self.iline).at("ILINEN", &self.ilinen).at("SLINE", &self.sline).at("RSTART", &self.rstart).at("RUNX", &self.runx).at("RUNTOT", &self.run_scan.total).at("RUN_END", &self.run_end).at("SLINEN", &self.slinen).at("LCTL", &self.lctl).at("P1_RNAMES", &self.rnames).at("P1_RNTOP", &self.rntop).word("RNC", self.rn_cap).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
+            .at("ILINE", &self.iline).at("ILINEN", &self.ilinen).at("SLINE", &self.sline).at("RSTART", &self.rstart).at("RUNX", &self.runx).at("RUNTOT", &self.run_scan.total).at("RUN_END", &self.run_end).at("SLINEN", &self.slinen).at("LCTL", &self.lctl).at("P1_RNAMES", &self.rnames).at("P1_RNTOP", &self.rntop).word("RNC", self.rn_cap).word("RQC", self.rq_cap).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
         l.at("IF_OPS", &self.if_ops).at("IF_VAL", &self.if_val).at("IF_KEYS", &self.if_keys).word("IF_TRUE", self.true_is_one).word("N_IFOP", self.n_ifop);
         l.at("IF_OPKEYS", &self.op_keys).at("IF_OPKINDS", &self.op_kinds).word("N_FEAT", self.n_feat).at("IF_FEATKEYS", &self.feat_keys).at("IF_FEATVALS", &self.feat_vals);
         l.at("P1_MADE", &self.made).at("P1_MADEF", &self.made_file).at("P1_ENTER", &self.enter).at("P1_CAND", &self.cand).at("P1_ONCE", &self.once);
@@ -927,8 +971,8 @@ impl Vis {
 
     /// The round's requests (decision 0501 §1), each once.
     pub fn requests(&self) -> Vec<Request> {
-        let n = (self.word(&self.nreq) as usize).min(self.nd);
-        // SAFETY: the device finished; `reqs` holds `nd` requests, `n` of them written.
+        let n = (self.word(&self.nreq) as usize).min(self.rq_cap as usize);
+        // SAFETY: the device finished; `reqs` holds `rq_cap` requests, `n` of them written.
         let raw = unsafe { std::slice::from_raw_parts(self.reqs.host().cast::<[u32; 6]>(), n) };
         let mut out: Vec<Request> = raw
             .iter()
@@ -937,11 +981,13 @@ impl Vis {
                 // SAFETY: the device finished; a request's name lies within the names' room.
                 let (at, n) = ((q[3] as usize).min(self.rn_cap as usize), q[4] as usize);
                 let name = unsafe { std::slice::from_raw_parts(self.rnames.host().add(at), n.min(self.rn_cap as usize - at)).to_vec() };
-                Request { key: u64::from(q[0]) | (u64::from(q[1]) << 32), file: q[2], name, angle: q[5] & 1 != 0, next: q[5] & 2 != 0 }
+                let unit = self.unit_files.partition_point(|&f| f <= q[2]).saturating_sub(1);
+                Request { key: u64::from(q[0]) | (u64::from(q[1]) << 32), unit: unit as u32, file: q[2] - self.unit_files[unit], name, angle: q[5] & 1 != 0, next: q[5] & 2 != 0 }
             })
             .collect();
-        out.sort_unstable_by_key(|q| (q.key, q.file));
-        out.dedup_by_key(|q| q.key);
+        // A key is unit-free: one request a key and unit.
+        out.sort_unstable_by_key(|q| (q.unit, q.key, q.file));
+        out.dedup_by_key(|q| (q.unit, q.key));
         out
     }
 
@@ -978,16 +1024,13 @@ pub const X_SPLICE: u32 = 2048;
 pub const X_BARRIER: u32 = 4096;
 /// `#` or `##` of `__COUNTER__`'s value (decision 0502 §3).
 pub const X_COUNTER_SPELLED: u32 = 8192;
-/// The host's: a unit whose expansion run ended with P1's refusals or requests, which its
-/// rounds had settled.
-pub const X_UNSETTLED: u32 = 32768;
-/// `__COUNTER__` in a directive's line (its value would count text not expanded yet).
 /// A `_Pragma` that would make a row (`once`, `push_macro`, `pop_macro`), or whose operand is a
 /// macro's.
 pub const X_PRAGMA: u32 = 16384;
 
-/// The expansion's rungs: rung `k`'s arena holds `2^(k+1)` tokens a top token.
-pub const EXP_RUNGS: u32 = 5;
+/// The expansion's tries for room. A refused run stops where its first room ran out, so each try
+/// uncovers about one room's need (seven rooms); the budget's lease bounds the sizes.
+pub const EXP_RUNGS: u32 = 10;
 /// The close table's keys: a biased depth (16 bits) above a position (24 bits).
 const CLOSE_BITS: u32 = 40;
 /// A string literal's tape kind.
@@ -1195,14 +1238,17 @@ impl Exp {
     /// The refusals, and the output's refs where there are none (after the command buffer).
     /// Each store's use and room (`ROOM_STORES`'s order): its top (past the room where it ran
     /// out: a top only grows) and its capacity.
-    pub fn room(&self) -> [(u32, u32); 6] {
+    pub fn room(&self) -> [(u32, u32); ROOMS] {
         // SAFETY: the device finished; `ctl` and `words` are the control and capacity words, and
         // `qctl` the queue's (its tail the items pushed, past the room where it ran out).
         unsafe {
             let ctl = self.ctl.host().cast::<u32>();
             let w = self.words.host().cast::<u32>();
             let [a, b, c, d, e] = [(0, 1, 8), (1, 2, 9), (3, 3, 10), (4, 8, 11), (5, 9, 12)].map(|(t, c, h)| ((*ctl.add(t)).max(*ctl.add(h)), *w.add(c)));
-            [a, b, c, d, e, ((*self.qctl.host().cast::<u32>().add(1)).max(*ctl.add(13)), self.q_cap)]
+            let q = ((*self.qctl.host().cast::<u32>().add(1)).max(*ctl.add(13)), self.q_cap);
+            // The output: the pieces' total of the text and of each top before (the lines'), as
+            // `pp_check` and the places compare it with the room.
+            [a, b, c, d, e, q, ((*self.vscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap as u32)]
         }
     }
 
@@ -1283,7 +1329,7 @@ pub struct Expanded {
     pub scratch: Vec<u8>,
     pub stoks: Vec<[u32; 3]>,
     /// The arena's use and room at the rung it ran at, store by store (`ROOM_STORES`).
-    pub room: [(u32, u32); 6],
+    pub room: [(u32, u32); ROOMS],
     /// P1's refusals (`P1_*`), and the round's requests (decision 0501 §1): with either, the
     /// round ended before the expansion, and `out` is empty.
     pub p1_flags: u32,
@@ -1296,7 +1342,9 @@ pub struct Expanded {
 }
 
 /// The arena's stores, as `Expanded::room` lists them.
-pub const ROOM_STORES: [&str; 6] = ["tokens", "lists", "arguments", "scratch bytes", "scratch tokens", "queue items"];
+pub const ROOM_STORES: [&str; ROOMS] = ["tokens", "lists", "arguments", "scratch bytes", "scratch tokens", "queue items", "output"];
+/// The expansion's rooms a run reports (`Exp::room`).
+pub const ROOMS: usize = 7;
 
 /// A ref to a scratch token, not a tape node.
 pub const SCRATCH: u32 = 0x8000_0000;
@@ -1317,7 +1365,7 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
 /// `expand_at` from the rooms `sizes` (a unit's last run's), which it leaves at the rooms this
 /// run settled at. Each room grows a bounded number of times a call.
 pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<Expanded, Error> {
-    let Sizes { p1, x, defs: def_rung } = *sizes;
+    let Sizes { p1, x, defs: def_rung, .. } = *sizes;
     let (mut def_rung, mut groups, mut p1, mut x) = (def_rung, groups, p1, x);
     let (mut p1_tries, mut x_tries) = (0, 0);
     // The last run refused for the expansion's room: its answer stands where the next run's
@@ -1354,7 +1402,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
             groups = fewer(groups)?;
             continue;
         };
-        *sizes = Sizes { p1, x, defs: def_rung };
+        *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             def_rung += 1;
@@ -1387,12 +1435,15 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         let (refused, out) = exp.read();
         if refused & X_ROOM != 0 && refused & !X_ROOM == 0 && x_tries + 1 < EXP_RUNGS {
             if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
-                eprintln!("expansion room at rung {rung}: (used, cap) tokens, lists, args, scratch bytes, scratch tokens {:?}; out cap {}", exp.room(), exp.out_cap);
+                eprintln!("expansion room at rung {rung}: (used, cap) {:?} {:?}", ROOM_STORES, exp.room());
             }
             x = x.grown(p1.top, exp.room());
             x_tries += 1;
             short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
             continue;
+        }
+        if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
+            eprintln!("settled: p1 need {:?} against nodes {} dirs {} gaps {} top {} reqs {} names {}; expansion {:?}", vis.p1_need(), p1.nodes, p1.dirs, p1.gaps, p1.top, p1.reqs, p1.names, exp.room());
         }
         let (scratch, stoks) = exp.scratch();
         let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
@@ -1408,7 +1459,7 @@ pub fn expand(unit: &Unit, lay: &Layout) -> Result<Expanded, Error> {
 /// `RERAIL_PP_ARENA_LOG`: an arena's bytes, and its largest stores.
 fn arena_log(arena: &Arena, l: &Lay, what: std::fmt::Arguments) {
     if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
-        let big: Vec<String> = l.largest(12).iter().map(|(n, b)| format!("{n} {:.1}", *b as f64 / 1048576.0)).collect();
+        let big: Vec<String> = l.largest(if std::env::var_os("RERAIL_PP_ARENA_ALL").is_some() { 400 } else { 12 }).iter().map(|(n, b)| format!("{n} {:.1}", *b as f64 / 1048576.0)).collect();
         eprintln!("arena {:.1} MiB, {what}: {}", arena.bytes() as f64 / 1048576.0, big.join(", "));
     }
 }
@@ -1423,7 +1474,7 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
 /// `lookups` from the rooms `sizes` (the unit's last round's), which it leaves at the rooms this
 /// run settled at.
 pub fn lookups_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
-    let Sizes { p1, x, defs: rung } = *sizes;
+    let Sizes { p1, x, defs: rung, .. } = *sizes;
     let (mut rung, mut groups, mut p1, mut x) = (rung, crate::pp_arena::groups(), p1, x);
     let (mut p1_tries, mut x_tries) = (0, 0);
     loop {
@@ -1446,7 +1497,7 @@ pub fn lookups_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(cr
             groups = fewer(groups)?;
             continue;
         }
-        *sizes = Sizes { p1, x, defs: rung };
+        *sizes = Sizes { p1, x, defs: rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             rung += 1;
@@ -1544,62 +1595,11 @@ fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), gr
     Ok(on_grid(&arena, unit, &front, &l, groups)?.map(|(_, s)| s))
 }
 
-/// One unit's answer from a batch (`expand_many`): the batch's expansion it ran in, its files
+/// One unit's answer from a batch (`rounds::run_many`, decision 0503 §7): the batch's expansion it ran in, its files
 /// there (`x.ev.bases`' and the refs' files), and its output (`x.out`'s range). Where the unit was
 /// refused, it ran alone, and `x.refused` says why.
 pub struct Part {
     pub x: std::rc::Rc<Expanded>,
     pub files: std::ops::Range<usize>,
     pub out: std::ops::Range<usize>,
-}
-
-/// The units `units` (each a unit and its layout, of one dialect) expanded in as few batches as
-/// hold them (decision 0468, batching): one arena and one run of the grid a batch. A batch is
-/// split in halves where its documents are in more than one slab (a batch reads one, and
-/// gathering would copy them), where the budget refuses its arena, or where the device refuses
-/// it: a refusal is then a unit's alone.
-pub fn expand_many(units: &[(&Unit, &Layout, Sizes)]) -> Result<Vec<Part>, Error> {
-    let mut parts = Vec::with_capacity(units.len());
-    many(units, &mut parts)?;
-    Ok(parts)
-}
-
-fn many(units: &[(&Unit, &Layout, Sizes)], parts: &mut Vec<Part>) -> Result<(), Error> {
-    let split = |parts: &mut Vec<Part>| -> Result<(), Error> {
-        let (a, b) = units.split_at(units.len() / 2);
-        many(a, parts)?;
-        many(b, parts)
-    };
-    match units {
-        [] => Ok(()),
-        [(unit, lay, sizes)] => {
-            let mut x = expand_sized(unit, lay, &mut sizes.fit(unit, lay), crate::pp_arena::groups())?;
-            // A unit its rounds settled that the device's run does not: its answer is not the
-            // unit's (the serial pass takes it).
-            if x.p1_flags != 0 || !x.requests.is_empty() {
-                x.refused |= X_UNSETTLED;
-            }
-            let x = std::rc::Rc::new(x);
-            let out = 0..x.out.len();
-            parts.push(Part { x, files: 0..unit.len(), out });
-            Ok(())
-        }
-        _ => {
-            let Some(batch) = Unit::batch(&units.iter().map(|(u, _, _)| *u).collect::<Vec<_>>()) else { return split(parts) };
-            let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l, _)| (*l, u.len())).collect();
-            let Some(lay) = Layout::join(&joined) else { return split(parts) };
-            let x = match expand(&batch, &lay) {
-                Ok(x) if x.refused == 0 && x.p1_flags == 0 && x.requests.is_empty() => std::rc::Rc::new(x),
-                Ok(_) | Err(Error::BackendCapacity) => return split(parts),
-                Err(e) => return Err(e),
-            };
-            let mut file = 0;
-            for (k, (unit, _, _)) in units.iter().enumerate() {
-                let out = x.unit_out[k] as usize..x.unit_out[k + 1] as usize;
-                parts.push(Part { x: std::rc::Rc::clone(&x), files: file..file + unit.len(), out });
-                file += unit.len();
-            }
-            Ok(())
-        }
-    }
 }

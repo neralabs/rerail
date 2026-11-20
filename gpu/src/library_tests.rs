@@ -686,12 +686,14 @@ fn grid_ctl() -> crate::device::Buffer {
 /// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups and the device's resident count, each round's reads seeing every
 /// group's writes before it, and no barrier failed.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+#[ignore = "Q367: on the M1 Max a group stops at 8 groups (not a lost arrival, a weak CAS or the bound: 100x the spins still hangs); passes on the M5, a V100 and the CPU backend: run with --ignored"]
 fn grid_barriers_see_every_groups_writes() {
     let Some((p, mut q)) = setup() else { return };
     let lsz = 256u32.min(crate::device::max_threadgroup());
     for groups in grid_sizes(p.function("t_grid_barrier").unwrap(), lsz) {
-        let rounds = 5_000u32;
+        // The CPU backend's groups take turns in a fixed order (coroutines), so a few rounds test all its orders do;
+        // a GPU's many rounds are for the races its groups run.
+        let rounds = if crate::device::backend() == "CPU" { 100 } else { 5_000u32 };
         let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
         launch(&q, p.function("t_grid_barrier").unwrap())
             .value("args", &TestArgs { n: rounds, w: groups })
@@ -703,7 +705,7 @@ fn grid_barriers_see_every_groups_writes() {
         q.flush().await_().unwrap();
         let c: Vec<u32> = read(&ctl, 3);
         let wrong: Vec<u32> = read(&out, groups as usize);
-        assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed", crate::device::backend());
+        assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed, at generation {} of {}", crate::device::backend(), c[1], 4 * rounds);
         assert_eq!(c[1], 4 * rounds, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
         assert!(wrong.iter().all(|&w| w == 0), "{}: {groups} groups: reads before the barrier's writes: {wrong:?}", crate::device::backend());
     }
@@ -734,7 +736,7 @@ fn a_grid_past_residency_fails_its_barrier() {
 /// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
 /// boundaries, at 1, 8 and 32 groups and the device's resident count, its count read on the device.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+#[ignore = "Q367: on the M1 Max a group stops at 8 groups (not a lost arrival, a weak CAS or the bound: 100x the spins still hangs); passes on the M5, a V100 and the CPU backend: run with --ignored"]
 fn the_grid_scan_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(41);
@@ -773,7 +775,7 @@ fn the_grid_scan_equals_the_host() {
 /// R5: the grid's segmented scans (add and max) equal the host's from 0 to 10^6 values, heads dense and sparse, at
 /// 1, 8 and 32 groups.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+#[ignore = "Q367: on the M1 Max a group stops at 8 groups (not a lost arrival, a weak CAS or the bound: 100x the spins still hangs); passes on the M5, a V100 and the CPU backend: run with --ignored"]
 fn the_grid_segmented_scans_equal_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(43);
@@ -811,7 +813,7 @@ fn the_grid_segmented_scans_equal_the_host() {
 /// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups and the device's resident count;
 /// the few rows' path (ranks over the grid) at 1 to 32 groups; and a sort told its rows' low bits are in order.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+#[ignore = "Q367: on the M1 Max a group stops at 8 groups (not a lost arrival, a weak CAS or the bound: 100x the spins still hangs); passes on the M5, a V100 and the CPU backend: run with --ignored"]
 fn the_grid_sort_is_stable_and_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     if crate::device::max_threadgroup() < 256 {
@@ -824,6 +826,11 @@ fn the_grid_sort_is_stable_and_equals_the_host() {
         // where an even count of digits leaves the rows.
         // `low`: keys whose low bits are their index (in order already), a random part above.
         for (n, low, bits) in [(0u32, 0u32, 8u32), (1, 0, 8), (200, 0, 64), (1023, 0, 16), (1025, 0, 24), (4099, 0, 64), (4101, 0, 64), (70_001, 0, 40), (1_000_000, 0, 64), (900, 32, 64), (70_001, 24, 40)] {
+            // The CPU backend runs each thread as a coroutine: a million keys at every grid take minutes there, and
+            // 70,001 already crosses every tile and group boundary the million does.
+            if n > 100_000 && crate::device::backend() == "CPU" {
+                continue;
+            }
             let narrow = |k: u64| match n {
                 4099 => 0x5a5a_0000_0000_0000 | (k & 0xff) | (k & 1 << 40),
                 4101 => 0x5a5a_0000_0000_0000 | (k & 0xff),

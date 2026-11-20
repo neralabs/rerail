@@ -3030,6 +3030,7 @@ pub mod tests {
         }
         // Another thread, stopped inside a span with a statement running, while this one dumps.
         let (opened, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        // The test's run with its context (`job_run`: the switch `set` bound), as a job carries it.
         let run = job_run();
         let holder = std::thread::Builder::new()
             .name("holder".into())

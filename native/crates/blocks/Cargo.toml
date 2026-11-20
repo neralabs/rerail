@@ -16,7 +16,7 @@ rayon = "=1.12.0"
 
 [target.'cfg(windows)'.dependencies]
 # Windows' memory calls for blocks and scratch regions (`windows`).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Memory"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Memory"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 # A block's device buffer (`Block::device_buffer`, `Backing::buffer`): the device layer's, on every backend

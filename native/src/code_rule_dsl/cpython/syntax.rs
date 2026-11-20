@@ -1,5 +1,7 @@
 //! `ast.parse`'s verdict on a module's text, as CPython 3.13 gives it (core.rerail's `syntax_error(d, l, msg)`): whether it
-//! raises `SyntaxError` (or its subclasses `IndentationError`, `TabError`), and the error's `lineno` and `msg`.
+//! raises `SyntaxError` (or its subclasses `IndentationError`, `TabError`), and the error's `lineno` and `msg`, and
+//! where CPython puts it (`Located`: `offset`, `text`, `end_lineno`, `end_offset`), by how CPython raises it (`Span`:
+//! at a token or a node, at the tokenizer's cursor, at a token with no column, at a bracket never closed).
 //!
 //! Ruff's parser (`ruff_python_parser`, at `cpython::VERSION`) reads the grammar; its errors and the version-gated
 //! syntax it reports (`unsupported_syntax_errors`: a t-string, `except A, B:`) are where CPython's parser fails. Only
@@ -25,11 +27,184 @@ use ruff_python_parser::{
 };
 use ruff_text_size::{Ranged, TextRange, TextSize};
 
-/// CPython's `SyntaxError`: its `lineno` (1 where CPython gives none, for a null byte) and `msg`.
+/// CPython's `SyntaxError`: its `lineno` (1 where CPython gives none, for a null byte), `msg`, and where it is (`at`:
+/// none for a null byte, where CPython's attributes are all `None`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SyntaxError {
     pub(crate) line: usize,
     pub(crate) msg: String,
+    pub(crate) at: Option<Located>,
+}
+
+/// A `SyntaxError`'s `lineno`, `offset`, `text`, `end_lineno` and `end_offset`, as CPython 3.13 sets them: offsets in
+/// characters from 1, of `text` (the error's line: with its end, as `\n`, where the tokenizer has read no further,
+/// else without), `end_offset` -1 where the token has no end (an `INDENT`, the end of the file) and 0 at a bracket
+/// never closed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Located {
+    pub(crate) lineno: usize,
+    pub(crate) offset: i64,
+    pub(crate) text: String,
+    pub(crate) end_lineno: usize,
+    pub(crate) end_offset: i64,
+}
+
+/// Where CPython puts an error, by how it raises it (byte offsets in the source).
+#[derive(Clone, Copy, Debug)]
+enum Span {
+    /// At a node or a token an action raises at (`RAISE_SYNTAX_ERROR_KNOWN_LOCATION`): its columns, plus 1, on its
+    /// first line; the tokenizer has read one token past it.
+    Range(TextSize, TextSize),
+    /// At the token the parser failed at (the last it read, `RAISE_SYNTAX_ERROR`): as `Range`, the tokenizer as far
+    /// as the second pass read (`read_failed`).
+    Failed(TextSize, TextSize),
+    /// By the tokenizer (`_syntaxerror_range`): at its cursor, the end there too; `text` without the line's end.
+    Cursor(TextSize),
+    /// At a token with no column (an `INDENT`, the end of the file, the tokenizer's dedent): the tokenizer's cursor
+    /// on a line (its number, the cursor's bytes into it), no end (-1).
+    NoColumn(usize, usize),
+    /// At a bracket never closed or a line continuation (`RAISE_ERROR_KNOWN_LOCATION`, end -1): its column plus 1,
+    /// end 0; whether the tokenizer has read to the end of the file.
+    Open(TextSize, bool),
+}
+
+impl Span {
+    /// Its `lineno`.
+    fn line(&self, lines: &Lines) -> usize {
+        match *self {
+            Span::Range(at, _) | Span::Failed(at, _) | Span::Open(at, _) => lines.line(at),
+            Span::Cursor(at) => lines.line(at.checked_sub(TextSize::new(1)).unwrap_or(at)),
+            Span::NoColumn(line, _) => line,
+        }
+    }
+
+    /// The token at `at` (where Ruff reports an error), else `at..end`: a newline token is one character wide, as
+    /// CPython's `NEWLINE` is, also where the file ends without one.
+    fn token(tokens: &Tokens, at: TextSize, end: TextSize) -> Span {
+        match tokens.iter().find(|t| t.start() == at && !t.kind().is_trivia() && t.kind() != TokenKind::EndOfFile) {
+            Some(t) if t.kind() == TokenKind::Newline => Span::Failed(t.start(), t.start() + TextSize::new(1)),
+            Some(t) if !t.range().is_empty() => Span::Failed(t.start(), t.end()),
+            _ => Span::Failed(at, end.max(at + TextSize::new(1))),
+        }
+    }
+
+    /// Its attributes, as CPython sets them.
+    fn locate(&self, cx: &Cx) -> Located {
+        let lines = cx.lines;
+        let lineno = self.line(lines);
+        let (body, _) = lines.text(cx.source, lineno);
+        let with_end = || format!("{body}\n");
+        match *self {
+            Span::Range(start, end) | Span::Failed(start, end) => {
+                let end_lineno = lines.line(end.checked_sub(TextSize::new(1)).unwrap_or(start).max(start));
+                let reading = if matches!(self, Span::Failed(..)) { read_failed(cx, start, end) } else { read_to(cx, end) };
+                let text = if reading == lineno { with_end() } else { body.to_owned() };
+                let col = |at: TextSize, line: usize| at.to_usize() - lines.start(line);
+                Located {
+                    lineno,
+                    offset: chars_to(&text, col(start, lineno) + 1),
+                    end_offset: chars_to(&text, col(end, end_lineno) + 1),
+                    text,
+                    end_lineno,
+                }
+            }
+            Span::Cursor(at) => {
+                let offset = chars_to(body, at.to_usize() - lines.start(lineno));
+                Located { lineno, offset, text: body.to_owned(), end_lineno: lineno, end_offset: offset }
+            }
+            Span::NoColumn(line, bytes) => {
+                let text = with_end();
+                Located { lineno: line, offset: chars_to(&text, bytes), text, end_lineno: line, end_offset: -1 }
+            }
+            Span::Open(at, eof) => {
+                let reading = if eof { lines.count() } else { lineno };
+                let text = if reading == lineno { with_end() } else { body.to_owned() };
+                let offset = chars_to(&text, at.to_usize() - lines.start(lineno) + 1);
+                Located { lineno, offset, text, end_lineno: lineno, end_offset: 0 }
+            }
+        }
+    }
+}
+
+/// A token's span ended where it starts (`RAISE_SYNTAX_ERROR_STARTING_FROM`: its end is its start).
+fn at_start(span: Span) -> Span {
+    match span {
+        Span::Range(at, _) => Span::Range(at, at),
+        Span::Failed(at, _) => Span::Failed(at, at),
+        other => other,
+    }
+}
+
+/// The line CPython's tokenizer is on once its parser has failed at the token `start..end`, as its second pass read on
+/// (where `_PyPegen_raise_error` takes the line's text from): past the expression starting at the token where it
+/// stands beside another (`invalid_expression`'s `a=disjunction b=expression_without_invalid`, which reads all of
+/// `b` and one token more), else no further than the token.
+///
+/// APPROX: `b` is the expression Ruff read there, which runs on where CPython's stops at a token its grammar refuses
+/// (`ef f[**P, T](\n…)`: CPython's `b` ends at the `**`, Ruff's at the call's `)` lines later), so `text` loses its line
+/// end; and where Ruff fails at another token than CPython's furthest (`raise e,.x`, at `,` rather than `.`), the
+/// columns are Ruff's. 3 of the 737 mutants (`cpython::parity`, Q360) differ so.
+fn read_failed(cx: &Cx, start: TextSize, end: TextSize) -> usize {
+    let at = cx.tokens.iter().position(|t| t.start() == start && !t.kind().is_trivia());
+    let beside = at.is_some_and(|i| {
+        let before = cx.tokens[..i].iter().rev().find(|t| !t.kind().is_trivia());
+        starts_expression(cx.tokens[i].kind()) && before.is_some_and(|b| ends_expression(b.kind()))
+    });
+    if beside {
+        return read_to(cx, expression_end(cx, start, false));
+    }
+    let last = end.checked_sub(TextSize::new(1)).unwrap_or(start).max(start);
+    if last.to_usize() >= cx.source.len() { cx.lines.count() } else { cx.lines.line(last) }
+}
+
+/// Whether a token can end an expression (so another standing after it is beside it).
+fn ends_expression(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Name
+            | TokenKind::Int
+            | TokenKind::Float
+            | TokenKind::Complex
+            | TokenKind::String
+            | TokenKind::FStringEnd
+            | TokenKind::TStringEnd
+            | TokenKind::Rpar
+            | TokenKind::Rsqb
+            | TokenKind::Rbrace
+            | TokenKind::None
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::Ellipsis
+    )
+}
+
+/// The line CPython's tokenizer is on once its parser has read an error's last token (ending at `end`): that token's,
+/// where it ends a logical line; else the line the next token ends on (the parser reads one token past it).
+fn read_to(cx: &Cx, end: TextSize) -> usize {
+    let lines = cx.lines;
+    let significant = |t: &&Token| !matches!(t.kind(), TokenKind::Comment | TokenKind::NonLogicalNewline);
+    let last = cx.tokens.iter().filter(significant).take_while(|t| t.start() < end).last();
+    if let Some(t) = last.filter(|t| t.kind() == TokenKind::Newline) {
+        return lines.line(t.start());
+    }
+    match cx.tokens.iter().filter(significant).find(|t| t.start() >= end) {
+        // At the end of the file (Ruff's tokens there are empty): the tokenizer's last line.
+        Some(t) if t.kind() != TokenKind::EndOfFile && t.start().to_usize() < cx.source.len() => {
+            lines.line(t.end().checked_sub(TextSize::new(1)).unwrap_or(t.start()).max(t.start()))
+        }
+        _ => lines.count(),
+    }
+}
+
+/// The characters CPython counts in the first `bytes` bytes of `text` (`_PyPegen_byte_offset_to_character_offset`):
+/// decoded with replacement, a character cut short one, and at most one past the end (its terminating NUL).
+fn chars_to(text: &str, bytes: usize) -> i64 {
+    let bytes = bytes.min(text.len() + 1);
+    let mut whole = bytes.min(text.len());
+    while !text.is_char_boundary(whole) {
+        whole -= 1;
+    }
+    (text[..whole].chars().count() + usize::from(whole < bytes)) as i64
 }
 
 /// An exception `ast.parse` raises that is no `SyntaxError`: an escape a format spec's text cannot decode, whose
@@ -44,16 +219,17 @@ pub(crate) struct Raised {
 /// `ast.parse(source)`'s verdict: `Ok(None)` where it parses, its `SyntaxError`, or another exception it raises.
 pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> {
     if source.contains('\0') {
-        return Ok(Some(SyntaxError { line: 1, msg: "source code string cannot contain null bytes".into() }));
+        return Ok(Some(SyntaxError { line: 1, msg: "source code string cannot contain null bytes".into(), at: None }));
     }
     let lines = Lines::new(source);
-    // CPython reads a str: a byte order mark is a character, which its tokenizer refuses (Ruff skips it).
-    if source.starts_with('\u{feff}') {
-        return Ok(Some(SyntaxError { line: 1, msg: "invalid non-printable character U+FEFF".into() }));
-    }
     let parsed = parse_unchecked(source, ParseOptions::from(Mode::Module).with_target_version(super::VERSION));
     let tokens = parsed.tokens();
     let cx = Cx { source, lines: &lines, tokens, module: parsed.syntax() };
+    // CPython reads a str: a byte order mark is a character, which its tokenizer refuses (Ruff skips it).
+    if source.starts_with('\u{feff}') {
+        let at = Some(Span::Cursor(TextSize::new(3)).locate(&cx));
+        return Ok(Some(SyntaxError { line: 1, msg: "invalid non-printable character U+FEFF".into(), at }));
+    }
     let mut found: Vec<Found> = Vec::new();
     for e in parsed.errors() {
         found.push(Found { at: e.location.start(), end: e.location.end(), what: What::Parse(&e.error) });
@@ -79,13 +255,14 @@ pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> 
     // `print` or `exec` before an expression, at or before the failure, is one (`invalid_legacy_expression`); an
     // f-string's replacement field whose expression fails is another (`invalid_replacement_field`).
     let legacy = if first.first_pass(source) { None } else { legacy_call(&cx, first.at) };
-    let second = legacy.map(|(line, name)| (line, format!("Missing parentheses in call to '{name}'. Did you mean {name}(...)?")));
+    let second = legacy.map(|(span, name)| (span, format!("Missing parentheses in call to '{name}'. Did you mean {name}(...)?")));
     let second = second.or_else(|| chosen.generic.then(|| replacement_field(&cx, first.at).or_else(|| missing_block(&cx, first.at))).flatten());
-    if let Some((line, msg)) = &second {
-        chosen = Chosen { line: *line, msg: msg.clone(), generic: false, at_eof: false, raises: false };
+    if let Some((span, msg)) = &second {
+        chosen = Chosen { line: span.line(&lines), span: *span, msg: msg.clone(), generic: false, at_eof: false, raises: false };
     }
     let unclosed = brackets.open.last().map(|&(open, kind)| Chosen {
         line: lines.line(open),
+        span: Span::Open(open, true),
         msg: format!("'{}' was never closed", bracket_char(kind)),
         generic: false,
         at_eof: false,
@@ -111,7 +288,7 @@ pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> 
             chosen = unclosed;
         }
     }
-    Ok(Some(SyntaxError { line: chosen.line, msg: chosen.msg }))
+    Ok(Some(SyntaxError { line: chosen.line, at: Some(chosen.span.locate(&cx)), msg: chosen.msg }))
 }
 
 /// Line starts, at CPython's terminators (`\r\n`, `\r`, `\n`).
@@ -143,6 +320,19 @@ impl Lines {
     /// The 1-based line of byte offset `at`.
     fn line(&self, at: TextSize) -> usize {
         self.starts.partition_point(|&s| s <= at.to_usize())
+    }
+
+    /// The byte offset line `line` starts at.
+    fn start(&self, line: usize) -> usize {
+        self.starts.get(line.saturating_sub(1)).copied().unwrap_or(self.len)
+    }
+
+    /// Line `line`'s text without its terminator, and the terminator ("" on a last line without one).
+    fn text<'s>(&self, source: &'s str, line: usize) -> (&'s str, &'s str) {
+        let (start, end) = (self.start(line), self.starts.get(line).copied().unwrap_or(self.len));
+        let all = &source[start..end.max(start)];
+        let body = all.strip_suffix("\r\n").or_else(|| all.strip_suffix(['\n', '\r'])).unwrap_or(all);
+        (body, &all[body.len()..])
     }
 
     /// The line the tokenizer is on at the end of the text: its last character's.
@@ -221,6 +411,7 @@ enum What<'a> {
 /// `SyntaxError`'s but the `UnicodeDecodeError` `ast.parse` raises (`Raised`).
 struct Chosen {
     line: usize,
+    span: Span,
     msg: String,
     generic: bool,
     at_eof: bool,
@@ -308,77 +499,105 @@ impl Found<'_> {
             .rev()
             .find(|t| !t.kind().is_trivia() && !matches!(t.kind(), TokenKind::EndOfFile | TokenKind::Newline | TokenKind::Dedent))
             .is_none_or(|t| t.end() <= self.at);
-        let generic = |line| Chosen { line, msg: "invalid syntax".into(), generic: true, at_eof, raises: false };
-        let named = |line, msg: String| Chosen { line, msg, generic: false, at_eof, raises: false };
+        let generic = |span: Span| Chosen { line: span.line(lines), span, msg: "invalid syntax".into(), generic: true, at_eof, raises: false };
+        let named = |span: Span, msg: String| Chosen { line: span.line(lines), span, msg, generic: false, at_eof, raises: false };
         let target = || expr_at(cx.module, self.at, self.end);
         let name = || target().map_or("expression", expr_name);
+        // Where CPython's parser fails: the token it read last; where an action raises it, at a node.
+        let token = Span::token(tokens, self.at, self.end);
+        let node = Span::Range(self.at, self.end.max(self.at + TextSize::new(1)));
+        // Where its tokenizer fails: its cursor past the character it refuses.
+        let past = |at: TextSize| Span::Cursor(at + source[at.to_usize()..].chars().next().map_or(TextSize::new(0), TextSize::of));
         match &self.what {
-            What::Tokenizer(msg) | What::Named(msg) => named(line, msg.clone()),
+            What::Tokenizer(msg) => named(past(self.at), msg.clone()),
+            What::Named(msg) => named(token, msg.clone()),
             What::Unsupported(UnsupportedSyntaxErrorKind::UnparenthesizedExceptionTypes) => {
-                named(line, "multiple exception types must be parenthesized".into())
+                named(node, "multiple exception types must be parenthesized".into())
             }
-            What::Unsupported(_) => generic(line),
+            What::Unsupported(_) => generic(token),
             What::Parse(e) => match e {
                 ParseErrorType::Lexical(l) => match l {
                     LexicalErrorType::UnclosedStringError => {
                         let text = &source[self.at.to_usize()..];
                         let quote_at = text.find(['\'', '"']).unwrap_or(0);
                         let q = &text[quote_at..];
+                        // The tokenizer's cursor is put back past the string's first character (its prefix's, if any).
+                        let span = Span::Cursor(self.at + TextSize::new(1));
                         if q.starts_with("'''") || q.starts_with("\"\"\"") {
-                            named(line, format!("unterminated triple-quoted string literal (detected at line {})", lines.count()))
+                            named(span, format!("unterminated triple-quoted string literal (detected at line {})", lines.count()))
                         } else {
-                            named(line, format!("unterminated string literal (detected at line {})", lines.line(self.end)))
+                            named(span, format!("unterminated string literal (detected at line {})", lines.line(self.end)))
                         }
                     }
-                    LexicalErrorType::IndentationError => named(line, "unindent does not match any outer indentation level".into()),
-                    LexicalErrorType::UnrecognizedToken { tok } if is_operator_character(*tok) => generic(line),
-                    LexicalErrorType::UnrecognizedToken { tok } => named(line, invalid_character(*tok)),
-                    LexicalErrorType::LineContinuationError => named(line, "unexpected character after line continuation character".into()),
-                    LexicalErrorType::InvalidByteLiteral => named(line, "bytes can only contain ASCII literal characters".into()),
-                    LexicalErrorType::FStringError(f) => fstring(f, self, cx, line, &named),
+                    LexicalErrorType::IndentationError => {
+                        // Raised as the dedented line is read: the cursor at its end, past its terminator.
+                        let (body, end) = lines.text(source, line);
+                        named(Span::NoColumn(line, body.len() + end.len().max(1)), "unindent does not match any outer indentation level".into())
+                    }
+                    LexicalErrorType::UnrecognizedToken { tok } if is_operator_character(*tok) => generic(token),
+                    LexicalErrorType::UnrecognizedToken { tok } => named(past(self.at), invalid_character(*tok)),
+                    LexicalErrorType::LineContinuationError => {
+                        // At the character after the backslash (`cur - buf - 1`), with no end.
+                        let after = self.at + TextSize::new(1);
+                        named(Span::Open(after, false), "unexpected character after line continuation character".into())
+                    }
+                    LexicalErrorType::InvalidByteLiteral => named(node, "bytes can only contain ASCII literal characters".into()),
+                    LexicalErrorType::FStringError(f) => fstring(f, self, cx, token, &named),
                     LexicalErrorType::UnicodeError | LexicalErrorType::MissingUnicodeLbrace | LexicalErrorType::MissingUnicodeRbrace => {
                         match escape_error(cx, self.at) {
-                            Some(Escape::Syntax(line, msg)) => named(line, msg),
-                            Some(Escape::Raises(msg)) => Chosen { line, msg, generic: false, at_eof, raises: true },
-                            None => generic(line),
+                            Some(Escape::Syntax(span, msg)) => named(span, msg),
+                            Some(Escape::Raises(msg)) => Chosen { line, span: token, msg, generic: false, at_eof, raises: true },
+                            None => generic(token),
                         }
                     }
-                    _ => generic(line),
+                    _ => generic(token),
                 },
-                ParseErrorType::FStringError(f) => fstring(f, self, cx, line, &named),
-                ParseErrorType::UnexpectedIndentation => named(line, "unexpected indent".into()),
-                ParseErrorType::ExpectedToken { expected: TokenKind::Colon, .. } => named(line, "expected ':'".into()),
+                ParseErrorType::FStringError(f) => fstring(f, self, cx, token, &named),
+                ParseErrorType::UnexpectedIndentation => {
+                    // At the `INDENT`, which has no column: the cursor past the line's indentation.
+                    let (body, _) = lines.text(source, line);
+                    named(Span::NoColumn(line, body.len() - body.trim_start_matches([' ', '\t', '\x0c']).len()), "unexpected indent".into())
+                }
+                ParseErrorType::ExpectedToken { expected: TokenKind::Colon, .. } => named(token, "expected ':'".into()),
                 ParseErrorType::ExpectedToken { expected: TokenKind::Comma | TokenKind::Rpar | TokenKind::Rsqb | TokenKind::Rbrace, found }
                     if depth_at(tokens, self.at) > 0 && starts_expression(*found) =>
                 {
                     // `invalid_expression`: two expressions side by side in brackets, reported at the first. Its
                     // parse reads on to the end of the file where a bracket is never closed, which is reported then.
                     let before = tokens.iter().take_while(|t| t.end() <= self.at).filter(|t| !t.kind().is_trivia()).last();
-                    let line = before.map_or(line, |t| lines.line(t.start()));
-                    Chosen { line, msg: "invalid syntax. Perhaps you forgot a comma?".into(), generic: false, at_eof: true, raises: false }
+                    let from = before.map_or(self.at, |t| expression_start(cx, t.end()));
+                    let to = expression_end(cx, self.at, false);
+                    let span = Span::Range(from, to);
+                    Chosen { line: span.line(lines), span, msg: "invalid syntax. Perhaps you forgot a comma?".into(), generic: false, at_eof: true, raises: false }
                 }
                 // A line break inside brackets is no token for CPython: it fails at the next one.
                 ParseErrorType::ExpectedToken { found: TokenKind::Newline, .. } if depth_at(tokens, self.at) > 0 => {
                     let next = tokens.iter().find(|t| t.start() > self.at && !t.kind().is_trivia() && !t.kind().is_any_newline());
-                    generic(next.map_or(line, |t| lines.line(t.start())))
+                    generic(next.map_or(token, |t| Span::token(tokens, t.start(), t.end())))
                 }
-                ParseErrorType::EmptyTypeParams => named(line, "Type parameter list cannot be empty".into()),
-                ParseErrorType::EmptyImportNames => named(line, "Expected one or more names after 'import'".into()),
-                ParseErrorType::InvalidMatchPatternTarget => named(line, "cannot use '_' as a target".into()),
+                ParseErrorType::EmptyTypeParams => named(token, "Type parameter list cannot be empty".into()),
+                ParseErrorType::EmptyImportNames => named(at_start(token), "Expected one or more names after 'import'".into()),
+                ParseErrorType::InvalidMatchPatternTarget => named(node, "cannot use '_' as a target".into()),
                 ParseErrorType::OtherError(msg) => match msg.strip_prefix("Expected an indented block after ") {
                     Some(clause) => {
                         let header = header_line(tokens, self.at, lines);
-                        // At the end of the file CPython's position is the tokenizer's line there: its last
-                        // character's, blank lines and comments included.
-                        let line = if at_eof { lines.count().max(line) } else { line };
-                        named(line, format!("expected an indented block after {} on line {header}", clause_name(clause)))
+                        // At the end of the file CPython's position is the tokenizer's there (the `ENDMARKER` has no
+                        // column): its last character's line, blank lines and comments included, past its end.
+                        let span = if at_eof {
+                            let last = lines.count().max(line);
+                            let (body, end) = lines.text(source, last);
+                            Span::NoColumn(last, body.len() + end.len().max(1))
+                        } else {
+                            Span::token(tokens, self.at, self.end)
+                        };
+                        named(span, format!("expected an indented block after {} on line {header}", clause_name(clause)))
                     }
                     None => match other_message(msg) {
-                        Some(m) => named(line, m.into()),
-                        None => generic(line),
+                        Some(m) => named(node, m.into()),
+                        None => generic(token),
                     },
                 },
-                ParseErrorType::InvalidDeleteTarget => named(line, format!("cannot delete {}", name())),
+                ParseErrorType::InvalidDeleteTarget => named(node, format!("cannot delete {}", name())),
                 ParseErrorType::InvalidAssignmentTarget => {
                     // `invalid_named_expression`: an operand target followed by `=` and a value is "here", with a hint.
                     let operand = target().is_some_and(|e| {
@@ -401,34 +620,34 @@ impl Found<'_> {
                     });
                     let next = tokens.iter().find(|t| t.start() >= self.end && !t.kind().is_trivia()).map(|t| t.kind());
                     if operand && next == Some(TokenKind::Equal) {
-                        named(line, format!("cannot assign to {} here. Maybe you meant '==' instead of '='?", name()))
+                        named(node, format!("cannot assign to {} here. Maybe you meant '==' instead of '='?", name()))
                     } else {
-                        named(line, format!("cannot assign to {}", name()))
+                        named(node, format!("cannot assign to {}", name()))
                     }
                 }
                 ParseErrorType::InvalidAugmentedAssignmentTarget => {
-                    named(line, format!("'{}' is an illegal expression for augmented assignment", name()))
+                    named(node, format!("'{}' is an illegal expression for augmented assignment", name()))
                 }
                 ParseErrorType::InvalidAnnotatedAssignmentTarget => match target() {
-                    Some(Expr::Tuple(_)) => named(line, "only single target (not tuple) can be annotated".into()),
-                    Some(Expr::List(_)) => named(line, "only single target (not list) can be annotated".into()),
-                    _ => named(line, "illegal target for annotation".into()),
+                    Some(Expr::Tuple(_)) => named(node, "only single target (not tuple) can be annotated".into()),
+                    Some(Expr::List(_)) => named(node, "only single target (not list) can be annotated".into()),
+                    _ => named(node, "illegal target for annotation".into()),
                 },
-                ParseErrorType::InvalidNamedAssignmentTarget => named(line, format!("cannot use assignment expressions with {}", name())),
-                ParseErrorType::UnparenthesizedGeneratorExpression => named(line, "Generator expression must be parenthesized".into()),
-                ParseErrorType::PositionalAfterKeywordArgument => named(line, "positional argument follows keyword argument".into()),
+                ParseErrorType::InvalidNamedAssignmentTarget => named(node, format!("cannot use assignment expressions with {}", name())),
+                ParseErrorType::UnparenthesizedGeneratorExpression => named(node, "Generator expression must be parenthesized".into()),
+                ParseErrorType::PositionalAfterKeywordArgument => named(node, "positional argument follows keyword argument".into()),
                 ParseErrorType::PositionalAfterKeywordUnpacking => {
-                    named(line, "positional argument follows keyword argument unpacking".into())
+                    named(node, "positional argument follows keyword argument unpacking".into())
                 }
                 ParseErrorType::InvalidArgumentUnpackingOrder => {
-                    named(line, "iterable argument unpacking follows keyword argument unpacking".into())
+                    named(node, "iterable argument unpacking follows keyword argument unpacking".into())
                 }
                 ParseErrorType::NonDefaultParamAfterDefaultParam => {
-                    named(line, "parameter without a default follows parameter with a default".into())
+                    named(node, "parameter without a default follows parameter with a default".into())
                 }
-                ParseErrorType::ParamAfterVarKeywordParam => named(line, "arguments cannot follow var-keyword argument".into()),
-                ParseErrorType::ExpectedKeywordParam => named(line, "named arguments must follow bare *".into()),
-                _ => generic(line),
+                ParseErrorType::ParamAfterVarKeywordParam => named(node, "arguments cannot follow var-keyword argument".into()),
+                ParseErrorType::ExpectedKeywordParam => named(node, "named arguments must follow bare *".into()),
+                _ => generic(token),
             },
         }
     }
@@ -465,6 +684,49 @@ fn expr_at(module: &Mod, start: TextSize, end: TextSize) -> Option<&Expr> {
         at.visit_body(&m.body);
     }
     at.found
+}
+
+/// The start of the outermost expression ending at `end` (the first of two side by side, `invalid_expression`'s `a`),
+/// else `end`'s token's.
+fn expression_start(cx: &Cx, end: TextSize) -> TextSize {
+    outermost(cx.module, |e| e.end() == end && !matches!(e, Expr::Tuple(_) | Expr::Generator(_))).map_or_else(
+        || cx.tokens.iter().rev().find(|t| t.end() == end).map_or(end, Ranged::start),
+        |r| r.start(),
+    )
+}
+
+/// The end of the outermost expression starting at the first token at or after `at`, else that token's: with
+/// `tuples`, a tuple too (`star_expressions`, what a legacy `print` would print); without, an `expression` (the second
+/// of two side by side), no tuple and no comprehension Ruff made of what follows it.
+fn expression_end(cx: &Cx, at: TextSize, tuples: bool) -> TextSize {
+    let Some(first) = cx.tokens.iter().find(|t| t.start() >= at && !t.kind().is_trivia()) else { return at };
+    let pick = |e: &Expr| e.start() == first.start() && (tuples || !matches!(e, Expr::Tuple(_) | Expr::Generator(_)));
+    outermost(cx.module, pick).map_or(first.end(), |r| r.end())
+}
+
+/// The range of the outermost expression `pick` takes.
+fn outermost(module: &Mod, pick: impl Fn(&Expr) -> bool) -> Option<TextRange> {
+    struct Find<F> {
+        pick: F,
+        found: Option<TextRange>,
+    }
+    impl<'a, F: Fn(&Expr) -> bool> Visitor<'a> for Find<F> {
+        fn visit_expr(&mut self, expr: &'a Expr) {
+            if self.found.is_some() {
+                return;
+            }
+            if (self.pick)(expr) {
+                self.found = Some(expr.range());
+                return;
+            }
+            walk_expr(self, expr);
+        }
+    }
+    let mut find = Find { pick, found: None };
+    if let Mod::Module(m) = module {
+        find.visit_body(&m.body);
+    }
+    find.found
 }
 
 /// CPython's name of an expression in its messages (`_PyPegen_get_expr_name`).
@@ -533,7 +795,7 @@ fn is_operator_character(c: char) -> bool {
 /// the field's `!`, `:` or `=`): its expression does not parse from the `{` (`f-string: expecting a valid expression
 /// after '{'`, at the token after the `{`), or it is followed by what may not follow it (`f-string: expecting '=', or
 /// '!', or ':', or '}'`). Its line and message.
-fn replacement_field(cx: &Cx, at: TextSize) -> Option<(usize, String)> {
+fn replacement_field(cx: &Cx, at: TextSize) -> Option<(Span, String)> {
     /// An open field: its `{` (a token index), its bracket depth, and whether its expression is over (past a `!`,
     /// `:` or `=` outside brackets).
     struct Field {
@@ -581,9 +843,9 @@ fn replacement_field(cx: &Cx, at: TextSize) -> Option<(usize, String)> {
     // APPROX: a bracket left open after the field's first token (`f'{x + (y $)}'`) gives "a valid expression after
     // '{'" here, where CPython 3.13 says "expecting '=', or '!', or ':', or '}'". No corpus holds such a field.
     if after.start() >= at || field.depth > 0 {
-        Some((cx.lines.line(after.start()), "f-string: expecting a valid expression after '{'".into()))
+        Some((Span::token(cx.tokens, after.start(), after.end()), "f-string: expecting a valid expression after '{'".into()))
     } else {
-        Some((cx.lines.line(at), "f-string: expecting '=', or '!', or ':', or '}'".into()))
+        Some((Span::token(cx.tokens, at, at), "f-string: expecting '=', or '!', or ':', or '}'".into()))
     }
 }
 
@@ -612,7 +874,7 @@ fn header_line(tokens: &Tokens, at: TextSize, lines: &Lines) -> usize {
 /// `invalid_*_stmt`'s missing block, where Ruff reads none: a character CPython reads as an operator (`$`) starting
 /// the logical line after a compound statement's header, at the header's indentation (no `INDENT`). Its line and
 /// message.
-fn missing_block(cx: &Cx, at: TextSize) -> Option<(usize, String)> {
+fn missing_block(cx: &Cx, at: TextSize) -> Option<(Span, String)> {
     let before: Vec<_> = cx.tokens.iter().take_while(|t| t.start() <= at).filter(|t| !t.kind().is_trivia()).collect();
     let [.., colon, newline, unknown] = before[..] else { return None };
     if unknown.kind() != TokenKind::Unknown || unknown.start() != at || newline.kind() != TokenKind::Newline || colon.kind() != TokenKind::Colon {
@@ -638,7 +900,7 @@ fn missing_block(cx: &Cx, at: TextSize) -> Option<(usize, String)> {
         TokenKind::Case => "'case' statement",
         _ => return None,
     };
-    Some((cx.lines.line(at), format!("expected an indented block after {clause} on line {}", cx.lines.line(before[start].start()))))
+    Some((Span::token(cx.tokens, at, at), format!("expected an indented block after {clause} on line {}", cx.lines.line(before[start].start()))))
 }
 
 /// The name an f-string's conversion is written with, at the start of `text`.
@@ -648,7 +910,7 @@ fn conversion_name(text: &str) -> Option<&str> {
 }
 
 /// CPython's message for an f-string error of Ruff's.
-fn fstring(e: &InterpolatedStringErrorType, at: &Found, cx: &Cx, line: usize, named: &dyn Fn(usize, String) -> Chosen) -> Chosen {
+fn fstring(e: &InterpolatedStringErrorType, at: &Found, cx: &Cx, span: Span, named: &dyn Fn(Span, String) -> Chosen) -> Chosen {
     let text = &cx.source[at.at.to_usize()..];
     let msg = match e {
         InterpolatedStringErrorType::UnclosedLbrace => "f-string: expecting '}'".into(),
@@ -669,7 +931,22 @@ fn fstring(e: &InterpolatedStringErrorType, at: &Found, cx: &Cx, line: usize, na
             format!("unterminated triple-quoted f-string literal (detected at line {})", cx.lines.count())
         }
     };
-    named(line, msg)
+    // An f-string left open is the tokenizer's error: its cursor put back past the f-string's first character (Ruff
+    // reports it past the f-string's start, its last `FStringStart` up to there).
+    let span = match e {
+        InterpolatedStringErrorType::UnterminatedString | InterpolatedStringErrorType::UnterminatedTripleQuotedString => {
+            let start = cx
+                .tokens
+                .iter()
+                .take_while(|t| t.start() <= at.at)
+                .filter(|t| matches!(t.kind(), TokenKind::FStringStart | TokenKind::TStringStart))
+                .last()
+                .map_or(at.at, Ranged::start);
+            Span::Cursor(start + TextSize::new(1))
+        }
+        _ => span,
+    };
+    named(span, msg)
 }
 
 /// CPython's message for one of Ruff's `OtherError`s, where CPython names it.
@@ -683,6 +960,8 @@ fn other_message(ruff: &str) -> Option<&'static str> {
         | "Only one '*' parameter allowed"
         | "Keyword-only parameter separator not allowed after '*' parameter" => "* argument may appear only once",
         "'/' parameter must appear before '*' parameter" => "/ must be ahead of *",
+        "Only single target (not tuple) can be annotated" => "only single target (not tuple) can be annotated",
+        "Only single target (not list) can be annotated" => "only single target (not list) can be annotated",
         _ => return None,
     })
 }
@@ -743,7 +1022,7 @@ fn starts_star_expressions(kind: TokenKind) -> bool {
 /// assignment to it, and after a bracket, a comma, `=`, `:=`, `->`, `:` and the keywords before an expression, but
 /// not after an operator (an operand is no `expression`), in a comprehension's or a ternary's condition, or in a
 /// target (`print [1] = x`).
-fn legacy_call(cx: &Cx, failure: TextSize) -> Option<(usize, String)> {
+fn legacy_call(cx: &Cx, failure: TextSize) -> Option<(Span, String)> {
     let all: Vec<_> = cx.tokens.iter().filter(|t| !matches!(t.kind(), TokenKind::Comment | TokenKind::NonLogicalNewline)).collect();
     let statement_start = |j: Option<usize>| j.is_none_or(|j| matches!(all[j].kind(), TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent));
     let mut positions: Option<Positions> = None;
@@ -799,7 +1078,7 @@ fn legacy_call(cx: &Cx, failure: TextSize) -> Option<(usize, String)> {
             _ => false,
         };
         if reads && !positions.targets.iter().any(|r| r.contains(t.start())) {
-            return Some((cx.lines.line(t.start()), name.into_owned()));
+            return Some((Span::Range(t.start(), expression_end(cx, t.end(), true)), name.into_owned()));
         }
     }
     None
@@ -898,7 +1177,7 @@ fn literal_at(tokens: &Tokens, at: TextSize) -> Option<(usize, Place)> {
 /// What an escape a literal cannot decode raises: a `SyntaxError` (its line and message), or, in a format spec, the
 /// codec's `UnicodeDecodeError` (its `str`).
 enum Escape {
-    Syntax(usize, String),
+    Syntax(Span, String),
     Raises(String),
 }
 
@@ -924,7 +1203,7 @@ fn escape_error(cx: &Cx, at: TextSize) -> Option<Escape> {
             let quoted = &text[prefix..];
             let q = if quoted.starts_with("\"\"\"") || quoted.starts_with("'''") { 3 } else { 1 };
             let body = prefix + q..text.len().checked_sub(q).filter(|&e| e >= prefix + q)?;
-            let line = cx.lines.line(token.start());
+            let line = Span::Range(token.start(), token.end());
             if text[..prefix].contains(['b', 'B']) {
                 let (buf, _) = escape_buffer(&text[body], 0);
                 return bytes_escape_error(&buf).map(|p| Escape::Syntax(line, format!("(value error) invalid \\x escape at position {p}")));
@@ -935,7 +1214,7 @@ fn escape_error(cx: &Cx, at: TextSize) -> Option<Escape> {
         Place::Spec => decode(0..text.len(), base).map(Escape::Raises),
         Place::Text { end } => {
             // CPython decodes an f-string's text once it has read the f-string's end, where it reports the error.
-            let line = cx.lines.line(end.unwrap_or(token.start()));
+            let line = end.map_or(Span::Range(token.start(), token.end()), |end| Span::token(cx.tokens, end, end));
             // Its tokenizer ends a piece of text after a doubled brace's first brace; each piece is decoded apart.
             let bytes = text.as_bytes();
             let mut pieces = Vec::new();

@@ -525,6 +525,13 @@ inferred from it left out, in a later model too; a prepared plan reading it not 
 `a_run_finds_a_fanout_its_rows_break_and_finds_the_same` and `a_run_finds_a_key_its_rows_break_where_they_are_written`
 (the findings are the rules', and the run notes one fact broken).
 
+**The writes' check at scale** (2026-11-20, corpus0 x B-now, cold, profiling build, an M3 at load 9-23). Its first
+run found a declared fact false: `.layout doc key(d) key(path)`. A guest document's path is its host file's (decision
+0055), so a path holds a file's documents, not one. The check saw it on four relations a rule copies `doc`'s path
+and document into (`xd_…_rr_diagnostic_…`, inferred `key(rr_p)`), each planned from statistics after; the
+probes never had (no probe there binds a path alone). core.rr keeps `key(d)` alone. After: 463 findings, the
+sorted rows' digest unchanged (a8b386173677), no fact broken, 1,146-1,155 G instructions.
+
 **At scale** (corpus0 x B-now, profiling build, an M1 Max at load 10-15): 3,350 probe steps checked, no fact broken,
 463 findings d067ec2ebf6f; 985.8 G instructions in one run and 1,004.9 and 1,017.7 G in two others, against 982.7 and
 1,045.8 G before.

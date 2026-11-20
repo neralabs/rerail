@@ -1605,6 +1605,21 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
   and the work run again. The packs are now registered as the test binary loads, beside Metal (`test_load`), as the
   engine registers them as it loads. The lane suite passes with no such panic on Metal (59) and on CUDA (58).
 
+**An AMD integrated GPU under WSL2: what reaches it (2026-11-20).**
+
+- **The machine:** a Ryzen 7 7735HS, whose GPU is a Radeon 680M (RDNA2, gfx1035), running the farm's Linux jobs
+  under WSL2 (Ubuntu 24.04).
+- **What WSL2 gives a Linux process of it: Direct3D 12 only** (`/dev/dxg`, `libd3d12`, `libdxcore`). `/dev/dri` is
+  WSL's placeholder device (`faux_driver`), not the GPU.
+- **ROCm (HIP, the CUDA-like path):** AMD's ROCm for WSL serves a list of discrete Radeons, not this GPU, so HIP
+  cannot reach it from WSL. HIP would be a port of the CUDA backend (`hipModuleLoadData`, `hiprtc`), with RDNA's
+  32 lanes and a 64-bit ballot (`ukl_mask_t`); it needs a machine where HIP runs.
+- **OpenCL:** AMD's OpenCL is not in WSL. Mesa's rusticl (25.2, fetched into the farm's own directory) has the
+  radeonsi, iris, zink and software drivers, and no d3d12 one; no device is found.
+- **So both need the GPU's own driver:** native Windows (AMD's driver ships OpenCL and the HIP runtime; the
+  workspace's Windows build, plan step 4), or native Linux on the machine (radeonsi under rusticl; ROCm, which
+  runs gfx1035 only as gfx1030, with `HSA_OVERRIDE_GFX_VERSION`).
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

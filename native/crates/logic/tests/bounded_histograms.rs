@@ -6,6 +6,13 @@ mod sketch;
 mod rows {
     pub use rerail_facts::code_rule_dsl::facts::rows::BlockVec;
 }
+// The sketch hashes keys as the Bloom filters do (`logic::bloom::hash`), read at its path in the engine.
+#[path = "../../../src/code_rule_dsl"]
+mod code_rule_dsl {
+    pub mod logic {
+        pub mod bloom;
+    }
+}
 #[test]
 fn compact_integer_domains_keep_exact_counts_past_64_distinct_values() {
     let mut s=sketch::Sketch::default();

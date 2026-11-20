@@ -93,7 +93,7 @@ fn the_names_pass_reads_the_tapes_in_place() {
         f.1 = image(&f.0, crate::pp::options(true));
     }
     files.extend(corpus_in());
-    let unit = place(&files.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>());
+    let unit = place(&files.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>()).unwrap();
     let got = evaluate(&unit, true).unwrap();
     let mut g = 0usize;
     for (f, (src, tape, _)) in files.iter().enumerate() {
@@ -136,7 +136,7 @@ fn the_directives_pass_gives_the_spikes_tables() {
     ];
     let mut files: Vec<(Vec<u8>, Vec<u8>, bool)> = shapes.iter().map(|s| (s.to_vec(), image(s, crate::pp::options(false)), false)).collect();
     files.extend(corpus_in());
-    let unit = place(&files.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>());
+    let unit = place(&files.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>()).unwrap();
     let got = evaluate(&unit, false).unwrap();
     let mut rows = 0usize;
     for (f, (src, tape, cpp)) in files.iter().enumerate() {
@@ -192,7 +192,7 @@ fn the_definitions_are_the_serial_passes() {
     // Units of 500 files: a batch's buffers stay inside the device's budget (0448 §2).
     let (mut defines, mut malformed) = (0usize, 0usize);
     for (c, chunk) in files.chunks(500).enumerate() {
-    let unit = place(&chunk.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>());
+    let unit = place(&chunk.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>()).unwrap();
     let (got, d) = definitions(&unit).unwrap();
     let mut rows = 0usize;
     for (f, (src, tape, cpp)) in chunk.iter().enumerate() {
@@ -285,17 +285,12 @@ fn the_paste_relexer_is_the_lexers() {
     eprintln!("{} spellings, 5 dialects", texts.len());
 }
 
-/// A unit on the device from its main file alone, in P1's rounds (decision 0501 §1): the last
-/// round's unit and layout, its files' format 15 tapes (the host's views of them), sources and paths.
+/// A unit on the device from its main file alone, in P1's rounds of lookups (decision 0501 §1):
+/// the last round's unit and layout, and its files' paths.
 struct OnDevice {
     unit: Unit,
     lay: rerail_metal::pp_expand::Layout,
-    tapes: Vec<Vec<u8>>,
-    files: Vec<Vec<u8>>,
     paths: Vec<String>,
-    rounds: u32,
-    /// The rooms the last round settled at.
-    sizes: rerail_metal::pp_expand::Sizes,
 }
 
 /// The unit whose main file is `path` on the device, in rounds, and the spike's P1 of it (the
@@ -309,9 +304,8 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
 /// The unit whose main file is `path` on the device, in rounds, the spike not run; or why the
 /// device refuses it.
 fn on_device(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool) -> Result<OnDevice, &'static str> {
-    use super::rounds::Refused;
     use rerail_metal::pp_expand::*;
-    // The rooms carry from round to round (decision 0503 §6), and on to the expansion's run.
+    // The rooms carry from round to round (decision 0503 §6).
     let mut sizes: Option<Sizes> = None;
     let r = super::rounds::run(&cfg, io, path, cpp, |u, l| {
         let mut s = sizes.map_or_else(|| Sizes::first(u, l), |s| s.fit(u, l));
@@ -319,7 +313,24 @@ fn on_device(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, p
         sizes = Some(s);
         r
     })
-    .map_err(|e| match e {
+    .map_err(|e| why_refused(e, path))?;
+    if r.answer & X_BUILTIN != 0 {
+        return Err("built-ins in an #if");
+    }
+    if r.answer & X_PRAGMA != 0 {
+        return Err("a _Pragma that makes a row");
+    }
+    if r.answer != 0 {
+        return Err("an #if's expansion");
+    }
+    Ok(OnDevice { unit: r.unit, lay: r.lay, paths: r.loaded.paths })
+}
+
+/// Why the rounds refused the unit whose main file is `path`.
+fn why_refused(e: super::rounds::Refused, path: &str) -> &'static str {
+    use super::rounds::Refused;
+    use rerail_metal::pp_expand::*;
+    match e {
         Refused::NoMain => "the main file is not read",
         Refused::P1(f) if f & P1_IF_DEFINED != 0 => "defined made by a macro in an #if",
         Refused::P1(f) if f & P1_IF_BIG != 0 => "an #if past the evaluator's room",
@@ -331,19 +342,45 @@ fn on_device(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, p
             eprintln!("device error {path}: {e:?}");
             "a device error"
         }
-    })?;
-    if r.answer & X_BUILTIN != 0 {
-        return Err("built-ins in an #if");
     }
-    if r.answer & X_PRAGMA != 0 {
-        return Err("a _Pragma that makes a row");
-    }
-    if r.answer != 0 {
-        return Err("an #if's expansion");
-    }
-    let tapes = r.loaded.files.iter().map(|s| image(s, crate::pp::options(cpp))).collect();
-    let sizes = sizes.map_or_else(|| Sizes::first(&r.unit, &r.lay), |s| s.fit(&r.unit, &r.lay));
-    Ok(OnDevice { unit: r.unit, lay: r.lay, tapes, files: r.loaded.files, paths: r.loaded.paths, rounds: r.rounds, sizes })
+}
+
+/// What a language's batched rounds ran: the device's runs, and their GPU time (seconds).
+#[derive(Default)]
+struct Ran {
+    runs: usize,
+    gpu_seconds: f64,
+    /// Each expansion store's most use over a run's top-level tokens (`ROOM_STORES`), and the
+    /// most over its room.
+    per_top: [f64; rerail_metal::pp_expand::ROOMS],
+    per_cap: [f64; rerail_metal::pp_expand::ROOMS],
+}
+
+/// The units whose main files are `units`' (each its files), settled in batched rounds
+/// (`rounds::run_many`) under `cfg`: each its expansion and its files' tapes, or why the rounds
+/// refused it; the runs counted in `ran`.
+fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::files::Files + '_>, String)], ran: &mut Ran) -> Vec<Result<(super::rounds::Settled, Vec<Vec<u8>>), &'static str>> {
+    let cpp = cfg.opts.cpp;
+    let r = super::rounds::run_many(cfg, cpp, units, |u, l, s| {
+        let x = rerail_metal::pp_expand::expand_sized(u, l, s, rerail_metal::pp_arena::groups());
+        if let Ok(x) = &x {
+            ran.runs += 1;
+            ran.gpu_seconds += x.gpu_seconds;
+            for (k, &(u, c)) in x.room.iter().enumerate() {
+                ran.per_top[k] = ran.per_top[k].max(f64::from(u) / x.caps.top.max(1) as f64);
+                ran.per_cap[k] = ran.per_cap[k].max(f64::from(u) / f64::from(c.max(1)));
+            }
+        }
+        x
+    });
+    r.into_iter()
+        .zip(units.iter())
+        .map(|(r, (_, path))| {
+            let s = r.map_err(|e| why_refused(e, path))?;
+            let tapes = s.loaded.files.iter().map(|f| image(f, crate::pp::options(cpp))).collect();
+            Ok((s, tapes))
+        })
+        .collect()
 }
 
 /// One unit of R4: its main file read by the spike's P1, then its layout's lookups on the device
@@ -458,7 +495,7 @@ fn if_values_are_the_serial_passes() {
         for (t, op, v) in [("__has_feature", "cxx_rtti", 1), ("__has_builtin", "__builtin_expect", 1), ("__has_cpp_attribute", "nodiscard", 201603), ("__has_cpp_attribute", "clang::fallthrough", 201603), ("__has_attribute", "F", 1)] {
             cfg.features.insert((t.to_string(), op.to_string()), v);
         }
-        let (got, want, rung, launches) = expanded_in(&files, cfg, &[("inc", DirKind::Angle)], 0);
+        let (got, want, rung, launches) = expanded_in(&files, cfg, &[("inc", DirKind::Angle)]);
         let chosen: Vec<String> = want.iter().map(|t| String::from_utf8_lossy(t).into_owned()).filter(|t| (t.starts_with('t') || t.starts_with('f')) && t.len() > 1 && t[1..].bytes().all(|c| c.is_ascii_digit())).collect();
         // Every test chose its text, some true and some false.
         same(chosen.len(), exprs.len(), "the tests' texts");
@@ -623,7 +660,7 @@ fn the_refused_cases_are_the_serial_passes() {
             for (t, op, v) in [("__has_feature", "cxx_rtti", 1), ("__has_builtin", "__builtin_expect", 1), ("__has_cpp_attribute", "clang::fallthrough", 201603), ("__has_attribute", "F", 1)] {
                 cfg.features.insert((t.to_string(), op.to_string()), v);
             }
-            let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)], 0);
+            let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)]);
             same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
             same(launches, LAUNCHES, format!("{what}: launches (rung {rung})"));
         }
@@ -761,14 +798,13 @@ impl rerail_c_pp::sink::Sink for Spelled {
 
 /// The unit of `files` (its main file `main.c`) expanded on the device from rung `rung`: its
 /// output spelled, or its refusal bits; and the serial pass's output. `None` where P1 refuses it.
-fn expanded(files: &[(&str, &str)], cpp: bool, rung: u32) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize) {
-    expanded_in(files, rerail_c_pp::Config::new(crate::pp::options(cpp)), &[], rung)
+fn expanded(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize) {
+    expanded_in(files, rerail_c_pp::Config::new(crate::pp::options(cpp)), &[])
 }
 
 /// `expanded` under `cfg`, its search path `dirs`.
-fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)], rung: u32) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize) {
+fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize) {
     use rerail_c_pp::files::Search;
-    let cpp = cfg.opts.cpp;
     let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
     let dirs: Vec<(String, rerail_c_pp::files::DirKind)> = dirs.iter().map(|&(d, k)| (d.to_string(), k)).collect();
     let mut serial = Spelled::default();
@@ -777,33 +813,13 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
     assert!(pp.run("main.c"));
     drop(pp);
-    let mut io = Search::new(dirs, move |p: &str| m.get(p).cloned());
-    let d = on_device(cfg, &mut io, "main.c", cpp).unwrap();
-    let (unit, lay, tapes) = (&d.unit, &d.lay, &d.tapes);
-    let x = if rung == 0 {
-        rerail_metal::pp_expand::expand_sized(unit, lay, &mut d.sizes.fit(unit, lay), rerail_metal::pp_arena::groups()).unwrap()
-    } else {
-        rerail_metal::pp_expand::expand_from(unit, lay, rung).unwrap()
-    };
+    let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(dirs, move |p: &str| m.get(p).cloned())), "main.c".into())];
+    let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
+    let x = &*s.part.x;
     if x.refused != 0 {
         return (Err(x.refused), serial.0, x.rung, x.launches);
     }
-    let views: Vec<View> = tapes.iter().map(|t| View::new(t).unwrap()).collect();
-    let spelled = x
-        .out
-        .iter()
-        .map(|&g| {
-            if g & rerail_metal::pp_expand::SCRATCH != 0 {
-                let [a, b, _] = x.stoks[(g & !rerail_metal::pp_expand::SCRATCH) as usize];
-                return x.scratch[a as usize..b as usize].to_vec();
-            }
-            let f = x.ev.bases.partition_point(|&b| b <= g) - 1;
-            let i = (g - x.ev.bases[f]) as usize;
-            // The serial pass spells a token after phase 2: its line splices left out.
-            rerail_metal::pp_eval::phase2(&d.files[f][views[f].start(i) as usize..views[f].end(i) as usize]).into_owned()
-        })
-        .collect();
-    (Ok(spelled), serial.0, x.rung, x.launches)
+    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches)
 }
 
 /// Decisions 0468 §4 and 0502 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
@@ -823,7 +839,7 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     let doubling = "#define A0 x y\n#define A1 A0 A0\n#define A2 A1 A1\n#define A3 A2 A2\n#define A4 A3 A3\n#define A5 A4 A4\n#define A6 A5 A5\n#define A7 A6 A6\n#define A8 A7 A7\n#define A9 A8 A8\nA9 A9 A9\n";
     let shapes: [(&str, &[(&str, &str)]); 3] = [("empty", &[("main.c", "")]), ("large", &[("main.c", big.as_str())]), ("doubling", &[("main.c", doubling)])];
     for (what, files) in shapes {
-        let (got, want, rung, launches) = expanded(files, false, 0);
+        let (got, want, rung, launches) = expanded(files, false);
         same(got.map(|g| show(&g)), Ok(show(&want)), what);
         same(launches, LAUNCHES, format!("{what}'s launches (rung {rung})"));
     }
@@ -901,7 +917,7 @@ fn pragma_rows_are_the_serial_passes() {
     for (what, files) in shapes {
         for cpp in [false, true] {
             let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
-            let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)], 0);
+            let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)]);
             same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
             same(launches, LAUNCHES, format!("{what}: launches (rung {rung})"));
         }
@@ -912,7 +928,7 @@ fn pragma_rows_are_the_serial_passes() {
         "#define X 1\n#define P _Pragma(\"pop_macro(\\\"X\\\")\") X\n#pragma push_macro(\"X\")\n#undef X\nP\n",
         "#define Q _Pragma(\"push_macro(\\\"X\\\")\") _Pragma(\"pop_macro(\\\"X\\\")\")\nQ\n",
     ] {
-        let (got, _, _, _) = expanded(&[("main.c", main)], false, 0);
+        let (got, _, _, _) = expanded(&[("main.c", main)], false);
         same(got.err().map(|r| r & rerail_metal::pp_expand::X_PRAGMA), Some(rerail_metal::pp_expand::X_PRAGMA), format!("{main:?}"));
     }
     // A row-making `_Pragma` in a directive's line.
@@ -947,7 +963,7 @@ fn counters_in_directives_are_the_serial_passes() {
     for (what, files) in shapes {
         for cpp in [false, true] {
             let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
-            let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)], 0);
+            let (got, want, rung, launches) = expanded_in(files, cfg, &[("inc", DirKind::Angle)]);
             same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
             same(launches, LAUNCHES, format!("{what}: launches (rung {rung})"));
         }
@@ -955,7 +971,7 @@ fn counters_in_directives_are_the_serial_passes() {
     // Refused: `#` or `##` of the value (an include's name made of it, the unique-name idiom).
     use rerail_metal::pp_expand::X_COUNTER_SPELLED;
     for main in ["#define C(a, b) C2(a, b)\n#define C2(a, b) a ## b\nC(n, __COUNTER__)\n", "#define S(x) S2(x)\n#define S2(x) #x\nS(__COUNTER__)\n"] {
-        let (got, _, _, _) = expanded(&[("main.c", main)], false, 0);
+        let (got, _, _, _) = expanded(&[("main.c", main)], false);
         same(got.err().map(|r| r & X_COUNTER_SPELLED), Some(X_COUNTER_SPELLED), format!("{main:?}"));
     }
 }
@@ -979,34 +995,35 @@ fn a_batch_is_its_units() {
         &[("main.c", "#include \"a.h\"\nH K\n"), ("a.h", "#define K k\n#define H(x) x\n")],
         &[("main.c", "K H(1)\n")],
     ];
-    let mut entries = Vec::new();
+    let cfg = rerail_c_pp::Config::new(crate::pp::options(false));
+    let mut serials = Vec::new();
+    let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = Vec::new();
     for files in shapes {
         let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
-        let cfg = rerail_c_pp::Config::new(crate::pp::options(false));
         let mut serial = Spelled::default();
         let m2 = m.clone();
         let mut io = Search::new(vec![], move |p: &str| m2.get(p).cloned());
         let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
         pp.run("main.c");
         drop(pp);
-        let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
-        let d = on_device(cfg, &mut io, "main.c", false).unwrap();
-        entries.push((serial.0, d));
+        serials.push(serial.0);
+        units.push((Box::new(Search::new(vec![], move |p: &str| m.get(p).cloned())), "main.c".into()));
     }
-    let units: Vec<_> = entries.iter().map(|e| (&e.1.unit, &e.1.lay, e.1.sizes)).collect();
-    let parts = rerail_metal::pp_expand::expand_many(&units).unwrap();
+    let settled: Vec<_> = settled_many(&cfg, &mut units, &mut Ran::default()).into_iter().map(Result::unwrap).collect();
     let mut alone = Vec::new();
-    for (k, ((serial, d), part)) in entries.iter().zip(&parts).enumerate() {
-        if part.x.refused != 0 {
-            alone.push((k, part.x.refused));
+    for (k, (serial, (s, tapes))) in serials.iter().zip(&settled).enumerate() {
+        if s.part.x.refused != 0 {
+            alone.push((k, s.part.x.refused));
             continue;
         }
-        same(show(&part_tokens(part, &d.files, &d.tapes)), show(serial), format!("unit {k}"));
+        same(show(&part_tokens(&s.part, &s.loaded.files, tapes)), show(serial), format!("unit {k}"));
     }
     eprintln!("refused alone: {alone:?}");
     same(alone, vec![(5, rerail_metal::pp_expand::X_ACROSS)], "the units refused: a call past its file's end");
-    // The units before a refused one ran in a batch of more than one.
-    assert!(std::rc::Rc::ptr_eq(&parts[0].x, &parts[1].x), "units 0 and 1 in one batch");
+    // The units before a refused one ran in a batch of more than one; the unit with an include
+    // took two rounds, the others riding with it.
+    assert!(std::rc::Rc::ptr_eq(&settled[0].0.part.x, &settled[1].0.part.x), "units 0 and 1 in one batch");
+    same(settled.iter().map(|(s, _)| s.rounds).collect::<Vec<_>>(), vec![1, 1, 1, 1, 1, 1, 2, 1], "each unit's rounds");
 }
 
 fn show(v: &[Vec<u8>]) -> String {
@@ -1042,7 +1059,7 @@ fn object_like_expansion_is_the_serial_passes() {
     let (mut tokens, mut launches) = (0, 0);
     for (k, files) in shapes.iter().enumerate() {
         for cpp in [false, true] {
-            let (got, want, _, n) = expanded(files, cpp, 0);
+            let (got, want, _, n) = expanded(files, cpp);
             launches = launches.max(n);
             let at = format!("shape {k} ({})", if cpp { "C++" } else { "C" });
             match got {
@@ -1062,7 +1079,7 @@ fn shapes_agree(shapes: &[&[(&str, &str)]]) -> (usize, usize) {
     let (mut tokens, mut launches) = (0, 0);
     for (k, files) in shapes.iter().enumerate() {
         for cpp in [false, true] {
-            let (got, want, _, n) = expanded(files, cpp, 0);
+            let (got, want, _, n) = expanded(files, cpp);
             launches = launches.max(n);
             let at = format!("shape {k} ({})", if cpp { "C++" } else { "C" });
             match got {
@@ -1170,11 +1187,11 @@ fn corpus_root() -> std::path::PathBuf {
 
 /// A batch's GPU time by stage and by phase, as `where_an_evaluations_gpu_time_goes` gives a
 /// unit's: each the best of 5, at 32 groups.
-fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand::Layout, rerail_metal::pp_expand::Sizes)]) {
+fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand::Layout)]) {
     use rerail_metal::pp_eval::{TO_ALL, TO_DEFS, TO_FRONT, TO_VIS, Unit};
     use rerail_metal::pp_expand::{Layout, stage_seconds};
-    let Some(unit) = Unit::batch(&units.iter().map(|(u, _, _)| *u).collect::<Vec<_>>()) else { return eprintln!("no batch: slabs differ") };
-    let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l, _)| (*l, u.len())).collect();
+    let Some(unit) = Unit::batch(&units.iter().map(|(u, _)| *u).collect::<Vec<_>>()) else { return eprintln!("no batch: slabs differ") };
+    let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l)| (*l, u.len())).collect();
     let lay = Layout::join(&joined).unwrap();
     let best = |f: &dyn Fn() -> f64| (0..5).map(|_| f()).fold(f64::MAX, f64::min) * 1e6;
     let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
@@ -1267,10 +1284,10 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         (X_SPLICE, "# or ## of a token with a line splice"),
         (X_PRAGMA, "a _Pragma that makes a row"),
         (X_COUNTER_SPELLED, "# or ## of __COUNTER__'s value"),
-        (X_UNSETTLED, "P1 unsettled in the expansion's run"),
         (X_BARRIER, "a grid barrier"),
     ];
     let (mut same_units, mut tokens, mut launches, mut rounds) = (0, 0, 0, 0);
+    let mut ran = Ran::default();
     let mut gpu: Vec<f64> = Vec::new();
     let mut batches: Vec<usize> = Vec::new();
     let mut serial_s = 0f64;
@@ -1279,15 +1296,11 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
     let read = move |q: &str| std::fs::read(q).ok().or_else(|| (stub && q.starts_with("<stub>")).then(Vec::new));
     for (paths, cpp) in langs {
         let builtins = rerail_c_pp::stream::parallel::predefined(&Config::new(crate::pp::options(cpp))).1;
-        // Each unit's serial answer and its P1, then every unit of the language in batches.
-        struct Entry {
-            path: String,
-            serial: Vec<Vec<u8>>,
-            d: OnDevice,
-        }
-        let mut entries = Vec::new();
+        // Each unit's serial answer, then every unit of the language in batched rounds.
+        let cfg = Config::new(crate::pp::options(cpp));
+        let mut serials = Vec::new();
+        let mut ios: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = Vec::new();
         for path in paths {
-            let cfg = Config::new(crate::pp::options(cpp));
             let mut serial = Spelled::default();
             let mut io = Search::new(dirs.clone(), read);
             let t0 = std::time::Instant::now();
@@ -1295,33 +1308,47 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
             pp.run(&path);
             drop(pp);
             serial_s += t0.elapsed().as_secs_f64();
-            let mut io = Search::new(dirs.clone(), read);
-            let d = match on_device(cfg, &mut io, &path, cpp) {
-                Ok(u) => u,
+            serials.push(serial.0);
+            ios.push((Box::new(Search::new(dirs.clone(), read)), path));
+        }
+        struct Entry<'a> {
+            path: &'a str,
+            serial: Vec<Vec<u8>>,
+            s: super::rounds::Settled,
+            tapes: Vec<Vec<u8>>,
+        }
+        let mut entries = Vec::new();
+        let settled = settled_many(&cfg, &mut ios, &mut ran);
+        for ((r, serial), (_, path)) in settled.into_iter().zip(serials).zip(&ios) {
+            match r {
+                Ok((s, tapes)) => {
+                    rounds = rounds.max(s.rounds);
+                    entries.push(Entry { path, serial, s, tapes });
+                }
                 Err(why) => {
                     eprintln!("REFUSED {path}: {why}");
                     *refused.entry(why).or_default() += 1;
-                    continue;
                 }
-            };
-            rounds = rounds.max(d.rounds);
-            entries.push(Entry { path, serial: serial.0, d });
+            }
         }
-        let units: Vec<_> = entries.iter().map(|e| (&e.d.unit, &e.d.lay, e.d.sizes)).collect();
+        // The measurements' units, placed again (resident still, or placed anew).
+        let measured = std::env::var_os("RERAIL_PP_PROFILE").is_some() || std::env::var_os("RERAIL_PP_STAGES").is_some();
+        let placed: Vec<Unit> = if measured { entries.iter().map(|e| super::rounds::place(&e.s.loaded.files.iter().map(|f| (f.as_slice(), cpp)).collect::<Vec<_>>()).unwrap()).collect() } else { Vec::new() };
+        let units: Vec<_> = placed.iter().zip(&entries).map(|(u, e)| (u, &e.s.lay)).collect();
         // `RERAIL_PP_PROFILE`: each unit alone at the rooms its run settled at: its GPU time to
         // the front's end, the definitions', and the whole setup (best of 3, ms); P1's
         // iterations and text passes; its rooms.
         if std::env::var_os("RERAIL_PP_PROFILE").is_some() {
             use rerail_metal::pp_eval::{TO_ALL, TO_DEFS, TO_FRONT};
             use rerail_metal::pp_expand::{expand_sized, stage_seconds_as};
-            for (e, (unit, lay, sizes)) in entries.iter().zip(&units) {
-                let Ok(x) = expand_sized(unit, lay, &mut sizes.fit(unit, lay), rerail_metal::pp_arena::groups()) else { continue };
+            for (e, (unit, lay)) in entries.iter().zip(&units) {
+                let Ok(x) = expand_sized(unit, lay, &mut Sizes::first(unit, lay), rerail_metal::pp_arena::groups()) else { continue };
                 let at = |last: u32, iters: u32| (0..3).map(|_| stage_seconds_as(unit, lay, last, 0, iters, &x).ok().flatten().unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e3;
                 let best = |last: u32| at(last, 0);
-                let name = e.path.rsplit('/').next().unwrap_or(&e.path);
+                let name = e.path.rsplit('/').next().unwrap_or(e.path);
                 eprintln!(
                     "PROFILE {name}: front {:.1} defs {:.1} setup {:.1} ms (run {:.1}); rounds {}, iterations {}, text passes {}; files {}, nodes {}, dirs {}, top {}, tokens {}/{}, out {}",
-                    best(TO_FRONT), best(TO_DEFS), best(TO_ALL + 1), x.gpu_seconds * 1e3, e.d.rounds, x.passes.0, x.passes.1, unit.len(), x.caps.nodes, x.caps.dirs, x.caps.top, x.room[0].0, x.room[0].1, x.out.len()
+                    best(TO_FRONT), best(TO_DEFS), best(TO_ALL + 1), x.gpu_seconds * 1e3, e.s.rounds, x.passes.0, x.passes.1, unit.len(), x.caps.nodes, x.caps.dirs, x.caps.top, x.room[0].0, x.room[0].1, x.out.len()
                 );
                 // The setup bounded at k of P1's iterations: each one's cost (the last with the text).
                 if std::env::var_os("RERAIL_PP_PROFILE_ITERS").is_some() {
@@ -1336,13 +1363,10 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         if let Some(k) = std::env::var("RERAIL_PP_STAGES").ok().and_then(|k| k.parse::<usize>().ok()) {
             batch_stages(&units[..k.min(units.len())]);
         }
-        let parts = match expand_many(&units) {
-            Ok(parts) => parts,
-            Err(e) => panic!("{e:?}"),
-        };
         let mut seen: Vec<*const Expanded> = Vec::new();
-        for (e, part) in entries.iter().zip(&parts) {
-            let (path, x) = (&e.path, &*part.x);
+        for e in &entries {
+            let (path, part) = (e.path, &e.s.part);
+            let x = &*part.x;
             if !seen.contains(&std::ptr::from_ref(x)) {
                 seen.push(std::ptr::from_ref(x));
                 launches = launches.max(x.launches);
@@ -1359,7 +1383,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
             if refused_by & X_BUILTIN != 0 {
                 for name in &builtins {
                     let n = name.as_slice();
-                    if e.d.files.iter().any(|f| f.windows(n.len()).any(|w| w == n)) {
+                    if e.s.loaded.files.iter().any(|f| f.windows(n.len()).any(|w| w == n)) {
                         *named.entry(String::from_utf8_lossy(n).into_owned()).or_default() += 1;
                     }
                 }
@@ -1373,12 +1397,12 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
                 }
                 continue;
             }
-            let got = part_tokens(part, &e.d.files, &e.d.tapes);
+            let got = part_tokens(part, &e.s.loaded.files, &e.tapes);
             if got != e.serial {
                 let k = got.iter().zip(&e.serial).position(|(a, b)| a != b).unwrap_or(got.len().min(e.serial.len()));
                 let near = |v: &[Vec<u8>]| show(&v[k.saturating_sub(8)..(k + 8).min(v.len())]);
                 eprintln!("DIFF {path}: token {k} (device {}, serial {})\n  device: {}\n  serial: {}", got.len(), e.serial.len(), near(&got), near(&e.serial));
-                differ.push(path.clone());
+                differ.push(path.to_string());
                 continue;
             }
             same_units += 1;
@@ -1391,6 +1415,8 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         let all: f64 = gpu.iter().sum();
         eprintln!("GPU time: {:.1} ms in all over {} runs (units a run: {batches:?}), median {:.3} ms, most {:.3} ms a run", all * 1e3, gpu.len(), gpu[gpu.len() / 2] * 1e3, most * 1e3);
     }
+    eprintln!("every round's runs (the batches' rounds and a split's halves; a run again for room inside one not counted): {} runs, {:.1} ms GPU in all", ran.runs, ran.gpu_seconds * 1e3);
+    eprintln!("stores' most use (over the top level's tokens, over the room): {}", rerail_metal::pp_expand::ROOM_STORES.iter().zip(ran.per_top.iter().zip(ran.per_cap)).map(|(n, (t, c))| format!("{n} {t:.3}/{c:.3}")).collect::<Vec<_>>().join(", "));
     eprintln!("the serial pass: {:.1} ms in all", serial_s * 1e3);
     eprintln!("the built-ins in units refused for them: {named:?}");
     assert!(differ.is_empty(), "units unlike the serial pass's: {differ:?}");
@@ -1442,7 +1468,7 @@ fn a_unit_past_its_room_runs_again_larger() {
     for (what, text) in [("tokens", tokens), ("scratch bytes", bytes)] {
         let files = [("main.c", text.as_str())];
         for cpp in [false, true] {
-            let (got, want, rung, _) = expanded(&files, cpp, 0);
+            let (got, want, rung, _) = expanded(&files, cpp);
             let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
             same(show(&got), show(&want), what);
             assert!(rung > 0, "{what}: ran at rung 0");
@@ -1457,10 +1483,36 @@ fn a_unit_past_its_room_runs_again_larger() {
     let main = format!("{fan}#if A4 == 32768\n#include \"h.h\"\n#endif\nend\n");
     for cpp in [false, true] {
         let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
-        let (got, want, rung, _) = expanded_in(&[("main.c", main.as_str()), ("h.h", "in h\n")], cfg, &[], 0);
+        let (got, want, rung, _) = expanded_in(&[("main.c", main.as_str()), ("h.h", "in h\n")], cfg, &[]);
         same(got.map(|g| show(&g)), Ok("in h end".to_string()), "a line past its room");
         same(show(&want), "in h end".to_string(), "the serial pass");
         assert!(rung > 0, "a line past its room: ran at rung 0");
+    }
+}
+
+/// Decision 0503 §9: an argument with no macro's, built-in's or call's name in it is read in
+/// place where the body uses it, with no list made for it. Used expanded, once and twice, with
+/// `#` and `##` beside, empty, with a painted name in it, with a function-like macro's name
+/// (scanned: not flat), as the last of a variadic call and under `__VA_OPT__`, and through levels
+/// of calls each passing it on.
+#[test]
+fn a_flat_argument_is_read_in_place() {
+    let shapes: &[&str] = &[
+        "#define T(a) [a]\nT(x y z) T( x ) T()\n",
+        "#define D(a) a a\nD(1 + 2) D(  p  q  )\n",
+        "#define S(a) #a a\n#define P(a, b) a##b a b\nS(x  y) P(l, r) P(, r) P(l,)\n",
+        "#define R R(x)\n#define G(a) a R\nG(R) G(z)\n",
+        "#define F(x) x(1)\n#define H(n) <n>\nF(H) F(J)\n",
+        "#define V(a, ...) a __VA_ARGS__ __VA_OPT__(<__VA_ARGS__>)\nV(1) V(1, 2, 3) V(1,)\n",
+        "#define L0(s) s\n#define L1(s) L0(s) L0(s)\n#define L2(s) L1(s) L1((s))\nL2(a b) L2(())\n",
+    ];
+    for text in shapes {
+        let files = [("main.c", *text)];
+        for cpp in [false, true] {
+            let (got, want, _, _) = expanded(&files, cpp);
+            let got = got.unwrap_or_else(|why| panic!("{text:?}: refused {why}"));
+            same(show(&got), show(&want), text);
+        }
     }
 }
 
