@@ -3062,6 +3062,9 @@ submitted" now hold device memory at once.
   clauses fail (`BackendFailure`, a lane status, not a GPU error) where the base has 1 (`log001`, red there too), and 18
   refused where the base has 12. Next: the lane status code the three new failures return, then the reads whose call
   changes it.
+  Also waiting on Metal: `every_operation_runs_on_every_executor`'s ledger has no row for `@ascii_lower/1`
+  (`source-language.rerail`, from #508). It runs natively on Linux; its device cell needs `RERAIL_BLESS_COVERAGE=1` on a
+  farm Mac.
   (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —
