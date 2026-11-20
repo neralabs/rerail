@@ -117,16 +117,17 @@ describe("waiting for the write lock", () => {
       const holder = holding(path);
       try {
         const calledAt = now();
-        // 25 ms after the first try past the busy handler's short pauses counted from the wait's start, 75 ms before the
-        // next; 10 ms before one of the handler's tries counted from a caller that met the lock half a second before.
-        const release = calledAt + start + sqliteTryAtMs(11) + 25;
+        // Just after the first try past the busy handler's short pauses counted from the wait's start (that start comes
+        // no later than `start`), 95 ms before the next; 10 ms before one of the handler's tries counted from a caller
+        // that met the lock half a second before the call.
+        const release = calledAt + start + sqliteTryAtMs(11) + 5;
         const since = release + 10 - sqliteTryAtMs(18);
         const answered = waitForWriteLock(path, undefined, since).then(now);
         const released = await releaseAt(holder, release, false);
         let next = 0;
         while (since + sqliteTryAtMs(next) < released) next += 1;
-        // Up to 20 ms for the answer's way back and a timer's step.
-        expect(await answered).toBeLessThanOrEqual(since + sqliteTryAtMs(next) + 20);
+        // Up to 35 ms for the answer's way back and the timers' steps, which are about 16 ms on Windows.
+        expect(await answered).toBeLessThanOrEqual(since + sqliteTryAtMs(next) + 35);
       } finally {
         holder.close();
       }
