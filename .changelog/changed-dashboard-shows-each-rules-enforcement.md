@@ -1,1 +1,0 @@
-The dashboard shows each rule's enforcement, Steer or Log only, beside its switch and on its sheet; your coding agent still changes it. The counts line says how many rules steer, log only and are off, Filter offers Steer and Log only, and the whole-pack switch sits halfway while some rules are on.

@@ -4,6 +4,14 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.11 (2026-11-20)
+
+51 rules, 32 of them on by default.
+
+### Fixed
+
+- `react-jsx-no-target-blank` treats `target` and `rel` conditionals whose tests are both something other than a name, such as `url.startsWith("http") ? …`, as one test, as eslint-plugin-react does: only the `rel` branch beside an exact `_blank` must hold `noreferrer`. Such links are no longer reported, and one whose target is `_BLANK` now is.
+
 ## 0.1.10 (2026-11-17)
 
 51 rules, 32 of them on by default.

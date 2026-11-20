@@ -1,1 +1,0 @@
-On Linux, hooks no longer wait while the daemon starts Git. Each Git start copied the whole daemon and paused it for tens to hundreds of milliseconds as it grew, so under load every session's hooks stalled together; the daemon now starts Git without copying itself.
