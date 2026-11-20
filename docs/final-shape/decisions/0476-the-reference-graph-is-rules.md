@@ -100,4 +100,6 @@ join row. W's Rust walked each file once. Open:
 - `rf_seen_at`, which starts from its demand (2.2 M rows) rather than from `rf_value_last` (17 k);
 - the projection a guest round makes again.
 
-Metal (R7) is not yet measured.
+**Metal (R7).** At `--metal-mb 2048` the rows equal the before run's (plus `rr_embed_req`): after, 76.3 s of CPU,
+26.3 s of wall and 1,123 G instructions; before, 37.0 s, 31.6 s and 478 G (load about 5). At the default 512 MB the
+run fails: the derived relations' row blocks hold the Metal budget, and the ast matcher wave is refused (Q285).
