@@ -122,7 +122,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 ```json
 {
   "kind": "code",
-  "rule": { "format": "rerail.policy/v1", "id": "local:…", "revision": 1, "mode": "steer", "description": "…", "scope": { "include": ["…"], "exclude": [] }, "clauses": ["…"] },
+  "rule": { "format": "rerail.policy/v1", "id": "local:…", "revision": 1, "mode": "steer", "title": "…", "description": "…", "scope": { "include": ["…"], "exclude": [] }, "clauses": ["…"] },
   "cases": {
     "caught": [{ "path": "src/a.ts", "content": "…" }],
     "passed": [{ "path": "src/a.ts", "content": "…" }]
@@ -137,6 +137,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 |---|---|
 | `kind` | `code` |
 | `rule` | the rule document |
+| `rule.title` | the rule in your own words, as the dashboard lists it; the agent never reads it. `rules add` refuses a rule without one. |
 | `folder` | optional: the repository folder to add the rule at, `""` for the whole repository. Absent, a new rule goes to the whole repository and one already added stays where it is. |
 | `cases.caught`, `cases.passed` | files the rule must catch, and must let pass: `{ "path", "content" }` |
 

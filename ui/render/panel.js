@@ -1,15 +1,17 @@
 /**
  * The sheet. A rule, as the v8 design reads it: the switch and "Edit with coding agent" in the header, then what
- * Rerail does on a violation (read-only here), its numbers, its description, where it came from and when, where it
+ * Rerail does on a violation (read-only here), its numbers (logged and declined in the range, logged since install),
+ * its description, where it came from and when, where it
  * applies, what the coding agent sees (Edit hands a new text to the coding agent), its recent violations, and for a
  * rule created by you a Delete in a footer at the end. A rule pack's contents render here too (`pack-panel.js`).
  */
 import { h, setAttr, setText, setContent, icon, pendingIcon } from "../dom.js";
 import { fmt, plural, whenLabel, clock, shortSessionId } from "../format.js";
 import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
-import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
+import { data, ui, rangeCaption, fires, allFires, isMeasured, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { MODE_READ_ONLY, enforcementTag, updateEnforcementTag } from "./enforcement.js";
+import { outcomesOf } from "../history-model.js";
 import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, askHint, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
 import { sheetState, syncSheetState, askRule } from "./rule-sheet-actions.js";
 
@@ -50,7 +52,12 @@ function buildRule() {
     el.askWhy);
   el.enforcement = enforcementTag();
   el.modeText = h("p");
-  el.stats = h("div.pstats", null, h("div", null, h("b.num"), h("span")), h("div", null, h("b"), h("span", null, "last logged")), h("div", null, h("b.num"), h("span", null, "since install")));
+  // Each card reads the same three lines, so their numbers and words line up: how many, what, over when.
+  const stat = (what, tip) => h("div", { title: tip }, h("b.num"), h("span", null, what), h("small"));
+  el.stats = h("div.pstats", null,
+    stat("logged", "Violations of this rule Rerail logged in the range, steered or not."),
+    stat("declined", "Violations whose steer the coding agent declined, recording why with rerail feedback."),
+    stat("logged", "Violations of this rule Rerail logged since it was installed."));
   el.statsNone = h("p.pstats-none");
   el.description = h("p.desc");
   el.source = h("dl.kv");
@@ -97,19 +104,25 @@ function renderModes(stored) {
   setText(p.modeText, MODE_PLAIN[ruleMode(stored)] ?? "");
 }
 
+/** The three cards' count and caption: logged and declined in the range, logged since install; dashes if uncounted. */
+function statCards(id) {
+  if (!isMeasured(id)) return Array.from({ length: 3 }, () => ["–", "not counted yet"]);
+  const when = rangeCaption();
+  return [[fmt(fires(id)), when], [fmt(outcomesOf(id).declined), when], [fmt(allFires(id)), "since install"]];
+}
+
 function renderStats(stored, id) {
-  const measured = isMeasured(id), f = fires(id), all = allFires(id), lastSeen = activityAllOf(id).lastSeenAt;
   // A measured rule that never logged one says so in a line; the three cells would all read nothing.
-  const none = measured && all === 0;
+  const none = isMeasured(id) && allFires(id) === 0;
   setAttr(p.stats, "hidden", none);
   setAttr(p.statsNone, "hidden", !none);
   // Off is off in every folder: `enabled` also reads off for a rule on in only some of them.
   if (none) { setText(p.statsNone, stored.folderStates.every(state => !state.on) ? "Off. Nothing is logged or steered." : "No violations logged yet."); return; }
-  const [s1, s2, s3] = p.stats.children;
-  setText(s1.firstChild, measured ? fmt(f) : "–");
-  setText(s1.lastChild, measured ? `logged ${rangeLabel()}` : "not counted in this release");
-  setText(s2.firstChild, all && lastSeen ? whenLabel(lastSeen) : "never");
-  setText(s3.firstChild, measured ? fmt(all) : "–");
+  statCards(id).forEach(([count, caption], i) => {
+    const card = p.stats.children[i];
+    setText(card.firstChild, count);
+    setText(card.lastChild, caption);
+  });
 }
 
 /** The Approve button, which approves exactly the content this page read. */

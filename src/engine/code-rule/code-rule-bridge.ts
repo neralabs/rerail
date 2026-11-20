@@ -43,7 +43,7 @@ import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
-import { ToolCallWindows } from "./tool-call-windows.js";
+import { type EndedCalls, ToolCallWindows } from "./tool-call-windows.js";
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
@@ -228,7 +228,7 @@ interface GitVerdict {
   readonly previousText?: string;
   readonly keptAs?: "git";
 }
-/** What Git holds for a walk's changes in one checkout, read once (`#gitVerdicts`). */
+/** What Git holds for a walk's changes in one checkout, as one reading of its verdicts finds it (`#gitVerdicts`). */
 interface GitBlobs {
   /** Each change's index blob, its conflict stages, its `HEAD` blob and, when `HEAD` moved, its blob at `before`. */
   readonly blobs: ReadonlyMap<string, Buffer>;
@@ -256,7 +256,6 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
   const head = await git.run(signal => gitHead(checkout, { signal }));
   if (head === undefined) return undefined;
   const from = discovery.heads.get(checkout);
-  if (from === undefined) discovery.heads.set(checkout, head);
   const unmerged = await readUnmergedView(discovery, checkout);
   const moved = from !== head;
   const committed = moved && await git.run(signal => headMovedOnlyByCommits(checkout, from, { signal }));
@@ -275,12 +274,19 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
 function unmergedNow(discovery: SourceDiscovery, checkout: string): Promise<ReadonlyMap<string, string> | undefined> {
   return discovery.git.run(signal => discovery.readUnmerged(checkout, { signal }));
 }
-/** A checkout's unmerged entries now and as the last walk saw them; the first entries read become its snapshot. */
+/** A checkout's unmerged entries now and as the last walk saw them (`keepFirstSnapshot` takes the first ones). */
 async function readUnmergedView(discovery: SourceDiscovery, checkout: string): Promise<Pick<GitBlobs, "unmerged" | "unmergedBefore">> {
   const unmerged = await unmergedNow(discovery, checkout);
-  const unmergedBefore = discovery.unmerged.get(checkout);
-  if (unmergedBefore === undefined && unmerged !== undefined) discovery.unmerged.set(checkout, unmerged);
-  return { unmerged, unmergedBefore };
+  return { unmerged, unmergedBefore: discovery.unmerged.get(checkout) };
+}
+/**
+ * Where no walk has taken a checkout's snapshot yet, makes it the `HEAD` and unmerged entries the standing reading of
+ * its Git verdicts read. Only that reading leaves one, so each reading of a walk is judged from what the last walk saw,
+ * never from an earlier reading's.
+ */
+function keepFirstSnapshot(discovery: SourceDiscovery, checkout: string, view: GitBlobs): void {
+  if (!discovery.heads.has(checkout)) discovery.heads.set(checkout, view.head);
+  if (!discovery.unmerged.has(checkout) && view.unmerged !== undefined) discovery.unmerged.set(checkout, view.unmerged);
 }
 /**
  * Whether a merge, rebase or cherry-pick stopped on a conflict since the last walk: the unmerged entries changed. A
@@ -299,6 +305,31 @@ async function commitsMade(git: GitReads, checkout: string, view: GitBlobs): Pro
   const { before, head } = view;
   const commits = before === undefined ? [head] : await git.run(signal => gitCommitsBetween(checkout, before, head, { signal }));
   return commits.length === 0 ? undefined : commits;
+}
+/** A walk's change in one checkout: its path there and, when its text was not captured, the digest it had before. */
+interface CheckoutEdit {
+  readonly edit: CodeRuleEdit;
+  readonly path: string;
+  readonly prior: string | undefined;
+}
+/** One reading of a checkout's Git verdicts (`#gitVerdicts`), and the view of Git it was made from. */
+interface VerdictReading {
+  readonly verdicts: Map<string, GitVerdict>;
+  readonly view: GitBlobs;
+}
+/**
+ * How many readings of a checkout's Git verdicts a walk makes at most, while each finds a change Git's and `HEAD` moved
+ * as it was read: a command that commits as the first reading is made is read through by the second. A `HEAD` that
+ * moves through all of them belongs to a command still committing, or a rebase at work, which no reading holds for.
+ */
+const GIT_VERDICT_READS = 3;
+/** Whether a reading takes a change for Git's: one with no text Git's move proves it was changed from. */
+function findsGitWrite(verdicts: ReadonlyMap<string, GitVerdict>): boolean {
+  return [...verdicts.values()].some(verdict => verdict.previousText === undefined);
+}
+/** Whether `checkout`'s `HEAD` still names `head`, read through the session's Git reads. */
+async function headStill(discovery: SourceDiscovery, checkout: string, head: string): Promise<boolean> {
+  return await discovery.git.run(signal => gitHead(checkout, { signal })) === head;
 }
 function gitRevisions(path: string, before: string | undefined): string[] {
   const revisions = [`:./${path}`, `:2:./${path}`, `:3:./${path}`, `HEAD:./${path}`];
@@ -427,6 +458,39 @@ function recordReadError(scan: SourceScan, source: Source): void {
   if (source.readError === undefined) return;
   if (unreadOversize(source)) scan.unread.set(source.path, { stamp: source.stamp, readError: source.readError });
   else scan.errors.push({ path: source.path, readError: source.readError });
+}
+/**
+ * Notes each file the session folder's walk could not read, with the calls that may have written it unseen
+ * (`SourceDiscovery.missedFiles`). Whether the walk lets the other calls go: it listed every folder, so it read every
+ * file but those, and the calls it keeps for them claim only their writes (`ToolCallWindows.ranDuring`).
+ */
+function holdMissedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): boolean {
+  discovery.missedFiles = missedFiles(discovery, walk, scan);
+  if (scan.failedRoots.size > 0) return false;
+  discovery.listedEnds = walk.callsEnded;
+  return true;
+}
+/**
+ * Each file the walk could not read, with the calls it keeps: from those that ended after the last walk that listed
+ * every folder before its first miss began, up to this walk's start. A file under a folder the walk could not list is
+ * one: the walk tried no read of it. `failFolder` finds a source there only for a file the session observes, and a file
+ * the last walk missed may have none (a tool call pending on it, or a read of it that failed, leaves it unobserved), so
+ * each such file the last walk missed stays missed here with its calls.
+ */
+function missedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Map<string, EndedCalls> {
+  const missed = new Map<string, EndedCalls>();
+  for (const [path, source] of scan.sources) if (missedRead(source)) missed.set(path, missedThrough(discovery, path, walk.callsEnded));
+  for (const path of discovery.missedFiles.keys())
+    if (!missed.has(path) && underBaselineRoot(scan.failedRoots, path)) missed.set(path, missedThrough(discovery, path, walk.callsEnded));
+  return missed;
+}
+/** A file whose read failed: an error with no stamp. */
+function missedRead(source: Source): boolean {
+  return source.readError !== undefined && source.stamp === undefined;
+}
+/** The calls the file at `path` keeps as a walk that began once `through` calls had ended misses it. */
+function missedThrough(discovery: SourceDiscovery, path: string, through: number): EndedCalls {
+  return { after: discovery.missedFiles.get(path)?.after ?? discovery.listedEnds, through };
 }
 /** What a walk could not check, as a boundary reports it; undefined when it checked everything. */
 function scanErrors(errors: readonly ScanError[]): string | undefined {
@@ -780,6 +844,15 @@ interface SourceDiscovery {
   readonly readUnmerged: ReturnType<typeof gitUnmergedReader>;
   /** When the session's tool calls ran: a change the session folder's walk finds is its own only when one ran then. */
   readonly toolCalls: ToolCallWindows;
+  /**
+   * Each file the session folder's last walk could not read, by path, with the calls that may have written it unseen
+   * (`holdMissedFiles`): any call from the last walk that listed every folder before the walks began to miss it, up to
+   * the last walk's start. Another program may let the file go between two walks that miss it, so each call in that
+   * time may have written it.
+   */
+  missedFiles: ReadonlyMap<string, EndedCalls>;
+  /** `ToolCallWindows.ends` as the last session folder walk that listed every folder began. */
+  listedEnds: number;
 }
 
 /**
@@ -1408,7 +1481,7 @@ export class CodeRuleBridge {
         startedAt: from.since, walkedFrom: from.since, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(from.gitSeen.heads), git, unmerged: new Map(from.gitSeen.unmerged), passedCheckouts: new Set(from.gitSeen.passedCheckouts),
-        readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
+        readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched, missedFiles: new Map(), listedEnds: 0,
         late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), listingSlots: { free: LISTINGS_AGAIN_AT_ONCE, waiting: [] },
       };
       this.#unwatched = new ToolCallWindows();
@@ -2674,8 +2747,10 @@ export class CodeRuleBridge {
     discovery.error = scanErrors(scan.errors);
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
-    // A subtree it could not read may still hold writes made since the session opened, which its next walk judges.
-    if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.callsEnded);
+    // A subtree or a file it could not read may still hold writes of the calls that ended before it: the next walk that
+    // reads them judges each by its stamp. A folder it could not list keeps every call; a file keeps those that may have
+    // written it unseen (`holdMissedFiles`), for its own writes only.
+    if (holdMissedFiles(discovery, walk, scan)) discovery.toolCalls.answered(walk.callsEnded, [...discovery.missedFiles.values()]);
     this.#listLateAgain(discovery, scan.lateListings);
   }
 
@@ -2929,12 +3004,13 @@ export class CodeRuleBridge {
   /**
    * Whether one of the session's tool calls ran as `edit`'s file was stamped or, for a file now gone, as its folder was
    * (removing an entry stamps the folder; a later change there moves the stamp on). With no stamp to go by, at some point
-   * since the walk that last saw the file began.
+   * since the walk that last saw the file began. A file the last walk could not read counts the calls kept for it too.
    */
   async #writtenByCall(discovery: SourceDiscovery, walk: WalkStart, edit: CodeRuleEdit): Promise<boolean> {
     const stamp = this.#observedSource(edit.path)?.modifiedAt ?? (edit.deleted === true ? await folderStamp(discovery.root, edit.path) : undefined);
-    if (stamp !== undefined) return discovery.toolCalls.ranDuring(stamp, stamp);
-    return discovery.toolCalls.ranDuring(walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt, walk.observedAt);
+    const held = discovery.missedFiles.get(edit.path);
+    if (stamp !== undefined) return discovery.toolCalls.ranDuring(stamp, stamp, held);
+    return discovery.toolCalls.ranDuring(walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt, walk.observedAt, held);
   }
 
   /**
@@ -2963,6 +3039,12 @@ export class CodeRuleBridge {
    * before it. A file holds a blob in the CRLF line breaks as well where the repository's settings have a checkout write
    * them (`gitCrlfPaths`, `line-endings.ts`); other filters' bytes never match, and stay the session's.
    * Of the rest, a file restored from a branch is Git's too (`#restoredFromBranches`).
+   *
+   * The verdicts hold for one `HEAD`, and Git is read in several processes, `HEAD` first. A command that writes files
+   * and commits them can commit in between: `HEAD` then reads as unmoved while the files hold the blob of its new
+   * commit, which `HEAD` and the branch have by the next read, so they would read as Git's and none would be checked. So
+   * a reading that finds a change Git's stands only once `HEAD` still names what it read, and Git is read again while it
+   * does not (`#settledReading`). When `HEAD` moves through every reading, the first one stands, as one reading would.
    */
   async #gitVerdicts(
     discovery: SourceDiscovery,
@@ -2970,17 +3052,47 @@ export class CodeRuleBridge {
     edits: readonly CodeRuleEdit[],
     uncaptured: ReadonlyMap<string, string>,
   ): Promise<Map<string, GitVerdict>> {
-    const verdicts = new Map<string, GitVerdict>();
     const named = edits.map(edit => ({ edit, path: sessionPath(checkout, resolve(discovery.root, edit.path)), prior: uncaptured.get(edit.path) }));
+    const first = await this.#readGitVerdicts(discovery, checkout, named);
+    if (first === undefined) return new Map();
+    const standing = await this.#settledReading(discovery, checkout, named, first) ?? first;
+    keepFirstSnapshot(discovery, checkout, standing.view);
+    return standing.verdicts;
+  }
+
+  /**
+   * The first reading of the verdicts, from `first` on, that holds for one `HEAD`: one that finds no change Git's, or
+   * whose `HEAD` has not moved since it was read. Undefined when none does in `GIT_VERDICT_READS`, or Git cannot say, and
+   * once the session closes: the walk's step holds the queue that the close waits on, so a reading made then would hold
+   * up the close, and the first reading stands, as one reading would.
+   */
+  async #settledReading(
+    discovery: SourceDiscovery,
+    checkout: string,
+    named: readonly CheckoutEdit[],
+    first: VerdictReading,
+  ): Promise<VerdictReading | undefined> {
+    let reading: VerdictReading | undefined = first;
+    for (let reads = 1; reading !== undefined; reads += 1) {
+      if (!findsGitWrite(reading.verdicts) || await headStill(discovery, checkout, reading.view.head)) return reading;
+      if (reads === GIT_VERDICT_READS || discovery.cancelled) return undefined;
+      reading = await this.#readGitVerdicts(discovery, checkout, named);
+    }
+    return undefined;
+  }
+
+  /** One reading of `#gitVerdicts`, from Git as it is now; undefined where Git cannot say. */
+  async #readGitVerdicts(discovery: SourceDiscovery, checkout: string, named: readonly CheckoutEdit[]): Promise<VerdictReading | undefined> {
     const read = await readGitView(discovery, checkout, named.map(({ path }) => path));
-    if (read === undefined) return verdicts;
+    if (read === undefined) return undefined;
+    const verdicts = new Map<string, GitVerdict>();
     const view: GitView = { ...read, stopped: stoppedSince(read, named) };
     for (const { edit, path, prior } of named) {
       const verdict = edit.readError === undefined ? this.#gitVerdict(view, edit, path, prior) : undefined;
       if (verdict !== undefined) verdicts.set(edit.path, verdict);
     }
     await this.#addRestoredVerdicts(discovery.git, checkout, view, named, verdicts);
-    return verdicts;
+    return { verdicts, view: read };
   }
 
   /** Of the changes Git has not explained, those restored from a branch are Git's, their text kept for the next edit. */
@@ -3303,6 +3415,9 @@ export class CodeRuleBridge {
     const sessionId = this.#requireSession();
     const edits = await this.#recoverPreimages(discovery, captured, uncaptured);
     for (const edit of edits) {
+      // The evaluator keeps the text it held of a file it could not read, so the session keeps it too: another
+      // program's later write there is then audited for it (`#sortUnownedWrite`).
+      if (edit.readError !== undefined) continue;
       this.#forgetText(edit.path);
       if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, "edit");
     }

@@ -71,6 +71,7 @@ The review: “the `Integration` model is scoped to the control silo.” The fix
     "id": "local:cell-silo-reads-control-through-rpc",
     "revision": 1,
     "mode": "steer",
+    "title": "Cell-silo code reads users and integrations through RPC",
     "description": "Fetch users and integrations through their RPC services in cell-silo endpoints and tasks, not by querying the control-silo models, which a cell's database doesn't hold.",
     "scope": { "include": ["src/sentry/**/*.py"], "exclude": ["src/sentry/testutils/**", "src/sentry/**/migrations/**"] },
     "clauses": [
@@ -198,6 +199,7 @@ The review: “please use `async_get_clientsession` both here and in the config 
     "id": "local:integration-http-through-library",
     "revision": 1,
     "mode": "steer",
+    "title": "Integrations make HTTP calls through the device's library",
     "description": "Keep HTTP out of Home Assistant integrations: call the device's PyPI library and pass it Home Assistant's shared web session instead of opening one.",
     "scope": {
       "include": ["homeassistant/components/**/*.py"],
@@ -368,6 +370,7 @@ On `zerver/actions/`: “we have a policy that all code calling `send_event_on_c
     "id": "local:views-change-state-through-actions",
     "revision": 1,
     "mode": "steer",
+    "title": "Views change state through actions",
     "description": "Keep client events and audit-log writes out of Zulip views; a do_ function in zerver/actions makes the change, logs it and notifies clients.",
     "scope": { "include": ["zerver/views/**/*.py"], "exclude": ["zerver/views/development/**"] },
     "clauses": [
@@ -506,6 +509,7 @@ The review: “We don't call fs methods directly in services. Can you just add t
     "id": "local:services-go-through-repositories",
     "revision": 1,
     "mode": "steer",
+    "title": "Services reach files and processes through repositories",
     "description": "Reach the filesystem and child processes from server services through the storage and process repositories, not node:fs or node:child_process; services stay testable with mocks.",
     "scope": { "include": ["server/src/services/**/*.ts"], "exclude": ["**/*.spec.ts"] },
     "clauses": [
@@ -666,6 +670,7 @@ The guide: “Never import another `@n8n/frontend-module-*`. Never import `@/…
     "id": "local:frontend-modules-stay-in-bounds",
     "revision": 1,
     "mode": "steer",
+    "title": "Frontend modules stay on the shared packages",
     "description": "Keep n8n frontend modules on the shared packages: no imports of the editor shell or of another module, and no store reads at the top of a descriptor.",
     "scope": {
       "include": ["packages/modules/*/frontend/src/**/*.ts", "packages/modules/*/frontend/src/**/*.vue"],
@@ -842,6 +847,7 @@ The coding guidelines: “Declare service dependencies in constructors via DI �
     "id": "local:inject-services-in-constructors",
     "revision": 1,
     "mode": "steer",
+    "title": "Services are injected in constructors",
     "description": "Declare the services a VS Code class needs as constructor parameters, not by resolving them later through the instantiation service's invokeFunction.",
     "scope": {
       "include": [
@@ -995,6 +1001,7 @@ The review: “It seems that the layering is slightly off here, we generally don
     "id": "local:no-io-in-ide-and-hir",
     "revision": 1,
     "mode": "steer",
+    "title": "No IO in the ide, hir and base-db crates",
     "description": "Keep file, process and network access out of rust-analyzer's ide, hir and base-db crates; only the rust-analyzer crate, which talks to the editor, does IO.",
     "scope": {
       "include": [
@@ -1126,6 +1133,7 @@ The review: “Could we go through `Worktree::create_entry` instead of `std::fs:
     "id": "local:project-files-through-fs",
     "revision": 1,
     "mode": "steer",
+    "title": "Project crates touch files through Fs",
     "description": "Read and write files in Zed's editor, project, workspace and UI crates through the Fs trait or the Worktree, not std::fs or smol::fs; direct calls skip remote projects and FakeFs.",
     "scope": {
       "include": [
@@ -1253,6 +1261,7 @@ The review: “Should be in `EnvVars`”, on `std::env::var("AWS_DEFAULT_REGION"
     "id": "local:env-vars-through-envvars",
     "revision": 1,
     "mode": "steer",
+    "title": "Environment variables go through EnvVars",
     "description": "Name every environment variable uv reads or sets through a constant in uv-static's EnvVars, not a string literal; EnvVars is the one list the environment reference is generated from.",
     "scope": {
       "include": ["crates/**/*.rs"],
@@ -1380,6 +1389,7 @@ The review: “`OC` is private and should not be used in apps. Only use `OCP` AP
     "id": "local:apps-use-public-api",
     "revision": 1,
     "mode": "steer",
+    "title": "Apps use only the public OCP API",
     "description": "Use only Nextcloud's public OCP API in the app, never the server's private OC classes; private classes change without notice between releases.",
     "scope": { "include": ["lib/**/*.php", "templates/**/*.php", "appinfo/**/*.php"], "exclude": ["tests/**", "vendor/**"] },
     "clauses": [
@@ -1479,6 +1489,7 @@ The review: “The `env` function may only be used in config files.” The Larav
     "id": "local:env-only-in-config",
     "revision": 1,
     "mode": "steer",
+    "title": "env() only in config files",
     "description": "Call env only in config files and read settings everywhere else through config; once config is cached, env returns null for values from .env.",
     "scope": {
       "include": ["app/**/*.php", "routes/**/*.php", "database/**/*.php", "resources/views/**/*.php"],
@@ -1620,6 +1631,7 @@ The doc: “including adding columns, indices or `NOT NULL` constraints to non-e
     "id": "local:index-existing-tables-in-background",
     "revision": 1,
     "mode": "steer",
+    "title": "Index existing tables in background updates",
     "description": "Create indexes on existing tables, and drop indexes, through background updates instead of schema delta files; a delta blocks Synapse's startup until it finishes.",
     "scope": { "include": ["synapse/storage/schema/*/delta/**/*.sql"], "exclude": [] },
     "clauses": [
@@ -1732,6 +1744,7 @@ the folder convention carries the nesting across files.
     "id": "local:no-nested-panels",
     "revision": 1,
     "mode": "steer",
+    "title": "No nested panels",
     "description": "Don't nest panels: no PanelFrame inside another, and no panel component rendered from inside a panel.",
     "scope": { "include": ["src/**/*.tsx"], "exclude": ["**/*.test.tsx", "**/*.stories.tsx"] },
     "clauses": [
@@ -1860,6 +1873,7 @@ Whether every page renders `src/panels/` components inside a frame needs the ren
     "id": "local:use-panel-below-panel-frame",
     "revision": 1,
     "mode": "steer",
+    "title": "usePanel only inside a PanelFrame",
     "description": "Call usePanel only in components rendered inside a PanelFrame, which live under src/panels, never in the component that renders the frame.",
     "scope": { "include": ["src/**/*.ts", "src/**/*.tsx"], "exclude": ["**/*.test.*", "**/*.stories.tsx", "src/ui/panel/**"] },
     "clauses": [

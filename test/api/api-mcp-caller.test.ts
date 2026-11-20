@@ -21,8 +21,9 @@ import {
   upsertLibraryRule,
   writeLibraryRule,
   ruleSettings,
+  listLibraryRules,
 } from "../../src/engine/index.js";
-import { MOCK_CODE_RULES } from "../../src/cli/index.js";
+import { MOCK_CODE_RULES, MOCK_CONVERSATION_RULES } from "../../src/cli/index.js";
 import { installPack } from "../support/installed-packs.js";
 import { shortSpelling } from "../engine/support/short-path.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -79,6 +80,7 @@ describe("MCP callers and the agent guard", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     stores.close();
     await removeFolder(root);
   });
@@ -231,7 +233,7 @@ describe("MCP callers and the agent guard", () => {
     const [ruleId, packId] = [...ruleCatalog.packOf].find(([id]) => ruleCatalog.documents.get(id)?.kind === "code")!;
     addAttachment(stores.database(), { repositoryKey: parentKey, folder: "web", sourceKind: "pack", sourceId: packId });
     const original = ruleCatalog.documents.get(ruleId)!.rule as CodeRule;
-    const copied = await call("library_rules_upsert", { id: ruleId, kind: "code", rule: { ...original, revision: original.revision + 1 } }, caller);
+    const copied = await call("library_rules_upsert", { id: ruleId, kind: "code", rule: { ...original, title: "Our copy", revision: original.revision + 1 } }, caller);
     expect(copied.result).toMatchObject({ copiedFromRuleId: ruleId, attached: { repositoryKey: parentKey, folders: ["web"] } });
     expect(stores.database().select().from(ruleSettings).where(eq(ruleSettings.targetId, ruleId)).all()).toEqual([]);
     // Editing its own copy later is allowed, as making it was.
@@ -280,10 +282,34 @@ describe("MCP callers and the agent guard", () => {
     const response = await app.request(`/api/library-rules/${bundledId}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "code", rule: { ...(document.rule as CodeRule), mode: "steer" } }),
+      body: JSON.stringify({ kind: "code", rule: { ...(document.rule as CodeRule), title: "Ours, from before the release", mode: "steer" } }),
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ copiedFromRuleId: null, rule: { rule: { id: bundledId, mode: "steer" } } });
+  });
+
+  it("refuses a rule written without a title, over /api and MCP and for a copy of a By Rerail rule, and stores nothing", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", "1");
+    const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+    const put = (id: string, body: unknown) => app.request(`/api/library-rules/${id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const { title: _code, ...code } = MOCK_CODE_RULES[0]!;
+    const { title: _conversation, ...conversation } = MOCK_CONVERSATION_RULES[0]!;
+    const [bundledId, bundled] = [...loadRuleCatalog().documents].find(([, candidate]) => candidate.kind === "code")!;
+    for (const [id, body] of [
+      [code.id, { kind: "code", rule: code }],
+      [conversation.id, { kind: "conversation", rule: conversation }],
+      [bundledId, { kind: "code", rule: bundled.rule }],
+    ] as const) {
+      const response = await put(id, body);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "rule-title-required", message: expect.stringMatching(/^rule\.title is required/u) });
+    }
+    expect((await call("library_rules_upsert", { id: code.id, kind: "code", rule: code })).result).toMatch(/^rule-title-required: rule\.title is required/u);
+    expect(listLibraryRules(stores.database())).toEqual([]);
   });
 
   it("lets a person through /api make the same changes an agent is refused", async () => {

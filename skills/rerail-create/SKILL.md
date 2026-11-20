@@ -136,6 +136,10 @@ again), add it again, and show its block alone with the same question.
    accepts the draft: when it answers that conversation rules are experimental and off, tell the person in one line and
    offer a code rule if one would do.
    - Give it the id `local:<short-kebab-name>` and `revision` 1.
+   - Set `title` to the rule in the person's own words, as they wrote or said it, cut down to the rule itself: the dashboard
+     lists the rule by it, and `rules add` refuses a rule without one. With no words of theirs (a rule from evidence), write
+     the sentence they would put in a list of house rules. [Writing the title](references/code-rules.md#writing-the-title)
+     says how.
    - Set `mode`. Use `steer` when you are sure of the rule. Use `log` when the repo pass or the meaning leaves doubt. Never use
      `block`.
 3. **Write the cases before the matcher.** You need at least two the rule must catch and at least two it must let through.
@@ -177,6 +181,7 @@ again), add it again, and show its block alone with the same question.
    ```text
    Here is the rule as I understand it.
 
+     Title            <the title, as the dashboard will list it>
      What it checks   <in plain words>
      Where it runs    When I edit a file under <folder> | When I run <command> | When you or I say <…>
      Applies to       All of <this repo's name> | This worktree only (<its folder name>)
@@ -191,7 +196,8 @@ again), add it again, and show its block alone with the same question.
      4. Cancel
    ```
 
-   - **Rows.** Applies to is "All of <repo>" unless the person asked for this worktree, branch or experiment only; repo is the
+   - **Rows.** Title is the draft's `title` word for word, so the person sees the name they will find in the dashboard.
+     Applies to is "All of <repo>" unless the person asked for this worktree, branch or experiment only; repo is the
      name `rules test` and `rules add` use (the checkout's folder name). Where it runs names the
      excludes that matter: "When I edit a file under src/ (not src/scripts/ or tests)". How often is "Every time" for a code
      rule; for a command rule it follows `repeat.mode` (`always`: Every time, `once`: The first time only). Tested names the
@@ -209,7 +215,7 @@ again), add it again, and show its block alone with the same question.
      part of Rerail's latest release, and runs only while RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1 is set for the daemon, or
      for Pi itself when Pi runs Rerail in process.`
    - **"Change something".** Offer Steer and Log, each with what it means; All of the repo or this worktree only (its rule
-     runs nowhere else, not in the main checkout nor other worktrees); and any other row the person names.
+     runs nowhere else, not in the main checkout nor other worktrees); the title; and any other row the person names.
    - **"Show me the rule".** Print the rule JSON, then ask again.
 7. **Add it, only after the person says yes.** The person's yes to the card is also their approval of what it says: you wrote
    the rule and they read it. For all of the repo:
@@ -264,7 +270,8 @@ A rule the person wrote by hand into `.rerail/rules/` can be checked as it is: `
 3. **Fix it** with the most targeted step on the fix ladder in
    [references/rule-quality.md](references/rule-quality.md#the-fix-ladder). Add the misfire as a `passed` case, and show it was
    wrong before: run it against the current rule and see it caught. Keep every earlier case: from the draft file, or, without it,
-   rebuilt from the rule's description and the repo. Raise `revision` by one.
+   rebuilt from the rule's description and the repo. Raise `revision` by one. A rule from before titles has none: add one, as
+   Write step 2 says, and show it in the read-back.
 4. **Test, read back and add** as in Write, steps 4 to 7; a worktree rule's file is written over in place. The edit waits for
    approval again, and the person's yes to the read-back gives it. In the read-back, add one line above the card, at most two
    sentences:
@@ -273,8 +280,8 @@ A rule the person wrote by hand into `.rerail/rules/` can be checked as it is: `
 ## Scope
 
 The person changes only where a rule applies. Change its `scope` and nothing else: what it checks, its message, its
-mode and its id stay as they are. Write's review and quality gates are about those, so skip them; this takes a handful of
-commands, not a new rule.
+mode, its title and its id stay as they are. Write's review and quality gates are about those, so skip them; this takes a
+handful of commands, not a new rule. `rules show` gives a rule that ships with Rerail the title its pack lists.
 
 1. **Read the rule:** `rerail rules show <id>`. It prints the rule as a draft, as it runs in this repo; save it as
    `<tmp>/draft.json`. A line on stderr says what saving does. Go on after the first two lines below, start again with
@@ -288,7 +295,9 @@ commands, not a new rule.
    - "is off in <repo>": a copy would run where the person has the rule off. Ask whether they want it on first.
    - A rule in this worktree's `.rerail/rules/` is not printed: read its file instead and change it in place.
 
-   A rule with no `scope` (one about commands, not files) has no paths to change: say so, and stop.
+   A rule with no `scope` (one about commands, not files) has no paths to change: say so, and stop. A second line, "has no
+   title", means a rule of the person's from before titles: `rules add` refuses it without one, so add a `title` as Write
+   step 2 says, and show it in the card's diff as `title  + "<title>"`.
 2. **Change only `rule.scope`.** Turn the person's words into `include` and `exclude` globs (an exclude wins; `**/`
    matches any folder). Name what this repo really has: one listing of its files shows, for example, where tests live
    (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`, `*.test.ts`, `__tests__/`). If the words can be read two ways, ask

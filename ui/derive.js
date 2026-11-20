@@ -71,13 +71,13 @@ export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 export const isRunning = stored => stored.enabled && !stored.configError;
 
 const titles = new WeakMap();
-/** Sentence the row leads with: conversation rule → reference; file rule → first clause's message, else its id. */
+/** Sentence the row leads with: the rule's title; else a conversation rule's reference, a file rule's first clause's message, else its id. */
 export function ruleTitle(stored) {
   let title = titles.get(stored);
   if (title === undefined) {
     const rule = stored.rule;
     const clause = stored.kind === "conversation" ? undefined : rule.clauses[0];
-    title = collapse(stored.kind === "conversation" ? rule.reference : clause?.violation?.message) || rule.id;
+    title = collapse(rule.title) || collapse(stored.kind === "conversation" ? rule.reference : clause?.violation?.message) || rule.id;
     titles.set(stored, title);
   }
   return title;
@@ -255,3 +255,18 @@ const folderState = entry => ({
   folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
   source: entry.source,
 });
+
+/**
+ * A rule's distinct violations in a range (one `rules_activity` entry), each in exactly one outcome: Log only (recorded
+ * on Log, so the coding agent was not told), Declined (a steer the agent declined with `rerail feedback`, even when
+ * another audit recorded it on Log), or Steered (sent to the agent, and not declined). History by rule's chips and
+ * Overview's Violations steered both read it. An answer without the declined counts reads none declined.
+ * @param {{ distinctViolations: number, loggedViolations?: number, declinedViolations?: number, declinedLoggedViolations?: number }} a
+ * @returns {{ all: number, logged: number, steered: number, declined: number }}
+ */
+export function violationOutcomes(a) {
+  const all = a.distinctViolations;
+  const declined = Math.min(a.declinedViolations ?? 0, all);
+  const logged = Math.max(0, Math.min((a.loggedViolations ?? 0) - (a.declinedLoggedViolations ?? 0), all - declined));
+  return { all, logged, steered: all - logged - declined, declined };
+}
