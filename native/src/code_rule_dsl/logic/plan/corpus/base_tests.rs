@@ -1527,10 +1527,10 @@ only_tree(p) :- doc(d, p, _), syntax_error(d), !cpython_syntax_error(d, _, _).
 }
 
 /// `string_annotation(s)` is each string Ruff's semantic model reads as a type definition (the scope table's), nested
-/// ones included, and `parsed(s, "annotation", root)` its tree, decision 0055's guest asked for by `string_annotation`:
-/// the value parsed as `( … )`, in T's shape (this program declares its base relations) the guest's whole tree, its
-/// identifiers `text` rows as a file's are; a nested string's guest is made in the next round. T's shape keeps every
-/// document, so a guest that does not parse keeps its partial tree. A `Literal` argument is no type definition.
+/// ones included, and `parsed(s, "annotation", root)` its tree, a tape value asked for by `string_annotation`: the
+/// value parsed as the `annotation` fragment, from a `type` (decision 0482), its identifiers `text` rows as a file's
+/// are; a nested string's value is made in the next round. A value the parser refuses (`"not valid (("`, which Ruff
+/// refuses too) is one `ERROR` over the text, with no names. A `Literal` argument is no type definition.
 #[test]
 fn string_annotations_are_ruffs_with_their_trees() {
     let source = "from typing import List, Literal, Optional\nimport typing\n\nx: \"List[int]\" = []\n\ndef f(a: \"Optional[Foo]\", b: 'typing.Dict[str, \"Bar\"]') -> \"Baz\":\n    pass\n\ny: \"not valid ((\" = 1\nz: Literal[\"notatype\"] = 1\n";
@@ -1568,19 +1568,18 @@ files(p) :- doc(_, p, _).
             &["'typing.Dict[str, \"Bar\"]'", "str"],
             &["\"Bar\"", "Bar"],
             &["\"Baz\"", "Baz"],
-            &["\"not valid ((\"", "valid"],
         ])
     );
-    // Each root is its guest's module, over the string's value in `( … )`.
+    // Each root is its value's `type`, over the string's value (decision 0482); a refused one's an `ERROR`.
     assert_eq!(
         set(&got[2]),
         want(&[
-            &["\"List[int]\"", "module", "0", "11"],
-            &["\"Optional[Foo]\"", "module", "0", "15"],
-            &["'typing.Dict[str, \"Bar\"]'", "module", "0", "25"],
-            &["\"Bar\"", "module", "0", "5"],
-            &["\"Baz\"", "module", "0", "5"],
-            &["\"not valid ((\"", "module", "0", "14"],
+            &["\"List[int]\"", "type", "0", "9"],
+            &["\"Optional[Foo]\"", "type", "0", "13"],
+            &["'typing.Dict[str, \"Bar\"]'", "type", "0", "23"],
+            &["\"Bar\"", "type", "0", "3"],
+            &["\"Baz\"", "type", "0", "3"],
+            &["\"not valid ((\"", "ERROR", "0", "12"],
         ])
     );
     // The trees are no files.

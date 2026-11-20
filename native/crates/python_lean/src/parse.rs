@@ -155,8 +155,21 @@ pub enum Relex {
 /// Line ends a text may join before it is refused.
 pub const MAX_JOINS: usize = 64;
 
+/// A node kind a parse may start at (decision 0482): a file's `module`, or a `type` (a string annotation's text, read
+/// as if in parentheses).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    Module,
+    Type,
+}
+
 /// `src` parsed, `joins` joined; `Err(Ok(r))`, the text to be lexed again.
 pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn Sink<Out>) -> Result<Out, Result<Relex, Refusal>> {
+    parse_from(src, lexed, joins, Start::Module, finish)
+}
+
+/// [`parse`] from `start`.
+pub fn parse_from<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], start: Start, finish: &mut dyn Sink<Out>) -> Result<Out, Result<Relex, Refusal>> {
     let mut widths = Widths::guess(src.len());
     loop {
         let mut p = P {
@@ -171,7 +184,11 @@ pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn Sin
             relex: None,
             joins,
         };
-        if let Err(r) = p.module() {
+        let read = match start {
+            Start::Module => p.module(),
+            Start::Type => p.type_fragment(),
+        };
+        if let Err(r) = read {
             return Err(p.relex.ok_or(r));
         }
         match finish.finish(p.w) {
@@ -2625,6 +2642,24 @@ impl<'a> P<'a> {
     }
 
     // ---- Types.
+
+    /// A `type` alone, the root (decision 0482): what follows `x:` in an annotated assignment, as tree-sitter reads it
+    /// there (the annotation's rule: a generic's union a `union_type`, any other `|` an expression's). No extra lies
+    /// outside the root: a fragment's tape has one root.
+    fn type_fragment(&mut self) -> R<()> {
+        let (first, last) = match (self.toks.first(), self.toks.iter().rev().find(|t| t.kind != T::Eof)) {
+            (Some(f), Some(l)) if f.kind != T::Eof => (f.start, l.end),
+            _ => return self.refuse(),
+        };
+        if self.extras.iter().any(|x| x.start < first || x.start >= last) {
+            return Err(Refusal::Parse(first));
+        }
+        self.annotation(f::NONE)?;
+        if self.peek() != T::Eof {
+            return self.refuse();
+        }
+        Ok(())
+    }
 
     /// `type`, with unions over its operands (left to right), in `field`.
     fn ty(&mut self, field: u8) -> R<N> {

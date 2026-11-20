@@ -515,7 +515,7 @@ pub struct Guest {
     /// `at`: the host's node or span (`host << 32 | local`).
     pub at: i64,
     pub grammar: String,
-    /// "program" or "fragment" (`doc_role`).
+    /// "program" (a file's) or "fragment" (a string's).
     pub role: String,
     /// The core id of the guest's root: a fragment's expression inside its wrapper, else the tree's root. The
     /// document is that node's subtree.
@@ -562,8 +562,8 @@ impl PartialEq for TapePlace {
 }
 impl Eq for TapePlace {}
 
-/// A document's text as a rule gets it back (`@unparse`): a wrapped fragment's root's text (the expression inside
-/// `( … )`), else the whole text.
+/// A document's text as a rule gets it back (`@unparse`): its root's text where its root is not its first node, else
+/// the whole text (a fragment's tape is rooted at its start node, decision 0482).
 pub fn unparsed(d: &Document) -> &str {
     match d.guest.as_deref() {
         Some(g) if g.root != 0 => d.facts.text(g.root),
@@ -813,6 +813,27 @@ impl Numbering {
     pub fn node(&self, local: u32) -> Option<(u32, &'static str)> {
         let (p, dialect) = self.p.as_ref()?;
         (local < p.len()).then(|| p.node(local)).map(|id| (id, dialect.name(&p.facts, id)))
+    }
+    /// The root's id; `None` for a document with no nodes.
+    pub fn root(&self) -> Option<i64> {
+        let (p, _) = self.p.as_ref()?;
+        (p.len() > 0).then(|| p.global(0))
+    }
+    /// The id of the innermost numbered node over host bytes `[a, b]`: from the root, down through the child whose
+    /// span holds them (`GuestRows::host_nodes`' walk); `None` without a root.
+    pub fn over(&self, [a, b]: [u32; 2]) -> Option<i64> {
+        let (p, _) = self.p.as_ref()?;
+        if p.len() == 0 {
+            return None;
+        }
+        let mut over = 0;
+        while let Some(c) = p.children(over).find(|&c| {
+            let [x, y] = p.span(c);
+            x <= a && b <= y
+        }) {
+            over = c;
+        }
+        Some(p.global(over))
     }
     /// The kind name of core id `id`, if the projection numbers it.
     pub fn kind_of(&self, id: u32) -> Option<&'static str> {
@@ -1172,12 +1193,12 @@ impl Projected {
     /// Its arrays are in a block of its own; a batch's documents' are in the batch's (`narrowed`).
     pub fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
         let block = cells::block(Self::bytes(&facts));
-        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, &block)
+        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, None, &block)
     }
     /// `new`, narrowed to `anchors` (`narrowed`): the root and each outermost anchor's subtree.
     pub fn anchored(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, anchors: &BTreeSet<String>) -> Self {
         let block = cells::block(Self::bytes(&facts));
-        Self::narrowed(key, facts, dialect, shape, false, None, Some(anchors), &block)
+        Self::narrowed(key, facts, dialect, shape, false, None, None, Some(anchors), &block)
     }
 
     /// What a projection's arrays can take in a block: `core`, `local`, `up`, `low`, the ordinals and the fielded
@@ -1192,7 +1213,8 @@ impl Projected {
     /// root's child here; the program reads no node outside the subtrees, nor an anchor's parent or place among its
     /// siblings, and its node ids stay inside its phase.
     #[allow(clippy::too_many_arguments)]
-    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
+    /// `known`: the document's own lines where a guest of it was projected first and built them (decision 0470 step 2).
+    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, known: Option<Arc<core_rr::Lines>>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
         let identity_span = crate::code_rule_dsl::logic::profile::span(|| "identity maps".into());
         let f = &*facts;
         let (first, last) = match guest {
@@ -1302,7 +1324,7 @@ impl Projected {
         drop(identity_span);
         if shape == Shape::Core {
             let lines_span = crate::code_rule_dsl::logic::profile::span(|| "line index".into());
-            let lines = Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.is_some_and(|d| d.family == Family::Python), p.block()));
+            let lines = known.unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.is_some_and(|d| d.family == Family::Python), p.block())));
             drop(lines_span);
             let _ids_span = crate::code_rule_dsl::logic::profile::span(|| "definition ids".into());
             if definition_ids() && let Some(dialect) = dialect {
@@ -1626,6 +1648,9 @@ pub struct Batch {
     /// in `docs` itself, each step read a different projection's line (Q220: `Batch::node` was a fifth of a join's
     /// view reads).
     keys: Vec<u32>,
+    /// The programs among the documents (decision 0431 §4), by file: `(file, document)`, ascending; a lookup of `node`
+    /// by its document reads a file's programs' rows with its own.
+    programs: Vec<(u32, usize)>,
     /// Each document's tape, for W's values answered on request (`LongTexts::value_any`, decision 0174), and its values,
     /// read off it at the first request; empty where no program asks for values.
     valued: Vec<Option<Arc<Valued>>>,
@@ -2805,6 +2830,8 @@ impl Batch {
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
         let mut g = GuestRows::default();
         let lines_of = &mut grown.lines_of;
+        // A file's lines built ahead of it, for a guest projected before it (below): taken by the file's projection.
+        let mut ahead: HashMap<u32, Arc<core_rr::Lines>> = HashMap::new();
         // Each guest's file: its host's, through guests of guests. Files' keys are below every guest's, so a file
         // is projected (and its lines known) before its guests; a guest's guests may come before it.
         grown.host.extend(documents.iter().filter_map(|d| d.guest.as_ref().map(|g| (d.key, g.host))));
@@ -2841,9 +2868,33 @@ impl Batch {
             };
             let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
-            let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &block)))));
+            // A guest's lines are its file's. A file that a run reads for its programs (decision 0470 step 2) has a hidden
+            // key, past its programs', so a program may come first: its file's lines are built then, from the file's
+            // document, and the file's projection takes them.
+            let placed = match guest {
+                Some(g) => {
+                    let file = file_of(g.host);
+                    let lines = match lines_of.get(&file) {
+                        Some(lines) => Arc::clone(lines),
+                        None => match documents.iter().find(|h| h.key == file && h.guest.is_none()) {
+                            Some(h) => {
+                                let tag = crate::code_rule_dsl::facts::core::facts_tag(&h.facts);
+                                let python = tag != TEXT && Family::of(crate::code_rule_dsl::language::from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label)) == Family::Python;
+                                let lines = Arc::new(core_rr::Lines::shared(Arc::clone(&h.facts.source), python, &block));
+                                ahead.insert(file, Arc::clone(&lines));
+                                lines_of.insert(file, Arc::clone(&lines));
+                                lines
+                            }
+                            None => Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &block)),
+                        },
+                    };
+                    Some((g, lines))
+                }
+                None => None,
+            };
+            let known = if guest.is_none() && core { ahead.remove(&d.key) } else { None };
             let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
-            let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &block);
+            let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, known, projection.node_anchors.as_ref().filter(|_| core), &block);
             drop(new_span);
             // A program that reads `end_point` has each node's end point among the positions, after the lines.
             let nodes = p.len();
@@ -3142,6 +3193,11 @@ impl Batch {
         let batch = Arc::new(Batch {
             docs: docs.clone(),
             keys: if alone { docs.iter().map(|p| p.key).collect() } else { grown.keys.clone() },
+            programs: {
+                let mut programs: Vec<(u32, usize)> = docs.iter().enumerate().filter(|(_, p)| p.file != p.key).map(|(d, p)| (p.file, d)).collect();
+                programs.sort_unstable();
+                programs
+            },
             valued: if alone { added_valued.clone() } else { grown.valued.clone() },
             dialects: dialects.clone(),
             nodes,
@@ -3198,6 +3254,11 @@ impl Batch {
             d
         });
         (&self.docs[doc], row - offsets[doc])
+    }
+    /// The documents of file `file`'s programs (decision 0431 §4).
+    fn programs_of(&self, file: u32) -> impl Iterator<Item = usize> + '_ {
+        let at = self.programs.partition_point(|&(f, _)| f < file);
+        self.programs[at..].iter().take_while(move |&&(f, _)| f == file).map(|&(_, d)| d)
     }
     /// The document of key `d`, by index (the last one found tried first, as `locate`).
     fn doc(&self, d: i64) -> Option<usize> {
@@ -3591,9 +3652,11 @@ impl Source for Viewed {
             return self.for_rows(&[column], &mut |r, row| each(r, if row[0] >= 1 << 32 { row[0] >> 32 } else { row[0] }));
         }
         let offsets = self.batch.offsets(self.view);
+        let node = matches!(self.view, View::Node) && column == 0;
         for (doc, p) in self.batch.docs.iter().enumerate() {
+            let d = if node { p.file } else { p.key };
             for r in offsets[doc]..offsets[doc + 1] {
-                each(r, i64::from(p.key));
+                each(r, i64::from(d));
             }
         }
     }
@@ -3631,7 +3694,8 @@ impl Viewed {
     /// documents (a kind, a tape node), else in every document.
     fn lookup_docs(&self, column: usize, values: &[i64], only: Option<usize>) -> Option<Vec<usize>> {
         let b = &*self.batch;
-        let kept = |doc: &usize| only.is_none_or(|o| o == *doc);
+        // A lookup kept to a file keeps to its programs too (decision 0431 §4).
+        let kept = |doc: &usize| only.is_none_or(|o| o == *doc || b.docs[*doc].file == b.docs[o].key);
         let mut rows = Vec::new();
         for &v in values {
             if column == self.own() {
@@ -3650,8 +3714,14 @@ impl Viewed {
             } else if matches!(self.view, View::Sibling) && column == 0 {
                 // The row of `a`'s next sibling: a hop along the tape's siblings.
                 rows.extend(b.node(v).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
-            } else if matches!(self.view, View::Node | View::Core) && column == 0 {
+            } else if matches!(self.view, View::Core) && column == 0 {
                 rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes[doc]..b.nodes[doc + 1]));
+            } else if matches!(self.view, View::Node) && column == 0 {
+                // A file's rows, then its programs' (decision 0431 §4).
+                let Ok(file) = u32::try_from(v) else { continue };
+                for doc in b.doc(v).into_iter().chain(b.programs_of(file)) {
+                    rows.extend(b.nodes[doc]..b.nodes[doc + 1]);
+                }
             } else if matches!(self.view, View::Core) && column == 1 {
                 // A tape node of each document that has it as a node; the statement filters `d`.
                 let Ok(t) = u32::try_from(v) else { continue };
@@ -3918,7 +3988,9 @@ impl Viewed {
         let id = || (at.node)() as usize;
         let parent = at.up;
         match (self.view, column) {
-            (View::Node | View::Core, 0) => i64::from(p.key),
+            // A program's nodes are its file's (decision 0431 §4); `core` keeps to the document underneath.
+            (View::Node, 0) => i64::from(p.file),
+            (View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id() as i64,
             (View::Node, 2) => self.batch.dialects[p.tag].kind(&p.facts, id() as u32),
             (View::Node, 3) => i64::from(p.facts.start(id() as u32)),

@@ -304,6 +304,21 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
 pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn Sink<Out>) -> R<Out> {
+    parse_from(src, dialect, Start::Program, finish)
+}
+
+/// The node kind a parse starts at (decision 0482): a whole file, or one JSX element alone, its root (a fragment).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    Program,
+    /// `<a>…</a>` or `<>…</>`: tree-sitter's `jsx_element`.
+    JsxElement,
+    /// `<a />`.
+    JsxSelfClosingElement,
+}
+
+/// [`parse_into`] from `start`.
+pub fn parse_from<Out>(src: &[u8], dialect: Dialect, start: Start, finish: &mut dyn Sink<Out>) -> R<Out> {
     let lx = Lexer::new(src);
     if let Some(at) = lx.first_nul() {
         return Err(Refusal::Lex(at as u32));
@@ -333,7 +348,12 @@ pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn Sink<Out>)
             ts: dialect != Dialect::JavaScript,
             in_extends: false,
         };
-        if let Err(r) = p.program() {
+        let parsed = match start {
+            Start::Program => p.program(),
+            Start::JsxElement => p.jsx_fragment(K::JsxElement),
+            Start::JsxSelfClosingElement => p.jsx_fragment(K::JsxSelfClosingElement),
+        };
+        if let Err(r) = parsed {
             return Err(match r {
                 Refusal::Parse(at) => Refusal::Parse(at.max(p.far)),
                 r => r,
@@ -1075,6 +1095,28 @@ impl<'a> P<'a> {
         }
         self.flush(u32::MAX);
         self.w.close(m, len);
+        Ok(())
+    }
+
+    /// One JSX element alone, the root (decision 0482): read as where an expression starts, of kind `want` (an element
+    /// with its closing tag, or a self-closing one). No comment lies outside the root: a fragment's tape has one root.
+    fn jsx_fragment(&mut self, want: K) -> R<()> {
+        let t = self.tok();
+        if t.kind != T::Lt || self.dialect == Dialect::TypeScript || !self.extras.is_empty() {
+            return Err(Refusal::Parse(t.start));
+        }
+        // In an expression's slot: the root's supertypes are an expression's, as in `x = <a/>`.
+        let n = self.jsx(slot(f::NONE, Ctx::Expr))?;
+        if n.kind != want {
+            return Err(Refusal::Parse(t.start));
+        }
+        let e = self.tok();
+        if e.kind != T::Eof || self.e != self.extras.len() {
+            return Err(Refusal::Parse(e.start));
+        }
+        if e.word == u8::MAX {
+            return Err(Refusal::Lex(e.start));
+        }
         Ok(())
     }
 

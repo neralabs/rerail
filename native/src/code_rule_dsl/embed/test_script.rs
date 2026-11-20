@@ -101,6 +101,7 @@ impl Embedder for TestScript {
             text,
             segments,
             host_errors: Vec::new(),
+            at: None,
         })
     }
 }

@@ -2018,7 +2018,6 @@ pub struct SpanProgram<'a> {
 /// The column of a relation that names a grammar (`grammar_names`).
 pub fn grammar_column(rel: &str) -> Option<usize> {
     match rel {
-        "embed" | "embed_value" => Some(2),
         "parsed" | "sub_tape" => Some(1),
         _ => None,
     }
@@ -5472,7 +5471,7 @@ const DEMANDS: [&str; 3] = ["rr_embed_req", "rr_parse_req", "rr_splice_req"];
 /// The placeholder for a demand's location (`value_demand`).
 const LOCATED: &str = "rr_located";
 
-const GUEST_RELATIONS: [&str; 12] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
+const GUEST_RELATIONS: [&str; 10] = ["parsed", "sub_tape", "rr_program", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
 
 /// The tape operations (decision 0058 §4): function, arity, the relation it reads, and that relation's columns.
 pub(super) const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [

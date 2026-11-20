@@ -271,6 +271,24 @@ pub trait TreeParser: Send + Sync {
     /// it stopped at a limit before it read the file.
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>>;
 
+    /// Whether `parse` builds the file's programs itself (Blade's compiled view). Otherwise the router builds them over
+    /// its tape, for a dialect that embeds others (`TapeImage::parse`).
+    fn embeds_itself(&self) -> bool {
+        false
+    }
+
+    /// The node kinds it parses a text from besides a whole file (decision 0482): a fragment's start.
+    fn starts(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// `source` parsed from the node kind `start` (one of `starts`), the tape's root one such node with none above
+    /// it: `None` where the parser refuses the text (there is no tree-sitter fallback for a fragment), `Some(Err)`
+    /// where the tape cannot be made.
+    fn parse_from(&self, _grammar: &Grammar, _source: &str, _start: &str, _budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        None
+    }
+
     /// Its own kinds, where its trees are not a tree-sitter grammar's.
     fn kinds(&self) -> Option<OwnTable> {
         None
@@ -331,10 +349,27 @@ pub fn install_parsers(registered: Vec<ParserImpl>) {
     let _ = ROUTER.set(Router { registered, chosen });
 }
 
+/// `parser`'s documents of `source` (`TreeParser::parse`), with the programs a dialect that embeds others holds, built
+/// over the parser's tape (`embed::host` reads it in place), unless the parser builds them itself: a file that embeds
+/// code is read by its lean parser too. Every caller of a dialect's own parser reads a file through it.
+pub fn parse_own(parser: &dyn TreeParser, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    let parsed = parser.parse(grammar, source, budget)?;
+    if parser.embeds_itself() || grammar.lang.embeds().is_empty() {
+        return Some(parsed);
+    }
+    Some(parsed.and_then(|image| FileImage::embedding(image.primary, grammar, source, budget).map_err(TemplateError::Encode)))
+}
+
 /// `dialect`'s own parser, where its language registered one this host runs: the router's choice.
 pub fn tree_parser(dialect: GrammarDialect) -> Option<&'static dyn TreeParser> {
     let router = ROUTER.get()?;
     router.chosen.iter().find(|(lang, _)| *lang == dialect).map(|&(_, i)| router.registered[i].parser)
+}
+
+/// The node kinds `dialect`'s hand-written parser parses a fragment from (decision 0482): none for a dialect only
+/// tree-sitter parses.
+pub fn starts(dialect: GrammarDialect) -> &'static [&'static str] {
+    tree_parser(dialect).map_or(&[], |p| p.starts())
 }
 
 /// Every registered implementation, in registration order, and whether the router took it.
@@ -1518,7 +1553,7 @@ impl TapeImage {
         // tree-sitter's (JSON's Bitlex parser, which may leave the file to tree-sitter-json below).
         if let Some(parser) = tree_parser(grammar.lang)
             && !(ALL_TOKENS.get() && grammar.kinds.grammar().is_some())
-            && let Some(parsed) = parser.parse(grammar, source, &budget)
+            && let Some(parsed) = parse_own(parser, grammar, source, &budget)
         {
             return match parsed {
                 Ok(image) => Some(Ok(image)),
@@ -1558,6 +1593,24 @@ impl TapeImage {
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, tree.root_node().descendant_count() as u64);
         }
         Some(Self::encode(tree.root_node(), grammar, source, budget))
+    }
+
+    /// `source` parsed from the node kind `start` by `grammar`'s hand-written parser (decision 0482): `None` where its
+    /// dialect has no parser that starts there. A text the parser refuses is one `ERROR` node over it (`refused`):
+    /// no tree is made up for it, and a rule's `.on guest_error` sees it where it stands.
+    pub fn parse_from(grammar: &Grammar, source: &str, start: &str, budget: &impl Fn() -> bool) -> Option<Result<FileImage, String>> {
+        let parser = tree_parser(grammar.lang).filter(|p| p.starts().contains(&start))?;
+        let image = parser.parse_from(grammar, source, start, &budget).unwrap_or_else(|| Self::refused(grammar, source, budget));
+        Some(image.map(|image| FileImage::single(image, source)))
+    }
+
+    /// A refused fragment's tape (decision 0482): one `ERROR` node over the text less the blanks at its ends.
+    pub fn refused(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+        let start = source.len() - source.trim_start().len();
+        let end = source.trim_end().len().max(start);
+        let kf = Code::error(0)?.kf();
+        let node = Pending { kf, parent: None, start: start as u32, length: (end - start) as u32, size: 1, extra: false, error: true, missing: false, kind_alias: None };
+        Self::finish(vec![node], Vec::new(), grammar, source, budget)
     }
 
     /// The documents of a tree-sitter tree of `source`: its tape, and the programs its embedders
@@ -2509,6 +2562,29 @@ impl TapeSource {
 }
 
 impl TapeDoc {
+    /// The document over `held`, a tape the facts were read off and checked then (`facts::core`): the same image,
+    /// read in place, with nothing copied or checked again (decision 0353). An embedder that reads the host through
+    /// the scope table reads it so (decision 0470).
+    pub fn over(held: Arc<formats::DocTape>, grammar: Arc<Grammar>, lines: Arc<LineTable>) -> Self {
+        let image = Arc::clone(held.image_arc());
+        let source = Arc::clone(held.source());
+        Self {
+            source_digest: image.source_digest.unwrap_or_default(),
+            points: Arc::new(Points { source: Arc::clone(&source), rows: std::sync::OnceLock::new() }),
+            held,
+            source,
+            grammar,
+            lines,
+            labels: Arc::new(Vec::new()),
+            texts: Arc::default(),
+            guests: Guests::Owned(Arc::new(Vec::new())),
+            host: None,
+            image,
+            digest: Arc::default(),
+            path: None,
+        }
+    }
+
     /// P's: the digest of the source the tape was built from (P's SQL anchor engine,
     /// test-only). W's tape keeps no digest, so it is computed.
     /// G's: the shared source (G's literal anchors, test-only).

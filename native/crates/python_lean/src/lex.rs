@@ -222,6 +222,8 @@ struct Lexer<'s> {
     inside_interpolated_string: bool,
     /// Where the scanner does not run (each a NEWLINE the parser did not take), in order.
     joins: &'s [u32],
+    /// The brackets the text is inside (`lex_inside`): 0 for a file.
+    outer: u32,
 }
 
 const MAX_NESTING: u32 = 64;
@@ -232,7 +234,13 @@ pub fn lex(src: &[u8]) -> Result<Lexed, Refusal> {
 
 /// `src` lexed, the line ends at `joins` (where a NEWLINE was, in order) read as blanks.
 pub fn lex_joined(src: &[u8], joins: &[u32]) -> Result<Lexed, Refusal> {
-    let mut l = Lexer { src, b: block::Blocks::of(src), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, joins };
+    lex_inside(src, joins, 0)
+}
+
+/// `src` lexed as text inside `outer` brackets (a fragment read as if in parentheses, decision 0482): no NEWLINE,
+/// INDENT or DEDENT, as inside brackets, and a closer never takes the depth below `outer`.
+pub fn lex_inside(src: &[u8], joins: &[u32], outer: u32) -> Result<Lexed, Refusal> {
+    let mut l = Lexer { src, b: block::Blocks::of(src), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, joins, outer };
     l.module()?;
     Ok(Lexed { toks: l.toks, extras: l.extras })
 }
@@ -426,7 +434,7 @@ impl<'s> Lexer<'s> {
         let src = self.src;
         // A statement is open (NEWLINE is valid), and the last token was a header's `:`.
         let (mut open, mut header) = (false, false);
-        let mut brackets = 0u32;
+        let mut brackets = self.outer;
         loop {
             // The scanner, where it runs: outside brackets.
             // (Only where a line may end before the next token: else the scanner gives nothing.)
@@ -515,7 +523,7 @@ impl<'s> Lexer<'s> {
             let kind = self.token(i)?;
             match kind {
                 T::LParen | T::LBracket | T::LBrace => brackets += 1,
-                T::RParen | T::RBracket | T::RBrace => brackets = brackets.saturating_sub(1),
+                T::RParen | T::RBracket | T::RBrace => brackets = brackets.saturating_sub(1).max(self.outer),
                 _ => {}
             }
             open = true;

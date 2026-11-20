@@ -365,8 +365,8 @@ impl<'p> Findings<'_, 'p> {
                     let line = if line_one { Tm::Wild } else { l.clone() };
                     me.put(o, "syntax_error", &[d.clone(), line, Tm::Wild], false);
                     me.put(o, "doc", &[d.clone(), p, Tm::Wild], false);
-                    // A file's own error: a guest's is `.on guest_error`'s.
-                    me.put(o, "guest", &[d, Tm::Wild, Tm::Wild, Tm::Wild], true);
+                    // A file's own error: a program's is `.on guest_error`'s.
+                    me.put(o, "rr_program", &[d, Tm::Wild, Tm::Wild], true);
                     me.scope(o, scoped);
                     if line_one {
                         me.put_cmp(o, l, "=", Tm::Int(1));
@@ -399,7 +399,7 @@ impl<'p> Findings<'_, 'p> {
                 let (p, l, d) = (me.v("rr_p"), me.v("rr_l"), me.v("rr_d"));
                 let g = grammar.as_deref().map_or(Tm::Wild, |g| me.s(g));
                 me.put(o, "syntax_error", &[d.clone(), l, Tm::Wild], false);
-                me.put(o, "guest", &[d.clone(), Tm::Wild, Tm::Wild, g], false);
+                me.put(o, "rr_program", &[d.clone(), Tm::Wild, g], false);
                 me.put(o, "doc", &[d, p, Tm::Wild], false);
             };
             self.error_diagnostic(&policy, "guest_error", &code, &body)?;
@@ -543,10 +543,11 @@ impl<'p> Findings<'_, 'p> {
         self.put_cmp(o, test, "=", Tm::Int(1));
     }
 
-    /// `guest(g, host, at, grammar)` as an input (`core.rr` declares it; a program without it has it here).
+    /// `rr_program(d, file, grammar)` as an input: the document underneath a file's program (decision 0431 §4), which
+    /// no library a rule reads declares (a rule names a program by its file and place).
     fn guest_input(&mut self) {
-        self.b.fields().declare_absent("guest", &[("g", "int"), ("host", "int"), ("at", "node"), ("grammar", "sym")]);
-        self.b.fields().add_input("guest");
+        self.b.fields().declare_absent("rr_program", &[("d", "int"), ("file", "int"), ("grammar", "sym")]);
+        self.b.fields().add_input("rr_program");
     }
 
     /// Decision 0055's settings as `guest_policy` facts, which the corpus runner and the batch read:

@@ -524,6 +524,33 @@ pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) ->
     }
 }
 
+/// The node kinds a parse may start at (decision 0482), by name: a file's `module`, and a `type`.
+pub const STARTS: &[&str] = &["module", "type"];
+
+/// The tape of `src` parsed from the node kind `start` (one of [`STARTS`]): its root a node of that kind, with no
+/// node above it. A `type` is read as if in parentheses: its line ends are blanks.
+pub fn tape_from(src: &[u8], start: &str) -> Result<Tape, Refusal> {
+    tape_from_into(src, start, &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns)
+}
+
+/// [`tape_from`], written to `finish`'s target.
+pub fn tape_from_into<T>(src: &[u8], start: &str, finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
+    match start {
+        "module" => tape_into(src, finish),
+        "type" => {
+            if src.len() >= u32::MAX as usize / 2 {
+                return Err(Refusal::TooLarge);
+            }
+            let lexed = lex::lex_inside(src, &[], 1)?;
+            parse::parse_from(src, &lexed, &[], parse::Start::Type, finish).map_err(|e| match e {
+                Ok(_) => Refusal::Parse(0),
+                Err(r) => r,
+            })
+        }
+        _ => Err(Refusal::Parse(0)),
+    }
+}
+
 /// How many tokens and extras `src` lexes to (the lexer alone, for a measurement).
 pub fn token_count(src: &[u8]) -> Result<usize, Refusal> {
     let lexed = lex::lex(src)?;
@@ -583,6 +610,62 @@ mod oracle;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fragment's tape, as text.
+    fn fragment(text: &str) -> String {
+        tape_text(&tape_from(text.as_bytes(), "type").unwrap_or_else(|e| panic!("{text:?}: {e:?}")))
+    }
+
+    /// The `type` node of `x: <text>` in a file and what it holds, as a fragment's tape reads: at depth 0, its field
+    /// gone, its spans less the prefix's bytes.
+    fn written(text: &str) -> String {
+        let file = tape_text(&tape(format!("x: {text}\n").as_bytes()).unwrap());
+        let lines: Vec<&str> = file.lines().collect();
+        let at = lines.iter().position(|l| l.trim_start().starts_with("type type:")).expect("the annotation's type");
+        let depth = lines[at].len() - lines[at].trim_start().len();
+        let shift = |l: &str| -> String {
+            let (head, span) = l.rsplit_once(" [").unwrap();
+            let (a, b) = span.trim_end_matches(']').split_once("..").unwrap();
+            let (a, b): (u32, u32) = (a.parse().unwrap(), b.parse().unwrap());
+            format!("{} [{}..{}]", &head[depth..], a - 3, b - 3)
+        };
+        let mut out = vec![shift(lines[at]).replacen("type type:", "type", 1)];
+        out.extend(lines[at + 1..].iter().take_while(|l| l.len() - l.trim_start().len() > depth).map(|l| shift(l)));
+        out.join("\n") + "\n"
+    }
+
+    /// Decision 0482 R1: a `type` fragment's tape has one root, a `type` spanning the text less its blanks, and no
+    /// node above it.
+    #[test]
+    fn a_type_fragment_is_rooted_at_its_type() {
+        let t = fragment(" List[int] ");
+        let first = t.lines().next().unwrap();
+        assert_eq!(first, "type [1..10]", "{t}");
+        assert!(t.lines().skip(1).all(|l| l.starts_with("  ")), "one root: {t}");
+        assert!(!t.contains("module") && !t.contains("parenthesized_expression") && !t.contains("expression_statement"), "{t}");
+    }
+
+    /// R2: a `type` fragment's tree is the parser's tree of the same text written after `x:`.
+    #[test]
+    fn a_type_fragment_is_a_written_annotations_type() {
+        for text in ["int", "List[int]", "Dict[str, List[int]]", "a.b.C", "Optional['A']", "Callable[[int], str]", "int | None", "*Ts", "Literal[1, 'a']", "x: y"] {
+            assert_eq!(fragment(text), written(text), "{text:?}");
+        }
+    }
+
+    /// R3: a `type` fragment is read as if in parentheses: its line ends are blanks, and a trailing comment or a
+    /// stray closer is refused (one root, nothing after it).
+    #[test]
+    fn a_type_fragment_joins_its_lines() {
+        let shape = |t: String| t.lines().map(|l| l.rsplit_once(" [").unwrap().0.to_owned()).collect::<Vec<_>>();
+        let joined = fragment("Dict[\n    str,\n    int]");
+        assert_eq!(shape(joined.clone()), shape(fragment("Dict[str, int]")));
+        assert!(joined.starts_with("type [0..23]\n"), "{joined}");
+        assert!(tape_from(b"int\n| None", "type").is_ok());
+        assert!(tape_from(b"int  # c", "type").is_err());
+        assert!(tape_from(b"int)", "type").is_err());
+        assert!(tape_from(b"", "type").is_err());
+    }
 
     #[test]
     fn the_tables_agree() {

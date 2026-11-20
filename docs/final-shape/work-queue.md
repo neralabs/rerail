@@ -6256,6 +6256,9 @@ Open:
   `imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order`. The planner refuses the typing
   program (`typing/programs/calls.rr`'s `base`, which reads no guest relation) before any batch is built, so it is
   not decision 0431's.
+- **Also seen** (Q263 on django-bugs, 2026-11-19, with 0431 step 3 in the tree): `python_calls_program_agrees_with_the_runtime`
+  and `rules_read_the_python_program_through_lib_calls` fail with it (`in res`: "the read in `res` has no connected
+  demand"), with or without step 3's widened hiding. `res` is the product the Done below bounds.
 - **Done** (2026-11-19). The products the pass refused are bounded by declared fan-outs:
   - `pv(o, "cls", c) :- attr_of(_, o, _), builtin_ref(o, "object"), qv("builtins.object", "cls", c)` (calls.rr) pairs
     each reference to `object` with the few class nodes of one qualified name.
@@ -6567,6 +6570,9 @@ Open:
 - **Design** (the user, 2026-11-18): strings the rules parse are tape values, their nodes named by the tape ("do
   a"); programs the grammar holds are part of their file ("okay, I agree with that"); format 16 unchanged.
 - **Steps**: 0431's five. Step 1 (the record and the R1–R4 tests, ignored, each failing for its reason) is done.
+  Steps 2 to 5 done (2026-11-19); leftovers in Q338.
+- **Measured after** (PostHog cold, M3, step 5): guests 0.16 s (CPU binding) and 0.33 s (Metal); instructions 2,421 G
+  and 1,800 G (1ca497070: 2,476 G and 2,071 G); findings 29,747, fa0efeaed6ff (0431, "Measured (step 5)").
 - **Done when**: R1–R8 hold, their tests pass unignored, no guest document, key range, embed slice or batch rebuild
   is left, and PostHog's findings are unchanged on CPU and Metal.
 
@@ -7212,4 +7218,96 @@ on an M3 or M5:
   - `rerail-blocks` (38) and `rerail-store` (211, the host-journal `observe::tests` left out);
   - the engine's broken-fan-out and broken-key runs, the prepared plans' tests, `a_stored_run_is_read_in_place`, the
     test binary's flush mode, and `library_modules_link_to_the_lowering_of_them_together` (8, 22 s).
+- **Open**: nothing new.
+
+### Q337. `docof` lowered as `node`'s projection gives a program's own key
+
+- **Seen** (2026-11-19, 0431 step 3): core.rr's `docof(n, d)` of a program's node is its file (`Projected::file`,
+  `ViewDoc::file`, `ChunkDoc::file`), but `node(d, n, …)`'s `d` stays the program's own key, which `doc_role`,
+  `doc_root` and `guest` name it by. Where a program's `docof` is `node`'s projection (T's programs over nodes,
+  `rr::lower::projections`; `whole::Projected` in a combined part), a program's node has its own key for `docof`.
+- **Decided** (2026-11-19, the user: "pick a for the decision"): the guest relations name a program by its file and
+  place (`parsed(at, grammar, root)`), so `node`'s `d` is the file (0431 §4).
+- **Done when**: `docof` of a program's node is its file in a T program too, with a test.
+
+### Q338. 0431's leftovers after step 3
+
+- **Seen** (2026-11-19, 0431 step 3 done):
+  - `@parse(g, x)` and `@splice` values are still made by the slice's rounds (`embed_slice`, `guests::DEPTH`), which
+    grow the batch: 0431 §1 has no rounds outside the engine. A string a rule parses is already asked in the
+    fixpoint (§8, R10); a computed text's value is to be one too.
+  - The rule-file language declares no embeds (`rr/embeds.rr`): its patterns need the pattern grammars, its `match`
+    regexes the regex grammar, and no embedder reads a JSON object. Before, the library's rules made nothing either
+    (no grammar registered), and no program included them.
+  - A fresh host parse builds its programs (`TapeImage::encode` → `FileImage::embedding`) and `build_with_tape`
+    drops them; `Guests::programs` runs the embedders again from the tape (a stored host's has no programs). The
+    programs are to be kept with the file's tape (0431 §7) and read there.
+  - `.guests off` hides the run language's code guests: under 0431 a tape value is never code and a program is code
+    only in a run of its own grammar's label, so the setting has nearly nothing left to hide
+    (`combined_programs_see_guests_by_their_own_policy`).
+- **Done when**: no round outside the fixpoint; a file's programs read from its stored tape; the setting's meaning
+  decided.
+
+### Q339. A fragment is parsed from a node kind (decision 0482)
+
+- **Asked** (2026-11-19, the user): "we need to allow a parse to start from a given node type ... a Python annotation
+  is not a module. It's a type. A JSX document doesn't start with a <html> tag"; tree-sitter-only dialects: "Hand-written
+  parsers only". Before 0431's language-declared embeds at known places (the user's choice 2 for HTML in a string).
+- **Steps**: R1–R7's tests; the parsers' `STARTS` and `parse_from` (Python `type`, TSX `jsx_element`, HTML
+  `element`); the registry's fragment start and tag; the engine's fragment parse (no wrapper, no `wrapped_root`); the
+  libraries' rules over a `type` root; PostHog's findings.
+- **Done when**: R1–R7 hold and PostHog's findings are unchanged or each change is named.
+- **Done** (2026-11-19). R1–R7 hold (0482 "Tests"). The three parsers start at `type`, `jsx_element` /
+  `jsx_self_closing_element` and `element`. A refused text is one `ERROR` node, so `.on guest_error` still sees it.
+  The libraries' rules needed no change: `annotation`, `parsed_in` and `ann_strip` already read a `type` root.
+  PostHog on the CPU is unchanged: 29,747 findings, fa0efeaed6ff.
+
+### Q340. A language declares the places its strings embed code (decision 0470)
+
+- **Asked** (2026-11-19, the user): choice 2 for "a string we know is HTML": a language declares the embeds at known
+  places. After 0482.
+- **Steps**: R1–R6's tests; the registry's `places` (schema, checks, generated table); the `call-argument` embedder
+  over the batch's tape document (scope table, plain strings, segments); Python's places; an HTML rule over a
+  program; PostHog's findings.
+- **Done when**: R1–R6 hold and PostHog's findings are unchanged or each change is named.
+- **Step 1 done** (2026-11-19): R1–R4, R5 for a Python rule, R6 (PostHog unchanged, 29,747). Open, step 2: a run of
+  the embedded language reads the files holding its programs (0470 "Steps"); an HTML run sees no Python file's
+  program, nor a JavaScript run an HTML file's `<script>`.
+- **Step 2 done** (2026-11-19, the user: "possible but not happen by default"): `.embedded on` makes a run read the
+  files that hold its language's programs, their own nodes hidden (0470 "Steps", 2; R7). Also fixed: a cross-file
+  part's base relation with no rows anywhere (`rr_program` in a run holding no program) is bound empty.
+
+
+### Q341. Roll-up 15 (django-bugs onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): django-bugs at 0c8f63e70f0, base ed639096f4. Only theirs' added lines were renumbered:
+  - decision 0466 → 0482, its file and README row noting the old number. 0470 keeps its number: none is used here.
+  - work queue Q267–Q270 → Q337–Q340. Theirs' citations of its own Q261 and Q266 are Q306 and Q310 here (roll-up 7).
+  - 0431's header cited format 16 as 0426 (0434 here) and the work queue as Q261 (Q306 here).
+- **Taken from theirs**:
+  - 0431 steps 3–5: a file's programs are its grammar's, named by their file and place (`rr_program(d, file,
+    grammar)` replaces `guest`, `doc_root` and `doc_role`), and the slice makes the tape operations' values alone.
+  - 0482: fragments parsed from a node kind by the hand-written parsers.
+  - 0470: a language's declared embed places, and `.embedded on`.
+  - The `node` view's document column is a program's file (`ViewDoc::file`).
+- **Kept from ours**, theirs' change adapted to it:
+  - The views' reads are UKL (`<ukl/reads/view.h>`, generated). Theirs' change to the deleted `view_reads.metal` is
+    made by generating the header again (`the_view_kernels_reads_are_these`). The one line that differs reads the
+    file's column at 116, as theirs' Metal did.
+  - Findings lower to the version (ours' `self.b`). Theirs' `rr_program` reads are written in that builder: a file's
+    own syntax error is not a program's, and `.on guest_error` reads `rr_program` with its grammar.
+  - A chunk keeps its documents where theirs says (slice, parses, guests the rules see, `.embedded on`), and where
+    ours' cross part reads base relations (0458). The no-slice arm returns ours' documents and sets theirs'
+    `host_of`.
+  - `guests::READS` takes theirs' list, at ours' visibility.
+  - The device test over a file's programs takes theirs' bound (the uploads against a file with no script, plus
+    `parsed`'s rows).
+  - Theirs' Q263 note (`res` with no connected demand) goes into Q249 here, the typing oracles' products, whose
+    Done bounds `res`.
+- **Checked** on the m1max:
+  - the workspace's tests and bins check with no warnings;
+  - `rerail-clif` (with the views' reads test), `rerail-python-lean`, `rerail-ecma-lean` and `rerail-html-lean`
+    (43, 4 ignored);
+  - the engine's fragment, embed, call-argument and place tests, `.embedded on`, the guest tests, the syntax-error
+    and guest-error findings, and `cpu_and_metal_read_the_same_tape_values` (72, 1 ignored).
 - **Open**: nothing new.

@@ -243,7 +243,11 @@ pub mod code_rule_dsl {
     }
     pub mod cpython;
     pub use rerail_w::code_rule_dsl::crypto;
-    pub use rerail_lang::code_rule_dsl::embed;
+    #[path = "embed"]
+    pub mod embed {
+        pub use rerail_lang::code_rule_dsl::embed::*;
+        pub mod call_argument;
+    }
     pub use rerail_w::code_rule_dsl::eval;
     #[path = "facts"]
     pub mod facts {

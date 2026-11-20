@@ -362,6 +362,7 @@ impl View {
             text: self.text,
             segments: self.segments,
             host_errors: self.syntax_errors,
+            at: None,
         }
     }
 
