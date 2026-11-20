@@ -136,6 +136,8 @@ fn tier2_writes_format_16_by_the_ops() {
         Written::F16(t) => t.as_bytes().to_vec(),
         Written::F16Z(t) => t.as_bytes().to_vec(),
     };
+    // The tape's home: the tape, then its presence (the document's and each block's).
+    let home_of = |w: &Written| w.extent().to_vec();
     let mut docs: Vec<String> = DOCUMENTS.iter().map(|d| d.to_string()).collect();
     for d in DOCUMENTS {
         if let Some(at) = d.find([';', ',']) {
@@ -172,8 +174,9 @@ fn tier2_writes_format_16_by_the_ops() {
             let number = f16::numbers(&lang, &table).expect("numbers");
             let numbers = sixteen.numbers(&lang);
             for z in [false, true] {
-                let want = f16::write_from(&lang, &t, &number, bytes, structure.tag, z).expect("the writer's tape");
+                let want = f16::write_from_with_presence(&lang, &t, &number, bytes, structure.tag, z).expect("the writer's tape").tape;
                 let got = parser.image16(bytes, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: {shown:?} (16z {z}): {e}"));
+                assert!(got.presence_bytes().is_some() && home_of(&got) == home_of(&want), "{name}: {shown:?} (16z {z}): the presence, the document's and each block's");
                 let (got, want) = (bytes_of(&got), bytes_of(&want));
                 let first = (0..got.len().min(want.len())).find(|&k| got[k] != want[k]);
                 assert!(got == want, "{name}: {shown:?} (16z {z}): format 16 by tier 2's passes: lengths {} and {}, first differing at {first:?}", got.len(), want.len());
@@ -214,7 +217,7 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
         let words = rir_asm::assemble(&compiled.text()).expect("assembles");
         let structure = native_ir::lower(&words, 0, 0).expect("lowers");
         let pushes: Vec<u16> = structure.structural.iter().filter_map(|w| if let native_ir::StructuralOperation::Push { target, .. } = w.operation { Some(target) } else { None }).collect();
-        let shared = crate::native_cpu_stream::shared_runs(&structure, &pushes);
+        let shared = crate::native_cpu_stream::shared_runs(&structure, &pushes, None);
         let ops = |a: usize, b: usize| structure.structural[a..b].iter().map(|w| w.operation).collect::<Vec<_>>();
         for (&s, &(b, ti)) in &shared.at {
             let body = &shared.bodies[b];
@@ -362,13 +365,27 @@ fn a_unicode_escapes_checks_run_at_its_u() {
     }
     let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("the ladder's JSON");
     let c = crate::ladder::compile_step("14-json", &source);
-    // One token's check past its token (the hex digits and the lone high, merged), and no mask's.
+    // One token's check past its token (the hex digits and both lone halves, merged), and no
+    // mask's. The lone low reads the six bytes before its escape and the tokens' ends there
+    // (decision 0428): tier 1 has no surrogate test left.
     assert_eq!(c.program.local_checks.iter().filter(|k| k.token && k.delay == 8).count(), 1, "{:?}", c.program.local_checks);
     assert!(c.program.local_checks.iter().all(|k| k.token), "{:?}", c.program.local_checks);
+    assert!(c.program.local_checks.iter().any(|k| k.back == 6 && k.ops.contains(&crate::program::LocalOp::Ended)), "{:?}", c.program.local_checks);
+    // Run only at a `\u` (`token_gate`): its last byte `u`, as simdjson's stage 2 switches on
+    // the escape's byte. The number's check has no such bound.
+    let mut u = [0u64; 4];
+    u[usize::from(b'u') / 64] |= 1 << (b'u' % 64);
+    let gates: Vec<Option<[u64; 4]>> = c.program.local_checks.iter().map(crate::native_cpu_stream::token_gate).collect();
+    assert_eq!(gates.iter().filter(|g| **g == Some(u)).count(), 1, "{gates:?}");
+    assert_eq!(gates.iter().filter(|g| g.is_none()).count(), 1, "{gates:?}");
     let block = &c.program.block_programs[0];
     let texts = [
         r"A", r"éx", r"😀", r"😀", r"\u12", r"\u12G4", r"\uZZZZ", r"\u", r"\uD800", r"\uD800x", r"\uD800A", r"\uDC00",
         r"a\uDE00", r"\uD800\uD800", r"\\u12", r"\\A", r"\\\u12", r"\\\\uD800", r"\uD83D\n\uDE00", r"􏿿", r"\uD800\\uDC00",
+        // The lone low, read back (decision 0428): after a pair, after an escaped backslash's
+        // `uD800` (no escape), after other escapes and text, and pairs after backslash runs.
+        r"\uD800\uDC00", r"\uDBFF\uDFFF", r"\uD800\uDC00\uDC00", r"\\uD800\uDC00", r"\\\uD800\uDC00", r"\\\\uD800\uDC00",
+        r"\n\uDC00", r"uD800\uDC00", r"\uD80\uDC00", r"\u0D80\uDC00", r"\uD800x\uDC00", r"\uDC00\uD800\uDC00", r"\/uD800\uDC00",
     ];
     let (mut accepted, mut refused) = (0, 0);
     for text in texts {
@@ -383,6 +400,16 @@ fn a_unicode_escapes_checks_run_at_its_u() {
                 assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
                 if want.is_ok() { accepted += 1 } else { refused += 1 }
             }
+        }
+    }
+    // A frame that begins before the file: the escape a byte or two in (decision 0428).
+    for text in [r"\uDC00", r"\uD800\uDC00", r"\uDC00\uDC00", r"a\uDC00", r"\uDBFF\uDFFF"] {
+        for doc in [format!("\"{text}\""), format!("[\"{text}\"]"), format!(" \"{text}\"")] {
+            let bytes = doc.as_bytes();
+            let pc = |r: Result<Vec<stream::Node>, stream::Refused>| r.map_err(|e| e.pc);
+            let want = pc(stream::run(&c.program, bytes, &block.run(bytes)));
+            assert_eq!(want.is_ok(), valid(text.as_bytes()), "the interpreter: {doc:?}");
+            assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
         }
     }
     assert!(accepted > 100 && refused > 100, "{accepted} accepted, {refused} refused");
@@ -467,6 +494,8 @@ fn the_hot_loop_carries_the_bytes_before_its_block() {
         assert!(before.is_empty(), "{name}: the hot loop loads bytes before its block: {before:?}");
         let reduced = hot.iter().filter(|l| l.starts_with("mov x") && l.ends_with(".d[1]")).count();
         assert_eq!(reduced, 1, "{name}: vectors reduced to words in the hot loop");
+        let lowered = crate::block_native::BlockNative::lower(&c.program.block_programs[0]);
+        let (made, lazy) = (lowered.cpu_unstored(), crate::native_cpu_block::lazy_code_bits(&lowered));
         let (mut docs, mut refused) = (0, 0);
         for seq in [&[0xc3u8, 0xa9][..], &[0xe2, 0x82, 0xac], &[0xf0, 0x9f, 0x98, 0x80], &[0xed, 0xa0, 0x80], &[0xe0, 0x80, 0x80], &[0xf4, 0x90, 0x80, 0x80], &[0xc0, 0x80], &[0xf5, 0x80], &[0x80], &[0xc3], &[0xe2, 0x82], &[0xc3, 0x80, 0x80]] {
             for edge in [20usize, 128, 192, 300] {
@@ -477,13 +506,54 @@ fn the_hot_loop_carries_the_bytes_before_its_block() {
                     doc.extend(b"\", 1]");
                     doc.resize(320, b' ');
                     let interpreted = c.program.block_programs[0].run_files(&[&doc]).remove(0);
-                    assert!(crate::ladder::tier1_agrees(&c, &c.parser.tier1.extract(&doc), &interpreted), "{name}: {seq:02x?} at {pad}");
+                    assert!(crate::ladder::tier1_agrees(&c.parser.tier1.extract(&doc), &interpreted, &made, lazy), "{name}: {seq:02x?} at {pad}");
                     docs += 1;
                     refused += usize::from(interpreted.totals.iter().any(|&t| t != 0));
                 }
             }
         }
         assert!(0 < refused && refused < docs, "{name}: {refused} of {docs} refused");
+    }
+}
+
+/// Decisions 0417 and 0418: the hot loop's UTF-8 check and totals in simdjson's form.
+/// - Lags 2 and 3 are made from the bytes 2 and 3 back, as simdjson's `prev2 >= 0xe0` of
+///   `prev<2>(input)`: one `ext` of each lag a chunk, its compare after it.
+/// - The error vector is copied on no way through the loop: the only vector copy is the
+///   carried chunk's (0405).
+/// - Each total with no row is ORed into the running word where it is made, a flag's word
+///   leaves too, and an edge block remakes them: the stack accesses are a ratchet.
+#[test]
+#[cfg(target_arch = "aarch64")]
+fn the_hot_loop_keeps_simdjsons_utf8_and_error_registers() {
+    for (name, source) in crate::ladder::steps().into_iter().filter(|(n, _)| n.starts_with("14-json") || n.starts_with("15-jsonc")) {
+        let c = crate::ladder::compile_step(&name, &source);
+        let hot = crate::clif_text::machine_loop(&c.parser.tier1.loops_disassembly());
+        for k in [14, 13] {
+            let exts: Vec<usize> = (0..hot.len()).filter(|&i| hot[i].starts_with("ext v") && hot[i].ends_with(&format!(", #{k}"))).collect();
+            assert_eq!(exts.len(), 4, "{name}: the bytes {} back, one `ext` a chunk", 16 - k);
+            // Each `ext` of bytes, compared next: its result's first reader is a `cmhs`.
+            for &i in &exts {
+                let dest = hot[i]["ext ".len()..].split(',').next().expect("a destination").to_owned();
+                let reads = |l: &String| l.split_once(", ").is_some_and(|(_, src)| src.split(", ").any(|r| r == dest));
+                let reader = hot[i + 1..].iter().find(|l| reads(l)).expect("read");
+                assert!(reader.starts_with("cmhs "), "{name}: `{}` read by `{reader}`, not compared", hot[i]);
+            }
+        }
+        // Decision 0418: the check's constants (its tables, `0xe0`, `0xf0`, `0x80`) are held in
+        // registers round the loop, as simdjson's: none is made between the first chunk's `prev`s
+        // and the last chunk's.
+        // Lags 2 and 3 are the check's alone; the first chunk's lag-1 lookups come 9 before.
+        let exts: Vec<usize> = (0..hot.len()).filter(|&i| hot[i].starts_with("ext v") && [", #14", ", #13"].iter().any(|k| hot[i].ends_with(k))).collect();
+        let (first, last) = (exts[0], exts[exts.len() - 1]);
+        let made: Vec<&String> = hot[first - 9..=last + 6].iter().filter(|l| l.starts_with("movi ") || l.starts_with("ldr q")).collect();
+        assert!(made.is_empty(), "{name}: constants made in the UTF-8 check: {made:?}");
+        let copies: Vec<&String> = hot.iter().filter(|l| l.starts_with("mov v") && l.contains(".16b, v")).collect();
+        assert!(copies.len() <= 1, "{name}: vector copies in the hot loop: {copies:?}");
+        let stack = crate::clif_text::loop_costs(&hot).0;
+        // `machine_loop`'s loop, which takes in more of JSONC's than `json_shapes`'s (7 there).
+        let most = if name.starts_with("14-json") { 1 } else { 9 };
+        assert!(stack <= most, "{name}: {stack} stack loads or stores in the hot loop (at most {most})");
     }
 }
 
@@ -505,6 +575,7 @@ fn utf8s_two_byte_rules_are_one_pair_lookup() {
     assert_eq!(bits, [7, 1], "{name}: the eight rules in seven boxes, then two continuations: {pairs:?}");
     assert!(pairs.iter().all(|p| (p.0, p.1) == (pairs[0].0, pairs[0].1)), "{name}: one pair of tables: {pairs:?}");
     assert_eq!(fused.tables[usize::from(pairs[0].1)].lo, [0xff; 16], "{name}: this byte's table is of high nibbles");
+    let (made, lazy) = (native.cpu_unstored(), crate::native_cpu_block::lazy_code_bits(&native));
     let (mut docs, mut refused) = (0, 0);
     for lead in [0xc2u8, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5] {
         let len = if lead < 0xe0 { 2 } else if lead < 0xf0 { 3 } else { 4 };
@@ -523,10 +594,10 @@ fn utf8s_two_byte_rules_are_one_pair_lookup() {
                 let first = [&[next, lead][..], b" 1"].concat();
                 for d in [more, lead_lead, first] {
                     let (compiled, interpreted) = (c.parser.tier1.extract(&d), c.program.block_programs[0].run_files(&[&d]).remove(0));
-                    assert!(crate::ladder::tier1_agrees(&c, &compiled, &interpreted), "{name}: {d:02x?}");
+                    assert!(crate::ladder::tier1_agrees(&compiled, &interpreted, &made, lazy), "{name}: {d:02x?}");
                 }
                 let (compiled, interpreted) = (c.parser.tier1.extract(&doc), c.program.block_programs[0].run_files(&[&doc]).remove(0));
-                assert!(crate::ladder::tier1_agrees(&c, &compiled, &interpreted), "{name}: {doc:02x?}");
+                assert!(crate::ladder::tier1_agrees(&compiled, &interpreted, &made, lazy), "{name}: {doc:02x?}");
                 refused += usize::from(interpreted.totals.iter().any(|&t| t != 0));
                 docs += 1;
             }
@@ -578,4 +649,31 @@ error "invalid UTF-8" when never | (needed ^ cont)
         }
     }
     assert!(differ.is_empty() && refused > 0 && refused < n, "{n} documents, {refused} refused; differ: {differ:#?}");
+}
+
+/// Decision 0420: a mask is taken out of its vector where it is read. In every ladder step's hot
+/// loop, each `extractlane` to a word comes just before its first reader in its block, or ends
+/// the block (its readers are in the blocks after).
+#[test]
+fn a_mask_leaves_its_vector_where_it_is_read() {
+    let mut checked = 0;
+    for (name, source) in crate::ladder::steps() {
+        let c = crate::ladder::compile_step(&name, &source);
+        for (block, lines) in crate::clif_text::hot_loop(&c.parser.tier1.clif) {
+            for (i, l) in lines.iter().enumerate() {
+                let Some((v, rest)) = l.split_once(" = ") else { continue };
+                if !rest.starts_with("extractlane ") || rest.starts_with("extractlane.i8x16") {
+                    continue;
+                }
+                // Past the others moved before the same reader (a vector's two halves, say).
+                let j = (i + 1..lines.len()).find(|&j| crate::clif_text::opcode(&lines[j]) != "extractlane").expect("a terminator");
+                let next = &lines[j];
+                let reads = next.split(|ch: char| !ch.is_alphanumeric()).any(|w| w == v);
+                let last = j + 1 == lines.len() || matches!(crate::clif_text::opcode(next), "brif" | "jump" | "return");
+                assert!(reads || last, "{name} {block}: `{l}` held before `{next}`");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 100, "{checked} masks");
 }

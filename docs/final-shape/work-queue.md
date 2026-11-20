@@ -6453,3 +6453,28 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   top spans too.
 - **Do**: find what in `open_tuple`'s plan grows with the chunk's square (a cross product of the chunk's tuples, or an
   index the planner skips at the bigger size), and fix its shape. 0435's sizing is a user decision: it stays.
+
+### Q317. Roll-up 9 (Parser-generators-final-shape onto rr-align): what the merge chose
+
+- **Seen** (merge of 6da4cd4692e; the branch has moved on to 9fc4ad9c22, and the roll-up keeps the pinned commit):
+  - Both sides renumbered the same four decisions. This branch had them as 0411, 0412, 0402 and 0403. Theirs had
+    them as 0452–0455, after taking 0402 and 0403 for the kept facts and the proven reads; this branch numbers those
+    0456 and 0463. Theirs' new decisions 0417, 0418, 0420, 0421, 0423 and 0428 collide with nothing here.
+- **Done**:
+  - This branch's numbers stay. Every citation theirs made was mapped: 0452 → 0411, 0453 → 0412, 0454 → 0402 and
+    0455 → 0403. Theirs' copies of the four files are gone, and the README rows are this branch's, with theirs' six
+    new rows added.
+  - In the code, each side's change is kept. From theirs: step 5b's end of the stream (`Next` past the count, no
+    `AtEnd`), in this branch's 0407 token-mark test too; 0418's hoisted constants beside this branch's
+    `forward(exits, arm_rules)`; `tier1_agrees` given `made` and `lazy` once a ladder, inside this branch's
+    `check_documents`; the regions read as `parse_string` ahead of time, without the one-extra refusal this branch
+    lifted. From this branch: 0413's cut on a rule's last; the run's compile options (0442) in place of theirs'
+    `OPTIMIZE_TIER2`.
+  - Format 16's tier 2 module is one code arena (`cut.near || sixteen`, `rerail_clif::jit::CODE_RESERVE`). The tape
+    writer's ops call each other directly (`writer::define_ops`), so two chunks of the default provider could lie
+    past a `bl`'s reach. Theirs' new `ladder_steps_rust_tapes_are_the_jits` panicked there once in three runs
+    (`compiled_blob`'s `Arm64Call`), and it has passed since.
+  - The AOT crates' build scripts and `kotlin_aot::aot` compile in a run of their own. They still stored to the
+    statics 0442 had removed, a break that only `--features generated` showed. Without a run, `options()` is a fresh
+    value each call, so the IR was not kept ("tier 1: no entry"). `aot`'s flags now end with its run, and the
+    restore of `bit_test` is gone.

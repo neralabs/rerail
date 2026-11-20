@@ -274,6 +274,13 @@ fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
     }
 }
 
+/// Elsewhere `mincore` tells no page dirty, and `MS_SYNC` returns once the range is written
+/// back: one `msync`.
+#[cfg(not(target_os = "macos"))]
+fn written_back(base: *mut u8, len: usize) -> io::Result<()> {
+    msync(base, len, libc::MS_SYNC)
+}
+
 fn msync(base: *mut u8, len: usize, flags: i32) -> io::Result<()> {
     if len == 0 {
         return Ok(());

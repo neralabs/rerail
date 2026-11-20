@@ -27,6 +27,10 @@ mod generated_reads;
 mod generated_writer;
 
 
+/// The writer's ops as Rust source (`generated_writer`, the host's own): a tier 2 generated ahead of time that writes
+/// format 16 holds it as a module of its own and calls the ops at its node words (`rerail_compiler::rust_stream`).
+pub const WRITER_RUST: &str = include_str!("generated_writer.rs");
+
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
 /// named-only at rest, no stored source digest (RER-131); 14: the tokens the grammar implies
