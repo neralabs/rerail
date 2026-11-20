@@ -1309,6 +1309,22 @@ def clean(target, source, relax_home):
 os.makedirs(ROOT, exist_ok=True)
 if sys.argv[1:2] == ["exec"]:
     run_command(json.loads(sys.argv[2]))
+if sys.argv[1:2] == ["fetch"]:
+    # One file of a test-remote command's target directory, to stdout (`--fetch`): a program the
+    # host built, for this Mac to run. Only a file inside that target directory.
+    base = os.path.realpath(os.path.join(TARGETS, sys.argv[2]))
+    path = os.path.realpath(os.path.join(base, sys.argv[3]))
+    if not path.startswith(base + os.sep) or not os.path.isfile(path):
+        print(f"farm-agent: no file {sys.argv[3]} in the command's target directory", file=sys.stderr, flush=True)
+        os._exit(66)
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            sys.stdout.buffer.write(chunk)
+    sys.stdout.buffer.flush()
+    os._exit(0)
 if sys.argv[1:2] == ["free"]:
     os.setpriority(os.PRIO_PROCESS, 0, 19)
     free_space(json.loads(sys.argv[2]))

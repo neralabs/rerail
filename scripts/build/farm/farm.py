@@ -23,7 +23,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 47
+VERSION = 48
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1385,6 +1385,15 @@ def test_slots(host):
     command at a time left a 16-core host mostly idle while others queued behind it for 25 minutes
     (2026-11-16)."""
     return max(1, int(host.get("test_slots") or host.get("cores", 3) // 3))
+
+
+def cpu_share(host):
+    """The jobs one test command may run at once on `host`: twice its cores over its test slots
+    (at least 2). Each command's cargo and test runner get it (test-remote: CARGO_BUILD_JOBS,
+    NEXTEST_TEST_THREADS, RUST_TEST_THREADS; rustc's codegen threads take cargo's job tokens), so
+    a host full of commands runs about twice its cores, not each command's own: five commands on
+    the 16-core M3 had run a load of 88 (2026-11-20)."""
+    return max(2, 2 * host.get("cores", 4) // test_slots(host))
 
 
 def free_test_slots(host):
