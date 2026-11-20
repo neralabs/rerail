@@ -100,9 +100,11 @@ pub const CHECK: u8 = 0x66;
 /// hold, from the first on, are no longer pending: the nodes closed next keep them, as a leaf
 /// taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
 /// line break are the statement's. (0x84: 0x67 became the preprocessing words' `READ`.)
-/// `m=1` (`mark … , drops W`): where mask `operand` holds at the token's start, the extra
-/// pending last is dropped: no node of the tape (decision 0406, the lean lexer's swallowed
-/// comment).
+/// `m=1` (`mark … , drops …`): where gap pattern `operand` holds at the token
+/// (`Words::gap_patterns`, its first entry), the extra pending last is dropped: no node of the
+/// tape (decision 0406, the lean lexer's swallowed comment). `m=2`, and `m=3+F` where flag `F`
+/// is set (`mark … , loses …`): where gap pattern `operand` holds, the extra pending last is
+/// lost: of no width, after the token (decision 0451, the lean lexer's `asi`).
 pub const SETTLE: u8 = 0x84;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
@@ -296,6 +298,12 @@ pub struct Words {
     /// record's bit does and its tokens follow, each element one record (the extras between
     /// skipped). Rising by mark.
     pub token_marks: Vec<TokenMark>,
+    /// The questions a mark's `drops` and `loses` ask (decision 0451; `gappattern P oO kK …`):
+    /// entries of one pattern share its order `P`, which `SETTLE` names by its first entry
+    /// (`patterns_hold`). Each element is a record as the lexer wrote it, extras included, at
+    /// its offset from the token (`gap_pattern_holds`): the lean lexer's `asi`, which reads on
+    /// past a comment after a line break. Rising by pattern.
+    pub gap_patterns: Vec<TokenMark>,
     /// The counts of tokens (`COUNT`; `tokencount N max M`): each one's most.
     pub counts: Vec<u16>,
     /// Checks of a few bytes at each bit of a sparse mask (`localcheck`): tier 1's escape or
@@ -509,6 +517,9 @@ pub struct TokenElem {
     /// The marks whose bit the record must hold (`with M`), as the lean parser asks
     /// `peek_at(j).nl`: the element holds only where the code has all of them.
     pub with: u32,
+    /// The bytes the record's token may begin with (`starting "B"`, a gap pattern's only): a
+    /// set of 256 bits, none for no test. The lean lexer's `asi` reads the byte after a comment.
+    pub first: [u64; 4],
 }
 
 /// One side of a run's depth (`TokenElem::nests`): its counter (0 to 3), whether it opens, and
@@ -547,6 +558,11 @@ impl TokenElem {
         let word = crate::records::word_of(code);
         let keyword = word > 0 && self.except.contains(&((word - 1) as u16));
         (kind < 64 && self.kinds >> kind & 1 == 1 && !keyword) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+    }
+
+    /// Whether the record's first byte is one the element takes (`TokenElem::first`).
+    pub fn first_holds(&self, byte: u8) -> bool {
+        self.first == [0; 4] || self.first[usize::from(byte / 64)] >> (byte % 64) & 1 == 1
     }
 
     /// Whether the element holds at a record's code (`None`: no record left, the file's end).

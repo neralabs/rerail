@@ -85,7 +85,6 @@ class star      = '*'
 class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
 class alpha     = 'a'..'z' 'A'..'Z' '_'
 class punct     = '.' '*'
-class ichar     = 'i'
 mask line_open  = slash & next(slash)
 regions hidden {
   line  = line_open .. lf outside
@@ -93,7 +92,6 @@ regions hidden {
 mask code       = ~hidden & ~o_line
 mask w          = code & word
 mask name       = fill(w & alpha, ~w)
-mask swallow    = code & ichar & ~prev(word)
 error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
 token comment = start slash & o_line read line
 token simple_identifier = start alpha & name & ~prev(name) run word
@@ -101,7 +99,7 @@ token punct     = start code & punct
 keywords simple_identifier { } soft { "package" "import" "as" }
 keywords punct { "." "*" } required
 skip ws
-mark line       = lf & code, unless before "." simple_identifier, unless before "." "*", end, settles, drops swallow
+mark line       = lf & code, unless before "." simple_identifier, unless before "." "*", end, settles, drops before starting "i"
 mark more       = lf & code, before "." simple_identifier
 mark wild       = tokens "." "*"
 mark alias      = tokens after "import" simple_identifier (simple_identifier | ".")* "as"
@@ -140,7 +138,6 @@ class star      = '*'
 class word      = 'a'..'z' '0'..'9' '_'
 class alpha     = 'a'..'z' '_'
 class punct     = '.' '(' ')' ','
-class dot       = '.'
 mask block_open = slash & next(star)
 mask block_end  = slash & prev(star)
 regions hidden {
@@ -149,11 +146,6 @@ regions hidden {
 mask code       = ~hidden & ~o_block
 mask w          = code & word
 mask name       = fill(w & alpha, ~w)
-mask solid      = code & ~ws
-mask lf_end     = lf & code
-mask asked_blk  = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)), solid)), block_end)
-mask after_asked = solid & prev(fill(block_end & prev(asked_blk), solid))
-mask lost_at    = after_asked & dot
 error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
 mask last_byte  = ~next(~empty)
 error "a block comment open at the end" by tokens when f_block & last_byte
@@ -162,7 +154,7 @@ token simple_identifier = start alpha & name & ~prev(name) run word
 token punct     = start code & punct
 keywords punct { "." "(" ")" "," } required
 skip ws
-mark line       = lf & code, unless before ".", end, settles, ends, loses lost_at
+mark line       = lf & code, unless before ".", end, settles, ends, loses after comment with line before "."
 tree t {
   node source_file whole = [line] [statements]
   node statements nested = (call line)+

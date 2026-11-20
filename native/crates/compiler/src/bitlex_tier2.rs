@@ -174,7 +174,15 @@ pub struct Lowered {
     /// Each element: its offset, kinds, words, whether it is a `~` of them, whether the file's
     /// end takes it (`::bitlex::syntax::TokenElem`). The flag: the mark refuses (`refusing`).
     pub token_marks: Vec<(u8, bool, bool, Vec<TokenElemRow>)>,
+    /// The `drops` and `loses` questions (`Words::gap_patterns`), in the order `SETTLE` names
+    /// them: each entry's pattern, whether it is an `unless`, and its elements (`GapElemRow`).
+    pub gap_patterns: Vec<(u8, bool, Vec<GapElemRow>)>,
 }
+
+/// One element of a gap pattern, as `Lowered::gap_patterns` holds it: its offset from the token,
+/// its kinds' names, its words (strings), whether it is a `~` of them, the marks it holds with or
+/// without (each its name and whether with), and the bytes it may start with (`starting`).
+pub type GapElemRow = (i8, Vec<String>, Vec<u16>, bool, Vec<(String, bool)>, Vec<u8>);
 
 /// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
 /// starts, and whether it is hidden (skipped where no arm takes it).
@@ -206,12 +214,16 @@ pub struct Mark {
     /// `, settles`: its mask from each bit to the next grammar token's start, which its arms
     /// settle the pending extras before (`SETTLE`).
     pub settle: Option<u16>,
-    /// `, drops W`: `W`'s mask, at whose tokens its arms drop the extra pending last
-    /// (`SETTLE m=1`).
+    /// `, drops …`: its questions' first entry (`Words::gap_patterns`), at whose tokens its
+    /// arms drop the extra pending last (`SETTLE m=1`).
     pub drop: Option<u16>,
-    /// `, loses W`: `W`'s mask, at whose tokens each test of the mark gives the extra pending
-    /// last no width, at the token (`SETTLE m=2`), as the lean lexer's `asi` loses it.
+    /// `, loses …`: its questions' first entry, at whose tokens each test of the mark gives the
+    /// extra pending last no width, at the token (`SETTLE m=2`), as the lean lexer's `asi`
+    /// loses it.
     pub lose: Option<u16>,
+    /// The questions themselves (`GapPattern`), whose rows `lower` writes (`Lowered::gap_patterns`).
+    pub drops: Vec<::bitlex::syntax::GapPattern>,
+    pub loses: Vec<::bitlex::syntax::GapPattern>,
     /// With `lose`: the flag set where a level is at the mark's level (decision 0451), the lean
     /// parser's `stmt`. A call sets it where the state it returns to takes the mark, keeps its
     /// caller's where that state ends at it, and clears it elsewhere (`lose_flags`).
@@ -1395,6 +1407,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                         ::bitlex::syntax::TokenElem::Without(m) => without.push((m.clone(), false)),
                         ::bitlex::syntax::TokenElem::With(m) => without.push((m.clone(), true)),
                         ::bitlex::syntax::TokenElem::Not(_) | ::bitlex::syntax::TokenElem::Many(..) => return Err("a `~` or a run inside a `~` or a run".into()),
+                        ::bitlex::syntax::TokenElem::Starting(_) => return Err("`starting` in a mark's `drops` or `loses` only".into()),
                     }
                 }
                 // The token before, `~`: it holds with no token before too (`end` there).
@@ -1412,6 +1425,36 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     }
     for w in marks.iter().flat_map(|m| m.unless.iter()) {
         e.string(w);
+    }
+    // The `drops` and `loses` questions, a pattern each (`bitlex_masks` numbers their entries
+    // in this order), their elements at offsets from the token: `after`'s before it, the last
+    // at -1; `before`'s from it.
+    let mut gap_patterns = Vec::new();
+    for (p, qs) in marks.iter().flat_map(|m| [&m.drops, &m.loses]).filter(|q| !q.is_empty()).enumerate() {
+        for q in qs.iter() {
+            let a = q.after.len() as i8;
+            let at = q.after.iter().enumerate().map(|(i, x)| (i as i8 - a, x)).chain(q.before.iter().enumerate().map(|(i, x)| (i as i8, x)));
+            let mut elems = Vec::new();
+            for (offset, choices) in at {
+                let (not, choices) = match choices.as_slice() {
+                    [::bitlex::syntax::TokenElem::Not(inner)] => (true, inner.as_slice()),
+                    c => (false, c),
+                };
+                let (mut kinds, mut words, mut marks_named, mut first) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+                for c in choices {
+                    match c {
+                        ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
+                        ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
+                        ::bitlex::syntax::TokenElem::With(m) => marks_named.push((m.clone(), true)),
+                        ::bitlex::syntax::TokenElem::Without(m) => marks_named.push((m.clone(), false)),
+                        ::bitlex::syntax::TokenElem::Starting(b) => first.extend_from_slice(b),
+                        _ => return Err("a gap pattern's element of kinds, words, `with`, `without` and `starting`".into()),
+                    }
+                }
+                elems.push((offset, kinds, words, not, marks_named, first));
+            }
+            gap_patterns.push((p as u8, q.unless, elems));
+        }
     }
     for t in 0..empties {
         e.push("EMPTY", 0, Arg::Num(t));
@@ -1555,7 +1598,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let _ = std::fs::write(at, &text);
     }
     let rule_ids = firsts.iter().map(|&pc| kept_rules[usize::from(pc)]).collect();
-    Ok(Lowered { text, switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, rule_ids, mark_words, token_marks })
+    Ok(Lowered { text, switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, rule_ids, mark_words, token_marks, gap_patterns })
 }
 
 /// The words laid out as compiled code is, with no jump a layout can spare (the lean parser's

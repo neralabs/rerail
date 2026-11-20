@@ -264,12 +264,6 @@ mask close_at   = lf_end | code & rbrace & (prev(after_semi) | prev(code & semic
 # string, or a comment inside a line, is no such comment.
 mask asked_blk  = fill(o_block & prev(fill(lf_end & prev(fill(solid, lf)), solid)), block_end)
 mask after_asked = solid & prev(fill(block_end & prev(asked_blk), solid))
-# Where what follows goes on, the scanner reads the comment as part of the line, and tree-sitter
-# loses its bytes: a comment of no width at the token after it (`asi`'s `lost`). The token, where
-# the lean lexer's `asi` loses it: a byte of `goes_on`, `!=`, `as`, `where`, `by`. `semi` loses
-# the comment there wherever tier 2 asks for it (`loses`), as the lean parser asks `asi` only
-# where its state takes a semicolon; elsewhere the comment is any other.
-mask lost_at    = after_asked & (code & goes_on | code & text("!=") | as_w | where_w | by_w)
 # Not read yet: `catch`, `finally`, a header's `constructor`, `else` but a `when` entry's
 # (`else ->`), and an annotation or a visibility modifier before a header's `constructor`.
 mask else_blk   = else_w & after_asked
@@ -280,22 +274,11 @@ escape "a block comment before a token that goes on the line" when (catch_w | fi
 # After a token's line, before another comment, the scanner reads it through and the tree keeps
 # a comment of no width where the next one starts: not read yet.
 escape "a block comment that starts a line, before a comment" when (o_line | o_block) & prev(fill(block_end & prev(asked_blk), ~ws))
-# Before a word that starts with `a`, `e` or `w` (`abstract`, `external`), and that is not `as`,
-# `else` or `where`, the scanner swallows the comment into the semicolon it inserts after it (the
-# lean lexer's `Asi::Swallow`), and the tree loses it: the semicolon drops it (`drops`), and the
-# nodes it closes end at the word, where the semicolon of no width is. It does so wherever the
-# parser's state takes a semicolon, whatever ends the line before: `semi` drops it where it is
-# taken, and elsewhere (a call's arguments, after an operator) the comment is any other. Right
-# after a delegation specifier or a property with no initializer, a word with `b` does the same
-# (open, 0332).
-mask awe_word   = code & word & ~prev(w) & (text("a") | text("e") | text("w")) & ~as_w & ~where_w & ~else_w
 # A `when` entry's `else ->` after one: the scanner swallows the comment there too, which the
 # grammar does not say yet (the `->`).
 mask else_asked = else_w & after_asked
 mask arrow_asked = code & text("->") & (prev(else_asked, 4) | prev(fill(prev(else_asked, 4) & ~solid, solid)))
 escape "a block comment before `else ->`" when arrow_asked
-# The word after a swallowed comment, where the semicolon drops it.
-mask swallow_at = awe_word & after_asked
 # The first token of each line, and the bytes of a line from an `@` or a visibility modifier
 # that starts it (an accessor's, `acc_word`).
 mask line_first = solid & prev(fill(lf & code, solid))
@@ -410,7 +393,26 @@ skip ws
 # `constructor` on its line (`without semi`), as the lean lexer reads them; annotations may end
 # theirs.
 mark head_ctor  = lf & code, before "constructor", before "public" | "private" | "internal" | "protected" "constructor" without semi, before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor" | "public" | "private" | "internal" | "protected"))* nest ("(" to ")") "constructor", before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor"))* nest ("(" to ")") ending ("public" | "private" | "internal" | "protected") "constructor" without semi
-mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends, drops swallow_at, loses lost_at
+# A block comment first on the line after a line break where a semicolon may come (not after a
+# `;`): the lean lexer's `asi` reads it through, then decides by the token after it, as `semi`'s
+# questions do at that token (decision 0451), the comment's record holding `semi`'s bit of its
+# own gap.
+# - Before a word that starts with `a`, `e` or `w` (`abstract`, `external`), and that is not
+#   `as`, `else` or `where`, the scanner swallows the comment into the semicolon it inserts
+#   after it (`Asi::Swallow`), and the tree loses it: the semicolon drops it (`drops`), and the
+#   nodes it closes end at the word, where the semicolon of no width is. Wherever the parser's
+#   state takes a semicolon: elsewhere (a call's arguments, after an operator) the comment is
+#   any other. Right after a delegation specifier or a property with no initializer, a word
+#   with `b` does the same (open, 0332).
+# - Where what follows goes on (a byte of `goes_on`, `!=`, `as`, `where`, `by`), the scanner
+#   reads the comment as part of the line, and tree-sitter loses its bytes: a comment of no
+#   width at the token after it (`asi`'s `lost`). Wherever tier 2 asks for `semi` (`loses`), as
+#   the lean parser asks `asi` only where its state takes a semicolon.
+mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends,
+  drops after ~";" multiline_comment with semi before starting "aew",
+  drops unless after multiline_comment before "as" | "where" | "else",
+  loses after ~";" multiline_comment with semi before starting ",.:*%><={[(?|&/",
+  loses after ~";" multiline_comment with semi before "!=" | "!==" | "as" | "where" | "by"
 mark semi_close = close_at, before "}", settles, ends
 # Something between two tokens: a blank or a comment. A token without it touches the token
 # before, as the lean parser's `adjacent(0)` asks.

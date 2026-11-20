@@ -1631,6 +1631,81 @@ fn refusal_tests(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: Value, marks: 
     f.switch_to_block(on);
 }
 
+/// A token element's test on a record's code `c` (`TokenElem::holds`): a kind of its set, or a
+/// word of its; a `not` element, none; its `with` and `without` marks. Where it fails, to `fail`;
+/// else on, in a new block.
+fn elem_test(f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem, fail: Block) {
+    // `without M`: a code with one of the marks' bits fails (`TokenElem::without`).
+    if el.without != 0 {
+        let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
+        let x = f.ins().band_imm(x, i64::from(el.without));
+        let on = f.create_block();
+        f.ins().brif(x, fail, &[], on, &[]);
+        f.switch_to_block(on);
+    }
+    // `with M`: a code without one of the marks' bits fails (`TokenElem::with`).
+    if el.with != 0 {
+        let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
+        let x = f.ins().band_imm(x, i64::from(el.with));
+        let x = f.ins().icmp_imm(IntCC::Equal, x, i64::from(el.with));
+        let on = f.create_block();
+        f.ins().brif(x, on, &[], fail, &[]);
+        f.switch_to_block(on);
+    }
+    let (ok, miss) = (f.create_block(), f.create_block());
+    let ok_to = if el.not { miss } else { ok };
+    if el.kinds != 0 {
+        let kind = f.ins().band_imm(c, 0xff);
+        let small = f.ins().icmp_imm(IntCC::UnsignedLessThan, kind, 64);
+        let set = f.ins().iconst(types::I64, el.kinds as i64);
+        let bit = f.ins().ushr(set, kind);
+        let bit = f.ins().band_imm(bit, 1);
+        let zero = f.ins().iconst(types::I64, 0);
+        let bit = f.ins().select(small, bit, zero);
+        let other = f.create_block();
+        if el.except.is_empty() {
+            f.ins().brif(bit, ok_to, &[], other, &[]);
+        } else {
+            // Of the kinds, but not one of their hard keywords (`TokenElem::except`): those
+            // go on to the words.
+            let kind_hit = f.create_block();
+            f.ins().brif(bit, kind_hit, &[], other, &[]);
+            f.switch_to_block(kind_hit);
+            let w = f.ins().ushr_imm(c, i64::from(crate::records::KIND_BITS));
+            let w = f.ins().band_imm(w, 0xff);
+            for &s in &el.except {
+                let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(s) + 1);
+                let next = f.create_block();
+                f.ins().brif(same, other, &[], next, &[]);
+                f.switch_to_block(next);
+            }
+            f.ins().jump(ok_to, &[]);
+        }
+        f.switch_to_block(other);
+    }
+    if !el.words.is_empty() {
+        let w = f.ins().ushr_imm(c, i64::from(crate::records::KIND_BITS));
+        let w = f.ins().band_imm(w, 0xff);
+        for &s in &el.words {
+            let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(s) + 1);
+            let other = f.create_block();
+            f.ins().brif(same, ok_to, &[], other, &[]);
+            f.switch_to_block(other);
+        }
+    }
+    // None of the choices: a `not` element holds, any other fails.
+    if el.not {
+        f.ins().jump(ok, &[]);
+        f.switch_to_block(miss);
+        f.ins().jump(fail, &[]);
+    } else {
+        f.ins().jump(fail, &[]);
+        f.switch_to_block(miss);
+        f.ins().jump(fail, &[]);
+    }
+    f.switch_to_block(ok);
+}
+
 fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: Option<u8>, heads: &mut Vec<(Block, Step)>) -> Value {
     let flags = MemFlags::trusted();
     let codes = (e.ctx)(f, CODES);
@@ -1652,79 +1727,7 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
         }
         None => f.ins().iconst(types::I64, 0),
     };
-    // The element's test on a code: a kind of its set, or a word of its; a `not` element, none.
-    // Where it fails, to `fail`.
-    let test = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem, fail: Block| {
-        // `without M`: a code with one of the marks' bits fails (`TokenElem::without`).
-        if el.without != 0 {
-            let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
-            let x = f.ins().band_imm(x, i64::from(el.without));
-            let on = f.create_block();
-            f.ins().brif(x, fail, &[], on, &[]);
-            f.switch_to_block(on);
-        }
-        // `with M`: a code without one of the marks' bits fails (`TokenElem::with`).
-        if el.with != 0 {
-            let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
-            let x = f.ins().band_imm(x, i64::from(el.with));
-            let x = f.ins().icmp_imm(IntCC::Equal, x, i64::from(el.with));
-            let on = f.create_block();
-            f.ins().brif(x, on, &[], fail, &[]);
-            f.switch_to_block(on);
-        }
-        let (ok, miss) = (f.create_block(), f.create_block());
-        let ok_to = if el.not { miss } else { ok };
-        if el.kinds != 0 {
-            let kind = f.ins().band_imm(c, 0xff);
-            let small = f.ins().icmp_imm(IntCC::UnsignedLessThan, kind, 64);
-            let set = f.ins().iconst(types::I64, el.kinds as i64);
-            let bit = f.ins().ushr(set, kind);
-            let bit = f.ins().band_imm(bit, 1);
-            let zero = f.ins().iconst(types::I64, 0);
-            let bit = f.ins().select(small, bit, zero);
-            let other = f.create_block();
-            if el.except.is_empty() {
-                f.ins().brif(bit, ok_to, &[], other, &[]);
-            } else {
-                // Of the kinds, but not one of their hard keywords (`TokenElem::except`): those
-                // go on to the words.
-                let kind_hit = f.create_block();
-                f.ins().brif(bit, kind_hit, &[], other, &[]);
-                f.switch_to_block(kind_hit);
-                let w = f.ins().ushr_imm(c, i64::from(crate::records::KIND_BITS));
-                let w = f.ins().band_imm(w, 0xff);
-                for &s in &el.except {
-                    let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(s) + 1);
-                    let next = f.create_block();
-                    f.ins().brif(same, other, &[], next, &[]);
-                    f.switch_to_block(next);
-                }
-                f.ins().jump(ok_to, &[]);
-            }
-            f.switch_to_block(other);
-        }
-        if !el.words.is_empty() {
-            let w = f.ins().ushr_imm(c, i64::from(crate::records::KIND_BITS));
-            let w = f.ins().band_imm(w, 0xff);
-            for &s in &el.words {
-                let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(s) + 1);
-                let other = f.create_block();
-                f.ins().brif(same, ok_to, &[], other, &[]);
-                f.switch_to_block(other);
-            }
-        }
-        // None of the choices: a `not` element holds, any other fails.
-        if el.not {
-            f.ins().jump(ok, &[]);
-            f.switch_to_block(miss);
-            f.ins().jump(fail, &[]);
-        } else {
-            f.ins().jump(fail, &[]);
-            f.switch_to_block(miss);
-            f.ins().jump(fail, &[]);
-        }
-        f.switch_to_block(ok);
-    };
+    let test = elem_test;
     // The record after `at` that is no extra: a stated loop over the extras. Past the last, to
     // `past`; else the found record and its code.
     let after = |f: &mut FunctionBuilder<'_>, at: Value, past: Block, heads: &mut Vec<(Block, Step)>| -> (Value, Value) {
@@ -1889,6 +1892,89 @@ fn token_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::
     let (mut none_of, mut one_of): (Option<Value>, Option<Value>) = (None, None);
     for m in marks[first..].iter().take_while(|m| m.order == order) {
         let v = token_pattern(f, e, m, extra_bit, heads);
+        if m.unless {
+            none_of = Some(none_of.map_or(v, |a| f.ins().bor(a, v)));
+        } else {
+            one_of = Some(one_of.map_or(v, |a| f.ins().bor(a, v)));
+        }
+    }
+    let one = one_of.unwrap_or_else(|| f.ins().iconst(types::I64, 1));
+    match none_of {
+        Some(x) => {
+            let not = f.ins().bxor_imm(x, 1);
+            f.ins().band(one, not)
+        }
+        None => one,
+    }
+}
+
+/// A gap pattern's entry (`Words::gap_patterns`, decision 0451) at the token, record `Next - 1`:
+/// each element the record at its offset, as the lexer wrote them, extras included; past either
+/// end, an element with `end` holds; its `starting`, the record's first byte, as the lean
+/// lexer's `asi` reads it. 1 or 0.
+fn gap_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark) -> Value {
+    let flags = MemFlags::trusted();
+    let (codes, starts, bytes, n) = ((e.ctx)(f, CODES), (e.ctx)(f, STARTS), (e.ctx)(f, BYTES), (e.ctx)(f, NSTARTS));
+    let stride = (e.ctx)(f, RECORD_STRIDE);
+    let next = (e.get)(f, Mem::Next);
+    let here = f.ins().iadd_imm(next, -1);
+    let (no, yes, done) = (f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(done, types::I64);
+    // At the stream's end no token: none holds.
+    let at_end = (e.get)(f, Mem::AtEnd);
+    let token = f.create_block();
+    f.ins().brif(at_end, no, &[], token, &[]);
+    f.switch_to_block(token);
+    for el in &m.elems {
+        let j = f.ins().iadd_imm(here, i64::from(el.offset));
+        // Past either end (a negative index is past the last too, unsigned).
+        let inside = f.ins().icmp(IntCC::UnsignedLessThan, j, n);
+        let on = f.create_block();
+        f.ins().brif(inside, on, &[], if el.end { yes } else { no }, &[]);
+        f.switch_to_block(on);
+        let off = f.ins().imul(j, stride);
+        let a = f.ins().iadd(codes, off);
+        let c = f.ins().uload32(flags, a, 0);
+        elem_test(f, c, el, no);
+        if el.first != [0; 4] {
+            let sa = f.ins().iadd(starts, off);
+            let st = f.ins().uload32(flags, sa, 0);
+            let ba = f.ins().iadd(bytes, st);
+            let b = f.ins().uload8(types::I64, flags, ba, 0);
+            // The set's word of the byte, and its bit.
+            let q = f.ins().ushr_imm(b, 6);
+            let mut word = f.ins().iconst(types::I64, el.first[3] as i64);
+            for k in (0..3).rev() {
+                let is = f.ins().icmp_imm(IntCC::Equal, q, k);
+                let w = f.ins().iconst(types::I64, el.first[k as usize] as i64);
+                word = f.ins().select(is, w, word);
+            }
+            let sh = f.ins().band_imm(b, 63);
+            let bit = f.ins().ushr(word, sh);
+            let bit = f.ins().band_imm(bit, 1);
+            let on = f.create_block();
+            f.ins().brif(bit, on, &[], no, &[]);
+            f.switch_to_block(on);
+        }
+    }
+    f.ins().jump(yes, &[]);
+    f.switch_to_block(yes);
+    let one = f.ins().iconst(types::I64, 1);
+    f.ins().jump(done, &[BlockArg::from(one)]);
+    f.switch_to_block(no);
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().jump(done, &[BlockArg::from(zero)]);
+    f.switch_to_block(done);
+    f.block_params(done)[0]
+}
+
+/// A gap pattern's entries together, from `first`: none of the `unless` ones and one of the
+/// others (`program::patterns_hold`).
+fn gap_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], first: usize) -> Value {
+    let order = marks[first].order;
+    let (mut none_of, mut one_of): (Option<Value>, Option<Value>) = (None, None);
+    for m in marks[first..].iter().take_while(|m| m.order == order) {
+        let v = gap_pattern(f, e, m);
         if m.unless {
             none_of = Some(none_of.map_or(v, |a| f.ins().bor(a, v)));
         } else {
@@ -4708,24 +4794,18 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     f.switch_to_block(after);
                     f.ins().jump(fall, &[]);
                 }
-                Op::DropLast { mask } => {
-                    // `drops`: where the mask holds at the token's start, the extra pending last
-                    // dropped; the next node made takes its row and cells.
-                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                Op::DropLast { pattern } => {
+                    // `drops`: an extra pending, and the question holding at the token (the lean
+                    // lexer's `asi`): the extra pending last dropped; the next node made takes
+                    // its row and cells.
                     let start = mget(&mut f, Mem::Start);
-                    let w = f.ins().ushr_imm(start, 6);
-                    let off = f.ins().imul_imm(output_stride, output as i64);
-                    let base = f.ins().iadd(outputs_p, off);
-                    let word = mask_word(&mut f, base, lasts_stride, w);
-                    let s = f.ins().band_imm(start, 63);
-                    let bit = f.ins().ushr(word, s);
-                    let bit = f.ins().band_imm(bit, 1);
                     let pending = mget(&mut f, Mem::Pending);
-                    let some = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
-                    let some = f.ins().uextend(types::I64, some);
-                    let both = f.ins().band(bit, some);
+                    let ask = f.create_block();
+                    f.ins().brif(pending, ask, &[], fall, &[]);
+                    f.switch_to_block(ask);
+                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern));
                     let drop = f.create_block();
-                    f.ins().brif(both, drop, &[], fall, &[]);
+                    f.ins().brif(holds, drop, &[], fall, &[]);
                     f.switch_to_block(drop);
                     let p = f.ins().iadd_imm(pending, -1);
                     mset(&mut f, Mem::Pending, p);
@@ -4739,39 +4819,34 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     mset(&mut f, Mem::Nodes, n);
                     f.ins().jump(fall, &[]);
                 }
-                Op::LoseLast { mask, flag } => {
-                    // `loses`: where the mask holds at the token's start, the extra pending last
-                    // taken out, its kind kept: the `TOKEN` that takes this token makes it again
-                    // after the token's leaf (`lost_leaf`).
-                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
-                    let start = mget(&mut f, Mem::Start);
-                    let w = f.ins().ushr_imm(start, 6);
-                    let off = f.ins().imul_imm(output_stride, output as i64);
-                    let base = f.ins().iadd(outputs_p, off);
-                    let word = mask_word(&mut f, base, lasts_stride, w);
-                    let s = f.ins().band_imm(start, 63);
-                    let bit = f.ins().ushr(word, s);
-                    let bit = f.ins().band_imm(bit, 1);
-                    // One a token: a second test at it (a nested level's) finds it taken out.
+                Op::LoseLast { pattern, flag } => {
+                    // `loses`: an extra pending, and the question holding at the token (the lean
+                    // lexer's `asi`): the extra pending last taken out, its kind kept: the
+                    // `TOKEN` that takes this token makes it again after the token's leaf
+                    // (`lost_leaf`). One a token: a second test at it (a nested level's) finds
+                    // it taken out.
                     let pending = mget(&mut f, Mem::Pending);
                     let some = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
                     let lost = mget(&mut f, Mem::Lost);
                     let none = f.ins().icmp_imm(IntCC::Equal, lost, 0);
                     let some = f.ins().band(some, none);
                     let some = f.ins().uextend(types::I64, some);
-                    let both = f.ins().band(bit, some);
                     // Where a caller's level is the mark's: its flag.
-                    let both = match flag {
+                    let some = match flag {
                         Some(k) => {
                             let fl = mget(&mut f, Mem::Flags);
                             let fl = f.ins().ushr_imm(fl, i64::from(k));
                             let fl = f.ins().band_imm(fl, 1);
-                            f.ins().band(both, fl)
+                            f.ins().band(some, fl)
                         }
-                        None => both,
+                        None => some,
                     };
+                    let ask = f.create_block();
+                    f.ins().brif(some, ask, &[], fall, &[]);
+                    f.switch_to_block(ask);
+                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern));
                     let lose = f.create_block();
-                    f.ins().brif(both, lose, &[], fall, &[]);
+                    f.ins().brif(holds, lose, &[], fall, &[]);
                     f.switch_to_block(lose);
                     word!(WordFn::Lose, &[], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, _: &[Value]| {
                         let p = (e.get)(g, Mem::Pending);
@@ -6035,8 +6110,8 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::Switch { .. } => vec![BYTES],
         Op::Mark { .. } | Op::Row { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::SettleBefore { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE, ROWS],
-        Op::DropLast { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
-        Op::LoseLast { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE, ROWS],
+        Op::DropLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE],
+        Op::LoseLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE, ROWS],
         Op::Open { .. } => vec![ROWS, OPEN],
         Op::Close { .. } => vec![OPEN, ROWS],
         Op::Leaf { .. } => vec![ROWS],

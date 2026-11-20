@@ -38,6 +38,23 @@ pub enum TokenElem {
     /// `E with M`: the element holds only at a token with mark `M`'s bit, as the lean parser
     /// asks `peek_at(j).nl`.
     With(String),
+    /// `E starting "B"`, or `starting "B"` alone (any token): the element holds only at a
+    /// token whose first byte is one of `B`'s, as the lean lexer's `asi` reads the byte after a
+    /// comment. A gap pattern's only (`GapPattern`).
+    Starting(Vec<u8>),
+}
+
+/// A mark's `drops` or `loses` question (decision 0451): `, drops [unless] [after A …] before
+/// B …`, over the records as the lexer wrote them, extras included. `after`'s elements are the
+/// records before the token, the last the extra pending last (its `with M`: the marks of its
+/// own gap, `Records::extra`); `before`'s run from the token on. The question holds where none
+/// of its `unless` entries does and one of the others does, as the lean lexer's `asi` decides
+/// from the bytes after a line break.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GapPattern {
+    pub unless: bool,
+    pub after: Vec<Vec<TokenElem>>,
+    pub before: Vec<Vec<TokenElem>>,
 }
 
 /// A depth a run counts (`(C)* nest (O to C) …`, Q222), as the lean parsers' forward scans count
@@ -708,15 +725,16 @@ pub enum Stmt {
     /// at. `next` holds them, each with whether it is an `unless`: the mark holds where no
     /// `unless before` does and, if it has a `before`, one of them does.
     ///
-    /// `, drops W` (with `settles`): where its arm runs at a token where `W` holds, the extra
-    /// pending last is dropped, as the lean lexer's `asi` loses the comment it swallows into the
-    /// semicolon (decision 0406). `W` holds at the token right after such an extra.
+    /// `, drops [unless] after A … before B …` (with `settles`; `GapPattern`): where its arm runs
+    /// at a token where the question holds, the extra pending last is dropped, as the lean
+    /// lexer's `asi` loses the comment it swallows into the semicolon (decision 0406).
     ///
-    /// `, loses W`: where a level asks for the mark at a token where `W` holds, the extra pending
-    /// last is of no width, at the token's start: the lean lexer's `asi` reads a block comment
-    /// that starts the line through, finds that the line goes on, and tree-sitter loses the
-    /// comment's bytes (its `lost`; decision 0451). `W` holds only where the mark does not.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Option<Expr>, loses: Option<Expr> },
+    /// `, loses [unless] after A … before B …`: where a level asks for the mark at a token where
+    /// the question holds, the extra pending last is of no width, at the token's start: the lean
+    /// lexer's `asi` reads a block comment that starts the line through, finds that the line goes
+    /// on, and tree-sitter loses the comment's bytes (its `lost`; decision 0451). It holds only
+    /// where the mark does not. Each clause is one entry; a mark's entries together decide.
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Vec<GapPattern>, loses: Vec<GapPattern> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -1171,6 +1189,50 @@ impl P {
             if !c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_) | TokenElem::Without(_) | TokenElem::With(_))) {
                 return self.err("`with` or `without` after an element of kinds and words");
             }
+            let m = self.ident()?;
+            c.push(if with { TokenElem::With(m) } else { TokenElem::Without(m) });
+        }
+    }
+    /// A `drops` or `loses` question (`GapPattern`): `[unless] [after A …] before B …`, each
+    /// element of kinds and words (or a `~` of them), its `with M`, `without M` and `starting
+    /// "B"`, or `starting "B"` alone.
+    fn gap_pattern(&mut self) -> R<GapPattern> {
+        let unless = self.eat_kw("unless");
+        let mut after = vec![];
+        if self.eat_kw("after") {
+            while !self.is_kw("before") {
+                after.push(self.gap_elem()?);
+            }
+        }
+        self.want_kw("before")?;
+        let mut before = vec![self.gap_elem()?];
+        while matches!(self.peek(), Some(Tok::Str(_) | Tok::P("~"))) || matches!(self.peek(), Some(Tok::Ident(_))) && !self.is_kw("end") {
+            before.push(self.gap_elem()?);
+        }
+        Ok(GapPattern { unless, after, before })
+    }
+    /// One element of a gap pattern (`gap_pattern`).
+    fn gap_elem(&mut self) -> R<Vec<TokenElem>> {
+        let mut c = if self.is_kw("starting") { vec![] } else { self.token_choices()? };
+        if matches!(c.as_slice(), [TokenElem::Many(..)]) || c.contains(&TokenElem::End) {
+            return self.err("a gap pattern's element of kinds and words, or a `~` of them");
+        }
+        loop {
+            if self.eat_kw("starting") {
+                let b = self.string()?;
+                if b.is_empty() || c.iter().any(|x| matches!(x, TokenElem::Not(_))) {
+                    return self.err("`starting` and a byte or more, not on a `~`");
+                }
+                c.push(TokenElem::Starting(b));
+                continue;
+            }
+            let with = if self.eat_kw("without") {
+                false
+            } else if self.eat_kw("with") {
+                true
+            } else {
+                return Ok(c);
+            };
             let m = self.ident()?;
             c.push(if with { TokenElem::With(m) } else { TokenElem::Without(m) });
         }
@@ -2098,7 +2160,7 @@ impl P {
                         }
                     }
                 }
-                let (mut end, mut unplaced, mut checks, mut settles, mut ends, mut drops, mut loses) = (false, None, vec![], false, false, None, None);
+                let (mut end, mut unplaced, mut checks, mut settles, mut ends, mut drops, mut loses) = (false, None, vec![], false, false, vec![], vec![]);
                 let mut next: Vec<(bool, Vec<Vec<TokenElem>>)> = Vec::new();
                 while self.eat_p(",") {
                     self.nls();
@@ -2114,9 +2176,9 @@ impl P {
                     } else if self.eat_kw("settles") {
                         settles = true;
                     } else if self.eat_kw("drops") {
-                        drops = Some(self.expr()?);
+                        drops.push(self.gap_pattern()?);
                     } else if self.eat_kw("loses") {
-                        loses = Some(self.expr()?);
+                        loses.push(self.gap_pattern()?);
                     } else if self.eat_kw("ends") {
                         ends = true;
                     } else if self.eat_kw("else") {
@@ -2136,7 +2198,7 @@ impl P {
                         end = true;
                     }
                 }
-                if drops.is_some() && !settles {
+                if !drops.is_empty() && !settles {
                     return self.err("`drops` on a mark that settles");
                 }
                 Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses }
@@ -2484,12 +2546,23 @@ mod tier2_tests {
         assert!(mark("mark k = lf, before \"@\" (name)* ending (~name) \".\"").is_err());
     }
 
-    /// A settling mark's `drops W` (decision 0406): parsed with `settles`, refused without.
+    /// A settling mark's `drops` (decision 0406, its questions 0451): parsed with `settles`,
+    /// refused without; the records before the token, and those from it.
     #[test]
     fn a_settling_mark_drops_an_extra() {
-        let mark = |m: &str| parse(&format!("lexer t\nclass lf = '\\n'\n{m}\n")).map(|s| matches!(s.last(), Some(Stmt::Mark { drops: Some(_), .. })));
-        assert_eq!(mark("mark k = lf, settles, drops lf"), Ok(true));
-        assert!(mark("mark k = lf, drops lf").is_err());
+        let mark = |m: &str| parse(&format!("lexer t\nclass lf = '\\n'\n{m}\n")).map(|s| match s.last() {
+            Some(Stmt::Mark { drops, .. }) => drops.clone(),
+            _ => vec![],
+        });
+        let kind = |k: &str| TokenElem::Kind(k.into());
+        assert_eq!(
+            mark("mark k = lf, settles, drops after ~\";\" c with k before starting \"ae\", drops unless after c before \"as\" x"),
+            Ok(vec![
+                GapPattern { unless: false, after: vec![vec![TokenElem::Not(vec![TokenElem::Word(b";".to_vec())])], vec![kind("c"), TokenElem::With("k".into())]], before: vec![vec![TokenElem::Starting(b"ae".to_vec())]] },
+                GapPattern { unless: true, after: vec![vec![kind("c")]], before: vec![vec![TokenElem::Word(b"as".to_vec())], vec![kind("x")]] },
+            ])
+        );
+        assert!(mark("mark k = lf, drops before \"a\"").is_err());
     }
 
     /// The tier-2 forms of decision 0071, as JSON's tree section writes them.

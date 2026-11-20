@@ -16,12 +16,12 @@
 //!
 //! - **A settling mark** (`mark … , settles`) taken: the extras before its bit, since the token
 //!   before, are the nodes' it is taken in (they end at them, and hold them), as a leaf taken
-//!   after them would; with `drops W`, where `W` holds at its token, the extra before that token
-//!   goes into the mark, as the lean lexer's semicolon swallows it: no node, and the nodes end at
+//!   after them would; with `drops …`, where its question holds at its token (`GapPattern`: the
+//!   records around it, extras included), the extra before that token goes into the mark, as the lean lexer's semicolon swallows it: no node, and the nodes end at
 //!   the token after it, where the semicolon of no width is (decision 0406, Q220, 0429).
 //!
-//! - **A mark that loses** (`mark … , loses W`): where the grammar asks for it after a token,
-//!   and `W` holds at the next token, the extra before that token is lost: of no width at the
+//! - **A mark that loses** (`mark … , loses …`): where the grammar asks for it after a token,
+//!   and its question holds at the next token, the extra before that token is lost: of no width at the
 //!   token's start, and after it (the lean lexer's `asi` read the comment through and found the
 //!   line goes on; decision 0451). A level asks for it where it may take it next (the follow), or
 //!   where it may end there and its level is the mark's: a nested level's is where its call

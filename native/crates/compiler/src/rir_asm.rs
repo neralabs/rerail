@@ -516,11 +516,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.counts.push(line.number("")?);
         }
-        "tokenmark" => {
+        "tokenmark" | "gappattern" => {
             let order: u8 = line.number("")?;
+            let gap = keyword == "gappattern";
+            let list = if gap { &parts.gap_patterns } else { &parts.token_marks };
             // A mark's entries share its order (`program::patterns_hold`).
-            if parts.token_marks.last().is_some_and(|m| m.order > order) {
-                return Err(format!("tokenmark {order} out of order"));
+            if list.last().is_some_and(|m| m.order > order) {
+                return Err(format!("{keyword} {order} out of order"));
             }
             let mut elems: Vec<crate::program::TokenElem> = Vec::new();
             // Whose words and keywords follow: the element's (0), a run's depth's side's
@@ -569,6 +571,10 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 } else if let Some(h) = w.strip_prefix('h') {
                     let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `with` `{w}`"))?;
                     elems.last_mut().ok_or("a `with` before its element")?.with = bits;
+                } else if let Some(h) = w.strip_prefix('f') {
+                    let words: Vec<u64> = h.split('.').map(|x| u64::from_str_radix(x, 16)).collect::<Result<_, _>>().map_err(|_| format!("a bad `starting` `{w}`"))?;
+                    let first: [u64; 4] = words.try_into().map_err(|_| format!("a bad `starting` `{w}`"))?;
+                    elems.last_mut().ok_or("a `starting` before its element")?.first = first;
                 } else if let Some(s) = w.strip_prefix('s') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
                     let el = elems.last_mut().ok_or("a word before its element")?;
@@ -589,7 +595,12 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     return Err(format!("a bad token mark's part `{w}`"));
                 }
             }
-            parts.token_marks.push(crate::program::TokenMark { order, elems, refuses, unless });
+            let m = crate::program::TokenMark { order, elems, refuses, unless };
+            if gap {
+                parts.gap_patterns.push(m);
+            } else {
+                parts.token_marks.push(m);
+            }
         }
         "tokenextra" => {
             let b: u8 = line.number("b")?;
@@ -1030,6 +1041,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::word_kind_rows(out, &program.word_kinds);
     crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::token_mark_rows(out, &program.token_marks);
+    crate::rir_text::gap_pattern_rows(out, &program.gap_patterns);
     crate::rir_text::count_rows(out, &program.counts);
     crate::rir_text::local_check_rows(out, &program.local_checks);
     crate::rir_text::rule_rows(out, &program.rules);

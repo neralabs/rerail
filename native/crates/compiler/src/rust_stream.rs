@@ -366,6 +366,12 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
             patterns(out, i, &n.token_marks);
         }
     }
+    for (i, m) in n.gap_patterns.iter().enumerate() {
+        gap_pattern(out, i, m);
+        if i == 0 || n.gap_patterns[i - 1].order != m.order {
+            gap_patterns(out, i, &n.gap_patterns);
+        }
+    }
     // The refusing token marks' tests, at a token whose code has a bit of theirs.
     let refusing: Vec<String> = n
         .token_marks
@@ -877,19 +883,17 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         }
     }
 
-    /// `SETTLE m=2` (a mark's `loses`): where output `o` holds at the token, the extra pending
-    /// last taken out, its kind kept (`lost`): the `TOKEN` that takes the token makes it again
-    /// after it, of no width. With none left pending, the nodes closed next end at the token
-    /// before.
+    /// `SETTLE m=2` (a mark's `loses`), where its question holds at the token: the extra
+    /// pending last taken out, its kind kept (`lost`): the `TOKEN` that takes the token makes
+    /// it again after it, of no width. With none left pending, the nodes closed next end at the
+    /// token before.
     #[inline(always)]
-    fn lose(&mut self, o: usize) {
-        if self.pending != 0 && self.lost == 0 && self.bit(o, self.start) {
-            self.pending -= 1;
-            self.nodes -= 1;
-            self.lost = unsafe { *(self.row(self.nodes) as *const u32) } + 1;
-            if self.pending == 0 {
-                self.last_end = self.keep;
-            }
+    fn lose(&mut self) {
+        self.pending -= 1;
+        self.nodes -= 1;
+        self.lost = unsafe { *(self.row(self.nodes) as *const u32) } + 1;
+        if self.pending == 0 {
+            self.last_end = self.keep;
         }
     }
 
@@ -1387,7 +1391,18 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
     };
     let free = no_extra("c");
     let mut body = String::new();
-    let test = |el: &crate::program::TokenElem| -> String {
+    let test = element_test;
+    // The next record that is no extra, after `at`: past the last, `past`.
+    let advance = |past: &str| format!("        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n");
+    pattern_body(out, i, m, &mut body, &free, &test, &advance);
+}
+
+/// A token element's test of a record's code `c` (`TokenElem::holds`): a kind of its set or a
+/// word of its (a `not` element none), and its `with` and `without` marks.
+fn element_test(el: &crate::program::TokenElem) -> String {
+    let mut all = Vec::new();
+    // Of no kinds and words, a `not` element is any record: no test of its choices.
+    if el.kinds != 0 || !el.words.is_empty() || !el.not {
         let mut t = Vec::new();
         if el.kinds != 0 {
             // Not one of the kinds' hard keywords (`TokenElem::except`).
@@ -1405,14 +1420,23 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
         }
         let t = if t.is_empty() { "false".into() } else { t.join(" || ") };
         // A `not` element: none of its choices.
-        let t = if el.not { format!("!({t})") } else { t };
-        // `without M`: none of the marks' bits in the code (`TokenElem::without`).
-        let t = if el.without != 0 { format!("({t}) && c >> {} & {:#x} == 0", crate::records::MARK_SHIFT, el.without) } else { t };
-        // `with M`: all of the marks' bits in the code (`TokenElem::with`).
-        if el.with != 0 { format!("({t}) && c >> {} & {:#x} == {:#x}", crate::records::MARK_SHIFT, el.with, el.with) } else { t }
-    };
-    // The next record that is no extra, after `at`: past the last, `past`.
-    let advance = |past: &str| format!("        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n");
+        // One `matches!` needs no parentheses to be negated.
+        let one = t.starts_with("matches!(") && !t.contains(" || ");
+        all.push(if el.not && one { format!("!{t}") } else if el.not { format!("!({t})") } else if all.is_empty() && el.without == 0 && el.with == 0 { t } else { format!("({t})") });
+    }
+    // `without M`: none of the marks' bits in the code (`TokenElem::without`).
+    if el.without != 0 {
+        all.push(format!("c >> {} & {:#x} == 0", crate::records::MARK_SHIFT, el.without));
+    }
+    // `with M`: all of the marks' bits in the code (`TokenElem::with`).
+    if el.with != 0 {
+        all.push(format!("c >> {} & {:#x} == {:#x}", crate::records::MARK_SHIFT, el.with, el.with));
+    }
+    if all.is_empty() { "true".into() } else { all.join(" && ") }
+}
+
+/// `pattern`'s body: the elements' tests in turn, and the run's.
+fn pattern_body(out: &mut String, i: usize, m: &TokenMark, body: &mut String, free: &str, test: &dyn Fn(&crate::program::TokenElem) -> String, advance: &dyn Fn(&str) -> String) {
     // The token's own element, those before the run; the run (decision 0406) tries the rest
     // (`pattern_{i}_rest`) from each of its records on, as a forward scan.
     let run = m.elems.iter().position(|e| e.run);
@@ -1468,6 +1492,47 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
         test(run_el)
     )
     .unwrap();
+}
+
+/// A gap pattern's entry (`Words::gap_patterns`, decision 0451): each element the record at its
+/// offset from the token's, as the lexer wrote them, extras included; its `starting`, the
+/// record's first byte, as the lean lexer's `asi` reads the byte after a comment. At the
+/// stream's end, no token: none holds.
+fn gap_pattern(out: &mut String, i: usize, m: &TokenMark) {
+    let mut body = String::new();
+    for el in &m.elems {
+        let o = el.offset;
+        let none = if el.end { "true" } else { "false" };
+        let at = if o < 0 { format!("here.checked_sub({})", -i32::from(o)) } else if o == 0 { "Some(here)".into() } else { format!("Some(here + {o}).filter(|&j| j < self.n)") };
+        let j = if o == 0 { "        let j = here;\n".to_string() } else { format!("        let Some(j) = {at} else {{ return {none} }};\n") };
+        body.push_str(&j);
+        let test = element_test(el);
+        if test != "true" {
+            // A `~` of one `matches!`: its test, not negated twice.
+            let fails = match test.strip_prefix('!').filter(|t| t.starts_with("matches!(") && !t.contains(" && ")) {
+                Some(t) => t.to_string(),
+                None => format!("!({test})"),
+            };
+            writeln!(body, "        let c = unsafe {{ *self.codes.add(j * self.rs) }};\n        if {fails} {{ return false; }}").unwrap();
+        }
+        // `starting`: the token's first byte, as the lean lexer's `asi` matches it.
+        if el.first != [0; 4] {
+            let bytes: Vec<String> = (0..=255u8).filter(|&b| el.first_holds(b)).map(|b| byte_literal(usize::from(b))).collect();
+            writeln!(body, "        let b = unsafe {{ *self.bytes.add(*self.starts.add(j * self.rs) as usize) }};\n        if !matches!(b, {}) {{ return false; }}", bytes.join(" | ")).unwrap();
+        }
+    }
+    writeln!(out, "    /// Gap pattern entry {i}'s records follow.\n    #[inline(never)]\n    fn gap_{i}(&self) -> bool {{\n        if self.at_end {{ return false; }}\n        let here = self.next as usize - 1;\n{body}        true\n    }}\n").unwrap();
+}
+
+/// A gap pattern's entries together, from `first`, as the token marks' (`patterns`).
+fn gap_patterns(out: &mut String, first: usize, marks: &[TokenMark]) {
+    let order = marks[first].order;
+    let these: Vec<usize> = (first..marks.len()).take_while(|&i| marks[i].order == order).collect();
+    let none: Vec<String> = these.iter().filter(|&&i| marks[i].unless).map(|i| format!("!self.gap_{i}()")).collect();
+    let one: Vec<String> = these.iter().filter(|&&i| !marks[i].unless).map(|i| format!("self.gap_{i}()")).collect();
+    let one = if one.is_empty() { "true".to_string() } else { format!("({})", one.join(" || ")) };
+    let all: Vec<String> = none.into_iter().chain(std::iter::once(one)).collect();
+    writeln!(out, "    /// Gap pattern {order}'s question: its entries together.\n    #[inline(always)]\n    fn gaps_{first}(&self) -> bool {{\n        {}\n    }}\n", all.join(" && ")).unwrap();
 }
 
 /// The token marks of one order together, from entry `first` (`program::patterns_hold`): none
@@ -1852,11 +1917,12 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         // The next node made takes the dropped one's row and cells.
         // The extra pending last made again at the token, of no width: its row and cells.
         // Taken out, its kind kept: the `TOKEN` that takes the token makes it again after it.
-        Op::LoseLast { mask, flag } => match flag {
-            Some(f) => format!("if flags & {} != 0 {{\n    s.lose({});\n}}\n{}", 1u32 << f, mask_output(n, mask)?, jump(0)?),
-            None => format!("s.lose({});\n{}", mask_output(n, mask)?, jump(0)?),
+        // The lean lexer's `asi`: a comment pending, then the question at the token.
+        Op::LoseLast { pattern, flag } => match flag {
+            Some(f) => format!("if flags & {} != 0 && s.pending != 0 && s.lost == 0 && s.gaps_{pattern}() {{\n    s.lose();\n}}\n{}", 1u32 << f, jump(0)?),
+            None => format!("if s.pending != 0 && s.lost == 0 && s.gaps_{pattern}() {{\n    s.lose();\n}}\n{}", jump(0)?),
         },
-        Op::DropLast { mask } => format!("if s.pending != 0 && s.bit({}, s.start) {{ s.pending -= 1; s.nodes -= 1; if s.pending == 0 {{ s.last_end = s.start; }} }}\n{}", mask_output(n, mask)?, jump(0)?),
+        Op::DropLast { pattern } => format!("if s.pending != 0 && s.gaps_{pattern}() {{ s.pending -= 1; s.nodes -= 1; if s.pending == 0 {{ s.last_end = s.start; }} }}\n{}", jump(0)?),
         Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
             let k = u32::from(order);
             // A token mark past the code's (decision 0407): live at every token, its tokens

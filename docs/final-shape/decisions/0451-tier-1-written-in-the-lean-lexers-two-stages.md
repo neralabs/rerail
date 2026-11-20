@@ -478,3 +478,51 @@ against the interpreter, and fails on the old Metal code.
 
 **Result:** Tapes unchanged. The compiler's tests (131), Kotlin's (52) and `kotlin_aot`'s (4)
 pass. The corpus is 450 the same, 41 refused, 0 differ.
+
+## Item 4, comments, steps 2 and 3: `drops` and `loses` asked at the token (2026-11-19)
+
+Before this step, `drops W` and `loses W` named stage-1 masks: `swallow_at` and `lost_at`, built
+from `asked_blk` and `after_asked`. Tier 2 tested them at the token's start. Now each is a
+question over the records as the lexer wrote them, comments included: Bitlex's `GapPattern`,
+written as `, drops [unless] after A … before B …`.
+- `after`'s elements are the records before the token. The last of them is the comment pending
+  last, and its `with semi` reads the comment's own gap (step 1).
+- `before`'s elements run from the token on.
+- A new element, `starting "B"`, tests the token's first byte, as `asi` reads the byte after
+  the comment.
+- A mark's clauses are its entries. The question holds where no `unless` entry does and one of
+  the others does, as the token marks' entries decide.
+
+Kotlin's `semi` now says `asi`'s two cases itself:
+```
+drops after ~";" multiline_comment with semi before starting "aew",
+drops unless after multiline_comment before "as" | "where" | "else",
+loses after ~";" multiline_comment with semi before starting ",.:*%><={[(?|&/",
+loses after ~";" multiline_comment with semi before "!=" | "!==" | "as" | "where" | "by"
+```
+
+The program keeps the questions as `Words::gap_patterns` (text rows `gappattern`). They are a
+list apart from the token marks, because Kotlin's 32 mark orders are all taken. Each element is
+the record at its offset from the token. `SETTLE m=1` and `m≥2` name a pattern's first entry
+where they named a mask.
+
+Every executor asks the question only once an extra is pending:
+- the reference (`eval.rs`, over its tokens);
+- the interpreter (`gap_pattern_holds`);
+- Cranelift (`gap_pattern`, using the same element test as the token marks, `elem_test`);
+- `rust_stream` (`gap_N`). Its question reads as `asi` does:
+  `if !matches!(b, b'a' | b'e' | b'w') { return false; }`.
+
+`validate_gap_patterns` refuses a `with M` on an extra's element unless `M` is a blank mark,
+because an extra's code holds no other mark.
+
+The two ladder tests say the same in the new form: `drops before starting "i"`, and `loses
+after comment with line before "."`. Their masks are gone.
+
+**Result:** Gone from stage 1: `lost_at`, `awe_word` and `swallow_at`. The block program went
+from 1,380 operations to 1,334. Tapes unchanged: the compiler's tests (131), Kotlin's (52),
+`kotlin_aot`'s (4) and Bitlex's (11) pass. The corpus is 450 the same, 41 refused, 0 differ.
+
+**Still to do:**
+- `asked_blk` and `after_asked` remain, for the escapes alone (step 5).
+- `settles` still tests a mask (step 4).
