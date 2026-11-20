@@ -15,29 +15,28 @@ import { existsSync } from "node:fs";
 import * as nodeModule from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "../engine/child-process.js";
 import { sameFile } from "./same-file.js";
 
 /**
  * Turns on Node's compile cache in this process (`module.enableCompileCache`) in the folder Node takes itself: the one
- * `NODE_COMPILE_CACHE` names, else `node-compile-cache` in the temporary folder. It gives the environment a hook run as
- * a child takes: this one with `NODE_COMPILE_CACHE` naming that folder, so the child's Node starts with the cache on and
- * keeps its code there in a folder for its own version, as this one does. Each hook event starts a Node that loads the
- * hook's bundle of over 2 MB, which V8 would otherwise parse and compile again in every process. The cache stays off
- * where `NODE_DISABLE_COMPILE_CACHE` turns it off, and a node without one, or a cache folder that cannot be made, runs
- * the hook as before.
+ * `NODE_COMPILE_CACHE` names, else `node-compile-cache` in the temporary folder. Each hook event starts a Node that loads
+ * the hook's bundle of over 2 MB, which V8 would otherwise parse and compile again in every process. It changes no
+ * environment, so whatever the hook starts runs as it did before. The cache stays off where
+ * `NODE_DISABLE_COMPILE_CACHE` turns it off, and a node without one, or a cache folder that cannot be made, runs the
+ * hook as before.
  */
-function compileCacheEnv(): NodeJS.ProcessEnv {
+function turnOnCompileCache(): void {
   // A node older than the cache has no such export; the namespace then holds none.
   const enable = (nodeModule as { enableCompileCache?: typeof nodeModule.enableCompileCache }).enableCompileCache;
   // Node reads an empty NODE_COMPILE_CACHE as none.
   const named = process.env.NODE_COMPILE_CACHE;
   const folder = named === undefined || named === "" ? join(tmpdir(), "node-compile-cache") : named;
   try {
-    return enable?.(folder).directory === undefined ? process.env : { ...process.env, NODE_COMPILE_CACHE: folder };
+    enable?.(folder);
   } catch {
-    return process.env;
+    // The hook runs without the cache, as on a node that has none.
   }
 }
 
@@ -66,17 +65,22 @@ function watchAnswer(): () => boolean {
   return () => written;
 }
 
+// What the launcher passes in the recorded node's place when it starts itself under that node: that launcher runs the
+// hook in its own process, so a recorded node whose process names another binary (a version manager's stand-in) starts
+// no third launcher.
+const HERE = "--here";
+
 const [recordedNode, hookScript] = process.argv.slice(2);
 if (recordedNode === undefined || hookScript === undefined) {
   process.stderr.write("Usage: node hook-launcher.js <recorded node> <hook script>\n");
   process.exit(1);
 }
 
-const env = compileCacheEnv();
-if (existsSync(recordedNode) && !sameFile(recordedNode, process.execPath)) {
-  // The event JSON on stdin goes straight to the hook; its answer comes back through here, so a hook that wrote none
-  // can be answered for.
-  const result = spawnSync(recordedNode, [hookScript], { stdio: ["inherit", "pipe", "inherit"], env });
+if (recordedNode !== HERE && existsSync(recordedNode) && !sameFile(recordedNode, process.execPath)) {
+  // The launcher starts itself under the recorded node, as this node started it, so the hook runs in that launcher's
+  // process with the compile cache on whatever this node has. The event JSON on stdin goes straight to it; its answer
+  // comes back through here, so a launcher that wrote none can be answered for.
+  const result = spawnSync(recordedNode, [...process.execArgv, fileURLToPath(import.meta.url), HERE, hookScript], { stdio: ["inherit", "pipe", "inherit"] });
   const answer = result.stdout ?? Buffer.alloc(0);
   process.stdout.write(answer);
   if (result.error !== undefined) quiet(result.error.message, answer.length > 0);
@@ -84,6 +88,7 @@ if (existsSync(recordedNode) && !sameFile(recordedNode, process.execPath)) {
 } else {
   // Run in this process exactly as `node <hook>` would: a hook serves only when it is the launched script, argv[1].
   // The hook is chosen by the registration's argument, so it cannot be a static import.
+  turnOnCompileCache();
   process.argv.splice(1, 3, hookScript);
   const answered = watchAnswer();
   // A hook that fails here answers as a hook run as a child does: exit 0, and `{}` when it wrote nothing. Whether it

@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -117,48 +118,127 @@ describe("hook launcher", () => {
   });
 });
 
-// Reports the folder of Node's compile cache in the process that runs it, or null where the cache is off.
+// Reports the folder of Node's compile cache in the process that runs it, or null where the cache is off, and the
+// NODE_COMPILE_CACHE its environment holds.
 const CACHE_REPORTING_HOOK = [
   'import { getCompileCacheDir } from "node:module";',
-  "process.stdout.write(JSON.stringify({ cache: getCompileCacheDir() ?? null }));",
+  "process.stdout.write(JSON.stringify({ cache: getCompileCacheDir() ?? null, named: process.env.NODE_COMPILE_CACHE ?? null }));",
 ].join("\n");
 
-/**
- * The launcher started as Claude Code starts a hook, with the run's own temporary folder (where Node keeps its compile
- * cache by default) and none of the caller's compile cache settings; `env` adds to that environment.
- */
-async function launchForCache(recorded: "runs" | "itself", env: NodeJS.ProcessEnv = {}): Promise<{ cache: string | null; base: string; stderr: string }> {
+interface CachePlace {
+  base: string;
+  node: string;
+  hook: string;
+}
+
+/** A folder for one test: the cache reporting hook, the recorded node and a temporary folder (`tmp`) of its own. */
+async function cachePlace(recorded: "runs" | "itself"): Promise<CachePlace> {
   const base = await mkdtemp(join(tmpdir(), "rerail-hook-launcher-"));
   temporaryDirectories.push(base);
   const hook = join(base, "claude-hook.mjs");
   await writeFile(hook, CACHE_REPORTING_HOOK);
   const node = recorded === "itself" ? process.execPath : join(base, RECORDED_NODE);
   if (recorded === "runs") await recordedNode(node);
-  const temp = join(base, "tmp");
-  await mkdir(temp);
+  await mkdir(join(base, "tmp"));
+  return { base, node, hook };
+}
+
+/**
+ * The launcher started as Claude Code starts a hook, with the place's temporary folder (where Node keeps its compile
+ * cache by default) and none of the caller's compile cache settings; `env` adds to that environment, and `preload` is a
+ * module the node that starts the launcher loads first.
+ */
+function launchAt(place: CachePlace, env: NodeJS.ProcessEnv = {}, preload?: string): { cache: string | null; named: string | null; stderr: string } {
+  const temp = join(place.base, "tmp");
   const { NODE_COMPILE_CACHE: _cache, NODE_DISABLE_COMPILE_CACHE: _off, ...caller } = process.env;
-  const result = spawnSync(process.execPath, ["--import", "tsx", LAUNCHER, node, hook], {
+  const imports = preload === undefined ? [] : ["--import", pathToFileURL(preload).href];
+  const result = spawnSync(process.execPath, ["--import", "tsx", ...imports, LAUNCHER, place.node, place.hook], {
     input: "{}",
     encoding: "utf8",
     env: { ...caller, TMPDIR: temp, TMP: temp, TEMP: temp, ...env },
   });
-  const answer = JSON.parse(result.stdout || "{}") as { cache?: string | null };
-  return { cache: answer.cache ?? null, base, stderr: result.stderr };
+  const answer = JSON.parse(result.stdout || "{}") as { cache?: string | null; named?: string | null };
+  return { cache: answer.cache ?? null, named: answer.named ?? null, stderr: result.stderr };
+}
+
+async function launchForCache(recorded: "runs" | "itself", env: NodeJS.ProcessEnv = {}): Promise<{ cache: string | null; named: string | null; base: string; stderr: string }> {
+  const place = await cachePlace(recorded);
+  return { ...launchAt(place, env), base: place.base };
 }
 
 describe("hook launcher and Node's compile cache", () => {
   // Every hook event starts a Node that loads the hook's bundle; with the cache on, V8 reads the code it compiled at an
   // earlier event instead of parsing and compiling the bundle again.
-  // Node keeps each version's code in a folder of its own inside the cache folder, so a child under another node finds
-  // the cache folder itself, never a folder inside this node's.
+  // Node keeps each version's code in a folder of its own inside the cache folder, so the hook under either node finds
+  // the cache folder itself, never a folder inside another node's.
   it.each<"runs" | "itself">(["itself", "runs"])("runs the hook with Node's compile cache on, in its default folder (recorded node %s)", async recorded => {
     const { cache, base, stderr } = await launchForCache(recorded);
     expect(cache, stderr).not.toBeNull();
     expect(dirname(await realpath(cache ?? ""))).toBe(await realpath(join(base, "tmp", "node-compile-cache")));
   }, 30_000);
 
+  it.each<"runs" | "itself">(["itself", "runs"])("keeps the cache in the folder the person named in NODE_COMPILE_CACHE (recorded node %s)", async recorded => {
+    const place = await cachePlace(recorded);
+    const named = join(place.base, "named-cache");
+    const { cache, stderr } = launchAt(place, { NODE_COMPILE_CACHE: named });
+    expect(cache, stderr).not.toBeNull();
+    expect(dirname(await realpath(cache ?? ""))).toBe(await realpath(named));
+  }, 30_000);
+
   it.each<"runs" | "itself">(["itself", "runs"])("leaves the cache off where the person turned it off (recorded node %s)", async recorded => {
     const { cache, stderr } = await launchForCache(recorded, { NODE_DISABLE_COMPILE_CACHE: "1" });
     expect(cache, stderr).toBeNull();
+  }, 30_000);
+
+  // A daemon the hook starts, and through it the person's own hook commands, take the hook's environment.
+  it.each<"runs" | "itself">(["itself", "runs"])("gives the hook no NODE_COMPILE_CACHE the person did not set (recorded node %s)", async recorded => {
+    const { cache, named, stderr } = await launchForCache(recorded);
+    expect(cache, stderr).not.toBeNull();
+    expect(named).toBeNull();
+  }, 30_000);
+});
+
+/**
+ * Stands in for a node on PATH older than the compile cache (Node 22.1), which has no `module.enableCompileCache`, while
+ * the recorded node keeps it. It writes a line to `LAUNCHER_STARTS` for each node that starts a launcher, and ends the
+ * third at once, so a launcher that started itself without end shows in the count instead of filling the machine.
+ */
+const NODE_WITHOUT_CACHE = [
+  'import { appendFileSync, readFileSync } from "node:fs";',
+  'import nodeModule, { syncBuiltinESMExports } from "node:module";',
+  'import { basename } from "node:path";',
+  "const starts = process.env.LAUNCHER_STARTS;",
+  'appendFileSync(starts, "started\\n");',
+  'if (readFileSync(starts, "utf8").split("\\n").length > 3) process.exit(0);',
+  `if ((process.env.RECORDED ?? basename(process.execPath)) !== ${JSON.stringify(RAN_RECORDED)}) {`,
+  "  delete nodeModule.enableCompileCache;",
+  "  syncBuiltinESMExports();",
+  "}",
+].join("\n");
+
+describe("hook launcher started by a node without Node's compile cache", () => {
+  async function olderNodePlace(): Promise<{ place: CachePlace; preload: string }> {
+    const place = await cachePlace("runs");
+    const preload = join(place.base, "node-without-cache.mjs");
+    await writeFile(preload, NODE_WITHOUT_CACHE);
+    return { place, preload };
+  }
+
+  it("runs the hook with the cache on under the recorded node, which reads the code it kept at the next call", async () => {
+    const { place, preload } = await olderNodePlace();
+    // Node's own debug lines say whether V8 took the code it read from the cache.
+    const env = { NODE_DEBUG_NATIVE: "COMPILE_CACHE" };
+    launchAt(place, { ...env, LAUNCHER_STARTS: join(place.base, "first-starts") }, preload);
+    const second = launchAt(place, { ...env, LAUNCHER_STARTS: join(place.base, "second-starts") }, preload);
+    expect(second.cache, second.stderr).not.toBeNull();
+    expect(second.stderr).toMatch(/\[compile cache\] V8 code cache for \S+ \S*claude-hook\.mjs was accepted/u);
+  }, 60_000);
+
+  it("starts a launcher under the recorded node once, and that one runs the hook itself", async () => {
+    const { place, preload } = await olderNodePlace();
+    const starts = join(place.base, "starts");
+    const { cache, stderr } = launchAt(place, { LAUNCHER_STARTS: starts }, preload);
+    expect(cache, stderr).not.toBeNull();
+    expect(await readFile(starts, "utf8")).toBe("started\nstarted\n");
   }, 30_000);
 });
