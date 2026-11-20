@@ -11,9 +11,6 @@
 //! The functions here return Cranelift's own `ModuleError`, as `Module`'s methods do: its size is Cranelift's.
 #![allow(clippy::result_large_err)]
 
-// The module's errors are Cranelift's `ModuleError`, as `Module` returns them: large, and passed up as they are.
-#![allow(clippy::result_large_err)]
-
 use crate::reads::{self, READS, Read};
 use cranelift_codegen::Context;
 use cranelift_codegen::inline::{Inline, InlineCommand};

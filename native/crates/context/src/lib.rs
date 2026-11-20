@@ -41,10 +41,13 @@ pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
 
 pub type AnyArc = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 
+/// The place a setting is read (its file, line and column) and the type it is read as.
+type SettingPlace = (&'static str, u32, u32, std::any::TypeId);
+
 /// A run's settings, by the place that reads each, and its own values, by type (decision 0442).
 #[derive(Default)]
 pub struct RunValues {
-    settings: parking_lot::Mutex<std::collections::HashMap<(&'static str, u32, u32, std::any::TypeId), AnyArc>>,
+    settings: parking_lot::Mutex<std::collections::HashMap<SettingPlace, AnyArc>>,
     locals: parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>,
 }
 

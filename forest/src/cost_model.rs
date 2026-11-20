@@ -244,11 +244,10 @@ struct WordHasher(u64);
 
 impl std::hash::Hasher for WordHasher {
     fn write(&mut self, bytes: &[u8]) {
-        let mut chunks = bytes.chunks_exact(8);
-        for c in &mut chunks {
-            self.word(u64::from_le_bytes(c.try_into().unwrap()));
+        let (words, rest) = bytes.as_chunks::<8>();
+        for &w in words {
+            self.word(u64::from_le_bytes(w));
         }
-        let rest = chunks.remainder();
         if !rest.is_empty() {
             let mut w = [0u8; 8];
             w[..rest.len()].copy_from_slice(rest);

@@ -656,7 +656,7 @@ mod tests {
         // Feature 0 (ordinal, 8 buckets): row % 8; the label is mostly bucket >= 3 (rows 0 and 26 are true too), so
         // the best split is feature 0 at 3, with a mixed left side (a split pure on both sides finishes its
         // partition instead). Feature 1 (categorical, 3 buckets): row % 3, unrelated to the label.
-        let label = |r: u32| r % 8 >= 3 || r % 13 == 0;
+        let label = |r: u32| r % 8 >= 3 || r.is_multiple_of(13);
         let feature_nb = [8u32, 3];
         let bucket_of = |f: usize, r: u32| if f == 0 { r % 8 } else { r % 3 };
 
