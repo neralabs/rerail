@@ -129,8 +129,8 @@ pub fn reader_demand() -> bool {
 /// How the deferred joins pass (`product_demand::deferred`) runs for one prepared program. `RERAIL_DEFERRED_JOINS`:
 /// `auto` (the default) and `adaptive` share a frequently requested endpoint's work and admit small pair caches; `on`
 /// makes the static rewrites alone; `off` leaves the joins as written. On by default (decision 0477): an insurance
-/// against a join over-long for its readers' demand, at 1.0% more instructions on corpus0 x B-now (961.8 G against
-/// 952.7 G, the same findings). A run that loads (`world::wanted`) keeps them: a load hands exports back by location,
+/// against a join over-long for its readers' demand, at 0.27% more instructions on corpus0 x B-now (955.9 G against
+/// 953.3 G, the same findings). A run that loads (`world::wanted`) keeps them: a load hands exports back by location,
 /// which a new factor has none of.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Deferral {
