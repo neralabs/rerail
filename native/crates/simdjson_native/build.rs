@@ -10,9 +10,13 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         return;
     }
-    let vendor = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/simdjson-5.0.5");
-    let shim = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shim.cpp");
-    let kernel = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/kernel.inc");
+    // The package's folder as cargo sets it for this run, not as `env!` fixed it when the script was compiled: cargo
+    // keeps one compiled build script per target folder, so checkouts that share a target folder run the copy compiled
+    // in the first one, which would build that checkout's sources.
+    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"));
+    let vendor = manifest.join("../../vendor/simdjson-5.0.5");
+    let shim = manifest.join("src/shim.cpp");
+    let kernel = manifest.join("src/kernel.inc");
     for file in [vendor.join("simdjson.cpp"), vendor.join("simdjson.h"), shim.clone(), kernel] {
         println!("cargo:rerun-if-changed={}", file.display());
     }
