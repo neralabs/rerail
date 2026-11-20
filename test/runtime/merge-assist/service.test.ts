@@ -79,6 +79,68 @@ class HeldReadiness extends FakeGithub {
   }
 }
 
+/**
+ * `gh` that reads its sign-in as it starts, as `gh auth status` reads its hosts file, and counts its listings. Held, its
+ * answers wait until let go (`holdAnswers`), and so do the stats of its hosts file (`holdStats`), which then find the
+ * file as it is when let go.
+ */
+class GhReadAtStart extends FakeGithub {
+  listings = 0;
+  #answers: PromiseWithResolvers<void> | undefined;
+  #stats: PromiseWithResolvers<void> | undefined;
+  #started: PromiseWithResolvers<void> | undefined;
+
+  /** Settles once the next read of gh's sign-in starts. */
+  started(): Promise<void> {
+    this.#started = Promise.withResolvers();
+    return this.#started.promise;
+  }
+
+  holdAnswers(): void {
+    this.#answers = Promise.withResolvers();
+  }
+
+  holdStats(): void {
+    this.#stats = Promise.withResolvers();
+  }
+
+  release(): void {
+    this.#answers?.resolve();
+    this.#stats?.resolve();
+    this.#answers = this.#stats = undefined;
+  }
+
+  override async readiness(repository: GithubRepository | null): Promise<GithubReadiness> {
+    const said = super.readiness(repository);
+    this.#started?.resolve();
+    if (this.#answers !== undefined) await this.#answers.promise;
+    return await said;
+  }
+
+  override signInStamp(): ReturnType<FakeGithub["signInStamp"]> {
+    const stamp = super.signInStamp();
+    const held = this.#stats;
+    return held === undefined ? stamp : { ...stamp, file: held.promise.then(() => this.options.signInStamp ?? "hosts.yml as first written") };
+  }
+
+  override async openPullRequests(): Promise<PullRequestListing> {
+    this.listings += 1;
+    return await super.openPullRequests();
+  }
+}
+
+/** Settles once `SignInReads.read` is next asked, then asks it as asked. */
+function nextReadAsked(): Promise<void> {
+  const asked = Promise.withResolvers<void>();
+  const read = SignInReads.prototype.read;
+  const spy = vi.spyOn(SignInReads.prototype, "read").mockImplementation(function (this: SignInReads, ...args: Parameters<SignInReads["read"]>) {
+    asked.resolve();
+    return read.apply(this, args);
+  });
+  onTestFinished(() => spy.mockRestore());
+  return asked.promise;
+}
+
 /** A conflict in the workspace: branch `jbarnes-orders` changes the line `mine` changes. */
 function overlap(ws: Workspace): void {
   commit(ws.worktree("jbarnes-orders"), { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" }, "Version the orders path");
@@ -221,10 +283,10 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(environments.map(github => github.readinessReads)).toEqual([2, 1, 1, 1, 1]);
   });
 
-  it("keeps the stat of gh's hosts file that answers after gh did, so the statuses after run no gh", async () => {
+  it("keeps the stat of gh's hosts file it waited for before gh started, though gh answers faster, so the statuses after run no gh", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     const now = Date.parse("2026-11-03T14:00:00Z");
-    // gh is not installed: it answers with no process, before the stat taken as it started.
+    // gh is not installed: it answers with no process, faster than the stat.
     const github = new FakeGithub({ readiness: { state: "missing", login: null, repository: "acme/app" }, signInStatSlow: true });
     const service = ws.service({ github, now: () => now });
     await service.setEnabled(ws.repo, true);
@@ -233,6 +295,81 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     await service.status(ws.repo);
     await ws.service({ github, now: () => now, answersOnce: true }).status(ws.repo);
     expect(github.readinessReads).toBe(reads);
+  });
+
+  it("shows the account gh switched to after a read whose stat of gh's hosts file answered only once gh had read the file", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const github = new GhReadAtStart();
+    const service = ws.service({ github, now: () => now });
+    await service.setEnabled(ws.repo, true);
+
+    // Five minutes on, the CLI's status reads gh in its answer; the stat taken for that read answers only after gh read
+    // the file and `gh auth switch` rewrote it.
+    now += 5 * 60_000;
+    github.holdStats();
+    const started = github.started();
+    const cli = ws.service({ github, now: () => now, answersOnce: true }).status(ws.repo);
+    await started;
+    github.options.readiness = { state: "signed-in", login: "jbarnes", repository: "acme/app" };
+    github.options.signInStamp = "after gh auth switch to jbarnes";
+    github.release();
+    expect((await cli).readiness.github.login).toBe("tbelanger");
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect((await service.status(ws.repo)).readiness.github.login).toBe("jbarnes");
+  });
+
+  it("shows a gh auth switch made while a read of gh ran at the status that finds gh's hosts file moved, not that read's answer", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const github = new GhReadAtStart();
+    const service = ws.service({ github, now: () => now });
+    await service.setEnabled(ws.repo, true);
+
+    // Five minutes on, a status starts a read of gh for the next one; gh read the file and is slow to answer.
+    now += 5 * 60_000;
+    github.holdAnswers();
+    const started = github.started();
+    await service.status(ws.repo);
+    await started;
+    // `gh auth switch` rewrites the file meanwhile, and the page asks for the status as the stamp moved.
+    github.options.readiness = { state: "signed-in", login: "jbarnes", repository: "acme/app" };
+    github.options.signInStamp = "after gh auth switch to jbarnes";
+    const asked = nextReadAsked();
+    const switched = service.status(ws.repo);
+    await asked;
+    github.release();
+
+    expect((await switched).readiness.github.login).toBe("jbarnes");
+  });
+
+  it("lists from what gh says after gh's hosts file moved past a read of gh still running, not from that read", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const github = new GhReadAtStart();
+    const service = ws.service({ github, now: () => now });
+    await service.setEnabled(ws.repo, true);
+
+    // A sign-out moves the file: the next status reads gh, which reads the file and is slow to answer.
+    now += 60_000;
+    github.options.readiness = { state: "signed-out", login: null, repository: "acme/app" };
+    github.options.signInStamp = "after gh auth logout";
+    github.holdAnswers();
+    const started = github.started();
+    const signedOut = service.status(ws.repo);
+    await started;
+    // A sign-in moves it again before that read answers; the agent's edit then lists the pull requests.
+    delete github.options.readiness;
+    github.options.signInStamp = "after gh auth login";
+    const asked = nextReadAsked();
+    const listing = service.detectAfterEdit(ws.repo);
+    await asked;
+    github.release();
+    await Promise.all([signedOut, listing]);
+
+    // Once from the kept reading, as it starts, and once from gh's sign-in read after the sign-in.
+    expect(github.listings).toBe(2);
   });
 
   it("answers a status with the kept reading and its time when the stat of gh's hosts file does not answer", async () => {

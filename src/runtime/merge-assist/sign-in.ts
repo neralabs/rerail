@@ -30,10 +30,15 @@ const GITHUB_UNAVAILABLE_MS = 60_000;
 /** How many `gh` environments a repository keeps a reading for; the one written longest ago goes first. */
 const ENVIRONMENTS_KEPT = 4;
 /**
- * The hosts file's part of a stamp whose stat had not answered when `gh` did, until it answers: a status whose stat
- * answers first reads `gh` again.
+ * The hosts file's part of a stamp whose stat had not answered when `gh` started (`STAT_WAIT_MS`): a status whose stat
+ * answers reads `gh` again.
  */
 const UNANSWERED = "unanswered";
+/**
+ * How long a read of `gh` waits for the stat of its hosts file before `gh` starts. A stat answers in far less; one that
+ * does not (a drive that stalls) holds `gh` no longer, and the reading is kept `unanswered`.
+ */
+const STAT_WAIT_MS = 1_000;
 
 /** A reading as kept: what `gh` said, when (epoch ms), and the stamp of its sign-in as `gh` started. */
 const readingSchema = z.object({ at: z.number(), readiness: githubReadinessSchema, environment: z.string(), file: z.string() });
@@ -69,24 +74,46 @@ async function answered(file: Promise<string>, by: Promise<unknown>): Promise<st
   return await Promise.race([file, by.then(() => undefined, () => undefined)]);
 }
 
+/** What `file` answers within `ms`, else undefined; the timer ends with the wait. */
+async function answeredWithin(file: Promise<string>, ms: number): Promise<string | undefined> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await answered(file, new Promise(resolve => { timer = setTimeout(resolve, ms); }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** The readings with this one in place of its environment's, the one written longest ago dropped past the bound. */
 function withReading(readings: readonly Reading[], reading: Reading): Reading[] {
   const others = readings.filter(kept => kept.environment !== reading.environment);
   return [...others, reading].slice(-ENVIRONMENTS_KEPT);
 }
 
-/** The row with the late stat's answer in place of `unanswered`, while that reading is still the one kept; else none. */
-function answeredLate(row: Kept | undefined, readings: readonly Reading[], reading: Reading, file: string): Kept | undefined {
-  const kept = readings.find(candidate => candidate.environment === reading.environment);
-  if (row === undefined || kept?.at !== reading.at || kept.file !== UNANSWERED) return undefined;
-  return { ...row, readings: withReading(readings, { ...kept, file }) };
+/** A read of `gh` running in this process, with the stamp of its hosts file it keeps, taken before `gh` started. */
+interface RunningRead {
+  readonly reading: Promise<ShownReadiness>;
+  /** The stamp; undefined until it is taken: `gh` has not started, and reads the file as it is then or later. */
+  readonly file: () => string | undefined;
+}
+
+/**
+ * Whether a caller that found `gh`'s hosts file at `file` (undefined: not compared) takes `running`'s answer: `gh` read
+ * the file as that caller found it or later. Not when `running` kept another stamp: the file moved since it started.
+ */
+function shares(running: RunningRead, file: string | undefined): boolean {
+  const stamped = running.file();
+  return file === undefined || stamped === undefined || stamped === file;
 }
 
 /** `gh`'s sign-in per repository: read when none is kept, it changed or it is due, shown as last read. */
 export class SignInReads {
   readonly #options: SignInReadsOptions;
-  /** Reads running in this process, by repository: every caller meanwhile shares one, so at most one `gh` runs. */
-  readonly #reads = new Map<string, Promise<ShownReadiness>>();
+  /**
+   * The read running in this process, by repository: callers meanwhile share it unless the hosts file moved past its
+   * stamp, and a read for those starts once it ended, so at most one `gh` runs.
+   */
+  readonly #reads = new Map<string, RunningRead>();
 
   constructor(options: SignInReadsOptions) {
     this.#options = options;
@@ -107,7 +134,7 @@ export class SignInReads {
     const kept = this.#kept(repositoryKey, stamp.environment);
     if (kept === undefined) return await this.read(repositoryKey);
     const file = await answered(stamp.file, answerBy);
-    if (file !== undefined && file !== kept.file) return await this.read(repositoryKey);
+    if (file !== undefined && file !== kept.file) return await this.read(repositoryKey, file);
     return await this.#rereadIfDue(repositoryKey, kept);
   }
 
@@ -123,19 +150,26 @@ export class SignInReads {
     const kept = this.#kept(repositoryKey, stamp.environment);
     if (fresh || kept === undefined || this.#due(kept)) return await list(await this.read(repositoryKey));
     const listing = list(kept.readiness);
-    if ((await answered(stamp.file, listing)) === kept.file) return await listing;
-    return await list(await this.read(repositoryKey));
+    const file = await answered(stamp.file, listing);
+    if (file === kept.file) return await listing;
+    return await list(await this.read(repositoryKey, file));
   }
 
-  /** `gh`'s sign-in read now, or the read already running in this process; kept while Merge Assist is on. */
-  read(repositoryKey: string): Promise<ShownReadiness> {
+  /**
+   * `gh`'s sign-in read now, or the read already running in this process unless the stamp it keeps is not `file`, the
+   * hosts file as the caller found it; kept while Merge Assist is on.
+   */
+  read(repositoryKey: string, file?: string): Promise<ShownReadiness> {
     const repository = githubRepositoryOf(repositoryKey);
     if (repository === null) return Promise.resolve({ state: "not-github", login: null, repository: null, readAt: null });
-    let reading = this.#reads.get(repositoryKey);
-    if (reading === undefined) {
-      reading = this.#readNow(repositoryKey, repository).finally(() => this.#reads.delete(repositoryKey));
-      this.#reads.set(repositoryKey, reading);
-    }
+    const running = this.#reads.get(repositoryKey);
+    if (running !== undefined && shares(running, file)) return running.reading;
+    let stamped: string | undefined;
+    const before = running === undefined ? Promise.resolve() : running.reading.then(() => undefined, () => undefined);
+    const reading = before
+      .then(async () => await this.#readNow(repositoryKey, repository, taken => { stamped = taken; }))
+      .finally(() => { if (this.#reads.get(repositoryKey)?.reading === reading) this.#reads.delete(repositoryKey); });
+    this.#reads.set(repositoryKey, { reading, file: () => stamped });
     return reading;
   }
 
@@ -152,7 +186,7 @@ export class SignInReads {
 
   /** Resolves once the reads of `gh` running now have answered and kept what they said. */
   async settled(): Promise<void> {
-    await Promise.allSettled([...this.#reads.values()]);
+    await Promise.allSettled([...this.#reads.values()].map(running => running.reading));
   }
 
   /** This environment's kept reading for the repository; none from a build that kept one reading for all. */
@@ -181,41 +215,32 @@ export class SignInReads {
   }
 
   /**
-   * Run `gh` and keep what it said with the stamp taken as it started. A stat that has not answered when `gh` did (a
-   * `gh` that answers with no process, a drive that stalls) is kept `unanswered`, and its answer replaces that when it
-   * comes, so a slow stat costs no read of `gh` at the next status.
+   * Stamp `gh`'s hosts file (`stamped` hears it), then run `gh` and keep what it said with that stamp: `gh` reads the
+   * file as the stamp found it or later, so a change made after the stamp moves it past the kept one and the next status
+   * reads again. A stat that has not answered within `STAT_WAIT_MS` (a drive that stalls) is kept `unanswered`, never
+   * its later answer, which may come after `gh` read the file.
    */
-  async #readNow(repositoryKey: string, repository: GithubRepository): Promise<ShownReadiness> {
+  async #readNow(repositoryKey: string, repository: GithubRepository, stamped: (file: string) => void): Promise<ShownReadiness> {
     const github = this.#options.github();
-    // Stamped as gh starts: a change while it runs moves the stamp past the kept one, so the next status reads again.
     const stamp = github.signInStamp();
-    const said = github.readiness(repository);
-    const [readiness, file] = await Promise.all([said, answered(stamp.file, said)]);
-    const reading: Reading = { at: this.#options.now(), readiness, environment: stamp.environment, file: file ?? UNANSWERED };
+    const file = (await answeredWithin(stamp.file, STAT_WAIT_MS)) ?? UNANSWERED;
+    stamped(file);
+    const readiness = await github.readiness(repository);
+    const reading: Reading = { at: this.#options.now(), readiness, environment: stamp.environment, file };
     this.#write(repositoryKey, readings => ({ at: reading.at, readiness, readings: withReading(readings, reading) }));
-    if (file === undefined) this.#keepLate(repositoryKey, reading, stamp.file);
     return shownOf(reading, reading.at);
-  }
-
-  /** The late stat's answer in place of `unanswered`; one that cannot be kept leaves the next status to read `gh` again. */
-  #keepLate(repositoryKey: string, reading: Reading, file: Promise<string>): void {
-    file.then(late => this.#write(repositoryKey, (readings, row) => answeredLate(row, readings, reading, late))).catch((error: unknown) => {
-      process.stderr.write(`rerail: Merge Assist could not keep gh's sign-in: ${error instanceof Error ? error.message : String(error)}\n`);
-    });
   }
 
   /**
    * One change of the repository's row, while Merge Assist is on for it (turned off meanwhile, it keeps none) and the
-   * service runs (a stopped one's database may be closing); a change that returns nothing writes nothing.
+   * service runs (a stopped one's database may be closing).
    */
-  #write(repositoryKey: string, change: (readings: Reading[], row: Kept | undefined) => Kept | undefined): void {
+  #write(repositoryKey: string, change: (readings: Reading[]) => Kept): void {
     if (this.#options.stopped()) return;
     const key = STATE_KEYS.github(repositoryKey);
     this.#options.database().transaction(tx => {
       if (!mergeAssistEnabled(tx, repositoryKey)) return;
-      const row = readState(tx, key, keptSchema);
-      const next = change(row?.readings ?? [], row);
-      if (next !== undefined) writeState(tx, key, next, this.#options.now());
+      writeState(tx, key, change(readState(tx, key, keptSchema)?.readings ?? []), this.#options.now());
     }, { behavior: "immediate" });
   }
 }
