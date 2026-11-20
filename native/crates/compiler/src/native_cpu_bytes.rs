@@ -551,6 +551,7 @@ impl<'a> Bytewise<'a> {
                     Sym::Value(v, false) => v,
                     Sym::Value(v, true) => f.ins().bnot(v),
                     Sym::Slot(..) => unreachable!("a window's mask is a value"),
+                    Sym::Unmade => unreachable!("a window's mask is made"),
                 }
             } else {
                 self.short_x(f, at, x, d, p, &mut windows, &mut memo, &mut carry, heads)
@@ -1359,6 +1360,7 @@ fn sym_value(f: &mut FunctionBuilder<'_>, s: Sym) -> Value {
         Sym::Value(v, false) => v,
         Sym::Value(v, true) => f.ins().bnot(v),
         Sym::Slot(..) => unreachable!("a window's mask is a value"),
+        Sym::Unmade => unreachable!("a window's mask is made"),
     }
 }
 

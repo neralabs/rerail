@@ -7854,6 +7854,24 @@ on an M3 or M5:
   `span(after_odd_run(x), 20) & after(high) & starts(ws)` and `after_odd_run(prev(bs & alpha, 54))`.
 - **Done when**: the program's gated region keeps its vectors inside its branch (or the gate is
   not taken for it), and the corpus test passes whole.
+- **Done** (2026-11-20). The refusal now names the instruction and its block. It showed the ASCII
+  split (`ascii_split`) making `after(high)` (%48, `prev(high) & ~high`) in its non-ASCII arm. The
+  split left a region's members to the region but not the region's own vectors. It leaves both
+  now. Two more faults lay behind that one:
+  - With %48 out of the split, it is made from words (it reads the split's word of `high`). The
+    region's top made only the vectors whose masks are wanted, so %48 was never made, and its
+    reader read a zero. The top makes those made from words too.
+  - An outlined region's function did not get those words either: `call_region` treated a
+    member on the vectors as remade from the bytes even where it is made from words. It passes
+    them in now, as 0423 says.
+  - Both faults read a value never made, which every value's default, `Sym::Known(0)`, turned
+    into a zero. Values start as `Sym::Unmade` now, and reading one panics with the value. An
+    absorbed flag leaf (its bits in the error vector, by design) gives its zero by name in
+    `finish`. A reader in `emit` names the operand it reads too early.
+  - The corpus test writes each differing program's values and CLIF under
+    `RERAIL_CORPUS_CLIF`.
+  - Checked on Linux: rerail-compiler (143), rerail-parser-tests (85, the corpus whole), Kotlin
+    (52), rr_parser (48), JSON, Python, ECMA, Rust, SQL, PHP, rerail-lang and rerail-rr.
 
 ### Q356. (Q331 on investigate-bend-vs-datalog) Native-and-GPU-strata's process-global state, merged before 0442 reached it (d719a840ef, 2026-11-19)
 

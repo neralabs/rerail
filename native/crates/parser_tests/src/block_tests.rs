@@ -86,7 +86,7 @@ fn eq_equals_reference_on_every_executor() {
         for bytes in inputs() {
             let want = reference(&bytes, |b| b == byte);
             for (name, got) in ex.every(&bytes) {
-                assert_eq!(got, [want.clone()], "{name}, eq {byte:#04x}, {} bytes", bytes.len());
+                assert_eq!(got, std::slice::from_ref(&want), "{name}, eq {byte:#04x}, {} bytes", bytes.len());
             }
         }
     }
@@ -337,7 +337,8 @@ fn not_equals_reference_on_every_executor() {
 
 #[test]
 fn binary_operators_equal_reference_on_every_executor() {
-    let cases: [(&str, fn(u64, u64) -> u64); 4] =
+    type Op = fn(u64, u64) -> u64;
+    let cases: [(&str, Op); 4] =
         [("and", |x, y| x & y), ("or", |x, y| x | y), ("xor", |x, y| x ^ y), ("andnot", |x, y| x & !y)];
     for (name, f) in cases {
         // Each operator on the two masks, and on a mask with itself.

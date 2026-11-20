@@ -1161,8 +1161,14 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
     let n = native.insts.len();
     let known = ascii_known(native, plan);
     let output: Vec<bool> = (0..n).map(|x| native.outputs.contains(&(x as u16))).collect();
+    // A gated region's values, its members and its own values on the vectors, are made in its
+    // branch (decision 0423), never in this one.
+    let mut gated: Vec<bool> = plan.region_of.iter().map(Option::is_some).collect();
+    for x in plan.regions.iter().flat_map(|r| &r.vectors) {
+        gated[*x] = true;
+    }
     let inside: Vec<bool> = (0..n)
-        .map(|x| e.live[x] && known[x].is_some() && !matches!(native.insts[x], BlockInst::Const(_)) && plan.full[x].is_none() && plan.region_of[x].is_none() && grouped[x].is_none())
+        .map(|x| e.live[x] && known[x].is_some() && !matches!(native.insts[x], BlockInst::Const(_)) && plan.full[x].is_none() && !gated[x] && grouped[x].is_none())
         .collect();
     // A value on the vectors is made from its operands' vectors, again in each reader
     // (`Lanes`): one past the branch that reads a known value there would make it on every
@@ -1568,7 +1574,7 @@ impl<'a, 'b> Emit<'a, 'b> {
             err_in: at.err.filter(|_| at.full),
             absorbed: vec![false; n],
             as_words: vec![false; n],
-            syms: vec![Sym::Known(0); n],
+            syms: vec![Sym::Unmade; n],
             values: vec![None; n],
             packed_out: vec![None; state.words],
             consts: vec![0; state.words],
@@ -1715,6 +1721,9 @@ impl Emit<'_, '_> {
             self.set(at, Sym::Known(c));
             self.carry(&mut *f, at);
             return;
+        }
+        if let Some(o) = inst.operands().into_iter().find(|&o| matches!(self.syms[o], Sym::Unmade) && self.values[o].is_none()) {
+            panic!("value %{at} = {inst:?} reads %{o} = {:?} before it is made (region {:?}, its {:?}; on the vectors {}, masked {}, as words {})", native.insts[o], plan.region_of[at], plan.region_of[o], plan.lanes[o], self.masked[o], self.as_words[o]);
         }
         let logic = |x: u16| self.syms[usize::from(x)];
         let folded = match inst {
@@ -1949,8 +1958,9 @@ impl Emit<'_, '_> {
         }
         // Its values on the vectors that a member reads as words (one made from words,
         // `Emit::as_words`): their masks made here, never in a block that skips the region
-        // (decision 0423). The others are made on the vectors where read.
-        let as_words: Vec<usize> = reg.vectors.iter().copied().filter(|&v| self.live[v] && self.masked[v]).collect();
+        // (decision 0423), and so is one made from words itself (the ASCII split's reader of a
+        // word it gives, `ascii_split`). The others are made on the vectors where read.
+        let as_words: Vec<usize> = reg.vectors.iter().copied().filter(|&v| self.live[v] && (self.masked[v] || self.as_words[v])).collect();
         for v in as_words {
             self.emit(&mut *f, v);
         }
@@ -2016,11 +2026,14 @@ impl Emit<'_, '_> {
         let reg = &plan.regions[r];
         let inner: Vec<usize> = reg.members.iter().copied().filter(|m| !early.contains(m)).collect();
         // What the region reads from outside: on the vectors, a value on the vectors is made
-        // again from the bytes (`native_cpu_lanes`); any other is passed.
+        // again from the bytes (`native_cpu_lanes`); any other is passed, and so is the word of
+        // one a member made from words reads (`Emit::as_words`), made at the branch's top
+        // (decision 0423).
         let mut inputs: Vec<usize> = Vec::new();
         for &m in &inner {
             for o in native.insts[m].operands() {
-                if !inner.contains(&o) && !(plan.lanes[o] && plan.lanes[m]) && !inputs.contains(&o) {
+                let remade = plan.lanes[o] && plan.lanes[m] && !self.as_words[m];
+                if !inner.contains(&o) && !remade && !inputs.contains(&o) {
                     inputs.push(o);
                 }
             }
@@ -2130,7 +2143,7 @@ impl Emit<'_, '_> {
                 err_in: None,
                 absorbed: vec![false; n],
                 as_words: self.as_words.clone(),
-                syms: vec![Sym::Known(0); n],
+                syms: vec![Sym::Unmade; n],
                 values: vec![None; n],
                 packed_out: vec![None; state.words],
                 consts: vec![0; state.words],
@@ -2530,6 +2543,9 @@ impl Emit<'_, '_> {
         let outputs = (0..self.native.outputs.len())
             .map(|k| match (self.sunk[k], self.fixed[k]) {
                 (Some(v), _) | (None, Some(v)) => v,
+                // A flag's leaf the ASCII branch or a sink ORed in where made (`absorbed`): its bits
+                // are in the flag, and no word of its own is made.
+                (None, None) if self.absorbed[usize::from(self.native.outputs[k])] && matches!(self.syms[usize::from(self.native.outputs[k])], Sym::Unmade) => f.ins().iconst(types::I64, 0),
                 (None, None) => plain(&mut *f, &self.syms, &mut self.values, usize::from(self.native.outputs[k])),
             })
             .collect();
@@ -9071,8 +9087,8 @@ fn hoist_constants(func: &mut cranelift_codegen::ir::Function, body: cranelift_c
 /// A gated region's values on the vectors (`Region::vectors`) are made in its branch, never in
 /// a block that skips it (decision 0423): the first instruction made for one (its source
 /// location, `Emit::emit`) in a warm block its branch block does not dominate, by region and
-/// value. Cold blocks (the edge part) make values without the regions.
-fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::native_cpu_lanes::Plan, entered: &[(usize, cranelift_codegen::ir::Block)]) -> Option<(usize, usize)> {
+/// value, with the instruction and its block. Cold blocks (the edge part) make values without the regions.
+fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::native_cpu_lanes::Plan, entered: &[(usize, cranelift_codegen::ir::Block)]) -> Option<(usize, usize, String)> {
     if entered.is_empty() {
         return None;
     }
@@ -9087,7 +9103,7 @@ fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::
             let v = loc.bits() as usize - 1;
             for &(r, active) in entered {
                 if plan.regions.get(r).is_some_and(|reg| reg.vectors.contains(&v)) && !domtree.block_dominates(active, b) {
-                    return Some((r, v));
+                    return Some((r, v, format!("`{}` in {b}, its branch {active}", func.dfg.display_inst(i))));
                 }
             }
         }
@@ -9894,8 +9910,8 @@ fn forward(jit: Jit<'_>, native: &BlockNative, made: &BlockNative, slot_of: &[u1
         if let Some(&body) = hot.first() {
             sink_extracts(&mut context.func, body);
         }
-        if let Some((r, v)) = region_vectors_outside(&context.func, &lp.state.plan, &lp.entered.borrow()) {
-            return Err(Error::RefusedShape(format!("region {r}'s value %{v} on the vectors made outside its branch (decision 0423)")));
+        if let Some((r, v, at)) = region_vectors_outside(&context.func, &lp.state.plan, &lp.entered.borrow()) {
+            return Err(Error::RefusedShape(format!("region {r}'s value %{v} on the vectors made outside its branch (decision 0423): {at}")));
         }
         let mut owns = vec![own.clone()];
         owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
@@ -10048,6 +10064,8 @@ pub enum Sym {
     Known(u64),
     Value(Value, bool),
     Slot(cranelift_codegen::ir::StackSlot, i32, bool),
+    /// Not made yet: every value's state until `Emit` makes it. Read, it is the compiler's error, never a zero.
+    Unmade,
 }
 
 impl Sym {
@@ -10056,6 +10074,7 @@ impl Sym {
             Sym::Known(c) => Sym::Known(!c),
             Sym::Value(v, neg) => Sym::Value(v, !neg),
             Sym::Slot(s, at, neg) => Sym::Slot(s, at, !neg),
+            Sym::Unmade => unmade(),
         }
     }
 
@@ -10070,6 +10089,9 @@ impl Sym {
     /// `a & b`, one instruction at most: a complemented side is a `bic`; both complemented,
     /// the complement of an `or`.
     fn and(f: &mut FunctionBuilder<'_>, a: Sym, b: Sym) -> Sym {
+        if let (Sym::Unmade, _) | (_, Sym::Unmade) = (a, b) {
+            unmade();
+        }
         if let (Sym::Known(0), _) | (_, Sym::Known(0)) = (a, b) {
             return Sym::Known(0);
         }
@@ -10086,6 +10108,7 @@ impl Sym {
             (Sym::Value(x, false), Sym::Value(y, true)) | (Sym::Value(y, true), Sym::Value(x, false)) => Sym::Value(f.ins().band_not(x, y), false),
             (Sym::Value(x, true), Sym::Value(y, true)) => Sym::Value(f.ins().bor(x, y), true),
             (Sym::Slot(..), _) | (_, Sym::Slot(..)) => unreachable!("loaded"),
+            (Sym::Unmade, _) | (_, Sym::Unmade) => unmade(),
         }
     }
 
@@ -10101,8 +10124,15 @@ impl Sym {
             }
             (Sym::Value(x, nx), Sym::Value(y, ny)) => Sym::Value(f.ins().bxor(x, y), nx != ny),
             (Sym::Slot(..), _) | (_, Sym::Slot(..)) => unreachable!("loaded"),
+            (Sym::Unmade, _) | (_, Sym::Unmade) => unmade(),
         }
     }
+}
+
+/// A value read before it is made (`Sym::Unmade`): the order of the compiler's making is wrong.
+#[track_caller]
+fn unmade() -> ! {
+    panic!("a value read before it is made")
 }
 
 /// Value `x` plain (not complemented), made once; a slot's word loaded at each use, not kept.
@@ -10118,6 +10148,7 @@ fn plain(f: &mut FunctionBuilder<'_>, syms: &[Sym], values: &mut [Option<Value>]
             let w = f.ins().stack_load(types::I64, s, at);
             return if neg { f.ins().bnot(w) } else { w };
         }
+        Sym::Unmade => panic!("value %{x} read before it is made"),
     };
     values[x] = Some(v);
     v
