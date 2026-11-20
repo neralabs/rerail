@@ -637,10 +637,14 @@ describe("Rerail tool results waiting for their edit's check", () => {
       expect(await ending).toEqual([]);
 
       const { answering } = await edit("t1", BAD);
-      // A wait the result began would end only at its own ten seconds.
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(await answering).toEqual([]);
+      let answered = false;
+      void answering.then(() => {
+        answered = true;
+      });
+      // The result answers, or begins a wait of its own, which would end only at its own ten seconds.
+      await vi.waitFor(() => expect(answered || settles.length > 1).toBe(true));
       expect(settles).toEqual([undefined]);
+      expect(await answering).toEqual([]);
     } finally {
       vi.useRealTimers();
       walk.resolve();
