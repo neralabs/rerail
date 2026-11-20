@@ -3949,6 +3949,8 @@ pub(crate) fn path_tape_tag(path: &str) -> Option<u8> {
 pub use rerail_facts::code_rule_dsl::text;
 #[cfg(test)]
 mod test_support;
+// The addon's `.rerail` entry points (`CodeRuleDslRuntime.describeRr`, `runRr`) over `tools`.
+mod rr_host;
 pub mod tools;
 #[cfg_attr(test, path = "transducer")]
 mod transducer {
