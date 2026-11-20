@@ -2176,29 +2176,30 @@ describe("CodeRuleBridge", () => {
       }
     });
 
-    it(`tells none of the refusals past the first ${MAX_TOLD_AT_ONCE} a walk looks at, which it had no room to look at, though the record has room: removed by the next checkpoint, they are never told`, async () => {
+    it(`tells none of the refusals past the first ${MAX_TOLD_AT_ONCE} in path order, which it had no room to look at, though the record has room: removed by the next walk, they are never told`, async () => {
       const root = await workspace();
-      const folders = Array.from({ length: MAX_TOLD_AT_ONCE + 15 }, (_, index) => join(root, "src", `a${String(index).padStart(3, "0")}`));
+      const onDiscoveryGaps = vi.fn();
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await bridge.settleWalk();
+      // Made after the session's first walks, so one walk meets them before some go. Being removed: the first ten in path
+      // order, whose delete is pending at every look until they are gone, which leaves the record room, and the five past
+      // the hundredth, which the walk has no room to look at.
+      const folders = Array.from({ length: MAX_TOLD_AT_ONCE + 5 }, (_, index) => join(root, "src", `a${String(index).padStart(3, "0")}`));
       for (const folder of folders) {
         await mkdir(folder);
         denyFolder(folder, "EPERM");
       }
-      // Being removed: the first ten in path order, whose delete is pending at every look until they are gone, which leaves
-      // the record room, and the five past the hundred denied after them, which no walk has room to look at: the first
-      // looks at the first hundred, a later one at the hundred denied, ahead of the ten it withdrew. The session's first
-      // walk looks at them too, so each answers pending for every walk.
       for (const folder of folders.slice(0, 10)) discovery.accesses.set(folder, Array.from({ length: 50 }, () => deletePending(folder)));
-      const onDiscoveryGaps = vi.fn();
-      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
-      await bridge.openWorkspace("session-1");
 
       await bridge.checkpoint("turn");
-      for (const folder of [...folders.slice(0, 10), ...folders.slice(MAX_TOLD_AT_ONCE + 10)]) {
+      for (const folder of [...folders.slice(0, 10), ...folders.slice(MAX_TOLD_AT_ONCE)]) {
         discovery.directories.delete(folder);
         await removeFolder(folder);
       }
       await bridge.checkpoint("turn");
-      expect(toldPaths(onDiscoveryGaps)).toEqual(folders.slice(10, MAX_TOLD_AT_ONCE + 10).map(folder => `src/${basename(folder)}`));
+      expect(toldPaths(onDiscoveryGaps)).toEqual(folders.slice(10, MAX_TOLD_AT_ONCE).map(folder => `src/${basename(folder)}`));
     });
 
     it(`records a denied file that ${MAX_TOLD_AT_ONCE + 1} files whose deletes stay pending sort before: a walk looks first at the refusals no earlier walk withdrew`, async () => {
