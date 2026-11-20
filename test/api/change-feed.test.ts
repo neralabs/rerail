@@ -1,22 +1,12 @@
 import { EventEmitter } from "node:events";
 import type { FSWatcher, watch as watchFolder } from "node:fs";
-import { appendFileSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { databaseChangeFeed, LOOK_AGAIN_MS, type ChangeNotice } from "../../src/api/change-feed.js";
+import { loopInPlace } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
-
-/**
- * Puts a link that leads to itself in the place of the file at `path`, so `stat` of it fails (ELOOP) for every account
- * on every system: on Windows a junction, which needs no privilege. Rights taken away would not bind every account:
- * root reads past a folder's mode, and on Windows a token whose backup privilege is on (an elevated administrator's in
- * Git Bash, as GitHub's Windows runner runs the tests) reads past a deny rule.
- */
-function loopInPlace(path: string): void {
-  rmSync(path);
-  symlinkSync(path, path, process.platform === "win32" ? "junction" : null);
-}
 
 const DATABASE = join("/rerail-home", "rerail.sqlite");
 
