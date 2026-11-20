@@ -7,7 +7,7 @@ use std::process::Stdio;
 
 fn main() {
     // MSVC compiles none of it (GCC and Clang target regions and attributes): the crate is empty there.
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+    if target_is("windows", "msvc") {
         return;
     }
     // The package's folder as cargo sets it for this run, not as `env!` fixed it when the script was compiled: cargo
@@ -33,13 +33,18 @@ fn main() {
         .file(&shim)
         .warnings(false);
     println!("cargo:rerun-if-env-changed=TARGET_SYSROOT");
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
-        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu")
+    if target_is("linux", "gnu")
         && let Some(sysroot) = std::env::var_os("TARGET_SYSROOT").filter(|sysroot| !sysroot.is_empty())
     {
         for_sysroot(&mut build, sysroot);
     }
     build.compile("rerail_simdjson");
+}
+
+/// Whether cargo builds for this target OS and environment (`CARGO_CFG_TARGET_OS`, `CARGO_CFG_TARGET_ENV`); an unset
+/// variable matches nothing.
+fn target_is(os: &str, env: &str) -> bool {
+    std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok(os) && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok(env)
 }
 
 /// The released Linux engine (`napi build --use-napi-cross`, package.yml) links against the sysroot of napi-rs's cross
