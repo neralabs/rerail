@@ -114,6 +114,16 @@ export interface WorktreeScan {
   readonly startedAt: number;
   /** Subtrees the last read could not read: a source first seen under one keeps no text unless stamped since `startedAt`. */
   readonly baselineRoots: ReadonlySet<string>;
+  /**
+   * Whether the record of every session the read serves holds the EPERM gap of `path` (`WatcherWalk.holdsRefusal`): a
+   * refusal there is a gap, and is not looked at again, so each read looks at those some session has not recorded yet.
+   */
+  readonly held: (path: string) => boolean;
+  /**
+   * The refusals the worktree's reads withdrew (`SourceWalk.withdrawn`), through whichever session read it: kept here,
+   * by the walk, so a read through another session orders its looks by the same facts.
+   */
+  readonly withdrawn: Set<string>;
   /** Filesystem-clock reading taken as the walk began. */
   readonly observedAt: number;
   /**
@@ -156,6 +166,11 @@ export interface WatcherWalk {
    * session closed meanwhile, and another watching session reads it instead.
    */
   scan(request: WorktreeScan): Promise<WorktreeScanned | undefined>;
+  /**
+   * Whether the session's record holds the EPERM gap of `path` in the worktree at `root` (physical; `path` relative to it,
+   * `.` for it): a look spared there adds no place to the session's record.
+   */
+  holdsRefusal(root: string, path: string): boolean;
   /** Takes what the walk found. Never rejects: the session records its own failures. */
   take(walk: WorktreeWalk): Promise<void>;
 }
@@ -337,9 +352,12 @@ function skippedIn(root: string, skip: ReadonlySet<string>): string {
   return [...skip].filter(folder => folder.startsWith(`${root}${sep}`)).sort().join("\n");
 }
 
-/** Whether a read must be tried again: a folder it could not list, or a file whose read failed (an error with no stamp). */
+/**
+ * Whether a read must be tried again: it gave up on a path it met (`SourceScan.gaveUp`: a folder it could not list, or a
+ * path gone as it looked, which may have moved where it did not look), or a file's read failed (an error with no stamp).
+ */
 function retried(scan: SourceScan): boolean {
-  if (scan.failedRoots.size > 0) return true;
+  if (scan.gaveUp === true) return true;
   for (const source of scan.sources.values()) if (source.readError !== undefined && source.stamp === undefined) return true;
   return false;
 }
@@ -393,6 +411,12 @@ export class WorktreeWalks {
   readonly #kept = new Map<string, Kept>();
   /** Worktrees a walk began to read and has not kept findings of: the next walk reads them whatever the notices say. */
   readonly #owed = new Set<string>();
+  /**
+   * The refusals each worktree's reads withdrew (`WorktreeScan.withdrawn`), by its path, dropped with what was kept of it
+   * (`#forget`). A read begun while a session watched it can put back an empty set as the session closes, which no read
+   * through a closed session fills (`WatcherWalk.scan`), until the next walk or close drops it.
+   */
+  readonly #withdrawn = new Map<string, Set<string>>();
   readonly #readUnmerged = gitUnmergedReader();
   readonly #readTrackedIgnored = gitTrackedIgnoredReader();
   /**
@@ -628,8 +652,7 @@ export class WorktreeWalks {
    */
   #forget(watched: ReadonlyArray<ReadonlySet<string>>): void {
     const roots = new Set(watched.flatMap(worktrees => [...worktrees]));
-    for (const root of this.#kept.keys()) if (!roots.has(root)) this.#kept.delete(root);
-    for (const root of this.#owed) if (!roots.has(root)) this.#owed.delete(root);
+    for (const held of [this.#kept, this.#owed, this.#withdrawn]) for (const root of held.keys()) if (!roots.has(root)) held.delete(root);
     this.#notices.retain(roots);
     this.#looks.retain(roots);
   }
@@ -863,10 +886,10 @@ export class WorktreeWalks {
     const previous = this.#kept.get(root)?.findings.snapshot;
     const request: WorktreeScan = {
       root,
-      previous: previous?.sources ?? new Map(),
-      captureChanges: previous !== undefined,
+      ...this.#lastRead(root),
+      held: path => watchers.every(walk => walk.holdsRefusal(root, path)),
+      withdrawn: this.#withdrawnIn(root),
       startedAt: Math.min(...watchers.map(walk => walk.startedAt)),
-      baselineRoots: this.#kept.get(root)?.findings.failedRoots ?? new Set(),
       observedAt: read.observedAt,
       skip: begun.skip,
     };
@@ -883,6 +906,20 @@ export class WorktreeWalks {
       return { findings, scan };
     }
     return undefined;
+  }
+
+  /** The refusals the reads of `root` withdrew (`WorktreeScan.withdrawn`): an empty set before its first read. */
+  #withdrawnIn(root: string): Set<string> {
+    const withdrawn = this.#withdrawn.get(root) ?? new Set<string>();
+    this.#withdrawn.set(root, withdrawn);
+    return withdrawn;
+  }
+
+  /** What a read of `root` asks with of what the last read kept (`WorktreeScan`): nothing for a first read. */
+  #lastRead(root: string): Pick<WorktreeScan, "previous" | "captureChanges" | "baselineRoots"> {
+    const kept = this.#kept.get(root)?.findings;
+    if (kept === undefined) return { previous: new Map(), captureChanges: false, baselineRoots: new Set() };
+    return { previous: kept.snapshot.sources, captureChanges: true, baselineRoots: kept.failedRoots };
   }
 
   #deliver(watching: Watching, delivery: NonNullable<Watching["waiting"]>): void {
