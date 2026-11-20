@@ -10,6 +10,26 @@ fn strings(items: &[String]) -> String {
     format!("[{}]", items.iter().map(|s| serde_json::to_string(s).unwrap()).collect::<Vec<_>>().join(", "))
 }
 
+#[test]
+fn a_nullary_guard_is_ready_in_a_demanded_body() {
+    let mut p = crate::code_rule_dsl::logic::front::parse("
+        .decl rows(x: int)
+        .input rows
+        .decl answer(x: int)
+        .output answer
+        answer($x) :- rows($x).
+    ").unwrap();
+    // Program transformations can supply an empty-tuple predicate directly.
+    p.decls.insert("ready".into(), Default::default());
+    p.inputs.push("ready".into());
+    p.rules[0].body.push(Literal::Atom(crate::code_rule_dsl::logic::front::Atom {
+        rel: "ready".into(), args: Default::default(), neg: false, gated: false,
+    }));
+    let planned = magic_adorn(p, &Options::default()).unwrap();
+    assert!(planned.rules.iter().any(|r| r.head.rel == "answer" && r.body.iter()
+        .any(|l| l.atom().is_some_and(|a| a.rel == "ready" && a.args.is_empty()))));
+}
+
 /// The program as the goldens print it (T's repr, and `json.dumps` with sorted keys for gates and the report).
 fn golden_text(p: &Program) -> String {
     let mut lines = Vec::new();

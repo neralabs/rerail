@@ -268,6 +268,7 @@ pub fn run_rr(
     if !program.outputs.iter().any(|name| super::logic::rr::is_diagnostic(name)) {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
+    let _sources = rr::profile_join_sources(&[path]);
     run_program(program, &files, root, out, options)
 }
 
@@ -394,7 +395,7 @@ pub fn run_policies(
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
     // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
     // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
-    // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
+    // `RERAIL_BATCH_PACK=off` runs each policy alone. With `strict`, a failed group returns its error.
     let packed = std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
     let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
     let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
@@ -485,12 +486,21 @@ fn run_pack(
     use super::{logic::plan::corpus, typing::file_local::Binding};
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    let _sources = super::logic::profile::on().then(|| super::logic::rr::profile_join_sources(
+        &group.members.iter().map(|&k| paths[k].as_path()).collect::<Vec<_>>(),
+    ));
     let dir = out.join(format!("pack-{}", group.members[0]));
     crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
-    let Ok(report) = corpus::run_with_options(&texts, root, None, &dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options)) else {
-        return Ok(None);
+    let fallback = |reason| {
+        if std::env::var("RERAIL_BATCH_PACK").as_deref() == Ok("strict") {
+            Err(format!("combined run of {} policies failed: {reason}", texts.len()))
+        } else { Ok(None) }
+    };
+    let report = match corpus::run_with_options(&texts, root, None, &dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options)) {
+        Ok(report) => report,
+        Err(error) => return fallback(error.to_string()),
     };
     let mut each: Vec<Vec<serde_json::Value>> = group.members.iter().map(|_| Vec::new()).collect();
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&dir).map_err(|e| e.to_string())?;
@@ -499,7 +509,9 @@ fn run_pack(
     let mut rows: Vec<std::collections::BTreeMap<String, Rows<'_>>> = group.members.iter().map(|_| std::collections::BTreeMap::new()).collect();
     for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
         for row in outputs.rows(rel) {
-            let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
+            let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else {
+                return fallback(format!("{rel} produced a finding with an unknown policy id {:?}", row.get(0).text()));
+            };
             each[at].push(diagnostic(&row)?);
             rows[at].entry(rel.to_owned()).or_default().push(row);
         }
@@ -1128,6 +1140,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     // A directory: every `.rr` in it, run as one program (each file parsed once for all of them); each file's
     // `#include`s are read in.
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
+    let _sources;
     let programs = if Path::new(program.as_str()).is_dir() {
         let mut files: Vec<_> = std::fs::read_dir(program)
             .map_err(|e| format!("{program}: {e}"))?
@@ -1152,10 +1165,14 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
         timeline_mark("the program files listed");
         let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        _sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
         timeline_mark("the program texts read");
         texts
     } else {
-        vec![crate::tools::program_text(Path::new(program.as_str()))?]
+        let path = Path::new(program.as_str());
+        let text = crate::tools::program_text(path)?;
+        _sources = super::logic::rr::profile_join_sources(&[path]);
+        vec![text]
     };
     drop(reading);
     if programs.is_empty() {

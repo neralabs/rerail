@@ -16,6 +16,27 @@ The [reachability experiments](reachability-spikes.md) compare batched SQL with 
 
 The [SQL workload profiler](sql-workload-profiling.md) adds complete statement capture, plans, bytecode, and ranked reports through `--sql-profile`.
 
+## Inspect a join in a rule
+
+Run the native CLI with a profile directory. Use a fresh store to measure the first evaluation.
+
+```sh
+RERAIL_PROFILE="$PWD/tmp/slf-profile" RERAIL_TAPE_CACHE="$PWD/tmp/slf-profile.sqlite" \
+  nice -n 19 rerail-engine run-policies /path/to/python/corpus "$PWD/tmp/slf-output" \
+  docs/rule-syntax/packs/python/ruff-slf001-private-member-access.rr
+```
+
+Open `tmp/slf-profile/profile.txt` and look for **Joins in authored rules**.
+Each entry names the relation and gives the file and line of its definitions.
+A reader entry identifies the clause that reads the relation and the columns that lack a lookup value.
+
+On a 100-file PostHog run, the readers of `slf_class_head` requested 46 distinct pairs.
+The engine checked the requested pairs directly. The rule author can keep the original clause.
+
+For a shared cache, the profile shows the plan choice, the observed cache size when available, and the cache limit.
+The limit applies to optional pairs. Factors and required output use additional memory.
+A run that reuses all findings has no new join measurements.
+
 ## Run a bounded workload
 
 Use Python 3.9 or later. Use the normal Node development environment.

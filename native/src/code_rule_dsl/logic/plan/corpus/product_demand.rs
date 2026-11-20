@@ -9,10 +9,13 @@ use crate::code_rule_dsl::logic::plan::fields::Fields;
 use crate::code_rule_dsl::logic::program_image::Version;
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(super) mod deferred;
 mod nullable;
 mod upstream;
 
 pub(in crate::code_rule_dsl::logic::plan) const PREFIX: &str = "rr_product_demand_";
+
+pub(in crate::code_rule_dsl::logic::plan) const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
 
 fn atom(name: String, args: &[Term]) -> Atom {
     Atom {
@@ -193,7 +196,8 @@ pub(super) fn has_products(v: &Version, f: &Fields<'_>) -> bool {
 }
 
 fn refusal(relation: &str, reason: impl std::fmt::Display) -> String {
-    format!("unbounded node Cartesian product in `{relation}`: {reason}")
+    let source = crate::code_rule_dsl::logic::profile::author_joins::source_name(relation, None);
+    format!("unbounded node Cartesian product in `{source}`: {reason}")
 }
 
 fn guard(rule: &Rule) -> Literal {
@@ -318,7 +322,11 @@ fn rewrite_products(program: &mut Program, mut demanded: BTreeSet<String>) -> Re
             let available = contexts(reader, own.then_some(&own_guard), &demanded);
             for read in reads {
                 let a = read.atom().expect("a read of a demanded relation");
-                let from_reader = || format!("the read in `{}` has no connected demand", reader.head.rel);
+                let from_reader = || {
+                    let source = crate::code_rule_dsl::logic::profile::author_joins::source_name(&reader.head.rel, Some(&a.rel));
+                    let columns = program.decls[&a.rel].iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ");
+                    format!("the read in `{source}` has no connected demand for ({columns})")
+                };
                 if !matches!(read, Literal::Atom(_)) || a.gated || !a.args.iter().all(plain) {
                     return Err(refusal(&a.rel, from_reader()));
                 }

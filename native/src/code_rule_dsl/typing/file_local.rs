@@ -185,6 +185,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 
 pub mod split_memo;
 mod shape;
+mod deferred_cache;
 mod on_version;
 pub use on_version::FileLocal;
 mod passes;
@@ -1261,9 +1262,30 @@ const FACTOR_COPIES: usize = 8;
 ///
 /// Returns a line per relation factorized. A relation whose parts the split does not find file-local is left whole.
 pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
+    factorize(prog, None, false).0
+}
+
+type FactorCaches = std::collections::BTreeMap<String, Option<(String, String, usize)>>;
+
+/// Keep a shared-key intermediate as reduced factors, also within a document or within the global plan.
+/// The caller supplies single-definition, nonrecursive candidates and checks all their non-rule uses.
+pub(crate) fn factorize_intermediates(
+    prog: &mut crate::code_rule_dsl::logic::front::Program,
+    candidates: &std::collections::BTreeSet<String>,
+    cache_reused: bool,
+) -> (Vec<String>, FactorCaches) {
+    if candidates.is_empty() { return (Vec::new(), Default::default()); }
+    factorize(prog, Some(candidates), cache_reused)
+}
+
+fn factorize(
+    prog: &mut crate::code_rule_dsl::logic::front::Program,
+    intermediates: Option<&std::collections::BTreeSet<String>>,
+    cache_reused: bool,
+) -> (Vec<String>, FactorCaches) {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
-    let local = split(prog);
+    let local = if intermediates.is_none() { split(prog) } else { Default::default() };
     // A cross-file native reads its inputs whole there; a file-local one reads them in the chunk, which the
     // factorized store leaves as they are.
     let natives_read: BTreeSet<&str> = prog.natives.iter().filter(|(rel, _)| !local.contains(rel.as_str())).flat_map(|(_, n)| n.reads()).collect();
@@ -1297,7 +1319,7 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
     for (rel, read) in &reads {
         let rel = *rel;
         let engine = rel.starts_with("magic_") || rel.starts_with("done_") || rel.contains("__");
-        if !local.contains(rel)
+        if !intermediates.map_or_else(|| local.contains(rel), |names| names.contains(rel))
             || unfit.contains(rel)
             || engine
             || prog.outputs.iter().any(|o| o == rel)
@@ -1346,14 +1368,14 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
                 _ => false,
             })
         });
-        if binds {
+        if binds || intermediates.is_some() {
             chosen.insert(rel.to_owned(), plan);
         }
     }
     // Made, checked by the split, and made again without the relations whose parts it does not find file-local.
     loop {
         if chosen.is_empty() {
-            return Vec::new();
+            return (Vec::new(), Default::default());
         }
         let mut used = std::collections::HashMap::new();
         let mut next = prog.clone();
@@ -1361,6 +1383,19 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
         let mut made: BTreeMap<String, Vec<String>> = BTreeMap::new();
         // Per relation, per rule: the parts' atoms over the rule's own variables.
         let mut stands: BTreeMap<String, Vec<(Vec<String>, Vec<Atom>)>> = BTreeMap::new();
+        let mut caches = BTreeMap::new();
+        // Split a reader at most once, including when it mentions several different products.
+        let cacheable: BTreeSet<_> = chosen.keys().filter(|rel| cache_reused
+            && chosen[*rel].len() == 1 && chosen[*rel][0].1.len() == 2
+            && reads[rel.as_str()].len() > 1
+            && reads[rel.as_str()].iter().all(|&(ri, _)| prog.rules[ri].body.iter()
+                .filter_map(Literal::atom).filter(|a| chosen.contains_key(a.rel.as_str())).count() == 1)
+        ).collect();
+        // Across these optional caches the number of joined witnesses is at most this allowance.
+        // Both factors are sets. Even a single shared hot key contributes at most |left| * |right|.
+        let allowance = std::env::var_os("RERAIL_JOIN_CACHE_ROWS").map_or(4096, |s|
+            s.to_str().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0)).min(i64::MAX as usize);
+        let pair_limit = allowance / cacheable.len().max(1);
         for (rel, plan) in &chosen {
             let rules = &rules_of[rel.as_str()];
             let mut shown = Vec::new();
@@ -1391,8 +1426,12 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
                         break;
                     };
                     let content = format!("{rel}({}) :- {}", iface.join(", "), part.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "));
-                    let name = helper_name("fz", rel, &content, |n| prog.decls.contains_key(n), &mut used);
+                    let name = helper_name("fz", rel, &content, |n| prog.decls.contains_key(n)
+                        || (intermediates.is_some() && prog.decls.contains_key(format!("fzk{}", &n[2..]).as_str())), &mut used);
                     next.decls.insert(name.clone().into(), cols.clone().into());
+                    if intermediates.is_some() {
+                        next.qualifiers.entry(name.clone()).or_default().insert("no_inline".to_owned());
+                    }
                     let kname = format!("fzk{}", &name["fz".len()..]);
                     next.decls.insert(kname.clone().into(), [cols.last().cloned().expect("the key")].into());
                     // A part's key reduces the other parts as a semijoin, stored so it holds each key once. Inlined,
@@ -1406,6 +1445,11 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
                 }
                 if !ok {
                     break;
+                }
+                if pair_limit > 0 && cacheable.contains(rel) {
+                    let cache = deferred_cache::install(&mut next, rule, &atoms, reads[rel.as_str()].len(), pair_limit);
+                    caches.insert(rel.clone(), cache);
+                    shown.push(format!("cache if factor row counts multiply to at most {pair_limit}"));
                 }
                 for (i, (atom, body)) in atoms.iter().zip(&bodies).enumerate() {
                     next.rules.push(Rule { head: keys[i].clone(), body: body.clone().into() });
@@ -1423,7 +1467,8 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
             if !ok {
                 continue;
             }
-            lines.push(format!("{rel}: handed on as parts, each reduced by the others' keys, read in {} cross-file rules; {}", reads[rel.as_str()].len(), shown.join("; ")));
+            let scope = if intermediates.is_some() { "reader" } else { "cross-file" };
+            lines.push(format!("{rel}: handed on as parts, each reduced by the others' keys, read in {} {scope} rules; {}", reads[rel.as_str()].len(), shown.join("; ")));
             stands.insert(rel.clone(), per_rule);
         }
         // The relation's rules go; each read becomes the parts of each of its rules, the key and the variables the
@@ -1444,16 +1489,37 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
                     continue;
                 };
                 let Literal::Atom(read) = &rule.body[at] else { unreachable!() };
+                let mut cold = None;
+                if let Some((eager, small)) = caches.get(read.rel.as_str()) {
+                    let mut copy = rule.clone();
+                    let Literal::Atom(a) = &mut copy.body.make_mut()[at] else { unreachable!() };
+                    a.rel = eager.clone();
+                    rules.push(copy);
+                    let mut large = small.clone();
+                    large.neg = true;
+                    cold = Some(Literal::Atom(large));
+                }
                 for (head, atoms) in &stands[read.rel.as_str()] {
+                    // A user variable in the reader can have the generated witness's spelling.
+                    let mut witness_depth = depth + 1;
+                    if intermediates.is_some() {
+                        let mut occupied = rule.head.vars();
+                        occupied.extend(rule.body.iter().flat_map(Literal::vars));
+                        while atoms.iter().flat_map(Atom::vars).filter(|v| !head.contains(v))
+                            .any(|v| occupied.contains(&format!("fz{witness_depth}_{v}"))) {
+                            witness_depth += 1;
+                        }
+                    }
                     let to = |v: &str| -> Term {
                         match head.iter().position(|h| h == v) {
                             Some(i) => read.args[i].clone(),
-                            None => Term::Var(format!("fz{}_{v}", depth + 1).into()),
+                            None => Term::Var(format!("fz{witness_depth}_{v}").into()),
                         }
                     };
                     let parts = atoms.iter().map(|a| Literal::Atom(Atom { rel: a.rel.clone(), args: a.args.iter().map(|t| if let Term::Var(v) = t { to(v) } else { t.clone() }).collect(), neg: false, gated: false }));
                     let mut copy = rule.clone();
                     copy.body.splice(at..=at, parts);
+                    if let Some(gate) = &cold { copy.body.push(gate.clone()); }
                     work.push((copy, depth + 1));
                 }
             }
@@ -1462,12 +1528,21 @@ pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program)
         next.rules = rules;
         for rel in stands.keys() {
             next.decls.remove(rel.as_str());
+            if intermediates.is_some() { next.qualifiers.remove(rel); }
+        }
+        if intermediates.is_some() {
+            *prog = next;
+            let choices = stands.into_keys().map(|rel| {
+                let cache = caches.remove(&rel).map(|(pairs, guard)| (guard.rel.to_string(), pairs.to_string(), pair_limit));
+                (rel, cache)
+            }).collect();
+            return (lines, choices);
         }
         let now = split(&next);
         let failed: Vec<String> = made.iter().filter(|(_, parts)| parts.iter().any(|p| !now.contains(p))).map(|(r, _)| r.clone()).collect();
         if failed.is_empty() {
             *prog = next;
-            return lines;
+            return (lines, Default::default());
         }
         for r in failed {
             chosen.remove(&r);

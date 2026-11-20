@@ -50,6 +50,8 @@ use rows::Rows;
 /// A column's statistics in a fixed size (decision 0112): no index is kept for them.
 pub mod sketch;
 use sketch::Sketch;
+mod join_filter;
+mod join_cache;
 pub mod rowcode;
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rusqlite::ffi;
@@ -2087,6 +2089,7 @@ pub fn close(conn: impl Scoped, name: &str) -> Result<()> {
         for rel in rels {
             let moved = InRel::moved(rel);
             let table = moved.name.get().cloned().unwrap_or_default();
+            crate::code_rule_dsl::logic::profile::author_joins::observe(&table, || moved.rows());
             derived.insert(table, Arc::new(moved));
         }
     }
@@ -4026,6 +4029,7 @@ pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
 pub fn hold_as(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
     let conn = conn.db();
     forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
     on(&conn).derived.lock().insert(table.to_owned(), rel);
 }
 
@@ -4039,6 +4043,7 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vec<i64>>, types: Ve
     let mut rel = InRel::flat(&rows, types);
     Arc::get_mut(&mut rel).unwrap().stored = 0;
     forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
     on(&conn).derived.lock().insert(table.to_owned(), rel);
     Ok(())
 }
@@ -4056,6 +4061,7 @@ pub fn hold_view_in_place(conn: impl Scoped, table: &str, src: Arc<dyn crate::co
     let rel = Arc::new(InRel { vers: Default::default(), viewed: true, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
     on(&conn).derived.lock().insert(table.to_owned(), rel);
 }
 
@@ -4066,6 +4072,7 @@ pub fn hold_source(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule
     let rel = InRel::over_source(src, types);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
     on(&conn).derived.lock().insert(table.to_owned(), rel);
 }
 
@@ -4097,6 +4104,7 @@ pub fn hold_view(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_d
     let rel = Arc::new(rel);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
     on(&conn).derived.lock().insert(table.to_owned(), rel);
     live
 }
@@ -4148,6 +4156,7 @@ pub fn held_source(conn: impl Scoped, table: &str) -> Option<Arc<dyn crate::code
 pub fn hold_empty(conn: impl Scoped, table: &str, types: Vec<u8>) {
     let conn = conn.db();
     forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || 0);
     on(&conn).derived.lock().insert(table.to_owned(), InRel::flat(&[], types));
 }
 
@@ -4157,6 +4166,7 @@ pub fn hold_rows(conn: &Connection, table: &str, types: Vec<u8>, rows: Vec<i64>,
     let rel = InRel::kept(types, rows, n);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
     on(&conn).derived.lock().insert(table.to_owned(), rel);
 }
 
@@ -6554,13 +6564,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      /// Per atom step, the slots it binds that the steps before `upto` read, and `upto` (`factored`):
                      /// a row whose rest of the body fails before reaching `upto` fails by those values alone.
                      factor: Vec<Option<Factor>>,
+                     screen: Option<&'a join_filter::JoinFilter>,
                      /// The deepest step entered (`go`), so a factored step knows where its row's descent stopped.
                      deep: usize,
                      /// Per such step, in its current probe, the values of those slots the rest of the body failed for,
                      /// each with what that failure added to the steps' counts from this step on (`counts[i..]`, in
                      /// and out per step): a row passed over adds them again, so the counts are the join's rows, as
                      /// the walk with no factoring (and the device) counts them; only the work is saved.
-                     failed: Vec<rustc_hash::FxHashMap<[i64; FACTOR_MAX], Box<[u64]>>>,
+                     failed: Vec<join_cache::Failures>,
                      /// The counts from a factored step on, before its row's descent (a stack: descents nest).
                      snap: Vec<u64>,
                      /// Rows passed over by `failed`: read and tested, not joined on.
@@ -6872,6 +6883,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         }
         match step {
             Step::Atom { src, neg, keys, binds, tests } => {
+                if i == 1 && cx.screen.is_some_and(|f| f.rejects(slots)) { return; }
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let given = if i == 0 { cx.first.take() } else { None };
@@ -6983,7 +6995,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 // (`factored`): it is passed over, not joined on. `pfn`'s `pcall__ins` by `$o` gave 733,692 rows, each
                 // tested against `fv` by `$m` alone and every one rejected, where few distinct `$m` were tested.
                 let factor = if exists { None } else { cx.factor[i] };
-                if factor.is_some() && !cx.failed[i].is_empty() { cx.failed[i].clear(); }
+                if factor.is_some() { cx.failed[i].begin_probe(); }
                 let found = rows.each(cands, need, |id, row| {
                     if cx.stop { return true; }
                     if rows.dead(id) || only.as_ref().is_some_and(|o| !o.has(id)) { return false; }
@@ -7005,9 +7017,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         cx.snap.extend(cx.counts[i..].iter().flatten().map(std::cell::Cell::get));
                         go(cx, i + 1, slots);
                         // Stopped before `upto`: only `read` of this row's bindings was looked at.
-                        if cx.n == made && cx.deep < upto && cx.error.is_none() {
-                            let added: Box<[u64]> = cx.counts[i..].iter().flatten().zip(&cx.snap[at..]).map(|(c, b)| c.get() - b).collect();
-                            cx.failed[i].insert(key, added);
+                        if cx.n == made && cx.deep < upto && cx.error.is_none() && !cx.stop {
+                            let added = cx.counts[i..].iter().flatten().zip(&cx.snap[at..]).map(|(c, b)| c.get() - b);
+                            cx.failed[i].record(&key, cx.snap.len() - at, added);
                         }
                         cx.snap.truncate(at);
                         cx.deep = cx.deep.max(deep);
@@ -7300,6 +7312,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         struct Out { n: u64, fresh: Fresh, rows: Vec<i64>, counts: Vec<[u64; 2]>, skipped: u64, work: u64, failed: Option<String>, error: Option<Error>,
                      left: Option<Vec<u32>>, texts: Vec<String> }
         let (head, collecting, cut_from, cap) = (cx.head, cx.collect.is_some(), cx.cut_from, cx.cap);
+        let screen = cx.screen;
         let atoms = Arc::clone(&cx.syms.atoms);
         let mut outs: Vec<Option<Out>> = (0..parts).map(|_| None).collect();
         crate::threads::scope(|jobs| {
@@ -7314,7 +7327,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap, pending: Vec::new(),
                                       scratch: j.steps.iter().map(|_| rowcode::Scratch::default()).collect(), texts: Vec::new(),
                                       collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
-                                      factor, failed, snap: Vec::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
+                                      factor, screen, failed, snap: Vec::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
                                       only_step: usize::MAX, only: None, list0: None, cut_from,
                                       counts: j.counts.iter().map(|_| Default::default()).collect(), first: Some((rows_of_first(src, store), first)),
                                       left0: None, clock: StepClock::start(j.steps.len()) };
@@ -7510,8 +7523,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let scratch = j.steps.iter().map(|_| rowcode::Scratch::default()).collect();
     let factor = factored(j);
     let failed = factor.iter().map(|_| Default::default()).collect();
+    let screen = if limit.is_none() && each.is_none() && paired.is_none() && preset.is_empty() {
+        join_filter::JoinFilter::choose(j, store)
+    } else { None };
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: vec![None; j.steps.len()],
-                       factor, failed, snap: Vec::new(), skipped: 0, deep: 0,
+                       factor, screen: screen.as_ref(), failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
                        cut_from: usize::MAX, counts: j.counts.iter().map(|_| Default::default()).collect(), first: None, left0: None,

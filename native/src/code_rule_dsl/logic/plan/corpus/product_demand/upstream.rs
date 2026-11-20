@@ -5,13 +5,13 @@ use super::{Context, PREFIX as PRODUCT, atom, connect, plain};
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Rule, Term, Value, components_of};
 use std::collections::{BTreeMap, BTreeSet};
 
-const PREFIX: &str = "rr_reader_demand_";
+pub(super) const PREFIX: &str = "rr_reader_demand_";
 
 fn is_demand(rel: &str) -> bool {
     rel.starts_with(PREFIX) || rel.starts_with(PRODUCT)
 }
 
-fn eligible(program: &Program, rel: &str) -> bool {
+pub(super) fn eligible(program: &Program, rel: &str) -> bool {
     program.decls.contains_key(rel)
         && !program.outputs.iter().any(|r| r == rel)
         && !program.inputs.iter().any(|r| r == rel)
@@ -121,7 +121,18 @@ fn install(
     products: &BTreeSet<String>,
     require_anchor: bool,
 ) -> bool {
-    let name = format!("{PREFIX}{rel}");
+    install_named(program, rel, cols, products, require_anchor, PREFIX)
+}
+
+pub(super) fn install_named(
+    program: &mut Program,
+    rel: &str,
+    cols: &[usize],
+    products: &BTreeSet<String>,
+    require_anchor: bool,
+    prefix: &str,
+) -> bool {
+    let name = format!("{prefix}{rel}");
     if program.decls.contains_key(name.as_str()) {
         return false;
     }

@@ -661,10 +661,24 @@ pub struct Choice {
     pub why: &'static str,
 }
 
+/// Observations from one scan followed by a keyed probe, before the walker selects its lookup.
+#[derive(Clone, Copy, Debug)]
+pub struct BloomProbeInput {
+    pub probe_rows: usize,
+    pub build_rows: usize,
+    pub distinct_overlap: Option<f64>,
+    pub sampled: usize,
+    pub rejected: usize,
+}
+
 /// A batch prediction of the candidates' work (decision 0203 §2): one call per round, a price per candidate. The
 /// planner's estimates stand where none is set, or where it answers `None`.
 pub trait Pricer: Send + Sync {
     fn price(&self, round: &[Choice]) -> Option<Vec<Vec<f64>>>;
+    /// Rank a bounded pair cache against reading its factors at each reader. The caller first proves
+    /// that the cache fits. Keep predictions deterministic for an analysis and its retained state.
+    fn cache_pairs(&self, _input: PairCacheInput) -> Option<bool> { None }
+    fn use_bloom(&self, _input: BloomProbeInput) -> Option<bool> { None }
 }
 
 /// The machine's batch pricer, the learned model's (decision 0442: the machine's), and whether one is set.
@@ -675,7 +689,21 @@ fn pricer() -> Arc<Pricing> {
     super::super::profile::machine::<Pricing>()
 }
 
+/// The pair caches' admission hook (`strings::functions::PairCacheInput`), as the pricer sees it.
+pub use crate::code_rule_dsl::logic::strings::functions::PairCacheInput;
+
+pub(crate) fn use_bloom(input: BloomProbeInput) -> bool {
+    if pricing() {
+        let pricer = pricer().0.read().clone();
+        if let Some(choice) = pricer.and_then(|p| p.use_bloom(input)) { return choice; }
+    }
+    input.rejected * 2 >= input.sampled
+}
+
 pub fn set_pricer(p: Option<Arc<dyn Pricer>>) {
+    // The pair caches' admission (`rr_admit_pairs`, in a crate below) asks the same machine's pricer.
+    let admit = p.clone().map(|p| Arc::new(move |input| p.cache_pairs(input)) as Arc<dyn Fn(PairCacheInput) -> Option<bool> + Send + Sync>);
+    *super::super::profile::machine::<crate::code_rule_dsl::logic::strings::functions::PairAdmission>().0.write() = admit;
     let held = pricer();
     held.1.store(p.is_some(), Relaxed);
     *held.0.write() = p;

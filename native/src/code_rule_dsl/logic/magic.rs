@@ -580,7 +580,9 @@ impl Adorn<'_> {
                 return None;
             }
             let a = |i: usize| positive(&rest[i]).expect("a positive atom");
-            let first = |i: usize| is_const(&a(i).args[0]) || matches!(&a(i).args[0], Term::Var(v) if bound.contains(v.as_str()));
+            // A nullary predicate is an existence test. It can run with no bindings.
+            let first = |i: usize| a(i).args.first()
+                .is_none_or(|key| is_const(key) || matches!(key, Term::Var(v) if bound.contains(v.as_str())));
             let derived = |i: usize| self.idb.contains(a(i).rel.as_str());
             let joined: Vec<usize> = pos.iter().copied().filter(|&i| !a(i).vars().is_disjoint(&bound)).collect();
             let lowest = |ix: &[usize], key: &dyn Fn(usize) -> i64| {

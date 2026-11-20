@@ -230,7 +230,15 @@ impl<'v> Body<'v> {
         (0..self.len()).find(|&i| {
             self.plain_atom(i).is_some_and(|a| {
                 let rel = self.rel(a);
-                !a.neg() && (rel.contains("rr_demand_agg_") || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
+                !a.neg() && (rel.contains("rr_demand_agg_")
+                    || rel.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_small")).is_some_and(|base|
+                        super::super::front::shape_base(head).strip_prefix("rr_pair_cache_")
+                            .and_then(|s| s.strip_suffix("_pairs")) == Some(base))
+                    || ["demand_", super::corpus::product_demand::PREFIX].iter().any(|&p| rel.strip_prefix(p) == Some(head))
+                    // Maintenance gives each witness rule a support head (wide__sup0). It needs the same
+                    // driving request as wide itself. An explicitly driving delta still takes precedence.
+                    || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS)
+                        .is_some_and(|producer| producer == super::super::front::shape_base(head)))
             })
         })
     }
