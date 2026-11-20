@@ -209,9 +209,9 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
         if !Arc::ptr_eq(p.block(), b) {
             return refused("views.refused.block");
         }
-        let first = batch.nodes[i] as u32;
+        let first = batch.nodes()[i] as u32;
         let loc = loc_rows.get(i).map_or(0, |&r| r as u32);
-        let mut row = ViewRow { rows: [first, batch.children[i] as u32, batch.fields[i] as u32, first, first, loc, loc, loc, loc], ..Default::default() };
+        let mut row = ViewRow { rows: [first, batch.offsets(View::Child)[i] as u32, batch.offsets(View::Field)[i] as u32, first, first, loc, loc, loc, loc], ..Default::default() };
         if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(b, p).is_none() {
             // Why, by the guest's placement where it has one.
             let why = match p.extra.as_ref().and_then(|x| x.host.as_ref()).map(|(_, place)| place) {
@@ -396,9 +396,9 @@ fn build_in(batch: &Batch) -> Chunk {
             (*d).key = p.key;
             (*d).tag = u32::from(p.tag);
             (*d).nodes = p.len();
-            (*d).node_row = batch.nodes[i] as u32;
-            (*d).child_row = batch.children[i] as u32;
-            (*d).field_row = batch.fields[i] as u32;
+            (*d).node_row = batch.nodes()[i] as u32;
+            (*d).child_row = batch.offsets(View::Child)[i] as u32;
+            (*d).field_row = batch.offsets(View::Field)[i] as u32;
             (*d).nfielded = p.fielded();
             (*d).preorder = u32::from(p.defs.is_none());
             // The tape node and the parent of each local id, made from the rank index and the tape (the host reads
@@ -440,9 +440,9 @@ fn build_in(batch: &Batch) -> Chunk {
     // SAFETY: the root, just allocated; its spans point into `b`.
     unsafe {
         (*root).ndocs = batch.docs.len() as u32;
-        (*root).nodes = *batch.nodes.last().unwrap_or(&0) as u32;
-        (*root).children = *batch.children.last().unwrap_or(&0) as u32;
-        (*root).fields = *batch.fields.last().unwrap_or(&0) as u32;
+        (*root).nodes = *batch.nodes().last().unwrap_or(&0) as u32;
+        (*root).children = *batch.offsets(View::Child).last().unwrap_or(&0) as u32;
+        (*root).fields = *batch.offsets(View::Field).last().unwrap_or(&0) as u32;
         Span::set(&raw const (*root).docs, docs, batch.docs.len());
     }
     let at = b.offset_of(root);

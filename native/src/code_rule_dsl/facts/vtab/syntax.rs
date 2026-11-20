@@ -54,6 +54,8 @@ use core_rr::Family;
 pub mod guests;
 pub mod granules;
 pub mod ranks;
+/// A batch's documents and rows, each made when first read (decision 0474).
+pub mod made;
 mod cells;
 /// A projection's numbering's reads, written once in CLIF (`rerail_clif::id_reads`, decision 0353 step 2).
 #[rustfmt::skip]
@@ -412,15 +414,15 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
 /// engine's `func` step and SQL's functions find it on the run's connection, so a text is read from the batch the run
 /// reads, never from a process-wide or per-thread table of batches by document key.
 pub struct LongTexts {
-    nodes: Relation,
+    nodes: Arc<dyn Source>,
     batch: Arc<Batch>,
     /// Each document key's place in `batch.docs`.
     docs: HashMap<u32, usize>,
 }
 
 impl LongTexts {
-    fn new(nodes: Relation, batch: &Arc<Batch>) -> Self {
-        let docs = batch.docs.iter().enumerate().map(|(i, p)| (p.key, i)).collect();
+    fn new(nodes: Arc<dyn Source>, batch: &Arc<Batch>) -> Self {
+        let docs = batch.docs.keys().iter().enumerate().map(|(i, &k)| (k, i)).collect();
         Self { nodes, batch: Arc::clone(batch), docs }
     }
 
@@ -527,6 +529,9 @@ impl Source for LongTexts {
     fn python_batch(&self) -> Option<Arc<Batch>> {
         Some(Arc::clone(&self.batch))
     }
+    fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
+        self.nodes.rows_of_documents(docs)
+    }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
@@ -560,8 +565,20 @@ impl Source for LongTexts {
 }
 
 /// The batch's relation `name` as a source: `rr_long_text_node` with the batch (`LongTexts`), any other as rows.
-fn as_source(name: &str, rows: Relation, batch: &Arc<Batch>) -> Arc<dyn Source> {
-    if name == LONG_TEXT_NODES { Arc::new(LongTexts::new(rows, batch)) } else { Arc::new(rows) }
+fn as_source(name: &str, rows: Arc<dyn Source>, batch: &Arc<Batch>) -> Arc<dyn Source> {
+    if name == LONG_TEXT_NODES { Arc::new(LongTexts::new(rows, batch)) } else { rows }
+}
+
+/// The batch's relations, each over its groups (`made::MadeRows`, decision 0474), but those of the batch's own the
+/// program derives (`Projection::derived`): each name, whether it is one of the batch's own, and its source.
+pub fn made_sources(batch: &Arc<Batch>) -> Vec<(&str, Option<&'static str>, Arc<dyn Source>)> {
+    let rows = &batch.rows;
+    rows.names
+        .iter()
+        .enumerate()
+        .filter(|(rel, name)| *rel >= rows.relations || !batch.projection.derived.contains(name.as_str()))
+        .map(|(rel, name)| (name.as_str(), rows.statics.get(rel).copied(), as_source(name, Arc::new(made::MadeRows { batch: Arc::clone(batch), rel }), batch)))
+        .collect()
 }
 
 /// The relation of the nodes whose text `@rr_node_text` reads, bound with the batch every node read goes through
@@ -2263,23 +2280,22 @@ impl Projected {
 
 /// One wave's documents, sorted by key, and the row offsets of the views.
 pub struct Batch {
-    pub docs: Vec<Projected>,
-    /// The documents' keys, in their order (ascending): the index a node's document is searched in (`doc`). Searched
-    /// in `docs` itself, each step read a different projection's line (Q220: `Batch::node` was a fifth of a join's
-    /// view reads).
-    keys: Vec<u32>,
+    /// Its documents, each one's projection made on its first read (decision 0474).
+    pub docs: made::Docs,
     /// Each document's tape, for W's values answered on request (`LongTexts::value_any`, decision 0174), and its values,
     /// read off it at the first request; empty where no program asks for values.
     valued: Vec<Option<Valued>>,
-    pub dialects: Dialects,
-    pub nodes: Vec<usize>,
-    children: Vec<usize>,
-    fields: Vec<usize>,
-    siblings: Vec<usize>,
-    /// Nodes and spans (`Projected::locs`).
-    locs: OnceLock<Vec<usize>>,
-    /// The `node` view's rows by kind (`by_kind`), made at the first lookup by kind.
-    kinds: OnceLock<KindRows>,
+    pub dialects: Arc<Dialects>,
+    /// The documents of each tape tag, ascending: a probe by kind reads its language's documents alone (a batch's
+    /// guests are documents of other languages, most of a Python batch's).
+    of_tag: [Vec<u32>; 256],
+    /// The views' row offsets by document: nodes, children, fielded nodes, siblings, and nodes and spans
+    /// (`Projected::locs`).
+    offsets: made::Offsets,
+    /// The `node` view's rows by kind, one index for each tape tag the batch has documents of (`of_tag`), made at the
+    /// first lookup of one of its kinds over that tag's documents alone (Q183; decision 0474: a guest's language stays
+    /// unmade).
+    kinds: Vec<(u8, OnceLock<KindRows>)>,
     shape: Shape,
     /// The registered lazy families (`Families`, Python's `py.*`: list step 25), by registration; `None` for one
     /// whose dialect has no document in the batch.
@@ -2293,6 +2309,18 @@ pub struct Batch {
     /// The batch's chunk (decision 0289): its views' arrays, made on the device's first read of a view.
     #[cfg(target_os = "macos")]
     chunk: OnceLock<device_chunk::Chunk>,
+    /// What a group's rows are made with (`make_rows`): the projection, the `match_all` regexes, the markers of the
+    /// `fstring_template` atoms, the span prefilter's binding, the store's atoms, and the `ast` matchers' wave.
+    projection: Arc<Projection>,
+    matches: Vec<Arc<regex::Regex>>,
+    markers: Vec<String>,
+    metal: bool,
+    atoms: Arc<crate::content_store::atoms::Atoms>,
+    wave: Option<(Matchers, crate::code_rule_dsl::facts::nearest::Binding)>,
+    /// The rows made, by group (decision 0474).
+    rows: made::Rows,
+    /// Each relation's rows, by name, as its kept statistics count them (`give_totals`, decision 0474).
+    given_rows: OnceLock<HashMap<String, usize>>,
 }
 
 /// The `node` view's rows by kind: an index of the view (decision 0353: an index in its relation's place, not a copy of
@@ -2310,10 +2338,12 @@ struct KindRows {
 }
 
 impl KindRows {
-    fn new(b: &Batch) -> Self {
-        let mut all: Vec<(i64, u32, u32, u32)> = Vec::with_capacity(b.nodes.last().copied().unwrap_or(0));
-        for (doc, p) in b.docs.iter().enumerate() {
-            let Some(dialect) = b.dialects.get(p.tag) else { continue };
+    /// Over the documents of tape tag `tag` alone (`Batch::of_tag`).
+    fn new(b: &Batch, tag: u8) -> Self {
+        let mut all: Vec<(i64, u32, u32, u32)> = Vec::new();
+        let Some(dialect) = b.dialects.get(tag) else { return KindRows { keys: Vec::new(), starts: vec![0], at: Vec::new() } };
+        for &doc in &b.of_tag[usize::from(tag)] {
+            let p = &b.docs[doc as usize];
             all.extend(p.nodes().map(|(l, x)| (dialect.kind(&p.facts, x), doc as u32, l, x)));
         }
         // Stable: within a kind, the rows stay in order.
@@ -2395,6 +2425,8 @@ pub trait Families: Send + Sync {
 pub trait BoundFamilies: Send + Sync {
     /// The rows of the `family`th relation over `batch`'s documents.
     fn rows<'b>(&'b self, batch: &'b Batch, family: usize) -> &'b Relation;
+    /// Whether the `family`th relation's rows are made (a `len` before then is the count given, decision 0474).
+    fn is_made(&self, family: usize) -> bool;
     /// The families as their own type, for the family's other readers (Python's candidates and demand).
     fn as_any(&self) -> &dyn std::any::Any;
 }
@@ -2471,7 +2503,22 @@ impl Source for FamilySource {
         families()[self.at].columns()[self.family].iter().map(|c| (*c).to_owned()).collect()
     }
     fn len(&self) -> usize {
-        self.rows().len()
+        // The rows as their kept statistics count them, until they are made (decision 0474); then checked by them.
+        let given = self.batch.given_rows(families()[self.at].names()[self.family]);
+        let made = self.batch.families[self.at].as_ref().is_none_or(|b| b.is_made(self.family));
+        match given {
+            Some(n) if !made => n,
+            _ => {
+                let len = self.rows().len();
+                if let Some(n) = given.filter(|&n| n != len) {
+                    self.batch.docs.fail(format!("{}: {len} rows made, its kept statistics counted {n} (decision 0474)", families()[self.at].names()[self.family]));
+                }
+                len
+            }
+        }
+    }
+    fn failure(&self) -> Option<String> {
+        self.batch.docs.failure()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.rows().estimated_matches(column, batch)
@@ -3258,14 +3305,116 @@ impl NodeRows {
 pub static BATCHES: parking_lot::Mutex<Vec<(Vec<u32>, std::sync::Weak<Batch>)>> = parking_lot::Mutex::new(Vec::new());
 
 impl Batch {
-    /// Projects each document and interns the batch's strings; the documents' keys are distinct.
-    /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`), and those
-    /// of core.rr's the program `reads` that T had not (`Extra`), the `match_all` relations among them (of `matches`)
-    /// apart. A text-only document (`core::TEXT`) has the document's relations and its text's, and no node.
-    /// Also returns the batch's distinct strings and their symbols: its vocabulary, which text tests read
-    /// (`logic::strings::Vocabulary`, decision 0037).
-    #[allow(clippy::type_complexity)]
+    /// The batch of `documents` (their keys distinct), none of them made (decision 0474): a document's projection is
+    /// made on its first read, its rows in a group with those the read needs (`ensure`). What a group makes is named
+    /// here, by an empty group's relations. `wave` runs the program's `ast` matchers over a group's tapes. `given`:
+    /// documents' views' counts, by key, as the documents' table keeps them (decision 0474), which the views' row
+    /// space is counted from where given; a document made whose counts differ fails, named.
     #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        store: &ContentStore,
+        documents: Vec<Document>,
+        projection: &Projection,
+        matches: &[Arc<regex::Regex>],
+        markers: &[String],
+        metal: bool,
+        wave: Option<(Matchers, crate::code_rule_dsl::facts::nearest::Binding)>,
+        given: &HashMap<u32, made::ViewCounts>,
+    ) -> StoreResult<Arc<Self>> {
+        let shape = projection.shape;
+        let mut documents = documents;
+        documents.sort_by_key(|d| d.key);
+        if documents.windows(2).any(|w| w[0].key == w[1].key) {
+            return Err(StoreError::Invalid("a batch holds a document key twice".into()));
+        }
+        let tag_of = |d: &Document| crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
+        let mut dialects = Dialects::default();
+        for d in &documents {
+            if tag_of(d) != TEXT {
+                dialects.get_or_new(tag_of(d))?;
+            }
+        }
+        // The batch's block: what the projections can take, the chunk's copies of the facts' arrays (4 bytes a node for
+        // each of `parent`, `start`, `end`, `kind`, `core.rr`'s places; `field`'s 2), its tables, and the starts of the
+        // axes the device solves (4 bytes a node; their rows are relations of their own, decision 0353 step 5). The
+        // block reserves address space, not memory.
+        let block = cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two());
+        // Decision 0055: each guest's host. A guest's key is past every file's (`corpus::guests`).
+        let host: HashMap<u32, u32> = documents.iter().filter_map(|d| d.guest.as_ref().map(|g| (d.key, g.host))).collect();
+        // W's values on request (decision 0174): the tapes of the documents W reads values of.
+        let valued: Vec<Option<Valued>> = if projection.derived.contains(VALUE_REQ) {
+            documents
+                .iter()
+                .map(|d| d.tape.clone().filter(|_| dialects.get(tag_of(d)).is_some_and(|x| x.values)).map(|(tape, file)| Valued { tape, file, values: OnceLock::new() }))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut of_tag: [Vec<u32>; 256] = std::array::from_fn(|_| Vec::new());
+        for (doc, d) in documents.iter().enumerate() {
+            of_tag[usize::from(tag_of(d))].push(doc as u32);
+        }
+        // Each lazy family's strings, where the batch has documents of its dialect, interned with the batch's.
+        let vocabulary: Vec<Option<u8>> = families().iter().map(|f| crate::code_rule_dsl::language::tape_tag(f.dialect()).filter(|&tag| dialects.get(tag).is_some())).collect();
+        let named: Vec<&str> = families().iter().zip(&vocabulary).filter(|(_, v)| v.is_some()).flat_map(|(f, _)| f.strings().iter().copied()).collect();
+        let mut atoms = store.intern_atoms(&named)?.into_iter();
+        let bound: Vec<Option<Box<dyn BoundFamilies>>> = families()
+            .iter()
+            .zip(vocabulary)
+            .map(|(f, v)| {
+                v.map(|tag| {
+                    let strings: Vec<i64> = f.strings().iter().map(|_| i64::from(atoms.next().expect("a family string's atom"))).collect();
+                    f.bind(tag, &dialects[tag].catalog, &strings, documents.len())
+                })
+            })
+            .collect();
+        let (dialects, projection) = (Arc::new(dialects), Arc::new(projection.clone()));
+        let n = documents.len();
+        let context = made::Context { dialects: Arc::clone(&dialects), projection: Arc::clone(&projection), block: Arc::clone(&block), host, failure: Default::default() };
+        let mut batch = Batch {
+            docs: made::Docs::new(documents, context, given),
+            valued,
+            dialects,
+            kinds: (0..=u8::MAX).filter(|&t| !of_tag[usize::from(t)].is_empty()).map(|t| (t, OnceLock::new())).collect(),
+            of_tag,
+            offsets: made::Offsets::default(),
+            shape,
+            families: bound,
+            made: BTreeSet::new(),
+            block,
+            #[cfg(target_os = "macos")]
+            chunk: OnceLock::new(),
+            projection,
+            matches: matches.to_vec(),
+            markers: markers.to_vec(),
+            metal,
+            atoms: store.atoms_handle(),
+            wave,
+            rows: made::Rows::new(n, Vec::new(), Vec::new(), Vec::new()),
+            given_rows: OnceLock::new(),
+        };
+        // What a group makes: an empty group's relations, which answer what each is before its rows are made.
+        let empty = batch.make_rows(&[])?;
+        batch.made = empty.read.clone();
+        let statics: Vec<&'static str> = empty.relations.iter().map(|(name, _)| *name).collect();
+        let template: Vec<(String, Arc<dyn Source>)> = empty
+            .relations
+            .into_iter()
+            .map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>))
+            .chain(empty.matched.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)))
+            .chain(empty.waved)
+            .collect();
+        let (names, template) = template.into_iter().unzip();
+        batch.rows = made::Rows::new(n, names, template, statics);
+        let batch = Arc::new(batch);
+        #[cfg(any(test, feature = "test-hooks"))]
+        BATCHES.lock().push((batch.docs.keys().to_vec(), Arc::downgrade(&batch)));
+        Ok(batch)
+    }
+
+    /// A batch with every document made, as one group, and that group's rows: the small relations, the `match_all`
+    /// relations apart, and the batch's distinct strings and their symbols (`make_rows`).
+    #[allow(clippy::type_complexity)]
     pub fn build(
         store: &ContentStore,
         documents: Vec<Document>,
@@ -3274,18 +3423,54 @@ impl Batch {
         markers: &[String],
         metal: bool,
     ) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, Vec<(String, Relation)>, (Vec<String>, Vec<u32>))> {
-        let shape = projection.shape;
+        let batch = Self::new(store, documents, projection, matches, markers, metal, None, &HashMap::new())?;
+        let made = batch.make_rows(&(0..batch.docs.len()).collect::<Vec<_>>())?;
+        Ok((batch, made.relations, made.matched, (made.strings, made.symbols)))
+    }
+
+    /// Whether the batch's documents are made by its probes: one given its documents' counts (decision 0474), whose
+    /// row space is known without making them. Its text tests are then probed, not scanned.
+    pub fn lazy(&self) -> bool {
+        self.docs.given_all()
+    }
+
+    /// Each document's views' counts, by key: the documents' table keeps them (decision 0474). A document neither made
+    /// nor given counts is made for them.
+    pub fn view_counts(&self) -> Vec<(u32, made::ViewCounts)> {
+        (0..self.docs.len()).map(|i| (self.docs.key(i), self.docs.counts(i))).collect()
+    }
+
+    /// `view_counts`, each with its document's digest (`Document::digest`): what the documents' table keeps.
+    pub fn kept_counts(&self) -> Vec<(u32, [u8; 32], made::ViewCounts)> {
+        (0..self.docs.len()).map(|i| (self.docs.key(i), self.docs.input(i).digest, self.docs.counts(i))).collect()
+    }
+
+    /// Each relation's rows, by name, as its kept statistics count them (decision 0474): a relation's `len` before
+    /// every document is made. Once every one is, a relation whose rows are not its count fails, named.
+    pub fn give_totals(&self, totals: &HashMap<String, usize>) {
+        self.rows.give_totals(totals);
+        let _ = self.given_rows.set(totals.clone());
+    }
+
+    /// Relation `rel`'s rows as `give_totals` gave them.
+    fn given_rows(&self, rel: &str) -> Option<usize> {
+        self.given_rows.get().and_then(|t| t.get(rel).copied())
+    }
+
+    /// The rows of the documents `group` (indexes, ascending), made together (decision 0474): the batch's small
+    /// relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`), those of core.rr's the program reads that T
+    /// had not (`Extra`), the `match_all` relations among them (of the batch's regexes) apart, and the `ast`
+    /// matchers'. A text-only document (`core::TEXT`) has the document's relations and its text's, and no node. Also
+    /// the group's distinct strings and their symbols: its vocabulary, which text tests read (decision 0037).
+    fn make_rows(&self, group: &[usize]) -> StoreResult<made::Made> {
+        let projection = &*self.projection;
+        let (shape, matches, markers, metal) = (projection.shape, &self.matches[..], &self.markers[..], self.metal);
+        let documents: Vec<&Document> = group.iter().map(|&i| self.docs.input(i)).collect();
         let core = shape == Shape::Core;
         // What the program reads, for the relations made only for a program that reads them (`Extra` and those beside
         // it); a projection that names none (T's, `Projection::core`'s) reads none of them.
         let none = BTreeSet::new();
         let reads = projection.reads.as_ref().unwrap_or(&none);
-        let mut documents = documents;
-        documents.sort_by_key(|d| d.key);
-        if documents.windows(2).any(|w| w[0].key == w[1].key) {
-            return Err(StoreError::Invalid("a batch holds a document key twice".into()));
-        }
-        let mut dialects = Dialects::default();
         let mut strings: Vec<String> = Vec::new();
         // Every string of every node passes here: Fx, not SipHash (a third of the projection's time with SipHash).
         let mut at: rustc_hash::FxHashMap<String, usize> = rustc_hash::FxHashMap::default();
@@ -3370,7 +3555,7 @@ impl Batch {
             use crate::code_rule_dsl::facts::span_prefilter::{RanOn, SpanEnds, launch as ends_launch};
             let filters: Vec<(usize, &Arc<dyn SpanEnds>)> = rx_spans.iter().enumerate().filter_map(|(i, (_, _, _, f))| f.as_ref().map(|f| (i, f))).collect();
             let mut out: Vec<Vec<Option<Vec<u64>>>> = vec![vec![None; rx_spans.len()]; documents.len()];
-            if !filters.is_empty() {
+            if !filters.is_empty() && !documents.is_empty() {
                 let mut at = Vec::new();
                 let mut sources: Vec<Arc<String>> = Vec::new();
                 let mut files: Vec<(usize, usize)> = Vec::new();
@@ -3394,67 +3579,17 @@ impl Batch {
             }
             out
         };
-        let mut docs: Vec<Projected> = Vec::with_capacity(documents.len());
-        // The batch's block: what the projections can take, the chunk's copies of the facts' arrays (4 bytes a node for
-        // each of `parent`, `start`, `end`, `kind`, `core.rr`'s places; `field`'s 2), its tables, and the starts of the
-        // axes the device solves (4 bytes a node; their rows are relations of their own, decision 0353 step 5). The
-        // block reserves address space, not memory.
-        let block = cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two());
         // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
         let mut g = GuestRows::default();
-        let mut lines_of: HashMap<u32, Arc<core_rr::Lines>> = HashMap::new();
-        // Each guest's file: its host's, through guests of guests. Files' keys are below every guest's, so a file
-        // is projected (and its lines known) before its guests; a guest's guests may come before it.
-        let host: HashMap<u32, u32> = documents.iter().filter_map(|d| d.guest.as_ref().map(|g| (d.key, g.host))).collect();
-        let file_of = |mut k: u32| {
-            for _ in 0..=host.len() {
-                match host.get(&k) {
-                    Some(&h) => k = h,
-                    None => break,
-                }
-            }
-            k
-        };
-        let mut withheld_at = Vec::with_capacity(documents.len());
         // The documents W reads no values of (`Dialect::values`).
         let mut unvalued: std::collections::HashSet<u32> = std::collections::HashSet::new();
-        for (j, d) in documents.iter().enumerate() {
+        for (j, (&i, d)) in group.iter().zip(&documents).enumerate() {
+            let made::MadeDoc { p, withheld, error } = self.docs.made(i);
+            let (withheld, tag) = (*withheld, self.docs.tag(i));
             // The document's own dialect (`Facts::tag`): a text-only document has none, and no node.
-            let tag = crate::code_rule_dsl::facts::core::facts_tag(&d.facts);
-            let dialect = if tag == TEXT {
-                None
-            } else {
-                Some(dialects.get_or_new(tag)?)
-            };
-            // `core.rr`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
-            // and `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document.
-            // A guest that does not parse is withheld too, unless the policy keeps its partial tree (decision 0055 §6).
+            let dialect = if tag == TEXT { None } else { self.dialects.get(tag) };
             let guest = d.guest.as_deref().filter(|_| core);
-            let error = match dialect {
-                Some(dialect) if (core && (projection.wants("syntax_error") || guest.is_some())) || (!core && projection.verdict) => {
-                    core_rr::verdict(&d.facts, dialect).map_err(|raised| core_rr::failure(&d.path, &raised))?
-                }
-                _ => None,
-            };
-            let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
-            let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
-            let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &block)))));
-            let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
-            let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &block);
-            drop(new_span);
-            // A program that reads `end_point` has each node's end point among the positions, after the lines.
-            let nodes = p.len();
-            if core && projection.wants("end_point")
-                && let Some(x) = p.extra.as_mut()
-            {
-                x.ends = nodes;
-            }
-            p.module = crate::code_rule_dsl::module_path::ModulePath::dotted(d.module.as_deref().unwrap_or(&module(&d.path)));
-            // Its positions (tokens, text, lines) in the top slots (`granules::span_low`): past them ids would clash.
-            if p.defs.is_some() && u64::from(p.locs() - p.len()) > granules::POSITIONS {
-                return Err(StoreError::Invalid(format!("{} has more than {} positions (tokens and lines: core.rr's span ids)", d.path, granules::POSITIONS)));
-            }
             if core && !projection.ast_patterns.is_empty() && guest.is_none() && !withheld
                 && let Some(dialect) = dialect
                 && let Some(lang) = crate::code_rule_dsl::language::from_tape_tag(tag)
@@ -3468,10 +3603,6 @@ impl Batch {
                 });
                 c.patterns(&p, d.tape.as_ref().map(|(t, _)| t), dialect, lang, compiled, &mut string);
             }
-            if core && guest.is_none() && let Some(x) = &p.extra {
-                lines_of.insert(d.key, Arc::clone(&x.lines));
-            }
-            withheld_at.push(withheld);
             if dialect.is_some_and(|d| !d.values) {
                 unvalued.insert(d.key);
             }
@@ -3535,7 +3666,7 @@ impl Batch {
                     }
                     (c.skip.literal_rows, c.skip.literal_value) = kept;
                 }
-                if let Some((line, msg)) = &error {
+                if let Some((line, msg)) = error {
                     let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
                     c.withheld(&p, &(line, msg.clone()), &mut string);
                 }
@@ -3585,22 +3716,14 @@ impl Batch {
                 }
             }
             drop(document_span);
-            docs.push(p);
         }
         // The guests' rows, once every document is projected: a guest's host may be a guest after it. Either shape:
         // a program that declares its base relations itself (T's) reads guests as core.rr's do.
-        for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
-            g.document(p, d, d.guest.as_deref(), withheld, &docs, [projection.wants("host_node"), projection.wants("unparse_of")], &mut string);
+        for (&i, d) in group.iter().zip(&documents) {
+            let m = self.docs.made(i);
+            g.document(&m.p, d, d.guest.as_deref(), m.withheld, &self.docs, [projection.wants("host_node"), projection.wants("unparse_of")], &mut string);
         }
-        // Each lazy family's strings, where the batch has documents of its dialect.
-        let vocabulary: Vec<Option<(u8, Vec<i64>)>> = families()
-            .iter()
-            .map(|f| {
-                crate::code_rule_dsl::language::tape_tag(f.dialect())
-                    .filter(|&tag| dialects.get(tag).is_some())
-                    .map(|tag| (tag, f.strings().iter().map(|name| string(name) as i64).collect()))
-            })
-            .collect();
+        let docs: Vec<&Projected> = group.iter().map(|&i| &self.docs[i]).collect();
         crate::code_rule_dsl::logic::profile::decision("input payload", || {
             let identities: usize = docs.iter().map(|p| p.ranks().bytes() + p.idx.get().map_or(0, |v| v.len() * 4)).sum();
             serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities}).to_string()
@@ -3608,14 +3731,9 @@ impl Batch {
         crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"coreNodes":if core_nodes {docs.iter().map(|p| p.len() as usize).sum::<usize>()}else{0},"scalarNodes":visited,"nodes":docs.iter().map(|p| p.len() as usize).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
         let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
-        let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
+        let atoms = self.atoms.intern_all(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
         drop(intern);
         let atom = |i: i64| i64::from(atoms[i as usize]);
-        let bound: Vec<Option<Box<dyn BoundFamilies>>> = families()
-            .iter()
-            .zip(vocabulary)
-            .map(|(f, v)| v.map(|(tag, strings)| f.bind(tag, &dialects[tag].catalog, &strings.into_iter().map(atom).collect::<Vec<_>>(), docs.len())))
-            .collect();
         let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
             Relation::from_rows(columns, rows)
@@ -3667,49 +3785,31 @@ impl Batch {
             ]);
         }
         relations.extend(read);
-        let offsets = |count: &dyn Fn(&Projected) -> usize| {
-            let mut v = vec![0];
-            docs.iter().for_each(|p| v.push(v.last().unwrap() + count(p)));
-            v
+        // The `ast` matchers' relations over the group's tapes (decision 0106).
+        let waved = match &self.wave {
+            Some((matchers, binding)) if !matchers.is_empty() => {
+                let held: Vec<usize> = group.iter().copied().filter(|&i| self.docs.input(i).guest.is_none() && self.docs.input(i).tape.is_some()).collect();
+                let tapes: Vec<(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)> =
+                    held.iter().map(|&i| self.docs.input(i)).filter_map(|d| Some((Arc::clone(&d.facts), d.tape.as_ref()?.0.clone(), d.path.clone()))).collect();
+                let at: Vec<Option<&Projected>> = held.iter().map(|&i| Some(&self.docs[i])).collect();
+                match &matchers.0 {
+                    Some(wave) => wave.matched(&tapes, &at, *binding, &self.atoms)?,
+                    None => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
         };
-        let nodes = offsets(&|p| p.len() as usize);
-        let children = offsets(&|p| (p.len() as usize).saturating_sub(1));
-        let fields = offsets(&|p| if projection.wants("field") { p.fielded() as usize } else { 0 });
-        let siblings = offsets(&|p| if projection.wants("next_sibling") { p.after_siblings() as usize } else { 0 });
-        let locs = OnceLock::new();
-        // W's values on request (decision 0174): the tapes of the documents W reads values of.
-        let valued: Vec<Option<Valued>> = if projection.derived.contains(VALUE_REQ) {
-            documents
-                .iter()
-                .zip(&docs)
-                .map(|(d, p)| d.tape.clone().filter(|_| dialects.get(p.tag).is_some_and(|x| x.values)).map(|(tape, file)| Valued { tape, file, values: OnceLock::new() }))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let keys: Vec<u32> = docs.iter().map(|p| p.key).collect();
-        debug_assert!(keys.is_sorted(), "a batch's documents ascend by key");
-        let batch = Arc::new(Batch {
-            docs,
-            keys,
-            valued,
-            dialects,
-            nodes,
-            children,
-            fields,
-            siblings,
-            locs,
-            kinds: OnceLock::new(),
-            shape,
-            families: bound,
-            made,
-            block,
-            #[cfg(target_os = "macos")]
-            chunk: OnceLock::new(),
-        });
-        #[cfg(any(test, feature = "test-hooks"))]
-        BATCHES.lock().push((batch.docs.iter().map(|p| p.key).collect(), Arc::downgrade(&batch)));
-        Ok((batch, relations, matched, (strings, atoms)))
+        Ok(made::Made { relations, matched, waved, read: made, strings, symbols: atoms })
+    }
+
+    /// How many groups of documents the batch has made rows of (decision 0474).
+    pub fn groups(&self) -> usize {
+        self.rows.groups()
+    }
+
+    /// The node view's row offsets by document: every document's projection made.
+    pub fn nodes(&self) -> &[usize] {
+        self.offsets(View::Node)
     }
 
     /// The batch's chunk block (decision 0289), made on first use.
@@ -3717,18 +3817,26 @@ impl Batch {
     pub fn chunk(&self) -> &device_chunk::Chunk {
         self.chunk.get_or_init(|| device_chunk::build(self))
     }
+    /// The view's rows' offsets by document, from each document's count of them (decision 0474): made on the first
+    /// read, every document's projection made for it.
     fn offsets(&self, view: View) -> &[usize] {
+        // Each document's counts: those given (the documents' table's), else its made projection's.
+        let counted = |count: &dyn Fn(made::ViewCounts) -> usize| {
+            let mut offsets = Vec::with_capacity(self.docs.len() + 1);
+            offsets.push(0);
+            for i in 0..self.docs.len() {
+                offsets.push(offsets.last().unwrap() + count(self.docs.counts(i)));
+            }
+            offsets
+        };
+        let o = &self.offsets;
+        let [nodes, fielded, siblings, locs] = [0, 1, 2, 3];
         match view {
-            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order => &self.nodes,
-            View::Child => &self.children,
-            View::Field => &self.fields,
-            View::Sibling => &self.siblings,
-            View::Loc(_) => self.locs.get_or_init(|| {
-                let mut offsets = Vec::with_capacity(self.docs.len() + 1);
-                offsets.push(0);
-                for p in &self.docs { offsets.push(offsets.last().unwrap() + p.locs() as usize); }
-                offsets
-            }),
+            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order => o.nodes.get_or_init(|| counted(&|c| c[nodes] as usize)),
+            View::Child => o.children.get_or_init(|| counted(&|c| (c[nodes] as usize).saturating_sub(1))),
+            View::Field => o.fields.get_or_init(|| counted(&|c| if self.projection.wants("field") { c[fielded] as usize } else { 0 })),
+            View::Sibling => o.siblings.get_or_init(|| counted(&|c| if self.projection.wants("next_sibling") { c[siblings] as usize } else { 0 })),
+            View::Loc(_) => o.locs.get_or_init(|| counted(&|c| c[locs] as usize)),
         }
     }
     /// The document and its row index of `row`.
@@ -3752,15 +3860,15 @@ impl Batch {
     /// The document of key `d`, by index (the last one found tried first, as `locate`).
     fn doc(&self, d: i64) -> Option<usize> {
         let d = u32::try_from(d).ok()?;
-        let key = self.docs.as_ptr() as usize;
+        let key = self.docs.addr();
         let hit = DOC.with(|h| {
             let (k, i) = h.get();
-            (k == key && self.docs.get(i).is_some_and(|p| p.key == d)).then_some(i)
+            (k == key && i < self.docs.len() && self.docs.key(i) == d).then_some(i)
         });
         if hit.is_some() {
             return hit;
         }
-        let i = self.keys.binary_search(&d).ok()?;
+        let i = self.docs.position(d)?;
         DOC.with(|h| h.set((key, i)));
         Some(i)
     }
@@ -3772,7 +3880,9 @@ impl Batch {
     }
     /// The nodes whose `kind` (the `node` view's column 2) is `kind`, in row order: `(document, local id, tape node)`.
     fn by_kind(&self, kind: i64) -> &[(u32, u32, u32)] {
-        let k = self.kinds.get_or_init(|| KindRows::new(self));
+        let (Ok(tag), true) = (u8::try_from(kind / i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE)), kind >= 0) else { return &[] };
+        let Ok(at) = self.kinds.binary_search_by_key(&tag, |e| e.0) else { return &[] };
+        let k = self.kinds[at].1.get_or_init(|| KindRows::new(self, tag));
         k.keys.binary_search(&kind).map_or(&[][..], |i| &k.at[k.starts[i] as usize..k.starts[i + 1] as usize])
     }
     /// The document index and node or span of id `n`.
@@ -3801,12 +3911,13 @@ impl Batch {
     /// The rows of nodes with ids in `lo..=hi`.
     fn between(&self, view: View, lo: i64, hi: i64) -> Vec<usize> {
         let mut rows = Vec::new();
-        let first = self.docs.partition_point(|p| i64::from(p.key) < lo >> 32);
-        for (doc, p) in self.docs.iter().enumerate().skip(first) {
-            let base = i64::from(p.key) << 32;
+        let first = self.docs.keys().partition_point(|&k| i64::from(k) < lo >> 32);
+        for doc in first..self.docs.len() {
+            let base = i64::from(self.docs.key(doc)) << 32;
             if base > hi {
                 break;
             }
+            let p = &self.docs[doc];
             // Ids by definition are not in local order: the locals whose ids fall in the range.
             if p.defs.is_some() {
                 let ids: Box<dyn Iterator<Item = (u32, i64)>> = if matches!(view, View::Loc(_)) { Box::new(p.loc_ids()) } else { Box::new(p.node_ids().map(|(l, _, n)| (l, n))) };
@@ -3915,6 +4026,11 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
 
 impl Source for Viewed {
     fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
+    /// A view's rows are in document order (decision 0474): a document's lie at its offset, counted.
+    fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
+        let offsets = self.batch.offsets(self.view);
+        Some(docs.iter().filter_map(|&k| self.batch.docs.position(k)).flat_map(|i| offsets[i]..offsets[i + 1]).collect())
+    }
     #[cfg(target_os = "macos")]
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
         let view = device_chunk::device_view(self.view)?;
@@ -4197,7 +4313,7 @@ impl Viewed {
                 rows.extend(found.and_then(|(doc, local)| b.row(self.view, doc, local)));
             } else if Some(column) == self.parent() {
                 if v == -1 && matches!(self.view, View::Tape) {
-                    rows.extend((0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).map(|doc| b.nodes[doc]));
+                    rows.extend((0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).map(|doc| b.nodes()[doc]));
                 } else if let Some((doc, local)) = b.node(v) {
                     b.docs[doc].each_child(local, |c| rows.extend(b.row(self.view, doc, c)));
                 }
@@ -4209,17 +4325,17 @@ impl Viewed {
                 // The row of `a`'s next sibling: a hop along the tape's siblings.
                 rows.extend(b.node(v).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
             } else if matches!(self.view, View::Node | View::Core) && column == 0 {
-                rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes[doc]..b.nodes[doc + 1]));
+                rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes()[doc]..b.nodes()[doc + 1]));
             } else if matches!(self.view, View::Core) && column == 1 {
                 // A tape node of each document that has it as a node; the statement filters `d`.
                 let Ok(t) = u32::try_from(v) else { continue };
                 for (doc, p) in b.docs.iter().enumerate().filter(|(doc, _)| kept(doc)) {
                     if let Some(local) = p.ranks().local(Item::Node, t) {
-                        rows.push(b.nodes[doc] + local as usize);
+                        rows.push(b.nodes()[doc] + local as usize);
                     }
                 }
             } else if matches!(self.view, View::Node) && column == 2 {
-                rows.extend(b.by_kind(v).iter().filter(|&&(doc, _, _)| kept(&(doc as usize))).map(|&(doc, local, _)| b.nodes[doc as usize] + local as usize));
+                rows.extend(b.by_kind(v).iter().filter(|&&(doc, _, _)| kept(&(doc as usize))).map(|&(doc, local, _)| b.nodes()[doc as usize] + local as usize));
             } else {
                 return None;
             }
@@ -4528,15 +4644,14 @@ pub fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Ve
 
 /// The base relations over `documents` in `projection`'s shape, and the `py.*` families, by table name.
 pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Projection) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
-    let (batch, relations, _, _) = Batch::build(store, documents, projection, &[], &[], false)?;
-    let mut out: Vec<(&'static str, Arc<dyn Source>)> =
-        relations.into_iter().map(|(name, r)| (name, as_source(name, r, &batch))).collect();
+    let batch = Batch::new(store, documents, projection, &[], &[], false, None, &HashMap::new())?;
+    let mut out: Vec<(&'static str, Arc<dyn Source>)> = made_sources(&batch).into_iter().filter_map(|(_, name, source)| Some((name?, source))).collect();
     out.extend(views(&batch));
     Ok(out)
 }
 
 /// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
-fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
+pub fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
     let mut named = vec![("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core), ("node_order", View::Order)];
     match batch.shape {
@@ -4584,11 +4699,11 @@ pub fn with_nearest(
     store: &ContentStore,
     documents: Vec<Document>,
     sets: &[(String, Vec<i64>)],
-    tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+    tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
     binding: crate::code_rule_dsl::facts::nearest::Binding,
     projection: &Projection,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-    with_matchers(store, documents, sets, &Matchers::default(), tests, binding, projection)
+    with_matchers(store, documents, sets, &Matchers::default(), tests, binding, projection, &HashMap::new())
 }
 
 /// A program's `ast` matchers (decision 0106) as one wave over a batch's tapes (decision 0107), which the engine
@@ -4597,12 +4712,12 @@ pub fn with_nearest(
 pub trait AstWave: Send + Sync {
     /// How many matchers the wave runs.
     fn len(&self) -> usize;
-    /// Each matcher's relation over `tapes` (each a batch document's facts, tape and path): its matched nodes, and
-    /// the captures it binds.
+    /// Each matcher's relation over `tapes` (each a batch document's facts, tape and path, its projection `at`): its
+    /// matched nodes, and the captures it binds.
     fn matched(
         &self,
-        batch: &Batch,
         tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+        at: &[Option<&Projected>],
         binding: crate::code_rule_dsl::facts::nearest::Binding,
         atoms: &crate::content_store::atoms::Atoms,
     ) -> StoreResult<Vec<(String, Arc<dyn Source>)>>;
@@ -4655,40 +4770,25 @@ pub fn with_matchers(
     documents: Vec<Document>,
     sets: &[(String, Vec<i64>)],
     matchers: &Matchers,
-    tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+    tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
     binding: crate::code_rule_dsl::facts::nearest::Binding,
     projection: &Projection,
+    given: &HashMap<u32, made::ViewCounts>,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
     let metal = matches!(binding, crate::code_rule_dsl::facts::nearest::Binding::Metal);
-    let tapes: Vec<(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)> = if matchers.is_empty() {
-        Vec::new()
-    } else {
-        documents.iter().filter(|d| d.guest.is_none()).filter_map(|d| Some((Arc::clone(&d.facts), d.tape.as_ref()?.0.clone(), d.path.clone()))).collect()
-    };
-    let (batch, relations, match_all, (strings, symbols)) = Batch::build(store, documents, projection, &tests.matches, &tests.markers, metal)?;
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
+    let batch = Batch::new(store, documents, projection, &tests.matches, &tests.markers, metal, Some((matchers.clone(), binding)), given)?;
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, (0..batch.docs.len()).map(|i| batch.docs.input(i).facts.len() as u64).sum());
     drop(built);
-    // The batch's relations and views, but none the program derives (`Projection::derived`).
-    let mut out: Vec<(String, Arc<dyn Source>)> =
-        relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, r)| (name.to_owned(), as_source(name, r, &batch))).collect();
-    // The `match_all` relations (`logic::strings::as_relations`): each regex's matches in the batch's spans.
-    out.extend(match_all.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)));
-    if !matchers.is_empty() {
-        if let Some(wave) = &matchers.0 {
-            out.extend(wave.matched(&batch, &tapes, binding, &store.atoms_handle())?);
-        }
-    }
+    // The batch's relations, the `match_all` relations (`logic::strings::as_relations`: each regex's matches in the
+    // batch's spans) and the `ast` matchers', made by group (decision 0474), but none the program derives.
+    let mut out: Vec<(String, Arc<dyn Source>)> = made_sources(&batch).into_iter().map(|(name, _, source)| (name.to_owned(), source)).collect();
     let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
-    // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
-    let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
-    for ((name, _), rows) in tests.tests.iter().zip(tests.rows(&strings, &symbols)) {
-        let mut r = Relation::new(&["s"]);
-        rows.into_iter().for_each(|s| r.push(&[s]));
-        out.push((name.clone(), Arc::new(r)));
+    // The text tests' relations (decision 0037): each a test of a string, which a probe asks of the probed strings and
+    // a scan of the batch's (decision 0474), each string tested once a run.
+    for (k, (name, _)) in tests.tests.iter().enumerate() {
+        out.push((name.clone(), Arc::new(made::TextTest::new(&batch, k, tests, store.atoms_handle()))));
     }
-    drop(text);
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, source)| (name.to_owned(), source)));
     drop(viewing);

@@ -130,7 +130,7 @@ impl PythonProject for Batch {
         let (mut requested, mut admitted, mut scopes, mut semantic, mut arguments) =
             (0usize, 0usize, 0usize, 0usize, 0usize);
         for (doc, low) in by_doc {
-            let Ok(index) = self.docs.binary_search_by_key(&doc, |p| p.key) else {
+            let Some(index) = self.docs.position(doc) else {
                 return Err(format!("Python demand references absent document {doc}"));
             };
             let p = &self.docs[index];

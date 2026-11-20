@@ -1147,12 +1147,16 @@ fn a_copy_of_an_inputs_columns_is_a_view_of_it() {
                    .decl kinds(k: symbol)\nkinds(k) :- node(_, _, k, _, _).\n\
                    .decl calls(s: number, k: symbol)\ncalls(s, k) :- kind(n, \"call\"), node(_, n, _, s, _), kinds(k), k = \"call\".\n\
                    .output calls\n";
+    // Each run in a scope of its own, which the corpus run joins: the counts are the run's (decision 0442).
+    let held_run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let before = crate::code_rule_dsl::logic::plan::input_views();
     let viewed = run(&dir, program, &["calls"]);
     let held = crate::code_rule_dsl::logic::plan::input_views() - before;
+    drop(held_run);
     assert!(held >= 1, "kind is a view of node: {held}");
     let copied = {
         let _copy = super::switches::set(&[("RERAIL_COPY_VIEWS", "1")]);
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let before = crate::code_rule_dsl::logic::plan::input_views();
         std::fs::remove_dir_all(dir.join(".out")).ok();
         let got = run(&dir, program, &["calls"]);

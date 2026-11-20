@@ -208,6 +208,11 @@ pub trait Source: Send + Sync {
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         None
     }
+    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0474: a
+    /// batch's, by group or by offset); `None` where it does not, and they are found by a read of its rows.
+    fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
+        None
+    }
     /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
     fn doc_column(&self) -> Option<usize> {
         None

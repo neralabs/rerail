@@ -40,7 +40,7 @@ impl GuestRows {
     /// Document `p`'s rows (`d` is its document, `guest` its place when it is one); `docs` are the batch's documents
     /// projected before it, its host among them.
     /// `wants` says whether `host_node` and `unparse_of` are read.
-    pub(super) fn document(&mut self, p: &Projected, d: &Document, guest: Option<&Guest>, withheld: bool, docs: &[Projected], [host_nodes, unparse]: [bool; 2], string: &mut dyn FnMut(&str) -> usize) {
+    pub(super) fn document(&mut self, p: &Projected, d: &Document, guest: Option<&Guest>, withheld: bool, docs: &super::made::Docs, [host_nodes, unparse]: [bool; 2], string: &mut dyn FnMut(&str) -> usize) {
         let key = i64::from(p.key);
         let tape = string(&hex(&d.digest)) as i64;
         self.tape.push([key, tape]);
@@ -74,7 +74,7 @@ impl GuestRows {
         if !host_nodes || matches!(g.place, Placement::At(_)) {
             return;
         }
-        let Ok(h) = docs.binary_search_by_key(&g.host, |q| q.key) else { return };
+        let Some(h) = docs.position(g.host) else { return };
         let host = &docs[h];
         // A node id's low bits are its local id only under preorder ids.
         let Some(at) = host.local_of((g.at & 0xffff_ffff) as u32) else { return };
