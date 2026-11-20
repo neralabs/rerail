@@ -349,8 +349,8 @@ pub mod tests {
         std::fs::write(root.join(".git/info/exclude"), "# local\n\nlocal.py\n").unwrap();
         let root = dunce::canonicalize(root).unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
-        // Git names a pattern's file with the platform's separator (`\` on Windows), so the expected
-        // path is joined one component at a time.
+        // gix's exclude stack joins a pattern file's path with the platform's separator (`\` on
+        // Windows), so the expected path is joined one component at a time.
         let source = |path: &str| {
             let file = path
                 .split('/')
