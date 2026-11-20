@@ -190,6 +190,8 @@ pub const NOT_FOUND: u32 = u32::MAX;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Request {
     pub key: u64,
+    /// The batch's unit that made it, and its file there (the unit's file index).
+    pub unit: u32,
     pub file: u32,
     /// The name, as the device spelled it (phase 2: a literal's bytes, or an expansion's).
     pub name: Vec<u8>,
@@ -547,6 +549,8 @@ pub struct Vis {
     ft_files: Buf,
     found_by: Buf,
     unit_file: Buf,
+    /// The same, on the host: a request's unit and its file there.
+    unit_files: Vec<u32>,
     max_depth: u32,
     live: Buf,
     // The tests' lines (decision 0467 §4): by directive word, its tokens, its first node, its
@@ -709,6 +713,8 @@ impl Vis {
         feats.sort_unstable();
         let mut found_by = lay.found_by.clone();
         found_by.resize(unit.len().max(1), NOT_FOUND);
+        // Each unit's first file: its predefines root's.
+        let unit_files: Vec<u32> = (0..lay.units()).map(|u| lay.nodes.iter().find(|n| n.unit == u && n.pdir == 0).map_or(0, |n| n.file)).collect();
         // The built-ins' rows, at slot 0: the configuration's, written before the passes.
         let mut sk = vec![0u64; rows.max(1)];
         let mut nk = vec![0u64; rows.max(1)];
@@ -730,7 +736,8 @@ impl Vis {
             ft_files: words(&if table.is_empty() { vec![0] } else { table.iter().map(|t| t.1).collect() })?,
             found_by: words(&found_by)?,
             // Each unit's first file: its predefines root's.
-            unit_file: words(&(0..lay.units()).map(|u| lay.nodes.iter().find(|n| n.unit == u && n.pdir == 0).map_or(0, |n| n.file)).collect::<Vec<_>>())?,
+            unit_file: words(&unit_files)?,
+            unit_files,
             max_depth: lay.max_depth,
             if_count: zeroed(nd)?,
             if_first: zeroed(nd)?,
@@ -937,11 +944,13 @@ impl Vis {
                 // SAFETY: the device finished; a request's name lies within the names' room.
                 let (at, n) = ((q[3] as usize).min(self.rn_cap as usize), q[4] as usize);
                 let name = unsafe { std::slice::from_raw_parts(self.rnames.host().add(at), n.min(self.rn_cap as usize - at)).to_vec() };
-                Request { key: u64::from(q[0]) | (u64::from(q[1]) << 32), file: q[2], name, angle: q[5] & 1 != 0, next: q[5] & 2 != 0 }
+                let unit = self.unit_files.partition_point(|&f| f <= q[2]).saturating_sub(1);
+                Request { key: u64::from(q[0]) | (u64::from(q[1]) << 32), unit: unit as u32, file: q[2] - self.unit_files[unit], name, angle: q[5] & 1 != 0, next: q[5] & 2 != 0 }
             })
             .collect();
-        out.sort_unstable_by_key(|q| (q.key, q.file));
-        out.dedup_by_key(|q| q.key);
+        // A key is unit-free: one request a key and unit.
+        out.sort_unstable_by_key(|q| (q.unit, q.key, q.file));
+        out.dedup_by_key(|q| (q.unit, q.key));
         out
     }
 
@@ -978,10 +987,6 @@ pub const X_SPLICE: u32 = 2048;
 pub const X_BARRIER: u32 = 4096;
 /// `#` or `##` of `__COUNTER__`'s value (decision 0475 §3).
 pub const X_COUNTER_SPELLED: u32 = 8192;
-/// The host's: a unit whose expansion run ended with P1's refusals or requests, which its
-/// rounds had settled.
-pub const X_UNSETTLED: u32 = 32768;
-/// `__COUNTER__` in a directive's line (its value would count text not expanded yet).
 /// A `_Pragma` that would make a row (`once`, `push_macro`, `pop_macro`), or whose operand is a
 /// macro's.
 pub const X_PRAGMA: u32 = 16384;
@@ -1544,62 +1549,11 @@ fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), gr
     Ok(on_grid(&arena, unit, &front, &l, groups)?.map(|(_, s)| s))
 }
 
-/// One unit's answer from a batch (`expand_many`): the batch's expansion it ran in, its files
+/// One unit's answer from a batch (`rounds::run_many`, decision 0478 §7): the batch's expansion it ran in, its files
 /// there (`x.ev.bases`' and the refs' files), and its output (`x.out`'s range). Where the unit was
 /// refused, it ran alone, and `x.refused` says why.
 pub struct Part {
     pub x: std::rc::Rc<Expanded>,
     pub files: std::ops::Range<usize>,
     pub out: std::ops::Range<usize>,
-}
-
-/// The units `units` (each a unit and its layout, of one dialect) expanded in as few batches as
-/// hold them (decision 0460, batching): one arena and one run of the grid a batch. A batch is
-/// split in halves where its documents are in more than one slab (a batch reads one, and
-/// gathering would copy them), where the budget refuses its arena, or where the device refuses
-/// it: a refusal is then a unit's alone.
-pub fn expand_many(units: &[(&Unit, &Layout, Sizes)]) -> Result<Vec<Part>, Error> {
-    let mut parts = Vec::with_capacity(units.len());
-    many(units, &mut parts)?;
-    Ok(parts)
-}
-
-fn many(units: &[(&Unit, &Layout, Sizes)], parts: &mut Vec<Part>) -> Result<(), Error> {
-    let split = |parts: &mut Vec<Part>| -> Result<(), Error> {
-        let (a, b) = units.split_at(units.len() / 2);
-        many(a, parts)?;
-        many(b, parts)
-    };
-    match units {
-        [] => Ok(()),
-        [(unit, lay, sizes)] => {
-            let mut x = expand_sized(unit, lay, &mut sizes.fit(unit, lay), crate::pp_arena::groups())?;
-            // A unit its rounds settled that the device's run does not: its answer is not the
-            // unit's (the serial pass takes it).
-            if x.p1_flags != 0 || !x.requests.is_empty() {
-                x.refused |= X_UNSETTLED;
-            }
-            let x = std::rc::Rc::new(x);
-            let out = 0..x.out.len();
-            parts.push(Part { x, files: 0..unit.len(), out });
-            Ok(())
-        }
-        _ => {
-            let Some(batch) = Unit::batch(&units.iter().map(|(u, _, _)| *u).collect::<Vec<_>>()) else { return split(parts) };
-            let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l, _)| (*l, u.len())).collect();
-            let Some(lay) = Layout::join(&joined) else { return split(parts) };
-            let x = match expand(&batch, &lay) {
-                Ok(x) if x.refused == 0 && x.p1_flags == 0 && x.requests.is_empty() => std::rc::Rc::new(x),
-                Ok(_) | Err(Error::BackendCapacity) => return split(parts),
-                Err(e) => return Err(e),
-            };
-            let mut file = 0;
-            for (k, (unit, _, _)) in units.iter().enumerate() {
-                let out = x.unit_out[k] as usize..x.unit_out[k + 1] as usize;
-                parts.push(Part { x: std::rc::Rc::clone(&x), files: file..file + unit.len(), out });
-                file += unit.len();
-            }
-            Ok(())
-        }
-    }
 }

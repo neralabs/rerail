@@ -46,9 +46,9 @@ On Boost.Preprocessor's tests that does not work:
 5. **The expansion's run reads the lines' room first.** The rounds (`lookups`) grew the expansion's
    stores when a directive's line ran out of them. The expansion's own run did not: it read the
    requests a line cut short had made, and `many` passed the unit on as expanded with no tokens.
-   Now the expansion's run grows for the lines' room before reading requests or P1's refusals. A
-   unit whose expansion run still ends with requests or refusals the rounds had settled is
-   refused by name (`X_UNSETTLED`), never returned as output.
+   Now the expansion's run grows for the lines' room before reading requests or P1's refusals.
+   (Its guard, `X_UNSETTLED` for a unit whose expansion run ended with requests the rounds had
+   settled, went with §7: the expansion's run is the last round's.)
 
 6. **The rooms carry from run to run.** A unit's runs settle at rooms (`Sizes`: P1's, the
    expansion's, the definitions' rung). A round's unit holds the last round's, so the next round
@@ -57,6 +57,25 @@ On Boost.Preprocessor's tests that does not work:
    Before, every round climbed the definitions' rungs and P1's rooms again from the first: 3
    Boost `control` units took 82 runs for their rounds and 9 for their expansions; now 41 and 6.
 
+7. **The rounds are the batch's, and the last round's run is the expansion.** Since 0475 a run
+   that makes no requests has done the text pass inside P1's iterations: it is the expansion.
+   Each unit's rounds ran alone (`lookups`), and then the batch's run (`expand_many`) did every
+   unit's last round again. Now `rounds::run_many` runs a batch's units' rounds together:
+   - each round is one run over the batch's units still in it (`expand_sized` on the joined unit);
+   - a request names its unit (`Request::unit`, its file the unit's): keys are unit-free, so two
+     units asking for one header are two requests;
+   - the host answers each unit's requests; a unit with none rides along in the next round as it
+     was (a run with requests stops before the text, so riding costs P1's iterations alone);
+   - the round with no requests is every unit's answer (`Settled`: its layout, its files, its
+     rounds, its part of the run);
+   - a batch is split in halves where its documents are in more than one slab, the budget refuses
+     its arena, or the device or P1 refuses it. The halves go on from their rounds so far, and run
+     with none of the batch's documents held (a split's caller keeps no placed unit), and a
+     settled unit holds none either, so the residency can retire them.
+
+   The corpus's first 1,000 units: 20 runs in all for every round, against one run a unit a
+   round (about 1,500) and then 10 batches' runs before.
+
 ## Requirements (each a test)
 
 | # | Requirement | Test |
@@ -64,6 +83,7 @@ On Boost.Preprocessor's tests that does not work:
 | R1 | A unit past rung 0's tokens and scratch bytes runs again larger to the serial pass's tokens. An `#if` line past its room that decides an include does too, in the rounds and in the expansion's run. | `a_unit_past_its_room_runs_again_larger` (without the fix in §5: "" for "in h end") |
 | R2 | The evaluator's tests, the Metal gates, and the corpus slices unchanged: 3,135 units, none refused, 2 launches a round. | the existing tests |
 | R3 | Boost.Preprocessor's tests: no unit unlike the serial pass's; the units refused are counted by reason. | `boost_preprocessor_is_the_serial_passes` |
+| R4 | A batch's rounds: each unit its own serial answer, a unit with an include taking two rounds and the others one, a refusal one unit's alone. | `a_batch_is_its_units` |
 
 ## Measured (M1 Max farm host for the checks; this Mac for the runs, 2026-11-19)
 
@@ -86,11 +106,6 @@ Boost.Preprocessor's 64 test files (C as C, the rest as C++), each its own unit:
   537k; exits' joins 44k. So most of it is copies of the same tokens, all kept to the end. The fix
   is a design of its own: an argument read in place in its call's list instead of copied, and a
   list's tokens reclaimed once its parent holds them.
-- **The last round's run is done twice.** Since 0475 the last round's run does the text pass
-  inside P1's iterations: it is the expansion. The expansion's run (`expand_many`, a batch of
-  units) does it all again. A batch's rounds run unit by unit, and the batch's run repeats them.
-  The rounds should be the batch's: one run a round over the batch's units still requesting, a
-  unit's answer from the run it settled in.
 - **The text pass on Boost is dependency-bound.** `control.c`: P1's 23 iterations cost about 1 ms
   each; the text pass about 264 ms, for 106k queue items over 48k lists (240k tokens through an
   output of 240). `BOOST_PP_WHILE`'s levels are a chain of rescans, each waiting on the one
