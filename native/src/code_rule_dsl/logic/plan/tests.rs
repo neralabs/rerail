@@ -2871,6 +2871,10 @@ fn a_stratum_issued_ahead_reads_an_input_the_loop_binds_later() {
         .args(["--exact", "code_rule_dsl::logic::plan::tests::issued_ahead_child", "--ignored", "--nocapture"])
         .env("RERAIL_THREADS", "2")
         .env("RERAIL_STREAM_AT_SUBMIT", "1");
+    // The switches that take the issue-ahead path away, or reshape its components, are the test's own.
+    for switch in ["RERAIL_STRANDS", "RERAIL_STRATA_PARALLEL", "RERAIL_STRATA_MERGE", "RERAIL_STRATA_K", "RERAIL_STRATA_FIXED"] {
+        child.env_remove(switch);
+    }
     let out = super::corpus::switches::started(|| child.output()).unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }
