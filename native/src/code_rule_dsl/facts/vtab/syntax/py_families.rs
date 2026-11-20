@@ -81,7 +81,7 @@ pub struct Py {
 impl Py {
     /// `p`'s place in `batch` (documents are in key order).
     pub(crate) fn at(batch: &Batch, p: &Projected) -> usize {
-        batch.docs.binary_search_by_key(&p.key, |q| q.key).expect("a document of the batch")
+        batch.docs.position(p.key).expect("a document of the batch")
     }
 
     /// Document `p`'s imports' screen, made on its first read.

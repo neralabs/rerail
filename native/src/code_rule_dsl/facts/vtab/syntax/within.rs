@@ -333,7 +333,7 @@ impl Within {
             use crate::code_rule_dsl::logic::profile;
             use crate::code_rule_dsl::facts::nearest::{self as file_local, Trees};
             let _span = profile::span(|| "kind-set axis solved for the batch".into());
-            let n = self.batch.nodes.last().copied().unwrap_or(0);
+            let n = self.batch.nodes().last().copied().unwrap_or(0);
             let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
             if self.binding == Binding::Cpu && (0..self.batch.docs.len()).all(|doc| self.doc_tape(doc).is_some()) {
                 profile::work(profile::Unit::Node, n as u64);
@@ -341,7 +341,7 @@ impl Within {
             }
             let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));
             for (doc, p) in self.batch.docs.iter().enumerate() {
-                let base = self.batch.nodes[doc] as u32;
+                let base = self.batch.nodes()[doc] as u32;
                 for l in 0..p.len() {
                     let up = p.parent(l as usize);
                     parent.push(if up == NONE { file_local::NONE } else { base + up });
@@ -389,7 +389,7 @@ impl Within {
         let mut found = Vec::with_capacity(n);
         let mut near = Vec::new();
         for (doc, p) in self.batch.docs.iter().enumerate() {
-            let base = self.batch.nodes[doc] as u32;
+            let base = self.batch.nodes()[doc] as u32;
             let dt = self.doc_tape(doc).expect("every document holds its tape");
             with_tape!(self.tape_of(dt), |t| {
                 nearest_all(&t, self.set(doc, &t), |id| p.local_of_node(id as u32) != NONE, &mut near);
@@ -407,7 +407,7 @@ impl Within {
         let s = self.solved();
         #[cfg(target_os = "macos")]
         if let Some(c) = &s.in_chunk {
-            let n = self.batch.nodes.last().copied().unwrap_or(0) + 1;
+            let n = self.batch.nodes().last().copied().unwrap_or(0) + 1;
             // SAFETY: the device wrote `n` values there, and the chunk lives as long as the batch this axis holds.
             return unsafe { std::slice::from_raw_parts(self.batch.chunk().block.ptr::<u32>(c.start), n) };
         }
@@ -462,7 +462,7 @@ impl Within {
         }
         let mut expected = self.expected.lock();
         *expected += keys.max(0.0);
-        let nodes = self.batch.nodes.last().copied().unwrap_or(0) as f64;
+        let nodes = self.batch.nodes().last().copied().unwrap_or(0) as f64;
         if *expected * LOOKUP_NS > nodes * SOLVE_NS {
             self.chosen.store(true, Ordering::Relaxed);
             crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0143)", || {
@@ -490,8 +490,8 @@ impl Within {
 
     /// The document and local node of node row `row`.
     fn at(&self, row: u32) -> (usize, u32) {
-        let doc = self.batch.nodes.partition_point(|&o| o <= row as usize) - 1;
-        (doc, row - self.batch.nodes[doc] as u32)
+        let doc = self.batch.nodes().partition_point(|&o| o <= row as usize) - 1;
+        (doc, row - self.batch.nodes()[doc] as u32)
     }
 
     fn span(&self, doc: usize, local: u32) -> (u32, u32) {
@@ -622,7 +622,7 @@ impl Within {
             return run;
         }
         let (doc, local) = self.at(row);
-        let base = self.batch.nodes[doc] as u32;
+        let base = self.batch.nodes()[doc] as u32;
         let others = if side == 0 { self.containers(doc, local) } else { self.contained(doc, local) };
         let mut made = self.made.lock();
         if let Some(&run) = made.1[side].get(&row) {
@@ -770,7 +770,7 @@ impl Source for Within {
             return self.shape().rows as usize;
         }
         *self.all.get_or_init(|| {
-            for row in 0..self.batch.nodes.last().copied().unwrap_or(0) as u32 {
+            for row in 0..self.batch.nodes().last().copied().unwrap_or(0) as u32 {
                 self.rows(0, row);
             }
             self.len.load(Ordering::Acquire)
@@ -819,7 +819,7 @@ impl Source for Within {
         }
         let mut out = Vec::new();
         for doc in 0..self.batch.docs.len() {
-            let (from, to) = (self.batch.nodes[doc], *self.batch.nodes.get(doc + 1)?);
+            let (from, to) = (self.batch.nodes()[doc], *self.batch.nodes().get(doc + 1)?);
             if from == to || !owned(self.batch.id(from)) {
                 continue;
             }
@@ -837,7 +837,7 @@ impl Source for Within {
         let mut out = Vec::new();
         for &v in values {
             let Some((doc, local)) = self.batch.node(v) else { continue };
-            let row = self.batch.nodes[doc] + local as usize;
+            let row = self.batch.nodes()[doc] + local as usize;
             if column == 0 && self.reads_solved() {
                 let start = self.starts();
                 out.extend(start[row] as usize..start[row + 1] as usize);

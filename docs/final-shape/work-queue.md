@@ -4456,6 +4456,24 @@ after the phases went on the run path (0083).
     rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
   - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
 
+### Q288. `the_view_reads_are_the_hosts_rows` times out: its kernel's pipeline does not compile in 240 s (open)
+
+Found 2026-11-19 while running `syntax::tests` for 0464 (on the M3 and the M1 Max, the same each run).
+- **What.** The test's `view_probe` kernel (16 view reads: `clif_view_node` ×5, `child` ×3, `field` ×3, `core` ×3,
+  `line` ×2) is built over the generated reads it includes (`metal_tape_reads_z.metal`, `id_reads.metal`,
+  `view_reads.metal`: 245 KB of MSL). `new_library_with_source` returns; `new_compute_pipeline_state_with_function`
+  (the backend's compile) has not returned when nextest stops the test at 240 s. Progress lines put it there: no
+  case is parsed, no read runs.
+- **Since when.** b3c58409e (2026-11-18 07:53, 0353 step 4b) measured this test passing at every cache room. The
+  test and its kernel are unchanged since; the reads it includes were written again from the merged CLIF by the
+  hub's structured translator in 377364723 (2026-11-18 11:57: `view_reads.metal` +2334/−, `metal_tape_reads_z.metal`
+  +6743/−). Nothing 0464 changes is on its path.
+- **Why it matters.** A stage that reads views on the device includes the same reads: if its pipeline takes as long,
+  a Metal run stalls at its first view stage (0382 §6: a failed or stalled compile is fatal, no fallback).
+- **Next.** Time `new_compute_pipeline_state_with_function` for one read at a time (`clif_view_node` alone, then
+  the 16z decode alone) at 377364723 and its parent, to find which written-again read the backend's compile
+  chokes on; then the translator's shape for it (an irreducible loop, a decode inlined at every call).
+
 ### Q287. An edit keeps the rows of the cross part's `kind`, a view of `node` (open)
 
 Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one-file edit).
