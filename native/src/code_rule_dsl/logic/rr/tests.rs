@@ -3272,6 +3272,24 @@ Call(c) :- kind(c, "call").
     assert_eq!(seen[1], seen[0], "the store's corpus roots after the first run, then after the second");
 }
 
+/// A test's directory is the same every run over one store, so the store keeps one root for it; with no store
+/// (`RERAIL_TAPE_CACHE=off`) nothing is kept, and each run has a directory of its own, so two processes at once never
+/// share one.
+#[test]
+fn a_tests_directory_is_the_stores_or_the_runs_own() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-dirs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rerail");
+    std::fs::write(&file, "").unwrap();
+    let store = dir.join("store.sqlite");
+    let at = |store: Option<&std::path::Path>| super::testing::in_work(store, &file, "t", |work| work.to_owned()).unwrap();
+    let (first, second) = (at(Some(&store)), at(Some(&store)));
+    let (own, other) = (at(None), at(None));
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(first, second, "over one store, the same directory");
+    assert_ne!(own, other, "with no store, each run's own");
+}
+
 /// A test's block is checked as it is parsed: closed by `.end`, not nested, and no `.end` outside one.
 #[test]
 fn test_blocks_parse_only_whole() {

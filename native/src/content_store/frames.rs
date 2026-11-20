@@ -2117,23 +2117,30 @@ mod tests {
         }
     }
 
-    /// A collector, and so a compaction (`collect_corpus_pass`), waits while a run holds its collection lease
-    /// (`hold_collection`), which the run keeps until its writes are applied, each segment's name with them
-    /// (`SealedSegments::name`, after the commit): no compaction finds a segment whose rows are committed and whose file
-    /// is not named yet.
+    /// The writer runs each job as a savepoint of its batch's one immediate transaction (`in_one_transaction`), so a
+    /// job's segment is named (`SealedSegments::name`) before the batch commits, and a compaction, which takes the
+    /// store's write lock, cannot read the job's rows before then: one tried during the batch finds the store busy
+    /// and merges nothing; one after it merges both entries and forgets neither.
     #[test]
-    fn a_collector_waits_for_a_run_and_its_writes() {
+    fn a_compaction_cannot_run_inside_the_batch_that_names_its_segments() {
         let dir = tempfile::tempdir().unwrap();
-        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
-        let reading = store.hold_collection().unwrap();
-        let put = Put { rel: rel("r", 1), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], n: 1, rows: vec![1] } };
-        store.queue_frames([8; 32], vec![put], Vec::new(), None);
-        assert!(store.try_collect().unwrap().is_none(), "no collector while the run writes");
-        store.written().unwrap();
-        assert_eq!(std::fs::read_dir(frame_dir(&store.database_path)).unwrap().count(), 1, "the write's segment named");
-        assert!(store.try_collect().unwrap().is_none(), "nor while the run holds its lease");
-        drop(reading);
-        assert!(store.try_collect().unwrap().is_some(), "a collector once the run let go");
+        let path = dir.path().join("store.sqlite");
+        let store = ContentStore::open(&path).unwrap();
+        let space = local_space(&[9u8; 32]);
+        let put = |part: i64| MemoPut { part, path: format!("{part}.py"), digest: [part as u8; 32], key: 1, bytes: vec![part as u8; 100], over: false };
+        let segments = || std::fs::read_dir(dir.path().join("store.sqlite.memo")).unwrap().count();
+        store.put_memo_entries(&space, vec![put(0)], 4).unwrap();
+        let during = store
+            .in_one_transaction(|| {
+                store.put_memo_entries(&space, vec![put(1)], 4).unwrap();
+                let compaction = std::thread::scope(|s| s.spawn(|| ContentStore::open(&path).unwrap().compact_memo_pack_within(u64::MAX, 0)).join().unwrap());
+                (compaction.map_err(|e| e.to_string()), segments())
+            })
+            .unwrap();
+        assert_eq!(during, (Err("content store writer is busy".to_owned()), 2), "during the batch: busy, both segments as they were");
+        ContentStore::open(&path).unwrap().compact_memo_pack_within(u64::MAX, 0).unwrap();
+        assert_eq!(segments(), 1, "after it: both segments merged");
+        assert_eq!(store.memo_entries(&space, &[0, 1], true).unwrap().len(), 2, "neither entry forgotten");
     }
 
     #[test]

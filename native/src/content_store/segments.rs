@@ -156,9 +156,9 @@ impl SegmentKind<'_> {
 
     /// Compacts the kind in its write transaction `t` where `usage`, read in `t` (so nothing is written between the
     /// choice and the merge), makes it due: its segments from the oldest `retired` names merged (`merge`), each row
-    /// `placed` finds in them moved or lost. Every segment a row names is named in place by then (see
-    /// `SealedSegments::name`), so an entry found missing is lost. Returns the retired segments, whose files go once
-    /// `t` commits (`remove`).
+    /// `placed` finds in them moved or lost. A segment a row names is named in place by the time a compaction can read
+    /// the row (`SealedSegments::name`), so an entry found missing is lost. Returns the retired segments, whose files
+    /// go once `t` commits (`remove`).
     pub(super) fn compact<K>(
         &self,
         t: &rusqlite::Connection,
@@ -437,12 +437,14 @@ impl SealedSegments {
     pub(super) fn placed(&self, i: usize) -> (usize, usize, usize) {
         self.placed[i]
     }
-    /// Once the rows naming them are committed: each segment renamed to its number (`numbers`, in `files`' order) in
-    /// `dir`. A reader that found a row meanwhile misses. No compaction runs meanwhile, which would find the rows'
-    /// segment missing and forget its entries (`SegmentKind::compact`): a store is one process's at a time
-    /// (`corpus::owner`), a run's writes, this rename with them, are applied under its collection lease
-    /// (`hold_collection`, kept until written), and compaction runs only under the exclusive lease (`try_collect`,
-    /// `collect_corpus_pass`), which that lease keeps off (`a_collector_waits_for_a_run_and_its_writes`).
+    /// Once the rows naming them are written: each segment renamed to its number (`numbers`, in `files`' order) in
+    /// `dir`. A reader that found a row meanwhile misses. A compaction never finds those rows without their file, which
+    /// would forget their entries (`SegmentKind::compact`): the store's writer runs every job as a savepoint of its
+    /// batch's one immediate transaction (`in_one_transaction`), so the rename comes before the batch commits, and a
+    /// compaction takes the store's write lock (`immediate_transaction_once`): it reads the rows only once they and
+    /// their files are both there (`a_compaction_cannot_run_inside_the_batch_that_names_its_segments`). A write run
+    /// with no writer (a handle that writes at once) is its run's, done while the run holds its collection lease,
+    /// which every compaction waits out (`try_collect`, `collect_corpus_pass`).
     pub(super) fn name(&mut self, dir: &Path, numbers: &[i64]) -> StoreResult<()> {
         self.named = true;
         for (file, seg) in self.files().iter().zip(numbers) {

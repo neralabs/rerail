@@ -749,24 +749,34 @@ fn test_row(file: &Path, test: &Test, store: Option<&Path>) -> serde_json::Value
     })
 }
 
-/// Runs `f` in `test`'s directory of `file` (`$TMPDIR/rerail-test-rr-work/<digest of the store's path, the file's and
-/// the test's name>`), removed after. The directory is the test's every run over `store`: its fixtures are a corpus
-/// root, and the store keeps a root's runs and frames by its path (`kept_strata::part_space`), so a directory of each
-/// run's own was a root more on every run, all its frames written again. A store is one process's at a time
-/// (`corpus::owner`), so two processes at once run over two stores, in two directories.
-fn in_work<T>(store: Option<&Path>, file: &Path, test: &str, f: impl FnOnce(&Path) -> T) -> Result<T, String> {
+/// Runs `f` in `test`'s directory of `file` (`$TMPDIR/rerail-test-rr-work/<work_name>`), removed after.
+pub(super) fn in_work<T>(store: Option<&Path>, file: &Path, test: &str, f: impl FnOnce(&Path) -> T) -> Result<T, String> {
+    let work = work_base()?.join(work_name(store, file, test)?);
+    let out = f(&work);
+    let _ = std::fs::remove_dir_all(&work);
+    Ok(out)
+}
+
+/// The name of `test`'s directory of `file` (`in_work`). Over a store, the digest of the store's path, the file's
+/// and the test's name: the test's every run over the store uses it. Its fixtures are a corpus root, and the store
+/// keeps a root's runs and frames by its path (`kept_strata::part_space`), so a directory of each run's own was a
+/// root more on every run, all its frames written again. A store is one process's at a time (`corpus::owner`), so two
+/// processes at once run over two stores, in two directories. With no store (`RERAIL_TAPE_CACHE=off`) nothing is
+/// kept between runs, and the directory is the run's own: the process's id and a count.
+fn work_name(store: Option<&Path>, file: &Path, test: &str) -> Result<String, String> {
     use sha2::Digest as _;
+    static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let Some(store) = store else {
+        return Ok(format!("{}-{}", std::process::id(), RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    };
     let file = dunce::canonicalize(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let mut digest = sha2::Sha256::new();
-    for part in [store.map(|s| s.to_string_lossy()).unwrap_or_default(), file.to_string_lossy(), test.into()] {
+    for part in [store.to_string_lossy(), file.to_string_lossy(), test.into()] {
         digest.update(part.as_bytes());
         digest.update(b"\0");
     }
     let digest: [u8; 32] = digest.finalize().into();
-    let work = work_base()?.join(crate::content_store::observe::hex(&digest));
-    let out = f(&work);
-    let _ = std::fs::remove_dir_all(&work);
-    Ok(out)
+    Ok(crate::content_store::observe::hex(&digest))
 }
 
 /// The directory of the tests' directories (`in_work`).
