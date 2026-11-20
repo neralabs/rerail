@@ -24,7 +24,7 @@ export interface ChangeFeed {
 }
 
 /**
- * The beat, the poll's old 5 s. Two missed beats and the page stops saying Live (`LIVE_MS` in `ui/frame/topbar.js`): a
+ * The beat, the poll's old 5 s. Two missed beats and the page stops saying Live (`LIVE_MS` in `ui/poll.js`): a
  * daemon whose event loop is stuck closes no connection, so only a beat that does not come can tell it.
  */
 export const BEAT_MS = 5_000;

@@ -525,6 +525,10 @@ export class LinkedFiles {
  * engine tells of one let go of), and on Windows a write that keeps the size by a program that still holds the file open
  * (Windows tells of it as the program closes the file). A pass reads whole once the last whole walk began more than
  * `fullWalkMs` ago, so such a write waits for the first result past that, or for the turn's end if it comes first.
+ *
+ * A pass takes the notices the engine's watch has delivered when it begins. A write whose notice is still on its way
+ * then (fseventsd behind under load on macOS, the watch's thread not run yet on a busy machine) is read by the next
+ * pass: the next result, or the turn's end, which reads the whole folder.
  */
 export class SessionNotices {
   readonly #root: string;

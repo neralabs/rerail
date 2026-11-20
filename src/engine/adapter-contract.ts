@@ -470,7 +470,9 @@ export type SessionNoteRules = { setUp: true; ruleCount: number | null } | { set
 /**
  * What the daemon's answer to an event says beside its deliveries, so a hook builds the session-start note and links a
  * steer without asking the daemon again. A field is absent where no answer carried it: the daemon is older than the
- * field, or the event loop runs in the hook's own process. The hook then reads it from the daemon as before.
+ * field, the event loop runs in the hook's own process, the answer links nothing (no session start, rule or conflict),
+ * or no runtime of the daemon holds the session (a checkout Rerail stopped, a session not open there). The hook then
+ * reads it from the daemon as before.
  */
 export interface EventAnswerFacts {
   /** The checkout's dashboard, scoped to its repository and checkout; null where the daemon has none to open. */
@@ -497,9 +499,10 @@ export interface RerailEventLoop {
   /**
    * True when the daemon is not reading: each event given to `ingest` is left for it to check once it reads again, and
    * answered with nothing; what the check finds reaches the agent with a later answer. The hook then touches none of
-   * its session's files and holds no session lock: it answers `{}`, and the steers held for the session wait for the
-   * next hook the daemon answers. A host whose hook reads the agent's own record up to a mark (Cursor's transcript)
-   * leaves both the record and the mark alone then, so the next hook the daemon answers sends it through the rules.
+   * its session's files and holds no session lock: it answers as a hook with nothing to deliver, and the steers held
+   * for the session wait for the next hook the daemon answers. A host whose hook reads the agent's own record up to a
+   * mark (Cursor's transcript) leaves both the record and the mark alone then, so the next hook the daemon answers
+   * sends it through the rules.
    */
   readonly untaken?: true;
 }
