@@ -41,6 +41,20 @@ both Metal budgets, alternated:
 
 The runs still refused at 1 GB are large strata (26-35 ms a run on the CPU).
 
+## What threads keep (the work left)
+
+A thread kept on the device, past every admission, its device joins' sort scratch (two sets, each slot grown to the
+largest sort it ran and never given back) and its own copies of the relations its strata read (`resident`: their
+sorts, views made, uploads, texts). Counted (the profile's "device kept by threads between strata", ab105, 1 GB):
+scratch 276 MB at most and all of it at the end, resident relations 171 MB at most.
+
+The scratch now goes back when a thread's outermost device stratum ends with no stratum waiting for its wave
+(`join::scratch_return`), to Metal, which frees it once the command buffers that hold it completed. Given to the
+pool instead, a sort still running wrote into a block the pool's next lease made of it (Q265's check stopped the
+run). ab108 (one run, 1 GB, load 9): scratch 96 MB at most, 12 MB at the end, 2,375 MB given back over the run;
+490 G instructions, 80 runs back to the CPU, 463 violations. The resident copies grew into the room (281 MB at most):
+each thread's own copy and sort of the same relation is what is left to remove.
+
 ## Tests
 
 - `rerail-accel`'s `budget::tests::budgets_default_set_and_share`: the default, the scaling of a Metal part at it,

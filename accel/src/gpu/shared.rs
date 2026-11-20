@@ -53,6 +53,37 @@ pub(crate) struct Memory {
     reserved: std::sync::atomic::AtomicUsize,
     /// Per thread: the bytes its bounded leases hold, and how many admissions on it wait now (`holder`).
     holders: Mutex<HashMap<u64, (usize, u32)>>,
+    /// What threads keep on the device between strata (`Kept`), now and at most, for the profile and a refusal.
+    kept: [std::sync::atomic::AtomicUsize; 2],
+    kept_peak: [std::sync::atomic::AtomicUsize; 2],
+}
+
+/// What a thread keeps on the device between its strata, past every admission (Q203): its device joins' sort scratch
+/// (`join::scratch`) and the relations' device copies its strata left resident.
+#[derive(Clone, Copy)]
+pub enum Kept {
+    Scratch = 0,
+    Resident = 1,
+}
+
+/// Notes that a thread's kept bytes of `kind` changed by `delta`.
+pub fn kept_change(kind: Kept, delta: isize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let d = dev();
+    let k = kind as usize;
+    let now = if delta >= 0 {
+        d.kept[k].fetch_add(delta as usize, Relaxed) + delta as usize
+    } else {
+        d.kept[k].fetch_sub(delta.unsigned_abs(), Relaxed).saturating_sub(delta.unsigned_abs())
+    };
+    d.kept_peak[k].fetch_max(now, Relaxed);
+}
+
+/// What threads keep on the device (`Kept`): per kind, the bytes now and the most at once.
+pub fn kept() -> [(usize, usize); 2] {
+    use std::sync::atomic::Ordering::Relaxed;
+    let d = dev();
+    [0, 1].map(|k| (d.kept[k].load(Relaxed), d.kept_peak[k].load(Relaxed)))
 }
 
 fn dev() -> std::sync::Arc<Memory> {
@@ -627,8 +658,8 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
         // What this thread's admission reserved and left it (none: no admission, or one spent), and what others reserve.
         let (left, admitted) = (RESERVE_LEFT.with(|r| r.get()), ADMITTED.with(|a| a.get()));
         let why = format!(
-            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool; this thread's admission {} MB, {} MB of it left, {} MB reserved in all)",
-            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20, admitted >> 20, left >> 20, reserved() >> 20
+            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool; this thread's admission {} MB, {} MB of it left, {} MB reserved in all; threads keep {} MB of join scratch and {} MB of resident relations)",
+            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20, admitted >> 20, left >> 20, reserved() >> 20, kept()[0].0 >> 20, kept()[1].0 >> 20
         );
         if let Some(hook) = REFUSAL_HOOK.get() {
             hook(&why);

@@ -1237,6 +1237,21 @@ struct Resident {
     unions: Vec<(Vec<(Weak<InRel>, usize)>, Vec<i64>, Rc<mj::DevText>)>,
     bytes: usize,
     clock: u64,
+    /// Its bytes last told the device's count of what threads keep (`rerail_accel::gpu::shared::Kept`).
+    told: usize,
+}
+
+/// This thread's resident relations, changed by `f`; what they hold after it, told to the device's count.
+fn with_resident<T>(f: impl FnOnce(&mut Resident) -> T) -> T {
+    RESIDENT.with_borrow_mut(|res| {
+        let out = f(res);
+        let now = res.bytes();
+        if now != res.told {
+            rerail_accel::gpu::shared::kept_change(rerail_accel::gpu::shared::Kept::Resident, now as isize - res.told as isize);
+            res.told = now;
+        }
+        out
+    })
 }
 
 thread_local! {
@@ -1271,7 +1286,7 @@ impl Resident {
 /// indexes they made (cached as they were encoded) were never written. Later strata would read them as made.
 fn unrun<T>(r: Result<T, String>) -> Result<T, String> {
     if r.is_err() {
-        RESIDENT.with_borrow_mut(|res| {
+        with_resident(|res| {
             res.entries.clear();
             res.unions.clear();
             res.bytes = 0;
@@ -1324,7 +1339,7 @@ struct Run<'p> {
 /// A copy holds only the columns stages read; one that lacks a column is uploaded again with it (decision 0277).
 #[allow(clippy::type_complexity)]
 fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vec<u32>), String> {
-    RESIDENT.with_borrow_mut(|res| {
+    with_resident(|res| {
         res.clock += 1;
         let clock = res.clock;
         let owner = Owner::of(rel);
@@ -1670,7 +1685,7 @@ fn mapped_text(rel: &Arc<InRel>, col: usize, ops: &[TextOp], batch: &mut mj::Bat
     }
     // The relation's entry holds its texts (no column of it need be uploaded for them).
     resident(rel, &[], &[], batch, rep)?;
-    RESIDENT.with_borrow_mut(|res| {
+    with_resident(|res| {
         let owner = Owner::of(rel);
         let e = res.entries.iter_mut().find(|e| e.owner.same(&owner)).expect("the relation made resident");
         let key = (owner_col(rel, col), steps.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";"));
@@ -1709,7 +1724,7 @@ fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text
     // The relation resident first (its entry holds the verdicts).
     // The relation's entry holds its texts (no column of it need be uploaded for them).
     resident(rel, &[], &[], batch, rep)?;
-    RESIDENT.with_borrow_mut(|res| {
+    with_resident(|res| {
         let owner = Owner::of(rel);
         let e = res.entries.iter_mut().find(|e| e.owner.same(&owner)).expect("the relation made resident");
         let oc = owner_col(rel, col);
@@ -1751,7 +1766,7 @@ fn column_symbols(rel: &InRel, col: usize) -> Vec<i64> {
 // copy (0353 step 6): symbols' names copied for the device. They go: the kernels read the strings block
 // (decision 0353).
 fn texts(cols: &[(Arc<InRel>, usize)], consts: &[i64], rep: &mut Report, names: &Interner) -> Result<Rc<mj::DevText>, String> {
-    RESIDENT.with_borrow_mut(|res| {
+    with_resident(|res| {
         let found = res.unions.iter().find(|(cs, ks, _)| {
             ks == consts && cs.len() == cols.len() && cs.iter().zip(cols).all(|((w, c), (r, c2))| c == c2 && Weak::ptr_eq(w, &Arc::downgrade(r)))
         });
@@ -2039,6 +2054,7 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
         let some: Vec<(&Plan, &JoinRule, usize)> = live.iter().map(|&k| rules[k]).collect();
         return run_here(&some, store, names, fresh).map(|rows| spliced(rules.len(), &live, rows));
     }
+    let _in = in_device();
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
@@ -2054,7 +2070,7 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
             // Out of device buffers: the relations kept resident and the pool's free buffers give theirs back, once,
             // and the group runs again.
             Err(e) if !cleared && e.contains("BackendCapacity") => {
-                RESIDENT.with_borrow_mut(|r| {
+                with_resident(|r| {
                     r.entries.clear();
                     r.bytes = 0;
                 });
@@ -2077,6 +2093,37 @@ thread_local! {
     static FLUSHED: RefCell<HashMap<u64, Result<Option<mj::Done>, String>>> = RefCell::new(HashMap::new());
     /// Strata waiting for their wave, by ticket: their encoded runs, their wave, their report so far.
     static SUSPENDED: RefCell<HashMap<u64, (Vec<Run<'static>>, u64, Report, Vec<usize>)>> = RefCell::new(HashMap::new());
+}
+
+thread_local! {
+    /// How many device strata this thread is inside (`InDevice`): nested when a wait ran another job's.
+    static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// A device stratum under way on this thread (`run_here`, `submit_`, `resume_`, `fixpoint_here`). When the outermost
+/// one ends and no stratum of the thread waits for its wave, the thread's join scratch is given back
+/// (`join::scratch_return`, Q203): to Metal, which frees it once the command buffers that hold it completed. The
+/// next stratum's sorts lease theirs anew.
+struct InDevice;
+
+fn in_device() -> InDevice {
+    DEPTH.with(|d| d.set(d.get() + 1));
+    InDevice
+}
+
+impl Drop for InDevice {
+    fn drop(&mut self) {
+        let outer = DEPTH.with(|d| {
+            d.set(d.get() - 1);
+            d.get() == 0
+        });
+        if outer && SUSPENDED.with_borrow(HashMap::is_empty) {
+            let n = rerail_accel::gpu::join::scratch_return();
+            if n > 0 {
+                crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "join scratch given back (MB)", (n >> 20) as u64);
+            }
+        }
+    }
 }
 
 /// The waves' and the tickets' numbers, of the process. A parked stratum can resume on another thread than the one it
@@ -2131,6 +2178,7 @@ pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], name
 }
 
 fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
+    let _in = in_device();
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (to the wave)".into());
     // A wave holds its strata's buffers to the level's end: with the budget's headroom gone (the wave's own leases
     // count, `device_bytes_left`), this stratum runs in a submission of its own, whose buffers go back when it ends.
@@ -2194,6 +2242,7 @@ pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, 
 }
 
 fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    let _in = in_device();
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (after the wave)".into());
     let Some((runs, wave, mut rep, live)) = SUSPENDED.with_borrow_mut(|s| s.remove(&ticket)) else { return Err("a stratum's device joins were not submitted".into()) };
     let all = rules.len();
@@ -2719,6 +2768,7 @@ fn map_at(m: &super::keys::KeyMap) -> mj::LatMap<'_> {
 }
 
 fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    let _in = in_device();
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device fixpoint".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: (seeds.len() + deltas.len()) as u32, stages: seeds.iter().chain(deltas).map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
