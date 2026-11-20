@@ -11,6 +11,12 @@
 // convention (generator beside its output, #6) and are not scanned for markers.
 // Exemption `tool-owned`: lockfiles (`*.lock`, `package-lock.json`) and `.changeset/README.md` are written
 // by their tools, which mark them; they have no generator in this repository.
+// Exemption `vendored`: vendored third-party code (lib.mjs `isVendored`) carries its upstream's own generated markers.
+// Exemption `workbench` (the `.rerail` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
+// under `docs/rule-syntax/`, a rule's generated tables are marked by the workbench's own convention, a first line naming
+// the `gen-*.py` beside them that writes them; they are workbench records, never engine or host sources.
+// Exemption `engine-layout`: the engine line's files ENGINE_LAYOUT lists by exact path, with their reasons, until
+// they are settled with their owner in a follow-up.
 // The manifest itself and this gate's own sources and tests (which spell out the marker) are not scanned.
 
 import { finding, sortFindings } from "../lib.mjs";
@@ -20,11 +26,23 @@ export const id = 20;
 export const title = "Generated files are marked and grouped";
 export const target = "100%";
 
+/** Exemption `workbench`. */
+const WORKBENCH = "docs/rule-syntax/";
+
+/** Exemption `engine-layout`: a generated file and why it is left as it is. */
+const ENGINE_LAYOUT = new Map([
+  [
+    "native/src/code_rule_dsl/transducer/packed/admission_spike_interpreter.rs",
+    "an isolated CPU experiment whose generator is outside this repository (its header names it); never a production path",
+  ],
+]);
+
 export function check(repo) {
   const rows = manifestRows(repo);
   const findings = [];
   let generated = 0;
   for (const path of repo.files) {
+    if (ENGINE_LAYOUT.has(path) || path.startsWith(WORKBENCH)) continue;
     const named = isGeneratedName(path);
     if (!named && !hasGeneratedMarker(repo, path)) continue;
     generated += 1;

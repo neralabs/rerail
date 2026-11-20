@@ -52,7 +52,7 @@ Rerail appends to your status-line command instead of replacing it; `rerail inst
 <summary>Details</summary>
 
 - This includes a command a Git worktree inherits from its main checkout; later edits to it apply without reinstalling.
-- It refreshes every five seconds unless you set your own interval.
+- Rerail sets no refresh interval: Claude Code runs the status line on its own events, so an idle session starts nothing ([how it is drawn](#how-claude-code-draws-it)). An interval you set stays. The 5-second interval an earlier version of Rerail set is removed the next time set-up or `rerail update` runs.
 - Re-running setup changes nothing. `rerail install --remove` restores your previous status line and interval and leaves other settings alone.
 - What Rerail replaced is recorded in `~/.rerail/harness.sqlite`.
 
@@ -192,7 +192,7 @@ Each coding agent waits briefly after an edit for its check, so the steer lands 
 - **Claude Code, Codex, Cursor** wait up to one second after an edit for its check, so the agent sees the steer under the edit and can act that turn. Checks usually take tens of milliseconds.
 - **OMP and Pi** wait up to 10 seconds at a tool result and at turn end, so a shell command that wrote thousands of files does not stall the agent for minutes.
 
-Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule.
+Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule. A hook stops waiting for a Rerail too busy to answer it within 30 seconds; a steer its answer would have carried goes to the session's next hook.
 
 </details>
 
@@ -346,7 +346,7 @@ R E R A I L ● 26 rules · steered 3×
 
 Where Rerail is not started, or was stopped, there is no footer; `/rerail` says `not on here`.
 
-It refreshes every five seconds and only reads: it never starts a daemon, runs a check or writes anything.
+It only reads: it never starts a daemon, runs a check or writes anything. OMP and Pi draw it inside the agent and refresh it every five seconds. Claude Code can only run a command for its status line, on its own events ([below](#how-claude-code-draws-it)).
 
 <details>
 <summary>Suffixes appended when they apply</summary>
@@ -375,6 +375,26 @@ The footer never animates. Full audits and rule lists are on the dashboard.
 - **Unknown is not zero.** Older sessions, and history lost in a reset, show `steering unavailable`; recomputing coverage shows `rules unavailable`.
 - **A steer proves nothing** about whether the agent read it or fixed anything. A crash right after sending can leave it uncounted.
 - **Violations are not a to-do list** or a review-ready signal. Rerail running normally and an audit reporting failures are separate states.
+
+</details>
+
+### How Claude Code draws it
+
+Claude Code runs the status line when a session starts or resumes, on each new assistant message, after `/compact` and when the permission mode changes. Rerail sets no timer, so an idle session starts nothing.
+
+On macOS and Linux, where you had no status line of your own, a refresh starts no program. The daemon keeps each Claude Code session's line in `~/.rerail/claude-status-lines/<session id>` and writes it again when what it shows changes. The shell Claude Code starts for the status command prints that file with shell built-ins. Only a session's first draw may start a program, `sleep`, while it waits for the line.
+
+<details>
+<summary>What follows from that</summary>
+
+- **A new session's line shows a second or so after it starts.** Claude Code draws the status line as the session starts, before the session's start hook has told the daemon of it, and not again until the first reply. So until that reply, a draw that finds no line waits for it: 7 seconds at most, starting `sleep` six times at most. In a repository where Rerail is not on, or with no daemon to start, the first draw waits those 7 seconds once.
+- **The line is as of Claude Code's last draw.** A steer shows with the next assistant message. A change the daemon writes just after a reply shows with the reply after that: when a prompt's hook starts the daemon again, that prompt's reply can still say `not running`.
+- **A daemon that is killed or crashes leaves the last line it drew**, counts included, until a daemon starts again. A daemon that stops normally (`rerail daemon stop`, an update) leaves `not running`.
+- **A busy daemon's last line stays.** Claude Code's status line no longer says `not answering`.
+- **With no daemon recorded, a session with no line says `not running`**, also in a repository where Rerail is not on: the command cannot tell the two apart. While a daemon runs, such a session shows no line, as before.
+- **With a status line of your own, each refresh starts Node**, which runs your command and adds Rerail's line, read from the daemon as before. So does every refresh on Windows. Its first draw waits the same way while the daemon says `starting`.
+- **The files are yours alone**, like Rerail's other files, and set-up keeps coding agents' file tools out of the folder. A session's file goes when the session ends, with `rerail reset` when it deletes the session, and with `rerail install --remove`. Claude Code often exits before a session's end hook has run; such a session's file goes once it has had no event for a week. Rerail removes only its own files from the folder, named by session id; anything else you put there stays.
+- **`RERAIL_HOME` must be an absolute path** for the status line to find the files; with any other value it reads `~/.rerail`.
 
 </details>
 

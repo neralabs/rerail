@@ -1,0 +1,540 @@
+#!/usr/bin/python3
+"""A host's end of the farm's live mirror (scripts/build/farm/README.md, "Live mirror").
+
+The build machine's mirror daemon starts this over ssh and keeps it: one connection per host. Frames
+both ways are a 4-byte big-endian header length, a JSON header, and `size` bytes of payload.
+
+Everything this writes is under one root of the farm's own, ROOT (`~/Library/Caches/rerail-farm/
+root.noindex`): a build machine's path P is kept at ROOT + P. Nothing of the host's own is ever
+written, moved or mounted over (README.md, "The farm's root on a host").
+
+From the daemon:
+- {"op": "put", "path", "mtime_ns", "mode", "size"} + bytes: writes the file kept for that path,
+  through a temporary file, so a compile never reads half of it. Its mtime here is the time of the
+  write, never the build machine's: a cargo here (`test-remote`) then rebuilds what a late-arriving
+  file changed, however old the file is there. The build machine's mtime and size are kept with
+  the file (an extended attribute), and `seen` reports those while the file is as written.
+- {"op": "have", "id", "paths"}: replies {"op": "had", "id", "seen"}, each path's [mtime_ns, size]
+  (null when missing): what an earlier connection already wrote.
+- {"op": "same", "id", "files"}: `files` maps paths of this host's own (a crate in its cargo
+  registry, at the path it has on the build machine too) to their sha256 there. Replies {"op":
+  "same?", "id", "differ"}: those missing or different here. Only read: a compile then reads that
+  crate in place, at the very path the build machine compiles it from, and rustc's output is the
+  same bytes (rustc hashes a source file's real path into it, remapped or not).
+- {"op": "run", "id", "cwd", "argv", "env", "dirs", "outputs", "depinfo", "map", "inplace"}: runs
+  the compile in a thread of its own; `inplace` lists the directories it reads in place (`same`). `map` lists the build machine's paths that are kept here: every one of
+  them in the arguments, the environment and `cwd` is replaced by where it is kept, and
+  `--remap-path-prefix ROOT=/` (rustc's lowest-precedence remap; rustc strips a prefix by path components, so `/` puts the leading slash back) gives the compile's paths back.
+  Replies with a "file" frame per output (the dep-info with ROOT taken out), then {"op": "done",
+  "id", "code", "stdout", "stderr", "read"}: `read` maps each file the dep-info lists to
+  [mtime_ns, size] as `seen`, for the daemon to check against its own. An output that names ROOT
+  (a path written into it that no remap reached, such as `env!("CARGO_MANIFEST_DIR")`) is not sent:
+  code 71, and the compile runs on the build machine. A put that fails makes every later run fail
+  with code 70: the daemon then drops this agent and forgets what it sent.
+
+The stream starts on ssh. The daemon's first frame may be {"op": "tcp", "port", "token"}: the agent
+then connects back to the build machine (at the address this connection came from: the fast link,
+which `farm.health` checked) on that port, sends the token, and every later frame both ways goes
+over that plain TCP connection, which costs no encryption and no ssh flow control. ssh stays open as
+the lifeline: when it ends, the agent ends. If the connection cannot be made, it replies
+{"op": "tcp-failed", "why"} on ssh and stays there.
+"""
+import ctypes, json, os, re, socket, struct, subprocess, sys, threading
+
+ROOT = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/root.noindex")
+XATTR = b"org.rerail.farm.sent"
+
+out = sys.stdout.buffer
+inp = sys.stdin.buffer
+write_lock = threading.Lock()
+refused = []
+
+libc = ctypes.CDLL(None, use_errno=True)
+libc.getxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
+libc.getxattr.restype = ctypes.c_ssize_t
+libc.setxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
+libc.setxattr.restype = ctypes.c_int
+
+
+def at(path):
+    """Where the build machine's absolute `path` is kept here: always under ROOT."""
+    if not path.startswith("/"):
+        raise OSError(f"not an absolute path: {path!r}")
+    return ROOT + os.path.normpath(path)
+
+
+def send(header, payload=b""):
+    header = dict(header, size=len(payload))
+    data = json.dumps(header).encode()
+    with write_lock:
+        out.write(struct.pack(">I", len(data)) + data + payload)
+        out.flush()
+
+
+def receive():
+    head = inp.read(4)
+    if len(head) < 4:
+        return None, None
+    header = json.loads(inp.read(struct.unpack(">I", head)[0]))
+    return header, inp.read(header.get("size", 0))
+
+
+def seen(kept):
+    """[mtime_ns, size] of the file kept at `kept`, as the build machine had it when it was sent (its
+    attribute), while the file is as it was written; else as it is here; None when missing."""
+    try:
+        st = os.stat(kept)
+    except OSError:
+        return None
+    buf = ctypes.create_string_buffer(96)
+    n = libc.getxattr(kept.encode(), XATTR, buf, 96, 0, 0)
+    if n > 0:
+        try:
+            mtime, size, written = (int(x) for x in buf.raw[:n].split())
+            if written == st.st_mtime_ns and size == st.st_size:
+                return [mtime, size]
+        except ValueError:
+            pass
+    return [st.st_mtime_ns, st.st_size]
+
+
+hashes = {}
+
+
+def sha(path):
+    """The sha256 of this host's file `path`, kept while its mtime and size stay (None: unreadable)."""
+    import hashlib
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    k = (st.st_mtime_ns, st.st_size)
+    if hashes.get(path, (None,))[0] != k:
+        try:
+            hashes[path] = (k, hashlib.sha256(open(path, "rb").read()).hexdigest())
+        except OSError:
+            return None
+    return hashes[path][1]
+
+
+def under(path, dirs):
+    return any(path == d or path.startswith(d.rstrip("/") + "/") for d in dirs)
+
+
+def under_mount(path):
+    mounts = [l.split(" on ", 1)[1].rsplit(" (", 1)[0] for l in
+              subprocess.run(["mount", "-t", "nfs,autofs"], capture_output=True, text=True).stdout.splitlines() if " on " in l]
+    return any(path == m or path.startswith(m.rstrip("/") + "/") for m in mounts)
+
+
+def put(header, payload):
+    kept = at(header["path"])
+    os.makedirs(os.path.dirname(kept), exist_ok=True)
+    tmp = f"{kept}.farm-{os.getpid()}-{threading.get_ident()}"
+    with open(tmp, "wb") as f:
+        f.write(payload)
+    os.chmod(tmp, header.get("mode", 0o644) & 0o7777)
+    written = os.stat(tmp).st_mtime_ns
+    tag = f"{header['mtime_ns']} {len(payload)} {written}".encode()
+    if libc.setxattr(tmp.encode(), XATTR, tag, len(tag), 0, 0) != 0:
+        os.unlink(tmp)
+        raise OSError(ctypes.get_errno(), "setxattr failed", kept)
+    os.replace(tmp, kept)
+
+
+def mapper(prefixes):
+    """Replaces each of `prefixes` (the build machine's paths kept here) where it starts a path: at the
+    start of a string or after `=`, `:` or a space, and ending there or before `/`, `=`, `:` or a space."""
+    ps = sorted({os.path.normpath(p) for p in prefixes if p.startswith("/") and p != "/"}, key=len, reverse=True)
+    if not ps:
+        return lambda s: s
+    rx = re.compile(r"(?<![^=:\s])(" + "|".join(re.escape(p) for p in ps) + r")(?=/|$|[=:\s])")
+    return lambda s: rx.sub(lambda m: ROOT + m.group(1), s)
+
+
+def map_args(argv, m):
+    """rustc's arguments with the kept paths mapped. A `--remap-path-prefix FROM=TO` maps its FROM
+    only (TO is what the outputs say). `--remap-path-prefix ROOT=/` goes first: rustc applies the
+    last remap that matches, so every remap given keeps its meaning, and the rest of ROOT goes."""
+    out, i = [argv[0], "--remap-path-prefix", f"{ROOT}=/"], 1
+    while i < len(argv):
+        a = argv[i]
+        if a == "--remap-path-prefix" and i + 1 < len(argv):
+            src, eq, dst = argv[i + 1].partition("=")
+            out += [a, m(src) + eq + dst]
+            i += 2
+            continue
+        if a.startswith("--remap-path-prefix="):
+            src, eq, dst = a[len("--remap-path-prefix="):].partition("=")
+            out.append("--remap-path-prefix=" + m(src) + eq + dst)
+        else:
+            out.append(m(a))
+        i += 1
+    return out
+
+
+def run(job):
+    if refused:
+        send({"op": "done", "id": job["id"], "code": 70, "stdout": "", "read": {},
+              "stderr": f"a file was not written: {refused[0]}"})
+        return
+    m = mapper(job.get("map", []))
+    try:
+        for d in job["dirs"]:
+            os.makedirs(at(d), exist_ok=True)
+        cwd = m(job["cwd"])
+        argv = map_args(job["argv"], m) if len(job["argv"]) > 1 else job["argv"]
+        env = {k: m(v) for k, v in job["env"].items()}
+        done = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True)
+        code, stdout, stderr = done.returncode, done.stdout, done.stderr
+    except OSError as e:
+        code, stdout, stderr = 127, b"", str(e).encode()
+    read = {}
+    root = ROOT.encode()
+    if code == 0:
+        files = []
+        for path in job["outputs"]:
+            try:
+                data = open(at(path), "rb").read()
+            except OSError:
+                continue
+            if path == job.get("depinfo"):
+                data = data.replace(root + b"/", b"/")
+            if root in data:
+                code, stderr = 71, f"{path} names this host's farm root: compiled on the build machine instead".encode()
+                break
+            files.append((path, data))
+        if code == 0:
+            for path, data in files:
+                send({"op": "file", "id": job["id"], "path": path}, data)
+            try:
+                text = open(at(job["depinfo"])).read().replace("\\\n", " ") if job.get("depinfo") else ""
+            except OSError:
+                text, read = "", {"?": None}
+            inplace = job.get("inplace", [])
+            for line in text.splitlines():
+                if not line.startswith("#") and ":" in line:
+                    for path in line.split(":", 1)[1].split():
+                        p = path[len(ROOT):] if path.startswith(ROOT + "/") else path
+                        full = p if p.startswith("/") else os.path.normpath(os.path.join(job["cwd"], p))
+                        # Read in place: its content was checked (`same`) just before.
+                        read[p] = "inplace" if under(full, inplace) else seen(at(full))
+    send({"op": "done", "id": job["id"], "code": code, "stdout": stdout.decode("latin-1").replace(ROOT + "/", "/"),
+          "stderr": stderr.decode("latin-1").replace(ROOT + "/", "/"), "read": read})
+
+
+def over_tcp(header):
+    """Moves the stream to a TCP connection back to the build machine (see above); False if none."""
+    global out, inp
+    client = os.environ.get("SSH_CONNECTION", "").split()[:1]
+    try:
+        if not client:
+            raise OSError("no SSH_CONNECTION")
+        sock = socket.create_connection((client[0], header["port"]), timeout=5)
+        sock.settimeout(None)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        for opt in (socket.SO_SNDBUF, socket.SO_RCVBUF):
+            sock.setsockopt(socket.SOL_SOCKET, opt, 8 << 20)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        # A dead link is noticed in about 10 s, not macOS's default 2 hours.
+        # (TCP_KEEPALIVE, the idle time, is 0x10 on macOS; Python names it only on some builds.)
+        for opt, v in ((getattr(socket, "TCP_KEEPALIVE", 0x10), 4), (socket.TCP_KEEPINTVL, 2), (socket.TCP_KEEPCNT, 3)):
+            sock.setsockopt(socket.IPPROTO_TCP, opt, v)
+        sock.sendall(header["token"].encode() + b"\n")
+    except (OSError, KeyError) as e:
+        send({"op": "tcp-failed", "why": repr(e)})
+        return False
+    lifeline = inp
+
+    def watch():
+        while lifeline.read(65536):
+            pass
+        os._exit(0)
+    out, inp = sock.makefile("wb"), sock.makefile("rb")
+    threading.Thread(target=watch, daemon=True).start()
+    return True
+
+
+TARGETS = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/targets.noindex")
+# A test target directory unused this long goes; so do the least recently used ones while the disk
+# has less free than the run asks for and PRUNE_HEADROOM_GB more: pruning only to the farm's own
+# threshold left the host just above it, and the next run's build took it below (unusable).
+TARGET_DAYS = 3
+PRUNE_HEADROOM_GB = 40
+# A target directory is cleaned (scripts/dev/clean-target: builds no current build was made from,
+# debug objects no binary names, stale incremental state) after a command that used it ends, at most
+# this often. Without it a host's targets grew without bound: 207 GB on one host, 195 GB of it
+# leftovers (2026-11-16).
+CLEAN_SECONDS = 15 * 60
+
+
+def free_gb():
+    st = os.statvfs(os.path.expanduser("~"))
+    return st.f_bavail * st.f_frsize / (1 << 30)
+
+
+def prune(keep, min_free_gb):
+    """Removes test target directories of TARGETS (never anything else): those unused for TARGET_DAYS,
+    then the least recently used while the disk is short of `min_free_gb`."""
+    import shutil, time
+    used = []
+    for name in os.listdir(TARGETS):
+        d = os.path.join(TARGETS, name)
+        if name == keep or not os.path.isdir(d) or os.path.islink(d):
+            continue
+        try:
+            used.append((os.stat(os.path.join(d, ".used")).st_mtime, d))
+        except OSError:
+            used.append((0, d))
+    used.sort()
+    for when, d in used:
+        if time.time() - when > TARGET_DAYS * 86400 or free_gb() < min_free_gb + PRUNE_HEADROOM_GB:
+            print(f"farm-agent: removing the test target {os.path.basename(d)} (unused since {time.ctime(when)})", file=sys.stderr, flush=True)
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def run_command(job):
+    """`farm-agent exec JOB` (test-remote, live-test-remote): runs a command in the build machine's
+    `cwd` as kept here, with `env` added, the kept paths of `map` mapped in both, and the open-file
+    limit `nofile`. With `target` (a key of the checkout's path), cargo builds in a target directory
+    of its own under TARGETS: never the checkout's `target/`, where the mirror writes the compiles'
+    dependencies, so no two writers share one. The command stops when this command's input ends
+    (the connection closed): a host's sshd does not stop it without a terminal."""
+    import resource, signal
+    m = mapper(job.get("map", []))
+    env = dict(os.environ)
+    env.update({k: m(v) for k, v in job.get("env", {}).items()})
+    env["PATH"] = os.path.expanduser("~/.cargo/bin") + ":/opt/homebrew/bin:" + env.get("PATH", "")
+    if job.get("target"):
+        os.makedirs(TARGETS, exist_ok=True)
+        target = os.path.join(TARGETS, job["target"])
+        os.makedirs(target, exist_ok=True)
+        open(os.path.join(target, ".used"), "w").close()
+        # Cargo writes the tag only into a directory it makes itself; clean-target cleans only a
+        # directory that has it.
+        tag = os.path.join(target, "CACHEDIR.TAG")
+        if not os.path.exists(tag):
+            with open(tag, "w") as f:
+                f.write("Signature: 8a477f597d28d172789f06886806bc55\n"
+                        "# This file is a cache directory tag created by the rerail farm.\n")
+        prune(job["target"], job.get("min_free_gb", 40))
+        env["CARGO_TARGET_DIR"] = target
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    want = job.get("nofile") or soft
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(want, hard) if hard != resource.RLIM_INFINITY else want, hard))
+    except (ValueError, OSError) as e:
+        print(f"farm-agent: the open-file limit stays {soft}: {e}", file=sys.stderr, flush=True)
+    argv = [m(a) for a in job["argv"]]
+    try:
+        proc = subprocess.Popen(["nice", "-n", str(job.get("nice", 10))] + argv, cwd=m(job["cwd"]), env=env,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        print(f"farm-agent: {e}", file=sys.stderr, flush=True)
+        os._exit(127)
+
+    def watch():
+        while sys.stdin.buffer.read(65536):
+            pass
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+    threading.Thread(target=watch, daemon=True).start()
+    code = proc.wait()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if job.get("target") and job.get("cleaner"):
+        clean(os.path.join(TARGETS, job["target"]), job["cleaner"], env.get("RELAX_HOME"))
+    if job.get("target"):
+        tidy_root(job.get("min_free_gb", 40))
+    os._exit(code if code >= 0 else 128 - code)
+
+
+# What the root holds that no run has used for ROOT_DAYS goes (prune_root); while the disk is short
+# (under min_free_gb + PRUNE_HEADROOM_GB free), what is idle for a day, then 6 hours. Checked after a
+# command ends, at most once every ROOT_SECONDS. Without it the root kept every copy and every run
+# output (95 GB on one host, 2026-11-16).
+ROOT_DAYS = 3
+ROOT_SHORT_DAYS = (1, 0.25)
+ROOT_SECONDS = 3600
+
+
+def tidy_root(min_free_gb):
+    """Starts prune_root in a process of its own (the command's exit is not held up), logged in
+    the farm's `root.log` beside the root."""
+    import time
+    stamp = os.path.join(os.path.dirname(ROOT), "root.pruned")
+    try:
+        if time.time() - os.stat(stamp).st_mtime < ROOT_SECONDS:
+            return
+    except OSError:
+        pass
+    open(stamp, "w").close()
+    try:
+        if os.fork():
+            return
+    except OSError:
+        return
+    # The child: only file system calls from here, never this process's streams or threads' locks.
+    try:
+        os.setsid()
+        os.setpriority(os.PRIO_PROCESS, 0, 19)
+        # Off the command's streams: ssh waits until every holder of them closes.
+        null = os.open(os.devnull, os.O_RDWR)
+        for n in (0, 1, 2):
+            os.dup2(null, n)
+        fd = os.open(os.path.join(os.path.dirname(ROOT), "root.log"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        relax = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
+        for days in (ROOT_DAYS,) + ROOT_SHORT_DAYS:
+            if days != ROOT_DAYS and free_gb() >= min_free_gb + PRUNE_HEADROOM_GB:
+                break
+            n, b = prune_root(days, [relax])
+            os.write(fd, f"{time.strftime('%Y-%m-%d %H:%M')}: idle {days:g}+ days: {n} paths, "
+                         f"{b / 1e9:.1f} GB; {free_gb():.0f} GB free\n".encode())
+    finally:
+        os._exit(0)
+
+
+def prune_root(days, keep=()):
+    """Removes from ROOT what no run has used for `days`: whole directories none of whose files was
+    read or written since, and, in directories still in use, the copies the mirror sent (they carry
+    XATTR; the mirror sends one again when a run needs it: a compile that misses it fails once, runs
+    on the build machine, and the host is asked what it holds). A file a command wrote here stays
+    while its directory is in use. `keep`: subtrees left alone (the farm's Relax home: clean-target
+    cleans it). Files are judged by their own access and modification times, never a
+    directory's (this walk reads the directories). Symlinks are never followed; nothing outside
+    ROOT is touched. Returns (paths, bytes)."""
+    import shutil, time
+    cutoff = time.time() - days * 86400
+    keep = [os.path.realpath(k) for k in keep]
+    removed = [0, 0]
+
+    def blocks(path):
+        total = 0
+        for d, dirs, files in os.walk(path):
+            for n in dirs + files:
+                try:
+                    total += os.lstat(os.path.join(d, n)).st_blocks * 512
+                except OSError:
+                    pass
+        return total
+
+    def remove(path, isdir):
+        if not path.startswith(ROOT + "/"):
+            return
+        try:
+            b = blocks(path) if isdir else os.lstat(path).st_blocks * 512
+        except OSError:
+            return
+        removed[0] += 1
+        removed[1] += b
+        if isdir:
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def sent(path):
+        return libc.getxattr(path.encode(), XATTR, None, 0, 0, 0x0001) > 0  # XATTR_NOFOLLOW
+
+    def walk(d, top=False):
+        """The newest use of anything under `d` (0: nothing in it); removes what is idle in it."""
+        if any(d == k or d.startswith(k + "/") for k in keep):
+            return time.time()
+        newest, idle_dirs, idle_sent = 0.0, [], []
+        try:
+            # Its own modification time (an entry added or removed) counts: a directory a command
+            # made and has not written into yet is in use.
+            newest = os.lstat(d).st_mtime
+            entries = list(os.scandir(d))
+        except OSError:
+            return time.time()
+        for e in entries:
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    used = walk(e.path)
+                    if used < cutoff:
+                        idle_dirs.append(e.path)
+                else:
+                    st = e.stat(follow_symlinks=False)
+                    used = max(st.st_atime, st.st_mtime)
+                    if used < cutoff and not e.is_symlink() and sent(e.path):
+                        idle_sent.append(e.path)
+            except OSError:
+                used = time.time()
+            newest = max(newest, used)
+        # A directory still in use keeps itself and what was used; its idle parts go. A wholly idle
+        # one goes whole, from its parent.
+        if newest >= cutoff or top:
+            for p in idle_dirs:
+                remove(p, True)
+            for p in idle_sent:
+                remove(p, False)
+        return newest
+
+    if os.path.isdir(ROOT) and not os.path.islink(ROOT):
+        walk(ROOT, True)
+    return removed[0], removed[1]
+
+
+def clean(target, source, relax_home):
+    """Starts the cleaner (clean-target's text, sent with the job) on `target`, detached, so the
+    command's exit is not held up, at most once every CLEAN_SECONDS. Its only Relax home is the
+    farm's (`relax_home`, the job's RELAX_HOME, under the farm's root), never one of the host's own.
+    It skips a profile directory another command builds in; that command cleans it when it ends."""
+    import time
+    stamp = os.path.join(target, ".cleaned")
+    try:
+        if time.time() - os.stat(stamp).st_mtime < CLEAN_SECONDS:
+            return
+    except OSError:
+        pass
+    open(stamp, "w").close()
+    home = relax_home if relax_home and os.path.realpath(relax_home).startswith(os.path.realpath(ROOT) + "/") else ""
+    try:
+        with open(os.path.join(target, ".cleaned.log"), "w") as log:
+            subprocess.Popen(["nice", "-n", "19", "/usr/bin/python3", "-c", source, "--relax-home", home, target],
+                             stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
+                             env={k: v for k, v in os.environ.items() if k != "RELAX_HOME"})
+    except OSError as e:
+        print(f"farm-agent: the cleaner did not start: {e}", file=sys.stderr, flush=True)
+
+
+# The root is the farm's: made here, never a mount (a mounted root would write through to whatever
+# is mounted).
+os.makedirs(ROOT, exist_ok=True)
+if sys.argv[1:2] == ["exec"]:
+    run_command(json.loads(sys.argv[2]))
+if under_mount(ROOT):
+    refused.append(f"{ROOT} is under a network mount")
+
+while True:
+    header, payload = receive()
+    if header is None:
+        break
+    if header["op"] == "tcp":
+        over_tcp(header)
+        continue
+    if header["op"] == "put":
+        try:
+            put(header, payload)
+        except OSError as e:
+            print(f"farm-agent: {header['path']}: {e}", file=sys.stderr, flush=True)
+            refused.append(f"{header['path']} ({e})")
+    elif header["op"] == "run":
+        threading.Thread(target=run, args=(header,), daemon=True).start()
+    elif header["op"] == "same":
+        send({"op": "same?", "id": header["id"], "differ": [p for p, h in header["files"].items() if sha(p) != h]})
+    elif header["op"] == "have":
+        send({"op": "had", "id": header["id"], "seen": [seen(at(p)) for p in header["paths"]]})
+    elif header["op"] == "ping":
+        send({"op": "pong", "id": header.get("id")})
+
+# The stream ended: the daemon is gone. Leave at once. A normal exit would finalize the interpreter
+# while the lifeline thread holds stdin's lock, or a compile's thread still runs, and Python aborts
+# ("Fatal Python error: _enter_buffered_busy"), which macOS reports as a crash on the host.
+sys.stderr.flush()
+os._exit(0)

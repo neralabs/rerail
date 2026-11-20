@@ -1,0 +1,140 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n814-camelcase-imported-as-constant",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep the alias of an imported CamelCase name in CamelCase; an UPPER_CASE alias makes readers mistake a class for a constant.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "camelcase-imported-as-constant",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "has-upper": {
+              "regex": "[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}]"
+            },
+            "cased-lower": {
+              "all": [
+                {
+                  "regex": "\\p{Lowercase}"
+                },
+                {
+                  "not": {
+                    "matches": "has-upper"
+                  }
+                }
+              ]
+            },
+            "cased-upper": {
+              "all": [
+                {
+                  "matches": "has-upper"
+                },
+                {
+                  "regex": "^[\\P{Lowercase}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}]*$"
+                },
+                {
+                  "not": {
+                    "regex": "[\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}]"
+                  }
+                }
+              ]
+            },
+            "camelcase": {
+              "all": [
+                {
+                  "not": {
+                    "regex": "_"
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "cased-lower"
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "cased-upper"
+                  }
+                },
+                {
+                  "not": {
+                    "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "aliased_import",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "dotted_name",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "kind": "identifier"
+                      }
+                    },
+                    "pattern": "$NAME",
+                    "matches": "camelcase"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "alias",
+                  "kind": "identifier",
+                  "pattern": "$ASNAME",
+                  "regex": "^(?:..|[\\x{132}\\x{13F}\\x{1C4}\\x{1C7}\\x{1CA}\\x{1F1}\\x{2161}-\\x{2163}\\x{2165}-\\x{2168}\\x{216A}\\x{216B}])",
+                  "matches": "cased-upper"
+                }
+              }
+            ],
+            "compare": {
+              "left": "ACRONYM",
+              "op": "ne",
+              "right": "ASNAME"
+            }
+          },
+          "transform": {
+            "ACRONYM": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "\\P{Uppercase}",
+                "by": ""
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N814",
+        "message": "Use a CamelCase alias instead of `$ASNAME` for `$NAME` and update its uses; leave it if `$NAME` is really a constant despite its CamelCase name.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N814"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

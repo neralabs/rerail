@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { PACKAGE_ROOT } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
+import type { EngineGitExit, EngineGitRun, EngineStartedGit } from "../git-start.js";
 
 export interface NativeHealth {
   ok: boolean;
@@ -88,6 +89,8 @@ export type CodeRuleDslSourceFormat = "json" | "yaml";
 export type CodeRuleDslEvaluationMode = "decision" | "report";
 
 export interface NativeCompiledCodeRuleDsl {
+  /** Diagnostic availability depends on the installed addon version. Uses the normal compiler. */
+  candidateFrontierAudit?(): string;
   canonicalJson(): string;
   /** Whether a repository-relative path is inside the code rule's scope; the matcher evaluation uses. */
   inScope(path: string): boolean;
@@ -318,13 +321,104 @@ export function encodeCodeRuleWorkspaceRequest(request: {
 export type NativeCodeRuleDslWorkspaceConstructor = new () => NativeCodeRuleDslWorkspace;
 
 export interface NativeCodeRuleDslRuntimeConstructor {
+  /** Canonical CPython facts for a whole document demand batch; source is never executed. */
+  pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
+  /**
+   * The tests the `.rerail` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
+   * `NativeRrTestResult` (`rerail-engine test-rr`).
+   */
+  testRr(pathsJson: string, filter?: string | null): string;
+}
+
+/** One test of a `.rerail` file, as `testRr` reports it. */
+export interface NativeRrTestResult {
+  file: string;
+  test: string;
+  line: number;
+  status: "pass" | "fail";
+  /** Each failed `.expect`, with its line and what the run had instead. */
+  failures: string[];
+  /** The run's findings, as keys: `code at "path":line`. */
+  findings: string[];
+}
+
+/** A policy document for the first slice: its name (the file stem), source and format. */
+export interface NativeSlicePolicy {
+  name: string;
+  source: string;
+  format: CodeRuleDslSourceFormat;
+}
+
+/** An editor's unsaved source for `path` (relative to the directory, `/` separators); the file may not exist yet. */
+export interface NativeSliceBuffer {
+  path: string;
+  source: string;
+}
+
+/**
+ * The first slice over one content store (docs/final-shape/06-first-slice.md): the pack's lowered Python `ast`
+ * clauses, kept between runs. `audit` and `apply` return JSON: `findings` ({rule, code, path, line}), `coverage`
+ * ({rule, path, coverage, reason?}), `evaluated` paths, `rerun` derivations and the `changed` families.
+ */
+export interface NativeCodeRuleSlice {
+  clauses(): number;
+  /**
+   * A cold audit of `scope` at `directory` as `observer` sees it: `"directory"` (default, the working tree's
+   * snapshot, with `buffers` over it) or `"head"` (the `HEAD` tree of its Git checkout; no buffers).
+   */
+  audit(scope: string, directory: string, observer?: "directory" | "head" | null, buffers?: NativeSliceBuffer[] | null): string;
+  /** `scope` at `directory` as `observer` sees it, evaluating only the documents that changed since the last run. */
+  apply(scope: string, directory: string, observer?: "directory" | "head" | null, buffers?: NativeSliceBuffer[] | null): string;
+  /** The lowered rules as `rir` (list step 18): programs and label tables, with `fused` the packs and groups, with `setplan` the set plan. */
+  dump(fused?: boolean | null, setplan?: boolean | null): string;
+}
+
+export interface NativeCodeRuleSliceConstructor {
+  /** Opens the store at `storePath` and lowers `policies` for `backend` (`"cpu"` or `"metal"`). */
+  new (storePath: string, policies: NativeSlicePolicy[], capabilitiesJson: string, backend: "cpu" | "metal"): NativeCodeRuleSlice;
 }
 
 /** An OS advisory lock (`flock` / `LockFileEx`) the OS drops when the holding process exits, however it exits. */
 export interface NativeExclusiveFileLock {
   /** Unlocks and closes the file before process exit; later calls do nothing. */
   release(): void;
+}
+
+/** A connection-local SQL extension context over the native content store. */
+export interface NativeCodeRuleSqlExecutor {
+  bindSnapshot(snapshotJson: string): void;
+  /** Retain SQL results across source edits; unchanged files reuse native fact shards. */
+  applySnapshot(snapshotJson: string, maxWaves?: number | null): string;
+  /** Atomic {upsert: snapshot files, delete: paths}; leaves unmentioned files and metadata in place. */
+  applyFileChanges(changesJson: string, maxWaves?: number | null): string;
+  bindStored(scope: string, paths?: string[] | null): void;
+  bindRelation(relationJson: string): void;
+  /** Drop generated outputs while keeping fact bindings and registered extensions. */
+  reset(): void;
+  /** Per-operation limits: {max_steps?: number, timeout_ms?: number}. An empty object removes limits. */
+  setLimits(limitsJson: string): void;
+  createIndex(relation: string, columns: number[]): void;
+  /** Register deterministic aggregate/merge/widen SQL functions for a custom lattice. */
+  registerLattice(name: string, specificationJson: string): void;
+  lower(program: string, dialect: string): string;
+  run(program: string, dialect: string, maxWaves?: number | null): string;
+  runFile(path: string, dialect: string, maxWaves?: number | null): string;
+  /** Atomic [{name, insert?: rows, delete?: rows}] batch; returns deltas and refreshed strata. */
+  applyChanges(changesJson: string, maxWaves?: number | null): string;
+  query(sql: string, parametersJson?: string | null, maxRows?: number | null): string;
+  /** Read-only SQL graph: CTE fusion, shared statement limits, and parallel SQL groups. */
+  queryPlan(planJson: string): string;
+}
+
+export interface NativeCodeRuleSqlExecutorConstructor {
+  new(storePath: string): NativeCodeRuleSqlExecutor;
+}
+
+export interface NativeCodeRuleDslExecution {
+  evaluate(compiled: NativeCompiledCodeRuleDsl, snapshot: string, mode: string): string;
+  createWorkspace(): NativeCodeRuleDslWorkspace;
+  close(): void;
 }
 
 /** What changed under one watched root since the last `take` (`NativeTreeWatcher`). */
@@ -367,6 +461,9 @@ export interface NativeTreeWatcher {
 }
 
 export interface NativeBinding {
+  CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
+  CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
+  executeSqlRequest(storePath: string, requestJson: string): string;
   /** The message of a workspace task's failure while another apply holds the engine's one slot: pause and call again. */
   readonly WORKSPACE_BUSY: string;
   health(): NativeHealth;
@@ -407,7 +504,24 @@ export interface NativeBinding {
    * the handle it kept, so a pid Windows has given to another process is no answer. A binary built before it lacks it.
    */
   detachedExitCode?(pid: number): number | null;
-  /** The content-store file name this binary's store schema owns (`content-v1.sqlite` at store floor 1). */
+  /**
+   * Linux only: starts Git through `posix_spawn`, which copies nothing of this process (`git-start.ts`). A binary built
+   * before it lacks it.
+   */
+  startGit?(program: string, args: string[], env: string[], pipeStderr: boolean): EngineStartedGit;
+  /** Linux only: reaps a child `startGit` started once its exit pipe has closed. A binary built before it lacks it. */
+  reapGit?(pid: number): EngineGitExit;
+  /**
+   * Linux only: runs Git as `spawnSync` does, through `posix_spawn` (`git-start.ts`). A binary built before it lacks it.
+   */
+  runGit?(program: string, args: string[], env: string[], timeoutMs: number | undefined, maxBuffer: number): EngineGitRun;
+  /**
+   * Windows only: whether every path's owner is one Git for Windows takes as this process's user (the user, or the
+   * Administrators group while the process's token is a member); false when an owner cannot be read, and on every
+   * other platform. A binary built before it lacks it.
+   */
+  pathsOwnedByCurrentUser?(paths: string[]): boolean;
+  /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
@@ -417,6 +531,14 @@ export interface NativeBinding {
   PackageFactsReader: new (root: string) => NativePackageFactsReader;
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;
   CodeRuleDslWorkspace: NativeCodeRuleDslWorkspaceConstructor;
+  CodeRuleSlice: NativeCodeRuleSliceConstructor;
+  /**
+   * `policies` lowered and dumped as `rir` without a store (`rerail engine dump`): every clause, or only `clause`
+   * (`policy/clause` or a clause id); `fused` adds the packs and groups, `setplan` the set plan.
+   */
+  dumpRir(policies: NativeSlicePolicy[], capabilitiesJson: string, clause?: string | null, fused?: boolean | null, setplan?: boolean | null): string;
+  /** Every `program` block of `text` assembled through the verifier and dumped again (`rerail engine asm`); throws the first refusal. */
+  assembleRir(text: string): string;
   /** The file-system event bus; an engine built before it lacks it. */
   TreeWatcher?: new () => NativeTreeWatcher;
 }
@@ -473,4 +595,36 @@ export function isWorkspaceBusy(error: unknown): boolean {
 
 export function nativeHealth(): NativeHealth {
   return loadNativeBinding().health();
+}
+
+/**
+ * On Windows, whether Git, started by this process, takes every one of `paths` as its user's own: the engine reads each
+ * owner as Git for Windows does. Undefined on every other platform, and when no engine here can tell (none loads, one
+ * built before it, or a read that throws), so the caller asks Git; the first such failure is reported
+ * ({@link reportOwnerReadFailure}).
+ */
+export function pathsOwnedByCurrentUser(paths: readonly string[]): boolean | undefined {
+  if (process.platform !== "win32") return undefined;
+  try {
+    const binding = loadNativeBinding();
+    if (binding.pathsOwnedByCurrentUser === undefined) throw new Error("the engine was built before it could read a path's owner");
+    return binding.pathsOwnedByCurrentUser([...paths]);
+  } catch (error) {
+    reportOwnerReadFailure(error);
+    return undefined;
+  }
+}
+
+/** Whether a failure of the engine's owner read was reported in this process. */
+let ownerReadFailureReported = false;
+
+/**
+ * Writes the first failure of the engine's owner read to stderr, which a daemon keeps in its log, once per process:
+ * without that read every worktree a repository start places is asked of Git, one process each.
+ */
+function reportOwnerReadFailure(error: unknown): void {
+  if (ownerReadFailureReported) return;
+  ownerReadFailureReported = true;
+  const reason = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`rerail: the engine could not read path owners, so Git places each worktree a start asks after: ${reason}\n`);
 }

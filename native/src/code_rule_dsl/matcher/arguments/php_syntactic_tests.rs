@@ -2,8 +2,9 @@
 //! (`fixtures/php/matcher/arguments/generate_php_syntactic.php`).
 
 use super::{Arguments, Passed, SlotKind};
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::matcher::arguments::lang_php::PhpArguments as _;
 use ast_grep_core::tree_sitter::LanguageExt;
 use serde_json::Value as Json;
 

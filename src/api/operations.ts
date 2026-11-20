@@ -20,7 +20,7 @@ import {
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { approvalKey, packSubject, readApprovals } from "../engine/catalog/rule-approval.js";
 import { rulePackListSchema } from "./rule-pack-contracts.js";
-import { SESSION_EVENT_PAGE_LIMIT, type StoredSessionSummary } from "../runtime/session-store.js";
+import { SESSION_EVENT_PAGE_LIMIT, type DeclinedViolations, type DeclineNote, type StoredSessionSummary } from "../runtime/session-store.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
 import { ApiError, defineOperation, experimentalSummary, type Operation, type RerailApiStores } from "./operation.js";
 import { mergeAssistOperations } from "./merge-assist-operations.js";
@@ -81,6 +81,25 @@ function agentViolation(caller: ApiCaller, violation: CodeRuleViolation): CodeRu
   if (caller.kind === "person" || violation.path === undefined || !sensitiveByName(violation.path)) return violation;
   const { fix: _fix, ...rest } = violation;
   return { ...rest, message: SECRET_FILE_FINDING_MESSAGE, variables: {} };
+}
+
+/** Rule `id`'s declined violations as `rules_activity` reports them; zeros for a rule with none. */
+function declinedOf(declined: ReadonlyMap<string, DeclinedViolations>, id: string) {
+  const counts = declined.get(id);
+  return { declinedViolations: counts?.declined ?? 0, declinedLoggedViolations: counts?.alsoLogged ?? 0 };
+}
+
+/** A steer as `violations_list` names it: the audit that steered and the rule it steered on. */
+const steerKey = (auditId: string, ruleId: string) => `${auditId}\u0000${ruleId}`;
+
+/** The reasons of decline notes, oldest first, by the steer each declined. */
+function declineReasonsBySteer(notes: ReadonlyArray<DeclineNote & { auditId: string }>): Map<string, string[]> {
+  const reasons = new Map<string, string[]>();
+  for (const note of notes) {
+    const key = steerKey(note.auditId, note.ruleId);
+    reasons.set(key, [...reasons.get(key) ?? [], note.reason]);
+  }
+  return reasons;
 }
 
 const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
@@ -271,10 +290,53 @@ const ruleActivitySchema = z.object({
   lastSeenAt: z.number().int().nullable(),
   audits: z.number().int().nonnegative().describe("Distinct audits in range that compiled this rule, so a zero violation count over a positive number of audits is evidence rather than silence."),
   loggedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those recorded in Log mode at the time, whatever the rule's mode is now."),
+  declinedViolations: z.number().int().nonnegative().describe("Of distinctViolations, those of a steer the coding agent declined with `rerail feedback`. A steer with no note is not known to be followed: an agent can decline without recording why."),
+  declinedLoggedViolations: z.number().int().nonnegative().describe("Of declinedViolations, those also in loggedViolations (recorded in Log mode by another audit in range). Counting each violation once, as Log only, steered or declined, a declined one is declined: Log only is loggedViolations less these, steered the rest."),
   rerails: z.number().int().nonnegative(),
   ...inactiveField,
   removed: z.literal(true).optional().describe("Set on a rule no longer among the rules reported (taken out of the repository, or no longer installed or in the library) that has violations in range: listed for its history, with nothing to turn off."),
 }).strict();
+
+type RuleActivity = z.infer<typeof ruleActivitySchema>;
+
+/** What `rules_activity` reads for a range: each rule's audit totals, steer deliveries and declined violations. */
+interface RuleActivityCounts {
+  activity: ReturnType<RerailApiStores["audits"]["ruleActivity"]>;
+  rerails: ReadonlyMap<string, number>;
+  declined: ReadonlyMap<string, DeclinedViolations>;
+}
+
+/**
+ * A catalog rule's activity. Every rule is reported, so a caller never has to infer absence from a missing key; a
+ * conversation rule writes no audit (so nothing of it is steered or declined) and an inactive code rule is never
+ * evaluated, so neither is measured.
+ */
+function catalogRuleActivity(
+  { id, kind, rule }: ReturnType<typeof activityRules>[number],
+  counts: RuleActivityCounts,
+): RuleActivity {
+  const { inactive } = inactiveOf(kind, rule);
+  const totals = kind === "conversation" ? undefined : counts.activity.get(id);
+  return {
+    measured: kind !== "conversation" && inactive === undefined,
+    distinctViolations: totals?.distinctViolations ?? 0,
+    sessions: totals?.sessions ?? 0,
+    lastSeenAt: totals?.lastSeenAt ?? null,
+    audits: totals?.audits ?? 0,
+    loggedViolations: totals?.loggedViolations ?? 0,
+    ...declinedOf(counts.declined, id),
+    rerails: kind === "conversation" ? 0 : counts.rerails.get(id) ?? 0,
+    ...(inactive === undefined ? {} : { inactive }),
+  };
+}
+
+/** A rule taken out since keeps its violations: History still lists it, marked removed, while it has some in range. */
+function addRemovedRuleActivity(rules: Record<string, RuleActivity>, counts: RuleActivityCounts): void {
+  for (const [id, totals] of counts.activity) {
+    if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
+    rules[id] = { measured: true, ...totals, ...declinedOf(counts.declined, id), rerails: counts.rerails.get(id) ?? 0, removed: true };
+  }
+}
 
 const violationRecordSchema = z.object({
   id: z.string(),
@@ -291,6 +353,7 @@ const violationRecordSchema = z.object({
   at: z.number().int().describe("Start time of the audit that reported the violation."),
   host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded."),
   logged: z.boolean().describe("Rerail recorded the violation without telling the coding agent: the audit ran in Log mode, or the rule was in Log mode then. `mode` is the rule's mode alone."),
+  declinedReasons: z.array(z.string()).describe("The reasons the coding agent recorded with `rerail feedback` for declining the steer of this violation's audit and rule, oldest first; empty when no note declined it, and always for a logged violation."),
 }).strict();
 
 const repositoryPathSchema = z.string().refine(value => value === "" || isAbsolute(value), "Repository must be an absolute path or empty for the database default.");
@@ -403,30 +466,17 @@ export const operations: readonly Operation[] = [
     }),
     handler: (stores, input, caller) => {
       const ids = historyScope(stores, caller, input.repository);
-      const activity = stores.audits.ruleActivity(input.since, ids);
-      const rerails = stores.reader.steersByRule(input.since, ids);
-      const rules: Record<string, z.infer<typeof ruleActivitySchema>> = {};
+      const counts: RuleActivityCounts = {
+        activity: stores.audits.ruleActivity(input.since, ids),
+        rerails: stores.reader.steersByRule(input.since, ids),
+        declined: stores.reader.declinedByRule(input.since, ids),
+      };
+      const rules: Record<string, RuleActivity> = {};
       // A coding agent's rules are its own repository's, as its counts are: never the machine's whole library.
-      for (const { id, kind, rule } of activityRules(stores, callerRepositoryKey(stores, caller) ?? input.repository)) {
-        // Every rule is reported, so a caller never has to infer absence from a missing key.
-        const { inactive } = inactiveOf(kind, rule);
-        const totals = kind === "conversation" ? undefined : activity.get(id);
-        rules[id] = {
-          measured: kind !== "conversation" && inactive === undefined,
-          distinctViolations: totals?.distinctViolations ?? 0,
-          sessions: totals?.sessions ?? 0,
-          lastSeenAt: totals?.lastSeenAt ?? null,
-          audits: totals?.audits ?? 0,
-          loggedViolations: totals?.loggedViolations ?? 0,
-          rerails: kind === "conversation" ? 0 : rerails.get(id) ?? 0,
-          ...(inactive === undefined ? {} : { inactive }),
-        };
+      for (const entry of activityRules(stores, callerRepositoryKey(stores, caller) ?? input.repository)) {
+        rules[entry.id] = catalogRuleActivity(entry, counts);
       }
-      // A rule taken out since keeps its violations: History still lists it, marked removed.
-      for (const [id, totals] of activity) {
-        if (rules[id] !== undefined || totals.distinctViolations === 0) continue;
-        rules[id] = { measured: true, ...totals, rerails: rerails.get(id) ?? 0, removed: true };
-      }
+      addRemovedRuleActivity(rules, counts);
       return {
         since: input.since,
         rules,
@@ -612,11 +662,13 @@ export const operations: readonly Operation[] = [
         ...(input.ruleId === undefined ? {} : { ruleId: input.ruleId }),
         ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
       }, historyScope(stores, caller, input.repository));
+      const reasons = declineReasonsBySteer(stores.reader.placedDeclineNotes([...new Set(page.violations.map(v => v.sessionId))]));
       return {
         total: page.total,
         violations: page.violations.map(({ violation: found, sessionId, auditId, at, host, logged }) => {
           const { id, ruleId, clauseId, code, mode, message, path, span, fix } = agentViolation(caller, found);
-          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host, logged };
+          const declinedReasons = logged ? [] : reasons.get(steerKey(auditId, ruleId)) ?? [];
+          return { id, ruleId, clauseId, code, mode, message, path: path ?? null, span: span ?? null, fix: fix ?? null, sessionId, auditId, at, host, logged, declinedReasons };
         }),
         nextCursor: page.nextCursor,
       };
@@ -637,6 +689,7 @@ export const operations: readonly Operation[] = [
       sessions: z.array(sessionSummarySchema.extend({
         violationCount: z.number().int().nonnegative().describe("Violations in the session's history, as `violations_list` with its `sessionId` counts them."),
         steeredViolations: z.number().int().nonnegative().describe("Of violationCount, those no audit recorded in Log mode (steered, or blocked)."),
+        declinedViolations: z.number().int().nonnegative().describe("Of steeredViolations, those of a steer the coding agent declined, as `sessions_get` counts them in `declined`."),
         lastEventAt: z.number().int().nullable().describe("Epoch milliseconds the session's newest event was observed; null when it has none."),
       })),
       total: z.number().int().nonnegative(),
@@ -670,12 +723,21 @@ export const operations: readonly Operation[] = [
           observedAt: z.number().int().describe("Epoch milliseconds it was first met."),
         })).max(DISCOVERY_GAP_PLACES).optional().describe(`The first ${DISCOVERY_GAP_PLACES} places \`discoveryGaps\` counts, in the order the session met them. A person's only: a coding agent gets none, as it gets no \`source-discovery-gap\` payload.`),
       }).describe("Over the whole transcript, however much of it a reader has loaded."),
+      declined: z.object({
+        violations: z.number().int().nonnegative().describe("Steered violations of a declined steer: its audit's violations of the rule, each counted once."),
+        notes: z.array(z.object({
+          ruleId: z.string(),
+          reason: z.string().describe("The one line the coding agent gave the person for not following the steer."),
+          recordedAt: z.number().int(),
+          auditId: z.string().nullable().describe("The audit whose steer it declined: the latest in the session to steer the rule's violations and start at or before the note; null when none did."),
+        })).describe("Oldest first."),
+      }).describe("Steers the coding agent declined, from the notes it recorded with `rerail feedback`. A steer with no note is not known to be followed: an agent can decline without recording why."),
     }),
     handler: (stores, input, caller) => {
       const response = sessionResponse(stores, caller, input.sessionId);
       if (response === null) throw sessionNotFound(input.sessionId);
       const places = caller.kind === "person" ? { discoveryGapPlaces: [...stores.reader.discoveryGaps(input.sessionId, DISCOVERY_GAP_PLACES)] } : {};
-      return { ...response, gaps: { ...stores.reader.gaps(input.sessionId), ...places } };
+      return { ...response, gaps: { ...stores.reader.gaps(input.sessionId), ...places }, declined: stores.reader.declines(input.sessionId) };
     },
   }),
   defineOperation({

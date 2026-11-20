@@ -1,0 +1,119 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-com818-trailing-comma-on-bare-tuple",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove a stray comma at the end of a statement, or parenthesize the tuple; a trailing comma silently turns the value into a tuple.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "trailing-comma-on-bare-tuple",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "line-ends-after": {
+              "layout": { "after": { "to": "token", "breaks": { "min": 1 }, "edge": true } }
+            },
+            "ends-line": {
+              "any": [
+                { "matches": "line-ends-after" },
+                { "precedes": { "kind": "line_continuation", "matches": "ends-line" } }
+              ]
+            }
+          },
+          "rule": {
+            "regex": "(?P<COMMA>,)\\z",
+            "not": { "kind": "comment" },
+            "inside": { "any": [{ "kind": "module" }, { "kind": "block" }], "stopBy": "neighbor" },
+            "any": [
+              { "matches": "line-ends-after", "not": { "has": { "kind": "block", "stopBy": "end" } } },
+              { "precedes": { "kind": "line_continuation", "matches": "ends-line" } }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.COMMA",
+        "code": "COM818",
+        "message": "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "COM818"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "trailing-comma-at-end-of-file",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "module",
+            "regex": "(?m)^(?:[^\\r\\n]*?(?:\"\"\"|'''))??(?:[^#'\"\\r\\n]|'(?:[^'\\\\\\r\\n]|\\\\.)*'|\"(?:[^\"\\\\\\r\\n]|\\\\.)*\"|['\"])*(?P<COMMA>,)[ \\t\\f]*(?:#[^\\r\\n]*|(?:\\\\\\r?\\n[ \\t\\f]*)*\\\\\\r?\\n(?:[ \\t\\f]+(?:#[^\\r\\n]*)?|#[^\\r\\n]*))?\\z"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.COMMA",
+        "code": "COM818",
+        "message": "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "COM818"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "trailing-comma-before-assignment-line",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "line-ends-after": {
+              "layout": { "after": { "to": "token", "breaks": { "min": 1 }, "edge": true } }
+            },
+            "ends-line": {
+              "any": [
+                { "matches": "line-ends-after" },
+                { "precedes": { "kind": "line_continuation", "matches": "ends-line" } }
+              ]
+            }
+          },
+          "rule": {
+            "regex": "^,$",
+            "matches": "ends-line",
+            "inside": {
+              "kind": "pattern_list",
+              "stopBy": "neighbor",
+              "inside": { "any": [{ "kind": "assignment" }, { "kind": "augmented_assignment" }], "stopBy": "neighbor" }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "COM818",
+        "message": "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "COM818"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

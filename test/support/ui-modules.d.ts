@@ -8,6 +8,8 @@ declare module "*/ui/sessions-model.js" {
     key: string;
     finding: { path?: string | null; at: number; span?: { startLine: number } | null; [k: string]: unknown };
     rule: unknown;
+    /** The coding agent's reasons for declining the steer, oldest first; null when it recorded none. */
+    declined?: string[] | null;
   }
   export interface CallView {
     key: string;
@@ -52,13 +54,16 @@ declare module "*/ui/sessions-model.js" {
   export function discoveryGapPlaces(s: { sessionId: string }): Array<{ path?: string; reason: string; boundary: string; observedAt: number }>;
   export function discoveryGapsMore(s: { sessionId: string }): boolean;
   export function sessionCorrections(sessionId: string): Correction[];
+  export function mcpToolLabel(toolName: unknown): string;
+  export function callToolLabel(call: { verb: string; level: string; label: string; toolName: string }): string | null;
   export function sessionViolationTotal(sessionId: string): number | null;
+  export function sessionDeclinedTotal(s: SessionRow): number;
   export function loadedFrom(sessionId: string): number;
   export const STALE_MIN: number;
-  export interface SessionRow { sessionId: string; startedAt: number; endedAt: number | null; lastEventAt?: number | null; violationCount?: number; steeredViolations?: number }
+  export interface SessionRow { sessionId: string; startedAt: number; endedAt: number | null; lastEventAt?: number | null; violationCount?: number; steeredViolations?: number; declinedViolations?: number }
   export function lastEventAt(s: SessionRow): number;
   export function openState(s: SessionRow, now?: number): "live" | "stale" | null;
-  export function violationCounts(s: SessionRow): { logged: number; steered: number };
+  export function violationCounts(s: SessionRow): { logged: number; steered: number; declined: number };
 }
 
 declare module "*/ui/poll.js" {
@@ -121,6 +126,8 @@ declare module "*/ui/derive.js" {
   export function publisherLabel(pack: { publisher: string }): string;
   /** The skipped entries that are files of the worktree at `checkoutPath`'s `.rerail/rules`, by file name, with why. */
   export function worktreeLeftOut(skipped: ReadonlyArray<{ path: string; reason: string }>, checkoutPath: string | null | undefined): Array<{ file: string; reason: string }>;
+  /** The sentence a rule's row leads with: its title, else its first message (or reference), else its id. */
+  export function ruleTitle(stored: { kind: string; rule: object }): string;
 }
 
 declare module "*/ui/render/pack-panel.js" {
@@ -139,7 +146,7 @@ declare module "*/ui/state.js" {
   /** A cursor-paged list as the page holds it. */
   export interface PagedList<Row> { key: string | null; owner: string | null; rows: Row[]; total: number; next: string | null; pages: number }
   export function pagedList<Row = never>(key?: string | null, owner?: string | null): PagedList<Row>;
-  export interface SessionDetail { head: object | null; gaps: object | null; events: Array<{ sequence: number; observedAt: number; [k: string]: unknown }>; nextAfter: number; loaded: boolean; earlier: boolean; loading: Promise<unknown> | null }
+  export interface SessionDetail { head: object | null; gaps: object | null; declined?: { violations: number; notes: Array<{ ruleId: string; auditId: string | null; reason: string; recordedAt: number }> } | null; events: Array<{ sequence: number; observedAt: number; [k: string]: unknown }>; nextAfter: number; loaded: boolean; earlier: boolean; loading: Promise<unknown> | null }
   export type Violation = { id: string; auditId: string; ruleId: string; sessionId: string; mode?: string; at: number; host?: string | null };
   export const data: {
     rules: Map<string, unknown>;
@@ -172,13 +179,15 @@ declare module "*/ui/state.js" {
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
   export const ui: {
-    filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean;
+    filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "logged" | "steered" | "declined"; view: string; settingUp: boolean;
     selectedSession: string | null; panel: object | null;
   };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
   export function runningCount(): number;
   export function matches(stored: object): boolean;
+  /** The row title: the rule's own title, else its pack's title, else `ruleTitle`'s fallback. */
+  export function titleOf(stored: { kind: string; rule: object }): string;
   export interface RuleGroup { name: string; all: Array<{ rule: { id: string } }> }
   export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;
 }
@@ -242,8 +251,8 @@ declare module "*/ui/pack-model.js" {
 declare module "*/ui/routes.js" {
   export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "merge";
   export interface Route {
-    view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "steered" | "logged";
-    sessionFilter?: "all" | "corr" | "open"; rule?: string; session?: string; jump?: boolean; conflict?: string;
+    view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "logged" | "steered" | "declined";
+    sessionFilter?: "all" | "corr" | "declined"; rule?: string; session?: string; jump?: boolean; conflict?: string;
   }
   export function parseRoute(hash: string): Route;
   export function hashOf(route: Partial<Route>): string;
@@ -260,10 +269,13 @@ declare module "*/ui/views/index.js" {
 }
 
 declare module "*/ui/history-model.js" {
-  export interface RankedRule { id: string; title: string; origin: string; count: number }
+  export type Outcome = "all" | "logged" | "steered" | "declined";
+  export interface RankedRule { id: string; title: string; origin: string; count: number; declined: number }
   export function filterRanked(ranked: RankedRule[], query: string): RankedRule[];
   export function historyOrigin(id: string): string;
-  export function rankedRules(outcome?: "all" | "steered" | "logged"): RankedRule[];
+  export function rankedRules(outcome?: Outcome): RankedRule[];
+  export function outcomesOf(id: string): Record<Outcome, number>;
+  export function inRange(id: string, outcome?: Outcome): number;
   export function historyRuleId(ranked?: RankedRule[]): string | null;
   export function historyTitle(id: string): string;
   export type HistoryEmpty = { kind: "noRules" } | { kind: "noSessions" } | { kind: "noViolations"; sessions: number } | { kind: "nothingInRange" };
@@ -335,7 +347,7 @@ declare module "*/ui/first-open.js" {
   export function firstOpenState(facts: RepositoryFacts): FirstOpenState;
   export function bannerFor(state: FirstOpenState, welcomeDismissed: boolean): "stopped" | "welcome" | null;
   export function overviewBody(facts: { ruleCount: number; sessionsEver: number; topCount: number }): "no-rules" | "no-sessions" | "no-violations" | "lists";
-  export function steeredTally(activity: Record<string, { measured?: boolean; distinctViolations: number; loggedViolations?: number; rerails?: number }>): { steered: number; total: number };
+  export function steeredTally(activity: Record<string, { measured?: boolean; distinctViolations: number; loggedViolations?: number; declinedViolations?: number; declinedLoggedViolations?: number; rerails?: number }>): { steered: number; total: number };
   export const TOP_RULES: number;
   export function topRules<R extends { id: string; title: string; fires: number }>(rules: readonly R[], limit?: number): R[];
   export function rulesOnSource(packCount: number, mineCount: number): string;

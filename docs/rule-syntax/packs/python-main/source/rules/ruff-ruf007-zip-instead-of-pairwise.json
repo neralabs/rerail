@@ -1,0 +1,526 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf007-zip-instead-of-pairwise",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use itertools.pairwise to iterate over successive pairs instead of zipping a sequence with a copy of itself shifted by one; it is clearer and avoids slicing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "zip-instead-of-pairwise",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.10"
+            }
+          },
+          "utils": {
+            "name1": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$ID1"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name1"
+                  }
+                }
+              ]
+            },
+            "name2": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$ID2"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name2"
+                  }
+                }
+              ]
+            },
+            "int1": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "pattern": "$L1"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "int1"
+                  }
+                }
+              ]
+            },
+            "int2": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "pattern": "$L2",
+                  "value": {
+                    "le": 2147483647
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "int2"
+                  }
+                }
+              ]
+            },
+            "one": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "eq": 1
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "one"
+                  }
+                }
+              ]
+            },
+            "lower-node": {
+              "all": [
+                {
+                  "matches": "code"
+                },
+                {
+                  "not": {
+                    "regex": "^:$"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^:$"
+                    }
+                  }
+                }
+              ]
+            },
+            "step-node": {
+              "all": [
+                {
+                  "matches": "code"
+                },
+                {
+                  "not": {
+                    "regex": "^:$"
+                  }
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^:$",
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^:$"
+                    }
+                  }
+                }
+              ]
+            },
+            "step-ok": {
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "step-node",
+                  "not": {
+                    "matches": "one"
+                  }
+                }
+              }
+            },
+            "sliced": {
+              "kind": "subscript",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^,$"
+                }
+              }
+            },
+            "first-arg": {
+              "any": [
+                {
+                  "matches": "name1"
+                },
+                {
+                  "matches": "sliced",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "value",
+                        "matches": "name1"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "subscript",
+                        "kind": "slice",
+                        "matches": "step-ok",
+                        "any": [
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "lower-node"
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "all": [
+                                {
+                                  "matches": "lower-node"
+                                },
+                                {
+                                  "matches": "int1"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "first-arg"
+                  }
+                }
+              ]
+            },
+            "second-arg": {
+              "any": [
+                {
+                  "matches": "sliced",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "value",
+                        "matches": "name2"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "subscript",
+                        "kind": "slice",
+                        "matches": "step-ok",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "all": [
+                            {
+                              "matches": "lower-node"
+                            },
+                            {
+                              "matches": "int2"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "second-arg"
+                  }
+                }
+              ]
+            },
+            "code": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "line_continuation"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "global": [
+                "zip"
+              ],
+              "import": [
+                "builtins.zip"
+              ]
+            },
+            "inside": {
+              "field": "function",
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "call",
+              "has": {
+                "field": "arguments",
+                "kind": "argument_list",
+                "all": [
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "list_splat"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "matches": "code"
+                        }
+                      },
+                      "matches": "first-arg"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 2,
+                        "ofRule": {
+                          "matches": "code"
+                        }
+                      },
+                      "matches": "second-arg"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "nthChild": {
+                          "position": 3,
+                          "ofRule": {
+                            "matches": "code"
+                          }
+                        },
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "keyword_argument"
+                            },
+                            {
+                              "kind": "dictionary_splat"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "all": [
+                {
+                  "compare": {
+                    "left": "ID1",
+                    "op": "eq",
+                    "right": "ID2"
+                  }
+                },
+                {
+                  "compare": {
+                    "left": "A2",
+                    "op": "eq",
+                    "right": "B2"
+                  }
+                },
+                {
+                  "compare": {
+                    "left": "D1",
+                    "op": "eq",
+                    "right": "C2"
+                  }
+                }
+              ]
+            }
+          },
+          "transform": {
+            "V1": {
+              "replace": {
+                "source": "$L1",
+                "replace": "^(.*)$",
+                "by": "$1",
+                "default": "0",
+                "value": true
+              }
+            },
+            "V2": {
+              "replace": {
+                "source": "$L2",
+                "replace": "^(.*)$",
+                "by": "$1",
+                "value": true
+              }
+            },
+            "A1": {
+              "replace": {
+                "source": "$V1",
+                "replace": "^(.*?)9*$",
+                "by": "0$1"
+              }
+            },
+            "S1": {
+              "replace": {
+                "source": "$A1",
+                "replace": "^([0-9]*)8$",
+                "by": "${1}9"
+              }
+            },
+            "S2": {
+              "replace": {
+                "source": "$S1",
+                "replace": "^([0-9]*)7$",
+                "by": "${1}8"
+              }
+            },
+            "S3": {
+              "replace": {
+                "source": "$S2",
+                "replace": "^([0-9]*)6$",
+                "by": "${1}7"
+              }
+            },
+            "S4": {
+              "replace": {
+                "source": "$S3",
+                "replace": "^([0-9]*)5$",
+                "by": "${1}6"
+              }
+            },
+            "S5": {
+              "replace": {
+                "source": "$S4",
+                "replace": "^([0-9]*)4$",
+                "by": "${1}5"
+              }
+            },
+            "S6": {
+              "replace": {
+                "source": "$S5",
+                "replace": "^([0-9]*)3$",
+                "by": "${1}4"
+              }
+            },
+            "S7": {
+              "replace": {
+                "source": "$S6",
+                "replace": "^([0-9]*)2$",
+                "by": "${1}3"
+              }
+            },
+            "S8": {
+              "replace": {
+                "source": "$S7",
+                "replace": "^([0-9]*)1$",
+                "by": "${1}2"
+              }
+            },
+            "S9": {
+              "replace": {
+                "source": "$S8",
+                "replace": "^([0-9]*)0$",
+                "by": "${1}1"
+              }
+            },
+            "A2": {
+              "replace": {
+                "source": "$S9",
+                "replace": "^0(.)",
+                "by": "$1"
+              }
+            },
+            "B2": {
+              "replace": {
+                "source": "$V2",
+                "replace": "^(.*?)0*$",
+                "by": "$1"
+              }
+            },
+            "C1": {
+              "replace": {
+                "source": "$V1",
+                "replace": "^.*?(9*)$",
+                "by": "$1"
+              }
+            },
+            "D1": {
+              "replace": {
+                "source": "$C1",
+                "replace": "9",
+                "by": "0"
+              }
+            },
+            "C2": {
+              "replace": {
+                "source": "$V2",
+                "replace": "^.*?(0*)$",
+                "by": "$1"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF007",
+        "message": "Replace this `zip` with `itertools.pairwise($ID1)`, or pairwise over the common slice when both arguments are slices; keep `zip` if the upper bounds differ or `$ID1` is not a plain sequence.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF007"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

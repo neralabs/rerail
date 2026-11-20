@@ -35,6 +35,7 @@ export const SHOW_ME_RULE = {
   id: SHOW_ME_RULE_ID,
   revision: 1,
   mode: "steer",
+  title: "Greet with \"Hello from Nera\"",
   description: SHOW_ME_DESCRIPTION,
   scope: { include: [SHOW_ME_FILE], exclude: [] },
   clauses: [{

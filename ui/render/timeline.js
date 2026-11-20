@@ -2,7 +2,7 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, discoveryGaps, discoveryGapsMore, discoveryGapPlaces, outputText, describeInput } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, discoveryGaps, discoveryGapsMore, discoveryGapPlaces, outputText, describeInput, callToolLabel } from "../sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");
@@ -31,12 +31,12 @@ function build(tl) {
 
 /* ---------- event rows ---------- */
 
+/** A call's outcome on its row: only what is worth a glance (no result yet, failed, a read's length); a success says nothing. */
 function outcome(ev) {
   if (ev.resSeq === null) return [h("span.dim", null, "…")];
   if (ev.failed) return [h("span.bad", null, "failed")];
   if (ev.verb === "read" && ev.lines) return [`${fmt(ev.lines)} ${plural(ev.lines, "line")}`];
-  if (ev.verb === "run") return [h("span.ok", null, "ok")];
-  return [h("span.ok", null, "ok")];
+  return [];
 }
 
 const str = v => (typeof v === "string" ? v : "");
@@ -51,9 +51,10 @@ function inputRows(ev, i, row) {
   else row("Path", ev.target, true);
 }
 
+/** The opened call's Result: a failure in red; a success plainly, with no colour. */
 function resultCell(ev) {
   if (ev.resSeq === null) return "no result recorded";
-  return ev.failed ? h("span.bad", null, "failed") : h("span.ok", null, "ok");
+  return ev.failed ? h("span.bad", null, "failed") : "ok";
 }
 
 const diffLines = (cls, sign, text) => text.split("\n").map(l => h(cls, null, `${sign} ${l}`));
@@ -98,9 +99,30 @@ function payload(ev) {
 
 function createEvent(ev) {
   return h("div.evt", null,
-    h("button.eh", { "data-act": "etoggle", "data-i": ev.key, "aria-expanded": "false" }, chevron(), h("span.vb"), h("span.tg"),
-      h("span.out", null, h("span.oc"), h("span.tn"), h("span.sq.num"), h("span.tm.num"))),
+    h("button.eh", { "data-act": "etoggle", "data-i": ev.key, "aria-expanded": "false" }, chevron(),
+      h("span.vcell", null, h("span.vb"), h("span.vtool", { hidden: true })), h("span.tg"),
+      h("span.out", null, h("span.oc"), h("span.tn"), h("span.tm.num"))),
+    h("span.spk", { hidden: true }),
     h("div.pay"));
+}
+
+/** Who a call or card is from ("Agent", "Rerail"), in the column "You" sits in; `null` continues the row above's. */
+function setSpeaker(node, who) {
+  const spk = node.querySelector(":scope > .spk");
+  setAttr(spk, "hidden", !who);
+  setText(spk, who ?? "");
+}
+
+/**
+ * The call's tool beside its badge (`callToolLabel`), the whole name in the tooltip. The right-hand tool name (wide
+ * windows only) would repeat it, so a call that names its tool here leaves that out.
+ */
+function updateCallTool(eh, ev) {
+  const label = callToolLabel(ev), vtool = eh.querySelector(".vtool");
+  setAttr(vtool, "hidden", label === null);
+  setAttr(eh.querySelector(".tn"), "hidden", label !== null);
+  setText(vtool, label ?? "");
+  setAttr(vtool, "title", label === null ? null : ev.toolName);
 }
 
 function verbLabel(ev) {
@@ -109,36 +131,87 @@ function verbLabel(ev) {
   return ev.label;
 }
 
-function updateEvent(node, ev) {
-  const isOpen = ui.openEvents.has(ev.key) || (ev.failed && !ui.closedEvents.has(ev.key));
+/** Open when the person opened it, or when it failed and they have not closed it. */
+const eventOpen = ev => ui.openEvents.has(ev.key) || (ev.failed && !ui.closedEvents.has(ev.key));
+
+/** The call's description, or its target as a short path, with the full target in the tooltip. */
+function updateDescription(tg, ev) {
+  const desc = ev.title !== ev.target;
+  setClass(tg, "desc", desc);
+  setText(tg, desc ? ev.title : shortPath(ev.title));
+  setAttr(tg, "title", ev.target);
+}
+
+/** The outcome, redrawn only when the call's result changes. */
+function updateOutcome(oc, ev) {
+  const sig = `${ev.resSeq}|${ev.failed}|${ev.lines}`;
+  if (oc.dataset.sig === sig) return;
+  oc.dataset.sig = sig;
+  oc.replaceChildren(...outcome(ev));
+}
+
+/** The call's time and how long it took; its sequence numbers and tool in the time's tooltip, not on the row. */
+function updateTime(eh, ev) {
+  const tn = eh.querySelector(".tn");
+  setText(tn, ev.toolName);
+  setAttr(tn, "title", ev.toolName);
+  const resultRef = ev.resSeq === null ? "" : `, Result #${ev.resSeq}`;
+  const took = ev.dur ? ` · ${ev.dur}s` : "";
+  const tm = eh.querySelector(".tm");
+  setText(tm, `${clockSeconds(ev.callTime)}${took}`);
+  setAttr(tm, "title", `Call #${ev.callSeq}${resultRef} · ${ev.toolName}`);
+}
+
+/** The opened call's payload, built only while it is open and rebuilt when its result arrives. */
+function updatePayload(pay, ev, isOpen) {
+  const sig = isOpen ? `${ev.key}|${ev.resSeq}` : "";
+  if (pay.dataset.sig === sig) return;
+  pay.dataset.sig = sig;
+  pay.replaceChildren(...(isOpen ? payload(ev) : []));
+}
+
+function updateEvent(node, ev, who = null) {
+  setSpeaker(node, who);
+  const isOpen = eventOpen(ev);
   setAttr(node, "class", `evt lvl-${ev.level}${ev.failed ? " failed" : ""}`);
   setAttr(node, "data-open", String(isOpen));
   const eh = node.firstChild;
   setAttr(eh, "aria-expanded", String(isOpen));
   setText(eh.querySelector(".vb"), verbLabel(ev));
-  const tg = eh.querySelector(".tg");
-  const desc = ev.title !== ev.target;
-  setClass(tg, "desc", desc);
-  setText(tg, desc ? ev.title : shortPath(ev.title));
-  setAttr(tg, "title", ev.target);
-  const sig = `${ev.resSeq}|${ev.failed}|${ev.lines}`;
-  const oc = eh.querySelector(".oc");
-  if (oc.dataset.sig !== sig) { oc.dataset.sig = sig; oc.replaceChildren(...outcome(ev)); }
-  const tn = eh.querySelector(".tn"); setText(tn, ev.toolName); setAttr(tn, "title", ev.toolName);
-  const sq = eh.querySelector(".sq"); setText(sq, ev.resSeq === null ? `#${ev.callSeq}` : `#${ev.callSeq}–${ev.resSeq}`);
-  const resultRef = ev.resSeq === null ? "" : `, Result #${ev.resSeq}`;
-  setAttr(sq, "title", `Call #${ev.callSeq}${resultRef}`);
-  const took = ev.dur ? ` · ${ev.dur}s` : "";
-  setText(eh.querySelector(".tm"), `${clockSeconds(ev.callTime)}${took}`);
-  const pay = node.lastChild;
-  const paySig = isOpen ? `${ev.key}|${ev.resSeq}` : "";
-  if (pay.dataset.sig !== paySig) { pay.dataset.sig = paySig; pay.replaceChildren(...(isOpen ? payload(ev) : [])); }
+  updateCallTool(eh, ev);
+  updateDescription(eh.querySelector(".tg"), ev);
+  updateOutcome(eh.querySelector(".oc"), ev);
+  updateTime(eh, ev);
+  updatePayload(node.lastChild, ev, isOpen);
 }
 
+/** A violation's card: its rule's title, which opens the rule, the rule id, then its badges, over what Rerail said. */
 function createCorr(item) {
   return h("div.corr", { id: `c-${item.key}`, "data-key": item.key },
-    h("div.ch", null, h("b"), h("span.mono"), h("span.badge"), h("div.act", null, h("button.btn.sm.ghost", { "data-act": "detail" }, "Open rule"))),
-    h("dl.beats", null, h("dt.nera", null, "Rerail said"), h("dd.said"), h("dt.where", null, "Where"), h("dd.where", null, h("code"))));
+    h("span.spk", { hidden: true }),
+    h("div.ch", null, h("button.ctitle"), h("span.mono"),
+      h("span.badges", null, h("span.badge.outcome"),
+        h("span.badge.declined", { hidden: true, title: "The coding agent didn’t follow this steer and recorded why with rerail feedback." }, "Declined"))),
+    h("dl.beats", null, h("dt.nera", null, "Rerail said"), h("dd.said"),
+      h("dt.reason", { hidden: true }, "Agent said"), h("dd.reason", { hidden: true }),
+      h("dt.where", null, "Where"), h("dd.where", null, h("code"))));
+}
+
+/** A declined steer's badge and the agent's reasons under Rerail's message, one per line; hidden for a card no note answers. */
+function updateDeclined(node, reasons) {
+  const declined = reasons !== null;
+  setAttr(node.querySelector(".badge.declined"), "hidden", !declined);
+  setAttr(node.querySelector("dt.reason"), "hidden", !declined);
+  const said = node.querySelector("dd.reason");
+  setAttr(said, "hidden", !declined);
+  setText(said, declined ? reasons.join("\n") : "");
+}
+
+/** A path as text that a narrow card breaks after a `/` first (`<wbr>`), so a folder name stays whole where it can. */
+function setPath(code, text) {
+  if (code.dataset.text === text) return;
+  code.dataset.text = text;
+  code.replaceChildren(...text.split("/").flatMap((part, i, parts) => (i < parts.length - 1 ? [`${part}/`, document.createElement("wbr")] : [part])));
 }
 
 /** `path:line` of a finding, or `""` when it has no path. */
@@ -148,21 +221,38 @@ function whereText(f) {
   return `${f.path}${line}`;
 }
 
+/**
+ * The card's title, which opens the rule. A rule taken out of the repository since keeps its card: named from its
+ * pack, else by id, as plain text with nothing to open.
+ */
+function updateTitle(title, rule, ruleId) {
+  if (rule === null) {
+    setText(title, `${packRuleOf(ruleId)?.rule.title ?? ruleId} (no longer in this repository)`);
+    for (const name of ["data-act", "data-i", "title"]) setAttr(title, name, null);
+    setAttr(title, "disabled", true);
+    return;
+  }
+  setText(title, titleOf(rule));
+  setAttr(title, "data-act", "detail");
+  setAttr(title, "data-i", ruleId);
+  setAttr(title, "title", "Open the rule");
+  setAttr(title, "disabled", false);
+}
+
 function updateCorr(node, item) {
   const c = item.c, f = c.finding;
-  // A rule taken out of the repository since keeps its card: named from its pack, else by id, with nothing to open.
-  setText(node.querySelector("b"), c.rule === null ? `${packRuleOf(f.ruleId)?.rule.title ?? f.ruleId} (no longer in this repository)` : titleOf(c.rule));
+  setSpeaker(node, item.who);
+  updateTitle(node.querySelector(".ctitle"), c.rule, f.ruleId);
   setText(node.querySelector(".mono"), f.ruleId);
   const result = violationOutcome(f);
   node.dataset.outcome = result;
-  const badge = node.querySelector(".badge");
+  const badge = node.querySelector(".badge.outcome");
   setText(badge, result === "logged" ? "Logged" : "Steered");
   setAttr(badge, "title", result === "logged" ? "Rerail recorded it; the coding agent wasn’t told." : "Rerail told the coding agent.");
-  setAttr(node.querySelector("[data-act=detail]"), "data-i", f.ruleId);
-  setAttr(node.querySelector("[data-act=detail]"), "hidden", c.rule === null);
+  updateDeclined(node, c.declined);
   setText(node.querySelector(".said"), f.message);
   const where = whereText(f);
-  setText(node.querySelector("dd.where code"), where);
+  setPath(node.querySelector("dd.where code"), where);
   setAttr(node.querySelector("dt.where"), "hidden", where === "");
   setAttr(node.querySelector("dd.where"), "hidden", where === "");
 }
@@ -171,8 +261,8 @@ function updateCorr(node, item) {
 
 function createTurn(turn) {
   return h("div.turn", null,
-    h("div.msgrow.u", null, h("span.who", null, "You"), h("div.msg"), h("span.mt", { title: "user-prompt" })),
-    h("div.msgrow.a", null, h("span.who", null, "Agent"), h("div.msg"), h("span.mt", { title: "assistant-message" })),
+    h("div.msgrow.u", { "data-kind": "user-prompt" }, h("span.who", null, "You"), h("div.msg"), h("span.mt")),
+    h("div.msgrow.a", { "data-kind": "assistant-message" }, h("span.who", null, "Agent"), h("div.msg"), h("span.mt")),
     h("button.fold", { "data-act": "foldtoggle", "aria-expanded": "false", hidden: true }, chevron(), h("span")),
     h("div.foldbody", { hidden: true }),
     h("div.tbody"));
@@ -193,7 +283,10 @@ function updateMessage(row, text, seq, time) {
   setAttr(row, "hidden", text === null);
   if (text === null) return;
   setText(row.querySelector(".msg"), text);
-  setText(row.querySelector(".mt"), `#${seq} · ${clockSeconds(time)}`);
+  // Its time; its event and sequence number in the tooltip.
+  const mt = row.querySelector(".mt");
+  setText(mt, clockSeconds(time));
+  setAttr(mt, "title", `${row.dataset.kind} #${seq}`);
 }
 
 /** The fold of a turn's quiet calls (reads, searches, plan updates): offered only while every event shows. */
@@ -208,7 +301,7 @@ function updateFold(fold, foldBody, turn, sessionId) {
   syncChildren(foldBody, showFold && fopen ? quiet : [], e => e.key, createEvent, updateEvent);
 }
 
-/** The turn's body: its shown loud calls, each followed by its shown cards. */
+/** The turn's body: its shown loud calls, each followed by its shown cards, each named by its speaker. */
 function turnItems(turn) {
   const card = c => ({ key: `c:${c.key}`, c });
   // Orphans are older than every loaded call, so they lead the turn.
@@ -218,6 +311,26 @@ function turnItems(turn) {
     items.push({ key: `e:${ev.key}`, ev });
     items.push(...ev.corrections.filter(cardShown).map(card));
   }
+  return nameSpeakers(items, lastSpeaker(turn));
+}
+
+/** Who the turn's messages leave speaking: the agent after its reply, you after your prompt, else nobody. */
+function lastSpeaker(turn) {
+  if (turn.a !== null) return "Agent";
+  return turn.u !== null ? "You" : null;
+}
+
+/**
+ * Each item's `who` ("Agent" for a call, "Rerail" for a card) only where the speaker changes from `last`, as a chat
+ * names a speaker once per run.
+ */
+function nameSpeakers(items, last) {
+  let previous = last;
+  for (const item of items) {
+    const who = item.ev ? "Agent" : "Rerail";
+    item.who = who === previous ? null : who;
+    previous = who;
+  }
   return items;
 }
 
@@ -226,7 +339,7 @@ function updateTurn(node, turn, sessionId) {
   updateMessage(u, turn.u, turn.uSeq, turn.uTime);
   updateMessage(a, turn.a === null ? null : truncate(turn.a, 600), turn.aSeq, turn.aTime);
   updateFold(fold, foldBody, turn, sessionId);
-  syncChildren(body, turnItems(turn), i => i.key, i => (i.ev ? createEvent(i.ev) : createCorr(i)), (n, i) => (i.ev ? updateEvent(n, i.ev) : updateCorr(n, i)));
+  syncChildren(body, turnItems(turn), i => i.key, i => (i.ev ? createEvent(i.ev) : createCorr(i)), (n, i) => (i.ev ? updateEvent(n, i.ev, i.who) : updateCorr(n, i)));
 }
 
 const turnVisible = turn => EF() === "all" || turn.tools.some(evMatches) || turn.orphans.some(cardShown);
@@ -342,14 +455,39 @@ export function renderTimeline(tl, rail, sess, turns, cs, page) {
   placeTicks(rail, tl);
 }
 
-/** One rail tick per correction card, at the card's offset within the timeline. */
+/**
+ * How far `el` sits below the top of `root`, an ancestor it is laid out in, by offsets: unlike two viewport rects,
+ * this cannot change between reads when the browser re-anchors the scroll as the timeline shrinks (Show all events
+ * off, under a scrolled view), which left every tick displaced by the scroll and the timeline padded with empty space.
+ */
+function offsetWithin(el, root) {
+  let y = 0;
+  for (let node = el; node !== root; node = node.offsetParent) {
+    if (node === null) return el.getBoundingClientRect().top - root.getBoundingClientRect().top;
+    y += node.offsetTop;
+  }
+  return y;
+}
+
+/**
+ * One rail tick per correction card, in its card's outcome colour, centred on the card's first title line: the line
+ * the "Rerail" speaker label sits on. Every position is read before any tick moves, so placing ticks changes no layout
+ * the next one is read from.
+ */
 export function placeTicks(rail, tl) {
   if (!rail || !tl || rail.hidden) return;
-  const top = tl.getBoundingClientRect().top;
+  // The rail and the timeline share the positioned wrapper the ticks' offsets are taken in.
+  const root = rail.offsetParent ?? rail.parentElement;
+  const railTop = offsetWithin(rail, root);
+  const placed = [...tl.querySelectorAll(".corr")].map(card => {
+    const title = card.querySelector(".ctitle");
+    const line = parseFloat(getComputedStyle(title).lineHeight) || 20;
+    return { card, top: offsetWithin(title, root) - railTop + line / 2 };
+  });
   for (const old of rail.querySelectorAll(".tick")) old.remove();
-  for (const card of tl.querySelectorAll(".corr")) {
-    const tick = h("button.tick", { "aria-label": "Jump to violation", "data-act": "jump", "data-i": card.dataset.key });
-    tick.style.top = `${card.getBoundingClientRect().top - top + 14}px`;
+  for (const { card, top } of placed) {
+    const tick = h("button.tick", { "aria-label": "Jump to violation", "data-act": "jump", "data-i": card.dataset.key, "data-outcome": card.dataset.outcome });
+    tick.style.top = `${top}px`;
     rail.append(tick);
   }
 }
