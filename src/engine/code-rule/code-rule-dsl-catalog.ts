@@ -108,13 +108,26 @@ export class CompiledRuleCache {
     ahead = false,
   ): Promise<CompileOutcome> {
     const key = compileKey(capabilities, rule.policyId, rule.config);
-    const held = this.#held(key, rule.sourceDigest);
-    if (held !== undefined) return held;
+    const known = this.#held(key, rule.sourceDigest) ?? this.#joined(key, rule.sourceDigest, ahead);
+    if (known !== undefined) return await known;
+    return await this.#queued(key, capabilities, rule, ahead);
+  }
+
+  /** The compile of this source already asked for, moved to the line of calls when the ask is not `ahead` and it has not started. */
+  #joined(key: string, sourceDigest: string, ahead: boolean): Promise<CompileOutcome> | undefined {
     const running = this.#compiling.get(key);
-    if (running?.sourceDigest === rule.sourceDigest) {
-      if (!ahead && this.#ahead.take(running.job)) this.#now.add(running.job);
-      return await running.outcome;
-    }
+    if (running?.sourceDigest !== sourceDigest) return undefined;
+    if (!ahead && this.#ahead.take(running.job)) this.#now.add(running.job);
+    return running.outcome;
+  }
+
+  /** A compile of the rule, added to its line; settles with its outcome once the line has run it. */
+  async #queued(
+    key: string,
+    capabilities: CodeRuleCapabilities,
+    rule: { readonly policyId: string; readonly sourceText: string; readonly sourceDigest: string },
+    ahead: boolean,
+  ): Promise<CompileOutcome> {
     const compiled = Promise.withResolvers<CompileOutcome>();
     const job: CompileJob = async () => compiled.resolve(await this.#compileNow(key, capabilities, rule));
     const entry = { sourceDigest: rule.sourceDigest, outcome: compiled.promise, job };
@@ -367,25 +380,29 @@ export interface CompiledPlan {
 function catalogPlan(loaded: LoadedCheckoutRules): CatalogPlan {
   const ruleSet = loaded.ruleSet;
   const placed = ruleSet === undefined ? new Map<string, PlacedRule>() : placedRules(ruleSet, loaded.folders);
-  const entries: PlanEntry[] = [];
-  for (const policyId of [...placed.keys()].sort(compareDeterministicStrings)) {
-    const { rule, decisions } = placed.get(policyId)!;
-    const placement = placementOf(decisions, loaded.folders);
-    if (placement.length === 0) continue;
-    if (rule.configError !== null) {
-      entries.push({ skip: { ruleId: policyId, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` } });
-      continue;
-    }
-    const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
-    if (relationalOff !== undefined) {
-      entries.push({ skip: { ruleId: policyId, kind: "code", owner: ownerOf(rule), reason: relationalOff } });
-      continue;
-    }
-    const sourceText = stableJsonText(rule.document.rule);
-    if (sourceText === undefined) throw new Error(`Policy ${policyId} is not JSON representable`);
-    entries.push({ compile: { policyId, rule, decisions, placement, sourceText, sourceDigest: digest(sourceText), config: stableJsonText(rule.config) ?? "" } });
-  }
+  const entries = [...placed.keys()].sort(compareDeterministicStrings)
+    .flatMap(policyId => planEntry(policyId, placed.get(policyId)!, loaded.folders) ?? []);
   return { ruleSet, quarantined: loaded.quarantined, entries };
+}
+
+/** The rule `policyId` to compile, or left out with why; undefined where it is placed nowhere. */
+function planEntry(policyId: string, { rule, decisions }: PlacedRule, folders: readonly string[]): PlanEntry | undefined {
+  const placement = placementOf(decisions, folders);
+  if (placement.length === 0) return undefined;
+  const skipped = skippedRule(policyId, rule);
+  if (skipped !== undefined) return { skip: skipped };
+  const sourceText = stableJsonText(rule.document.rule);
+  if (sourceText === undefined) throw new Error(`Policy ${policyId} is not JSON representable`);
+  return { compile: { policyId, rule, decisions, placement, sourceText, sourceDigest: digest(sourceText), config: stableJsonText(rule.config) ?? "" } };
+}
+
+/** Why the placed rule `policyId` is left out before any compile, or undefined when it compiles. */
+function skippedRule(policyId: string, rule: EffectiveRule): QuarantinedRule | undefined {
+  if (rule.configError !== null) {
+    return { ruleId: policyId, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` };
+  }
+  const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
+  return relationalOff === undefined ? undefined : { ruleId: policyId, kind: "code", owner: ownerOf(rule), reason: relationalOff };
 }
 
 function ownerOf(rule: EffectiveRule): string {
