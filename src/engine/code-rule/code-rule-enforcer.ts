@@ -653,6 +653,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #nestedCheckouts: () => readonly string[];
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #followGitignore: boolean;
+  readonly #openGitIgnore: (root: string) => NativeGitIgnoreMatcher | null;
   readonly #steerShell: SteerShell | undefined;
   /** Git's exclude stack for this checkout: undefined until first use, null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
@@ -753,6 +754,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
        * repository's setting when it opens, and it holds for the session's life.
        */
       followGitignore?: boolean;
+      /**
+       * Opens `root`'s Git ignore rules (the process's `NativeGitAccess.openGitIgnoreMatcher` by default). A matcher holds
+       * the checkout's index, so a router hands the one it already holds for the checkout, and a checkout keeps one.
+       */
+      openGitIgnore?: (root: string) => NativeGitIgnoreMatcher | null;
       /** The shell the session's coding agent runs commands in, which a steer's command is written for (`steerShell`). */
       steerShell?: SteerShell | undefined;
     },
@@ -768,6 +774,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
     this.#timingLog = options.timingLog;
     this.#followGitignore = options.followGitignore ?? false;
+    this.#openGitIgnore = options.openGitIgnore ?? (root => nativeGitAccess().openGitIgnoreMatcher(root));
     this.#steerShell = options.steerShell;
     this.#ownedAudits =
       options.audits === undefined
@@ -809,6 +816,19 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return this.#rerail;
   }
 
+  /**
+   * The catalog version of the rules `readsPath` answers by: the workspace being opened or the open one; undefined
+   * before the lane opened one. Two lanes at one version read the same paths, placements included.
+   */
+  get rulesVersion(): string | undefined {
+    return (this.#replacement ?? this.#workspace)?.version;
+  }
+
+  /** `acceptsPath` apart from Git's ignore rules: what another checkout at `rulesVersion` reads (the router asks it). */
+  readsPath(path: string): boolean {
+    return this.#readsPath(path);
+  }
+
   /** `acceptsPath` apart from Git's ignore rules. */
   #readsPath(path: string): boolean {
     const language = languageFor(path);
@@ -845,9 +865,23 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /** `ask` of this checkout's exclude stack while the lane follows `.gitignore`; undefined otherwise, and outside Git. */
   #askGitIgnore<T>(path: string, ask: (matcher: NativeGitIgnoreMatcher) => T): T | undefined {
     if (!this.#followGitignore) return undefined;
-    // A repository Git refuses is tried once: every later path sees no matcher. An open that outran its time limit
-    // (a disk that stopped answering) is tried again once GIT_OPEN_AGAIN_MS has passed; until then paths see no
-    // matcher. A matcher opened while Git had not said which config it reads is opened again once it has.
+    const matcher = this.#openedGitIgnore();
+    if (!matcher) return undefined;
+    try {
+      return ask(matcher);
+    } catch (error) {
+      this.#reportGitIgnoreError(path, error);
+      return undefined;
+    }
+  }
+
+  /**
+   * This checkout's exclude stack, opened on first use; none outside Git or while it cannot be opened. A repository Git
+   * refuses is tried once: every later path sees no matcher. An open that outran its time limit (a disk that stopped
+   * answering) is tried again once GIT_OPEN_AGAIN_MS has passed; until then paths see no matcher. A matcher opened while
+   * Git had not said which config it reads is opened again once it has.
+   */
+  #openedGitIgnore(): NativeGitIgnoreMatcher | null | undefined {
     try {
       const access = nativeGitAccess();
       if (access !== this.#gitIgnoreAccess) {
@@ -856,7 +890,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       }
       if (this.#gitIgnore === undefined) {
         if (Date.now() < this.#gitIgnoreOpenAgainAt) return undefined;
-        this.#gitIgnore = access.openGitIgnoreMatcher(this.#workspaceRoot);
+        this.#gitIgnore = this.#openGitIgnore(this.#workspaceRoot);
       }
     } catch (error) {
       if (gitReadTimedOut(error)) this.#gitIgnoreOpenAgainAt = Date.now() + GIT_OPEN_AGAIN_MS;
@@ -864,13 +898,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       this.#reportGitIgnoreError(".", error);
       return undefined;
     }
-    if (this.#gitIgnore === null) return undefined;
-    try {
-      return ask(this.#gitIgnore);
-    } catch (error) {
-      this.#reportGitIgnoreError(path, error);
-      return undefined;
-    }
+    return this.#gitIgnore;
   }
 
   #reportGitIgnoreError(path: string, error: unknown): void {

@@ -27,6 +27,7 @@ import {
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { claudeCodeReportedPreimage } from "../engine/code-rule/tool-result/reported-preimage.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { GitIgnoreMatchers } from "../engine/native/git-ignore-matchers.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
@@ -1087,6 +1088,11 @@ export interface RerailRuntimeOptions {
    * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
    */
   worktreeWalks?: RepositoryWorktreeWalks;
+  /**
+   * Git's ignore rules of each checkout, one matcher for every session (`GitIgnoreMatchers`): the engine service passes
+   * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
+   */
+  gitIgnoreMatchers?: GitIgnoreMatchers;
   /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
   timingLog?: (line: string) => void;
   /** The sessions an engine service suspended (`closeIdleSession`), which this runtime takes back as it opens one. */
@@ -1149,6 +1155,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
   readonly #worktreeWalks: RepositoryWorktreeWalks;
+  readonly #gitIgnoreMatchers: GitIgnoreMatchers;
   readonly #discoveryWaitMs: number | undefined;
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
@@ -1176,6 +1183,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#discoveryWaitMs = options.discoveryWaitMs;
     this.#worktreeWalks = options.worktreeWalks ?? new RepositoryWorktreeWalks();
+    this.#gitIgnoreMatchers = options.gitIgnoreMatchers ?? new GitIgnoreMatchers();
     this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
@@ -1185,6 +1193,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       startingCheckout: startingCheckout(this.#owners, auditorOptions.workspaceRoot).checkoutRoot,
       owners: this.#owners,
       catalogs: this.#catalogs,
+      gitIgnoreMatchers: this.#gitIgnoreMatchers,
     }));
     if (options.embedder !== undefined) this.#embedder = options.embedder;
     else if (options.modelPath !== undefined) this.#embedder = new NativeSemanticEmbedder(options.modelPath);
@@ -2115,47 +2124,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         followGitignore: followsGitignore,
         steerShell: steerShell(session.host),
       });
-      bridge = new CodeRuleBridge(checkout.cwd, auditor, {
-        observations: this.#sourceObservations,
-        ...walkResumeOption(suspension),
-        heldCalls: heldCallsOf(opened.restoredCalls),
-        // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own. The walk is
-        // looked up at the session's first walk, as one dropped when its last session left is no longer the repository's.
-        worktreeWalks: () => this.#worktreeWalks.of(this.#catalogs.checkout(checkout.root)?.cloneId ?? checkout.root),
-        ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
-        // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
-        onDiscoveryPending: boundary => this.#recordSessionFact(
-          session.sessionId,
-          (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
-        ),
-        // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
-        onIgnoredEdit: edit => this.#recordSessionFact(
-          session.sessionId,
-          (store, descriptor, attribution) => store.recordIgnoredEdit(descriptor, edit, attribution),
-        ),
-        ...(followsGitignore ? {
-          onIgnoreRulesChanged: (change: IgnoreRulesChange) => this.#recordSessionFact(
-            session.sessionId,
-            (store, descriptor, attribution) => store.recordIgnoreRulesChanged(descriptor, change, attribution),
-          ),
-        } : {}),
-        onRevision: (sessionId, revision, paths) => {
-          const current = this.#sessions.get(sessionId);
-          if (current !== opened || current.closed || paths.length === 0) return;
-          current.codeRuleRevision = Math.max(current.codeRuleRevision, revision);
-          for (const path of paths) current.codeRuleSourceVersions.set(path, revision);
-          current.pendingSteers = current.pendingSteers.filter(pending => {
-            if (this.#isCurrentSteer(current, pending)) return true;
-            this.#recordUndelivered(current, pending);
-            return false;
-          });
-          current.missedFindings = current.missedFindings.filter(finding => {
-            if (this.#isCurrentSteer(current, finding)) return true;
-            this.#recordUndelivered(current, finding);
-            return false;
-          });
-        },
-      });
+      bridge = this.#codeRuleBridge({ session, checkout, auditor, opened, followsGitignore, suspension });
       opened.codeRuleBridge = bridge;
       await this.#beforeSessionPublish?.(session);
       this.#failWhileWriteLockedForScan(session.sessionId);
@@ -2207,6 +2176,65 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // waits for no rule to compile: the agent's next command may rewrite one, and is measured from that text.
     await bridge.heldTextsRead();
     return { processedEventIds: [...opened.processed] };
+  }
+
+  /**
+   * The code-rule bridge of `opened`, the session's state as it opens, over `auditor` in the session's folder. It goes on
+   * from where `suspension` left the session's walks, when the engine service suspended it. What its walks and its tool
+   * edits leave unchecked goes on the session's record; a revision drops what it makes stale.
+   */
+  #codeRuleBridge({ session, checkout, auditor, opened, followsGitignore, suspension }: {
+    session: AdapterSession; checkout: StartingCheckout; auditor: CodeRuleAuditor; opened: RuntimeSessionState;
+    followsGitignore: boolean; suspension: SessionSuspension | undefined;
+  }): CodeRuleBridge {
+    return new CodeRuleBridge(checkout.cwd, auditor, {
+      observations: this.#sourceObservations,
+      ...walkResumeOption(suspension),
+      heldCalls: heldCallsOf(opened.restoredCalls),
+      // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own. The walk is
+      // looked up at the session's first walk, as one dropped when its last session left is no longer the repository's.
+      worktreeWalks: () => this.#worktreeWalks.of(this.#catalogs.checkout(checkout.root)?.cloneId ?? checkout.root),
+      ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
+      // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
+      onDiscoveryPending: boundary => this.#recordSessionFact(
+        session.sessionId,
+        (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
+      ),
+      // What a boundary's walks could not check goes on the session's record, once per gap; the agent is not told of it.
+      onDiscoveryGaps: gaps => this.#recordSessionFact(
+        session.sessionId,
+        (store, descriptor, attribution) => store.recordDiscoveryGaps(descriptor, gaps, attribution),
+      ),
+      // Read as the workspace opens, so a reopened session or a restarted daemon goes on from what the record holds.
+      recordedDiscoveryGaps: (sessionId, limit) => this.#sessionStore.discoveryGaps(sessionId, limit),
+      // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
+      onIgnoredEdit: edit => this.#recordSessionFact(
+        session.sessionId,
+        (store, descriptor, attribution) => store.recordIgnoredEdit(descriptor, edit, attribution),
+      ),
+      ...(followsGitignore ? {
+        onIgnoreRulesChanged: (change: IgnoreRulesChange) => this.#recordSessionFact(
+          session.sessionId,
+          (store, descriptor, attribution) => store.recordIgnoreRulesChanged(descriptor, change, attribution),
+        ),
+      } : {}),
+      onRevision: (sessionId, revision, paths) => {
+        const current = this.#sessions.get(sessionId);
+        if (current !== opened || current.closed || paths.length === 0) return;
+        current.codeRuleRevision = Math.max(current.codeRuleRevision, revision);
+        for (const path of paths) current.codeRuleSourceVersions.set(path, revision);
+        current.pendingSteers = current.pendingSteers.filter(pending => {
+          if (this.#isCurrentSteer(current, pending)) return true;
+          this.#recordUndelivered(current, pending);
+          return false;
+        });
+        current.missedFindings = current.missedFindings.filter(finding => {
+          if (this.#isCurrentSteer(current, finding)) return true;
+          this.#recordUndelivered(current, finding);
+          return false;
+        });
+      },
+    });
   }
 
   /**

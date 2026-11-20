@@ -1072,9 +1072,10 @@ function ruleDraftHelp(): string {
     "rules test checks a draft without storing it: it validates the rule, runs its cases, and for a code rule lists the",
     "places it matches in the repository, in the folders rules add would add it at, and says where rules add would",
     "refuse the draft. It also takes a rule document on its own (a worktree's .rerail/rules/<name>.json), which has no",
-    "cases, and a .rerail rule file, whose own tests (.test ... .end) it runs. rules add stores the rule in your",
-    "library and adds it to the repository. A draft that keeps a By Rerail rule's id is stored as your copy of it,",
-    "added where the original is; approving the copy turns the original off there.",
+    "cases, and a .rerail rule file, whose own tests (.test ... .end) it runs; a .rerail file that is not there, does",
+    "not parse or holds no tests is an error. rules add stores the rule in your library and adds it to the",
+    "repository. A draft that keeps a By Rerail rule's id is stored as your copy of it, added where the original is;",
+    "approving the copy turns the original off there.",
     "",
     "A draft is one JSON file:",
     "  {",
@@ -1182,11 +1183,14 @@ async function runAdd(file: string, repo: string, stdout: CommandOutput, stderr:
 
 /**
  * The tests a `.rerail` rule file carries (`.test` … `.end`), each run by the Engine as `rerail-engine test-rr` runs them:
- * one line a test, and each failed expectation under it.
+ * one line a test, and each failed expectation under it. A file that is not there or does not parse is the Engine's
+ * error, and a file with no tests is one too: with nothing run, a script or CI step would read it as a pass.
  */
 export function testRrFile(file: string): NativeRrTestResult[] {
   const binding = loadNativeBinding();
-  return JSON.parse(binding.CodeRuleDslRuntime.testRr(JSON.stringify([resolve(file)]), null)) as NativeRrTestResult[];
+  const results = JSON.parse(binding.CodeRuleDslRuntime.testRr(JSON.stringify([resolve(file)]), null)) as NativeRrTestResult[];
+  if (results.length === 0) throw new RuleDraftError(`${file} holds no tests (.test ... .end): there is nothing to run`);
+  return results;
 }
 
 export function formatRrTestReport(results: readonly NativeRrTestResult[]): string {
@@ -1196,7 +1200,7 @@ export function formatRrTestReport(results: readonly NativeRrTestResult[]): stri
     for (const failure of result.failures) lines.push(`    ${failure}`);
   }
   const failed = results.filter(result => result.status === "fail").length;
-  lines.push(results.length === 0 ? "no tests" : `${results.length - failed} passed, ${failed} failed`);
+  lines.push(`${results.length - failed} passed, ${failed} failed`);
   return lines.join("\n");
 }
 

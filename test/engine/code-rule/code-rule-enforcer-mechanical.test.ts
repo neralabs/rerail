@@ -2095,7 +2095,7 @@ describe("mechanical code rule regressions", () => {
     roots.push(root);
     const access = nativeGitAccess();
     const timedOut = Object.assign(new Error("opening Git's ignore rules gave no answer within 10 s"), { code: "GitReadTimedOut" });
-    const ignoresLogs = { ignored: (path: string) => path.endsWith(".log"), ignoredBy: () => null };
+    const ignoresLogs = { ignored: (path: string) => path.endsWith(".log"), ignoredBy: () => null, sourcesUnchanged: () => true };
     const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementationOnce(() => { throw timedOut; }).mockImplementation(() => ignoresLogs);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     let clock = 1_000_000;
@@ -2127,6 +2127,7 @@ describe("mechanical code rule regressions", () => {
     const failing = {
       ignored: (path: string) => { throw new Error(path.startsWith("locked/") ? "cannot read Git excludes for locked: Permission denied" : "cannot read Git index"); },
       ignoredBy: () => null,
+      sourcesUnchanged: () => true,
     };
     const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(() => failing);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);

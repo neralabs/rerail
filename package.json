@@ -142,6 +142,7 @@
     "ui:scenario": "node --import tsx scripts/dev/ui-scenario.ts",
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
+    "translations:check": "node --import tsx scripts/ship/translations.ts check",
     "fixtures:pull": "node scripts/s3/pack-fixtures.mjs pull",
     "fixtures:stage": "node scripts/s3/pack-fixtures.mjs stage",
     "fixtures:push": "node scripts/s3/pack-fixtures.mjs push",
