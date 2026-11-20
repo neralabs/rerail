@@ -250,16 +250,20 @@ function searchText(stored) {
   return hay;
 }
 
+/** What each Filter choice keeps (`PAGE_FILTERS`); "all", and any value not here, keeps every rule. */
+const FILTER_KEEPS = {
+  __proto__: null,
+  on: stored => isRunning(stored),
+  off: stored => !isRunning(stored),
+  steer: stored => isRunning(stored) && !isLog(stored),
+  log: stored => isRunning(stored) && isLog(stored),
+  fired: stored => fires(stored.rule.id) !== 0,
+};
+
 export function matches(stored) {
-  const id = stored.rule.id;
-  const f = ui.filter;
-  if (f === "on" && !isRunning(stored)) return false;
-  if (f === "off" && isRunning(stored)) return false;
-  if (f === "steer" && !(isRunning(stored) && !isLog(stored))) return false;
-  if (f === "log" && !(isRunning(stored) && isLog(stored))) return false;
-  if (f === "fired" && fires(id) === 0) return false;
-  if (ui.query && !searchText(stored).includes(ui.query)) return false;
-  return true;
+  const keeps = FILTER_KEEPS[ui.filter];
+  if (keeps !== undefined && !keeps(stored)) return false;
+  return !ui.query || searchText(stored).includes(ui.query);
 }
 export const filtering = () => ui.filter !== "all" || ui.query !== "";
 

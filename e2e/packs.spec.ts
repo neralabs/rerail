@@ -135,9 +135,12 @@ test.describe("rule pack pages and the catalog over mature", () => {
     await expect(page.locator("#sidenav")).toContainText("Python");
     await expect(row.getByRole("button", { name: "Remove pack" })).toBeVisible();
 
+    // Python starts some rules on and its opt-in rules off, so its whole-pack switch is halfway.
+    expect(startsOn.length).toBeGreaterThan(0);
+    expect(startsOn.length).toBeLessThan(python.rules.length);
     await page.goto(await rerail.dashboard("mature", { hash: "pack/python" }));
-    await expect(page.locator("#content")).toContainText(`${startsOn.length} of ${python.rules.length} on`);
-    await expect(packSwitch(page, "Python")).toHaveAttribute("aria-checked", startsOn.length === python.rules.length ? "true" : "false");
+    await expect(page.locator("#content .packall")).toHaveText(`All · ${startsOn.length} of ${python.rules.length} on`);
+    await expect(packSwitch(page, "Python")).toHaveAttribute("aria-checked", "mixed");
 
     await page.goto(url);
     await row.locator("b", { hasText: /^Python$/u }).click();

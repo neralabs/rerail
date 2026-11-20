@@ -46,16 +46,21 @@ function countContent(stored) {
   return { text: "–", zero: true, tip: "Not run yet." };
 }
 
-function updateRow(row, stored) {
-  const id = stored.rule.id, r = row._r, title = titleOf(stored);
-  setClass(row, "off", !isRunning(stored));
+/** The "Not running" badge: a rule switched on that Rerail runs nowhere, and why in its hover. */
+function updateStopped(badge, stored) {
   // Switched on, but its stored options no longer apply to its document: Rerail runs it nowhere.
   // A conversation rule is in internal testing: it runs only while the daemon runs that experiment.
   const experimentOff = isInternalTesting(stored) && !(data.health?.experiments ?? []).includes("CONVERSATION_RULES");
-  setAttr(r.stopped, "hidden", (isRunning(stored) && !experimentOff) || !stored.enabled);
-  setAttr(r.stopped, "title", experimentOff
+  setAttr(badge, "hidden", (isRunning(stored) && !experimentOff) || !stored.enabled);
+  setAttr(badge, "title", experimentOff
     ? "Conversation rules are experimental and off: start the Rerail daemon with RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1 to run them."
     : stored.configError ? `Its options don't apply: ${stored.configError}` : null);
+}
+
+function updateRow(row, stored) {
+  const id = stored.rule.id, r = row._r, title = titleOf(stored);
+  setClass(row, "off", !isRunning(stored));
+  updateStopped(r.stopped, stored);
   setAttr(row, "aria-selected", panelRuleId() === id ? "true" : null);
   setText(r.title, title);
   setAttr(r.title, "title", title);
