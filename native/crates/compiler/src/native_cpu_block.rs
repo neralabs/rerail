@@ -263,6 +263,8 @@ pub struct Batch {
     /// Each file's prefix length where it starts with the program's (`CompiledBlock::prefix`):
     /// the passes run past it.
     pub stripped: Vec<u8>,
+    /// No file's prefix stripped (`stripped` all 0): a feed's files' positions stay as made.
+    pub unstripped: bool,
     pub out: Vec<u64>,
     pub positions: Vec<u32>,
     pub counts: Vec<u64>,
@@ -288,10 +290,13 @@ impl Batch {
         let (mut bytes, mut rows) = (Vec::new(), Vec::with_capacity(files.len()));
         let p = &program.prefix;
         let mut stripped: Vec<u8> = Vec::with_capacity(files.len());
+        let mut unstripped = true;
         let (mut words, mut positions, mut counts, mut scratch) = (0u64, 0u64, 0u64, 0u64);
         for file in files {
             // The bytes the host stripped (0389): the prefix, where the file starts with it.
-            stripped.push(if !p.is_empty() && file.starts_with(p) { p.len() as u8 } else { 0 });
+            let k = if !p.is_empty() && file.starts_with(p) { p.len() as u8 } else { 0 };
+            unstripped &= k == 0;
+            stripped.push(k);
             // The file's blocks and `delay` bytes past its end, zero beyond it.
             let blocks = (file.len() + usize::from(program.delay)).div_ceil(64);
             bytes.resize(bytes.len() + FRONT, 0);
@@ -318,6 +323,7 @@ impl Batch {
             bytes,
             rows,
             stripped,
+            unstripped,
             out: vec![0u64; words as usize],
             positions: vec![0u32; positions as usize],
             counts: vec![0u64; counts as usize],
@@ -330,20 +336,8 @@ impl Batch {
     pub fn call(&mut self, program: &CompiledBlock) {
         // A feed's files (no prefix stripped, whose positions move after the passes): stage 1 now, the records as
         // tier 2 asks (decision 0496).
-        if let Some(f) = program.feed.filter(|_| self.stripped.iter().all(|&k| k == 0)) {
-            // A call again (a benchmark's round): the last call's feeds end first.
-            if let Some(old) = self.feed {
-                for state in self.feeds.drain(..) {
-                    // SAFETY: made by `old.new`, freed once.
-                    unsafe { (old.free)(state) };
-                }
-            }
-            self.feed = Some(f);
-            for i in 0..self.rows.len() {
-                // SAFETY: the batch's buffers, laid out for the program (`Batch::new`).
-                let state = unsafe { (f.new)(self.bytes.as_ptr(), self.rows.as_ptr(), i as u64, self.out.as_mut_ptr(), self.positions.as_mut_ptr(), self.counts.as_mut_ptr()) };
-                self.feeds.push(state);
-            }
+        if let (Some(f), true) = (program.feed, self.unstripped) {
+            self.start_feeds(f);
             return;
         }
         let rows = self.strip(program);
@@ -351,6 +345,23 @@ impl Batch {
             self.run(*entry);
         }
         self.unstrip(program, rows);
+    }
+
+    /// Each file's feed (decision 0496), the last call's ended first (a benchmark's round): a loop
+    /// over the files, as `call`'s passes over its entries.
+    fn start_feeds(&mut self, f: Feed) {
+        if let Some(old) = self.feed {
+            for state in self.feeds.drain(..) {
+                // SAFETY: made by `old.new`, freed once.
+                unsafe { (old.free)(state) };
+            }
+        }
+        self.feed = Some(f);
+        for file in 0..self.rows.len() {
+            // SAFETY: the batch's buffers, laid out for the program (`Batch::new`).
+            let state = unsafe { (f.new)(self.bytes.as_ptr(), self.rows.as_ptr(), file as u64, self.out.as_mut_ptr(), self.positions.as_mut_ptr(), self.counts.as_mut_ptr()) };
+            self.feeds.push(state);
+        }
     }
 
     /// Every fed file's records made (`call` with a feed): tier 1's whole output, as without one, for a comparison
@@ -5408,7 +5419,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     f.set_cold_block(none);
                     // The end and the count tests in one pass (`read_fn`), as a lexer's string
                     // reader: its last and its hits on to the other tests (`tested`'s rest).
-                    let read = rd.calls.iter().find(|x| x.0 == READ_CALL | (k as u16) << 3 | j as u16);
+                    // A closer to its last (`ReadArm::last`): read here, a word at a time.
+                    let read = rd.calls.iter().find(|x| x.0 == READ_CALL | (k as u16) << 3 | j as u16).filter(|_| a.last.is_none());
                     // A short reader's (`RuleMode::Short`): the read's first window inline, as
                     // `read_fn`'s, and a token whose closer is past it, or whose bytes the
                     // counts need, its whole function's call, returned. As a lexer reads a short
@@ -5518,7 +5530,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     // A short reader's (`RuleMode::Short`): its closer's 64 bytes from the token's
                     // second inline, as a lexer's search from where it is, and a region past them
                     // its whole function's call, returned.
-                    let whole = match (mode, rd.bytes.filter(|(b, _)| b.can(a.closer))) {
+                    let whole = match (mode, rd.bytes.filter(|(b, _)| b.can(a.closer) && a.last.is_none())) {
                         (RuleMode::Short(_), Some(bytes)) => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16).map(|w| (w, bytes)),
                         (RuleMode::Calls, Some(bytes)) if in_arm => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16).map(|w| (w, bytes)),
                         _ => None,
@@ -5589,10 +5601,41 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     let at = f.ins().iadd(w64, tz);
                     let w1 = f.ins().iadd_imm(w, 1);
                     f.ins().brif(x, found, &[at.into()], more, &[w1.into()]);
-                    // The closer's first byte: the last at its offset.
+                    // The closer's first byte: the last at its offset, or the first bit of its
+                    // last from it (`ReadArm::last`, a `${`'s two bytes).
                     f.switch_to_block(found);
                     let at = f.block_params(found)[0];
-                    let l = f.ins().iadd_imm(at, i64::from(a.off));
+                    let l = match a.last {
+                        None => f.ins().iadd_imm(at, i64::from(a.off)),
+                        Some(o) => {
+                            let limit = rd.limit(o, limit);
+                            let (lscan, llook, lfound) = (f.create_block(), f.create_block(), f.create_block());
+                            f.append_block_param(lscan, types::I64);
+                            f.append_block_param(lscan, types::I64);
+                            f.append_block_param(lfound, types::I64);
+                            let q = f.ins().ushr_imm(at, 6);
+                            let sh = f.ins().band_imm(at, 63);
+                            let ones = f.ins().iconst(types::I64, -1);
+                            let m = f.ins().ishl(ones, sh);
+                            f.ins().jump(lscan, &[q.into(), m.into()]);
+                            f.switch_to_block(lscan);
+                            heads.push((lscan, Step::Word));
+                            let (w, m) = (f.block_params(lscan)[0], f.block_params(lscan)[1]);
+                            let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+                            inside_or_past(f, inside, llook, limit, none, &[]);
+                            f.switch_to_block(llook);
+                            let x = word_at(f, w, o, heads);
+                            let x = f.ins().band(x, m);
+                            let w64 = f.ins().ishl_imm(w, 6);
+                            let tz = f.ins().ctz(x);
+                            let l = f.ins().iadd(w64, tz);
+                            let w1 = f.ins().iadd_imm(w, 1);
+                            let ones = f.ins().iconst(types::I64, -1);
+                            f.ins().brif(x, lfound, &[l.into()], lscan, &[w1.into(), ones.into()]);
+                            f.switch_to_block(lfound);
+                            f.block_params(lfound)[0]
+                        }
+                    };
                     f.ins().jump(ended, &[l.into(), tag.into(), nohits.into()]);
                     f.switch_to_block(none);
                     read_none(f, a.none, c, s, tag, nohits, ended);

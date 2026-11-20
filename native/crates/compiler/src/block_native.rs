@@ -441,7 +441,14 @@ impl BlockNative {
         } else {
             Vec::new()
         };
-        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o)).map(usize::from).collect();
+        // A region tier 2 splits otherwise (`Split::Tier2`): tier 2 reads its masks too, stored.
+        let split_read: Vec<u16> = r
+            .readers
+            .iter()
+            .filter(|rd| rd.split == crate::records::Split::Tier2 && !rd.parts.is_empty() && !rd.parts.iter().any(|p| unread.contains(&p.start)))
+            .flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last)).chain(rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))))
+            .collect();
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o) && !split_read.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();
         v

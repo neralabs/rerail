@@ -80,6 +80,9 @@ struct Facts<'a> {
     /// Where tier 2 makes each token's record from its start (page 40), as simdjson's stage 2
     /// takes a structural index: the rules and the region read as `parse_string`.
     fetch: Option<Fetched>,
+    /// The readers whose regions tier 2 splits from tier 1's records (`Split::Tier2`, decision
+    /// 0323), as the lean parser's string arm reads its string's pieces (`split_code`).
+    split: bool,
     /// The supertype classes the tape's codes carry (`native_cpu_stream::supertype_classes`).
     classes: Vec<u16>,
     /// The tape sized from the input once (`Bounds::unchecked`): no room check a token.
@@ -499,9 +502,10 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
     }
     let fetch = fetched(native)?;
     let late = native.block_programs.iter().filter_map(|b| b.records.as_ref()).any(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2));
-    if late && fetch.as_ref().is_none_or(|f| f.seq.is_none()) {
-        return Err("a region tier 2 splits (decision 0323), not read as `parse_string`: not yet ahead of time".into());
+    if late && fetch.as_ref().is_some_and(|f| f.seq.is_none()) {
+        return Err("a region tier 2 splits (decision 0323), where tier 2 makes the records, not read as `parse_string`: not yet ahead of time".into());
     }
+    let split = late && fetch.is_none();
     let classes = crate::native_cpu_stream::supertype_classes(native).map_err(|e| format!("supertype classes: {e:?}"))?;
     let records = native.block_programs.first().and_then(|b| b.records.as_ref());
     let starts = native.structural.iter().any(|b| matches!(b.operation, Op::Token { .. }));
@@ -554,7 +558,7 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         (0..native.strings.len()).map(|i| d[&i].clone()).collect()
     };
     let loses = native.structural.iter().any(|b| matches!(b.operation, Op::LoseLast { .. }));
-    let mut facts = Facts { native, loses, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, part_kinds, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, fn_names, kind_names, token_names, word_names, asks: Default::default() };
+    let mut facts = Facts { native, loses, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, part_kinds, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, split, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, fn_names, kind_names, token_names, word_names, asks: Default::default() };
     facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {
@@ -654,7 +658,7 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
         writer: c.writer, numbers: c.numbers, passed: 0,
         block_base: 0, coded: 0, ncodes: 0, wide: 0,
         room_nodes: c.room_nodes as usize, room_supers: c.room_supers as usize,
-        next: 0, start: 0, end: 0, rec_end: 0, code: 0, last_end: 0, at_end: false, need: true, part_at: 0, live: 0,
+        next: 0, start: 0, end: 0, rec_end: 0, code: 0, last_end: 0, at_end: false, need: true, part_at: 0, part_end: 0, part_close: 0, part_rd: 0, live: 0,
         nodes: 0, nopen: 0, pending: 0, keep: 0, supers: 0, lost: 0, last_made: 0, moved: 0,
         counts: [0; COUNTS], depth: 0, ret: [0; DEPTH as usize],
     };
@@ -712,6 +716,9 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     }
     if let Some(fx) = &x.fetch {
         fetched_helpers(out, x, fx)?;
+    }
+    if x.split {
+        split_code(out, x)?;
     }
     // The vector reads a fetched token step and a token's check share.
     if x.fetch.is_some() || n.local_checks.iter().any(|c| c.token) {
@@ -922,6 +929,8 @@ struct S {
     next: u32, start: u32, end: u32, rec_end: u32, code: u32, last_end: u32, at_end: bool, need: bool,
     /// Where tier 2 makes the records: the place of a region's next part (0: none pending).
     part_at: u32,
+    /// A region tier 2 splits (`split_enter`): the record's last, its closer's first byte, and its reader.
+    part_end: u32, part_close: u32, part_rd: u32,
     /// The marks not yet taken or passed at this token.
     live: u64,
     /// The nodes made, open; the deferred extras' leaves, and the end before them; the
@@ -1065,7 +1074,7 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
             return Err(false);
         }}
         loop {{
-{before}{lost}            let i = self.next as usize;
+{before}{lost}{piece}            let i = self.next as usize;
             if !self.has(i) {{
                 if self.fed.get() == 2 {{
                     return Err(false);
@@ -1079,16 +1088,80 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
 {set_end}            self.rec_end = unsafe {{ *self.lasts.add(i * self.rs) }} + 1;
             self.code = c;
             self.next = i as u32 + 1;
-{extra}{refusals}            self.live = {live};
+{enter}{extra}{refusals}            self.live = {live};
             return Ok(());
         }}
     }}
 ",
         if flagged { ", where this one's bytes are taken" } else { "" },
         x.end_bits,
+        piece = if x.split { format!("            // A split region's next piece (`split_next`), before the next record.\n            if self.part_at != 0 {{\n                self.split_next();\n{}                self.live = {live};\n                return Ok(());\n            }}\n", if flagged { "                self.end = self.start;\n" } else { "" }) } else { String::new() },
+        enter = if x.split { "            // A record that is a whole region tier 2 splits: its opener the token, its pieces pending.\n            self.split_enter();\n" } else { "" },
         lost = if x.loses { "            if self.lost != 0 {\n                // A lost extra: after the token's leaf, of no width at its start.\n                let k = self.lost - 1;\n                self.lost = 0;\n                let at = self.start;\n                self.leaf::<true, true>(k, at);\n            }\n" } else { "" }
     )
     .unwrap();
+    Ok(())
+}
+
+/// The split of a region tier 2 splits (`Split::Tier2`, decision 0323), as the lean parser's
+/// string arm reads its string: `split_enter` at a record that is a whole region (at a reader's
+/// opener, past its byte), its opener the token; then `split_next` a piece a `TOKEN`, by its
+/// reader's walk (`records::read_parts`): the closer, the nearest part, or the content before it.
+/// A piece's code is its kind (its own, or its first byte's) and its word, as tier 1's
+/// (`records::pass`): the regions hold no marks (`Reader::quiet`).
+fn split_code(out: &mut String, x: &Facts<'_>) -> Result<(), String> {
+    let r = x.native.block_programs.first().and_then(|b| b.records.as_ref()).ok_or("a split with no records")?;
+    let readers: Vec<&crate::records::Reader> = r.readers.iter().filter(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2).collect();
+    let marked = !r.marks.is_empty() || r.retags.iter().any(|t| !t.part) || r.gaps != 0;
+    if readers.iter().any(|rd| rd.arms.len() != 1 || marked && !rd.quiet) {
+        return Err("a region tier 2 splits, of two regions or with marks: not yet ahead of time".into());
+    }
+    let table = crate::records::WordTable::new(&r.words).map_err(|_| "the words fit no table")?;
+    let kind_name = |k: u8| x.token_names.get(&k).map_or_else(|| k.to_string(), |n| format!("t::{n}"));
+    let kind_of = |k: Option<u8>| k.map_or("None".to_owned(), |k| format!("Some({})", kind_name(k)));
+    let mut enter = String::new();
+    let mut walks = String::new();
+    let mut by_reader = String::new();
+    for (k, rd) in readers.iter().enumerate() {
+        let a = &rd.arms[0];
+        let word = if a.retag.or(rd.retag).is_some() { String::new() } else { "            self.code = self.code & !0xff00 | Self::t1_word(self.bytes, s, 1) << 8;\n".into() };
+        writeln!(
+            enter,
+            "        if self.bit({}, s) {{\n            self.part_at = s + 1;\n            self.part_end = l;\n            self.part_rd = {k};\n            self.part_close = self.first_from({}, s + 1);\n{word}            self.rec_end = s + 1;\n            return;\n        }}",
+            a.opener, a.closer
+        )
+        .unwrap();
+        writeln!(by_reader, "            {k} => self.split_next_{k}(),").unwrap();
+        let closers: String = rd.closers.iter().map(|&(b, k)| format!("{b:#04x} => Some({}), ", kind_name(k))).collect();
+        let closer = if closers.is_empty() { "None".to_owned() } else { format!("match self.byte(c) {{ {closers}_ => None }}") };
+        let content = kind_of(rd.content);
+        let parts_words: Vec<String> = rd.parts.iter().map(|p| format!("self.mask_word({}, q)", p.start)).collect();
+        let mut parts: Vec<&crate::records::ReadPart> = rd.parts.iter().collect();
+        parts.sort_by_key(|p| (p.bytes, p.start));
+        let mut arms = String::new();
+        for p in &parts {
+            let l = match p.last {
+                Some(o) => format!("self.first_from({o}, at)"),
+                None => format!("at + {}", u32::from(p.bytes).saturating_sub(1)),
+            };
+            writeln!(arms, "        if self.bit({}, at) {{\n            let l = {l};\n            self.part_at = l + 1;\n            self.piece(at, l, {});\n            return;\n        }}", p.start, kind_of(p.kind)).unwrap();
+        }
+        writeln!(
+            walks,
+            "    /// Reader {k}'s next piece: the closer, the nearest part, or the content before it.\n    fn split_next_{k}(&mut self) {{\n        let (at, c) = (self.part_at, self.part_close);\n        if at == c {{\n            self.part_at = 0;\n            let kind = {closer};\n            self.piece(c, self.part_end, kind);\n            return;\n        }}\n        let (mut q, mut m) = (at >> 6, !0u64 << (at & 63));\n        let near = loop {{\n            let x = ({}) & m;\n            if x != 0 {{\n                break ((q << 6) + x.trailing_zeros()).min(c);\n            }}\n            if q >= c >> 6 {{\n                break c;\n            }}\n            q += 1;\n            m = !0;\n        }};\n        if near > at {{\n            self.part_at = near;\n            self.piece(at, near - 1, {content});\n            return;\n        }}\n{arms}        unreachable!(\"a part at its bit\");\n    }}\n",
+            parts_words.join(" | ")
+        )
+        .unwrap();
+    }
+    writeln!(
+        out,
+        "    /// A record that is a whole region tier 2 splits: at its reader's opener and past its byte,\n    /// its opener's byte the token (its word its byte's alone, where it has no tag), the\n    /// rest pending to its last, its closer's first byte by the closer's bits past the opener.\n    #[inline(always)]\n    fn split_enter(&mut self) {{\n        let (s, l) = (self.start, self.rec_end - 1);\n        if l <= s {{\n            return;\n        }}\n{enter}    }}\n\n    /// The first bit of output `o` at or after `from` (the file's length where there is none).\n    fn first_from(&self, o: usize, from: u32) -> u32 {{\n        let mut q = from >> 6;\n        let mut x = self.mask_word(o, q) & (!0u64 << (from & 63));\n        while x == 0 {{\n            q += 1;\n            if q << 6 >= self.len {{\n                return self.len;\n            }}\n            x = self.mask_word(o, q);\n        }}\n        (q << 6) + x.trailing_zeros()\n    }}\n\n    #[inline(always)]\n    fn byte(&self, at: u32) -> u8 {{\n        unsafe {{ *self.bytes.add(at as usize) }}\n    }}\n\n    /// A split region's next piece, by its reader.\n    fn split_next(&mut self) {{\n        match self.part_rd {{\n{by_reader}            _ => unreachable!(\"a reader\"),\n        }}\n    }}\n\n{walks}\n    /// Piece `s..=l` as the token: its kind its own or its first byte's, its word.\n    fn piece(&mut self, s: u32, l: u32, kind: Option<u32>) {{\n        let k = kind.unwrap_or_else(|| u32::from(Self::T1_KIND[usize::from(self.byte(s))]));\n        self.start = s;\n        self.rec_end = l + 1;\n        self.code = k | Self::t1_word(self.bytes, s, l + 1 - s) << 8;\n    }}\n"
+    )
+    .unwrap();
+    // Tier 1's kinds and words (`records::pass`), for the pieces' codes.
+    writeln!(out, "    /// Each byte's record kind as a token's first byte (tier 1's `KIND`).\n    const T1_KIND: [u8; 256] = {:?};", r.kinds).unwrap();
+    writeln!(out, "    const T1_WORD_MULT: u64 = 0x{:016x};\n    const T1_WORD_BITS: u32 = {};\n    const T1_WORD_KEYS: [u64; {}] = {:?};\n    const T1_WORD_META: [u32; {}] = {:?};\n    const T1_WORD_TAILS: [[u64; 7]; {}] = {:?};", table.mult, table.bits, table.keys.len(), table.keys, table.meta.len(), table.meta, table.tails.len(), table.tails).unwrap();
+    out.push_str("    /// The word of the `len` bytes at `at` (`records::WordTable::word`): its code, or 0. The file\n    /// has 64 readable bytes after its end.\n    #[inline(always)]\n    fn t1_word(bytes: *const u8, at: u32, len: u32) -> u32 {\n    let (at, len) = (at as usize, len as usize);\n    let load = |o: usize| -> u64 { unsafe { (bytes.add(o) as *const u64).read_unaligned() } };\n    let cut = |w: u64, k: usize| if k >= 8 { w } else { w & ((1u64 << (8 * k)) - 1) };\n    let key = cut(load(at), len);\n    let s = ((key ^ len as u64).wrapping_mul(Self::T1_WORD_MULT) >> (64 - Self::T1_WORD_BITS)) as usize;\n    let (k, meta) = (Self::T1_WORD_KEYS[s], Self::T1_WORD_META[s]);\n    if meta == 0 || k != key || (meta & 0xff) as usize != len {\n        return 0;\n    }\n    let code = meta >> 8;\n    if len > 8 {\n        let tail = &Self::T1_WORD_TAILS[code as usize - 1];\n        for (j, &t) in tail.iter().enumerate() {\n            let from = 8 * (j + 1);\n            if from < len && cut(load(at + from), len - from) != t {\n                return 0;\n            }\n        }\n    }\n    code\n}\n\n");
     Ok(())
 }
 

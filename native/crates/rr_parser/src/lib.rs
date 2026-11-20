@@ -452,10 +452,12 @@ pub mod tests {
             ("lib.rs", "fn metal_tapes("),
             ("../../compiler/src/native_cpu_block.rs", "pub fn new(program: &CompiledBlock, files"),
             ("../../compiler/src/native_cpu_block.rs", "pub fn call(&mut self, program: &CompiledBlock)"),
+            ("../../compiler/src/native_cpu_block.rs", "fn start_feeds(&mut self, f: Feed)"),
             ("../../compiler/src/native_cpu_block.rs", "fn run(&mut self, entry: Entry)"),
         ];
         let walks = [".iter(", ".iter_mut(", ".into_iter(", ".chunks", ".windows(", ".flatten(", ".map(", ".fold(", ".for_each(", ".bytes()", ".chars()", ".collect", ".position(", ".find(", ".any(", ".all(", ".filter(", ".sum(", ".count()", "while ", "loop {", "nodes()"];
-        let loops_allowed = ["for file in files", "for entry in &program.entries"];
+        // A loop over the files or the entries; a feed's over its files (decision 0496).
+        let loops_allowed = ["for file in files", "for entry in &program.entries", "for state in self.feeds.drain(..)", "for file in 0..self.rows.len()"];
         for (file, head) in path {
             // The code alone: comments dropped.
             let b: String = body(&read(file), head).lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");

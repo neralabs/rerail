@@ -132,11 +132,9 @@ impl<'a> Gen<'a> {
         }
         for rd in readers {
             // `retag` and the arms' are the CPU's form of the retags (`Records::retags`), which
-            // the token's record reads; `quiet` is a proved hint; a split by tier 2 is refused.
-            let crate::records::Reader { arms, other: _, retag: _, parts, content: _, closers: _, split, quiet: _ } = rd;
-            if !parts.is_empty() && *split != crate::records::Split::Tier1 {
-                return Err("a region tier 2 splits (0323): not written yet".into());
-            }
+            // the token's record reads; `quiet` is a proved hint. A region tier 2 splits
+            // (`Split::Tier2`) is one token here, read whole (`read_X`).
+            let crate::records::Reader { arms, other: _, retag: _, parts, content: _, closers: _, split: _, quiet: _ } = rd;
             for a in arms {
                 let crate::records::ReadArm { opener: _, closer: _, off: _, last: _, none: _, retag: _ } = a;
             }
@@ -762,7 +760,12 @@ impl<'a> Gen<'a> {
                     ReadNone::End => format!("Ok((n.saturating_sub(1), {kind}))"),
                     ReadNone::Bytes(b) => format!("Ok((s + {b} - 1, {kind}))"),
                 };
-                let _ = writeln!(out, "    if bit(&{}, s) {{\n        return match first_bit(&{}, s + 1) {{\n            Some(c) => Ok((c.wrapping_add_signed({}), {kind})),\n            None => {none},\n        }};\n    }}", self.mask(a.opener), self.mask(a.closer), a.off);
+                // A closer to its last (`ReadArm::last`), as the walk ends it.
+                let last = match a.last {
+                    Some(o) => format!("first_bit(&{}, c).ok_or(())?", self.mask(o)),
+                    None => format!("c.wrapping_add_signed({})", a.off),
+                };
+                let _ = writeln!(out, "    if bit(&{}, s) {{\n        return match first_bit(&{}, s + 1) {{\n            Some(c) => Ok(({last}, {kind})),\n            None => {none},\n        }};\n    }}", self.mask(a.opener), self.mask(a.closer));
             }
             let other = match r.rules.get(usize::from(rd.other)) {
                 Some(EndRule::Read(_)) | None => "Err(())".to_owned(),

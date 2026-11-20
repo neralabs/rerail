@@ -553,7 +553,11 @@ pub fn read_last(records: &Records, reader: &Reader, s: usize, bytes: &[u8], out
         loop {
             if x != 0 {
                 let c = 64 * q + x.trailing_zeros() as usize;
-                return Ok(c.wrapping_add_signed(isize::from(a.off)));
+                // A closer to its last (`ReadArm::last`, a `${`'s two bytes), as the walk ends it.
+                return match a.last {
+                    Some(o) => first_bit(outputs, o, c).ok_or(()),
+                    None => Ok(c.wrapping_add_signed(isize::from(a.off))),
+                };
             }
             q += 1;
             match w.get(q) {

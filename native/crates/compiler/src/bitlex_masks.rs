@@ -4585,11 +4585,10 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         .collect(),
                     None => Vec::new(),
                 };
-                // Where tier 1 is the block of masks (no `skip`: no token loop), its parts are tier
-                // 2's (page 40): tier 1 records where the region opens, and tier 2 reads its parts
-                // from there, as simdjson's stage 2 reads a string. In a token loop, tier 1's
-                // (decision 0323's lowering A; B is a compile option).
-                let split = if low.skip.is_none() && !parts.is_empty() { crate::records::Split::Tier2 } else { crate::records::Split::Tier1 };
+                // Its parts are tier 2's (decision 0323's lowering B): tier 1 reads the region as
+                // one token, as the lean lexer reads a string, and tier 2 splits it where it reads
+                // it, as the lean parser's string arm and simdjson's stage 2 read a string.
+                let split = if parts.is_empty() { crate::records::Split::Tier1 } else { crate::records::Split::Tier2 };
                 // Its content's own kind, where its rows were moved (above).
                 let content = low.token_part_names.get(&kind).and_then(|p| moved.iter().find(|&&(r, _)| token_rows[r].0 == p.1 && low.inside_of.get(r).cloned().flatten().is_some_and(|(k, _)| k == kind))).map(|&(_, f)| kinds[usize::from(f)]);
                 let mut closers: Vec<(u8, u8)> = closer_rows.iter().filter(|c| c.0 == kind).flat_map(|&(_, r, f)| { let first = real_first[r]; (0..=255u8).filter(move |&b| first[usize::from(b >> 6)] >> (b & 63) & 1 == 1).map(move |b| (b, f)) }).map(|(b, f)| (b, kinds[usize::from(f)])).collect();
@@ -4718,7 +4717,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // (`Reader::quiet`), as a lexer's string arm marks nothing inside the string.
     for &(k, fill) in &reader_starts {
         let rd = &mut readers[k];
-        if rd.parts.is_empty() || rd.arms.len() != 1 {
+        if rd.parts.is_empty() {
             continue;
         }
         // The region's fill past its opener's byte, and its closer's first byte.

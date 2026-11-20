@@ -349,6 +349,14 @@ pub struct Refused {
 /// record (`records`), its first byte, its last byte and its code; `EMPTY` reads the totals.
 /// It executes the words only; the tables it reads are the program's switches, strings and
 /// checks.
+/// The reader a record's first byte `b`'s rule is, where tier 2 splits its regions (`Split::Tier2`).
+pub fn split_reader(r: &crate::records::Records, b: u8) -> Option<&crate::records::Reader> {
+    match r.rules.get(usize::from(r.ends[usize::from(b)])) {
+        Some(&crate::records::EndRule::Read(i)) => r.readers.get(usize::from(i)).filter(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2),
+        _ => None,
+    }
+}
+
 pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Result<Vec<Node>, Refused> {
     run_seen(program, bytes, tier1, &mut |_| {})
 }
@@ -383,7 +391,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     // A region read in parts that tier 2 splits (`Split::Tier2`, decision 0323): where a record
     // is a whole region (at its opener, past its byte), its tokens (`records::read_parts`) with
     // their codes (`records::pass`), taken one a `TOKEN` before the next record.
-    let late = records.and_then(|r| r.readers.iter().find(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2).map(|rd| (r, rd, crate::records::WordTable::new(&r.words).expect("verified: the words fit a table"))));
+    let late = records.filter(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2)).map(|r| (r, crate::records::WordTable::new(&r.words).expect("verified: the words fit a table")));
+
     let mut parts: std::collections::VecDeque<(u32, u32, u32)> = std::collections::VecDeque::new();
     let block = program.block_programs.first();
     let mask_bit = |m: u16, at: u32| -> bool {
@@ -468,7 +477,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     rec_end = lasts[next] + 1;
                     code = tier1.codes.get(next).copied().unwrap_or(0);
                     next += 1;
-                    if let Some((r, rd, table)) = &late {
+                    if let Some((r, rd, table)) = late.as_ref().and_then(|(r, t)| Some((*r, split_reader(r, bytes.get(start as usize).copied()?)?, t))) {
                         let opens = rd.arms.first().is_some_and(|a| tier1.outputs.get(usize::from(a.opener)).and_then(|w| w.get(start as usize / 64)).is_some_and(|w| w >> (start % 64) & 1 == 1));
                         if opens && rec_end > start + 1 {
                             let Ok(tokens) = crate::records::read_parts(rd, start as usize, &tier1.outputs) else {

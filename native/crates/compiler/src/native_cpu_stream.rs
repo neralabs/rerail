@@ -754,10 +754,13 @@ enum Mem {
     /// An extra a mark lost (`SETTLE m=2`): its kind and field, plus one (0: none), made again
     /// by the next `TOKEN` that takes a token, of no width at the token taken.
     Lost,
+    /// A split region's closer's first byte, and its reader (`SplitParts::readers`).
+    PartClose,
+    PartRd,
 }
 
 impl Mem {
-    const COUNT: u32 = 29;
+    const COUNT: u32 = 31;
 }
 
 /// `TOKEN`, taking a token: the extra a mark lost at it (`Mem::Lost`), made again after its
@@ -2467,6 +2470,22 @@ struct Table<'a> {
     direct: Option<&'a [(u32, u32)]>,
 }
 
+/// A reader whose regions tier 2 splits: its opener and closer (outputs), the closer's last
+/// (its offset, or the output its last is the first bit of), its parts (each its start, its
+/// bytes or its last's output, and its own kind; the shortest first), its content's own kind,
+/// and its closers' own kinds by their first byte.
+pub(crate) struct SplitReader {
+    pub(crate) opener: u16,
+    pub(crate) closer: u16,
+    pub(crate) off: i8,
+    pub(crate) last: Option<u16>,
+    pub(crate) parts: Vec<(u16, u8, Option<u16>, Option<u8>)>,
+    pub(crate) content: Option<u8>,
+    pub(crate) closers: Vec<(u8, u8)>,
+    /// Its opener's token has the reader's tag (`Reader::retag`): the record's code, no word.
+    pub(crate) tagged: bool,
+}
+
 /// A region read in parts that tier 2's `TOKEN` splits (`Split::Tier2`, decision 0323): its
 /// reader's opener (an output) and its closer's offset (its record's last is the closer's), its parts (each its start's
 /// output and its bytes, the shortest first), and the record pass's tables for the parts' codes
@@ -2475,6 +2494,9 @@ pub(crate) struct SplitParts {
     pub(crate) opener: u16,
     pub(crate) off: i8,
     pub(crate) parts: Vec<(u16, u8)>,
+    /// Each reader whose regions tier 2 splits, as the lean parser's string arm reads its
+    /// string's pieces (decision 0509): its pieces need no marks.
+    pub(crate) readers: Vec<SplitReader>,
     pub(crate) tables: crate::native_cpu_block::RecordTables,
     /// Where the region reads as simdjson's `parse_string` (`sequential`): its closer's byte
     /// test and its part's (instructions of tier 1's block, read from the bytes in tier 2).
@@ -2566,15 +2588,24 @@ pub(crate) fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>,
     let Some(block) = native.block_programs.first() else { return Ok(None) };
     let Some(r) = &block.records else { return Ok(None) };
     let late: Vec<&crate::records::Reader> = r.readers.iter().filter(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2).collect();
-    let [rd] = late[..] else {
-        return if late.is_empty() { Ok(None) } else { Err(Error::UnsupportedFeature("two regions tier 2 splits")) };
-    };
-    if rd.parts.iter().any(|p| p.last.is_some()) || rd.arms.iter().any(|a| a.last.is_some()) {
-        return Err(Error::UnsupportedFeature("a region tier 2 splits, with a part to a last"));
+    let Some(&rd) = late.first() else { return Ok(None) };
+    // A piece's code is its kind and word: no mark holds in the region (`Reader::quiet`), or
+    // the program has none.
+    let marked = !r.marks.is_empty() || r.retags.iter().any(|t| !t.part) || r.gaps != 0;
+    if late.iter().any(|rd| rd.arms.len() != 1 || marked && !rd.quiet) {
+        return Err(Error::UnsupportedFeature("a region tier 2 splits, of two regions or with marks"));
     }
-    if rd.arms.len() != 1 || !r.marks.is_empty() || r.retags.iter().any(|t| !t.part) || rd.parts.iter().any(|p| p.kind.is_some()) || r.gaps != 0 {
-        return Err(Error::UnsupportedFeature("a region tier 2 splits, with marks or retags"));
-    }
+    let readers: Vec<SplitReader> = late
+        .iter()
+        .map(|rd| {
+            let a = &rd.arms[0];
+            let mut parts: Vec<(u16, u8, Option<u16>, Option<u8>)> = rd.parts.iter().map(|p| (p.start, p.bytes, p.last, p.kind)).collect();
+            parts.sort_by_key(|&(o, n, _, _)| (n, o));
+            SplitReader { opener: a.opener, closer: a.closer, off: a.off, last: a.last, parts, content: rd.content, closers: rd.closers.clone(), tagged: a.retag.or(rd.retag).is_some() }
+        })
+        .collect();
+    // simdjson's `parse_string`: one reader, its parts of bytes, no kinds of their own.
+    let simple = late.len() == 1 && rd.parts.iter().all(|p| p.last.is_none() && p.kind.is_none()) && rd.arms[0].last.is_none() && rd.content.is_none() && rd.closers.is_empty() && !marked;
     let tables = crate::native_cpu_block::RecordTables::new(r, block)?;
     if tables.rest == crate::native_cpu_block::WordRest::Tails {
         return Err(Error::UnsupportedFeature("a region tier 2 splits, with words past sixteen bytes"));
@@ -2583,7 +2614,7 @@ pub(crate) fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>,
     parts.sort_by_key(|&(o, n)| (n, o));
     let a = &rd.arms[0];
     // Sequential only where tier 2 makes the records: the region's record is then its opener.
-    let mut seq = if r.fetched_in_tier2() { sequential(block, a, &parts) } else { None };
+    let mut seq = if r.fetched_in_tier2() && simple { sequential(block, a, &parts) } else { None };
     if let Some(sq) = seq.as_mut() {
         let set = crate::native_cpu_bytes::exact_at(block, sq.e).map(|n| n.set).unwrap_or_default();
         let ones: Vec<u8> = (0..=255u8).filter(|&b| set[usize::from(b) / 64] >> (b % 64) & 1 == 1).collect();
@@ -2595,7 +2626,7 @@ pub(crate) fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>,
             sq.codes2 = Some(t);
         }
     }
-    Ok(Some(Box::new(SplitParts { opener: a.opener, off: a.off, parts, tables, seq })))
+    Ok(Some(Box::new(SplitParts { opener: a.opener, off: a.off, parts, readers, tables, seq })))
 }
 
 /// Each token's record made by `TOKEN` from its start (`Records::fetched_in_tier2`, page 40), as
@@ -3710,18 +3741,55 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
         f.switch_to_block(record);
         return;
     }
+    // Its reader's walk (`PartRd`), one where there is one.
+    let rdv = (e.get)(f, Mem::PartRd);
+    let n = sp.readers.len();
+    for (k, rd) in sp.readers.iter().enumerate() {
+        let this = f.create_block();
+        let other = (k + 1 < n).then(|| f.create_block());
+        match other {
+            Some(o) => {
+                let is = f.ins().icmp_imm(IntCC::Equal, rdv, k as i64);
+                f.ins().brif(is, this, &[], o, &[]);
+            }
+            None => {
+                f.ins().jump(this, &[]);
+            }
+        }
+        f.switch_to_block(this);
+        split_next_reader(f, e, sp, rd, bw, at, fetched, heads);
+        if let Some(o) = other {
+            f.switch_to_block(o);
+        }
+    }
+    f.switch_to_block(record);
+}
+
+/// A split region's next piece by its reader `rd`, as `records::read_parts` and the lean
+/// lexer's string arm read it: at the closer (`PartClose`), the closer to the record's last
+/// (`PartEnd`); else the nearest part's bit before the closer, a word at a time; a part there,
+/// its bytes or to its last; else the bytes before it (or the closer), the content. Each with its
+/// own kind. Then on to `fetched`.
+#[allow(clippy::too_many_arguments)]
+fn split_next_reader(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, rd: &SplitReader, bw: &crate::native_cpu_bytes::Bytewise<'_>, at: Value, fetched: Block, heads: &mut Vec<(Block, Step)>) {
     let pe = (e.get)(f, Mem::PartEnd);
-    let c0 = f.ins().iadd_imm(pe, -i64::from(sp.off));
+    let c0 = (e.get)(f, Mem::PartClose);
     let (closer, look) = (f.create_block(), f.create_block());
     let here = f.ins().icmp(IntCC::Equal, at, c0);
     f.ins().brif(here, closer, &[], look, &[]);
-    // The closer: the region's last token.
+    // The closer: the region's last token, its own kind by its byte.
     f.switch_to_block(closer);
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::PartAt, zero);
-    split_token(f, e, sp, c0, pe, fetched, read_word, None);
-    // The nearest part's bit from `at`, below the closer's byte: a word at a time.
+    split_piece(f, e, sp, c0, pe, Piece::Closer(&rd.closers), fetched);
     f.switch_to_block(look);
+    if rd.parts.is_empty() {
+        (e.set)(f, Mem::PartAt, c0);
+        let l = f.ins().iadd_imm(c0, -1);
+        split_piece(f, e, sp, at, l, Piece::Kind(rd.content), fetched);
+        return;
+    }
+    // The nearest part's bit from `at`, below the closer's byte: a word at a time.
     let (scan, found) = (f.create_block(), f.create_block());
     f.append_block_param(scan, types::I64);
     f.append_block_param(scan, types::I64);
@@ -3734,7 +3802,7 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
     f.switch_to_block(scan);
     heads.push((scan, Step::Word));
     let (w, m) = (f.block_params(scan)[0], f.block_params(scan)[1]);
-    let words: Vec<Value> = sp.parts.iter().map(|&(o, _)| {
+    let words: Vec<Value> = rd.parts.iter().map(|&(o, ..)| {
         let x = output_word(f, e, bw, o, w, heads);
         f.ins().band(x, m)
     }).collect();
@@ -3768,16 +3836,16 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
     f.switch_to_block(content);
     (e.set)(f, Mem::PartAt, near);
     let l = f.ins().iadd_imm(near, -1);
-    split_token(f, e, sp, at, l, fetched, read_word, None);
-    // A part at `at`: the shortest whose bit is there, its bytes.
+    split_piece(f, e, sp, at, l, Piece::Kind(rd.content), fetched);
+    // A part at `at`: the shortest whose bit is there, its bytes or to its last.
     f.switch_to_block(parted);
     let low = {
         let neg = f.ins().ineg(any);
         f.ins().band(any, neg)
     };
-    for (j, (&(_, n), &x)) in sp.parts.iter().zip(&words).enumerate() {
+    for (j, (&(_, n, to, kind), &x)) in rd.parts.iter().zip(&words).enumerate() {
         let this = f.create_block();
-        let other = (j + 1 < sp.parts.len()).then(|| f.create_block());
+        let other = (j + 1 < rd.parts.len()).then(|| f.create_block());
         match other {
             Some(o) => {
                 let is = f.ins().band(x, low);
@@ -3788,15 +3856,56 @@ fn split_next(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw:
             }
         }
         f.switch_to_block(this);
-        let after = f.ins().iadd_imm(at, i64::from(n));
+        let l = match to {
+            Some(o) => first_bit_from(f, e, bw, o, at, heads).0,
+            None => f.ins().iadd_imm(at, i64::from(n) - 1),
+        };
+        let after = f.ins().iadd_imm(l, 1);
         (e.set)(f, Mem::PartAt, after);
-        let l = f.ins().iadd_imm(at, i64::from(n) - 1);
-        split_token(f, e, sp, at, l, fetched, read_word, None);
+        split_piece(f, e, sp, at, l, Piece::Kind(kind), fetched);
         if let Some(o) = other {
             f.switch_to_block(o);
         }
     }
-    f.switch_to_block(record);
+}
+
+/// A split region's piece's kind: its own (none: its first byte's), or a closer's by its byte.
+enum Piece<'a> {
+    Kind(Option<u8>),
+    Closer(&'a [(u8, u8)]),
+}
+
+/// A split region's piece `s..=l` as the token: its code `plain_code`'s, its kind its own
+/// (`Piece`). Then on to `fetched`.
+fn split_piece(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s: Value, l: Value, kind: Piece<'_>, fetched: Block) {
+    let bytes = (e.ctx)(f, BYTES);
+    let k = crate::native_cpu_block::tables_consts(f, &sp.tables);
+    let n = f.ins().isub(l, s);
+    let len = f.ins().iadd_imm(n, 1);
+    let mut code = crate::native_cpu_block::plain_code(f, &sp.tables, k, bytes, s, len);
+    let own = |f: &mut FunctionBuilder<'_>, code: Value, k: u8| {
+        let rest = f.ins().band_imm(code, !0xff);
+        f.ins().bor_imm(rest, i64::from(k))
+    };
+    match kind {
+        Piece::Kind(None) => {}
+        Piece::Kind(Some(k)) => code = own(f, code, k),
+        Piece::Closer(closers) if !closers.is_empty() => {
+            let a = f.ins().iadd(bytes, s);
+            let b = f.ins().uload8(types::I64, MemFlags::trusted(), a, 0);
+            for &(x, k) in closers {
+                let is = f.ins().icmp_imm(IntCC::Equal, b, i64::from(x));
+                let tagged = own(f, code, k);
+                code = f.ins().select(is, tagged, code);
+            }
+        }
+        Piece::Closer(_) => {}
+    }
+    let l1 = f.ins().iadd_imm(l, 1);
+    (e.set)(f, Mem::Start, s);
+    (e.set)(f, Mem::Limit, l1);
+    (e.set)(f, Mem::Taken, code);
+    f.ins().jump(fetched, &[]);
 }
 
 /// `split_next` where the region reads as simdjson's `parse_string` (`Seq`): from `at`, a clean
@@ -3916,21 +4025,50 @@ fn split_enter_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts
 /// last (`Mem::PartEnd`). Records split already (tier 1's, `Split::Tier1`; Metal's masks) are
 /// tokens as they are.
 fn split_enter(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw: &crate::native_cpu_bytes::Bytewise<'_>, s: Value, l: Value, words: Option<&[u8]>, heads: &mut Vec<(Block, Step)>) {
-    let q = f.ins().ushr_imm(s, 6);
-    let x = output_word(f, e, bw, sp.opener, q, heads);
-    let sh = f.ins().band_imm(s, 63);
-    let x = f.ins().ushr(x, sh);
-    let opens = f.ins().band_imm(x, 1);
+    let _ = words;
     let whole = f.ins().icmp(IntCC::UnsignedGreaterThan, l, s);
     let whole = f.ins().uextend(types::I64, whole);
-    let both = f.ins().band(opens, whole);
-    let (enter, on) = (f.create_block(), f.create_block());
-    f.ins().brif(both, enter, &[], on, &[]);
-    f.switch_to_block(enter);
-    let s1 = f.ins().iadd_imm(s, 1);
-    (e.set)(f, Mem::PartAt, s1);
-    (e.set)(f, Mem::PartEnd, l);
-    split_token(f, e, sp, s, s, on, words, None);
+    let on = f.create_block();
+    for (k, rd) in sp.readers.iter().enumerate() {
+        let q = f.ins().ushr_imm(s, 6);
+        let x = output_word(f, e, bw, rd.opener, q, heads);
+        let sh = f.ins().band_imm(s, 63);
+        let x = f.ins().ushr(x, sh);
+        let opens = f.ins().band_imm(x, 1);
+        let both = f.ins().band(opens, whole);
+        let (enter, next) = (f.create_block(), f.create_block());
+        f.ins().brif(both, enter, &[], next, &[]);
+        f.switch_to_block(enter);
+        let s1 = f.ins().iadd_imm(s, 1);
+        (e.set)(f, Mem::PartAt, s1);
+        (e.set)(f, Mem::PartEnd, l);
+        let kv = f.ins().iconst(types::I64, k as i64);
+        (e.set)(f, Mem::PartRd, kv);
+        // Its closer's first byte, by the closer's bits past the opener, as the record's last
+        // was read (`records::read_last`).
+        let (c, _) = first_bit_from(f, e, bw, rd.closer, s1, heads);
+        (e.set)(f, Mem::PartClose, c);
+        // The opener's token: the record's code (its marks), its word its byte's alone where it
+        // has no tag.
+        let taken = (e.get)(f, Mem::Taken);
+        let code = if rd.tagged {
+            taken
+        } else {
+            let bytes = (e.ctx)(f, BYTES);
+            let kc = crate::native_cpu_block::tables_consts(f, &sp.tables);
+            let one = f.ins().iconst(types::I64, 1);
+            let plain = crate::native_cpu_block::plain_code(f, &sp.tables, kc, bytes, s, one);
+            let w = f.ins().band_imm(plain, 0xff00);
+            let rest = f.ins().band_imm(taken, !0xff00);
+            f.ins().bor(rest, w)
+        };
+        (e.set)(f, Mem::Start, s);
+        (e.set)(f, Mem::Limit, s1);
+        (e.set)(f, Mem::Taken, code);
+        f.ins().jump(on, &[]);
+        f.switch_to_block(next);
+    }
+    f.ins().jump(on, &[]);
     f.switch_to_block(on);
 }
 
