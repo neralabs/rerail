@@ -414,9 +414,6 @@ jobs:
           echo "::error::Never published, so not published by this run: ${FIRST}. Publish each by hand and configure its trusted publisher (docs/publishing-a-new-pack.md)."
           exit 1
 
-  # Reads each pack's dist-tags from npm, which for these restricted packs needs the read-only NPM_PACKS_READ_TOKEN
-  # (as ci.yml's installed-packs job does), and lists what the promote job will move. A pack it cannot read fails
-  # this job but is only left out: the promote job still moves the others.
   # Starts this workflow's promotion of exactly what the publish job released: a run of its own, whose promote job waits
   # for a person to approve it once the release is tested on `next` (docs/release.md, "Promoting"). A run of its own,
   # in a group of its own, so the wait holds back no later release. GITHUB_TOKEN can start a workflow_dispatch run.
@@ -436,6 +433,9 @@ jobs:
           RELEASED: ${{ needs.publish.outputs.released }}
         run: gh workflow run release-packs.yml --ref main -f released="$RELEASED"
 
+  # Reads each pack's dist-tags from npm, which for these restricted packs needs the read-only NPM_PACKS_READ_TOKEN
+  # (as ci.yml's installed-packs job does), and lists what the promote job will move. A pack it cannot read fails
+  # this job but is only left out: the promote job still moves the others.
   promote-plan:
     name: Packs to promote
     if: github.event_name == 'workflow_dispatch'
