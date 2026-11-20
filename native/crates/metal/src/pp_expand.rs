@@ -174,6 +174,8 @@ pub struct P1Out {
     /// P1's refusals and the round's requests: with either, no lookups.
     pub flags: u32,
     pub requests: Vec<Request>,
+    /// The expansion's refusals (`X_*`) in the tests' lines (decision 0467 §4).
+    pub refused: u32,
 }
 
 /// A root's parent.
@@ -202,6 +204,36 @@ pub const P1_EXPANDED_NAME: u32 = 2;
 pub const P1_EMBED: u32 = 4;
 pub const P1_LINE: u32 = 8;
 pub const P1_ITERATIONS: u32 = 16;
+/// `defined` made by a macro's expansion, or read inside a call's arguments, in an `#if`.
+pub const P1_IF_DEFINED: u32 = 32;
+/// An `#if` past the evaluator's stacks, or a constant past its bytes.
+pub const P1_IF_BIG: u32 = 64;
+
+/// The `#if` operators' kinds (`pp_if.uglykl`'s `OPK_*`): the `__has_*` tests by their names,
+/// and C++'s alternative tokens (`OPK_ALT` + the operator's code, `EO_*`).
+pub const OPK_HAS_INCLUDE: u32 = 1;
+pub const OPK_HAS_INCLUDE_NEXT: u32 = 2;
+pub const OPK_HAS_EMBED: u32 = 3;
+pub const OPK_FEATURE: u32 = 4;
+/// A test the configuration answers, 1 where it does not (`__is_identifier`).
+pub const OPK_IS_IDENTIFIER: u32 = 5;
+pub const OPK_ALT: u32 = 64;
+/// The evaluator's operators an alternative token can be (`EO_*`); `EO_OTHER` none it reads.
+pub const EO_OROR: u32 = 1;
+pub const EO_ANDAND: u32 = 2;
+pub const EO_OR: u32 = 3;
+pub const EO_XOR: u32 = 4;
+pub const EO_AND: u32 = 5;
+pub const EO_NE: u32 = 7;
+pub const EO_TILDE: u32 = 20;
+pub const EO_BANG: u32 = 21;
+pub const EO_OTHER: u32 = 27;
+
+/// A `__has_*` test's row of the configuration's answers: the test's name's key and its
+/// operand's (its tokens' spellings together) made one.
+pub fn feature_key(test: &str, operand: &str) -> u64 {
+    crate::pp_eval::key_mix(name_key(test.as_bytes()), name_key(operand.as_bytes()))
+}
 
 /// A unit as P1 starts it, and what the host knows from the rounds before: P1's input. The device
 /// grows its include tree (decision 0467 §5), lays it out (§2) and decides its conditionals (§4).
@@ -216,9 +248,13 @@ pub struct Layout {
     pub found_by: Vec<u32>,
     /// The configuration's include depth.
     pub max_depth: u32,
-    /// The `#if`s' and `#elif`s' values by (unit, slot within the unit), the spike's (the test
-    /// input of 0448) until the device evaluates them (0467 step 5).
-    pub if_values: Vec<(u32, u32, u32)>,
+    /// The `#if` operators by their names' keys (`OPK_*`): the dialect's `__has_*` tests and
+    /// alternative tokens.
+    pub if_ops: Vec<(u64, u32)>,
+    /// The configuration's answers to the `__has_*` tests, by `feature_key`.
+    pub features: Vec<(u64, u64)>,
+    /// `true` is 1 in `#if`.
+    pub true_is_one: bool,
     /// The built-in macros' names' keys: rows at slot 0.
     pub builtins: Vec<u64>,
     /// The dialect's options as the paste relexer reads them (`relex_options`).
@@ -239,20 +275,24 @@ impl Layout {
             table: Vec::new(),
             found_by: Vec::new(),
             max_depth: first.max_depth,
-            if_values: Vec::new(),
+            if_ops: first.if_ops.clone(),
+            features: first.features.clone(),
+            true_is_one: first.true_is_one,
             builtins: first.builtins.clone(),
             relex_options: first.relex_options,
             file_literals: Vec::new(),
         };
         let mut files = 0u32;
         for (u, &(l, n_files)) in parts.iter().enumerate() {
-            assert!(l.builtins == first.builtins && l.relex_options == first.relex_options && l.max_depth == first.max_depth, "a batch of one dialect");
+            assert!(
+                l.builtins == first.builtins && l.relex_options == first.relex_options && l.max_depth == first.max_depth && l.if_ops == first.if_ops && l.features == first.features && l.true_is_one == first.true_is_one,
+                "a batch of one dialect and configuration"
+            );
             let (u, i0) = (u as u32, lay.nodes.len() as u32);
             lay.nodes.extend(l.nodes.iter().map(|n| PpNode { file: n.file + files, parent: if n.parent == NO_PARENT { NO_PARENT } else { n.parent + i0 }, pdir: n.pdir, depth: n.depth, unit: u }));
             lay.table.extend(l.table.iter().map(|&(_, k, f)| (u, k, if f == NOT_FOUND { f } else { f + files })));
             // copy: not block data (the files' search entries, configuration input, joined on the host)
             lay.found_by.extend_from_slice(&l.found_by[..n_files]);
-            lay.if_values.extend(l.if_values.iter().map(|&(_, s, v)| (u, s, v)));
             lay.file_literals.extend(l.file_literals[..n_files].iter().cloned());
             files += n_files as u32;
         }
@@ -340,10 +380,25 @@ pub struct Vis {
     found_by: Buf,
     unit_file: Buf,
     max_depth: u32,
-    n_if: u32,
-    if_keys: Buf,
-    if_vals: Buf,
     live: Buf,
+    // The tests' lines (decision 0467 §4): by directive word, its tokens, its first node, its
+    // first top token, its value; by top token, its node and its mark; the keys of `defined`
+    // and `true`, and whether `true` is 1; the operators' table and the configuration's answers.
+    if_count: Buf,
+    if_first: Buf,
+    if_at: Buf,
+    if_scan: Scan,
+    if_nodes: Buf,
+    if_ops: Buf,
+    if_val: Buf,
+    if_keys: Buf,
+    true_is_one: u32,
+    n_ifop: u32,
+    op_keys: Buf,
+    op_kinds: Buf,
+    n_feat: u32,
+    feat_keys: Buf,
+    feat_vals: Buf,
     made: Buf,
     made_file: Buf,
     enter: Buf,
@@ -458,8 +513,8 @@ impl Vis {
         // The file table and the `#if` values, sorted by their keys.
         let mut table: Vec<(u64, u32)> = lay.table.iter().map(|&(u, k, f)| (unit_key(k, u), f)).collect();
         table.sort_unstable();
-        let mut ifs: Vec<(u64, u32)> = lay.if_values.iter().map(|&(u, s, v)| ((u64::from(u) << 32) | u64::from(s), v)).collect();
-        ifs.sort_unstable();
+        let mut feats = lay.features.clone();
+        feats.sort_unstable();
         let mut found_by = lay.found_by.clone();
         found_by.resize(unit.len().max(1), NOT_FOUND);
         // The built-ins' rows, at slot 0: the configuration's, written before the passes.
@@ -483,9 +538,21 @@ impl Vis {
             // Each unit's first file: its predefines root's.
             unit_file: words(&(0..lay.units()).map(|u| lay.nodes.iter().find(|n| n.unit == u && n.pdir == 0).map_or(0, |n| n.file)).collect::<Vec<_>>())?,
             max_depth: lay.max_depth,
-            n_if: ifs.len() as u32,
-            if_keys: arena.from_slice(&if ifs.is_empty() { vec![0u64] } else { ifs.iter().map(|t| t.0).collect() })?,
-            if_vals: words(&if ifs.is_empty() { vec![0] } else { ifs.iter().map(|t| t.1).collect() })?,
+            if_count: zeroed(nd)?,
+            if_first: zeroed(nd)?,
+            if_at: zeroed(nd)?,
+            if_scan: Scan::new(arena)?,
+            if_nodes: zeroed(top)?,
+            if_ops: zeroed(top)?,
+            if_val: zeroed(nd)?,
+            if_keys: arena.from_slice(&[name_key(b"defined"), name_key(b"true")])?,
+            true_is_one: u32::from(lay.true_is_one),
+            n_ifop: lay.if_ops.len() as u32,
+            op_keys: arena.from_slice(&if lay.if_ops.is_empty() { vec![0u64] } else { lay.if_ops.iter().map(|t| t.0).collect() })?,
+            op_kinds: words(&if lay.if_ops.is_empty() { vec![0] } else { lay.if_ops.iter().map(|t| t.1).collect() })?,
+            n_feat: feats.len() as u32,
+            feat_keys: arena.from_slice(&if feats.is_empty() { vec![0u64] } else { feats.iter().map(|t| t.0).collect() })?,
+            feat_vals: arena.from_slice(&if feats.is_empty() { vec![0u64] } else { feats.iter().map(|t| t.1).collect() })?,
             live: zeroed(ni)?,
             made: zeroed(nd)?,
             made_file: zeroed(nd)?,
@@ -570,7 +637,10 @@ impl Vis {
         l.word("N_BUILTIN", self.n_builtin).word("ND", self.nd as u32).word("NG", self.ng as u32);
         l.at("P1_NODES", &self.nodes).at("P1_DEPTHN", &self.depth).at("P1_NDIRS", &self.p1_ndirs).at("P1_NGAPS", &self.p1_ngaps);
         l.word("N_FT", self.n_ft).at("P1_FTKEYS", &self.ft_keys).at("P1_FTFILES", &self.ft_files).at("P1_FOUNDBY", &self.found_by).at("P1_UFILE", &self.unit_file).word("P1_MAXDEPTH", self.max_depth);
-        l.word("N_IF", self.n_if).at("P1_IFKEYS", &self.if_keys).at("P1_IFVALS", &self.if_vals).at("P1_LIVE", &self.live);
+        l.at("P1_LIVE", &self.live);
+        l.at("IF_COUNT", &self.if_count).at("IF_FIRST", &self.if_first).at("IF_AT", &self.if_at).at("IF_TOTAL", &self.if_scan.total).at("IF_NODES", &self.if_nodes);
+        l.at("IF_OPS", &self.if_ops).at("IF_VAL", &self.if_val).at("IF_KEYS", &self.if_keys).word("IF_TRUE", self.true_is_one).word("N_IFOP", self.n_ifop);
+        l.at("IF_OPKEYS", &self.op_keys).at("IF_OPKINDS", &self.op_kinds).word("N_FEAT", self.n_feat).at("IF_FEATKEYS", &self.feat_keys).at("IF_FEATVALS", &self.feat_vals);
         l.at("P1_MADE", &self.made).at("P1_MADEF", &self.made_file).at("P1_ENTER", &self.enter).at("P1_CAND", &self.cand).at("P1_ONCE", &self.once);
         l.at("P1_NEWF", &self.newf).at("P1_NEWAT", &self.newat).at("P1_NNEW", &self.nnew).at("P1_REQS", &self.reqs).at("P1_NREQ", &self.nreq);
         l.at("P1_FLAGS", &self.flags).at("P1_UFIRST", &self.ufirst);
@@ -609,6 +679,7 @@ impl Vis {
             gap_active: words(&self.gactive, ng),
             flags: 0,
             requests: Vec::new(),
+            refused: 0,
         }
     }
 
@@ -870,6 +941,12 @@ impl Exp {
         }
     }
 
+    /// The refusals (`X_*`), after the command buffer.
+    pub fn refusals(&self) -> u32 {
+        // SAFETY: the device finished; `ctl` holds the control words.
+        unsafe { *self.ctl.host().cast::<u32>().add(2) }
+    }
+
     pub fn read(&self) -> (u32, Vec<u32>) {
         // SAFETY: the device finished; `out` holds at least `n_out` words where no room ran out.
         unsafe {
@@ -980,17 +1057,20 @@ pub fn expand(unit: &Unit, lay: &Layout) -> Result<Expanded, Error> {
 /// command buffer: each active stretch token's meaning (`L_*`, or the directive row of its
 /// definition), in the layout's order; and P1's answer (`Vis::p1`).
 pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
-    let (mut rung, mut groups, mut p1_rung) = (0, crate::pp_arena::groups(), 0);
+    let (mut rung, mut groups, mut p1_rung, mut x_rung) = (0, crate::pp_arena::groups(), 0, 0);
     loop {
         let arena = Arena::new();
         let front = Front::new(&arena, unit, false, groups)?;
         let defs = Defs::new(&arena, unit, rung)?;
         let vis = Vis::new(&arena, unit, lay, p1_rung)?;
+        // The expansion's stores: the tests' lines are expanded in P1 (decision 0467 §4).
+        let exp = Exp::new(&arena, unit, lay, x_rung, p1_rung)?;
         arena.lease()?;
         let mut l = Lay::new();
         front.lay(&mut l, TO_VIS);
         defs.lay(&mut l);
         vis.lay(&mut l);
+        exp.lay(&mut l);
         if on_grid(&arena, unit, &front, &l, groups)?.is_none() {
             groups = fewer(groups)?;
             continue;
@@ -1007,6 +1087,11 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
         out.flags = vis.p1_flags();
         if out.flags == P1_ROOM && p1_rung + 1 < P1_RUNGS {
             p1_rung += 1;
+            continue;
+        }
+        out.refused = exp.refusals();
+        if out.refused & X_ROOM != 0 && out.refused & !X_ROOM == 0 && x_rung + 1 < EXP_RUNGS {
+            x_rung += 1;
             continue;
         }
         out.requests = vis.requests();

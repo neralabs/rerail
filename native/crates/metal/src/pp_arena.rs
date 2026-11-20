@@ -153,13 +153,14 @@ impl Bound for Buffer {
 pub fn source() -> &'static str {
     static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "#include <ukl/backend.h>\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n{}{}\n{}\n{}\n{}\n{}\n{}",
+            "#include <ukl/backend.h>\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}",
             rerail_clif::view::ukl(),
             SLOTS.iter().enumerate().map(|(k, s)| format!("#define S_{s} {k}u\n")).collect::<String>(),
             include_str!("pp_eval.uglykl"),
             include_str!("pp_search.uglykl"),
             include_str!("pp_expand.uglykl"),
             include_str!("pp_p1.uglykl"),
+            include_str!("pp_if.uglykl"),
             include_str!("pp_grid.uglykl"),
             include_str!("pp_probes.uglykl")
         )
@@ -299,9 +300,10 @@ pub const SLOTS: &[&str] = &[
     "P1_USIZE", "P1_UTOTAL", "P1_BASE", "DIR_ACTS", "RTYPES", "N_STACK", "STK_MATCH", "STK_SRC", "STK_CHANGED", "STK_ROUNDS",
     "NQ", "P1_GCOUNT", "P1_GRPF", "P1_NGRP", "P1_GA", "P1_TAKEN", "P1_OWN", "P1_PAR", "P1_OWN2", "P1_PAR2", "P1_JCHANGED", "P1_ICHANGED",
     "P1_JUMPS", "P1_ITERS",
-    "P1_DEPTHN", "N_FT", "P1_FTKEYS", "P1_FTFILES", "P1_FOUNDBY", "P1_MAXDEPTH", "N_IF", "P1_IFKEYS", "P1_IFVALS", "P1_LIVE",
+    "P1_DEPTHN", "N_FT", "P1_FTKEYS", "P1_FTFILES", "P1_FOUNDBY", "P1_MAXDEPTH", "P1_LIVE",
     "P1_MADE", "P1_MADEF", "P1_ENTER", "P1_CAND", "P1_ONCE", "P1_NEWF", "P1_NEWAT", "P1_NNEW", "P1_REQS", "P1_NREQ", "P1_FLAGS", "P1_UFIRST",
     "NC", "DC", "GC", "TC", "P1_UFILE",
+    "IF_COUNT", "IF_FIRST", "IF_AT", "IF_TOTAL", "IF_NODES", "IF_OPS", "IF_VAL", "IF_KEYS", "IF_TRUE", "N_IFOP", "IF_OPKEYS", "IF_OPKINDS", "N_FEAT", "IF_FEATKEYS", "IF_FEATVALS",
     "THEADS", "DELTA", "DEPTH", "CLOSE", "CLOSE_AT", "CLOSE_TOTAL", "CLOSE_KEYS", "CSORT_KB", "CSORT_VA", "CSORT_VB", "CSORT_HIST",
     "CLOSE_BITS", "CEND", "EHEADS", "REACH", "STATE", "OFLAG", "OID", "OTOTAL", "LISTS", "SLOTS", "CTL", "QCTL", "XFLAG", "XAT",
     "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OUT", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP",

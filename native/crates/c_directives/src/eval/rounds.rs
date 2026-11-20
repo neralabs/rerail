@@ -87,15 +87,56 @@ pub enum Refused {
     Device(String),
 }
 
+/// The `#if` operators of `cfg`'s dialect, by their names' keys (`OPK_*`): the `__has_*` tests
+/// (the built-ins'), and in C++ the alternative tokens (`and` is `&&`), as `Pp::if_value` reads
+/// them.
+fn if_ops(cfg: &Config) -> Vec<(u64, u32)> {
+    use rerail_c_lean::T;
+    use rerail_c_pp::macros::{BUILTINS, Builtin};
+    use rerail_metal::pp_expand::*;
+    let mut ops: Vec<(u64, u32)> = BUILTINS
+        .iter()
+        .filter_map(|&(n, b, _)| {
+            let k = match b {
+                Builtin::HasInclude { next: false } => OPK_HAS_INCLUDE,
+                Builtin::HasInclude { next: true } => OPK_HAS_INCLUDE_NEXT,
+                Builtin::HasEmbed => OPK_HAS_EMBED,
+                Builtin::Feature if n == "__is_identifier" => OPK_IS_IDENTIFIER,
+                Builtin::Feature => OPK_FEATURE,
+                _ => return None,
+            };
+            Some((name_key(n.as_bytes()), k))
+        })
+        .collect();
+    if cfg.opts.cpp {
+        for (n, t) in rerail_c_pp::stream::ALT {
+            let eo = match t {
+                T::AmpAmp => EO_ANDAND,
+                T::PipePipe => EO_OROR,
+                T::Bang => EO_BANG,
+                T::Amp => EO_AND,
+                T::Pipe => EO_OR,
+                T::Caret => EO_XOR,
+                T::Tilde => EO_TILDE,
+                T::Ne => EO_NE,
+                _ => EO_OTHER,
+            };
+            ops.push((name_key(n.as_bytes()), OPK_ALT + eo));
+        }
+    }
+    ops
+}
+
 /// The unit whose main file is `main`, in rounds of `eval` under `cfg` and `io` (C++ where
-/// `cpp`). `if_values`: each `#if`'s and `#elif`'s value by its slot (the test input of 0448,
-/// until the device evaluates them, 0467 step 5).
-pub fn run<T>(cfg: &Config, io: &mut dyn Files, main: &str, cpp: bool, if_values: &[(u32, u32)], mut eval: impl FnMut(&Unit, &Layout) -> Result<Round<T>, rerail_metal::Error>) -> Result<Rounds<T>, Refused> {
+/// `cpp`).
+pub fn run<T>(cfg: &Config, io: &mut dyn Files, main: &str, cpp: bool, mut eval: impl FnMut(&Unit, &Layout) -> Result<Round<T>, rerail_metal::Error>) -> Result<Rounds<T>, Refused> {
     let src = io.read(main).ok_or(Refused::NoMain)?;
     let (pre, builtins) = rerail_c_pp::stream::parallel::predefined(cfg);
     let mut loaded = Loaded { files: vec![pre, src], paths: vec!["<built-in>".into(), main.to_string()], found_by: vec![NOT_FOUND, NOT_FOUND] };
     let mut table: Vec<(u32, u64, u32)> = Vec::new();
     let o = crate::pp::options(cpp);
+    let ops = if_ops(cfg);
+    let features: Vec<(u64, u64)> = cfg.features.iter().map(|((t, op), &v)| (rerail_metal::pp_expand::feature_key(t, op), v as u64)).collect();
     for round in 1..=cfg.max_depth + 2 {
         let unit = place(&loaded.files.iter().map(|s| (s.as_slice(), cpp)).collect::<Vec<_>>());
         let lay = Layout {
@@ -103,7 +144,9 @@ pub fn run<T>(cfg: &Config, io: &mut dyn Files, main: &str, cpp: bool, if_values
             table: table.clone(),
             found_by: loaded.found_by.clone(),
             max_depth: cfg.max_depth,
-            if_values: if_values.iter().map(|&(s, v)| (0, s, v)).collect(),
+            if_ops: ops.clone(),
+            features: features.clone(),
+            true_is_one: cfg.true_is_one,
             builtins: builtins.iter().map(|n| name_key(n)).collect(),
             relex_options: relex_options(o.cpp, o.colons, o.digit_separators, o.raw_strings),
             file_literals: loaded.paths.iter().chain([&cfg.date, &cfg.time, &cfg.timestamp]).map(|p| literal(p)).collect(),

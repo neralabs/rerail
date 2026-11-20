@@ -198,7 +198,7 @@ UKL_INLINE void p1_taken_reset(UKL_GLOBAL const uint32_t* n_grp, UKL_GLOBAL uint
 // Arm word `w`'s test, where its chain's parent group is active: true takes the chain at its
 // index, the least such the chain's first true arm.
 UKL_INLINE void p1_tests(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint64_t* dir_keys,
-                         UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL const uint32_t* dslot, UKL_GLOBAL const uint64_t* if_keys, UKL_GLOBAL const uint32_t* if_values, uint32_t n_if, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* grp_first,
+                         UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL const uint32_t* dslot, UKL_GLOBAL const uint32_t* if_vals, UKL_GLOBAL const uint32_t* grp_first,
                          UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* floors, uint32_t n_units,
                          UKL_GLOBAL uint32_t* taken, UKL_GLOBAL uint32_t* bad, uint32_t w) {
     if (w >= n_dirs[0] || dactive[w] == 0u) return;
@@ -207,13 +207,8 @@ UKL_INLINE void p1_tests(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32
     if (d.chain == NO_CHAIN || d.kind < K_IF || d.kind > K_ELSE) return;
     bool v;
     if (d.kind == K_ELSE) v = true;
-    else if (d.kind == K_IF || d.kind == K_ELIF) {
-        // The given value (until step 5), by the unit and the slot within it.
-        uint32_t u = nodes[i].unit;
-        uint64_t q = (((uint64_t)(u)) << 32) | ((uint64_t)(dslot[w] - floors[u]));
-        uint32_t c = pb_lower_bound(if_keys, n_if, q);
-        v = c < n_if && if_keys[c] == q && if_values[c] != 0u;
-    }
+    // The expression's value, this iteration's (`p1_if_eval`).
+    else if (d.kind == K_IF || d.kind == K_ELIF) v = if_vals[w] != 0u;
     else {
         uint64_t key = dir_keys[r];
         bool defined = key != 0ul && visible(sorted, perm, n_rows[0], name_keys, values, floors, n_units, key, dslot[w], bad) != L_NONE;

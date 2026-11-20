@@ -296,21 +296,16 @@ struct OnDevice {
     rounds: u32,
 }
 
-/// The spike's `#if` and `#elif` values by slot, the device's test input until 0467 step 5: every
-/// directive's, whether the group after it is active (read only at those directives).
-fn if_values(p1: &rerail_c_pp::stream::parallel::P1) -> Vec<(u32, u32)> {
-    p1.insts.iter().flat_map(|i| (0..i.dir_slots.len()).map(|d| (i.dir_slots[d] as u32, u32::from(i.gap_active[d + 1])))).collect()
-}
-
 /// The unit whose main file is `path` on the device, in rounds, and the spike's P1 of it (the
-/// cross-check, and the `#if` values until 0467 step 5); or why one of them refuses it.
-fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool) -> Result<(OnDevice, rerail_c_pp::stream::parallel::P1), &'static str> {
+/// cross-check; `Err` with its reason where the spike refuses it); or why the device refuses it.
+fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool) -> Result<(OnDevice, Result<rerail_c_pp::stream::parallel::P1, &'static str>), &'static str> {
     use super::rounds::Refused;
     use rerail_metal::pp_expand::*;
-    let p1 = rerail_c_pp::stream::parallel::p1_of(cfg.clone(), io, path)?;
-    let ifs = if_values(&p1);
-    let r = super::rounds::run(&cfg, io, path, cpp, &ifs, |u, l| lookups(u, l).map(|(_, _, o)| (o.requests, o.flags, ()))).map_err(|e| match e {
+    let p1 = rerail_c_pp::stream::parallel::p1_of(cfg.clone(), io, path);
+    let r = super::rounds::run(&cfg, io, path, cpp, |u, l| lookups(u, l).map(|(_, _, o)| (o.requests, o.flags, o.refused))).map_err(|e| match e {
         Refused::NoMain => "the main file is not read",
+        Refused::P1(f) if f & P1_IF_DEFINED != 0 => "defined made by a macro in an #if",
+        Refused::P1(f) if f & P1_IF_BIG != 0 => "an #if past the evaluator's room",
         Refused::P1(f) if f & P1_EXPANDED_NAME != 0 => "an expanded include name",
         Refused::P1(f) if f & P1_LINE != 0 => "#line",
         Refused::P1(f) if f & P1_EMBED != 0 => "#embed",
@@ -319,6 +314,12 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
         Refused::Rounds => "past the rounds' bound",
         Refused::Device(_) => "a device error",
     })?;
+    if r.answer & X_BUILTIN != 0 {
+        return Err("built-ins in an #if");
+    }
+    if r.answer != 0 {
+        return Err("an #if's expansion");
+    }
     let tapes = r.loaded.files.iter().map(|s| image(s, crate::pp::options(cpp))).collect();
     Ok((OnDevice { unit: r.unit, lay: r.lay, tapes, files: r.loaded.files, paths: r.loaded.paths, rounds: r.rounds }, p1))
 }
@@ -329,6 +330,7 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
     use rerail_c_pp::stream::parallel::Lookup;
     use rerail_metal::pp_expand::{L_BUILTIN, L_DATE, L_FILE, L_IDENT, L_LINE, L_NONE, L_NOT_NAME, L_TIME, L_TIMESTAMP, lookups};
     let (d, p1) = unit_of(cfg, io, path, cpp)?;
+    let p1 = p1?;
     let (ev, got, out) = lookups(&d.unit, &d.lay).unwrap();
     same(out.flags, 0, format!("{what}: P1's refusals"));
     same(out.requests.len(), 0, format!("{what}: the last round's requests"));
@@ -383,6 +385,64 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
     let defs = p1.lookups.iter().filter(|l| matches!(l, Lookup::Def { .. })).count();
     let builtins = p1.lookups.iter().filter(|l| matches!(l, Lookup::Builtin)).count();
     Ok([got.len(), defs, builtins])
+}
+
+/// R4 of decision 0467: every `#if` and `#elif` is decided on the device as the serial pass's
+/// `if_value` decides it. Each expression below chooses its own text (`t` or `f` and its index),
+/// and the unit's output is the serial pass's, in C and C++. The expressions cover each operator
+/// and its precedence, the unsigned rules, the short circuits (a division by zero not evaluated
+/// is no error), the errors (which make a test false), character constants, names (`true` as the
+/// dialect has it), macros expanded in the line, `defined` in both forms before and after a
+/// definition, `__has_include`, `__has_include_next` and `__has_embed` (a header found, not found,
+/// empty), the configuration's `__has_*` answers, and C++'s alternative tokens; and chains of
+/// `#elif`, nested conditionals, and a test that a header's definition decides.
+#[test]
+fn if_values_are_the_serial_passes() {
+    use rerail_c_pp::files::DirKind;
+    let exprs = [
+        "1 + 2 * 3 == 7", "(1 + 2) * 3 == 9", "10 - 2 - 3 == 5", "1 << 4 >> 2 == 4", "(7 & 3 | 8 ^ 1) == 11", "1 ? 2 : 3", "0 ? 2 : 0 ? 3 : 4",
+        "0 ? 1 : 0", "-5 / 2 == -2", "-5 % 2 == -1", "!0 + ~0", "1, 0", "0, 1", "1 ? 0, 1 : 0", "0x10 + 010 + 0b11 == 27", "07 == 7", "0 == 00",
+        "1 < 2 && 2 <= 2 && 3 > 2 && 3 >= 3 && 1 != 2", "-1 > 0u", "-1 > 0", "(0u - 1) >> 63", "-1 >> 63 == -1", "-1 >> 64 == -1", "1 << 64",
+        "18446744073709551615 == -1", "(1 ? -1 : 0u) > 0", "(0 ? 0u : -1) > 0", "0xFFFFFFFFFFFFFFFFull", "99999999999999999999", "1u << 63 >> 63 == 1",
+        "-9223372036854775807 - 1 < 0", "(-9223372036854775807 - 1) / -1 < 0", "(-9223372036854775807 - 1) % -1 == 0", "10LL == 10", "10uLL > 9",
+        "0 && 1 / 0", "1 || 1 % 0", "0 ? 1 / 0 : 5", "1 / 0", "1 && 1 / 0", "!(0 && 1 / 0)", "(1 || 1 / 0) + 0", "1 % 0 || 1",
+        "", "1 +", "1 2", "(1", "1.0", "1 )", "1 ? 2", ": 1", "\"s\"", "1 = 1", "1e5", "0x", "08", "1 ++ 2", "+ - ~ ! 0",
+        "UNDEFINED + 1", "UNDEFINED", "true", "false", "true + true == 2",
+        "'a' == 97", "'\\n' + '\\x41' + '\\101' == 140", "'\\377' < 0", "'ab' == 0x6162", "L'\\xffffffff' == -1", "U'\\xffffffff' == 0xffffffff",
+        "u'\u{e9}' == 0xe9", "u8'a' == 97", "'\\u00e9' < 0", "'\\e' == 27", "''", "'\\q' == 'q'",
+        "A == 2", "defined A", "defined(A)", "defined ( B )", "!defined C", "defined A && A == 2", "defined(F) && F(3) == 3", "defined LATER",
+        "F(A) * 2 == 4", "G == 7", "H(1, 2) == 3", "F(F(A)) == 2", "__LINE__ > 0", "defined __LINE__", "defined", "defined (",
+        "__has_include(\"a.h\")", "__has_include(\"nope.h\")", "__has_include(<b.h>)", "__has_include(<nope.h>)", "__has_include(<sub/c.h>)",
+        "__has_include_next(<b.h>)", "__has_embed(\"a.h\") == 1", "__has_embed(\"e.h\") == 2", "__has_embed(\"nope.h\") == 0",
+        "__has_feature(cxx_rtti)", "__has_feature(nope)", "__has_builtin(__builtin_expect)", "__has_cpp_attribute(nodiscard) >= 201603",
+        "__has_cpp_attribute(clang::fallthrough)", "__is_identifier(foo)", "__has_feature", "defined __has_feature", "__has_attribute(F)",
+        "1 and 1", "0 or 1", "not 0", "(6 bitand 3) == 2", "compl 0 == -1", "1 not_eq 2", "(5 xor 1) == 4", "(4 bitor 1) == 5",
+    ];
+    let mut main = String::from("#define A 2\n#define B\n#define F(x) x\n#define G (3 + 4)\n#define H(a, b) a + b\n");
+    for (k, e) in exprs.iter().enumerate() {
+        main += &format!("#if {e}\nt{k}\n#else\nf{k}\n#endif\n");
+        if k == exprs.len() / 2 {
+            main += "#define LATER\n#if defined LATER\nlater\n#endif\n#undef A\n#if defined A\nstill\n#endif\n#define A 2\n";
+        }
+    }
+    main += "#if 0\na\n#elif 1 + 1 == 2\nb\n#elif 1\nc\n#else\nd\n#endif\n";
+    main += "#if 1\n# if 0\nx\n# elif defined F\ny\n# endif\n#elif 1 / 0\nz\n#endif\n";
+    main += "#ifdef A\n#if A > 1 && !defined NOPE\nnested\n#endif\n#endif\n";
+    main += "#include \"a.h\"\n#if FROM_A == 5\nfrom_a\n#else\nnot_from_a\n#endif\n";
+    let files = [("main.c", main.as_str()), ("a.h", "#define FROM_A 5\n"), ("e.h", ""), ("inc/b.h", "int b;\n"), ("inc/sub/c.h", "int c;\n")];
+    for cpp in [false, true] {
+        let mut cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+        for (t, op, v) in [("__has_feature", "cxx_rtti", 1), ("__has_builtin", "__builtin_expect", 1), ("__has_cpp_attribute", "nodiscard", 201603), ("__has_cpp_attribute", "clang::fallthrough", 201603), ("__has_attribute", "F", 1)] {
+            cfg.features.insert((t.to_string(), op.to_string()), v);
+        }
+        let (got, want, rung, launches) = expanded_in(&files, cfg, &[("inc", DirKind::Angle)], 0);
+        let chosen: Vec<String> = want.iter().map(|t| String::from_utf8_lossy(t).into_owned()).filter(|t| (t.starts_with('t') || t.starts_with('f')) && t.len() > 1 && t[1..].bytes().all(|c| c.is_ascii_digit())).collect();
+        // Every test chose its text, some true and some false.
+        same(chosen.len(), exprs.len(), "the tests' texts");
+        assert!(chosen.iter().any(|t| t.starts_with('t')) && chosen.iter().any(|t| t.starts_with('f')), "both values");
+        same(got.map(|g| show(&g)), Ok(show(&want)), format!("the tests' text, C++ {cpp}"));
+        same(launches, 4, format!("launches (rung {rung})"));
+    }
 }
 
 /// R5 of decision 0467 (literal names): the device grows the include tree from the main file
@@ -546,16 +606,22 @@ impl rerail_c_pp::sink::Sink for Spelled {
 /// The unit of `files` (its main file `main.c`) expanded on the device from rung `rung`: its
 /// output spelled, or its refusal bits; and the serial pass's output. `None` where P1 refuses it.
 fn expanded(files: &[(&str, &str)], cpp: bool, rung: u32) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize) {
+    expanded_in(files, rerail_c_pp::Config::new(crate::pp::options(cpp)), &[], rung)
+}
+
+/// `expanded` under `cfg`, its search path `dirs`.
+fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)], rung: u32) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize) {
     use rerail_c_pp::files::Search;
+    let cpp = cfg.opts.cpp;
     let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
-    let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+    let dirs: Vec<(String, rerail_c_pp::files::DirKind)> = dirs.iter().map(|&(d, k)| (d.to_string(), k)).collect();
     let mut serial = Spelled::default();
     let m2 = m.clone();
-    let mut io = Search::new(vec![], move |p: &str| m2.get(p).cloned());
+    let mut io = Search::new(dirs.clone(), move |p: &str| m2.get(p).cloned());
     let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
     assert!(pp.run("main.c"));
     drop(pp);
-    let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+    let mut io = Search::new(dirs, move |p: &str| m.get(p).cloned());
     let (d, _) = unit_of(cfg, &mut io, "main.c", cpp).unwrap();
     let (unit, lay, tapes) = (&d.unit, &d.lay, &d.tapes);
     let x = rerail_metal::pp_expand::expand_from(unit, lay, rung).unwrap();
@@ -892,13 +958,13 @@ fn the_corpus_expands_on_the_device() {
     let stub = |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new));
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+        let builtins = rerail_c_pp::stream::parallel::predefined(&Config::new(crate::pp::options(cpp))).1;
         let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).collect();
         paths.sort();
         // Each unit's serial answer and its P1, then every unit of the language in batches.
         struct Entry {
             path: String,
             serial: Vec<Vec<u8>>,
-            p1: rerail_c_pp::stream::parallel::P1,
             d: OnDevice,
         }
         let mut entries = Vec::new();
@@ -919,7 +985,8 @@ fn the_corpus_expands_on_the_device() {
                 }
             };
             rounds = rounds.max(d.rounds);
-            entries.push(Entry { path, serial: serial.0, p1, d });
+            let _ = p1;
+            entries.push(Entry { path, serial: serial.0, d });
         }
         let units: Vec<_> = entries.iter().map(|e| (&e.d.unit, &e.d.lay)).collect();
         // `RERAIL_PP_STAGES`: where a batch's GPU time goes (its first `RERAIL_PP_STAGES` units).
@@ -932,7 +999,7 @@ fn the_corpus_expands_on_the_device() {
         };
         let mut seen: Vec<*const Expanded> = Vec::new();
         for (e, part) in entries.iter().zip(&parts) {
-            let (path, p1, x) = (&e.path, &e.p1, &*part.x);
+            let (path, x) = (&e.path, &*part.x);
             if !seen.contains(&std::ptr::from_ref(x)) {
                 seen.push(std::ptr::from_ref(x));
                 launches = launches.max(x.launches);
@@ -947,7 +1014,7 @@ fn the_corpus_expands_on_the_device() {
             }
             // The built-ins a unit refused for them names in its text.
             if refused_by & X_BUILTIN != 0 {
-                for name in &p1.builtins {
+                for name in &builtins {
                     let n = name.as_slice();
                     if e.d.files.iter().any(|f| f.windows(n.len()).any(|w| w == n)) {
                         *named.entry(String::from_utf8_lossy(n).into_owned()).or_default() += 1;

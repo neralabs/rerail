@@ -474,6 +474,12 @@ pub fn name_key(bytes: &[u8]) -> u64 {
     h ^ (h >> 29)
 }
 
+/// Two keys made one (`pp_eval.uglykl`'s `key_mix`).
+pub fn key_mix(h: u64, w: u64) -> u64 {
+    let h = (h ^ w).wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^ (h >> 32)
+}
+
 /// `bytes` with their line splices left out (a `\`, blanks, then a newline), as phase 2 reads them.
 pub fn phase2(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     if !bytes.contains(&b'\\') {

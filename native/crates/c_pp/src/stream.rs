@@ -171,7 +171,7 @@ struct Syms {
 }
 
 /// C++'s alternative tokens (`and` is `&&`), as `#if` reads them.
-const ALT: [(&str, T); 11] = [
+pub const ALT: [(&str, T); 11] = [
     ("and", T::AmpAmp),
     ("or", T::PipePipe),
     ("not", T::Bang),

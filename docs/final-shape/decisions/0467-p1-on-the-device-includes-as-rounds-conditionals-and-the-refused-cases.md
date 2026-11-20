@@ -256,3 +256,45 @@ row.
     2 rounds of 4 launches; refused: `#line` 2, a call across a stretch's end 1, an expanded
     include name 2 (step 6; the spike read them on the host before). GPU time 184 ms against
     160 ms: P1's room makes larger arenas, so batches split at 125 units, not 250.
+- **Step 5: `#if` expressions, `defined`, `__has_include` and the configuration's tests (§4;
+  R4).** `pp_if.uglykl`, as phases of P1's iterations, after the definitions' table and
+  before the tests.
+  - The host gives no `#if` value any more: `Layout` holds the dialect's operators (the
+    `__has_*` tests by their names' keys, from `macros::BUILTINS`, and in C++ the alternative
+    tokens, from `stream::ALT`), the configuration's answers (`Config::features`, by the test's
+    name's key and its operand's), and whether `true` is 1.
+  - Each active `#if`'s and `#elif`'s line is a top of its own, its directive word a stretch:
+    its tokens (its `OPERANDS`' leaves) read in place through `IF_NODES`, at its directive's
+    slot. The expansion's top-level passes, its queue and its places are the text's, bound to
+    the lines (`IF_TOP`) instead of the active stretches (`TEXT_TOP`). Inside the kernel the
+    queue is drained a bounded number of times (`PX_DRAIN`), and between tops its slots and the
+    arena's tops are reset (`PX_RESET`: the queue is linear).
+  - The lines' names are looked up as `in_if` reads them (`p1_if_tokens`): `defined` and the
+    operand it reads raw (the token after it, or after its `(` and the one after that) are no
+    names; a `__has_*` test whose name means the built-in there, followed by `(`, is marked,
+    and its operand (to its `)`, by the depth's close table and a max scan) is read raw.
+  - One thread a test evaluates its line's output (`p1_if_eval`), as `expr::eval` does:
+    operator precedence over two stacks (no recursion), 64-bit values with the unsigned rules,
+    a division by zero carried as a flag that `&&`, `||` and `?:` drop where they do not take
+    the operand (the serial pass's `live`), any other error making the test false; integer and
+    character constants as `expr::number` and `expr::char_value` read them (phase-2 bytes);
+    `defined` answered by a lookup at the directive's slot; the configuration's tests by their
+    table (`__is_identifier` 1 where it holds no row); `__has_include`, `__has_include_next`
+    and `__has_embed` through the file table as an include's key (a miss is a request, so the
+    round ends and the host answers it); C++'s alternative tokens as their operators.
+  - `lookups` lays the expansion's stores out too, and reruns at the next rung where the
+    lines' expansion runs out of room.
+  - Refused, by name: `defined` made by a macro's expansion, or read inside a call's arguments
+    (undefined behaviour, C17 §6.10.1p4; the corpus has none: `P1_IF_DEFINED`), and an
+    expression past the evaluator's 48-deep stacks or a constant past 128 bytes
+    (`P1_IF_BIG`). A `__has_include` whose operand is a macro is step 6's.
+  - R4: `if_values_are_the_serial_passes`, 117 expressions in one unit (each operator and its
+    precedence, the unsigned rules, short circuits, errors, character constants, `true`,
+    macros in the line, both forms of `defined` before and after a definition and after an
+    `#undef`, the three header tests found, not found and empty, the configuration's answers,
+    the alternative tokens), `#elif` chains, nested conditionals and a test a header's
+    definition decides, in C and C++: the output is the serial pass's, and both values occur.
+  - All 23 evaluator tests pass; the Metal gates pass. The corpus, from main files: 3,129
+    units equal, at most 2 rounds of 4 launches; refused: `#line` 2, a call across a stretch's
+    end 1, an expanded include name 3 (one more than step 4: a `__has_include` of a macro,
+    step 6). GPU time 206 ms against 184 ms: each iteration expands the tests' lines.
