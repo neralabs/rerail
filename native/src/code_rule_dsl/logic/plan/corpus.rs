@@ -10112,6 +10112,18 @@ fn run_observed_within(
                             from_owners += 1;
                             return Some((Arc::clone(plus), Arc::clone(minus)));
                         }
+                        // A text test is a test of a string (decision 0494): a probe tests the string probed, whatever
+                        // documents hold it, so no edit changes a row a rule reads, and its delta is empty. Diffed by
+                        // the rules, its rows now were its every string's, every document made (Q332).
+                        if cross_vocabulary.tests.iter().any(|(t, _)| t == rel) {
+                            if std::env::var_os("RERAIL_STRATA_LIVE").is_some() {
+                                eprintln!("RERAIL_STRATA_LIVE input delta {rel}: none, a text test (decision 0494)");
+                            }
+                            let none = || -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+                                Arc::new(crate::code_rule_dsl::facts::vtab::Relation::from_rows(&[super::sql_col(rel, 0).as_str()], &mut std::iter::empty()))
+                            };
+                            return Some((none(), none()));
+                        }
                         let kept = cell.as_ref()?;
                         let Some((_, new)) = cross_inputs.iter().find(|(r, _)| r == rel) else {
                             if std::env::var_os("RERAIL_PROFILE").is_some() { eprintln!("rerail: input delta of {rel}: not among the cross part's inputs, diffed by rules"); }

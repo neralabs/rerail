@@ -6369,21 +6369,59 @@ impl<'a> Run<'a, '_> {
         Ok(Some(source.len()))
     }
 
-    /// A view of `node`'s columns `cols` (`input_view`) held in place (decision 0329, `hold_view_in_place`), where `src`
-    /// is a batch's, and its rows' count. Its statistics are each column's exact ones, counted from the batch without
-    /// reading its rows (`syntax::node_column_counts`), as a copy's sketches gave them (`live_of`), when a plan first
-    /// reads them (`InPlaceView`): counting them makes every document. `None`: `src` is not a batch's, and the view
-    /// is read into flat rows (`hold_view`).
-    fn hold_view_in_place(&mut self, rel: &str, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: &[usize], types: Vec<u8>) -> Option<i64> {
+    /// A view of `base`'s (`node`'s) columns `cols` (`input_view`) held in place (decision 0329, `hold_view_in_place`),
+    /// where `src` is a batch's, and its rows' count. Its statistics are each column's exact ones: `base`'s, where the
+    /// run holds them (`view_stats_held`); else counted from the batch without reading its rows
+    /// (`syntax::node_column_counts`), as a copy's sketches gave them (`live_of`), when a plan first reads them
+    /// (`InPlaceView`): counting them makes every document. `None`: `src` is not a batch's, and the view is read into
+    /// flat rows (`hold_view`).
+    fn hold_view_in_place(&mut self, base: &str, rel: &str, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: &[usize], types: Vec<u8>) -> Option<i64> {
         if src.columns().len() != 5 || !cols.iter().all(|&c| crate::code_rule_dsl::facts::vtab::syntax::node_column_counted(c)) {
             return None;
         }
         let batch = src.python_batch()?;
         let n = src.len() as i64;
         super::native::component::hold_view_in_place(self.db, rel, Arc::clone(src), cols.to_vec(), types);
+        if let Some(live) = self.view_stats_held(base, &src.columns(), cols, n) {
+            self.model.stats.lazy.0.remove(rel);
+            live_stats(&mut self.model, rel, live);
+            super::profile::decision("a view held in place: its statistics (Q332)", || format!("{rel}: {base}'s, held"));
+            return Some(n);
+        }
+        super::profile::decision("a view held in place: its statistics (Q332)", || format!("{rel}: counted off the batch when first planned with ({base}'s are not held)"));
         self.model.stats.prior_later.remove(rel);
         self.model.stats.lazily(rel, n.max(1) as usize, Arc::new(InPlaceView { rel: rel.to_owned(), batch, cols: cols.to_vec(), rows: n }));
         Some(n)
+    }
+
+    /// The statistics of a view of `base`'s columns `cols` (`names`, its columns), `n` rows, from those the run holds
+    /// of `base` itself (Q332): its columns' counts, kept and patched by the changed documents (decision 0458), and
+    /// the kind column's values, the tree's (`Stats::tree`: by the same kind atoms the column holds). What counting
+    /// the batch's documents gives (`InPlaceView`), none made. `None` where one is not held, or holds other rows than
+    /// the view's (a node column's counts of `n` rows, the tree's kinds `n` nodes of as many kinds).
+    fn view_stats_held(&self, base: &str, names: &[String], cols: &[usize], n: i64) -> Option<LiveRel> {
+        let st = &self.model.stats;
+        let (mut ndv, mut sq, mut freq) = (Vec::new(), Vec::new(), Vec::new());
+        for (j, &c) in cols.iter().enumerate() {
+            let &[rows, d, s, _] = st.col.get(&(base.to_owned(), names.get(c)?.clone()))?;
+            if rows != n {
+                return None;
+            }
+            match c {
+                1 => {}
+                2 => {
+                    let kinds: HashMap<Constant, i64> = st.kfreq.iter().filter(|(_, m)| **m > 0).map(|(k, &m)| Some((Constant::Int(k.parse().ok()?), m))).collect::<Option<_>>()?;
+                    if kinds.values().sum::<i64>() != n || kinds.len() as i64 != d {
+                        return None;
+                    }
+                    freq.push((j, kinds));
+                }
+                _ => return None,
+            }
+            ndv.push(d);
+            sq.push(s);
+        }
+        Some(LiveRel { n, delta: n, ndv, sq, freq })
     }
 
     /// The reach index (decision 0119, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
@@ -8746,7 +8784,7 @@ impl<'a> Run<'a, '_> {
             // `node`, decision 0329): no row read. Else read once into flat rows (`hold_view`). Either way its
             // statistics are a copy's, exact or sketched: its readers plan as they did when a stratum copied it. Held
             // in place, they are counted when a plan first reads them (`InPlaceView`).
-            let (form, n) = match self.hold_view_in_place(rel, &src, &cols, types(rel).into_bytes()) {
+            let (form, n) = match self.hold_view_in_place(&base, rel, &src, &cols, types(rel).into_bytes()) {
                 Some(n) => ("held in place", n),
                 None => {
                     let _span = super::profile::span(|| "a view of an input's columns: its rows".into());

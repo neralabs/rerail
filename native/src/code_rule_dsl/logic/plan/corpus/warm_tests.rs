@@ -45,6 +45,8 @@ struct Ran {
     /// The corpus batches' documents: the run's and every phase's it ran (phase 1, `sources.rerail`, holds every
     /// source file's document too), summed.
     corpus: CorpusDocs,
+    /// The run's own, no phase's.
+    main: CorpusDocs,
     /// Each phase's own, by name.
     phases: Vec<(String, CorpusDocs)>,
     /// Every parse the run made, wherever (`core::parses`), by the path that made it and its language.
@@ -100,7 +102,7 @@ impl Corpus {
             made: a.made + p.made,
             documents: a.documents + p.documents,
         });
-        Ran { corpus, phases, parsed_by: report.parsed, cross_kept: report.cross_kept, waves: report.file_tapes, rows }
+        Ran { corpus, main: report.corpus_docs, phases, parsed_by: report.parsed, cross_kept: report.cross_kept, waves: report.file_tapes, rows }
     }
 
     /// A cold run, then the warm one over the same store after `edit` (none: the files as they were), and a cold run
@@ -168,4 +170,15 @@ fn a_warm_edit_makes_the_changed_documents_rows_alone() {
     // Each batch (the run's, and each phase's that holds documents) makes the changed one's alone.
     let batches = 1 + warm.phases.iter().filter(|(_, p)| p.documents > 0).count();
     assert!(warm.corpus.made <= batches, "Q332: of the corpus batches' documents only the changed one's rows are made, once a batch ({batches}): {:?} (warm run: {warm:?})", warm.corpus);
+}
+
+/// A warm run after a one-file edit: the run's own corpus batch (no phase's) builds no unchanged file's document and
+/// makes the changed one's rows alone. Its plans' statistics of a view of `node` held in place (`kind`) are `node`'s,
+/// kept and patched by the edit, not counted off every document (Q332).
+#[test]
+fn a_warm_edits_own_batch_makes_the_changed_document_alone() {
+    let (_, warm, fresh) = Corpus::cold_then_warm("edit-own", Some(EDIT));
+    assert_eq!(warm.rows, fresh, "the warm edit's outputs are a cold run's");
+    assert_eq!(warm.main.from_tape, 0, "Q332: the run's batch builds no unchanged file's document from its tape: {:?} (warm run: {warm:?})", warm.main);
+    assert!(warm.main.made <= 1, "Q332: the run's batch makes the changed document's rows alone: {:?} (warm run: {warm:?})", warm.main);
 }

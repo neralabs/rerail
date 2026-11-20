@@ -5138,11 +5138,16 @@ after the phases went on the run path (0083).
   - The warm tests count every run's corpus batch, the phases' too (`Report::phase_runs`), and name each phase's.
   - The kept frames' digest-only entry of a base relation records the rows it was bound with (`totals`), not its
     `len` (a text test's is a scan of the batch's strings).
+  - A view of `node` held in place (`kind`) takes its statistics from `node`'s where the run holds them (kept and
+    patched by the edit; its kind values the tree's, `Stats::tree`, by the same kind atoms): none counted off the
+    documents. Where they do not add up to the view's rows it is counted when first planned with, as before.
+  - A text test's input delta in a maintained stratum is empty (its probe tests the string probed, whatever holds
+    it): diffed by the rules, it listed every string of the batch, every document made.
 - **Still open**: after a one-file edit, the unchanged files' documents are still made (`a_warm_edit_builds_no_*`,
-  `a_warm_edit_makes_*` fail):
-  - In the main run, by the statistics of `kind`, a view of `node` held in place: a maintained stratum plans with
-    them, and counting them (`node_column_counts`, its kinds) reads every document's nodes. `node`'s kept
-    statistics, patched by the changed documents, hold the same counts while its kind column's exact map is.
+  `a_warm_edit_makes_*`, `a_warm_edits_own_batch_*` fail):
+  - In the main run, by a join: the maintained `named` probes `text(b, t)` by its string, and no index of a base
+    relation by a column other than its document's is kept (0458 keeps a base relation as its digest), so the probe
+    makes every document (`MadeRows::target`). Open: what keeps that index, or answers it without the documents.
   - In phase 1, by `doc`'s and `tape_of`'s statistics: its documents are what `sources.rerail`'s loads make in its
     waves, where no old source is read, so they have no version and no total (0494 step 4, part 2).
 
