@@ -89,6 +89,13 @@ export async function readPublicDistTags(name) {
 /** `name`'s `next` dist-tag, null when it has none (readPublicDistTags). */
 export const readNextTag = async (name) => (await readPublicDistTags(name))[NEXT_TAG] ?? null;
 
+/** `version` of `name` as npm published it: its package.json, read anonymously. Throws when the registry has none. */
+export async function readPublishedManifest(name, version) {
+  const response = await fetch(`${REGISTRY}/${name.replace("/", "%2f")}/${encodeURIComponent(version)}`, { headers: { accept: "application/json" } });
+  if (!response.ok) throw new Error(`${name}@${version} answers an anonymous request with ${response.status}`);
+  return await response.json();
+}
+
 /** `name`'s dist-tags, as readPublicDistTags reads them, or none (`{}`) when the package was never published. */
 export async function readDistTagsOrNone(name) {
   const response = await fetch(`${REGISTRY}/-/package/${name.replace("/", "%2f")}/dist-tags`, { headers: { accept: "application/json" } });

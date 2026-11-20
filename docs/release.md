@@ -91,15 +91,11 @@ releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_
 
 ### Before promoting
 
-Merging publishes the release to `next`; nothing reaches `latest` until a person promotes it. First:
+Merging publishes the release to `next`; nothing reaches `latest` until a person approves its promotion. First:
 
 - **End-user testing.** One hour using the release the way a user does. `rerail update --channel next` installs its
   core and lists the newer versions of your installed packs on `next`, with the `rerail packs add` command for each:
   run them, so the packs under test are the release's too.
-
-Promote a release before the next Release pull request merges. The packs' promote takes each pack's version on `main`,
-so once a later release has merged it would promote that one, which nobody tested. Its run summary lists the versions
-it will move before anyone approves: check they are the ones tested.
 
 If testing finds a problem, fix it on `main` as any pull request. The next Release pull request releases the fix as the
 next version on `next`, and that version is the one to test and promote. The version that failed stays on `next` and
@@ -107,7 +103,27 @@ never reaches `latest`.
 
 ### Promoting
 
-Core first, then the packs, each behind the `release` environment's approval:
+Each release run ends with its promotion, waiting for a person to approve the `release` environment once the release is
+tested. Approve core's first, then the packs':
+
+1. **Core:** the **Release** run of `v<version>`, job **Point latest at `<version>`**. It points `latest` at that
+   version and makes its GitHub Release the repository's latest.
+2. **Packs:** the **Release packs** run the release's publish started, job **Promote to latest**. Its first job lists
+   the pack versions it will move: exactly those the release published, whatever `main` holds by then, less any pack
+   held where it was put back ([pack-format.md](pack-format.md#release)). It makes each one's GitHub Release a full
+   release.
+
+Each promotion is checked once approved, so a wait of days is safe:
+
+- A release a newer one has already promoted is refused, so approving an older release's promotion last never moves
+  `latest` back. It stays on `next`; reject its approval instead.
+- A pack whose core range leaves out the core on `latest` is refused, naming it: Rerail leaves such a pack out, so the
+  people on stable would lose it. Approve core's promotion, then re-run the packs' failed job.
+- The tested bytes are what `latest` gets: promoting moves the dist-tag and rebuilds nothing.
+- Several releases can wait at once: each promotion is a run of its own, so the wait holds back no later release.
+
+GitHub fails a job left waiting 30 days for its approval. To promote then, or to put a version back, run the promotion
+by hand, behind the same approval:
 
 ```bash
 gh workflow run release.yml --ref main -f latest=<version>
@@ -117,13 +133,8 @@ gh workflow run release.yml --ref main -f latest=<version>
 gh workflow run release-packs.yml --ref main
 ```
 
-- **Core:** points `latest` at that released plain version and makes its GitHub Release the repository's latest. A
-  preview or a version never released is refused.
-- **Packs:** with no inputs, points `latest` at every released pack version not `latest` yet, less any pack held where
-  it was put back ([pack-format.md](pack-format.md#release)). It refuses a pack whose core range leaves out the core on
-  `latest`, naming it: Rerail leaves such a pack out, so the people on stable would lose it. Promote core first, then
-  run it again.
-- The tested bytes are what `latest` gets: promoting moves the dist-tag and rebuilds nothing.
+With no inputs, the packs' run promotes every released pack version not `latest` yet, less any held; with a pack and
+an older version, it puts that pack back and holds it there. A promotion by hand takes each pack's version on `main`.
 
 ### Installer plugins
 
@@ -182,8 +193,8 @@ after a reviewer approves.
 
 - **No inputs:** uploads the tarball as a run artifact, unpublished. Try it with `npm install <tarball>`.
 - **`publish` set to a version:** retries that version's release from `main`, to `next`; see below.
-- **`latest` set to a released plain version:** builds nothing and points `latest` at it: a newer version promotes it
-  ([Promoting](#promoting)), an older one puts core back.
+- **`latest` set to a released plain version:** builds nothing and points `latest` at it: a newer version promotes it,
+  as a release run's own promotion does once approved ([Promoting](#promoting)), an older one puts core back.
 
 <details>
 <summary>Retrying a failed release</summary>

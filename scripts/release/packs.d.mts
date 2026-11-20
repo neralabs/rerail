@@ -55,14 +55,10 @@ export function planPromotions(
   packs: readonly PromotionCandidate[],
   tags: readonly string[],
   distTagsOf: (name: string) => Record<string, string> | null,
-  options?: { named?: boolean; coreProblem?: (pack: PromotionCandidate) => string | null },
-): {
-  promote: Promotion[];
-  unreleased: PromotionCandidate[];
-  held: (PromotionCandidate & { latest: string | null })[];
-  unreadable: PromotionCandidate[];
-  needsCore: (PromotionCandidate & { problem: string })[];
-};
+  options?: { named?: boolean },
+): { promote: Promotion[]; unreleased: PromotionCandidate[]; held: (PromotionCandidate & { latest: string | null })[]; unreadable: PromotionCandidate[] };
+export function releasedRequest(packs: readonly ReleasePack[], released: string): { packs: PromotionCandidate[]; named: boolean };
+export function coreRangeProblem(range: string | undefined, coreLatest: string): string | null;
 export function promotePacks(
   promotions: readonly { name: string; version: string; hold?: boolean; release?: boolean }[],
   tags: readonly string[],
@@ -71,6 +67,9 @@ export function promotePacks(
     hold(name: string, version: string): void;
     release(name: string): void;
     readNext(name: string): Promise<string | null>;
+    readLatest(name: string): Promise<string | null>;
+    readCoreRange(name: string, version: string): Promise<string | undefined>;
+    readCoreLatest(): Promise<string>;
     distTag(name: string, version: string, tag: string): void;
     log(line: string): void;
   },

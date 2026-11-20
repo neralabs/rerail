@@ -68,6 +68,7 @@ jobs:
     outputs:
       channel: ${{ steps.release-channel.outputs.channel }}
       version: ${{ steps.release-channel.outputs.version }}
+      promotable: ${{ steps.release-channel.outputs.promotable }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -103,7 +104,9 @@ jobs:
           const refusal = publishRefusal(version, channel, await readPublicDistTags("@neralabs/rerail"));
           if (refusal !== null) throw new Error(refusal);
           console.log(`Publishing ${version} to the ${channel} channel.`);
-          appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nversion=${version}\n`);
+          // A plain version waits on next for its promotion (the promote job); a preview stays on its channel.
+          const promotable = channel === "next" && /^\d+\.\d+\.\d+$/u.test(version);
+          appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nversion=${version}\npromotable=${promotable}\n`);
           EOF
 
   package:
@@ -253,7 +256,7 @@ jobs:
         with:
           node-version: "24"
 
-      # Trusted publishing needs npm 11.5.1 or newer; the put-back job, which moves dist-tags over it, needs 11.21.0.
+      # Trusted publishing needs npm 11.5.1 or newer; the promote job, which moves dist-tags over it, needs 11.21.0.
       - name: Install npm with trusted publishing support
         run: |
           npm install --global "npm@^11.21.0"
@@ -315,19 +318,32 @@ jobs:
           RELEASED: "@neralabs/rerail@${{ needs.metadata.outputs.version }}:${{ needs.metadata.outputs.channel }}"
         run: node scripts/release/dist-tags-check.mjs
 
-  # Promotes core, or puts it back: points `latest` at a plain version this repository released (its tag exists) and npm
-  # has, newer (a promotion, once it is tested on `next`) or older (a put-back), and `next` there
-  # too should `next` be older, so it never trails `latest` (a put-back to an older version leaves `next` alone). Trusted
-  # publishing, as for publish: core's trusted publisher on npmjs must allow `npm dist-tag` as well as `npm publish`.
-  put-back:
-    name: Point latest at ${{ inputs.latest }}
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.latest && !inputs.publish && github.ref == 'refs/heads/main' }}
+  # Promotes core to `latest`, or puts it back. A release run of a plain version ends here: once the release is tested
+  # on `next`, a person approves the `release` environment and this job points `latest` at it (docs/release.md,
+  # "Promoting"). The run waits for that approval, up to GitHub's 30 days; its group is its tag's, so the wait holds
+  # back no other release. Run by hand with `latest`, it points `latest` at a released plain version, newer to promote
+  # it or older to put core back. It moves only a plain version this repository released (its tag exists) and npm has,
+  # and `next` there too should `next` be older, so it never trails `latest`. A release run's promotion approved after a
+  # newer version reached `latest` is refused, so it never moves `latest` back. Trusted publishing, as for publish:
+  # core's trusted publisher on npmjs must allow `npm dist-tag` as well as `npm publish`.
+  promote:
+    name: Point latest at ${{ inputs.latest || needs.metadata.outputs.version }}
+    needs: [metadata, publish]
+    if: >-
+      ${{
+        !cancelled() && (
+          (github.event_name == 'workflow_dispatch' && inputs.latest && !inputs.publish && github.ref == 'refs/heads/main') ||
+          (needs.metadata.outputs.promotable == 'true' && needs.publish.result == 'success')
+        )
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
     permissions:
       contents: read
       id-token: write
+    env:
+      VERSION: ${{ inputs.latest || needs.metadata.outputs.version }}
     steps:
       - name: Set up Node.js v24
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -350,7 +366,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ inputs.latest }}
         run: |
           set -euo pipefail
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -362,20 +377,22 @@ jobs:
             exit 1
           fi
 
-      - name: Point latest at ${{ inputs.latest }}
-        env:
-          VERSION: ${{ inputs.latest }}
+      # Read once approved, which can be days after the release: a newer release promoted meanwhile supersedes this one.
+      - name: Refuse a release a newer one superseded on latest
+        if: ${{ !inputs.latest }}
+        run: |
+          node --input-type=module -e 'import { compareVersions, readPublicDistTags } from "./scripts/release/dist-tags.mjs"; const { latest } = await readPublicDistTags("@neralabs/rerail"); if (latest !== undefined && compareVersions(process.env.VERSION, latest) < 0) { console.log(`::error::latest is ${latest}, newer than ${process.env.VERSION}, so this release is superseded: it stays on next`); process.exit(1); }'
+
+      - name: Point latest at ${{ env.VERSION }}
         run: npm dist-tag add "@neralabs/rerail@${VERSION}" latest --registry https://registry.npmjs.org
 
       - name: Keep next from trailing latest
-        env:
-          VERSION: ${{ inputs.latest }}
         run: node scripts/release/raise-next.mjs "@neralabs/rerail@${VERSION}"
 
       # Core is public, so `npm dist-tag ls` reads it back with no token.
       - name: Check core's dist-tag
         env:
-          RELEASED: "@neralabs/rerail@${{ inputs.latest }}:latest"
+          RELEASED: "@neralabs/rerail@${{ env.VERSION }}:latest"
         run: node scripts/release/dist-tags-check.mjs
 
   # The GitHub Release of the tag, once the tarball has passed the checks every publish needs: its notes are the
@@ -383,24 +400,19 @@ jobs:
   # once, in the changelog. It runs beside the publish and waits on nothing npm does, so a slow publish or a dist-tag
   # read-back that fails cannot leave the tag without its Release; should the publish fail, the Release stands and a
   # retry (the `publish` input) runs this job again. Every release a tag publishes, on `next` or `beta`, is a
-  # pre-release. Run again, it rewrites the notes and flags of the Release it made. After a promotion or a put-back it
-  # runs for that version, whose Release exists already: that rewrite makes it the latest release, with its notes from
-  # main's CHANGELOG.md, which keeps every released version's section. This is the one job
-  # that writes to the repository, so it alone holds `contents: write`.
+  # pre-release. Run again, it rewrites the notes and flags of the Release it made. It waits on nothing the promotion
+  # does: the promoted-release job rewrites the Release once `latest` moves. It and promoted-release are the jobs that
+  # write to the repository, so they alone hold `contents: write`.
   github-release:
     name: GitHub Release
-    needs: [metadata, shrinkwrap, windows-install, unix-install, put-back]
+    needs: [metadata, shrinkwrap, windows-install, unix-install]
     if: >-
       ${{
-        !cancelled() && (
-          needs.put-back.result == 'success' ||
-          (
-            needs.metadata.outputs.channel != '' &&
-            needs.shrinkwrap.result == 'success' &&
-            needs.windows-install.result == 'success' &&
-            needs.unix-install.result == 'success'
-          )
-        )
+        !cancelled() &&
+        needs.metadata.outputs.channel != '' &&
+        needs.shrinkwrap.result == 'success' &&
+        needs.windows-install.result == 'success' &&
+        needs.unix-install.result == 'success'
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -419,5 +431,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASED: ${{ inputs.latest && format('@neralabs/rerail@{0}:latest', inputs.latest) || format('@neralabs/rerail@{0}:{1}', needs.metadata.outputs.version, needs.metadata.outputs.channel) }}
+          RELEASED: "@neralabs/rerail@${{ needs.metadata.outputs.version }}:${{ needs.metadata.outputs.channel }}"
+        run: node scripts/release/github-release.mjs
+
+  # After a promotion or a put-back, the version's GitHub Release, which exists already, is rewritten as the
+  # repository's latest release, with its notes from the checkout's CHANGELOG.md: the tag's on a release run, main's
+  # on a run by hand, which keeps every released version's section.
+  promoted-release:
+    name: Promoted GitHub Release
+    needs: [metadata, promote]
+    if: ${{ !cancelled() && needs.promote.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Make the GitHub Release the repository's latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASED: "@neralabs/rerail@${{ inputs.latest || needs.metadata.outputs.version }}:latest"
         run: node scripts/release/github-release.mjs

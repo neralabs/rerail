@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { NEXT_TAG, publishRefusal, raiseNext } from "./dist-tags.mjs";
+import { compareVersions, NEXT_TAG, parseExpectation, publishRefusal, raiseNext } from "./dist-tags.mjs";
 import { changeType, changeTypeRefusal, releaseNoteEntry } from "./release-notes.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -324,17 +324,46 @@ export function promotionRequest(packs, id, version) {
 }
 
 /**
+ * What a release run's promotion asks for: exactly the versions it published, `released` as the run names them
+ * (`<name>@<version>:<dist-tag> ...`, packs-publish.mjs), whatever `main` holds by the time it is approved, none of them
+ * a hold. A sweep (named false), so a pack held where someone put it back stays held. Throws on a package that is no
+ * published pack.
+ */
+export function releasedRequest(packs, released) {
+  const request = released.split(/\s+/u).filter((entry) => entry !== "").map((entry) => {
+    const { name, version } = parseExpectation(entry);
+    const pack = packs.find((candidate) => candidate.name === name);
+    if (pack === undefined) throw new Error(`${name} is not a published pack under packs/`);
+    return { ...pack, version, hold: false };
+  });
+  return { packs: request, named: false };
+}
+
+/**
+ * Why core `coreLatest` can't load a pack whose core range is `range` (its `peerDependencies["@neralabs/rerail"]`,
+ * undefined when it names none), or null when it can. Only one lower bound, `>=<version>`, is read: the form the
+ * release writes (raisedCoreRange in core.mjs) and every pack uses, read without semver, which the promote job does
+ * not install.
+ */
+export function coreRangeProblem(range, coreLatest) {
+  if (range === undefined) return "it names no core range, so whether the core on latest loads it is unknown";
+  const floor = /^>=\s*(\S+)$/u.exec(range.trim())?.[1];
+  if (floor === undefined) return `its core range ${range} is not one lower bound (>=<version>), so the promote can't check it`;
+  return compareVersions(coreLatest, floor) < 0 ? `it needs core ${range}, and latest is ${coreLatest}: promote core first, then run this again` : null;
+}
+
+/**
  * Which packs a promotion moves to `latest`, given the release tags and `distTagsOf(name)`: the pack's `latest` and
  * `held` dist-tags (absent when npm has none), or null when npm could not be read. A pack is promoted when its
  * version is released (its tag exists) and is not `latest` already; one without its tag is `unreleased`. A sweep
  * leaves out a pack held at its `latest` (put back on purpose); naming that pack promotes it. A promotion that is
- * not itself a hold releases any hold the pack has (`release`). A pack `coreProblem(pack)` says the core on `latest`
- * can't load (a string naming why, or null) is left out as `needsCore`, with that `problem`: on `latest`, the people
- * on stable would lose it until core is promoted. A hold is an older version, so it is never left out for that.
+ * not itself a hold releases any hold the pack has (`release`). Whether the core on `latest` loads a pack, and
+ * whether a newer version reached `latest` meanwhile, are checked when the promotion runs (promotePacks), after its
+ * approval, not here.
  */
-export function planPromotions(packs, tags, distTagsOf, { named = false, coreProblem = () => null } = {}) {
+export function planPromotions(packs, tags, distTagsOf, { named = false } = {}) {
   const existing = new Set(tags);
-  const plan = { promote: [], unreleased: [], held: [], unreadable: [], needsCore: [] };
+  const plan = { promote: [], unreleased: [], held: [], unreadable: [] };
   for (const pack of packs) {
     if (!existing.has(releaseTag(pack.name, pack.version))) {
       plan.unreleased.push(pack);
@@ -353,11 +382,6 @@ export function planPromotions(packs, tags, distTagsOf, { named = false, corePro
       continue;
     }
     if (latest === pack.version && held === (hold ? pack.version : null)) continue;
-    const problem = hold ? null : coreProblem(pack);
-    if (problem !== null) {
-      plan.needsCore.push({ ...pack, problem });
-      continue;
-    }
     plan.promote.push({ ...pack, latest, hold, release: !hold && held !== null });
   }
   return plan;
@@ -365,21 +389,34 @@ export function planPromotions(packs, tags, distTagsOf, { named = false, corePro
 
 /**
  * Points `latest` at each `{ name, version }` in `promotions`, refusing a version this repository never released (no
- * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. Then `next` is pointed at the version
- * too unless it is already at a newer one (raiseNext in dist-tags.mjs), so `next` never trails `latest`; a put-back to
- * an older version leaves it where it is. One failure does not stop the others. Returns each pack fully promoted, and
- * each failure, so the run reports them all and can be run again. `steps.promote(name, version)`,
- * `steps.hold(name, version)`, `steps.release(name)` and `steps.distTag(name, version, tag)` throw on failure, and
- * `steps.readNext(name)` resolves to `next` or null.
+ * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. A promotion that is not a hold is
+ * checked as it runs, after its approval, which can come days after its plan: it is refused when `latest` is at a
+ * newer version already (an older release's promote approved after a newer one's), or when the core on `latest` can't
+ * load the version (coreRangeProblem): promote core first. Then `next` is pointed at the version too unless it is
+ * already at a newer one (raiseNext in dist-tags.mjs), so `next` never trails `latest`; a put-back to an older version
+ * leaves it where it is. One failure does not stop the others. Returns each pack fully promoted, and each failure, so
+ * the run reports them all and can be run again. `steps.promote(name, version)`, `steps.hold(name, version)`,
+ * `steps.release(name)` and `steps.distTag(name, version, tag)` throw on failure; `steps.readNext(name)` and
+ * `steps.readLatest(name)` resolve to that dist-tag or null, `steps.readCoreRange(name, version)` to the published
+ * version's core range (undefined when it names none), and `steps.readCoreLatest()` to core's `latest`, read once and
+ * only when a promotion needs it.
  */
 export async function promotePacks(promotions, tags, steps) {
   const existing = new Set(tags);
   const promoted = [];
   const failures = [];
+  let coreLatest;
   for (const { name, version, hold = false, release = false } of promotions) {
     const tag = releaseTag(name, version);
     try {
       if (!existing.has(tag)) throw new Error("it was never released from this repository (no such git tag)");
+      if (!hold) {
+        const latest = await steps.readLatest(name);
+        if (latest !== null && compareVersions(version, latest) < 0) throw new Error(`latest is ${latest}, newer, so this release is superseded`);
+        coreLatest ??= steps.readCoreLatest();
+        const problem = coreRangeProblem(await steps.readCoreRange(name, version), await coreLatest);
+        if (problem !== null) throw new Error(problem);
+      }
       steps.promote(name, version);
       if (hold) steps.hold(name, version);
       if (release) steps.release(name);

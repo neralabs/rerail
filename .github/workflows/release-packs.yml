@@ -9,8 +9,9 @@ name: Release packs
 #   Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
 #   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, and
 #   tagged. The release never waits on npm: the tag comes first, then the version's GitHub Release and its publish
-#   under `next` with trusted publishing, side by side. Nothing a push publishes reaches `latest`: a person promotes
-#   the versions once they are tested on `next` (the promote below; docs/release.md, "Promoting"). A version tagged
+#   under `next` with trusted publishing, side by side. Nothing a push publishes reaches `latest` until a person
+#   approves it: the request-promotion job starts a run of this workflow that promotes exactly what was published,
+#   and waits for that approval once the release is tested on `next` (docs/release.md, "Promoting"). A version tagged
 #   but not on npm (a failed or unapproved publish) is planned again by every later run, so re-running the run or the
 #   next push publishes it. The dist-tags job then lists each published pack's dist-tags in the run summary and fails
 #   if one's `next` is not the version just published, or is older than its `latest`. A pack never published at all needs its first
@@ -20,14 +21,14 @@ name: Release packs
 # (the Release pull request is not checked). Its
 # paths see only the git diff, not the packs' test data: a change to that data is a change to a tool-pack's
 # test-data.lock, under packs/**, and a pull request that checks data in adds it there too (CONTRIBUTING.md).
-# `workflow_dispatch` points `latest` at released pack versions. With no inputs it promotes: every pack whose released
-# version is not `latest` yet, less any pack held. Naming a pack and an older version puts it back and holds it there
+# `workflow_dispatch` points `latest` at released pack versions. With `released`, as a release run starts it, it
+# promotes those versions. By hand with no inputs, every pack whose released version is not `latest` yet, less any held. Naming a pack and an older version puts it back and holds it there
 # (`held`), and naming the pack alone, at its package.json version, promotes it again and releases the hold.
 # The promote-plan job lists them in the run summary before the promote job, which needs the `release` environment's
 # approval, moves them all, moves each one's `next` up to it unless `next` is at a newer version, and then fails if a
-# promoted pack's `latest` is not the version or its `next` is older (docs/pack-format.md, "Release"). The promote
-# plan refuses a pack whose core range leaves out the core on `latest`, and the promoted-releases job makes each
-# promoted version's GitHub Release a full release.
+# promoted pack's `latest` is not the version or its `next` is older (docs/pack-format.md, "Release"). Once approved,
+# the promote job refuses a pack whose `latest` is already newer or whose core range leaves out the core on `latest`,
+# and the promoted-releases job makes each promoted version's GitHub Release a full release.
 # Each pack version a push tags gets its GitHub Release on its tag, with the version's CHANGELOG.md section as its
 # notes (the github-releases job), a pre-release until it is promoted.
 
@@ -56,15 +57,21 @@ on:
         required: false
         default: ""
         type: string
+      released:
+        description: "Set by a release run, which starts this run to promote what it published: <name>@<version>:next, space-separated. Leave pack and version empty"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
-# GitHub keeps one pending run per group and cancels the older one. Every promotion shares one group, so two never
+# GitHub keeps one pending run per group and cancels the older one. Promotions run by hand share one group, so two never
 # move the same pack's `latest` at once, while a promotion can neither cancel a publish queued behind a release run
-# nor be cancelled by one.
+# nor be cancelled by one. A release run's promotion waits for its approval, for days if testing takes that long, so
+# it is a group of its own: it holds back neither the next release nor a put-back, and none of them cancels it.
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && 'release-packs-promote' || format('release-packs-{0}', github.event.pull_request.number || github.ref) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && (inputs.released != '' && format('release-packs-promote-{0}', github.run_id) || 'release-packs-promote') || format('release-packs-{0}', github.event.pull_request.number || github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -408,6 +415,25 @@ jobs:
   # Reads each pack's dist-tags from npm, which for these restricted packs needs the read-only NPM_PACKS_READ_TOKEN
   # (as ci.yml's installed-packs job does), and lists what the promote job will move. A pack it cannot read fails
   # this job but is only left out: the promote job still moves the others.
+  # Starts this workflow's promotion of exactly what the publish job released: a run of its own, whose promote job waits
+  # for a person to approve it once the release is tested on `next` (docs/release.md, "Promoting"). A run of its own,
+  # in a group of its own, so the wait holds back no later release. GITHUB_TOKEN can start a workflow_dispatch run.
+  request-promotion:
+    name: Start the promotion to latest
+    needs: publish
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.publish.outputs.released != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Start a promotion of what this run published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASED: ${{ needs.publish.outputs.released }}
+        run: gh workflow run release-packs.yml --ref main -f released="$RELEASED"
+
   promote-plan:
     name: Packs to promote
     if: github.event_name == 'workflow_dispatch'
@@ -425,14 +451,16 @@ jobs:
             exit 1
           fi
 
+      - name: Set up Node.js v24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
-
-      # The plan reads each pack's core range with semver. Installed before npm is given the read token.
-      - uses: ./.github/actions/node-deps
 
       # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
       - name: Authenticate npm to read the packs
@@ -448,6 +476,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
           PACK: ${{ inputs.pack }}
           VERSION: ${{ inputs.version }}
+          RELEASED: ${{ inputs.released }}
         run: node scripts/release/packs-promote-plan.mjs "$PACK" "$VERSION"
 
   promote:

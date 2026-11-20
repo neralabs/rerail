@@ -77,7 +77,7 @@ beta    designated customer preview
 latest  stable customer release
 ```
 
-Merging the **Release** pull request publishes core and rule packs to `next`. That is the release candidate: once it is tested, a person promotes it to `latest` ([release](release.md#promoting)). Previews come from a hand-pushed `v<version>-next.N` or `-beta.N` tag.
+Merging the **Release** pull request publishes core and rule packs to `next`. That is the release candidate: once it is tested, a person approves its promotion to `latest`, which the release run waits for ([release](release.md#promoting)). Previews come from a hand-pushed `v<version>-next.N` or `-beta.N` tag.
 
 <details>
 <summary>How a release runs</summary>
@@ -87,7 +87,7 @@ Core (`0.1.0`, `0.1.1`, …) and rule packs publish plain versions to `next`, an
 1. `.github/workflows/release-pr.yml` keeps the **Release** pull request current with `main`. It bumps core's patch version if anything core ships changed since its last `v<version>` tag, beside the packs' changeset bumps.
 2. Merging it is the release: the workflow tags core's new version.
 3. `release.yml` builds and publishes core to `next`; `release-packs.yml` publishes packs to `next`. Each publish waits for a reviewer to approve the `release` environment. Each run then checks `next` is the version it published ([release](release.md#release), [pack-format.md](pack-format.md#release)).
-4. After testing on `next`, a person promotes core, then the packs, to `latest`. Each promotion moves the dist-tag, so `latest` gets the tested bytes; the packs' promotion refuses a pack the core on `latest` can't load ([release](release.md#promoting)).
+4. Each release run ends with its promotion, waiting for a person to approve it once the release is tested on `next`: core's, then the packs'. Each promotion moves the dist-tag, so `latest` gets the tested bytes; the packs' promotion refuses a pack the core on `latest` can't load ([release](release.md#promoting)).
 
 **GitHub Releases:** every released version, core's and each pack's, gets one on its tag, which comes first: neither the tag nor the Release waits on npm, and a failed publish is re-run for the same tagged version. Its notes are that version's section of its `CHANGELOG.md`: notes are written once, in the changelog, for the people who upgrade. A Release is a pre-release while its version is on `next` or `beta`; promoted, core's becomes the repository's latest release ([release](release.md#release)).
 

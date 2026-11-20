@@ -27,6 +27,7 @@ import {
   promotePacks,
   privateChangesetFailures,
   promotionRequest,
+  releasedRequest,
   publishedPacks,
   readChangesets,
   releasePacks,
@@ -327,22 +328,6 @@ describe("planPromotions", () => {
   };
   const promoted = (plan) => plan.promote.map(({ id, version, latest, hold, release }) => ({ id, version, latest, hold, release }));
 
-  it("leaves out a pack the core on latest can't load, naming why, and promotes the rest", () => {
-    const problem = "needs core >=0.2.0-0; latest is 0.1.5";
-    const coreProblem = (candidate) => (candidate.id === "fresh" ? problem : null);
-    const plan = planPromotions([pack("behind", "0.1.3"), pack("fresh", "0.1.0")], tags, (packageName) => distTags[packageName], { coreProblem });
-    expect(plan.promote.map(({ id }) => id)).toEqual(["behind"]);
-    expect(plan.needsCore).toEqual([expect.objectContaining({ id: "fresh", version: "0.1.0", problem })]);
-  });
-
-  it("puts a pack back whatever core it needs, since an older version is no newer a pack", () => {
-    const coreProblem = () => "needs core >=0.2.0-0; latest is 0.1.5";
-    const request = promotionRequest([pack("behind", "0.1.3")], "behind", "0.1.2");
-    const plan = planPromotions(request.packs, [...tags, name("behind@0.1.2")], () => ({ latest: "0.1.3" }), { named: true, coreProblem });
-    expect(plan.promote.map(({ id, version, hold }) => [id, version, hold])).toEqual([["behind", "0.1.2", true]]);
-    expect(plan.needsCore).toEqual([]);
-  });
-
   it("sweeps every released version not latest yet, leaving out one held where it was put back, and one npm could not read", () => {
     const asked = [];
     const plan = planPromotions(
@@ -396,6 +381,9 @@ describe("promotePacks", () => {
         hold: (name, version) => void calls.push(`held ${name}@${version}`),
         release: (name) => void calls.push(`release ${name}`),
         readNext: async (name) => nexts[name],
+        readLatest: async () => null,
+        readCoreRange: async () => ">=0.1.0-0",
+        readCoreLatest: async () => "0.1.5",
         distTag: (name, version, tag) => void calls.push(`${tag} ${name}@${version}`),
         log: () => {},
       },
@@ -415,6 +403,82 @@ describe("promotePacks", () => {
       "@neralabs/rerail-pack-b@0.1.3: npm error code E403",
       "@neralabs/rerail-pack-d@9.9.9: it was never released from this repository (no such git tag)",
     ]);
+  });
+});
+
+describe("promotePacks, when the approval comes", () => {
+  const promotion = (id, version, flags = {}) => ({ name: `@neralabs/rerail-pack-${id}`, version, ...flags });
+  const tags = ["a@0.2.0", "b@0.2.0", "c@0.1.0", "d@0.2.0"].map((tag) => `@neralabs/rerail-pack-${tag}`);
+
+  /** Steps where `latest` and `ranges` map a pack id to its `latest` and to its version's core range. */
+  function steps(latest = {}, ranges = {}, coreLatest = "0.1.5") {
+    const calls = [];
+    const id = (name) => name.replace("@neralabs/rerail-pack-", "");
+    return {
+      calls,
+      steps: {
+        promote: (name, version) => void calls.push(`latest ${name}@${version}`),
+        hold: (name, version) => void calls.push(`held ${name}@${version}`),
+        release: () => {},
+        readNext: async () => null,
+        readLatest: async (name) => latest[id(name)] ?? null,
+        readCoreRange: async (name) => (Object.hasOwn(ranges, id(name)) ? ranges[id(name)] : ">=0.1.0-0"),
+        readCoreLatest: async () => coreLatest,
+        distTag: () => {},
+        log: () => {},
+      },
+    };
+  }
+
+  it("leaves out a pack the core on latest can't load, naming why, and promotes the rest", async () => {
+    const { calls, steps: run } = steps({}, { a: ">=0.2.0-0", b: undefined });
+    const { promoted, failures } = await promotePacks([promotion("a", "0.2.0"), promotion("b", "0.2.0"), promotion("d", "0.2.0")], tags, run);
+    expect(promoted.map(({ name }) => name)).toEqual(["@neralabs/rerail-pack-d"]);
+    expect(failures).toEqual([
+      "@neralabs/rerail-pack-a@0.2.0: it needs core >=0.2.0-0, and latest is 0.1.5: promote core first, then run this again",
+      "@neralabs/rerail-pack-b@0.2.0: it names no core range, so whether the core on latest loads it is unknown",
+    ]);
+    expect(calls).toEqual(["latest @neralabs/rerail-pack-d@0.2.0"]);
+  });
+
+  it("refuses a range other than one lower bound, which it can't read without semver", async () => {
+    const { steps: run } = steps({}, { a: "^0.1.0" });
+    const { failures } = await promotePacks([promotion("a", "0.2.0")], tags, run);
+    expect(failures).toEqual(["@neralabs/rerail-pack-a@0.2.0: its core range ^0.1.0 is not one lower bound (>=<version>), so the promote can't check it"]);
+  });
+
+  it("never moves latest back past a newer release, as approving an older release's promote last would", async () => {
+    const { calls, steps: run } = steps({ a: "0.2.1" });
+    const { promoted, failures } = await promotePacks([promotion("a", "0.2.0")], tags, run);
+    expect(promoted).toEqual([]);
+    expect(failures).toEqual(["@neralabs/rerail-pack-a@0.2.0: latest is 0.2.1, newer, so this release is superseded"]);
+    expect(calls).toEqual([]);
+  });
+
+  it("puts a pack back whatever latest and core hold, since that is what a hold is for", async () => {
+    const { calls, steps: run } = steps({ c: "0.2.0" }, { c: ">=9.0.0-0" });
+    const { promoted, failures } = await promotePacks([promotion("c", "0.1.0", { hold: true })], tags, run);
+    expect(failures).toEqual([]);
+    expect(promoted.map(({ version }) => version)).toEqual(["0.1.0"]);
+    expect(calls).toEqual(["latest @neralabs/rerail-pack-c@0.1.0", "held @neralabs/rerail-pack-c@0.1.0"]);
+  });
+});
+
+describe("releasedRequest", () => {
+  const packs = [pack("python", "0.1.6"), pack("react", "0.1.3")];
+
+  it("asks for exactly the versions a release run published, whatever main holds now, and none of them a hold", () => {
+    expect(releasedRequest(packs, "@neralabs/rerail-pack-python@0.1.5:next  @neralabs/rerail-pack-react@0.1.3:next")).toEqual({
+      packs: [
+        { ...pack("python", "0.1.5"), hold: false },
+        { ...pack("react", "0.1.3"), hold: false },
+      ],
+      named: false,
+    });
+  });
+
+  it("refuses a package that is no pack here", () => {
+    expect(() => releasedRequest(packs, "@neralabs/rerail-pack-nope@0.1.0:next")).toThrow(/@neralabs\/rerail-pack-nope is not a published pack under packs\//u);
   });
 });
 

@@ -855,9 +855,10 @@ Core's `v*` release (`release.yml`) is separate.
    is the release.
 2. **Publish.** On each push to `main`, every published pack (not private) whose `package.json` version has no git tag
    `@neralabs/rerail-pack-<id>@<version>` passes the publish gate and is published under `next`.
-3. **Promote.** Once the release is tested on `next`, and core is promoted, run the workflow from `main` with no inputs
-   (`gh workflow run release-packs.yml --ref main`) to point `latest` at each released version
-   ([release.md](release.md#promoting)). To put a pack back, run it with the pack's id and an older released version.
+3. **Promote.** The publish starts a run of this workflow that promotes exactly the versions it published, and waits
+   for a person to approve it once the release is tested on `next` and core is promoted
+   ([release.md](release.md#promoting)). To put a pack back, run the workflow from `main` with the pack's id and an
+   older released version.
 
 <details>
 <summary>Step 1: the Release pull request</summary>
@@ -920,11 +921,15 @@ The first job lists in the run summary what will move. After a reviewer approves
 promote job points `latest` at each version, and the **Promoted GitHub Releases** job makes each one's Release a full
 release.
 
-- With no inputs, the workflow points `latest` at every published pack's released version not yet `latest`, less any
-  held.
-- It refuses a pack whose core range leaves out the core on `latest`, naming the pack and the core it needs: Rerail
-  leaves such a pack out, so the people on stable would lose it. Promote core first
-  ([release.md](release.md#promoting)), then run it again. A put-back is never refused for it.
+- A release's own promotion (the `released` input, set by its **Start the promotion to latest** job) moves exactly the
+  versions that release published, less any held. Its run is in a concurrency group of its own, so waiting for
+  approval holds back no later release or put-back.
+- Run by hand with no inputs, the workflow points `latest` at every published pack's released version not yet
+  `latest`, less any held.
+- Once approved, a promotion that is not a put-back is refused for a pack whose `latest` is already newer, so an older
+  release's promotion never moves it back, and for a pack whose core range (read from the published version) leaves
+  out the core on `latest`, naming the core it needs: Rerail leaves such a pack out, so the people on stable would lose
+  it. Approve core's promotion first ([release.md](release.md#promoting)), then re-run the failed job.
 - Naming a pack and an older released version puts it back and tags it `held` there. Publishes and runs with no inputs
   leave a held pack's `latest` alone (the summary names it). Promoting the pack by id again, at its `package.json`
   version, releases the hold.
