@@ -13,7 +13,7 @@ pub(super) struct Small {
     values: Vec<bitlex_masks::Named>,
 }
 
-/// The IR's tests' backward fill (decision 0406): a mask or a number named `ahead`, written
+/// The IR's tests' backward fill (decision 0490): a mask or a number named `ahead`, written
 /// `fill(…)`, is a `back_fill` (`syntax::backward`).
 pub(super) fn small(text: &str) -> Small {
     let stmts = ::bitlex::syntax::parse(text).expect("parses");

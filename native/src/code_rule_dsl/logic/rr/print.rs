@@ -194,6 +194,19 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
             let (x, e, q) = (var("rr_x"), var("rr_e"), var("rr_q"));
             format!("{}({x}, {q}) :- {}({x}, {e}), {}({e}, {q}).", relation(&head.rel), relation(reach), relation(map))
         }
+        // A count below a bound, as the count it holds (`rank_form`): read back, it is found in the form again.
+        Native::Rank { query, counted, group, op } => {
+            let width = |r: &str| prog.decls.get(r).map_or(0, |c| c.len());
+            let (wq, wc) = (width(query), width(counted));
+            let g: Vec<String> = (0..*group).map(|i| var(&format!("rr_g{i}"))).collect();
+            let q: Vec<String> = (*group..wq.saturating_sub(1)).map(|i| var(&format!("rr_q{i}"))).collect();
+            let c: Vec<String> = (*group..wc.saturating_sub(1)).map(|i| var(&format!("rr_c{i}"))).collect();
+            let (kx, ky, n) = (var("rr_kx"), var("rr_ky"), var("rr_n"));
+            let head_cols = g.iter().chain(&q).cloned().chain([n.clone()]).collect::<Vec<_>>().join(", ");
+            let query_cols = g.iter().chain(&q).cloned().chain([kx.clone()]).collect::<Vec<_>>().join(", ");
+            let counted_cols = g.iter().chain(&c).cloned().chain([ky.clone()]).collect::<Vec<_>>().join(", ");
+            format!("{}({head_cols}) :- {}({query_cols}), {n} = count : {{ {}({counted_cols}), {ky} {op} {kx} }}.", relation(&head.rel), relation(query), relation(counted))
+        }
         // The text test over its input's rows, as the rule it was made from (`strings::as_relations`).
         Native::TextTest { input, column, op, patterns } => {
             let s = head.args.get(*column).cloned().unwrap_or_else(|| Term::Var("rr_text0".into()));

@@ -1,101 +1,27 @@
-//! The store's zstd frames: how sources and tapes are compressed, with or without a shipped
-//! dictionary, and how every frame is read back.
+//! The store's zstd frames for its internal rows (results, pages, memo entries): how they are compressed and read
+//! back. Sources and tapes are not compressed: each is kept as it is, in a segment (`object_segments`; decision
+//! 0295 step 5, 2026-11-19).
 //!
-//! - **Plain frames** are what `zstd::stream::encode_all` writes, from one compression context
-//!   per thread instead of a fresh one (and its zeroed tables) per call.
-//! - **Dictionary frames.** A source or tape under [`SMALL`] bytes is also compressed with its
-//!   language's dictionary, and the smaller frame is kept. A small frame has little history of its
-//!   own to copy from; a dictionary trained on the language supplies it (t28: 25–45% of frames
-//!   under 1 KB).
-//! - A dictionary frame names its dictionary in the zstd frame header (its dictionary id, two
-//!   bytes), so `codec_id` stays [`super::CODEC_ZSTD`] and readers need no other column:
-//!   [`decompress`] picks the dictionary from the frame.
-//! - **Dictionaries are compiled in and append-only** (`native/dictionaries`). A retrained
-//!   dictionary takes a new id and the old one stays, so every stored frame stays readable.
-//!
-//! Every reader of a store frame goes through [`decompress`], [`decompress_into`],
-//! [`decompress_head`] or [`decompress_chunks`].
+//! - **Plain frames** are what `zstd::stream::encode_all` writes, from one compression context per thread instead of
+//!   a fresh one (and its zeroed tables) per call.
+//! - Every reader of a store frame goes through [`decompress`], [`decompress_into`], [`decompress_head`] or
+//!   [`decompress_chunks`]. A frame that names a dictionary is refused: the store compresses with none.
 
-use std::collections::HashMap;
 use std::cell::{Cell, RefCell};
 use std::io;
 use zstd::stream::raw::{Decoder, Encoder, InBuffer, Operation, OutBuffer};
 
-/// Frames at least this long are stored plain: a dictionary saves nothing on them, and can cost.
-pub(crate) const SMALL: usize = 64 * 1024;
-
-/// What a dictionary was trained on.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Content {
-    Source,
-    Tape,
-}
-
-/// A shipped dictionary: its zstd dictionary id (in each frame it compressed), the languages
-/// (tape tags) and content it serves, and its bytes.
-struct Dictionary {
-    id: u32,
-    tags: &'static [u8],
-    content: Content,
-    bytes: &'static [u8],
-}
-
-// The path is this file's (`native/dictionaries`), not the crate's directory: a build in another
-// checkout then compiles the same crate, which a shared compiler cache can reuse.
-macro_rules! dictionary {
-    ($id:expr, $tags:expr, $content:ident, $file:literal) => {
-        Dictionary {
-            id: $id,
-            tags: $tags,
-            content: Content::$content,
-            bytes: include_bytes!(concat!("../../dictionaries/", $file)),
-        }
-    };
-}
-
-/// Append-only: a new dictionary takes the next id, and a writer uses the last one listed for its
-/// language. Tape tags: Python 1, TypeScript 2, TSX 3, JavaScript 6, PHP 7, Rust 9, SQL 10
-/// (`language::tape_tag`). Trained with `zstd --train -3` on redistributable text: Rerail's own
-/// files, and CPython's standard library for Python (`native/dictionaries/README.md`).
-static DICTIONARIES: &[Dictionary] = &[
-    dictionary!(0x8001, &[1], Source, "python-source.zdict"),
-    dictionary!(0x8002, &[1], Tape, "python-tape.zdict"),
-    dictionary!(0x8003, &[2, 3], Source, "typescript-source.zdict"),
-    dictionary!(0x8004, &[2, 3], Tape, "typescript-tape.zdict"),
-    dictionary!(0x8005, &[6], Source, "javascript-source.zdict"),
-    dictionary!(0x8006, &[6], Tape, "javascript-tape.zdict"),
-    dictionary!(0x8007, &[9], Source, "rust-source.zdict"),
-    dictionary!(0x8008, &[9], Tape, "rust-tape.zdict"),
-    dictionary!(0x8009, &[7], Source, "php-source.zdict"),
-    dictionary!(0x800A, &[7], Tape, "php-tape.zdict"),
-    dictionary!(0x800B, &[10], Tape, "sql-tape.zdict"),
-];
-
-/// The dictionary a writer uses for `content` of the language with tape tag `tag`.
-fn dictionary_for(tag: u8, content: Content) -> Option<&'static Dictionary> {
-    DICTIONARIES.iter().rev().find(|d| d.content == content && d.tags.contains(&tag))
-}
-
-fn dictionary_by_id(id: u32) -> io::Result<&'static Dictionary> {
-    DICTIONARIES
-        .iter()
-        .find(|d| d.id == id)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("frame names unknown dictionary {id:#x}")))
-}
-
 thread_local! {
     /// This thread's plain context, with the level it was set to.
     static ENCODER: RefCell<Option<(i32, Encoder<'static>)>> = const { RefCell::new(None) };
-    /// This thread's contexts with a dictionary loaded, by dictionary id: (level, context).
-    static DICT_ENCODERS: RefCell<HashMap<u32, (i32, Encoder<'static>)>> = RefCell::new(HashMap::new());
-    /// This thread's decompression contexts, by dictionary id (0: none).
-    static DECODERS: RefCell<HashMap<u32, Decoder<'static>>> = RefCell::new(HashMap::new());
+    /// This thread's decompression context.
+    static DECODER: RefCell<Option<Decoder<'static>>> = const { RefCell::new(None) };
     /// The bytes of the frames this thread has made for the store: a writer's job reads what it encoded as the
     /// difference around it (`write_back`'s accounts), whether its payload came encoded or it encoded it there.
     static ENCODED: Cell<usize> = const { Cell::new(0) };
 }
 
-/// The bytes of the frames this thread has made so far ([`compress`], [`compress_source`], [`compress_tape`]).
+/// The bytes of the frames this thread has made so far ([`compress`]).
 pub(crate) fn encoded_here() -> usize {
     ENCODED.with(Cell::get)
 }
@@ -109,7 +35,7 @@ fn counted(frame: io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
 
 /// `bytes` as one plain zstd frame at `level`, byte for byte what `encode_all` writes: streamed,
 /// so the frame header carries no content size. For store-internal blobs (results, pages, memo
-/// entries); sources and tapes use [`compress_source`] and [`compress_tape`].
+/// entries).
 pub fn compress(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
     counted(plain(bytes, level))
 }
@@ -132,73 +58,7 @@ fn plain(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
     })
 }
 
-/// A source's frame. `tag` is its language's tape tag when the writer knows it (from the file's
-/// path, or from its tape: [`tape_tag`]).
-pub(crate) fn compress_source(bytes: &[u8], level: i32, tag: Option<u8>) -> io::Result<Vec<u8>> {
-    compress_as(bytes, level, tag.and_then(|tag| dictionary_for(tag, Content::Source)))
-}
-
-/// A tape's frame: its language is in its own header.
-pub(crate) fn compress_tape(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
-    compress_as(bytes, level, tape_tag(bytes).and_then(|tag| dictionary_for(tag, Content::Tape)))
-}
-
-/// How a writer finds a frame's language: the tape tag of a stored tape image, and of the language a file at a
-/// path is parsed as. The engine knows both (`code_rule_dsl::tape`'s header, its languages) and sets them as it
-/// loads. Before that, or without them, a writer uses no dictionary; every reader decodes either frame.
-static LANGUAGE_TAGS: std::sync::OnceLock<(fn(&[u8]) -> Option<u8>, fn(&str) -> Option<u8>)> = std::sync::OnceLock::new();
-
-/// Sets how a writer finds a frame's language (`LANGUAGE_TAGS`); the first setting stays.
-pub fn set_language_tags(tape: fn(&[u8]) -> Option<u8>, path: fn(&str) -> Option<u8>) {
-    let _ = LANGUAGE_TAGS.set((tape, path));
-}
-
-/// The tape tag of a stored tape image, if `bytes` is one.
-pub(crate) fn tape_tag(bytes: &[u8]) -> Option<u8> {
-    LANGUAGE_TAGS.get().and_then(|(tape, _)| tape(bytes))
-}
-
-/// The tape tag of the language a file at `path` is parsed as.
-pub(crate) fn path_tag(path: &str) -> Option<u8> {
-    LANGUAGE_TAGS.get().and_then(|(_, of_path)| of_path(path))
-}
-
-/// The tape tag of a file at `path` whose tape (if it has one) is `tape`: the tape's own, else
-/// the path's.
-pub(crate) fn file_tag(path: &str, tape: Option<&[u8]>) -> Option<u8> {
-    tape.and_then(tape_tag).or_else(|| path_tag(path))
-}
-
-fn compress_as(bytes: &[u8], level: i32, dictionary: Option<&'static Dictionary>) -> io::Result<Vec<u8>> {
-    counted(chosen(bytes, level, dictionary))
-}
-
-fn chosen(bytes: &[u8], level: i32, dictionary: Option<&'static Dictionary>) -> io::Result<Vec<u8>> {
-    let plain = plain(bytes, level)?;
-    let Some(dictionary) = dictionary.filter(|_| bytes.len() < SMALL) else {
-        return Ok(plain);
-    };
-    let framed = DICT_ENCODERS.with_borrow_mut(|encoders| {
-        let encoder = match encoders.get_mut(&dictionary.id) {
-            Some((known, encoder)) if *known == level => {
-                encoder.reinit()?;
-                encoder
-            }
-            _ => {
-                encoders.insert(dictionary.id, (level, Encoder::with_dictionary(level, dictionary.bytes)?));
-                &mut encoders.get_mut(&dictionary.id).expect("inserted").1
-            }
-        };
-        let frame = encode(encoder, bytes);
-        if frame.is_err() {
-            encoders.remove(&dictionary.id);
-        }
-        frame
-    })?;
-    Ok(if framed.len() < plain.len() { framed } else { plain })
-}
-
-/// A store frame's bytes, plain or with the dictionary its header names. `capacity` is the
+/// A store frame's bytes. `capacity` is the
 /// expected length, when the caller knows it (a hint; the frame decides).
 pub fn decompress(frame: &[u8], capacity: usize) -> io::Result<Vec<u8>> {
     with_decoder(frame, |decoder| {
@@ -287,26 +147,23 @@ fn finished(input: &InBuffer<'_>, frame: &[u8]) -> io::Result<()> {
     }
 }
 
-/// Runs `read` with this thread's decoder for `frame`'s dictionary, reset for a new frame.
+/// Runs `read` with this thread's decoder, reset for a new frame. A frame that names a dictionary is refused.
 fn with_decoder<T>(frame: &[u8], read: impl FnOnce(&mut Decoder<'static>) -> io::Result<T>) -> io::Result<T> {
-    let id = zstd::zstd_safe::get_dict_id_from_frame(frame).map_or(0, |id| id.get());
-    DECODERS.with_borrow_mut(|decoders| {
-        let decoder = match decoders.entry(id) {
-            std::collections::hash_map::Entry::Occupied(entry) => {
-                let decoder = entry.into_mut();
+    if let Some(id) = zstd::zstd_safe::get_dict_id_from_frame(frame) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("a frame of dictionary {:#x}: the store uses none", id.get())));
+    }
+    DECODER.with_borrow_mut(|slot| {
+        let decoder = match slot {
+            Some(decoder) => {
                 decoder.reinit()?;
                 decoder
             }
-            std::collections::hash_map::Entry::Vacant(entry) => entry.insert(if id == 0 {
-                Decoder::new()?
-            } else {
-                Decoder::with_dictionary(dictionary_by_id(id)?.bytes)?
-            }),
+            None => slot.insert(Decoder::new()?),
         };
         let result = read(decoder);
         if result.is_err() {
             // A context that failed mid-frame is not reused.
-            decoders.remove(&id);
+            *slot = None;
         }
         result
     })
@@ -378,36 +235,21 @@ mod tests {
     }
 
     #[test]
-    fn source_and_tape_frames_read_back_with_and_without_dictionaries() {
+    fn frames_read_back_whole_into_a_slot_by_head_and_in_chunks() {
         let python = b"from __future__ import annotations\n\nimport os\n\n\ndef main() -> None:\n    print(os.getcwd())\n";
-        let small = compress_source(python, 3, Some(1)).unwrap();
-        assert!(small.len() < compress(python, 3).unwrap().len(), "a small Python source gains from its dictionary");
-        assert_eq!(zstd::zstd_safe::get_dict_id_from_frame(&small).map(|id| id.get()), Some(0x8001));
+        let small = compress(python, 3).unwrap();
         assert_eq!(decompress(&small, 0).unwrap(), python);
         let mut slot = vec![0; python.len()];
         decompress_into(&small, &mut slot).unwrap();
         assert_eq!(slot, python);
         assert!(decompress_into(&small, &mut vec![0; python.len() - 1]).is_err());
         assert!(decompress_into(&small, &mut vec![0; python.len() + 1]).is_err());
-        // No language, a language without a dictionary, and a large input: plain frames.
-        for (bytes, tag) in [(python.to_vec(), None), (python.to_vec(), Some(12)), (python.repeat(1000), Some(1))] {
-            let frame = compress_source(&bytes, 3, tag).unwrap();
-            assert_eq!(frame, compress(&bytes, 3).unwrap());
-            assert_eq!(decompress(&frame, bytes.len()).unwrap(), bytes);
-        }
-        // Every shipped dictionary loads, and has a distinct id.
-        let mut ids: Vec<_> = DICTIONARIES.iter().map(|d| d.id).collect();
-        for d in DICTIONARIES {
-            assert_eq!(zstd::zstd_safe::get_dict_id(d.bytes).map(|id| id.get()), Some(d.id));
-        }
-        ids.dedup();
-        assert_eq!(ids.len(), DICTIONARIES.len());
         assert!(decompress(b"not a frame", 0).is_err());
         assert_eq!(decompress_head(&small, 10).unwrap(), &python[..10]);
         assert!(decompress_head(&small, python.len() + 1).is_err());
         let large = python.repeat(3000);
         let mut joined = Vec::new();
-        decompress_chunks(&compress_source(&large, 3, Some(1)).unwrap(), |chunk| joined.extend_from_slice(chunk)).unwrap();
+        decompress_chunks(&compress(&large, 3).unwrap(), |chunk| joined.extend_from_slice(chunk)).unwrap();
         assert_eq!(joined, large);
     }
 }

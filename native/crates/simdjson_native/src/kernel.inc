@@ -152,6 +152,8 @@ enum : uint32_t { NO_FIELD = 0, KEY = 1, VALUE = 2 };
 // The tape's buffers, in the sink's order.
 enum : uint32_t { CODE = 0, SIZE = 1, OFF = 2, TAIL = 3, BASE = 4 };
 constexpr uint32_t STRIDE = 16;
+// Format 16's events (`rerail_v9np_sink::ev`): the low byte of an event's first word.
+enum : uint32_t { EV_OPEN = 0, EV_LEAF = 1, EV_CLOSE = 2 };
 
 // A number checked as simdjson's `numberparsing::parse_number` checks it, its value not kept
 // (`::no_values`); and where it ends.
@@ -244,7 +246,11 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
   // first byte); a pair takes four bytes or more. So the tape has at most this many nodes, and the
   // buffers are made for them once: no node checks for room.
   const uint32_t bound = len + len / 4 + 2;
-  reserve_columns(sink, bound, widths);
+  // Format 16's events (`rerail_v9np_sink::ev`), or the columns.
+  uint32_t* const ev = sink->ev;
+  const bool events = ev != nullptr;
+  uint32_t el = 0;
+  if (!events) { reserve_columns(sink, bound, widths); }
   uint16_t* const code = reinterpret_cast<uint16_t*>(sink->col[CODE]);
   uint32_t* const base = reinterpret_cast<uint32_t*>(sink->col[BASE]);
   SZ* const size = reinterpret_cast<SZ*>(sink->col[SIZE]);
@@ -270,8 +276,24 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
     }
     return id;
   };
+  // An event (`events`): the window passed on when full.
+  auto event = [&](uint32_t head, uint32_t a, uint32_t b) simdjson_inline_lambda {
+    if (simdjson_unlikely(el + 3 > sink->ev_cap)) {
+      sink->ev_len = el;
+      sink->flush(sink);
+      el = 0;
+    }
+    ev[el] = head;
+    ev[el + 1] = a;
+    ev[el + 2] = b;
+    el += 3;
+  };
   // A node's start: its code, its offset from its block's base, the base of each block.
   auto open = [&](uint32_t slot, uint32_t field, uint32_t start) simdjson_inline_lambda -> uint32_t {
+    if (events) {
+      event(EV_OPEN | uint32_t(code_of(slot, field)) << 8, start, 0);
+      return n++;
+    }
     code[n] = code_of(slot, field);
     if ((n % STRIDE) == 0) {
       block_base = start;
@@ -285,6 +307,10 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
   };
   // A node's end: its size and its tail (its end less its last descendant's start).
   auto close = [&](uint32_t ord, uint32_t end) simdjson_inline_lambda {
+    if (events) {
+      event(EV_CLOSE, end, 0);
+      return;
+    }
     const uint32_t t = end - last_start, z = n - ord;
     high_tail |= t;
     high_size |= z;
@@ -292,6 +318,11 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
     size[ord] = SZ(z);
   };
   auto leaf = [&](uint32_t slot, uint32_t field, uint32_t start, uint32_t end) simdjson_inline_lambda {
+    if (events) {
+      event(EV_LEAF | uint32_t(code_of(slot, field)) << 8, start, end);
+      n++;
+      return;
+    }
     const uint32_t ord = open(slot, field, start);
     const uint32_t t = end - start;
     high_tail |= t;
@@ -354,6 +385,12 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
       if (q == 0) {
         leaf(STRING, field, s, s + 2);
         return s + 2;
+      }
+      if (events) {
+        open(STRING, field, s);
+        leaf(CONTENT, NO_FIELD, s + 1, s + 1 + q);
+        close(0, s + q + 2);
+        return s + q + 2;
       }
       const uint32_t ord = open(STRING, field, s);
       const uint32_t content = open(CONTENT, NO_FIELD, s + 1);
@@ -604,6 +641,11 @@ document_end:
   if (next != index + count) { return -int(TAPE_ERROR); }
   gap(UINT32_MAX);
   close(0, len);
+  if (events) {
+    sink->ev_len = el;
+    sink->flush(sink);
+    return 0;
+  }
   for (uint32_t c = 0; c < 5; c++) { sink->len[c] = column_bytes(c, n, widths); }
   for (int c = 0; c < 3; c++) { sink->width[c] = uint8_t(widths[c]); }
   return (sizeof(SZ) == 2 && high_size > 0xffff ? 1 : 0) | (sizeof(OF) == 2 && high_off > 0xffff ? 2 : 0) | (sizeof(TL) == 2 && high_tail > 0xffff ? 4 : 0) |

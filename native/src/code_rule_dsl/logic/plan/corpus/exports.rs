@@ -8,6 +8,7 @@
 //! export per chunk, read back from `x` when the cross-file part started. On the Python pack that copy was 5.6 s of
 //! about 89 s of CPU (166M SQLite VM steps, about 30 ns each).
 
+use crate::code_rule_dsl::facts::rows::{Life, Rows};
 use crate::code_rule_dsl::facts::vtab::Source;
 use hashbrown::HashTable;
 use rustc_hash::FxHasher;
@@ -15,10 +16,18 @@ use std::collections::BTreeMap;
 use std::hash::Hasher;
 use std::sync::Arc;
 
-/// One export's rows: columns, and a set of row ids, hashed by the rows' values, that keeps each row once.
+/// One export's rows, as one relation (decision 0384): each chunk's new rows written into it once when the chunk is
+/// filed, read where they lie in the chunk's relation, with a set of row ids, hashed by the rows' values, that keeps
+/// each row once. A row another chunk gave already, or dead in the chunk's relation, is not written. The chunks'
+/// relations go when they are filed, and a reader (the device's, which binds one relation in its block) finds the
+/// export whole, not in a part per chunk merged into a copy (`Rows::one`).
 struct Held {
-    columns: Vec<Vec<i64>>,
+    rows: Rows,
+    /// Rows not among the export's (bit `id`): a row given again, or dead in the relation it came from.
+    dead: Vec<u64>,
     set: HashTable<u32>,
+    /// Its columns' types, as the relations it holds give them (the engine's codes).
+    types: Option<Vec<u8>>,
     /// The rows as a source, made when the cross-file part first reads them. No chunk adds after that.
     source: Option<Arc<dyn Source>>,
     /// Rows appended unchecked (`append_own`), not in `set`: each a document's own, which no other file's entry
@@ -26,27 +35,92 @@ struct Held {
     unset: Vec<std::ops::Range<u32>>,
     at: Option<usize>,
     unset_docs: rustc_hash::FxHashSet<i64>,
+    /// Let go after its last reader (`release`).
+    released: bool,
 }
 
 impl Held {
     fn new(width: usize) -> Self {
-        Held { columns: vec![Vec::new(); width], set: HashTable::new(), source: None, unset: Vec::new(), at: None, unset_docs: Default::default() }
+        Held { rows: Rows::living(width, Life::Kept), dead: Vec::new(), set: HashTable::new(), types: None, source: None, unset: Vec::new(), at: None, unset_docs: Default::default(), released: false }
+    }
+
+    fn width(&self) -> usize {
+        self.rows.width()
+    }
+
+    /// Row `id`'s value in column `c`, where it lies.
+    #[inline]
+    fn get(&self, id: u32, c: usize) -> i64 {
+        self.rows.get(id, c)
+    }
+
+    fn is_dead(&self, id: u32) -> bool {
+        self.dead.get(id as usize / 64).is_some_and(|w| w >> (id % 64) & 1 == 1)
+    }
+
+    fn kill(&mut self, id: u32) {
+        let w = id as usize / 64;
+        if self.dead.len() <= w {
+            self.dead.resize(w + 1, 0);
+        }
+        self.dead[w] |= 1 << (id % 64);
+    }
+
+    fn row_hash(&self, id: u32) -> u64 {
+        Held::hash((0..self.width()).map(|c| self.get(id, c)))
+    }
+
+    /// `row` written as the next row unless the set holds its like. Whether it was written.
+    fn insert(&mut self, row: &[i64]) -> bool {
+        let h = Held::hash(row.iter().copied());
+        let (rows, width) = (&self.rows, self.width());
+        if self.set.find(h, |&i| (0..width).all(|c| rows.get(i, c) == row[c])).is_some() {
+            return false;
+        }
+        let id = self.len() as u32;
+        self.rows.extend_from_slice(row);
+        let rows = &self.rows;
+        self.set.insert_unique(h, id, |&i| Held::hash((0..width).map(|c| rows.get(i, c))));
+        true
+    }
+
+    /// Row `id` kept unless the set holds its like: then it is marked dead. Whether it was kept.
+    fn keep_once(&mut self, id: u32) -> bool {
+        let h = self.row_hash(id);
+        let (rows, width) = (&self.rows, self.width());
+        if self.set.find(h, |&i| (0..width).all(|c| rows.get(i, c) == rows.get(id, c))).is_some() {
+            self.kill(id);
+            return false;
+        }
+        self.set.insert_unique(h, id, |&i| Held::hash((0..width).map(|c| rows.get(i, c))));
+        true
     }
 
     /// The rows appended unchecked put in the set: a row may now come again.
     fn set_all(&mut self) {
-        let columns = &self.columns;
         for range in std::mem::take(&mut self.unset) {
             for id in range {
-                let h = Held::hash(columns.iter().map(|col| col[id as usize]));
-                self.set.insert_unique(h, id, |&i| Held::hash(columns.iter().map(|col| col[i as usize])));
+                let h = self.row_hash(id);
+                let (rows, width) = (&self.rows, self.width());
+                self.set.insert_unique(h, id, |&i| Held::hash((0..width).map(|c| rows.get(i, c))));
             }
         }
         self.unset_docs.clear();
     }
 
+    /// Rows held, dead ones too: the next row's id.
     fn len(&self) -> usize {
-        self.columns.first().map_or(0, Vec::len)
+        self.rows.rows()
+    }
+
+    /// Rows held and not dead.
+    fn live(&self) -> usize {
+        self.len() - self.dead.iter().map(|w| w.count_ones() as usize).sum::<usize>()
+    }
+
+    /// Each live row's id.
+    fn live_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        (0..self.len() as u32).filter(|&id| !self.is_dead(id))
     }
 
     fn hash(row: impl Iterator<Item = i64>) -> u64 {
@@ -65,33 +139,69 @@ pub(super) struct Exports {
 }
 
 impl Exports {
-    /// Adds the rows of `rows` (its first `width` columns) to export `rel`; how many were new.
+    /// Adds the rows of `rows` (its first `width` columns) to export `rel`; how many were new. A relation the engine
+    /// derived (`held_rows`) is read where it lies, its live rows not given before written once into the export's
+    /// relation, as one batch's: nothing of the chunk's relation is kept. Other sources' rows are copied in.
     pub(super) fn add(&mut self, rel: &str, width: usize, rows: &dyn Source) -> usize {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         debug_assert!(held.source.is_none(), "export {rel} added to after the cross-file part read it");
+        let start = held.len() as u32;
+        let in_place = crate::code_rule_dsl::logic::native::component::held_rows(rows)
+            .filter(|(r, n, ..)| r.width() == width && r.rows() == *n);
+        let given: Vec<bool> = match in_place {
+            Some((r, n, dead, types)) => {
+                held.types.get_or_insert_with(|| types.to_vec());
+                // Room for every row at once: the tail grows once, not row by row, and pages no row reaches are
+                // never touched.
+                held.rows.reserve(n * width);
+                let mut row = vec![0i64; width];
+                let mut added = 0;
+                r.each_run(0, n as u32, |p, lo, hi, first| {
+                    for i in lo..hi {
+                        let id = (first + i - lo) as usize;
+                        if dead.get(id / 64).is_some_and(|w| w >> (id % 64) & 1 == 1) {
+                            continue;
+                        }
+                        for (c, v) in row.iter_mut().enumerate() {
+                            *v = p.get(i, c);
+                        }
+                        // A row of a document whose own rows were appended unchecked may be one of them: they are set
+                        // first.
+                        if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains(&super::memo::document_of(row[at]))) {
+                            held.set_all();
+                        }
+                        if held.insert(&row) {
+                            added += 1;
+                        }
+                    }
+                });
+                return added;
+            }
+            None => {
+                let mut row = vec![0i64; width];
+                for r in 0..rows.len() {
+                    for (c, v) in row.iter_mut().enumerate() {
+                        *v = rows.value(r, c);
+                    }
+                    held.rows.extend_from_slice(&row);
+                }
+                vec![false; rows.len()]
+            }
+        };
         let mut added = 0;
-        let mut row = vec![0i64; width];
-        for r in 0..rows.len() {
-            for (c, v) in row.iter_mut().enumerate() {
-                *v = rows.value(r, c);
-            }
-            // A row of a document whose own rows were appended unchecked may be one of them: they are set first.
-            if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains(&super::memo::document_of(row[at]))) {
-                held.set_all();
-            }
-            let h = Held::hash(row.iter().copied());
-            let columns = &held.columns;
-            let same = |&id: &u32| row.iter().enumerate().all(|(c, v)| columns[c][id as usize] == *v);
-            if held.set.find(h, same).is_some() {
+        for (i, dead) in given.into_iter().enumerate() {
+            let id = start + i as u32;
+            if dead {
+                held.kill(id);
                 continue;
             }
-            let id = held.len() as u32;
-            for (c, v) in row.iter().enumerate() {
-                held.columns[c].push(*v);
+            // A row of a document whose own rows were appended unchecked may be one of them: they are set first.
+            if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains(&super::memo::document_of(held.get(id, at)))) {
+                held.set_all();
             }
-            let columns = &held.columns;
-            held.set.insert_unique(h, id, |&i| Held::hash(columns.iter().map(|col| col[i as usize])));
-            added += 1;
+            if held.keep_once(id) {
+                added += 1;
+            }
         }
         added
     }
@@ -113,8 +223,13 @@ impl Exports {
         }
         held.at = Some(at);
         let start = held.len() as u32;
-        for (to, from) in held.columns.iter_mut().zip(columns) {
-            to.extend(from);
+        held.rows.reserve(n * width);
+        let mut row = vec![0i64; width];
+        for r in 0..n {
+            for (c, v) in row.iter_mut().enumerate() {
+                *v = columns[c][r];
+            }
+            held.rows.extend_from_slice(&row);
         }
         held.unset.push(start..start + n as u32);
         held.unset_docs.extend(documents);
@@ -123,7 +238,7 @@ impl Exports {
 
     /// How many rows export `rel` holds.
     pub(super) fn len(&self, rel: &str) -> usize {
-        self.rels.get(rel).map_or(0, |h| h.source.as_ref().map_or_else(|| h.len(), |s| s.len()))
+        self.rels.get(rel).map_or(0, |h| h.source.as_ref().map_or_else(|| h.live(), |s| s.len()))
     }
 
     /// Export `rel`'s rows so far, copied, as a source of columns `c0…`: for a reader that starts while chunks may
@@ -131,8 +246,16 @@ impl Exports {
     pub(super) fn snapshot(&self, rel: &str, width: usize) -> Arc<dyn Source> {
         let names = (0..width).map(|c| format!("c{c}")).collect();
         let values = match self.rels.get(rel) {
-            Some(held) if held.source.is_none() && !held.columns.is_empty() => held.columns.iter().cloned().map(Some).collect(),
             Some(Held { source: Some(s), .. }) => return Arc::clone(s),
+            Some(held) if held.width() >= width => {
+                let mut cols = vec![Vec::with_capacity(held.live()); width];
+                for id in held.live_ids() {
+                    for (c, col) in cols.iter_mut().enumerate() {
+                        col.push(held.get(id, c));
+                    }
+                }
+                cols.into_iter().map(Some).collect()
+            }
             _ => vec![Some(Vec::new()); width],
         };
         crate::code_rule_dsl::logic::native::component::columns_source(names, values)
@@ -140,71 +263,87 @@ impl Exports {
 
     /// Each of export `rel`'s rows held so far, read where it is held (`width` columns).
     pub(super) fn each_row(&self, rel: &str, width: usize, mut f: impl FnMut(Vec<i64>)) {
-        match self.rels.get(rel) {
-            Some(Held { source: Some(s), .. }) => (0..s.len()).for_each(|r| f((0..width).map(|c| s.value(r, c)).collect())),
-            Some(Held { source: None, columns, .. }) if columns.len() >= width => {
-                (0..columns.first().map_or(0, Vec::len)).for_each(|r| f(columns[..width].iter().map(|col| col[r]).collect()))
-            }
-            _ => {}
-        }
+        self.visit(rel, width, |row| f(row.to_vec()));
     }
 
     /// Export `rel`'s rows held so far whose column `at` is a node of one of `documents` (`memo::document_of`):
     /// a load's new documents' rows, for the cone of requests that asked for them.
     pub(super) fn rows_of(&self, rel: &str, width: usize, at: usize, documents: &std::collections::HashSet<i64>) -> Vec<Vec<i64>> {
-        let columns: &[Vec<i64>] = match self.rels.get(rel) {
-            Some(Held { source: None, columns, .. }) => columns,
-            Some(Held { source: Some(s), .. }) => {
-                return (0..s.len()).filter(|&r| documents.contains(&super::memo::document_of(s.value(r, at)))).map(|r| (0..width).map(|c| s.value(r, c)).collect()).collect();
-            }
-            None => return Vec::new(),
-        };
-        let Some(keys) = columns.get(at) else { return Vec::new() };
-        (0..keys.len()).filter(|&r| documents.contains(&super::memo::document_of(keys[r]))).map(|r| columns.iter().map(|col| col[r]).collect()).collect()
+        let mut out = Vec::new();
+        if at < width {
+            self.visit(rel, width, |row| {
+                if documents.contains(&super::memo::document_of(row[at])) {
+                    out.push(row.to_vec());
+                }
+            });
+        }
+        out
     }
 
     /// Visits held rows without a scratch SQL table or a second column store.
-    pub(super) fn visit(&self,rel:&str,width:usize,mut row:impl FnMut(&[i64])) {
-        let Some(held)=self.rels.get(rel) else {return;};
-        let mut cells=vec![0;width];
-        if let Some(source)=&held.source {
+    pub(super) fn visit(&self, rel: &str, width: usize, mut row: impl FnMut(&[i64])) {
+        let Some(held) = self.rels.get(rel) else { return };
+        let mut cells = vec![0; width];
+        if let Some(source) = &held.source {
             for r in 0..source.len() {
-                for (c,v) in cells.iter_mut().enumerate() {*v=source.value(r,c);}
+                for (c, v) in cells.iter_mut().enumerate() {
+                    *v = source.value(r, c);
+                }
                 row(&cells);
             }
-        } else {
-            for r in 0..held.len() {
-                for (c,v) in cells.iter_mut().enumerate() {*v=held.columns[c][r];}
+        } else if held.width() >= width {
+            for id in held.live_ids() {
+                for (c, v) in cells.iter_mut().enumerate() {
+                    *v = held.get(id, c);
+                }
                 row(&cells);
             }
         }
     }
 
     /// Export `rel` as a source of columns `c0…`: its rows, or none when no chunk added any. Made once. The rows
-    /// move into it, and the set that kept them distinct is dropped.
+    /// move into it, where they lie, and the set that kept them distinct is dropped.
     pub(super) fn source(&mut self, rel: &str, width: usize) -> Arc<dyn Source> {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
+        debug_assert!(!held.released, "export {rel} read after it was let go");
         if let Some(s) = &held.source {
             return Arc::clone(s);
         }
-        let columns = std::mem::take(&mut held.columns);
+        let rows = std::mem::replace(&mut held.rows, Rows::living(width, Life::Kept)).sealed();
+        let n = rows.rows();
+        let dead = std::mem::take(&mut held.dead);
         held.set = HashTable::new();
         held.unset.clear();
         held.unset_docs.clear();
-        let names = (0..width).map(|c| format!("c{c}")).collect();
-        let values = if columns.is_empty() { vec![Some(Vec::new()); width] } else { columns.into_iter().map(Some).collect() };
-        let source = crate::code_rule_dsl::logic::native::component::columns_source(names, values);
+        let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
+        let source = if n == 0 || rows.width() != width {
+            crate::code_rule_dsl::logic::native::component::columns_source(names, vec![Some(Vec::new()); width])
+        } else {
+            let types = held.types.clone().unwrap_or_else(|| vec![b'i'; width]);
+            crate::code_rule_dsl::logic::native::component::InRel::held(rows, n, types, dead).source(names)
+        };
         held.source = Some(Arc::clone(&source));
         source
     }
 }
 
 impl Exports {
+    /// Lets export `rel`'s rows go (Q74): the cross-file part read it for the last time. A later `source` is a
+    /// mistake, caught in debug builds.
+    pub(super) fn release(&mut self, rel: &str) {
+        if let Some(held) = self.rels.get_mut(rel) {
+            let width = held.width().max(held.source.as_ref().map_or(0, |s| s.columns().len()));
+            *held = Held::new(width);
+            held.released = true;
+        }
+    }
+
     /// Export `rel`'s rows are `source` (a session's counted exports, `Counted`): what a chunk added this run is
     /// dropped, as the counted rows hold it.
     pub(super) fn install(&mut self, rel: &str, width: usize, source: Arc<dyn Source>) {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
-        held.columns = Vec::new();
+        held.rows = Rows::living(width, Life::Kept);
+        held.dead.clear();
         held.set = HashTable::new();
         held.source = Some(source);
     }
@@ -478,6 +617,35 @@ pub mod tests {
         assert_eq!(exports.source("none", 3).len(), 0);
     }
 
+    /// Decision 0384: an export is one relation. The chunks' derived relations are read where they lie and each new
+    /// live row is written into it once: it holds none of their parts, and a row another chunk gave first, or one dead
+    /// in its relation, is not written at all (no dead rows), so a reader binding it finds one relation, all live.
+    #[test]
+    fn an_export_is_one_relation_of_the_chunks_new_rows() {
+        use crate::code_rule_dsl::logic::native::component::{InRel, held_rows};
+        let names = || vec!["c0".to_owned(), "c1".to_owned()];
+        let a = InRel::from_flat(vec![1, 2, 3, 4, 7, 8], 3, vec![b'i', b'i']).source(names());
+        let mut dead = vec![0u64];
+        dead[0] |= 1 << 2;
+        // Rows [3, 4] (given by `a` too), [5, 6], and [9, 9], dead in its relation.
+        let b = InRel::held(Rows::frozen(2, vec![3, 4, 5, 6, 9, 9], 3), 3, vec![b'i', b'i'], dead).source(names());
+        let mut exports = Exports::default();
+        assert_eq!(exports.add("e", 2, a.as_ref()), 3);
+        assert_eq!(exports.add("e", 2, b.as_ref()), 1);
+        {
+            let held = &exports.rels["e"];
+            let (ra, ..) = held_rows(a.as_ref()).expect("rows");
+            assert!(!held.rows.parts().any(|p| ra.parts().any(|q| std::ptr::eq(p.rel(), q.rel()))), "a chunk's part held");
+            assert_eq!(held.rows.parts().count(), 1, "one relation");
+            assert_eq!(held.rows.rows(), 4, "the repeat and the dead row not written");
+            assert!(held.dead.iter().all(|&w| w == 0));
+        }
+        assert_eq!(exports.len("e"), 4);
+        let s = exports.source("e", 2);
+        let rows: Vec<(i64, i64)> = (0..s.len()).map(|r| (s.value(r, 0), s.value(r, 1))).collect();
+        assert_eq!(rows, vec![(1, 2), (3, 4), (7, 8), (5, 6)]);
+    }
+
     /// Counted exports hold a row while one file holds it: a row two files hold stays when one counts it out, goes
     /// when both have, and the rows held are those of the files counted in, whatever order they came and went in.
     #[test]
@@ -570,6 +738,29 @@ pub mod tests {
         assert_eq!(exports.add("e", 2, chunk(vec![[node(3, 0), 1], [node(3, 0), 1]]).as_ref()), 1);
         // A row of document 1 again: the unchecked rows are set first, so it is found.
         assert_eq!(exports.add("e", 2, chunk(vec![[node(1, 1), 8], [node(1, 2), 8]]).as_ref()), 1);
+        let s = exports.source("e", 2);
+        let mut rows: Vec<(i64, i64)> = (0..s.len()).map(|r| (s.value(r, 0), s.value(r, 1))).collect();
+        rows.sort();
+        assert_eq!(rows, vec![(node(1, 0), 7), (node(1, 1), 8), (node(1, 2), 8), (node(2, 0), 9), (node(3, 0), 1)]);
+    }
+
+    #[test]
+    fn a_documents_own_rows_and_others_given_again_are_kept_once() {
+        let chunk = |rows: Vec<[i64; 2]>| {
+            let names = vec!["c0".to_owned(), "c1".to_owned()];
+            crate::code_rule_dsl::logic::native::component::columns_source(names, (0..2).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
+        };
+        let node = |doc: i64, i: i64| (doc << 32) | i;
+        let mut exports = Exports::default();
+        // Document 1's own rows, then document 2's.
+        exports.add("e", 2, chunk(vec![[node(1, 0), 7], [node(1, 1), 8]]).as_ref());
+        exports.add("e", 2, chunk(vec![[node(2, 0), 9]]).as_ref());
+        // Another document's row twice, and a row of document 1 again.
+        exports.add("e", 2, chunk(vec![[node(3, 0), 1], [node(3, 0), 1]]).as_ref());
+        exports.add("e", 2, chunk(vec![[node(1, 1), 8], [node(1, 2), 8]]).as_ref());
+        let mut docs = std::collections::HashSet::new();
+        docs.insert(1);
+        assert_eq!(exports.rows_of("e", 2, 0, &docs), vec![vec![node(1, 0), 7], vec![node(1, 1), 8], vec![node(1, 2), 8]]);
         let s = exports.source("e", 2);
         let mut rows: Vec<(i64, i64)> = (0..s.len()).map(|r| (s.value(r, 0), s.value(r, 1))).collect();
         rows.sort();

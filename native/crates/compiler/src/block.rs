@@ -731,7 +731,7 @@ pub struct BlockRun {
 
 impl BlockRun {
     /// The run less the outputs in `made` (`BlockNative::records_made`), each emptied: the CPU's
-    /// record pass makes their positions (a token's last by its gap, decision 0400), and its
+    /// record pass makes their positions (a token's last by its gap, decision 0452), and its
     /// tier 1 no mask for them. Tier 1's runs are compared on the rest.
     pub fn without(&self, made: &[usize]) -> BlockRun {
         BlockRun {
@@ -804,7 +804,7 @@ impl BlockProgram {
         let records = self.records.as_ref().is_none_or(|r| {
             usize::from(r.starts) < self.extracts.len()
                 && usize::from(r.lasts) < self.extracts.len()
-                // The gaps' ends (decision 0400): the skip's output, and no end rules.
+                // The gaps' ends (decision 0452): the skip's output, and no end rules.
                 && r.gap.is_none_or(|g| usize::from(g) < self.outputs.len() && r.rules.is_empty() && r.skip.is_none())
                 && r.starts != r.lasts
                 && r.kinds.len() == 256
@@ -1036,7 +1036,7 @@ impl BlockProgram {
                 } else if let Some((r, gap)) =
                     self.records.as_ref().and_then(|r| r.gap.map(|g| (r, g)))
                 {
-                    // The lasts by the gaps (decision 0400): each the byte before the next
+                    // The lasts by the gaps (decision 0452): each the byte before the next
                     // start, less the skip's bytes there, as the CPU's record pass makes them.
                     positions[usize::from(r.lasts)] = crate::records::gap_lasts(
                         &outputs[usize::from(gap)],
@@ -1827,7 +1827,7 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
             let _ = writeln!(out, "  block {at} recmark {o} {w}");
         }
         // `block N recgap O` the skip's output, where the tokens' last bytes are the gaps'
-        // (decision 0400).
+        // (decision 0452).
         if let Some(g) = r.gap {
             let _ = writeln!(out, "  block {at} recgap {g}");
         }

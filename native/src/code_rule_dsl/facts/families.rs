@@ -395,7 +395,7 @@ impl Families {
         // A derived document's tape is not stored here: the slice's dialect (Python) has none.
         let bytes = image.primary.to_bytes().map_err(StoreError::Invalid)?;
         let id = crate::code_rule_dsl::prof::time("push.put_tape", || store.put_tape(source_id, tag, grammar_version(), version, &bytes))?;
-        let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
+        let lines = Arc::new(LineTable::placed(&source, Terminators::of(language)));
         let doc = crate::code_rule_dsl::prof::time("push.restore", || TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false))
             .map_err(StoreError::Invalid)?;
         let identity = crate::code_rule_dsl::tape::tape_identity(doc.source_digest(), &bytes);
@@ -416,14 +416,14 @@ impl Families {
             return Ok(None);
         };
         let source = Arc::new(source);
-        let Some((bytes, _)) = store.get_tapes_bulk(&[id])?.remove(&id) else {
+        let Some(bytes) = store.get_tapes_bulk(&[id])?.remove(&id) else {
             return Ok(None);
         };
         let grammar = tape::Grammar::new(language).map_err(StoreError::Invalid)?;
         self.parses.decoded += 1;
         let primary = TapeImage::from_bytes(&bytes, &grammar).map_err(StoreError::Invalid)?;
         let image = FileImage { primary, derived: Vec::new() };
-        let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
+        let lines = Arc::new(LineTable::placed(&source, Terminators::of(language)));
         let doc = TapeDoc::restore_with_lines(source, grammar, &image, Arc::clone(&lines), &|| false)
             .map_err(StoreError::Invalid)?;
         let identity = crate::code_rule_dsl::tape::tape_identity(doc.source_digest(), &bytes);

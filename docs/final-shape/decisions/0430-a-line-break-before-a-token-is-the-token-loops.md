@@ -1,7 +1,7 @@
 # 0430: A line break before a token is the token loop's, as the lean lexer's `nl`
 
 Status: decided (2026-11-18), the first step of 0429's "marks at every token" and "automatic
-semicolons" (items 3 and 6). Follows 0429, 0177 and 0406.
+semicolons" (items 3 and 6). Follows 0429, 0177 and 0490.
 
 ## Intro
 

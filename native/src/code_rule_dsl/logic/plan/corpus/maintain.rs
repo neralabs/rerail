@@ -53,6 +53,7 @@
 //! changed read whose old rows were not kept, is derived again from its inputs: its rules unchanged.
 //! Either way its relations' deltas feed the strata after it, and an empty delta derives nothing there.
 
+use crate::code_rule_dsl::logic::program_image::t_of;
 use super::retain::{Cut, Retained};
 use super::{Error, Result, lower};
 use crate::code_rule_dsl::facts::vtab::Source;
@@ -221,9 +222,10 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
 
 // -- The rewrite over a version (decision 0241) --
 
-use crate::code_rule_dsl::logic::plan::body::{Group, Maint, Placed};
+use crate::code_rule_dsl::logic::plan::body::{AgainRef, Group, Maint, Placed};
 use crate::code_rule_dsl::logic::plan::fields::Fields;
-use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, CmpOp, Lit as PLit, LitRef, NativeSpec, Rewrite, RuleId, RuleRef, TermRef, Version, T};
+use crate::code_rule_dsl::logic::program_image::manager::{StepKey, StepRecord, Steps};
+use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, CmpOp, Lit as PLit, LitRef, NativeSpec, RelId, Rewrite, RuleId, RuleRef, TermRef, Version, T};
 
 /// What the rewrite reads: a part of a program, by its version.
 pub(in crate::code_rule_dsl) struct Part<'v> {
@@ -380,18 +382,6 @@ impl<'v> Named<'v> {
     }
 }
 
-/// A term of `v`'s rule `r`, to write into a builder under `v`'s ids.
-fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
-    match t {
-        TermRef::Var(s) => T::VarAtom(r.var(s)),
-        TermRef::Wild => T::Wild,
-        TermRef::Top => T::Top,
-        TermRef::Int(i) => T::Int(i),
-        TermRef::Branded(b) => T::Branded(b),
-        TermRef::Str(a) => T::StrAtom(a),
-        TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| t_of(v, r, a)).collect()),
-    }
-}
 
 fn tm(t: &Tm) -> T<'_> {
     match t {
@@ -612,12 +602,6 @@ fn unmaintainable_over(f: Fields<'_>, scc: &BTreeSet<String>, rules: &[Named<'_>
             return Some("its own old rows not kept");
         }
     }
-    if super::supports::counting()
-        && std::env::var("RERAIL_COUNT_RECURSIVE").is_ok_and(|v| v == "again")
-        && rules.iter().any(|r| r.lits.iter().any(|l| l.atom().is_some_and(|a| scc.contains(r.rel(a)))))
-    {
-        return Some("recursive, under counting");
-    }
     for rule in rules {
         if !rule.plain_head() {
             return Some("a head term");
@@ -748,7 +732,10 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         }
         if let Some(why) = why {
             let name = scc.iter().max_by_key(|r| count_of(r)).cloned().unwrap_or_default();
-            again.push((format!("{name} ({} relations)", scc.len()), why));
+            // The changed read with no old rows, named beside the stratum.
+            let read = mine.iter().flat_map(|r| r.lits.iter().filter_map(move |l| l.atom().map(|a| r.rel(a)))).find(|r| changed.contains(*r) && !scc.contains(*r) && !old(r));
+            let read = read.map(|r| format!(", reads {r}")).unwrap_or_default();
+            again.push((format!("{name} ({} relations{read})", scc.len()), why));
             derived_again += 1;
             rules.extend(at.iter().map(|&k| Ir::Copy(k)));
             changed.extend(scc.iter().cloned());
@@ -756,11 +743,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         }
         maintained += 1;
         let start = rules.len();
-        let exact = scc.iter().all(|r| super::supports::is_support(r));
-        let projection = !exact
-            && scc.len() == 1
-            && mine.iter().all(|r| r.len() == 1 && matches!(r.lit(0), Some(PLit::Atom(a)) if !a.neg() && super::supports::is_support(r.rel(a))));
-        let lost = |h: &str| if projection { named(h, "lost") } else { named(h, "del") };
+        let lost = |h: &str| named(h, "del");
         let is_recursive = mine.iter().any(|r| r.lits.iter().any(|l| l.atom().is_some_and(|a| scc.contains(r.rel(a)))));
         if is_recursive {
             recursive += 1;
@@ -903,33 +886,15 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
                     olds.insert(n.rel(b).to_owned());
                 }
             }
-            if exact {
-                continue;
-            }
-            if projection {
-                let mut held = vec![L::HeadArgs { rel: named(h, "lost"), neg: false }];
-                held.extend(body.iter().cloned());
-                rules.push(Ir::Rule { src: Some(k), head: H::Named(named(h, "held")), body: held });
-                continue;
-            }
             let mut red = vec![L::HeadArgs { rel: named(h, gone), neg: false }];
             red.extend(body.iter().cloned());
             rules.push(Ir::Rule { src: Some(k), head: H::Named(named(h, "redo")), body: red });
         }
-        let exact = exact || projection;
         for rel in scc {
             let width = f.arity(rel).unwrap_or_else(|| panic!("no declaration of {rel}"));
             let v = row_tm(width);
             let a = |s: &str, neg: bool| atom_tm(named(rel, s), v.clone(), neg);
             olds.insert(rel.clone());
-            if projection {
-                rules.push(Ir::Rule { src: None, head: H::Terms(named(rel, "del"), v.clone()), body: vec![a("lost", false), a("held", true)] });
-                fresh.push((rel.clone(), named(rel, "lost")));
-                fresh.push((rel.clone(), named(rel, "held")));
-            }
-            if exact {
-                exact_rels.insert(rel.clone());
-            }
             rules.push(Ir::Rule { src: None, head: H::Terms(rel.clone(), v.clone()), body: vec![a("old", false), a(gone, true)] });
             if lv {
                 let gated = |s: &str| L::Atom { rel: named(rel, s), args: v.clone(), neg: true, gated: true };
@@ -942,16 +907,12 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
                 gone_of.insert(rel.clone());
             }
             rules.push(Ir::Rule { src: None, head: H::Terms(rel.clone(), v.clone()), body: vec![a("ins", false)] });
-            if !exact {
-                rules.push(Ir::Rule { src: None, head: H::Terms(rel.clone(), v.clone()), body: vec![a("redo", false)] });
-            }
+            rules.push(Ir::Rule { src: None, head: H::Terms(rel.clone(), v.clone()), body: vec![a("redo", false)] });
             if !lv {
                 fresh.push((rel.clone(), named(rel, "del")));
             }
             fresh.push((rel.clone(), named(rel, "ins")));
-            if !exact {
-                fresh.push((rel.clone(), named(rel, "redo")));
-            }
+            fresh.push((rel.clone(), named(rel, "redo")));
         }
         maint.extend(scc.iter().cloned());
         changed.extend(scc.iter().cloned());
@@ -1084,6 +1045,11 @@ thread_local! {
 /// The recursive strata maintained by levels so far by this thread's runs (decision 0090), not by delete-and-rederive.
 pub fn strata_by_levels() -> usize {
     BY_LEVELS.with(std::cell::Cell::get)
+}
+
+/// A recursive stratum the evaluator's maintain mode maintained by levels (decision 0364 §2): counted as a form's.
+pub fn by_levels_ran() {
+    BY_LEVELS.with(|c| c.set(c.get() + 1));
 }
 
 /// The sets of pieces run as one component so far by this thread's runs (`together`).
@@ -1315,7 +1281,7 @@ pub(in crate::code_rule_dsl) struct Form {
 
 /// The about rows of the run's version a form keeps of its stratum's relations (its lattices and natives: few
 /// rows, each a relation's).
-const STRATUM_ABOUT: [&str; 14] = [
+const STRATUM_ABOUT: [&str; 15] = [
     "lattice",
     "lattice_merge",
     "lattice_widen",
@@ -1328,20 +1294,15 @@ const STRATUM_ABOUT: [&str; 14] = [
     "native_components",
     "native_reach",
     "native_reach_through",
+    "native_rank",
     "native_text_test",
     "native_text_pattern",
 ];
 
-/// Stratum `scc`'s maintained form (decision 0117 step 3), its rules `rules` (places among the run's version `v0`'s
-/// rules), whose reads `moved` changed: a derivation of `v0` holding the parts the stratum's program alone states
-/// (its rules, the declarations, nullary, qualifier and tape rows of what they mention, its own lattice, natives and
-/// facts, and every kind set), rewritten (`rewrite_over`). Its inputs are those `run_input` holds and the old rows.
-/// It is written as an overlay of `atoms`, `v0`'s atoms and relations alone (`Builder::under`), made once per run:
-/// a form's cost is its size.
-pub(in crate::code_rule_dsl) fn form(atoms: &Arc<Version>, v0: &Placed, rules: &[usize], scc: &BTreeSet<String>, moved: &BTreeSet<String>, domains: &lower::Domains, kept: &dyn Olds, one: &One, run_input: &dyn Fn(&str) -> bool) -> Result<Form> {
-    let f = Fields::of(v0).ok_or_else(|| Error::Plan("the run's version holds its rules alone".into()))?;
+/// Stratum `scc` alone (its rules `rules`, places among `v0`'s): every relation its rules read and its natives read,
+/// with its own, and its natives with what each reads.
+fn mentioned(v0: &Placed, f: &Fields<'_>, rules: &[usize], scc: &BTreeSet<String>) -> (BTreeSet<String>, Vec<(String, Vec<String>)>) {
     let v: &Version = &v0.v;
-    // The stratum alone: its rules, and every relation they read declared as an input of it.
     let mut mentioned: BTreeSet<String> = scc.clone();
     for &k in rules {
         let r = v0.rule(k);
@@ -1362,6 +1323,19 @@ pub(in crate::code_rule_dsl) fn form(atoms: &Arc<Version>, v0: &Placed, rules: &
             natives.push((rel.clone(), reads));
         }
     }
+    (mentioned, natives)
+}
+
+/// Stratum `scc`'s maintained form (decision 0117 step 3), its rules `rules` (places among the run's version `v0`'s
+/// rules), whose reads `moved` changed: a derivation of `v0` holding the parts the stratum's program alone states
+/// (its rules, the declarations, nullary, qualifier and tape rows of what they mention, its own lattice, natives and
+/// facts, and the kind sets it reads), rewritten (`rewrite_over`). Its inputs are those `run_input` holds and the old rows.
+/// It is written as an overlay of `atoms`, `v0`'s atoms and relations alone (`Builder::under`), made once per run:
+/// a form's cost is its size.
+pub(in crate::code_rule_dsl) fn form(atoms: &Arc<Version>, v0: &Placed, rules: &[usize], scc: &BTreeSet<String>, moved: &BTreeSet<String>, domains: &lower::Domains, kept: &dyn Olds, one: &One, run_input: &dyn Fn(&str) -> bool) -> Result<Form> {
+    let f = Fields::of(v0).ok_or_else(|| Error::Plan("the run's version holds its rules alone".into()))?;
+    let v: &Version = &v0.v;
+    let (mentioned, natives) = mentioned(v0, &f, rules, scc);
     let mut b = Builder::on(atoms);
     b.copy_about(v, "program", |_| true);
     for rel in &mentioned {
@@ -1395,8 +1369,22 @@ pub(in crate::code_rule_dsl) fn form(atoms: &Arc<Version>, v0: &Placed, rules: &
     for name in STRATUM_ABOUT {
         b.copy_about(v, name, first);
     }
-    for name in ["kindset", "kindset_kind"] {
-        b.copy_about(v, name, |_| true);
+    // The kind sets the stratum reads: a `nearest` literal's, and a tree axis's or nearest relation's it mentions (as
+    // `lower` names them), not the program's every set: a form holds its own.
+    let mut sets: BTreeSet<&str> = BTreeSet::new();
+    for &k in rules {
+        sets.extend(v0.rule(k).body().filter_map(|l| match l.view() {
+            PLit::Nearest { kindset, .. } => Some(v.text(kindset)),
+            _ => None,
+        }));
+    }
+    use crate::code_rule_dsl::logic::front::{AXIS, DESCENDANTS, NEAREST};
+    sets.extend(mentioned.iter().filter_map(|r| r.strip_prefix(AXIS).or_else(|| r.strip_prefix(DESCENDANTS)).or_else(|| r.strip_prefix(NEAREST))));
+    if !sets.is_empty() {
+        let set_of = |r: &[crate::code_rule_dsl::logic::program_image::Cell]| matches!(r.get(1), Some(crate::code_rule_dsl::logic::program_image::Cell::Str(a)) if sets.contains(v.text(*a)));
+        for name in ["kindset", "kindset_kind"] {
+            b.copy_about(v, name, set_of);
+        }
     }
     for rel in scc {
         if let Some(facts) = f.facts(rel) {
@@ -1505,29 +1493,7 @@ fn drivers(p: &Placed, scc: &BTreeSet<String>, reads: &BTreeSet<String>) -> Vec<
     out
 }
 
-/// Every stratum's general form of a maintained cross-file part (decision 0298), written once for the part, over its
-/// version: by stratum (its relations, joined by `,`). A stratum made natively (but a text test) has none.
-pub(in crate::code_rule_dsl) struct GeneralForms {
-    pub(in crate::code_rule_dsl) by_stratum: HashMap<String, General>,
-    /// A recursive stratum's general form by levels (decision 0090), for kept rows that have them; where its form
-    /// cannot be by levels (a rule not a join), none, and `by_stratum`'s stands for every kept part.
-    pub(in crate::code_rule_dsl) by_levels: HashMap<String, General>,
-}
-
-/// The signature of the old rows `olds` takes as kept among `part`'s relations: general forms written for one are
-/// those of every kept part with the same.
-pub(in crate::code_rule_dsl) fn olds_signature(part: &Placed, olds: &dyn Olds) -> Result<u64> {
-    use std::hash::{Hash, Hasher};
-    let f = Fields::of(part).ok_or_else(|| Error::Plan("a maintained part holds its rules alone".into()))?;
-    let v: &Version = &part.v;
-    let mut rels: BTreeSet<&str> = f.inputs().collect();
-    rels.extend((0..part.len()).map(|i| v.rel_name(part.rule(i).head().rel())));
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    rels.into_iter().filter(|r| olds.has_old(r)).for_each(|r| r.hash(&mut h));
-    Ok(h.finish())
-}
-
-/// The key of stratum `scc` in `GeneralForms`.
+/// The name of stratum `scc` in its general form's key: its relations, joined by `,`.
 pub(in crate::code_rule_dsl) fn stratum_key(scc: &BTreeSet<String>) -> String {
     scc.iter().map(String::as_str).collect::<Vec<_>>().join(",")
 }
@@ -1547,37 +1513,403 @@ impl Olds for Holds<'_> {
     }
 }
 
-/// The general forms of `part`, a maintained cross-file part (decision 0298): each stratum's, once, for the old rows
-/// `kept` holds; a recursive stratum's also by levels, where its form can be.
-pub(in crate::code_rule_dsl) fn general_forms(part: &Placed, domains: &lower::Domains, kept: &Retained) -> Result<GeneralForms> {
-    let _s = crate::code_rule_dsl::logic::profile::span(|| "the general forms (decision 0298)".into());
-    let f = Fields::of(part).ok_or_else(|| Error::Plan("a maintained part holds its rules alone".into()))?;
-    let v: &Version = &part.v;
-    let mut by_head: HashMap<&str, Vec<usize>> = HashMap::new();
-    for i in 0..part.len() {
-        by_head.entry(v.rel_name(part.rule(i).head().rel())).or_default().push(i);
+/// The settings a form's writer reads beside its input and kept rows (each the variable's value, or none): part of a
+/// stored general form's key.
+fn writer_settings() -> Vec<u8> {
+    let mut out = Vec::new();
+    for name in ["RERAIL_SESSION_VIEWS", "RERAIL_RECURSIVE", "RERAIL_CROSS_MAINTAIN_ONLY", "RERAIL_PIECES_APART"] {
+        out.extend(name.as_bytes());
+        out.push(b'=');
+        if let Some(v) = std::env::var_os(name) {
+            out.extend(v.as_encoded_bytes());
+        }
+        out.push(0);
     }
-    let atoms = Builder::under(v).finish().map_err(Error::Plan)?.0;
-    let (plain, levels) = (Holds(kept, false), Holds(kept, true));
-    let (mut by_stratum, mut by_levels) = (HashMap::new(), HashMap::new());
-    for scc in part.components()?.iter() {
-        if scc.iter().any(|r| f.native(r).is_some_and(|n| !matches!(n.spec, NativeSpec::TextTest { .. }))) {
-            continue;
-        }
-        let rules: Vec<usize> = scc.iter().flat_map(|r| by_head.get(r.as_str()).into_iter().flatten().copied()).collect();
-        if rules.is_empty() {
-            continue;
-        }
-        let g = general(&atoms, part, &rules, scc, domains, &plain, &|_| true)?;
-        if g.form.recursive > 0 && levels_wanted() {
-            let l = general(&atoms, part, &rules, scc, domains, &levels, &|_| true)?;
-            if l.form.by_levels > 0 {
-                by_levels.insert(stratum_key(scc), l);
+    out
+}
+
+/// The identity a part's general forms are keyed by (decision 0298 §4): its version's (`manager::identity`), and its
+/// atoms' and relations' names in order, which a stored form's layers are opened over (`StoredForms`) and are not
+/// fixed by the rules alone.
+fn forms_identity(v: &Version) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.general-forms/v1\0");
+    h.update(crate::code_rule_dsl::logic::program_image::manager::identity(v));
+    for a in 0..v.atom_end() {
+        let t = v.text(crate::code_rule_dsl::logic::program_image::AtomId(a));
+        h.update((t.len() as u64).to_le_bytes());
+        h.update(t.as_bytes());
+    }
+    for r in 0..v.rel_end() {
+        h.update(v.rel_atom(RelId(r)).0.to_le_bytes());
+    }
+    h.finalize().into()
+}
+
+/// What a stratum's general form takes of the kept part (decision 0298): for each relation the stratum mentions,
+/// whether its old rows are kept, and whether they have levels (`levels`, the same for all). Two kept parts alike in
+/// these have the same general form.
+fn kept_of(v0: &Placed, f: &Fields<'_>, rules: &[usize], scc: &BTreeSet<String>, kept: &Retained, levels: bool) -> Vec<u8> {
+    let mut out = vec![u8::from(levels)];
+    for r in mentioned(v0, f, rules, scc).0 {
+        out.extend(r.as_bytes());
+        out.push(0);
+        out.push(u8::from(kept.holds_old(&r)));
+    }
+    out
+}
+
+/// Whether stratum `scc` (its rules `rules`, places among `v0`'s) is recursive: more than one relation, or a rule
+/// reading its own. Only a recursive stratum's form can be by levels (decision 0090), so only its general form is
+/// keyed by them.
+pub(in crate::code_rule_dsl) fn recursive(v0: &Placed, rules: &[usize], scc: &BTreeSet<String>) -> bool {
+    scc.len() > 1 || rules.iter().any(|&k| v0.rule(k).body().filter_map(|l| l.atom()).any(|a| scc.contains(v0.v.rel_name(a.rel()))))
+}
+
+/// Whether stratum `scc` has a general form (decision 0298): not one made natively, but a text test.
+fn has_general(f: &Fields<'_>, rules: &[usize], scc: &BTreeSet<String>) -> bool {
+    !rules.is_empty() && !scc.iter().any(|r| f.native(r).is_some_and(|n| !matches!(n.spec, NativeSpec::TextTest { .. })))
+}
+
+/// The pass that writes a stratum's general form, as a keyed step names it (0281 §6); its version is the writer's.
+const GENERAL_PASS: &str = "a stratum's general form (decision 0298)";
+const GENERAL_VERSION: u32 = 1;
+
+/// A general form's record (decision 0298 §4): what a selection reads, stored before the form's layers. Varints: each
+/// name an atom of the form's image, each relation its id there, each rule a place in it (the form's rules first, then
+/// its maintenance's).
+fn put(out: &mut Vec<u8>, mut n: u64) {
+    while n >= 0x80 {
+        out.push(n as u8 | 0x80);
+        n >>= 7;
+    }
+    out.push(n as u8);
+}
+
+/// Reads a record `put` wrote.
+struct Record<'b>(&'b [u8]);
+
+impl Record<'_> {
+    fn n(&mut self) -> Result<u64> {
+        let mut n = 0u64;
+        for shift in (0..64).step_by(7) {
+            let (&b, rest) = self.0.split_first().ok_or_else(|| Error::Plan("a stored general form's record is cut short".into()))?;
+            self.0 = rest;
+            n |= u64::from(b & 0x7f) << shift;
+            if b < 0x80 {
+                return Ok(n);
             }
         }
-        by_stratum.insert(stratum_key(scc), g);
+        Err(Error::Plan("a stored general form's record holds a number too long".into()))
     }
-    Ok(GeneralForms { by_stratum, by_levels })
+    fn list<T>(&mut self, mut item: impl FnMut(&mut Self) -> Result<T>) -> Result<Vec<T>> {
+        let len = self.n()?;
+        (0..len).map(|_| item(self)).collect()
+    }
+}
+
+impl General {
+    /// The image and the record the general form is stored as: its maintenance's version (its rules after the form's),
+    /// or the form's, and the rest (`put`). A form derived again in part is not selected from (its strata's reasons are
+    /// the writer's), so its `again` is not kept.
+    fn stored(&self) -> Result<(Arc<Version>, Vec<u8>)> {
+        let p = &self.form.placed;
+        let image = p.maint.as_ref().map_or_else(|| Arc::clone(&p.v), |m| Arc::clone(&m.v));
+        let place: HashMap<RuleId, u32> = image.rules().enumerate().map(|(k, r)| (r.id(), k as u32)).collect();
+        if (0..p.len()).any(|k| place.get(&p.id(k)) != Some(&(k as u32))) {
+            return Err(Error::Plan("a general form's rules are not its image's first".into()));
+        }
+        let mut out = Vec::new();
+        let atom = |n: &str| image.find(n).map(|a| u64::from(a.0)).ok_or_else(|| Error::Plan(format!("a general form's name {n} is not in its image")));
+        let names = |out: &mut Vec<u8>, ns: &mut dyn ExactSizeIterator<Item = &String>| -> Result<()> {
+            put(out, ns.len() as u64);
+            for n in ns {
+                put(out, atom(n)?);
+            }
+            Ok(())
+        };
+        let rels = |out: &mut Vec<u8>, rs: &[RelId]| {
+            put(out, rs.len() as u64);
+            rs.iter().for_each(|r| put(out, u64::from(r.0)));
+        };
+        let rules = |out: &mut Vec<u8>, ids: &[RuleId]| -> Result<()> {
+            put(out, ids.len() as u64);
+            ids.iter().try_for_each(|id| Ok(put(out, u64::from(*place.get(id).ok_or_else(|| Error::Plan("a maintained rule is not in its image".into()))?))))
+        };
+        let f = &self.form;
+        put(&mut out, p.len() as u64);
+        names(&mut out, &mut self.reads.iter())?;
+        put(&mut out, self.drivers.len() as u64);
+        for d in &self.drivers {
+            put(&mut out, d.as_deref().map_or(Ok(0), |n| atom(n).map(|a| a + 1))?);
+        }
+        names(&mut out, &mut self.inputs.iter())?;
+        names(&mut out, &mut self.outputs.iter())?;
+        put(&mut out, self.rule_inputs.len() as u64);
+        for r in &self.rule_inputs {
+            put(&mut out, r.len() as u64);
+            r.iter().for_each(|&i| put(&mut out, u64::from(i)));
+        }
+        names(&mut out, &mut f.old_reads.iter())?;
+        [f.maintained, f.derived_again, f.recursive, f.by_levels].iter().for_each(|&c| put(&mut out, c as u64));
+        match &p.maint {
+            None => put(&mut out, 0),
+            Some(m) => {
+                put(&mut out, 1);
+                put(&mut out, m.again.len() as u64);
+                for g in &m.again {
+                    rels(&mut out, &g.scc);
+                    rels(&mut out, &g.owned);
+                    rules(&mut out, &g.rules)?;
+                    rules(&mut out, &g.deltas)?;
+                    rels(&mut out, &g.reads);
+                    rels(&mut out, &g.olds);
+                }
+                put(&mut out, m.together.len() as u64);
+                m.together.iter().for_each(|t| rels(&mut out, t));
+            }
+        }
+        Ok((image, out))
+    }
+
+    /// The general form stored as `image` and `record` (`stored`), opened.
+    fn opened(image: Arc<Version>, record: &[u8]) -> Result<General> {
+        let ids: Vec<RuleId> = image.rules().map(|r| r.id()).collect();
+        let bad = |what: &str| Error::Plan(format!("a stored general form's {what} is not in its image"));
+        let mut r = Record(record);
+        let n = |r: &mut Record<'_>| r.n().and_then(|n| u32::try_from(n).map_err(|_| bad("number")));
+        let name = |r: &mut Record<'_>| {
+            let a = n(r)?;
+            (a < image.atom_end()).then(|| image.text(crate::code_rule_dsl::logic::program_image::AtomId(a)).to_owned()).ok_or_else(|| bad("name"))
+        };
+        let rel = |r: &mut Record<'_>| {
+            let k = n(r)?;
+            (k < image.rel_end()).then_some(RelId(k)).ok_or_else(|| bad("relation"))
+        };
+        let rule = |r: &mut Record<'_>| ids.get(n(r)? as usize).copied().ok_or_else(|| bad("rule"));
+        let rules = n(&mut r)? as usize;
+        if rules > ids.len() {
+            return Err(bad("rules"));
+        }
+        let reads = r.list(name)?;
+        let drivers = r.list(|r| match n(r)? {
+            0 => Ok(None),
+            a => (a - 1 < image.atom_end()).then(|| Some(image.text(crate::code_rule_dsl::logic::program_image::AtomId(a - 1)).to_owned())).ok_or_else(|| bad("name")),
+        })?;
+        let inputs = r.list(name)?;
+        let outputs = r.list(name)?;
+        let rule_inputs = r.list(|r| r.list(n))?;
+        let old_reads = r.list(name)?;
+        let [maintained, derived_again, recursive, by_levels] = [(); 4].map(|()| r.n().map(|c| c as usize));
+        let maint = match r.n()? {
+            0 => None,
+            _ => {
+                let again = r.list(|r| Ok(AgainRef { scc: r.list(rel)?, owned: r.list(rel)?, rules: r.list(rule)?, deltas: r.list(rule)?, reads: r.list(rel)?, olds: r.list(rel)? }))?;
+                let together = r.list(|r| r.list(rel))?;
+                Some(Arc::new(Maint { v: Arc::clone(&image), again, together }))
+            }
+        };
+        if !r.0.is_empty() {
+            return Err(Error::Plan("a stored general form's record is longer than its fields".into()));
+        }
+        let mut placed = Placed::new(Arc::clone(&image), ids[..rules].to_vec(), rules == ids.len());
+        placed.maint = maint;
+        let form = Form { placed, sources: Vec::new(), old_reads, maintained: maintained?, derived_again: derived_again?, recursive: recursive?, by_levels: by_levels?, again: Vec::new() };
+        Ok(General { form, reads: reads.into_iter().collect(), drivers, inputs, outputs, rule_inputs })
+    }
+}
+
+/// The keyed pipeline of stratum `scc`'s general form (0281 §6): over the part's version (`identity`), keyed by the
+/// stratum and what it takes of the kept part (`kept_of`).
+#[allow(clippy::too_many_arguments)]
+fn general_pipeline<'s>(v0: &Placed, f: &Fields<'_>, identity: [u8; 32], steps: &'s StoredForms<'_>, rules: &[usize], scc: &BTreeSet<String>, kept: &Retained, levels: bool) -> crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s> {
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::keyed_by("general form", Arc::clone(&v0.v), identity, steps);
+    p.key_part("stratum", stratum_key(scc).as_bytes()).key_part("kept", &kept_of(v0, f, rules, scc, kept, levels));
+    p
+}
+
+/// Stratum `scc`'s general form (decision 0298), its rules `rules` (places among `v0`'s), for the old rows `kept`
+/// holds, with levels or not (`levels`): read from `steps` where a run stored it for the same part (`identity`, the
+/// part's version), the same kept old rows of the relations the stratum mentions and the same settings, else written
+/// and stored (0281 §6's keyed step). `None` for a stratum made natively (but a text test), which has none.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::code_rule_dsl) fn general_of(atoms: &Arc<Version>, v0: &Placed, identity: [u8; 32], steps: &StoredForms<'_>, rules: &[usize], scc: &BTreeSet<String>, domains: &lower::Domains, kept: &Retained, levels: bool) -> Result<Option<General>> {
+    let f = Fields::of(v0).ok_or_else(|| Error::Plan("a maintained part holds its rules alone".into()))?;
+    if !has_general(&f, rules, scc) {
+        return Ok(None);
+    }
+    let olds = Holds(kept, levels);
+    let mut p = general_pipeline(v0, &f, identity, steps, rules, scc, kept, levels);
+    let mut written = None;
+    p.made(GENERAL_PASS, GENERAL_VERSION, &writer_settings(), |_| {
+        let g = general(atoms, v0, rules, scc, domains, &olds, &|_| true).map_err(|e| e.to_string())?;
+        let (image, record) = g.stored().map_err(|e| e.to_string())?;
+        *steps.writing.borrow_mut() = Some(record);
+        written = Some(g);
+        Ok((image, Vec::new()))
+    });
+    // A stored form that does not open over the run's atoms is a cache's miss: the run writes its form.
+    let image = match p.finish() {
+        Ok((image, _)) => image,
+        Err(e) if written.is_none() => {
+            crate::code_rule_dsl::logic::profile::decision("a stored general form not read (decision 0298)", || format!("{}: {e}", stratum_key(scc)));
+            return Ok(None);
+        }
+        Err(e) => return Err(Error::Plan(e)),
+    };
+    match written {
+        Some(g) => Ok(Some(g)),
+        None => {
+            let record = steps.found.borrow_mut().take().ok_or_else(|| Error::Plan("a stored general form read without its record".into()))?;
+            General::opened(image, &record.1).map(Some)
+        }
+    }
+}
+
+/// Where a run's general forms are kept (decision 0298 §4): a source of the store per form, under its step's key (0281
+/// §6), holding its record (`General::stored`) and then its layers over the run's atoms, each varint-prefixed. The
+/// step's pass and version are in its key, and opening a layer checks it, so nothing else is stored. Read inside the
+/// waves by leave (`profile::read_in_waves`, the user's call, 2026-11-16: a reached stratum's key is known only once
+/// the run reaches it), and written, with the pins of what it read, behind the run.
+pub(in crate::code_rule_dsl) struct StoredForms<'s> {
+    /// None for a run that keeps no forms (a chunk's guest rounds, decision 0331): each reached stratum's form is made.
+    store: Option<&'s crate::content_store::ContentStore>,
+    /// The run's version's atoms and relations alone (`Builder::under`), which every form is an overlay of: a form is
+    /// stored as its own layers over them, so it holds its own names alone, not the part's, and is opened over them.
+    atoms: std::cell::OnceCell<Arc<Version>>,
+    /// The part's forms' identity (`forms_identity`), read at the first stratum reached.
+    identity: std::cell::OnceCell<[u8; 32]>,
+    /// The sources the run read, pinned for it (O95) in one write behind it, when it is dropped.
+    held: std::cell::RefCell<Vec<crate::content_store::SourceId>>,
+    /// The form `find` read, opened, and its record, until its pipeline opens it and `general_of` takes the record.
+    found: std::cell::RefCell<Option<(Arc<Version>, Vec<u8>)>>,
+    /// The record of the form being written, from its writer to `keep`.
+    writing: std::cell::RefCell<Option<Vec<u8>>>,
+}
+
+/// The alias a general form's source is kept under: its step's key, in the image format its layers are written in.
+fn form_alias(key: &StepKey) -> crate::content_store::HashKey {
+    alias_of(key.as_slice())
+}
+
+/// `form_alias` of a key's bytes.
+fn alias_of(key: &[u8]) -> crate::content_store::HashKey {
+    let format = crate::code_rule_dsl::logic::program_image::FORMAT;
+    crate::content_store::HashKey::sha256(&[format!("rerail general form {format}\0").as_bytes(), key].concat())
+}
+
+/// The general forms a run read, named by its record (decision 0306), so collection keeps them.
+fn apply_read(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+    let held: Vec<crate::content_store::SourceId> = crate::content_store::record::codec::from_body("the general forms read", body)?;
+    cx.name(held);
+    Ok(())
+}
+
+/// A general form a run wrote (its key's bytes; its source the item's bytes), stored once under its alias and named.
+fn apply_form(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+    let key: Vec<u8> = crate::content_store::record::codec::from_body("a general form", body)?;
+    let alias = alias_of(&key);
+    let id = match cx.store.source_by_alias(alias)? {
+        Some(id) => id,
+        None => cx.store.put_source(cx.bytes, &[alias])?,
+    };
+    cx.name([id]);
+    Ok(())
+}
+
+impl<'s> StoredForms<'s> {
+    pub(in crate::code_rule_dsl) fn new(store: &'s crate::content_store::ContentStore) -> StoredForms<'s> {
+        StoredForms { store: Some(store), atoms: Default::default(), identity: Default::default(), held: Default::default(), found: Default::default(), writing: Default::default() }
+    }
+    /// Forms neither read nor kept: each is made where it is reached.
+    pub(in crate::code_rule_dsl) fn unstored() -> StoredForms<'s> {
+        StoredForms { store: None, atoms: Default::default(), identity: Default::default(), held: Default::default(), found: Default::default(), writing: Default::default() }
+    }
+    /// The part `v0` whose forms the run reads, and the atoms they are overlays of (`Builder::under(v0)`, made once by
+    /// the run: the first set is every form's): the forms' identity, their keys' start.
+    pub(in crate::code_rule_dsl) fn over(&self, v0: &Placed, atoms: &Arc<Version>) -> [u8; 32] {
+        let _ = self.atoms.set(Arc::clone(atoms));
+        *self.identity.get_or_init(|| forms_identity(&v0.v))
+    }
+    /// The source of form `v` and its `record`: the record, then `v`'s layers above the atoms, lowest first, each
+    /// varint-prefixed.
+    fn source(&self, record: &[u8], v: &Version) -> std::result::Result<Vec<u8>, String> {
+        let atoms = self.atoms.get().ok_or("a general form stored before its atoms")?;
+        let mut layers = Vec::new();
+        let mut at = v;
+        while let crate::code_rule_dsl::logic::program_image::Layer::Overlay(parent, bytes) = at.layer() {
+            layers.push(bytes);
+            at = parent;
+        }
+        if !std::ptr::eq(at, &**atoms) {
+            return Err("a general form is not layers over the run's atoms".into());
+        }
+        let mut out = Vec::with_capacity(record.len() + layers.iter().map(|l| l.len() + 4).sum::<usize>() + 4);
+        put(&mut out, record.len() as u64);
+        out.extend_from_slice(record);
+        for bytes in layers.iter().rev() {
+            put(&mut out, bytes.len() as u64);
+            out.extend_from_slice(bytes);
+        }
+        Ok(out)
+    }
+    /// The form stored as `bytes` (`source`), opened over the atoms, and its record.
+    fn opened_source(&self, bytes: &[u8]) -> std::result::Result<(Arc<Version>, Vec<u8>), String> {
+        let mut v = Arc::clone(self.atoms.get().ok_or("a general form opened before its atoms")?);
+        let mut r = Record(bytes);
+        let part = |r: &mut Record<'_>| -> std::result::Result<Vec<u8>, String> {
+            let len = r.n().map_err(|e| e.to_string())? as usize;
+            let (part, rest) = r.0.split_at_checked(len).ok_or("a stored general form is cut short")?;
+            r.0 = rest;
+            Ok(part.to_vec())
+        };
+        let record = part(&mut r)?;
+        while !r.0.is_empty() {
+            v = Version::over(&v, &part(&mut r)?)?;
+        }
+        Ok((v, record))
+    }
+}
+
+impl Drop for StoredForms<'_> {
+    fn drop(&mut self) {
+        let held = std::mem::take(self.held.get_mut());
+        if let (false, Some(store)) = (held.is_empty(), self.store) {
+            store.record("the general forms read", Vec::new(), &held, None, apply_read);
+        }
+    }
+}
+
+impl Steps for StoredForms<'_> {
+    /// The form stored under `key`, read and opened at once (its source is one read); the record names the opened
+    /// form by its key (`open`).
+    fn find(&self, key: &StepKey) -> std::result::Result<Option<StepRecord>, String> {
+        let Some(store) = self.store else { return Ok(None) };
+        let found = crate::code_rule_dsl::logic::profile::read_in_waves(|| -> std::result::Result<_, crate::content_store::StoreError> {
+            let Some(id) = store.source_by_alias(form_alias(key))? else { return Ok(None) };
+            Ok(Some((store.get_source(id)?, id)))
+        })
+        .map_err(|e| e.to_string())?;
+        let Some((bytes, id)) = found else { return Ok(None) };
+        let (v, record) = self.opened_source(&bytes)?;
+        self.held.borrow_mut().push(id);
+        let output = (v.size(), v.digest());
+        *self.found.borrow_mut() = Some((v, record));
+        Ok(Some(StepRecord { pass: GENERAL_PASS.into(), version: GENERAL_VERSION, image: *key, output, decided: Vec::new() }))
+    }
+    fn open(&self, _: &[u8; 32]) -> std::result::Result<Option<Arc<Version>>, String> {
+        Ok(self.found.borrow().as_ref().map(|f| Arc::clone(&f.0)))
+    }
+    /// Its record and layers (`source`), queued for the store's writer (decision 0102): no wave waits for it.
+    fn keep(&self, key: &StepKey, _: &StepRecord, output: &Version) -> std::result::Result<(), String> {
+        let record = self.writing.borrow_mut().take().ok_or("a general form kept without its record")?;
+        let Some(store) = self.store else { return Ok(()) };
+        let bytes = self.source(&record, output)?;
+        // In the run's record (decision 0306): stored once under its alias, and named so collection keeps it.
+        store.record("a general form", Vec::new(), &key.as_slice().to_vec(), Some(bytes), apply_form);
+        Ok(())
+    }
 }
 
 /// The places of `g`'s rules a stratum whose reads `moved` changed runs (decision 0298): those driven by a read in
@@ -1656,5 +1988,16 @@ h(x, n) :- c(x), n = count : { b(x, _) }.
             let unmoved: Vec<&str> = ["a", "b", "c"].into_iter().filter(|r| !m.contains(*r)).collect();
             assert_eq!(shown(&g.form.placed, at.into_iter(), &unmoved), shown(&narrow.placed, 0..narrow.placed.v.size(), &[]), "moved {moved:?}");
         }
+        // Stored (its image, here folded to a base, and its record) and opened in a new process: the same rules,
+        // drivers, inputs and maintenance.
+        let (image, record) = g.stored().unwrap();
+        let folded = image.fold().unwrap();
+        let opened = General::opened(Version::open(folded.base_bytes().unwrap()).unwrap(), &record).unwrap();
+        let p = &g.form.placed;
+        let q = &opened.form.placed;
+        assert_eq!(shown(q, 0..q.len(), &[]), shown(p, 0..p.len(), &[]));
+        assert_eq!((&opened.drivers, &opened.inputs, &opened.outputs, &opened.rule_inputs, &opened.reads), (&g.drivers, &g.inputs, &g.outputs, &g.rule_inputs, &g.reads));
+        assert_eq!(q.maint.as_ref().map(|m| m.digest()), p.maint.as_ref().map(|m| m.digest()), "its maintenance");
+        assert_eq!((opened.form.maintained, opened.form.recursive, &opened.form.old_reads), (g.form.maintained, g.form.recursive, &g.form.old_reads));
     }
 }

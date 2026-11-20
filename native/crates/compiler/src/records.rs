@@ -163,14 +163,14 @@ pub struct Records {
     /// The prefix (`prefix B …`, decision 0335): where the file starts with these bytes, the
     /// stream, and the loop, start after them. Empty: no prefix.
     pub prefix: Vec<u8>,
-    /// The skip's mask (decision 0400), an output: where set, a token's last byte is the byte
+    /// The skip's mask (decision 0452), an output: where set, a token's last byte is the byte
     /// before the next token's start (the file's end) less the run of this mask's bytes before
     /// it (`gap_last`), as the lasts extract's, proved. The CPU's tier 1 then makes no lasts; its
     /// record pass makes them.
     pub gap: Option<u16>,
 }
 
-/// A token's last byte (decision 0400, `Records::gap`): the byte before `next` (the next
+/// A token's last byte (decision 0452, `Records::gap`): the byte before `next` (the next
 /// token's start, or the file's length), less the run of `gap`'s bits before it, found a word
 /// at a time (the leading zeros of the word's bits not in the run).
 pub fn gap_last(gap: &[u64], start: usize, next: usize) -> usize {
@@ -376,6 +376,17 @@ impl Records {
         for rd in self.readers.iter_mut().filter(|rd| !rd.parts.is_empty()) {
             rd.split = at;
         }
+    }
+}
+
+impl Records {
+    /// Whether tier 2 makes each token's record from its start (page 40): where tier 1 is the
+    /// block of masks (no `skip`, so no token loop) and the tokens end by their rules, tier 1
+    /// writes each token's start alone, as simdjson's stage 1 its structural indexes, and tier 2
+    /// finds the token's last by its first byte's rule and makes its code, as simdjson's stage 2
+    /// switches on the byte at the index. The CPU's tier 1 then has no record pass.
+    pub fn fetched_in_tier2(&self) -> bool {
+        !self.rules.is_empty() && self.skip.is_none() && self.gap.is_none()
     }
 }
 
@@ -593,6 +604,11 @@ pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64
         .map(|&s| {
             let first = bytes.get(s as usize).copied().unwrap_or(0);
             match records.rules.get(usize::from(records.ends[usize::from(first)])) {
+                // A region's token: to its closer (`read_last`), a region tier 2 reads in parts
+                // whole (`Split::Tier2`).
+                // Split in tier 1, its parts are rows of their own, and its opener is a byte.
+                Some(&EndRule::Read(i)) if records.readers[usize::from(i)].parts_in_tier1() => Some(s),
+                Some(&EndRule::Read(i)) => read_last(records, &records.readers[usize::from(i)], s as usize, bytes, outputs).ok().map(|l| l.max(s as usize) as u32),
                 Some(&rule) => last_by_rule(records, rule, s as usize, bytes, outputs).map(|l| l as u32),
                 None => Some(s),
             }

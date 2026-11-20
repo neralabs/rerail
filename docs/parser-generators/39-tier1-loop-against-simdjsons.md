@@ -32,6 +32,16 @@ Measured 2026-11-18 on arm64, at d169f605b.
 | JSONC's tier 1 (`15-jsonc.bitlex`) | 1,332 | 58 |
 | `lexers/json.bitlex` (`json_loop_keeps_values_in_registers`) | 673 | 7 |
 
+**Now (2026-11-18, after 0428).** The table above is the page's starting point; the sections
+below take it to these:
+
+| Loop | Instructions | Stack loads or stores |
+|---|---:|---:|
+| simdjson's stage 1, by clang | **344** | 0 |
+| `stage1.rir`, by our compiler | **332** | 1 |
+| JSON's tier 1 (`14-json`) | **358** (simdjson's five masks, `stage1.rir`'s tables) | 1 |
+| JSONC's tier 1 (`15-jsonc`) | 523 | 6 |
+
 **A correction.** The 673 quoted in 0383 and 0389 as "JSON's hot loop" is the loop of
 `docs/parser-generators/lexers/json.bitlex`, the program `compile_tests` measures. That lexer is
 laxer than simdjson: it checks no UTF-8, and its only string error is a newline. The program
@@ -154,25 +164,25 @@ values being words: simdjson's `prev1` is a vector `ext` with the block before's
 mechanism, the totals made one flag at the first, its edge part making them exactly, is kept
 as a patch outside the tree. It fires on no grammar here.
 
-**Item 3: token ends from the gaps (0400).** A token ends at the next start, less the
+**Item 3: token ends from the gaps (0452).** A token ends at the next start, less the
 whitespace between them, as this page put it; Bitlex proves it for every row of `14-json`. The
 CPU's tier 1 makes no lasts, and its record pass makes each from the next start and the skip's
 mask: one word and a count of leading zeros.
 
 | | Hot loop | Stack accesses | Tier 1's operations |
 |---|---:|---:|---:|
-| Token ends from the gaps (0400) | **616** | **5** | 123 |
+| Token ends from the gaps (0452) | **616** | **5** | 123 |
 
-JSONC kept its extract at first: the proof did not reach its comments (0400). With the claim
+JSONC kept its extract at first: the proof did not reach its comments (0452). With the claim
 as its own induction hypothesis, and lemmas that two regions are never open at one byte in a
-file not refused, it does (0401):
+file not refused, it does (0453):
 
 | `15-jsonc` | Hot loop | Stack accesses |
 |---|---:|---:|
-| After 0400 | 988 | 33 |
-| Token ends from the gaps (0401) | **814** | **27** |
+| After 0452 | 988 | 33 |
+| Token ends from the gaps (0453) | **814** | **27** |
 
-## Item 2 again: the UTF-8 rules' form (0402)
+## Item 2 again: the UTF-8 rules' form (0454)
 
 The premise above, that the lane plan makes the UTF-8 check's previous-byte values as words,
 came from the program as Bitlex writes it, where `~prefix` cuts every class that holds a byte
@@ -183,10 +193,10 @@ as simdjson's `check_special_cases`.
 
 | | Hot loop | Stack accesses | UTF-8 stretch |
 |---|---:|---:|---:|
-| `14-json` after 0400 | 616 | 5 | 195 |
-| `14-json`, rules as one pair (0402) | **574** | **1** | **153** |
-| `15-jsonc` after 0401 | 814 | 27 | |
-| `15-jsonc`, 0402 | **784** | **11** | |
+| `14-json` after 0452 | 616 | 5 | 195 |
+| `14-json`, rules as one pair (0454) | **574** | **1** | **153** |
+| `15-jsonc` after 0453 | 814 | 27 | |
+| `15-jsonc`, 0454 | **784** | **11** | |
 
 simdjson's UTF-8 check is 72. What is left of it:
 
@@ -226,13 +236,14 @@ it's profitable". The spike ran in two steps:
    carried between blocks, kept right on the ASCII path, the edge part, the general body and
    the regions, and 1 to 3 registers held across the loop.
 
-Neither is profitable here, so neither is kept. Step 1 is a patch outside the tree
-(`tmp/spike-chunk0-prevs.patch`).
+Neither is profitable here on its own count. The user rejected that criterion: a step that
+puts simdjson's structure in place is kept even at a flat count. Step 1 is now 0455, and the
+carry is the step it prepares.
 
 **Where the profit is.** A steady chunk of the check is 29 instructions against simdjson's
 17, about 48 a block:
 
-- simdjson's one lookup holds all of its two-byte rules. Ours, since 0402, holds the four
+- simdjson's one lookup holds all of its two-byte rules. Ours, since 0454, holds the four
   overlong and surrogate rules, while "a continuation is needed, by lag 1" and "never a lead
   byte" are separate class tests, each with its `ext`.
 - The current byte is looked up in two tables, since its classes need more than 8 bits.
@@ -240,6 +251,168 @@ Neither is profitable here, so neither is kept. Step 1 is a patch outside the tr
   raw bytes.
 
 Folding the lag-1 rules into the pair's table is the next simdjson step that pays.
+
+### simdjson's lookup form (0404)
+
+All three are done: the grammars state the check as simdjson's `lookup4` rules, every rule of
+two bytes is a bit of one pair of tables, this byte's table is one `tbl` of high nibbles, and
+lags 2 and 3 are `prev2 ≥ 0xe0 | prev3 ≥ 0xf0` against `TWO_CONTS`.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch | Steady chunk |
+|---|---:|---:|---:|---:|
+| After 0454 | 574 | 1 | 153 | 29 |
+| Chunk 0 (0455) and the lookup form (0404) | **549** | **1** | **128** | **25** |
+
+JSONC: 784 / 11 → 735 / 8. simdjson's stretch is 72 and its chunk about 17. Left:
+
+- the bytes that never start a sequence, two products no pair bit holds, on a lookup of their
+  own;
+- each rule tested to a 0 or 1 lane, where simdjson keeps the ANDed bytes;
+- the carried previous block.
+
+### simdjson's structure (0405)
+
+All three are done: the bytes that never start a sequence are pair rules, merged into
+simdjson's bits; the rules are made as bytes and tested once a chunk; and the hot loop carries
+its last chunk to the next block.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch | Steady chunk |
+|---|---:|---:|---:|---:|
+| After 0404 | 549 | 1 | 128 | 25 |
+| 0405 | **507** | **1** | **85** | **17** |
+| simdjson | | | 72 | 17 |
+
+JSONC: 735 / 8 → 693 / 9. The steady chunk is simdjson's. What is left of the stretch is the
+error's mask, about 9 instructions a block, where simdjson ORs error bytes into one vector for
+the file: that is item 2's flag (0454).
+
+### The error vector (0406)
+
+Item 2's flag now fires. A total no mask, mark or token-loop read names has no row without a
+token loop too, and the UTF-8 error's bytes are ORed into one vector carried round the hot
+loop, reduced where the loop leaves, as simdjson's `error`.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch |
+|---|---:|---:|---:|
+| After 0405 | 507 | 1 | 85 |
+| 0406 | **485** | **1** | **76** |
+| simdjson | | | 72 |
+
+JSONC: 693 / 9 → 667 / 11.
+
+### simdjson's registers (0417)
+
+The four ORs a block were simdjson's four `error |=` already. What differed was the ASCII
+way's copy of the error vector, lags 2 and 3 compared before their `ext` (and chunk 0 compared
+again each block), and six constants built in the loop. Now lags 2 and 3 are `ext`s of the
+bytes, then compares, as simdjson's `prev<2>(input)`, and the vector passes no join. Each
+rowless total, and each word leaf of the flag, is ORed into the running word where made, an
+edge block remaking them.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch |
+|---|---:|---:|---:|
+| After 0406 | 485 | 1 | 76 |
+| 0417 | **481** | **1** | **74** |
+| simdjson | | | 72 |
+
+JSONC: 667 / 11 → 651 / 7. A chunk of the stretch is simdjson's 16 instructions. The gap is the
+six constants (`movi` of `0xe0`, `0xf0`, `0x80`, three table loads) built in the loop, where
+simdjson holds them in registers. The mid-end's code motion would hoist every constant and
+spill them (0069), so hoisting needs to choose which constants to hold, against the vector
+pressure of the number and string checks (peak 32).
+
+### The constants in registers (0418)
+
+The six constants are parameters of the hot body, made where the loop is entered and round
+the back edge, and made again on the way out of the cold edge part, which holds 37 vectors.
+Made at the function's entry, they were spilled there. The slow way also makes its error
+bytes first, so each chunk's `ext`s are made where read.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch |
+|---|---:|---:|---:|
+| After 0417 | 481 | 1 | 74 |
+| 0418 | **475** | **1** | **68** |
+| simdjson | | | 72 |
+
+JSONC: 651 / 7 → 647 / 8. The stretch is the four chunks' 64 and four ORs. simdjson's 72
+includes its incomplete-sequence check, folded away here in a full block.
+
+### Masks taken out where read (0420)
+
+Each mask leaves its vector (`extractlane`) just before its first reader, so it is not held in
+an integer register meanwhile. JSONC: 647 / 8 → 644–645 / 6–7; `14-json` 475 / 1. Parking idle
+loop values in vector registers was tried and rejected: it costs about what a spill costs.
+
+### Stage 1 at clang's size (0421)
+
+The trace of `stage1.rir`'s loop against clang's (389 against 344):
+
+| Where | Ours | clang |
+|---|---:|---:|
+| Word `and`s in the position writer | 16 | 0 |
+| Masks reduced to words | 7 | 5 |
+| Vector `and`s besides the reductions | 24 | 16 |
+
+- **The writer** (the compiler): `ctz` and `w & (w - 1)` a position, where clang reverses the
+  word once and takes `clz`, clearing the bit with `^ (1 << 63) >> z`. Now clang's: −13 in
+  every loop.
+- **The two masks** (the program): the UTF-8 errors and the open sequence were asked as masks.
+  They are now totals, as simdjson keeps its error: the open sequence is tested at the byte past
+  the stream, which a full block folds away (−33). The compiler still reduced the error, a
+  total that is one vector value: 0406's flag refused a root that is its own leaf. Fixed (−11).
+- **The last 8 vector `and`s** are the program's classify, the older simdjson's two-nibble
+  table for all five classes. The simdjson clang builds here uses `cmeq` for quote and
+  backslash, a whitespace lookup and a `tbx` for operators. That is the program's statement,
+  left as it is.
+
+| | `stage1.rir` | `14-json` | `15-jsonc` |
+|---|---:|---:|---:|
+| After 0420 | 389 / 1 | 475 / 1 | 644–645 / 6–7 |
+| 0421 | **332 / 1** | **462 / 1** | **632 / 7** |
+| clang's simdjson | 344 / 0 | | |
+
+`14-json` is 118 over clang's stage 1. Its extra checks (control characters, the first bytes
+of numbers and escapes) are 130 over `stage1.rir`: the next part to trace.
+
+### What `14-json` adds over stage 1 (0423)
+
+Nine masks a block against stage 1's five. The four more:
+
+| Part | Instructions | Runs |
+|---|---:|---|
+| The surrogate check (`d`, `8 9 a b`, `c`–`f`: a second table, 3 masks) | 79 | behind its gate since 0423 |
+| The `u` of an escape | 13 | in the string-body region |
+| The token kinds' word logic (content, escapes, punctuation, words, the skip) | about 46 | every block |
+
+The surrogate check's masks were made every block, before its gate (a `\u` in the block): the
+compiler made a region's own vectors outside its branch when its members read them as words.
+Now they are made inside, and the compiler refuses a function that does otherwise. The code is
+8 longer; a block with no `\u` runs about 60 fewer, and tier 1 retires 5.4% fewer instructions
+over 17 corpus files.
+
+What is left over stage 1 is the grammar's split of the work. Tier 2 reads the token kinds
+simdjson's stage 2 finds by rescanning. The surrogate check is stage 2's in simdjson, done per
+`\u` when it converts one; moved to tier 2 as 0399 moved the hex digits, it would take the
+region, its table and the `u` mask out of tier 1.
+
+### The surrogate check in tier 2 (0428)
+
+Done. The last `\u` test, "a lone low surrogate" (`low & ~prev(high, 6)`), is now part of the
+escape token's check. It reads six bytes before the escape, and the tokens' ends there
+(`Ended`), from tier 2's records: tier 1's carry, already made.
+- The compiler proves that reading any token's end in place of an escape's refuses the same
+  files.
+- The check runs only at an escape whose last byte is `u` (`token_gate`), as simdjson's stage
+  2 switches on the escaped byte.
+
+| `14-json` | After 0423 | Now | `stage1.rir` |
+|---|---:|---:|---:|
+| Hot loop | 470 | **358** | 332 |
+| Masks a block | 9 | **5** | 5 |
+| Tables (`tbl`) | 28 | **20** | 20 |
+| Tier 1 / both tiers, 17 corpus files | 20.0M / 49.9M | **19.2M / 49.0M** | |
+
+The 26 left over `stage1.rir` are the token kinds' word logic that tier 2 reads.
 
 ## Reproducing
 

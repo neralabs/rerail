@@ -16,7 +16,9 @@
 use crate::grammar::{Act, ArmRow, StateRow};
 use crate::program::{MARK_KEEP, push_flag};
 use crate::stream_ir::{ByteSwitch, WORD_KIND};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+/// Maps hashed with a fixed seed (`foldhash`'s), so what iterates one goes the same way each run.
+type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::FixedState>;
+type HashSet<K> = std::collections::HashSet<K, foldhash::fast::FixedState>;
 
 /// A set of bytes, bit `b` for byte `b`.
 pub type ByteSet = [u64; 4];
@@ -205,7 +207,7 @@ pub struct Mark {
     pub words: Option<Vec<Vec<u8>>>,
     /// A token mark (decision 0129): the token before (none: any), then the run from the mark's.
     pub tokens: Option<(Vec<::bitlex::syntax::TokenElem>, Vec<Vec<::bitlex::syntax::TokenElem>>)>,
-    /// `before`, `unless before` (decision 0406): the tokens from the one a gap mark is before,
+    /// `before`, `unless before` (decision 0490): the tokens from the one a gap mark is before,
     /// each with whether it is an `unless`, tested by tier 2 as a token mark's run is.
     pub nexts: Vec<(bool, Vec<Vec<::bitlex::syntax::TokenElem>>)>,
     /// `unless after`: the words of the grammar token before that make it none
@@ -1366,7 +1368,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     // The token marks' words, and their elements by offset.
     let mut token_marks = Vec::new();
     for (k, m) in marks.iter().enumerate() {
-        // A token mark's run; a gap mark's `before`s and `unless before`s (decision 0406), each
+        // A token mark's run; a gap mark's `before`s and `unless before`s (decision 0490), each
         // an entry of the mark's order.
         let none = Vec::new();
         let patterns: Vec<(bool, &Vec<::bitlex::syntax::TokenElem>, &Vec<Vec<::bitlex::syntax::TokenElem>>)> = match &m.tokens {

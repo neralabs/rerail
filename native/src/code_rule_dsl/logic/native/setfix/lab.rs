@@ -125,7 +125,7 @@ fn with_sources(join: &JoinSpec, f: &mut dyn FnMut(&Source) -> Source) -> JoinSp
         .map(|item| {
             let mut item = item.clone();
             if let JoinItem::Atom { src, .. } | JoinItem::Count { src, .. } | JoinItem::Extreme { src, .. } | JoinItem::StrJoin { src, .. } = &mut item
-                && matches!(src, Source::Native(_) | Source::Input(_))
+                && matches!(src, Source::Native(_) | Source::Input(_) | Source::Version(..))
             {
                 *src = f(src);
             }
@@ -147,7 +147,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
         match line {
             // The run held its rows in memory, not in tables; the replay writes them, to compare them.
             // Where the run put it (`Device`): the replay runs every capture on the CPU, and again on the device.
-            Line::NoWrite | Line::Device | Line::Leveled(_) | Line::Stats(_) | Line::KeptOld | Line::Lattice { .. } | Line::Seed { .. } | Line::Join { .. } => {}
+            Line::NoWrite | Line::Device | Line::Leveled(_) | Line::Stats(_) | Line::KeptOld | Line::KeptRows(_) | Line::Sorted(_) | Line::Lattice { .. } | Line::Seed { .. } | Line::Join { .. } => {}
             Line::Rel { name, types, start } => {
                 let empty = match start {
                     Start::Rows => false,
@@ -163,6 +163,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
             Line::Gate { .. } => return Err("a `gate` line".to_owned()),
             Line::Levels { .. } => return Err("a `levels` line".to_owned()),
             Line::Edge(_) => return Err("a `rule` line".to_owned()),
+            Line::Remove { .. } | Line::AddChecked { .. } | Line::Recheck { .. } => return Err("a maintain mode's line".to_owned()),
         }
         let joins: Vec<&Arc<JoinSpec>> = match line {
             Line::Seed { join, .. } => vec![join],
@@ -185,6 +186,11 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
         let (rel, base): (Arc<InRel>, bool) = match src {
             Source::Native(table) => (DERIVED.lock(scope(conn)).get(&(scope(conn), table.clone())).cloned().ok_or_else(|| format!("no native relation {table}"))?, false),
             Source::Input(key) => (input_of(conn, key, &mut syms).map_err(|e| e.to_string())?, key.base),
+            Source::Version(table, ver) => {
+                let held = DERIVED.lock(scope(conn)).get(&(scope(conn), table.clone())).cloned().ok_or_else(|| format!("no native relation {table}"))?;
+                let v = match ver { super::spec::Ver::New => Some(held), super::spec::Ver::Old => held.version_view(super::Ver::Old), super::spec::Ver::Minus => held.version_view(super::Ver::Minus), super::spec::Ver::Plus => held.version_view(super::Ver::Plus) };
+                (v.ok_or_else(|| format!("{table} has no version"))?, false)
+            }
             _ => unreachable!("only a native relation or an input is a source"),
         };
         let table = format!("s{k}");

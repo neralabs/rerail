@@ -204,9 +204,47 @@ static LEARNED: std::sync::RwLock<Vec<Learned>> = std::sync::RwLock::new(Vec::ne
 pub struct Learned {
     pub name: String,
     pub lane: Lane,
-    /// Seconds a unit, the samples' median.
+    /// Seconds a launch and a unit: a robust line through the samples ([`line`]), past the lane's own fixed costs.
+    pub per_launch: f64,
     pub per_unit: f64,
+    /// Host CPU seconds a launch and a unit (a device's encoding, sizing and reading back), the same way.
+    pub host_per_launch: f64,
+    pub host_per_unit: f64,
     pub samples: usize,
+    /// The most units a sample had, and whether the samples' units span [`SPREAD`] times (else the line's slope is
+    /// noise: [`Learned::at`]).
+    pub largest: f64,
+    pub spread: bool,
+    /// Fitted from this run's own samples ([`observe`]), not the stored statistics.
+    pub this_run: bool,
+}
+
+/// How far the samples' units must spread (largest over smallest) for a line's slope to be fitted from them, and how
+/// far past the largest sample a line prices. A line of small launches says nothing of large ones:
+/// - the cores' matcher waves at s1000 ran six small launches first (6.7e4–8.3e4 units), whose line's slope was about
+///   nothing: a wave 80 times larger was priced at 6.5 ms and took 200;
+/// - the GPU's first four (7e4–1.3e5) gave a slope of 2.7e-8 s a unit against its 6e-9 on large waves, and 14 of 18
+///   waves went to the cores (3.2 s of wall against 0.6 on the GPU; 2026-11-17).
+pub const SPREAD: f64 = 2.0;
+
+impl Learned {
+    /// The busy wall and host CPU of a launch of `units`, given the priors' per-unit rates (`rate` as [`learned`]
+    /// returns it). Within the samples' reach, the line. Past it, or where the samples do not spread, a line from the
+    /// fitted line's value at the largest sample, whose slope is the prior's or that point's own rate a unit, the
+    /// less: what was measured holds at the samples' size, and past it a price grows no faster than either says.
+    fn at(rate: &[f64; 6], units: f64, prior: f64, host_prior: f64) -> (f64, f64) {
+        let [per_launch, per_unit, host_per_launch, host_per_unit, largest, spread] = *rate;
+        let line = (per_launch + per_unit * units, host_per_launch + host_per_unit * units);
+        if (spread != 0.0 && units <= SPREAD * largest) || largest <= 0.0 {
+            return line;
+        }
+        let from = |a: f64, b: f64, prior: f64| {
+            let at = a + b * largest;
+            let slope = prior.min(at / largest);
+            (at - slope * largest).max(0.0) + slope * units
+        };
+        (from(per_launch, per_unit, prior), from(host_per_launch, host_per_unit, host_prior))
+    }
 }
 
 /// The fewest warm samples a rate is fitted from.
@@ -217,7 +255,7 @@ pub const MIN_SAMPLES: usize = 8;
 static LEARNED_VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 thread_local! {
-    static LEARNED_COPY: std::cell::RefCell<(u64, Vec<(String, Lane, f64)>)> = const { std::cell::RefCell::new((0, Vec::new())) };
+    static LEARNED_COPY: std::cell::RefCell<(u64, Vec<(String, Lane, [f64; 6])>)> = const { std::cell::RefCell::new((0, Vec::new())) };
 }
 
 /// What a price waits for first: the stored statistics, which the engine reads once a run has work to price
@@ -240,7 +278,9 @@ pub fn first_price() {
     }
 }
 
-fn learned(name: &str, lane: Lane) -> Option<f64> {
+/// The learned seconds of `name` on `lane`: a launch's and a unit's wall, then a launch's and a unit's host CPU; then
+/// the largest sample's units, and 1 when the samples spread ([`Learned::at`]).
+fn learned(name: &str, lane: Lane) -> Option<[f64; 6]> {
     first_price();
     let version = LEARNED_VERSION.load(std::sync::atomic::Ordering::Acquire);
     if version == 0 {
@@ -248,11 +288,123 @@ fn learned(name: &str, lane: Lane) -> Option<f64> {
     }
     LEARNED_COPY.with_borrow_mut(|(seen, copy)| {
         if *seen != version {
-            *copy = LEARNED.read().map(|l| l.iter().map(|x| (x.name.clone(), x.lane, x.per_unit)).collect()).unwrap_or_default();
+            *copy = LEARNED
+                .read()
+                .map(|l| {
+                    l.iter()
+                        .map(|x| (x.name.clone(), x.lane, [x.per_launch, x.per_unit, x.host_per_launch, x.host_per_unit, x.largest, f64::from(u8::from(x.spread))]))
+                        .collect()
+                })
+                .unwrap_or_default();
             *seen = version;
         }
         copy.iter().find(|x| x.1 == lane && x.0 == name).map(|x| x.2)
     })
+}
+
+/// Whether a launch named `name` on `lane` has its host CPU priced from a learned line: a program's, once fitted
+/// (a table form's host CPU stays the table's). Such a price is not scaled by the lane's measured host ratio, and
+/// does not feed it: the ratio corrects priors, and a learned line scaled by it was counted twice (a GPU program's
+/// prior host CPU of nothing set the ratio to its bound, 50, and the learned line then priced a wave's host at 0.8 s).
+pub fn host_learned(name: &str, lane: Lane) -> bool {
+    Form::ALL.iter().all(|f| f.name() != name) && learned(name, lane).is_some()
+}
+
+/// A sample as a fit reads it: its kernel name, and per launch its units, busy wall (the lane's fixed costs taken
+/// out) and host CPU; `None` where it fits no rate: cold, failed, no units, more than one kernel name, or a table form
+/// on the cores (it splits over the threads, so its wall is not one unit's cost).
+///
+/// A pool lane's wall is divided by the cores' slowdown when it ran (`load`, at least 1): its price multiplies the
+/// rate by the slowdown when it prices (`Prices::cost`), so a rate fitted from loaded walls counted the load twice (the
+/// cores' matcher wave at 7.8e-8 s a unit under a load of 80, priced at 4 times that again).
+fn point_of(lane: Lane, forms: &str, launches: u32, units: f64, wall: f64, cpu: f64, load: f64, cold: bool, ok: bool) -> Option<(String, [f64; 3])> {
+    let name = forms.split(',').next().unwrap_or("");
+    if cold || !ok || units <= 0.0 || launches == 0 || forms.split(',').any(|f| f != name) {
+        return None;
+    }
+    let program = Form::ALL.iter().all(|f| f.name() != name);
+    if lane == Lane::Cpu && !program {
+        return None;
+    }
+    let fixed = Prices::default().fixed[lane.index()];
+    let busy = wall - fixed.submission - fixed.launch * f64::from(launches);
+    let busy = if matches!(lane, Lane::Cpu | Lane::Sme | Lane::Sql) { busy / load.max(1.0) } else { busy };
+    let n = f64::from(launches);
+    (busy > 0.0).then(|| (name.to_owned(), [units / n, busy / n, cpu.max(0.0) / n]))
+}
+
+/// A robust line `y = a + b x` through `points` (Theil–Sen: `b` the median of the pairs' slopes, `a` the median of
+/// what is left), both at least 0. A launch of a program has a fixed part (sizing, buffers, pipelines) and a part
+/// that grows with its units: a rate a unit alone, from the median of `y / x`, priced the GPU's matcher wave from its
+/// small launches (1e5 units, 10 ms) at 9 times its large ones' rate (s1000, 2026-11-17). Without spread in `x`, the
+/// line is through the origin.
+pub fn line(points: &[(f64, f64)]) -> (f64, f64) {
+    let median = |mut v: Vec<f64>| -> Option<f64> {
+        if v.is_empty() {
+            return None;
+        }
+        v.sort_by(f64::total_cmp);
+        Some(v[v.len() / 2])
+    };
+    let mut slopes = Vec::with_capacity(points.len() * points.len() / 2);
+    for (i, &(x0, y0)) in points.iter().enumerate() {
+        for &(x1, y1) in &points[i + 1..] {
+            // Pairs whose units differ by under a tenth say nothing of the slope.
+            if (x1 - x0).abs() > 0.1 * x0.max(x1) {
+                slopes.push((y1 - y0) / (x1 - x0));
+            }
+        }
+    }
+    let Some(b) = median(slopes) else {
+        return (0.0, median(points.iter().map(|&(x, y)| y / x).collect()).unwrap_or(0.0).max(0.0));
+    };
+    let b = b.max(0.0);
+    let a = median(points.iter().map(|&(x, y)| y - b * x).collect()).unwrap_or(0.0).max(0.0);
+    (a, b)
+}
+
+/// The rate fitted from points `[units, busy wall, host CPU]` a launch.
+fn fitted(name: String, lane: Lane, points: &[[f64; 3]], this_run: bool) -> Learned {
+    let (per_launch, per_unit) = line(&points.iter().map(|p| (p[0], p[1])).collect::<Vec<_>>());
+    let (host_per_launch, host_per_unit) = line(&points.iter().map(|p| (p[0], p[2])).collect::<Vec<_>>());
+    let (lo, hi) = points.iter().fold((f64::INFINITY, 0.0f64), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
+    Learned { name, lane, per_launch, per_unit, host_per_launch, host_per_unit, samples: points.len(), largest: hi, spread: hi >= SPREAD * lo, this_run }
+}
+
+/// This run's warm samples' points, by (kernel name, lane): the latest [`RUN_HELD`] of each.
+static RUN: std::sync::Mutex<std::collections::BTreeMap<(String, usize), std::collections::VecDeque<[f64; 3]>>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+/// The most recent samples a rate of this run is fitted from.
+const RUN_HELD: usize = 64;
+/// The fewest of this run's own samples a rate is fitted from: fewer than the stored statistics' ([`MIN_SAMPLES`]),
+/// since a run has few launches of a program (s1000: 18 matcher waves) and they are what the machine does now.
+pub const RUN_MIN_SAMPLES: usize = 4;
+
+/// A finished job, priced from as the run goes (the scoreboard's `finish`): once a kernel name on a lane has
+/// [`RUN_MIN_SAMPLES`] warm samples of this run, the line through its latest replaces its prior and the stored
+/// statistics' rate. A run then prices its later launches from what its earlier ones measured, not from a constant
+/// (a cold run with no stored statistics priced the GPU's matcher wave at 2.5e-8 s a unit, 1.65 times what it
+/// measured, and its host CPU at nothing). Refitted at each sample up to 16, then at every 8th.
+pub fn observe(lane: Lane, forms: &str, launches: u32, units: f64, wall: f64, cpu: f64, load: f64, cold: bool, ok: bool) {
+    let Some((name, point)) = point_of(lane, forms, launches, units, wall, cpu, load, cold, ok) else { return };
+    let fit = {
+        let Ok(mut run) = RUN.lock() else { return };
+        let held = run.entry((name.clone(), lane.index())).or_default();
+        if held.len() == RUN_HELD {
+            held.pop_front();
+        }
+        held.push_back(point);
+        let n = held.len();
+        if n < RUN_MIN_SAMPLES || (n > 16 && n % 8 != 0 && n != RUN_HELD) {
+            return;
+        }
+        fitted(name, lane, &held.iter().copied().collect::<Vec<_>>(), true)
+    };
+    if let Ok(mut l) = LEARNED.write() {
+        l.retain(|x| !(x.name == fit.name && x.lane == fit.lane));
+        l.push(fit);
+        LEARNED_VERSION.fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
 }
 
 /// The rates learned so far.
@@ -270,6 +422,10 @@ pub fn learn_from(samples: &[crate::score::Sample]) -> Vec<Learned> {
     let fitted = fit_rates(samples);
     if let Ok(mut l) = LEARNED.write() {
         for f in &fitted {
+            // A rate of this run's own samples stays: it is what the machine does now.
+            if l.iter().any(|x| x.this_run && x.name == f.name && x.lane == f.lane) {
+                continue;
+            }
             l.retain(|x| !(x.name == f.name && x.lane == f.lane));
             l.push(f.clone());
         }
@@ -282,34 +438,13 @@ pub fn learn_from(samples: &[crate::score::Sample]) -> Vec<Learned> {
 
 /// [`learn_from`]'s rates, not put in place.
 pub fn fit_rates(samples: &[crate::score::Sample]) -> Vec<Learned> {
-    let p = Prices::default();
-    let mut by: std::collections::BTreeMap<(String, usize), Vec<f64>> = Default::default();
+    let mut by: std::collections::BTreeMap<(String, usize), Vec<[f64; 3]>> = Default::default();
     for s in samples {
-        let name = s.forms.split(',').next().unwrap_or("");
-        // One kernel name alone: a mixed job's wall is not one name's.
-        if s.cold || !s.ok || s.units <= 0.0 || s.forms.split(',').any(|f| f != name) {
-            continue;
-        }
-        let name = name.to_owned();
-        let program = Form::ALL.iter().all(|f| f.name() != name);
-        if s.lane == Lane::Cpu && !program {
-            continue;
-        }
-        let fixed = p.fixed[s.lane.index()];
-        let busy = s.wall - fixed.submission - fixed.launch * f64::from(s.launches);
-        if busy > 0.0 {
-            by.entry((name, s.lane.index())).or_default().push(busy / s.units);
+        if let Some((name, point)) = point_of(s.lane, &s.forms, s.launches, s.units, s.wall, s.cpu, s.load, s.cold, s.ok) {
+            by.entry((name, s.lane.index())).or_default().push(point);
         }
     }
-    let fitted: Vec<Learned> = by
-        .into_iter()
-        .filter(|(_, v)| v.len() >= MIN_SAMPLES)
-        .map(|((name, lane), mut v)| {
-            v.sort_by(f64::total_cmp);
-            Learned { name, lane: Lane::ALL[lane], per_unit: v[v.len() / 2], samples: v.len() }
-        })
-        .collect();
-    fitted
+    by.into_iter().filter(|(_, v)| v.len() >= MIN_SAMPLES).map(|((name, lane), v)| fitted(name, Lane::ALL[lane], &v, false)).collect()
 }
 
 impl Prices {
@@ -329,8 +464,10 @@ impl Prices {
             Kernel::Program(p) => p.0.per_unit(lane)?,
             _ => self.per_unit(k.form(), lane)?,
         };
-        let per = learned(k.name(), lane).unwrap_or(prior);
-        let busy = per * k.units();
+        let busy = match learned(k.name(), lane) {
+            Some(rate) => Learned::at(&rate, k.units(), prior, 0.0).0,
+            None => prior * k.units(),
+        };
         // A table form splits its work over the cores; a program's cores' form is one job, its price one thread's.
         let busy = if lane == Lane::Cpu && !matches!(k, Kernel::Program(_)) { busy / self.cores } else { busy };
         Some(self.fixed[lane.index()].launch + busy)
@@ -350,12 +487,17 @@ impl Prices {
 
     /// `k`'s host CPU seconds on `lane`, its job's share counted when the lane is not `open` for this batch yet.
     pub fn host(&self, k: &Kernel, lane: Lane, open: bool) -> Option<f64> {
-        let per = match k {
-            Kernel::Program(p) => p.0.host_per_unit(lane)?,
-            _ => self.host_per_unit[form_index(k.form())][lane.index()]?,
+        // A program's host CPU is learned with its wall where it has samples (its prior on a device is a guess: the
+        // encoding and reading back of a program the price cannot see).
+        let work = match k {
+            Kernel::Program(p) => {
+                let prior = p.0.host_per_unit(lane)?;
+                learned(k.name(), lane).map_or(prior * k.units(), |rate| Learned::at(&rate, k.units(), 0.0, prior).1)
+            }
+            _ => self.host_per_unit[form_index(k.form())][lane.index()]? * k.units(),
         };
         let fixed = self.host[lane.index()];
-        Some(per * k.units() + fixed.launch + if open { 0.0 } else { fixed.submission })
+        Some(work + fixed.launch + if open { 0.0 } else { fixed.submission })
     }
 
     /// `k`'s cost on `lane` under `load`: the learned model's when it predicted one ([`crate::cost_model`]), else
@@ -385,7 +527,7 @@ impl Prices {
         let wall = self.wall(k, lane)? * slow;
         let queued = if lane.is_pool() { load.queued[Lane::Cpu.index()] + load.queued[Lane::Sql.index()] } else { load.queued[i] };
         let finish = queued + if load.open[i] { 0.0 } else { load.latency[i] } + wall;
-        let scale = if load.host_scale[i] > 0.0 { load.host_scale[i] } else { 1.0 };
+        let scale = if load.host_scale[i] > 0.0 && !host_learned(k.name(), lane) { load.host_scale[i] } else { 1.0 };
         Some(Cost { finish, wall, host: self.host(k, lane, load.open[i])? * scale })
     }
 

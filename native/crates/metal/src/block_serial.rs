@@ -1815,10 +1815,6 @@ fn run_split_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: 
 
 /// The files' bytes admitted once a run, every pass of it reading them where they are.
 fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
-    // An `early` (decision 0330) or a prefix (0335) is the CPU's for now, as at `run_batch`.
-    if programs.iter().any(|p| crate::block_program::starts_late(p)) {
-        return Err(Error::UnsupportedBackend);
-    }
     let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
     let sources = match digests {
         Some(d) if d.len() == files.len() => crate::slabs::admit_sources_digested(&bytes, d)?,
@@ -2069,9 +2065,6 @@ fn back_kernels(fills: &[(u16, u16, u16)], slots: u16) -> String {
 
 /// `run_serial` over programs without passes, or one forward pass of a program in passes (`io`).
 fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std::sync::Arc<crate::slabs::ResidentSource>], segments: Segments, io: Option<&Io<'_>>, read: bool) -> Result<(SerialRun, Option<Kept>), Error> {
-    if programs.iter().any(|p| crate::block_program::starts_late(p)) {
-        return Err(Error::UnsupportedBackend);
-    }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
     let refs: Vec<&BlockNative> = forms.iter().collect();

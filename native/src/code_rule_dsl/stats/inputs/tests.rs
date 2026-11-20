@@ -2,7 +2,6 @@ use super::*;
 use crate::code_rule_dsl::{
     language::{self, GrammarDialect},
     fixtures::{document, open, temp}, prefilter::tests::{matcher, put},
-    tape::TAPE_FORMAT_VERSION,
 };
 use crate::content_store::ContentStore;
 
@@ -85,7 +84,7 @@ fn statistics_rollback_a_failed_publication() {
     let (doc, bytes) = document(source, lang);
     let grammar = i64::from(language::tape_tag(lang).unwrap());
     let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
-    let tape = store.put_tape(source_id, grammar, 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
+    let tape = store.put_tape(source_id, grammar, 1, i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
     assert!(crate::code_rule_dsl::prefilter::publish(&store, &[tape], &[doc]).is_err());
     assert_eq!(estimate(&store, lang, identifier, Some("target")).rows, 1);
     assert_eq!(estimate(&store, lang, identifier, Some("explode")).rows, 0);

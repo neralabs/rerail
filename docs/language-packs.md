@@ -260,7 +260,7 @@ Each dialect has:
 - **`grammar`**, supported only: `vendored:<name>` (built by `build.rs`), `native:<name>` (a parser Rerail implements)
   or `ast-grep:<Language>`.
 - **`tapeTag`**: required when supported; a `planned` dialect may declare one to reserve it. Persisted, unique across
-  entries, never reused. Taken: Rust 9, SQL 10, Vue 12, rr 13, JSON 14, Python's percent- and brace-format strings 15 and 16, ESLint directives 17, Java 18, C# 19, HTML 20, CSS 21, Markdown 22 and its inline texts 23, Kotlin 24, Swift 25, Scala 26, Go 27, C 28 and C++ 29 (11 is free for a second SQL dialect).
+  entries, never reused. Taken: Rust 9, SQL 10, Vue 12, rr 13, JSON 14, Python's percent- and brace-format strings 15 and 16, ESLint directives 17, Java 18, C# 19, HTML 20, CSS 21, Markdown 22 and its inline texts 23, Kotlin 24, Swift 25, Scala 26, Go 27, C 28 and C++ 29 (11 is free for a second SQL dialect; 24 to 26 are left free).
 
 </details>
 

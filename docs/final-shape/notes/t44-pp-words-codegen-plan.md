@@ -6,7 +6,7 @@ The C preprocessor's mode (b) runs as *preprocessing words*: a small program
 (`c_directives/expand/expand.rir`) that the interpreter (`pp_words::run`) runs, and that
 `native_cpu_pp` compiles to machine code with Cranelift (decision 0348, stage 4). Both give the
 same tokens on every corpus TU. But the compiled code ran at 1.09× the interpreter's cycles,
-while retiring only 45% of its instructions (work queue Q36).
+while retiring only 45% of its instructions (work queue Q184).
 
 Since then, the same compiled code has been built a second way. `clif_rust` turns the Cranelift
 IR the JIT is given into Rust, function for function, and rustc compiles it with LLVM
@@ -137,11 +137,11 @@ profile of step 1. Each change was timed alone on the corpus (M1 Max, quiet run)
   its index to be known. Every rir `RETURN` dispatched through a table, so every return of
   `#if`'s evaluator and the expansion's calls waited. LLVM's jump tables have no barrier.
 - **The fix.** A balanced tree of compares for every dispatch in Cranelift's code: first the
-  words' own (`Lower::switch`), since Q38 the pass every backend shares
-  (`native_cpu_codegen::tables_as_compares`), run after the IR `clif_rust` takes, so rustc's
+  words' own (`Lower::switch`), since Q186 the pass every backend shares
+  (`native_cpu_codegen::switch_trees`), run after the IR `clif_rust` takes, so rustc's
   code keeps its tables. The shape test refuses a `csdb` in the words' code.
 - Cranelift's code is now at 0.50× the interpreter's cycles and 1.14× rustc's.
-- The same barrier is in tier 1's and tier 2's jump tables (work queue Q38).
+- The same barrier is in tier 1's and tier 2's jump tables (work queue Q186).
 
 ### 5. A decision for the user: which code the CPU path runs
 

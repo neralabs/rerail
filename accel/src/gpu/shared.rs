@@ -101,6 +101,8 @@ pub fn get() -> Option<&'static Shared> {
     static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
     SHARED
         .get_or_init(|| {
+            // The pool's blocks are handed out by the one policy (decision 0342).
+            crate::blocks::install();
             objc::rc::autoreleasepool(|| {
                 // The forest's (the lowest crate that uses Metal): one device and one queue for the process.
                 let one = rerail_forest::gpu::shared::get()?;
@@ -280,14 +282,26 @@ pub fn lease_block_within(kind: u32, bytes: usize) -> Result<rerail_blocks::Bloc
     Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
 }
 
-/// `lease_block`, only when the Metal budget holds it with no more than idle buffers released: nothing the evictor
-/// holds (the tape residency's slabs) is retired for it. For a block that has a home without the pool (anonymous
-/// memory, which the device reads through a no-copy wrap): the FACTS blocks of a run's relations (decision 0325),
-/// whose leases retiring the residency's tapes made a run admit them again (20-35 s runs on posthog/hogql).
-pub fn lease_block_spare(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
+/// A block for one of a device join's own relations (decision 0325 step 5: a view it makes, a fixpoint's total): a
+/// pooled buffer of the relation's size, leased as a join's buffer is (`lease_for_join`: bounded by the budget inside
+/// `within_budget`, where a refusal runs the work on the CPU), and back in the pool when the relation goes. No slab's
+/// least size: shared 16 MB blocks, kept by any relation in them, refused small views their room. The block policy's
+/// alone (`Size::Exact` in `Budget::Join`, Q205): every block is leased through it.
+pub(crate) fn lease_block_for_join(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
+    let slab = lease_for_join(bytes.max(rerail_blocks::alloc::EXACT_MIN), false)?;
+    Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
+}
+
+/// `lease_block`, only when the Metal budget holds it with no more than idle buffers released and `keep` bytes of it
+/// still free after: nothing the evictor holds (the tape residency's slabs) is retired for it, and the device's own
+/// buffers keep their room. For a block that has a home without the pool (anonymous memory, which the device reads
+/// through a no-copy wrap): the FACTS blocks of a run's relations (decision 0325). Their leases retiring the
+/// residency's tapes made a run admit them again (20-35 s runs on posthog/hogql); taking the budget's last room
+/// left the device's joins 6-48 MB, and its resident relations were dropped 28 times a run.
+pub fn lease_block_spare(kind: u32, bytes: usize, keep: usize) -> Result<rerail_blocks::Block, String> {
     let need = class(bytes.max(SLAB_MIN));
     pool().lock().expect("the pool").trim(need);
-    if other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + need > crate::budget::metal() {
+    if other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + need + keep > crate::budget::metal() {
         return Err(format!("device budget: no spare room for a block of {} MB", need >> 20));
     }
     let slab = lease(bytes.max(SLAB_MIN))?;

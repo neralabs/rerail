@@ -17,7 +17,7 @@ enum Tok {
 /// A token mark's choice (`Stmt::TokenMark`): a token of a kind, or a token whose text is a word.
 /// After the first element, three more: `~C` (`Not`), a token none of `C`'s choices, never the
 /// file's end, the only choice of its element; `end` (`End`), no token left, in the last element;
-/// `(C)*` (`Many`, decision 0406), any number of tokens of `C`'s choices (or of none of them, for
+/// `(C)*` (`Many`, decision 0490), any number of tokens of `C`'s choices (or of none of them, for
 /// a `C` that is one `~`), then the elements after
 /// it from any of them on (as a forward scan for the first place they hold), the only choice of
 /// its element, one a run and never its last. A run's `nest` counts depths (`Nest`); its `ending
@@ -725,14 +725,14 @@ pub enum Stmt {
     /// valid, before the token after it, which the level might read on (`a` then `b` on the next
     /// line is two statements, not an infix call).
     ///
-    /// `, before A B …` and `, unless before A B …` (decision 0406): the tokens from the one the
+    /// `, before A B …` and `, unless before A B …` (decision 0490): the tokens from the one the
     /// mark is before, as a token mark's run (`tokens`), as a parser asks of the tokens it peeks
     /// at. `next` holds them, each with whether it is an `unless`: the mark holds where no
     /// `unless before` does and, if it has a `before`, one of them does.
     ///
     /// `, drops [unless] after A … before B …` (with `settles`; `GapPattern`): where its arm runs
     /// at a token where the question holds, the extra pending last is dropped, as the lean
-    /// lexer's `asi` loses the comment it swallows into the semicolon (decision 0406).
+    /// lexer's `asi` loses the comment it swallows into the semicolon (decision 0490).
     ///
     /// `, loses [unless] after A … before B …`: where a level asks for the mark at a token where
     /// the question holds, the extra pending last is of no width, at the token's start: the lean
@@ -968,7 +968,7 @@ struct P {
 
 type R<T> = Result<T, String>;
 
-/// For the IR's tests of its backward pass (decision 0406): the masks and numbers named in
+/// For the IR's tests of its backward pass (decision 0490): the masks and numbers named in
 /// `names`, each written `fill(…)`, made `back_fill(…)`, as a region's `else` makes one
 /// (`Regions::body`). A grammar can not write `back_fill`; the IR keeps the operation.
 pub fn backward(mut stmts: Vec<Stmt>, names: &[&str]) -> Result<Vec<Stmt>, String> {
@@ -994,8 +994,8 @@ pub fn backward(mut stmts: Vec<Stmt>, names: &[&str]) -> Result<Vec<Stmt>, Strin
     Ok(stmts)
 }
 
-/// Why `back_fill` is refused, and what to write instead (decision 0406).
-pub const BACK_FILL_REMOVED: &str = "`back_fill` is removed from Bitlex (decision 0406). A value at a byte that is made from the \
+/// Why `back_fill` is refused, and what to write instead (decision 0490).
+pub const BACK_FILL_REMOVED: &str = "`back_fill` is removed from Bitlex (decision 0490). A value at a byte that is made from the \
 bytes after it needs a pass backward over the whole file, and the lean parsers never make one: they look ahead from \
 where they stand, and only where they need to. Write what the back fill asks, at the token:
   - the next token, or a run of tokens from here: a token mark, `mark K = tokens [after E] A B ...`, \
@@ -1828,7 +1828,7 @@ impl P {
     fn stmt(&mut self) -> R<Stmt> {
         let kw = self.ident()?;
         let s = match kw.as_str() {
-            // The deprecation period of `back_fill` is over (decision 0406).
+            // The deprecation period of `back_fill` is over (decision 0490).
             "deprecated" => return Err(BACK_FILL_REMOVED.into()),
             "lexer" => Stmt::Lexer(self.ident()?),
             "class" => {
@@ -2502,7 +2502,7 @@ mod tier2_tests {
     use super::*;
 
     /// `back_fill` is refused, as a mask's and as a number's, with what to write instead
-    /// (decision 0406), with or without the old `deprecated back_fill`; `backward` makes one for
+    /// (decision 0490), with or without the old `deprecated back_fill`; `backward` makes one for
     /// the IR's tests.
     #[test]
     fn back_fill_is_refused() {
@@ -2520,7 +2520,7 @@ mod tier2_tests {
         assert!(backward(parse(src).expect("parses"), &["q"]).is_err());
     }
 
-    /// A gap mark's `before` and `unless before` (decision 0406): the tokens from the one after
+    /// A gap mark's `before` and `unless before` (decision 0490): the tokens from the one after
     /// it, several of each, a run among them; and a token mark's run.
     #[test]
     fn a_mark_is_before_a_token() {
@@ -2570,7 +2570,7 @@ mod tier2_tests {
         assert!(mark("mark k = lf, before \"@\" (name)* ending (~name) \".\"").is_err());
     }
 
-    /// A settling mark's `drops` (decision 0406, its questions 0451): parsed with `settles`,
+    /// A settling mark's `drops` (decision 0490, its questions 0451): parsed with `settles`,
     /// refused without; the records before the token, and those from it.
     #[test]
     fn a_settling_mark_drops_an_extra() {

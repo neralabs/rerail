@@ -331,7 +331,7 @@ impl BlockNative {
     }
 
     /// The output of the records' lasts extract, where their end rules (decision 0177) or
-    /// their gaps (0400) give the lasts instead: the CPU makes no last-byte mask for it.
+    /// their gaps (0452) give the lasts instead: the CPU makes no last-byte mask for it.
     pub fn ruled_lasts(&self) -> Option<usize> {
         let r = self
             .records
@@ -384,12 +384,24 @@ impl BlockNative {
         r.marks.iter().enumerate().filter(|&(k, m)| looped >> k & 1 == 0 && m.0 != crate::records::WORD_ALONE).map(|(_, m)| usize::from(m.0)).collect()
     }
 
+    /// The outputs whose rows the CPU's tier 1 does not store: those the record pass makes
+    /// (`records_made`), and the totals no one reads by their rows (`rowless_totals`), each its
+    /// file's flag only. Its rows are compared to the interpreter's without them.
+    pub fn cpu_unstored(&self) -> Vec<usize> {
+        let mut v = self.records_made();
+        v.extend(self.rowless_totals());
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
     /// The outputs the CPU's token loop makes from the file's bytes where it reads them
     /// (`native_cpu_bytes`), and nothing else of the records reads from the rows: the CPU's
     /// body makes none of them. The skip, the end rules', the readers' and the tests' masks.
     pub fn read_at_tokens(&self) -> Vec<usize> {
         use crate::records::EndRule;
-        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+        // The token loop's (`skip`), or tier 2's where it makes the records (page 40).
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some() || r.fetched_in_tier2()) else {
             return Vec::new();
         };
         let bytes = crate::native_cpu_bytes::Bytewise::of(self);
@@ -413,23 +425,39 @@ impl BlockNative {
         // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.
         let others: Vec<usize> = self.masks.iter().enumerate().filter(|(i, _)| !r.check_masks.contains(&(*i as u16))).map(|(_, &o)| o).collect();
         read.extend(r.check_masks.iter().filter_map(|&m| self.masks.get(usize::from(m))).filter(|o| !others.contains(o)).map(|&o| o as u16));
-        let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !stored.contains(&o)).map(usize::from).collect();
+        // A region tier 2 reads as `parse_string` (`native_cpu_stream::sequential`) reads its
+        // part's start from no mask at all.
+        let unread: Vec<u16> = if r.fetched_in_tier2() {
+            r.readers
+                .iter()
+                .filter(|rd| rd.split == crate::records::Split::Tier2 && rd.arms.len() == 1)
+                .filter(|rd| {
+                    let mut parts: Vec<(u16, u8)> = rd.parts.iter().map(|p| (p.start, p.bytes)).collect();
+                    parts.sort_by_key(|&(o, n)| (n, o));
+                    crate::native_cpu_stream::sequential(self, &rd.arms[0], &parts).is_some()
+                })
+                .flat_map(|rd| rd.parts.iter().map(|p| p.start))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();
         v
     }
 
-    /// The totals whose words no one reads from the rows where the CPU's token loop runs
-    /// (decision 0347): a total is read as one running word, its file's flag (`Batch::results`),
-    /// and only tier 2 (`masks`), a mark, or the token loop's own reads (the skip, the end
-    /// rules', the readers', the tests') read a row. simdjson keeps its error flags so: one
-    /// register, OR-ed a block, never stored a block.
+    /// The totals whose words no one reads from the rows (decisions 0347, 0406): a total is read
+    /// as one running word, its file's flag (`Batch::results`, tier 2's `totals`), and only
+    /// tier 2 (`masks`), a mark, or the token loop's own reads (the skip, the end rules', the
+    /// readers', the tests') read a row. With no token loop, only tier 2's masks and the marks.
+    /// simdjson keeps its error flags so: one register, never stored a block.
     pub fn rowless_totals(&self) -> Vec<usize> {
         use crate::records::EndRule;
-        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
-            return Vec::new();
-        };
         let mut read: Vec<usize> = self.masks.clone();
+        let Some(r) = self.records.as_ref() else {
+            return self.totals.iter().copied().filter(|t| !read.contains(t)).collect();
+        };
         read.extend(r.skip.map(usize::from));
         read.extend(r.marks.iter().filter(|m| m.0 != crate::records::WORD_ALONE).map(|m| usize::from(m.0)));
         read.extend(r.rules.iter().filter_map(|x| match *x {

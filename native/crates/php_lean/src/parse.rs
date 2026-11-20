@@ -17,7 +17,7 @@
 use crate::kinds::{K, f};
 use crate::lex::{Extra, Lexer, R, Refusal, T, Tok, w};
 use crate::{Tape, key, unkey};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 mod decl;
 mod expr;
@@ -248,7 +248,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
-pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     let lx = Lexer::new(src);
     let mut widths = Widths::guess(src.len());
     loop {
@@ -260,7 +260,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
             next: 0,
             extras: Vec::new(),
             e: 0,
-            w: Writer::new(0, widths, src.len() / 3 + 16),
+            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src),
             last_end: 0,
             depth: 0,
             far: 0,
@@ -271,10 +271,10 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
                 r => r,
             });
         }
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -818,6 +818,8 @@ impl<'a> P<'a> {
         }
         while !matches!(self.peek(), T::Eof | T::CloseTag) {
             self.statement(STMT)?;
+            // A top-level statement is final: its nodes are committed (passed to format 16's ops; decision 0434 §2).
+            self.w.commit();
         }
         if self.peek() == T::CloseTag {
             self.leaf(K::PhpEndTag, f::NONE, C_NONE)?;

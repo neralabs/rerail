@@ -13,7 +13,7 @@ fn every_step_parses_as_the_reference() {
 }
 
 
-/// A gap mark's `before`s and `unless before`s (decision 0406), a token mark's run of tokens,
+/// A gap mark's `before`s and `unless before`s (decision 0490), a token mark's run of tokens,
 /// and token marks tier 2 tests alone (0407): a line break ends a header unless
 /// the token after it is a `.`, which goes on the name, as a parser asks of the token it peeks
 /// at; at the file's end the mark holds (`, end`). The reference's nodes equal the interpreter's

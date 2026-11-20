@@ -22,6 +22,7 @@ use std::sync::Arc;
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 pub(super) const PRAGMA: &str = "cross-memo";
 pub(super) const COMPONENT: &str = "rr_cx_component";
@@ -68,12 +69,66 @@ pub(super) fn declared(prog: &front::Program) -> Option<BTreeSet<String>> {
 
 /// Adds `components.rr` to `prog`: its declarations, natives and rules, and `rr_cx_component` as an output. Core's
 /// relations and rules are the engine's, taken once.
+// The tree's edit, kept as a debug build's check of the version's (`run_typed`'s `Beside`).
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub(super) fn add(prog: &mut front::Program) -> Result<()> {
     let path = crate::code_rule_dsl::logic::rr::library().join("components.rr");
     let components = crate::code_rule_dsl::logic::rr::parse_file(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))?;
     // Only the engine's own rules (`rr_` heads: `rr_cx_*` and what lowering made for `components`), not what
     // `core.rr` brings with it: a program that declares a base relation itself keeps its own declaration.
-    let rules: Vec<front::Rule> = components.rules.into_iter().filter(|r| r.head.rel.starts_with("rr_")).collect();
+    let mut fields = components;
+    let rules: Vec<front::Rule> = std::mem::take(&mut fields.rules).into_iter().filter(|r| r.head.rel.starts_with("rr_")).collect();
+    fields.rules = rules.clone();
+    add_fields(prog, fields)?;
+    for rule in rules {
+        if !prog.rules.contains(&rule) {
+            prog.rules.push(rule);
+        }
+    }
+    Ok(())
+}
+
+/// `add` on the program's version, `head` its header (`Version::header`), edited as `add` edits the tree's fields:
+/// the declarations, natives, qualifiers, facts, inputs and output by the header, and `components.rr`'s rules
+/// copied from its image, each one the program does not hold already.
+pub(super) fn add_to(v: &Arc<Version>, head: &mut front::Program) -> Result<Arc<Version>> {
+    let path = crate::code_rule_dsl::logic::rr::library().join("components.rr");
+    let components = crate::code_rule_dsl::logic::rr::parse_file(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))?;
+    let mut fields = components;
+    let rules: Vec<front::Rule> = std::mem::take(&mut fields.rules).into_iter().filter(|r| r.head.rel.starts_with("rr_")).collect();
+    fields.rules = rules.clone();
+    let own = front::Program { rules, decls: fields.decls.clone(), ..Default::default() };
+    let was = head.clone();
+    let mut edited = head.clone();
+    add_fields(&mut edited, fields)?;
+    let (image, _) = Builder::of_program(&own).and_then(|b| b.finish()).map_err(Error::Plan)?;
+    let mut b = Builder::on(v);
+    // The header first: a copied rule's relations are declared.
+    b.set_header(&was, &edited);
+    // A rule the program holds already is taken once (by its hash and its text).
+    let held: std::collections::HashMap<u64, Vec<String>> = v.rules().fold(std::collections::HashMap::new(), |mut m, r| {
+        m.entry(r.hash()).or_insert_with(Vec::new).push(v.show_rule(r));
+        m
+    });
+    let mut added: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for r in image.rules() {
+        let text = image.show_rule(r);
+        if held.get(&r.hash()).is_some_and(|ts| ts.contains(&text)) || !added.insert(text) {
+            continue;
+        }
+        b.copy(&image, r);
+    }
+    *head = edited;
+    b.finish().map(|(v, _)| v).map_err(Error::Plan)
+}
+
+/// `add`'s edit of everything but the rules: `components`' natives, declarations, qualifiers, facts and inputs the
+/// program lacks, and `rr_cx_component` as an output. Only the engine's own rules count (`rr_` heads: `rr_cx_*` and
+/// what lowering made for `components`), not what `core.rr` brings with it: a program that declares a base relation
+/// itself keeps its own declaration, and its input or rule as its lowering made it (`docof` over nodes is a rule over
+/// `node`, not an input), and what it keeps (`.decl rr_cx_edge(…) no_inline`, decision 0099).
+fn add_fields(prog: &mut front::Program, components: front::Program) -> Result<()> {
+    let rules = components.rules;
     let mut needed: BTreeSet<String> = BTreeSet::new();
     for r in &rules {
         needed.insert(r.head.rel.to_string());
@@ -84,13 +139,10 @@ pub(super) fn add(prog: &mut front::Program) -> Result<()> {
         needed.extend(native.reads().into_iter().map(str::to_owned));
         prog.natives.entry(rel).or_insert(native);
     }
-    // A relation the program declares stays as the program has it: its own columns, and an input or a rule as its
-    // lowering made it (`docof` over nodes is a rule over `node`, not an input). Only what it lacks is added.
     let missing: BTreeSet<String> = needed.iter().filter(|rel| !prog.decls.contains_key(rel.as_str())).cloned().collect();
     for (rel, cols) in components.decls.into_iter().filter(|(rel, _)| missing.contains(rel.as_str())) {
         prog.decls.insert(rel, cols);
     }
-    // And what it keeps (`.decl rr_cx_edge(…) no_inline`, decision 0099).
     for (rel, words) in components.qualifiers.into_iter().filter(|(rel, _)| missing.contains(rel)) {
         prog.qualifiers.entry(rel).or_default().extend(words);
     }
@@ -100,11 +152,6 @@ pub(super) fn add(prog: &mut front::Program) -> Result<()> {
     for input in components.inputs.into_iter().filter(|rel| missing.contains(rel)) {
         if !prog.inputs.contains(&input) {
             prog.inputs.push(input);
-        }
-    }
-    for rule in rules {
-        if !prog.rules.contains(&rule) {
-            prog.rules.push(rule);
         }
     }
     if !prog.outputs.iter().any(|o| o == COMPONENT) {

@@ -1,17 +1,17 @@
-//! Kotlin's parser in Bitlex: the grammar of `bitlex_ladder/`'s last step, compiled once per
+//! Kotlin's parser in Bitlex: the grammar `kotlin.bitlex`, compiled once per
 //! process through the Bitlex compiler to tier 1 and tier 2 on Cranelift.
 //!
 //! Its tape is tree-sitter-kotlin's, as the lean parser (`rerail_kotlin_lean`) writes it: the
 //! grammar names the lean parser's kinds and fields, so a key here is the lean parser's key. A
-//! file the compiled parser refuses (a construct the ladder does not reach yet, or any syntax
+//! file the compiled parser refuses (a construct the grammar does not read yet, or any syntax
 //! error) goes to the lean parser, and from there to tree-sitter.
 
 use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
 use rerail_kotlin_lean as lean;
 
-/// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/36-no-back-fills.bitlex");
+/// The grammar.
+pub const GRAMMAR: &str = include_str!("../kotlin.bitlex");
 
 /// The tape's tag: Kotlin's in the registry (`languages/kotlin.json`).
 pub const TAG: u8 = 24;
@@ -28,7 +28,7 @@ pub struct Compiled {
     pub proofs: Vec<(Vec<u8>, rerail_compiler::bitlex_prove::Answer)>,
 }
 
-/// The provers' answers by question (decision 0404).
+/// The provers' answers by question (decision 0488).
 pub type Proofs = rerail_compiler::bitlex_prove::Known;
 
 // SAFETY: nothing changes a compiled parser once it is made (as `rerail_rr_parser::Compiled`):
@@ -61,7 +61,7 @@ fn field(name: &str) -> Option<u16> {
     lean::FIELDS.iter().position(|&f| f == name).filter(|&i| i > 0).map(|i| i as u16)
 }
 
-/// `grammar` compiled: a ladder step's text.
+/// `grammar` compiled: a Bitlex grammar's text.
 pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
     compile_timed(grammar, Default::default(), &mut |_, _| {})
 }
@@ -69,7 +69,7 @@ pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
 /// `compile_text`, each phase's time given to `lap` as it ends: Bitlex's syntax, the Bitlex
 /// compiler (tier 1's masks and tier 2's words), the words assembled, lowered to the native IR,
 /// tier 2's functions cut into clusters, and Cranelift's code for each tier. `known`: the provers'
-/// answers a compile made before (`Compiled::proofs`, decision 0404).
+/// answers a compile made before (`Compiled::proofs`, decision 0488).
 pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Compiled, String> {
     let mut at = std::time::Instant::now();
     let mut lap = |name: &'static str| {

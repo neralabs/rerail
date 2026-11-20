@@ -104,6 +104,19 @@ Between its sealing and its archive a segment is **read in place**:
 - a segment is trusted only once its header checks (state and length); one left by a process that ended is
   archived or removed, never read unchecked.
 
+
+**A segment's table past the estimate** (2026-11-17). A writer is told how many entries a write makes, and each
+segment's entry table has room for those still to come. The frames placed as encoded (Q89) are told the
+retained part's relations plus four an input, but an input has a frame per changed granule: about 3,500 frames
+against the estimate. Once the estimate was spent, every new segment's table held one entry, so each frame was
+a segment of its own, leased, mapped, named and written back: 13,677 segment files for a write of 166 MB on 50
+Python files of B-now, against 34 before, and 0.09 → 3.3 s of the store writer's CPU. A segment past the estimate
+now has room for as many entries as were placed so far (`SegmentWriter::slots`): 45 files, the same bytes.
+
+Frames placed as encoded are also encoded outside the writer's lock (`cross_rows::encode_windows`): each column
+into a buffer of the job's in one pass over the rows, then copied into the entry under the lock. Counted in a
+first pass and written in a second under the lock, the rows were read twice and the jobs framing a write's
+inputs took turns: 0.25 s of CPU became 1.8 s, and their waits more.
 ### 4. The archive: bulk inserts of rows, then the segment is free
 
 The store's writer **archives** sealed segments into SQLite as **rows of real tables**, in bulk: as many whole
@@ -276,8 +289,19 @@ wrap, anonymous or file-backed, so the pool's own budget is what counts those.
    as a row of codec 0 pointing at its range (`seg`, `seg_at`, `seg_len`; no frame), moving a stored row there
    (upsert), so a row whose segment went missing is whole again once its file is parsed again. Every read of either
    (the corpus's tapes before the first wave, residency, the bulk reads, search indexing, the prefilter's tapes) maps
-   the segment; a row of `seg` 0 is an older or lone write's zstd frame, decompressed as before. Outside a run's
-   waves (a standalone build, a publication) a file is still compressed and written in its own rows. Upkeep compacts
+   the segment. **No inline rows (2026-11-19, the user: "why do we have inline sql rows? ... We should not have them
+   anymore").** Inline zstd rows (`seg` 0) had stayed for writes outside a run's waves (a standalone build, a
+   publication, a snapshot, `put_source`/`put_tape`), for rows written before, and for a gather that found no room on
+   disk. Now every write places its objects in a segment: outside the waves `Placing` writes one segment of the
+   write's sources and tapes before its transaction, which numbers it (`max(seg)+1`) and inserts rows pointing at it,
+   and names the file once the rows commit (an overlay publication's pass gives its rows `seg` 0 as "this pass's
+   segment", which its SQL resolves to the number the pass's transaction registered); a gather with no room is dropped
+   and its files parsed again later. No source or tape is compressed (`compress_source`, `compress_tape`, the
+   shipped dictionaries' use and the decompressed read cache are gone: a read is the bytes in their segment). The
+   floor is 7 (`content-v7.sqlite`): an older store, which may hold inline rows, is refused, not read. Results,
+   relationships, the facts memo and tree pages keep their zstd rows (not sources or tapes). Tests:
+   `objects_whose_rows_disagree_with_their_segments_fail_closed`, `source_and_tape_objects_deduplicate_and_round_trip`
+   (no row holds bytes). Upkeep compacts
    the segments; a row whose segment is gone is marked `seg` -1 (never a segment's number) rather than deleted, as
    other rows name it. The store's disk budget (`capacity`) counts the three segment directories, which it did not.
    Test: `a_runs_tapes_and_sources_are_gathered_into_a_segment_and_read_there`.

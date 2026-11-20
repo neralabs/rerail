@@ -3159,6 +3159,7 @@ dependencies = [
  "rayon",
  "rerail-blocks",
  "rerail-forest",
+ "rustc-hash",
  "sha2 0.10.9",
 ]
 
@@ -3177,6 +3178,7 @@ name = "rerail-c-directives"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "rerail-c-directives",
  "rerail-c-lean",
  "rerail-c-pp",
  "rerail-compiler",
@@ -3225,12 +3227,12 @@ dependencies = [
  "cranelift-jit-wasm",
  "cranelift-module",
  "cranelift-native",
+ "foldhash",
  "libc",
  "rayon",
  "rerail-clif",
  "rerail-compiler",
  "rerail-tape-format",
- "rustc-hash",
 ]
 
 [[package]]
@@ -3483,6 +3485,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -3588,6 +3591,7 @@ dependencies = [
  "bitlex",
  "rerail-compiler",
  "rerail-kotlin-lean",
+ "rerail-kotlin-parser",
  "rerail-tape-format",
 ]
 
@@ -3645,6 +3649,7 @@ dependencies = [
  "rerail-lang",
  "rerail-markdown-inline-lean",
  "rerail-markdown-lean",
+ "rerail-metal",
  "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
@@ -4149,6 +4154,7 @@ dependencies = [
  "rerail-lang",
  "rerail-logic",
  "rerail-prof",
+ "rerail-program-image",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4214,10 +4220,12 @@ name = "rerail-parser-tests"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "libc",
  "rerail-compiler",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
+ "rerail-tape-format",
  "tree-sitter",
  "tree-sitter-json",
 ]
@@ -4300,6 +4308,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-program-image"
+version = "0.1.0"
+dependencies = [
+ "foldhash",
+ "rerail-prof",
+ "rerail-program-image",
+ "rerail-rr-syntax",
+ "rustc-hash",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "rerail-python-lean"
 version = "0.1.0"
 dependencies = [
@@ -4351,6 +4372,7 @@ dependencies = [
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",
+ "rerail-program-image",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4623,7 +4645,9 @@ version = "0.1.0"
 dependencies = [
  "lz4-sys",
  "memchr",
+ "metal",
  "rerail-clif",
+ "rerail-simd8",
  "sha2 0.10.9",
 ]
 

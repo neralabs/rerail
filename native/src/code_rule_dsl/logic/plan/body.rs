@@ -125,11 +125,28 @@ pub struct Body<'v> {
     /// The version the rule's source (`RuleRef::source`) is a rule of: the run's version 0, for a rule of a
     /// maintained form (`Versions::at`); `None` for every other rule.
     sources: Option<&'v Version>,
+    /// Its head's plain variables bound before its first step (`with_head_bound`): a recheck's, run once per
+    /// candidate row (decision 0364 stage 3, Q208).
+    head_bound: bool,
 }
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None, head_bound: false }
+    }
+    /// The rule with its head's plain variables bound before its first step: a recheck of one candidate row
+    /// (decision 0364 stage 3). The planner prices and keeps its order apart from the rule's own (`key` names it):
+    /// each step starts from those variables bound and one row (Q208).
+    pub fn with_head_bound(&self) -> Body<'v> {
+        Body { v: self.v, rule: self.rule, lits: self.lits.clone(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: self.sources, head_bound: true }
+    }
+    /// The variables bound before its first step: its head's plain ones for a recheck (`with_head_bound`), else none.
+    /// A computed term's variables are not bound by the candidate.
+    pub fn bound_before(&self) -> VarSet {
+        if !self.head_bound {
+            return VarSet::new();
+        }
+        VarSet::of(self.head().args().filter_map(|t| t.var()))
     }
     /// The rule this one was written from (decision 0258): for a maintenance rule of a session's form (`h__del`,
     /// `h__ins`, `h__redo`, …), its source rule `h :- …` of the run's version. `None` for a rule not written from one.
@@ -208,9 +225,40 @@ impl<'v> Body<'v> {
     pub fn read_count(&self) -> usize {
         self.lits.iter().filter(|l| l.atom().is_some()).count()
     }
-    /// The demand of a demand-restricted aggregate (`rr_demand_agg_…`, a positive atom), which drives its rule.
+    /// The demand that drives its rule whatever the statistics say: a demand-restricted aggregate's
+    /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys.
     pub fn demand_first(&self) -> Option<usize> {
         (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).contains("rr_demand_agg_")))
+    }
+    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
+    pub fn own_demand(&self) -> Option<usize> {
+        let head = self.rel(self.head());
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).strip_prefix("demand_").is_some_and(|r| r == head)))
+    }
+    /// Whether an order led by literal `lead` keeps a demanded relation's rule to what its demand bounds (Q59): led
+    /// by the demand, or by an atom a constant restricts (a column a constant names, or a variable an equality binds
+    /// to one: `kind($i, #k1139)` reads one kind's nodes). An unrestricted atom first (`col(v, c)`) scans the corpus
+    /// per chunk: 29 M rows, not 34 k, on PostHog. Forcing the demand first always cost 66x on a restricted lead
+    /// (`not_name` on 50 files of B-now: a 42 k-row demand against a kind of 498 nodes).
+    pub fn demand_bounds_lead(&self, lead: usize) -> bool {
+        let Some(d) = self.own_demand() else { return true };
+        if lead == d {
+            return true;
+        }
+        let Some(a) = self.plain_atom(lead) else { return false };
+        if a.neg() {
+            return false;
+        }
+        let bound: Vec<_> = (0..self.len())
+            .filter_map(|l| match self.view(l) {
+                Lit::Cmp { l: x, op: CmpOp::Eq, r: y } => match (x, y) {
+                    (TermRef::Var(v), t) | (t, TermRef::Var(v)) if self.constant(t).is_some() => Some(v),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        self.args(lead).iter().any(|&t| self.constant(t).is_some() || t.var().is_some_and(|v| bound.contains(&v)))
     }
     /// The share of rows filter `i` passes on (decision 0297): measured by kind of filter, rows weighted, over the
     /// 300-file bench's 317 rules (`profile`'s `native.tsv`, each step's rows in and out). An equality that binds a
@@ -379,6 +427,10 @@ impl<'v> Body<'v> {
 
     /// The rule written into a digest, as `plan::digest_atom` and `plan::digest_literal` write the tree's head and body.
     pub(in crate::code_rule_dsl) fn digest(&self, d: &mut super::super::derived::Inputs) {
+        // A recheck's order is not the rule's: kept apart (Q208).
+        if self.head_bound {
+            d.str("head bound");
+        }
         self.digest_atom(d, self.head());
         d.u64(self.lits.len() as u64);
         for &l in &self.lits {

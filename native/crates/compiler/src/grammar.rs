@@ -15,7 +15,9 @@
 //! 5. **Merging.** States that act alike on every token are one (Moore's refinement).
 
 use bitlex::syntax::{Gram, Stmt};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+/// Maps hashed with a fixed seed (`foldhash`'s), so what iterates one goes the same way each run.
+type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::FixedState>;
+type HashSet<K> = std::collections::HashSet<K, foldhash::fast::FixedState>;
 
 /// A state of tier 2's state machine (docs/parser-generators/18-tree-as-grammar.md §2): the
 /// tree section's grammar, one level per nested node. State 0 is the root's start.

@@ -27,7 +27,10 @@
 //! stream's or before it (`within` is which), one after it may be past the end.
 
 use crate::block::{BlockOp, ClassTable};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+/// The prover's maps and sets: hashed with a fixed seed (`foldhash`'s), so a search that iterates them (which
+/// value to choose next, the order of a window's clauses) goes the same way each run, and fast.
+type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::FixedState>;
+type HashSet<K> = std::collections::HashSet<K, foldhash::fast::FixedState>;
 
 /// A set of bytes, bit `b` for byte `b`.
 pub type ByteSet = [u64; 4];
@@ -447,7 +450,7 @@ const STREAM: u16 = u16::MAX;
 /// together at any position, by the same proof one level down. Proved, it is made smaller (each
 /// value dropped while the rest still never hold), kept, and holds at every lag of every window
 /// after, to the question's end (a question's answer depends on it alone, so a later one starts
-/// with none: decision 0404); the value is tried again. Not proved, or past the levels or rounds: not proved (sound,
+/// with none: decision 0488); the value is tried again. Not proved, or past the levels or rounds: not proved (sound,
 /// a lemma is a proof of its own).
 pub struct Induction {
     nexts: HashMap<u16, u16>,
@@ -467,17 +470,17 @@ pub struct Induction {
     question: usize,
     /// The solver, reset for each solve (its memory kept).
     solver: Solver,
-    /// The lemmas a caller proved and gave (`add_lemma`, `never_inductive`, decision 0401), kept
+    /// The lemmas a caller proved and gave (`add_lemma`, `never_inductive`, decision 0453), kept
     /// across its questions, unlike a question's own (`lemmas`). A prover's answers depend on
     /// them, so a prover given any is not asked through the keyed answers (`Proofs`, decision
-    /// 0404), which are keyed by a question's content alone: `gap_ends`' prover is its own.
+    /// 0488), which are keyed by a question's content alone: `gap_ends`' prover is its own.
     given: Vec<Lemma>,
     /// The root's hypothesis is made at every lag of the window (`never_inductive`): a value
     /// the window reads at the position only is then assumed at the lags before it too.
     whole_hypothesis: bool,
 }
 
-/// The version of what the provers answer, in every question's key (`Proofs`, decision 0404):
+/// The version of what the provers answer, in every question's key (`Proofs`, decision 0488):
 /// bumped with any change that can make one answer differently.
 pub const PROOFS_VERSION: u32 = 1;
 
@@ -491,7 +494,7 @@ pub enum Answer {
 /// Answers by question's key (`question`).
 pub type Known = HashMap<Vec<u8>, Answer>;
 
-/// The provers' answers by question (decision 0404): `known`, given to a compile, answers a
+/// The provers' answers by question (decision 0488): `known`, given to a compile, answers a
 /// question without its proof; `made`, each question the compile answered otherwise, for the
 /// caller to keep (as the engine keeps images, 0264). A question is its key (`question`): the
 /// answer depends on nothing else.
@@ -526,7 +529,7 @@ impl Proofs {
     }
 }
 
-/// Answers as bytes, for a store (decision 0404): `RRPROOFS`, the version (u32), then each
+/// Answers as bytes, for a store (decision 0488): `RRPROOFS`, the version (u32), then each
 /// answer: its key's length (u32) and bytes, a tag (0 no, 1 yes, 2 bytes) and, for bytes, the
 /// four words. Sorted by key, so the same answers are the same bytes.
 pub fn encode(answers: &[(Vec<u8>, Answer)]) -> Vec<u8> {
@@ -585,7 +588,7 @@ pub fn decode(bytes: &[u8]) -> Known {
     known
 }
 
-/// A question's key (decision 0404): what the prover reads of it and nothing else. The value's
+/// A question's key (decision 0488): what the prover reads of it and nothing else. The value's
 /// cone (the operations it reads, through the fixed points' nexts), numbered in the order a walk
 /// from the value meets them, each class by its table's bytes; the delay; and `asker`, the prover
 /// and its settings. The same question in another grammar, or at other numbers, has this key.
@@ -794,6 +797,12 @@ impl Induction {
         proved
     }
 
+    /// Whether a stream that begins within the window has `v` at delay `d` (`prove`'s first solve): a stream's, so
+    /// no lemma rules it out and `never` and `never_inductive` both fail on `v`.
+    pub fn refuted(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
+        matches!(self.solve(ops, tables, v, d, None, true, &[0; 4]), Outcome::Way(..))
+    }
+
     /// A lemma proved by the caller: these values (each an operation, a lag from the position
     /// as a `prev` reads it, and its value) never hold together at a position in the stream.
     /// Over carried values, it constrains a window's edge, where they are free. The caller
@@ -886,7 +895,7 @@ impl Induction {
     /// A new question, of `ops`: the windows of the last are dropped (its operations may not
     /// be these).
     fn ask(&mut self, ops: &[BlockOp]) {
-        // A question's lemmas are its own: its answer depends on it alone (decision 0404).
+        // A question's lemmas are its own: its answer depends on it alone (decision 0488).
         self.lemmas.clear();
         self.windows.clear();
         self.question = ops.len();
@@ -907,17 +916,16 @@ impl Induction {
             let window = {
                 let (_, plain) = cone(ops, v);
                 let reach = plain.keys().copied().max().unwrap_or(0).max(u32::from(d)) + self.horizon;
-                let (mut readers, mut far) = unrolled_readers(ops, nexts, v, reach);
-                // Its values are made at every lag of the window: their bytes' groups too.
-                for &(at, l, _) in whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM) {
-                    let (theirs, f) = unrolled_readers(ops, nexts, at, reach);
+                // The root at its lag, and the hypothesis' values at every lag of the window where
+                // they are made there (`whole_hypothesis`, below): their readers too, so each byte
+                // an operation reads has its groups.
+                let mut roots = vec![(v, 0u32)];
+                if let Some(h) = whole {
                     for lag in 1..=reach {
-                        for (k, set) in &theirs {
-                            readers.entry(k + lag + l).or_default().extend(set.iter().copied());
-                        }
-                        far = far.max(f + lag + l);
+                        roots.extend(h.iter().filter(|&&(at, _, _)| at != STREAM).map(|&(at, l, _)| (at, lag + l)));
                     }
                 }
+                let (readers, far) = unrolled_readers(ops, nexts, &roots, reach);
                 let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Clauses::default(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default() };
                 // A literal that is true.
                 u.clauses.push(&[1]);
@@ -1102,11 +1110,11 @@ fn carried(ops: &[BlockOp], nexts: &HashMap<u16, u16>, at: u16) -> bool {
 
 /// The readers of each lag's byte, as `Unrolled::op` reads them.
 /// And the farthest lag any operation is read at (a `within` at its byte's).
-fn unrolled_readers(ops: &[BlockOp], nexts: &HashMap<u16, u16>, v: u16, reach: u32) -> (HashMap<u32, HashSet<Reader>>, u32) {
+fn unrolled_readers(ops: &[BlockOp], nexts: &HashMap<u16, u16>, roots: &[(u16, u32)], reach: u32) -> (HashMap<u32, HashSet<Reader>>, u32) {
     let mut far = 0;
     let mut readers: HashMap<u32, HashSet<Reader>> = HashMap::default();
     let mut seen = HashSet::default();
-    let mut work = vec![(v, 0u32)];
+    let mut work = roots.to_vec();
     while let Some((at, lag)) = work.pop() {
         if !seen.insert((at, lag)) {
             continue;
@@ -1366,7 +1374,7 @@ mod tests {
     use super::*;
 
     /// A question's key is its content: the same cone at other numbers is the same key, and any
-    /// change to it another (decision 0404). And answers keep through `encode`.
+    /// change to it another (decision 0488). And answers keep through `encode`.
     #[test]
     fn questions_are_keyed_by_content() {
         let tables = vec![ClassTable { lo: [1; 16], hi: [1; 16] }];

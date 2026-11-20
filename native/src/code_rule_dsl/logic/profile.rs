@@ -273,6 +273,7 @@ impl State {
             s.planned_work += t.planned_work;
             s.planned_scanned += t.planned_scanned;
             s.steps += t.steps;
+            s.rules += t.rules;
             s.work += t.work;
             s.cpu_estimate += t.cpu_estimate;
             s.gpu_estimate += t.gpu_estimate;
@@ -286,6 +287,9 @@ impl State {
                 a.3 += b.3;
             }
             s.gpu.add(&t.gpu);
+            for (a, b) in s.gpu_terms.iter_mut().zip(t.gpu_terms) {
+                *a += b;
+            }
             if t.refused.is_some() {
                 s.refused = t.refused;
             }
@@ -327,6 +331,8 @@ pub struct PlacedTotal {
     /// Of the planned work, the rows its scans read (`Shape::scanned`), and its rules' steps, over its runs.
     pub planned_scanned: f64,
     pub steps: u64,
+    /// Its rules, over its runs.
+    pub rules: u64,
     pub work: u64,
     pub cpu_estimate: f64,
     pub gpu_estimate: f64,
@@ -343,6 +349,9 @@ pub struct PlacedTotal {
     /// refused it, when it was placed there and did not run there.
     pub gpu: GpuTotal,
     pub refused: Option<String>,
+    /// The device price's terms over its runs on the device, as priced (`placement::DeviceTerms::array`: rules,
+    /// steps, sorts, values read, rows made, joins' device seconds, other work, views read).
+    pub gpu_terms: [f64; 8],
 }
 
 #[derive(Default, Clone)]
@@ -370,6 +379,8 @@ pub struct GpuTotal {
     pub sort_hits: u64,
     pub rows: u64,
     pub distinct: u64,
+    /// Head rows written in place into their head's block (decision 0325 step 4).
+    pub placed: u64,
     pub bindings: u64,
     /// Texts made on the device into heads, stored as symbols.
     pub made: u64,
@@ -407,6 +418,7 @@ impl GpuTotal {
         self.sort_hits += o.sort_hits;
         self.rows += o.rows;
         self.distinct += o.distinct;
+        self.placed += o.placed;
         self.bindings += o.bindings;
         self.made += o.made;
         self.waved += o.waved;
@@ -1344,6 +1356,8 @@ pub fn peaks() -> String {
     memory::sampled_report(&mut r);
     if let Some(dir) = directory() {
         let _ = std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv());
+        let _ = std::fs::write(dir.join("heap.tsv"), memory::heap_tsv());
+        if !rerail_prof::heap::snapshot_frames().is_empty() || std::env::var_os("RERAIL_HEAP_FRAMES").is_some() { let _ = std::fs::write(dir.join("heap-frames.tsv"), memory::heap_frames_tsv()); }
     }
     r
 }
@@ -1372,6 +1386,13 @@ static WAVES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::n
 thread_local! {
     /// This thread works behind the run (the store's writer): what it sends to SQLite no wave waits for.
     static BEHIND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f`, which reads the store inside the waves (decision 0104's one exception, decision 0298 §5: a reached
+/// stratum's stored general form, whose key the run knows only once it reaches the stratum), as work behind the run
+/// (`behind`), which the strict mode lets through. `f` reads alone: what it would write goes to the store's writer.
+pub fn read_in_waves<T>(f: impl FnOnce() -> T) -> T {
+    behind(f)
 }
 
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
@@ -1485,9 +1506,6 @@ pub fn warm() -> bool {
 /// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
 /// and refuses a commit that changes one without the other.
 pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
-    ("the run's hold on its plans", "a lock: a lease on the run's plans against a collection in another process (decision 0053)"),
-    ("the run's hold released", "a lock: the lease's release"),
-    ("a source's pin", "a lock: a lease on a source the run reads, until its manifest names it (O95)"),
     ("the combined program's pins released", "a lock: the release of the combined program's leases"),
     ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
     ("the journal's aged cursor", "a timestamp: a root's journal cursor, or a run record's (the cutoff's checks), stored again once it is a million events behind with nothing named since (`observe::CURSOR_AGE`), as a replay from far back is slow"),
@@ -1910,7 +1928,8 @@ pub fn now() -> f64 {
 /// function of the step's inputs, not of whether the process that made them profiled.
 pub fn decision(topic: &str, text: impl FnOnce() -> String) {
     let deciding = DECIDING.with(|d| !d.borrow().is_empty());
-    if !on() && !deciding {
+    // A debug build's tree check beside a pass decides nothing (`quiet`): the pass itself records its decisions.
+    if QUIET.get() || (!on() && !deciding) {
         return;
     }
     // The text first: making it may profile too (a split's span), and the state's lock is not reentrant.
@@ -1970,6 +1989,27 @@ impl Drop for Deciding {
     }
 }
 
+/// Decisions made before, stated again as made now (decision 0385): a pass run over an edit, where the decisions it
+/// made over the whole stand, says what it said then, to the profile and to every open step (`Deciding`).
+pub fn restate(made: &[Decided]) {
+    if made.is_empty() || QUIET.get() {
+        return;
+    }
+    DECIDING.with(|d| {
+        for step in d.borrow_mut().iter_mut() {
+            for (k, n) in made {
+                *step.entry(k.clone()).or_default() += n;
+            }
+        }
+    });
+    if on() {
+        let mut state = state();
+        for (k, n) in made {
+            *state.decisions.entry(k.clone()).or_default() += n;
+        }
+    }
+}
+
 /// The decisions a version this run reused made when it was made (decision 0269), taken from `from` (`memory`,
 /// `store`): the run states them as its own, as a run that made the version would.
 pub fn reused(from: &'static str, made: &[Decided]) {
@@ -1981,6 +2021,19 @@ pub fn reused(from: &'static str, made: &[Decided]) {
         *state.decisions.entry(k.clone()).or_default() += n;
         state.kept.insert(k.clone(), from);
     }
+}
+
+thread_local! {
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with this thread's decisions unrecorded: a debug build's check that runs a pass's tree form beside it,
+/// whose decisions the pass itself records.
+pub fn quiet<T>(f: impl FnOnce() -> T) -> T {
+    let was = QUIET.replace(true);
+    let out = f();
+    QUIET.set(was);
+    out
 }
 
 /// The decisions made so far (none when profiling is off).
@@ -2024,8 +2077,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}, found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}, found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
     let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
@@ -2573,6 +2626,11 @@ pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads
     if on() { analysis_report::projection(prog, reads); }
 }
 
+/// `projection_plan` from the relations' readers and the outputs (`analysis_report::projection_of`).
+pub fn projection_plan_of(users: impl FnOnce() -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>>, outputs: &std::collections::BTreeSet<String>, reads: &std::collections::BTreeSet<String>) {
+    if on() { analysis_report::projection_of(&users(), outputs, reads); }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -2832,6 +2890,9 @@ pub struct Report {
     pub decode_cpu: f64,
     /// Head rows left once made distinct on the device (of `rows`).
     pub distinct: u64,
+    /// Of those, rows the device wrote in place into their head's block, which the store takes as they lie
+    /// (decision 0325 step 4): none read back.
+    pub placed: u64,
     pub upload_cpu: f64,
     /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
     pub uploads: u32,

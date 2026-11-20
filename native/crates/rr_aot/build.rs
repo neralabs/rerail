@@ -1,6 +1,7 @@
 //! With the `generated` feature, writes the `.rr` parser's code as Rust into `OUT_DIR`: tier 1's
 //! through `clif_rust` (the JIT's functions' IR) as `tier1_aot.rs`, tier 2's through `rust_stream`
-//! (the native IR, the structured backend) as `tier2_aot.rs`. Each carries its fingerprint, which
+//! (the native IR, the structured backend) as `tier2_aot.rs`, and in format 16, writing the tape by the writer's ops
+//! as it parses (decision 0434), as `tier2_16_aot.rs`. Each carries its fingerprint, which
 //! `aot` checks against the program the JIT compiles when it runs. Their inner attributes and
 //! docs are dropped: `lib.rs` includes each inside a module and sets the attributes there.
 
@@ -21,8 +22,10 @@ fn generate() {
     let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
     let (widths, tag) = c.parser.tier2.widths_tag();
     let two = rust_stream::rust_source_at(&native, widths, tag).unwrap_or_else(|e| panic!("tier 2 to Rust: {e}"));
+    let (widths16, tag16) = c.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    let sixteen = rust_stream::rust_source_16(&native, widths16, tag16).unwrap_or_else(|e| panic!("tier 2 in format 16 to Rust: {e}"));
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
-    for (file, src) in [("tier1_aot.rs", &one), ("tier2_aot.rs", &two)] {
+    for (file, src) in [("tier1_aot.rs", &one), ("tier2_aot.rs", &two), ("tier2_16_aot.rs", &sixteen)] {
         let body: String = src
             .lines()
             .filter(|l| !l.starts_with("#![") && !l.starts_with("//!"))

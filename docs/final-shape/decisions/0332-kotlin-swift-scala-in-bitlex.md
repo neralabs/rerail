@@ -677,7 +677,7 @@ fun g(
 
 The stop is the byte after `by` (`prev(by_w, 2)`), not its `b`. With `by_w` itself the stop
 looks two bytes ahead, and the CPU's tier 1 then lost the receiver's mark wherever the run
-crossed a word: 16 files were refused that the interpreter read. That is open below (Q186).
+crossed a word: 16 files were refused that the interpreter read. That is open below (Q198).
 
 Still refused: a generic call on `?:`'s right side (`m ?: f<M>()!!`).
 
@@ -1063,7 +1063,13 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
 
 ## Found on the way
 
-- Q186 (open; Q33 where it was written): the CPU's tier 1 gets a `fill` wrong where its stop is a delayed output (one that
+(Work queue numbers as on the hub; written as Q30, Q31 and Q32 on Swift-Kotlin-Scala-support.)
+
+- Q125: the ladder test `07-textes` was already red at the merged Parser-generators commit. It is
+  theirs to fix.
+- Q124: done in this decision (the settling mark).
+- Q126: a token with no end rule ends at different bytes in the CPU tier 1 and in the interpreter.
+- Q198 (open; Q33 where it was written, Q186 on Swift-Kotlin-Scala-support): the CPU's tier 1 gets a `fill` wrong where its stop is a delayed output (one that
   looks ahead) and the fill crosses a word. `decl_stop = … | by_w` in step 27 lost the
   `dotted` mark at `fun ValueMapperBuilder.forKotlin()` (bytes 2165 to 2192, across 2176) in
   pkl's `ConfigExtensions.kt`; the interpreter's mark is right. `tests::tier1_records` over
@@ -1081,11 +1087,6 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
   start. Both need tier 2 to write what the bytes don't give: a zero-width extra at a mark's
   position, and a node that ends at a mark. A grammar step that only dropped the comment's
   token was tried and withdrawn.
-
-- Q184 (Q31 where it was written): the ladder test `07-textes` was already red at the merged Parser-generators commit. It is
-  theirs to fix.
-- Q183 (Q30 where it was written): done in this decision (the settling mark).
-- Q185 (Q32 where it was written): a token with no end rule ends at different bytes in the CPU tier 1 and in the interpreter.
   The grammar gives its punctuation a `pair` rule, as rr's does.
 
 ## Next

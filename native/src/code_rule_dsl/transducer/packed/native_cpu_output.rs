@@ -113,7 +113,8 @@ fn capture_oldest(
     )
 }
 
-fn line_for(
+/// The line (from 0) source byte `byte` lies in (the batch's numbering): a search of the task's line starts.
+pub(super) fn line_for(
     function: &mut FunctionBuilder<'_>,
     task: cranelift_codegen::ir::Value,
     byte: cranelift_codegen::ir::Value,
@@ -304,28 +305,28 @@ fn byte_for(
     function.block_params(finish)[0]
 }
 
+/// Whether the JIT has code for every instruction of the output program (the caller asks before compiling).
+pub(super) fn lowered(native: &NativeModule) -> bool {
+    native.output_program.instructions.iter().all(|instruction| {
+        matches!(
+            instruction,
+            OutputInstruction::MatchProperty { .. }
+                | OutputInstruction::CaptureProperty { .. }
+                | OutputInstruction::Offset { .. }
+                | OutputInstruction::Downcase { .. }
+                | OutputInstruction::SelectAdjacent { .. }
+                | OutputInstruction::Strip { .. }
+                | OutputInstruction::LanguageFromMime { .. }
+        )
+    })
+}
+
 pub(super) fn define(
     module: &mut JITModule,
     native: &NativeModule,
     regex_find: Option<FuncId>,
 ) -> Result<FuncId, Box<cranelift_module::ModuleError>> {
-    if native
-        .output_program
-        .instructions
-        .iter()
-        .any(|instruction| {
-            !matches!(
-                instruction,
-                OutputInstruction::MatchProperty { .. }
-                    | OutputInstruction::CaptureProperty { .. }
-                    | OutputInstruction::Offset { .. }
-                    | OutputInstruction::Downcase { .. }
-                    | OutputInstruction::SelectAdjacent { .. }
-                    | OutputInstruction::Strip { .. }
-                    | OutputInstruction::LanguageFromMime { .. }
-            )
-        })
-    {
+    if !lowered(native) {
         return Err(Box::new(cranelift_module::ModuleError::Undeclared(
             "output instruction is not lowered".into(),
         )));
@@ -656,6 +657,7 @@ pub(super) fn define(
         let values = function.block_params(properties).to_vec();
         // Output operators share one budget for this complete candidate.
         // Neither a previous candidate nor its structural execution owns it.
+        super::native_cpu::fold_most_steps(&mut function, task);
         function.ins().store(
             MemFlags::trusted(),
             zero,

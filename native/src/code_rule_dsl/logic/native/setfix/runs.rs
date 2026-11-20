@@ -769,13 +769,40 @@ fn gallop<T>(v: &[T], start: usize, less: impl Fn(&T) -> bool) -> usize {
     }
 }
 
+thread_local! {
+    /// How deep this thread is in builds other jobs of the pool may wait for (`inline`).
+    static INLINE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Runs `f` with this thread's sorts and merges kept on it, off the pool: for a build other jobs may wait for (a
+/// derived input's lazy order, `Csr::runs`, made inside its `OnceLock`). A wait for the pool's jobs runs the pool's
+/// other jobs on the waiting thread (`threads::scope`); one that probes the same order then waits for the build on
+/// the build's own stack, and never returns. hogql's cold runs hung so on a busy host: a join's morsel made an order
+/// with a sort on the pool, and its wait ran another morsel of the join.
+pub(super) fn inline<R>(f: impl FnOnce() -> R) -> R {
+    struct Out;
+    impl Drop for Out {
+        fn drop(&mut self) {
+            INLINE.with(|c| c.set(c.get() - 1));
+        }
+    }
+    INLINE.with(|c| c.set(c.get() + 1));
+    let _out = Out;
+    f()
+}
+
+/// Whether a sort or merge here may go on the pool: more than one thread, and not inside an `inline` build.
+fn on_pool() -> bool {
+    crate::threads::max() > 1 && INLINE.with(|c| c.get() == 0)
+}
+
 /// `v`, sorted pieces one after another (`bounds`: each piece's start, then the end), merged into one sorted
 /// sequence: adjacent pieces two at a time, a pass at a time, through one buffer of `v`'s length, `le(a, b)` saying
 /// `a` may come before `b` (ties keep the left piece's first). Each item moves about log(pieces) times; one piece
 /// moves nothing (decision 0187: rows known sorted are merged, not sorted again). From `PAR_ROWS` items, on the pool
 /// (`merge_pieces_par`).
 pub(super) fn merge_pieces<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize>, le: impl Fn(T, T) -> bool + Sync) {
-    if v.len() >= PAR_ROWS && crate::threads::max() > 1 {
+    if v.len() >= PAR_ROWS && on_pool() {
         return merge_pieces_par(v, bounds, le);
     }
     let mut buf: Vec<T> = Vec::new();
@@ -869,7 +896,7 @@ fn merge_pieces_par<T: Copy + Send + Sync>(v: &mut Vec<T>, mut bounds: Vec<usize
 fn sort_unstable_par<T: Ord + Copy + Send + Sync>(v: &mut Vec<T>) {
     let n = v.len();
     let threads = crate::threads::max();
-    if n < PAR_ROWS || threads < 2 {
+    if n < PAR_ROWS || !on_pool() {
         v.sort_unstable();
         return;
     }
@@ -1444,6 +1471,28 @@ pub mod presorted {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// Inside a build other jobs may wait for (`inline`, a lazy order's), sorts and merges stay on the thread, nested
+    /// builds too, and leave it as they found it, a panic included; outside, a large one goes on the pool. The sort's
+    /// result is one thread's either way.
+    #[test]
+    fn a_build_others_wait_for_sorts_on_its_own_thread() {
+        let pool = crate::threads::max() > 1;
+        assert_eq!(on_pool(), pool);
+        inline(|| {
+            assert!(!on_pool());
+            inline(|| assert!(!on_pool()));
+            assert!(!on_pool());
+            let mut v: Vec<u64> = (0..PAR_ROWS as u64 * 2).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 20).collect();
+            let mut want = v.clone();
+            want.sort_unstable();
+            sort_unstable_par(&mut v);
+            assert_eq!(v, want);
+        });
+        assert_eq!(on_pool(), pool);
+        assert!(std::panic::catch_unwind(|| inline(|| panic!("a build that fails"))).is_err());
+        assert_eq!(on_pool(), pool);
+    }
 
     /// Decision 0294: a merge of pieces on the pool puts out what one thread's does, ties included (the left piece's
     /// first: items equal by `le` and told apart by their ids), whatever the pieces' sizes; and a sort on the pool is

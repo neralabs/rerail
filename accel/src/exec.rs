@@ -64,6 +64,8 @@ pub fn threads() -> usize {
 pub fn configure(this_thread: bool) {
     static MADE: OnceLock<()> = OnceLock::new();
     MADE.get_or_init(|| {
+        // Every block is made by the one policy from here on (decision 0342).
+        crate::blocks::install();
         let b = rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}")).stack_size(POOL_STACK);
         let _ = if this_thread { b.use_current_thread() } else { b }.build_global();
     });
@@ -112,11 +114,71 @@ thread_local! {
     static LAST_RUN: std::cell::Cell<(f64, &'static str)> = const { std::cell::Cell::new((0.0, "")) };
 }
 
-/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]).
+/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]). The job runs in
+/// a job scope of its own ([`in_job_scope`]).
 pub fn as_job<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
-    let r = f();
+    let r = in_job_scope(f);
     LAST_JOB.with(|j| j.set(name));
     r
+}
+
+/// A job scope's entry and exit (decision 0386): what a layer above keeps per job rather than per thread, saved
+/// when a job starts on a thread and restored when it ends. A job may start on a thread in the middle of another (a
+/// wait that runs the pool's jobs): the inner job's work must not join the outer's, nor be left for it.
+pub type JobScopeEnter = fn() -> Box<dyn std::any::Any>;
+pub type JobScopeExit = fn(Box<dyn std::any::Any>);
+
+static JOB_SCOPE: std::sync::OnceLock<(JobScopeEnter, JobScopeExit)> = std::sync::OnceLock::new();
+
+/// Sets the job scope's entry and exit, once for the process (before its first job); later calls are ignored.
+pub fn set_job_scope(enter: JobScopeEnter, exit: JobScopeExit) {
+    let _ = JOB_SCOPE.set((enter, exit));
+}
+
+/// Runs `f` in a job scope of its own: the scope set by [`set_job_scope`] is entered before it and exited after it,
+/// also when it panics. Every job of the pool runs in one: [`as_job`]'s and a stream's ([`crate::stream`]).
+pub fn in_job_scope<R>(f: impl FnOnce() -> R) -> R {
+    let Some(&(enter, exit)) = JOB_SCOPE.get() else { return f() };
+    struct Exit(Option<Box<dyn std::any::Any>>, JobScopeExit);
+    impl Drop for Exit {
+        fn drop(&mut self) {
+            if let Some(saved) = self.0.take() {
+                (self.1)(saved);
+            }
+        }
+    }
+    let _exit = Exit(Some(enter()), exit);
+    f()
+}
+
+thread_local! {
+    /// The command buffers this thread made and has not committed (decision 0386).
+    static UNCOMMITTED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts a command buffer this thread made, to be committed by it ([`command_committed`]). A queue holds a bounded
+/// number of command buffers not yet completed (64 on Metal), and a thread asking for one past them waits for one to
+/// complete: one never committed never completes. So a thread commits what it made before it waits for anything
+/// ([`assert_no_uncommitted`]), and leaves none open when the call that made it returns.
+pub fn command_opened() {
+    UNCOMMITTED.with(|c| c.set(c.get() + 1));
+}
+
+/// A command buffer [`command_opened`] counted, committed or dropped unencoded.
+pub fn command_committed() {
+    UNCOMMITTED.with(|c| c.set(c.get().saturating_sub(1)));
+}
+
+/// The command buffers this thread holds uncommitted.
+pub fn uncommitted_here() -> u32 {
+    UNCOMMITTED.try_with(std::cell::Cell::get).unwrap_or(0)
+}
+
+/// A wait's check (debug builds): the waiting thread holds no uncommitted command buffer. A thread that waits with one
+/// can hold up every thread that needs a command buffer of the queue, and the one that would commit it.
+#[track_caller]
+pub fn assert_no_uncommitted(site: &'static str) {
+    debug_assert_eq!(uncommitted_here(), 0, "{site}: a thread waits holding command buffers it did not commit (decision 0386)");
 }
 
 /// Runs one of the pool's other jobs on this thread, if one is queued (a pool thread's wait): whether it ran one. Its
@@ -282,6 +344,7 @@ pub fn help_until<T>(poll: impl FnMut() -> Option<T>) -> T {
 
 /// [`help_until`], its waits recorded under `site` ([`waits`]).
 pub fn help_until_as<T>(site: &'static str, mut poll: impl FnMut() -> Option<T>) -> T {
+    assert_no_uncommitted(site);
     let pool = on_pool();
     let mut nap = 20e-6f64;
     let mut wait = Waiting::new(site);
@@ -320,6 +383,7 @@ impl Bell {
     /// Waits until `poll` gives a value, recorded under `site` ([`waits`]), running no job: it polls each time the
     /// bell rings, and at least every millisecond (a ring is never needed for the wait to end).
     pub fn wait_as<T>(&self, site: &'static str, mut poll: impl FnMut() -> Option<T>) -> T {
+        assert_no_uncommitted(site);
         let mut wait = Waiting::new(site);
         loop {
             let seen = *self.rung.lock().unwrap_or_else(|p| p.into_inner());
@@ -387,6 +451,22 @@ pub fn measured_lane_for(kernel: &Kernel) -> Option<Lane> {
 pub trait Pending {
     /// Waits for it to complete: its outputs, in its launches' order.
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String>;
+    /// Whether it already ran to its end as it began (a submission the backend ran at once): the worker then hands
+    /// its outputs back before it begins the next, which would otherwise hold them for that one's whole run.
+    fn done(&self) -> bool {
+        false
+    }
+    /// [`finish`](Self::finish), with the CPU seconds it spent on threads the worker does not count (a submission
+    /// run on the lanes' pool while the worker begins the next: [`lane_spawn`]).
+    fn finish_counted(self: Box<Self>) -> (Result<Vec<Output>, String>, f64) {
+        (self.finish(), 0.0)
+    }
+    /// Whether its finish is host work (decoding, reading back) for the lanes' pool. One that only waits for a
+    /// result another thread makes ([`lane_spawn`]) is finished on the worker's own thread: a wait on a pool thread
+    /// can be stolen into the middle of the very job it waits for (a parallel loop's join), and neither moves.
+    fn finish_on_pool(&self) -> bool {
+        true
+    }
 }
 
 /// A submission that ran as it began.
@@ -395,6 +475,9 @@ struct Ready(Result<Vec<Output>, String>);
 impl Pending for Ready {
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
         self.0
+    }
+    fn done(&self) -> bool {
+        true
     }
 }
 
@@ -564,11 +647,24 @@ struct Flight<'a> {
 }
 
 impl Flight<'_> {
+    /// [`end`](Self::end) on the lanes' pool where its finish is host work, else here ([`Pending::finish_on_pool`]).
+    fn end_on(self, board: &Scoreboard, lane: Lane) {
+        if self.pending.as_ref().is_ok_and(|p| p.finish_on_pool()) {
+            lane_host(lane, || self.end(board, lane));
+        } else {
+            self.end(board, lane);
+        }
+    }
+
     /// Waits for it and hands its outputs to the batch's waiter.
     fn end(self, board: &Scoreboard, lane: Lane) {
         let Flight { claims, ids, mut ticket, start, pending } = self;
         ticket.resume();
-        let r = pending.and_then(|p| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.finish())).unwrap_or_else(|_| Err("its submission panicked".into())));
+        let r = pending.and_then(|p| {
+            let (r, elsewhere) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.finish_counted())).unwrap_or_else(|_| (Err("its submission panicked".into()), 0.0));
+            ticket.add_cpu(elsewhere);
+            r
+        });
         let (_, cpu) = board.finish(ticket, r.is_ok());
         claims.reply((lane, ids, (r, start, Instant::now(), cpu)));
     }
@@ -672,13 +768,18 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
                             r
                         })
                     };
-                    if let Some(f) = flight.replace(Flight { claims, ids, ticket, start, pending }) {
-                        lane_host(lane, || f.end(&board, lane));
+                    let begun = Flight { claims, ids, ticket, start, pending };
+                    // One that ran as it began (or failed to begin) is handed back now: kept in flight, its outputs
+                    // would wait for the next submission's whole run.
+                    if begun.pending.as_ref().map_or(true, |p| p.done()) {
+                        begun.end_on(&board, lane);
+                    } else if let Some(f) = flight.replace(begun) {
+                        f.end_on(&board, lane);
                     }
                     continue;
                 }
                 if let Some(f) = flight.take() {
-                    lane_host(lane, || f.end(&board, lane));
+                    f.end_on(&board, lane);
                     continue;
                 }
                 open.retain(|c| c.takeable_in(lane).is_some());
@@ -712,9 +813,7 @@ fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
     struct Handed<T>(T);
     // SAFETY: see `Handed`: the caller is blocked for as long as the other thread holds it.
     unsafe impl<T> Send for Handed<T> {}
-    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
-    let pool = POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).build().ok());
-    match pool {
+    match lanes_pool() {
         Some(pool) => {
             let f = Handed(f);
             pool.install(move || {
@@ -726,6 +825,58 @@ fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
         None => f(),
     }
 }
+
+/// The device lanes' own pool ([`lane_host`]): `None` where it could not be made.
+fn lanes_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+    POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).build().ok())
+        .as_ref()
+}
+
+/// Runs a device lane's submission on a pool of its own and returns at once: its result, and the CPU seconds of the
+/// thread that ran it, come on the receiver. So a lane's worker begins its next submission while this one runs: one
+/// submission's host part (encoding, sizing, reading back) beside another's command buffers on the device (decision
+/// 0344). A panic is an error.
+///
+/// Each running submission has a slot: a pool that runs it alone, where its parallel loops stay. On one shared pool,
+/// a thread waiting in one submission's join stole the other submission and ran it inside, on the same thread: its
+/// thread-local evaluation (the launch budget, the profile's spans) was the first's, and the first waited for the
+/// whole of the second. With every slot busy (more in flight than [`SLOTS`]) it runs here.
+pub fn lane_spawn<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> std::sync::mpsc::Receiver<(std::thread::Result<R>, f64)> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static BUSY: [AtomicBool; SLOTS] = [const { AtomicBool::new(false) }; SLOTS];
+    static POOLS: [OnceLock<Option<rayon::ThreadPool>>; SLOTS] = [const { OnceLock::new() }; SLOTS];
+    let (send, take) = std::sync::mpsc::channel();
+    let job = move |slot: Option<usize>| {
+        let c0 = thread_cpu();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        let cpu = thread_cpu() - c0;
+        if let Some(slot) = slot {
+            BUSY[slot].store(false, Ordering::Release);
+        }
+        let _ = send.send((r, cpu));
+    };
+    let claimed = (0..SLOTS).find(|&i| BUSY[i].compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_ok());
+    let pool = claimed.and_then(|i| {
+        POOLS[i]
+            .get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(move |t| format!("rerail-lane-slot {i}.{t}")).build().ok())
+            .as_ref()
+            .map(|pool| (i, pool))
+    });
+    match pool {
+        Some((i, pool)) => pool.spawn(move || job(Some(i))),
+        None => {
+            if let Some(i) = claimed {
+                BUSY[i].store(false, Ordering::Release);
+            }
+            job(None)
+        }
+    }
+    take
+}
+
+/// The submissions [`lane_spawn`] runs at once, each on its own pool: a device lane's worker keeps two in flight.
+const SLOTS: usize = 2;
 
 /// A batch's launches, claimed as the lanes reach them (decision 0100 §11).
 ///
@@ -1643,5 +1794,65 @@ mod stack_tests {
             left
         }).unwrap().join().unwrap();
         assert!(deeper + (512 << 10) <= left + (64 << 10), "a frame of 512 KiB is counted: {deeper} after {left}");
+    }
+}
+
+#[cfg(test)]
+mod job_scope_tests {
+    use std::cell::Cell;
+
+    thread_local! {
+        static DEPTH: Cell<u32> = const { Cell::new(0) };
+        static ENTERED: Cell<u32> = const { Cell::new(0) };
+    }
+
+    fn enter() -> Box<dyn std::any::Any> {
+        ENTERED.set(ENTERED.get() + 1);
+        Box::new(DEPTH.replace(0))
+    }
+
+    fn exit(saved: Box<dyn std::any::Any>) {
+        DEPTH.set(*saved.downcast::<u32>().expect("the saved depth"));
+    }
+
+    /// Decision 0386: every job runs in a scope of its own, entered before it and exited after it, also when it
+    /// panics; a job nested in another (a wait that ran it) sees its own state, and the outer's comes back.
+    #[test]
+    fn a_job_runs_in_a_scope_of_its_own() {
+        super::set_job_scope(enter, exit);
+        std::thread::spawn(|| {
+            DEPTH.set(7);
+            let seen = super::as_job("a test's job", || {
+                let outer = DEPTH.replace(1);
+                let nested = super::as_job("a nested job", || DEPTH.get());
+                (outer, nested, DEPTH.get())
+            });
+            assert_eq!(seen, (0, 0, 1), "each job starts with its own state; the outer's is back after the nested one");
+            assert_eq!(DEPTH.get(), 7, "the thread's is back after the job");
+            let r = std::panic::catch_unwind(|| super::as_job("a panicking job", || {
+                DEPTH.set(3);
+                panic!("a test's panic")
+            }));
+            assert!(r.is_err());
+            assert_eq!(DEPTH.get(), 7, "restored after a panic too");
+            assert_eq!(ENTERED.get(), 3);
+        })
+        .join()
+        .unwrap();
+    }
+
+    /// The count of command buffers a thread holds uncommitted.
+    #[test]
+    fn a_thread_counts_its_uncommitted_command_buffers() {
+        std::thread::spawn(|| {
+            super::command_opened();
+            super::command_opened();
+            assert_eq!(super::uncommitted_here(), 2);
+            super::command_committed();
+            super::command_committed();
+            super::assert_no_uncommitted("a test");
+        })
+        .join()
+        .unwrap();
     }
 }

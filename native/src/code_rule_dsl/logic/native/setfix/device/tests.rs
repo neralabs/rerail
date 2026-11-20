@@ -7,7 +7,9 @@
     /// One stratum's seed joins run on the CPU and on the device: the same rows, and the same observed counts per
     /// step. The joins: a scan, a keyed join with a fused comparison and `docof`, a negation, a semi-join, a filter
     /// after a step that binds nothing, a `let`, constants in keys and heads; one rule whose second join's rows
-    /// overflow the first guess of its table.
+    /// overflow the first guess of its table. The rules' rows, one head's, are written in place on the device
+    /// (decision 0325 step 4): made distinct across the rules, and, with the head holding rows before the run (some
+    /// of them derived again, some not), less those, read where they lie.
     #[test]
     fn a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts() {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
@@ -59,21 +61,32 @@
             // h0(x, n) :- c(x), n = count : { b(_, _) }: no keys, the whole relation.
             format!("pos {c} v0\ncount {b} _ _ v1\nhead v0 v1"),
         ];
+        for held in [false, true] {
         let mut got = Vec::new();
         for device in [false, true] {
             db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            if held {
+                // Rows the fourth rule derives again, and rows no rule derives.
+                db.execute_batch("INSERT INTO temp.h0 SELECT a.c0, b.c1 FROM temp.a JOIN temp.b ON a.c1 = b.c0 LIMIT 700;").unwrap();
+                for v in 0..300 {
+                    db.execute("INSERT INTO temp.h0 VALUES (?1, ?2)", [-1 - v, v]).unwrap();
+                }
+            }
             let mut spec = vec!["name dev_test".to_owned()];
             if device {
                 spec.push("device".into());
             }
-            spec.push("rel h0 ii empty".into());
+            spec.push(if held { "rel h0 ii".into() } else { "rel h0 ii empty".into() });
             spec.extend(rules.iter().map(|r| format!("seed 0 {}", hex(r))));
             super::super::open(&db, &spec.join("\n")).unwrap();
             super::super::run(&db, "dev_test", 0).unwrap();
             let report = super::take_report();
             assert_eq!(report.as_ref().is_some_and(|r| r.refused.is_none()), device, "{report:?}");
             if let Some(r) = &report {
-                assert!(r.reruns >= 1 && r.submissions >= 2, "the large join overflows its first table: {r:?}");
+                // The first run only: the next guesses the join's growth from it (`GROWTH`).
+                assert!(held || r.reruns >= 1 && r.submissions >= 2, "the large join overflows its first table: {r:?}");
+                assert!(r.placed > 1000 && r.placed == r.distinct, "the head's rows written in place: {r:?}");
+                assert!(!held || r.in_place >= 1, "the rows held read in place: {r:?}");
             }
             let counts = super::super::step_counts(&db, "dev_test").unwrap();
             super::super::close(&db, "dev_test").unwrap();
@@ -82,8 +95,9 @@
             got.push((rows, counts));
         }
         assert!(got[0].0.len() > 1000, "{} rows", got[0].0.len());
-        assert_eq!(got[0].0, got[1].0, "the device's rows are the CPU's");
-        assert_eq!(got[0].1, got[1].1, "the device's counts per step are the CPU's");
+        assert_eq!(got[0].0, got[1].0, "the device's rows are the CPU's (held: {held})");
+        assert_eq!(got[0].1, got[1].1, "the device's counts per step are the CPU's (held: {held})");
+        }
     }
 
     /// A recursive stratum on the device: its rounds to the fixpoint there, the same rows as the CPU's waves.
@@ -135,6 +149,8 @@
                 let r = report.as_ref().expect("a device report");
                 assert!(r.refused.is_none(), "{r:?}");
                 assert!(r.rounds > 5, "the closure takes rounds: {r:?}");
+                // Written in place into the head's block (decision 0325 step 4): none read back.
+                assert!(r.placed > 1000 && r.placed == r.distinct, "the fixpoint's rows written in place: {r:?}");
             }
             super::super::close(&db, "dev_rec").unwrap();
             let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
@@ -197,6 +213,8 @@
                     let r = report.as_ref().expect("a device report");
                     assert!(r.refused.is_none(), "{r:?}");
                     assert!(r.rounds > 3, "the recursion takes rounds: {r:?}");
+                    // A set head's rows written in place with their rounds (decision 0325 step 4); a lattice's read.
+                    assert_eq!(r.placed > 0, lattice.is_none(), "{r:?}");
                 }
                 super::super::close(&db, "dev_lev").unwrap();
                 let held = super::super::held(&db, "h0").expect("the relation held");
@@ -385,6 +403,108 @@
         assert_eq!(got[1], got[0], "the strata's rows after the wave are their own runs'");
     }
 
+    /// Decision 0386, the queue's bound: a stratum that waits for its wave leaves no command buffer open on its
+    /// thread. The wave keeps its strata's committed work and waits once when flushed; an open one held by a thread
+    /// that then waits (or goes idle, as a pool's thread after its job) holds one of the queue's 64 until a thread
+    /// asking for one more waits for ever (every thread of a 300-file Metal run did, 2026-11-17).
+    #[test]
+    fn a_stratum_waiting_for_its_wave_leaves_no_command_buffer_open() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        use crate::code_rule_dsl::logic::lanes::wave;
+        let db = wave_db(400);
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let strata = [("open_a", "h0", format!("pos {n} v0 v1\nlt v1 i:100\nhead v0 v1")), ("open_b", "h1", format!("pos {n} v0 v1\npos {n} v0 v2\nlt v1 v2\nlt v2 i:60\nhead v1 v2"))];
+        for (name, h, rule) in &strata {
+            open_stratum(&db, name, h, rule);
+        }
+        {
+            let _w = wave::suspendable();
+            for (name, _, _) in &strata {
+                let status = super::super::run(&db, name, 0).unwrap();
+                assert!(status.ends_with(" 3"), "{name} waits for its wave: {status}");
+                assert_eq!(rerail_accel::exec::uncommitted_here(), 0, "{name}'s joins are committed: the wave holds no open command buffer");
+            }
+        }
+        wave::flush(strata.len()).unwrap();
+        for (name, h, _) in &strata {
+            let status = super::super::run(&db, name, 0).unwrap();
+            assert!(!status.ends_with(" 3"), "{name} finished: {status}");
+            super::super::close(&db, name).unwrap();
+            assert!(!stratum_rows(&db, h).is_empty(), "{name} made rows");
+        }
+    }
+
+    /// Decision 0386, a job's wave: a job that starts on a thread with a wave open (a wait running the pool's jobs)
+    /// opens one of its own, and the wave it leaves unflushed is finished when it ends, on its thread: its stratum
+    /// resumes with nothing else flushed, and the outer wave holds the outer stratum alone. Before, the job's stratum
+    /// joined the outer wave and was left for a flush on the thread that owned it: a job resumed elsewhere found its
+    /// joins "not submitted" and ran on the CPU (20 strata of the 300-file Metal run).
+    #[test]
+    fn a_jobs_wave_is_its_own_and_ends_with_it() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        use crate::code_rule_dsl::logic::lanes::wave;
+        wave::install_job_scope();
+        let db = wave_db(400);
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let outer = format!("pos {n} v0 v1\nlt v1 i:100\nhead v0 v1");
+        let inner = format!("pos {n} v0 v1\npos {n} v0 v2\nlt v1 v2\nlt v2 i:60\nhead v1 v2");
+        // The inner stratum's rows run alone, for the comparison.
+        open_stratum(&db, "inner_alone", "h2", &inner);
+        super::super::run(&db, "inner_alone", 0).unwrap();
+        super::super::close(&db, "inner_alone").unwrap();
+        let want = stratum_rows(&db, "h2");
+        assert!(!want.is_empty());
+        open_stratum(&db, "outer", "h0", &outer);
+        open_stratum(&db, "inner", "h1", &inner);
+        let _w = wave::suspendable();
+        let status = super::super::run(&db, "outer", 0).unwrap();
+        assert!(status.ends_with(" 3"), "the outer stratum waits for its wave: {status}");
+        // A job on this thread, the outer wave open: it waits for a wave and ends without flushing it.
+        let status = rerail_accel::exec::as_job("a test's job", || super::super::run(&db, "inner", 0).unwrap());
+        assert!(status.ends_with(" 3"), "the job's stratum waited for its wave: {status}");
+        assert_eq!(rerail_accel::exec::uncommitted_here(), 0);
+        // Its wave was finished as the job ended: it resumes now, nothing flushed.
+        let status = super::super::run(&db, "inner", 0).unwrap();
+        assert!(!status.ends_with(" 3"), "the job's stratum finished: {status}");
+        super::super::close(&db, "inner").unwrap();
+        assert_eq!(stratum_rows(&db, "h1"), want, "the job's stratum's rows are its own run's");
+        // The outer wave holds the outer stratum's work alone: one deferred submission, its own.
+        assert_eq!(wave::flush(1).unwrap(), 1, "the outer wave: one submission");
+        let status = super::super::run(&db, "outer", 0).unwrap();
+        assert!(!status.ends_with(" 3"), "the outer stratum finished: {status}");
+        super::super::close(&db, "outer").unwrap();
+        assert!(!stratum_rows(&db, "h0").is_empty());
+    }
+
+    /// A store with `temp.n` of `rows` rows (`s<k % 37>`, k), the native module registered: the wave tests' input.
+    fn wave_db(rows: i64) -> Connection {
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1);").unwrap();
+        for k in 0..rows {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![format!("s{}", k % 37), k]).unwrap();
+        }
+        db
+    }
+
+    fn open_stratum(db: &Connection, name: &str, h: &str, rule: &str) {
+        db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{h}; CREATE TEMP TABLE {h} (c0, c1);")).unwrap();
+        super::super::open(db, &format!("name {name}\ndevice\nrel {h} si empty\nseed 0 {}", hex(rule))).unwrap();
+    }
+
+    fn stratum_rows(db: &Connection, h: &str) -> Vec<(i64, i64)> {
+        let mut r: Vec<(i64, i64)> = db.prepare(&format!("SELECT c0, c1 FROM temp.{h}")).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+        r.sort_unstable();
+        r
+    }
+
     /// Q48: a stratum run on its own (its driver cannot wait) beside an open wave on its thread. The wave's stratum
     /// made the relation's verdicts and its sort in the wave's batch, and the resident cache hands them to the next
     /// stratum at once. The stratum run apart commits its own batch before the wave is flushed: unless the wave's
@@ -554,6 +674,44 @@
         }
     }
 
+    /// Decision 0325 step 3: a whole view of a source whose rows are in a block (the vtab's `Relation`) is bound
+    /// where they lie, nothing uploaded, every source column at its own place; the device's reads of it (its column
+    /// statistics, through the generated `clif_rel_get`) are the host's values.
+    #[test]
+    fn a_sources_rows_in_their_block_are_read_in_place() {
+        use crate::code_rule_dsl::facts::vtab::{Relation, Source};
+        use crate::code_rule_dsl::logic::device::StatColumn;
+        use crate::code_rule_dsl::logic::native::setfix::InRel;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let mut x = 0x0325_u64;
+        let mut next = |m: u64| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; (x % m) as i64 };
+        // Three columns, past several chunks of the block's relation; the view reads its first two.
+        let n = 5_000;
+        let mut r = Relation::new(&["a", "b", "c"]);
+        for i in 0..n {
+            r.push(&[i as i64, next(97) - 40, (next(1 << 20) << 20) | i as i64]);
+        }
+        let src: std::sync::Arc<dyn Source> = std::sync::Arc::new(r);
+        assert!(src.in_block().is_some_and(|b| b.rows as usize == n), "the source's rows are one relation in a block");
+        let rel = InRel::over_source(std::sync::Arc::clone(&src), vec![b'i'; 3]);
+        let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
+        let mut rep = super::Report::default();
+        let (dev, _, place) = super::resident(&rel, &[1, 2], &[], &mut batch, &mut rep).expect("resident");
+        assert_eq!((rep.in_place, rep.uploads, rep.upload_bytes), (1, 0, 0), "read in place: {rep:?}");
+        assert_eq!((dev.rows, dev.cols), (n, 3));
+        assert_eq!(place, [0, 1, 2], "each column at its own place");
+        let cols = [StatColumn::Rel(&rel, 1), StatColumn::Rel(&rel, 2)];
+        let (read, in_place) = super::column_stats(&cols, 8).expect("the device");
+        assert_eq!(in_place, 2);
+        for (c, got) in [1, 2].into_iter().zip(&read) {
+            let values: Vec<i64> = (0..n).map(|i| src.value(i, c)).collect();
+            let (host, _) = super::column_stats(&[StatColumn::Values(&values)], 8).expect("the device");
+            assert_eq!(*got, host[0], "column {c}");
+        }
+    }
+
     /// Decision 0261: the device's column statistics read a relation it holds in place (its resident upload), and
     /// are the same as over the values gathered on the host; a relation it does not hold is gathered.
     #[test]
@@ -710,6 +868,59 @@
         }
     }
 
+    /// Decision 0325 step 6: a view the device made in a batch a refusal dropped uncommitted is not kept as made. The
+    /// next stratum makes it again and reads the host's rows, not a relation nothing wrote (the lost findings of a
+    /// refused `attr_of`, 2026-11-17).
+    #[test]
+    fn a_view_made_in_a_refused_batch_is_made_again() {
+        use crate::code_rule_dsl::facts::core;
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::logic::native::setfix::InRel;
+        use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+        use std::sync::Arc;
+        if !mj::available() {
+            return;
+        }
+        crate::test_languages();
+        // Tapes held in vectors of their own, not where the device reads them (a parse not placed): the batch's views
+        // are made, not read in place (decision 0353 step 4d).
+        let lang = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let grammar = Arc::new(crate::code_rule_dsl::tape::Grammar::new(lang).unwrap());
+        let docs: Vec<Document> = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a):\n        return a\n"].iter().enumerate().map(|(at, source)| {
+            let path = format!("r{at}.py");
+            let source = Arc::new((*source).to_owned());
+            let image = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+            let lines = Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::of(lang)));
+            let facts = Arc::new(core::from_image(source, &grammar, image, lines).unwrap());
+            Document { key: (5 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let store_path = std::env::temp_dir().join(format!("rerail-refused-view-{}-{nonce}.sqlite", std::process::id()));
+        let store = crate::content_store::ContentStore::open(&store_path).unwrap();
+        let all = sources(&store, docs).unwrap();
+        let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
+        assert!(src.device_view().is_some_and(|d| d.in_place.is_none()), "made on the device");
+        let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
+        // Encoded into a batch the refusal drops uncommitted: nothing ran it.
+        let mut refused = mj::Batch::new().expect("the device");
+        let mut rep = super::Report::default();
+        super::resident(&rel, &[0, 1], &[], &mut refused, &mut rep).expect("resident");
+        assert_eq!(rep.uploads, 1, "made: {rep:?}");
+        drop(refused);
+        let _ = super::unrun::<()>(Err("refused at run time".to_owned()));
+        let mut batch = mj::Batch::new().expect("the device");
+        let mut rep = super::Report::default();
+        let (dev, _, place) = super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
+        assert_eq!((rep.uploads, rep.resident_hits), (1, 0), "made again, not found: {rep:?}");
+        batch.finish().unwrap();
+        let n = src.len();
+        for c in [0, 1] {
+            let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+            assert_eq!(dev.column(place[c] as usize), host, "column {c}");
+        }
+        let _ = std::fs::remove_file(&store_path);
+    }
+
     /// Decision 0289 §2: a view made on the device from the batch's chunk block is the host's rows (`Source::value`),
     /// for each view the device makes, over documents with fields, nesting and a broken one.
     #[test]
@@ -736,38 +947,19 @@
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
         let all = sources(&store, docs).unwrap();
         let device = rerail_accel::gpu::join::device().expect("the device");
-        let mut seen = 0;
-        for name in ["node", "child", "field", "core_node"] {
-            let src = &all.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+        let (mut seen, mut in_place) = (0, 0);
+        // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name.
+        for name in ["node", "child", "field", "core_node", "line"] {
+            let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
             let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
             let (n, k) = (src.len(), src.columns().len());
             assert_eq!(d.rows, n, "{name}");
             assert!(n > 0, "{name}: rows");
             // Every column, and a subset out of order, as a stratum asks for.
             for cols in [(0..k).collect::<Vec<_>>(), vec![k - 1, 0]] {
-                let out = mj::DevRel::empty(cols.len(), n).unwrap();
-                let mut batch = mj::Batch::new().expect("the device");
-                batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
-                batch.finish().unwrap();
-                for (j, &c) in cols.iter().enumerate() {
-                    let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-                    assert_eq!(out.column(j), &host[..], "{name}: column {c}");
-                }
                 seen += 1;
-            }
-        }
-        assert_eq!(seen, 8);
-        // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
-        {
-            use crate::code_rule_dsl::facts::vtab::syntax::{Projection, shaped};
-            let core_views = shaped(&store, make(), &Projection::core()).unwrap();
-            for name in ["line", "end_line", "col", "docof"] {
-                let src = &core_views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
-                let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
-                let n = src.len();
-                assert_eq!(d.rows, n, "{name}");
-                assert!(n > 0, "{name}: rows");
-                for cols in [vec![0, 1], vec![1]] {
+                // Made (a batch whose tapes are not on the device: `a_view_made_in_a_refused_batch_is_made_again`).
+                if d.in_place.is_none() {
                     let out = mj::DevRel::empty(cols.len(), n).unwrap();
                     let mut batch = mj::Batch::new().expect("the device");
                     batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
@@ -775,6 +967,72 @@
                     for (j, &c) in cols.iter().enumerate() {
                         let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
                         assert_eq!(out.column(j), &host[..], "{name}: column {c}");
+                    }
+                }
+                // Read in place (decision 0353 step 4d): the views' reads over the batch's directory, copied out of
+                // the view by `rows_copy`, are the same rows; nothing made them.
+                if let Some(v) = d.in_place.clone() {
+                    let view = mj::DevRel::view(k, n, v.clone()).unwrap();
+                    let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                    let mut batch = mj::Batch::new().expect("the device");
+                    let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                    batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                    batch.finish().unwrap();
+                    // A 16z batch's blocks through its cache (0353 step 4b): every read found room.
+                    assert_eq!(v.cache_failed(), 0, "{name}: the 16z cache had room: {:?}", v.cache_counts());
+                    for (j, &c) in cols.iter().enumerate() {
+                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                        assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
+                    }
+                    in_place += 1;
+                }
+            }
+        }
+        assert_eq!(seen, 10);
+        assert_eq!(in_place, 10, "node, child, field, core_node and line read in place");
+        // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
+        {
+            use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
+            // With a guest (decision 0055): its places are its host's lines, through its placement, found on the
+            // host and put in the chunk (`ChunkDoc::placed`).
+            let mut docs = make();
+            let text = "y = [2,\n  3]\n";
+            let file = FileInput::new("d0.py".to_owned(), "python".to_owned(), Arc::new(text.to_owned()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("the guest") };
+            // At the host's second line (byte 10 of "import os\nx = f(1, y=2)\n"): the guest's two lines are the
+            // host's line 2.
+            let place = Placement::Copied { delta: 10, within: [10, 24] };
+            let guest = Guest { host: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
+            docs.push(Document { key: 100, core: "/w#core:d0.py#guest:python:0".to_owned(), digest: core::digest(&facts), path: "d0.py".to_owned(), facts, tape: None, guest: Some(Arc::new(guest)), module: None });
+            let core_views = shaped(&store, docs, &Projection::core()).unwrap();
+            {
+                let view = |name: &str| core_views.iter().find(|(n, _)| *n == name).unwrap().1.clone();
+                let (docof, line) = (view("docof"), view("line"));
+                let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 100).collect();
+                assert!(!guest.is_empty(), "the guest's places are rows");
+                assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
+            }
+            // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
+            // directory, its tapes and core.rr's lines in the batch's block; a guest's (a copied stretch) through its
+            // host's lines and its placement. With the guest and without.
+            let own_views = shaped(&store, make(), &Projection::core()).unwrap();
+            for views in [&core_views, &own_views] {
+                for name in ["line", "end_line", "col", "docof"] {
+                    let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+                    let v = src.device_view().and_then(|d| d.in_place.clone()).unwrap_or_else(|| panic!("{name}: read in place"));
+                    let n = src.len();
+                    assert!(n > 0, "{name}: rows");
+                    for cols in [vec![0, 1], vec![1]] {
+                        let view = mj::DevRel::view(2, n, v.clone()).unwrap();
+                        let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                        let mut batch = mj::Batch::new().expect("the device");
+                        let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                        batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                        batch.finish().unwrap();
+                        for (j, &c) in cols.iter().enumerate() {
+                            let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                            assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
+                        }
                     }
                 }
             }

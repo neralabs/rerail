@@ -515,22 +515,51 @@ pub struct Compiled {
 }
 
 pub fn compile_step(name: &str, source: &str) -> Compiled {
+    compile_step_as(name, source, false)
+}
+
+/// A step compiled as a rules grammar's parser is (`kotlin_parser::compile_text`'s way, `rules`): tier 2 shaped by its
+/// rules (`Shape::Rules`), tier 1's blocks padded for the bytes before (`native_cpu_block::BACK`), the clusters by rule;
+/// else as `compile_step`.
+pub fn compile_step_as(name: &str, source: &str, rules: bool) -> Compiled {
+    // `RERAIL_STEP_TIMES`: each phase's time.
+    let times = std::env::var_os("RERAIL_STEP_TIMES").is_some();
+    let (mut t0, mut c0) = (std::time::Instant::now(), crate::native_cpu_block::thread_cpu());
+    let mut phase = |what: &str| {
+        let c = crate::native_cpu_block::thread_cpu();
+        if times {
+            eprintln!("{name}: {what} {:.2?} wall, {:.2}s CPU", t0.elapsed(), c - c0);
+        }
+        (t0, c0) = (std::time::Instant::now(), c);
+    };
     let stmts = parse(source).unwrap_or_else(|e| panic!("{name}: parses: {e}"));
     let ids = Ids::default();
     let compiled = {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
         let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
-        crate::bitlex_masks::compile(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
+        let shape = if rules { crate::bitlex_masks::Shape::Rules } else { crate::bitlex_masks::Shape::Auto };
+        crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
+    phase("bitlex compile");
     let text = compiled.text();
     // `RERAIL_LADDER_DUMP`: the program as text, for a step whose name holds it.
     if std::env::var("RERAIL_LADDER_DUMP").is_ok_and(|d| name.contains(&d)) {
         eprintln!("{name}:\n{}\n{text}", compiled.machine);
     }
     let program = crate::rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
-    let native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
-    let parser = crate::native_cpu_stream::Parser::new(&native).unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
+    let mut native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
+    phase("assemble and lower");
+    let parser = if rules {
+        for b in &mut native.block_programs {
+            b.pad = crate::native_cpu_block::BACK as u16;
+        }
+        crate::native_cpu_stream::Parser::with_cut(&native, &crate::native_cpu_clusters::by_rules(&native))
+    } else {
+        crate::native_cpu_stream::Parser::new(&native)
+    };
+    let parser = parser.unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
+    phase("Cranelift (tier 1 and tier 2)");
     Compiled { stmts, ids, program, native, parser }
 }
 
@@ -622,7 +651,7 @@ pub fn check_shape(name: &str, c: &Compiled) {
     // `native_cpu_stream::outline`).
     // No indirect jump: tier 2's shared arms (`native_cpu_stream::shared_runs`) end in a jump
     // table of their own in the IR, which Cranelift's code has as a tree of compares
-    // (`native_cpu_codegen::tables_as_compares`: its Arm jump tables carry a speculation
+    // (`native_cpu_codegen::switch_trees`: its Arm jump tables carry a speculation
     // barrier), so neither tier's machine code has a jump table or a `br`.
     for (tier, asm, own) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls()), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls)] {
         // A jump table's sequence is one line, its `br` inside, its entries the function's labels.
@@ -634,35 +663,47 @@ pub fn check_shape(name: &str, c: &Compiled) {
     }
 }
 
-/// Tier 1 on the CPU against its interpreter, on what the CPU makes: every output but those its
-/// record pass makes instead (`BlockNative::records_made`: their positions, as a token's last by
-/// its gap, decision 0400; all of them where the pass has no block loop: `PassShape::block_loop`),
-/// the positions and totals, and the codes but for the gap marks tier 2 on the CPU tests itself
-/// (`native_cpu_block::lazy_code_bits`). The outputs are made before the loop, so a file both
-/// refuse has the same; its codes are not read (the compiled loop leaves at the refusal, decision
-/// 0177, "A refusal leaves the loop", while the interpreter goes on).
-pub(crate) fn tier1_equal(c: &Compiled, cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
-    let block = &c.native.block_programs[0];
-    let unmade = block.records_made();
-    let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
-    let lazy = crate::native_cpu_block::lazy_code_bits(block);
-    let outputs = !looped || (cpu.outputs.len() == interpreted.outputs.len() && (0..cpu.outputs.len()).all(|o| unmade.contains(&o) || cpu.outputs[o] == interpreted.outputs[o]));
+/// Tier 1 compiled agrees with its interpreter on a document, on what the CPU makes: every output
+/// but those in `made` (`tier1_made`), the positions and totals, and the codes but for the bits in
+/// `lazy` (the gap marks tier 2 on the CPU tests itself, `native_cpu_block::lazy_code_bits`). A
+/// file both send to the fallback (a total set) is the same up to its refusal (decision 0177, "A
+/// refusal leaves the loop"): the compiled loop leaves there, so its positions are a prefix of the
+/// interpreter's, which goes on, and its codes the interpreter's up to the refusal and none or 0s
+/// past it.
+pub(crate) fn tier1_agrees(cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun, made: &[usize], lazy: u32) -> bool {
+    let outputs = cpu.outputs.len() == interpreted.outputs.len() && (0..cpu.outputs.len()).all(|o| made.contains(&o) || cpu.outputs[o] == interpreted.outputs[o]);
     let codes = cpu.codes.len() == interpreted.codes.len() && cpu.codes.iter().zip(&interpreted.codes).all(|(a, b)| a & !lazy == b & !lazy);
     let fell = interpreted.totals.iter().any(|&t| t != 0);
-    // A file that falls back: the token loop stops at its first error (decision 0177), where
-    // the interpreter goes on; nothing reads past it. Its positions so far are the interpreter's.
-    let positions = if fell {
-        cpu.positions.len() == interpreted.positions.len() && cpu.positions.iter().zip(&interpreted.positions).all(|(a, b)| b.starts_with(a))
-    } else {
-        cpu.positions == interpreted.positions
-    };
-    positions && cpu.totals == interpreted.totals && outputs && (fell || codes)
+    if fell {
+        let prefix = |a: &[u32], b: &[u32]| a.len() <= b.len() && a == &b[..a.len()];
+        // Past the refusal the compiled loop writes no code: none (a shorter run), or 0s.
+        let left = cpu.codes.iter().zip(&interpreted.codes).position(|(a, b)| a & !lazy != b & !lazy).unwrap_or(cpu.codes.len());
+        let codes = cpu.codes.len() <= interpreted.codes.len() && cpu.codes[left..].iter().all(|&c| c & !lazy == 0);
+        let positions = cpu.positions.len() == interpreted.positions.len() && cpu.positions.iter().zip(&interpreted.positions).all(|(a, b)| prefix(a, b));
+        return cpu.totals == interpreted.totals && positions && codes;
+    }
+    cpu.positions == interpreted.positions && cpu.totals == interpreted.totals && outputs && codes
+}
+
+/// The outputs tier 1 on the CPU does not make as the interpreter does: those its record pass
+/// makes and the totals no one reads by their rows (`BlockNative::cpu_unstored`), and all of them
+/// where a pass has no block loop (`PassShape::block_loop`).
+fn tier1_made(c: &Compiled) -> Vec<usize> {
+    let block = &c.native.block_programs[0];
+    let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
+    if !looped {
+        return (0..block.outputs.len()).collect();
+    }
+    let mut made = block.cpu_unstored();
+    made.extend(block.records_made());
+    made
 }
 
 /// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from
 /// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
 /// reference's nodes: a difference with another parser, if any. The differences, one per step at
 /// most.
+
 pub fn check_ladder(
     steps: &[(String, String)],
     alphabet: &[u8],
@@ -697,6 +738,7 @@ pub fn check_documents(
     let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
     let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
+    let (made, lazy) = (tier1_made(c), crate::native_cpu_block::lazy_code_bits(&c.native.block_programs[0]));
     let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(c, b).is_some(), alphabet);
     docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
     for (i, bytes) in docs.into_iter().enumerate() {
@@ -706,7 +748,7 @@ pub fn check_documents(
         let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
         let compiled = c.parser.parse(&bytes).ok().map(as_ids);
         let tier1 = c.parser.tier1.extract(&bytes);
-        if !tier1_equal(c, &tier1, &run) {
+        if !tier1_agrees(&tier1, &run, &made, lazy) {
             if std::env::var_os("RERAIL_LADDER_CODES").is_some() {
                 eprintln!("codes interp {:x?}\n      cpu    {:x?}\nstarts {:?}", run.codes, tier1.codes, run.positions.first());
             }

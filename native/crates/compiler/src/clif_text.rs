@@ -10,7 +10,7 @@ pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
     for line in clif.lines() {
         let t = line.trim();
         if t.starts_with("block") && t.ends_with(':') {
-            // `block12(v1: i64):`, `block12 cold:`.
+            // `block7(v1: i64):`, `block9 cold:`: the name alone.
             let name = t.split(['(', ':', ' ']).next().unwrap_or("").to_owned();
             blocks.push((name, Vec::new()));
         } else if let Some((_, lines)) = blocks.last_mut()

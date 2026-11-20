@@ -107,3 +107,12 @@ PostHog on the M3 Max (29,885 files, `RERAIL_CHUNKS_AT_ONCE=15`). All five runs 
 The lock spin is gone, but the wall did not move: the cold run is bound elsewhere. The remaining kernel time is
 `open` (23 k samples), store `pwrite`/`fsync`/`pread` (24 k) and rayon's idle spin (8 k). The leftover rwlock
 yields belong to the store's interner, whose writers take a write lock per new atom; that is a separate decision.
+
+## Publications in shards (2026-11-17)
+
+"Copy-on-write for the few new ones" assumed few publications. A run publishes each time a stratum's entry
+planned anew, and each publication copied the whole map. On B-now over 50 files, 317 programs and about 5,800
+components, cloning and dropping the map was the run's top cost in samples. `Plans` is now 64 shards by key hash,
+each an `Arc`'d map. A publication copies only the shards its plans fall in (`Arc::make_mut`), and readers still
+take no lock. Instructions went 320 -> 316 G and cycles 110 -> 94 G (the copies were contended), with the same
+findings.

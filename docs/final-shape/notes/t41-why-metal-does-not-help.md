@@ -244,3 +244,68 @@ What is left, by kernel:
   restore. The conformance tests and these runs caught both. `the_label_kernels_compile_for_every_format` (slow
   tier, 84 s on an M1 Max) now compiles every label kernel and the pattern kernel for formats 0, 15 and 16. A test
   for a walk whose steps change is still Q62's.
+
+### The generated code as structured control flow (2026-11-17)
+
+`rerail_clif::msl` emitted every function with more than one block as a dispatch loop: `switch (b)` inside a
+`while`, each jump a store to `b`. Metal's compiler keeps the loop's state live across the switch and does not merge
+the blocks, so every read cost a branch through the dispatch. The emitter now writes the CFG as structured code:
+
+- an `if`/`else` that rejoins at the branch's immediate post-dominator;
+- a natural loop as `while (true)` with `continue` and `break`, or a selector `e<h>` where a loop has several exits;
+- a block reached on two paths duplicated, up to a size cap (`STRUCTURED_MAX`) and a depth of 64;
+- the switch form kept only as the fallback, for a CFG that is not reducible. No kernel in the tree needs it;
+  `metal_tape_reads.metal` has no `switch (b)` left.
+
+Same run as above (s1000, the GPU pinned, 97,241,194 steps in both), format 16, load 33–41:
+
+| Engine | Label passes | `label_micro` | `label_micro_8` |
+|---|---|---|---|
+| merged, the dispatch loop | 710 ms | 355 | 315 |
+| + structured control flow | 349 ms | 159 | 171 |
+| hand-written format 15 reads (the diagnostic build) | | 211 | |
+| hub (61e9f383c), with its parent column | 292 ms | 169 | 91 |
+
+The generated reads now beat the hand-written ones (159 against 211 ms). The width branches were not the cost.
+What is left against the hub's tree is `label_micro_8`, the parent climbs (171 against 91). The format 16 parent is
+still a search where the hub's tree had a column.
+
+### The parent climb spike (2026-11-17)
+
+Q62 put `label_micro_8`'s gap to the hub engine (171 ms against 91 ms) on format 16's parent climb. A spike tested
+that before building a window parent pass. Every variant was switched at compile time, with the same run as above,
+alternated at load 45–96:
+
+- **An oracle parent column**, made by a kernel before the walks, which the walks read in place of the climb:
+  220 ms. No gain. It was a bound for the measurement only: nothing is precomputed, since a precomputed structure
+  costs a kernel of its own and its memory (the user).
+- **The window's parents from one forward pass** over its 64 slots, read where the node is in the start's window:
+  170 ms. No gain.
+- **Counted**: 4.0 M parent climbs in 97 M steps, 1.8 hops each. 92% of them land inside the start's window, and
+  0.09 M steps escape to the side list.
+- **The root mask made twice**: +8–16 ms, so making it is about 10 ms.
+- **A group's nodes split over S threads**, at the same walks:
+
+| Threads a group | `label_micro_8` | Label passes |
+|---|---|---|
+| 1 (before) | 179–180 ms | 376–378 ms |
+| 8 | 110–112 | 272–274 |
+| 16 | 94–110 | 250–301 |
+| 32 | 94–97 | 240–243 |
+| the hub engine | 76–96 | 247–258 |
+
+The cost was the dispatch's shape. A thread a 64-node group gave a launch about 8,800 threads, and a SIMD group walked
+its 32 groups' roots (about 560) in rounds, one after another. Decision 0359 makes a short walk's group a SIMD
+group's. The loop tier keeps a thread an item: its pool is fixed at 4,096, and 1, 4 and 32 lanes measured the same
+there.
+
+The spike's split had a bug: it did not scale the loop tier's dispatch, so it skipped some of that tier's walks.
+Its `label_micro` times are not valid; its `label_micro_8` times are, because that tier's walks matched exactly. The
+profile now prints each tier's walks and steps over all passes, so a run whose walks differ is seen at once.
+
+**The pattern kernel** (`clause_patterns`, 6.8 ms against the hub engine's 3 ms) had the same shape, a thread a
+64-node group, but its fact items hold one root each, so a SIMD group an item would idle 31 lanes a fact. Its items'
+threads are contiguous (`threadStart`), so a pass item now takes 4 threads a group and a fact item keeps one. A SIMD
+group packs its lanes' roots whatever items they belong to. At load 25–37, 1, 4, 8 and 32 lanes a group took
+3.6–6.8, 2.1–2.5, 2.8–2.9 and 2.7–2.8 ms. The hub engine took 3.0–3.2 ms, with 25.8 M threads against 4 lanes' 1.7 M.
+

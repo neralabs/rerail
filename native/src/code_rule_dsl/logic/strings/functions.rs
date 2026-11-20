@@ -82,6 +82,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_div", &[Number, Number], Number),
     ("rr_max", &[Number, Number], Number),
     ("rr_min", &[Number, Number], Number),
+    // A flat lattice's `@flat_bin(op, a, b)` (`select::term`'s SQL form): `top` (1 << 62) when either side is, or the
+    // op is not `+`, `-` or `*`, or a product's sides are 2^40 or more; an overflow is `top` too.
+    ("flat_bin", &[Text, Number, Number], Number),
     // `.rr`'s `@place(path, line)`, `@place_path` and `@place_line` (`plan::sql_term`'s encoding): a symbol is its
     // atom, so the path is a number here. `-2 - (path << 32 | line)`, `unset` (-1) for a line outside `0 .. 2^32`.
     ("rr_place", &[Number, Number], Number),
@@ -124,6 +127,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_node_text_any", &[Number], Text),
     // A node's value as W reads it (`facts::vtab::syntax::LongTexts::value_any`): `value`'s answer (decision 0174).
     ("rr_node_value", &[Number], Text),
+    // A node's string literal's content (`facts::vtab::syntax::LongTexts::str_any`): `str`'s answer (decisions 0174,
+    // 0353 step 3).
+    ("rr_node_str", &[Number], Text),
     // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -287,6 +293,19 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_div" => return numbers[0].checked_div(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_max" => return Value::Integer(numbers[0].max(numbers[1])),
         "rr_min" => return Value::Integer(numbers[0].min(numbers[1])),
+        "flat_bin" => {
+            const TOP: i64 = 1 << 62;
+            let (x, y) = (numbers[0], numbers[1]);
+            let small = |v: i64| v.unsigned_abs() < 1 << 40;
+            let v = match t(0) {
+                _ if x == TOP || y == TOP => None,
+                "+" => x.checked_add(y),
+                "-" => x.checked_sub(y),
+                "*" if small(x) && small(y) => x.checked_mul(y),
+                _ => None,
+            };
+            return Value::Integer(v.unwrap_or(TOP));
+        }
         "rr_place" => {
             let (p, l) = (numbers[0], numbers[1]);
             let place = (0..1i64 << 32).contains(&l).then(|| p.checked_mul(1 << 32).and_then(|x| x.checked_add(l)).and_then(|x| (-2i64).checked_sub(x))).flatten();
@@ -319,7 +338,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_to_string" => Some(numbers[0].to_string()),
         "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
         // Read through the run's binding of its batch (`node_read`), never by value alone.
-        "rr_node_text" | "rr_node_text_any" | "rr_node_value" => None,
+        "rr_node_text" | "rr_node_text_any" | "rr_node_value" | "rr_node_str" => None,
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
         "semver_subset" => {

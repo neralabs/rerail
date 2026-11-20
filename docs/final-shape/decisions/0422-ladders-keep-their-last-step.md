@@ -1,12 +1,12 @@
 # 0422: The Bitlex ladders keep their last step only
 
-Status: decided (the user, 2026-11-18: "get rid of all of the old grammars"). Follows 0406.
+Status: decided (the user, 2026-11-18: "get rid of all of the old grammars"). Follows 0490.
 
 ## Intro
 
 A ladder builds a grammar a step at a time: each step is a whole Bitlex file, the grammar so far
 plus one construct. The tree kept every step, so it held many near-copies of each grammar:
-Kotlin's 36 steps were 1.4 MB, and since 0406 its steps 1 to 35 did not even parse. A step that
+Kotlin's 36 steps were 1.4 MB, and since 0490 its steps 1 to 35 did not even parse. A step that
 is not the grammar is history, and git keeps history.
 
 ## The decision

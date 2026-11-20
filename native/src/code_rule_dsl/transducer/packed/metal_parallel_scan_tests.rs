@@ -1,6 +1,6 @@
 //! Paired scans preserve eight independent count meanings and checked saturation.
 use super::super::metal_backend::launch::{LaunchScope, commit_checked, wait_checked};
-use super::super::metal_backend::metal_execution_guard;
+use super::super::metal_backend::evaluation_scope;
 use super::*;
 
 /// `count` values of `buffer`, from its start.
@@ -44,7 +44,7 @@ fn independent_arenas_share_each_scan_level_without_mixing_columns_or_overflows(
         let expected_a = oracle(&a);
         let expected_b = oracle(&b);
         let (actual_a, actual_b, launches) = metal::objc::rc::autoreleasepool(|| {
-            let _guard = metal_execution_guard().unwrap();
+            let _scope = evaluation_scope();
             let scope = LaunchScope::enter();
             let device = Device::system_default().unwrap();
             let queue = device.new_command_queue();
@@ -86,7 +86,7 @@ fn independent_arenas_share_each_scan_level_without_mixing_columns_or_overflows(
 #[test]
 fn paired_scans_reject_aliases_and_different_domains_before_dispatch() {
     let (alias, different, trace) = {
-        let _guard = metal_execution_guard().unwrap();
+        let _scope = evaluation_scope();
         let scope = LaunchScope::enter();
         let device = Device::system_default().unwrap();
         let queue = device.new_command_queue();
@@ -106,7 +106,7 @@ fn paired_scans_reject_aliases_and_different_domains_before_dispatch() {
 
 #[test]
 fn independent_scan_domains_refuse_aliases_and_inconsistent_hierarchies_before_dispatch() {
-    let _guard = metal_execution_guard().unwrap();
+    let _scope = evaluation_scope();
     let scope = LaunchScope::enter();
     let before = scope.snapshot().len();
     let device = Device::system_default().unwrap();
@@ -136,7 +136,7 @@ fn independent_scan_domains_keep_every_saturated_prefix_with_one_dispatch() {
         (65_537, 257),
         (2_800_001, 10_938),
     ] {
-        let _guard = metal_execution_guard().unwrap();
+        let _scope = evaluation_scope();
         let scope = LaunchScope::enter();
         let before = scope.snapshot().len();
         let device = Device::system_default().unwrap();
@@ -201,7 +201,7 @@ fn bounded_scans_preserve_every_prefix_and_saturated_total_in_one_dispatch() {
         0, 1, 255, 256, 257, 65_536, 65_537, 1_048_577, 8_388_608, 8_388_609,
     ] {
         metal::objc::rc::autoreleasepool(|| {
-            let _guard = metal_execution_guard().unwrap();
+            let _scope = evaluation_scope();
             let scope = LaunchScope::enter();
             let device = Device::system_default().unwrap();
             let queue = device.new_command_queue();
@@ -251,7 +251,7 @@ fn bounded_scans_preserve_every_prefix_and_saturated_total_in_one_dispatch() {
 fn gpu_counted_bounded_scans_preserve_inactive_values_and_every_live_prefix() {
     for count in [0usize, 1, 255, 256, 257, 65_536, 65_537] {
         metal::objc::rc::autoreleasepool(|| {
-            let _guard = metal_execution_guard().unwrap();
+            let _scope = evaluation_scope();
             let scope = LaunchScope::enter();
             let device = Device::system_default().unwrap();
             let queue = device.new_command_queue();

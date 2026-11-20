@@ -17,6 +17,12 @@ use crate::content_store::{SegmentBytes, StoreError, StoreResult};
 use std::collections::HashMap;
 
 const NODES: &str = "#nodes";
+/// How many of the image's first strings are its symbols' (`encode_parts` writes them first); then one past the
+/// largest atom id they had where the entry was made (the store's atoms handle), where it names any: a process holding
+/// every stored atom below it, and not forked from the store's (decision 0170), holds the entry's symbols already, so
+/// `hold` reads nothing of the entry. Only a hint for that: the entry reads by its strings, in every process. An entry
+/// written before it has one row.
+const SYMS: &str = "#syms";
 
 fn bad(what: impl std::fmt::Display) -> StoreError {
     StoreError::Invalid(format!("a corpus memo entry {what}"))
@@ -35,8 +41,28 @@ pub(super) fn encode(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<V
 /// `atoms`, the table its rows were made under.
 pub(super) fn encode_parts(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<Finished> {
     let mut b = Builder::new(0, false);
-    b.rows_as_is(NODES, &[col::INT], vec![entry.nodes as i64]);
+    // The symbols' strings first, so they are the image's strings `0..SYMS`: holding the entry's atoms reads them
+    // there, not every row (`hold`).
     let mut shown: HashMap<i64, i64> = HashMap::new();
+    for (key, (w, values)) in &entry.rows {
+        let w = *w;
+        if w == 0 {
+            continue;
+        }
+        let Some(cols) = syms.columns(key, w).filter(|c| c.len() == w) else { continue };
+        for row in values.chunks_exact(w) {
+            for (c, &v) in row.iter().enumerate() {
+                if cols[c] && !shown.contains_key(&v) {
+                    let atom = Sym::try_from(v).map_err(|_| bad(format!("of {key}: symbol {v} is no atom")))?;
+                    let at = atoms.with_str(atom, |s| i64::from(b.text(s))).ok_or_else(|| bad(format!("of {key}: symbol {v} is no atom of this process's")))?;
+                    shown.insert(v, at);
+                }
+            }
+        }
+    }
+    let end = shown.keys().copied().max().map_or(0, |m| m + 1);
+    b.rows_as_is(SYMS, &[col::INT], vec![shown.len() as i64, end]);
+    b.rows_as_is(NODES, &[col::INT], vec![entry.nodes as i64]);
     for (key, (w, values)) in &entry.rows {
         let w = *w;
         let name = format!("r:{key}");
@@ -113,8 +139,52 @@ fn atoms_of(image: &Image, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) -> StoreR
 
 /// Holds the atoms of the entry's symbols in this process (interned, or found where the store holds them), before a
 /// run's waves: so a wave decoding the entry finds each in memory.
-pub(super) fn hold(bytes: &SegmentBytes, atoms: &Atoms) -> StoreResult<()> {
-    atoms_of(&image(bytes)?, &|_| true, atoms).map(drop)
+/// All of `entries` at once: one lookup of what this process lacks, not one per entry.
+/// An entry whose symbols this process holds already (`SYMS`'s end at or below `atoms.held_below()`) reads nothing.
+/// Returns how many entries it read.
+pub(super) fn hold(entries: &[&SegmentBytes], atoms: &Atoms) -> StoreResult<usize> {
+    let held = atoms.held_below();
+    let images = entries.iter().map(|b| image(b)).collect::<StoreResult<Vec<_>>>()?;
+    let mut strings: Vec<&str> = Vec::new();
+    let mut wanted: Vec<u32> = Vec::new();
+    let mut read = 0;
+    for image in &images {
+        let syms = image.rel(SYMS).map(|r| r.col(0));
+        if let (Some(&[_, end]), Some(held)) = (syms, held)
+            && end as usize <= held
+        {
+            continue;
+        }
+        read += 1;
+        if let Some(n) = syms.and_then(|c| c.first().copied()) {
+            strings.extend((0..n as u32).map(|i| image.string(i)));
+            continue;
+        }
+        // An entry written before `SYMS`: its symbol columns read.
+        // Each image's strings by index, once: a symbol column repeats them row after row.
+        wanted.clear();
+        for (name, rel) in image.relations() {
+            if !name.starts_with("r:") {
+                continue;
+            }
+            for (c, &t) in rel.types().iter().enumerate() {
+                if t == col::TEXT {
+                    wanted.extend(rel.col(c).iter().map(|&v| v as u32));
+                }
+            }
+        }
+        wanted.sort_unstable();
+        wanted.dedup();
+        strings.extend(wanted.iter().map(|&i| image.string(i)));
+    }
+    // The strings many entries share, once, by hash: no string sort.
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::with_capacity(strings.len());
+    strings.retain(|s| seen.insert(s));
+    if strings.is_empty() {
+        return Ok(read);
+    }
+    let _s = crate::code_rule_dsl::logic::profile::span(|| format!("memo lookup: the entries' {} strings interned", strings.len()));
+    atoms.intern_all(&strings).map(|_| read)
 }
 
 /// The entry of `bytes` (`encode`'s; its key is its row's), keeping only the relations `keep` takes: the others are
@@ -126,7 +196,9 @@ pub(super) fn decode(bytes: &SegmentBytes, keep: &dyn Fn(&str) -> bool, atoms: &
     let mut columns: HashMap<&str, Vec<usize>> = HashMap::new();
     let mut counts: HashMap<&str, usize> = HashMap::new();
     for (name, rel) in image.relations() {
-        if name == NODES {
+        if name == SYMS {
+            continue;
+        } else if name == NODES {
             entry.nodes = rel.col(0).first().copied().unwrap_or(0) as u64;
         } else if let Some(key) = name.strip_prefix("r:") {
             if !keep(key) {
@@ -212,5 +284,39 @@ mod tests {
         assert_eq!(other.with_str(named[1] as Sym, str::to_owned).as_deref(), Some("ünï"), "another table reads the strings");
         assert_ne!(named[3], i64::from(z));
         assert_eq!(named[1], named[5], "one string, one atom");
+    }
+
+    /// Decision 0397: `hold` reads no entry whose symbols' atoms the process holds already (stored, below
+    /// `Atoms::held_below`); an entry naming an atom not stored yet is read, and is not once the atom is stored. Either
+    /// way the entry reads back by its strings.
+    #[test]
+    fn hold_reads_no_entry_whose_symbols_are_held() {
+        use super::super::super::super::lower::Domain;
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::content_store::ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let atoms = store.atoms_handle();
+        let domains: std::collections::BTreeMap<String, Vec<Domain>> = [("named".to_owned(), vec![Domain::Int, Domain::Name])].into();
+        let syms = Syms::of(&domains);
+        let entry_of = |strings: &[&str]| {
+            let ids = store.intern_atoms(strings).unwrap();
+            let mut entry = Entry { key: 1, ..Entry::default() };
+            entry.rows.insert("named".into(), (2, ids.iter().flat_map(|&i| [0, i64::from(i)]).collect()));
+            let bytes = encode(&entry, &syms, &atoms).unwrap();
+            (entry, bytes)
+        };
+        assert!(atoms.ready_for_run().unwrap());
+        let (stored, stored_bytes) = entry_of(&["a", "b"]);
+        atoms.run_over();
+        store.flush_atoms().unwrap();
+        assert!(atoms.held_below().is_some_and(|h| h > 2), "the stored atoms held");
+        let (pending, pending_bytes) = entry_of(&["c"]);
+        let (s, p) = (SegmentBytes::of(&stored_bytes), SegmentBytes::of(&pending_bytes));
+        assert_eq!(hold(&[&s], &atoms).unwrap(), 0, "its atoms stored and held: nothing read");
+        assert_eq!(hold(&[&s, &p], &atoms).unwrap(), 1, "an atom not stored yet: that entry read");
+        store.flush_atoms().unwrap();
+        assert_eq!(hold(&[&s, &p], &atoms).unwrap(), 0, "once stored, held");
+        for (entry, bytes) in [(&stored, &s), (&pending, &p)] {
+            assert_eq!(decode(bytes, &|_| true, &atoms).map(|e| Entry { key: 1, ..e }).unwrap(), *entry, "read by its strings");
+        }
     }
 }

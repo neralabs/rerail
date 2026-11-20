@@ -98,7 +98,7 @@ pub fn lean(src: &[u8], cpp: bool) -> Vec<Tok> {
     let mut lx = PpLexer::new(&p2.text, opts);
     let mut out = Vec::new();
     loop {
-        let t = lx.next();
+        let t = lx.next_token();
         let kind = match t.kind {
             P::Eof => break,
             P::Ident => "identifier",
@@ -130,7 +130,7 @@ mod tests {
             return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
         }
         #[cfg(target_os = "macos")]
-        if let Some(m) = c.metal_images(&[src]) {
+        if let Ok(m) = c.metal_images(&[src]) {
             if m[0] != image {
                 return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
             }
@@ -221,7 +221,7 @@ mod tests {
 
 #[cfg(test)]
 mod lowering_time {
-    /// The token grammar's lowering, step by step (work queue Q34): run it with `--nocapture`.
+    /// The token grammar's lowering, step by step (work queue Q131): run it with `--nocapture`.
     #[test]
     #[ignore = "a measurement"]
     fn lowering_steps() {

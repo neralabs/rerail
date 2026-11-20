@@ -438,10 +438,10 @@ fn the_words_translate_to_rust() {
 /// The run's function as Cranelift compiles it: its instructions, its accesses
 /// relative to the stack pointer (the register allocator's spills and reloads, and the frame's),
 /// its branches by kind (before emission: a jump to the next block still there); its text and
-/// its emitted bytes written to `RERAIL_PP_DISASM` (and `.bin`) where set (Q36: beside rustc's code of the
+/// its emitted bytes written to `RERAIL_PP_DISASM` (and `.bin`) where set (Q184: beside rustc's code of the
 /// same IR, `the_aot_words_are_the_interpreters`' builds).
 #[test]
-#[ignore = "a report (Q36)"]
+#[ignore = "a report (Q184)"]
 fn the_compiled_words_code_counted() {
     let c = rerail_compiler::native_cpu_pp::disassemble(program().unwrap()).unwrap();
     let text = &c.disasm[0];
@@ -565,7 +565,7 @@ fn the_compiled_words_have_their_shape() {
     let functions = c.clif.matches("function ").count();
     assert!(!c.clif.contains("call_indirect") && !c.clif.contains("return_call"));
     // No speculation barrier in Cranelift's code (`csdb`, which its Arm jump tables carry):
-    // its tables are trees of compares (`native_cpu_codegen::tables_as_compares`).
+    // its tables are trees of compares (`native_cpu_codegen::switch_trees`).
     let kept = rerail_compiler::native_cpu_pp::disassemble(p).unwrap();
     let csdb = kept.code.iter().flat_map(|f| f.chunks_exact(4)).filter(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]) == 0xd503_229f).count();
     assert!(kept.code.len() == c.code_bytes.len() && kept.code.iter().all(|f| !f.is_empty()));

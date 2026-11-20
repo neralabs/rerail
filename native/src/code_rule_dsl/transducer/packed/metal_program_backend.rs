@@ -292,7 +292,7 @@ fn prefix(defines: &str) -> String {
     format!(
         "{defines}#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
         crate::code_rule_dsl::residency::slabs::msl(),
-        include_str!("metal_tape_reads.metal"),
+        include_str!("metal_tape_reads_z.metal"),
         include_str!("metal_tape.metal")
     )
 }
@@ -512,7 +512,7 @@ fn jit_support(
         }
         for capture in 0..program.capture_programs.len() {
             source.push_str(&format!(
-                "__attribute__((noinline)) bool jit_capture_{program_index}_{capture}(thread JitContext& context){{uint outcome=evaluate_assertion(context.assertions[context.program.captureStart+{capture}u],context.assertionData,context.captures,context.path->captures,context.task,context.file,context.program,*context.nodes,context.source,context.strings,context.stringBytes,context.values,context.nfaStates,context.nfaData,context.nfaRanges,context.luaInstructions,context.luaMembers,context.valueWork,*context.lineStarts,context.path->steps,*context.evaluation,*context.globalArenas,context.valueBase,context.valueCapacity);if(outcome==2u){{context.status->error=6u;return false;}}if(outcome==3u){{context.status->error=4u;return false;}}if(outcome==4u){{context.status->error=2u;return false;}}*context.keep=outcome==1u;return true;}}"
+                "__attribute__((noinline)) bool jit_capture_{program_index}_{capture}(thread JitContext& context){{uint outcome=evaluate_assertion(context.assertions[context.program.captureStart+{capture}u],context.assertionData,context.captures,context.path->captures,context.task,context.file,context.program,*context.nodes,context.supertypes,context.source,context.strings,context.stringBytes,context.values,context.nfaStates,context.nfaData,context.nfaRanges,context.luaInstructions,context.luaMembers,context.valueWork,*context.lineStarts,context.path->steps,*context.evaluation,*context.globalArenas,context.valueBase,context.valueCapacity);if(outcome==2u){{context.status->error=6u;return false;}}if(outcome==3u){{context.status->error=4u;return false;}}if(outcome==4u){{context.status->error=2u;return false;}}*context.keep=outcome==1u;return true;}}"
             ));
         }
     }
@@ -546,6 +546,10 @@ fn jit_support(
                 source.push_str(&format!(
                     "case {pc}u:return jit_value_{program_index}_{operand}(context);"
                 ));
+            } else if opcode == ASSERT && !program.tree_sitter_query {
+                // An ordinary program tests the capture predicate where it asserts it, on the captures so far, as the
+                // CPU's (`ASSERT`); a tree-sitter query's are tested on its candidates at the task's end.
+                source.push_str(&format!("case {pc}u:return jit_capture_{program_index}_{operand}(context);"));
             } else if opcode == ASSERT {
                 source.push_str(&format!("case {pc}u:return true;"));
             } else {
@@ -600,14 +604,14 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
         return Ok(engine.clone());
     }
     let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
-    let engine = Engine::Interpreter { pipeline: pipeline_named(&source, "run_batch")?, buffers: Arc::new(Mutex::new(None)) };
+    let engine = Engine::Interpreter { pipeline: rerail_metal::runtime::pipeline_named_fixed(&source, "run_batch", None)?, buffers: Arc::new(Mutex::new(None)) };
     *cached = Some(engine.clone());
     Ok(engine)
 }
 
 pub fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
-        pipeline: pipeline_named(&format!("{}{}", *TAPE_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch")?,
+        pipeline: rerail_metal::runtime::pipeline_named_fixed(&format!("{}{}", *TAPE_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch", None)?,
         buffers: Arc::new(Mutex::new(None)),
     })
 }
@@ -637,7 +641,7 @@ pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipeline
     let begin = source.find("kernel void run_batch(").expect("the runtime has run_batch") + "kernel void run_batch(".len();
     let end = begin + source[begin..].find("uint tid [[thread_position_in_grid]]){").expect("run_batch's thread position");
     let kernel = include_str!("metal_label_sweep.metal").replace("/*PARAMETERS*/", &source[begin..end]);
-    let pipeline = pipeline_named(&format!("{source}\n{kernel}"), "label_sweep")?;
+    let pipeline = rerail_metal::runtime::pipeline_named_fixed(&format!("{source}\n{kernel}"), "label_sweep", None)?;
     *cached = Some(pipeline.clone());
     Ok(pipeline)
 }
@@ -738,7 +742,32 @@ pub fn execute_packed_with_result_limits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
-    let _evaluation = super::metal_backend::metal_execution_guard()?;
+    execute_packed_budgeted(engine, programs, files, anchors, result_limits, super::Budget::current())
+}
+
+/// The batch with `budget` (decision 0334): an evaluation that outgrows its steps or states restarts with twice as
+/// much (`restarting`).
+pub fn execute_packed_budgeted(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: super::Budget,
+) -> Result<PackedExecution, Error> {
+    super::restarting(programs, anchors, budget, &mut |anchors, budget, growth| execute_packed_once(engine, programs, files, anchors, result_limits, budget, growth))
+}
+
+fn execute_packed_once(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: super::Budget,
+    growth: &super::StateGrowth,
+) -> Result<PackedExecution, Error> {
+    let _evaluation = super::metal_backend::evaluation_scope();
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
         return Err(Error::InvalidAnchor);
     }
@@ -749,35 +778,47 @@ pub fn execute_packed_with_result_limits(
         }
         error
     })?;
+    batch.apply_budget(budget, growth);
     if batch.tasks.is_empty() {
         return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
-    }
-    let totals = batch
-        .assign_workspace_with_result_limits_and_lanes(programs, result_limits, EXECUTION_LANES)
-        .map_err(|error| {
-            if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-                eprintln!("TEMPO_PACKED_BATCH_ERROR stage=workspace error={error:?}");
-            }
-            error
-        })?;
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-        eprintln!(
-            "TEMPO_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} workspaceBytes={} totals={totals:?}",
-            programs.len(),
-            batch.tasks.len(),
-            batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
-        );
     }
     let allocation_started = std::time::Instant::now();
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let queue = rerail_metal::queue()?;
-    let workspace = MetalWorkspaceLease::acquire(
-        device,
-        totals,
-        batch.header.scheduler_byte_count,
-        batch.header.workspace_byte_count,
-        batch.tasks.len(),
-    )?;
+    // Every lane reserves the widest evaluation's states: a workspace the pool refuses runs with half the lanes,
+    // down to one (decision 0334 §9). Fewer lanes run its tasks in fewer at a time; the results are the same.
+    let mut lanes = EXECUTION_LANES;
+    let (totals, workspace) = loop {
+        let totals = batch
+            .assign_workspace_with_result_limits_and_lanes(programs, result_limits, lanes)
+            .map_err(|error| {
+                if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+                    eprintln!("TEMPO_PACKED_BATCH_ERROR stage=workspace error={error:?}");
+                }
+                error
+            })?;
+        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+            eprintln!(
+                "TEMPO_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} lanes={lanes} workspaceBytes={} totals={totals:?}",
+                programs.len(),
+                batch.tasks.len(),
+                batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
+            );
+        }
+        match MetalWorkspaceLease::acquire(
+            device,
+            totals,
+            batch.header.scheduler_byte_count,
+            batch.header.workspace_byte_count,
+            batch.tasks.len(),
+        ) {
+            Err(Error::BackendCapacity) if lanes > 1 => {
+                crate::code_rule_dsl::prof::count("metal.fewer_lanes", 1);
+                lanes /= 2;
+            }
+            workspace => break (totals, workspace?),
+        }
+    };
     for evaluation in &mut batch.evaluations {
         evaluation.generation = workspace.generation;
     }

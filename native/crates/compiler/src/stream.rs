@@ -851,7 +851,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 // The token's own bytes, as simdjson's stage 2 reads a number (decision 0398).
                 let c = &program.local_checks[usize::from(operand)];
                 let end = (rec_end as usize).min(bytes.len()).max(start as usize);
-                if crate::program::token_value(&c.ops, bytes, start as usize, end, c.delay) {
+                // The tokens before it: the records before this one, ending in turn (decision 0428).
+                let before = &lasts[..next.saturating_sub(1).min(lasts.len())];
+                let ended = |j: usize| before.binary_search(&(j as u32)).is_ok();
+                if crate::program::token_value(c, bytes, start as usize, end, &ended) {
                     return refuse!(pc - 1, "a token's check holds");
                 }
             }
@@ -1006,7 +1009,11 @@ pub fn validate_local_checks(program: &Words) -> Result<(), Error> {
             };
             ok && (c.token || !op.token_only())
         });
-        if c.ops.is_empty() || !earlier || (!c.token && usize::from(c.mask) >= masks) || (c.token && c.delay >= 64) {
+        // A token's check that reads the tokens before it (`LocalOp::Ended`) reads the records,
+        // which a region tier 2 splits (decision 0323) does not hold apart (decision 0428).
+        let split = program.block_programs.first().and_then(|b| b.records.as_ref()).is_some_and(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2));
+        let ended = c.ops.contains(&LocalOp::Ended);
+        if c.ops.is_empty() || !earlier || (!c.token && usize::from(c.mask) >= masks) || (c.token && (usize::from(c.delay) + usize::from(c.back) >= 64 || (ended && split))) || (!c.token && c.back != 0) {
             return Err(Error::InvalidOperand(i));
         }
     }
@@ -1025,7 +1032,7 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         if m.refuses && usize::from(m.order) >= bits {
             return Err(Error::InvalidOperand(i));
         }
-        // Rising by order; a mark's entries together (decision 0406), one where it refuses (its
+        // Rising by order; a mark's entries together (decision 0490), one where it refuses (its
         // `TOKEN` test is the one entry's), and none an `unless` alone of a refusing mark.
         let rising = i == 0 || program.token_marks[i - 1].order < m.order || (program.token_marks[i - 1].order == m.order && !m.refuses && !program.token_marks[i - 1].refuses);
         let rising = rising && !(m.refuses && m.unless);
@@ -1036,7 +1043,7 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
         // A `not` or an `end` only after the mark's token, but for the token before's `not`,
         // which has an `end` (no token before holds), and the mark's own token's `not`, a gap
-        // mark's `unless before` (decision 0406: its mask gives the token's bytes); an `end`
+        // mark's `unless before` (decision 0490: its mask gives the token's bytes); an `end`
         // only last after the mark's.
         let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0 || (e.offset == 0 && !e.end) || (e.offset == -1 && e.not && e.end)) && m.elems.iter().filter(|e| e.offset >= 0).rev().skip(1).all(|e| !e.end);
         let offsets = offsets && after;
@@ -1074,7 +1081,7 @@ pub fn extra_kind(extras: &[(u8, u16)], code: u32) -> Option<u16> {
 /// Whether token mark `m` holds at the record before `next` (`Words::token_marks`): the element
 /// at -1 at the record before, the others in turn from the token on, each at the next record
 /// that is no extra (`extra_bit`, the code's bit; none for a grammar without extras); a run
-/// (decision 0406) any number of records it takes, then the elements after it from any of them
+/// (decision 0490) any number of records it takes, then the elements after it from any of them
 /// on.
 pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: Option<u32>) -> bool {
     let is_extra = |c: u32| extra_bit.is_some_and(|b| c >> (crate::records::MARK_SHIFT + b) & 1 == 1);

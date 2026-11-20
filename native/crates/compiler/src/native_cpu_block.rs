@@ -250,7 +250,7 @@ impl Batch {
         let mut stripped: Vec<u8> = Vec::with_capacity(files.len());
         let (mut words, mut positions, mut counts, mut scratch) = (0u64, 0u64, 0u64, 0u64);
         for file in files {
-            // The prefix the passes skip (a byte order mark, 0389), in the one walk of the files.
+            // The bytes the host stripped (0389): the prefix, where the file starts with it.
             stripped.push(if !p.is_empty() && file.starts_with(p) { p.len() as u8 } else { 0 });
             // The file's blocks and `delay` bytes past its end, zero beyond it.
             let blocks = (file.len() + usize::from(program.delay)).div_ceil(64);
@@ -666,7 +666,7 @@ pub(crate) fn toggle(f: &mut FunctionBuilder<'_>, x: Value) -> (Value, Option<cr
         });
     }
     let whole = prefix_xor(f, lane);
-    // The rounds behind a branch, cold (0353): the quotes the terms take out are zero but where
+    // The rounds behind a branch, cold (0381): the quotes the terms take out are zero but where
     // one is escaped or gated off, as simdjson's escape handling is its rare path.
     let taken = out.expect("a term");
     let (rare, join) = (f.create_block(), f.create_block());
@@ -750,9 +750,13 @@ pub struct At<'a> {
     /// In a full block: whether its bytes and the 16 before are all ASCII (`all_ascii`). The
     /// values known then (`ascii_known`) are made behind one branch on it, the body once.
     /// And set where that branch was made (some such value is read past it).
-    pub ascii_split: Option<(Value, &'a std::cell::Cell<bool>)>,
+    /// With the slow way's blocks, recorded (`hoist_constants`).
+    pub ascii_split: Option<(Value, &'a std::cell::Cell<bool>, &'a std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>)>,
     /// Where the full body keeps its rare paths' blocks (`toggle`); none: not kept.
     pub rare: Option<&'a std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>>,
+    /// Where the full body keeps each gated region's branch block, by region (`Emit::region`):
+    /// its values on the vectors are made there (decision 0423); none: not kept.
+    pub entered: Option<&'a std::cell::RefCell<Vec<(usize, cranelift_codegen::ir::Block)>>>,
     /// The block's row of slot words, and the slots per block (`native_ir::Passes`).
     pub scratch: Value,
     pub slots: u16,
@@ -768,6 +772,9 @@ pub struct At<'a> {
     pub edge: Option<EdgeAt>,
     /// The outputs whose words the token loop takes as values (`Loop::hand`).
     pub hand: &'a [u16],
+    /// The flag's error vector in (decision 0406, simdjson's `error` register), carried round
+    /// the hot loop: the flag's leaves are ORed into it, unreduced. None: reduced each block.
+    pub err: Option<Value>,
 }
 
 /// An edge block (0383): the stream's first, or one at or past `len / 64`. One compare: `i - 1`
@@ -849,6 +856,12 @@ pub struct Sinks<'a> {
     pub extra: &'a [(usize, i32)],
     /// Whether those are stored; else only kept for the token loop (`Emit::stored_words`).
     pub extra_stored: bool,
+    /// The totals with no row (`rowless_totals`), each ORed into the running word `running`
+    /// where the body makes it (decision 0406), as simdjson ORs into its error register: no
+    /// total's word is live to the block's end. On an edge block the edge part makes each of
+    /// them again and ORs it into the running word the block took (`Emit::edge_part`).
+    pub ors: &'a [bool],
+    pub running: Option<&'a std::cell::Cell<Value>>,
 }
 
 /// Output `k`'s word at delay `d > 0`, stored without holding a word across the loop. The
@@ -900,7 +913,7 @@ fn places_pack(native: &BlockNative, state: &State, live_at: &[bool]) -> crate::
 /// `block::MAX_ROUNDS` times). The loop's heads are given back for the shape's check.
 /// Also the words its sinks stored (`Emit::stored_words`), for the token loop (`Hand`).
 #[allow(clippy::type_complexity)]
-pub fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c: &Consts, at: At<'_>) -> (Vec<Value>, Vec<Value>, usize, Vec<cranelift_codegen::ir::Block>, Vec<Option<Value>>) {
+pub fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c: &Consts, at: At<'_>) -> (Vec<Value>, Vec<Value>, usize, Vec<cranelift_codegen::ir::Block>, Vec<Option<Value>>, Option<Value>) {
     let plan = &state.plan;
     let n = native.insts.len();
     let (live_at, masked_at) = live(native, state, at.full);
@@ -915,6 +928,15 @@ pub fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c:
     }
     let mut e = Emit::new(native, state, c, &at, lanes);
     (e.live, e.masked) = (live_at, masked_at);
+    if at.full {
+        e.flags = flags(native, state, &e.live, at.slot_of, at.sinks.as_ref().map(|s| s.early));
+        // A flag's leaves are read on the vectors only: no word of theirs.
+        if let Some(fl) = &e.flags {
+            for &l in &fl.leaves {
+                e.masked[l] = false;
+            }
+        }
+    }
     let mut grouped: Vec<Option<usize>> = vec![None; n];
     for (g, group) in native.groups.iter().enumerate() {
         for &m in &group.members {
@@ -933,15 +955,15 @@ pub fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c:
     // The last pass's outputs to store where they are made.
     if let Some(sk) = at.sinks {
         for (k, &v) in native.outputs.iter().enumerate() {
-            if sk.early[k] {
+            if sk.early[k] || (sk.ors[k] && sk.running.is_some()) {
                 sink_at[usize::from(v)].push(k);
             }
         }
     }
     let mut order = Order { done: vec![false; n], regions: vec![0; regions], ran: vec![false; native.groups.len()] };
     let mut gates = 0;
-    if let Some((flag, made)) = at.ascii_split.filter(|_| at.full) {
-        if let Some(g) = ascii_split(&mut e, &mut *f, flag, &grouped, &store_at, &sink_at, regions, &mut order) {
+    if let Some((flag, made, slow)) = at.ascii_split.filter(|_| at.full) {
+        if let Some(g) = ascii_split(&mut e, &mut *f, flag, &grouped, &store_at, &sink_at, regions, &mut order, slow) {
             gates += g;
             made.set(true);
         }
@@ -953,8 +975,9 @@ pub fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c:
     }
     let rounds = std::mem::take(&mut e.rounds);
     let stored_words = std::mem::take(&mut e.stored_words);
+    let err = e.err;
     let (outputs, packed) = e.finish(&mut *f);
-    (outputs, packed, gates, rounds, stored_words)
+    (outputs, packed, gates, rounds, stored_words, err)
 }
 
 /// A body's values in the order they are needed: each just before the first value that reads
@@ -1092,9 +1115,11 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
                         stack.push((node, true));
                         let reg = &plan.regions[r];
                         let mut need: Vec<usize> = vec![reg.pre.unwrap_or(reg.gate)];
+                        // Not its own values on the vectors (`Region::vectors`): made in its
+                        // branch, as words where a member reads them so (decision 0423).
                         for &m in &reg.members {
                             for o in native.insts[m].operands() {
-                                if plan.region_of[o] != Some(r) && needs(o, m) {
+                                if plan.region_of[o] != Some(r) && !reg.vectors.contains(&o) && needs(o, m) {
                                     need.push(o);
                                 }
                             }
@@ -1122,7 +1147,8 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
 /// another reads as a word, an output, or a carried one (`exits`). A value on the vectors that
 /// another on the vectors reads is made again there by its reader (`Lanes`), so it leaves none.
 #[allow(clippy::too_many_arguments)]
-fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, grouped: &[Option<usize>], store_at: &[Vec<u16>], sink_at: &[Vec<usize>], regions: usize, order: &mut Order) -> Option<usize> {
+#[allow(clippy::too_many_arguments)]
+fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, grouped: &[Option<usize>], store_at: &[Vec<u16>], sink_at: &[Vec<usize>], regions: usize, order: &mut Order, slow_blocks: &std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>) -> Option<usize> {
     let native = e.native;
     let state = e.state;
     let plan = &state.plan;
@@ -1169,15 +1195,18 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
             exit[x] = true;
         }
     }
-    let exits: Vec<usize> = (0..n).filter(|&x| exit[x]).collect();
-    if exits.is_empty() {
+    // The flag's leaves, where the error vector goes round the loop: ORed into it in the
+    // branch, and no word of theirs leaves it.
+    let absorb: Vec<usize> = if e.err.is_some() { (0..n).filter(|&x| exit[x] && plan.lanes[x] && flag_leaf(e, x)).collect() } else { Vec::new() };
+    let exits: Vec<usize> = (0..n).filter(|&x| exit[x] && !absorb.contains(&x)).collect();
+    if exits.is_empty() && absorb.is_empty() {
         return None;
     }
     for x in 0..n {
         if words[x] {
             e.as_words[x] = true;
         }
-        if exit[x] && plan.lanes[x] {
+        if exit[x] && plan.lanes[x] && !flag_leaf(e, x) {
             // Made a mask in the branch, the word that leaves it.
             e.masked[x] = true;
         }
@@ -1188,22 +1217,57 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
     for _ in &exits {
         f.append_block_param(join, types::I64);
     }
+    let err = !absorb.is_empty();
+    if err {
+        f.append_block_param(join, types::I8X16);
+    }
     f.ins().brif(flag, fast, &[], slow, &[]);
     f.switch_to_block(fast);
-    let consts: Vec<BlockArg> = exits.iter().map(|&x| BlockArg::from(f.ins().iconst(types::I64, known[x].expect("known") as i64))).collect();
+    // The error vector on an ASCII block: as it was.
+    let ascii_err = e.err.filter(|_| err);
+    let consts: Vec<BlockArg> = exits.iter().map(|&x| BlockArg::from(f.ins().iconst(types::I64, known[x].expect("known") as i64))).chain(ascii_err.map(BlockArg::from)).collect();
     f.ins().jump(join, &consts);
     // The other way's values are its own: what it made is not kept past the join (the vectors'
     // memos, the carries), only the exits' words.
     f.switch_to_block(slow);
+    let way_from = f.func.dfg.num_blocks();
     let mut way = e.clone();
+    // The way's values are its own (a flag made in it leaves as a word): the error vector
+    // stays out of it, but for the leaves it ORs in below.
+    way.err = None;
+    way.err_in = None;
     let mut way_order = order.clone();
     let none_u16: Vec<Vec<u16>> = vec![Vec::new(); n];
     let none_k: Vec<Vec<usize>> = vec![Vec::new(); n];
+    // The error bytes first, chunk by chunk, as simdjson's check: each chunk's `prev`s made
+    // where it reads them, not ahead of it for the exits' masks (decision 0418).
+    let err_slow = e.err.filter(|_| err).map(|acc| match way.lanes.any_bytes(&mut *f, &absorb) {
+        Some(v) => f.ins().bor(acc, v),
+        None => acc,
+    });
     gates += demand_order(&mut way, &mut *f, grouped, &none_u16, &none_k, regions, Some(&exit), &mut way_order);
-    let words: Vec<BlockArg> = exits.iter().map(|&x| BlockArg::from(plain(&mut *f, &way.syms, &mut way.values, x))).collect();
+    // A flag's leaf (`flags`) leaves as a word nonzero where any of its lanes is set, not a
+    // mask: the flag only tests it (simdjson's error register, reduced once).
+    let leaves: Vec<usize> = exits.iter().copied().filter(|&x| plan.lanes[x] && flag_leaf(&way, x)).collect();
+    for x in leaves {
+        way.syms[x] = way.lanes.any_of(&mut *f, &[x]);
+    }
+    let words: Vec<BlockArg> = exits.iter().map(|&x| BlockArg::from(plain(&mut *f, &way.syms, &mut way.values, x))).chain(err_slow.map(BlockArg::from)).collect();
     f.ins().jump(join, &words);
+    {
+        let mut b = slow_blocks.borrow_mut();
+        b.push(slow);
+        b.extend((way_from..f.func.dfg.num_blocks()).map(|k| cranelift_codegen::ir::Block::from_u32(k as u32)));
+    }
     f.switch_to_block(join);
     let params = f.block_params(join).to_vec();
+    if err {
+        e.err = params.last().copied();
+        for &x in &absorb {
+            e.absorbed[x] = true;
+            order.done[x] = true;
+        }
+    }
     for (&x, &v) in exits.iter().zip(&params) {
         e.syms[x] = Sym::Value(v, false);
         e.values[x] = Some(v);
@@ -1213,6 +1277,11 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
         e.sink(&mut *f, x, &sink_at[x]);
     }
     Some(gates)
+}
+
+/// Whether value `x` is a leaf on the vectors of the full body's flag (`flags`).
+fn flag_leaf(e: &Emit<'_, '_>, x: usize) -> bool {
+    e.flags.as_ref().is_some_and(|fl| fl.leaves.contains(&x))
 }
 
 /// What `demand_order` has made so far, for a call after another (`body`'s ASCII split): the
@@ -1266,6 +1335,116 @@ fn ascii_known(native: &BlockNative, plan: &crate::native_cpu_lanes::Plan) -> Ve
     k
 }
 
+/// The totals a full body makes as one flag (page 39, item 2), as simdjson keeps its error
+/// registers: their words are only ORed together and tested for a bit (`BlockNative::totals`),
+/// so each total's value, an `or` of values (an `and` with a value all ones in a full block is
+/// its other side), is made as a word that is nonzero where any bit of it is. Its leaves on the
+/// vectors are ORed there, all of them, and reduced once, never made masks (simdjson's UTF-8
+/// error); its leaves that are words are ORed as words (simdjson's unescaped-character error).
+/// Each root is the value of rowless totals only (`BlockNative::rowless_totals`: no row read,
+/// none stored), outside regions, fixed points and carries; its tree's inner values are read by
+/// the tree only, its vector leaves as words by the tree only. The edge part makes a root
+/// exactly (`Flags::roots`). `None` where no total has a leaf on the vectors.
+#[derive(Clone, Debug, Default)]
+struct Flags {
+    /// The totals' values made as the flag: the first one made makes it, the rest are zero.
+    roots: Vec<usize>,
+    /// The values inside the trees (not made in a full block), the leaves on the vectors (made
+    /// there only) and the leaves that are words (made as they are, and ORed).
+    inner: Vec<bool>,
+    leaves: Vec<usize>,
+    words: Vec<usize>,
+}
+
+fn flags(native: &BlockNative, state: &State, live: &[bool], slot_of: &[u16], early: Option<&[bool]>) -> Option<Flags> {
+    let n = native.insts.len();
+    let plan = &state.plan;
+    let rowless = native.rowless_totals();
+    let mut readers: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for y in (0..n).filter(|&y| live[y]) {
+        for o in native.insts[y].operands() {
+            readers[o].push(y);
+        }
+    }
+    let grouped: Vec<bool> = {
+        let mut g = vec![false; n];
+        for group in &native.groups {
+            for &m in &group.members {
+                g[m] = true;
+            }
+        }
+        g
+    };
+    let plain = |x: usize| plan.region_of[x].is_none() && state.top[x].is_none() && state.flag[x].is_none() && !grouped[x];
+    // A tree under `x`: its inner values and leaves, or `None`.
+    // A tree under `x`: its inner values, its leaves on the vectors and its leaves as words.
+    fn tree(native: &BlockNative, plan: &crate::native_cpu_lanes::Plan, x: usize, inner: &mut Vec<usize>, leaves: &mut Vec<usize>, words: &mut Vec<usize>, depth: u32) -> Option<()> {
+        if depth > 32 {
+            return None;
+        }
+        if plan.lanes[x] {
+            leaves.push(x);
+            return Some(());
+        }
+        let full = |y: u16| plan.full[usize::from(y)] == Some(u64::MAX);
+        match native.insts[x] {
+            BlockInst::Or(a, b) => {
+                inner.push(x);
+                tree(native, plan, usize::from(a), inner, leaves, words, depth + 1)?;
+                tree(native, plan, usize::from(b), inner, leaves, words, depth + 1)
+            }
+            BlockInst::And(a, b) if full(b) => {
+                inner.push(x);
+                tree(native, plan, usize::from(a), inner, leaves, words, depth + 1)
+            }
+            BlockInst::And(a, b) if full(a) => {
+                inner.push(x);
+                tree(native, plan, usize::from(b), inner, leaves, words, depth + 1)
+            }
+            _ => {
+                words.push(x);
+                Some(())
+            }
+        }
+    }
+    let mut out = Flags { roots: Vec::new(), inner: vec![false; n], leaves: Vec::new(), words: Vec::new() };
+    for x in 0..n {
+        let outs: Vec<usize> = (0..native.outputs.len()).filter(|&k| usize::from(native.outputs[k]) == x).collect();
+        if outs.is_empty() || !outs.iter().all(|&k| rowless.contains(&k) && slot_of.get(k).is_none() && !early.is_some_and(|e| e[k])) || !plain(x) || !readers[x].is_empty() {
+            continue;
+        }
+        let (mut inner, mut leaves, mut words) = (Vec::new(), Vec::new(), Vec::new());
+        let t = tree(native, plan, x, &mut inner, &mut leaves, &mut words, 0);
+        if t.is_none() || leaves.is_empty() {
+            continue;
+        }
+        let ours = |y: usize| y == x || inner.contains(&y);
+        // Inner values read by the tree only, no output; leaves read as words by the tree only.
+        let inner_ok = inner.iter().all(|&y| y == x || (plain(y) && readers[y].iter().all(|&r| ours(r)) && !native.outputs.contains(&(y as u16))));
+        // The root itself may be the one leaf: a total made on the vectors as it is (stage 1's
+        // UTF-8 error, decision 0421).
+        let leaves_ok = leaves.iter().all(|&l| plain(l) && (l == x || !native.outputs.contains(&(l as u16))) && readers[l].iter().all(|&r| ours(r) || plan.lanes[r]));
+        // A word leaf is made as it is: outside regions, or a region's value read past it (its
+        // `zero`, the branch's word after it), so the body has its word.
+        let out_of_region = |w: usize| plan.region_of[w].is_some_and(|r| plan.regions[r].zero.contains(&w)) && state.top[w].is_none() && state.flag[w].is_none() && !grouped[w] && !plan.lanes[w];
+        let words_ok = words.iter().all(|&w| (plain(w) || out_of_region(w)) && !inner.contains(&w));
+        if inner_ok && leaves_ok && words_ok {
+            out.roots.push(x);
+            out.inner[x] = true;
+            for &y in &inner {
+                out.inner[y] = true;
+            }
+            out.leaves.extend(leaves);
+            out.words.extend(words);
+        }
+    }
+    out.leaves.sort_unstable();
+    out.leaves.dedup();
+    out.words.sort_unstable();
+    out.words.dedup();
+    (!out.roots.is_empty()).then_some(out)
+}
+
 /// The values a body must make: the outputs, the carried ones (a known one's carry is a constant)
 /// and what they read. In a full block a value known in every full block reads nothing. Second,
 /// the byte-local values made a mask: those a live value reads as one (`native_cpu_lanes`).
@@ -1313,6 +1492,17 @@ struct Emit<'a, 'b> {
     /// The values something reads: in a full block, one whose readers all fold is not made.
     live: Vec<bool>,
     masked: Vec<bool>,
+    /// The totals made as one flag in a full body (`flags`), and whether it is made yet.
+    flags: Option<Flags>,
+    any_made: bool,
+    /// The flag's error vector so far (`At::err`), its leaves ORed into it where made; and the
+    /// vector as the block took it, only to tell that it goes round the loop. An edge block's
+    /// is zero both in and out (decision 0417): the loop enters those from its head, with zero,
+    /// and the edge part makes the flag's totals exactly, as words. So no join on the way takes
+    /// a copy of the vector in.
+    err: Option<Value>,
+    err_in: Option<Value>,
+    absorbed: Vec<bool>,
     /// Byte-local values made from words, not on the vectors: a reader of an all-ASCII block's
     /// known values past their branch (`ascii_split`).
     as_words: Vec<bool>,
@@ -1340,6 +1530,8 @@ struct Emit<'a, 'b> {
     walked: Vec<bool>,
     /// Where its rare paths' blocks are kept (`At::rare`).
     rare: Option<&'b std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>>,
+    /// Where its regions' branch blocks are kept (`At::entered`).
+    entered: Option<&'b std::cell::RefCell<Vec<(usize, cranelift_codegen::ir::Block)>>>,
     /// The words its sinks stored: each output's, then each of `Sinks::extra`'s, as stored
     /// (`Hand`: the token loop takes them as values, `finish` gives a sunk output as zero).
     stored_words: Vec<Option<Value>>,
@@ -1364,6 +1556,11 @@ impl<'a, 'b> Emit<'a, 'b> {
             even: c.even,
             live: Vec::new(),
             masked: Vec::new(),
+            flags: None,
+            any_made: false,
+            err: at.err.filter(|_| at.full),
+            err_in: at.err.filter(|_| at.full),
+            absorbed: vec![false; n],
             as_words: vec![false; n],
             syms: vec![Sym::Known(0); n],
             values: vec![None; n],
@@ -1377,6 +1574,7 @@ impl<'a, 'b> Emit<'a, 'b> {
             walks: at.walks,
             walked: vec![false; native.walks.len()],
             rare: at.rare,
+            entered: at.entered,
             stored_words: vec![None; native.outputs.len() + at.sinks.map_or(0, |sk| sk.extra.len())],
             fixed: vec![None; native.outputs.len()],
         }
@@ -1439,6 +1637,43 @@ impl Emit<'_, '_> {
         let inst = native.insts[at];
         if !self.live[at] {
             self.set(at, Sym::Known(0));
+            return;
+        }
+        // The totals as one flag (`flags`): every root's leaves ORed on the vectors, and its word
+        // leaves as words, one reduction a block, as simdjson's error registers (page 39, item 2).
+        if self.full
+            && let Some(fl) = self.flags.as_ref().filter(|fl| fl.inner[at])
+        {
+            // At the last root: every word leaf is made by then (the values are in order).
+            let sym = if fl.roots.last() == Some(&at) && !self.any_made {
+                let (mut leaves, mut words) = (fl.leaves.clone(), fl.words.clone());
+                self.any_made = true;
+                // Those the ASCII branch ORed into the error vector already, and the word leaves
+                // ORed into the running word (`sink`).
+                leaves.retain(|&l| !self.absorbed[l]);
+                words.retain(|&w| !self.absorbed[w]);
+                // A leaf made a word already (past the ASCII branch, `ascii_split`): nonzero
+                // where a lane of it is set, ORed as a word.
+                let made: Vec<usize> = leaves.iter().copied().filter(|&l| matches!(self.syms[l], Sym::Value(..))).collect();
+                leaves.retain(|l| !made.contains(l));
+                words.extend(made);
+                // Into the error vector where it goes round the loop (`At::err`), else reduced.
+                let mut any = if let Some(acc) = self.err {
+                    if let Some(v) = self.lanes.any_bytes(&mut *f, &leaves) {
+                        self.err = Some(f.ins().bor(acc, v));
+                    }
+                    Sym::Known(0)
+                } else {
+                    self.lanes.any_of(&mut *f, &leaves)
+                };
+                for w in words {
+                    any = Sym::and(&mut *f, any.not(), self.syms[w].not()).not();
+                }
+                any
+            } else {
+                Sym::Known(0)
+            };
+            self.set(at, sym);
             return;
         }
         // A walk's values are made together, by its call; what it reads, by the call too.
@@ -1660,7 +1895,9 @@ impl Emit<'_, '_> {
             .filter(|&m| self.native.outputs.contains(&(m as u16)) || (0..self.native.insts.len()).any(|u| state.plan.region_of[u] != Some(r) && self.native.insts[u].operands().contains(&m)))
             .collect();
         let words: Vec<usize> = state.region_fields[r].iter().map(|&(w, _)| w).collect();
-        // The region's carried bits that came in, ORed.
+        // The region's carried bits that came in, ORed, and the test of them and the gate: made for no value, so the
+        // source location is not the last value's made before (`region_vectors_outside`; Kotlin's `08-templates`).
+        f.set_srcloc(cranelift_codegen::ir::SourceLoc::default());
         let mut carried: Option<Value> = None;
         for &(w, m) in &state.region_fields[r] {
             let bits = f.ins().band_imm(self.packed_in[w], m as i64);
@@ -1701,6 +1938,16 @@ impl Emit<'_, '_> {
         // The region computed. Its carried bits are made plain, not gathered as constants: the
         // two ways must agree.
         f.switch_to_block(active);
+        if let Some(entered) = self.entered {
+            entered.borrow_mut().push((r, active));
+        }
+        // Its values on the vectors that a member reads as words (one made from words,
+        // `Emit::as_words`): their masks made here, never in a block that skips the region
+        // (decision 0423). The others are made on the vectors where read.
+        let as_words: Vec<usize> = reg.vectors.iter().copied().filter(|&v| self.live[v] && self.masked[v]).collect();
+        for v in as_words {
+            self.emit(&mut *f, v);
+        }
         if let Some(calls) = self.calls.filter(|c| !c.inline.borrow()[r]) {
             let args = self.call_region(&mut *f, r, &early, &outside, &words, calls);
             self.consts = consts;
@@ -1724,7 +1971,9 @@ impl Emit<'_, '_> {
         }
         f.ins().jump(after, &args);
         }
-        // Skipped: the values zero, the carried words as they were.
+        // Skipped: the values zero, the carried words as they were. Made for no value: the
+        // source location is not the last member's (`region_vectors_outside`).
+        f.set_srcloc(cranelift_codegen::ir::SourceLoc::default());
         f.switch_to_block(skip);
         let zero = f.ins().iconst(types::I64, 0);
         let mut args: Vec<BlockArg> = outside.iter().map(|_| BlockArg::from(zero)).collect();
@@ -1868,6 +2117,12 @@ impl Emit<'_, '_> {
                 even: c.even,
                 live: self.live.clone(),
                 masked: self.masked.clone(),
+                // A region's function: no value in a region is a flag (`flags`).
+                flags: None,
+                any_made: false,
+                err: None,
+                err_in: None,
+                absorbed: vec![false; n],
                 as_words: self.as_words.clone(),
                 syms: vec![Sym::Known(0); n],
                 values: vec![None; n],
@@ -1880,6 +2135,7 @@ impl Emit<'_, '_> {
                 walks: None,
                 walked: vec![false; native.walks.len()],
                 rare: None,
+                entered: None,
                 stored_words: Vec::new(),
                 fixed: vec![None; native.outputs.len()],
             };
@@ -1980,6 +2236,20 @@ impl Emit<'_, '_> {
     fn sink(&mut self, f: &mut FunctionBuilder<'_>, x: usize, ks: &[usize]) {
         f.set_srcloc(cranelift_codegen::ir::SourceLoc::new(x as u32 + 1));
         let Some(sk) = self.sinks else { return };
+        // A word leaf of the flag, where its roots are ORed into the running word: ORed in where
+        // made, as simdjson ORs each error word into its register, so no leaf's word lives to
+        // the root (decision 0417).
+        if self.full
+            && let Some(run) = sk.running
+            && let Some(fl) = self.flags.as_ref()
+            && fl.words.contains(&x)
+            && !self.absorbed[x]
+            && fl.roots.iter().all(|&r| self.native.outputs.iter().enumerate().any(|(k, &v)| usize::from(v) == r && sk.ors[k]))
+        {
+            let v = plain(&mut *f, &self.syms, &mut self.values, x);
+            run.set(f.ins().bor(run.get(), v));
+            self.absorbed[x] = true;
+        }
         let outs = self.native.outputs.len();
         for (e, &(_, off)) in sk.extra.iter().enumerate().filter(|(_, e)| e.0 == x) {
             let v = plain(&mut *f, &self.syms, &mut self.values, x);
@@ -1998,6 +2268,17 @@ impl Emit<'_, '_> {
         }
         for &k in ks {
             let v = plain(&mut *f, &self.syms, &mut self.values, x);
+            if let (true, Some(run)) = (sk.ors[k], sk.running) {
+                let word = if self.full {
+                    v
+                } else {
+                    let inside = within_word(&mut *f, self.i, self.len, self.native.output_delays[k]);
+                    f.ins().band(v, inside)
+                };
+                run.set(f.ins().bor(run.get(), word));
+                self.sunk[k] = Some(f.ins().iconst(types::I64, 0));
+                continue;
+            }
             let d = self.native.output_delays[k];
             let word = if self.full {
                 v
@@ -2042,7 +2323,14 @@ impl Emit<'_, '_> {
         // A stored one is stored again in the edge part, over the body's word.
         let stored = self.sinks.is_some();
         let sunk_now = |k: usize| sunk[k] && stored;
-        let joined: Vec<usize> = fixed.iter().copied().filter(|&k| !sunk_now(k) || handed.contains(&(k as u16))).collect();
+        // A total ORed into the running word where made (`Sinks::ors`) leaves by the running
+        // word, not by its own.
+        let running = self.sinks.and_then(|sk| sk.running);
+        let ored: Vec<usize> = match self.sinks.filter(|_| running.is_some()) {
+            Some(sk) => (0..native.outputs.len()).filter(|&k| sk.ors[k]).collect(),
+            None => Vec::new(),
+        };
+        let joined: Vec<usize> = fixed.iter().copied().filter(|&k| !ored.contains(&k) && (!sunk_now(k) || handed.contains(&(k as u16)))).collect();
         let mut full_words: Vec<BlockArg> = joined.iter().map(|&k| BlockArg::from(self.body_word(&mut *f, k, sunk_now(k)))).collect();
         // The carried words with a differing value's bits: they leave by the join too, the edge
         // part's in place of the full body's, so the next block starts from the general body's
@@ -2056,9 +2344,22 @@ impl Emit<'_, '_> {
             };
             full_words.push(BlockArg::from(word));
         }
+        // The totals' running word (`Sinks::running`, decision 0417): the full body's, or on an
+        // edge block the one it took with each of those totals, made exactly here, ORed in.
+        if let Some(r) = running {
+            full_words.push(BlockArg::from(r.get()));
+        }
+        // The error vector (`err`): the full body's, or zero on an edge block, which took zero
+        // from the loop's head, the edge part making the flag's totals exactly, as words.
+        if let Some(v) = self.err {
+            full_words.push(BlockArg::from(v));
+        }
         let (edge_way, join) = (f.create_block(), f.create_block());
-        for _ in 0..joined.len() + carried.len() {
+        for _ in 0..joined.len() + carried.len() + usize::from(running.is_some()) {
             f.append_block_param(join, types::I64);
+        }
+        if self.err.is_some() {
+            f.append_block_param(join, types::I8X16);
         }
         // An edge block: the one whose index the head's cold path left in the slot. Each file's
         // first block is one, so a full block, after it, never finds its own index there; and
@@ -2076,6 +2377,9 @@ impl Emit<'_, '_> {
         let mut g = self.clone();
         g.full = false;
         g.rare = None;
+        g.flags = None;
+        g.err = None;
+        g.err_in = None;
         // The carries in: the loop's, the general body's after any block (the join below).
         for w in 0..state.words {
             g.packed_in[w] = f.ins().stack_load(types::I64, ea.slot, 8 * (3 + w) as i32);
@@ -2090,6 +2394,16 @@ impl Emit<'_, '_> {
         // its operands there, from the bytes.
         let valid = |o: usize| (matches!(self.syms[o], Sym::Value(..) | Sym::Slot(..)) && !plan.lanes[o]) || matches!(native.insts[o], BlockInst::Const(_));
         let mut remake = ed.differs.clone();
+        // The totals the running word holds: made exactly here, its word the one taken.
+        for &k in &ored {
+            remake[usize::from(native.outputs[k])] = true;
+        }
+        // The flag's totals (`flags`): made exactly here, for the cut to the stream.
+        if let Some(fl) = &self.flags {
+            for &r in &fl.roots {
+                remake[r] = true;
+            }
+        }
         let mut stack: Vec<usize> = (0..n).filter(|&x| remake[x]).collect();
         while let Some(x) = stack.pop() {
             if plan.lanes[x] && !self.as_words[x] {
@@ -2155,10 +2469,32 @@ impl Emit<'_, '_> {
         for b in made_from..f.func.dfg.num_blocks() {
             f.set_cold_block(cranelift_codegen::ir::Block::from_u32(b as u32));
         }
+        if running.is_some() {
+            let at = 8 * (3 + state.words + native.extracts.len()) as i32;
+            let mut w = f.ins().stack_load(types::I64, ea.slot, at);
+            for &k in &ored {
+                let x = usize::from(native.outputs[k]);
+                let v = plain(&mut *f, &g.syms, &mut g.values, x);
+                let inside = within_word(&mut *f, self.i, self.len, native.output_delays[k]);
+                let v = f.ins().band(v, inside);
+                w = f.ins().bor(w, v);
+            }
+            words.push(BlockArg::from(w));
+        }
+        if self.err.is_some() {
+            let z = f.ins().iconst(types::I8, 0);
+            words.push(BlockArg::from(f.ins().splat(types::I8X16, z)));
+        }
         f.set_cold_block(edge_way);
         f.ins().jump(join, &words);
         f.switch_to_block(join);
         let params = f.block_params(join).to_vec();
+        if let Some(r) = running {
+            r.set(params[joined.len() + carried.len()]);
+        }
+        if self.err.is_some() {
+            self.err = params.last().copied();
+        }
         for (&k, &w) in joined.iter().zip(&params) {
             if sunk_now(k) {
                 self.stored_words[k] = Some(w);
@@ -2234,20 +2570,27 @@ pub fn within_word(f: &mut FunctionBuilder<'_>, i: Value, len: Value, d: u8) -> 
 /// `u32`s from `ptr`. Eight are written whatever the count (the ones past it are slack the next
 /// write covers), then eight at a time while more are left. Gives the count, and the loop's block
 /// (a `Bits` progress point, `native_cpu_shape`). The builder is left in the block after.
+///
+/// As clang compiles simdjson's (decision 0421): the word is reversed once, and each position is
+/// its leading zeros, the bit cleared by `^ (1 << 63) >> z`, three operations where `ctz` and
+/// `w & (w - 1)` are five. Past the last set bit `z` is 64, the shift wraps to 0 and the top bit
+/// flips: what follows is slack, which the count leaves out, and the eight more are not entered.
 pub fn flatten(f: &mut FunctionBuilder<'_>, m: Value, at: Value, ptr: Value) -> (Value, cranelift_codegen::ir::Block) {
     let flags = MemFlags::new().with_notrap();
     let cnt = f.ins().popcnt(m);
-    let eight = |f: &mut FunctionBuilder<'_>, mut w: Value, ptr: Value| {
+    let top = f.ins().iconst(types::I64, i64::MIN);
+    let eight = |f: &mut FunctionBuilder<'_>, mut r: Value, ptr: Value| {
         for j in 0..8 {
-            let tz = f.ins().ctz(w);
-            let p = f.ins().iadd(at, tz);
+            let z = f.ins().clz(r);
+            let p = f.ins().iadd(at, z);
             f.ins().istore32(flags, p, ptr, 4 * j);
-            let less = f.ins().iadd_imm(w, -1);
-            w = f.ins().band(w, less);
+            let bit = f.ins().ushr(top, z);
+            r = f.ins().bxor(r, bit);
         }
-        w
+        r
     };
-    let w = eight(f, m, ptr);
+    let r = f.ins().bitrev(m);
+    let w = eight(f, r, ptr);
     let more = f.create_block();
     let after = f.create_block();
     f.append_block_param(more, types::I64);
@@ -2291,7 +2634,9 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     }
     // The records (`records`): made in the last pass at each file's end where it is a forward
     // one, else in a pass of their own after the passes.
-    let mut tables = native.records.as_ref().map(|r| RecordTables::new(r, native)).transpose()?;
+    // None where tier 2 makes the records (`Records::fetched_in_tier2`, page 40): tier 1 then
+    // writes the starts alone, and has no record pass.
+    let mut tables = native.records.as_ref().filter(|r| !r.fetched_in_tier2()).map(|r| RecordTables::new(r, native)).transpose()?;
     // The CPU's form: the walks made by walking, not by rounds (decision 0139); the refill's
     // words the body makes for its rows kept (0361).
     let keep: Vec<usize> = native.records.as_ref().zip(tables.as_ref()).and_then(|(r, t)| refill_outs(r, t, native)).unwrap_or_default().into_iter().map(usize::from).collect();
@@ -2983,7 +3328,7 @@ impl FileCols {
 
 }
 
-/// A token's last byte by its gap (decision 0400, `records::gap_last`): the byte before the next
+/// A token's last byte by its gap (decision 0452, `records::gap_last`): the byte before the next
 /// token's start (the file's end at the last token), less the run of the skip's bits (output
 /// `gap`) before it. A word of the mask at a time, from the one holding the byte before the next
 /// start: the highest bit not in the run is the last, a count of leading zeros. A run of 64
@@ -8193,6 +8538,8 @@ fn backward(context: &mut Context, fills: &[(u16, u16, u16)], slots: u16) -> Res
 /// What a block's step needs that is the same for every block of a forward pass.
 struct Loop<'a> {
     native: &'a BlockNative,
+    /// Each gated region's branch block in the full body (`At::entered`), this round's.
+    entered: std::cell::RefCell<Vec<(usize, cranelift_codegen::ir::Block)>>,
     state: &'a State,
     counted: &'a [usize],
     /// The outputs the body stores where it makes them (`Sinks`): all but the counted.
@@ -8213,6 +8560,8 @@ struct Loop<'a> {
     extra: &'a [(usize, i32)],
     /// Whether the full body branched on an all-ASCII block (`ascii_split`).
     split: std::cell::Cell<bool>,
+    /// The ASCII branch's slow way's blocks (`hoist_constants`).
+    slow: std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>,
     /// The full body's rare paths' blocks (`PassShape::rare_branches`).
     rare: std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>,
     /// The outputs whose words a full block hands the token loop as values, then `extra`'s
@@ -8225,6 +8574,9 @@ struct Loop<'a> {
     edge: bool,
     /// The edge part's call (`EdgeAt`), made where the file's length is read.
     edge_at: std::cell::Cell<Option<EdgeAt>>,
+    /// Whether the full body makes its totals as one flag (`flags`): then its error vector goes
+    /// round the hot loop (decision 0406).
+    flagged: bool,
 }
 
 impl Loop<'_> {
@@ -8243,7 +8595,11 @@ impl Loop<'_> {
 /// With, in a full block, the words the token loop's refill reads (`Loop::hand`): the block's
 /// own, handed on as values.
 #[allow(clippy::type_complexity)]
-fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value], len: Value, full: bool, scratch: Value, calls: Option<&RegionCalls>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, usize, usize, Vec<Value>) {
+/// `chunk0`: the 16 bytes before the block, carried in a register from the block before
+/// (decision 0405); the block's last 16 are then the fifth value given back, for the next.
+/// `err_in`: the flag's error vector (`At::err`, 0406); the sixth value given back is its next.
+#[allow(clippy::too_many_arguments)]
+fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value], len: Value, full: bool, scratch: Value, calls: Option<&RegionCalls>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>, chunk0: Option<Value>, err_in: Option<Value>) -> (Vec<Value>, usize, usize, Vec<Value>, Option<Value>, Option<Value>) {
     let (native, state) = (lp.native, lp.state);
     let (carried, counted, early) = (lp.carried(), lp.counted, lp.early);
     let stores = MemFlags::new().with_notrap();
@@ -8255,25 +8611,42 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     let scratch = if lp.rowed() { p[lp.params - 1] } else { scratch };
     let (slot_of, slots) = (lp.slot_of, lp.slots);
     let sunk: Vec<bool> = early.iter().zip(lp.stored).map(|(&e, &s)| e && s).collect();
-    let sinks = slot_of.is_empty().then_some(Sinks { dst, stride: lp.stride, early: &sunk, extra: lp.extra, extra_stored: lp.extra_stored });
+    // The totals ORed where made (`Sinks::ors`): those with no row.
+    let totals_at = (counted.len() > native.extracts.len()).then_some(native.extracts.len());
+    let ors: Vec<bool> = (0..native.outputs.len()).map(|k| native.totals.contains(&k) && !lp.stored[k]).collect();
+    let running = totals_at.map(|c| std::cell::Cell::new(counts_in[c]));
+    let sinks = slot_of.is_empty().then_some(Sinks { dst, stride: lp.stride, early: &sunk, extra: lp.extra, extra_stored: lp.extra_stored, ors: &ors, running: running.as_ref() });
     // A full body on every block (0383): its edge part's call slot and bound (`forward`).
     let edge = (lp.edge && full).then(|| lp.edge_at.get().expect("made at the file's start"));
     // The full body's one branch: an all-ASCII block runs a body with the values known on
     // ASCII bytes folded (`native_cpu_lanes`), the others the whole body. Both meet before
     // the sinks.
+    // The block's last chunk, for the next block's chunk 0: one of the body's loads.
+    let mut last_chunk = None;
+    let err_out;
     let (values, packed_out, extras) = if full && state.plan.ascii_branch {
         // One body; what an all-ASCII block knows behind one branch in it (`ascii_split`).
-        let (ascii, bytes) = all_ascii(&mut *f, native, &state.plan, base);
-        let (v, packed, gates, rounds, extras) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes: Some(bytes), ascii_split: Some((ascii, &lp.split)), rare: Some(&lp.rare), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand });
+        let (ascii, bytes) = all_ascii(&mut *f, native, &state.plan, base, chunk0);
+        last_chunk = chunk0.and(bytes[4]);
+        let (v, packed, gates, rounds, extras, e_out) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes: Some(bytes), ascii_split: Some((ascii, &lp.split, &lp.slow)), rare: Some(&lp.rare), entered: Some(&lp.entered), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand, err: err_in });
         gate_branches += gates;
         round_branches += rounds.len();
         heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
+        err_out = e_out;
         (v, packed, extras)
     } else {
-        let (v, packed, gates, rounds, extras) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes: None, ascii_split: None, rare: full.then_some(&lp.rare), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand });
+        let bytes = chunk0.map(|v| {
+            let last = f.ins().load(types::I8X16, MemFlags::new().with_notrap(), base, 48);
+            last_chunk = Some(last);
+            let mut b = [None; 5];
+            (b[0], b[4]) = (Some(v), Some(last));
+            b
+        });
+        let (v, packed, gates, rounds, extras, e_out) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes, ascii_split: None, rare: full.then_some(&lp.rare), entered: full.then_some(&lp.entered), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand, err: err_in });
         gate_branches += gates;
         round_branches += rounds.len();
         heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
+        err_out = e_out;
         (v, packed, extras)
     };
     // Before the last pass each output's word is in its slot: the body stored it.
@@ -8317,7 +8690,10 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
             // The totals only test for a bit (`BlockProgram::totals`): every total's words OR-ed
             // into one running word.
             let _ = k;
-            let any = native.totals.iter().fold(n, |acc, &t| {
+            // The totals ORed where made: into `running` already, from `n` (`Sinks::ors`).
+            let early_ored = running.is_some() && sinks.is_some();
+            let n = running.as_ref().filter(|_| early_ored).map_or(n, |r| r.get());
+            let any = native.totals.iter().filter(|&&t| !(early_ored && ors[t])).fold(n, |acc, &t| {
                 // A sunk total's word, back from its row (the body stored it there).
                 let w = if slot_of.is_empty() && sunk[t] { f.ins().load(types::I64, MemFlags::trusted(), dst, 8 * t as i32) } else { words[t] };
                 f.ins().bor(acc, w)
@@ -8341,7 +8717,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     } else {
         Vec::new()
     };
-    (again, gate_branches, round_branches, handed)
+    (again, gate_branches, round_branches, handed, last_chunk, err_out)
 }
 
 /// The general body as a function of its own, called by the pass for the blocks that are not
@@ -8360,7 +8736,7 @@ fn general(context: &mut Context, lp: &Loop<'_>) -> Result<(), Error> {
     let p: Vec<Value> = (0..lp.params).map(|k| f.ins().load(types::I64, flags, at, 8 * k as i32)).collect();
     let zero = f.ins().iconst(types::I64, 0);
     let mut heads = Vec::new();
-    let (again, _, _, hand) = step(&mut f, lp, &consts, &p, len, false, zero, None, &mut heads);
+    let (again, _, _, hand, _, _) = step(&mut f, lp, &consts, &p, len, false, zero, None, &mut heads, None, None);
     for (k, &v) in again.iter().enumerate() {
         f.ins().store(flags, v, at, 8 * k as i32);
     }
@@ -8463,6 +8839,178 @@ fn main_run(r: &crate::records::Records) -> Option<u16> {
 /// branches on ASCII, the gated regions' branches and the fixed points' loops.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
+/// The vector constants the slow way of the ASCII branch makes (`blocks`, the UTF-8 check), held
+/// in registers round the hot loop (`body`), as simdjson holds its UTF-8 tables and splats
+/// across its loop (decision 0418). Each is a parameter of the hot body: made where the loop is
+/// entered, passed on round the back edge, and made again on the way out of a cold block (the
+/// edge part), so that it is not live across one: those hold the most vectors. A block where
+/// two of its values meet takes it as a parameter too. A `splat` of an `iconst` is one, and so
+/// is a `vconst`. Only these: hoisting every vector constant spills them (0069).
+fn hoist_constants(func: &mut cranelift_codegen::ir::Function, body: cranelift_codegen::ir::Block, blocks: &[cranelift_codegen::ir::Block]) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{Block, Inst, InstructionData, Opcode, ValueDef};
+    use std::collections::HashMap;
+    // The constants, each its instruction and how to make it again.
+    #[derive(Clone, Copy)]
+    enum Make {
+        V(cranelift_codegen::ir::Constant),
+        Splat(cranelift_codegen::ir::immediates::Imm64, cranelift_codegen::ir::Type),
+    }
+    let mut consts: Vec<(Inst, Value, Make)> = Vec::new();
+    for &b in blocks {
+        for inst in func.layout.block_insts(b) {
+            match func.dfg.insts[inst] {
+                InstructionData::UnaryConst { opcode: Opcode::Vconst, constant_handle } => consts.push((inst, func.dfg.first_result(inst), Make::V(constant_handle))),
+                InstructionData::Unary { opcode: Opcode::Splat, arg } => {
+                    if let ValueDef::Result(def, _) = func.dfg.value_def(arg)
+                        && let InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } = func.dfg.insts[def]
+                    {
+                        consts.push((inst, func.dfg.first_result(inst), Make::Splat(imm, func.dfg.value_type(arg))));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    // Read in the slow way only (its values are its own).
+    let in_slow: std::collections::HashSet<Block> = blocks.iter().copied().collect();
+    let all: Vec<Block> = func.layout.blocks().collect();
+    consts.retain(|&(_, r, _)| all.iter().all(|&b| in_slow.contains(&b) || func.layout.block_insts(b).all(|i| !func.dfg.inst_values(i).any(|v| v == r))));
+    if consts.is_empty() {
+        return;
+    }
+    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(func);
+    let domtree = cranelift_codegen::dominator_tree::DominatorTree::with_function(func, &cfg);
+    // The loop's blocks: those `body` dominates, in reverse post-order.
+    let order: Vec<Block> = domtree.cfg_postorder().iter().rev().copied().filter(|&b| domtree.dominates(body, b, &func.layout)).collect();
+    let make = |func: &mut cranelift_codegen::ir::Function, at: Inst, m: Make| -> Value {
+        let ty = cranelift_codegen::ir::types::I8X16;
+        let mut pos = FuncCursor::new(func).at_inst(at);
+        match m {
+            Make::V(h) => pos.ins().vconst(ty, h),
+            Make::Splat(imm, t) => {
+                let c = pos.ins().iconst(t, imm);
+                pos.ins().splat(ty, c)
+            }
+        }
+    };
+    let preds = |b: Block| -> Vec<(Block, Inst)> { cfg.pred_iter(b).map(|p| (p.block, p.inst)).collect() };
+    for &(inst, r, m) in &consts {
+        // Each loop block's value of it at its entry: none in a cold block.
+        let mut at: HashMap<Block, Value> = HashMap::new();
+        let mut params: Vec<Block> = Vec::new();
+        for &b in &order {
+            if func.layout.is_cold(b) && b != body {
+                continue;
+            }
+            let v = if b == body {
+                Some(func.dfg.append_block_param(b, types::I8X16))
+            } else {
+                let ins: Vec<Option<Value>> = preds(b).iter().map(|&(p, _)| at.get(&p).copied()).collect();
+                match ins.first() {
+                    Some(&Some(v)) if ins.iter().all(|&x| x == Some(v)) => Some(v),
+                    _ => {
+                        params.push(b);
+                        Some(func.dfg.append_block_param(b, types::I8X16))
+                    }
+                }
+            };
+            at.insert(b, v.expect("a value"));
+        }
+        // The arguments: the value out of a loop block that has one; else made at the branch.
+        for &b in std::iter::once(&body).chain(&params) {
+            for (p, br) in preds(b) {
+                let arg = match at.get(&p) {
+                    Some(&v) => v,
+                    None => make(func, br, m),
+                };
+                let dfg = &mut func.dfg;
+                for d in dfg.insts[br].branch_destination_mut(&mut dfg.jump_tables, &mut dfg.exception_tables) {
+                    if d.block(&dfg.value_lists) == b {
+                        d.append_argument(arg, &mut dfg.value_lists);
+                    }
+                }
+            }
+        }
+        // Its readers read the block's value.
+        for &b in blocks {
+            let v = at[&b];
+            for i in func.layout.block_insts(b).collect::<Vec<_>>() {
+                func.dfg.map_inst_values(i, |x| if x == r { v } else { x });
+            }
+        }
+        func.layout.remove_inst(inst);
+    }
+}
+
+/// A mask taken out of its vector where it is read (decision 0420): each `extractlane` of the
+/// hot loop (the blocks `body` dominates) moves to just before its first reader in its block, or
+/// to the block's end, so the word is not held in an integer register over a stretch where the
+/// vector it comes from holds it. Cranelift does not move it itself (its mid-end is off, 0069).
+/// A gated region's values on the vectors (`Region::vectors`) are made in its branch, never in
+/// a block that skips it (decision 0423): the first instruction made for one (its source
+/// location, `Emit::emit`) in a warm block its branch block does not dominate, by region and
+/// value. Cold blocks (the edge part) make values without the regions.
+fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::native_cpu_lanes::Plan, entered: &[(usize, cranelift_codegen::ir::Block)]) -> Option<(usize, usize)> {
+    if entered.is_empty() {
+        return None;
+    }
+    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(func);
+    let domtree = cranelift_codegen::dominator_tree::DominatorTree::with_function(func, &cfg);
+    for b in func.layout.blocks().filter(|&b| domtree.is_reachable(b) && !func.layout.is_cold(b)) {
+        for i in func.layout.block_insts(b) {
+            let loc = func.srcloc(i);
+            if loc.is_default() || loc.bits() == 0 {
+                continue;
+            }
+            let v = loc.bits() as usize - 1;
+            for &(r, active) in entered {
+                if plan.regions.get(r).is_some_and(|reg| reg.vectors.contains(&v)) && !domtree.block_dominates(active, b) {
+                    return Some((r, v));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn sink_extracts(func: &mut cranelift_codegen::ir::Function, body: cranelift_codegen::ir::Block) {
+    use cranelift_codegen::ir::Opcode;
+    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(func);
+    let domtree = cranelift_codegen::dominator_tree::DominatorTree::with_function(func, &cfg);
+    let blocks: Vec<_> = func.layout.blocks().filter(|&b| domtree.is_reachable(b) && domtree.block_dominates(body, b)).collect();
+    for b in blocks {
+        let insts: Vec<_> = func.layout.block_insts(b).collect();
+        for &e in &insts {
+            if func.dfg.insts[e].opcode() != Opcode::Extractlane {
+                continue;
+            }
+            let r = func.dfg.first_result(e);
+            if func.dfg.value_type(r).is_vector() {
+                continue;
+            }
+            // Its first reader in this block, after it; else the block's end.
+            let mut seen = false;
+            let mut to = None;
+            for i in func.layout.block_insts(b) {
+                if i == e {
+                    seen = true;
+                    continue;
+                }
+                if seen && func.dfg.inst_values(i).any(|v| v == r) {
+                    to = Some(i);
+                    break;
+                }
+            }
+            let to = to.or_else(|| func.layout.last_inst(b)).expect("a terminator");
+            if func.layout.next_inst(e) != Some(to) {
+                func.layout.remove_inst(e);
+                func.layout.insert_inst(e, to);
+            }
+        }
+    }
+}
+
 fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>, records: Option<(&crate::records::Records, &RecordTables, usize)>, made: &BlockNative) -> Result<(bool, usize, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>, Vec<(usize, usize)>, usize, usize, usize, usize), Error> {
     // The outputs the token loop makes from the bytes (`native_cpu_bytes`), from the program
     // before its CPU form.
@@ -8472,7 +9020,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let counted = counted(native);
     let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
     // Every output but the extracts is stored where the body makes it. A total with a row is
-    // read back from it at the step's end, into the totals' one running word (0353): held from
+    // read back from it at the step's end, into the totals' one running word (0381): held from
     // where it was made to there, it took a register through the body, or a spill.
     let early: Vec<bool> = (0..native.outputs.len()).map(|k| !native.extracts.contains(&k)).collect();
     let state = State::of(native);
@@ -8486,7 +9034,14 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let (mut arms, mut known_entries) = (0, 0);
     // On the CPU, no row of an output the record pass makes (`records_made`).
     // Nor of a total no one reads by its rows (`rowless_totals`): its running word is its flag.
-    let mut unmade: Vec<usize> = if records.is_some() && made.outputs.len() == native.outputs.len() { made.records_made().into_iter().chain(made.rowless_totals()).collect() } else { Vec::new() };
+    let mut unmade: Vec<usize> = if made.outputs.len() != native.outputs.len() {
+        Vec::new()
+    } else if records.is_some() || made.records.as_ref().is_some_and(|r| r.fetched_in_tier2()) {
+        // Where tier 2 makes the records (page 40), the rows it makes from the bytes too.
+        made.records_made().into_iter().chain(made.rowless_totals()).collect()
+    } else {
+        made.rowless_totals()
+    };
     // The refill's words from the body's rows (0361): those outputs stored, the rare word in a
     // free slot.
     let rows = match records {
@@ -8523,7 +9078,12 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let edge = slot_of.is_empty()
         && usize::from(native.pad) >= 64 + 16 + usize::from(native.delay)
         && state.plan.edge(native).is_some_and(|ed| extra.iter().all(|&(x, _)| !ed.differs[x] && crate::native_cpu_lanes::byte_set(native, x).is_some_and(|s| s[0] & 1 == 0)));
-    let lp = Loop { native, state: &state, counted: &counted, early: &early, stored: &stored, stride: 8 * native.outputs.len() as i64, slot_of, slots, params, walks: Some(&walks), extra: &extra, split: std::cell::Cell::new(false), rare: std::cell::RefCell::new(Vec::new()), hand, extra_stored, edge, edge_at: std::cell::Cell::new(None) };
+    // The full body's flag (`flags`), as the body finds it: its live values, its sunk outputs.
+    let flagged = slot_of.is_empty() && {
+        let sunk: Vec<bool> = early.iter().zip(&stored).map(|(&e, &s)| e && s).collect();
+        flags(native, &state, &live(native, &state, true).0, slot_of, Some(&sunk)).is_some()
+    };
+    let lp = Loop { native, entered: std::cell::RefCell::new(Vec::new()), state: &state, counted: &counted, early: &early, stored: &stored, stride: 8 * native.outputs.len() as i64, slot_of, slots, params, walks: Some(&walks), extra: &extra, split: std::cell::Cell::new(false), slow: std::cell::RefCell::new(Vec::new()), rare: std::cell::RefCell::new(Vec::new()), hand, extra_stored, edge, edge_at: std::cell::Cell::new(None), flagged };
     // The general body, but where the full body runs on the edge blocks too (0383).
     if !lp.edge {
         general(general_context, &lp)?;
@@ -8698,6 +9258,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     // This round's function's: an earlier round's blocks are not this one's.
     lp.rare.borrow_mut().clear();
     lp.split.set(false);
+    lp.slow.borrow_mut().clear();
+    lp.entered.borrow_mut().clear();
     {
         let mut f = FunctionBuilder::new(&mut context.func, &mut builder_context);
         // entry -> row (one per file) -> head -> full or general (one per block) -> head ...
@@ -8731,6 +9293,20 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             }
         }
         f.append_block_param(tokens, types::I64);
+        // The bytes before the block, carried round the hot loop (decision 0405, simdjson's
+        // `prev_input_block`): the block before's last chunk on the back edge, a load from the
+        // head. Not round the token loop, whose calls would spill it.
+        let carry = !tokened && crate::native_cpu_lanes::reads_before(native, &lp.state.plan);
+        if carry {
+            f.append_block_param(body_block, types::I8X16);
+        }
+        // The flag's error vector round the hot loop (decision 0406, simdjson's `error`): zero
+        // from the head, reduced into the totals' running word where the loop leaves for it.
+        // Not round the token loop either.
+        let err_vec = !tokened && lp.flagged;
+        if err_vec {
+            f.append_block_param(body_block, types::I8X16);
+        }
         // The block a full body handed its refill words for, and the words (`Hand`).
         let handed = if tokened && !lp.hand.is_empty() { lp.hand.len() + lp.extra.len() } else { 0 };
         if handed > 0 {
@@ -8883,24 +9459,34 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let next_block = f.create_block();
         f.ins().brif(ended, finish, &args, next_block, &[]);
         f.switch_to_block(next_block);
+        // Into the hot body: with the bytes before the block, loaded (the window holds them).
+        let mut into_body: Vec<BlockArg> = args.clone();
+        if carry {
+            let before = f.ins().load(types::I8X16, MemFlags::new().with_notrap(), hp[1], -16);
+            into_body.push(before.into());
+        }
+        if err_vec {
+            let z = f.ins().iconst(types::I8, 0);
+            into_body.push(f.ins().splat(types::I8X16, z).into());
+        }
         if let (Some(slot), Some(ea)) = (edge_slot, lp.edge_at.get()) {
             // Every block the full body's (0383). On an edge block, first the loop's parameters
             // to the edge part's slot, cold: its block's index, which tells the body's end it is
             // one (`Emit::edge_part`), and the carried words in.
             let call = f.create_block();
             let is_edge = edge_block(&mut f, hp[0], ea.bound);
-            f.ins().brif(is_edge, call, &[], body_block, &args);
+            f.ins().brif(is_edge, call, &[], body_block, &into_body);
             f.switch_to_block(call);
             f.set_cold_block(call);
             for (k, &v) in hp[..params].iter().enumerate() {
                 f.ins().stack_store(v, slot, 8 * k as i32);
             }
-            f.ins().jump(body_block, &args);
+            f.ins().jump(body_block, &into_body);
         } else {
             let past_first = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, hp[0], 1);
             let inside = f.ins().icmp(IntCC::UnsignedLessThan, hp[0], full_end);
             let is_full = f.ins().band(past_first, inside);
-            f.ins().brif(is_full, body_block, &args, general, &args);
+            f.ins().brif(is_full, body_block, &into_body, general, &args);
         }
 
         // The loops' progress points: the files, the blocks, and each flattening's set bits.
@@ -8910,15 +9496,17 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let made_from = f.func.dfg.num_blocks();
         f.switch_to_block(body_block);
         let p = f.block_params(body_block).to_vec();
-        let st = p[params..].to_vec();
+        let st = p[params..params + states].to_vec();
+        let chunk0 = carry.then(|| p[params + states]);
+        let err_in = err_vec.then(|| p[params + states + usize::from(carry)]);
         // The body's constants, made at its head each block (decision 0350): made once at the
         // function's entry they live across the token loop's calls, and were spilled there and
         // reloaded at each use (about 20 loads a block, against a `movi` and a `dup` here).
         // In every loop: where none crosses a call, the entry's were still spilled around the
-        // gated regions and reloaded at the loop's head (0353).
+        // gated regions and reloaded at the loop's head (0381).
         let body_consts = Consts::make(&mut f);
-        let (again, hand);
-        (again, gate_branches, round_branches, hand) = step(&mut f, &lp, &body_consts, &p[..params], len, true, scratch, Some(&calls), &mut heads);
+        let (again, hand, last_chunk, err_out);
+        (again, gate_branches, round_branches, hand, last_chunk, err_out) = step(&mut f, &lp, &body_consts, &p[..params], len, true, scratch, Some(&calls), &mut heads, chunk0, err_in);
         let again: Vec<BlockArg> = again.into_iter().map(BlockArg::from).collect();
         // The hot loop's back edge: to itself while the next block is full.
         hot.push(body_block);
@@ -8937,7 +9525,29 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             f.ins().jump(tokens, &args);
         } else {
             let more = f.ins().icmp(IntCC::UnsignedLessThan, next, full_end);
-            f.ins().brif(more, body_block, &again, head, &again);
+            // The back edge: this block's last chunk is the next one's chunk 0.
+            let again_carried: Vec<BlockArg> = again.iter().copied().chain(last_chunk.map(BlockArg::from)).chain(err_out.filter(|_| err_vec).map(BlockArg::from)).collect();
+            match err_out.filter(|_| err_vec) {
+                None => {
+                    f.ins().brif(more, body_block, &again_carried, head, &again);
+                }
+                Some(err) => {
+                    // Leaving for the head: the error vector reduced, once, into the totals'
+                    // running word.
+                    let leave = f.create_block();
+                    f.ins().brif(more, body_block, &again_carried, leave, &[]);
+                    f.switch_to_block(leave);
+                    let halves = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little), err);
+                    let (lo, hi) = (f.ins().extractlane(halves, 0), f.ins().extractlane(halves, 1));
+                    let any = f.ins().bor(lo, hi);
+                    let at = 3 + carried + native.extracts.len();
+                    let mut out = again.clone();
+                    if let BlockArg::Value(v) = out[at] {
+                        out[at] = f.ins().bor(v, any).into();
+                    }
+                    f.ins().jump(head, &out);
+                }
+            }
         }
 
         // The other blocks: the general body's call, the parameters through a stack slot.
@@ -9102,6 +9712,17 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         f.ins().return_(&[]);
         f.seal_all_blocks();
         f.finalize();
+        // The UTF-8 check's constants in registers round the hot loop, as simdjson's (decision
+        // 0418): not round the token loop, whose calls would spill them (0350).
+        if !tokened && let Some(&body) = hot.first() {
+            hoist_constants(&mut context.func, body, &lp.slow.borrow());
+        }
+        if let Some(&body) = hot.first() {
+            sink_extracts(&mut context.func, body);
+        }
+        if let Some((r, v)) = region_vectors_outside(&context.func, &lp.state.plan, &lp.entered.borrow()) {
+            return Err(Error::RefusedShape(format!("region {r}'s value %{v} on the vectors made outside its branch (decision 0423)")));
+        }
         let mut owns = vec![own.clone()];
         owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
         owns.extend(walk_names(Some(&walks)));

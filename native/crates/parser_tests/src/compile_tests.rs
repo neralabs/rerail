@@ -98,12 +98,12 @@ fn classes_pack_into_shared_products() {
     assert!(compiled.rows.contains("= eq 0x22"), "{}", compiled.rows);
 }
 
-/// What the compiler does not handle yet is refused by name, not guessed.
+/// What the compiler does not handle yet is refused by name, not guessed: `line_has`, which the
+/// evaluator has and the masks do not (`text`, the operation this test named first, is compiled
+/// since 0332's Kotlin step 2).
 #[test]
 fn unsupported_operations_are_refused() {
-    // `line_has` (whether a line holds a mask's bit) is the evaluator's alone. (`text`, the
-    // test's call before, is compiled since 0332 step 2.)
-    let stmts = ::bitlex::syntax::parse("class a = 'a'\nclass nl = 0x0a\nmask b = line_has(a, nl) & a\n").expect("parses");
+    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = line_has(a, a) & a\n").expect("parses");
     let error = bitlex_compile::compile(&stmts, &["b"], None).expect_err("refused");
     assert!(error.contains("line_has"), "{error}");
 }
@@ -423,7 +423,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
             }
             let at = format!("{executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
             assert_eq!(cut(got[starts].clone(), n), want_starts, "starts, {at}");
-            // The CPU makes no lasts mask where its record pass makes the lasts (decision 0400).
+            // The CPU makes no lasts mask where its record pass makes the lasts (decision 0452).
             if !(executor == "cranelift" && lasts_made) {
                 assert_eq!(cut(got[lasts].clone(), n), want_lasts, "lasts, {at}");
             }
@@ -557,14 +557,25 @@ fn the_cpu_executors_take_a_batch() {
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
-    // The outputs the CPU's record pass makes instead of a mask (decision 0400): not compared.
-    let made: Vec<Vec<usize>> = programs.iter().map(|p| rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).records_made()).collect();
+    // The outputs the CPU's record pass makes instead of a mask (decision 0452), and the rows its
+    // tier 1 does not store (0406: a total no one reads by its rows is its flag only, compared
+    // below): not compared.
+    let made: Vec<Vec<usize>> = blocks
+        .iter()
+        .map(|b| {
+            let native = rerail_compiler::block_native::BlockNative::lower(b);
+            let mut made = native.records_made();
+            made.extend(native.cpu_unstored());
+            made
+        })
+        .collect();
     for (name, got) in [("interpreter", block::run_batch(&blocks, &files)), ("cranelift", native_cpu_block::run_batch(&compiled, &files))] {
         assert_eq!(got.len(), files.len());
         for (k, (got, want)) in got.iter().zip(&want).enumerate() {
             let what = format!("{name}: file {k} ({} bytes, program {})", files[k].bytes.len(), files[k].program);
             let made: &[usize] = if name == "cranelift" { &made[files[k].program] } else { &[] };
             assert_eq!(got.without(made).outputs, want.without(made).outputs, "{what}");
+            assert_eq!(got.totals, want.totals, "{what}: the totals");
             if name == "interpreter" {
                 // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
                 assert_eq!(got.positions, want.positions, "{what}");
@@ -819,7 +830,7 @@ fn json_loop_keeps_values_in_registers() {
 /// toggle, the classes one lookup, the multiply), not raised then. 704 and 10 with 0346: the
 /// toggle's multiply of the raw quotes adds the rounds of the escaped ones (+7), and the string's
 /// two chains in words of their own, as simdjson's (-2), hold two more registers across the loop,
-/// and Cranelift spills two values elsewhere. 667 and 4 with 0353: a class one `cmtst` (24
+/// and Cranelift spills two values elsewhere. 667 and 4 with 0381: a class one `cmtst` (24
 /// fewer), the escaped quotes' rounds behind a branch (5), no complement of a complement (5),
 /// the bitmask's weights one load, the constants made at the body's head, and a total read
 /// back from its row at the step's end, not held through the body. 673 and 7 with 0383: the
@@ -1007,21 +1018,24 @@ fn only_the_compiler_reads_tier2s_states() {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("reads a source file");
-            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`)
-            // and tier 1's counts of arms read in place (`shape.arms`, `cols.arms`, `c.arms`) are
-            // not the table's: a `.arms` is the table's unless its receiver is one of those.
+            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`,
+            // and `self.arms` in `Reader`'s own methods) and tier 1's counts of arms read in place
+            // (`shape.arms`, `cols.arms`, `c.arms`) are not the table's: a `.arms` is the table's
+            // unless its receiver is one of those. The table's own `self.arms` is in `grammar.rs`.
             let other_arms = |line: &str| {
                 line.match_indices(".arms").all(|(at, _)| {
                     let before = &line[..at];
                     let receiver = before.rsplit(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or_default();
                     // `readers[…].arms`: the indexed list before the `.arms` is the readers'.
                     let indexed = before.ends_with(']') && before.rfind("readers[").is_some_and(|k| !before[k..].contains(".arms"));
-                    // In `records.rs`, `self.arms` is a `Reader`'s (its one type with arms).
-                    let own = receiver == "self" && name == "records.rs";
-                    ["rd", "reader", "shape", "cols", "c"].contains(&receiver) || indexed || own
+                    ["rd", "reader", "shape", "cols", "c", "self"].contains(&receiver) || indexed
                 })
             };
-            let table_line = |line: &str| needles[1..].iter().any(|n| line.contains(n)) || (line.contains(".arms") && !other_arms(line));
+            // And `.arms` is the table's only in code that reaches `grammar` (its rows are
+            // `grammar::ArmRow`s); a comment reads nothing.
+            let code = |line: &str| !line.trim_start().starts_with("//");
+            let reaches_grammar = text.lines().filter(|l| code(l)).any(|l| l.contains("grammar::"));
+            let table_line = |line: &str| code(line) && (needles[1..].iter().any(|n| line.contains(n)) || (reaches_grammar && line.contains(".arms") && !other_arms(line)));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }
@@ -1255,14 +1269,13 @@ fn json_compiled_path_equals_the_interpreters() {
     // (decision 0140: a block's base, a commit of codes, the image's end), none a table pass.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    // A pass over the table is a call of a wrap's `shift` or a drop's (`table_passes`, by callee).
-    // The number's check (decision 0398) is an outlined function too, as every check is: rare
-    // code, out of the arm's.
+    // Its calls are the tape's rare steps and the outlined checks (a number's, decision 0398, rare code
+    // out of the arm's): every one an outlined function's, none a pass over the table.
     assert_eq!(tier2.table_passes, 0, "no pass over the table");
     assert!(tier2.own_calls > 0 && rerail_compiler::clif_text::callees(&tier2.clif).len() == tier2.own_calls, "every call an outlined function's: {}", tier2.own_calls);
     let files = json_tier2_files();
     let made =
-        rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).records_made();
+        rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).cpu_unstored();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);
         let got1 = tier1.extract(f);
