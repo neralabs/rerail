@@ -42,7 +42,7 @@ fn find(source_root: Option<OsString>, image: Option<PathBuf>, others: [Option<P
     if let Some(root) = source_root {
         return Some(PathBuf::from(root));
     }
-    let from_image = image.and_then(|image| above(&image, |dir| is_root(dir) || is_installed(dir)));
+    let from_image = image.and_then(|image| above(&image, is_root_or_installed));
     from_image.or_else(|| others.into_iter().flatten().find_map(|start| above(&start, is_root)))
 }
 
@@ -54,6 +54,12 @@ fn above(start: &Path, test: impl Fn(&Path) -> bool) -> Option<PathBuf> {
 
 fn is_root(dir: &Path) -> bool {
     dir.join("native/Cargo.toml").is_file() && dir.join("docs/rule-syntax").is_dir()
+}
+
+/// A checkout's root (`is_root`) or an installed package's (`is_installed`). `docs/rule-syntax` is asked first, as
+/// both hold it: a directory that is neither costs one look, as it does `is_root`.
+fn is_root_or_installed(dir: &Path) -> bool {
+    dir.join("docs/rule-syntax").is_dir() && (dir.join("native/Cargo.toml").is_file() || is_installed(dir))
 }
 
 /// An installed package's root: the library and the typing programs, at the paths the package ships them.
