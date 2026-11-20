@@ -60,7 +60,11 @@ reports, with samples), `untranslated` (no `.rerail`) or `failed` (check-rr's re
 that does not compile, with the engine's message); the original's failures on single files (syntax errors, a spent
 work budget) are listed beside the comparison, not counted as failures. Translations include the library of this
 checkout (`docs/rule-syntax/lib`, passed as `RERAIL_RR_LIB`). `--rules a,b` narrows a run to some rules; `--corpora`,
-`--engine` and `--out` say where things are. Each engine run keeps its own store, so two runs at once do not meet.
+`--engine` and `--out` say where things are. Each engine run keeps its own store, so two runs at once do not meet. A
+tool-call rule (`sample.boundary: "tool-call"`) matches a coding agent's tool call, not files: it is compared on its
+pack.json examples as calls (the `tool-calls` corpus, each example's text the command, `tool:*` tried as Bash), its
+original through the runtime's matcher and its translation through `run-policies --tool-calls`; a finding is the rule
+and the call, as the original names no code.
 
 A directory here is a pack with originals only when `packs/<id>/pack.json` exists. One without has no
 `equivalence.json` and is not checked: `--all` names it as not a pack, and `--pack` refuses it. Today those are `rr`

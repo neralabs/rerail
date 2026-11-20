@@ -18,6 +18,9 @@ export const EXAMPLES_CORPUS = "examples";
 /** The corpus of a pack's recorded upstream fixtures (the benchmark's prepared `recorded/<pack>/files`). */
 export const FIXTURES_CORPUS = "fixtures";
 
+/** The corpus of a pack's tool-call rules' examples, each a coding agent's tool call (exampleToolCalls). */
+export const TOOL_CALLS_CORPUS = "tool-calls";
+
 /** One finding: the rule it is for, where, and its code; the column (1-based) when the side gives one. */
 export interface Finding {
   rule: string;
@@ -523,6 +526,35 @@ export function exampleFiles(packJson: { rules?: { id: string; examples?: Record
     }
   }
   return { files, skipped };
+}
+
+/** One tool call made of an example, as `rerail-engine run-policies --tool-calls` reads it. */
+export interface ExampleToolCall {
+  /** The example: `<rule> <kind>`. */
+  id: string;
+  tool: string;
+  input: { command: string };
+}
+
+/**
+ * The examples of a pack's tool-call rules (`sources`: each one's `sample.source`) as tool calls: an example's text is
+ * the command the coding agent runs, through the tool its source names (`tool:*` tried as Bash, as
+ * conformance/pack-validation.ts tries it). An example without text is not a call, and is skipped with why.
+ */
+export function exampleToolCalls(packJson: { rules?: { id: string; examples?: Record<string, { text?: string } | undefined> }[] }, sources: ReadonlyMap<string, string>): { calls: ExampleToolCall[]; skipped: string[] } {
+  const calls: ExampleToolCall[] = [];
+  const skipped: string[] = [];
+  for (const rule of packJson.rules ?? []) {
+    const source = sources.get(rule.id);
+    if (source === undefined) continue;
+    const tool = source === "tool:*" ? "Bash" : source.slice("tool:".length);
+    for (const [kind, example] of Object.entries(rule.examples ?? {})) {
+      if (example === undefined) continue;
+      if (typeof example.text !== "string") skipped.push(`${rule.id} ${kind}: no text`);
+      else calls.push({ id: `${rule.id} ${kind}`, tool, input: { command: example.text } });
+    }
+  }
+  return { calls, skipped };
 }
 
 /**

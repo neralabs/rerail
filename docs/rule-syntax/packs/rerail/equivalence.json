@@ -2,10 +2,6 @@
   "format": "rerail.translation-equivalence/v1",
   "pack": "rerail",
   "equivalent": true,
-  "untranslated": {
-    "rerail-pack-data-through-publish": "a tool-call rule (match on input.command, sample tool:*): .rerail has no relation for a tool call's input, and translate-json's policy has no rule (run-policies: no .violation declarations); NOTES-rerail.md",
-    "rerail-workflow-script-facts": "every scope is under .github/, and the engine's corpus never lists a file under a hidden directory (corpus_files, native/src/code_rule_dsl/logic/plan/corpus.rs); NOTES-rerail.md",
-    "rerail-workflow-shared-conditions": "every scope is under .github/, and the engine's corpus never lists a file under a hidden directory (corpus_files, native/src/code_rule_dsl/logic/plan/corpus.rs); NOTES-rerail.md"
-  },
+  "untranslated": {},
   "different": {}
 }
