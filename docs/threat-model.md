@@ -682,9 +682,10 @@ maker's alone.
   inherits let add a folder there may still add one, never list it (an entry set on the folder itself for an account
   is left as it is). Every `icacls` on the records folder or a folder in it runs with `/l`, so a junction swapped in
   for one cannot redirect a grant to a folder this user owns. That session's own folder is private before the session
-  writes (`makeLedgerFolder` with `repair`). Elsewhere it loses the group's and others'
-  read (`2775` becomes `2731`): no other account lists it, and one that shares it still makes its own `0700` session
-  folder there. On Windows, one
+  writes (`makeLedgerFolder` with `repair`). Elsewhere it loses the group's and others' read, and gets the sticky bit
+  while they may still add to it (`2775` becomes `3731`, `0777` `1733`, `0755` `0711`): no other account lists it, one
+  that shares it still makes its own `0700` session folder there, and none of them can rename or remove this account's
+  entries (its session folders, its `.gitignore`). On Windows, one
   whose ACL Rerail cannot read or change is named in the daemon log. Only the checkout's default records folder is
   repaired: a `RERAIL_STORAGE_ROOT` below a `.rerail` folder is checked for symlinks but keeps its mode and ACL.
 

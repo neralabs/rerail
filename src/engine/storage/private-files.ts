@@ -168,7 +168,8 @@ function repairUnderWay(folder: string, acl: WindowsAcl, shared: (name: string) 
 
 /**
  * Keeps what each account writes in a folder that another program may have made, and that other accounts may share,
- * that account's alone. Elsewhere than Windows, takes away what lets other accounts list it ({@link keepNamesPrivate}).
+ * that account's alone. Elsewhere than Windows, takes away what lets other accounts list it and, where they may still
+ * add entries, rename or remove this account's ({@link keepNamesPrivate}).
  * On Windows, outside the profile folder, it reads the folder's ACL (one `icacls`) and, when the folder still takes
  * entries from its parent's, as one Git, `mkdir` or an earlier release made does, gives it an ACL of its own
  * ({@link keepEachOwnersOwn}): what is already there becomes its owner's alone, as does what any account makes there
@@ -264,14 +265,19 @@ function keepPrivate(path: string): void {
 
 /**
  * Takes the group's and others' read from a folder this user owns, which is what lets another account list it, and
- * keeps what lets one pass through it and make a folder of its own there: `2775` becomes `2731`, `0755` `0711`. A
- * records folder Git or a person made may be shared with another account that records its own sessions there; each
- * session's folder is `0700`, so names are hidden and each account's records stay its own.
+ * keeps what lets one pass through it and make a folder of its own there. When the group or others may still add
+ * entries, it also sets the sticky bit, so such an account cannot rename or remove this account's entries (its `0700`
+ * session folders, its `.gitignore`); the folder's owner still can: `2775` becomes `3731`, `0777` `1733`, `0755`
+ * `0711`, `0700` stays. A records folder Git or a person made may be shared with another account that records its own
+ * sessions there; each session's folder is `0700`, so names are hidden and each account's records stay its own.
  */
 function keepNamesPrivate(folder: string): void {
   const stats = ownStats(folder);
-  if (stats?.isDirectory() !== true || (stats.mode & 0o044) === 0) return;
-  chmodSync(folder, stats.mode & 0o7777 & ~0o044);
+  if (stats?.isDirectory() !== true) return;
+  const found = stats.mode & 0o7777;
+  const unlisted = found & ~0o044;
+  const kept = (unlisted & 0o022) === 0 ? unlisted : unlisted | 0o1000;
+  if (kept !== found) chmodSync(folder, kept);
 }
 
 /**

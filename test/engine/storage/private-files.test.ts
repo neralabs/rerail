@@ -49,14 +49,16 @@ describe.skipIf(process.platform === "win32")("what Rerail keeps private", () =>
   it("takes only the list from a session records folder another program made, so an account it let in still makes its own folder there", async () => {
     const root = await temporaryDirectory();
     // 2775: a folder a person shares with their group (setgid, group-writable); 777 and 755, as Git or `mkdir` leave one
-    // under a loose umask; 700, as Rerail makes one.
-    for (const [found, kept] of [[0o2775, 0o2731], [0o777, 0o733], [0o755, 0o711], [0o700, 0o700]] as const) {
+    // under a loose umask; 700, as Rerail makes one. One the group or others may still add to also becomes sticky.
+    for (const [found, kept] of [[0o2775, 0o3731], [0o777, 0o1733], [0o755, 0o711], [0o700, 0o700]] as const) {
       const sessions = join(root, found.toString(8), ".rerail", "sessions");
       await mkdir(sessions, { recursive: true });
       await chmod(sessions, found);
+      // macOS drops the set-group-ID bit for an account outside the folder's group (wheel, in `/tmp`); it stays dropped.
+      const dropped = found & ~((await lstat(sessions)).mode & 0o7777) & 0o7000;
       const session = join(sessions, "a".repeat(64));
       await makeLedgerFolder(session, { repair: true });
-      expect((await lstat(sessions)).mode & 0o7777, found.toString(8)).toBe(kept);
+      expect((await lstat(sessions)).mode & 0o7777, found.toString(8)).toBe(kept & ~dropped);
       expect(await mode(session)).toBe(0o700);
     }
   });

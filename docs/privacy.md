@@ -164,8 +164,9 @@ only you, SYSTEM and Administrators are on. A `.rerail\sessions` that Git, you o
 daemon first opens a session there under which each record is its maker's alone, those already in it included but
 another account's earlier ones, which keep the list they had: an
 account you share the checkout with still records its own sessions there, but lists nothing in it and reads no one
-else's records. What a session writes in its own folder is private from its first byte. Elsewhere, such a folder loses the group's and others' read then (`2775` becomes
-`2731`): no other account lists it, and one you share it with still records its own sessions there. A root
+else's records. What a session writes in its own folder is private from its first byte. Elsewhere, such a folder loses the group's and others' read then, and
+becomes sticky where they may still add to it (`2775` becomes `3731`, `0777` `1733`, `0755` `0711`): no other account
+lists it, one you share it with still records its own sessions there, and none can rename or remove your entries. A root
 `RERAIL_STORAGE_ROOT` names keeps the access list or mode it has.
 
 <details>
