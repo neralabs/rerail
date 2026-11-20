@@ -328,8 +328,13 @@ describe("WorktreeWalks", () => {
     await turn(first);
     await shell(second.bridge, "shell-2", () => undefined);
     await turn(second);
-    // The first appends to a file there from the shell; the other runs a command that writes nothing.
-    await shell(first.bridge, "shell-3", () => writeFile(path, "old\nmine\n"));
+    // The first appends to a file there from the shell; the other runs a command that writes nothing. The command ends
+    // once the filesystem clock has passed the write's stamp: a walk that begins within the write's clock tick cannot
+    // tell it from a later write of the same size in that tick, and rightly reads the file again at the next walk.
+    await shell(first.bridge, "shell-3", async () => {
+      await writeFile(path, "old\nmine\n");
+      await awaitClockAfter(path);
+    });
     await turn(first);
     await shell(second.bridge, "shell-4", () => undefined);
     await turn(second, first);
