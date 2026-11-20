@@ -700,6 +700,8 @@ typedef struct PxScratch { uint32_t start, end, kind; } PxScratch;
 // A chain's lists at most, and an idle worker's polls.
 #define MAX_CHAIN (1024u)
 #define POLLS (4096u)
+// A top's items at most this many times the queue's room (a linear queue's bound was 1).
+#define PX_FUEL (4u)
 
 // A list: its parent (a list, or `TOP`: the frame that holds its call's `)`), its definition's
 // row (`NO_DEF`: an argument), its stretch's slot, its tokens in the arena, the range of its
@@ -725,8 +727,13 @@ typedef struct PxList {
     // its `)`); its marks (`F_*`); its blocks' classes in the tokens' pool (decision 0478 §10:
     // its own tokens' at `first`, bits 0 to 7, and its flatten's at `base`, bits 8 to 15;
     // `NO_CLS` none); the first `)` of an exit's call made in it (`NO_POS`: none), past which its
-    // descendants' exits may read on.
-    uint32_t owner, lref, flags, blk, xhi;
+    // descendants' exits may read on. Its scan's calls in order of their names (`kid`: the
+    // first, + 1; `sib`: the call after this one in its parent, + 1; 0 none): the walk reads a
+    // call's place from them, not from its tokens, so a done call's whole span (its name and its
+    // `)` too) can be given back (decision 0478 §10). A call's span in its parent given back so
+    // far, from its `lo` (`gend`: its end). A call's depth at its `)` in its parent (`hdepth`, from
+    // the scan that made it): an exit climbing out of it reads it here, as its `)` may be given.
+    uint32_t owner, lref, flags, blk, xhi, kid, sib, gend, hdepth;
 } PxList;
 #define ORDER_PLACED (0u)
 #define NO_OWNER (0xffffffffu)
@@ -760,6 +767,7 @@ UKL_INLINE void px_init(UKL_GLOBAL PxList* l, uint32_t parent, uint32_t def, uin
     ukl_atomic_store(&l->fpending, 0u);
     l->order = 0xffffffffu;
     l->owner = NO_OWNER; l->lref = NO_LREF; l->flags = 0u; l->blk = 0xffffu; l->xhi = NO_POS;
+    l->kid = 0u; l->sib = 0u; l->gend = 0u; l->hdepth = 0u;
 }
 
 // Reading a node of the unit: its file's tape and the node in it.
@@ -1211,16 +1219,21 @@ UKL_INLINE Walked px_walk(Ar a, uint32_t k, uint32_t lane, bool place __UKL_PARA
     uint32_t n = K->len, first = K->first, xj = K->xname == 0u ? NO_POS : K->xname - 1u;
     uint32_t dest = K->dest, at = K->base;
     uint32_t cover = 0u, stop = NO_POS, exit = 0u, reach = 0u, total = 0u;
+    // The children in order (`kid`, `sib`): a done call's span is read from its list, never
+    // its tokens (given back, decision 0478 §10).
+    uint32_t nx = K->kid;
     for (uint32_t c0 = 0u; c0 < n && c0 < stop; c0 += 32u) {
         uint32_t j = c0 + lane, child = 0u, ends = 0u;
         bool on = j < n, xb = false, own = false;
         Claim r;
         r.end = 0u; r.size = 0u; r.through = 0u;
-        if (on) child = a.tchild[first + j];
-        // A marker is a child's only where that child is `k`'s, at `j` (only the scan writes
-        // them): in a done call's inside, given back and taken again (decision 0478 §10), the
-        // token may be another list's.
-        if (child != 0u && (child - 1u >= a.list_cap || a.lists[child - 1u].parent != k || a.lists[child - 1u].lo != j)) child = 0u;
+        // The chunk's children (at most one a position): each lane takes the one at its `j`.
+        for (uint32_t guard = 0u; guard < 32u && nx != 0u && nx - 1u < a.list_cap; guard++) {
+            uint32_t lo = a.lists[nx - 1u].lo;
+            if (lo >= c0 + 32u) break;
+            if (on && lo == j) child = nx;
+            nx = a.lists[nx - 1u].sib;
+        }
         if (child != 0u) {
             r = px_claim(a, k, child - 1u);
             ends = a.lists[child - 1u].hi + 1u;
@@ -1363,7 +1376,7 @@ UKL_INLINE void px_exit(Ux u, Ar a, uint32_t l, uint32_t j, uint32_t m, uint32_t
             break;
         }
         UKL_GLOBAL PxList* P = &a.lists[p];
-        uint32_t base = a.tdepth[P->first + K->hi], target = base - r, found = NO_POS;
+        uint32_t base = K->hdepth, target = base - r, found = NO_POS;
         for (uint32_t c0 = s0; c0 < P->len && found == NO_POS; c0 += 32u) {
             uint32_t q = c0 + lane;
             uint64_t h = px_ballot(q < P->len && a.tdepth[P->first + q] == target && ref_is(u, a.tok[P->first + q], ')') __UKL_ARGS);
@@ -1427,6 +1440,7 @@ UKL_INLINE void px_exit(Ux u, Ar a, uint32_t l, uint32_t j, uint32_t m, uint32_t
         // At the top level, its slot the `)`'s stretch's.
         px_init(N, x, m, (x & TOP) != 0u ? top_slot(u.sc, u.gat, u.n_gaps, e) : L->slot, LK_MACRO);
         N->lo = seglo[ns - 1u]; N->hi = e; N->src = jid; N->at = 0u; N->end = total - 1u;
+        if ((x & TOP) == 0u) N->hdepth = a.tdepth[a.lists[x].first + e];
         J->owner = px_owner(a, x); N->owner = J->owner;
         N->lref = px_lref_at(u, a, jid, total - 1u);
         if ((x & TOP) == 0u) { ukl_atomic_add(&a.lists[x].pending, 1u); ukl_atomic_min(&a.lists[x].xhi, e); }
@@ -1454,7 +1468,7 @@ UKL_INLINE void px_scan(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
     }
     px_fence();
     ukl_sg_barrier();
-    uint32_t reach = 0u, xj = NO_POS, xm = 0u;
+    uint32_t reach = 0u, xj = NO_POS, xm = 0u, last = NO_POS;
     for (uint32_t c0 = 0u; c0 < n && xj == NO_POS; c0 += 32u) {
         uint32_t j = c0 + lane, m = 0u, e = 0u;
         bool call = false, fn = false, open = false, past = false;
@@ -1532,10 +1546,18 @@ UKL_INLINE void px_scan(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
             px_init(C, l, m, L->slot, LK_MACRO);
             C->lo = j; C->hi = e;
             C->at = j; C->end = e;
+            C->hdepth = a.tdepth[first + e];
             C->owner = px_owner(a, l);
             C->lref = px_lref_at(u, a, l, e);
-            a.tchild[first + j] = child + 1u;
+            // The chunk's calls have the ids after `cfirst`, in order: each's next is the one
+            // after it, the chunk's last the next chunk's first.
+            C->sib = child + 1u < cfirst + k ? child + 2u : 0u;
         }
+        if (lane == 0u && cfirst + k <= a.list_cap) {
+            if (last == NO_POS) L->kid = cfirst + 1u;
+            else a.lists[last].sib = cfirst + 1u;
+        }
+        last = cfirst + k - 1u;
         px_fence();
         if (call) px_push(a, child | (px_fnlike(u.defs, m) ? IT_CALL : IT_SUBST));
     }
@@ -2630,7 +2652,17 @@ UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8
             // givings remain (`CTL` 15 not past every room): the workers stop between items, for
             // the blocks and the ring's slots to be given back (decision 0478 §10).
             uint32_t mark = ukl_atomic_load(&a.ctl[15]);
-            if (ukl_atomic_load(&a.ctl[0]) > mark || (mark != 0xffffffffu && ukl_wq_taken(a.q) > a.q.capacity / 2u)) stop = 1u;
+            // A top's items at most `PX_FUEL` times the queue's room: with blocks used again
+            // and the ring, nothing else ends an expansion that would not (a launch would hold
+            // the GPU for minutes). Past it the run is refused for room, its use the queue's
+            // (`CTL` 13), so the next rung's queue, and fuel, is larger.
+            uint32_t taken = ukl_atomic_load(&a.q.control[0]);
+            if (taken >= PX_FUEL * a.q.capacity) {
+                px_refuse(a.ctl, X_ROOM);
+                ukl_atomic_max(&a.ctl[13], taken);
+                stop = 1u;
+            }
+            else if (ukl_atomic_load(&a.ctl[0]) > mark || (mark != 0xffffffffu && ukl_wq_taken(a.q) > a.q.capacity / 2u)) stop = 1u;
             else if (ukl_wq_take(a.q, &item)) { got = 1u; polls = 0u; }
             else if (ukl_wq_idle(a.q, &polls, POLLS)) stop = 1u;
         }
@@ -2676,17 +2708,28 @@ UKL_INLINE void px_gc_dead(UKL_GLOBAL PxList* lists, uint32_t i) {
     if (dead) L->flags |= F_DEAD;
 }
 
-// List `i`'s blocks given back: a dead list's own block (but its calls' insides given back
-// already) and its flatten's; a live list's done calls' insides, in order, while every call
-// before is final. Each once (`F_GIVEN`, `F_IGIVEN`).
-// The child whose marker is at `L`'s token `j`, else 0: a reused block keeps its earlier use's
-// markers where nothing wrote since (decision 0478 §10), and those name other lists.
-UKL_INLINE uint32_t px_child_at(UKL_GLOBAL const PxList* lists, UKL_GLOBAL const uint32_t* tchild, uint32_t n, uint32_t i, uint32_t j) {
-    uint32_t c = tchild[lists[i].first + j];
-    return c != 0u && c - 1u < n && lists[c - 1u].parent == i && lists[c - 1u].lo == j ? c : 0u;
+// Where a span of `L`'s ending at position `last` ends given back: past it, or, at the list's end,
+// the end of `L`'s block (the rounding past its tokens is read by nothing).
+UKL_INLINE uint32_t px_span_end(UKL_GLOBAL const PxList* L, uint32_t last, uint32_t own) {
+    return last + 1u >= L->len && own != NO_CLS ? ukl_pool_size(own) : last + 1u;
 }
 
-UKL_INLINE void px_give(UKL_GLOBAL PxList* lists, UKL_GLOBAL const uint32_t* tchild, UklPool pool, uint32_t n, uint32_t i) {
+// The last position of list `i` that final call `C`'s exits cover (their calls' `)`), while they
+// are `i`'s; `NO_POS` where one goes on past `i`'s end (its tokens may be read from there).
+UKL_INLINE uint32_t px_claim_last(UKL_GLOBAL const PxList* lists, uint32_t n, uint32_t i, UKL_GLOBAL const PxList* C) {
+    uint32_t last = C->hi, x = C->exit;
+    for (uint32_t step = 0u; step < MAX_EXITS && x != 0u; step++) {
+        if (x - 1u >= n || lists[x - 1u].parent != i) return NO_POS;
+        last = lists[x - 1u].hi;
+        x = lists[x - 1u].exit;
+    }
+    return last;
+}
+
+// List `i`'s blocks given back: a dead list's own block (but its calls' spans given back already)
+// and its flatten's; a live list's done calls' whole spans, in order, while every call before is
+// final. Each once (`F_GIVEN`, `F_IGIVEN`).
+UKL_INLINE void px_give(UKL_GLOBAL PxList* lists, UklPool pool, uint32_t n, uint32_t i) {
     UKL_GLOBAL PxList* L = &lists[i];
     uint32_t own = L->blk & 0xffu, flat = (L->blk >> 8) & 0xffu;
     if ((L->flags & F_DEAD) != 0u) {
@@ -2694,36 +2737,77 @@ UKL_INLINE void px_give(UKL_GLOBAL PxList* lists, UKL_GLOBAL const uint32_t* tch
         L->flags |= F_GIVEN;
         if (flat != NO_CLS && L->kind == LK_ARG && L->dest == i + 1u) ukl_pool_give(pool, L->base, flat);
         if (own == NO_CLS) return;
-        uint32_t from = 0u, j = 0u;
-        for (uint32_t step = 0u; step < L->len && j < L->len && L->kind != LK_JOIN; step++) {
-            uint32_t c = px_child_at(lists, tchild, n, i, j);
-            if (c == 0u) { j++; continue; }
+        // Its block but its calls' spans given already.
+        uint32_t from = 0u, c = L->kid;
+        for (uint32_t step = 0u; step < L->len && c != 0u && c - 1u < n; step++) {
             UKL_GLOBAL const PxList* C = &lists[c - 1u];
             if ((C->flags & F_IGIVEN) != 0u) {
-                ukl_pool_give_range(pool, L->first + from, C->lo + 1u - from);
-                // An object-like call's inside is empty (`hi` is `lo`): its name was given with the rest.
-                from = ukl_max(C->hi, C->lo + 1u);
+                if (C->lo > from) ukl_pool_give_range(pool, L->first + from, C->lo - from);
+                from = ukl_max(from, C->gend);
             }
-            j = ukl_max(j, C->hi) + 1u;
+            c = C->sib;
         }
-        ukl_pool_give_range(pool, L->first + from, ukl_pool_size(own) - from);
+        if (from < ukl_pool_size(own)) ukl_pool_give_range(pool, L->first + from, ukl_pool_size(own) - from);
         return;
     }
     if (L->kind == LK_JOIN) return;
-    uint32_t j = 0u;
-    for (uint32_t step = 0u; step < L->len && j < L->len; step++) {
-        uint32_t c = px_child_at(lists, tchild, n, i, j);
-        if (c == 0u) { j++; continue; }
+    // Its done calls' spans, in order, while every call before is final, and a final call's
+    // exits' in it (their raw tokens were copied to their joins when they were made). The calls
+    // the scan found inside an exit's (rolled back: its claim covers them) still run, and their
+    // results' scans and exits read on past them (`px_peek_paren`, `px_exit`): the claim is given
+    // once each of them is final, and none gives its own span.
+    // Spans that meet are given as one range.
+    uint32_t c = L->kid, rs = 0u, re = 0u, cov = 0u;
+    for (uint32_t step = 0u; step < L->len && c != 0u && c - 1u < n; step++) {
         UKL_GLOBAL PxList* C = &lists[c - 1u];
         // Past an exit's call: its descendants' exits may read on there.
-        if (C->lo > L->xhi) return;
+        if (C->lo > L->xhi) break;
+        bool final = ukl_atomic_load(&C->pending) == 0u;
+        if (C->lo < cov) {
+            // Inside a claim, which is given whole (below).
+            c = C->sib;
+            continue;
+        }
+        uint32_t s0 = NO_POS, e0 = 0u;
         if ((C->flags & (F_DONE | F_IGIVEN)) == F_DONE) {
             C->flags |= F_IGIVEN;
-            if (C->hi > C->lo + 1u) ukl_pool_give_range(pool, L->first + C->lo + 1u, C->hi - C->lo - 1u);
+            s0 = C->lo; e0 = px_span_end(L, C->hi, own);
+            C->gend = e0;
         }
-        if (ukl_atomic_load(&C->pending) != 0u) return;
-        j = ukl_max(j, C->hi) + 1u;
+        if (final && (C->flags & F_IGIVEN) != 0u && C->exit != 0u) {
+            uint32_t last = px_claim_last(lists, n, i, C);
+            if (last == NO_POS) {
+                // An exit past the list's end: no claim given, and none past it.
+                cov = NO_POS;
+            } else if (last > C->hi) {
+                cov = last + 1u;
+                // The calls inside the claim final?
+                bool inside_done = true;
+                uint32_t d = C->sib;
+                for (uint32_t k = 0u; k < L->len && d != 0u && d - 1u < n && lists[d - 1u].lo <= last; k++) {
+                    inside_done = inside_done && ukl_atomic_load(&lists[d - 1u].pending) == 0u;
+                    d = lists[d - 1u].sib;
+                }
+                uint32_t e1 = px_span_end(L, last, own);
+                if (inside_done && e1 > C->gend) {
+                    if (s0 == NO_POS) s0 = C->gend;
+                    e0 = e1;
+                    C->gend = e1;
+                }
+                if (!inside_done) final = false;
+            }
+        }
+        if (s0 != NO_POS) {
+            if (re != rs && re == s0) re = e0;
+            else {
+                if (re != rs) ukl_pool_give_range(pool, L->first + rs, re - rs);
+                rs = s0; re = e0;
+            }
+        }
+        if (!final) break;
+        c = C->sib;
     }
+    if (re != rs) ukl_pool_give_range(pool, L->first + rs, re - rs);
 }
 
 // The top level's rollback (after the queue's first phase, when every list is final): each

@@ -116,15 +116,32 @@ On Boost.Preprocessor's tests that does not work:
       spent the 64 givings on little.
     - **What is dead** (`px_gc_dead`): an argument's list whose call is done; a join whose
       list after it is done; any list under a dead owner (`owner`: its nearest argument's list).
-      A dead list gives its own block (but its done calls' insides, given already) and its
-      flatten's block. A live list gives each done call's inside (`[lo + 1, hi)`), in order, while
-      every call before it is final and none is past an exit's reach (`xhi`). Each once
-      (`F_GIVEN`, `F_IGIVEN`); a list keeps its blocks' classes (`blk`).
-    - **A reused block keeps its last use's `tchild` markers** where nothing wrote since: a marker
-      is a child's only where that child's parent is the list and its `lo` the position, in the
-      walk (`px_walk`) and in the giving (`px_child_at`).
-    - **An object-like call's inside is empty** (`hi` is `lo`): a dead list's giving goes on from
-      `max(hi, lo + 1)`, not `hi`, else it gives the call's name twice.
+      A dead list gives its own block (but what its calls gave already) and its flatten's block.
+      Each once (`F_GIVEN`, `F_IGIVEN`); a list keeps its blocks' classes (`blk`).
+    - **A list's calls are a chain, in the list record** (user, 2026-11-20: "so do 1"): `kid`, the
+      first call the scan found in it, and each call's `sib`, the next, in position order, linked
+      as the scan makes them. The walk (`px_walk`) and the giving read the chain, not markers in
+      the tokens: a token's `tchild` is no longer read, so a given block's tokens can all be
+      reused, the call's name and `)` with its inside.
+    - **A done call gives its whole span** (`[lo, hi]`), and up to the block's end when it ends
+      the list: a list that is one call gives its whole block, a 128 for a 123-token request
+      (R7's plain chain: each level's take is met by the level before's). A live list gives each
+      done call's span, in order, adjacent spans merged into one range, while every call before it
+      is final and none is past an exit's reach (`xhi`). How far a call gave is kept (`gend`),
+      and a dead list gives the rest around it.
+    - **An exit's claim.** A call whose `)` was past its list's end consumed the list's tokens up
+      to its exit's `)` (the exit chain, within the list). Once that call is final its span extends
+      over the claim, given once every call the scan found inside the claim is final (their
+      results' scans and exits read on past them: `px_peek_paren`, `px_exit`); those calls give
+      nothing themselves. Giving them their own spans as well gave the claim's tokens twice: the
+      pool's lists crossed (a fault in `ukl_pool_take`, on the CPU backend).
+    - **An exit climbing out of a call reads the call's depth at its `)` from the call**
+      (`hdepth`, written where the call is made), not from its parent's tokens: the `)` may be
+      given. Reading it there read a reused token (a call refused as past its list's end).
+    - **A top's work is bounded** (`PX_FUEL`): past 4 times the queue's capacity in items taken,
+      the run is refused for room (`CTL` 13 keeps what it took) and runs again larger, so no
+      launch runs on without bound (a Metal command buffer of minutes stalls the window server and
+      reboots the Mac: 2026-11-20, twice).
     - **The queue is a ring** (UKL's `ukl/workqueue.h`, `ring`): positions run on past the
       capacity, a position in slot `p % capacity`, and a push takes positions below the base
       plus the capacity. At a pause no taker is between its claim and its exchange, so every slot
@@ -155,7 +172,7 @@ On Boost.Preprocessor's tests that does not work:
 | R4 | A batch's rounds: each unit its own serial answer, a unit with an include taking two rounds and the others one, a refusal one unit's alone. | `a_batch_is_its_units` |
 | R5 | A flat argument in place: used once, twice, beside `#` and `##`, empty, painted, as a callee's name, variadic and under `__VA_OPT__`, and passed through levels. | `a_flat_argument_is_read_in_place` |
 | R6 | The pool gives each block once: blocks given back as ranges, taken by 8 groups, over 1 and 3 rounds of giving back and taking again, never overlap, each lies within one given range and fits its class, and a class's takes are its demand or its supply, whichever is less. | `pp_arena::tests::the_pool_gives_each_block_once` |
-| R7 | A chain of 150 calls passing a 120-token state settles at rung 0: plain, through a scanned argument, through an exit, with `__LINE__`, stringized; in C and C++. **Fails for "plain"** (open, below). | `reclaimed_tokens_keep_a_chain_at_rung_0` |
+| R7 | A chain of 150 calls passing a 120-token state settles at rung 0: plain, through a scanned argument, through an exit, with `__LINE__`, stringized; in C and C++. | `reclaimed_tokens_keep_a_chain_at_rung_0` |
 
 ## Measured (M1 Max farm host for the checks; this Mac for the runs, 2026-11-19)
 
@@ -195,14 +212,16 @@ what the 8 pauses had not given back yet.
 
 ## Open
 
-- **The lists and the arguments are linear.** A dead list's id (and its arguments') could be
-  given back as its tokens are, but ids are read from markers, parents and owners: a reused id
-  needs each of those readers to tell a list from the one before it, as the markers now do.
-- **A call's name and `)` stay live in its list.** In R7's plain chain each level asks for one
-  block of 123 tokens (a 128 block) and gives back its call's inside, 121 tokens: pieces of 64,
-  32, 16, 8 and 1, never a 128. None of 132 takes is met, under any classes. The walk reads a
-  done call through the marker at its `lo`; read through the list instead, a list that is one
-  call could give its whole block.
+- **The lists and the arguments are linear**, and now the rooms that run out. On UKL's CPU
+  backend (2026-11-20), the first 3 of `arithmetic.cxx`'s checks as one unit: 67k tokens taken,
+  the front at 27k, the tokens' room never past rung 0; the lists (7.5k) and arguments (11k)
+  forced rung 2. The first 10 checks: 120k tokens taken, the front at 36k, at rung 2; arguments
+  21k of 21k. A dead list's id (and its arguments') could be given back as its tokens are, but
+  ids are read from parents, owners and the chain: a reused id needs each of those readers to
+  tell a list from the one before it.
+- **A forced small gap spends the givings early.** At `RERAIL_PP_GIVE_GAP=64` the 64 givings a
+  launch cover 4k tokens of front; past them every take is a fresh power of two, and the tokens'
+  room outgrows a run that gives nothing. The default gap (a 32nd of the room) covers twice it.
 
 - **The 9 refused units** (12 after §8 and §9; 9 after §10, at the budget). The expansion keeps the whole expansion tree until the top level's
   places write it out: every list's tokens stay. Boost's recursions (`BOOST_PP_WHILE`, `REPEAT`,

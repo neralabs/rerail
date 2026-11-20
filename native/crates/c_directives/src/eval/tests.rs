@@ -1505,7 +1505,6 @@ fn a_flat_argument_is_read_in_place() {
 /// through an exit at each level (a join); `__LINE__` in it (its origin read from the lists'
 /// `lref`, not their tokens), `#` of it at the end, and in C and C++.
 #[test]
-#[ignore = "open (decision 0478, Open): a call's name and `)` stay live, so a plain chain's freed insides never fit its next level"]
 fn reclaimed_tokens_keep_a_chain_at_rung_0() {
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
     let levels = 150;

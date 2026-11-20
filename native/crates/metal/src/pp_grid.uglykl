@@ -145,7 +145,7 @@
         UklPool gv_p; gv_p.heads = AT(uint32_t, TOKENS) + 5u * gv_tc; gv_p.next = AT(uint32_t, TOKENS); \
         EACH(i, gv_nl) px_gc_dead(AT(PxList, LISTS), i);                                               \
         BARRIER();                                                                                     \
-        EACH(i, gv_nl) px_give(AT(PxList, LISTS), AT(const uint32_t, TOKENS) + 2u * gv_tc, gv_p, gv_nl, i);   \
+        EACH(i, gv_nl) px_give(AT(PxList, LISTS), gv_p, gv_nl, i);   \
         /* The queue's ring: the slots taken since its base emptied, then its base at its head. */     \
         UklWorkQueue gv_q; gv_q.slots = AT(uint32_t, SLOTS); gv_q.control = AT(uint32_t, QCTL); gv_q.capacity = W(Q_CAP); gv_q.ring = 1u; \
         EACH(k, ukl_min(ukl_wq_taken(gv_q), W(Q_CAP))) ukl_wq_rebase_clear(gv_q, k);                  \
