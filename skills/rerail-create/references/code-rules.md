@@ -53,10 +53,11 @@ example on this page is a complete draft for `rerail rules test`, and Rerail's t
 
 Rerail parses Python, JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.tsx`), PHP, Blade, Rust, SQL, Vue,
 Java, C (`.c`), C++ (`.cpp`, `.cc`, `.h` and the like), C# (`.cs`), Go, HTML (`.html`, `.htm`), CSS, Markdown (`.md`,
-`.markdown`) and JSON. For Java, C, C++, C#, Go, HTML, CSS and Markdown it reads syntax only: a rule that uses
-`resolves`, `binds`, `value`, `compare`, `arguments`, `calls` or `formatArgs` is kept but stays inactive, and for JSON it
-is refused. It reads every other text file, whatever its name, for `regex` and `file` clauses only, and never reads a
-binary file (one holding a NUL byte).
+`.markdown`) and JSON. For Java, C, C++, C#, Go, HTML, CSS, Markdown and JSON it reads syntax only, so leave
+`resolves`, `binds`, `value`, `compare`, `arguments`, `calls` and `formatArgs` out of a rule for them:
+`rerail rules test` refuses such a draft (`language-not-supported`, or an invalid rule for JSON). It reads every other
+text file, whatever its name, for `regex` and `file` clauses only, and never reads a binary file (one holding a NUL
+byte).
 
 ### Regex
 

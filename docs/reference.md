@@ -61,7 +61,7 @@ For your own conventions, name a pack's `package.json` `rerail-pack-<id>` or `@<
 
 ### Rule documents
 
-A code rule is a `rerail.policy/v1` document: a path `scope` plus regex, AST or relational clauses, each with the violation it reports. The [code-rule DSL reference](code-rule-dsl-reference.html) documents every construct; [Tool-call rules](tool-call-rules.md) covers tool calls.
+A code rule is a `rerail.policy/v1` document: a path `scope` plus regex or AST clauses (and `relational` ones, in [internal testing](internal-testing.md)), each with the violation it reports. The [code-rule DSL reference](code-rule-dsl-reference.html) documents every construct; [Tool-call rules](tool-call-rules.md) covers tool calls.
 
 A conversation rule file:
 
