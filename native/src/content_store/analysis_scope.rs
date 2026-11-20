@@ -162,7 +162,12 @@ impl AnalysisRun {
         Ok(run)
     }
 
+    /// The scope's begin, before the run it publishes: the command's own bookkeeping (`hazards::around_the_run`).
     pub fn begin_at(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
+        super::hazards::around_the_run(|| Self::begin_now(store, scope, id, acquired_at))
+    }
+
+    fn begin_now(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
         let lease = store.hold_collection()?;
         let mut owner = store.begin_analysis_scope_at(scope, acquired_at)?;
         let pending = format!("pending:{}:{}:{id}", store.connection.identity(), owner.acquisition);
@@ -177,7 +182,12 @@ impl AnalysisRun {
         Ok(Self { owner, store, lease: Some(lease), scan_id: id.to_owned(), scope_value: value.to_owned(), source: None, publication: None })
     }
 
+    /// The scope's publication, after the run: the command's own bookkeeping (`hazards::around_the_run`).
     pub fn finish(&mut self, succeeded: bool) -> StoreResult<()> {
+        super::hazards::around_the_run(|| self.finish_now(succeeded))
+    }
+
+    fn finish_now(&mut self, succeeded: bool) -> StoreResult<()> {
         if self.lease.is_none() {
             return Ok(());
         }

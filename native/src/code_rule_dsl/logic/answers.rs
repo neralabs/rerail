@@ -94,7 +94,7 @@ type Made = (String, Option<String>, String, Vec<(String, String)>);
 /// negation is gated, an overlay of the answers alone (`SetAnswers`).
 pub(in crate::code_rule_dsl) fn gate(p: &Placed, answers: &BTreeMap<String, Vec<String>>) -> Result<Arc<Version>, String> {
     let mut pipe = Pipeline::new("gate", p.v.clone());
-    let mut rules = GateRules { answers, produced: BTreeMap::new(), sccs: Vec::new(), comp: BTreeMap::new(), answered: BTreeSet::new(), fields: None, made: Vec::new() };
+    let mut rules = GateRules { answers, produced: BTreeMap::new(), sccs: Vec::new(), comp: BTreeMap::new(), answered: BTreeSet::new(), edges: BTreeMap::new(), fields: None, made: Vec::new() };
     if !answers.is_empty() {
         if !p.whole {
             return Err("the requests of a version of rules alone".into());
@@ -120,8 +120,39 @@ struct GateRules<'a> {
     comp: BTreeMap<String, usize>,
     /// The components that hold a request and what answers it.
     answered: BTreeSet<usize>,
+    /// The dependency edges the components were found from (head to body relation, and an answer to its request).
+    edges: Edges,
     fields: Option<Arc<FieldsData>>,
     made: Vec<Made>,
+}
+
+impl GateRules<'_> {
+    /// How `from` reaches `to` inside their component, by the edges the components were found from: the cycle an
+    /// aggregate of `to` over `from` is refused on, request and answer edges included.
+    fn path(&self, from: &str, to: &str) -> Vec<String> {
+        let Some(&c) = self.comp.get(from) else { return Vec::new() };
+        let mut back: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut queue = std::collections::VecDeque::from([from]);
+        while let Some(at) = queue.pop_front() {
+            if at == to {
+                let mut path = vec![to.to_owned()];
+                let mut x = to;
+                while let Some(&p) = back.get(x).filter(|_| x != from) {
+                    path.push(p.to_owned());
+                    x = p;
+                }
+                path.reverse();
+                return path;
+            }
+            for (next, _) in self.edges.get(at).into_iter().flatten() {
+                if self.comp.get(next.as_str()) == Some(&c) && next != from && !back.contains_key(next.as_str()) {
+                    back.insert(next, at);
+                    queue.push_back(next);
+                }
+            }
+        }
+        Vec::new()
+    }
 }
 
 impl RulePass for GateRules<'_> {
@@ -145,6 +176,7 @@ impl RulePass for GateRules<'_> {
             edges.entry(q.clone()).or_default().insert((req.clone(), false));
         }
         self.sccs = tarjan(&nodes, &edges);
+        self.edges = edges;
         self.comp = self.sccs.iter().enumerate().flat_map(|(i, s)| s.iter().map(move |r| (r.clone(), i))).collect();
         let (comp, sccs, produced) = (&self.comp, &self.sccs, &self.produced);
         self.answered = self.answers.keys().filter_map(|r| comp.get(r.as_str()).copied()).filter(|&c| sccs[c].iter().any(|r| produced.contains_key(r.as_str()))).collect();
@@ -167,8 +199,14 @@ impl RulePass for GateRules<'_> {
             let inside = in_comp(l);
             if inside && matches!(l.view(), Lit::Agg { .. }) {
                 let at = l.atom().map_or("?", |a| name(a.rel()));
+                let head = name(r.head().rel());
+                let requests: Vec<&str> = self.sccs[c].iter().filter(|q| self.answers.contains_key(q.as_str())).map(String::as_str).collect();
                 return Err(super::front::Error::NotStratifiable {
-                    message: format!("{} aggregates {at} inside a component that loads (decision 0065 §2a): not supported", name(r.head().rel())),
+                    message: format!(
+                        "{head} aggregates {at} inside a component that loads (decision 0065 §2a): not supported; {at} reaches {head} by {}, and the component asks {}",
+                        self.path(at, head).join(" -> "),
+                        requests.join(", ")
+                    ),
                     component: self.sccs[c].clone(),
                     negated: at.to_owned(),
                 }

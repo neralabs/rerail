@@ -5241,10 +5241,14 @@ fn run_observed_within(
         // Inside the waves (a load's files), the store is not read (decision 0104): each file is new to the run, its
         // source and tape handed to the writer as it is parsed.
         let reading = !crate::code_rule_dsl::logic::profile::inside_waves();
+        // The run on each pool job's thread (`run_state::Carry`, decision 0442): a stat's and a read's spans and work
+        // are the run's records, which a pool thread without it has none of.
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
         let stat = |path: &String| -> Option<crate::content_store::FileStat> {
             if !looking {
                 return None;
             }
+            let _in = carry.enter();
             let _stat = crate::code_rule_dsl::logic::profile::span(|| "stat".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::FileStat, 1);
             crate::git_workspace::snapshot::file_stat(root.join(path))
@@ -5312,6 +5316,7 @@ fn run_observed_within(
             .par_iter()
             .map(|i| {
                 let path = &window[*i].1;
+                let _in = carry.enter();
                 let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
                 // Held from the run's digests (decision 0300): taken here only where this window's texts are kept.
                 if let Some(source) = source_texts.text(&root.join(path), keep) {
