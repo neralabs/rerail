@@ -1,1 +1,0 @@
-Your own code rule that tests a token the syntax trees may leave out, such as `,`, `=>` or an implied keyword, stops running: Rerail skips it and says why, and `rerail rules add` and `rules test` refuse it. Test the named structure or the token as a neighbour (`has`, `follows`, `precedes`), or say why it is stored (`stored`).

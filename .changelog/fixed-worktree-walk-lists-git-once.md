@@ -1,1 +1,0 @@
-With agent sessions in several worktrees of one repository, Rerail no longer runs Git again to list a worktree's changed files for a session that is still reading an earlier check of the worktrees, one that already listed them; each such repeat was one extra Git process per worktree, and its result went unused.
