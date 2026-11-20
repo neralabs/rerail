@@ -733,10 +733,10 @@ describe("validatePack", () => {
     const examples = (caught: unknown, passes: unknown) => (rule: Record<string, unknown>): Record<string, unknown> => ({ ...rule, examples: { caught, passes } });
     const passes = { path: "src/a.py", text: "x = 1\n" };
 
-    it("passes a pack of .rerail rules, one including the pack's own library file under rules/, every rule ok", async () => {
+    it("passes a pack of .rerail rules, one including the pack's own library file under rules/, one reading another file, every rule ok", async () => {
       const validation = await validatePack(join(FIXTURES, "rr-sample"));
       expect(failing(validation)).toEqual({});
-      expect(validation.rules.map(({ id, status }) => [id, status])).toEqual([[ASSERT, "ok"], ["rr-sample-print-call", "ok"]]);
+      expect(validation.rules.map(({ id, status }) => [id, status])).toEqual([[ASSERT, "ok"], ["rr-sample-print-call", "ok"], ["rr-sample-deprecated-call", "ok"]]);
     });
 
     const rerailCases: [string, (directory: string) => void, Partial<Record<PackCheckName, unknown[]>>][] = [
@@ -839,7 +839,7 @@ describe("validatePack", () => {
     it("fails check 5 once core reads .rerail rules, while the core range admits older cores", async () => {
       const raised = (directory: string): void => editJson(join(directory, "package.json"), manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": raisedCoreRange(RERAIL_DOCUMENTS_SINCE) } }));
       expect(failing(await validatePack(join(FIXTURES, "rr-sample"), { coreVersion: RERAIL_DOCUMENTS_SINCE }))).toEqual({
-        package: [`package.json: the core range >=0.1.0-0 admits Rerail older than ${RERAIL_DOCUMENTS_SINCE}, which reads no rule written in .rerail (rr-sample-assert, rr-sample-print-call); raise it to >=${RERAIL_DOCUMENTS_SINCE}-0`],
+        package: [`package.json: the core range >=0.1.0-0 admits Rerail older than ${RERAIL_DOCUMENTS_SINCE}, which reads no rule written in .rerail (rr-sample-assert, rr-sample-print-call, rr-sample-deprecated-call); raise it to >=${RERAIL_DOCUMENTS_SINCE}-0`],
       });
       expect(failing(await validatePack(changed("rr-sample", raised), { coreVersion: RERAIL_DOCUMENTS_SINCE }))).toEqual({});
     });

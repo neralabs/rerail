@@ -51,6 +51,7 @@ describe("a pack's rules written in .rerail", () => {
     expect(catalog.packs.get("rr-sample")?.rules.map(({ id, kind, mode, on }) => ({ id, kind, mode, on }))).toEqual([
       { id: "rr-sample-assert", kind: "code", mode: "steer", on: true },
       { id: "rr-sample-print-call", kind: "code", mode: "steer", on: true },
+      { id: "rr-sample-deprecated-call", kind: "code", mode: "steer", on: true },
     ]);
     const printCall = catalog.documents.get("rr-sample-print-call");
     expect(printCall).toMatchObject({
@@ -160,7 +161,7 @@ describe("the engine's readings kept between processes", () => {
     readRuleCatalog([directory], { compile: true, compileChecks: checks });
     checks.save();
     const kept = JSON.parse(readFileSync(join(home, PACK_COMPILE_CHECKS_FILE), "utf8")) as { descriptions?: Record<string, { id: string }> }[];
-    expect(Object.values(kept[0]?.descriptions ?? {}).map(description => description.id).sort()).toEqual(["rr-sample-assert", "rr-sample-print-call"]);
+    expect(Object.values(kept[0]?.descriptions ?? {}).map(description => description.id).sort()).toEqual(["rr-sample-assert", "rr-sample-deprecated-call", "rr-sample-print-call"]);
   });
 });
 
@@ -180,15 +181,17 @@ describe("the checkout catalog's .rerail rules", () => {
       expect(catalog.snapshot().codeRules).toEqual([]);
       expect(catalog.snapshot().rerailRules.map(({ id, path, scope, language, placement }) => ({ id, path, scope, language, placement }))).toEqual([
         { id: "rr-sample-assert", path: join(installed, "rules", "rr-sample-assert.rerail"), scope: { include: ["**/*.py"], exclude: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
+        { id: "rr-sample-deprecated-call", path: join(installed, "rules", "rr-sample-deprecated-call.rerail"), scope: { include: ["**/*.py"], exclude: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
         { id: "rr-sample-print-call", path: join(installed, "rules", "rr-sample-print-call.rerail"), scope: { include: ["**/*.py"], exclude: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
       ]);
-      expect(catalog.status.ruleCount).toBe(2);
+      expect(catalog.status.ruleCount).toBe(3);
 
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "legacy", targetKind: "rule", targetId: "rr-sample-assert", on: null, mode: "log" });
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "", targetKind: "rule", targetId: "rr-sample-print-call", on: null, mode: null, config: { ceiling: 3 } });
       expect(catalog.refresh()).toBe(true);
       expect(catalog.snapshot().rerailRules.map(({ id, placement }) => ({ id, placement }))).toEqual([
         { id: "rr-sample-assert", placement: [{ folder: "", mode: "steer" }, { folder: "legacy", mode: "log" }] },
+        { id: "rr-sample-deprecated-call", placement: [{ folder: "", mode: "steer" }] },
       ]);
       expect(catalog.quarantined()).toEqual([expect.objectContaining({
         ruleId: "rr-sample-print-call",

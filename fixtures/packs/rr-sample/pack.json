@@ -47,6 +47,24 @@
           "text": "import logging\nlogging.info(\"starting\")\n"
         }
       }
+    },
+    {
+      "id": "rr-sample-deprecated-call",
+      "document": "rules/rr-sample-deprecated-call.rerail",
+      "title": "No calls to deprecated functions",
+      "group": "Sample",
+      "examples": {
+        "caught": {
+          "path": "src/a.py",
+          "text": "def view(items):\n    return old_total(items)\n",
+          "with": [{ "path": "src/legacy.py", "text": "@deprecated\ndef old_total(items):\n    return sum(items)\n" }]
+        },
+        "passes": {
+          "path": "src/a.py",
+          "text": "def view(items):\n    return old_total(items)\n",
+          "with": [{ "path": "src/legacy.py", "text": "def old_total(items):\n    return sum(items)\n" }]
+        }
+      }
     }
   ]
 }

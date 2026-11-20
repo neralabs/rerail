@@ -13,10 +13,12 @@ Small packs in the [pack format](../../docs/pack-format.md) that tests read, not
   `suppress`, an exempted one, a stale exemption).
 - `config-regex/` ships one rule whose `pattern` option is written into a regex: the rule settings API refuses a
   value the option allows but the engine cannot compile (`test/api/api-rule-settings.test.ts`).
-- `rr-sample/` ships two rules written in `.rerail`: `rr-sample-assert` is one file, and `rr-sample-print-call`
-  includes the pack's own library file, `rules/lib/sample-calls.rerail`. It passes every check, and copies of it prove
-  what the catalog and checks 1, 2, 3, 5 and 8 refuse in a `.rerail` rule (`test/engine/catalog/packs.test.ts`,
-  `test/engine/catalog/rerail-rules/rerail-pack-rules.test.ts`).
+- `rr-sample/` ships three rules written in `.rerail`: `rr-sample-assert` is one file, `rr-sample-print-call`
+  includes the pack's own library file, `rules/lib/sample-calls.rerail`, and `rr-sample-deprecated-call` reports a
+  call for what another file says of the function it calls. It passes every check, and copies of it prove what the
+  catalog and checks 1, 2, 3, 5 and 8 refuse in a `.rerail` rule (`test/engine/catalog/packs.test.ts`,
+  `test/engine/catalog/rerail-rules/rerail-pack-rules.test.ts`); sessions and audits run it
+  (`integration/rerail-pack-rules.test.ts`).
 - `sample-php/` is the conformance runner's sample (`conformance/languages/runner.ts`, run by
   `test/engine/code-rule/language-conformance.test.ts`): two ports scored against PHP_CodeSniffer's expected findings on
   authored fixtures, and on real-code samples the test writes beside it.

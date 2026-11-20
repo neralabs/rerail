@@ -1,0 +1,86 @@
+/**
+ * The `.rerail` part of a repository or touched-files audit: one run of the checkout's active `.rerail` rules over the
+ * whole checkout, beside the native evaluation, whose findings and failures join the audit's own record. It has the
+ * audit's budget; past it, only its rules fail.
+ */
+import type { AuditFailure, RepositoryAuditRuleProvenance } from "../audit/audit.js";
+import { folderContains } from "../catalog/repository-model.js";
+import type { CodeRuleViolation } from "../code-rule/code-rule.js";
+import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
+import { type RrRun, type RrRunOutcome, runRerailPolicies } from "./rr-runner.js";
+import { insideAny } from "./rr-rule-scope.js";
+import { rrRunFailures, rrStoppedFailures, rrViolations } from "./rr-violations.js";
+
+/** What an audit's `.rerail` run adds to the audit. */
+export interface RrAuditResults {
+  readonly violations: CodeRuleViolation[];
+  readonly failures: AuditFailure[];
+}
+
+/** What an audit's `.rerail` run is of. */
+export interface RrAuditRequest {
+  readonly root: string;
+  /** The checkout's active `.rerail` rules. */
+  readonly rules: readonly RerailRuleEntry[];
+  /** The files and folders a touched-files audit was given (relative to the checkout); undefined for the whole checkout. */
+  readonly paths: readonly string[] | undefined;
+  /** Folders of the checkout that are checkouts of their own, audited in their own lanes. */
+  readonly nestedCheckouts: readonly string[];
+  readonly deadlineMs: number;
+}
+
+/** Whether `rule` is on in some folder of the checkout. */
+function isOn(rule: RerailRuleEntry): boolean {
+  return rule.placement.some(entry => entry.mode !== null);
+}
+
+export class RrAuditRun {
+  readonly #request: RrAuditRequest;
+  readonly #rules: readonly RerailRuleEntry[];
+  readonly #run: (run: RrRun) => Promise<RrRunOutcome>;
+  readonly #controller = new AbortController();
+  #outcome: Promise<RrRunOutcome> | undefined;
+
+  constructor(request: RrAuditRequest, run: (run: RrRun) => Promise<RrRunOutcome> = runRerailPolicies) {
+    this.#request = request;
+    this.#rules = request.rules.filter(isOn);
+    this.#run = run;
+  }
+
+  /** Whether the audit has any `.rerail` rule to run. */
+  get empty(): boolean {
+    return this.#rules.length === 0;
+  }
+
+  /** The provenance of the rules the run carries, recorded with the audit. */
+  get provenance(): RepositoryAuditRuleProvenance[] {
+    return this.#rules.map(rule => rule.provenance);
+  }
+
+  /** Starts the run; once only. */
+  start(): void {
+    const { root, deadlineMs } = this.#request;
+    this.#outcome ??= this.#run({ root, policies: this.#rules.map(rule => rule.path), deadlineMs, signal: this.#controller.signal })
+      .catch((error: unknown): RrRunOutcome => ({ status: "failed", message: String(error) }));
+  }
+
+  /** Kills the run: the audit it belongs to ended without it. */
+  abort(): void {
+    this.#controller.abort();
+  }
+
+  /** The run's violations in the audited files and its rules' failures, once it has ended. */
+  async results(): Promise<RrAuditResults> {
+    this.start();
+    const outcome = await this.#outcome!;
+    if (outcome.status !== "completed") return { violations: [], failures: rrStoppedFailures(outcome, this.#rules, this.#request.deadlineMs) };
+    const violations = rrViolations(outcome.findings, this.#rules, path => this.#audits(path));
+    return { violations, failures: rrRunFailures(outcome.failures, this.#rules) };
+  }
+
+  /** Whether the audit covers `path`: in a folder it was given, and in no checkout nested in this one. */
+  #audits(path: string): boolean {
+    const { paths, nestedCheckouts } = this.#request;
+    return !insideAny(nestedCheckouts, path) && (paths === undefined || paths.some(folder => folderContains(folder, path)));
+  }
+}
