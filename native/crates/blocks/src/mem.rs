@@ -112,21 +112,59 @@ pub unsafe fn reuse_pages(p: *mut u8, len: usize) {
     let _ = (p, len);
 }
 
-/// Tells the OS a reservation's pages need not be kept (their bytes may be lost); elsewhere nothing.
+/// Tells the OS the whole pages inside `len` bytes at `p` of a reservation need not be kept (their bytes may be
+/// lost); elsewhere nothing. Pages the range only partly covers stay: `madvise` rounds a range out to whole pages,
+/// so those would take their other bytes with them, a live neighbour's (Q262: a freeze's free chunks, at 64-byte
+/// alignment, lost the rows beside them under memory pressure).
 ///
 /// # Safety
 /// `p` and `len` lie in a reservation, and nothing reads those bytes before writing them again.
 pub unsafe fn free_pages(p: *mut u8, len: usize) {
+    let (start, end) = ((p as usize).next_multiple_of(PAGE), (p as usize + len) / PAGE * PAGE);
+    if end <= start {
+        return;
+    }
     // On macOS `MADV_FREE` leaves the pages in the footprint until the OS wants them; reusable ones leave it at
     // once, and a later use marks them in use again (`reuse_pages`).
     #[cfg(target_vendor = "apple")]
     unsafe {
-        libc::madvise(p.cast(), len, libc::MADV_FREE_REUSABLE);
+        libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_FREE_REUSABLE);
     }
     #[cfg(all(unix, not(target_vendor = "apple")))]
     unsafe {
-        libc::madvise(p.cast(), len, libc::MADV_FREE);
+        libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_FREE);
     }
     #[cfg(not(unix))]
-    let _ = (p, len);
+    let _ = (start, end);
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::PAGE;
+
+    /// Whether the page holding `p` holds bytes the process wrote (`mincore`'s modified bit): one given back as
+    /// reusable has it cleared, and its bytes may be dropped.
+    #[cfg(target_vendor = "apple")]
+    pub(crate) fn modified(p: *const u8) -> bool {
+        let page = (p as usize) / PAGE * PAGE;
+        let mut v: libc::c_char = 0;
+        // SAFETY: one page of a mapping, its disposition read into `v`.
+        assert_eq!(unsafe { libc::mincore(page as *const libc::c_void, PAGE, &mut v) }, 0);
+        v as u8 as i32 & libc::MINCORE_MODIFIED != 0
+    }
+
+    /// Q262: `free_pages` gives back the whole pages inside its range, never the pages it only partly covers.
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn free_pages_gives_back_only_the_whole_pages_inside_its_range() {
+        let p = super::reserve(4 * PAGE);
+        // SAFETY: the reservation's four pages, written, then a range from inside page 1 to inside page 3 given back.
+        unsafe {
+            std::ptr::write_bytes(p, 7, 4 * PAGE);
+            super::free_pages(p.add(PAGE + PAGE / 2), 2 * PAGE);
+        }
+        let m: Vec<bool> = (0..4).map(|i| modified(unsafe { p.add(i * PAGE) })).collect();
+        assert_eq!(m, vec![true, true, false, true], "only page 2 lies wholly inside the range");
+        unsafe { super::release(p, 4 * PAGE) };
+    }
 }

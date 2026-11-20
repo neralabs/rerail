@@ -5406,7 +5406,7 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   coordination; the Metal peak footprint at big chunks (1.36-1.47 GB, the count's
   most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
 
-### Q262. On Metal a hogql run can lose a whole chunk's findings
+### Q262. On Metal a hogql run can lose a whole chunk's findings — one cause fixed (a freeze's pages); format 16 open
 
 - **Seen** (2026-11-19, decision 0450 5b-5e): a cold hogql run under the Metal binding, profiling build, format 15,
   sometimes gives fewer than its 1,629 findings (1,358, 1,375 and 1,487 seen), with no error and exit 0. The files
@@ -5427,6 +5427,40 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   `xd_fz2220395310_..._violation` made on the device in that run. The diagnostic's host run read an input that the
   refused chunk had not finished writing. **Next:** in the chunk that fell back, check which input the diagnostic's
   host run read, and when that input was filled.
+- **Reproduced** (2026-11-19): with two strata's device runs refused by a measurement knob (a diagnostic and a
+  violation of hogql's, one as `BackendCapacity`), about 1 run in 8 lost a chunk (1,487, 1,358). The loss was a device
+  run of `fzk3398261162_..._diagnostic` (`demand($d), node($d,$v,_,_,_), line($v,$l)`, one witness per file) that
+  passed 1 of 213 files, with no error. The CPU's rerun path, the device indexes, the in-place views and the
+  residency's slabs all checked out on the host after the run.
+- **Cause:** a freeze lost live rows. `Block::freeze` drops the block's free list (`drop_free_list`) and gives each free
+  chunk of a page or more to the OS with `mem::free_pages(base + at, size)`. Those chunks are not page-aligned: a chunk
+  from the front is 64-byte aligned, and a fit's piece lies at an eighth of its class. `madvise` rounds its range out to
+  whole pages (macOS takes an unaligned `MADV_FREE_REUSABLE` and clears the modified bit of a page it only partly
+  covers, shown with `mincore`). So the first and last pages of each such chunk, which hold its neighbours' live
+  rows, were marked reusable, and under memory pressure the OS dropped them: those rows read zero. Hence the
+  pattern: rare, silent, and only on Metal, where the device's memory leaves the host the least room. The lead above
+  (an input "not finished") was this: the rows were written, then lost.
+- **Fixed:** `mem::free_pages` gives back only the whole pages inside its range, as `mem::give_back` already did, so
+  no caller can reach a neighbour's page. Tests: `free_pages_gives_back_only_the_whole_pages_inside_its_range` and
+  `a_freeze_gives_back_no_page_a_live_chunk_shares` (both failed before the fix). The other `madvise` calls in the
+  tree are a mapping's whole range just before its `munmap`.
+- **Measured** (profiling build, an M-series Mac): with the fix, 16 runs with the two refusals forced and 6 plain runs
+  at format 15 gave 1,629 each (75-78 B instructions).
+- **Still open, format 16** (the default): after the fix, 5 of 30 runs lost a chunk (1,375, 1,358), all in the same
+  hour; the 30 runs after them lost none. In the bad runs that were traced, the loss was a device run of
+  `xd_fz3398261162_..._diagnostic` (`fl2387840878_P($v), node($d,$v,..), xk_..._1($d), fzk1229918992_..($d),
+  line($v,$l)`) whose last stage, `line`, passed 0 of 13,300 bindings. That chunk's `line` (`View::Loc(Place::Line)`)
+  was made on the device (`expand_view`, after `fill_locs`) rather than read in place, which happens only when a
+  document's tape or lines are not in a slab. Its index was well formed, but the host's rows in each key's bucket were
+  not the key. Each run with a made `line` view lost a chunk, and each run that read it in place did not. Forced
+  (every `Loc` view made, `RERAIL_Q262_MADE=loc`, also with a command buffer per pass), the made rows equal the
+  host's row by row and the runs give 1,629. So the made view goes wrong only under the pressure that makes it.
+  Suspect, not shown: the GPU reading pages the CPU wrote after they were given back as reusable and taken again (a
+  free list's chunks in a block the device has wrapped). **Next:** catch a natural bad run with the made view's rows
+  checked against the host's (the check is in `tmp/gpu/q36/q262-trace.patch`, with the knobs used here). If its rows
+  differ, the device read stale bytes; if they agree, the index build read them early.
+- **Also seen:** `bound_in` gives 60,278-60,281 rows between good runs (the findings the same): a smaller
+  nondeterminism, not looked into.
 
 ### Q263. A relation's statistics kept by delta are on the heap (0450 R5) — done (0450 step 6f)
 
