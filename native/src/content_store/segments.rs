@@ -8,6 +8,7 @@
 //! (`SegmentBytes`), in the producer's mapping or, from a row, in the segment's file mapped (`SegmentMaps`). The memo's
 //! entries (`memo_pack`) and the frames (`frames`) are kept this way, each kind in a directory of its own.
 
+use super::connection::Cached as _;
 use super::{StoreError, StoreResult};
 use rerail_blocks::block::{Frozen, kind};
 use std::collections::HashMap;
@@ -98,18 +99,25 @@ pub(super) fn segment_path(dir: &Path, seg: i64) -> PathBuf {
 /// the named bytes of those segments, about half the kind's, in one write transaction.
 pub(super) const SEGMENT_BUDGET: usize = 1024;
 
-/// The segments compaction retires, of `numbers` (a kind's, oldest first) holding `held` bytes, `named` of which their
-/// rows name, as the oldest of them and the kind's newest (`merge`): that one and every newer one are merged into one
-/// numbered after them all, so the order of the kind's entries, which the memo reads from their segments' numbers (its
-/// newest first), is kept. Every one where the bytes no row names are at least `floor` and half of `held` (the space
+/// A kind's segments as compaction weighs them: their bytes, the bytes their rows name, and their numbers, oldest
+/// first.
+pub(super) struct SegmentUse {
+    pub(super) held: u64,
+    pub(super) named: u64,
+    pub(super) numbers: Vec<i64>,
+}
+
+/// The oldest segment compaction retires, of a kind's `usage`: it and every newer one are merged into one numbered
+/// after them all (`merge`), so the order of the kind's entries, which the memo reads from their segments' numbers (its
+/// newest first), is kept. Every one where the bytes no row names are at least `floor` and half of the bytes (the space
 /// freed pays for the copy); else, past `budget` segments, all but the oldest half of the budget. `None`: no
 /// compaction is due.
-pub(super) fn retired(held: u64, named: u64, numbers: &[i64], floor: u64, budget: usize) -> Option<(i64, i64)> {
-    let newest = *numbers.last()?;
-    if held >= floor && held.saturating_sub(named) >= held / 2 {
-        return Some((numbers[0], newest));
+pub(super) fn retired(usage: &SegmentUse, floor: u64, budget: usize) -> Option<i64> {
+    let SegmentUse { held, named, numbers } = usage;
+    if *held >= floor && held.saturating_sub(*named) >= held / 2 {
+        return numbers.first().copied();
     }
-    numbers.get(budget / 2).filter(|_| numbers.len() > budget).map(|&from| (from, newest))
+    numbers.get(budget / 2).copied().filter(|_| numbers.len() > budget)
 }
 
 /// A kind of segment, as compaction finds and merges it: the table that numbers its segments and the column, and the
@@ -138,6 +146,36 @@ impl SegmentKind<'_> {
             let _ = std::fs::remove_file(segment_path(self.dir, n));
         }
     }
+
+    /// Its use, read in `t`: `named` sums the bytes its rows name.
+    pub(super) fn usage(&self, t: &rusqlite::Connection, named: &str) -> rusqlite::Result<SegmentUse> {
+        let numbers = self.numbers(t)?;
+        let named: i64 = t.query_row_cached(named, [], |r| r.get(0))?;
+        Ok(SegmentUse { held: self.held(&numbers), named: named as u64, numbers })
+    }
+
+    /// Compacts the kind in its write transaction `t` where `usage`, read in `t` (so nothing is written between the
+    /// choice and the merge), makes it due: its segments from the oldest `retired` names merged (`merge`), each row
+    /// `placed` finds in them moved or lost. Not while the newest segment's file is not in place: its writer names it
+    /// only once its rows are committed (`SealedSegments::name`), and a merge would find its entries lost. Returns the
+    /// retired segments, whose files go once `t` commits (`remove`).
+    pub(super) fn compact<K>(
+        &self,
+        t: &rusqlite::Connection,
+        usage: &SegmentUse,
+        (floor, budget): (u64, usize),
+        placed: impl FnOnce(&rusqlite::Connection, i64) -> rusqlite::Result<Vec<Moved<K>>>,
+        lost: impl FnMut(&K) -> rusqlite::Result<()>,
+        moved: impl FnMut(&K, i64, i64) -> rusqlite::Result<()>,
+    ) -> StoreResult<Vec<i64>> {
+        let Some(from) = retired(usage, floor, budget).filter(|_| self.newest_in_place(usage)) else { return Ok(Vec::new()) };
+        merge(t, self, from, placed(t, from)?, lost, moved)
+    }
+
+    /// Whether the newest segment's file is in place (`compact`).
+    fn newest_in_place(&self, usage: &SegmentUse) -> bool {
+        usage.numbers.last().is_none_or(|&n| segment_path(self.dir, n).exists())
+    }
 }
 
 /// An entry compaction copies: what names it (`K`, its row), its document key and content digest, and where it is.
@@ -148,35 +186,25 @@ pub(super) struct Moved<K> {
     pub(super) place: Place,
 }
 
-/// Merges `kind`'s segments `retired` names (the oldest, and the newest there was) in its write transaction `t`
-/// (decision 0295 §4): each of `entries` (theirs, in their order) is copied, in that order, into one new segment
-/// numbered after the kind's last, and `moved` points its row there (the segment and the offset); one whose bytes are
-/// not there is `lost`. Nothing is merged when a segment was written since `retired` read them (`unchanged`). Returns
-/// the retired segments, whose files go once `t` commits (`SegmentKind::remove`).
-pub(super) fn merge<K>(
+/// Merges `kind`'s segments numbered `from` and after in its write transaction `t` (decision 0295 §4): each of
+/// `entries` (theirs, in their order) is copied, in that order, into one new segment numbered after the kind's last,
+/// and `moved` points its row there (the segment and the offset); one whose bytes are not there is `lost`. Returns the
+/// retired segments.
+fn merge<K>(
     t: &rusqlite::Connection,
     kind: &SegmentKind<'_>,
-    (from, newest): (i64, i64),
+    from: i64,
     entries: Vec<Moved<K>>,
     lost: impl FnMut(&K) -> rusqlite::Result<()>,
     moved: impl FnMut(&K, i64, i64) -> rusqlite::Result<()>,
 ) -> StoreResult<Vec<i64>> {
-    let Some(numbers) = unchanged(t, kind, newest)? else { return Ok(Vec::new()) };
+    let numbers = kind.numbers(t)?;
     let kept = mapped(kind.dir, entries, lost)?;
     t.execute(&format!("DELETE FROM {} WHERE {} >= ?1", kind.table, kind.column), [from])?;
     if !kept.is_empty() {
-        install(t, kind, newest + 1, &kept, moved)?;
+        install(t, kind, numbers.last().copied().unwrap_or(0) + 1, &kept, moved)?;
     }
     Ok(numbers.into_iter().filter(|&n| n >= from).collect())
-}
-
-/// `kind`'s segments' numbers, oldest first, while its newest is still `newest`. A segment written since (numbered
-/// after it) is no merge's: its entries are newer than the merged ones, which would be numbered after them, and its
-/// writer may not have named its file yet (`SealedSegments::name`, once its rows are committed). The next compaction
-/// takes it.
-fn unchanged(t: &rusqlite::Connection, kind: &SegmentKind<'_>, newest: i64) -> rusqlite::Result<Option<Vec<i64>>> {
-    let numbers = kind.numbers(t)?;
-    Ok((numbers.last() == Some(&newest)).then_some(numbers))
 }
 
 /// Each entry's bytes, where they are: one whose segment is not there, or holds no such range, is `lost`.

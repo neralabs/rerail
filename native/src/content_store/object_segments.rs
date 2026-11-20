@@ -7,7 +7,6 @@
 //! held as the run holds them (no copy); once it holds the gather's cap, or the run's wave is sealed, it is placed in
 //! one segment and queued as one job, its tapes read there meanwhile ([`QueuedTape`]).
 
-use super::connection::Cached as _;
 use super::rows::{generation, intern_hash};
 use super::segments::{ALIGN, Place, SealedSegments, SegmentBytes, SegmentMaps, SegmentWriter};
 use super::write_back::{Closed, Gather, Held, Key, Kind, Syms, Work};
@@ -358,21 +357,15 @@ impl ContentStore {
 
     /// The tape and source segments' bytes, and the bytes their rows name: what compaction would leave.
     pub fn object_segment_bytes(&self) -> StoreResult<(u64, u64)> {
-        self.object_segment_use().map(|(held, named, _)| (held, named))
+        let usage = self.object_segment_use()?;
+        Ok((usage.held, usage.named))
     }
 
-    /// The tape and source segments' bytes, the bytes their rows name, and their numbers, oldest first.
-    fn object_segment_use(&self) -> StoreResult<(u64, u64, Vec<i64>)> {
+    /// The tape and source segments' bytes, the bytes their rows name, and their numbers.
+    fn object_segment_use(&self) -> StoreResult<super::segments::SegmentUse> {
         let dir = object_dir(&self.database_path);
         let connection = self.connection.lock().expect("content store mutex poisoned");
-        let numbers = object_kind(&dir).numbers(&connection)?;
-        let named: i64 = connection.query_row_cached(
-            "SELECT (SELECT coalesce(sum(seg_len), 0) FROM source_objects WHERE seg > 0) + (SELECT coalesce(sum(seg_len), 0) FROM tape_objects WHERE seg > 0)",
-            [],
-            |r| r.get(0),
-        )?;
-        drop(connection);
-        Ok((object_kind(&dir).held(&numbers), named as u64, numbers))
+        Ok(object_use(&connection, &object_kind(&dir))?)
     }
 
     /// Merges the tape and source segments compaction retires (`segments::retired`): every one where the bytes no row
@@ -385,21 +378,29 @@ impl ContentStore {
         self.compact_object_segments_within(floor, super::segments::SEGMENT_BUDGET)
     }
 
-    /// `compact_object_segments`, keeping at most `budget` segments.
+    /// `compact_object_segments`, keeping at most `budget` segments. Chosen again in the write transaction
+    /// (`SegmentKind::compact`); read before it too, so a store with nothing due takes no write lock.
     fn compact_object_segments_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {
-        let (held, named, numbers) = self.object_segment_use()?;
-        let Some(retiring) = super::segments::retired(held, named, &numbers, floor, budget) else { return Ok(0) };
+        let usage = self.object_segment_use()?;
+        if super::segments::retired(&usage, floor, budget).is_none() {
+            return Ok(0);
+        }
         let dir = object_dir(&self.database_path);
         let kind = object_kind(&dir);
-        let retired = self.immediate_transaction_once(|t| super::segments::merge(t, &kind, retiring, placed_objects(t, retiring.0)?, |o| lose_object(t, o), |o, seg, at| move_object(t, o, seg, at)))?;
+        let retired = self.immediate_transaction_once(|t| kind.compact(t, &object_use(t, &kind)?, (floor, budget), placed_objects, |o| lose_object(t, o), |o, seg, at| move_object(t, o, seg, at)))?;
         kind.remove(&retired);
-        Ok(held.saturating_sub(self.object_segment_bytes()?.0))
+        Ok(usage.held.saturating_sub(self.object_segment_bytes()?.0))
     }
 }
 
 /// The tape and source segments, as compaction finds and merges them.
 fn object_kind(dir: &Path) -> super::segments::SegmentKind<'_> {
     super::segments::SegmentKind { table: "object_segments", column: "seg", dir }
+}
+
+/// The tape and source segments' use, read in `t` (`segments::SegmentUse`).
+fn object_use(t: &Connection, kind: &super::segments::SegmentKind<'_>) -> rusqlite::Result<super::segments::SegmentUse> {
+    kind.usage(t, "SELECT (SELECT coalesce(sum(seg_len), 0) FROM source_objects WHERE seg > 0) + (SELECT coalesce(sum(seg_len), 0) FROM tape_objects WHERE seg > 0)")
 }
 
 /// A placed object's row, as compaction moves it: its table, the table's id column, and its id.

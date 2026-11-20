@@ -26,7 +26,7 @@
 #[allow(unused_imports)]
 use crate::content_store::connection::Cached as _;
 use super::super::{ContentStore, StoreResult};
-use super::super::segments::{ALIGN, Moved, Place, SEGMENT_BUDGET, SealedSegments, SegmentBytes, SegmentKind, SegmentMaps, SegmentWriter, merge, retired};
+use super::super::segments::{ALIGN, Moved, Place, SEGMENT_BUDGET, SealedSegments, SegmentBytes, SegmentKind, SegmentMaps, SegmentUse, SegmentWriter, retired};
 use rusqlite::params;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -314,18 +314,15 @@ impl ContentStore {
 
     /// The segments' bytes (and the packs' of before), and the bytes their rows name: what compaction would leave.
     pub fn memo_pack_bytes(&self) -> StoreResult<(u64, u64)> {
-        self.memo_pack_use().map(|(held, named, _)| (held, named))
+        let usage = self.memo_pack_use()?;
+        Ok((usage.held, usage.named))
     }
 
-    /// The segments' bytes (and the packs' of before), the bytes their rows name, and their numbers, oldest first.
-    fn memo_pack_use(&self) -> StoreResult<(u64, u64, Vec<i64>)> {
+    /// The segments' bytes (and the packs' of before), the bytes their rows name, and their numbers.
+    fn memo_pack_use(&self) -> StoreResult<SegmentUse> {
         let dir = pack_dir(&self.database_path);
         let connection = self.connection.lock().expect("content store mutex poisoned");
-        let packs = memo_kind(&dir).numbers(&connection)?;
-        let named: i64 = connection.query_row_cached("SELECT coalesce(sum(len + over_len), 0) FROM memo_entries WHERE framed = 1", [], |r| r.get(0))?;
-        drop(connection);
-        let old: u64 = packs.iter().map(|&p| std::fs::metadata(old_pack_path(&self.database_path, p)).map_or(0, |m| m.len())).sum();
-        Ok((memo_kind(&dir).held(&packs) + old, named as u64, packs))
+        Ok(memo_use(&connection, &memo_kind(&dir), &self.database_path)?)
     }
 
     /// Merges the segments compaction retires (`segments::retired`): every one where the bytes no row names are more
@@ -338,26 +335,32 @@ impl ContentStore {
         self.compact_memo_pack_within(floor, SEGMENT_BUDGET)
     }
 
-    /// `compact_memo_pack`, keeping at most `budget` segments.
+    /// `compact_memo_pack`, keeping at most `budget` segments. Chosen again in the write transaction
+    /// (`SegmentKind::compact`); read before it too, so a store with nothing due takes no write lock.
     pub(in crate::content_store) fn compact_memo_pack_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {
-        let (held, named, packs) = self.memo_pack_use()?;
-        let Some(retiring) = retired(held, named, &packs, floor, budget) else { return Ok(0) };
-        let dir = pack_dir(&self.database_path);
+        let usage = self.memo_pack_use()?;
+        if retired(&usage, floor, budget).is_none() {
+            return Ok(0);
+        }
+        let (database, dir) = (&self.database_path, pack_dir(&self.database_path));
         let kind = memo_kind(&dir);
-        let retired = self.immediate_transaction_once(|t| {
-            // The packs' of before, and a row whose digest is not one (`Moved::digest`), are forgotten.
-            t.execute_cached("DELETE FROM memo_entries WHERE framed = 0 OR length(digest) != 32", [])?;
-            merge(t, &kind, retiring, placed_entries(t, retiring.0)?, |e| lose_entry(t, e), |e, seg, at| move_entry(t, e, seg, at))
-        })?;
+        let retired = self.immediate_transaction_once(|t| kind.compact(t, &memo_use(t, &kind, database)?, (floor, budget), placed_entries, |e| lose_entry(t, e), |e, seg, at| move_entry(t, e, seg, at)))?;
         kind.remove(&retired);
-        remove_old_packs(&self.database_path, &retired);
-        Ok(held.saturating_sub(self.memo_pack_bytes()?.0))
+        remove_old_packs(database, &retired);
+        Ok(usage.held.saturating_sub(self.memo_pack_bytes()?.0))
     }
 }
 
 /// The memo's segments, as compaction finds and merges them.
 fn memo_kind(dir: &Path) -> SegmentKind<'_> {
     SegmentKind { table: "memo_packs", column: "pack", dir }
+}
+
+/// The memo's segments' use, read in `t` (`segments::SegmentUse`), the packs' of before (`old_pack_path`) held too.
+fn memo_use(t: &rusqlite::Connection, kind: &SegmentKind<'_>, database: &Path) -> rusqlite::Result<SegmentUse> {
+    let mut usage = kind.usage(t, "SELECT coalesce(sum(len + over_len), 0) FROM memo_entries WHERE framed = 1")?;
+    usage.held += usage.numbers.iter().map(|&p| std::fs::metadata(old_pack_path(database, p)).map_or(0, |m| m.len())).sum::<u64>();
+    Ok(usage)
 }
 
 /// Removes the packs of before (`old_pack_path`) among `retired`, once the transaction that retired them committed.
@@ -374,8 +377,10 @@ type EntryBytes = (Vec<u8>, i64, bool);
 /// kept over it are (pack, offset, length; `over_len` 0: nothing).
 type PlacedEntry = (Vec<u8>, i64, i64, Vec<u8>, i64, i64, i64, i64, i64, i64);
 
-/// The entries, and what is kept over them, in segments numbered `from` and after, in their order there.
+/// The entries, and what is kept over them, in segments numbered `from` and after, in their order there; the rows of
+/// the packs of before, and a row whose digest is not one (`Moved::digest`), forgotten first.
 fn placed_entries(t: &rusqlite::Connection, from: i64) -> rusqlite::Result<Vec<Moved<EntryBytes>>> {
+    t.execute_cached("DELETE FROM memo_entries WHERE framed = 0 OR length(digest) != 32", [])?;
     let mut st = t.prepare_cached(
         "SELECT space, part, doc, digest, pack, at, len, over_pack, over_at, over_len FROM memo_entries \
          WHERE pack >= ?1 OR (over_len > 0 AND over_pack >= ?1) ORDER BY pack, at",
