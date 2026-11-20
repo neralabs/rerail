@@ -567,8 +567,8 @@ describe("coreFloor", () => {
     expect(coreFloor(["held"], ["java"])).toBe(newest);
   });
 
-  it("is the release that first reads a rule written in .rerail for a pack that ships one", () => {
-    expect(coreFloor([], ["python"], ["django-practice-count-not-len"])).toBe(RERAIL_DOCUMENTS_SINCE);
+  it("is 0.2.0, the release that first reads a rule written in .rerail, for a pack that ships one", () => {
+    expect(coreFloor([], ["python"], ["django-practice-count-not-len"])).toBe("0.2.0");
     expect(coreFloor([], ["python"], [])).toBeUndefined();
   });
 });

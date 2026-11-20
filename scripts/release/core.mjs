@@ -271,9 +271,10 @@ export function heldOffRules(packJson) {
 
 /**
  * The first core release that reads a rule written in `.rerail` in a pack (`rules/<id>.rerail` in pack.json): an older
- * core refuses the document path, so it drops the whole pack.
+ * core refuses the document path, so it drops the whole pack. The release after 0.1.5 is 0.2.0 (CHANGELOG.md's
+ * unreleased heading, `nextCoreVersion`), so no 0.1.x reads one.
  */
-export const RERAIL_DOCUMENTS_SINCE = "0.1.6";
+export const RERAIL_DOCUMENTS_SINCE = "0.2.0";
 
 /** The ids of the rules a parsed `pack.json` ships written in `.rerail`. */
 export function rerailRules(packJson) {
