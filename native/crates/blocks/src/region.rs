@@ -453,6 +453,25 @@ impl<T: crate::Pod> Mutable<T> {
         self.r.buffer(device)
     }
 
+    /// Keeps its first `n` `T`s and gives back the rest: to its block when it was the block's last allocation from
+    /// the front. A chunk of a free list keeps its whole chunk (the ledger frees chunks whole, 0487 R2). Nothing else
+    /// may hold it: no other handle, range or GPU use.
+    #[track_caller]
+    pub fn truncate(&mut self, n: usize) {
+        let keep = n * size_of::<T>();
+        let Some(r) = Arc::get_mut(&mut self.r) else {
+            fail(&self.r, format!("a truncate from {} while another handle, range or GPU use holds it", Location::caller()));
+        };
+        if keep > r.len {
+            fail(r, format!("a truncate from {} to {keep} bytes, past its length", Location::caller()));
+        }
+        if r.kept == 0 {
+            // `alloc` took at least a byte from the front.
+            r.block.shrink_last(r.at, r.len.max(1), keep);
+        }
+        r.len = keep;
+    }
+
     /// Freezes it: no CPU read or write may be live, and no GPU write queued; GPU reads may be.
     #[track_caller]
     pub fn freeze(self) -> Frozen<T> {
@@ -692,6 +711,26 @@ mod tests {
         assert_ne!(Mutable::<u64>::alloc(&b, 512, "x").unwrap().region().at(), at, "the range holds it");
         assert!(fails(|| drop(part.range(5, 11))), "past its end");
         assert_eq!(part.region().name(), "rows");
+    }
+
+    /// A region truncated to what was written gives its tail back: from the front of its block, the next allocation
+    /// lands in it. A truncate while another handle holds it, or past its length, fails.
+    #[test]
+    fn a_truncated_region_gives_back_its_tail() {
+        let b = Arc::new(Block::anon(kind::FACTS, 8 << 20));
+        let mut m = Mutable::<u32>::alloc(&b, 1000, "cells").unwrap();
+        let at = m.region().at();
+        m.write()[..10].copy_from_slice(&[1; 10]);
+        let s = m.share();
+        assert!(fails(|| m.truncate(10)), "another handle holds it");
+        drop(s);
+        assert!(fails(|| m.truncate(1001)), "past its length");
+        m.truncate(10);
+        assert_eq!(m.len(), 10);
+        let next = Mutable::<u32>::alloc(&b, 4, "next").unwrap();
+        assert!(next.region().at() < at + 4 * 1000, "the tail went back: {} after {at}", next.region().at());
+        let f = m.freeze();
+        assert_eq!(&f[..], &[1; 10]);
     }
 
     /// A device with memory of its own (a discrete GPU's), simulated: its copy, and what crossed the bus.

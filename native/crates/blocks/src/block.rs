@@ -815,27 +815,20 @@ impl Deref for Frozen {
 }
 
 /// A run of `T`s in a shared block, read as a slice by the host: an array the host builds once and the device then
-/// reads in the same block (decision 0289 §3). The block lives as long as any of its `Cells`.
-pub struct Cells<T: crate::Pod> {
-    block: Arc<Block>,
-    at: usize,
-    len: usize,
-    _t: std::marker::PhantomData<T>,
-}
+/// reads in the same block (decision 0289 §3). A frozen region (decision 0491): its block lives, and its chunk stays
+/// taken, as long as any of its `Cells`, or a GPU use of it, does.
+pub struct Cells<T: crate::Pod>(crate::region::Frozen<T>);
 
 impl<T: crate::Pod> Cells<T> {
     /// Up to `capacity` `T`s, zero, filled by `fill`, which returns how many it used: the rest is given back to the
-    /// block when nothing was allocated after it. `None` when the block cannot hold `capacity`.
+    /// block when nothing was allocated after it (`region::Mutable::truncate`). `None` when the block cannot hold
+    /// `capacity`.
     pub fn build(block: &Arc<Block>, capacity: usize, fill: impl FnOnce(&mut [T]) -> usize) -> Option<Self> {
-        let size = capacity * size_of::<T>();
-        let at = block.try_alloc(size, align_of::<T>().max(8))?;
-        // SAFETY: `at..at + size` was just allocated to this call alone, zero (a dirty block zeroes it), and zero
-        // is a `T` (`Pod`).
-        let cells = unsafe { std::slice::from_raw_parts_mut(block.ptr::<T>(at), capacity) };
-        let len = fill(cells);
+        let mut m = crate::region::Mutable::<T>::alloc(block, capacity, "cells")?;
+        let len = fill(&mut m.write());
         assert!(len <= capacity, "cells filled past their capacity");
-        block.shrink_last(at, size, len * size_of::<T>());
-        Some(Cells { block: Arc::clone(block), at, len, _t: std::marker::PhantomData })
+        m.truncate(len);
+        Some(Cells(m.freeze()))
     }
 
     /// `src` copied into `block`.
@@ -849,19 +842,23 @@ impl<T: crate::Pod> Cells<T> {
 
     /// The block it is in.
     pub fn block(&self) -> &Arc<Block> {
-        &self.block
+        self.0.region().block()
+    }
+
+    /// Its region, as the device binds it.
+    pub fn frozen(&self) -> &crate::region::Frozen<T> {
+        &self.0
     }
 
     pub fn as_ptr(&self) -> *const T {
-        self.block.ptr(self.at)
+        self.0.as_ptr()
     }
 }
 
 impl<T: crate::Pod> Deref for Cells<T> {
     type Target = [T];
     fn deref(&self) -> &[T] {
-        // SAFETY: `build` filled `len` `T`s at `at`, and nothing writes them after it returns.
-        unsafe { std::slice::from_raw_parts(self.block.ptr::<T>(self.at), self.len) }
+        &self.0
     }
 }
 
