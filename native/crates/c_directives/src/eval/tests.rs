@@ -62,7 +62,7 @@ fn corpus_in() -> Vec<(Vec<u8>, Vec<u8>, bool)> {
 #[test]
 fn the_evaluator_copies_no_tape() {
     let rust = include_str!("../../../metal/src/pp_eval.rs");
-    let msl = [include_str!("../../../metal/src/pp_eval.metal"), include_str!("../../../metal/src/pp_expand.metal")].concat();
+    let ukl = [include_str!("../../../metal/src/pp_eval.uglykl"), include_str!("../../../metal/src/pp_expand.uglykl")].concat();
     for line in rust.lines().filter(|l| !l.trim_start().starts_with("//")) {
         let copies = ["copy_nonoverlapping", "copy_from_slice", "extend_from_slice", "MappedBuffer::from_slice(&device, &data", "fn load("];
         if copies.iter().any(|c| line.contains(c)) {
@@ -70,20 +70,36 @@ fn the_evaluator_copies_no_tape() {
         }
     }
     for gone in ["HEADER_BYTES", "rd32(", "px_newlines", "px_line_blocks", "LINE_BLOCK"] {
-        assert!(!msl.contains(gone), "the evaluator's MSL still has `{gone}`");
+        assert!(!ukl.contains(gone), "the evaluator still has `{gone}`");
     }
-    assert!(msl.contains("clif_tape_start") && msl.contains("clif_tape_line"), "the evaluator reads through the CLIF reads");
+    assert!(ukl.contains("clif_tape_start") && ukl.contains("clif_tape_line"), "the evaluator reads through the CLIF reads");
+}
+
+/// §5 of decision 0460: the evaluator is UKL, launched through the lane: its source has no MSL
+/// (no Metal kernel, attribute, address space or SIMD function of its own), takes UKL's work queue
+/// and grid, and the preprocessor's MSL work queue is gone.
+#[test]
+fn the_evaluator_is_ukl() {
+    let src = rerail_metal::pp_arena::source();
+    for msl in ["kernel void", "[[buffer", "metal_stdlib", "device ", "threadgroup ", "simd_", "atomic_uint", "memory_order", "thread_position"] {
+        let code: Vec<&str> = src.lines().filter(|l| !l.trim_start().starts_with("//") && l.contains(msl)).take(3).collect();
+        assert!(code.is_empty(), "the evaluator's source has MSL `{msl}`: {code:?}");
+    }
+    assert!(src.contains("#include <ukl/workqueue.h>") && src.contains("#include <ukl/grid.h>"), "UKL's queue and grid");
+    assert!(src.contains("DEFINE_KERNEL2(pp, pp_setup") && src.contains("DEFINE_KERNEL2(pp, px_expand") && src.contains("DEFINE_KERNEL2(pp, pp_check"), "the grid's kernels are UKL's");
+    let arena = include_str!("../../../metal/src/pp_arena.rs");
+    assert!(arena.contains("lane::Command") && !arena.contains("new_compute_command_encoder"), "launched through the lane");
 }
 
 /// R4 of decision 0460: an evaluation's stores are at offsets in one block, its arena
-/// (`pp_blocks::Arena`), leased from the GPU pool within the one budget: neither the front passes
+/// (`pp_arena::Arena`), leased from the GPU pool within the one budget: neither the front passes
 /// nor the expansion makes a buffer of its own.
 #[test]
 fn the_arena_is_one_block() {
     for (name, rust) in [("pp_eval.rs", include_str!("../../../metal/src/pp_eval.rs")), ("pp_expand.rs", include_str!("../../../metal/src/pp_expand.rs"))] {
         assert!(!rust.contains("MappedBuffer"), "{name} makes a buffer of its own");
     }
-    let blocks = include_str!("../../../metal/src/pp_blocks.rs");
+    let blocks = include_str!("../../../metal/src/pp_arena.rs");
     assert!(blocks.contains("lease_block_within("), "the arena is leased within the budget");
 }
 

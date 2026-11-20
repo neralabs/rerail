@@ -403,3 +403,25 @@ with the unit, because each primitive's number of levels was chosen by its capac
 - **The encoders are labelled.** `Enc::run` set no label, and the launch budget's record reads
   each dispatch's label, so `nsstring_as_str` was given nil: undefined behaviour that a cargo test
   catches (Relax's does not). Each encoder now takes its kernel's name.
+- **Step 5b: the evaluator is UKL, launched through the lane (§5).** `pp_eval.metal`,
+  `pp_expand.metal`, `pp_grid.metal`, `pp_blocks.metal` and the MSL work queue
+  (`work_queue.metal`, `rerail_metal::work_queue`) are gone:
+  - The passes are `pp_eval.uglykl`, `pp_search.uglykl` (the searches), `pp_expand.uglykl` and
+    `pp_grid.uglykl` (the kernels), and the tests' probes are `pp_probes.uglykl`.
+  - The kernels are `DEFINE_KERNEL2(pp, …)`. The grid's take the arena, the slab and the
+    layout as rows, and their threadgroup memory as a `SHARED` row (`PpTg`). The probes take
+    their scalars as `ARGS` (`PpProbeArgs`).
+  - The passes are written in UKL's dialect: C types, `ukl_atomic_*` over plain words,
+    `ukl_sg_*`, `ukl_min` and `ukl_max`, `ukl_ctz32`, and pointers where MSL had references. Every
+    function that reaches a SIMD-group operation takes `__UKL_PARAMS` (15 of the expansion's).
+  - The expansion's queue is `<ukl/workqueue.h>`, the same protocol. An argument's list is made
+    by `ukl_atomic_cas`, a strong exchange, where MSL had a weak one in a loop.
+  - `pp_blocks.rs` is `pp_arena.rs`: the arena, the layout and the one source, which the kernel
+    store now preprocesses for the device's backend. `Enc` holds a `lane::Command`, and binds rows
+    by name at their offsets in the arena, the arena's buffer now the device layer's
+    (`Block::device_buffer`). The slab is bound as its `device_buffer`. R9's one command is the
+    lane's.
+  - Tests: `the_evaluator_is_ukl` (no MSL left in the source; UKL's queue and grid; launched
+    through the lane), and `the_source_compiles` (every kernel; `RERAIL_PP_DUMP` writes the
+    preprocessed source). All 18 evaluator tests and the 3 arena tests pass. The corpus: 3,132
+    units equal, the same 3 refused, 4 launches each.

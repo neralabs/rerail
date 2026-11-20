@@ -1,19 +1,11 @@
-//! The building blocks of the preprocessor's grid passes (decision 0448 §3), `pp_blocks.metal`:
-//! a scan, a segmented scan (add or max), a stable radix sort of 64-bit keys, a search and an
-//! expand. Each is sized on the device: its count is a word of a device buffer, a plan kernel
-//! makes the levels' counts and the indirect arguments, and the host encodes every dispatch
-//! without reading one.
-//!
-//! Scratch is placed when a block is made, for a capacity the host knows (the arena's), so
-//! encoding never allocates. A count past the capacity is the caller's to refuse before.
-//!
-//! Every store an evaluation's passes use is at an offset in one block, its arena (decision 0460
-//! §3, `Arena`): leased once a run within the one budget, and bound at each store's offset.
+//! The preprocessor's evaluation arena and its kernels' one source (decisions 0448 §3, 0460):
+//! every store an evaluation's passes use is at an offset in one block (`Arena`), leased once a
+//! run within the one budget and bound at each store's offset; the layout (`Lay`) names each
+//! store's offset by slot (`SLOTS`); and the passes are UKL (`pp_*.uglykl`), launched on the
+//! process's device through the lane (`Enc`, `crate::lane`).
 
 use crate::Error;
-use crate::launch::CheckedComputeEncoder;
-use crate::runtime::pipeline_named_constant;
-use metal::{BufferRef, CommandBufferRef, MTLSize};
+use crate::lane::{self, Buffer};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -38,7 +30,7 @@ struct Inner {
 
 struct Leased {
     _block: rerail_blocks::Block,
-    buffer: metal::Buffer,
+    buffer: Buffer,
     /// The stores' first byte in the block (past its header), and in the host's mapping.
     base: usize,
     host: *mut u8,
@@ -92,12 +84,12 @@ impl Arena {
             return Ok(());
         }
         let bytes = self.bytes().max(ALIGN);
-        let device = crate::device()?;
+        let device = lane::device()?;
         let block = rerail_accel::gpu::shared::lease_block_within(rerail_blocks::block::kind::SCRATCH, bytes + 2 * ALIGN + 4096)
             .map_err(|_| Error::BackendCapacity)?;
         // Zeroed: a pooled slab may hold an earlier block's bytes.
         let base = block.try_alloc(bytes, ALIGN).ok_or(Error::BackendCapacity)?;
-        let buffer = block.gpu_buffer(&device);
+        let buffer = block.device_buffer(device).map_err(|_| Error::BackendFailure)?;
         let host = block.base_ptr();
         for (at, words) in self.0.init.borrow_mut().drain(..) {
             // SAFETY: the store's range lies inside the block's allocation `base..base + bytes`.
@@ -129,99 +121,106 @@ impl Buf {
 
 /// What a pass binds: a buffer, at a byte offset.
 pub trait Bound {
-    fn bound(&self) -> (&BufferRef, u64);
+    fn bound(&self) -> (&Buffer, u64);
 }
 
 impl Bound for Buf {
-    fn bound(&self) -> (&BufferRef, u64) {
+    fn bound(&self) -> (&Buffer, u64) {
         let l = self.arena.leased();
         (&l.buffer, (l.base + self.at) as u64)
     }
 }
 
 impl<T: Bound + ?Sized> Bound for &T {
-    fn bound(&self) -> (&BufferRef, u64) {
+    fn bound(&self) -> (&Buffer, u64) {
         (**self).bound()
     }
 }
 
-impl Bound for BufferRef {
-    fn bound(&self) -> (&BufferRef, u64) {
+impl Bound for Buffer {
+    fn bound(&self) -> (&Buffer, u64) {
         (self, 0)
     }
 }
 
-impl Bound for metal::Buffer {
-    fn bound(&self) -> (&BufferRef, u64) {
-        (self, 0)
-    }
-}
-
-/// The evaluator's one source: the tape's view and its reads written once in CLIF
-/// (`<ukl/reads/tape.h>`, the view read where the batch holds it), the persistent grid's barrier
-/// and primitives (`<ukl/grid.h>`), the arena's slots (`SLOTS`), the front passes
-/// (`pp_eval.metal`), the searches (`pp_blocks.metal`), the work queue (`work_queue.metal`), the
-/// expansion's passes (`pp_expand.metal`) and the kernels that run them all (`pp_grid.metal`); preprocessed for Metal once (`rerail_ukl::metal_source`, decision 0440
-/// §3.3) until the passes are UKL themselves (decision 0460 §5).
-pub fn source() -> Result<&'static str, Error> {
-    static SOURCE: std::sync::LazyLock<Result<String, String>> = std::sync::LazyLock::new(|| {
-        let text = format!(
-            "#include <metal_stdlib>\nusing namespace metal;\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/grid.h>\n{}{}\n{}\n{}\n{}\n{}",
+/// The evaluator's one source, UKL (decision 0460 §5): the tape's view and its reads written once
+/// in CLIF (`<ukl/reads/tape.h>`, the view read where the batch holds it), the persistent grid's
+/// barrier and primitives (`<ukl/grid.h>`), the work queue (`<ukl/workqueue.h>`), the arena's
+/// slots (`SLOTS`, the source's `S_*`), the front passes (`pp_eval.uglykl`), the searches
+/// (`pp_search.uglykl`), the expansion's passes (`pp_expand.uglykl`), the kernels that run them
+/// all (`pp_grid.uglykl`) and the tests' probes (`pp_probes.uglykl`). The kernel store
+/// preprocesses it for the device's backend.
+pub fn source() -> &'static str {
+    static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        format!(
+            "#include <ukl/backend.h>\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n{}{}\n{}\n{}\n{}\n{}",
             rerail_clif::view::ukl(),
             SLOTS.iter().enumerate().map(|(k, s)| format!("#define S_{s} {k}u\n")).collect::<String>(),
-            include_str!("pp_eval.metal"),
-            include_str!("pp_blocks.metal"),
-            include_str!("work_queue.metal"),
-            include_str!("pp_expand.metal"),
-            include_str!("pp_grid.metal")
-        );
-        // A failed source is fatal (no fallback): its reason is said once, where it is made.
-        rerail_ukl::metal_source("pp.metal", &text).map_err(|e| {
-            eprintln!("the preprocessor's evaluator source: {e}");
-            e.to_string()
-        })
+            include_str!("pp_eval.uglykl"),
+            include_str!("pp_search.uglykl"),
+            include_str!("pp_expand.uglykl"),
+            include_str!("pp_grid.uglykl"),
+            include_str!("pp_probes.uglykl")
+        )
     });
-    SOURCE.as_ref().map(String::as_str).map_err(|_| Error::BackendFailure)
+    &SOURCE
 }
 
-/// A dispatch's size: its groups. Every count past it is read on the device (decision 0460 §4),
-/// so no dispatch takes indirect arguments.
-#[derive(Clone, Copy)]
-pub enum Grid {
-    Groups(u64),
+/// The kernel `name` of the evaluator's source, made once a process (a failed compile is fatal).
+pub fn kernel(name: &str) -> &'static lane::Kernel {
+    static MADE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, &'static lane::Kernel>>> = std::sync::OnceLock::new();
+    let mut made = MADE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner());
+    made.entry(name.to_owned()).or_insert_with(|| Box::leak(Box::new(lane::kernel_fixed(source(), name, None))))
 }
 
 /// The threads of a group.
 pub const TG: u64 = 256;
 
-/// Encodes passes of `source` into a command buffer.
+/// A probe's scalars (`pp_probes.uglykl`'s `PpProbeArgs`).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ProbeArgs(pub [u32; 4]);
+unsafe impl lane::Pod for ProbeArgs {}
+
+/// The launches of one command, on the process's device (`lane::Command`).
 pub struct Enc<'a> {
-    pub command: &'a CommandBufferRef,
-    pub source: &'a str,
+    command: RefCell<lane::Command<'a>>,
 }
 
-impl Enc<'_> {
-    /// Kernel `name` (with `constant` at function constant 0) over `buffers`, then the words
-    /// `words` each at the next index.
-    pub fn run(&self, name: &str, constant: Option<u32>, buffers: &[&dyn Bound], words: &[u32], grid: Grid) -> Result<(), Error> {
-        let pipe = pipeline_named_constant(self.source, name, constant)?;
-        let e = self.command.new_compute_command_encoder();
-        // The launch budget records each dispatch by its encoder's label (an unlabelled one's is nil).
-        e.set_label(name);
-        e.set_compute_pipeline_state(&pipe);
-        let bound: Vec<(&BufferRef, u64)> = buffers.iter().map(|b| b.bound()).collect();
-        e.checked_set_buffers_at(self.command, &bound);
-        for (k, w) in words.iter().enumerate() {
-            e.set_bytes((buffers.len() + k) as u64, 4, std::ptr::from_ref(w).cast());
+impl<'a> Enc<'a> {
+    pub fn new(label: &str) -> Enc<'a> {
+        Enc { command: RefCell::new(lane::Command::new(label)) }
+    }
+
+    /// Kernel `name` over `groups` groups of `TG` threads, its buffer rows `rows` (each a row's
+    /// name and what it binds), and its `args` where it has them.
+    pub fn run(&self, name: &str, rows: &[(&'a str, &'a dyn Bound)], args: Option<ProbeArgs>, groups: u64) {
+        let mut command = self.command.borrow_mut();
+        let mut launch = command.launch(&**kernel(name), name);
+        for &(row, b) in rows {
+            let (buffer, offset) = b.bound();
+            launch = launch.buffer_at(row, buffer, offset);
         }
-        let group = MTLSize::new(TG, 1, 1);
-        let Grid::Groups(g) = grid;
-        e.checked_dispatch_thread_groups(self.command, MTLSize::new(g.max(1), 1, 1), group);
-        e.end_encoding();
-        Ok(())
+        if let Some(a) = args {
+            launch = launch.value("args", &a);
+        }
+        launch.groups([groups.max(1), 1, 1], [TG, 1, 1]);
+    }
+
+    /// The launches it holds (those within the budget).
+    pub fn len(&self) -> usize {
+        self.command.borrow().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Commits and waits: its time on the device, in seconds.
+    pub fn finish(self) -> Result<f64, Error> {
+        Ok(self.command.into_inner().run()?.device)
     }
 }
-
 
 /// A scan's total: the grid's scans (`ukl_grid_scan_n`) need no other store of their own (their
 /// groups' sums are the arena's one `SUMS`).
@@ -266,7 +265,7 @@ impl Sort {
 /// again with half as many.
 pub const GROUPS: u64 = 32;
 
-/// The arena's stores the persistent kernels read, by slot: `pp_grid.metal`'s `S_*`, made from
+/// The arena's stores the persistent kernels read, by slot: `pp_grid.uglykl`'s `S_*`, made from
 /// this list (`source`), and a run's offsets (`Lay`). A word slot holds a value, not an offset.
 pub const SLOTS: &[&str] = &[
     "GRID", "SUMS", "LAST", "STOP", "N_FILES", "NODES_FLAG", "FILES", "BASES", "TOTAL", "DIR_BASES", "DIR_TOTAL", "DFLAG", "GFLAG", "AFLAG", "DEV", "DRANK", "GRANK", "ARANK", "NDEPTH", "DEV_TOTAL", "N_GROUPS", "N_ARMS",
@@ -327,7 +326,7 @@ impl Default for Lay {
 
 impl Bound for Arena {
     /// The arena whole: its stores' first byte, where every slot's offset counts from.
-    fn bound(&self) -> (&BufferRef, u64) {
+    fn bound(&self) -> (&Buffer, u64) {
         let l = self.leased();
         (&l.buffer, l.base as u64)
     }

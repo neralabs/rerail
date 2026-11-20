@@ -1,0 +1,231 @@
+// The preprocessor's evaluation as a persistent grid (decision 0460 §4): G groups of 256 threads,
+// resident together, run the passes as phases, each group a share of each pass's items; a
+// device-wide barrier (`ukl_grid_barrier`) separates a phase from the next, and the scans,
+// segmented scans and sorts are the grid's own (`ukl/grid.h`). Every count a phase needs is read
+// from the arena, so the host sizes nothing but the arena.
+//
+// Launches, the same for every unit:
+// - `pp_setup`: the front passes, the definitions, the visibility and the top level, to the
+//   queue's seed;
+// - `px_expand`, twice: the queue's first phase, the top level's rollback and places, the
+//   queue's second phase. A stage word lets the second launch take up where the first ended (a
+//   queue whose workers all gave up waiting while work remained);
+// - `pp_check`: the refusals.
+//
+// The kernels bind the arena (`arena`: every store at its offset, `lay` the offsets by slot,
+// `S_*`), and the slab the unit's documents are in (`data`).
+
+#define AT(T, s) ((UKL_GLOBAL T*)(arena + lay[S_##s]))
+#define C32(s) ((UKL_COHERENT uint32_t*)(arena + lay[S_##s]))
+#define C64(s) ((UKL_COHERENT uint64_t*)(arena + lay[S_##s]))
+#define W(s) lay[S_##s]
+// Each of `n` items, a thread each, over the grid.
+#define EACH(t, n) for (uint32_t t = g.group * g.lsz + g.lid, t##_n = (n); t < t##_n; t += g.groups * g.lsz)
+// One thread of the grid.
+#define ONE(t) for (uint32_t t = 0u; g.group == 0u && g.lid == 0u && t < 1u; t++)
+// A measurement's stop (`STOP`): the kernel ends before its phase `stop` (0: never).
+#define TICK() if (++phase == stop) return
+#define BARRIER() TICK(); if (!ukl_grid_barrier(g, &tg->flag)) return
+// Scans sharing their barriers (`ukl_grid_scans`): `JOB(k, …)` each, then `SCANS(k)`.
+#define JOB(j, n_, in_, out_, total_) jobs[j].n = (n_); jobs[j].in = C32(in_); jobs[j].out = C32(out_); jobs[j].total = C32(total_)
+#define SCANS(k) TICK(); if (!ukl_grid_scans(g, jobs, (k), C32(SUMS), tg->scratch, &tg->flag __UKL_ARGS)) return
+#define SCAN(n, in, out, total) TICK(); if (!ukl_grid_scan_n(g, (n), C32(in), C32(out), C32(total), C32(SUMS), tg->scratch, &tg->flag __UKL_ARGS)) return
+#define SEG(op, n, in, heads, out) TICK(); if (!ukl_grid_seg_scan_n(g, (op), (n), C32(in), C32(heads), C32(out), C32(SUMS), tg->big, tg->big + 256u, &tg->flag)) return
+#define SORT(n, bits, keys, va, kb, vb, hist) TICK(); if (!ukl_grid_sort_u64(g, (n), (bits), true, C64(keys), C32(va), C64(kb), C32(vb), C32(hist), C32(SUMS), sl, tg->scratch, &tg->flag __UKL_ARGS)) return
+// A sort whose rows are already in the order of their low `low` bits: only the digits above pass.
+#define SORT_FROM(n, low, bits, keys, va, kb, vb, hist) TICK(); if (!ukl_grid_sort_u64_from(g, (n), (low), (bits), true, C64(keys), C32(va), C64(kb), C32(vb), C32(hist), C32(SUMS), sl, tg->scratch, &tg->flag __UKL_ARGS)) return
+// A count the passes before wrote.
+#define N(s) AT(const uint32_t, s)[0]
+
+// A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts or
+// a sorted tile (the segmented scans' two rows alias them: no phase runs two of them).
+#define PP_TG_BIG (UKL_GRID_SORT_TILE_WORDS > UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS ? UKL_GRID_SORT_TILE_WORDS : UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS)
+typedef struct PpTg {
+    uint32_t flag;
+    uint32_t scratch[UKL_TG_SCRATCH];
+    uint32_t big[PP_TG_BIG];
+} PpTg;
+
+// The stage word of `GRID` (after the barrier's three): 0 the queue's first phase, 1 its second,
+// 2 done.
+#define PG_STAGE (3u)
+
+// The rows of every grid kernel: the arena, the slab, the layout, the group's memory, and where
+// the thread is.
+#define PP_GRID_ROWS                                                                                   \
+    RWBUFFER, uint8_t,  arena, "[arena]",                                                              \
+    ROBUFFER, uint8_t,  data,  "[data]",                                                               \
+    ROBUFFER, uint32_t, lay,   "[slots]",                                                              \
+    SHARED,   PpTg,     tg,    1,                                                                      \
+    GSZ0,     uint32_t, gsz,   ,                                                                       \
+    TGID0,    uint32_t, group, ,                                                                       \
+    LID0,     uint32_t, lid,   ,                                                                       \
+    LSZ0,     uint32_t, lsz,
+
+#define PP_GRID_BEGIN                                                                                  \
+    UklGrid g;                                                                                         \
+    g.ctl = AT(uint32_t, GRID); g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;      \
+    uint32_t lane = lid % UKL_SIMD_WIDTH;                                                              \
+    UklGridSortLocal sl;                                                                               \
+    sl.counts = tg->big; sl.h = tg->big + UKL_RADIX_GROUPS * UKL_RADIX_DIGITS;                           \
+    sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS; sl.tile = tg->big;     \
+    UKL_GLOBAL const PpFile* files = AT(const PpFile, FILES);                                              \
+    uint32_t nf = W(N_FILES);                                                                              \
+    uint32_t stop = 0u, phase = 0u;                                                                        \
+    UklScanJob jobs[UKL_GRID_SCANS];                                                                   \
+    (void)lane; (void)data; (void)files; (void)nf; (void)sl; (void)stop; (void)phase; (void)jobs;
+
+DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
+{
+    PP_GRID_BEGIN
+    stop = W(STOP);
+    if (ukl_grid_failed(g)) return;
+    uint32_t last = W(LAST);
+    // --- The front: the nodes, the names, the directives, the text map, the guards ----------
+    // A node a thread, and a scan or a sort between: no thread walks a file (decision 0460).
+    uint32_t nn = N(TOTAL);
+    EACH(n, nn) {
+        pp_names(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TOTAL), AT(uint64_t, KEYS), nf, n);
+        if (W(NODES_FLAG) != 0u) pp_nodes(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TOTAL), AT(uint32_t, NODES_OUT), nf, n);
+        pp_node_flags(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TOTAL), AT(uint32_t, DFLAG), AT(uint32_t, GFLAG), AT(uint32_t, DEV), AT(uint32_t, OWNER_IN), nf, n);
+    }
+    BARRIER();
+    JOB(0, nn, DFLAG, DRANK, DIR_TOTAL);
+    JOB(1, nn, GFLAG, GRANK, N_GROUPS);
+    JOB(2, nn, DEV, NDEPTH, DEV_TOTAL);
+    SCANS(3);
+    SEG(UKL_SEG_MAX, nn, OWNER_IN, VHEADS, OWNER);
+    EACH(n, nn) pp_node_depths(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TOTAL), AT(const uint32_t, NDEPTH), AT(const uint32_t, DEV), AT(const uint32_t, GFLAG), AT(const uint32_t, GRANK), AT(const uint32_t, OWNER), AT(uint32_t, AFLAG), AT(uint32_t, TFLAG), AT(uint64_t, GRP_KEYS), nf, n);
+    BARRIER();
+    JOB(0, nn, TFLAG, TRANK, TTOTAL);
+    JOB(1, nn, AFLAG, ARANK, N_ARMS);
+    SCANS(2);
+    EACH(n, nn) {
+        pp_arm_keys(AT(const uint32_t, TOTAL), AT(const uint32_t, AFLAG), AT(const uint32_t, ARANK), AT(const uint32_t, NDEPTH), AT(const uint32_t, DEV), AT(uint64_t, ARM_KEYS), n);
+        pe_text_nodes(AT(const uint32_t, TFLAG), AT(const uint32_t, TRANK), AT(const uint32_t, TOTAL), AT(uint32_t, TEXT_NODES), n);
+    }
+    EACH(f, nf) pp_file_dirs(AT(const uint32_t, BASES), AT(const uint32_t, DRANK), AT(const uint32_t, ARANK), AT(const uint32_t, N_ARMS), AT(uint32_t, DIR_BASES), AT(uint32_t, DIR_GROUPS), nf, f);
+    BARRIER();
+    SORT(N(N_ARMS), 64u, ARM_KEYS, ASORT_VA, ASORT_KB, ASORT_VB, ASORT_HIST);
+    SORT(N(N_GROUPS), 64u, GRP_KEYS, PSORT_VA, PSORT_KB, PSORT_VB, PSORT_HIST);
+    EACH(n, nn) pp_rows(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TOTAL), AT(const uint32_t, DFLAG), AT(const uint32_t, DRANK), AT(const uint32_t, NDEPTH), AT(const uint32_t, DEV), AT(const uint32_t, TRANK), AT(const uint32_t, ARANK), AT(const uint32_t, GRANK), AT(const uint64_t, ARM_KEYS), AT(const uint32_t, N_ARMS), AT(const uint64_t, GRP_KEYS), AT(const uint32_t, N_GROUPS), AT(PpDir, ROWS), nf, n);
+    BARRIER();
+    EACH(r, N(DIR_TOTAL)) {
+        pp_dir_keys(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(const PpDir, ROWS), AT(uint64_t, DIR_KEYS), nf, r);
+        pp_guard_marks(AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(const PpDir, ROWS), AT(uint32_t, G_OUT), AT(uint32_t, G_ARMS), nf, r);
+    }
+    BARRIER();
+    EACH(f, nf) pp_guards(AT(const uint32_t, BASES), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(const PpDir, ROWS), AT(const uint32_t, TRANK), AT(const uint32_t, TTOTAL), AT(const uint32_t, G_OUT), AT(const uint32_t, G_ARMS), AT(const uint64_t, DIR_KEYS), AT(uint32_t, GUARDED), AT(uint64_t, GUARDS), nf, f);
+    if (last == 1u) return;
+    // --- The definitions --------------------------------------------------------------------
+    EACH(r, N(DIR_TOTAL)) pd_defs(files, data, AT(const uint32_t, BASES), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(const PpDir, ROWS), AT(PpDef, DEFS), AT(uint32_t, PCOUNT), AT(uint32_t, BCOUNT), nf, r);
+    BARRIER();
+    JOB(0, N(DIR_TOTAL), PCOUNT, PFIRST, PTOTAL);
+    JOB(1, N(DIR_TOTAL), BCOUNT, IFIRST, ITOTAL);
+    SCANS(2);
+    EACH(s, N(PTOTAL)) pd_params(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint32_t, PFIRST), AT(const uint32_t, PTOTAL), AT(uint64_t, PKEYS), AT(uint32_t, ROOM), nf, W(VA_LO), W(VA_HI), W(CAP), s);
+    BARRIER();
+    EACH(s, N(ITOTAL)) pd_items(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint32_t, IFIRST), AT(const uint32_t, ITOTAL), AT(const uint64_t, PKEYS), AT(uint32_t, ITEMS), AT(uint32_t, ROOM), nf, W(CAP), s);
+    if (last == 2u) return;
+    // --- The visibility: the rows, the stretches, the lookups (the text map is the front's) --
+    // The definitions' flags, done.
+    BARRIER();
+    EACH(j, W(ND)) pe_row_flag(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DACTIVE), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const PpDef, DEFS), AT(const uint64_t, DIR_KEYS), AT(uint32_t, RFLAG), j);
+    BARRIER();
+    SCAN(N(N_DIRS), RFLAG, RAT, RTOTAL);
+    EACH(j, W(ND)) pe_rows(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DSLOT), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint64_t, DIR_KEYS), AT(const uint32_t, RFLAG), AT(const uint32_t, RAT), AT(uint64_t, SORT_KEYS), AT(uint64_t, NAME_KEYS), AT(uint32_t, VALUES), W(N_BUILTIN), j);
+    EACH(j, W(NG)) pe_gap_keys(AT(const uint32_t, GSLOT), AT(const uint32_t, N_GAPS), AT(uint64_t, GKEYS), j);
+    ONE(i) pe_rows_total(AT(const uint32_t, RTOTAL), AT(uint32_t, N_ROWS), W(N_BUILTIN), i);
+    BARRIER();
+    SORT(N(N_ROWS), 64u, SORT_KEYS, SORT_VA, SORT_KB, SORT_VB, SORT_HIST);
+    SORT(N(N_GAPS), 32u, GKEYS, GSORT_VA, GSORT_KB, GSORT_VB, GSORT_HIST);
+    TICK();
+    EACH(p, W(NG)) pe_gap_counts(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, GACTIVE), AT(const uint32_t, N_GAPS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(const PpDir, ROWS), AT(const uint32_t, BASES), AT(const uint32_t, TOTAL), AT(const uint32_t, TRANK), AT(const uint32_t, TTOTAL), AT(uint32_t, GCOUNTS), AT(uint32_t, GFIRSTS), AT(const uint32_t, GSORT_VA), AT(const uint64_t, GKEYS), AT(uint32_t, SSLOT), nf, p);
+    TICK();
+    BARRIER();
+    SCAN(N(N_GAPS), GCOUNTS, GAT, GTOTAL);
+    EACH(s, N(GTOTAL)) pe_lookups(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, SSLOT), AT(const uint32_t, GTOTAL), AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, VALUES), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, LOOKUPS), AT(uint32_t, VBAD), nf, s);
+    if (last == 3u) return;
+    BARRIER();
+    // --- The top level: depth, the close table, the calls, the outermost, the lists --------
+    uint32_t nt = N(GTOTAL);
+    EACH(s, nt) px_top_parens(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL), AT(uint32_t, THEADS), AT(uint32_t, DELTA), AT(uint32_t, CLOSE), nf, s);
+    BARRIER();
+    SEG(UKL_SEG_ADD, nt, DELTA, THEADS, DEPTH);
+    SCAN(nt, CLOSE, CLOSE_AT, CLOSE_TOTAL);
+    EACH(s, nt) px_close_keys(AT(const uint32_t, DEPTH), AT(const uint32_t, CLOSE), AT(const uint32_t, CLOSE_AT), AT(const uint32_t, GTOTAL), AT(uint64_t, CLOSE_KEYS), AT(uint32_t, CTL), s);
+    BARRIER();
+    SORT_FROM(N(CLOSE_TOTAL), 24u, W(CLOSE_BITS), CLOSE_KEYS, CSORT_VA, CSORT_KB, CSORT_VB, CSORT_HIST);
+    UKL_GLOBAL const uint64_t* closes = ukl_grid_sort_in_input(W(CLOSE_BITS)) ? AT(const uint64_t, CLOSE_KEYS) : AT(const uint64_t, CSORT_KB);
+    TICK();
+    EACH(s, nt) px_top_calls(files, data, AT(const uint32_t, BASES), AT(const PpDef, DEFS), AT(const uint32_t, LOOKUPS), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL), AT(const uint32_t, DEPTH), closes, AT(const uint32_t, CLOSE_TOTAL), AT(uint32_t, CEND), AT(uint32_t, CTL), nf, s);
+    BARRIER();
+    SEG(UKL_SEG_MAX, nt, CEND, EHEADS, REACH);
+    EACH(s, nt) px_top_outer(AT(const uint32_t, CEND), AT(const uint32_t, REACH), AT(const uint32_t, GTOTAL), AT(uint32_t, STATE), AT(uint32_t, OFLAG), s);
+    BARRIER();
+    SCAN(nt, OFLAG, OID, OTOTAL);
+    EACH(s, nt) px_top_lists(AT(const uint32_t, LOOKUPS), AT(const uint32_t, CEND), AT(const uint32_t, STATE), AT(const uint32_t, OID), AT(const uint32_t, GTOTAL), AT(const uint32_t, SSLOT), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(PxList, LISTS), AT(uint32_t, SLOTS), AT(uint32_t, CTL), AT(const PpDef, DEFS), W(LIST_CAP), s);
+    ONE(i) px_seed(AT(const uint32_t, OTOTAL), AT(uint32_t, QCTL), AT(uint32_t, CTL), W(LIST_CAP), i);
+}
+
+// The queue's workers: each SIMD group of the grid one, until the queue is idle.
+#define PX_WORK()                                                                                      \
+    px_worker(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const PpDef, DEFS), AT(const uint32_t, ITEMS), \
+              AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), \
+              AT(const uint32_t, VALUES), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS),  \
+              AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL), AT(const uint32_t, DEPTH), AT(PxList, LISTS),          \
+              AT(uint32_t, TOKENS), AT(PxArg, ARGS), AT(uint32_t, OUT), AT(uint32_t, SLOTS), AT(uint32_t, QCTL),    \
+              AT(uint32_t, CTL), AT(const uint32_t, WORDS), AT(PxScratch, SCRATCH), closes, AT(const uint32_t, CLOSE_TOTAL), AT(const uint32_t, FLOORS), W(N_UNITS), lane __UKL_ARGS)
+
+DEFINE_KERNEL2(pp, px_expand, PP_GRID_ROWS)
+{
+    PP_GRID_BEGIN
+    if (ukl_grid_failed(g)) return;
+    UKL_GLOBAL uint32_t* stage = (UKL_GLOBAL uint32_t*)(AT(uint32_t, GRID) + PG_STAGE);
+    UKL_GLOBAL uint32_t* qctl = AT(uint32_t, QCTL);
+    UKL_GLOBAL const uint64_t* closes = ukl_grid_sort_in_input(W(CLOSE_BITS)) ? AT(const uint64_t, CLOSE_KEYS) : AT(const uint64_t, CSORT_KB);
+    uint32_t nt = N(GTOTAL);
+    uint32_t at = ukl_atomic_load(stage);
+    if (at == 0u) {
+        PX_WORK();
+        BARRIER();
+        // Work remains (its workers gave up waiting): the next launch takes it up. Every group
+        // reads the same count: no worker runs after the barrier.
+        if (ukl_atomic_load(&qctl[2]) != 0u) return;
+        // --- The top level's rollback, its sizes and places --------------------------------
+        EACH(s, nt) px_top_xflag(AT(const uint32_t, STATE), AT(const uint32_t, OID), AT(const PxList, LISTS), AT(const uint32_t, GTOTAL), AT(uint32_t, XFLAG), s);
+        BARRIER();
+        SCAN(nt, XFLAG, XAT, XTOTAL);
+        EACH(s, nt) px_top_xlist(AT(const uint32_t, XFLAG), AT(const uint32_t, XAT), AT(const uint32_t, GTOTAL), AT(uint32_t, XPOS), s);
+        BARRIER();
+        if (g.group == 0u) px_top_cover(AT(const uint32_t, XPOS), AT(const uint32_t, XTOTAL), AT(const uint32_t, OID), AT(PxList, LISTS), AT(uint32_t, XCOVER), AT(uint32_t, CTL), g.lid, lane __UKL_ARGS);
+        BARRIER();
+        EACH(s, nt) px_top_sizes(AT(uint32_t, STATE), AT(const uint32_t, OID), AT(PxList, LISTS), AT(const uint32_t, GTOTAL), AT(uint32_t, V), AT(const uint32_t, XPOS), AT(const uint32_t, XTOTAL), AT(const uint32_t, XCOVER), s);
+        BARRIER();
+        SCAN(nt, V, OBASE, VTOTAL);
+        EACH(s, nt) px_top_place(AT(const uint32_t, STATE), AT(const uint32_t, OID), AT(PxList, LISTS), AT(const uint32_t, GTOTAL), AT(const uint32_t, OBASE), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(uint32_t, OUT), AT(uint32_t, SLOTS), qctl, AT(uint32_t, CTL), W(OUT_CAP), W(Q_CAP), s);
+        BARRIER();
+        if (g.group == 0u && g.lid == 0u) ukl_atomic_store(stage, 1u);
+    } else if (at != 1u) {
+        return;
+    }
+    // --- The queue's second phase: the places, to the output -----------------------------------
+    PX_WORK();
+    BARRIER();
+    if (g.group == 0u && g.lid == 0u && ukl_atomic_load(&qctl[2]) == 0u) ukl_atomic_store(stage, 2u);
+}
+
+// The refusals, one thread: the queue's (work left, or it overflowed), the output's room, and a
+// failed barrier (the grid was not resident together: the host runs it again with fewer groups).
+DEFINE_KERNEL2(pp, pp_check,
+               RWBUFFER, uint8_t,  arena, "[arena]",
+               ROBUFFER, uint32_t, lay,   "[slots]",
+               GID0,     uint32_t, i,     )
+{
+    if (i != 0u) return;
+    UKL_GLOBAL uint32_t* ctl = AT(uint32_t, CTL);
+    UKL_GLOBAL const uint32_t* grid = AT(const uint32_t, GRID);
+    if (grid[2] != 0u) px_refuse(ctl, X_BARRIER);
+    else px_check(AT(uint32_t, QCTL), AT(const uint32_t, VTOTAL), ctl, W(OUT_CAP), 0u);
+    if (grid[2] == 0u && grid[PG_STAGE] != 2u) px_refuse(ctl, X_QUEUE);
+}

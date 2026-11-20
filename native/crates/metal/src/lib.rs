@@ -16,17 +16,12 @@ pub mod buffer_observation;
 pub mod lane;
 pub mod launch;
 pub mod launch_budget;
-/// The preprocessor's evaluator over tapes (decision 0436): plain MSL passes.
-/// The building blocks of the preprocessor's grid passes (decision 0448).
-pub mod pp_blocks;
+/// The preprocessor's evaluation arena and its kernels' one UKL source (decisions 0448, 0460).
+pub mod pp_arena;
+/// The preprocessor's evaluator over tapes (decision 0436).
 pub mod pp_eval;
 /// Macro expansion on the device (decision 0448).
 pub mod pp_expand;
-/// The device work queue (decision 0027) in MSL, for the preprocessor's expansion (0448) until it
-/// is written in UKL; the engine's kernels include `<ukl/workqueue.h>` (0440 step C).
-pub mod work_queue {
-    pub const SOURCE: &str = include_str!("work_queue.metal");
-}
 /// The preprocessing words on the device (decision 0348, stage 5).
 pub mod pp_on;
 /// Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.

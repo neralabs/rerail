@@ -1,11 +1,11 @@
-//! Macro expansion on the device (decision 0448), `pp_expand.metal`. Built so far: the setup's
+//! Macro expansion on the device (decision 0448), `pp_expand.uglykl`. Built so far: the setup's
 //! definitions (S1, S2, S4), read from the tapes in place.
 
 use crate::Error;
-use crate::pp_blocks::{Arena, Buf, Grid, Lay, Scan, Sort};
+use crate::pp_arena::{Arena, Buf, Lay, Scan, Sort};
 use crate::pp_eval::{Front, TO_ALL, TO_DEFS, TO_VIS, Unit, fewer, name_key, on_grid};
 
-/// A definition (`PpDef` in the MSL): the unit's nodes of its name, its `params` node (0: none)
+/// A definition (`PpDef` in the UKL): the unit's nodes of its name, its `params` node (0: none)
 /// and its body's first leaf; the leaves of each; its flags; its first parameter slot and item.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -99,7 +99,7 @@ pub fn definitions(unit: &Unit) -> Result<(crate::pp_eval::Evaluated, DefsRead),
 
 /// `definitions` from rung `rung`.
 pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
-    let mut groups = crate::pp_blocks::GROUPS;
+    let mut groups = crate::pp_arena::GROUPS;
     let (front, defs) = loop {
         let arena = Arena::new();
         let front = Front::new(&arena, unit, false, groups)?;
@@ -135,7 +135,7 @@ pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evalu
     Ok((ev, read))
 }
 
-/// An instance of a file in the unit's layout (`PpInst` in the MSL): its file, its first
+/// An instance of a file in the unit's layout (`PpInst` in the UKL): its file, its first
 /// directive and its first stretch in `Layout`'s arrays.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -212,7 +212,7 @@ impl Layout {
     }
 }
 
-/// What a lookup answers where it is no definition's row (`pp_expand.metal`'s `L_*`).
+/// What a lookup answers where it is no definition's row (`pp_expand.uglykl`'s `L_*`).
 pub const L_NOT_NAME: u32 = 0xffff_ffff;
 pub const L_NONE: u32 = 0xffff_fffe;
 pub const L_BUILTIN: u32 = 0xffff_fffd;
@@ -365,11 +365,11 @@ impl Vis {
     }
 }
 
-/// A list (`PxList` in the MSL): 24 words; an argument (`PxArg`): 3.
+/// A list (`PxList` in the UKL): 24 words; an argument (`PxArg`): 3.
 const LIST_WORDS: usize = 24;
 const ARG_WORDS: usize = 3;
 
-/// Why a unit is refused (`pp_expand.metal`'s `X_*`). `X_ROOM` reruns it at the next rung.
+/// Why a unit is refused (`pp_expand.uglykl`'s `X_*`). `X_ROOM` reruns it at the next rung.
 pub const X_BUILTIN: u32 = 1;
 pub const X_PAST_END: u32 = 4;
 pub const X_PASTE: u32 = 8;
@@ -627,7 +627,7 @@ pub const SCRATCH: u32 = 0x8000_0000;
 /// The front passes, the definitions, the lookups and the expansion over `unit` laid out as
 /// `lay`, in one command buffer; from rung `rung`, and at the next where a store's room ran out.
 pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Error> {
-    expand_at(unit, lay, rung, crate::pp_blocks::GROUPS)
+    expand_at(unit, lay, rung, crate::pp_arena::GROUPS)
 }
 
 /// `expand_from` on a grid of `groups` groups at first (halved after a failed barrier).
@@ -678,7 +678,7 @@ pub fn expand(unit: &Unit, lay: &Layout) -> Result<Expanded, Error> {
 /// command buffer: each active stretch token's meaning (`L_*`, or the directive row of its
 /// definition), in the layout's order.
 pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, Vec<u32>), Error> {
-    let (mut rung, mut groups) = (0, crate::pp_blocks::GROUPS);
+    let (mut rung, mut groups) = (0, crate::pp_arena::GROUPS);
     loop {
         let arena = Arena::new();
         let front = Front::new(&arena, unit, false, groups)?;
@@ -705,7 +705,7 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
     }
 }
 
-/// The dialect's options as the relexer reads them (`pp_expand.metal`'s `O_*`): C++, `::`, digit
+/// The dialect's options as the relexer reads them (`pp_expand.uglykl`'s `O_*`): C++, `::`, digit
 /// separators, raw strings.
 pub fn relex_options(cpp: bool, colons: bool, digit_separators: bool, raw_strings: bool) -> u32 {
     u32::from(cpp) | u32::from(colons) << 1 | u32::from(digit_separators) << 2 | u32::from(raw_strings) << 3
@@ -730,7 +730,11 @@ pub fn relex(texts: &[Vec<u8>], options: u32) -> Result<Vec<u32>, Error> {
     let out = arena.zeroed::<u32>(texts.len())?;
     arena.lease()?;
     let n = texts.len() as u32;
-    crate::pp_eval::run(|enc| enc.run("pd_relex_test", None, &[&b, &o, &out], &[n, options], Grid::Groups(u64::from(n).div_ceil(crate::pp_blocks::TG))))?;
+    let args = crate::pp_arena::ProbeArgs([n, options, 0, 0]);
+    crate::pp_eval::run(|enc| {
+        enc.run("pd_relex_test", &[("bytes", &b), ("offsets", &o), ("out", &out)], Some(args), u64::from(n).div_ceil(crate::pp_arena::TG));
+        Ok(())
+    })?;
     // SAFETY: the device finished writing `out`.
     Ok(unsafe { std::slice::from_raw_parts(out.host().cast::<u32>(), texts.len()).to_vec() })
 }

@@ -1,4 +1,5 @@
-//! The preprocessor's evaluator over tapes (decision 0436), plain MSL passes (`pp_eval.metal`).
+//! The preprocessor's evaluator over tapes (decision 0436), UKL passes (`pp_eval.uglykl`, decision
+//! 0460 §5) launched on the process's device.
 //!
 //! A unit is its files: each a source's bytes and its preprocessor tape (`rerail_c_pp::tape`,
 //! format 16, decision 0460 §1), documents of the slab residency. The evaluator reads them where
@@ -13,12 +14,12 @@
 //! rows: a file pass, a prefix sum and a file pass) and their names (`evaluate`).
 
 use crate::Error;
-use crate::launch::{commit_checked, wait_checked};
-use crate::pp_blocks::{Arena, Bound, Buf, Enc, Grid, Lay, Scan, Sort};
+use crate::lane::Buffer;
+use crate::pp_arena::{Arena, Bound, Buf, Enc, Lay, Scan, Sort};
 
-/// The passes' source, preprocessed for Metal (`crate::pp_blocks::source`).
-pub fn source() -> Result<&'static str, Error> {
-    crate::pp_blocks::source()
+/// The passes' source, UKL (`crate::pp_arena::source`).
+pub fn source() -> &'static str {
+    crate::pp_arena::source()
 }
 
 pub use crate::slabs::DocView;
@@ -27,7 +28,7 @@ pub use crate::slabs::DocView;
 pub struct Unit {
     /// The documents, gathered into one slab: the lease the kernels read through.
     pub documents: Vec<Arc<Resident>>,
-    /// Their views, in the unit's file order (`PpFile` in the MSL): placed in each run's arena
+    /// Their views, in the unit's file order (`PpFile` in the UKL): placed in each run's arena
     /// (`Front::files`).
     pub views: Vec<DocView>,
     /// The unit's nodes: each view's.
@@ -159,8 +160,8 @@ impl Unit {
     }
 
     /// The slab the unit's documents are in, as the kernels bind it (`None`: no documents).
-    pub fn data(&self) -> Option<&metal::BufferRef> {
-        self.documents.first().map(|d| &**d.slab.buffer())
+    pub fn data(&self) -> Option<&Buffer> {
+        self.documents.first().map(|d| d.slab.device_buffer())
     }
 }
 
@@ -183,7 +184,7 @@ pub struct Evaluated {
     pub guards: Vec<u64>,
 }
 
-/// A directive's row (`PpDir` in the MSL): its node in its file's tape, its kind, the text tokens
+/// A directive's row (`PpDir` in the UKL): its node in its file's tape, its kind, the text tokens
 /// before it in the file, the group it is read in and the group after it, and its chain
 /// (`u32::MAX`: none).
 #[repr(C)]
@@ -279,7 +280,7 @@ impl Front {
             files: arena.from_slice(&unit.views)?,
             grid: arena.zeroed::<u32>(8)?,
             sums: arena.zeroed::<u32>(4 * groups as usize + 4)?,
-            lay: arena.zeroed::<u32>(crate::pp_blocks::SLOTS.len())?,
+            lay: arena.zeroed::<u32>(crate::pp_arena::SLOTS.len())?,
             bases: arena.from_slice(&bases)?,
             dir_bases: per_file()?,
             dflag: per_node()?,
@@ -362,8 +363,8 @@ impl Front {
     }
 
     /// `pp_setup` over the arena, `groups` groups.
-    pub fn setup(&self, enc: &Enc<'_>, arena: &Arena, unit: &Unit, groups: u64) -> Result<(), Error> {
-        enc.run("pp_setup", None, &[arena, self.data(unit), &self.lay], &[], Grid::Groups(groups))
+    pub fn setup<'a>(&'a self, enc: &Enc<'a>, arena: &'a Arena, unit: &'a Unit, groups: u64) {
+        enc.run("pp_setup", &[("arena", arena), ("data", self.data(unit)), ("lay", &self.lay)], None, groups);
     }
 
     /// The results, read back for tests (after the command buffer is done).
@@ -392,42 +393,30 @@ impl Front {
     }
 }
 
-/// Encodes `f`'s passes in one command buffer, commits it and waits: the launches it made.
-pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error> {
+/// Encodes `f`'s launches in one command, commits it and waits: the launches it made.
+pub fn run<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<usize, Error> {
     run_timed(f).map(|(launches, _)| launches)
 }
 
-/// `run`, and the command buffer's time on the GPU, in seconds.
-pub fn run_timed(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
-    let device = crate::device()?;
+/// `run`, and the command's time on the device, in seconds.
+pub fn run_timed<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
     let scope = crate::launch::LaunchScope::enter();
-    let queue = crate::pool::queue(&device)?;
-    let command = queue.new_command_buffer();
-    command.set_label("Rerail pp evaluator");
-    let encoded = f(&Enc { command, source: source()? });
-    if let Err(e) = encoded {
-        command.commit();
-        command.wait_until_completed();
-        return Err(e);
-    }
-    if let Err(refused) = commit_checked(command) {
-        crate::launch::release_refused(command);
-        return Err(refused);
-    }
-    wait_checked(command)?;
-    // R9 of decision 0448: every pass in this one command buffer, so the host reads nothing
-    // between passes (it reads only after the whole buffer completed). An encoding that put a
-    // dispatch in another buffer is refused.
+    let enc = Enc::new("Rerail pp evaluator");
+    f(&enc)?;
+    let seconds = enc.finish()?;
+    // R9 of decision 0448: every pass in this one command, so the host reads nothing between
+    // passes (it reads only after the whole command completed). An encoding that put a launch in
+    // another command is refused.
     let records = scope.snapshot();
     if records.iter().any(|r| r.command != records[0].command) {
         return Err(Error::BackendFailure);
     }
-    Ok((records.len(), crate::launch::gpu_seconds(command)))
+    Ok((records.len(), seconds))
 }
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
-    let mut groups = crate::pp_blocks::GROUPS;
+    let mut groups = crate::pp_arena::GROUPS;
     loop {
         let arena = Arena::new();
         let front = Front::new(&arena, unit, nodes, groups)?;
@@ -450,12 +439,12 @@ pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) 
     l.write(&front.lay);
     let all = l.get("LAST") == TO_ALL;
     let ran = run_timed(|enc| {
-        front.setup(enc, arena, unit, groups)?;
+        front.setup(enc, arena, unit, groups);
         if all {
             for _ in 0..2 {
-                enc.run("px_expand", None, &[arena, front.data(unit), &front.lay], &[], Grid::Groups(groups))?;
+                enc.run("px_expand", &[("arena", arena), ("data", front.data(unit)), ("lay", &front.lay)], None, groups);
             }
-            enc.run("pp_check", None, &[arena, &front.lay], &[], Grid::Groups(1))?;
+            enc.run("pp_check", &[("arena", arena), ("lay", &front.lay)], None, 1);
         }
         Ok(())
     })?;
@@ -467,7 +456,7 @@ pub fn fewer(groups: u64) -> Result<u64, Error> {
     if groups <= 1 { Err(Error::BackendFailure) } else { Ok(groups / 2) }
 }
 
-/// A name's key, as `pp_eval.metal`'s `name_key` makes it: its bytes 8 at a time, line splices
+/// A name's key, as `pp_eval.uglykl`'s `name_key` makes it: its bytes 8 at a time, line splices
 /// left out (its phase-2 spelling).
 pub fn name_key(bytes: &[u8]) -> u64 {
     let spelled = phase2(bytes);
