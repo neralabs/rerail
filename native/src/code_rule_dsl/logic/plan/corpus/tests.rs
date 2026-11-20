@@ -876,7 +876,6 @@ unused(f) :- def(f, _), !used(f).
 /// imports delete, insert and derive again; after each, the outputs are a run's with an empty store, under the
 /// device's binding too.
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the maintain mode maintains no stratum"]
 fn a_maintained_strata_pieces_run_as_one_component() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("together");
@@ -1000,7 +999,6 @@ reach(a, a) :- side(a), never(a).
 /// group; `named` computes its head. Each edit's run starts from the last run's rows. Its outputs are those of a run
 /// with an empty store, and the mode maintained strata (none derived again by a form).
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the maintain mode maintains no stratum"]
 fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mode-aggregates");
@@ -1552,7 +1550,6 @@ fn beside_a_switch<T>(switch: (&'static str, &'static str), start: impl FnOnce()
 /// started while another test holds `RERAIL_CROSS_K4=off` (`beside_a_switch`): started holding nothing, it took it and
 /// wrote ("a write gathered for the store in a warm run").
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the warm run records a new manifest and recomputes twice"]
 fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
@@ -1566,7 +1563,6 @@ fn the_run_after_a_cold_one_writes_nothing() {
 /// and faulted "the observer's store not asked inside the waves". PR #508's 0206654a5 (t47).
 #[cfg(unix)]
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the warm run records a new manifest and recomputes twice"]
 fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("real")).unwrap();

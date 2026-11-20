@@ -6722,6 +6722,9 @@ Open:
   The hub's a85f74caf passes all five. The four corpus tests are ignored with this item.
 - **Do**: rr-align's owners fix them where they arise; the hub takes the fixes at the next roll-up.
 - **Done when**: all four pass, unignored.
+- 2026-11-20, roll-up 19 (after rr-align's merge): all four pass on Linux (spark2), run with `--run-ignored only`,
+  and their ignores are gone. Not run on macOS this time: no engine tests on a Mac while the Metal crashes are
+  open, as an executor there may take the device.
 
 ### Q293. (Q262 on benchmarks-on-integration) The settle-window test's first leg can no longer miss an edit
 
