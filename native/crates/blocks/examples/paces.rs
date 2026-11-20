@@ -888,7 +888,8 @@ fn main() {
         // A benchmark of its own process: it makes the device and queue the engine's owner would hand it.
         metal::Device::system_default().ok_or_else(|| "no Metal device".to_string()).and_then(|d| {
             let q = d.new_command_queue();
-            rerail_blocks::gpu::Gpu::on(d, q)
+            let msl = rerail_ukl::metal_source("join.metal", &rerail_blocks::gpu::source()).map_err(|e| e.to_string())?;
+            rerail_blocks::gpu::Gpu::on(d, q, &msl)
         })
     } } {
         Ok(g) => Some(g),

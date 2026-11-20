@@ -18,8 +18,9 @@ pub fn execute_sql_request(store_path: String, request_json: String) -> napi::Re
 /// A SQL extension request for the standalone tool. The same session serves the bindings,
 /// lowered rule program and subsequent SQL queries; no AST matcher is lowered to SQL.
 pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
+    // One run (decision 0442): the profile's records are its own.
+    let _run = super::logic::run::scope(super::logic::native::width::Settings::from_env);
     let profiling = super::logic::profile::on();
-    let _run = profiling.then(super::logic::profile::one_run);
     if profiling { super::logic::profile::reset(); }
     let span = super::logic::profile::span(||"SQL extension request".into());
     let result = sql_request(store,request);
@@ -776,8 +777,8 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
             text += &format!("    {phase:<6} {:.2} G instructions\n", *n as f64 / 1e9);
         }
     }
-    for (name, _) in &report.typing_runs {
-        text += &format!("  typing program {name} run first, for the relations it gives\n");
+    for run in &report.phase_runs {
+        text += &format!("  phase {} run first, for the exports it gives\n", run.name);
     }
     for (rel, rows) in &report.rows {
         text += &format!("  {rel}: {rows} rows\n");
@@ -809,7 +810,10 @@ const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine du
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
 /// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063): `cli_in`, with the session
 /// it keeps.
-pub fn cli(args: &[String]) -> Result<String, String> {
+///
+/// Returns the command's result, and where it cut a relation at the width cap (decision 0462, `RERAIL_WIDEST=cut`) the
+/// message that its results are incomplete: the caller fails the process with it.
+pub fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
     // Decision 0272 (O167): the process ends with its command, before any idle time, so each run serves its waiting
     // join searches at its end, within a share of its CPU (decision 0243). A long-lived caller of `cli_in` leaves
     // them to the idle job.
@@ -818,15 +822,18 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     crate::code_rule_dsl::logic::profile::command_begins();
     // Decision 0395: a run never waits on a Metal compile of a kernel it has another form of; the kernels it went
     // without are compiled by maintenance (below, upkeep, `kernels compile`).
+    // The process's command, its own caller: what it shares by design is its own (decision 0442), its machine too.
+    let shared = crate::code_rule_dsl::logic::run::Shared::new();
     #[cfg(target_os = "macos")]
     if args.first().is_none_or(|c| c != "kernels") {
-        rerail_accel::gpu::kernels::set_mode(rerail_accel::gpu::kernels::Mode::Defer);
+        rerail_accel::gpu::kernels::set_mode(shared.machine(), rerail_accel::gpu::kernels::Mode::Defer);
     }
-    let out = cli_in(args, &mut Default::default());
-    // The kernels this run went without, compiled after it by the engine in a process of its own, at the
-    // background priority (decision 0395; `RERAIL_METAL_MAINTENANCE=off`: not).
+    let (out, incomplete) = cli_in(args, &mut Default::default(), &shared);
+    // The kernels this run went without (its machine's), compiled after it by the engine in a process of its own, at
+    // the background priority (decision 0395; `RERAIL_METAL_MAINTENANCE=off`: not).
     #[cfg(target_os = "macos")]
     if let Ok(engine) = std::env::current_exe() {
+        let _on = crate::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&shared));
         rerail_accel::gpu::kernels::spawn_maintenance(&engine);
     }
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
@@ -837,11 +844,23 @@ pub fn cli(args: &[String]) -> Result<String, String> {
             c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
         );
     }
-    out
+    (out, incomplete)
 }
 
-/// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
-pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
+/// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`), sharing by design what
+/// `shared` holds (decision 0442): the caller owns both.
+///
+/// The command is one run (decisions 0462, 0441): its limits are read as it starts, its runs share them and one
+/// record, and nothing of them outlives it. Beside the result: the message that it cut a relation, if it did.
+pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept, shared: &std::sync::Arc<crate::code_rule_dsl::logic::run::Shared>) -> (Result<String, String>, Option<String>) {
+    let own = crate::code_rule_dsl::logic::run::scope_in(Some(shared), crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let out = command(args, kept);
+    let incomplete = own.finish().and_then(|r| r.width.incomplete());
+    (out, incomplete)
+}
+
+/// A command of `cli_in`, within its limits.
+fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
     // Done as the library loaded, except where nothing runs then (the browser's build).
     crate::install_store_functions();
     let budgets = budget_options(args)?;
@@ -1064,7 +1083,7 @@ fn repeat_command(script: &str) -> Result<String, String> {
             _ => {
                 let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
                 let (u0, s0) = cpu();
-                let result = cli_in(&args, &mut kept);
+                let result = command(&args, &mut kept);
                 let (u1, s1) = cpu();
                 eprintln!(
                     "repeat line {n}: {:.2} s CPU ({:.2} user + {:.2} sys); footprint {} MB, at most {} MB; {}",
@@ -1209,7 +1228,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             .map_err(|e| format!("{program}: {e}"))?
             .filter_map(|entry| entry.ok().map(|e| e.path()))
             // and every JSON policy (`rerail.policy/v1`), translated as it is read (decision 0175)
-            .filter(|path| path.extension().is_some_and(|x| x == "rr") || crate::code_rule_dsl::logic::json_rules::is_policy_path(path))
+            .filter(|path| path.extension().is_some_and(|x| x == "rerail") || crate::code_rule_dsl::logic::json_rules::is_policy_path(path))
             .collect();
         files.sort();
         // A file another one `#include`s is a library of it (`…confusables.rerail`), not a program of its own: alone it
@@ -1389,7 +1408,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             let dir = args.get(1).ok_or("kernels ship <dir> [--from <store dir>]")?;
             let from = match args.iter().position(|a| a == "--from") {
                 Some(i) => std::path::PathBuf::from(args.get(i + 1).ok_or("--from requires a directory")?),
-                None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?.to_path_buf(),
+                None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?,
             };
             let started = std::time::Instant::now();
             for line in k::ship(Path::new(dir), &from, args.iter().any(|a| a == "--air"))? {
@@ -1442,7 +1461,7 @@ fn upkeep_command(args: &[String]) -> Result<String, String> {
         }
         let store = std::sync::Arc::new(ContentStore::open(Path::new(path)).map_err(e)?);
         jobs.push(register(Box::new(Collect::new(&store))));
-        jobs.push(register(Box::new(crate::content_store::upkeep::Frames::new(Path::new(path)))));
+        jobs.push(register(Box::new(crate::content_store::upkeep::MemoSweep::new(Path::new(path)))));
         jobs.push(register(Box::new(crate::code_rule_dsl::workspace::storage::SearchIndex::new(&store))));
         jobs.push(register(Box::new(SqliteFile::new(Path::new(path), Tables::All))));
         held.push(store);
@@ -1701,7 +1720,8 @@ mod settings_tests {
         std::fs::write(at("p.rerail"), ".policy \"t:cli-calls\" revision 1\n.scope tool_calls\n.violation Push(at: symbol) code \"no-push\" \"a push\"\nPush(c) :- tool_input(c, \"command\", s), match(\"(?s:.*)(?:git push)(?s:.*)\", s).\n").unwrap();
         std::fs::write(at("calls.json"), r#"[{"id": "e1", "tool": "Bash", "input": {"command": "git push"}}]"#).unwrap();
         std::fs::write(at("bad.json"), "{}").unwrap();
-        let run = |args: &[String]| super::cli_in(&[vec!["run-policies".to_owned()], args.to_vec()].concat(), &mut Default::default());
+        let shared = crate::code_rule_dsl::logic::run::Shared::new();
+        let run = |args: &[String]| super::cli_in(&[vec!["run-policies".to_owned()], args.to_vec()].concat(), &mut Default::default(), &shared).0;
         let at_of = |out: String| -> Vec<serde_json::Value> {
             let report: serde_json::Value = serde_json::from_str(&out).unwrap();
             report["diagnostics"].as_array().unwrap().iter().map(|d| d["at"].clone()).collect()

@@ -1565,7 +1565,7 @@ SOFTWARE.
 
 Derived data: zstd dictionaries trained on the CPython 3.13 standard library
 Files: native/dictionaries/python-source.zdict, native/dictionaries/python-tape.zdict
-  (compiled into the engine; see native/dictionaries/README.md)
+  (read by the tape16 lab only, not shipped in the engine; see native/dictionaries/README.md)
 Source: https://github.com/python/cpython (Lib/, release 3.13.12)
 License: PSF-2.0 (the licence text is in LICENSES/PSF-2.0.txt)
 

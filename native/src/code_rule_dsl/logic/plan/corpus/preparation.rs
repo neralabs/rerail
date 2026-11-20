@@ -2,7 +2,7 @@
 //! program's version, run in one pipeline after the program's one image, from the last of the tree's passes
 //! backward as they move.
 
-use crate::code_rule_dsl::logic::program_image::manager::{Run, Cx, Pipeline, ProgramPass, ProgramW};
+use crate::code_rule_dsl::logic::program_image::manager::{self, Run, Cx, Pipeline, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::Version;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
@@ -118,8 +118,7 @@ pub struct Front {
     pub vocabulary: crate::code_rule_dsl::logic::strings::Vocabulary,
 }
 
-/// `version` pruned to the rules its outputs read (`front::prune`): what the bridged programs' check reads
-/// (`bridge::wanted`), before the run prepares the program.
+/// `version` pruned to the rules its outputs read (`front::prune`), before the run prepares the program.
 pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
     let mut p = Pipeline::new("pruned", version);
     p.program(&mut prune::Prune::default());

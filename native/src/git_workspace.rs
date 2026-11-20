@@ -647,7 +647,7 @@ impl GitWorkspace {
             .into_iter()
             .collect::<Vec<_>>();
         store
-            .put_source_at(&bytes, &aliases, relative_path)
+            .put_source(&bytes, &aliases)
             .map_err(|error| discovery_error("cannot persist workspace source", error))
     }
 

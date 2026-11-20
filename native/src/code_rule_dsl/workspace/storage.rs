@@ -14,7 +14,7 @@ use crate::git_workspace;
 use napi::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Arc as StdArc, LazyLock, Mutex};
+use std::sync::{Arc, Arc as StdArc, Mutex};
 use std::time::{Duration, Instant};
 
 pub struct StoreRegistryEntry {
@@ -22,13 +22,17 @@ pub struct StoreRegistryEntry {
     maintenance: std::sync::Weak<StorageMaintenance>,
 }
 
-pub static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// The shared object's content stores, by path (decision 0442): another object's workspaces on a store open their
+/// own, as another process's would.
+#[derive(Default)]
+pub struct ContentStores(pub Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>);
 
 pub fn shared_content_store(
     path: std::path::PathBuf,
 ) -> StoreResult<(StdArc<ContentStore>, StdArc<StorageMaintenance>)> {
-    let mut stores = CONTENT_STORES
+    let held = crate::code_rule_dsl::logic::profile::shared::<ContentStores>();
+    let mut stores = held
+        .0
         .lock()
         .map_err(|_| StoreError::Invalid("content store registry mutex poisoned".to_owned()))?;
     if let Some(store) = stores.get(&path).and_then(|entry| entry.store.upgrade()) {
@@ -75,9 +79,7 @@ impl StorageMaintenance {
         use rerail_accel::upkeep::register;
         let jobs = vec![
             register(Box::new(Collect::new(&store))),
-            register(Box::new(crate::content_store::upkeep::Frames::new(
-                store.database_path(),
-            ))),
+            register(Box::new(crate::content_store::upkeep::MemoSweep::new(store.database_path()))),
             register(Box::new(SearchIndex::new(&store))),
             register(Box::new(SqliteFile::new(
                 store.database_path(),
@@ -319,7 +321,7 @@ fn decode_stored_tape(
             loaded
         }
     };
-    let source = String::from_utf8(unindexed.source).ok()?;
+    let source = std::str::from_utf8(&unindexed.source).ok()?.to_owned();
     let image = tape::TapeImage::from_bytes(&unindexed.image, &grammar).ok()?;
     let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
     let image = tape::FileImage::single(image, &source);

@@ -41,12 +41,17 @@ pub struct Tiers {
 /// build script wrote.
 #[cfg(feature = "generated")]
 pub fn aot(tiers: Tiers, known: rerail_kotlin_parser::Proofs) -> Result<rerail_kotlin_parser::Compiled, String> {
-    native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
-    // Compiled for Rust's NEON as the source was (the build script): its bit tests (`BIT_TEST`).
-    // The same meaning either way; the flag back as it was for the JIT's compiles after.
-    let bit_test = rerail_compiler::native_cpu_lanes::BIT_TEST.swap(true, std::sync::atomic::Ordering::Relaxed);
-    let c = rerail_kotlin_parser::compile_timed(rerail_kotlin_parser::GRAMMAR, known, &mut |_, _| {});
-    rerail_compiler::native_cpu_lanes::BIT_TEST.store(bit_test, std::sync::atomic::Ordering::Relaxed);
+    // The compile in a run of its own (decision 0442), on the caller's shared object: its options
+    // end with it, and the caller's compiles after keep theirs. Each function's IR kept, for its
+    // Rust; compiled for Rust's NEON as the source was (the build script): its bit tests
+    // (`Options::bit_test`), the same meaning either way.
+    let c = {
+        let _run = rerail_context::within(rerail_context::shared_here());
+        let options = rerail_compiler::native_cpu_codegen::options();
+        options.keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
+        options.bit_test.store(true, std::sync::atomic::Ordering::Relaxed);
+        rerail_kotlin_parser::compile_timed(rerail_kotlin_parser::GRAMMAR, known, &mut |_, _| {})
+    };
     let mut c = c?;
     let one = clif_rust::rust_source(&c.parser)?;
     let (widths, tag) = c.parser.tier2.widths_tag();

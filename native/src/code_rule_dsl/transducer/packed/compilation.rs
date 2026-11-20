@@ -12,7 +12,7 @@
 use super::{Error, ExecutionBackend, Program, native_cpu};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{LazyLock, Mutex};
+use std::sync::Mutex;
 
 /// A plan's identity (list step 16; 03 §3 "Interpreted, then JIT"): one digest of what a batch
 /// runs, whatever binds it. The interpreter and the compiled programs are two bindings of the same
@@ -75,12 +75,18 @@ struct Requests {
     failed: BTreeMap<(Binding, PlanId), String>,
 }
 
-static REQUESTS: LazyLock<Mutex<Requests>> = LazyLock::new(Mutex::default);
+/// The compile queue's requests, by the caller's programs (decision 0442: the shared object's).
+#[derive(Default)]
+struct Queue(Mutex<Requests>);
+
+fn queue() -> std::sync::Arc<Queue> {
+    crate::code_rule_dsl::logic::profile::shared::<Queue>()
+}
 
 /// Whether `plan`'s `binding` is compiled (its request finished). A compile of it that failed stops the run here,
 /// on the thread that asks (decision 0382): a failed compile is never answered by interpreting for good.
 fn ready(binding: Binding, plan: PlanId) -> bool {
-    let (ready, failed) = match REQUESTS.lock() {
+    let (ready, failed) = match queue().0.lock() {
         Ok(requests) => (requests.ready.contains(&(binding, plan)), requests.failed.get(&(binding, plan)).cloned()),
         Err(_) => return false,
     };
@@ -95,14 +101,19 @@ fn ready(binding: Binding, plan: PlanId) -> bool {
 /// or failed.
 fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), Error> + Send + 'static) {
     let kind = binding.form();
-    let Ok(mut requests) = REQUESTS.lock() else { return };
+    let held = queue();
+    let Ok(mut requests) = held.0.lock() else { return };
     let key = (binding, plan);
     if requests.running.contains(&key) || requests.ready.contains(&key) || requests.unsupported.contains(&key) || requests.failed.contains_key(&key) {
         return;
     }
     crate::code_rule_dsl::prof::count("compilation.requests", 1);
     requests.running.insert(key);
+    // The job compiles on the caller's shared object, and marks its request in the caller's queue: a pool thread
+    // holds no run.
+    let (shared, held) = (crate::code_rule_dsl::logic::profile::shared_here(), std::sync::Arc::clone(&held));
     rayon::spawn(move || {
+        let _in_run = crate::code_rule_dsl::logic::profile::within(shared);
         // A panic is a failed compilation, kept with its message for the plan's next batch, which stops the run
         // with it (`ready`): a job's own panic would end the process from the pool, away from the batch.
         let started = std::time::Instant::now();
@@ -115,7 +126,7 @@ fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), 
             Err(message) => Err(Some(message)),
         };
         rerail_accel::forms::compiled(kind, &plan.hex(), "", started.elapsed().as_secs_f64(), done.is_ok());
-        if let Ok(mut requests) = REQUESTS.lock() {
+        if let Ok(mut requests) = held.0.lock() {
             requests.running.remove(&key);
             match done {
                 Ok(()) => {
@@ -184,7 +195,7 @@ pub fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[Program
 /// Waits for every running compilation (tests: the batch after it runs compiled).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn settle() {
-    rerail_accel::exec::help_until(|| REQUESTS.lock().map_or(true, |requests| requests.running.is_empty()).then_some(()));
+    rerail_accel::exec::help_until(|| queue().0.lock().map_or(true, |requests| requests.running.is_empty()).then_some(()));
 }
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

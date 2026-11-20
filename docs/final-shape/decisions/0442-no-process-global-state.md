@@ -1,0 +1,149 @@
+# 0442. No process-global state: the run, the connection, and a shared object the caller passes
+
+Status: accepted (2026-11-19). The user: "we want the engine to be re-entrant, multi-thread possible and to not have
+global state"; "How can they stay global when multiple runs could be happening at once?"; and on what is shared by
+design: "things that are shared by design need to come from an explicit "shared by design" object that is passed.
+Otherwise we can't maintain security boundaries."
+
+## Intro
+
+The engine kept much of its state in statics: 563 non-constant statics in its source (test files left out), beside
+its thread-locals. Two runs at once in one process collide in many of them: one tape for the native extension,
+results by name, phase 1's batch, testing mode's store, a store's stored tables dropped by another run's start,
+measurement sums. Settings read once a process go stale when a caller changes the environment between commands.
+And what is shared on purpose (a store's writer, a learned cost model, the executors, the interners) was reachable
+by any caller in the process, so two callers of different trust could not be kept apart.
+
+## Decision
+
+1. **The test is two runs at once, and two callers of different trust**, not whether a thing is the process's by
+   nature.
+2. **Where state lives:**
+   - **The run** (`logic::run::Run`, decision 0441): a run's results, batches, settings (read as it starts) and
+     measurements. Made by the outermost run's scope, carried to its jobs, returned in its record.
+   - **The connection**: a connection's own state (components, derived and input relations, temporary tables),
+     on the connection's object, not in a process map keyed by connection.
+   - **The shared object** (`Shared`): what is shared by design: each store's resources (its writer, handles,
+     atoms, frames, observers, journal, symbols), the learned models and their queues, the executors, the
+     interners, the caches 0104 has not yet moved into facts. A caller makes it and passes it in (`tools::cli_in`,
+     the Node addon, the reactor, a test). A run takes it at its scope and reaches it through the run, never through
+     a static; a run with none is refused, so there is no implicit process default. Two callers with two shared
+     objects reach nothing of each other's.
+3. **What may stay static:** constants; code a crate above registers at load (a function pointer, a device); a
+   value computed once from the engine's own files (a regex of a literal, core.rr's declarations). A thread's own
+   scratch stays a thread-local (`run_state::STATE`, class Thread).
+4. **The guard.** `scripts/check/check_no_global_state.py` (pre-commit) lists every non-constant static in the
+   engine's source against `scripts/check/global-state.txt`, each by its class: `stays`, `run`, `connection`,
+   `shared`, or `review` (not yet classified by hand). A static not listed is refused; one gone must be cut. Every
+   class but `stays` only shrinks.
+
+## Order
+
+1. Settings, logs and measurement sums into the run (`run::Local`).
+2. The run's results and batches (the native extension, results by name, phase 1's batch, testing mode's store,
+   stored tables, frame counts).
+3. The profile into the run.
+4. Per-connection state onto the connection.
+5. `Shared`: made by the caller, passed through every entry point, carried by the run; the store's resources,
+   models, executors, interners and caches into it.
+6. The `review` entries, classified by hand and moved.
+
+## Open
+
+- The baseline (2026-11-19): 563 statics: 78 stay, 109 run, 9 connection, 41 shared, 326 review.
+- Thread-locals of class Carried are the run's context in thread-locals: they fold into `Run` once it holds the rest.
+- Step 3 (the profile), as done:
+  - A run's records are the run's (`profile::Records`, a run local). Each thread's shard of them is listed in the run
+    it records for. Outside a run nothing keeps them: a test that reads a profile holds a run (`run::scope`, or
+    `profile::test_run` in the crates below `logic`).
+  - The run thread's phases are the run's. The command's clocks are the command's thread's (`COMMAND`, Outermost).
+  - Whether to profile, and where to write the report, are the caller's: thread-locals carried to its runs' jobs
+    (`ON`, `DIR`). `profile::carried` carries the run and the switch into a pool thread's item too.
+  - The process lock that let one profiled run at a time (`one_run`) is gone. A corpus run holds its run's records
+    (`hold_records`); one nested in it neither resets nor writes them.
+  - The threads' CPU accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) are the pool's, which is shared by design. They
+    move with the pool into `Shared` (step 5).
+  - Not done yet: `WAVES` (the process's count of waves, for a thread with no run's context) and `WARM_FAULTS` (the
+    process's exit status under `RERAIL_WARM=list`).
+- Step 4 (the connection), first part:
+  - Each connection holds the engine's values for it in its SQLite client data (`vtab::ConnData`, by type). They are
+    dropped as it closes, after `Forget::scope` has taken what it frees on a thread of its own.
+  - A `Db` points at them. An attached `Db` borrows its connection, which cannot close meanwhile. A detached one (a
+    stratum's job off the connection's thread) is made with the `Arc` its holder keeps (`plan::Strand`'s last field).
+  - setfix's per-connection maps (COMPONENTS, DERIVED, ADOPTED, INPUTS, CHANGING, SCOPE_PATHS, SCOPE_SYMS), each a
+    process map keyed by the connection's address, are one `OnConn` on the connection. `accel::sharded::ByScope`,
+    their sharded lock, is gone with them.
+- Step 4, second part:
+  - vtab's BOUND, REGISTERED, VIEWS, UNRESOLVED and SETUP are one `OnVtab` on the connection. A `Modules` keeps weak
+    handles to the connections it bound on, for its drop. A node read's plan step holds its connection's data
+    weakly (`NodeTexts::At`), and the SQL `node_read` functions hold it (they close with the connection).
+  - plan's TEMP_LEFT (what a connection's runs left in SQL) is on the connection (`plan::Left`).
+  - atoms' RESERVED was keyed by the arena's address. It is the arena's own (`Atoms::reserved`), held by each
+    reservation of its atoms.
+  - setfix's STORED is keyed by database, and every connection on one store shares its tables. So it is the store's,
+    shared by design: it moves with the store's resources (step 5).
+- Step 5 (`Shared`), the mechanism:
+  - `profile::Shared` is a typed store of what is shared by design, made by a caller. A run carries the one it is
+    handed (`run::scope_in(Some(&shared), …)`), and code reads it through the run (`run::shared::<T>()`), from any
+    crate. A run handed none has one of its own, as apart from every other run as one in another process (the store
+    is already safe across processes: its lease).
+  - The CLI's command makes one (`tools::cli`), the reactor one per instance, its one caller. A caller of
+    `tools::cli_in` passes its own. Node's entry points have none yet: each run they start has its own.
+  - Outside a run, `shared::<T>()` gives a value nothing keeps. That is wrong for an interner or a per-file registry,
+    whose ids must agree wherever they are read, so those move only once every reader is inside a run or holds the
+    object (each group's move says which).
+- Step 5, the machine (the user, 2026-11-19): the machine's resources are a second explicit object, `Machine`: the CPU
+  job pool and its queues, the pool threads' CPU accounts, the measured roofline, and the cost and price model learned
+  from this machine's runs. A caller makes it and every `Shared` is made on one (`Shared::on(&machine)`), so callers of
+  different trust can share one pool and one model of the machine while holding different `Shared` objects. A job on
+  the pool carries its own caller's run and `Shared`, so nothing crosses between callers through the pool. A `Shared`
+  made with none has a machine of its own.
+- Step 6 (classification by hand): the check now covers the accel crate too (`accel/src`: the pool, the device, the
+  price and cost tables), and has a `machine` class. Every entry was read and classed: of 482, 249 stay (constants
+  computed once from the engine's own files, code registered at load, id counters, test locks), 51 are run data
+  (mostly the profile's counters and settings), 89 are shared by design (interners, caches of callers' programs, the
+  store's registries) and 93 are the machine's (the pool, the device's pipelines and memory ledger, the learned cost
+  and price model, the process's sampler). The three moving classes are moved group by group (step 5).
+- Step 5, as done (2026-11-19). `global-state.txt` holds only `stays` (293 entries); no class that moves is left.
+  - What moved:
+    - The machine's: the pool's accounts, the device and its pipelines, the price and cost tables, the lanes, the
+      batch pricer, the roofline, the CPU slot for workspace work.
+    - The shared object's: every interner (call names, contracts, the facts' symbols, the front's relation names,
+      relation numbers, the typing rounds' large constants); every store registry (atoms by file and the in-memory
+      atoms, file identities, canonical paths, connections and handles, frames' counts and snapshots, the journal's
+      streams, observers, writers and their account, the content stores, setfix's symbols and stored tables); the
+      caches of callers' programs; the join statistics and their search job.
+    - The run's: the git calls' state, the lanes' counts, the profile's counters.
+  - Two objects on one store behave as two processes do: each has its own writer, atoms, snapshots and connections
+    (a thread's connections are kept by object and path), and the store's lease keeps them apart.
+  - A thread the engine starts reads its starter's object: `exec::service`, the compile queue's jobs, the warm-up,
+    the join search's upkeep job (registered once per object and holding it), a workspace's tasks and its sync
+    methods (`within`).
+  - Hot readers borrow a shared value (`with_shared`, as `with_local`): no lock and no count of references, so the
+    sharded relation numbers (decision 0279 §7) stay free of a shared word.
+  - The front's `Name` is equal by address, or by its text where the names come from two tables or a static, so a
+    name a static holds still equals the same name from an object.
+  - The Node host: the addon's caller is the Node environment. It makes one `Machine` and keeps it in its instance
+    data, and each workspace it makes is on a `Shared` of its own on that machine, so an environment's workspaces
+    share one pool, one CPU slot and one learned model. A worker thread's environment has its own. A Rust caller with
+    no environment (`CodeRuleDslWorkspace::new`) takes `default_shared`.
+  - The strict run (`RERAIL_STRICT_RUN=1`) logs each read outside any run once, by type, with its backtrace, to the
+    engine's stderr.
+- Step 5, the departures:
+  - A read outside any run is not refused, as Decision 2 says. In a product build it takes an object of its own that
+    nothing keeps; in a test build, the tests' one. The strict run names each such read.
+  - The CPU job pool is rayon's global pool, the process's. A job carries its caller's run and object, so nothing
+    crosses between callers through it, but two machines in one process share its threads. So the threads' CPU
+    accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) stay with the threads, the process's, and do not move into
+    `Machine`.
+  - Stays, each with its reason in `global-state.txt`:
+    - the heap sampler and the footprint sampler (they measure the process, as the OS reports it);
+    - `RESERVED` (the process's own mappings, its address space);
+    - `POLICY` (the block allocator's policy, registered at load);
+    - process-unique name and object counters;
+    - test-only counters;
+    - `WARM_FAULTS` (the exit status an atexit handler reads);
+    - `WAVES` (an id counter);
+    - the leaked names of the engine's own counters and fallback reasons;
+    - the typing settings' interner. It holds immutable values and a `Reading` compares them by value, so no id of
+      it can differ between callers.

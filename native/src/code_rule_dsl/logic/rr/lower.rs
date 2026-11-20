@@ -591,9 +591,9 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
                 [key, _] if key == crate::code_rule_dsl::logic::front::PRAGMA => {
                     return Err(at(Error::Syntax(format!(".pragma \"{key}\": bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9)"))));
                 }
-                // `.pragma "cross-memo" "r s"` (decision 0076): cross-file relations memoised per import component.
-                [key, rels] if key == "cross-memo" => {
-                    l.prog.push_setting("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\""));
+                // `.pragma "cross-memo" "r s"` (decision 0076), refused: the cross-file memo is removed (decision 0450 §3).
+                [key, _] if key == "cross-memo" => {
+                    return Err(at(Error::Syntax(".pragma \"cross-memo\": the cross-file memo is removed (decision 0450 §3)".to_owned())));
                 }
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
@@ -3880,8 +3880,18 @@ impl Lowerer {
             let Some(lits) = members.remove(&g) else { continue };
             let cols = projected.iter().find(|(p, _)| *p == g).map(|(_, c)| c.clone()).expect("a projected group");
             let rel = self.fresh("cover");
+            // A request's cover of one variable leads with the whole groups' literals that bind it from a relation a
+            // producer makes off a tape (`syntax::taped`: `string_annotation`): answered in the fixpoint (decision 0431
+            // §8), such a relation grows as values are admitted (a string nested in one), and a cover read before the
+            // request could hold none of a value's nodes. Led by it, the cover is the request's component's, its other
+            // literals read by the bound variable, a value's rows among them.
+            let taped = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if crate::code_rule_dsl::facts::vtab::syntax::taped(rel)) && body_vars(std::slice::from_ref(l)).iter().any(|v| cols.contains(v));
             let lits = if cols.len() > 1 {
                 let mut narrowed: Vec<Lit> = whole_binding.iter().filter(|(b, _)| cols.iter().any(|c| b.contains(c))).flat_map(|(_, l)| l.iter().cloned()).collect();
+                narrowed.extend(lits);
+                narrowed
+            } else if self.request_context {
+                let mut narrowed: Vec<Lit> = whole_binding.iter().flat_map(|(_, l)| l.iter().filter(|l| taped(l)).cloned()).collect();
                 narrowed.extend(lits);
                 narrowed
             } else {
@@ -4523,7 +4533,7 @@ const DEMANDS: [&str; 3] = ["rr_embed_req", "rr_parse_req", "rr_splice_req"];
 /// The placeholder for a demand's location (`value_demand`).
 const LOCATED: &str = "rr_located";
 
-const GUEST_RELATIONS: [&str; 10] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "parse_of", "unparse_of", "splice_of"];
+const GUEST_RELATIONS: [&str; 12] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
 
 /// The tape operations (decision 0058 §4): function, arity, the relation it reads, and that relation's columns.
 const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
@@ -5508,13 +5518,7 @@ fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
 }
 
 /// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless a
-/// rule makes it. For rules added to a program already read (`corpus::bridge`), as lowering adds them for its own.
-pub fn base_relation(prog: &mut Program, rel: &str) {
-    let derived = prog.rules.iter().any(|r| r.head.rel == rel);
-    base_relation_derived(prog, rel, derived);
-}
-
-/// `base_relation`, told whether a rule derives `rel` (`derived`): `prog` may be a header alone.
+/// rule derives it (`derived`). `prog` may be a header alone.
 pub fn base_relation_derived(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), rel: &str, derived: bool) {
     let cols: &[(&str, &str)] = match rel {
         "child" => &[("p", "node"), ("c", "node"), ("i", "int")],

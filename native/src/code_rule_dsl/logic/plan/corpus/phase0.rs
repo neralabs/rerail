@@ -142,10 +142,12 @@ pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
 
 /// The include graphs for `seeds`, each kept in this process while it holds; those not kept are derived by one run
 /// of `bootstrap.rerail` over all of them (a pack's programs are one run, not one each).
-static KEPT: OnceLock<Mutex<HashMap<Seed, Arc<Graph>>>> = OnceLock::new();
+#[derive(Default)]
+struct PhaseZeroGraphs(Mutex<HashMap<Seed, Arc<Graph>>>);
 
 pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
-    let kept = KEPT.get_or_init(Default::default);
+    let kept_held = crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>();
+    let kept = &kept_held.0;
     let mut found: Vec<Option<Arc<Graph>>> = {
         let map = kept.lock().expect("phase 0's graphs");
         seeds.iter().map(|s| map.get(s).cloned()).collect()
@@ -295,7 +297,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
         whole.phases.insert(text_key(0), named);
     }
     let graph = whole.of(seed, 0);
-    KEPT.get_or_init(Default::default).lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
+    crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>().0.lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
     true
 }
 
@@ -658,7 +660,7 @@ pub mod benchmarks {
     #[ignore = "a benchmark: RERAIL_P0_RULES=<a pack's directory>"]
     fn benchmark_phase_0_rules() {
         let dir = std::path::PathBuf::from(std::env::var("RERAIL_P0_RULES").expect("RERAIL_P0_RULES"));
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rr")).collect();
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rerail")).collect();
         files.sort();
         let before = super::super::observe(|o| {
             o.begin();

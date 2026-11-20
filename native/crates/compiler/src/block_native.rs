@@ -384,7 +384,8 @@ impl BlockNative {
     /// body makes none of them. The skip, the end rules', the readers' and the tests' masks.
     pub fn read_at_tokens(&self) -> Vec<usize> {
         use crate::records::EndRule;
-        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+        // The token loop's (`skip`), or tier 2's where it makes the records (page 40).
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some() || r.fetched_in_tier2()) else {
             return Vec::new();
         };
         let bytes = crate::native_cpu_bytes::Bytewise::of(self);
@@ -407,7 +408,23 @@ impl BlockNative {
         // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.
         let others: Vec<usize> = self.masks.iter().enumerate().filter(|(i, _)| !r.check_masks.contains(&(*i as u16))).map(|(_, &o)| o).collect();
         read.extend(r.check_masks.iter().filter_map(|&m| self.masks.get(usize::from(m))).filter(|o| !others.contains(o)).map(|&o| o as u16));
-        let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !stored.contains(&o)).map(usize::from).collect();
+        // A region tier 2 reads as `parse_string` (`native_cpu_stream::sequential`) reads its
+        // part's start from no mask at all.
+        let unread: Vec<u16> = if r.fetched_in_tier2() {
+            r.readers
+                .iter()
+                .filter(|rd| rd.split == crate::records::Split::Tier2 && rd.arms.len() == 1)
+                .filter(|rd| {
+                    let mut parts: Vec<(u16, u8)> = rd.parts.iter().map(|p| (p.start, p.bytes)).collect();
+                    parts.sort_by_key(|&(o, n)| (n, o));
+                    crate::native_cpu_stream::sequential(self, &rd.arms[0], &parts).is_some()
+                })
+                .flat_map(|rd| rd.parts.iter().map(|p| p.start))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();
         v

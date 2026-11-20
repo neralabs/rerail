@@ -780,7 +780,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 // The token's own bytes, as simdjson's stage 2 reads a number (decision 0398).
                 let c = &program.local_checks[usize::from(operand)];
                 let end = (rec_end as usize).min(bytes.len()).max(start as usize);
-                if crate::program::token_value(&c.ops, bytes, start as usize, end, c.delay) {
+                // The tokens before it: the records before this one, ending in turn (decision 0428).
+                let before = &lasts[..next.saturating_sub(1).min(lasts.len())];
+                let ended = |j: usize| before.binary_search(&(j as u32)).is_ok();
+                if crate::program::token_value(c, bytes, start as usize, end, &ended) {
                     return refuse!(pc - 1, "a token's check holds");
                 }
             }
@@ -916,7 +919,11 @@ pub fn validate_local_checks(program: &Words) -> Result<(), Error> {
             };
             ok && (c.token || !op.token_only())
         });
-        if c.ops.is_empty() || !earlier || (!c.token && usize::from(c.mask) >= masks) || (c.token && c.delay >= 64) {
+        // A token's check that reads the tokens before it (`LocalOp::Ended`) reads the records,
+        // which a region tier 2 splits (decision 0323) does not hold apart (decision 0428).
+        let split = program.block_programs.first().and_then(|b| b.records.as_ref()).is_some_and(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2));
+        let ended = c.ops.contains(&LocalOp::Ended);
+        if c.ops.is_empty() || !earlier || (!c.token && usize::from(c.mask) >= masks) || (c.token && (usize::from(c.delay) + usize::from(c.back) >= 64 || (ended && split))) || (!c.token && c.back != 0) {
             return Err(Error::InvalidOperand(i));
         }
     }

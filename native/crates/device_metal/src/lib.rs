@@ -222,9 +222,6 @@ pub mod code_rule_dsl {
                 use crate::code_rule_dsl::logic::profile::{Unit, work as charge};
             }
             #[allow(unused_imports)]
-            #[cfg(any(test, feature = "test-hooks"))]
-            pub(crate) use crate::code_rule_dsl::logic::native::setfix::DERIVATIONS;
-            #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::native::setfix::{forget_engine, forget_scope};
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::native::setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
@@ -497,8 +494,6 @@ pub mod code_rule_dsl {
             pub mod metal_backend;
             #[cfg(target_os="macos")]
             pub mod metal_join;
-            #[cfg(target_os="macos")]
-            pub mod metal_parallel;
             #[cfg(target_os="macos")]
             pub mod metal_program_backend;
             #[cfg(target_os="macos")]

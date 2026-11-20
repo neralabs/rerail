@@ -1607,7 +1607,7 @@ pub fn exact(native: &BlockNative, o: u16) -> Option<Needs> {
     exact_at(native, x).map(|n| n.shift(d))
 }
 
-fn exact_at(native: &BlockNative, x: usize) -> Option<Needs> {
+pub(crate) fn exact_at(native: &BlockNative, x: usize) -> Option<Needs> {
     match native.insts[x] {
         BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) => needs_at(native, x, &mut HashMap::new()),
         BlockInst::Or(a, b) => {

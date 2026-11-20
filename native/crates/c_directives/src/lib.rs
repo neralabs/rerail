@@ -154,25 +154,25 @@ impl Compiled {
     /// The same for each of `files`, tier 1 on Metal and tier 2 over its buffers; `None` for a
     /// file refused, and for all where the device cannot run the batch.
     #[cfg(target_os = "macos")]
-    pub fn metal_read(&self, files: &[&[u8]]) -> Option<Vec<Option<Read>>> {
-        Some(self.metal_images(files)?.into_iter().map(|t| t.and_then(|t| read(&t).ok())).collect())
+    pub fn metal_read(&self, files: &[&[u8]]) -> Result<Vec<Option<Read>>, rerail_compiler::Error> {
+        Ok(self.metal_images(files)?.into_iter().map(|t| t.and_then(|t| read(&t).ok())).collect())
     }
 
     /// Each of `files`' tapes, tier 1 on Metal and tier 2 over its buffers; `None` for a file
-    /// refused, and for all where the device cannot run the batch.
+    /// refused; the device's error where it cannot run the batch.
     #[cfg(target_os = "macos")]
-    pub fn metal_images(&self, files: &[&[u8]]) -> Option<Vec<Option<Vec<u8>>>> {
+    pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>, rerail_compiler::Error> {
         use rerail_metal::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {
-            Ok((_, run)) => Some((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).ok()).collect()),
+            Ok((_, run)) => Ok((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).ok()).collect()),
             Err(rerail_compiler::Error::BackendCapacity) if files.len() > 1 => {
                 let (a, b) = files.split_at(files.len() / 2);
                 let mut out = self.metal_images(a)?;
                 out.extend(self.metal_images(b)?);
-                Some(out)
+                Ok(out)
             }
-            Err(_) => None,
+            Err(e) => Err(e),
         }
     }
 }

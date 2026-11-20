@@ -28,6 +28,7 @@ pub mod words;
 ///
 /// Each operation uses the backend's CPU instructions: call them only where the CPU runs the
 /// backend (`Backend::runs`), as `dispatch!` does.
+#[allow(clippy::missing_safety_doc, reason = "every operation's contract is the trait's, under `# Safety` above")]
 pub unsafe trait Simd8x64 {
     /// 64 bytes.
     type V: Copy;

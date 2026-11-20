@@ -87,7 +87,7 @@ sfu_atomic_cm(g) :- kind(y, "yield"), sfu_in_atomic(y), nearest(y, g, dj_region_
 sfu_atomic_def(f) :- dj_atomic_def(f).
 sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), sfu_method_atomic(e).
 sfu_atomic_def(f) :- kind(f, "function_definition"), nearest(f, k, scope), kind(k, "class_definition"), decorator(k, e),
-    sfu_method_atomic(e), call_arg(e, -1, "name", nv), str(nv, x), sfu_wrapped_name(f, x).
+    sfu_method_atomic(e), sfu_name_kw(e, x), sfu_wrapped_name(f, x).
 sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), sym_of(m, q), qualname(d, q),
     sfu_atomic_wrapper(d).
 sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), kind(m, "call"),
@@ -96,6 +96,11 @@ sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e,
 .decl sfu_atomic_wrapper(d: node)
 sfu_atomic_wrapper(d) :- kind(d, "function_definition"), param(d, x, 0), kind(c, "call"), field(c, "function", fn),
     kind(fn, "identifier"), text(fn, x), look(fn, x, d), sfu_in_atomic(c).
+// sfu_name_kw(e, x): call e passes `name=x`, a string. A rule of its own, on e's document alone: sfu_atomic_def is
+// recursive through the run's call targets (python/points-to), and a string's text is read where the documents are
+// (decision 0174 §6).
+.decl sfu_name_kw(e: node, x: symbol)
+sfu_name_kw(e, x) :- kind(e, "call"), call_arg(e, -1, "name", nv), str(nv, x).
 .decl sfu_wrapped_name(f: node, x: symbol)
 sfu_wrapped_name(f, "dispatch") :- kind(f, "function_definition").
 sfu_wrapped_name(f, x) :- def_name(f, x).

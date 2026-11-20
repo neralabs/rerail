@@ -70,7 +70,7 @@ def main():
             if (rel, name) not in listed:
                 missing.append(f"{p}: {name}")
     if missing:
-        print("check-thread-state: thread-locals not listed in " + RUN_STATE + " (STATE):", file=sys.stderr)
+        print("check_thread_state: thread-locals not listed in " + RUN_STATE + " (STATE):", file=sys.stderr)
         for m in missing:
             print("  " + m, file=sys.stderr)
         print(

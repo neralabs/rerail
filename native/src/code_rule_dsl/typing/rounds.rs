@@ -592,14 +592,16 @@ trait AL: Sync {
 /// Cv in one word: 0 = Bot, 1 = Top, `v << 2 | 2` for a constant that fits in 62 bits, and `i << 2 | 3` for an
 /// interned larger one. Interning keeps equal constants equal as words, so `join` never has to decode.
 struct ACv;
-static BIGS: std::sync::Mutex<(Vec<i64>, Option<HashMap<i64, u64>>)> = std::sync::Mutex::new((Vec::new(), None));
+/// The larger constants interned, the shared object's (decision 0442): a word is its own object's.
+#[derive(Default)]
+struct Bigs(std::sync::Mutex<(Vec<i64>, Option<HashMap<i64, u64>>)>);
 fn cv_enc(c: &Cv) -> u64 {
     match c {
         Cv::Bot => 0,
         Cv::Top => 1,
         Cv::C(v) if *v < (1 << 61) && *v >= -(1 << 61) => ((*v as u64) << 2) | 2,
-        Cv::C(v) => {
-            let mut g = BIGS.lock().unwrap();
+        Cv::C(v) => crate::code_rule_dsl::logic::profile::with_shared::<Bigs, _>(|bigs| {
+            let mut g = bigs.0.lock().unwrap();
             let (list, map) = &mut *g;
             let map = map.get_or_insert_with(HashMap::new);
             let i = *map.entry(*v).or_insert_with(|| {
@@ -607,7 +609,7 @@ fn cv_enc(c: &Cv) -> u64 {
                 (list.len() - 1) as u64
             });
             (i << 2) | 3
-        }
+        }),
     }
 }
 fn cv_dec(x: u64) -> Cv {
@@ -615,7 +617,7 @@ fn cv_dec(x: u64) -> Cv {
         (0, _) => Cv::Bot,
         (1, _) => Cv::Top,
         (_, 2) => Cv::C((x as i64) >> 2),
-        _ => Cv::C(BIGS.lock().unwrap().0[(x >> 2) as usize]),
+        _ => Cv::C(crate::code_rule_dsl::logic::profile::with_shared::<Bigs, _>(|bigs| bigs.0.lock().unwrap().0[(x >> 2) as usize])),
     }
 }
 impl AL for ACv {

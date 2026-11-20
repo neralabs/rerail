@@ -29,7 +29,7 @@
 //! `SET_SEP`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 use crate::code_rule_dsl::text::{Domain, Lowered, Source, Spelling, lower};
 use rusqlite::Connection;
@@ -172,11 +172,12 @@ pub fn patterns(t: &Term) -> Option<Vec<String>> {
     }
 }
 
-static MATCHERS: LazyLock<Mutex<HashMap<(String, String), Option<Arc<Matcher>>>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct Matchers(Mutex<HashMap<(String, String), Option<Arc<Matcher>>>>);
 
 /// Test `op` of `s` against `pattern`, a set's patterns joined by `SET_SEP`. An invalid glob matches nothing.
 pub fn test(op: &str, s: &str, pattern: &str) -> bool {
-    let m = MATCHERS
+    let m = crate::code_rule_dsl::logic::profile::shared::<Matchers>().0
         .lock()
         .unwrap()
         .entry((op.to_owned(), pattern.to_owned()))
@@ -185,12 +186,14 @@ pub fn test(op: &str, s: &str, pattern: &str) -> bool {
     m.is_some_and(|m| m.is_match(s))
 }
 
-static GROUP_REGEXES: LazyLock<Mutex<HashMap<String, Option<Arc<regex::Regex>>>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct GroupRegexes(Mutex<HashMap<String, Option<Arc<regex::Regex>>>>);
 
 /// The text of named group `name` of regex `re`'s match of `s` (`.rerail`'s `match("(?<x>…)", s)`); none when `re`
 /// does not match, the group took no part, or `re` is invalid.
 pub(in crate::code_rule_dsl) fn group(s: &str, re: &str, name: &str) -> Option<String> {
-    let rx = GROUP_REGEXES.lock().unwrap().entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok().map(Arc::new)).clone()?;
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<GroupRegexes>();
+    let rx = held_.0.lock().unwrap().entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok().map(Arc::new)).clone()?;
     rx.captures(s)?.name(name).map(|m| m.as_str().to_owned())
 }
 

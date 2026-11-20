@@ -10,19 +10,26 @@ use std::sync::{Arc, LazyLock};
 pub const NONE: u32 = u32::MAX;
 pub const SCHEMA_VERSION: u32 = 3;
 
-/// Process-wide interner for kind and field names (the contract's `sym`).
+/// The interner for kind and field names (the contract's `sym`): the shared object's (decision 0442), so a symbol
+/// is its own object's.
+#[derive(Default)]
 pub struct Symbols {
     names: Vec<Arc<str>>,
     ids: rustc_hash::FxHashMap<Arc<str>, u32>,
 }
-static SYMBOLS: LazyLock<Mutex<Symbols>> = LazyLock::new(|| {
-    Mutex::new(Symbols {
-        names: Vec::new(),
-        ids: Default::default(),
-    })
-});
+/// The symbols, and the object's number in the process (a thread's copy of names is of one numbered object).
+struct Interned(Mutex<Symbols>, u64);
+
+impl Default for Interned {
+    fn default() -> Self {
+        /// The objects' numbers, unique in the process (0: no object).
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Interned(Mutex::default(), MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
 pub fn intern(name: &str) -> u32 {
-    let mut s = SYMBOLS.lock();
+    let held = crate::code_rule_dsl::logic::profile::shared::<Interned>();
+    let mut s = held.0.lock();
     if let Some(&id) = s.ids.get(name) {
         return id;
     }
@@ -33,26 +40,33 @@ pub fn intern(name: &str) -> u32 {
     id
 }
 pub fn lookup(name: &str) -> Option<u32> {
-    SYMBOLS.lock().ids.get(name).copied()
+    crate::code_rule_dsl::logic::profile::with_shared::<Interned, _>(|s| s.0.lock().ids.get(name).copied())
 }
 /// A symbol's name: a reference-count bump on a per-thread copy, no allocation and no lock
-/// after the first use of a symbol on a thread.
+/// after the first use of a symbol on a thread. The copy is of one shared object's symbols: a thread
+/// that reads another object's starts a copy of those.
 pub fn name(sym: u32) -> Rc<str> {
-    NAME_CACHE.with(|c| {
-        if let Some(Some(n)) = c.borrow().get(sym as usize) {
+    crate::code_rule_dsl::logic::profile::with_shared::<Interned, _>(|symbols| NAME_CACHE.with(|c| {
+        let of = symbols.1;
+        if c.borrow().0 != of {
+            *c.borrow_mut() = (of, Vec::new());
+        }
+        if let Some(Some(n)) = c.borrow().1.get(sym as usize) {
             return n.clone();
         }
-        let n: Rc<str> = Rc::from(&*SYMBOLS.lock().names[sym as usize]);
+        let n: Rc<str> = Rc::from(&*symbols.0.lock().names[sym as usize]);
         let mut c = c.borrow_mut();
+        let c = &mut c.1;
         if c.len() <= sym as usize {
             c.resize(sym as usize + 1, None);
         }
         c[sym as usize] = Some(n.clone());
         n
-    })
+    }))
 }
 thread_local! {
-    static NAME_CACHE: std::cell::RefCell<Vec<Option<Rc<str>>>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The symbols' object (its number) and this thread's copy of its names.
+    static NAME_CACHE: std::cell::RefCell<(u64, Vec<Option<Rc<str>>>)> = const { std::cell::RefCell::new((0, Vec::new())) };
 }
 
 /// The patched Python grammar the native engine parses with (field codes and names).

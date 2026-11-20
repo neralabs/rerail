@@ -8,6 +8,8 @@
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::{block, native_cpu_block, native_ir};
 #[cfg(target_os = "macos")]
+use rerail_compiler::block_native;
+#[cfg(target_os = "macos")]
 use rerail_metal as metal_program_backend;
 
 /// Inputs that put every byte value at every position of a block, and lengths around every
@@ -60,9 +62,9 @@ pub fn runs() -> Vec<Vec<u8>> {
 /// A program's first block program, lowered and compiled once, for runs over many inputs.
 pub struct Executors<'a> {
     block: &'a block::BlockProgram,
-    /// The lowered form the generated MSL runs (the Metal executors').
+    /// The lowered program Metal's generated MSL and forward carry run.
     #[cfg(target_os = "macos")]
-    native: rerail_compiler::block_native::BlockNative,
+    native: block_native::BlockNative,
     cranelift: native_cpu_block::CompiledBlock,
 }
 

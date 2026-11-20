@@ -3,12 +3,18 @@
 ;   1 control characters inside strings (simdjson's unescaped-characters error);
 ;   2 inside a string (its last bit set: an unclosed string);
 ;   3 UTF-8 errors (simdjson's lookup algorithm, utf8_lookup4);
-;   4 a UTF-8 sequence still open (its last bit set: an incomplete sequence at the end).
+;   4 a sequence cut short at the end (simdjson's `is_incomplete`): at the byte past the
+;     stream, a lead byte 1, 2 or 3 bytes before that needs more.
+; 3 and 4 are totals, one flag a file, as simdjson ORs its error vector across the blocks and
+; tests it once (decision 0421). The program runs one byte past the stream (`delay 1`) for 4,
+; which is that byte alone, 1 late: in a full block it is none, and the loop makes nothing
+; for it. 4 reads none of 3's values, so 3 is ORed into the error vector where made.
 ; The extract pass writes output 0's positions: simdjson's structural indexes.
 ; Names follow simdjson's json_structural_indexer, json_scanner, json_string_scanner and
 ; utf8_lookup4_algorithm.
 program -
   mode set=0 query=0
+  block 0 delay 1
   ; simdjson's classify table: 0x01 , 0x02 : 0x04 [ ] { } 0x08 space 0x10 \t \n \r 0x20 \
   ; 0x40 " 0x80 every byte below 0x20.
   block 0 table 0 lo=8880c0808080808080909284a1948080 hi=90804902002400040000000000000000
@@ -49,15 +55,20 @@ program -
   block 0 %24 = or %22, %23    ; must_be_2_3_continuation
   block 0 %25 = xor %24, %18   ; must be one exactly when TWO_CONTS
   block 0 %26 = or %17, %25    ; UTF-8 error
-  block 0 %27 = prev %19, 1
-  block 0 %28 = prev %20, 2
-  block 0 %29 = or %21, %27
-  block 0 %30 = or %29, %28  ; a sequence still open after the byte
-  block 0 output %15
-  block 0 output %16
-  block 0 output %7
-  block 0 output %26
-  block 0 output %30
+  block 0 %27 = within 1
+  block 0 %28 = within
+  block 0 %29 = andnot %27, %28  ; the byte past the stream
+  block 0 %30 = prev %21, 1
+  block 0 %31 = or %30, %22
+  block 0 %32 = or %31, %23      ; a lead 1, 2 or 3 bytes before that needs more
+  block 0 %33 = and %32, %29     ; at the byte past the stream: cut short at the end
+  block 0 output %15 delay 0
+  block 0 output %16 delay 0
+  block 0 output %7 delay 0
+  block 0 output %26 delay 0
+  block 0 output %33
+  block 0 total %26
+  block 0 total %33
   ; The extract pass: the structural starts' positions, simdjson's structural indexes.
   block 0 extract %15
   0000 STOP 0

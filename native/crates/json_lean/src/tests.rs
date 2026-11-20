@@ -119,10 +119,15 @@ fn tape_is_the_kernels() {
 /// The process's instructions retired and cycles (`proc_pid_rusage`, macOS's).
 #[cfg(target_os = "macos")]
 fn retired() -> (u64, u64) {
-    let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-    // SAFETY: `info` is a `rusage_info_v4`, as the flavor says.
-    unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-    (info.ri_instructions, info.ri_cycles)
+    #[cfg(target_os = "macos")]
+    {
+        let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` is a `rusage_info_v4`, as the flavor says.
+        if unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+            return (info.ri_instructions, info.ri_cycles);
+        }
+    }
+    (0, 0)
 }
 
 /// The benchmarks' inputs: JSON's corpus (`RERAIL_JSON_CORPUS`, the files simdjson accepts) and

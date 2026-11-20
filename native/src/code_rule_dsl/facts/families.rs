@@ -416,7 +416,7 @@ impl Families {
             return Ok(None);
         };
         let source = Arc::new(source);
-        let Some((bytes, _)) = store.get_tapes_bulk(&[id])?.remove(&id) else {
+        let Some(bytes) = store.get_tapes_bulk(&[id])?.remove(&id) else {
             return Ok(None);
         };
         let grammar = tape::Grammar::new(language).map_err(StoreError::Invalid)?;

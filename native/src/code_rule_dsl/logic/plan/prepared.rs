@@ -21,22 +21,21 @@ pub const NOMINAL_NODES: f64 = 1_048_576.0;
 pub const NOMINAL_DOCS: f64 = 300.0;
 pub const NOMINAL_KINDS: f64 = 200.0;
 
-/// One line's plan: its order, and its work and rows per node at the nominal scale.
+/// One line's plan: its order, its work and rows per node at the nominal scale, and the rows per node it assumed of
+/// each derived relation it reads that only an estimate sized (`Estimate`: no fact does). A run takes it only while
+/// those relations, made by then, are near what it assumed (`take`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreparedPlan {
     pub order: Vec<Step>,
     pub work_per_node: f64,
     pub rows_per_node: f64,
+    pub assumed: Vec<(String, f64)>,
 }
 
 /// The version's prepared plans, by line (`super::line_key`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Prepared(pub HashMap<u128, PreparedPlan>);
 
-/// Lines a run took from the prepared plans (`RERAIL_PLAN_CACHE_COUNTS`).
-pub static TAKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-/// Versions whose prepared plans a run read from the store, and made (Q228; `RERAIL_PLAN_CACHE_COUNTS`).
-pub static VERSIONS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
 impl Prepared {
     /// The version's prepared plans: its analysis, shared; none under `RERAIL_PREPARED_PLANS=off` or
@@ -51,15 +50,20 @@ impl Prepared {
         if v.analyses().holds::<Prepared>() {
             return manager::analysis::<Prepared>(v).unwrap_or_default();
         }
+        // A program of no rules (a cross part whose every stratum was kept) has no plan to make, read or keep: kept,
+        // it was a write of every warm run, which makes it fresh each time.
+        if v.rules().next().is_none() {
+            return Default::default();
+        }
         // The run's kept plans' entry holds the plans an earlier process made of a version the same as this one (Q228):
         // read, not made.
         let Some(id) = super::run_holds_plans().then(|| manager::identity(v)) else { return manager::analysis::<Prepared>(v).unwrap_or_default() };
         if let Some(p) = super::prepared_stored(&id) {
-            VERSIONS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            run_counts().versions[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return v.analyses().hold(p);
         }
         let p = manager::analysis::<Prepared>(v).unwrap_or_default();
-        VERSIONS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        run_counts().versions[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         super::prepared_made(id, Arc::clone(&p));
         p
     }
@@ -70,8 +74,12 @@ impl Prepared {
             .0
             .iter()
             .map(|(line, p)| {
-                let mut r = vec![Value::Int((line >> 64) as i64), Value::Int(*line as i64), Value::Int(p.work_per_node.to_bits() as i64), Value::Int(p.rows_per_node.to_bits() as i64)];
+                let mut r = vec![Value::Int((line >> 64) as i64), Value::Int(*line as i64), Value::Int(p.work_per_node.to_bits() as i64), Value::Int(p.rows_per_node.to_bits() as i64), Value::Int(p.order.len() as i64)];
                 r.extend(p.order.iter().map(|s| Value::Int(((s.at as i64) << 2) | mode_code(s.mode))));
+                for (rel, per_node) in &p.assumed {
+                    r.push(Value::Str(rel.as_str().into()));
+                    r.push(Value::Int(per_node.to_bits() as i64));
+                }
                 r
             })
             .collect();
@@ -90,19 +98,32 @@ impl Prepared {
         };
         let mut out = HashMap::new();
         for r in rows {
-            let ints: Vec<i64> = r.iter().map(int).collect::<Option<_>>()?;
-            let [hi, lo, work, rows, steps @ ..] = ints.as_slice() else { return None };
-            let line = (u128::from(*hi as u64) << 64) | u128::from(*lo as u64);
-            let order = steps.iter().map(|&s| Some(Step { at: usize::try_from(s >> 2).ok()?, mode: mode_of(s & 3) })).collect::<Option<Vec<_>>>()?;
-            out.insert(line, PreparedPlan { order, work_per_node: f64::from_bits(*work as u64), rows_per_node: f64::from_bits(*rows as u64) });
+            let [hi, lo, work, rows, n, rest @ ..] = r else { return None };
+            let (hi, lo, work, rows, n) = (int(hi)?, int(lo)?, int(work)?, int(rows)?, usize::try_from(int(n)?).ok()?);
+            let line = (u128::from(hi as u64) << 64) | u128::from(lo as u64);
+            let (steps, assumed) = (rest.get(..n)?, rest.get(n..)?);
+            let order = steps.iter().map(|s| { let s = int(s)?; Some(Step { at: usize::try_from(s >> 2).ok()?, mode: mode_of(s & 3) }) }).collect::<Option<Vec<_>>>()?;
+            let assumed = assumed
+                .chunks(2)
+                .map(|pair| match pair {
+                    [Value::Str(rel), v] => Some((rel.to_string(), f64::from_bits(int(v)? as u64))),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
+            out.insert(line, PreparedPlan { order, work_per_node: f64::from_bits(work as u64), rows_per_node: f64::from_bits(rows as u64), assumed });
         }
         Some(Prepared(out))
     }
 
-    /// Line `line`'s plan, scaled to a run of `nodes` nodes: its order, work and rows.
+    /// Line `line`'s plan, scaled to a run of `nodes` nodes: its order, work and rows. Taken as it is, estimates and
+    /// all: the run's planning stays lean for the plans that are right, and one that turns out heavy is searched where
+    /// it runs (`Model::prepared_heavy`). `None` where it has none, or where this run searched it so.
     pub fn take(&self, line: u128, nodes: f64) -> Option<super::Plan> {
         let p = self.0.get(&line)?;
-        TAKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if super::prepared_searched(line) {
+            return None;
+        }
+        run_counts().taken.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let n = nodes.max(1.0);
         Some((p.order.clone(), p.work_per_node * n, p.rows_per_node * n))
     }
@@ -188,37 +209,81 @@ impl Analysis for Prepared {
         model.derived = Arc::new((0..placed.len()).map(|k| placed.body(k)).map(|b| b.rel(b.head()).to_owned()).collect());
         // Each relation's component, by name: a recursive rule's deltas are its atoms of its own.
         let scc: HashMap<&str, usize> = strata.sccs.iter().enumerate().flat_map(|(i, s)| s.iter().map(move |r| (v.rel_name(*r), i))).collect();
-        let mut out = HashMap::new();
+        let mut by_head: HashMap<&str, Vec<usize>> = HashMap::new();
         for k in 0..placed.len() {
             let b = placed.body(k);
-            let known = |i: usize| -> bool {
-                match b.view(i) {
-                    Lit::Cmp { .. } => true,
-                    Lit::Atom(a) => {
-                        let rel = b.rel(a);
-                        model.stats.card.contains_key(rel) && b.args(i).iter().enumerate().all(|(c, t)| matches!(t, TermRef::Wild) || model.ndv.contains_key(&(rel.to_owned(), c)))
-                    }
-                    _ => false,
-                }
+            by_head.entry(b.rel(b.head())).or_default().push(k);
+        }
+        let derive = derived_estimates();
+        let mut out = HashMap::new();
+        // The derived relations sized by an estimate, not a fact: what a plan reading them assumes, checked when taken.
+        let mut estimated: HashSet<String> = HashSet::new();
+        // Components in dependency order: each derived relation the facts do not size is sized from its rules' plans
+        // (their rows priced, summed over the rules), so the rules that read it are planned after it.
+        for comp in &strata.sccs {
+            let names: Vec<&str> = comp.iter().map(|r| v.rel_name(*r)).collect();
+            let rules: Vec<usize> = names.iter().flat_map(|n| by_head.get(n).into_iter().flatten().copied()).collect();
+            let reads_own = |k: usize| {
+                let b = placed.body(k);
+                (0..b.len()).any(|i| b.atom(i).is_some_and(|a| names.contains(&b.rel(a))))
             };
-            if !(0..b.len()).all(known) {
+            let (steps, base): (Vec<usize>, Vec<usize>) = rules.iter().partition(|&&k| reads_own(k));
+            let sized_by_facts: Vec<&str> = names.iter().copied().filter(|n| model.stats.card.contains_key(*n)).collect();
+            let mut sums: HashMap<&str, Estimate> = HashMap::new();
+            let mut all_known = true;
+            for &k in &base {
+                match prepare_rule(&mut model, f, &layouts, &placed.body(k), &scc, &estimated, &mut out) {
+                    Some(e) => sums.entry(placed.body(k).rel(placed.body(k).head())).or_default().add(e),
+                    None => all_known = false,
+                }
+            }
+            if !derive {
+                for &k in &steps {
+                    prepare_rule(&mut model, f, &layouts, &placed.body(k), &scc, &estimated, &mut out);
+                }
                 continue;
             }
-            let own = scc.get(b.rel(b.head())).copied();
-            let deltas = (0..b.len()).filter(|&i| matches!(b.view(i), Lit::Atom(a) if !a.neg() && own.is_some() && scc.get(b.rel(a)).copied() == own));
-            for first in std::iter::once(None).chain(deltas.map(Some)) {
-                if let Some(d) = first.and_then(|i| b.atom(i)) {
-                    let rel = b.rel(d).to_owned();
-                    let rows = model.stats.card.get(&rel).copied().unwrap_or(1.0);
-                    model.stats.delta_rows.insert(rel, (rows / f64::from(crate::code_rule_dsl::logic::front::FEW)).max(1.0));
+            // A recursion's relations: their base rules' rows, times a nominal depth of the rounds (an estimate, as the
+            // rows of every derived relation here are: the facts give none).
+            let recursive = !steps.is_empty();
+            let set = |model: &mut Model, estimated: &mut HashSet<String>, name: &str, e: &Estimate, times: f64| {
+                if sized_by_facts.contains(&name) {
+                    return;
                 }
-                let Ok((order, work, rows)) = model.plan_rule_priced(f, &b, first) else { continue };
-                out.insert(super::line_key(&b, first), PreparedPlan { order, work_per_node: work / NOMINAL_NODES, rows_per_node: rows / NOMINAL_NODES });
+                estimated.insert(name.to_owned());
+                let width = v.decl_of(name).map_or(0, |d| d.cols().count());
+                let rows = (e.rows * times).max(1.0);
+                model.stats.card.insert(name.to_owned(), rows);
+                for c in 0..width {
+                    let n = (e.ndv.get(c).copied().unwrap_or(e.rows) * times).clamp(1.0, rows);
+                    model.ndv.insert((name.to_owned(), c), n);
+                    model.stats.fan.insert((name.to_owned(), c), (rows / n).max(1.0));
+                }
+            };
+            if recursive {
+                if all_known {
+                    for n in &names {
+                        if let Some(e) = sums.get(n) {
+                            set(&mut model, &mut estimated, n, e, RECURSION_DEPTH);
+                        }
+                    }
+                }
+                for &k in &steps {
+                    prepare_rule(&mut model, f, &layouts, &placed.body(k), &scc, &estimated, &mut out);
+                }
+            } else if all_known {
+                for n in &names {
+                    if let Some(e) = sums.get(n) {
+                        set(&mut model, &mut estimated, n, e, 1.0);
+                    }
+                }
             }
         }
         Ok(Prepared(out))
     }
-    const VERSION: u32 = 1;
+    /// 2: each plan's assumed sizes of the derived relations an estimate sized. 3: no plan for a line with a constant
+    /// on a column a `values` fact answers.
+    const VERSION: u32 = 3;
     fn rows(&self, _v: &Version) -> Option<Vec<Row>> {
         Some(self.to_rows())
     }
@@ -236,6 +301,12 @@ pub fn store_rows(by: &ByVersion) -> Vec<Row> {
     let mut out: Vec<Row> = Vec::new();
     for (id, p) in by {
         let head: Vec<Value> = id.chunks(8).map(|c| Value::Int(i64::from_le_bytes(c.try_into().expect("eight bytes")))).collect();
+        // A version with no prepared plan is kept too, as its id alone: else it is not read back, and the next run
+        // makes its (empty) plans again and writes them.
+        if p.0.is_empty() {
+            out.push(head);
+            continue;
+        }
         out.extend(p.to_rows().into_iter().map(|r| head.iter().cloned().chain(r).collect()));
     }
     out.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
@@ -252,12 +323,155 @@ pub fn of_store_rows(rows: &[Row]) -> ByVersion {
         for (k, i) in ids.iter().enumerate() {
             id[k * 8..k * 8 + 8].copy_from_slice(&i.to_le_bytes());
         }
-        by.entry(id).or_default().push(&r[4..]);
+        let plans = by.entry(id).or_default();
+        // Its id alone: a version with no prepared plan (`store_rows`).
+        if r.len() == 4 {
+            continue;
+        }
+        plans.push(&r[4..]);
         if r.len() < 8 {
             bad.insert(id);
         }
     }
     by.into_iter().filter(|(id, _)| !bad.contains(id)).filter_map(|(id, rows)| Some((id, Arc::new(Prepared::read_rows(rows)?)))).collect()
+}
+
+/// A recursion's rows, as its base rules' times this: the rounds' nominal depth (an estimate; a tree's recursions run
+/// about as deep as its documents' nesting).
+const RECURSION_DEPTH: f64 = 8.0;
+
+/// Whether derived relations the facts do not size are sized from their rules' plans (`RERAIL_DERIVED_ESTIMATES=off`
+/// prepares only the rules over relations the facts size, as before: a measurement aid).
+fn derived_estimates() -> bool {
+    !std::env::var("RERAIL_DERIVED_ESTIMATES").is_ok_and(|x| x == "off")
+}
+
+/// A relation's rows and its columns' distinct values as its rules' plans give them: summed over its rules.
+#[derive(Clone, Debug, Default)]
+struct Estimate {
+    rows: f64,
+    ndv: Vec<f64>,
+}
+
+impl Estimate {
+    fn add(&mut self, e: Estimate) {
+        self.rows += e.rows;
+        if self.ndv.len() < e.ndv.len() {
+            self.ndv.resize(e.ndv.len(), 0.0);
+        }
+        for (a, b) in self.ndv.iter_mut().zip(e.ndv) {
+            *a += b;
+        }
+    }
+}
+
+/// Plans rule `b` into `out` where every literal is one the model prices (an atom of a sized relation whose columns it
+/// reads have distinct values, or a comparison), with a recursive rule's deltas: its head's estimate from the plan
+/// (`None` where it is not planned). The rows are the plan's; a head column's distinct values those of the body column
+/// that binds it, at most the rows (one for a constant).
+fn prepare_rule(model: &mut Model, f: super::fields::Fields<'_>, layouts: &crate::code_rule_dsl::logic::program_image::layouts::Layouts, b: &super::body::Body<'_>, scc: &HashMap<&str, usize>, estimated: &HashSet<String>, out: &mut HashMap<u128, PreparedPlan>) -> Option<Estimate> {
+    let known = |model: &Model, i: usize| -> bool {
+        match b.view(i) {
+            Lit::Cmp { .. } => true,
+            Lit::Atom(a) => {
+                let rel = b.rel(a);
+                model.stats.card.contains_key(rel) && b.args(i).iter().enumerate().all(|(c, t)| matches!(t, TermRef::Wild) || model.ndv.contains_key(&(rel.to_owned(), c)))
+            }
+            _ => false,
+        }
+    };
+    if !(0..b.len()).all(|i| known(model, i)) {
+        if let Some(log) = why_log() {
+            let i = (0..b.len()).find(|&i| !known(model, i)).expect("a literal not known");
+            let why = match b.view(i) {
+                Lit::Agg { .. } => "aggregate".to_owned(),
+                Lit::Nearest { .. } => "nearest".to_owned(),
+                Lit::Ast { .. } => "ast".to_owned(),
+                Lit::Cmp { .. } => "comparison".to_owned(),
+                Lit::Atom(a) => {
+                    let rel = b.rel(a);
+                    let side = if f.is_input(rel) { "input" } else { "derived" };
+                    match model.stats.card.contains_key(rel) {
+                        false => format!("unsized {side} {rel}"),
+                        true => {
+                            let c = b.args(i).iter().enumerate().find(|(c, t)| !matches!(t, TermRef::Wild) && !model.ndv.contains_key(&(rel.to_owned(), *c))).map_or(0, |(c, _)| c);
+                            format!("column {side} {rel}.{c}")
+                        }
+                    }
+                }
+            };
+            use std::io::Write as _;
+            let _ = writeln!(log.lock(), "{why}\t{}", b.rel(b.head()));
+        }
+        return None;
+    }
+    // A constant on a column a `values` fact answers: the fact gives the column's distinct values, not how many rows
+    // hold this one, and the plan turns on it. PostHog's `param`: `kind($p, #k1025)` (an identifier, 16 % of the
+    // nodes) priced as one kind in 200 led and read 10.4 M rows, where the search, from the kind's frequency, led with
+    // `field($f, #f65559, $ps)` (0.4 %): 253 k. Such a line is planned at run time, from the constant's statistics
+    // (decision 0361 item 5: what no fact answers); its rows still size its head here.
+    let by_values = |i: usize| -> bool {
+        let Lit::Atom(a) = b.view(i) else { return false };
+        b.args(i).iter().enumerate().any(|(c, t)| {
+            matches!(t, TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_)) && layouts.of(a.rel()).any(|f| matches!(f, LayoutFact::Values { col, .. } if *col == c))
+        })
+    };
+    let kept = !(0..b.len()).any(by_values);
+    let own = scc.get(b.rel(b.head())).copied();
+    let deltas: Vec<usize> = (0..b.len()).filter(|&i| matches!(b.view(i), Lit::Atom(a) if !a.neg() && own.is_some() && scc.get(b.rel(a)).copied() == own)).collect();
+    let mut whole = None;
+    let mut assumed: Vec<(String, f64)> = Vec::new();
+    for i in 0..b.len() {
+        if let Some(a) = b.atom(i)
+            && estimated.contains(b.rel(a))
+            && !assumed.iter().any(|(r, _)| r == b.rel(a))
+        {
+            assumed.push((b.rel(a).to_owned(), model.stats.card.get(b.rel(a)).copied().unwrap_or(1.0) / NOMINAL_NODES));
+        }
+    }
+    for first in std::iter::once(None).chain(deltas.into_iter().map(Some)) {
+        if let Some(d) = first.and_then(|i| b.atom(i)) {
+            let rel = b.rel(d).to_owned();
+            let rows = model.stats.card.get(&rel).copied().unwrap_or(1.0);
+            model.stats.delta_rows.insert(rel, (rows / f64::from(crate::code_rule_dsl::logic::front::FEW)).max(1.0));
+        }
+        let Ok((order, work, rows)) = model.plan_rule_priced(f, b, first) else { continue };
+        if first.is_none() {
+            whole = Some(rows);
+        }
+        if kept {
+            out.insert(super::line_key(b, first), PreparedPlan { order, work_per_node: work / NOMINAL_NODES, rows_per_node: rows / NOMINAL_NODES, assumed: assumed.clone() });
+        }
+    }
+    let rows = whole?.max(1.0);
+    let ndv = b
+        .head()
+        .args()
+        .map(|t| match t {
+            TermRef::Var(x) => (0..b.len())
+                .filter_map(|i| match b.view(i) {
+                    Lit::Atom(a) if !a.neg() => b.args(i).iter().position(|u| matches!(u, TermRef::Var(y) if *y == x)).and_then(|c| model.ndv.get(&(b.rel(a).to_owned(), c)).copied()),
+                    _ => None,
+                })
+                .reduce(f64::min)
+                .unwrap_or(rows)
+                .min(rows),
+            TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_) => 1.0,
+            _ => rows,
+        })
+        .collect();
+    Some(Estimate { rows, ndv })
+}
+
+/// `RERAIL_PREPARED_WHY=FILE` (a measurement aid): each rule not prepared, appended as a version's plans are made:
+/// why (the first literal that stops it: its kind, or the relation with no size or the column with no distinct
+/// values) and its head.
+/// The run's own (opened once a run, decision 0442).
+fn why_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> {
+    crate::code_rule_dsl::logic::run::setting(|| {
+        let p = std::env::var_os("RERAIL_PREPARED_WHY")?;
+        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(|f| std::sync::Arc::new(parking_lot::Mutex::new(f)))
+    })
 }
 
 fn mode_code(m: Option<super::Mode>) -> i64 {
@@ -276,4 +490,21 @@ fn mode_of(c: i64) -> Option<super::Mode> {
         3 => Some(super::Mode::Descend),
         _ => None,
     }
+}
+
+/// The run's counts of this module's work (decision 0442: a run's own, `run::local`).
+#[derive(Default)]
+pub struct PreparedCounts {
+    /// Lines a run took from the prepared plans (`RERAIL_PLAN_CACHE_COUNTS`).
+    pub taken: std::sync::atomic::AtomicU64,
+    /// Lines a run found heavy while they ran their prepared plan, and searched once (`Model::prepared_heavy`).
+    pub searched: std::sync::atomic::AtomicU64,
+    /// Versions whose prepared plans a run read from the store, and made (Q183; `RERAIL_PLAN_CACHE_COUNTS`).
+    pub versions: [std::sync::atomic::AtomicU64; 2],
+}
+
+/// The run's `PreparedCounts`.
+#[inline]
+pub fn run_counts() -> std::sync::Arc<PreparedCounts> {
+    crate::code_rule_dsl::logic::run::local::<PreparedCounts>()
 }

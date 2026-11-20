@@ -134,8 +134,8 @@ unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> (Vec<Masks>, Option<usize>) {
         }
         m[WORD] &= !past;
         m[BLANK] &= !past;
-        for v in &mut m[EOL..MASKS] {
-            *v |= past;
+        for mk in &mut m[EOL..MASKS] {
+            *mk |= past;
         }
         out.push(m);
     }

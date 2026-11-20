@@ -53,6 +53,9 @@ instead, and only that run's output is shown.
 | `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
 | `test-mac-compiles HOST` | a test of this Mac's compiles on HOST: a small crate's library compiles (proc-macros, `OUT_DIR`, bundled C) go there through the farm, and each output must be this Mac's bytes |
 | `status` | what the farm can use now: each host probed, and why one is not usable |
+| `dashboard` | a live page of every host and this Mac: CPU (farm, fleet, the machine's own, idle), GPU, memory, disk, jobs, reachability, round trip, traffic ("Dashboard") |
+| `sampler` | the dashboard's end on each machine: one JSON line of its state every 3 seconds |
+| `free-local` | this Mac's disk floor: Rerail's least recently built builds go under `local_min_free_gb` |
 | `host-privacy` | keeps the farm's files on the hosts out of Time Machine, and (`--spotlight`, with sudo) Spotlight |
 | `setup` | installs all of it here, the machine's cargo configuration, a configuration to fill in, and the toolchain on each host |
 | `cargo-config` | writes the farm's part of `~/.cargo/config.toml` (`--check` reports) |
@@ -226,6 +229,7 @@ hosts, and everything compiles and tests here, as without the farm.
 | `test_slots` | how many `test-remote` commands the host runs at once (default: a third of its cores). One at a time left a 16-core host mostly idle while commands queued for 25 minutes; a command waits only when every slot of every host is taken, and goes to whichever frees first. A checkout's second command goes to another host when one has a slot (its commands on one host share a target directory, which cargo builds in one at a time) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | under this much free disk, the farm frees its own data on the host and says so (default 40) |
+| `local_min_free_gb` | this Mac's floor: under it, `free-local` removes Rerail's least recently built builds here (default 200) |
 | `floor_free_gb` | the free disk left to the host's own work: under it the host is not used (default 20) |
 | `max_target_gb` | the most a host's test target directories hold together (default 150 GB; per host too) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
@@ -377,13 +381,29 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   down) the host is not used, and is tried again every 60 s, not backed off. A route that stops
   answering is dropped, and the host is reached by name, then recovered again.
 - **Cache and back-off.** A healthy record holds 30 s, shared by every worktree (one caller probes,
-  the others read). A host that does not answer is not probed again for 30 s, doubling to 30
-  minutes, so a sleeping host costs nothing; `status` probes every host now, whatever its
-  back-off.
+  the others read). A host that does not answer is not probed again for 30 s, doubling to 5
+  minutes, so a sleeping host costs little. A back-off ends at once when this Mac's network
+  changes (its addresses, `scutil --nwi`), and when `test-remote` finds no usable host it asks
+  every backed-off host again, together, before it runs the command here. `status` probes every
+  host now, whatever its back-off. Until farm 33 the back-off doubled to 30 minutes and outlived
+  a move: hosts that had failed all evening at home showed "unreachable" for half an hour at the
+  office while ssh reached them, and agents ran their tests here (2026-11-18).
 - **Lost mid-job.** A compile whose send or run fails there runs here, and the host is marked down
   when its connection or agent is gone, or a file could not be written there (its disk full:
   agent code 70; the daemon then drops the agent and forgets what it sent). A test run whose ssh
   connection drops (exit 255) runs again here.
+- **One tree per copy.** A host holds one copy of a checkout, at the checkout's path (its warm
+  target directory's paths point there), so two commands of one checkout on one host share it.
+  A command finds it idle and sends its tree, or finds it running from the very tree it has (the
+  same files with the same stats: `mirror.fingerprint`) and runs too, sending nothing; else it
+  goes to another host, or waits as for a slot. A Relax session (`live-test-remote`) sends each
+  save, so it takes the copy alone, and waits up to 9 minutes for it. The locks are this Mac's
+  (`farm.CopyUse`: `tests/HOST.CHECKOUT.send` and `.tree`). Before farm 34 a second command only
+  preferred another host: on the same one it sent its tree into the copy the first was running
+  from, and the first read the other's files, a failure that looked like a broken merge
+  (2026-11-18). test-remote and live-test-remote are installed beside the farm since, and a
+  checkout's own copy hands itself to them (as an old `quiet-run` is), so every branch takes a
+  copy by the same rules.
 - **Cleaned copies.** The mirror remembers what it sent each host, and a host restarted or cleaned
   forgets: an agent is asked what it holds when it starts, a compile that read a stale file clears
   what was sent, and `test-remote` asks the host again for every file of the checkout before it runs.
@@ -391,7 +411,12 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
 - **Disk.** `test-remote`'s target directories (one per checkout, by a hash of its path) are
   cleaned after each command (above), go after 3 unused days, and the least recently used go while
   the host has less than `min_free_gb` + 40 GB free: pruning only to `min_free_gb` left the host
-  just above it, and the next build took it under. Never one a command is running in: each command
+  just above it, and the next build took it under. Within that headroom only targets unused for 2
+  hours go; one used more recently goes only under `min_free_gb` itself, and `test-remote` sends a
+  command to a host short of disk last. Before farm 36 any went: an M3 whose own data held it at
+  50-60 GB free (the farm's part of it 67 GB) had every target no command held removed by each
+  minute's sweep, and its checkouts' next commands rebuilt them whole, never reaching their tests
+  (2026-11-18). Never one a command is running in: each command
   holds its target's lock (`targets.noindex/.locks`) until it ends, and pruning skips a held one
   (farm 21; before, a checkout's run on a short disk removed another's target mid-build).
   The targets together stay under `max_target_gb` (150 GB): over it, the least recently used no
@@ -406,7 +431,66 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   within the hour (2026-11-17).
 
 `scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
-with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).
+with its round trip, throughput, free disk, how busy its CPUs are and its load average (`--json`
+for scripts; exit 1 when none is usable).
+
+**Busy is never a reason to wait.** A usable host takes a command whenever it has a free test slot,
+however busy it is; how busy it is only orders the hosts. Its busy figure is measured CPU (`busy`,
+percent of all its CPUs: `/proc/stat` over 0.3 s on Linux, the processes' CPU over the last minute
+on a Mac). The load average is shown but means little on a Mac: it counts threads waiting on I/O
+and macOS's background work, and an M3 about a third idle showed a load 31 over its cores. Until
+farm 33 `status` printed "cores to spare" (cores less the load average), and an agent read a
+negative figure as a full machine and waited 9 minutes before giving up on a run (2026-11-18).
+
+## This Mac's disk floor
+
+`clean-target` removes what no current build uses (about 540 GB a day here on 2026-11-18), but
+keeps every worktree's current builds with no cap: 30 worktrees' targets of 15 to 90 GB each.
+With the rest of the disk holding all but about 120 GB, agents' builds filled it that day. The
+hosts had a floor already (their agent's `free`); this Mac has one since farm 35:
+
+- Every Rerail build records its target directory (`farm.record`, in the farm's `targets/`) and,
+  at most every 2 minutes across all builds, looks at the free disk (`guard_disk`).
+- Under `local_min_free_gb` (default 200 GB) it starts `free-local`, which removes Rerail's
+  builds until 100 GB more is free, the least recently built targets first, in stages:
+  incremental state of targets not built for 30 minutes; profiles but `debug` (`profiling`,
+  `release`, other triples) not built for 2 hours; whole targets not built for 12 hours.
+- Never a profile a cargo build runs in (its `.cargo-lock`), and only directories of Rerail
+  checkouts' targets the farm saw a build in: no other project's data, no scratch, no store.
+- Each removal is logged (`free-local.log` in the farm's state) and a notification says what
+  went. When Rerail's builds are not what fills the disk, the notification says so.
+
+`scripts/build/farm/free-local --dry-run --floor GB` shows what it would remove at a floor.
+`status` prints this Mac's free disk and the floor.
+
+## Dashboard
+
+```
+scripts/build/farm/dashboard [--port 8740] [--open]      # then http://127.0.0.1:8740/
+```
+
+A live page of each enabled host and this Mac, with five minutes of history:
+
+- CPU, split by who uses it: the farm (the trees under its agents: test commands, Relax
+  sessions, the mirror; on a Linux host also the Mac-compile container; on this Mac, Rerail's
+  builds), the fleet's jobs (their containers), the machine's own load, and idle. The split
+  divides the machine's measured ticks; it never adds to them.
+- GPU busy % and memory (ioreg's statistics on a Mac, `nvidia-smi` on a Linux host).
+- Memory available, used and the farm's resident share; disk free, and on a Mac what an
+  important write can have (what macOS purges for it); a disk under 50 GB free shows red.
+- The farm's jobs on each machine (command, checkout, cores, memory), compiles, the fleet's jobs,
+  and whether someone is at it (a Mac's input idle time).
+- Reachability: the dashboard's own connection (and why it failed), and the farm's last health
+  probe (usable or why not, its round trip and the link's measured MB/s); the round trip now,
+  one line each way every 2 seconds over the open connection; the network traffic.
+
+Its cost: one `sampler` per machine, sent over one ssh connection when the dashboard starts and
+ended with it (on its input's end). It sleeps between samples and reads counters the system keeps
+(`/proc` on Linux; on a Mac the processor ticks and libproc, not `ps`, which cost 60 ms of CPU a
+sample); `ioreg` or `nvidia-smi` every 6 seconds, docker every 15. Each line reports what the
+sampler used, shown under each card: 0.3 to 2% of one core (2026-11-19). The dashboard adds no
+health probe: it reads the farm's records. The page and its data stay on 127.0.0.1; the hosts'
+names come from the configuration at run time.
 
 ## No benchmark leases
 

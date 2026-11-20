@@ -1,7 +1,8 @@
-//! A relation's name, interned for the process: one allocation per distinct name, shared by every atom that names
+//! A relation's name, interned for the shared object (decision 0442): one allocation per distinct name, shared by every atom that names
 //! it. A program is copied whole by several passes (the front, lowered and split forms, a run's parts), and its
 //! relation names were a `String` each, copied with every atom; names compared byte by byte where they are equal
-//! only when they are the same name. A `Name` clones by a count, and two compare equal by address.
+//! only when they are the same name. A `Name` clones by a count, and two compare equal by address, or (two
+//! objects' names, or one a static kept) by their text.
 //!
 //! It reads as the `str` it holds (`Deref`, `Borrow<str>`, `Display`, a `Debug` like a `String`'s), hashes and
 //! orders as that `str`, so a set or map of names keeps the order and lookups by `&str` a set of `String`s had.
@@ -10,12 +11,12 @@ use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct Name(Arc<str>);
 
-/// The process's names, in shards chosen by the text's hash: one text always lands in one shard, so a name stays one
+/// The shared object's names, in shards chosen by the text's hash: one text always lands in one shard, so a name stays one
 /// allocation, and the pool's threads lowering and simplifying programs at once mostly take different locks (one lock
 /// for the process was 6% of a cold batch's samples, most of it waiting). An entry no name holds any more (its count
 /// one: the table's own) goes when its shard has doubled since its last sweep, so a long-lived process preparing many
@@ -27,17 +28,28 @@ struct Table {
 
 const SHARDS: usize = 64;
 
-fn table(text: &str) -> &'static Mutex<Table> {
-    static TABLE: OnceLock<Vec<Mutex<Table>>> = OnceLock::new();
-    let shards = TABLE.get_or_init(|| (0..SHARDS).map(|_| Mutex::new(Table { names: HashSet::default(), swept_at: 1 << 10 })).collect());
+struct Tables(Vec<Mutex<Table>>);
+
+impl Default for Tables {
+    fn default() -> Self {
+        Tables((0..SHARDS).map(|_| Mutex::new(Table { names: HashSet::default(), swept_at: 1 << 10 })).collect())
+    }
+}
+
+/// `f` of the shard `text` lands in, of the shared object's names (lent: the pool's threads write no shared count).
+fn with_table<R>(text: &str, f: impl FnOnce(&Mutex<Table>) -> R) -> R {
     let mut h = rustc_hash::FxHasher::default();
     text.hash(&mut h);
-    &shards[(h.finish() >> 32) as usize % SHARDS]
+    rerail_context::with_shared::<Tables, _>(|shards| f(&shards.0[(h.finish() >> 32) as usize % SHARDS]))
 }
 
 impl Name {
     pub fn new(text: &str) -> Name {
-        let mut t = table(text).lock().expect("the names");
+        with_table(text, |table| Self::in_table(table, text))
+    }
+
+    fn in_table(table: &Mutex<Table>, text: &str) -> Name {
+        let mut t = table.lock().expect("the names");
         if let Some(found) = t.names.get(text) {
             return Name(Arc::clone(found));
         }
@@ -82,8 +94,8 @@ impl Borrow<str> for Name {
 
 impl PartialEq for Name {
     fn eq(&self, other: &Name) -> bool {
-        // Interned: one name, one address.
-        Arc::ptr_eq(&self.0, &other.0)
+        // Interned: one name, one address in one object's table; names of two tables (or a static's) by their text.
+        Arc::ptr_eq(&self.0, &other.0) || *self.0 == *other.0
     }
 }
 

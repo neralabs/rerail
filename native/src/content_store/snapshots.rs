@@ -1,7 +1,9 @@
 //! Git tree and snapshot storage.
 
-use super::compression::{compress_source, compress_tape, file_tag};
-use super::objects::{compress_documents, put_source_tx, put_tape_tx, validate_tape_payload};
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
+use super::object_segments::Placing;
+use super::objects::{put_source_tx, put_tape_tx, validate_tape_payload};
 #[cfg(any(test, feature = "test-hooks"))]
 use super::rows::intern_string;
 use super::rows::{
@@ -394,50 +396,45 @@ impl ContentStore {
                 "snapshot publication batch must contain 1 to {MAX_PUBLICATION_BATCH} files"
             )));
         }
-        let mut prepared = Vec::with_capacity(publications.len());
+        // Every file's source, tape and derived documents' sources and tapes, as they are, in one segment: entry
+        // `entries[f]..` of file `f` (its source, its tape, then each document's source and tape).
+        let mut bytes: Vec<&[u8]> = Vec::new();
+        let mut entries = Vec::with_capacity(publications.len());
         for publication in publications {
             validate_relative_path(publication.path)?;
             validate_tape_payload(publication.tape)?;
-            let source_frame = compress_source(
-                publication.source,
-                self.compression_level,
-                file_tag(publication.path, publication.tape.map(|tape| tape.bytes)),
-            )?;
-            let tape_frame = publication
-                .tape
-                .map(|payload| compress_tape(payload.bytes, self.compression_level))
-                .transpose()?;
-            let document_frames = publication
-                .tape
-                .map(|payload| compress_documents(payload.documents, self.compression_level))
-                .transpose()?
-                .unwrap_or_default();
-            prepared.push((publication, source_frame, tape_frame, document_frames));
+            entries.push(bytes.len());
+            bytes.push(publication.source);
+            if let Some(tape) = publication.tape {
+                bytes.push(tape.bytes);
+                for document in tape.documents {
+                    bytes.push(document.source);
+                    bytes.push(document.tape);
+                }
+            }
         }
+        let mut placing = Placing::write(&self.database_path, &bytes)?;
         let mut connection = self
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction =
-            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
-        let mut stored = Vec::with_capacity(prepared.len());
-        for (publication, source_frame, tape_frame, document_frames) in prepared {
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let seg = placing.number(&transaction)?.expect("the files, placed");
+        let place = |i: usize| placing.place(seg, i);
+        let mut stored = Vec::with_capacity(publications.len());
+        for (publication, &at) in publications.iter().zip(&entries) {
             let source_id = put_source_tx(
                 &transaction,
                 publication.source,
-                &source_frame,
+                place(at),
                 publication.aliases,
             )?;
-            let tape_id = match (publication.tape, tape_frame.as_deref()) {
-                (Some(payload), Some(frame)) => Some(put_tape_tx(
-                    &transaction,
-                    source_id,
-                    payload,
-                    frame,
-                    &document_frames,
-                )?),
-                (None, None) => None,
-                _ => unreachable!("tape frame follows tape payload"),
+            let tape_id = match publication.tape {
+                Some(payload) => {
+                    let documents = (0..payload.documents.len()).map(|d| (place(at + 2 + 2 * d), place(at + 3 + 2 * d))).collect::<Vec<_>>();
+                    Some(put_tape_tx(&transaction, source_id, payload, place(at + 1), &documents)?)
+                }
+                None => None,
             };
             let path_id = intern_path(&transaction, publication.path)?;
             transaction.execute_cached(
@@ -451,6 +448,8 @@ impl ContentStore {
             });
         }
         self.commit(transaction)?;
+        drop(connection);
+        placing.name(Some(seg))?;
         Ok(stored)
     }
 }

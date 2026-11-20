@@ -521,7 +521,7 @@ export interface NativeBinding {
    * other platform. A binary built before it lacks it.
    */
   pathsOwnedByCurrentUser?(paths: string[]): boolean;
-  /** The content-store file name this binary's store schema owns (`content-v6.sqlite` at store floor 6). */
+  /** The content-store file name this binary's store schema owns (`content-v9.sqlite` at store floor 9). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;

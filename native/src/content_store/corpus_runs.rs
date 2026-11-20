@@ -76,7 +76,7 @@ pub struct CorpusKept {
     pub evicted: usize,
     /// Bytes the protected manifests hold.
     pub protected_bytes: u64,
-    /// Bytes the other kept manifests hold alone.
+    /// Bytes the other kept manifests hold alone, with the ended workspaces' aged bytes (decision 0450 step 3).
     pub history_bytes: u64,
     /// Entries of `corpus_live` removed.
     pub unlived: usize,
@@ -137,7 +137,7 @@ fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>>
 }
 
 /// Whether no process `pid` exists on this host.
-fn process_gone(pid: i32) -> bool {
+pub(super) fn process_gone(pid: i32) -> bool {
     if pid <= 0 || pid as u32 == std::process::id() {
         return false;
     }
@@ -673,8 +673,8 @@ impl ContentStore {
             let mut live = HashSet::new();
             {
                 let mut rows = tx.prepare(
-                    "SELECT l.source_id, l.grammar_version, l.tape_format, coalesce(CASE WHEN s.seg != 0 THEN s.seg_len ELSE length(s.frame) END, 0), \
-                     coalesce((SELECT CASE WHEN t.seg != 0 THEN t.seg_len ELSE length(t.frame) END FROM tape_objects t WHERE t.source_id=l.source_id \
+                    "SELECT l.source_id, l.grammar_version, l.tape_format, coalesce(s.seg_len, 0), \
+                     coalesce((SELECT t.seg_len FROM tape_objects t WHERE t.source_id=l.source_id \
                                AND t.grammar_version=l.grammar_version AND t.tape_format_version=l.tape_format), 0) \
                      FROM corpus_live l LEFT JOIN source_objects s ON s.source_id=l.source_id",
                 )?;
@@ -708,7 +708,38 @@ impl ContentStore {
                 present = manifests.iter().filter(|m| !gone_roots.contains(&m.root)).map(Manifest::clone).collect();
                 &present
             };
-            let decided = decide(considered, &sizes, policy, now);
+            let mut aged = Aged {
+                bytes: tx.query_row(
+                    "SELECT coalesce(sum(aged_bytes),0) FROM store_sessions WHERE kind IN (?1,?2) AND ended IS NOT NULL",
+                    [super::reclamation::SESSION_WORKSPACE, super::reclamation::SESSION_PINS],
+                    |r| r.get::<_, i64>(0),
+                )? as u64,
+                ..Aged::default()
+            };
+            {
+                let mut rows = tx.prepare(
+                    "SELECT f.source_id, t.source_id, t.grammar_version, t.tape_format_version FROM workspaces w \
+                     JOIN snapshot_files f ON f.snapshot_id=w.snapshot_id LEFT JOIN tape_objects t ON t.tape_id=f.tape_id \
+                     WHERE w.state_id=2 \
+                     UNION SELECT v.source_id, t.source_id, t.grammar_version, t.tape_format_version FROM workspaces w \
+                     JOIN workspace_overlay v ON v.workspace_id=w.workspace_id LEFT JOIN tape_objects t ON t.tape_id=v.tape_id \
+                     WHERE w.state_id=2 \
+                     UNION SELECT CASE p.object_kind_id WHEN ?2 THEN p.object_id END, t.source_id, t.grammar_version, t.tape_format_version \
+                     FROM store_sessions e JOIN object_pins p ON p.owner_string_id=e.key \
+                     LEFT JOIN tape_objects t ON p.object_kind_id=?3 AND t.tape_id=p.object_id \
+                     WHERE e.kind=?1 AND e.ended IS NOT NULL",
+                )?;
+                let mut q = rows.query([super::reclamation::SESSION_PINS, super::reclamation::OBJECT_SOURCE, super::reclamation::OBJECT_TAPE])?;
+                while let Some(r) = q.next()? {
+                    if let Some(source) = r.get::<_, Option<i64>>(0)? {
+                        aged.sources.insert(source);
+                    }
+                    if let (Some(s), Some(g), Some(f)) = (r.get(1)?, r.get(2)?, r.get(3)?) {
+                        aged.tapes.insert((s, g, f));
+                    }
+                }
+            }
+            let decided = decide(considered, &sizes, policy, now, &aged);
             let kept_ids: HashSet<i64> = decided.kept.iter().copied().collect();
             let mut keep_live: HashSet<(i64, i64, i64)> = HashSet::new();
             let mut keep_plans: BTreeSet<Vec<u8>> = BTreeSet::new();
@@ -717,7 +748,7 @@ impl ContentStore {
             }
             // A plan is live while a root's protected runs name it (or a run holds it). A kept manifest past them
             // keeps its sources and tapes (any build's warm run reads them), not its plan: a plan names the engine
-            // build and the program, and its memo (decision 0146: a space of frames, the size of every file's
+            // build and the program, and its memo (decision 0146: a space of entries, the size of every file's
             // results) serves only runs of both. Manifests are kept by the bytes of their sources and tapes, which
             // a small corpus never fills, so every build's memo stayed live (1.75 GB of 1.86 GB of frames).
             let mut protection = Protection::over(&manifests);
@@ -738,6 +769,26 @@ impl ContentStore {
                         keep_plans.insert(p?);
                     }
                 }
+            }
+            // Each lane is a store session (decision 0450 §2, kind 2): its protected runs are its latest data, and a lane
+            // none of whose runs is protected ended at its last run. Rewritten by each decision from the kept manifests.
+            {
+                let mut lanes: HashMap<(i64, Option<&[u8]>), (i64, i64, bool)> = HashMap::new();
+                for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
+                    // Newest first: a lane's first manifest is its latest.
+                    let lane = lanes.entry((m.root, m.lane.as_deref())).or_insert((m.id, m.last_time, false));
+                    lane.2 |= protected_ids.contains(&m.id);
+                }
+                let rows: Vec<[Option<i64>; 4]> = lanes
+                    .iter()
+                    .map(|(&(root, lane), &(latest, last, protected))| [Some(lane_session(root, lane)), Some(latest), Some(last), (!protected).then_some(last)])
+                    .collect();
+                tx.execute_cached("DELETE FROM store_sessions WHERE kind=?1", [super::reclamation::SESSION_LANE])?;
+                tx.prepare_cached(
+                    "INSERT INTO store_sessions(kind,key,latest,last_used,ended,aged_bytes) SELECT ?1, json_extract(value,'$[0]'), \
+                     json_extract(value,'$[1]'), json_extract(value,'$[2]'), json_extract(value,'$[3]'), 0 FROM json_each(?2)",
+                )?
+                .execute(params![super::reclamation::SESSION_LANE, serde_json::to_string(&rows).expect("integers")])?;
             }
             let unlive: Vec<&(i64, i64, i64)> = live.iter().filter(|k| !keep_live.contains(k)).collect();
             let evicted: Vec<i64> = manifests.iter().map(|m| m.id).filter(|id| !kept_ids.contains(id)).collect();
@@ -766,26 +817,28 @@ impl ContentStore {
             tx.execute_cached("UPDATE corpus_decided SET run=(SELECT run FROM corpus_state WHERE singleton=1), time=?1 WHERE singleton=1", [now])?;
             // Collection stays due until a pass finds nothing (`collect_corpus_pass`), unless a new manifest came first.
             tx.execute_cached("UPDATE corpus_state SET due=2, history_bytes=?1 WHERE singleton=1 AND due<=1", [decided.history as i64])?;
+            // What it left aged may be archived (decision 0450 step 4).
+            tx.execute_cached("UPDATE corpus_state SET archive_due=1 WHERE singleton=1", [])?;
             Ok(CorpusKept { manifests: decided.kept.len(), evicted: evicted.len(), protected_bytes: decided.protected, history_bytes: decided.history, unlived: unlive.len() })
         })
     }
 
-    /// Whether a keep decision was made since the frames it left unreachable were collected (`sweep_frames`).
-    pub fn frames_sweep_wanted(&self) -> StoreResult<bool> {
+    /// Whether a keep decision was made since the memo entries it left unreachable were collected (`sweep_memo`).
+    pub fn memo_sweep_wanted(&self) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store connection unavailable");
-        Ok(frames_sweep_wanted(&connection)?)
+        Ok(memo_sweep_wanted(&connection)?)
     }
 
-    /// Collects the frames the last keep decision left unreachable (decision 0227), and records that decision as
+    /// Collects the memo entries the last keep decision left unreachable (decision 0227), and records that decision as
     /// swept: one write transaction. What it collected, and the seconds it took; `None` when `stop` interrupted it
     /// (a run began: a progress handler's `SQLITE_INTERRUPT`, the transaction rolled back, the sweep still due).
-    pub fn sweep_frames(&self, stop: impl Fn() -> bool + Send + Sync + 'static) -> StoreResult<Option<(super::frames::Unreachable, f64)>> {
+    pub fn sweep_memo(&self, stop: impl Fn() -> bool + Send + Sync + 'static) -> StoreResult<Option<(usize, f64)>> {
         let stop: std::sync::Arc<dyn Fn() -> bool + Send + Sync> = std::sync::Arc::new(stop);
         // Its writes delete rows and set a mark, naming no atom: a forked process sweeps too (decision 0170).
         super::atoms::mapped(|| {
             let started = std::time::Instant::now();
             let out = self.immediate_transaction_until(std::sync::Arc::clone(&stop), |tx| {
-                let out = super::frames::collect_unreachable_frames(tx)?;
+                let out = super::held::collect_unreachable_memo(tx)?;
                 tx.execute("UPDATE corpus_decided SET swept=run WHERE singleton=1", [])?;
                 Ok(out)
             });
@@ -853,12 +906,12 @@ impl ContentStore {
                 return Ok(pass);
             }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
-            // What the decision left live reaches the frames it keeps; the rest go, by the `frames` upkeep job (a
+            // What the decision left live reaches the memo entries it keeps; the rest go, by the memo sweep (a
             // utility job: soon, behind the run, and finished before the process exits; decision 0227).
             rerail_accel::upkeep::kick();
         }
-        // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is a few
-        // frames (one statement), and one plan a pass left a store's dead builds for as many runs.
+        // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is its
+        // entries' rows (one statement), and one plan a pass left a store's dead builds for as many runs.
         let mut budget = PLAN_ROWS_PER_PASS as usize;
         while budget > 0 {
             let n = self.immediate_transaction(|tx| {
@@ -870,22 +923,15 @@ impl ContentStore {
                     params![plan, PLAN_ROWS_PER_PASS],
                 )?;
                 if (n as i64) < PLAN_ROWS_PER_PASS {
-                    // The plan's per-file memo (decision 0146): its frames' space.
-                    let mut frames_gone = 0;
+                    // The plan's per-file memo (decision 0146): its entries' space.
+                    let mut memo_gone = 0;
                     if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
-                        let space = super::frames::local_space(&digest);
-                        frames_gone += super::frames::drop_memo_space(tx, &space)?;
-                        let frames: i64 = tx.query_row_cached("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
-                        if frames > 0 {
-                            frames_gone = tx.execute_cached("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
-                            tx.execute_cached("DELETE FROM frame_part_used WHERE space = ?1", [&space[..]])?;
-                            tx.execute_cached("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
-                        }
+                        memo_gone = super::held::drop_memo_space(tx, &super::held::local_space(&digest))?;
                     }
                     tx.execute_cached("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
                     tx.execute_cached("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
-                    // A dead plan collected is work done, though its memo is frames now (decision 0146), not rows.
-                    return Ok(n + frames_gone + 1);
+                    // A dead plan collected is work done, though its memo is entries in segments (decision 0240 §4), not rows.
+                    return Ok(n + memo_gone + 1);
                 }
                 Ok(n)
             })?;
@@ -898,8 +944,6 @@ impl ContentStore {
         pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
         // The memo's pack, once the entries collected left most of it unnamed (decision 0240 §4).
         pass.plan_rows += usize::from(self.compact_memo_pack(MEMO_PACK_FLOOR)? > 0);
-        // The frames' segments, once frames written again or collected left most of them unnamed (decision 0295 §4).
-        pass.plan_rows += usize::from(self.compact_frame_segments(MEMO_PACK_FLOOR)? > 0);
         // The tapes' and sources' segments, once files stored again or collected left most of them unnamed (0295 step 5).
         pass.plan_rows += usize::from(self.compact_object_segments(MEMO_PACK_FLOOR)? > 0);
         if !pass.did_work() {
@@ -930,15 +974,26 @@ struct Sizes {
 struct Decided {
     kept: Vec<i64>,
     protected: u64,
+    /// The aged bytes kept: the history's and the ended workspaces' (`Aged`).
     history: u64,
 }
 
+/// What ended workspaces and pin owners hold while they are aged (decision 0450 step 3): one budget holds every store session's aged
+/// data, and theirs is counted first. Its bytes count against the history's marks, and its sources and tapes count for
+/// no manifest again.
+#[derive(Default)]
+struct Aged {
+    bytes: u64,
+    sources: HashSet<i64>,
+    tapes: HashSet<(i64, i64, i64)>,
+}
+
 /// The manifests to keep, `manifests` newest first (the module's rules).
-fn decide(manifests: &[Manifest], sizes: &Sizes, policy: &CorpusPolicy, now: i64) -> Decided {
+fn decide(manifests: &[Manifest], sizes: &Sizes, policy: &CorpusPolicy, now: i64, aged: &Aged) -> Decided {
     let walk = |cap: Option<u64>| -> Decided {
         let mut protection = Protection::over(manifests);
-        let (mut seen_sources, mut seen_tapes) = (HashSet::new(), HashSet::new());
-        let mut out = Decided { kept: Vec::new(), protected: 0, history: 0 };
+        let (mut seen_sources, mut seen_tapes) = (aged.sources.clone(), aged.tapes.clone());
+        let mut out = Decided { kept: Vec::new(), protected: 0, history: aged.bytes };
         for m in manifests {
             let protected = protection.protects(m, policy.protected_runs, policy.protected_lanes);
             if now - m.last_time > policy.backstop_secs {
@@ -980,6 +1035,15 @@ fn decide(manifests: &[Manifest], sizes: &Sizes, policy: &CorpusPolicy, now: i64
     if all.history > policy.high_water { walk(Some(policy.low_water)) } else { all }
 }
 
+/// A corpus lane's store session key (decision 0450 §2, kind 2): the first eight bytes of a digest of its root and
+/// lane, so the key is the lane's durable name.
+fn lane_session(root: i64, lane: Option<&[u8]>) -> i64 {
+    let mut h = Sha256::new();
+    h.update(root.to_le_bytes());
+    h.update(lane.unwrap_or(&[]));
+    i64::from_le_bytes(h.finalize()[..8].try_into().expect("eight bytes"))
+}
+
 /// Sorted ids as delta varints.
 fn encode_ids(ids: &[i64]) -> Vec<u8> {
     let mut out = Vec::with_capacity(ids.len() * 2);
@@ -1000,7 +1064,7 @@ fn encode_ids(ids: &[i64]) -> Vec<u8> {
     out
 }
 
-fn decode_ids(bytes: &[u8]) -> StoreResult<Vec<i64>> {
+pub(super) fn decode_ids(bytes: &[u8]) -> StoreResult<Vec<i64>> {
     let mut out = Vec::new();
     let (mut last, mut d, mut shift) = (0i64, 0u64, 0u32);
     for &b in bytes {
@@ -1035,8 +1099,8 @@ pub fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
     super::write_back::Key::of(&[b"stat_blob", plan])
 }
 
-/// Whether `corpus_decided.run` is past its `swept` on connection `c` (a read: the `frames` job's `due`).
-pub fn frames_sweep_wanted(c: &rusqlite::Connection) -> rusqlite::Result<bool> {
+/// Whether `corpus_decided.run` is past its `swept` on connection `c` (a read: the memo sweep's `due`).
+pub fn memo_sweep_wanted(c: &rusqlite::Connection) -> rusqlite::Result<bool> {
     c.query_row(
         "SELECT run > swept FROM corpus_decided WHERE singleton=1",
         [],

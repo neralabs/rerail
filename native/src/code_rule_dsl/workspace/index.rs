@@ -85,6 +85,8 @@ pub struct RepositoryIndexOptions {
 pub struct WorkspaceIndexTask {
     pub(super) state: Arc<Mutex<WorkspaceState>>,
     pub(super) closed: Arc<AtomicBool>,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    pub(super) shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
     pub options: RepositoryIndexOptions,
 }
 
@@ -100,6 +102,8 @@ impl WorkspaceIndexTask {
         Self {
             state,
             closed,
+            // A test's index runs on the tests' shared object.
+            shared: crate::code_rule_dsl::logic::profile::default_shared(),
             options: RepositoryIndexOptions {
                 max_files: u32::MAX,
                 max_source_bytes: u32::MAX,
@@ -732,7 +736,7 @@ impl WorkspaceIndexTask {
         repository: &git_workspace::GitWorkspace,
         mut index: RepositoryIndex,
     ) -> Result<String> {
-        let Some(_slot) = cpu_slot().try_lock() else {
+        let Some(_slot) = cpu_slot().try_lock_arc() else {
             self.lock()?.repository_index = Some(index);
             return Err(invalid(WORKSPACE_BUSY));
         };
@@ -771,6 +775,7 @@ impl WorkspaceIndexTask {
             let mut apply = WorkspaceApplyTask {
                 state: Arc::clone(&self.state),
                 closed: Arc::clone(&self.closed),
+                shared: Arc::clone(&self.shared),
                 request_json: String::new(),
                 request_buffer: None,
                 request_direct: Some(Request {
@@ -798,6 +803,8 @@ impl Task for WorkspaceIndexTask {
     /// chunk keeps its plan and reports busy, so the host retries.
     fn compute(&mut self) -> Result<String> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
             let (storage, repository, index) = self.take_repository_index()?;
             let index = match index {

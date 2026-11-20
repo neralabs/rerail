@@ -16,40 +16,51 @@ pub fn active() -> bool {
     IN_PHASE_0.with(Cell::get)
 }
 
-/// Construction: files published into the anchor index (`Corpus::put`).
-pub static INDEX_PUBLISH: AtomicU64 = AtomicU64::new(0);
-/// Execution: candidate roots selected from the anchor index (`Corpus::prepare*`).
-pub static ANCHOR_SELECT: AtomicU64 = AtomicU64::new(0);
-/// Construction, nested in `ANCHOR_SELECT` and reported apart from it: anchor plans lowered to SQL
-/// and the SQL prepared.
-pub static ANCHOR_COMPILE: AtomicU64 = AtomicU64::new(0);
-/// Execution: relational sessions, from input rows to their findings (`relational::evaluate_batch`, `relational::evaluate_prepared`).
-pub static RELATIONAL: AtomicU64 = AtomicU64::new(0);
-
-/// Runs `run`, adding the CPU time this thread spent in it to `clock`.
-pub fn timed<T>(clock: &AtomicU64, run: impl FnOnce() -> T) -> T {
-    let started = thread_cpu_nanoseconds();
-    let result = run();
-    clock.fetch_add(thread_cpu_nanoseconds().saturating_sub(started), Ordering::Relaxed);
-    result
+/// A run's phase clocks, in CPU nanoseconds (decision 0442: the run's).
+#[derive(Default)]
+pub struct Clocks {
+    /// Construction: files published into the anchor index (`Corpus::put`).
+    pub index_publish: AtomicU64,
+    /// Execution: candidate roots selected from the anchor index (`Corpus::prepare*`).
+    pub anchor_select: AtomicU64,
+    /// Construction, nested in `anchor_select` and reported apart from it: anchor plans lowered to SQL and the SQL
+    /// prepared.
+    pub anchor_compile: AtomicU64,
+    /// Execution: relational sessions, from input rows to their findings (`relational::evaluate_batch`,
+    /// `relational::evaluate_prepared`).
+    pub relational: AtomicU64,
 }
 
-/// Adds the CPU time this thread spends until the span drops to `clock`.
-pub struct Span<'c> {
-    clock: &'c AtomicU64,
+/// The run's clocks.
+pub fn clocks() -> std::sync::Arc<Clocks> {
+    crate::code_rule_dsl::logic::profile::local::<Clocks>()
+}
+
+/// Which of a run's clocks (`|c| &c.relational`).
+pub type Clock = fn(&Clocks) -> &AtomicU64;
+
+/// Runs `run`, adding the CPU time this thread spent in it to the run's `clock`.
+pub fn timed<T>(clock: Clock, run: impl FnOnce() -> T) -> T {
+    let _span = Span::start(clock);
+    run()
+}
+
+/// Adds the CPU time this thread spends until the span drops to the run's `clock` (the run it started in).
+pub struct Span {
+    clocks: std::sync::Arc<Clocks>,
+    clock: Clock,
     started: u64,
 }
 
-impl<'c> Span<'c> {
-    pub fn start(clock: &'c AtomicU64) -> Self {
-        Self { clock, started: thread_cpu_nanoseconds() }
+impl Span {
+    pub fn start(clock: Clock) -> Self {
+        Self { clocks: clocks(), clock, started: thread_cpu_nanoseconds() }
     }
 }
 
-impl Drop for Span<'_> {
+impl Drop for Span {
     fn drop(&mut self) {
-        self.clock
-            .fetch_add(thread_cpu_nanoseconds().saturating_sub(self.started), Ordering::Relaxed);
+        (self.clock)(&self.clocks).fetch_add(thread_cpu_nanoseconds().saturating_sub(self.started), Ordering::Relaxed);
     }
 }
 
@@ -74,14 +85,15 @@ fn thread_cpu_nanoseconds() -> u64 {
     (user + kernel).as_nanos() as u64
 }
 
-/// The clocks' totals so far, in nanoseconds.
+/// The run's clocks' totals so far, in nanoseconds.
 pub fn snapshot() -> serde_json::Value {
+    let c = clocks();
     serde_json::json!({
-        "indexPublishNanoseconds": INDEX_PUBLISH.load(Ordering::Relaxed),
-        "anchorCompileNanoseconds": ANCHOR_COMPILE.load(Ordering::Relaxed),
-        "anchorSelectNanoseconds": ANCHOR_SELECT
+        "indexPublishNanoseconds": c.index_publish.load(Ordering::Relaxed),
+        "anchorCompileNanoseconds": c.anchor_compile.load(Ordering::Relaxed),
+        "anchorSelectNanoseconds": c.anchor_select
             .load(Ordering::Relaxed)
-            .saturating_sub(ANCHOR_COMPILE.load(Ordering::Relaxed)),
-        "relationalNanoseconds": RELATIONAL.load(Ordering::Relaxed),
+            .saturating_sub(c.anchor_compile.load(Ordering::Relaxed)),
+        "relationalNanoseconds": c.relational.load(Ordering::Relaxed),
     })
 }

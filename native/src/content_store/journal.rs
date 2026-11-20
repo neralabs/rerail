@@ -77,6 +77,13 @@ pub fn current_id() -> u64 {
     fsevents::current_id()
 }
 
+/// Drops this process's streams, as a new process starts with none: its next question is a replay from the cursor
+/// it gives (`observe`'s Q189 test, which moves a stored cursor past an edit as a merged replay does).
+#[cfg(all(test, target_os = "macos"))]
+pub fn forget_streams() {
+    fsevents::forget_streams();
+}
+
 /// A new outermost run begins: a question asked after this is answered with every change made before it (each kept
 /// stream waits for a cookie once, `fsevents::sync`). Runs inside it share its answer.
 pub fn next_epoch() {
@@ -409,7 +416,7 @@ mod fsevents {
         cookie_dir: PathBuf,
         /// The id it was started from: it holds every event after it.
         from: u64,
-        /// The run it was last synchronised for (`EPOCH`), and its cookie's event's id: every change before it has an
+        /// The run it was last synchronised for (the streams' epoch), and its cookie's event's id: every change before it has an
         /// earlier id, and was told before it.
         synced: Option<(u64, u64)>,
         /// Each sync's cookie id, with how many events had come before the cookie: a question from that id is told
@@ -422,7 +429,7 @@ mod fsevents {
     }
 
     // SAFETY: the stream and queue are FSEvents' and libdispatch's handles, usable from any thread; they are only
-    // touched under `LIVE`'s lock.
+    // touched under the streams' lock.
     unsafe impl Send for Live {}
 
     impl Drop for Live {
@@ -438,14 +445,24 @@ mod fsevents {
         }
     }
 
-    static LIVE: Mutex<Vec<Live>> = Mutex::new(Vec::new());
-    /// The outermost run under way (`next_epoch`): a stream is synchronised once for it.
-    static EPOCH: AtomicU64 = AtomicU64::new(0);
+    /// The shared object's streams (decision 0442), and its outermost run under way (`next_epoch`): a stream is
+    /// synchronised once for it.
+    #[derive(Default)]
+    struct Streams(Mutex<Vec<Live>>, AtomicU64);
+
+    fn streams() -> Arc<Streams> {
+        rerail_prof::code_rule_dsl::logic::profile::shared::<Streams>()
+    }
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[cfg(test)]
+    pub(super) fn forget_streams() {
+        streams().0.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
 
     /// A new outermost run: a question after this waits for a cookie of its own, once per stream.
     pub(super) fn next_epoch() {
-        EPOCH.fetch_add(1, Ordering::Relaxed);
+        streams().1.fetch_add(1, Ordering::Relaxed);
     }
 
     /// The cookies' prefix in `cookie_dir`: this process's.
@@ -499,7 +516,7 @@ mod fsevents {
         }
     }
 
-    /// Waits, once for the run (`EPOCH`), until `live` has been told every change made before now: a cookie written
+    /// Waits, once for the run (the streams' epoch), until `live` has been told every change made before now: a cookie written
     /// now has a later id than each, and comes after them. The cookie's id: what it has been told up to it is
     /// complete, so a replay from it misses nothing (and no id need be asked of the system).
     ///
@@ -598,7 +615,8 @@ mod fsevents {
                 _ => groups.push((r, c)),
             }
         }
-        let mut all = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let held = streams();
+        let mut all = held.0.lock().unwrap_or_else(|e| e.into_inner());
         for (root, from) in groups {
             if all.len() >= STREAMS {
                 break;
@@ -629,8 +647,9 @@ mod fsevents {
         if real.len() != roots.len() {
             return Since::Lost { cursor: Some(now()), why: "a root is not readable" };
         }
-        let epoch = EPOCH.load(Ordering::Relaxed);
-        let mut all = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let streams = streams();
+        let epoch = streams.1.load(Ordering::Relaxed);
+        let mut all = streams.0.lock().unwrap_or_else(|e| e.into_inner());
         // A replay whose history lacks its marker is started again, from the same cursor, while `settle` allows.
         let deadline = Instant::now() + settle;
         let mut again: Option<String> = None;
@@ -667,9 +686,10 @@ mod fsevents {
             let t = Instant::now();
             let fresh = all[at].synced.is_none_or(|(e, _)| e != epoch);
             let first = all[at].synced.is_none();
-            // The caller's bound (Q221: what checking its kept answers would cost), else `WAIT`, or a test of the
-            // journal's settle budget for the cookie.
-            let r = sync(&mut all[at], epoch, wait.unwrap_or(WAIT.max(settle)));
+            // The caller's bound (Q184, Q221: no longer than checking what the journal would save), within the
+            // settle window the merge of 0400 gave a stream; else that window. `settle` bounds a replay's restarts
+            // for its marker, not a sync: taken as the sync's wait, every root of a warm run waited for its cookie.
+            let r = sync(&mut all[at], epoch, wait.map_or(WAIT.max(settle), |w| w.min(WAIT.max(settle))));
             if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
                 let live = &all[at];
                 let (n, history, cookie) = live.shared.seen.lock().map(|s| (s.events.len(), s.history_at, s.cookie_at)).unwrap_or((0, None, None));
@@ -704,7 +724,7 @@ mod fsevents {
                     all.remove(at);
                     drop(all);
                     std::thread::sleep(Duration::from_millis(100));
-                    all = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                    all = streams.0.lock().unwrap_or_else(|e| e.into_inner());
                     continue;
                 }
                 // Told live of every change after its cookie: a later question from there is answered by it.

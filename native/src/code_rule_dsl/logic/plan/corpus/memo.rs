@@ -727,7 +727,7 @@ pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(Source
 /// content's and path's, and the entry names both. No source is read. Before the waves, from the store (the
 /// snapshot holds a run's entries only for what its waves look up: `admit_memo_entries`); in them, from the
 /// snapshot, in memory. A hit marks nothing (decision 0227): an entry is kept while its plan is live and a kept
-/// manifest names its content (`collect_unreachable_frames`), not by the runs that read it.
+/// manifest names its content (`collect_unreachable_memo`), not by the runs that read it.
 fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>) -> StoreResult<Vec<(usize, Found)>> {
     let stored = !crate::code_rule_dsl::logic::profile::inside_waves();
     let space = crate::content_store::local_space(&plan_digest(program));
@@ -918,11 +918,14 @@ impl Entry {
 }
 
 /// What the run's memo entries held, by relation (rows, values), and the documents' nodes: counted when profiling,
-/// so the profile names what makes the memo large (t31 A2). Read and cleared by `sizes`.
-static SIZES: std::sync::Mutex<(u64, BTreeMap<String, (u64, u64)>)> = std::sync::Mutex::new((0, BTreeMap::new()));
+/// so the profile names what makes the memo large (t31 A2). Read and cleared by `sizes`. The run's own
+/// (`run::local`, decision 0442).
+#[derive(Default)]
+struct Sizes(std::sync::Mutex<(u64, BTreeMap<String, (u64, u64)>)>);
 
 fn tally<'a>(entries: impl Iterator<Item = &'a Entry>) {
-    let mut sizes = SIZES.lock().expect("the memo's sizes");
+    let sizes = crate::code_rule_dsl::logic::run::local::<Sizes>();
+    let mut sizes = sizes.0.lock().expect("the memo's sizes");
     for entry in entries {
         sizes.0 += entry.nodes;
         for (rel, (width, values)) in &entry.rows {
@@ -935,7 +938,7 @@ fn tally<'a>(entries: impl Iterator<Item = &'a Entry>) {
 
 /// The nodes of the documents remembered, and each relation's (rows, values) over their entries, since the last call.
 pub(super) fn sizes() -> (u64, BTreeMap<String, (u64, u64)>) {
-    std::mem::take(&mut *SIZES.lock().expect("the memo's sizes"))
+    crate::code_rule_dsl::logic::run::local_if_any::<Sizes>().map(|s| std::mem::take(&mut *s.0.lock().expect("the memo's sizes"))).unwrap_or_default()
 }
 
 /// Where a run's memo is: the tape cache's store (decision 0052), or a session's memory (`session::Session`), whose

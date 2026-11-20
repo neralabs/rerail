@@ -289,8 +289,8 @@ pub struct FileState {
     /// Every remaining AST terminal was absent from a complete, error-free selector index.
     /// Its empty result is retained for persistence without restoring the tape.
     pub selector_skipped: bool,
-    pub tape_cache_hit: bool,
-    pub tape_decompressed: bool,
+    /// Its tape (and its documents') was read from the store, in place.
+    pub tape_from_store: bool,
     pub restored_local_results: usize,
     restored_result_ids: HashSet<ClauseId>,
     /// The last evaluation was interrupted (the workspace closed, or the inline deadline passed):

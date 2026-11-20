@@ -736,7 +736,7 @@ pub fn record_copy(asked_by: &mut BTreeMap<String, Vec<BTreeSet<String>>>, heads
 }
 
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
-pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach"];
+pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach", "sorted"];
 
 impl Program {
     /// Whether `.decl rel(…)` carries the qualifier `word` (one of `QUALIFIERS`).
@@ -1002,6 +1002,24 @@ pub const DESCENDANTS: &str = "rr_has_";
 
 /// The prefix of a `nearest(n, a, set)` literal's relation: `rr_nearest_<set>(n, a)` (`plan::lower`).
 pub const NEAREST: &str = "rr_nearest_";
+
+/// The layout of a relation the transducer makes from a kind set (an axis's, or `nearest`'s), `(n, a)` rows, wherever
+/// it is declared (decision 0361 step 5): what the planner sizes it by with the program. `nearest` holds one
+/// ancestor a node; `inside` the few of a set above it; `has` every ancestor of a node of the set, about a tree's
+/// depth. An ancestor column holds a share of the rows' values (a few nodes of the set hold many below them). `None`
+/// for another relation.
+pub fn made_from_a_kind_set(rel: &str) -> Option<Vec<LayoutFact>> {
+    let ancestors = LayoutFact::Values { col: 1, values: Values::OneIn(4) };
+    if rel.starts_with(NEAREST) {
+        Some(vec![LayoutFact::Key(vec![0]), LayoutFact::Local, ancestors])
+    } else if rel.starts_with(AXIS) {
+        Some(vec![LayoutFact::Fanout { from: vec![0], to: vec![1], fan: Fan::About(2) }, LayoutFact::Local, ancestors])
+    } else if rel.starts_with(DESCENDANTS) {
+        Some(vec![LayoutFact::Fanout { from: vec![0], to: vec![1], fan: Fan::About(8) }, LayoutFact::Local, ancestors])
+    } else {
+        None
+    }
+}
 
 /// Whether `rel` is a tree axis's relation, which the transducer makes: `(n, a)` rows.
 pub fn is_axis(rel: &str) -> bool {

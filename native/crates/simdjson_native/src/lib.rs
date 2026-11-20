@@ -46,6 +46,12 @@ pub struct Sink {
     pub code_field: [u16; 36],
     pub code_value: [u8; 36],
     pub digest: [u8; 32],
+    /// Format 16 (decision 0434): where `ev` is set, the walk writes no column but each node's event, three words,
+    /// and calls `flush` with `ev_len` words when `ev_cap` are full and at the end (`rerail_simdjson::events_with`).
+    pub ev: *mut u32,
+    pub ev_len: u32,
+    pub ev_cap: u32,
+    pub flush: unsafe extern "C" fn(*mut Sink),
 }
 
 /// A v9np kernel: simdjson's stage 1 for one of its implementations, the source hashed in it, and our

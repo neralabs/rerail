@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::matcher::{AstMatcher, StopBy};
@@ -205,7 +205,13 @@ thread_local! {
     static PHASE_STACK: RefCell<Vec<(Phase, u128)>> = const { RefCell::new(Vec::new()) };
 }
 
-static ACTIVE_SESSION: LazyLock<Mutex<Option<ProfileSession>>> = LazyLock::new(|| Mutex::new(None));
+/// The apply's profile, for the jobs its pool threads take (`WorkerProfile`): the run's (decision 0442).
+#[derive(Default)]
+struct ActiveSession(Mutex<Option<ProfileSession>>);
+
+fn active_session() -> Arc<ActiveSession> {
+    crate::code_rule_dsl::logic::profile::local::<ActiveSession>()
+}
 
 fn with_profile(f: impl FnOnce(&mut Profile)) {
     PROFILE.with(|profile| {
@@ -302,7 +308,8 @@ impl WorkerProfile {
         if PROFILE.with(|profile| profile.borrow().is_some()) {
             return Self(false);
         }
-        let session = ACTIVE_SESSION
+        let session = active_session()
+            .0
             .lock()
             .expect("profile session mutex poisoned")
             .clone();
@@ -502,7 +509,8 @@ impl ApplyProfile {
             revision,
             ..Profile::default()
         }));
-        *ACTIVE_SESSION
+        *active_session()
+            .0
             .lock()
             .expect("profile session mutex poisoned") = Some(Arc::clone(&session));
         PROFILE.with(|profile| *profile.borrow_mut() = Some(session));
@@ -535,7 +543,8 @@ impl Drop for ApplyProfile {
         }
         navigation::flush();
         let session = PROFILE.with(|profile| profile.borrow_mut().take());
-        *ACTIVE_SESSION
+        *active_session()
+            .0
             .lock()
             .expect("profile session mutex poisoned") = None;
         if let Some(session) = session {

@@ -489,10 +489,9 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
     let dir = temp("supertype");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = f(y)\nreturn g(x)\n").unwrap();
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut backends = vec![ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit];
+    let backends = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit];
     #[cfg(target_os = "macos")]
-    backends.extend([ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit]);
+    let backends = [backends.as_slice(), &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit]].concat();
     let mut reference = None;
     for backend in backends {
         let store = ContentStore::open(&temp("supertype-store").with_extension("sqlite")).unwrap();
@@ -530,11 +529,9 @@ fn the_backends_find_the_same_keys_on_real_files() {
     assert!(paths.len() == 4 || std::env::var_os("RERAIL_S7_FIXTURES").is_some() || std::env::var_os("RERAIL_S7_FILES").is_some(), "{} files", paths.len());
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut stores = vec![dir.clone()];
-
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut backends = vec![("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)];
+    let backends = [("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)];
     #[cfg(target_os = "macos")]
-    backends.extend([("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)]);
+    let backends = [backends.as_slice(), &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)]].concat();
     #[allow(clippy::type_complexity)]
     let mut reference: Option<(Keys, BTreeMap<(String, String), Coverage>)> = None;
     for (name, backend) in backends {

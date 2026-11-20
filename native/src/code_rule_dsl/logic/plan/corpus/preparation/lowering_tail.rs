@@ -1179,7 +1179,7 @@ impl ProgramPass for KindSets {
                 }
             }
         }
-        // `base_relation` for `child` and `node`, the rules gone left out.
+        // `base_relation_derived` for `child` and `node`, the rules gone left out.
         if !need.is_empty() {
             for rel in ["child", "node"] {
                 crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut head.b, rel, heads_of(&gone, rel));

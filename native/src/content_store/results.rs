@@ -1,8 +1,10 @@
 //! Persisted local/context check results, their process-local cache, and completion markers.
 
 use super::rows::{hash_params, intern_hash};
+use super::object_segments::{object_dir, row_frame};
+use super::segments::SegmentMaps;
 use super::{
-    CODEC_ZSTD, CandidateCatalogIdentity, CandidateClause, ContentStore, DirectoryReuse, HashKey,
+    CandidateCatalogIdentity, CandidateClause, ContentStore, DirectoryReuse, HashKey, ObjectBytes,
     SourceId, StoreError, StoreResult, StoredLocalResult, WorkspaceCompletion, WorkspaceId,
 };
 #[allow(unused_imports)]
@@ -100,6 +102,8 @@ impl ContentStore {
             return Ok(results);
         }
         let mut loaded = HashMap::<(HashKey, HashKey), Vec<StoredLocalResult>>::new();
+        let mut gone = HashSet::<(HashKey, HashKey)>::new();
+        let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let connection = self
             .connection
             .lock()
@@ -122,7 +126,7 @@ impl ContentStore {
                 ") SELECT q.source_algorithm,q.source_lane0,q.source_lane1,q.source_lane2,q.source_lane3,\
                  q.context_algorithm,q.context_lane0,q.context_lane1,q.context_lane2,q.context_lane3,\
                  ph.algorithm_id,ph.lane0,ph.lane1,ph.lane2,ph.lane3,cs.value,\
-                 r.codec_id,r.raw_length,r.frame \
+                 r.seg,r.seg_at,r.seg_len \
                  FROM requested q CROSS JOIN hashes sh ON sh.algorithm_id=q.source_algorithm \
                  AND sh.lane0=q.source_lane0 AND sh.lane1=q.source_lane1 AND sh.lane2=q.source_lane2 \
                  AND sh.lane3=q.source_lane3 CROSS JOIN source_objects so ON so.canonical_hash_id=sh.hash_id \
@@ -159,21 +163,22 @@ impl ContentStore {
                             },
                             clause: row.get(15)?,
                         },
-                        row.get::<_, i64>(16)?,
-                        row.get::<_, i64>(17)?,
-                        row.get::<_, Vec<u8>>(18)?,
+                        [row.get::<_, i64>(16)?, row.get::<_, i64>(17)?, row.get::<_, i64>(18)?],
                     ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
-            for (key, candidate, codec, raw_length, frame) in rows {
-                let bytes = decode_local_result(codec, raw_length, frame)?;
-                loaded
-                    .entry(key)
-                    .or_default()
-                    .push(StoredLocalResult { candidate, bytes });
+            for (key, candidate, [seg, at, len]) in rows {
+                match result_bytes(&mut maps, seg, at, len) {
+                    Some(bytes) => loaded.entry(key).or_default().push(StoredLocalResult { candidate, bytes }),
+                    None => {
+                        gone.insert(key);
+                    }
+                }
             }
         }
         drop(connection);
+        // A file whose result's segment is gone is a miss: its results are computed again.
+        loaded.retain(|key, _| !gone.contains(key));
         let mut cache = self
             .local_result_cache
             .lock()
@@ -198,7 +203,7 @@ impl ContentStore {
                 .expect("content store mutex poisoned");
             let mut statement = connection.prepare(
                 "SELECT h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3,s.value,\
-                 r.codec_id,r.raw_length,r.frame \
+                 r.seg,r.seg_at,r.seg_len \
                  FROM context_check_results r \
                  JOIN hashes ch ON ch.hash_id=r.context_hash_id \
                  JOIN candidate_checks c ON c.check_id=r.check_id \
@@ -235,22 +240,20 @@ impl ContentStore {
                                 },
                                 clause: row.get(5)?,
                             },
-                            row.get::<_, i64>(6)?,
-                            row.get::<_, i64>(7)?,
-                            row.get::<_, Vec<u8>>(8)?,
+                            [row.get::<_, i64>(6)?, row.get::<_, i64>(7)?, row.get::<_, i64>(8)?],
                         ))
                     },
                 )?
                 .collect::<Result<Vec<_>, _>>()?
         };
-        rows.into_iter()
-            .map(|(candidate, codec, raw_length, frame)| {
-                Ok(StoredLocalResult {
-                    candidate,
-                    bytes: decode_local_result(codec, raw_length, frame)?,
-                })
-            })
-            .collect()
+        // A result whose segment is gone makes the file's results a miss: none.
+        let mut maps = SegmentMaps::new(object_dir(&self.database_path));
+        let mut out = Vec::with_capacity(rows.len());
+        for (candidate, [seg, at, len]) in rows {
+            let Some(bytes) = result_bytes(&mut maps, seg, at, len) else { return Ok(Vec::new()) };
+            out.push(StoredLocalResult { candidate, bytes });
+        }
+        Ok(out)
     }
 
     pub fn complete_workspace_revision(
@@ -373,17 +376,8 @@ impl ContentStore {
     }
 }
 
-fn decode_local_result(codec: i64, raw_length: i64, frame: Vec<u8>) -> StoreResult<Vec<u8>> {
-    if codec != CODEC_ZSTD {
-        return Err(StoreError::Corrupt(format!(
-            "unsupported local result codec {codec}"
-        )));
-    }
-    let bytes = super::decompress(&frame, 0)?;
-    if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
-        return Err(StoreError::Corrupt(
-            "local result length does not match metadata".to_owned(),
-        ));
-    }
-    Ok(bytes)
+/// A result's bytes where its row names them (`seg`, `seg_at`, `seg_len`), mapped and read in place; `None` when its
+/// segment is gone.
+fn result_bytes(maps: &mut SegmentMaps, seg: i64, at: i64, len: i64) -> Option<ObjectBytes> {
+    row_frame(maps, seg, at, len).map(|frame| ObjectBytes::Mapped(frame.segment().clone()))
 }

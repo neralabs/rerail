@@ -1017,13 +1017,12 @@ pub struct Metrics {
     pub(super) storage_write_nanoseconds: u64,
     pub(super) reused_sources: usize,
     pub(super) reused_tapes: usize,
-    pub(super) compressed_sources: usize,
-    pub(super) compressed_tapes: usize,
+    pub(super) written_sources: usize,
+    pub(super) written_tapes: usize,
     pub(super) restored_tapes: usize,
     pub(super) restored_candidate_files: usize,
-    pub(super) avoided_tape_decompressions: usize,
-    pub(super) tape_cache_hits: usize,
-    pub(super) tape_decompressions: usize,
+    pub(super) avoided_tape_reads: usize,
+    pub(super) tapes_from_store: usize,
     pub(super) restored_local_results: usize,
 }
 
@@ -1074,13 +1073,12 @@ impl Metrics {
         self.storage_write_nanoseconds += other.storage_write_nanoseconds;
         self.reused_sources += other.reused_sources;
         self.reused_tapes += other.reused_tapes;
-        self.compressed_sources += other.compressed_sources;
-        self.compressed_tapes += other.compressed_tapes;
+        self.written_sources += other.written_sources;
+        self.written_tapes += other.written_tapes;
         self.restored_tapes += other.restored_tapes;
         self.restored_candidate_files += other.restored_candidate_files;
-        self.avoided_tape_decompressions += other.avoided_tape_decompressions;
-        self.tape_cache_hits += other.tape_cache_hits;
-        self.tape_decompressions += other.tape_decompressions;
+        self.avoided_tape_reads += other.avoided_tape_reads;
+        self.tapes_from_store += other.tapes_from_store;
         self.restored_local_results += other.restored_local_results;
     }
 }

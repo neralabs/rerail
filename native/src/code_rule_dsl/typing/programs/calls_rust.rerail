@@ -136,7 +136,8 @@ lglob(p, x, m) :- lwalk(p, x, m), modn(m, _), !bound_here(m, x).
 res(p, k, v) :- lfound(p, x, s), item(s, x, k, v).
 res(p, k, v) :- lfound(p, x, s), ures(s, x, k, v).
 res(p, k, v) :- lglob(p, x, m), globx(m, x, k, v).
-res(p, "mod", r) :- kind(p, "crate"), modn(r, "crate").
+// `crate` names the module named `crate`: a join on the name, not a product of two node ranges.
+res(p, "mod", r) :- kind(p, "crate"), text(p, x), modn(r, x).
 res(p, "mod", m) :- kind(p, "self"), field(_, "path", p), nearest(p, m, modk).
 res(p, "mod", m) :- kind(p, "self"), kind(w, "use_wildcard"), child(w, p, 0), nearest(p, m, modk).
 res(p, "mod", par) :- kind(p, "super"), nearest(p, m, modk), modpar(m, par).

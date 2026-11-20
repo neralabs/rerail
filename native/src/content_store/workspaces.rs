@@ -35,6 +35,17 @@ impl WorkspaceRegistration<'_> {
         let root_path_id = intern_path(transaction, self.root)?;
         let repository_id = intern_string(transaction, STRING_REPOSITORY, self.repository)?;
         let owner_id = intern_string(transaction, STRING_OWNER, self.owner)?;
+        // A workspace registered again after it ended (decision 0450 §2) starts a new session: the ended one's overlay
+        // was its own, and goes; its snapshot is released once no workspace names it.
+        transaction.execute_cached(
+            "DELETE FROM workspace_overlay WHERE workspace_id IN (SELECT workspace_id FROM workspaces WHERE root_path_id=?1 AND state_id>=2)",
+            [root_path_id],
+        )?;
+        transaction.execute_cached(
+            "INSERT INTO store_sessions(kind,key,latest,last_used,ended,aged_bytes) VALUES (?1,?2,?3,?4,NULL,0) \
+             ON CONFLICT(kind,key) DO UPDATE SET latest=excluded.latest,last_used=excluded.last_used,ended=NULL,aged_bytes=0",
+            params![super::reclamation::SESSION_WORKSPACE, root_path_id, self.generation, super::unix_seconds()?],
+        )?;
         transaction.execute_cached(
             "INSERT INTO workspaces(root_path_id,repository_string_id,owner_string_id,snapshot_id,generation,lease_until,state_id)\
              VALUES (?1,?2,?3,?4,?5,?6,1)\
@@ -331,7 +342,7 @@ impl ContentStore {
             StoreError::Invalid(format!("workspace leases cannot be encoded: {error}"))
         })?;
         let renew = |transaction: &Connection| {
-            transaction
+            let renewed = transaction
                 .prepare_cached(
                     "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) workspace_id, \
                      json_extract(value,'$[1]') owner FROM json_each(?1)) \
@@ -339,8 +350,15 @@ impl ContentStore {
                      JOIN strings s ON s.domain_id=?3 AND s.value=i.owner \
                      WHERE i.workspace_id=workspaces.workspace_id AND s.string_id=workspaces.owner_string_id)",
                 )?
-                .execute(params![encoded, lease_until, STRING_OWNER])
-                .map_err(StoreError::from)
+                .execute(params![encoded, lease_until, STRING_OWNER])?;
+            // Their store sessions were used now (decision 0450 §2).
+            transaction
+                .prepare_cached(
+                    "UPDATE store_sessions SET last_used=?2 WHERE kind=?3 AND ended IS NULL AND key IN (SELECT w.root_path_id FROM workspaces w \
+                     WHERE w.state_id=1 AND w.lease_until=?4 AND w.workspace_id IN (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) FROM json_each(?1)))",
+                )?
+                .execute(params![encoded, super::unix_seconds()?, super::reclamation::SESSION_WORKSPACE, lease_until])?;
+            Ok(renewed)
         };
         if retried {
             self.immediate_transaction(renew)

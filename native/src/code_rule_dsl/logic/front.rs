@@ -487,6 +487,28 @@ impl Parser<'_> {
                 }
                 prog.kindsets.insert(name, kinds);
             }
+            // `.layout r fanout(q -> v, few)` (decision 0361): facts about r's rows, its columns by their names.
+            "layout" => {
+                let name = self.id()?;
+                let start = self.toks.get(self.i).map(|t| t.1).unwrap_or(self.src.len());
+                self.id()?;
+                self.p("(")?;
+                let mut depth = 1;
+                while depth > 0 {
+                    match self.peek() {
+                        Tok::P("(") => depth += 1,
+                        Tok::P(")") => depth -= 1,
+                        Tok::Eof => return self.fail("a layout's closing parenthesis"),
+                        _ => {}
+                    }
+                    self.i += 1;
+                }
+                let text = &self.src[start..self.toks[self.i - 1].1 + 1];
+                let cols = prog.decls.get(name.as_str()).ok_or_else(|| Error::Syntax(format!("`.layout {name}`: `{name}` is not declared")))?;
+                let col = |w: &str| cols.iter().position(|(c, _)| AsRef::<str>::as_ref(c) == w).ok_or_else(|| format!("`{name}` has no column `{w}`"));
+                let facts = layout_facts(text, &col).map_err(|m| Error::Syntax(format!("`.layout {name} {text}`: {m}")))?;
+                add_layout(prog.layouts.entry(name).or_default(), facts);
+            }
             "policy" => {
                 let text = self.braces()?;
                 let policy = serde_json::from_str(&text).map_err(|e| Error::Syntax(format!("bad .policy document: {e}")))?;
@@ -1294,7 +1316,8 @@ pub fn document_column(relation: &str) -> Option<usize> {
         "source" | "src_line" | "src_line_lf" | "tape_line" | "split_line" | "lf_line" | "line_count" | "parsed"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
         | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),
-        "docof" => Some(1),
+        // Decision 0431: a string's parsed nodes, by the string (its file's node).
+        "docof" | "guest_of" | "guest_place" => Some(1),
         _ => None,
     }
 }

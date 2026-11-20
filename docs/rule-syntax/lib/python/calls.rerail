@@ -1,15 +1,13 @@
-// python/calls: call targets and call chains, from the engine's Python typing program.
+// python/calls: call targets and call chains (the targets: python/points-to, the analysis phase's typing).
 // COPY: Typing-support-final-shape@b193a9209:docs/rule-syntax/lib/python/calls.rerail (the call relations; its type
 // relations are python/types here), with this branch's syntax helpers (posarg skips comments; dexpr).
 //
-// The engine resolves Python calls once, in one program, typing/programs/calls.rerail beside this site. It runs that
-// program over the repository, file by file and then in bounded cross-file rounds, and gives this library its
-// answers as facts keyed by file and span (`typing_calls__*`, one row per answer; each node is its path, kind,
-// start byte and end byte). The rules below join those spans back to this run's nodes. The program runs only when
-// a rule's findings depend on one of these relations; a rule that reads only the syntax helpers does not run it.
-// rrlab does the same: it runs the program over the run's facts first (tools/rrlab/README.md, typing programs).
+// The call targets are python/points-to's: the analysis phase's typing (P3 of decision 0083 §1), rules of the
+// including program's own fixpoint. They read the earlier phases' exports (struct, types), which the engine runs
+// first, so libraries are read by symbol only. A rule that reads only the syntax helpers below leaves them out of
+// its program (pruned), and no phase runs for it.
 //
-// Three-valued, as the program answers:
+// Three-valued:
 //   call_target(c, f) rows and no call_open(c)  -> c calls exactly those f (definite)
 //   call_open(c)                                -> c may call something else too (unknown)
 //   neither                                     -> c calls no workspace function (e.g. `len(x)`)
@@ -29,17 +27,8 @@
 #include "python/imports.rerail"
 // fdef (a def node) comes from python/names.
 
-// ---- the program's answers ----------------------------------------------------------------------------------------
-.decl typing_calls__call_target(c_path: symbol, c_kind: symbol, c_start: number, c_end: number,
-    f_path: symbol, f_kind: symbol, f_start: number, f_end: number)
-.decl typing_calls__call_open(c_path: symbol, c_kind: symbol, c_start: number, c_end: number)
-
-.decl call_target(c: node, f: node)
-call_target(c, f) :- typing_calls__call_target(p, k, s, e, q, j, t, u), doc(d, p, _), node(d, c, k, s, e), doc(g, q, _),
-    node(g, f, j, t, u).
-.decl call_open(c: node)
-call_open(c) :- typing_calls__call_open(p, k, s, e), doc(d, p, _), node(d, c, k, s, e).
-
+// ---- call targets: python/points-to -------------------------------------------------------------------------------
+#include "python/points-to.rerail"
 // ---- call chains ----------------------------------------------------------------------------------------------
 // owner(c, f): f is the nearest enclosing def of call c (a lambda's or a nested class body's calls are the
 // enclosing function's).

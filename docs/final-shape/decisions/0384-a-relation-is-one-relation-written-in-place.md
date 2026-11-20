@@ -1,6 +1,6 @@
 # 0384. A relation is one relation, written in place
 
-Status: decided (2026-11-17), steps 1–6 built (2026-11-18). The user picked it over two other forms: relations of many parts with
+Status: decided (2026-11-17), built (steps 1–8, 2026-11-18). The user picked it over two other forms: relations of many parts with
 an index per part, and nesting only the fixpoint's runs in blocks.
 
 ## Intro
@@ -165,6 +165,54 @@ whole. A relation is never a list of parts that a reader must merge.
    968–971 G, sys 6.3–7.2 s against 6.8–6.9 s, peaks 1.41–1.55 GB against 1.53–1.56 GB. A cold 300-file Metal run:
    no relation merged, no tail moved, the outputs the CPU reference's.
 
+7. **A fork goes on in a continuation of its rows' relation (Q179).** A second relation started from frozen rows
+   whose writer the first took (two runs started from one kept relation at once) was the kept rows shared plus a tail
+   of its own, which a reader binding it merged. It now goes on in a *continuation* of the kept rows' relation
+   (`Relation::try_continue`): a relation in the same block whose ids below `base_rows` are its base's rows and whose
+   own rows come after, its base's descriptor `base_off` bytes from its own. The read was written once, in CLIF:
+   `rel_get` reads an id below `base_rows` in the base when `base_off` is set (one compare and a branch more), and the
+   host's `generated_reads.rs` and the kernels' `relation_reads.metal` are generated from it. So a reader binds a fork
+   as one relation of `base_rows + own` rows (`Rows::one`), nothing merged:
+
+   - its index, the host's (`build_index`) and the device's (`ix_bucket`, which reads by id), is of every id it
+     reads, the base's first (`the_device_reads_a_fork_through_its_base`);
+   - a kills delta of it marks any of its ids;
+   - the base's own writer going on past `base_rows` adds rows the continuation does not read
+     (`a_continuation_reads_its_bases_rows_where_they_lie`);
+   - frozen, it is two segments, the base and its rows, bound as the continuation still, and the next relation
+     started from them takes its writer (step 2);
+   - moved out of a full block (a push past it, or room for the device's rows, step 6) it takes its base's rows
+     with it, as a growth move does, and is a relation of its own from then (`Held::absorbed`;
+     `a_fork_goes_on_in_a_continuation_of_its_rows`).
+
+8. **Every fork stays one relation: a chain of continuations (Q180).** Step 7 required a continuation's base to be
+   a full relation, so a fork of a fork was still merged. Now a continuation may continue another:
+   - **The read walks the chain.** `rel_get` reads an id below `base_rows` in the base, and again in the base's
+     base, until the relation whose own rows hold it: a loop in CLIF, a `while` in the kernels' MSL (which has no
+     recursion). A relation that continues none takes the straight read after one load and one branch. The loop
+     inside it as the only form cost 1.3% more instructions on a cold 300-file CPU run; this form costs fewer than
+     step 6's (980–982 G against 989 G, alternating pairs).
+   - **A `Rows` is one relation or a chain.** Its segments are a relation of its own and continuations each of the
+     one before, the last reading every row (`chain_of`); its tail continues the last. Every way a tail is made
+     keeps it so (`Rows::opened`): a fork's first row; a copy's first row past the rows it shares (`clone`, which
+     made a tail of its own before); and the device's rows past a fork that has no tail yet (`tail_room` opens one,
+     the claim adopts it). Where the block has no room for a continuation, the chain's rows move into a relation
+     of their own with room, as a growth move (`Part::moved_all`).
+   - **Chains stay short.** Past `MAX_SEGMENTS` segments, `freeze` writes the newest two into one continuation of
+     the one before them. These are the small segments a session's edits add, once per `MAX_SEGMENTS` forks of
+     forks, and the chain stays a chain. Before, they were merged into a relation of their own, which broke it.
+     The copy is listed with the merged part (0353 step 6).
+   - **Moved, a continuation takes its whole chain** (`copy_reads`, down its bases).
+
+   `Rows::one` merges now only where a part is appended after rows of another relation (`append_part`), which the
+   device's head rows no longer are (they go into a tail opened past the rows). The profile counts that case under
+   "parts appended after rows of another relation (merged when bound)", and forks under "relations continued from
+   rows another writer went on from (forks)". Tests: `forks_of_forks_stay_one_relation` (ten levels, the
+   compaction, a copy, the device's room, a move), `a_continuation_reads_its_bases_rows_where_they_lie` (a chain,
+   its index), `the_device_reads_a_fork_through_its_base` (a fork of a fork, on the device). Cold 300-file CPU and
+   Metal runs equal the reference, and a one-line edit's run equals a run from scratch on the edited corpus. None
+   of them forked: forks need runs started at once from one kept relation.
+
 Measured on cold 300-file Metal runs over e2's corpus:
 
 | | Merged copies | Copied |
@@ -180,11 +228,11 @@ files, 3 of 3 at 300, and the CPU at 300. The strict 10-file outputs are byte-id
 The instructions retired by a 300-file Metal run went from 797–823 G to 761–779 G, two alternating runs each, at load
 16–22. The peaks are 2.2–2.9 GB on both binaries.
 
-`Rows::one` still merges where a relation is of many parts. That happens when a second relation is started from
-rows whose writer is taken (a fork: two runs started from one kept relation at once), and `freeze` merges segments
-past `MAX_SEGMENTS`, which only forks add. A tail's block with no room no longer makes one (step 6).
+`Rows::one` merges only a part appended after another relation's rows (`append_part`, counted). A fork, and a fork
+of a fork, goes on in a continuation (steps 7 and 8). `freeze` keeps a chain to `MAX_SEGMENTS` segments by writing
+its newest two into one continuation. A tail's block with no room moves the tail (step 6).
 
-None happened in these runs. The profile lists each merge under "rows of many parts merged into one", and counts the
+No merge happened in these runs. The profile lists each merge under "rows of many parts merged into one", and counts the
 heads written into their own tail and the heads given a relation of their own.
 
 ## What it does not change

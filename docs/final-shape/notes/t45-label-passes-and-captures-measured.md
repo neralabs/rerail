@@ -119,3 +119,10 @@ That last row has no span inside it, so where it goes is not yet known.
 Items 1 and 2 are where the run's time is. Items 3–5 cut the device's steps by roughly three quarters, which is
 worth about 40 ms of GPU time a run here. They matter more as the rules grow.
 Separately, `local`'s 0.9–1.8 s of unnamed CPU wants spans before anything is decided about it.
+
+## Outcome (2026-11-18)
+
+All five items were done (decision 0459), and rows were the same throughout. Captures fell from 1.95 s to 0.36 s
+of CPU, and walk steps from 65.8 M to 19.8 M (internal_dead_code) and 19.3 M to 7.4 M (public_api_triples). The
+GPU's label time barely moved: it now follows dispatches and group scans (Q187). The "59 s anomaly" was the
+first run of a new binary compiling the device's shaders.

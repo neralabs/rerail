@@ -107,7 +107,7 @@ pub fn local_check_rows(out: &mut String, checks: &[crate::program::LocalCheck])
 }
 
 /// A local check's words: `mM dD` and its ops (`localcheck`, `reclocal`); a token's check
-/// first `t` (`LocalCheck::token`).
+/// first `t` (`LocalCheck::token`), and `rB` after `dD` where it reads `B` bytes back.
 pub fn local_check_text(c: &crate::program::LocalCheck) -> String {
     use crate::program::LocalOp;
     use std::fmt::Write as _;
@@ -117,6 +117,9 @@ pub fn local_check_text(c: &crate::program::LocalCheck) -> String {
             out.push_str("t ");
         }
         let _ = write!(out, "m{} d{}", c.mask, c.delay);
+        if c.back != 0 {
+            let _ = write!(out, " r{}", c.back);
+        }
         for op in &c.ops {
             let _ = match *op {
                 LocalOp::Bytes(s) => write!(out, " b{:x}.{:x}.{:x}.{:x}", s[0], s[1], s[2], s[3]),
@@ -131,6 +134,7 @@ pub fn local_check_text(c: &crate::program::LocalCheck) -> String {
                 LocalOp::Fill(a, b) => write!(out, " f{a}.{b}"),
                 LocalOp::Start => write!(out, " s"),
                 LocalOp::Last => write!(out, " l"),
+                LocalOp::Ended => write!(out, " e"),
             };
         }
     }

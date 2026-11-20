@@ -156,7 +156,7 @@ fn rule_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             rule_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rr") {
+        } else if path.extension().is_some_and(|e| e == "rerail") {
             out.push(path);
         }
     }
@@ -333,9 +333,9 @@ fn sweep_templates(dir: &Path, key: &str) {
     }
 }
 
-/// The folders beside a store's file that its rows name files in: its atoms' blocks (decision 0401), its tapes' and
-/// sources' segments, its frames' and its memo's (0295).
-const FOLDERS: [&str; 5] = [".atoms", ".facts", ".objects", ".frames", ".memo"];
+/// The folders beside a store's file that its rows name files in: its atoms' and kept facts' blocks (decision 0401),
+/// its tapes' and sources' segments and its memo's (0295).
+const FOLDERS: [&str; 4] = [".atoms", ".facts", ".objects", ".memo"];
 
 /// The folder `suffix` beside the store at `path`.
 fn beside(path: &Path, suffix: &str) -> PathBuf {

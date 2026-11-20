@@ -4,7 +4,7 @@
 pub use rerail_clif::rust::*;
 use std::fmt::Write;
 
-/// Tier 1's source, from a parser compiled with `native_cpu_stream::KEEP_IR`: `tier1_entry_K`
+/// Tier 1's source, from a parser compiled with `native_cpu_codegen::Options::keep_ir`: `tier1_entry_K`
 /// a pass, the record pass's tables as data, `TABLES_DATA`; it ends with its fingerprint,
 /// `SOURCE`.
 /// (Tier 2's is `rust_stream`'s, from the native IR.)

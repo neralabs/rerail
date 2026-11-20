@@ -304,8 +304,9 @@ impl Answerer for Units {
             }
         }
         if wanted("c_pp_expansion") {
-            for (id, name, df, da, f, at, parent) in &facts.expansions {
-                out("c_pp_expansion", &[int(*id), text(name), path(*df), int(*da), path(*f), int(*at), int(*parent)]);
+            for e in &facts.expansions {
+                let ((df, da), (f, at)) = (e.defined, e.called);
+                out("c_pp_expansion", &[int(e.id), text(&e.name), path(df), int(da), path(f), int(at), int(e.parent)]);
             }
         }
         if wanted("c_pp_diag") {

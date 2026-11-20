@@ -1,7 +1,6 @@
 # 0330: A file's start read ahead delays nothing
 
-Status: decided (2026-11-16); landed on the CPU. Metal refuses the new
-operation for now. Part of 0177's token loop, after 0323.
+Status: decided (2026-11-16); landed on the CPU, and on Metal (2026-11-18, below). Part of 0177's token loop, after 0323.
 
 ## Intro
 
@@ -90,10 +89,13 @@ and the token outputs.
   `scalar` cuts it the same way. Each byte analysis follows it as a
   `prev` mirrored: `needs`, `inst_byte_at`, `needs_by_offset`, `bytes_at`,
   `fold`, `on_run_only`. `pad_reach` counts its reach as it does a delay's.
-- **Metal** refuses a program with an `early`
-  (`Error::UnsupportedBackend`), at `run_batch` and in the serial runs, as
-  it refuses a fixed point. It is to be generated as a shift of a file's
-  first lane.
+- **Metal** (2026-11-18) shifts the word: `v >> k` in the generated MSL
+  (`block_program::emit`) and the interpreter (op 17). `a` has no bits past
+  `EARLY_BITS`, Metal's narrowest lane, so they all lie in the file's first
+  lane at every width, and every other lane's word is zero already. Until
+  then Metal refused the program (`starts_late`), and so every grammar
+  whose start reads ahead: C's directives (`rerail-c-directives`' Metal
+  tests failed on it) and the ladder's JSON steps (14, 15).
 - **The prover and the local cones** (`bitlex_prove`, `token_local`) take
   an `early` as free, as they take a carried value: it reads bytes no
   window holds.

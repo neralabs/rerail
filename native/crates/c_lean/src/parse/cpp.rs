@@ -229,15 +229,16 @@ impl<'a> P<'a> {
         // `friend class X;`, `friend X;`.
         let k = usize::from(self.is_word(w::CLASS) || self.is_word(w::STRUCT) || self.is_word(w::UNION));
         if let Some(e) = self.class_name_end(k)
-            && self.kind_at(e) == T::Semi {
-                if k == 1 {
-                    self.kw_any(K::FriendDeclaration)?;
-                }
-                self.class_name(BARE)?;
-                self.tk(K::FriendDeclaration, K::TSemi)?;
-                self.close(n);
-                return Ok(());
+            && self.kind_at(e) == T::Semi
+        {
+            if k == 1 {
+                self.kw_any(K::FriendDeclaration)?;
             }
+            self.class_name(BARE)?;
+            self.tk(K::FriendDeclaration, K::TSemi)?;
+            self.close(n);
+            return Ok(());
+        }
         let _ = level;
         if self.ctor_ahead(Level::Top) {
             self.ctor(Level::Top)?;
@@ -1433,6 +1434,7 @@ impl<'a> P<'a> {
             // `new (T)`: a parenthesized type.
             return self.refuse();
         }
+        // `new const T`: a cv-qualifier before the type, not taken.
         if self.tok().kind == T::Name && matches!(self.tok().word, w::CONST | w::VOLATILE) {
             return self.refuse();
         }

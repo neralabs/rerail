@@ -165,8 +165,8 @@ impl std::fmt::Debug for PackagePublication {
 /// Whether a configured Node range is a subset of a condition's range, by the two ranges' texts
 /// (`Manifest::node_range_is_subset_of`): every manifest with the same range, and every copy of
 /// one, asks the same of each gated rule. Cleared when it holds `NODE_SUBSETS_MAX` answers.
-static NODE_SUBSETS: LazyLock<Mutex<HashMap<(String, String), bool>>> =
-    LazyLock::new(Mutex::default);
+#[derive(Default)]
+struct NodeSubsets(Mutex<HashMap<(String, String), bool>>);
 const NODE_SUBSETS_MAX: usize = 1 << 16;
 
 /// Whether a configured Node range (`None`: eslint-plugin-n's default, as for a file without a
@@ -174,11 +174,13 @@ const NODE_SUBSETS_MAX: usize = 1 << 16;
 pub(crate) fn node_range_is_subset_of(configured: Option<&Range>, range: &Range) -> bool {
     let configured = configured.unwrap_or(&DEFAULT_NODE_RANGE);
     let key = (configured.text().to_owned(), range.text().to_owned());
-    if let Some(&subset) = NODE_SUBSETS.lock().get(&key) {
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<NodeSubsets>();
+    if let Some(&subset) = held_.0.lock().get(&key) {
         return subset;
     }
     let subset = configured.is_subset_of(range);
-    let mut subsets = NODE_SUBSETS.lock();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<NodeSubsets>();
+    let mut subsets = held_.0.lock();
     if subsets.len() >= NODE_SUBSETS_MAX {
         subsets.clear();
     }

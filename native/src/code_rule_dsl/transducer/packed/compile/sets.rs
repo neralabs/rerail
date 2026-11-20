@@ -76,7 +76,7 @@ pub struct DeviceFormula {
     pub texts: Vec<String>,
 }
 
-/// `DeviceFormula`'s operations (`label_formula` in `metal_label_passes.metal`). A test pushes a set; `AND` and
+/// `DeviceFormula`'s operations (`label_formula` in `label_passes.uglykl`). A test pushes a set; `AND` and
 /// `OR` combine the top `arg` sets; an axis step replaces the top set (a chain the top two: through, then to); `arg`
 /// of a step is whether its nodes are named.
 pub mod device_ops {
@@ -338,6 +338,45 @@ impl Set {
             Set::Class(class) if class >= DERIVED_CLASS_BASE && unknown(class - DERIVED_CLASS_BASE) => Set::All,
             test => test,
         })
+    }
+
+    /// This set with each label it reads (from `DERIVED_CLASS_BASE`) renamed by `map` (a clause's labels in its wave).
+    pub fn relabelled(self, map: &dyn Fn(u16) -> u16) -> Self {
+        self.map_tests(&|test| match test {
+            Set::Class(class) if class >= DERIVED_CLASS_BASE => Set::Class(map(class)),
+            test => test,
+        })
+    }
+
+    /// This set with each text test read as every node: a superset, with no slot of the program it came from (a
+    /// slot is its program's, so another walk's anchor would read its own row there; decision 0460).
+    pub fn texts_dropped(self) -> Self {
+        self.map_tests(&|test| match test {
+            Set::Text(_) => Set::All,
+            test => test,
+        })
+    }
+
+    /// The labels this set reads (from `DERIVED_CLASS_BASE`), as their ids.
+    pub fn labels(&self) -> Vec<u16> {
+        let found = std::cell::RefCell::new(Vec::new());
+        self.clone().map_tests(&|test| {
+            if let Set::Class(class) = test
+                && class >= DERIVED_CLASS_BASE
+            {
+                found.borrow_mut().push(class);
+            }
+            test
+        });
+        let mut found = found.into_inner();
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+
+    /// The conjunction of `parts`, flattened (`All` dropped).
+    pub fn all_of(parts: Vec<Self>) -> Self {
+        Self::and(parts)
     }
 
     /// This set with `f` applied to each of its tests (the sets with no operand), its steps kept.

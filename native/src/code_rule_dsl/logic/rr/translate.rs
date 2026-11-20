@@ -9,6 +9,7 @@
 //! | `.decl r(k: t; v: sym) merge @f widen 8` | `.lattice f<symbol> { Lub -> @f }` and `.decl r(k: t, v: f<>) widen 8` |
 //! | `.demand a, b`                           | `.pragma "magic-transform" "a, b"`                         |
 //! | `.kindset k = "a" \| "b"`                | `.decl k(kind: symbol)` and `k("a"). k("b").`              |
+//! | `.layout r fanout(q -> v, few)`          | the same                                                   |
 //! | `@prefix($s, "_")`, `!@prefix(…)`        | `prefix("_", s)`, `!prefix("_", s)` (pattern first)        |
 //! | `@glob($s, {"a", "b"})`                  | `(glob("a", s) ; glob("b", s))`                            |
 //! | `!@glob($s, {"a", "b"})`                 | `!glob("a", s), !glob("b", s)`                             |
@@ -544,6 +545,24 @@ impl Translator<'_> {
             "policy" => {
                 let text = self.braces()?;
                 self.out.push_str(&format!(".policy {text}"));
+            }
+            // `.layout r fanout(…)` (decision 0361's declared shapes) is `.rerail` already: its group as written.
+            "layout" => {
+                let name = self.id()?;
+                let start = self.toks.get(self.i).map_or(self.src.len(), |t| t.1);
+                self.id()?;
+                self.p("(")?;
+                let mut depth = 1;
+                while depth > 0 {
+                    match self.peek() {
+                        Tok::P("(") => depth += 1,
+                        Tok::P(")") => depth -= 1,
+                        Tok::Eof => return self.fail("a layout's closing parenthesis"),
+                        _ => {}
+                    }
+                    self.i += 1;
+                }
+                self.out.push_str(&format!(".layout {name} {}", &self.src[start..self.toks[self.i - 1].2]));
             }
             _ => return self.fail("a directive"),
         }

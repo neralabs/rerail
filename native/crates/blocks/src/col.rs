@@ -7,6 +7,10 @@
 //!   A sorted column with repeats, as a canonical order's leading column is.
 //! - `LINE`: `v - (base + i * slope / 2^16)`, less `rmin`, in `bits` bits (MLDB's `Predictor`): a column that grows
 //!   with its position, as ids in canonical order do.
+//! - `GROUPS` (decision 0456 K2): groups of 128 values, each its own minimum (`bits` bits, less `base`) and width;
+//!   a value is its group's minimum and its residual, packed at the group's width from the group's bit offset (each
+//!   group's width and offset one `rbits`-bit entry). The random-access counterpart of a delta varint: a sorted id
+//!   column's 128 values span a small range, and a group that crosses a document costs that group alone.
 //!
 //! Reads are arithmetic on the words: the same on a GPU, where a column is read for its bandwidth and the extra
 //! instructions to decode it cost nothing.
@@ -19,6 +23,16 @@ pub const CONST: u32 = 0;
 pub const PACK: u32 = 1;
 pub const RUNS: u32 = 2;
 pub const LINE: u32 = 3;
+pub const GROUPS: u32 = 4;
+
+/// A `GROUPS` group's values, as a shift.
+const GROUP_LOG: u32 = 7;
+const GROUP: usize = 1 << GROUP_LOG;
+/// Bits of a group's width in its entry (widths 0..=64), below its offset.
+const WIDTH_BITS: u32 = 7;
+
+/// The encodings' names, by tag.
+pub const TAG_NAMES: [&str; 5] = ["const", "pack", "runs", "line", "groups"];
 
 structure! {
     pub struct IntCol {
@@ -303,6 +317,12 @@ fn line_fit(v: &[i64], slope: i64, bits: u32, lo: i64, hi: i64, sample: (i128, i
     (words(n, lbits), lbits, rlo as i64)
 }
 
+/// The least and greatest of `g` (not empty).
+#[inline]
+fn range_of(g: &[i64]) -> (i64, i64) {
+    g.iter().fold((g[0], g[0]), |(a, b), &x| (a.min(x), b.max(x)))
+}
+
 /// The smallest encoding of `v`: one pass for the range and the runs, one for the line's residuals (when a sample
 /// says the line may win), each in pieces in parallel.
 pub fn choose(v: &[i64]) -> Choice {
@@ -315,16 +335,24 @@ pub fn choose(v: &[i64]) -> Choice {
     let slope = if n > 1 { (((v[n - 1] as i128 - v[0] as i128) << 16) / (n as i128 - 1)) as i64 } else { 0 };
     // The range and the run count in one branch-free pass a piece (vectorized), and the line's residuals at
     // every 64th row (LINE's sample) in the same read.
+    // The range a group at a time (a piece is whole groups): `GROUPS`' widths, summed, and its minima's range come
+    // from the same read.
     let parts = over_pieces(n, |r| {
-        let (a, b) = v[r.clone()].iter().fold((v[r.start], v[r.start]), |(a, b), &x| (a.min(x), b.max(x)));
+        let (mut a, mut b, mut gbits, mut ghi) = (i64::MAX, i64::MIN, 0usize, i64::MIN);
+        for g in v[r.clone()].chunks(GROUP) {
+            let (x, y) = range_of(g);
+            (a, b, ghi) = (a.min(x), b.max(y), ghi.max(x));
+            gbits += g.len() * bits_for((y as i128 - x as i128) as u64) as usize;
+        }
         let from = r.start.max(1);
         let runs = (r.start == 0) as usize + v[from..r.end].iter().zip(&v[from - 1..]).map(|(a, b)| (a != b) as usize).sum::<usize>();
         let sample = (r.start.div_ceil(64) * 64..r.end).step_by(64).map(|i| resid(v, slope, i)).fold((i128::MAX, i128::MIN), |(a, b), d| (a.min(d), b.max(d)));
-        (a, b, runs, sample)
+        (a, b, runs, sample, gbits, ghi)
     });
-    let (lo, hi, nruns, sample) = parts
-        .into_iter()
-        .fold((i64::MAX, i64::MIN, 0, (i128::MAX, i128::MIN)), |(a, b, r, s), (c, d, t, u)| (a.min(c), b.max(d), r + t, (s.0.min(u.0), s.1.max(u.1))));
+    let (lo, hi, nruns, sample, gbits, ghi) = parts.into_iter().fold(
+        (i64::MAX, i64::MIN, 0, (i128::MAX, i128::MIN), 0, i64::MIN),
+        |(a, b, r, s, g, h), (c, d, t, u, gb, gh)| (a.min(c), b.max(d), r + t, (s.0.min(u.0), s.1.max(u.1)), g + gb, h.max(gh)),
+    );
     if lo == hi {
         return Choice { base: lo, ..none };
     }
@@ -333,7 +361,15 @@ pub fn choose(v: &[i64]) -> Choice {
     let rbits = bits_for(n as u64);
     let runs = (words(nruns, bits), words(nruns, rbits));
     let (line_words, lbits, rlo) = line_fit(v, slope, bits, lo, hi, sample);
-    let best = pack_words.min(runs.0 + runs.1).min(line_words);
+    // `GROUPS`: the residuals (two spare words: a group of width 0 at the end reads at the last bit), each group's
+    // minimum less the column's (`lo`, the least of them), and each group's entry (width, offset).
+    let ngroups = n.div_ceil(GROUP);
+    let (gb, eb) = (bits_for((ghi as i128 - lo as i128) as u64), WIDTH_BITS + bits_for(gbits as u64));
+    let groups = (gbits / 64 + 2, words(ngroups, gb) + words(ngroups, eb));
+    let best = pack_words.min(runs.0 + runs.1).min(line_words).min(groups.0 + groups.1);
+    if best == groups.0 + groups.1 && best < pack_words.min(runs.0 + runs.1).min(line_words) {
+        return Choice { tag: GROUPS, bits: gb, rbits: eb, nruns: ngroups as u32, base: lo, slope: 0, rmin: 0, n, data_words: groups.0, runs_words: groups.1 };
+    }
     if best == runs.0 + runs.1 {
         return Choice { tag: RUNS, bits, rbits, nruns: nruns as u32, base: lo, slope: 0, rmin: 0, n, data_words: runs.0, runs_words: runs.1 };
     }
@@ -350,6 +386,7 @@ pub fn write(c: &Choice, v: &[i64], data: &mut [u64], runs: &mut [u64]) {
         CONST => {}
         PACK => pack_resid(data, v, Line { base: c.base, slope: 0, rmin: 0 }, c.bits),
         LINE => pack_resid(data, v, Line { base: c.base, slope: c.slope, rmin: c.rmin }, c.bits),
+        GROUPS => write_groups(c, v, data, runs),
         _ => {
             let counts = over_pieces(v.len(), |r| {
                 let from = r.start.max(1);
@@ -383,6 +420,50 @@ pub fn write(c: &Choice, v: &[i64], data: &mut [u64], runs: &mut [u64]) {
             });
         }
     }
+}
+
+/// `GROUPS`' words: each group's minimum and width (a pass in pieces), their offsets (a prefix sum), then in pieces
+/// in parallel each group's residuals into `data` and its minimum and entry into `runs`.
+fn write_groups(c: &Choice, v: &[i64], data: &mut [u64], runs: &mut [u64]) {
+    let n = v.len();
+    let gs: Vec<(i64, u32)> = over_pieces(n, |r| {
+        v[r].chunks(GROUP)
+            .map(|g| {
+                let (x, y) = range_of(g);
+                (x, bits_for((y as i128 - x as i128) as u64))
+            })
+            .collect::<Vec<_>>()
+    })
+    .concat();
+    let mut offs = Vec::with_capacity(gs.len());
+    let mut at = 0usize;
+    for (k, &(_, w)) in gs.iter().enumerate() {
+        offs.push(at);
+        at += w as usize * GROUP.min(n - k * GROUP);
+    }
+    let (d, s) = (atomics(data), atomics(runs));
+    let entries = words(gs.len(), c.bits) * 64;
+    over_pieces(n, |r| {
+        let (k0, k1) = (r.start >> GROUP_LOG, r.end.div_ceil(GROUP));
+        let mut mins = BitW::new(s, k0 * c.bits as usize, c.bits);
+        let mut ents = BitW::new(s, entries + k0 * c.rbits as usize, c.rbits);
+        for k in k0..k1 {
+            let (gmin, w) = gs[k];
+            if c.bits > 0 {
+                mins.push(gmin.wrapping_sub(c.base) as u64);
+            }
+            ents.push((offs[k] as u64) << WIDTH_BITS | w as u64);
+            if w > 0 {
+                let mut out = BitW::new(d, offs[k], w);
+                for &x in &v[k * GROUP..((k + 1) * GROUP).min(n)] {
+                    out.push(x.wrapping_sub(gmin) as u64);
+                }
+                out.flush();
+            }
+        }
+        mins.flush();
+        ents.flush();
+    });
 }
 
 /// The smallest of the encodings for `v`, packed.
@@ -473,6 +554,7 @@ impl IntCol {
             rmask: mask(self.rbits),
             n: self.n as usize,
             nruns: self.nruns as usize,
+            entries: if self.tag == GROUPS { words(self.nruns as usize, self.bits) * 64 } else { 0 },
             base: self.base,
             slope: self.slope,
             rmin: self.rmin,
@@ -530,7 +612,7 @@ impl IntCol {
     }
 
     pub fn tag_name(&self) -> &'static str {
-        ["const", "pack", "runs", "line"][self.tag as usize]
+        TAG_NAMES[self.tag as usize]
     }
 }
 
@@ -544,6 +626,23 @@ fn rd(words: &[u64], i: usize, bits: u32, mask: u64) -> u64 {
     let (a, b) = unsafe { (*words.get_unchecked(w), *words.get_unchecked(w + 1)) };
     // `b << 1 << (63 - sh)` is `b << (64 - sh)` without a shift by 64 when `sh` is 0.
     ((a >> sh) | ((b << 1) << (63 - sh))) & mask
+}
+
+/// The value of `mask`'s bits at bit `bit` of packed words: `rd` from a bit position.
+#[inline(always)]
+fn rd_bit(words: &[u64], bit: usize, mask: u64) -> u64 {
+    let (w, sh) = (bit >> 6, (bit & 63) as u32);
+    debug_assert!(w + 1 < words.len());
+    // SAFETY: `GROUPS`' words end with two spare ones, so a read at its last bit (a group of width 0 there) is in
+    // bounds; its entries' words end with the spare one `words` gives.
+    let (a, b) = unsafe { (*words.get_unchecked(w), *words.get_unchecked(w + 1)) };
+    ((a >> sh) | ((b << 1) << (63 - sh))) & mask
+}
+
+/// The mask of `w` bits, `w` up to 64: no branch.
+#[inline(always)]
+fn mask_of(w: u32) -> u64 {
+    ((1u128 << w) - 1) as u64
 }
 
 /// The first position in `lo..hi` whose value (`f`, non-decreasing) is not less than `key`. One guess by
@@ -630,6 +729,8 @@ pub struct Dec<'a> {
     rmask: u64,
     n: usize,
     nruns: usize,
+    /// `GROUPS`: the bit where the groups' entries start in `runs`, past their minima.
+    entries: usize,
     base: i64,
     slope: i64,
     rmin: i64,
@@ -659,6 +760,17 @@ impl Dec<'_> {
         let r = if self.bits == 0 { 0 } else { rd(self.data, i, self.bits, self.mask) };
         let t = ((i as i128 * self.slope as i128) >> 16) as i64;
         self.base.wrapping_add(t).wrapping_add(self.rmin).wrapping_add(r as i64)
+    }
+
+    /// `GROUPS`' value `i`: its group's minimum, then its residual at the group's width from the group's offset.
+    #[inline(always)]
+    fn grp(&self, i: usize) -> i64 {
+        let k = i >> GROUP_LOG;
+        let min = rd_bit(self.runs, k * self.bits as usize, self.mask);
+        let e = rd_bit(self.runs, self.entries + k * self.rbits as usize, self.rmask);
+        let w = (e & ((1 << WIDTH_BITS) - 1)) as u32;
+        let r = rd_bit(self.data, (e >> WIDTH_BITS) as usize + (i & (GROUP - 1)) * w as usize, mask_of(w));
+        self.base.wrapping_add(min as i64).wrapping_add(r as i64)
     }
 
     /// Run `k`'s first position (`n` past the last run).
@@ -692,6 +804,7 @@ impl Dec<'_> {
             CONST => self.base,
             PACK => self.val(i),
             RUNS => self.val(self.run_of(i)),
+            GROUPS => self.grp(i),
             _ => self.on_line(i),
         }
     }
@@ -710,6 +823,7 @@ impl Dec<'_> {
                 let (a, b) = self.runs_over(lo, hi);
                 self.start(search(a, b, key, |k| self.val(k))).clamp(lo, hi)
             }
+            GROUPS => search(lo, hi, key, |i| self.grp(i)),
             _ => search(lo, hi, key, |i| self.on_line(i)),
         }
     }
@@ -735,6 +849,10 @@ impl Dec<'_> {
                 let r = search(ra, rb, key, |k| self.val(k));
                 let at = self.start(r).clamp(lo, hi);
                 if r == rb || self.val(r) != key { (at, at) } else { (at, self.start(r + 1).min(hi)) }
+            }
+            GROUPS => {
+                let a = search(lo, hi, key, |i| self.grp(i));
+                if a == hi || self.grp(a) != key { (a, a) } else { (a, upper_from(a, hi, key, |i| self.grp(i))) }
             }
             _ => {
                 let a = search(lo, hi, key, |i| self.on_line(i));
@@ -827,6 +945,84 @@ mod tests {
         }
         let tags: Vec<u32> = cases.iter().map(|v| encode(v).tag).collect();
         assert_eq!(&tags[..3], &[PACK, RUNS, LINE]);
+    }
+
+    /// K-R1 (decision 0456): `GROUPS` reads back every value, is chosen for node ids clustered by document (sorted,
+    /// and in a run's order), and searches as a scan does.
+    #[test]
+    fn groups_reads_every_value() {
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        let mut rnd = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        // Node ids of 300 documents, each 40..2,000 nodes with gaps: `document << 32 | slot << 18 | index`.
+        let mut sorted = Vec::new();
+        for d in 0..300i64 {
+            let mut low = 0i64;
+            for _ in 0..40 + rnd() % 1960 {
+                low += 1 + (rnd() % 3) as i64;
+                sorted.push((d + 17) << 32 | low);
+            }
+        }
+        // The same ids in a run's order: grouped by document, shuffled within each.
+        let mut clustered = sorted.clone();
+        for c in clustered.chunk_by_mut(|a, b| a >> 32 == b >> 32) {
+            for i in (1..c.len()).rev() {
+                c.swap(i, (rnd() as usize) % (i + 1));
+            }
+        }
+        let n = sorted.len();
+        let random: Vec<i64> = (0..3 * PIECE + 5).map(|_| rnd() as i64).collect();
+        let edge: Vec<i64> = (0..1000).map(|i| if i % 128 < 64 { i64::MIN + i } else { i64::MAX - i }).collect();
+        // Sorted: a group's 128 ids span about 256 (9 bits, and its entry); shuffled within a document, about the
+        // document's size (up to 12 bits). An 8-byte cell is 64.
+        for (v, most) in [(&sorted, 12), (&clustered, 15)] {
+            let e = encode(v);
+            assert_eq!(e.tag, GROUPS, "ids clustered by document");
+            assert!(e.bytes() * 8 < most * v.len(), "{} bits a value", e.bytes() * 8 / v.len());
+        }
+        for v in [&sorted, &clustered, &random, &edge] {
+            let c = choose(v);
+            let mut data = vec![0u64; groups_words(v).0];
+            let mut runs = vec![0u64; groups_words(v).1];
+            let g = Choice { tag: GROUPS, data_words: data.len(), runs_words: runs.len(), ..groups_choice(v) };
+            write(&g, v, &mut data, &mut runs);
+            let block = crate::block::Block::anon(crate::block::kind::FACTS, 64 << 20);
+            let p: *mut IntCol = block.alloc_t(1);
+            let e = Encoded { tag: g.tag, bits: g.bits, rbits: g.rbits, nruns: g.nruns, base: g.base, slope: 0, rmin: 0, n: g.n, data, runs };
+            unsafe { IntCol::place(p, &block, &e) };
+            let col = unsafe { &*p };
+            assert!((0..v.len()).all(|i| col.get(i) == v[i]), "groups reads back ({} chose {})", v.len(), TAG_NAMES[c.tag as usize]);
+        }
+        let block = crate::block::Block::anon(crate::block::kind::FACTS, 16 << 20);
+        let p: *mut IntCol = block.alloc_t(1);
+        unsafe { IntCol::place(p, &block, &encode(&sorted)) };
+        let d = unsafe { &*p }.dec();
+        for _ in 0..2000 {
+            let (a, b) = ((rnd() as usize) % (n + 1), (rnd() as usize) % (n + 1));
+            let (lo, hi) = (a.min(b), a.max(b));
+            let key = if rnd() % 2 == 0 && lo < hi { sorted[lo + (rnd() as usize) % (hi - lo)] } else { sorted[(rnd() as usize) % n] + 1 };
+            let want = lo + sorted[lo..hi].partition_point(|&y| y < key);
+            let end = lo + sorted[lo..hi].partition_point(|&y| y <= key);
+            assert_eq!(d.equal_range(lo, hi, key), (want, end), "{lo}..{hi} {key}");
+        }
+    }
+
+    /// `GROUPS`' choice for `v`, whichever encoding `choose` takes.
+    fn groups_choice(v: &[i64]) -> Choice {
+        let (lo, ghi) = v.chunks(GROUP).map(range_of).fold((i64::MAX, i64::MIN), |(a, b), (x, _)| (a.min(x), b.max(x)));
+        let gbits: usize = v.chunks(GROUP).map(|g| { let (x, y) = range_of(g); g.len() * bits_for((y as i128 - x as i128) as u64) as usize }).sum();
+        let ng = v.len().div_ceil(GROUP);
+        let (gb, eb) = (bits_for((ghi as i128 - lo as i128) as u64), WIDTH_BITS + bits_for(gbits as u64));
+        Choice { tag: GROUPS, bits: gb, rbits: eb, nruns: ng as u32, base: lo, slope: 0, rmin: 0, n: v.len(), data_words: gbits / 64 + 2, runs_words: words(ng, gb) + words(ng, eb) }
+    }
+
+    fn groups_words(v: &[i64]) -> (usize, usize) {
+        let c = groups_choice(v);
+        (c.data_words, c.runs_words)
     }
 
     #[test]
