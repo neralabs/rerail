@@ -106,9 +106,9 @@ export interface ScanReport {
   violations: ScanViolation[];
   failures: ScanFailure[];
   /**
-   * The rules on in the checkout that this Rerail does not run: an installed pack writes them in a form it no longer
-   * runs (they test a token parsed files now leave out). Neither a violation nor a failure; the pack's next version runs
-   * them again.
+   * The rules on in the checkouts scanned that this Rerail does not run: an installed pack writes them in a form it no
+   * longer runs (they test a token parsed files now leave out). Neither a violation nor a failure; the pack's next
+   * version runs them again.
    */
   notRun: ScanNotRun[];
   summary: { violations: number; failures: number };
@@ -488,14 +488,25 @@ async function runScanAudits(
     if (paths === null) await router.audit(sessionId, { scope: "repository", mode: "log" });
     else if (paths.length > 0) await router.audit(sessionId, { scope: "touched-files", mode: "log", paths: [...paths] });
     const nothingRan = audits.length === 0 && paths?.length !== 0;
-    const notRun = catalogs.catalog(start).quarantined()
-      .filter(entry => entry.code === READS_LEFT_OUT_TOKEN_CODE)
-      .map(({ ruleId, reason }) => ({ ruleId, reason }));
-    return { audits, unaudited: nothingRan ? unauditedCheckouts(router, start, paths) : [], notRun };
+    return { audits, unaudited: nothingRan ? unauditedCheckouts(router, start, paths) : [], notRun: rulesNotRun(catalogs, start, audits) };
   } finally {
     await router.close();
     catalogs.close();
   }
+}
+
+/**
+ * The rules on that this Rerail does not run in the checkout the scan starts in and in each other checkout it audited (a
+ * submodule's own, say), each named once.
+ */
+function rulesNotRun(catalogs: CheckoutCatalogs, start: string, audits: readonly ScanAudit[]): ScanNotRun[] {
+  const notRun = new Map<string, ScanNotRun>();
+  for (const checkout of new Set([start, ...audits.map(audit => audit.workspaceRoot)])) {
+    for (const { ruleId, reason, code } of catalogs.catalog(checkout).quarantined()) {
+      if (code === READS_LEFT_OUT_TOKEN_CODE && !notRun.has(ruleId)) notRun.set(ruleId, { ruleId, reason });
+    }
+  }
+  return [...notRun.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId));
 }
 
 /**

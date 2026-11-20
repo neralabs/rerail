@@ -293,6 +293,28 @@ describe("headless rerail scan", () => {
     }
   });
 
+  it("names the rules a submodule it audits has on that this Rerail does not run", async () => {
+    const root = checkout();
+    const submodule = checkout();
+    git(root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", submodule, "sub");
+    git(root, "commit", "--quiet", "-m", "Add the submodule");
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const rule = "complexity-cyclomatic-python";
+    installPackDirectory(withOlderTokenRule(repositoryPath("packs", "complexity"), join(home, "older-pack"), rule), "complexity");
+    try {
+      const databasePath = join(home, "rerail.sqlite");
+      setUpTestRepository(root, {}, databasePath);
+      setUpTestRepository(join(root, "sub"), { packs: ["complexity"] }, databasePath);
+
+      const report = await scan(root, { databasePath, paths: ["sub/a.py"] });
+
+      expect({ status: report.status, notRun: report.notRun.map(({ ruleId }) => ruleId) }).toEqual({ status: "completed", notRun: [rule] });
+    } finally {
+      removeInstalledPacks();
+    }
+  });
+
   it("uses the Rerail home's configuration in a copy of a started checkout that no session has recorded", async () => {
     const root = checkout();
     const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));

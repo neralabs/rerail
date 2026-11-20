@@ -238,9 +238,10 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
   The scan adds its own: `rule-left-out` for a rule file at `--rules-ref` that does not load, and
   `checkout-not-audited` for each checkout it meant to audit, when it had files to scan and no audit ran.
-- **`notRun`**: rules on in the checkout that this Rerail does not run, with why: an installed pack's version writes
-  them in a form it no longer runs, and the pack's next version runs them again. They are neither violations nor
-  failures, so they do not fail the scan.
+- **`notRun`**: rules on in the checkouts scanned (the one it starts in, and any other it audited, such as a submodule)
+  that this Rerail does not run, each named once, with why: an installed pack's version writes them in a form it no
+  longer runs, and the pack's next version runs them again. They are neither violations nor failures, so they do not
+  fail the scan.
 
 <details>
 <summary>Exact field semantics</summary>
