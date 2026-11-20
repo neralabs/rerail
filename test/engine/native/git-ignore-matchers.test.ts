@@ -1,0 +1,266 @@
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { GitIgnoreMatchers, type GitIgnoreOpener } from "../../../src/engine/native/git-ignore-matchers.js";
+import { nativeGitAccess } from "../../../src/engine/native/git-access.js";
+import type { NativeGitIgnoreMatcher } from "../../../src/engine/native/native.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
+
+const folders: string[] = [];
+afterEach(async () => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  for (const folder of folders.splice(0)) await removeFolder(folder);
+});
+
+function git(cwd: string, ...args: string[]): void {
+  execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
+}
+
+/**
+ * A committed repository holding a `.gitignore` of `gen/` and a linked worktree beside it, with a home of its own, where
+ * the engine and the matchers both find Git's default excludes file.
+ */
+async function checkout() {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-ignore-matchers-")));
+  folders.push(root);
+  const main = join(root, "main");
+  await mkdir(main);
+  await writeFile(join(main, ".gitignore"), "gen/\n");
+  git(main, "init", "--quiet");
+  git(main, "add", ".");
+  git(main, "commit", "--quiet", "-m", "seed");
+  git(main, "worktree", "add", "--quiet", "--detach", join(root, "linked"));
+  const home = join(root, "home");
+  await mkdir(join(home, "config", "git"), { recursive: true });
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("XDG_CONFIG_HOME", join(home, "config"));
+  // Git and the engine both read the global configuration from here, whatever the host sets up for its own runs.
+  vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, ".gitconfig"));
+  return { root, main, home, linked: await realpath(join(root, "linked")), excludes: join(home, "config", "git", "ignore") };
+}
+
+/** Whether Git folds the case of patterns in `cwd`'s repository: `git init` sets it where file names fold case (Windows, macOS). */
+function foldsCase(cwd: string): boolean {
+  return execFileSync("git", ["config", "--type=bool", "--default=false", "--get", "core.ignoreCase"], { cwd, encoding: "utf8" }).trim() === "true";
+}
+
+/** A path as a configuration value: forward slashes, which Git reads on every platform. */
+function slashed(path: string): string {
+  return path.split("\\").join("/");
+}
+
+/** The process's owner of Git reads with each matcher it opens passed through `wrap`: one object, as the owner is. */
+function wrapping(wrap: (matcher: NativeGitIgnoreMatcher) => NativeGitIgnoreMatcher): () => GitIgnoreOpener {
+  const access = nativeGitAccess();
+  const opener: GitIgnoreOpener = {
+    openGitIgnoreMatcher: root => {
+      const matcher = access.openGitIgnoreMatcher(root);
+      return matcher === null ? null : wrap(matcher);
+    },
+  };
+  return () => opener;
+}
+
+/** A router as a user of the matchers: one object for each name. */
+const users = new Map<string, object>();
+function user(name: string): object {
+  const known = users.get(name) ?? { name };
+  users.set(name, known);
+  return known;
+}
+
+describe("GitIgnoreMatchers", () => {
+  it("shares one matcher for a checkout while nothing it read changed, a configuration change that leaves its rules alone included", async () => {
+    const { main } = await checkout();
+    const opened = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
+    const matchers = new GitIgnoreMatchers();
+    const first = matchers.matcher(main, user("first"));
+    expect(first?.ignored("gen/a.py", false)).toBe(true);
+    expect(matchers.matcher(main, user("second"))).toBe(first);
+    // A configuration change that names no other excludes file and folds no case (an upstream `git push -u` sets).
+    git(main, "config", "branch.main.remote", "origin");
+    expect(matchers.matcher(main, user("third"))).toBe(first);
+    expect(opened).toHaveBeenCalledTimes(1);
+    for (const name of ["first", "second", "third"]) matchers.release(user(name));
+    expect(matchers.size).toBe(0);
+    // Once no router holds it, the matcher and its index are dropped: a later router gets one opened then.
+    expect(matchers.matcher(main, user("later"))).not.toBe(first);
+    expect(opened).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds nothing for a folder outside Git, where no matcher opens", () => {
+    const matchers = new GitIgnoreMatchers(() => ({ openGitIgnoreMatcher: () => null }));
+    expect(matchers.matcher(join(tmpdir(), "outside-git"), user("outside"))).toBeNull();
+    expect(matchers.size).toBe(0);
+  });
+
+  it("opens a fresh matcher for a router when the shared one cannot say whether what it read changed", async () => {
+    const { main } = await checkout();
+    let opens = 0;
+    const matchers = new GitIgnoreMatchers(wrapping(matcher => {
+      opens += 1;
+      return {
+        ignored: (path, directory) => matcher.ignored(path, directory),
+        ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
+        sourcesUnchanged: () => { throw new Error("cannot read the Git configuration"); },
+      };
+    }));
+    const first = matchers.matcher(main, user("first"));
+    expect(matchers.matcher(main, user("second"))).not.toBe(first);
+    expect(opens).toBe(2);
+  });
+
+  it("says once per checkout that a shared matcher cannot tell whether what it read changed, with the error", async () => {
+    const { main, linked } = await checkout();
+    const errors = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const matchers = new GitIgnoreMatchers(wrapping(matcher => ({
+      ignored: (path, directory) => matcher.ignored(path, directory),
+      ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
+      sourcesUnchanged: () => { throw new Error("cannot read the Git configuration"); },
+    })));
+    for (const name of ["first", "second", "third"]) matchers.matcher(main, user(name));
+    for (const name of ["first", "second"]) matchers.matcher(linked, user(name));
+    const said = errors.mock.calls.map(([text]) => String(text)).filter(text => text.includes("cannot tell whether Git ignore rules changed"));
+    expect(said).toHaveLength(2);
+    expect(said.every(text => text.includes("cannot read the Git configuration"))).toBe(true);
+  });
+
+  it("gives a router that held the matcher before a later one took it the index Git rewrote within the time step of the later one's read", async () => {
+    const { main } = await checkout();
+    const index = join(main, ".git", "index");
+    await mkdir(join(main, "gen"));
+    await writeFile(join(main, "gen", "x.py"), "X = 1\n");
+    const matchers = new GitIgnoreMatchers();
+    const earlier = matchers.matcher(main, user("earlier"));
+    expect(earlier?.ignored("gen/x.py", false)).toBe(true);
+    // The index moves on to a whole second (a time every file system keeps exactly), and a later router reads it.
+    await writeFile(join(main, "k.py"), "K = 1\n");
+    git(main, "add", "k.py");
+    const moved = Math.ceil(Date.now() / 1000) + 1;
+    await utimes(index, moved, moved);
+    expect(matchers.matcher(main, user("later"))?.ignored("gen/x.py", false)).toBe(true);
+    // Git writes the index again within that time step: a new file with the same time.
+    git(main, "add", "-f", "gen/x.py");
+    await utimes(index, moved, moved);
+    expect(earlier?.ignored("gen/x.py", false)).toBe(false);
+  });
+
+  it("gives a router that asks after the checkout's .gitignore changed a matcher that follows it, and leaves an earlier one's as it was", async () => {
+    const { main } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const before = matchers.matcher(main, user("before"));
+    expect(before?.ignored("gen/a.py", false)).toBe(true);
+
+    await writeFile(join(main, ".gitignore"), "gen2/\n");
+    const after = matchers.matcher(main, user("after"));
+    expect([after?.ignored("gen/a.py", false), after?.ignored("gen2/a.py", false)]).toEqual([false, true]);
+    // A router keeps the matcher it took for its life, as it kept one of its own.
+    expect([before?.ignored("gen/b.py", false), before?.ignored("gen2/b.py", false)]).toEqual([true, false]);
+    expect(matchers.size).toBe(2);
+    matchers.release(user("before"));
+    expect(matchers.size).toBe(1);
+  });
+
+  it("lets a router that asks again after the checkout's .gitignore changed go of the matcher it held, dropping one no router holds", async () => {
+    const { main } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const first = matchers.matcher(main, user("again"));
+    expect(matchers.matcher(main, user("keeps"))).toBe(first);
+
+    await writeFile(join(main, ".gitignore"), "gen2/\n");
+    const second = matchers.matcher(main, user("again"));
+    expect(second).not.toBe(first);
+    expect(matchers.matcher(main, user("again"))).toBe(second);
+    // The router that took the first one and did not ask again keeps it.
+    expect(matchers.size).toBe(2);
+    matchers.release(user("keeps"));
+    expect(matchers.size).toBe(1);
+  });
+
+  it("follows a nested .gitignore added, changed and removed before a router asks, where the shared matcher last read that folder", async () => {
+    const { linked } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const ask = (name: string, path: string) => matchers.matcher(linked, user(name))?.ignored(path, false);
+    // The first router's question leaves the matcher's walk in pkg/n1, before pkg holds a .gitignore.
+    expect(ask("first", "pkg/n1/x.py")).toBe(false);
+
+    await mkdir(join(linked, "pkg"));
+    await writeFile(join(linked, "pkg", ".gitignore"), "n1/\n");
+    expect([ask("added", "pkg/n1/y.py"), ask("added", "pkg/n2/y.py")]).toEqual([true, false]);
+    await writeFile(join(linked, "pkg", ".gitignore"), "n2/\n");
+    expect([ask("changed", "pkg/n2/y.py"), ask("changed", "pkg/n1/y.py")]).toEqual([true, false]);
+    // Asked from pkg/n1 again, then pkg/.gitignore goes.
+    expect(ask("changed", "pkg/n1/z.py")).toBe(false);
+    await rm(join(linked, "pkg", ".gitignore"));
+    expect([ask("removed", "pkg/n1/z.py"), ask("removed", "pkg/n2/z.py")]).toEqual([false, false]);
+  });
+
+  it("follows info/exclude, Git's default excludes file and the excludes file the configuration names, in a linked worktree", async () => {
+    const { main, linked, excludes, root } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const ask = (name: string, path: string) => matchers.matcher(linked, user(name))?.ignored(path, false);
+    expect(ask("first", "local.py")).toBe(false);
+
+    await writeFile(join(main, ".git", "info", "exclude"), "local.py\n");
+    expect(ask("exclude", "local.py")).toBe(true);
+    await writeFile(excludes, "home.py\n");
+    expect(ask("default", "home.py")).toBe(true);
+    const named = join(root, "named-ignore");
+    await writeFile(named, "");
+    git(main, "config", "core.excludesFile", named);
+    expect(ask("configured", "named.py")).toBe(false);
+    await writeFile(named, "named.py\n");
+    expect(ask("named", "named.py")).toBe(true);
+    // Git folds the case of patterns while core.ignoreCase holds: turned the other way, a later router follows it.
+    const folds = foldsCase(main);
+    expect(ask("named", "GEN/x.py")).toBe(folds);
+    git(main, "config", "core.ignoreCase", String(!folds));
+    expect(ask("turned", "GEN/x.py")).toBe(!folds);
+  });
+
+  it("follows an excludes file the global configuration names in a file it includes, and that file's changes", async () => {
+    const { root, home, linked } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const ask = (name: string, path: string) => matchers.matcher(linked, user(name))?.ignored(path, false);
+    expect(ask("first", "inc/a.py")).toBe(false);
+
+    const named = join(root, "included-ignore");
+    await writeFile(named, "inc/\n");
+    await writeFile(join(home, "inc.gitconfig"), `[core]\n\texcludesFile = ${slashed(named)}\n`);
+    git(linked, "config", "--global", "include.path", slashed(join(home, "inc.gitconfig")));
+    expect(ask("included", "inc/a.py")).toBe(true);
+    await writeFile(named, "inc2/\n");
+    expect([ask("changed", "inc/a.py"), ask("changed", "inc2/a.py")]).toEqual([false, true]);
+  });
+
+  it("follows an excludes file a conditional include of the global configuration names", async () => {
+    const { root, home, linked } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const ask = (name: string, path: string) => matchers.matcher(linked, user(name))?.ignored(path, false);
+    expect(ask("first", "cond/a.py")).toBe(false);
+
+    const named = join(root, "conditional-ignore");
+    await writeFile(named, "cond/\n");
+    await writeFile(join(home, "cond.gitconfig"), `[core]\n\texcludesFile = ${slashed(named)}\n`);
+    // Every Git folder below the test's folder meets the condition, the linked worktree's among them.
+    git(linked, "config", "--global", `includeIf.gitdir:${slashed(root)}/.path`, slashed(join(home, "cond.gitconfig")));
+    expect(ask("conditional", "cond/a.py")).toBe(true);
+  });
+
+  it("follows the file a configuration value names with a comment after it, and that file's changes", async () => {
+    const { home, linked } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const ask = (name: string, path: string) => matchers.matcher(linked, user(name))?.ignored(path, false);
+    await writeFile(join(home, "commented-ignore"), "c1/\n");
+    // A line added by hand to the file Git wrote: Git reads the value up to the comment.
+    git(linked, "config", "--global", "user.name", "Rerail");
+    const config = join(home, ".gitconfig");
+    await writeFile(config, `${await readFile(config, "utf8")}[core]\n\texcludesFile = ~/commented-ignore ; mine\n`);
+    expect([ask("first", "c1/a.py"), ask("first", "c2/a.py")]).toEqual([true, false]);
+    await writeFile(join(home, "commented-ignore"), "c2/\n");
+    expect([ask("changed", "c1/a.py"), ask("changed", "c2/a.py")]).toEqual([false, true]);
+  });
+});
