@@ -38,13 +38,17 @@ pub fn ignored_directory(name: &str) -> bool {
     ignored_directories().iter().any(|ignored| ignored == name)
 }
 
-const BUILTIN_IGNORE: &[u8] = b".git/\nnode_modules/\ntarget/\ntmp/\n__pycache__/\n";
+/// Rerail's records folder (`records_folder`) is among them: Git status leaves a file tracked there
+/// unread, which another account sharing the checkout may not read, and the walk never enters it.
+const BUILTIN_IGNORE: &[u8] =
+    b".git/\nnode_modules/\ntarget/\ntmp/\n__pycache__/\n**/.rerail/sessions/\n";
 const STATUS_EXCLUDES: &[&str] = &[
     ":(glob,exclude)**/.git/**",
     ":(glob,exclude)**/node_modules/**",
     ":(glob,exclude)**/target/**",
     ":(glob,exclude)**/tmp/**",
     ":(glob,exclude)**/__pycache__/**",
+    ":(glob,exclude)**/.rerail/sessions/**",
 ];
 /// The index entry flags with which gix status skips an entry without comparing it to the
 /// worktree (gix-status `index_as_worktree`).
@@ -1061,7 +1065,40 @@ pub fn discover_under(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
     discover_in(root, true)
 }
 
+/// The parts of a repository a discovery reads: the repository, its worktree (canonical), the
+/// ignore rules, and the root's path in the worktree ("" at the top or unscoped).
+struct Discovery {
+    repository: gix::Repository,
+    worktree: PathBuf,
+    ignore: IgnoreRules,
+    scope: String,
+}
+
+/// What a walk of HEAD's tree found: the tree's id, its trees and base files, and its gitlinks.
+struct HeadWalk {
+    tree: gix::ObjectId,
+    trees: Vec<GitTree>,
+    base_files: Vec<BaseFile>,
+    nested_paths: BTreeSet<String>,
+}
+
 fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError> {
+    let (repository, worktree) = open_worktree(root)?;
+    let ignore = load_ignore(&worktree, ignore_case(&repository)?)?;
+    let scope = scope_in(root, &worktree, scoped)?;
+    let found = Discovery {
+        repository,
+        worktree,
+        ignore,
+        scope,
+    };
+    let head = visit_head(&found)?;
+    describe(found, head)
+}
+
+/// The repository holding `root`, opened through the engine's one opener with no filter program,
+/// and its worktree, canonical.
+fn open_worktree(root: &Path) -> Result<(gix::Repository, PathBuf), DiscoveryError> {
     let mut repository = crate::git_access::opener::open(root).map_err(|error| match error {
         crate::git_access::opener::OpenError::NoRepository(message) => {
             DiscoveryError::NoRepository(message)
@@ -1074,153 +1111,370 @@ fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError
         DiscoveryError::Failed("bare Git repositories have no workspace".to_owned())
     })?)
     .map_err(|error| discovery_error("cannot resolve Git worktree", error))?;
-    let case = if repository
+    Ok((repository, worktree))
+}
+
+/// How the repository's `core.ignoreCase` folds the case of paths its ignore rules match.
+fn ignore_case(
+    repository: &gix::Repository,
+) -> Result<gix::ignore::glob::pattern::Case, DiscoveryError> {
+    let fold = repository
         .filesystem_options()
         .map_err(|error| discovery_error("cannot read core.ignoreCase", error))?
-        .ignore_case
-    {
+        .ignore_case;
+    Ok(if fold {
         gix::ignore::glob::pattern::Case::Fold
     } else {
         gix::ignore::glob::pattern::Case::Sensitive
-    };
-    let ignore = load_ignore(&worktree, case)?;
-    let root_tree = repository
+    })
+}
+
+/// Scoped: the root's path in the worktree ("" at the top), whose subtree and status a discovery
+/// reads. Unscoped: "".
+fn scope_in(root: &Path, worktree: &Path, scoped: bool) -> Result<String, DiscoveryError> {
+    if !scoped {
+        return Ok(String::new());
+    }
+    let canonical = dunce::canonicalize(root)
+        .map_err(|error| discovery_error("cannot resolve the root", error))?;
+    Ok(canonical
+        .strip_prefix(worktree)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default())
+}
+
+/// HEAD's tree, walked from the top or, scoped, from its subtree at the scope: a scope where HEAD
+/// holds no tree walks nothing.
+fn visit_head(found: &Discovery) -> Result<HeadWalk, DiscoveryError> {
+    let root_tree = found
+        .repository
         .head_tree()
         .map_err(|error| discovery_error("cannot read HEAD tree", error))?;
     // Status compares the index with this same tree: re-reading HEAD there would miss a commit
     // that lands during the walk, leaving its files clean against blobs of the walked tree.
-    let head_tree = root_tree.id().detach();
-    let root_tree_id = hash_key(head_tree.as_ref())?;
-    let mut trees = Vec::new();
-    let mut base_files = Vec::new();
-    let mut nested_paths = BTreeSet::new();
-    // Scoped: the root's path in the worktree ("" at the top), its subtree, and a pathspec for status.
-    let scope = if scoped {
-        let canonical = dunce::canonicalize(root)
-            .map_err(|error| discovery_error("cannot resolve the root", error))?;
-        canonical
-            .strip_prefix(&worktree)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    } else {
-        String::new()
+    let mut head = HeadWalk {
+        tree: root_tree.id().detach(),
+        trees: Vec::new(),
+        base_files: Vec::new(),
+        nested_paths: BTreeSet::new(),
     };
-    if scope.is_empty() {
+    let start = if found.scope.is_empty() {
+        Some(root_tree)
+    } else {
+        scope_tree(&root_tree, &found.scope)?
+    };
+    if let Some(tree) = start {
         visit_tree(
-            &repository,
-            root_tree,
-            "",
-            &ignore,
-            &mut trees,
-            &mut base_files,
-            &mut nested_paths,
-        )?;
-    } else if let Some(entry) = root_tree
-        .lookup_entry_by_path(&scope)
-        .map_err(|error| discovery_error("cannot read HEAD tree", error))?
-        .filter(|entry| entry.mode().is_tree())
-    {
-        let subtree = entry
-            .object()
-            .map_err(|error| discovery_error("cannot read Git subtree", error))?
-            .try_into_tree()
-            .map_err(|error| discovery_error("Git subtree has the wrong object kind", error))?;
-        visit_tree(
-            &repository,
-            subtree,
-            &scope,
-            &ignore,
-            &mut trees,
-            &mut base_files,
-            &mut nested_paths,
+            &found.repository,
+            tree,
+            &found.scope,
+            &found.ignore,
+            &mut head.trees,
+            &mut head.base_files,
+            &mut head.nested_paths,
         )?;
     }
+    Ok(head)
+}
+
+/// The tree HEAD holds at `scope`, if HEAD holds a tree there.
+fn scope_tree<'repo>(
+    root_tree: &gix::Tree<'repo>,
+    scope: &str,
+) -> Result<Option<gix::Tree<'repo>>, DiscoveryError> {
+    let Some(entry) = root_tree
+        .lookup_entry_by_path(scope)
+        .map_err(|error| discovery_error("cannot read HEAD tree", error))?
+        .filter(|entry| entry.mode().is_tree())
+    else {
+        return Ok(None);
+    };
+    let subtree = entry
+        .object()
+        .map_err(|error| discovery_error("cannot read Git subtree", error))?
+        .try_into_tree()
+        .map_err(|error| discovery_error("Git subtree has the wrong object kind", error))?;
+    Ok(Some(subtree))
+}
+
+/// Runs, once, the hook a test set to commit between the HEAD tree walk and the index read.
+fn after_head_tree_visit() {
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(hook) = AFTER_HEAD_TREE_VISIT.take() {
         hook();
     }
+}
 
-    let mut flags: BTreeMap<String, OverlayFlags> = BTreeMap::new();
-    let index = repository
+/// The rest of a discovery once HEAD's tree is walked: the paths that differ from it, then the
+/// workspace.
+fn describe(found: Discovery, mut head: HeadWalk) -> Result<GitWorkspace, DiscoveryError> {
+    after_head_tree_visit();
+    let index = found
+        .repository
         .index_or_empty()
         .map_err(|error| discovery_error("cannot read Git index", error))?;
-    let status = repository
+    let mut flags = status_flags(&found, &index, &mut head)?;
+    uncompared_flags(&index, &found.ignore, &mut flags)?;
+    checkout_stats(&found.repository, &index, &mut head.base_files)?;
+    workspace(found, head, flags)
+}
+
+/// Rerail's session records folder, `.rerail/sessions` in any folder (`src/runtime/session-paths.ts`).
+const RECORDS_FOLDER: &str = ".rerail/sessions";
+
+/// Whether `path` is a records folder ([`RECORDS_FOLDER`]), its case folded as `case` folds it,
+/// as the built-in ignore and status's pathspec fold theirs. Rerail writes a `.gitignore` of `*`
+/// there, so Git lists nothing in it. On a checkout several accounts share, the folder lets each
+/// other account pass through it and make its own folder there, but not list it, and that
+/// `.gitignore` is its maker's alone: a walk by another account can neither list the folder nor
+/// read that Git ignores what it holds. So no walk enters it, for any account.
+fn records_folder(path: &[u8], case: gix::ignore::glob::pattern::Case) -> bool {
+    let Some(start) = path.len().checked_sub(RECORDS_FOLDER.len()) else {
+        return false;
+    };
+    let (parent, folder) = path.split_at(start);
+    let named = match case {
+        gix::ignore::glob::pattern::Case::Fold => {
+            folder.eq_ignore_ascii_case(RECORDS_FOLDER.as_bytes())
+        }
+        gix::ignore::glob::pattern::Case::Sensitive => folder == RECORDS_FOLDER.as_bytes(),
+    };
+    named && (parent.is_empty() || parent.ends_with(b"/"))
+}
+
+/// What status's walk for untracked files emits, kept as gix's own status keeps it: never an entry
+/// of a type Git cannot track (a socket, a FIFO). Unlike that walk, it never enters a records
+/// folder ([`records_folder`]) nor names one: gix stops a walk at the first folder it cannot list,
+/// where Git warns and goes on.
+struct UntrackedWalk {
+    entries: Vec<gix::dir::Entry>,
+    /// The repository's `core.ignoreCase` folding, which [`records_folder`] applies.
+    case: gix::ignore::glob::pattern::Case,
+}
+
+impl gix::dir::walk::Delegate for UntrackedWalk {
+    fn emit(
+        &mut self,
+        entry: gix::dir::EntryRef<'_>,
+        _collapsed_directory_status: Option<gix::dir::entry::Status>,
+    ) -> gix::dir::walk::Action {
+        if entry.disk_kind != Some(gix::dir::entry::Kind::Untrackable)
+            && !records_folder(&entry.rela_path, self.case)
+        {
+            self.entries.push(entry.to_owned());
+        }
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn can_recurse(
+        &mut self,
+        entry: gix::dir::EntryRef<'_>,
+        for_deletion: Option<gix::dir::walk::ForDeletionMode>,
+        worktree_root_is_repository: bool,
+    ) -> bool {
+        !records_folder(&entry.rela_path, self.case)
+            && entry.status.can_recurse(
+                entry.disk_kind,
+                entry.pathspec_match,
+                for_deletion,
+                worktree_root_is_repository,
+            )
+    }
+}
+
+/// The pathspec of a discovery's status: the scope, if any, then the mandatory excludes.
+fn status_patterns(scope: &str) -> Vec<gix::bstr::BString> {
+    (!scope.is_empty())
+        .then(|| gix::bstr::BString::from(format!(":(top,literal){scope}")))
+        .into_iter()
+        .chain(
+            STATUS_EXCLUDES
+                .iter()
+                .map(|pattern| gix::bstr::BString::from(*pattern)),
+        )
+        .collect()
+}
+
+/// The untracked files and repositories in the worktree under `patterns`, as status lists them:
+/// gix's walk with status's own options and [`UntrackedWalk`] as its delegate, folding case as
+/// `case` does.
+fn untracked_entries(
+    repository: &gix::Repository,
+    index: &gix::index::State,
+    patterns: &[gix::bstr::BString],
+    case: gix::ignore::glob::pattern::Case,
+) -> Result<Vec<gix::dir::Entry>, DiscoveryError> {
+    let options = repository
+        .dirwalk_options()
+        .map_err(|error| discovery_error("cannot prepare Git status", error))?
+        .emit_untracked(gix::dir::walk::EmissionMode::Matching);
+    let mut walk = UntrackedWalk {
+        entries: Vec::new(),
+        case,
+    };
+    let interrupt = std::sync::atomic::AtomicBool::new(false);
+    repository
+        .dirwalk(index, patterns, &interrupt, options, &mut walk)
+        .map_err(|error| discovery_error("cannot read Git status item", error))?;
+    Ok(walk.entries)
+}
+
+/// Each path Git status finds staged or changed in the worktree, with how; its walk for untracked
+/// files is [`untracked_entries`]'s.
+fn changed_items(
+    found: &Discovery,
+    index: &gix::worktree::Index,
+    head_tree: gix::ObjectId,
+    patterns: &[gix::bstr::BString],
+) -> Result<BTreeMap<String, OverlayFlags>, DiscoveryError> {
+    let status = found
+        .repository
         .status(gix::progress::Discard)
         .map_err(|error| discovery_error("cannot prepare Git status", error))?
         .index(gix::worktree::IndexPersistedOrInMemory::Persisted(
             index.clone(),
         ))
-        .untracked_files(gix::status::UntrackedFiles::Files)
+        .untracked_files(gix::status::UntrackedFiles::None)
         .index_worktree_submodules(None)
         .head_tree(head_tree)
-        .into_iter(
-            (!scope.is_empty())
-                .then(|| gix::bstr::BString::from(format!(":(top,literal){scope}")))
-                .into_iter()
-                .chain(
-                    STATUS_EXCLUDES
-                        .iter()
-                        .map(|pattern| gix::bstr::BString::from(*pattern)),
-                ),
-        )
+        .into_iter(patterns.iter().cloned())
         .map_err(|error| discovery_error("cannot read Git status", error))?;
+    let mut flags = BTreeMap::new();
     for item in status {
         let item = item.map_err(|error| discovery_error("cannot read Git status item", error))?;
-        if let gix::status::Item::TreeIndex(gix::diff::index::Change::Rewrite {
-            source_location,
-            copy: false,
-            ..
-        }) = &item
-        {
-            let source = path_string(source_location)?;
-            if !ignored(&ignore, &source) {
-                flags.entry(source).or_default().staged = true;
-            }
-        }
-        let path = path_string(item.location())?;
-        if ignored(&ignore, &path) {
-            continue;
-        }
-        match item {
-            gix::status::Item::TreeIndex(_) => flags.entry(path).or_default().staged = true,
-            gix::status::Item::IndexWorktree(
-                gix::status::index_worktree::Item::DirectoryContents { entry, .. },
-            ) => {
-                if matches!(
-                    entry.disk_kind,
-                    Some(gix::dir::entry::Kind::Directory | gix::dir::entry::Kind::Repository)
-                ) && worktree.join(&path).join(".git").exists()
-                {
-                    nested_paths.insert(path.clone());
-                }
-                flags.entry(path).or_default().untracked = true;
-            }
-            gix::status::Item::IndexWorktree(_) => {
-                flags.entry(path).or_default().worktree = true;
-            }
+        flag_item(&found.ignore, &item, &mut flags)?;
+    }
+    Ok(flags)
+}
+
+/// Flags the source of a staged rename, which status names only as the rename's source.
+fn flag_rename_source(
+    ignore: &IgnoreRules,
+    item: &gix::status::Item,
+    flags: &mut BTreeMap<String, OverlayFlags>,
+) -> Result<(), DiscoveryError> {
+    if let gix::status::Item::TreeIndex(gix::diff::index::Change::Rewrite {
+        source_location,
+        copy: false,
+        ..
+    }) = item
+    {
+        let source = path_string(source_location)?;
+        if !ignored(ignore, &source) {
+            flags.entry(source).or_default().staged = true;
         }
     }
-    // Status never compares these entries with the worktree (assume-unchanged, skip-worktree), so
-    // nothing proves their worktree bytes are the committed ones: they are changed.
+    Ok(())
+}
+
+/// Flags the path a status item names, staged or changed in the worktree, unless Rerail ignores it.
+fn flag_item(
+    ignore: &IgnoreRules,
+    item: &gix::status::Item,
+    flags: &mut BTreeMap<String, OverlayFlags>,
+) -> Result<(), DiscoveryError> {
+    flag_rename_source(ignore, item, flags)?;
+    let path = path_string(item.location())?;
+    if ignored(ignore, &path) {
+        return Ok(());
+    }
+    let flag = flags.entry(path).or_default();
+    match item {
+        gix::status::Item::TreeIndex(_) => flag.staged = true,
+        gix::status::Item::IndexWorktree(_) => flag.worktree = true,
+    }
+    Ok(())
+}
+
+/// Flags each untracked path Rerail does not ignore; an untracked repository's goes to
+/// `nested_paths` too.
+fn flag_untracked(
+    found: &Discovery,
+    entries: Vec<gix::dir::Entry>,
+    flags: &mut BTreeMap<String, OverlayFlags>,
+    nested_paths: &mut BTreeSet<String>,
+) -> Result<(), DiscoveryError> {
+    for entry in entries {
+        let path = path_string(entry.rela_path.as_ref())?;
+        if ignored(&found.ignore, &path) {
+            continue;
+        }
+        if matches!(
+            entry.disk_kind,
+            Some(gix::dir::entry::Kind::Directory | gix::dir::entry::Kind::Repository)
+        ) && found.worktree.join(&path).join(".git").exists()
+        {
+            nested_paths.insert(path.clone());
+        }
+        flags.entry(path).or_default().untracked = true;
+    }
+    Ok(())
+}
+
+/// What status finds changed against HEAD and the index, and each untracked path, from the walk for
+/// untracked files on a thread beside it, as gix's status runs the two.
+fn status_flags(
+    found: &Discovery,
+    index: &gix::worktree::Index,
+    head: &mut HeadWalk,
+) -> Result<BTreeMap<String, OverlayFlags>, DiscoveryError> {
+    let patterns = status_patterns(&found.scope);
+    let walker = found.repository.clone().into_sync();
+    let case = found.ignore.case;
+    let (changes, untracked) = rerail_accel::exec::scoped(|scope| {
+        let walk =
+            scope.spawn(|| untracked_entries(&walker.to_thread_local(), index, &patterns, case));
+        let changes = changed_items(found, index, head.tree, &patterns);
+        // A panic of the walk goes on in this thread, as it would have had the walk run here.
+        let untracked = match walk.join() {
+            Ok(untracked) => untracked,
+            Err(panic) => std::panic::resume_unwind(panic),
+        };
+        (changes, untracked)
+    });
+    let mut flags = changes?;
+    flag_untracked(found, untracked?, &mut flags, &mut head.nested_paths)?;
+    Ok(flags)
+}
+
+/// Status never compares these entries with the worktree (assume-unchanged, skip-worktree), so
+/// nothing proves their worktree bytes are the committed ones: they are changed.
+fn uncompared_flags(
+    index: &gix::index::State,
+    ignore: &IgnoreRules,
+    flags: &mut BTreeMap<String, OverlayFlags>,
+) -> Result<(), DiscoveryError> {
     for entry in index.entries() {
         if !entry.flags.intersects(UNCOMPARED_INDEX_ENTRY) {
             continue;
         }
-        let path = path_string(entry.path(&index))?;
-        if !ignored(&ignore, &path) {
+        let path = path_string(entry.path(index))?;
+        if !ignored(ignore, &path) {
             flags.entry(path).or_default().worktree = true;
         }
     }
-    // The index entry stat of each base file a restore may verify by one `lstat`. A racy entry
-    // (written in the same timestamp tick as the index) proves nothing about later writes, and a
-    // size-preserving conversion makes the checkout bytes differ from the blob's at equal size:
-    // both leave the file to be hashed when restored, as does every file where the system
-    // attributes file cannot be named.
-    if let Some(mut attributes) = conversion_attributes(&repository, &index)? {
-        record_checkout_stats(&mut attributes, &index, &mut base_files)?;
-    }
+    Ok(())
+}
 
-    let mut overlays: Vec<WorkspaceOverlay> = flags
+/// The index entry stat of each base file a restore may verify by one `lstat`. A racy entry
+/// (written in the same timestamp tick as the index) proves nothing about later writes, and a
+/// size-preserving conversion makes the checkout bytes differ from the blob's at equal size: both
+/// leave the file to be hashed when restored, as does every file where the system attributes file
+/// cannot be named.
+fn checkout_stats(
+    repository: &gix::Repository,
+    index: &gix::index::State,
+    base_files: &mut [BaseFile],
+) -> Result<(), DiscoveryError> {
+    if let Some(mut attributes) = conversion_attributes(repository, index)? {
+        record_checkout_stats(&mut attributes, index, base_files)?;
+    }
+    Ok(())
+}
+
+/// Each flagged path as its overlay: untracked, deleted, or staged and changed as status found it.
+fn overlays(worktree: &Path, flags: BTreeMap<String, OverlayFlags>) -> Vec<WorkspaceOverlay> {
+    flags
         .into_iter()
         .map(|(path, flags)| {
             let exists = worktree.join(&path).is_file();
@@ -1237,12 +1491,20 @@ fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError
             };
             WorkspaceOverlay { path, kind }
         })
-        .collect();
-    // A nested checkout (a gitlink or an untracked repository) is judged by its own repository,
-    // never folded into this one; its directory is overlaid so no clean tree claims it.
-    let nested_roots = nested_paths
+        .collect()
+}
+
+/// A nested checkout (a gitlink or an untracked repository) is judged by its own repository, never
+/// folded into this one; its directory is overlaid so no clean tree claims it.
+fn nested_roots(
+    worktree: &Path,
+    ignore: &IgnoreRules,
+    nested_paths: BTreeSet<String>,
+    overlays: &mut Vec<WorkspaceOverlay>,
+) -> Vec<PathBuf> {
+    nested_paths
         .into_iter()
-        .filter(|path| !mandatory_nested_ignored(&ignore, path))
+        .filter(|path| !mandatory_nested_ignored(ignore, path))
         .filter(|path| {
             let root = worktree.join(path);
             root.is_dir() && root.join(".git").exists()
@@ -1256,18 +1518,34 @@ fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError
             }
             worktree.join(path)
         })
-        .collect::<Vec<_>>();
-    let common_directory = repository.common_dir().to_path_buf();
-    let repository_hash_algorithm = hash_algorithm(repository.object_hash())?;
+        .collect()
+}
+
+/// The workspace a discovery found, sorted by path and object identity.
+fn workspace(
+    found: Discovery,
+    head: HeadWalk,
+    flags: BTreeMap<String, OverlayFlags>,
+) -> Result<GitWorkspace, DiscoveryError> {
+    let HeadWalk {
+        tree,
+        mut trees,
+        mut base_files,
+        nested_paths,
+    } = head;
+    let mut overlays = overlays(&found.worktree, flags);
+    let nested_roots = nested_roots(&found.worktree, &found.ignore, nested_paths, &mut overlays);
+    let common_directory = found.repository.common_dir().to_path_buf();
+    let hash_algorithm = hash_algorithm(found.repository.object_hash())?;
+    let root_tree = hash_key(tree.as_ref())?;
     overlays.sort_by(|left, right| left.path.cmp(&right.path));
     trees.sort_by_key(|tree| tree.id);
     base_files.sort_by(|left, right| left.path.cmp(&right.path));
-
     Ok(GitWorkspace {
-        worktree_root: worktree,
+        worktree_root: found.worktree,
         common_directory,
-        hash_algorithm: repository_hash_algorithm,
-        root_tree: root_tree_id,
+        hash_algorithm,
+        root_tree,
         trees,
         base_files,
         overlays,
@@ -1403,6 +1681,213 @@ mod tests {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ))
+    }
+
+    /// Takes away this account's right to list `folder`, as another account has it on a records
+    /// folder several accounts share: it may still pass through and make what it makes there.
+    #[cfg(unix)]
+    fn deny_listing(folder: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o300)).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn allow_listing(folder: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    /// The same on Windows: an entry that denies this account listing `folder` and nothing more.
+    #[cfg(windows)]
+    fn deny_listing(folder: &Path) {
+        icacls_for_this_user(folder, "/deny", ":(RD)");
+    }
+
+    #[cfg(windows)]
+    fn allow_listing(folder: &Path) {
+        icacls_for_this_user(folder, "/remove:d", "");
+    }
+
+    #[cfg(windows)]
+    fn icacls_for_this_user(folder: &Path, action: &str, rights: &str) {
+        let user = std::env::var("USERNAME").unwrap();
+        let status = std::process::Command::new("icacls")
+            .arg(folder)
+            .arg(action)
+            .arg(format!("{user}{rights}"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    /// What `git status --porcelain --untracked-files=all` prints, as (two-letter code, path)
+    /// sorted by path.
+    fn porcelain(root: &Path) -> Vec<(String, String)> {
+        let output = std::process::Command::new("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .arg("-C")
+            .arg(root)
+            .args(["status", "--porcelain", "--untracked-files=all"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        // Git prints the changed paths first, then the untracked ones.
+        let mut lines: Vec<(String, String)> = String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(|line| (line[..2].to_owned(), line[3..].to_owned()))
+            .collect();
+        lines.sort_by(|left, right| left.1.cmp(&right.1));
+        lines
+    }
+
+    /// The overlays as `git status --porcelain` codes them, for the kinds the tests below make.
+    fn overlay_codes(workspace: &GitWorkspace) -> Vec<(String, String)> {
+        workspace
+            .overlays
+            .iter()
+            .map(|overlay| {
+                let code = match overlay.kind {
+                    OverlayKind::Untracked => "??",
+                    OverlayKind::Unstaged => " M",
+                    OverlayKind::Staged => "M ",
+                    OverlayKind::StagedAndUnstaged => "MM",
+                    OverlayKind::Deleted => " D",
+                };
+                (code.to_owned(), overlay.path.clone())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_records_folder_this_account_may_not_list_is_skipped_as_git_skips_it() {
+        let root = fixture_directory("unlistable-records");
+        initialize_repository(
+            &root,
+            &[("kept.py", b"kept\n"), ("changed.py", b"before\n")],
+        );
+        std::fs::write(root.join("changed.py"), b"after\n").unwrap();
+        std::fs::write(root.join("new.py"), b"new\n").unwrap();
+        let records = root.join(".rerail").join("sessions");
+        std::fs::create_dir_all(records.join("another-accounts-session")).unwrap();
+        std::fs::write(records.join(".gitignore"), b"*\n").unwrap();
+        std::fs::write(
+            records.join("another-accounts-session/events.jsonl"),
+            b"{}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join(".rerail/beside.txt"), b"beside\n").unwrap();
+
+        deny_listing(&records);
+        let discovered = discover(&root);
+        let status = porcelain(&root);
+        allow_listing(&records);
+
+        let workspace = discovered.unwrap();
+        assert_eq!(overlay_codes(&workspace), status);
+        assert_eq!(
+            status,
+            [
+                ("??", ".rerail/beside.txt"),
+                (" M", "changed.py"),
+                ("??", "new.py")
+            ]
+            .map(|(code, path)| (code.to_owned(), path.to_owned()))
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Takes away this account's right to read `file`'s attributes, as another account has it on a
+    /// file in a records folder after the folder's repair; on Unix its folder's mode does that.
+    #[cfg(windows)]
+    fn deny_attributes(file: &Path) {
+        icacls_for_this_user(file, "/deny", ":(RA)");
+    }
+
+    #[cfg(windows)]
+    fn allow_attributes(file: &Path) {
+        icacls_for_this_user(file, "/remove:d", "");
+    }
+
+    #[cfg(unix)]
+    fn deny_attributes(file: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = file.parent().unwrap();
+        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o000)).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn allow_attributes(file: &Path) {
+        allow_listing(file.parent().unwrap());
+    }
+
+    #[test]
+    fn a_records_folder_git_made_whose_file_this_account_may_not_read_is_left_out() {
+        let root = fixture_directory("unreadable-records");
+        initialize_repository(&root, &[("kept.py", b"kept\n")]);
+        let records = root.join(".rerail").join("sessions");
+        std::fs::create_dir_all(&records).unwrap();
+        std::fs::write(records.join("notes.md"), b"kept\n").unwrap();
+        run_git(&root, &["add", "--", ".rerail/sessions/notes.md"]);
+        run_git(&root, &["commit", "-m", "a file in the records folder"]);
+        std::fs::write(records.join(".gitignore"), b"*\n").unwrap();
+        std::fs::write(root.join("new.py"), b"new\n").unwrap();
+        let status = porcelain(&root);
+
+        deny_attributes(&records.join("notes.md"));
+        let discovered = discover(&root);
+        allow_attributes(&records.join("notes.md"));
+
+        let workspace = discovered.unwrap();
+        assert_eq!(overlay_codes(&workspace), status);
+        assert_eq!(status, [("??".to_owned(), "new.py".to_owned())]);
+        assert!(
+            workspace
+                .base_files
+                .iter()
+                .all(|file| !file.path.starts_with(".rerail/"))
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_git_ignores_that_this_account_may_not_list_is_never_listed() {
+        let root = fixture_directory("unlistable-ignored");
+        initialize_repository(
+            &root,
+            &[(".gitignore", b"build/\n"), ("kept.py", b"kept\n")],
+        );
+        let build = root.join("build");
+        std::fs::create_dir(&build).unwrap();
+        std::fs::write(build.join("out.o"), b"out\n").unwrap();
+
+        deny_listing(&build);
+        let discovered = discover(&root);
+        allow_listing(&build);
+
+        assert!(discovered.unwrap().overlays.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_git_does_not_ignore_that_this_account_may_not_list_still_stops_discovery() {
+        let root = fixture_directory("unlistable-untracked");
+        initialize_repository(&root, &[("kept.py", b"kept\n")]);
+        let folder = root.join("private");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("notes.txt"), b"notes\n").unwrap();
+
+        deny_listing(&folder);
+        let discovered = discover(&root);
+        allow_listing(&folder);
+
+        let error = discovered
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(error.contains("cannot read Git status item"), "{error}");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2334,6 +2819,29 @@ mod tests {
         assert!(!ignored(&rules, "generated/keep.py"));
         assert!(ignored(&rules, "tmp/keep.py"));
     }
+
+    /// A records folder named in another case is one where `core.ignoreCase` folds case, as on
+    /// Windows, so the walk skips it there as the built-in ignore and status's pathspec do.
+    #[test]
+    fn a_records_folder_is_matched_with_the_repository_case_folding() {
+        use gix::ignore::glob::pattern::Case;
+        for path in [".rerail/sessions", "sub/.rerail/sessions"] {
+            assert!(records_folder(path.as_bytes(), Case::Sensitive), "{path}");
+            assert!(records_folder(path.as_bytes(), Case::Fold), "{path}");
+        }
+        for path in [".Rerail/sessions", "sub/.RERAIL/Sessions"] {
+            assert!(records_folder(path.as_bytes(), Case::Fold), "{path}");
+            assert!(!records_folder(path.as_bytes(), Case::Sensitive), "{path}");
+        }
+        for path in [
+            "sub.rerail/sessions",
+            ".rerail/sessions/kept.py",
+            "sessions",
+        ] {
+            assert!(!records_folder(path.as_bytes(), Case::Fold), "{path}");
+        }
+    }
+
     #[test]
     fn clean_trees_comparisons_are_linear_for_many_trees_and_overlays() {
         let count = 2_000;

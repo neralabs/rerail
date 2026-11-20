@@ -4,7 +4,7 @@ Status: 2026-10-26. This compares each stream's current work with `03-architectu
 
 Sources:
 - DLRE, N1562, PIAT, SSE, Typing and Tempo were re-read at their HEADs today.
-- Moti's branches and SSC are unchanged since `notes/t10` and `notes/t11`.
+- The facts-engine stream's branches and SSC are unchanged since `notes/t10` and `notes/t11`.
 
 M marks a measured figure; A marks an estimate.
 
@@ -15,7 +15,7 @@ M marks a measured figure; A marks an estimate.
   - the push path with exact-same cutoff;
   - the overlay with background write-back.
 
-  Every engine stream throws its store away after a run: PIAT's `Store::temporary`, SSE's in-memory facts DB, DLRE's execution-scoped data, N1562's TEMP packets. So no stream has a warm path. Moti's Y1 and Typing's interface digests have the cutoff mechanism, but outside SQLite.
+  Every engine stream throws its store away after a run: PIAT's `Store::temporary`, SSE's in-memory facts DB, DLRE's execution-scoped data, N1562's TEMP packets. So no stream has a warm path. The facts-engine stream's Y1 and Typing's interface digests have the cutoff mechanism, but outside SQLite.
 - **Three streams still evaluate tree matching in SQL inside documents:**
   - PIAT runs `inside`/`has` as CTE stages;
   - N1562 uses recursive CTEs over navigation edges, with most of its effort going into fitting SQL text under 8 MiB;
@@ -28,7 +28,7 @@ M marks a measured figure; A marks an estimate.
   |---|---|
   | Typing | 445–724 MB |
   | SSE | 1.3 GB |
-  | Moti Y3 | 2 GB |
+  | Facts-engine Y3 | 2 GB |
   | Tempo | 2 GB Metal + 3.5 GB RSS |
   | DLRE | 4.7–6.5 GB |
 
@@ -49,7 +49,7 @@ M marks a measured figure; A marks an estimate.
 | **SSE** | Native producers → narrow `py.*` facts → vtab → 2 SQL statements → finding keys, for the ASYNC21x family. Full corpus: 350 ms SQL (M); demand cuts requests 65,302 → 12 (M) | closest to §4/§8/§9: facts via vtab, demand-installed facts, one consolidation; a template for the **findings layer** | producers scan 19M rows with no prefilter; facts in memory per run; 1.5 GiB ceiling; CTE fixpoints | **§4/§8 owner.** Producers are fed from anchor postings. `py.*` become versioned SQLite facts with cutoff (Phase 5 brought forward). Gate at 500 MB |
 | **Typing** | Round 8: magic sets over the whole program, so rules no longer carry demand. Generated demand matches hand-written (2.53M vs 2.51M tuples, M), but a one-file query costs 1.64–1.83 s (M), half a full run | the Datalog/lattice rule compiler (§0), semi-naive waves, magic sets as the **"install only needed facts"** mechanism, stats-driven replanning | whole-program evaluation in memory; 445–724 MB; no persistence or cutoff in program mode; the per-file split of `calls.rdl` not built | **§0/§2 generic-rule owner.** Split file-local strata (in-GPU candidates) from cross-file strata (waves). Persist per-file partitions with digests in SQLite. Measure body and interface edits (CPU, re-runs vs changes, RSS). Magic sets choose what each wave installs |
 | **Tempo (scale-test GPU)** | Getting the 335-pattern CPython run (2,079 files) under the 600-dispatch cap: 19 successor generations = 380 dispatches; widening proved repeat jobs (uncommitted). 506 s wall, 2 GB Metal (M) | batches of documents × programs; bounded matcher recursion on GPU; every op on Metal; no fallback | path mode with exact capture parity; no cross-rule combining; synchronous MSL compile; tapes copied per call; whole-corpus scale | **§3/§5 owner.** Set-mode oracle (finding keys + Complete/Unknown). Hash-consed cross-rule graph. Interpreter first, background JIT, same plan identity. Pinned no-copy slabs plus a program cache prepared per wave. Gate on a prefiltered wave inside 500 MB |
-| **Moti (facts-engine)** | Unchanged: Y3 wired path, exact on 1,151 edits, 0.53 / 3.76 / 8.62 ms (M), 2 GB heap | Y1 keyed tables + read-set memos with cutoff and backdating, the closest existing **push-path** design (§2); the mutant gate | SQLite replaced; 2 GB; Y2 level witness (not needed: we recompute) | **§2 design input.** Port Y1's read-set and cutoff scheme onto SQLite-backed facts with an overlay |
+| **Facts-engine** | Unchanged: Y3 wired path, exact on 1,151 edits, 0.53 / 3.76 / 8.62 ms (M), 2 GB heap | Y1 keyed tables + read-set memos with cutoff and backdating, the closest existing **push-path** design (§2); the mutant gate | SQLite replaced; 2 GB; Y2 level witness (not needed: we recompute) | **§2 design input.** Port Y1's read-set and cutoff scheme onto SQLite-backed facts with an overlay |
 | **SSC** | Unchanged: transition plan from matcher continuations to shared plans | plan records (`RelationSpec`/`Stage`/`ProgramGroup`/`Plan`) as **plan identity**; the findings and coverage contract; 19 lessons | retire the cohort interpreter (already planned) | merge the plan records into `compiled_plans` |
 | **Main** | shipped content store, ast-grep matcher per file | CAS, snapshots, leases, the positional kind FTS in one store, `calls` stamps | per-file matcher (kept as the rehydration oracle) | the home of the §1 fact store |
 
@@ -60,7 +60,7 @@ M marks a measured figure; A marks an estimate.
    - No stream builds it, and every warm-path target depends on it.
    - Inputs:
      - main's CAS (home);
-     - Moti's Y1 (cutoff design);
+     - The facts-engine stream's Y1 (cutoff design);
      - Typing's interface digests;
      - SSE's `py.*` facts (first customer).
 2. **The wave scheduler (§4/§7).**

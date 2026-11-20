@@ -50,7 +50,7 @@ describe("a peer's link", () => {
 
 describe("the status strip", () => {
   it("says gh's state with the login it is signed in as", () => {
-    expect(githubText({ state: "signed-in", login: "tbelanger", repository: "acme/storefront" })).toEqual({ ok: true, text: "Signed in as tbelanger" });
+    expect(githubText({ state: "signed-in", login: "akim", repository: "acme/storefront" })).toEqual({ ok: true, text: "Signed in as akim" });
     expect(githubText({ state: "signed-out", login: null, repository: null }).ok).toBe(false);
   });
 
@@ -88,7 +88,7 @@ describe("the readiness checklist", () => {
   it("says whether gh is signed in, and how to sign in when it is not", () => {
     const ready = readinessChecks(status().readiness);
     expect(ready.map(c => [c.key, c.ok])).toEqual([["github", true]]);
-    expect(text(ready[0]!.text)).toContain("gh is signed in as tbelanger");
+    expect(text(ready[0]!.text)).toContain("gh is signed in as akim");
     const signedOut = readinessChecks({ ...status().readiness, github: { state: "signed-out", login: null, repository: null } });
     expect(signedOut[0]!.ok).toBe(false);
     expect(text(signedOut[0]!.text)).toContain("Run gh auth login");

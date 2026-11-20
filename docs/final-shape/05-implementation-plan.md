@@ -2,7 +2,7 @@
 
 Status: plan, 2026-10-26.
 
-- Target: wolfeel, `jeremybarnes/final-rerail-shape`, based on `origin/main` 5cf4246e.
+- Target: wolfeel, `final-rerail-shape`, based on `origin/main` 5cf4246e.
 - Requirements: `00-requirements.md` (locked).
 - Architecture: `03-architecture.md`.
 - Sources: the code inventories of 2026-10-26.
@@ -29,7 +29,7 @@ Status: plan, 2026-10-26.
 | S | `rerail/Shared-structural-execution` | e1ffeaf2 |
 | T | `rerail/Typing-support` (`spikes/datalog-engines/`) | 7ebcffe0 |
 | G | `scale-test-the-re-railer/tempo` (Tempo) | 4c94cf77e (committed HEAD only) |
-| M | `origin/Moti-Velz/facts-engine` | 5b0d63a7 |
+| M | `facts-engine` | 5b0d63a7 |
 | W | wolfeel itself (main) | 5cf4246e |
 
 `cr` = `native/src/code_rule_dsl`.
@@ -121,7 +121,7 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 | Anchor store | P `cr/matcher/anchors/sql/{schema.sql, store.rs, store/kinds.rs, store/publication.rs, values.rs, postings.rs, reader.rs, session.rs}` (+ `tests.rs`, `preparation_tests.rs`) | `prefilter/` | Drop `Store::temporary` and the private `file` table. Key by W `tape_objects.tape_id` in the content store. Postings, `vlex` and `vcov` become versioned fact families. Fold `ftsk` into W `search_kind_fts`, re-tokenised to `lang·1024 + local`. Keep `file_kind_counts` as the access path per file. |
 | Prefilter lowering | P `cr/matcher/anchors/sql/lower.rs` (set algebra, `combine`/`union`/`factored`/`kinds`/`plan`/`pattern`, about l.170–583, 766–846), `access.rs`, `graph.rs`, `graph/program.rs`, `plans.rs` | `prefilter/lower.rs` | Keep only the candidate-set part: (file, preorder) sets from kinds, terms and probes. **Remove** `related`/`subtree_relation`/`frontier`/`neighbours`/`intervals`, `lower/children.rs`, `lower/waves.rs` and `decode.rs`; they move into transducers (§7). Keep `tree.rs`/`nera_tree` only for the pure-SQL fallback (§17). Replace the run-time `count(*)` in `pattern()` with statistics lookups (D10). |
 | Vocabulary + regex | P `cr/matcher/anchors/sql/functions.rs` (`nera_terms_matching`, `nera_literal_set`), `vocabulary.sql`, `vocabulary-fill.sql`, `access.rs` text fallback (b839fa05) | `prefilter/vocabulary.rs` | One vocabulary per language, keyed in the atoms table. Expose per-term results as `R[tid]` for the transducer. Record matched-term counts in `plan_feedback` (H4, X). |
-| Probes | W/P `cr/matcher/anchors/text.rs` (`TextProbe`) | `prefilter/probes.rs` | Move into production from `#[cfg(test)]`. Add suffix literals, first/last byte sets, anchored `=`/LIKE, and the non-word-boundary rule for required literals (ast-index-spike S199). |
+| Probes | W/P `cr/matcher/anchors/text.rs` (`TextProbe`) | `prefilter/probes.rs` | Move into production from `#[cfg(test)]`. Add suffix literals, first/last byte sets, anchored `=`/LIKE, and the non-word-boundary rule for required literals (SQL index prototype S199). |
 | Kind vocabulary | N `content_store/{schema.rs, search_index.rs}` delta (`search_kind_vocab`, frequency-ordered probes) | W same files | Port the +71 lines as-is. |
 | Plan-input statistics | D `cr/matcher/anchors/sql/statistics/mod.rs` (+ tests), `corpus/cache.rs` | `stats/inputs.rs` | One batched statement reads `kind_size`/`search_kind_vocab`/`search_term_vocab` and `edge_freq` from the content store, not from D's own store. |
 | Ingestion statistics | T `stats.py` (port, 193 lines) | `stats/ingest.rs` | `stat_kind`, `stat_edge`, `stat_val`, `stat_col`, `stat_docrange`, renamed to 03's `kind_size`, `edge_freq`, `fact_stats`. Signed per-batch merge inside the push path. Keep the `check` mode as a test. |

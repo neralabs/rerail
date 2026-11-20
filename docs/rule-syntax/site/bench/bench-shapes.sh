@@ -6,7 +6,7 @@
 # Inputs (never clean them up): corpus0, corpus1, pack-B/home-B, pack-1/home-1, rules/B-now, rules/B-one, rs-now.
 # CPU = user + sys from /usr/bin/time -l; peak = footprint (RSS also shown: it counts the store's file map).
 set -u
-SP=${SP:-${RERAIL_SHARED:-$HOME/orca/rerail-shared}/bench/step-vs-main}
+SP=${SP:-${RERAIL_SHARED:?set SP, or RERAIL_SHARED to the shared data folder}/bench/step-vs-main}
 CLI=${CLI:-$SP/main-pkg/node_modules/@neralabs/rerail/dist/cli/cli.js}
 SHAPE=$1; ENGINE=$2; shift 2; EXTRA=("RERAIL_SQL_STRICT=1" "$@")
 case $SHAPE in
