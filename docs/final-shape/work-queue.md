@@ -8312,7 +8312,7 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
 - **Open**: nothing new.
 
 
-### Q376. A broken fan-out is found only where a line's counts are kept (0361 step 6)
+### Q376. (done) A broken fan-out is found only where a line's counts are kept (0361 step 6)
 
 - **Found** (2026-11-20, at the merge of final-rerail-shape-rr-align 972dc90902): both sides built step 6. The
   hub's check (`Model::layout_broken`, `Shapes::broken_at`: 64 probes at least, 8 times the fact's bound) reads a
@@ -8325,8 +8325,14 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
   every run counts its probes, as `observe` did, or count them for the step-6 check alone.
 - **Done when**: the test passes un-ignored, and the hub's unit test
   `a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics` still does.
+- **Done** (2026-11-20): the check ran only inside the replanning paths: a probe line with a plan key while the
+  joins are on (`joins::on`, `keys`), or a led seed at its cut. An ordinary run's lines reach neither. Every line's
+  counts are now checked as they are added each chunk (`layout_broke`, plan.rs), a seed's against `orders`, a
+  probe's against `probes` (a line's counts are taken from it when its order is replaced, so they are always its
+  running order's), and the replanning paths read what broke there. The test passes un-ignored, with the hub's unit
+  test and the key test; the plan, joins and shapes tests are as before (three were red before: Q378).
 
-### Q377. A test's store keeps one object segment open after its test
+### Q377. (done) A test's store keeps one object segment open after its test
 
 - **Found** (2026-11-20, at the merge of final-rerail-shape-rr-align 972dc90902):
   `a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` failed on the m3 with four files of a probe's
@@ -8355,3 +8361,47 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
     forgets them in `ContentStore::forget` (by the store's path), as the snapshots and identities do. The test is
     ignored with this item.
 - **Done when**: the test passes un-ignored three runs in a row on the m3.
+- **Done** (2026-11-20): two holders, neither a cache of the store.
+  - The segment held the lowered program's image (0464), opened by `prepared::lookup`. The version never dropped:
+    a cycle. A part of it (a view, then an overlay of its fields) held its normal form as an analysis, in its slot
+    (0281 §2: "held by the version it is of, dropped with it"). The normal form is an edit of the part, so its
+    parent is the part: part → analyses → normal form → parent part, and the same for the stated-apart form over
+    the normal form. Nothing outside held any of them, and no drop ends a cycle. That is not the test's alone: every
+    version a run normalized stayed in memory, with all its analyses, for the life of the process.
+  - The fix: an analysis that makes a version over its own version makes it over the version's twin
+    (`Version::twin`, `manager::twin`). A twin has the same layer (image or delta, parent, ranges, digest) and
+    adopts the version's analyses, so nothing is computed again. The cache no longer points back at its holder.
+    `a_version_with_its_normal_and_apart_forms_drops_with_its_last_holder` locks it.
+  - The store's database files were held too, by pool threads. A thread's copy of a run's values (`SEEN`) was
+    dropped on leaving the run only if the run had already ended. A job that ended first left its copy, with the
+    run's locals and its shared and machine values, until the thread next entered a run. `left_run` now drops the
+    copy whenever the thread leaves the run the copy is of.
+  - Found by tracking which blocks were mapped and their versions; nothing in the shared object, the machine, the
+    tests' object or any pool thread's copy held the image. The test passes un-ignored, three runs in a row on the
+    m3. The program-image, prepared-program, normalization, run, profile, observer, workspace, lane and plan tests
+    pass, except the three plan tests that were red before (Q378).
+
+### Q378. (done) Three plan tests red after the roll-ups, each from two changes made apart
+
+- **Found** (2026-11-20, at the merge of final-rerail-shape-rr-align 972dc90902; red before it, on the hub):
+  `a_constant_counted_none_when_planned_is_growth_when_it_has_rows`,
+  `the_search_prices_the_steps_past_a_bound_head_as_one_witness` and
+  `a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it`.
+- **Done** (2026-11-20):
+  - The search priced the steps past the head's binding twice, by two mechanisms made on two branches, neither in
+    the other's history: Q146's `witnessed` (13d052bb17), which scales the tail's work by the share of the rows
+    walked that are witnesses, as a fixed order's price does, and Q245 item 5's cut (c30a34fb24), which set a
+    step's rows to the bindings it got. After the cut the rows were the bindings, the share was always all, and Q240's
+    documents no longer led (1 M rows where 1,200 come). The cut is gone and `witnessed` prices the search as it
+    prices a fixed order. Q245 item 5's own case (`a_probe_bounded_by_comparisons_reads_a_range`) passes on it, so the
+    cut added nothing `witnessed` lacked. Its duplicate head mask (`head_bits`, the same as `head_mask`) went with it.
+  - Smoking gun 10's test keyed its constant's count by the declared column name (`r`), which the model never reads:
+    a relation that is neither an input nor derived is read by its positional name (`Model::col`: `c1`). So the
+    count was never seen, and the setup ("about no fragment") was not the one it stated. The test now keys it as the
+    model reads it. Both of its assertions pass: `doc_role` leads with one fragment, and 2,455 are growth that is
+    searched again.
+  - The derived-relation test's second half (Q184, f6efa90478) asserted `o` prepared, but `o` tests a constant on a
+    `values` column, which 0361 (Q297, django-bugs' roll-up 7) plans at run time, as the test's own doc says. The
+    assertion states 0361 now: `o` is not prepared, and `r` is, as `o`'s inferred facts size it.
+  - The plan module's tests pass (90). Along the way: `gate/executor-coverage/packs.tsv` was stale since the merge's
+    `lib/python/references.rr` became `.rerail` and the library's programs counted one more. Blessed.

@@ -34,6 +34,8 @@ fn run_normalize(v: &Arc<Version>, mut pass: Normalize) -> Result<(Arc<Version>,
 /// `normalize`'s version of a version and its sentinels, held by the version it is of (decision 0281 §2): a run
 /// reads its program normalized (`body::Placed::normalized`), and a corpus run runs the program on each chunk, so it
 /// was normalized again on each (84 times on 901 files of the data layer's repository, 2.5 s of one policy's CPU).
+/// Made over the version's twin (`manager::twin`): held by the version, a derivation of the version itself would
+/// hold it, and neither would drop.
 #[derive(Debug)]
 pub struct NormalForm {
     pub v: Arc<Version>,
@@ -50,12 +52,13 @@ impl super::manager::Analysis for NormalForm {
     const NAME: &'static str = "normal form";
     const READS: super::manager::Reads = super::manager::Reads::ALL;
     fn compute(cx: &Cx<'_>) -> Result<NormalForm, String> {
-        let (v, sentinels) = normalize(cx.v())?;
+        let (v, sentinels) = normalize(&super::manager::twin(cx.v()))?;
         Ok(NormalForm { v, sentinels })
     }
 }
 
-/// `stated_apart`'s overlay of a version and the pairs it moves, held by the version it is of, as `NormalForm` is.
+/// `stated_apart`'s overlay of a version and the pairs it moves, held by the version it is of, and made over its
+/// twin, as `NormalForm` is.
 #[derive(Debug)]
 pub struct ApartForm {
     pub v: Arc<Version>,
@@ -72,7 +75,7 @@ impl super::manager::Analysis for ApartForm {
     const NAME: &'static str = "stated apart form";
     const READS: super::manager::Reads = super::manager::Reads::ALL;
     fn compute(cx: &Cx<'_>) -> Result<ApartForm, String> {
-        let (v, stated) = stated_apart(cx.v())?;
+        let (v, stated) = stated_apart(&super::manager::twin(cx.v()))?;
         Ok(ApartForm { v, stated })
     }
 }

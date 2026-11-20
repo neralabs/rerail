@@ -4,7 +4,9 @@
 //! `rerail-c-directives`' CPU path (`expand::native`); its tests check it against the
 //! interpreter and time it beside the JIT's code of the same IR.
 
-#[cfg(feature = "generated")]
+// The generated Rust is aarch64's: `clif_rust` writes its vector and carry-less operations as
+// `core::arch::aarch64` intrinsics. Another target's build has none, and the path is the JIT's.
+#[cfg(all(feature = "generated", target_arch = "aarch64"))]
 #[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_imports, unused_parens, non_snake_case, clippy::all)]
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/pp.rs"));
@@ -26,8 +28,8 @@ pub struct Build {
 }
 
 /// The build (none without the `generated` feature).
-#[cfg(feature = "generated")]
+#[cfg(all(feature = "generated", target_arch = "aarch64"))]
 pub const BUILD: Option<Build> = Some(Build { run: generated::pp_run, source: generated::SOURCE, structured: generated::STRUCTURED, words: generated::WORDS, abi: generated::ABI });
 
-#[cfg(not(feature = "generated"))]
+#[cfg(not(all(feature = "generated", target_arch = "aarch64")))]
 pub const BUILD: Option<Build> = None;

@@ -71,7 +71,7 @@ pub(super) fn answered(v: &Version) -> (Vec<String>, Vec<String>) {
     (produced, given)
 }
 
-/// `parsed`'s demand (decision 0055): the strings a rule asks to have parsed.
+/// `embed`'s demand: a string made a tape value and parsed (decision 0431 §8), answered in the fixpoint.
 pub(super) const DEMAND: &str = "rr_embed_req";
 /// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
 pub(super) const PARSE: &str = "rr_parse_req";
@@ -340,15 +340,20 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
     Some(tags)
 }
 
+/// Whether `t` is a document bound `combining::FoldOwn` widened to take the annotations in (above `ANNOTATION_KEYS`):
+/// a rule compared with it reads the annotations' documents, which only their requests (`DEMAND`) make.
+pub(super) fn widened(t: crate::code_rule_dsl::logic::program_image::TermRef<'_>) -> bool {
+    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+    matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32))
+}
+
 /// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
 /// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
 /// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
 /// against the widened bound, and the other guests (other grammars, values) never.
 pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
-    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
-    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    use crate::code_rule_dsl::logic::program_image::Lit;
     let entry = |rel: &str| READS.contains(&rel) || super::hiding::ENTRIES.iter().any(|(r, ..)| *r == rel);
-    let widened = |t: TermRef<'_>| matches!(t, TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32));
     let mut seen = Seen::Code;
     for r in v.rules() {
         for l in r.body() {

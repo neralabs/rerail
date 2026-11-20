@@ -709,6 +709,28 @@ fn the_planners_passes_over_a_version_hold() {
     assert!(super::passes::normalize(&two).is_err());
 }
 
+/// A version's analyses are dropped with it (decision 0281 §2), the forms made over it among them: its normal form and
+/// that form's stated-apart form are made over twins (`manager::twin`), so neither holds the version it is held by, and
+/// the version, with the image it reads in place, goes with its last holder (Q377).
+#[test]
+fn a_version_with_its_normal_and_apart_forms_drops_with_its_last_holder() {
+    use super::manager::analysis;
+    use super::passes::{ApartForm, NormalForm};
+    let p = crate::code_rule_dsl::logic::rr::parse_version(
+        ".decl e(x: number)\n.input e\n.decl a(x: number)\n.decl b()\na(x) :- e(x).\nb() :- a(_).\na(1).\n.output a, b\n",
+    )
+    .unwrap();
+    let (normal, apart) = {
+        let n = analysis::<NormalForm>(&p).unwrap();
+        let a = analysis::<ApartForm>(&n.v).unwrap();
+        (Arc::downgrade(&n.v), Arc::downgrade(&a.v))
+    };
+    let held = Arc::downgrade(&p);
+    assert!(analysis::<NormalForm>(&p).is_ok_and(|n| Arc::ptr_eq(&n.v, &normal.upgrade().unwrap())), "the form is held, made once");
+    drop(p);
+    assert_eq!((held.strong_count(), normal.strong_count(), apart.strong_count()), (0, 0, 0), "the version and its forms are gone");
+}
+
 /// A rule rewritten as it is copied keeps what the rewrite does not change, records its source, and takes more
 /// literals after; a fold keeps every source.
 #[test]

@@ -4394,10 +4394,6 @@ impl Model {
             /// once the head is bound, the work and rows at that point: the tail (`witnessed`).
             raw: f64,
             tail: Option<(f64, f64)>,
-            /// Its rows as its steps make them, the cut past the head's binding aside (`rows` is what the walk passes
-            /// on): how many of the tail's rows are witnesses, which `witnessed` scales its work by (Q240 with Q354
-            /// item 5). Cut, the tail never had more rows than bindings, and every read past the head stayed priced.
-            full: f64,
         }
         let filters: Vec<usize> = (0..b.len()).filter(|&i| !b.is_join(i)).collect();
         // Each filter's share of rows passed on (decision 0297); a body's first 128 filters are priced.
@@ -4546,8 +4542,6 @@ impl Model {
             }
             best
         };
-        // The head's variables as bits, where every one is a join's (`step`'s witness cut needs them all bound).
-        let head_bits: Option<u128> = head_vars.iter().try_fold(0u128, |m, v| var_ids[v.index()].filter(|&k| k < 128).map(|k| m | 1u128 << k));
         // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
         let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
         let mut closed: Vec<(u128, u128)> = vec![(0, 0); 1 << joins.len()];
@@ -4563,7 +4557,7 @@ impl Model {
             }
             (rows, work)
         };
-        cells[0] = Some(Cell { work: work0, rows: rows0, prev: 0, last: usize::MAX, mode: None, unfounded: false, fan: 1.0, basis: "", raw: work0, tail: None, full: rows0 });
+        cells[0] = Some(Cell { work: work0, rows: rows0, prev: 0, last: usize::MAX, mode: None, unfounded: false, fan: 1.0, basis: "", raw: work0, tail: None });
         // Only the subsets one join more than a subset reached (with the delta first, half of them or fewer): a
         // subset no order reaches has no cell, and its closure is not worked out. Each is solved as before, its last
         // joins tried in the same order, so the plan is the same.
@@ -4614,18 +4608,6 @@ impl Model {
                     let by = match p { Price::Atom(_, _, by) => by, _ => "" };
                     let Some((w, mut out, mode)) = priced(p, left) else { continue };
                     let w = w * range_pass(i, *bound);
-                    // The rows as the step makes them, for the witnesses' share (`Cell::full`): `from`'s, scaled as
-                    // this step scales the rows it is given.
-                    let mut full = if from.rows > 0.0 { out * from.full / from.rows } else { out };
-                    // Past the head's variables the walk passes on one witness a binding (`setfix::tail`), so the
-                    // steps after pay for the bindings, not the rows. The step itself still reads its rows until a
-                    // witness, and all of them where there is none: its work stays. Priced at one row read
-                    // (`step`'s greedy cut), `rr_agg15($a, $b, $p) :- rr_ctx16($a, $b, $p), bcgp_line($p, $l, _),
-                    // !bcgp_at_line($p, $l), $l > $a, $l < $b` led from the pairs (64.8 K) and read every line of
-                    // each pair's file: 28.6 s against 5.4 s led from the lines.
-                    if head_bits.is_some_and(|h| h & !*bound == 0) && out > left {
-                        out = left;
-                    }
                     let fan = if left > 0.0 { out / left } else { 0.0 };
                     let unfounded = (prev == 0 || from.unfounded) && no_rows_when_priced(i);
                     candidates += 1;
@@ -4637,14 +4619,20 @@ impl Model {
                         let k = new.trailing_zeros() as usize;
                         new &= new - 1;
                         out *= pass[k];
-                        full *= pass[k];
                         filtered += out;
                     }
-                    // Past the head's binding, priced as the walk runs it (`witnessed`); the tail starts at the first
-                    // join made with every head variable bound before it.
+                    // Past the head's binding, priced as the walk runs it (`witnessed`), as a fixed order is (`price`);
+                    // the tail starts at the first join made with every head variable bound before it. The walk passes
+                    // on one witness a binding (`setfix::tail`), and a step reads a binding's rows until its first:
+                    // all of them where none passes, so `rr_agg15($a, $b, $p) :- rr_ctx16($a, $b, $p),
+                    // bcgp_line($p, $l, _), !bcgp_at_line($p, $l), $l > $a, $l < $b` led from the pairs (64.8 K)
+                    // read every line of each pair's file (28.6 s against 5.4 s led from the lines). The rows here are
+                    // every row walked, as the fixed order's are: a second cut of the rows passed on to the bindings
+                    // (Q245 item 5, made apart from this one) left the share of witnesses always all, and Q240's
+                    // documents no longer led (1 M rows where 1,200 come, Q378).
                     let raw = from.raw + w + filtered;
                     let tail = from.tail.or_else(|| head_mask.is_some_and(|h| *bound & h == h).then_some((from.raw, left)));
-                    let cand = Cell { work: witnessed(raw, tail, full), rows: out, prev, last: i, mode, unfounded, fan, basis: by, raw, tail, full };
+                    let cand = Cell { work: witnessed(raw, tail, out), rows: out, prev, last: i, mode, unfounded, fan, basis: by, raw, tail };
                     if mask == full_mask {
                         finals.push((cand.work, prev, i, mode, fan, by));
                     }
@@ -9418,6 +9406,20 @@ impl<'a> Run<'a, '_> {
                     counted[k][i].1 += b as u64;
                 }
             }
+            // Decision 0361 step 6: every line's rows so far against the facts its order was priced by, in every run
+            // (not only the lines the joins check below): a probe past its fact's bound breaks the fact, and its
+            // relation is planned from statistics from then on. A line's counts are its running order's (they are
+            // taken from it when the order is replaced): a seed's `orders`, a probe's `probes` (a whole plan's rows
+            // are not counted). The checks below replan by what broke here.
+            let mut layout_broke = vec![false; counted.len()];
+            for (line, c) in counted.iter().enumerate() {
+                let order = if line < nseeds { orders.get(line).map(|o| &o.1) } else { probes.get(line - nseeds).map(|p| &p.2) };
+                if let Some(order) = order
+                    && !c.is_empty()
+                {
+                    layout_broke[line] = self.model.layout_broken(&line_bodies[line], order, c);
+                }
+            }
             let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && fields.types(rels[i]).get(c) == Some(&"sym");
             // Only the relations whose rows moved since the last chunk: the others' statistics are as recorded.
             let live = self.fx().stats_changed(&name, &mut live_seen, &text_symbols)?;
@@ -9447,9 +9449,9 @@ impl<'a> Run<'a, '_> {
                     let checked = joins::check(key, work, &probes[k].2);
                     // Its rows against its order's step by step: the widest blown up, or a step far under its price.
                     let miss = self.model.line_miss(pf, &vs.at(r), Some(ai), &probes[k].2, key, c, &mut expected[line]);
-                    // Its probes' rows against the facts they were priced by (decision 0361 step 6): a fact broken
-                    // leaves its relation to the statistics, and a prepared order priced by it is searched.
-                    let broken = self.model.layout_broken(&vs.at(r), &probes[k].2, c);
+                    // Its probes' rows broke a fact they were priced by (decision 0361 step 6, `layout_broke` above):
+                    // its relation is left to the statistics, and a prepared order priced by it is searched.
+                    let broken = layout_broke[line];
                     if (checked || miss.is_some() || broken || self.model.prepared_horribly_slow(&vs.at(r), &[Some(ai)], &probes[k].2, work))
                         && self.model.prepared_heavy(&vs.at(r), &[Some(ai)], &probes[k].2).is_some()
                     {
@@ -9717,10 +9719,8 @@ impl<'a> Run<'a, '_> {
                 // A seed or whole plan is checked here, at its cut (a probe was, above).
                 if led && let Some(key) = keys.get(line).copied().flatten() {
                     let running = order_now(&orders, &probes, &wholes);
-                    // Its rows against the facts its order was priced by (decision 0361 step 6).
-                    if let Some(steps) = counted.get(line) {
-                        self.model.layout_broken(&b, &running, steps);
-                    }
+                    // Its rows were checked against the facts its order was priced by as they were counted (decision 0361
+                    // step 6, `layout_broke`): a fact broken there prices this search from statistics.
                     // Its prepared order, heavy: searched now with the run's statistics, and a better order goes on
                     // under the handoff (decision 0206), which goes back to this one where it runs slower a row.
                     if self.model.prepared_heavy(&b, &[first, None], &running).is_some() {
