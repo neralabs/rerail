@@ -5136,11 +5136,15 @@ after the phases went on the run path (0083).
   - A batch is lazy when the only documents without counts are made already (an edit's changed ones).
   - A text test's rows at its binding are its kept statistics' (as its statistics already were), not its `len`.
   - The warm tests count every run's corpus batch, the phases' too (`Report::phase_runs`), and name each phase's.
+  - The kept frames' digest-only entry of a base relation records the rows it was bound with (`totals`), not its
+    `len` (a text test's is a scan of the batch's strings).
 - **Still open**: after a one-file edit, the unchanged files' documents are still made (`a_warm_edit_builds_no_*`,
-  `a_warm_edit_makes_*` fail). In the main run, by the kept frames' write of a text test's input (`retain::
-  write_input_kept`'s digest-only entry reads its `len`, which an edit cannot count without the batch's strings). In
-  phase 1, by `doc`'s and `tape_of`'s statistics: it reads no old source inside the waves, so they have no version
-  and no total (0494 step 4, part 2).
+  `a_warm_edit_makes_*` fail):
+  - In the main run, by the statistics of `kind`, a view of `node` held in place: a maintained stratum plans with
+    them, and counting them (`node_column_counts`, its kinds) reads every document's nodes. `node`'s kept
+    statistics, patched by the changed documents, hold the same counts while its kind column's exact map is.
+  - In phase 1, by `doc`'s and `tape_of`'s statistics: its documents are what `sources.rerail`'s loads make in its
+    waves, where no old source is read, so they have no version and no total (0494 step 4, part 2).
 
 ### Q383. (Q354 here until 2026-11-20; Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
 

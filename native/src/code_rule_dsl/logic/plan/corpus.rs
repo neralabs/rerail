@@ -9931,8 +9931,9 @@ fn run_observed_within(
                     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("session/{name}"));
                     let s = span("digest inputs");
                     // The base relations are read off the corpus batch and kept as their documents' digest alone, no
-                    // rows (decision 0458).
-                    let digest_only: BTreeSet<String> = stored.iter().map(|(r, _)| r.clone()).collect();
+                    // rows (decision 0458), and the rows each was bound with: counted without making a document (a
+                    // text test's, its kept statistics', which its `len`, a scan of the batch's strings, is not).
+                    let digest_only: BTreeMap<String, Option<usize>> = stored.iter().map(|(r, _)| (r.clone(), totals.rels.get(r).map(|t| t.0))).collect();
                     // A base relation's digest was taken when its source was made: its documents' (decision 0458).
                     let digests: HashMap<String, u64> = cross_inputs
                         .iter()
@@ -10576,7 +10577,7 @@ fn run_observed_within(
                             // Written with the digests it is the documents of: when one changed (or none was kept). A
                             // part with no base relation by its inputs' digests: its documents changed, they changed. A
                             // table left older than the documents only names more of them changed (hashed again).
-                            let unchanged = if digest_only.is_empty() { Box::new(digests.keys().map(String::as_str)) as Box<dyn Iterator<Item = &str>> } else { Box::new(digest_only.iter().map(|r| r.as_str())) }
+                            let unchanged = if digest_only.is_empty() { Box::new(digests.keys().map(String::as_str)) as Box<dyn Iterator<Item = &str>> } else { Box::new(digest_only.keys().map(|r| r.as_str())) }
                                 .all(|r| was.input_digest(r).is_some() && was.input_digest(r) == digests.get(r).copied());
                             // And when the table read was of another memo plan, or none was read.
                             let plan = plan_now;

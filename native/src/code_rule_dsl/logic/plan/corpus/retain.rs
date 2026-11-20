@@ -2939,7 +2939,7 @@ impl Retained {
     /// changed, with the input's digests by document. The relations kept as they were stay as stored.
     /// `sccs`: `prog`'s strata, computed once by the caller.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn write_kept(&self, store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeSet<String>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_kept(&self, store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeMap<String, Option<usize>>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, put".into());
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -3113,7 +3113,7 @@ pub(in crate::code_rule_dsl) struct InputsWritten {
 /// by document, queued as each input's job makes them. They depend on the inputs alone, so a run that lets its inputs
 /// go after their last reader (Q74) writes them before it runs, and hands what it wrote to `write_kept`.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &(dyn Fn(&str) -> Option<Arc<DocDigests>> + Sync), input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeSet<String>) -> InputsWritten {
+pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &(dyn Fn(&str) -> Option<Arc<DocDigests>> + Sync), input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeMap<String, Option<usize>>) -> InputsWritten {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the inputs' frames".into());
     let mut now: HashMap<String, u64> = HashMap::new();
     let mut written = 0;
@@ -3161,8 +3161,8 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
             return Some((digest, written));
         }
         // An input kept as its documents' digest (decision 0458): its documents' entry alone, one row, no granules.
-        if digest_only.contains(rel) {
-            let rows = vec![0, digest as i64, source.len() as i64];
+        if let Some(bound) = digest_only.get(rel) {
+            let rows = vec![0, digest as i64, bound.unwrap_or_else(|| source.len()) as i64];
             kept.push(kept_flat(name, DOCS_PART, digest, vec![(DIGEST_ONLY_READ.to_owned(), 1)], vec![b'i'; 3], rows, 1));
             queue(kept);
             return Some((digest, written));
