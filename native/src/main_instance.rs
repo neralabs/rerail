@@ -19,6 +19,8 @@ use napi_derive::napi;
 use parking_lot::Mutex;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::sync::mpsc;
+// Only the waits of Unix and Windows count time; wasm32-wasip1 has none.
+#[cfg(any(unix, windows))]
 use std::time::Duration;
 
 /// An exclusive lock on one file, held until `release` or until the owning process exits.
@@ -103,8 +105,9 @@ pub fn try_lock_exclusive(path: String) -> Result<Option<ExclusiveFileLock>> {
 }
 
 /// What the wait's promise settles with, made on the JavaScript thread.
-// Only `lock_exclusive` uses it, which only JavaScript calls.
-#[cfg_attr(test, allow(dead_code))]
+// Only the thread's wait of `lock_exclusive` uses it, which only JavaScript calls and
+// wasm32-wasip1 has not.
+#[cfg_attr(any(test, not(any(unix, windows))), allow(dead_code))]
 type Settle = Box<dyn FnOnce(Env) -> Result<Option<ExclusiveFileLock>> + Send>;
 
 /// The promise `lock_exclusive` returns.
@@ -172,9 +175,17 @@ fn wait_for_release(env: &Env, file: File, wait_ms: u32, path: String) -> Result
     }
 }
 
+/// wasm32-wasip1, and any target that is neither: no thread can wait for the holder there, so a
+/// held lock settles at once with `null`, as a take that never waits, and the thread's helpers
+/// below go unused.
+#[cfg(not(any(unix, windows)))]
+fn wait_for_release(env: &Env, _file: File, _wait_ms: u32, _path: String) -> Result<Taking<'_>> {
+    PromiseRaw::resolve(env, None)
+}
+
 /// Runs `wait`, a wait for the lock another handle holds, on a thread of its own, and settles the
 /// promise it returns with what that wait ends with.
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, not(any(unix, windows))), allow(dead_code))]
 fn wait_on_its_thread<Wait>(env: &Env, path: String, wait: Wait) -> Result<Taking<'_>>
 where
     Wait: FnOnce() -> std::io::Result<Option<File>> + Send + 'static,
@@ -201,7 +212,7 @@ where
     Ok(PromiseRaw::new(env.raw(), promise.raw()))
 }
 
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, not(any(unix, windows))), allow(dead_code))]
 fn wait_and_name(
     wait: impl FnOnce() -> std::io::Result<Option<File>>,
     path: &str,
@@ -211,7 +222,7 @@ fn wait_and_name(
     })
 }
 
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, not(any(unix, windows))), allow(dead_code))]
 fn settle(deferred: JsDeferred<Option<ExclusiveFileLock>, Settle>, waited: Result<Option<File>>) {
     match waited {
         Ok(file) => deferred.resolve(Box::new(move |_| Ok(file.map(ExclusiveFileLock::holding)))),
