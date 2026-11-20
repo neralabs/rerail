@@ -1547,20 +1547,22 @@ fn program_key(h: &mut sha2::Sha256, p: &Placed) {
 /// Identities kept as a stored fact under `key` (`parts::keep_facts`): read back where kept, else made by `make` and
 /// kept. The key names everything they are made of (the programs, the binds, the engine), so a program the run held
 /// before reads its identities rather than hashing its strata again (Q19's identities, decision 0379).
-fn kept_identities(store: &ContentStore, what: &str, key: [u8; 32], make: impl FnOnce() -> Result<Vec<(String, [u8; 32])>>) -> Result<Vec<(String, [u8; 32])>> {
+/// With the stored fact's source when it was read, which the run names in its manifest (decision 0306): a run that
+/// makes them names it as its write stores it.
+fn kept_identities(store: &ContentStore, what: &str, key: [u8; 32], make: impl FnOnce() -> Result<Vec<(String, [u8; 32])>>) -> Result<(Vec<(String, [u8; 32])>, Option<crate::content_store::SourceId>)> {
     use super::preparation::parts::{hex, keep_facts, kept_facts_alone, rows_of, str};
     let kept = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{what}: kept"));
-        kept_facts_alone(store, &key).and_then(|f| rows_of(&f, "frame_ident").map(|r| Some((r.first()?.clone(), super::preparation::parts::unhex(r.get(1)?)?))).collect::<Option<Vec<_>>>())
+        kept_facts_alone(store, &key).and_then(|(f, source)| Some((rows_of(&f, "frame_ident").map(|r| Some((r.first()?.clone(), super::preparation::parts::unhex(r.get(1)?)?))).collect::<Option<Vec<_>>>()?, source)))
     };
-    if let Some(k) = kept {
-        return Ok(k);
+    if let Some((k, source)) = kept {
+        return Ok((k, Some(source)));
     }
     let made = make()?;
     let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
     facts.insert("frame_ident".to_owned(), made.iter().map(|(name, ident)| vec![str(name), str(&hex(ident))].into()).collect());
     keep_facts(store, &key, &facts);
-    Ok(made)
+    Ok((made, None))
 }
 
 /// A program's derived relations' identities (`plan::identities`, by its components), as `Retained::bind_kept`
@@ -1569,7 +1571,7 @@ pub(in crate::code_rule_dsl) type StrataIdents = Arc<HashMap<String, [u8; 32]>>;
 
 /// `p`'s strata identities (`identities_by_heads` over `sccs`), kept as a stored fact under the program and its
 /// components. Read before the first wave only (decision 0104): a reader inside the waves is handed them.
-fn strata_idents_kept(store: &ContentStore, p: &Placed, sccs: &[BTreeSet<String>]) -> Result<StrataIdents> {
+fn strata_idents_kept(store: &ContentStore, p: &Placed, sccs: &[BTreeSet<String>]) -> Result<(StrataIdents, Option<crate::content_store::SourceId>)> {
     use sha2::{Digest as _, Sha256};
     let mut h = Sha256::new();
     h.update(b"rerail/strata identities v1\0");
@@ -1583,14 +1585,24 @@ fn strata_idents_kept(store: &ContentStore, p: &Placed, sccs: &[BTreeSet<String>
         h.update([1]);
     }
     let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(p.clone());
-    let made = kept_identities(store, "a program's strata identities", h.finalize().into(), || Ok(leaves.identities_by_heads(sccs)?.into_iter().collect()))?;
-    Ok(Arc::new(made.into_iter().collect()))
+    let (made, source) = kept_identities(store, "a program's strata identities", h.finalize().into(), || Ok(leaves.identities_by_heads(sccs)?.into_iter().collect()))?;
+    Ok((Arc::new(made.into_iter().collect()), source))
 }
 
 /// Each of `progs`' strata identities (`strata_idents_kept`), read before the first wave (decision 0104), for
-/// `Retained::bind_kept_named`: what the part's kept entries are named by.
-pub(in crate::code_rule_dsl) fn strata_kept(store: &ContentStore, progs: &[&Placed]) -> Result<Vec<StrataIdents>> {
-    progs.iter().map(|p| strata_idents_kept(store, p, &p.components()?)).collect()
+/// `Retained::bind_kept_named`: what the part's kept entries are named by. With the sources of those read from the
+/// store, for the run's manifest.
+pub(in crate::code_rule_dsl) fn strata_kept(store: &ContentStore, progs: &[&Placed]) -> Result<(Vec<StrataIdents>, Vec<crate::content_store::SourceId>)> {
+    let mut sources = Vec::new();
+    let strata = progs
+        .iter()
+        .map(|p| {
+            let (s, read) = strata_idents_kept(store, p, &p.components()?)?;
+            sources.extend(read);
+            Ok(s)
+        })
+        .collect::<Result<_>>()?;
+    Ok((strata, sources))
 }
 
 /// A relation's column types, as frames store them.

@@ -1448,7 +1448,7 @@ fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: 
     };
     let last = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the combine's last tail run, from the store (decision 0393)".into());
-        let named = preparation::parts::kept_facts_alone(&store, &key).and_then(|f| f.get("anchor").and_then(|r| r.first()).and_then(|r| match r.first() {
+        let named = preparation::parts::kept_facts_alone(&store, &key).and_then(|(f, _)| f.get("anchor").and_then(|r| r.first()).and_then(|r| match r.first() {
             Some(front::Value::Str(h)) => preparation::parts::unhex(h),
             _ => None,
         }));
@@ -5464,7 +5464,9 @@ fn run_observed_within(
         if let Some(maintained) = early_maintained.as_ref() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the cross part's strata identities".into());
             let progs = [cross.placed()?, maintained.placed()?];
-            let strata = retain::strata_kept(store, &[&progs[0], &progs[1]])?;
+            let (strata, read) = retain::strata_kept(store, &[&progs[0], &progs[1]])?;
+            // Named in the run's manifest, as the run that kept them named them (decision 0306).
+            late_sources.lock().expect("the late sources").extend(read);
             cross_idents = progs.iter().map(super::body::Placed::digest).zip(strata).collect();
         }
         let spaces = {
