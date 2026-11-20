@@ -2176,6 +2176,24 @@ describe("CodeRuleBridge", () => {
       expect(toldPaths(onDiscoveryGaps)).toEqual(folders.slice(10, MAX_TOLD_AT_ONCE).map(folder => `src/${basename(folder)}`));
     });
 
+    it(`records a denied file that ${MAX_TOLD_AT_ONCE + 1} files whose deletes stay pending sort before: a walk looks first at the refusals no earlier walk withdrew`, async () => {
+      const root = await workspace();
+      const going = Array.from({ length: MAX_TOLD_AT_ONCE + 1 }, (_, index) => join(root, "src", `a${String(index).padStart(3, "0")}.py`));
+      const denied = join(root, "src", "z.py");
+      for (const file of [...going, denied]) {
+        await writeFile(file, "x = 1\n");
+        refuseReads(file);
+      }
+      for (const file of going) discovery.accesses.set(file, Array.from({ length: 50 }, () => deletePending(file)));
+      const onDiscoveryGaps = vi.fn();
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+
+      await bridge.checkpoint("turn");
+      await bridge.checkpoint("turn");
+      expect(toldPaths(onDiscoveryGaps)).toEqual(["src/z.py"]);
+    });
+
     // The walk of the other worktrees is shared by every session watching them; what it had no room to look at again
     // reaches each session marked so, and is said, not recorded, until a later walk looks at it, as in the session folder.
     it(`tells the refusals past the first ${MAX_TOLD_AT_ONCE} in path order in another worktree once a later walk looked at them, none whose delete is pending`, async () => {

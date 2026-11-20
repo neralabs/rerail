@@ -1054,6 +1054,11 @@ interface SourceWalk {
   readonly held: (path: string) => boolean;
   /** The refusals the walk met (`noteRefusal`): the first `MAX_LOOKED_AGAIN` in path order are looked at once its other paths are done. */
   refusals?: Refusal[];
+  /**
+   * The refusals the session's earlier walks of this folder looked at again and found no denial, that each walk since met
+   * and had no room to look at: the walk looks at them after the others (`judgeRefusals`) and keeps this up to date.
+   */
+  readonly withdrawn: Set<string>;
 }
 /** What a walk of `SourceDiscovery` compares its scan with, all read before it started. */
 interface WalkStart {
@@ -1393,21 +1398,29 @@ function sameEntry(before: Stats, now: Stats): boolean {
   return before.dev === now.dev && before.ino === now.ino;
 }
 /**
- * Looks again at the first `MAX_LOOKED_AGAIN` refusals of `walk` (`noteRefusal`) in path order, at once: no listing is
- * made and no path walked again. One there is a denial, and its failure a gap; any other is no gap (`withdrawn`), and a
- * path examined that is gone is absent from the walk (`absentAfterAll`). One whose delete is pending keeps what the walk
- * held of it until a walk finds it gone, as a read that fails does. The rest are said but not recorded at this walk
- * (`Judged.unconfirmed`).
+ * Looks again at the first `MAX_LOOKED_AGAIN` refusals of `walk` (`noteRefusal`) in path order, those an earlier walk
+ * withdrew last (`SourceWalk.withdrawn`), at once: no listing is made and no path walked again. One there is a denial,
+ * and its failure a gap; any other is no gap (`withdrawn`), and a path examined that is gone is absent from the walk
+ * (`absentAfterAll`). One whose delete is pending keeps what the walk held of it until a walk finds it gone, as a read
+ * that fails does. The rest are said but not recorded at this walk (`Judged.unconfirmed`). So files whose deletes stay
+ * pending fill the looks of one walk, not of every walk, and a denial past them is recorded at the next.
  */
 async function judgeRefusals(walk: SourceWalk): Promise<Judged> {
   const judged: Judged = { withdrawn: new Set(), unconfirmed: new Set() };
   const { refusals } = walk;
   if (refusals === undefined || walk.discovery.cancelled) return judged;
-  refusals.sort((left, right) => compareDeterministicStrings(left.path, right.path));
+  const withdrawnBefore = ({ path }: Refusal): number => Number(walk.withdrawn.has(path));
+  refusals.sort((left, right) => withdrawnBefore(left) - withdrawnBefore(right) || compareDeterministicStrings(left.path, right.path));
   for (const { path } of refusals.splice(MAX_LOOKED_AGAIN)) judged.unconfirmed.add(path);
   const looks = await Promise.all(refusals.map(lookedAgain));
   refusals.forEach((refusal, index) => notDenied(walk, judged, refusal, looks[index]));
+  keepWithdrawn(walk.withdrawn, judged);
   return judged;
+}
+/** Keeps of `withdrawn` the refusals this walk met and had no room to look at, and adds those it withdrew. */
+function keepWithdrawn(withdrawn: Set<string>, { withdrawn: now, unconfirmed }: Judged): void {
+  for (const path of withdrawn) if (!unconfirmed.has(path)) withdrawn.delete(path);
+  for (const path of now) withdrawn.add(path);
 }
 /** What `judgeRefusals` found of a walk's refusals, by the failure's path (`ScanError.path`). */
 interface Judged {
@@ -1756,6 +1769,8 @@ export class CodeRuleBridge {
    * each told to `onDiscoveryGaps` since, once the call returned (`#tellGaps`).
    */
   readonly #toldGaps = new Set<string>();
+  /** For each folder the session's walks start at, by its path: the refusals they withdrew (`SourceWalk.withdrawn`). */
+  readonly #withdrawnRefusals = new Map<string, Set<string>>();
   readonly #onIgnoredEdit: ((edit: IgnoredEdit) => void) | undefined;
   readonly #onIgnoreRulesChanged: ((change: IgnoreRulesChange) => void) | undefined;
   /**
@@ -2843,6 +2858,7 @@ export class CodeRuleBridge {
       stack: [discovery.root], roots: new Set([discovery.root, ...worktrees]),
       view: this.#auditor.walkView?.() ?? this.#auditor,
       held: path => this.#holdsRefusal(path),
+      withdrawn: this.#withdrawnIn(discovery.root),
     });
     // Read off the lane, as the scan is, so tool calls are not held up behind it.
     await this.#readFirstSeenTexts(discovery, walk, scan);
@@ -2880,8 +2896,16 @@ export class CodeRuleBridge {
       scan: { ...emptyScan(), seen }, stack: [request.root], roots: request.skip,
       // Its findings serve every session watching the worktree, so only the records of them all spare a refusal its look.
       held: request.held,
+      withdrawn: this.#withdrawnIn(request.root),
     });
     return abandoned() ? undefined : { ...scan, seen };
+  }
+
+  /** The refusals the session's walks from `root` withdrew (`SourceWalk.withdrawn`): an empty set before its first walk. */
+  #withdrawnIn(root: string): Set<string> {
+    const withdrawn = this.#withdrawnRefusals.get(root) ?? new Set<string>();
+    this.#withdrawnRefusals.set(root, withdrawn);
+    return withdrawn;
   }
 
   /**
