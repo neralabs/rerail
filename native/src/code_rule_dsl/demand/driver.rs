@@ -16,10 +16,8 @@ use crate::content_store::{ContentStore, StoreResult};
 use rusqlite::{Connection, OptionalExtension as _, Row};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
-/// The batches registered by every driver; each lives for one `drive`.
-static REGISTRY: LazyLock<Arc<MatchRegistry>> = LazyLock::new(Arc::default);
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -325,14 +323,16 @@ pub fn drive(
     file_metadata: &str,
 ) -> StoreResult<QueryOutcome> {
     // Failures are rows here (`SqlFailureRow`), so the batch's status is the statements' to read.
-    with_batch(&REGISTRY, Some(demand), None, |token| {
+    // The batches registered by this drive: its own (decision 0442), read by its statements' tables.
+    let registry = Arc::new(MatchRegistry::default());
+    with_batch(&registry, Some(demand), None, |token| {
         let token = token.expect("a registered batch");
         store.candidate_transaction(false, |db| {
             // Registering again replaces the modules and re-reads their row estimates from
             // `fact_stats`, which the previous batch may have changed.
-            register_module(db, Arc::clone(&REGISTRY))?;
+            register_module(db, Arc::clone(&registry))?;
             let mut materialized = Vec::new();
-            let result = run(db, token, statements, file_metadata, &mut materialized);
+            let result = run(db, &registry, token, statements, file_metadata, &mut materialized);
             db.flush_prepared_statement_cache();
             for table in materialized.into_iter().rev() {
                 let _ = db.execute_batch(&format!("DROP TABLE IF EXISTS temp.\"{table}\""));
@@ -344,6 +344,7 @@ pub fn drive(
 
 fn run(
     db: &Connection,
+    registry: &MatchRegistry,
     token: i64,
     statements: &[ExecutionStatement],
     file_metadata: &str,
@@ -431,7 +432,7 @@ fn run(
         }
     }
     let row_count = rows.len() + violations.len() + failures.len();
-    let packed = REGISTRY
+    let packed = registry
         .query_execution_report(token)
         .expect("the registered batch remains available until publication");
     Ok(QueryOutcome {

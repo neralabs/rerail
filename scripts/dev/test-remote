@@ -2,7 +2,7 @@
 """Runs a test command on another Mac of the build farm, in this checkout's copy there; here when none
 is usable (docs/final-shape/notes/t37, §2; scripts/build/farm/README.md).
 
-    scripts/dev/test-remote [--host NAME] [--os macos|linux|any] [--dir native] [--remote-only] [--tree DIR]... -- COMMAND...
+    scripts/dev/test-remote [--host NAME] [--os macos|linux|windows|any] [--dir native] [--remote-only] [--tree DIR]... -- COMMAND...
 
 e.g. `scripts/dev/test-remote -- cargo nextest run --lib --profile gate` for the full suite, or
 `scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'`.
@@ -28,6 +28,12 @@ taken, and never one that needs macOS: one naming Metal (`metal-tests`, `rerail-
 sending a `--tree` (a program built here is a macOS one). `--os linux` sends it to a Linux host
 only, `--os any` lets any host take it, `--os macos` keeps it off Linux.
 
+A Windows host (`"os": "windows"`: a Windows PC's or VM's Windows side, through its WSL) takes a
+command only with `--os windows` (or `--host`): COMMAND runs there as a Windows build (Windows'
+cargo and MSVC, at a low priority; a leading `nice -n N` sets it), in a copy of the checkout on
+its drive. One machine's Linux and Windows sides share its test slots: what is queued decides how
+many of each run.
+
 `--tree DIR` also sends DIR whole (untracked files too, at the same path under the host's farm
 root): a run's inputs and a program built here, e.g. `--tree tmp/bench --tree tmp/engines` for a
 benchmark run on the host.
@@ -39,6 +45,7 @@ fail without it, on the host as here. The first run sends it (about 13 MB), late
 It runs the installed farm (`~/.local/share/rerail-farm`, `scripts/build/farm/setup`), the one every
 worktree's compiles use, whatever version this checkout has.
 """
+import concurrent.futures
 import os
 import resource
 import json
@@ -48,12 +55,14 @@ import subprocess
 import sys
 import time
 
-CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
+# The checkout's: the installed copy of this script runs for every checkout (the farm hands a
+# checkout's own copy to it), told which.
+CHECKOUT = os.environ.get("RERAIL_FARM_CHECKOUT") or os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
 SHARE = os.path.expanduser("~/.local/share/rerail-farm")
 USAGE = __doc__.split("\n\n")[1]
 
 UNAVAILABLE = 69
-KEPT = []
+
 
 
 def say(message):
@@ -86,29 +95,39 @@ def needs_macos(argv, trees):
     return bool(trees) or "metal" in " ".join(argv).lower()
 
 
-def choose(named, oses):
-    """A usable host of one of `oses` and its test slot (held until exit), or (None, None, why)."""
+def choose(named, oses, roots):
+    """A usable host of one of `oses`, its test slot and this checkout's copy there (`farm.CopyUse`
+    of the tree `roots` hold), each held until exit; or (None, None, None, why)."""
     if named:
         host = next((h for h in farm.hosts() if h["name"] == named), None)
         if host is None:
-            return None, None, f"{named} is not in the farm's configuration"
+            return None, None, None, f"{named} is not in the farm's configuration"
         if farm.host_os(host) not in oses:
-            return None, None, f"{named} is a {farm.host_os(host)} host, and this command runs on {' or '.join(oses)} (--os)"
+            return None, None, None, f"{named} is a {farm.host_os(host)} host, and this command runs on {' or '.join(oses)} (--os)"
         h = farm.health(host, fresh=True)
         if not h.get("ok"):
-            return None, None, f"{named} is not usable: {h.get('why')}"
+            return None, None, None, f"{named} is not usable: {h.get('why')}"
         candidates = [host]
     else:
         candidates = [h for h in farm.usable("tests") if farm.host_os(h) in oses]
         if not candidates:
+            # Every host is backed off: asked again now, together (a few seconds), before the command
+            # runs here. A back-off is a guess about a host, and running here on a wrong one costs more.
+            hosts = [h for h in farm.hosts() if h.get("enabled", True) and h.get("tests", True) and farm.host_os(h) in oses]
+            with concurrent.futures.ThreadPoolExecutor(max(len(hosts), 1)) as pool:
+                list(pool.map(lambda h: farm.health(h, fresh=True), hosts))
+            candidates = [h for h in farm.usable("tests") if farm.host_os(h) in oses]
+        if not candidates:
             reasons = [f"{h['name']}: {farm.health(h).get('why') or 'not ' + ' or '.join(oses)}" for h in farm.hosts()
                        if h.get("enabled", True) and h.get("tests", True)]
-            return None, None, "no usable host" + (f" ({'; '.join(reasons)})" if reasons else " (none configured)")
+            return None, None, None, "no usable host" + (f" ({'; '.join(reasons)})" if reasons else " (none configured)")
     said = False
     while True:
         # The host with the most of its test slots free, then the most cores to spare; any slot that
         # frees on any host is taken, not only the first host's.
         free = []
+        tree = mirror.fingerprint(roots)
+        other_tree = []
         for host in candidates:
             # Asked again while waiting: a host that started a fleet job meanwhile takes nothing more.
             if not farm.health(host).get("ok"):
@@ -125,25 +144,32 @@ def choose(named, oses):
                         continue
                 lock.release()
             if got:
+                # This checkout's copy there: idle, or running from this very tree; else another
+                # command of this checkout runs there from other files, which this one would change.
+                # (a Windows host's copy is its machine's Linux one: `shared_base`)
+                use = farm.CopyUse(farm.shared_base(host)["name"], CHECKOUT, tree)
+                if not use.held:
+                    other_tree.append(host["name"])
+                    got.release()
+                    continue
                 # This checkout's commands on one host share its target directory there, and cargo
-                # runs them one at a time: another host with a free slot goes first.
-                mine = farm.Lock(farm.state("tests", f"{host['name']}.{farm.key(CHECKOUT)}.checkout"), blocking=False)
-                free.append((farm.host_os(host) != "macos", not mine.held, -idle / len(paths), -farm.spare(host), host, got, mine))
+                # builds for them one at a time: a host where none runs goes first.
+                # (a host short of disk last: it keeps only its recently used targets, and drops
+                # even those under its floor)
+                free.append((farm.host_os(host) != "macos", bool(farm.health(host).get("short")), not use.sends,
+                             -idle / len(paths), -farm.spare(host), host, got, use))
         if free:
             # A Mac first: a Linux host's run is another platform's build.
-            free.sort(key=lambda f: f[:4])
+            free.sort(key=lambda f: f[:5])
             for f in free[1:]:
-                f[5].release()
                 f[6].release()
+                f[7].release()
             best = free[0]
-            if best[6].held:
-                KEPT.append(best[6])  # held until exit: a lock closes with its last reference
-            else:
-                best[6].release()
-            return best[4], best[5], None
+            return best[5], best[6], best[7], None
         if not said:
-            say("every test slot of every usable host is taken: waiting for the first that frees ("
-                + ", ".join(f"{h['name']} {farm.test_slots(h)}" for h in candidates) + ")")
+            say("every test slot of every usable host is taken"
+                + (f", or this checkout's copy there runs another command from other files ({', '.join(other_tree)})" if other_tree else "")
+                + ": waiting for the first that frees (" + ", ".join(f"{h['name']} {farm.test_slots(h)}" for h in candidates) + ")")
             said = True
         time.sleep(2)
 
@@ -169,8 +195,8 @@ def parse(argv):
             trees.append(os.path.realpath(argv[1]))
             argv = argv[2:]
         elif a == "--os":
-            if len(argv) < 2 or argv[1] not in ("macos", "linux", "any"):
-                usage("--os takes macos, linux or any")
+            if len(argv) < 2 or argv[1] not in ("macos", "linux", "windows", "any"):
+                usage("--os takes macos, linux, windows or any")
             os_choice, argv = argv[1], argv[2:]
         elif a in ("--host", "--dir"):
             if len(argv) < 2 or argv[1].startswith("-"):
@@ -224,24 +250,35 @@ def main(argv):
             "scripts/build/farm/setup installs it; running the installed one")
 
     started = time.time()
+    if os_choice is None and named and farm.host_os(farm.entry(named)) == "windows":
+        os_choice = "windows"
     if os_choice is None:
         os_choice = "macos" if needs_macos(argv, trees) else "any"
     oses = ("macos", "linux") if os_choice == "any" else (os_choice,)
-    host, slot, why = choose(named, oses)
+    roots = [[CHECKOUT, "checkout"]] + [[t, "tree"] for t in trees]
+    host, slot, use, why = choose(named, oses, roots)
     if host is None:
         here(argv, directory, why, remote_only)
     name = host["name"]
     linux = farm.host_os(host) == "linux"
+    windows = farm.host_os(host) == "windows"
+    kind = " (Linux: a Linux build and run)" if linux else " (Windows: a Windows build and run)" if windows else ""
     short = farm.health(host).get("short")
     if short:
         say(f"{name}: {short}")
-    reply = mirror.compile({"host": name, "since": started, "roots": [[CHECKOUT, "checkout"]] + [[t, "tree"] for t in trees], "files": [], "verify": True,
-                            "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
-    if reply is None or reply.get("code") != 0:
-        slot.release()
-        here(argv, directory, f"the checkout could not be sent to {name}: {(reply or {}).get('why') or 'no mirror daemon'}", remote_only)
-    t = reply.get("times", {})
-    say(f"{name}{' (Linux: a Linux build and run)' if linux else ''}: checkout sent ({t.get('files')} files, {t.get('sync')} s)")
+    if use.sends:
+        reply = mirror.compile({"host": name, "since": started, "roots": roots, "files": [], "verify": True,
+                                "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
+        if reply is None or reply.get("code") != 0:
+            use.release()
+            slot.release()
+            here(argv, directory, f"the checkout could not be sent to {name}: {(reply or {}).get('why') or 'no mirror daemon'}", remote_only)
+        use.sent()
+        t = reply.get("times", {})
+        say(f"{name}{kind}: checkout sent ({t.get('files')} files, {t.get('sync')} s)")
+    else:
+        say(f"{name}{kind}: nothing sent: this checkout's copy there is "
+            "this very tree, and another command of it runs from it")
 
     # The farm's wrapper is this machine's; the host's cargo builds as it would alone, in a target
     # directory of its own (farm-agent's `exec`).
@@ -250,6 +287,8 @@ def main(argv):
            "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0],
            "min_free_gb": farm.config().get("min_free_gb", 40),
            "max_target_gb": host.get("max_target_gb", farm.config()["max_target_gb"])}
+    if windows:
+        job["windows"] = True
     remote = farm.agent_exec(job)
     proc = subprocess.Popen(farm.ssh(name, remote, "test"), stdin=subprocess.PIPE)
     try:
@@ -266,6 +305,7 @@ def main(argv):
     say(f"{name}: exit {code} after {time.time() - started:.0f} s")
     if code == 255:
         farm.mark_down(name, "lost during a test run")
+        use.release()
         slot.release()
         here(argv, directory, f"the connection to {name} was lost", remote_only)
     sys.exit(code)

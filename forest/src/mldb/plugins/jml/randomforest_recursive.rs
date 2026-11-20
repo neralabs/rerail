@@ -300,7 +300,7 @@ pub fn test_all_cpu(depth: i32, features: &[Feature], rows: &Rows, criterion: Sp
     let do_feature = |i: usize| test_feature_number(i, features, rows.get_row_iterator(), rows.row_count(), &rows.w_all, criterion);
     let results: Vec<(f64, i32, W, W, bool, CategorySet)> = if depth < 4 || rows.row_count() as u64 * nf as u64 > 20000 {
         use rayon::prelude::*;
-        (0..nf).into_par_iter().map(do_feature).collect()
+        rerail_context::on_cores(|| (0..nf).into_par_iter().map(do_feature).collect())
     } else {
         (0..nf).map(do_feature).collect()
     };
@@ -504,7 +504,7 @@ pub fn get_partition_splits(buckets: &[W] /* [np][nab] */, num_active_buckets: u
         };
         let results: Vec<_> = if parallel {
             use rayon::prelude::*;
-            (0..active_feature_list.len()).into_par_iter().map(do_feature).collect()
+            rerail_context::on_cores(|| (0..active_feature_list.len()).into_par_iter().map(do_feature).collect())
         } else {
             (0..active_feature_list.len()).map(do_feature).collect()
         };
@@ -575,7 +575,7 @@ pub fn split_and_recurse_partitioned(depth: i32, max_depth: i32, tree: &mut Tree
     };
     let trained: Vec<_> = if depth <= 8 {
         use rayon::prelude::*;
-        new_data.par_iter().enumerate().filter_map(do_entry).collect()
+        rerail_context::on_cores(|| new_data.par_iter().enumerate().filter_map(do_entry).collect())
     } else {
         new_data.iter().enumerate().filter_map(do_entry).collect()
     };
@@ -880,12 +880,14 @@ pub fn train_partitioned_end_to_end_cpu(depth: i32, max_depth: i32, tree: &mut T
     let num_active_buckets = *bucket_offsets.last().unwrap();
     let decoded_rows = decode_rows(rows);
     use rayon::prelude::*;
-    let per_feature: Vec<Vec<W>> = active_features.par_iter().map(|&f| {
-        let f = f as usize;
-        let mut w = vec![W::default(); (bucket_offsets[f + 1] - bucket_offsets[f]) as usize];
-        test_feature_kernel(&decoded_rows[..], decoded_rows.len(), &features[f].buckets, &mut w);
-        w
-    }).collect();
+    let per_feature: Vec<Vec<W>> = rerail_context::on_cores(|| {
+        active_features.par_iter().map(|&f| {
+            let f = f as usize;
+            let mut w = vec![W::default(); (bucket_offsets[f + 1] - bucket_offsets[f]) as usize];
+            test_feature_kernel(&decoded_rows[..], decoded_rows.len(), &features[f].buckets, &mut w);
+            w
+        }).collect()
+    });
     let mut buckets = Vec::with_capacity(num_active_buckets as usize);
     for w in per_feature {
         buckets.extend(w);

@@ -93,8 +93,8 @@ fn walk(a: usize, kids: &[(u32, bool)], out: &mut [bool]) {
             if w != 0 && (w >> 8 & 15) as usize == to - from {
                 let word = &kinds::WORD[(w >> 12) as usize..(w >> 12) as usize + (to - from)];
                 if word.iter().zip(&kids[from..to]).all(|(&l, k)| l == k.0) {
-                    for i in from..to {
-                        out[i] |= w >> (i - from) & 1 == 1;
+                    for (i, o) in out[from..to].iter_mut().enumerate() {
+                        *o |= w >> i & 1 == 1;
                     }
                 }
             }

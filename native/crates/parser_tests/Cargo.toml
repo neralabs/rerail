@@ -3,23 +3,28 @@ name = "rerail-parser-tests"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The parsers' tests that need no engine: the .rr ladder against the engine's .rr parser, the JSON suite against tree-sitter, and both on Metal."
+description = "The parsers' tests that need no engine: the .rerail ladder against the engine's .rerail parser, the JSON suite against tree-sitter, and both on Metal."
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks"]
+test-hooks = ["rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
 rerail-rr-syntax = { path = "../rr_syntax" }
+# Format 16's tapes, which the JSON suite compares (decision 0434).
+rerail-tape-format = { path = "../tape_format" }
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 # The JSON suite's comparisons: the grammar the engine links (ast-grep's), at its version.
 tree-sitter = "=0.27.1"
 tree-sitter-json = "=0.24.8"
 
 [dev-dependencies]
+rerail-context = { path = "../context", features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-parser-tests = { path = ".", features = ["test-hooks"] }
+# Loading tier 2's Rust, built by rustc, in place of the JIT's code (`simdjson_forms_rust_trees_are_the_jits`).
+libc = "0.2.189"
 
 # The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]

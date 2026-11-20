@@ -1,4 +1,4 @@
-//! ECMAScript's reading of its core.rr facts (`core_rr::DialectFacts`): its strings decoded as ECMAScript decodes them.
+//! ECMAScript's reading of its core.rerail facts (`core_rr::DialectFacts`): its strings decoded as ECMAScript decodes them.
 
 use super::core_rr::DialectFacts;
 

@@ -86,12 +86,30 @@ pub fn tape(src: &[u8], dialect: Dialect) -> Result<Tape, Refusal> {
 }
 
 /// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
-/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0426).
+/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
 pub fn tape_into<T>(src: &[u8], dialect: Dialect, finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);
     }
     parse::parse_into(src, dialect, finish)
+}
+
+/// The node kinds a parse may start at (decision 0466): a whole file, or one JSX element alone ([`tape_from_into`]).
+pub const STARTS: &[&str] = &["program", "jsx_element", "jsx_self_closing_element"];
+
+/// [`tape_into`] from the node kind `start` (one of [`STARTS`]): its tape's root is one node of that kind over `src`,
+/// less blanks. `None` for a kind it does not start at.
+pub fn tape_from_into<T>(src: &[u8], dialect: Dialect, start: &str, finish: &mut dyn rerail_tape_format::Sink<T>) -> Option<Result<T, Refusal>> {
+    let start = match start {
+        "program" => parse::Start::Program,
+        "jsx_element" => parse::Start::JsxElement,
+        "jsx_self_closing_element" => parse::Start::JsxSelfClosingElement,
+        _ => return None,
+    };
+    if src.len() >= u32::MAX as usize / 2 {
+        return Some(Err(Refusal::TooLarge));
+    }
+    Some(parse::parse_from(src, dialect, start, finish))
 }
 
 /// A tape as plain text, as the engine's `python_tape_plain` writes one (the oracle's form): a node
@@ -145,5 +163,54 @@ mod tests {
         assert_eq!(unkey(key(K::Identifier, f::NAME, 6, false)), (K::Identifier as u16, f::NAME, 6, false));
         assert_eq!(unkey(key(K::Comment, 0, 0, true)), (K::Comment as u16, 0, 0, true));
         assert!(key(kinds::LAST, f::VALUE, 9, true) < 1 << 19);
+    }
+
+    fn element(src: &str, start: &str) -> Result<Tape, Refusal> {
+        tape_from_into(src.as_bytes(), Dialect::JavaScript, start, &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).unwrap()
+    }
+
+    /// Decision 0466 R1: a JSX element alone is one root of its kind over the text less blanks, nothing above it.
+    #[test]
+    fn a_jsx_fragment_is_rooted_at_its_element() {
+        for (src, start, root) in [
+            ("<a href={x}>hi {y}</a>", "jsx_element", "jsx_element [0..22]"),
+            ("  <>a<b/></>\n", "jsx_element", "jsx_element [2..12]"),
+            ("<br />", "jsx_self_closing_element", "jsx_self_closing_element [0..6]"),
+        ] {
+            let text = tape_text(&element(src, start).unwrap_or_else(|e| panic!("{src:?}: {e:?}")));
+            assert!(text.lines().next().unwrap().starts_with(root.split(' ').next().unwrap()), "{src:?}:\n{text}");
+            assert!(text.lines().next().unwrap().ends_with(root.split(' ').nth(1).unwrap()), "{src:?}:\n{text}");
+            assert!(text.lines().skip(1).all(|l| l.starts_with(' ')), "one root: {src:?}:\n{text}");
+        }
+    }
+
+    /// The element is the expression's: the same nodes as in `x = <…>;` at the element.
+    #[test]
+    fn a_jsx_fragment_is_the_files_element() {
+        let src = "<a b=\"c\">{d}<e /></a>";
+        let ours = tape_text(&element(src, "jsx_element").unwrap());
+        let file = tape_text(&tape(format!("x = {src};").as_bytes(), Dialect::JavaScript).unwrap());
+        let lines: Vec<&str> = file.lines().collect();
+        let at = lines.iter().position(|l| l.trim_start().starts_with("jsx_element")).unwrap();
+        let depth = lines[at].len() - lines[at].trim_start().len();
+        let shift = |l: &str| {
+            let (head, span) = l.rsplit_once(" [").unwrap();
+            let (a, b) = span.trim_end_matches(']').split_once("..").unwrap();
+            let head = &head[depth..];
+            let head = head.split_once(" right:").map_or(head.to_owned(), |(k, rest)| format!("{k}{rest}"));
+            format!("{head} [{}..{}]", a.parse::<u32>().unwrap() - 4, b.parse::<u32>().unwrap() - 4)
+        };
+        let theirs: Vec<String> = std::iter::once(shift(lines[at])).chain(lines[at + 1..].iter().take_while(|l| l.len() - l.trim_start().len() > depth).map(|l| shift(l))).collect();
+        assert_eq!(ours.lines().collect::<Vec<_>>(), theirs.iter().map(String::as_str).collect::<Vec<_>>());
+    }
+
+    /// Refused: another kind than the start, anything after the element, a comment outside it, TypeScript (no JSX).
+    #[test]
+    fn a_jsx_fragment_is_one_element() {
+        for (src, start) in [("<br />", "jsx_element"), ("<a></a>", "jsx_self_closing_element"), ("<a></a> x", "jsx_element"), ("<a></a><b></b>", "jsx_element"), ("// c\n<a></a>", "jsx_element"), ("<a></a> // c", "jsx_element"), ("x", "jsx_element"), ("", "jsx_element")] {
+            assert!(element(src, start).is_err(), "{src:?} from {start}");
+        }
+        assert!(tape_from_into(b"<a></a>", Dialect::TypeScript, "jsx_element", &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).unwrap().is_err());
+        assert!(tape_from_into(b"<a></a>", Dialect::JavaScript, "statement", &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns).is_none());
     }
 }

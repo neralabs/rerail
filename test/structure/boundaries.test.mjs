@@ -1,16 +1,17 @@
 // The layer boundary lint (scripts/check/check-boundaries.mjs, metric #13): each rule passes and fails on
 // a tiny checkout written to a temporary directory.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkBoundaries } from "../../scripts/check/check-boundaries.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const roots = [];
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 /** The violations, as `file:line [rule]`, of a checkout holding `tree` (path → contents). */

@@ -73,7 +73,7 @@ const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl
 
 /// The process's device in the device layer and the compiled kernels: once per process, on any backend.
 struct Gpu {
-    layer: &'static shared::Layer,
+    layer: shared::Layer,
     functions: Vec<Arc<ComputeFunction>>,
     page: usize,
     max_buffer: u64,
@@ -93,9 +93,21 @@ impl Gpu {
     }
 }
 
-fn gpu() -> Option<&'static Gpu> {
-    static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
-    GPU.get_or_init(|| Gpu::new().map_err(|e| eprintln!("{e}")).ok()).as_ref()
+/// The machine's GPU lane (decision 0442): its device's queue and pipelines, and its batches' counts.
+#[derive(Default)]
+struct GpuLane {
+    gpu: OnceLock<Option<Arc<Gpu>>>,
+    running: std::sync::atomic::AtomicUsize,
+    begun: std::sync::atomic::AtomicUsize,
+    beside: std::sync::atomic::AtomicUsize,
+}
+
+fn gpu_lane() -> Arc<GpuLane> {
+    rerail_context::machine::<GpuLane>()
+}
+
+fn gpu() -> Option<Arc<Gpu>> {
+    gpu_lane().gpu.get_or_init(|| Gpu::new().map_err(|e| eprintln!("{e}")).ok().map(Arc::new)).clone()
 }
 
 /// This lane's backend, when this machine has a Metal device and the kernels compiled.
@@ -110,7 +122,7 @@ pub fn backend() -> Option<Arc<dyn Backend>> {
 
 /// The gpu lane.
 pub struct GpuBackend {
-    gpu: &'static Gpu,
+    gpu: Arc<Gpu>,
     /// What the lane keeps between batches: joins' right sides (decision 0100 §4).
     space: std::sync::Mutex<space::Space>,
 }
@@ -234,13 +246,14 @@ impl Backend for GpuBackend {
                 Kernel::Program(p) => Arc::clone(&p.0),
                 _ => unreachable!("a program"),
             }).collect();
-            let beside = RUNNING.fetch_add(1, std::sync::atomic::Ordering::AcqRel) > 0;
-            BEGUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let lane = gpu_lane();
+            let beside = lane.running.fetch_add(1, std::sync::atomic::Ordering::AcqRel) > 0;
+            lane.begun.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if beside {
-                BESIDE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                lane.beside.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             let take = crate::exec::lane_spawn(move || {
-                let _running = RunningCount;
+                let _running = RunningCount(lane);
                 programs
                     .iter()
                     .map(|p| {
@@ -282,8 +295,8 @@ impl crate::exec::Pending for space::Started {
 /// Whether a batch of programs runs beside the one before (0344): on unless `RERAIL_GPU_OVERLAP=off`, which runs
 /// each as it begins on the lane's worker, to time what the overlap gives.
 fn overlap() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RERAIL_GPU_OVERLAP").as_deref() != Ok("off"))
+    // The run's setting (decision 0442).
+    rerail_context::setting(|| std::env::var("RERAIL_GPU_OVERLAP").as_deref() != Ok("off"))
 }
 
 /// A submission that ran as it began.
@@ -298,22 +311,19 @@ impl crate::exec::Pending for Done {
     }
 }
 
-static RUNNING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static BEGUN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static BESIDE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The GPU lane's batches of programs begun in this process, and how many of them began while another still ran
+/// The GPU lane's batches of programs begun on this machine, and how many of them began while another still ran
 /// (decision 0344: one's host part beside another's command buffers).
 pub fn programs_begun() -> (usize, usize) {
-    (BEGUN.load(std::sync::atomic::Ordering::Relaxed), BESIDE.load(std::sync::atomic::Ordering::Relaxed))
+    let lane = gpu_lane();
+    (lane.begun.load(std::sync::atomic::Ordering::Relaxed), lane.beside.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// One running batch of programs, counted while it lives.
-struct RunningCount;
+struct RunningCount(Arc<GpuLane>);
 
 impl Drop for RunningCount {
     fn drop(&mut self) {
-        RUNNING.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        self.0.running.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
@@ -339,7 +349,7 @@ impl crate::exec::Pending for Running {
 impl GpuBackend {
     /// Runs `ks` as one submission, with what it took on the device.
     pub fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Stats), String> {
-        let mut plan = Planner { gpu: self.gpu, inputs: HashMap::new(), leases: Default::default() };
+        let mut plan = Planner { gpu: &self.gpu, inputs: HashMap::new(), leases: Default::default() };
         let t = std::time::Instant::now();
         let jobs: Vec<Job> = crate::score::phase("upload", || ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>())?;
         let mut stats = Stats { encode: t.elapsed().as_secs_f64(), ..Stats::default() };
@@ -395,7 +405,7 @@ impl GpuBackend {
     /// One submission on the device's queue: every job's stage `s`, then stage `s + 1`. The queue runs its work in
     /// order, so each stage reads what the stages before it wrote (a stage boundary is counted as a barrier).
     fn execute<'a>(&self, jobs: impl Iterator<Item = &'a [Stage]> + Clone, stats: &mut Stats) -> Result<(), String> {
-        let gpu = self.gpu;
+        let gpu = &*self.gpu;
         let (c0, t0) = (crate::score::thread_cpu(), std::time::Instant::now());
         let mut q = ComputeQueue::new(gpu.layer.queue);
         let depth = jobs.clone().map(|j| j.len()).max().unwrap_or(0);
@@ -612,8 +622,8 @@ impl Job {
 }
 
 /// Builds a submission's jobs; inputs shared by several launches are wrapped once.
-struct Planner {
-    gpu: &'static Gpu,
+struct Planner<'g> {
+    gpu: &'g Gpu,
     inputs: HashMap<(usize, usize), Buffer>,
     /// The pooled buffers the submission's jobs use, returned once its work has completed and its outputs are
     /// read (when the planner drops).
@@ -624,7 +634,7 @@ fn u(x: usize) -> u32 {
     x as u32
 }
 
-impl Planner {
+impl Planner<'_> {
     /// A zeroed buffer of the pool (the kernels count into some, and read a new buffer as zero).
     fn alloc(&self, bytes: u64) -> Buffer {
         let lease = shared::lease_zeroed(bytes.max(16) as usize).unwrap_or_else(|e| panic!("gpu lane: {e}"));

@@ -13,6 +13,8 @@
 use crate::code_rule_dsl::logic::sql::select::Source;
 use super::owner::Lease;
 use super::schedule::Program;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+use crate::code_rule_dsl::logic::program_image::{Builder, Version};
 use crate::code_rule_dsl::logic::plan::emit;
 use crate::content_store::ContentStore;
 use std::collections::HashMap;
@@ -56,26 +58,28 @@ matched(c, d, n) :- kept_match(c, d, n).
 span(d, n, s, e) :- kept_span(d, n, s, e).
 ";
 /// `prog` with `more`'s declarations, inputs, outputs, rules (after its own) and facts: the program the two texts
-/// one after the other read as.
-fn joined(prog: &mut crate::code_rule_dsl::logic::front::Program, more: &crate::code_rule_dsl::logic::front::Program) {
-    prog.decls.extend(more.decls.iter().map(|(k, v)| (k.clone(), v.clone())));
-    prog.nullary.extend(more.nullary.iter().cloned());
-    prog.lattice.extend(more.lattice.iter().map(|(k, v)| (k.clone(), v.clone())));
-    prog.kindsets.extend(more.kindsets.iter().map(|(k, v)| (k.clone(), v.clone())));
-    for i in &more.inputs {
-        if !prog.inputs.contains(i) {
-            prog.inputs.push(i.clone());
-        }
+/// one after the other read as. Neither holds `.about` fields (the wave's programs have none).
+fn joined(prog: &Arc<Version>, more: &Version) -> StoreResult<Arc<Version>> {
+    let mut b = Builder::derive(prog);
+    for r in prog.rules() {
+        b.copy(prog, r);
     }
-    for o in &more.outputs {
-        if !prog.outputs.contains(o) {
-            prog.outputs.push(o.clone());
-        }
+    for rel in more.declared_names() {
+        let columns = more.columns_of(&rel).unwrap_or_default();
+        b.fields().declare(&rel, &columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>());
     }
-    prog.rules.extend(more.rules.iter().cloned());
-    for (rel, rows) in &more.facts {
-        prog.facts.entry(rel.clone()).or_default().extend(rows.iter().cloned());
+    let (mut inputs, mut outputs) = (prog.input_names(), prog.output_names());
+    inputs.extend(more.input_names().into_iter().filter(|i| !prog.input_names().contains(i)));
+    outputs.extend(more.output_names().into_iter().filter(|o| !prog.output_names().contains(o)));
+    b.fields().set_inputs(&inputs);
+    b.fields().set_outputs(&outputs);
+    for r in more.rules() {
+        b.copy(more, r);
     }
+    for rel in more.fact_names() {
+        b.fields().add_facts(&rel, &more.fact_rows(&rel));
+    }
+    b.finish().map(|(v, _)| v).map_err(invalid)
 }
 
 /// The kept rows a warm run reads, filled by its caller (`slice`).
@@ -120,7 +124,7 @@ pub(in crate::code_rule_dsl) struct Wave {
     logic: super::policies::Logic,
     /// The planner's programs, made once for the wave: `SOURCE` and the policies' rules (`logic.rules`), then with
     /// `KEPT` for a warm run; each with its digest (`choices::key`), the compiled plan's key (decision 0249).
-    sources: [(crate::code_rule_dsl::logic::front::Program, [u8; 32]); 2],
+    sources: [(Arc<Version>, [u8; 32]); 2],
     /// The demand statement, planned on the run's store when its program is (`Logic::demand_sql`).
     demand_sql: std::sync::Mutex<Option<Option<String>>>,
     /// Each chunk's candidates, in order.
@@ -161,18 +165,19 @@ fn invalid(error: impl std::fmt::Debug) -> StoreError {
 
 
 /// The process's planned wave programs, in memory before the store (`stats::plans`' bounded cache).
-static WAVE_PLANS: std::sync::LazyLock<std::sync::Mutex<crate::code_rule_dsl::stats::plans::Plans>> = std::sync::LazyLock::new(Default::default);
+#[derive(Default)]
+struct WavePlans(std::sync::Mutex<crate::code_rule_dsl::stats::plans::Plans>);
 
 impl Wave {
     /// The wave of `clauses`, each its own forbid rule demanded everywhere (`Logic::per_clause`).
     pub(in crate::code_rule_dsl) fn new(clauses: &[Clause], backend: ExecutionBackend) -> StoreResult<Self> {
-        Self::with_logic(clauses, super::policies::Logic::per_clause(clauses), backend)
+        Self::with_logic(clauses, super::policies::Logic::per_clause(clauses)?, backend)
     }
 
     /// Whether the demand statement reads a `py.*` family: the wave then reads it before its batch.
     pub(in crate::code_rule_dsl) fn demand_reads_py(&self) -> bool {
         let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::is_family(rel);
-        self.logic.demand.as_ref().is_some_and(|p| p.rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| py(&a.rel)))))
+        self.logic.demand.as_ref().is_some_and(|v| v.rules().any(|r| r.body().any(|l| l.atom().is_some_and(|a| py(v.rel_name(a.rel()))))))
     }
 
     /// The wave of `clauses` running the policies' rules `logic` (`policies::lower`).
@@ -183,14 +188,14 @@ impl Wave {
         }
         let matchers = clauses.iter().map(|clause| &clause.matcher).collect::<Vec<_>>();
         let lowered = LoweredWave::new(&matchers).map_err(invalid)?;
-        let mut cold = crate::code_rule_dsl::logic::rr::parse(SOURCE).map_err(invalid)?;
-        joined(&mut cold, &logic.rules);
-        let mut warm = cold.clone();
-        joined(&mut warm, &crate::code_rule_dsl::logic::rr::parse(KEPT).map_err(invalid)?);
+        let source = crate::code_rule_dsl::logic::rr::parse_version(SOURCE).map_err(invalid)?;
+        let cold = joined(&source, &logic.rules)?;
+        let kept = crate::code_rule_dsl::logic::rr::parse_version(KEPT).map_err(invalid)?;
+        let warm = joined(&cold, &kept)?;
         // Each program keyed by its version's digest (decision 0173 §7), once.
-        let keyed = |p: crate::code_rule_dsl::logic::front::Program| -> StoreResult<_> {
-            let key = crate::code_rule_dsl::logic::plan::choices::key(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).map_err(invalid)?);
-            Ok((p, key))
+        let keyed = |v: Arc<Version>| -> StoreResult<_> {
+            let key = crate::code_rule_dsl::logic::plan::choices::key(&crate::code_rule_dsl::logic::plan::body::Placed::whole(Arc::clone(&v)));
+            Ok((v, key))
         };
         Ok(Self {
             sources: [keyed(cold)?, keyed(warm)?],
@@ -262,7 +267,7 @@ impl Wave {
             identity = identity.text(name);
         }
         let id = *identity.finish().as_bytes();
-        let held = store.candidate_transaction(false, |db| WAVE_PLANS.lock().expect("wave plans mutex poisoned").valid(db, &[id], &reads))?;
+        let held = store.candidate_transaction(false, |db| crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").valid(db, &[id], &reads))?;
         if let Some(held) = held.get(&id) {
             // The SQL holds this store's atom ids: a plan is reused only where the atoms it was
             // planned with have the same ids here (its decisions record them).
@@ -280,9 +285,7 @@ impl Wave {
             atoms.extend(names.iter().map(|name| (*name).to_owned()).zip(found.iter().copied()));
             Ok(found)
         };
-        // The program joins the policies' tree (`json_rules`) until they write versions (0276 step 6).
-        let version = crate::code_rule_dsl::logic::program_image::Builder::of_program(source).and_then(|b| b.finish()).map(|(v, _)| v).map_err(invalid)?;
-        let mut program = emit::emit_program(version, PROGRAM, &batch, intern).map_err(invalid)?.program;
+        let mut program = emit::emit_program(Arc::clone(source), PROGRAM, &batch, intern).map_err(invalid)?.program;
         program.file_local = true;
         program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
         let bytes = serde_json::to_vec(&program).map_err(|error| invalid(error.to_string()))?;
@@ -291,7 +294,7 @@ impl Wave {
         let decisions = serde_json::to_string(&atoms).map_err(|error| invalid(error.to_string()))?;
         store.candidate_transaction(true, |db| {
             let compiled = crate::code_rule_dsl::stats::plans::Compiled { decisions: decisions.clone(), program: bytes.clone() };
-            WAVE_PLANS.lock().expect("wave plans mutex poisoned").put(db, id, compiled, &reads).map(|_| ())
+            crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").put(db, id, compiled, &reads).map(|_| ())
         })?;
         crate::code_rule_dsl::prof::count("wave.plan.compiled", 1);
         Ok(program)
@@ -537,20 +540,22 @@ impl Wave {
         use rayon::prelude::*;
         // Each clause's starts per file: its set's nodes where its root program starts, ascending
         // (the set's order). Held through the labels and the roots: no growth slack.
-        sets.into_par_iter()
-            .enumerate()
-            .map(|(clause, set)| {
-                let out = (0..tapes.len())
-                    .map(|file| {
-                        let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<Vec<_>>();
-                        nodes.shrink_to_fit();
-                        nodes
-                    })
-                    .collect::<Vec<_>>();
-                crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
-                Ok(out)
-            })
-            .collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            sets.into_par_iter()
+                .enumerate()
+                .map(|(clause, set)| {
+                    let out = (0..tapes.len())
+                        .map(|file| {
+                            let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<Vec<_>>();
+                            nodes.shrink_to_fit();
+                            nodes
+                        })
+                        .collect::<Vec<_>>();
+                    crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
+                    Ok(out)
+                })
+                .collect()
+        })
     }
 
     /// Each clause family's row estimate in `fact_stats`, and the terminal relation's (their

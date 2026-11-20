@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
-import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
@@ -12,9 +12,12 @@ import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
-import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
+import { auditViolations, checkouts, events, ruleViolationRollup, sessions, sessionsOfRepository, steerFeedback, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
+import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
+import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
+import { physicalPath, withinCheckout } from "../engine/catalog/checkout-control.js";
 
 /** The events that wait for the session's code-rule evaluator: a tool call, its result and a turn's end. */
 export type CodeRulesPendingBoundary = "call" | "result" | "turn-end";
@@ -36,6 +39,12 @@ export interface StoredSessionSummary {
   startedAt: number;
   endedAt: number | null;
   eventCount: number;
+}
+
+/** A session as a surface drawn ahead of time reads it (`SqliteSessionReader.drawnSessions`). */
+export interface DrawnSession extends Pick<StoredSessionSummary, "sessionId" | "cwd" | "endedAt"> {
+  /** When its latest event was observed; when it started, for a session with none. */
+  lastActiveAt: number;
 }
 
 export interface SessionEventRecord {
@@ -69,6 +78,57 @@ export interface SessionGaps {
 
 const NO_GAPS: SessionGaps = { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
 
+/** A coding agent's note on a steer it declined (`rerail feedback`), with the audit whose steer it was. */
+export interface DeclineNote {
+  ruleId: string;
+  /** The one line the agent gave the person. */
+  reason: string;
+  recordedAt: number;
+  /** The audit that steered the rule's violations the agent declined ({@link DECLINED_AUDIT}); null when none did. */
+  auditId: string | null;
+}
+
+/** A rule's declined violations in a range (`SqliteSessionReader.declinedByRule`). */
+export interface DeclinedViolations {
+  /** Distinct violations of a steer the coding agent declined. */
+  declined: number;
+  /** Of those, the ones an audit in range also recorded in Log mode. */
+  alsoLogged: number;
+}
+
+/** The steers a session's coding agent declined (`SqliteSessionReader.declines`). */
+export interface SessionDeclines {
+  /** Steered violations of a declined steer: its audit's violations of the rule, each counted once however many notes name it. */
+  violations: number;
+  /** Oldest first. */
+  notes: DeclineNote[];
+}
+
+/**
+ * The audit whose steer the `steer_feedback` row aliased `note` declined. A note keeps no audit, so time places it:
+ * `rerail feedback` runs after the steer it answers, so that steer is the latest audit of the note's session to report
+ * the rule's violations steered (`logged = 0`) and start at or before the note. Null when no audit did. The `+` keeps
+ * SQLite off `audit_violations_rule_started`, which reads the rule's violations in every session: it walks the
+ * session's own back from the note (`audit_violations_session_started`) and stops at the first. Two audits that start
+ * at the same moment are told apart by rowid, the later row first: the index already orders equal times by rowid, so
+ * the tie-break needs no sort.
+ */
+const DECLINED_AUDIT = sql`(
+  SELECT steered.audit_id FROM ${auditViolations} steered
+  WHERE steered.session_id = note.session_id AND +steered.rule_id = note.rule_id
+    AND steered.logged = 0 AND steered.started_at <= note.recorded_at
+  ORDER BY steered.started_at DESC, steered.rowid DESC LIMIT 1)`;
+
+/**
+ * How many steered violations of `session` a note declined: those its audit reported for its rule. An audit belongs to
+ * one session, so `(audit_id, rule_id)` alone finds them, an `audit_violations_audit_key` probe per note. Notes are
+ * few and only `rerail feedback` writes them, so reading them by session needs no index of its own.
+ */
+const declinedViolationCount = (session: SQL) => sql`(
+  SELECT count(*) FROM ${auditViolations} declined
+  WHERE declined.logged = 0 AND (declined.audit_id, declined.rule_id) IN (
+    SELECT ${DECLINED_AUDIT}, note.rule_id FROM ${steerFeedback} note WHERE note.session_id = ${session}))`;
+
 export interface SessionPageQuery {
   /** Only sessions started at or after this instant. */
   since?: number;
@@ -83,6 +143,8 @@ export interface SessionPageRow extends StoredSessionSummary {
   violationCount: number;
   /** Of those, the ones no audit recorded in Log mode: steered (or blocked). */
   steeredViolations: number;
+  /** Of the steered, those of a steer the coding agent declined (`SessionDeclines.violations`). */
+  declinedViolations: number;
   /** `observed_at` of the session's newest event; null when it has none. */
   lastEventAt: number | null;
 }
@@ -108,6 +170,8 @@ export interface SessionHud {
   overlays: string[];
   /** While `activeRuleCount` is current, how many rules and packs that are on run in Log waiting for a person's approval. */
   awaitingApproval: number | null;
+  /** The footer's Merge Assist segment, present only while the session's checkout has an open conflict that is not quiet. */
+  mergeAssist?: ConflictFooter;
 }
 
 /** What a session's active-rule count was computed from, so the footer can tell whether it is still current. */
@@ -156,6 +220,53 @@ function repositoryFilter(repositoryIds: string | readonly string[] | undefined)
   return ids.length === 0 ? sql`0` : inArray(sessions.repositoryId, ids);
 }
 
+/** The sessions after a page's cursor in newest-first order; every session without one. Refuses a malformed cursor. */
+function sessionsAfter(cursor: string | undefined): SQL | undefined {
+  if (cursor === undefined) return undefined;
+  const [startedAt, sessionId] = decodeCursor(cursor, sessionCursorSchema);
+  return sql`(${sessions.startedAt} < ${startedAt} OR (${sessions.startedAt} = ${startedAt} AND ${sessions.sessionId} > ${sessionId}))`;
+}
+
+/** The sessions a page query matches: started at or after `since`, in the repositories given. */
+function sessionsMatching(since: number | undefined, repositoryIds: string | readonly string[] | undefined): SQL | undefined {
+  return and(since === undefined ? undefined : gte(sessions.startedAt, since), repositoryFilter(repositoryIds));
+}
+
+/**
+ * Up to `limit` sessions matching `where`, newest first, each with its history counts. The page is chosen first and
+ * counted after: sorting every session with its counts attached would count them all.
+ */
+function sessionPageRows(database: RerailDatabase, where: SQL | undefined, limit: number): SessionPageRow[] {
+  return database.all<SessionPageRow>(sql`
+        SELECT
+          page.session_id AS sessionId, page.host AS host, page.cwd AS cwd, page.repository_id AS repositoryId,
+          page.started_at AS startedAt, page.ended_at AS endedAt,
+          (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
+          (SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = page.session_id
+            ORDER BY ${events.sequence} DESC LIMIT 1) AS lastEventAt,
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount,
+          -- Steered is everything not logged: counted as total minus logged, both index-only (the logged count reads the
+          -- partial index audit_violations_key_logged); "logged = 0" would read every violation row of the session.
+          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)
+            - (SELECT count(*) FROM ${auditViolations}
+              WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 1) AS steeredViolations,
+          ${declinedViolationCount(sql`page.session_id`)} AS declinedViolations
+        FROM (
+          SELECT * FROM ${sessions}
+          WHERE ${where ?? sql`1 = 1`}
+          ORDER BY ${sessions.startedAt} DESC, ${sessions.sessionId}
+          LIMIT ${limit}
+        ) page
+        ORDER BY page.started_at DESC, page.session_id
+      `);
+}
+
+/** The cursor to the page after `rows`, read with one row past `limit`; null when that row is not there. */
+function nextSessionCursor(rows: readonly SessionPageRow[], limit: number): string | null {
+  const last = rows[limit - 1];
+  return rows.length > limit && last !== undefined ? encodeCursor([last.startedAt, last.sessionId]) : null;
+}
+
 function listSessions(
   database: RerailDatabase,
   { sessionId, startedAtOrAfter, repositoryIds }: {
@@ -190,6 +301,29 @@ function listWorkLinks(database: RerailDatabase, sessionId: string): WorkLinkRec
   return database.select().from(workLinks).where(eq(workLinks.sessionId, sessionId)).orderBy(asc(workLinks.linkId)).all();
 }
 
+/**
+ * The HUD's Merge Assist segment for the session, absent when it has none: from the checkout it started in, as its
+ * coverage names it (`owners`), else the deepest recorded checkout holding its working folder read through symlinks,
+ * as checkouts are recorded. Nothing is read while the experiment is off.
+ */
+function sessionConflictFooter(database: RerailDatabase, sessionId: string, owners: readonly string[] | null): Pick<SessionHud, "mergeAssist"> {
+  if (!mergeAssistExperimentEnabled()) return {};
+  const checkout = owners?.[0] ?? sessionCheckout(database, sessionId);
+  const mergeAssist = checkout === undefined ? undefined : conflictFooter(database, checkout);
+  return mergeAssist === undefined ? {} : { mergeAssist };
+}
+
+/** The deepest recorded checkout holding the session's working folder, read through symlinks. */
+function sessionCheckout(database: RerailDatabase, sessionId: string): string | undefined {
+  const session = database.select({ cwd: sessions.cwd }).from(sessions).where(eq(sessions.sessionId, sessionId)).get();
+  if (session === undefined) return undefined;
+  const real = physicalPath(session.cwd);
+  return database.select({ path: checkouts.checkoutPath }).from(checkouts).all()
+    .map(row => row.path)
+    .filter(path => withinCheckout(path, real))
+    .sort((left, right) => right.length - left.length)[0];
+}
+
 
 export function decodeEventPayload(payload: Uint8Array): unknown {
   return deserialize(payload);
@@ -204,12 +338,25 @@ export class SqliteSessionStore {
   readonly path: string;
   readonly #database: RerailDatabase;
   readonly #repositoryId: string | null;
-  /** Each session's repository as it opened here, to restore its row after a reset. */
+  /**
+   * Each open session's repository as it opened here, to restore its row after a reset. A session's entry goes when it
+   * closes, at its end or idle, so a daemon's map holds its open sessions only; what is recorded for a closed session
+   * carries its repository in its attribution.
+   */
   readonly #sessionRepositories = new Map<string, string | null>();
+  readonly #onRowPutBack: ((sessionId: string) => void) | undefined;
 
-  constructor(path: string, { repositoryId }: { repositoryId?: string | undefined } = {}) {
+  /**
+   * `onRowPutBack` is told the session's id each time a write finds the session's row gone and writes it again
+   * (`append`), so the process that holds the session can write again what it recorded at the open beside the row.
+   */
+  constructor(path: string, { repositoryId, onRowPutBack }: {
+    repositoryId?: string | undefined;
+    onRowPutBack?: ((sessionId: string) => void) | undefined;
+  } = {}) {
     this.path = path;
     this.#repositoryId = repositoryId ?? null;
+    this.#onRowPutBack = onRowPutBack;
     this.#database = openRerailDatabase(path);
   }
 
@@ -338,11 +485,13 @@ export class SqliteSessionStore {
         endedAt: attribution?.endedAt ?? null,
       }).onConflictDoNothing().run();
       this.#database.insert(events).values(row).onConflictDoNothing().run();
+      this.#onRowPutBack?.(event.sessionId);
     }
     return eventId;
   }
 
   closeSession(sessionId: string, endedAt = Date.now()): void {
+    this.#sessionRepositories.delete(sessionId);
     this.#database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run();
   }
 
@@ -411,6 +560,29 @@ export class SqliteSessionReader {
     return database === undefined ? undefined : listSessions(database, { sessionId })[0];
   }
 
+  /**
+   * The sessions of `host` active at or after `since`, and those among `sessionIds` whatever their activity: what a
+   * surface drawn ahead of time for each session (the Claude Code status files) reads to keep them current. Ended
+   * sessions are among them: a daemon's stop ends every open session, and the session's next event opens it again, so
+   * an ended one may still be running. So may one that never ended, whose end hook did not arrive; its activity alone
+   * says whether anything still reads it.
+   */
+  drawnSessions(host: AdapterSession["host"], since: number, sessionIds: readonly string[]): DrawnSession[] {
+    const database = this.#database.open();
+    if (database === undefined) return [];
+    const named = sessionIds.length === 0 ? sql`0` : sql`drawn.sessionId IN (${sql.join(sessionIds.map(sessionId => sql`${sessionId}`), sql`, `)})`;
+    // Each session's latest event by sequence, read from the (session, sequence) index.
+    return database.all<DrawnSession>(sql`
+      SELECT * FROM (
+        SELECT
+          session.session_id AS sessionId, session.cwd AS cwd, session.ended_at AS endedAt,
+          coalesce((SELECT event.observed_at FROM ${events} AS event WHERE event.session_id = session.session_id
+            ORDER BY event.sequence DESC LIMIT 1), session.started_at) AS lastActiveAt
+        FROM ${sessions} AS session WHERE session.host = ${host}
+      ) AS drawn WHERE drawn.lastActiveAt >= ${since} OR ${named}
+    `);
+  }
+
   hud(sessionId: string): SessionHud {
     const database = this.#database.open();
     if (database === undefined) return { activeRuleCount: null, steeringCount: null, overlays: [], awaitingApproval: null };
@@ -447,6 +619,7 @@ export class SqliteSessionReader {
         steeringCount,
         overlays: current && isWorktreePack(catalog.packs.get(WORKTREE_PACK_ID)) ? [WORKTREE_PACK_ID] : [],
         awaitingApproval: current ? this.#awaitingApprovalIn(database, catalog, coverage.repositoryId!, owners, coverage.ruleSignature!) : null,
+        ...sessionConflictFooter(database, sessionId, owners),
       };
     });
   }
@@ -483,6 +656,83 @@ export class SqliteSessionReader {
         AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed')
     `)[0];
     return row ?? { ...NO_GAPS };
+  }
+
+  /**
+   * The steers the session's coding agent declined, each with the reason it recorded and the audit whose steer it was.
+   * Only a note says a steer was declined: an agent can decline one without recording why, so a steer with no note is
+   * not known to be followed either.
+   */
+  declines(sessionId: string): SessionDeclines {
+    const database = this.#database.open();
+    if (database === undefined) return { violations: 0, notes: [] };
+    return database.transaction(() => ({
+      violations: database.all<{ total: number }>(sql`SELECT ${declinedViolationCount(sql`${sessionId}`)} AS total`)[0]?.total ?? 0,
+      notes: database.all<DeclineNote>(sql`
+        SELECT note.rule_id AS ruleId, note.reason AS reason, note.recorded_at AS recordedAt, ${DECLINED_AUDIT} AS auditId
+        FROM ${steerFeedback} note
+        WHERE note.session_id = ${sessionId}
+        ORDER BY note.recorded_at, note.rowid
+      `),
+    }));
+  }
+
+  /**
+   * The notes of the sessions `sessionIds` placed on the steer each declined, oldest first: `violations_list` marks
+   * each violation of such a steer's audit and rule with the reasons. A note no audit steered before is left out.
+   */
+  placedDeclineNotes(sessionIds: readonly string[]): Array<DeclineNote & { auditId: string }> {
+    const database = this.#database.open();
+    if (database === undefined || sessionIds.length === 0) return [];
+    return database.all<DeclineNote & { auditId: string }>(sql`
+      SELECT ruleId, reason, recordedAt, auditId FROM (
+        SELECT note.rule_id AS ruleId, note.reason AS reason, note.recorded_at AS recordedAt, ${DECLINED_AUDIT} AS auditId,
+          note.rowid AS seq
+        FROM ${steerFeedback} note
+        WHERE note.session_id IN (${sql.join(sessionIds.map(id => sql`${id}`), sql`, `)})
+      ) WHERE auditId IS NOT NULL
+      ORDER BY recordedAt, seq
+    `);
+  }
+
+  /**
+   * Per rule, its violations in range whose steer the coding agent declined (`declined`), counted as `rules_activity`
+   * counts the rule's violations: each distinct violation key once, whichever sessions reported it. A declined steer
+   * is in range when its audit started in it. `alsoLogged` is how many of them an audit in range also recorded in Log
+   * mode, so are in `loggedViolations` too: a declined violation counts as declined, never also as Log only.
+   *
+   * Notes are few, so they drive the read: each note's steer (`DECLINED_AUDIT`), then that audit's violations of the
+   * rule, an `audit_violations_audit_key` probe. `CROSS JOIN` keeps that order, and the `+` keeps SQLite off
+   * `audit_violations_rule_started`, which would read every violation of the rule in range.
+   */
+  declinedByRule(since: number, repositoryIds: readonly string[] | undefined = undefined): Map<string, DeclinedViolations> {
+    const database = this.#database.open();
+    if (database === undefined) return new Map();
+    const scope = repositoryIds ?? this.#repositoryIds;
+    const scoped = (column: SQL) => (scope === undefined ? sql`1 = 1` : sql`${column} IN (${sessionsOfRepository(scope)})`);
+    const rows = database.all<DeclinedViolations & { ruleId: string }>(sql`
+      WITH declined_steers AS (
+        SELECT DISTINCT ${DECLINED_AUDIT} AS auditId, note.rule_id AS ruleId
+        FROM ${steerFeedback} note WHERE ${scoped(sql`note.session_id`)}
+      ),
+      declined_keys AS (
+        SELECT DISTINCT sighting.rule_id AS ruleId, sighting.violation_key AS violationKey
+        FROM declined_steers steer
+        CROSS JOIN ${auditViolations} sighting ON sighting.audit_id = steer.auditId AND sighting.rule_id = steer.ruleId
+        WHERE sighting.logged = 0 AND +sighting.started_at >= ${since}
+      ),
+      logged_keys AS (
+        SELECT DISTINCT ${ruleViolationRollup.ruleId} AS ruleId, ${ruleViolationRollup.violationKey} AS violationKey
+        FROM ${ruleViolationRollup}
+        WHERE ${ruleViolationRollup.lastSeenAt} >= ${since} AND ${ruleViolationRollup.lastLoggedAt} >= ${since}
+          AND ${ruleViolationRollup.ruleId} IN (SELECT ruleId FROM declined_keys) AND ${scoped(sql`${ruleViolationRollup.sessionId}`)}
+      )
+      SELECT declined.ruleId AS ruleId, count(*) AS declined, count(logged.ruleId) AS alsoLogged
+      FROM declined_keys declined
+      LEFT JOIN logged_keys logged ON logged.ruleId = declined.ruleId AND logged.violationKey = declined.violationKey
+      GROUP BY declined.ruleId
+    `);
+    return new Map(rows.map(({ ruleId, declined, alsoLogged }) => [ruleId, { declined, alsoLogged }]));
   }
 
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {
@@ -524,49 +774,16 @@ export class SqliteSessionReader {
    */
   sessionPage(query: SessionPageQuery, repositoryIds: readonly string[] | undefined = undefined): SessionPage {
     // A malformed cursor is refused whether or not any history exists yet.
-    const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sessionCursorSchema);
+    const continuing = sessionsAfter(query.cursor);
     const database = this.#database.open();
     if (database === undefined) return { sessions: [], total: 0, nextCursor: null };
-    const matching = and(
-      query.since === undefined ? undefined : gte(sessions.startedAt, query.since),
-      repositoryFilter(repositoryIds ?? this.#repositoryIds),
-    );
-    const continuing = after === undefined
-      ? undefined
-      : sql`(${sessions.startedAt} < ${after[0]} OR (${sessions.startedAt} = ${after[0]} AND ${sessions.sessionId} > ${after[1]}))`;
-    // The page is chosen first and counted after: sorting every session with its counts attached would count them all.
+    const matching = sessionsMatching(query.since, repositoryIds ?? this.#repositoryIds);
     // The page and its total come from one snapshot, so a commit between them cannot make them disagree.
     const { rows, total } = database.transaction(() => ({
-      rows: database.all<SessionPageRow>(sql`
-        SELECT
-          page.session_id AS sessionId, page.host AS host, page.cwd AS cwd, page.repository_id AS repositoryId,
-          page.started_at AS startedAt, page.ended_at AS endedAt,
-          (SELECT count(*) FROM ${events} WHERE ${events.sessionId} = page.session_id) AS eventCount,
-          (SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = page.session_id
-            ORDER BY ${events.sequence} DESC LIMIT 1) AS lastEventAt,
-          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id) AS violationCount,
-          -- Steered is everything not logged: counted as total minus logged, both index-only (the logged count reads the
-          -- partial index audit_violations_key_logged); "logged = 0" would read every violation row of the session.
-          (SELECT count(*) FROM ${auditViolations} WHERE ${auditViolations.sessionId} = page.session_id)
-            - (SELECT count(*) FROM ${auditViolations}
-              WHERE ${auditViolations.sessionId} = page.session_id AND ${auditViolations.logged} = 1) AS steeredViolations
-        FROM (
-          SELECT * FROM ${sessions}
-          WHERE ${and(matching, continuing) ?? sql`1 = 1`}
-          ORDER BY ${sessions.startedAt} DESC, ${sessions.sessionId}
-          LIMIT ${query.limit + 1}
-        ) page
-        ORDER BY page.started_at DESC, page.session_id
-      `),
+      rows: sessionPageRows(database, and(matching, continuing), query.limit + 1),
       total: database.select({ total: count() }).from(sessions).where(matching).get()?.total ?? 0,
     }));
-    const page = rows.slice(0, query.limit);
-    const last = page.at(-1);
-    return {
-      sessions: page,
-      total,
-      nextCursor: rows.length > query.limit && last !== undefined ? encodeCursor([last.startedAt, last.sessionId]) : null,
-    };
+    return { sessions: rows.slice(0, query.limit), total, nextCursor: nextSessionCursor(rows, query.limit) };
   }
 
   /** How many sessions started at or after `since`. */
@@ -609,4 +826,21 @@ export class SqliteSessionReader {
 function awaitingApprovalIn(database: RerailDatabase, catalog: RuleCatalog, repositoryKey: string, owners: readonly string[]): number {
   const [checkoutPath, ...parentCheckoutPaths] = owners;
   return awaitingApprovalOf(listRepositoryRules(database, catalog, repositoryKey, checkoutPath === undefined ? {} : { checkoutPath, parentCheckoutPaths }).rules);
+}
+
+/**
+ * When the newest event in the Rerail database at `databasePath` was observed (epoch ms), read without writing; null
+ * when it holds none or cannot be read. `rerail status` compares it with the hook failure log.
+ */
+export function lastObservedEventAt(databasePath: string): number | null {
+  let database: RerailDatabase | undefined;
+  try {
+    database = openRerailDatabase(databasePath, { readonly: true });
+    const [row] = database.select({ at: events.observedAt }).from(events).orderBy(desc(events.sequence)).limit(1).all();
+    return row?.at ?? null;
+  } catch {
+    return null;
+  } finally {
+    database?.$client.close();
+  }
 }

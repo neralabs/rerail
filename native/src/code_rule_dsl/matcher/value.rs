@@ -4,6 +4,7 @@ use super::resolve::{
 };
 use super::util::{UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{Family, GrammarDialect, kind_ids};
 use crate::code_rule_dsl::literal;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
@@ -17,7 +18,6 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// How a node's value is read: its grammar and the query's language options, which decide what
 /// is a builtin.
@@ -47,8 +47,10 @@ impl Reading {
         python: Option<Arc<PythonOptions>>,
     ) -> Self {
         let family = Family::of(language);
-        let kinds =
-            { let pack = language_pack::pack(family); pack.value_expression_kinds() };
+        let kinds = {
+            let pack = language_pack::pack(family);
+            pack.value_expression_kinds()
+        };
         Self {
             language,
             family,
@@ -93,7 +95,10 @@ impl Reading {
 
     /// The language whose semantics the reading's values follow.
     pub fn lang(&self) -> Family {
-        { let pack = language_pack::pack(self.family); pack.value_lang() }
+        {
+            let pack = language_pack::pack(self.family);
+            pack.value_lang()
+        }
     }
 
     /// The node's value, decoded once per file and reading. Each node decoded spends a step of
@@ -149,7 +154,10 @@ impl Reading {
                 .following_constants(&mut constant)
                 .following_table(&mut table);
         }
-        let decoded = { let pack = language_pack::pack(self.family); language_pack::value_decode(pack, node, &mut context) };
+        let decoded = {
+            let pack = language_pack::pack(self.family);
+            language_pack::value_decode(pack, node, &mut context)
+        };
         let exhausted = context.exhausted();
         let decoded = Rc::new(decoded);
         // A decode cut short by the budget or a deadline is not the node's value.
@@ -173,7 +181,10 @@ impl Reading {
         }
         let mut spend = spend_step;
         let mut context = Context::new(&mut spend);
-        let tokens = { let pack = language_pack::pack(self.family); language_pack::value_structure(pack, node, equality, &mut context) };
+        let tokens = {
+            let pack = language_pack::pack(self.family);
+            language_pack::value_structure(pack, node, equality, &mut context)
+        };
         // A read cut short by the budget or a deadline is not the node's structure.
         if context.exhausted() || UTIL_EXCEEDED.get().is_some() {
             return Rc::new(None);
@@ -237,16 +248,18 @@ impl ValueTest {
     pub fn holds<D: Doc>(&self, node: &Node<'_, D>) -> Option<bool> {
         let value = if self.name {
             let family = self.reading.family;
-            let Some(units) =
-                ({ let pack = language_pack::pack(family); language_pack::value_node_name(pack, node) })
-            else {
+            let Some(units) = ({
+                let pack = language_pack::pack(family);
+                language_pack::value_node_name(pack, node)
+            }) else {
                 return Some(false);
             };
             // A name holding a lone surrogate has no text to compare.
             let text = String::from_utf16(&units).ok()?;
-            Rc::new(
-                { let pack = language_pack::pack(family); pack.value_string(&text) },
-            )
+            Rc::new({
+                let pack = language_pack::pack(family);
+                pack.value_string(&text)
+            })
         } else {
             if !self.reading.has_value(node) {
                 return Some(false);
@@ -326,7 +339,10 @@ impl ValueTest {
             }
         }
         if let Some(bits) = self.bits_any {
-            let integer = { let pack = language_pack::pack(lang); pack.value_integer(value.as_ref()) };
+            let integer = {
+                let pack = language_pack::pack(lang);
+                pack.value_integer(value.as_ref())
+            };
             if !all(Some(integer.is_some_and(|integer| {
                 !(integer & BigInt::from(bits)).is_zero()
             }))) {
@@ -334,7 +350,10 @@ impl ValueTest {
             }
         }
         for (bound, limit) in &self.bounds {
-            let numeric = { let pack = language_pack::pack(lang); pack.value_numeric(value.as_ref()) };
+            let numeric = {
+                let pack = language_pack::pack(lang);
+                pack.value_numeric(value.as_ref())
+            };
             let holds = numeric
                 && value
                     .order(limit, lang)
@@ -383,7 +402,11 @@ pub(in crate::code_rule_dsl) fn file_values(
             continue;
         }
         let reading = Reading::new(language, None, None);
-        let reading = if followed { reading.following() } else { reading };
+        let reading = if followed {
+            reading.following()
+        } else {
+            reading
+        };
         // The reading's scope-table charges are its own, as one clause's are.
         super::resolve::CURRENT_CLAUSE.set(&reading as *const Reading as usize);
         let lang = reading.lang();
@@ -398,7 +421,10 @@ pub(in crate::code_rule_dsl) fn file_values(
             if !value.is_known() {
                 continue;
             }
-            let text = { let pack = language_pack::pack(lang); language_pack::value_to_str(pack, &value, &node) };
+            let text = {
+                let pack = language_pack::pack(lang);
+                language_pack::value_to_str(pack, &value, &node)
+            };
             let own;
             let types: &[&'static str] = match value.type_name(lang) {
                 None => &[],
@@ -429,11 +455,21 @@ impl crate::code_rule_dsl::facts::core::ValueReader for Values {
     ) {
         // A file that is no request's has no module or package: read as a request file with none.
         let made;
-        let file = match file.as_any().downcast_ref::<crate::code_rule_dsl::model::FileInput>() {
+        let file = match file
+            .as_any()
+            .downcast_ref::<crate::code_rule_dsl::model::FileInput>()
+        {
             Some(file) => file,
             None => {
-                made = crate::code_rule_dsl::model::FileInput::new(String::new(), file.language().to_owned(), Arc::clone(file.source()), None, None, "values")
-                    .expect("a file with no module or package");
+                made = crate::code_rule_dsl::model::FileInput::new(
+                    String::new(),
+                    file.language().to_owned(),
+                    Arc::clone(file.source()),
+                    None,
+                    None,
+                    "values",
+                )
+                .expect("a file with no module or package");
                 &made
             }
         };
@@ -442,6 +478,7 @@ impl crate::code_rule_dsl::facts::core::ValueReader for Values {
 }
 
 /// [`file_values`]' `each(followed, ordinal, text, types)`.
-pub(in crate::code_rule_dsl) type ValueSink<'a> = dyn FnMut(bool, u32, Option<String>, &[&'static str]) + 'a;
+pub(in crate::code_rule_dsl) type ValueSink<'a> =
+    dyn FnMut(bool, u32, Option<String>, &[&'static str]) + 'a;
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

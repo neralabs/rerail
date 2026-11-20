@@ -719,22 +719,11 @@ impl QueryConnection {
     }
 }
 
-/// One thread's SQLite connection. Workspace eviction can release every idle connection.
+/// One thread's SQLite connection.
 type Slot = Arc<std::sync::Mutex<Option<QueryConnection>>>;
-type SlotRegistry = Vec<std::sync::Weak<std::sync::Mutex<Option<QueryConnection>>>>;
-
-static SLOTS: std::sync::LazyLock<std::sync::Mutex<SlotRegistry>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
 
 thread_local! {
-    static CONNECTION: Slot = {
-        let slot = Slot::default();
-        SLOTS
-            .lock()
-            .expect("query connection registry poisoned")
-            .push(Arc::downgrade(&slot));
-        slot
-    };
+    static CONNECTION: Slot = Slot::default();
 }
 
 #[cfg(test)]

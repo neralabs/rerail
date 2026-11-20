@@ -274,6 +274,16 @@ impl<'v> Program<'v> {
         option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && self.f.is_input(rel))
     }
 
+    /// An input a file-local rule may join and stay file-local: the run's options alone. An earlier phase's export is
+    /// a run constant, but not placeless: it is every file's rows together, and an edit's delta of it (a function
+    /// added) is the reader's input delta (decision 0083 §2.3). A file-local rule that joined it made every file's
+    /// memo entry a function of all its rows, so each such edit missed every file (the 50-file data-layer pack: 5.3 s
+    /// an edit that adds a definition, 1.6 s one that does not). A rule reading one reads an input with no location:
+    /// cross-file, maintained there by the export's delta.
+    fn placeless_input(&self, rel: &str) -> bool {
+        option_input(rel)
+    }
+
     /// A derived relation's key: its columns and its rules' hashes, in the program's order.
     fn head_key(&self, r: u32) -> u64 {
         let mut h = hasher();
@@ -426,7 +436,7 @@ impl<'v> Program<'v> {
         let was = |r: usize| prev.filter(|_| !in_scope[r]);
         let forms = Forms::new(self);
         let constant = self.constants(&forms, &in_scope, prev.map(|p| &p.constants));
-        let placeless: Vec<bool> = (0..n).map(|r| rels.fact[r] || constant[r] || rels.run_constant[r] || rels.chunk_value[r] || rels.test[r]).collect();
+        let placeless: Vec<bool> = (0..n).map(|r| rels.fact[r] || constant[r] || rels.placeless_input[r] || rels.chunk_value[r] || rels.test[r]).collect();
         // A derived relation's location columns: those every rule fills from a location.
         let mut locs: Vec<Vec<usize>> = (0..n)
             .map(|r| {
@@ -568,7 +578,7 @@ impl<'v> Program<'v> {
             };
             let rel = v.rel_name(atom.rel());
             let derived = self.f.derives(rel);
-            let constant = (!derived && self.fact(rel) && !self.f.is_input(rel)) || constants.contains(rel) || self.run_constant(rel);
+            let constant = (!derived && self.fact(rel) && !self.f.is_input(rel)) || constants.contains(rel) || self.placeless_input(rel);
             let chunk_value = !derived && CHUNK_VALUES.contains(&rel);
             if constant || chunk_value || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) || filters.contains(rel) || filters.contains(head) {
                 continue;
@@ -676,7 +686,7 @@ struct Rels<'v> {
     derived_count: usize,
     derived: Vec<bool>,
     fact: Vec<bool>,
-    run_constant: Vec<bool>,
+    placeless_input: Vec<bool>,
     chunk_value: Vec<bool>,
     test: Vec<bool>,
     text: Vec<Option<&'static [usize]>>,
@@ -725,7 +735,7 @@ impl<'v> Rels<'v> {
             n,
             derived_count: derived.iter().filter(|d| **d).count(),
             fact: (0..n).map(|r| base(r) && p.fact(name(r)) && !f.is_input(name(r))).collect(),
-            run_constant: (0..n).map(|r| (derived[r] || read[r]) && p.run_constant(name(r))).collect(),
+            placeless_input: (0..n).map(|r| (derived[r] || read[r]) && p.placeless_input(name(r))).collect(),
             chunk_value: (0..n).map(|r| base(r) && CHUNK_VALUES.contains(&name(r))).collect(),
             test: (0..n).map(|r| (derived[r] || read[r]) && test(name(r))).collect(),
             text: (0..n).map(|r| if derived[r] || read[r] { crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(t, _)| *t == name(r)).map(|(_, c)| *c) } else { None }).collect(),
@@ -740,7 +750,7 @@ impl<'v> Rels<'v> {
     }
 
     fn empty() -> Rels<'v> {
-        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), run_constant: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
+        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), placeless_input: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
     }
 
     fn is_derived(&self, r: u32) -> bool {
@@ -938,7 +948,7 @@ impl Form {
         self.lits.iter().all(|l| match l {
             Lit::Read { rel, .. } => {
                 let r = *rel as usize;
-                constant[r] || rels.run_constant[r] || rels.fact[r]
+                constant[r] || rels.placeless_input[r] || rels.fact[r]
             }
             Lit::Cmp => true,
             _ => false,

@@ -9,6 +9,7 @@
 // Exemption `data-roots`: pack generators sit beside the expected findings they write, under `fixtures/` or
 // `packs/<id>/upstream/` (the fixtures convention, fixtures/README.md); generated files there are not
 // scanned for headers.
+// Exemption `engine-layout`: the engine line's generators ENGINE_LAYOUT lists by exact path, with what each writes.
 
 import { basename, finding, sortFindings } from "../lib.mjs";
 import { isGeneratorLocation, namedGenerators } from "../generated.mjs";
@@ -16,6 +17,32 @@ import { isGeneratorLocation, namedGenerators } from "../generated.mjs";
 export const id = 6;
 export const title = "Generators follow one known pattern";
 export const target = "0 misplaced";
+
+/**
+ * Exemption `engine-layout`: the engine line's generators that stay beside the inputs they read, each by exact path with
+ * what it writes, until they move under scripts/generate/ with the engine line's layout, settled with its owner in a
+ * follow-up. Their outputs are marked and listed in the manifest (#20, #25).
+ */
+const ENGINE_LAYOUT = new Map([
+  ["native/crates/c_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/csharp_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/css_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/ecma_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/go_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/html_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/java_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/kotlin_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/markdown_inline_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/markdown_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/php_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/rust_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/sql_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/vue_lean/gen_kinds.py", "writes its crate's src/kinds.rs from the grammar and the automata tables beside it"],
+  ["native/crates/clif/src/reads.rs", "the CLIF reads' Rust and MSL sources, written by the rerail-clif tests that compare them (RERAIL_WRITE_READS=1)"],
+  ["tools/cratify/hosts.py", "the crate split's test hosts (tools/cratify/test-hosts.tsv), one step of tools/cratify/regenerate.sh"],
+  ["tools/cratify/packgen.py", "the language pack interface (language/adapter/pack.rs), one step of the crate split"],
+  ["tools/cratify/runtime_hosts.py", "the crate split's runtime hosts (tools/cratify/runtime-hosts.tsv), from a split's test run"],
+]);
 
 const GENERATOR = /^generate(?:[-_][^/]*)?\.(mjs|cjs|js|ts|mts|py|php)$/;
 const WHERE = "outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (expected findings)";
@@ -29,7 +56,7 @@ export function check(repo) {
     findings.push(finding(path, `generator ${WHERE}`));
   }
   for (const { generator, path, line } of namedGenerators(repo)) {
-    if (isGeneratorLocation(generator)) continue;
+    if (isGeneratorLocation(generator) || ENGINE_LAYOUT.has(generator)) continue;
     misplaced.add(generator);
     findings.push(finding(path, `names generator ${generator}, ${WHERE}`, line));
   }

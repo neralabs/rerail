@@ -6,9 +6,9 @@ Status: proposed part of `spec.md` (new §18). It follows `findings-contract.md`
 - memory limits, debugging, testing tools and profiling are first-class design parts.
 
 The paths below are relative to the merged worktree (`Pulling-it-all-together`) unless prefixed:
-- `N1562:` means `jbarnes/ner-1562-sql-rerailer@8b6576f0`;
+- `N1562:` means `jbarnes/sql-rerailer@8b6576f0`;
 - `SSC:` means `jeremy/sql-capture-demand-spikes@b87eba3b`;
-- `Tempo:` means `nera-landing-2/ner-1562-scale-test-the-re-railer@e95613625`, under `tempo/`;
+- `Tempo:` means `scale-test-the-re-railer@e95613625`, under `tempo/`;
 - `DLRE:` means the DLRE worktree.
 
 ---
@@ -30,7 +30,7 @@ The paths below are relative to the merged worktree (`Pulling-it-all-together`) 
 | `estimated_bytes` | `tape.rs:337,485,1417`, `lines.rs:128`, `relational/syntax.rs:188` | Per-object size estimates for caches | **Reuse the pattern.** Every cached or arena object reports bytes (§2.1) |
 | jemalloc | `native/src/lib.rs:25-74` (global allocator, tree-sitter allocations routed through it); `tikv-jemalloc-ctl` stats | Allocator residency | Reuse |
 | Budgets | `model.rs:36-49` (`max_visited_nodes`, per-file allowance); `eval/evidence.rs:248` | Work allowances | **Change meaning.** A budget now only produces `Unknown(budget)` (decision 0001). It is never semantics |
-| Profiling CLI and docs | `docs/code-rule-profiling.md`; `npm run profile:code-rule-dsl` (`scripts/profiling/run.py`, `sample.py`, `report.py`, `compare.py`) | Pinned-snapshot runs, macOS `sample` attachment, bottom-up reports, comparison | **Reuse.** `run.py` becomes the driver for the unified profile format |
+| Profiling CLI and docs | `docs/code-rule-profiling.md` (removed; at 7efcac9c67); `npm run profile:code-rule-dsl` (`scripts/profiling/run.py`, `sample.py`, `report.py`, `compare.py`) | Pinned-snapshot runs, macOS `sample` attachment, bottom-up reports, comparison | **Reuse.** `run.py` becomes the driver for the unified profile format |
 | SQL profile tooling | `benchmark/sql-profile/{inventory,coverage,execution-budget,execution-reduction,report,summarize,summary}.mjs`; `scripts/profiling/sql-{report,budget,stats,parity}.*` | Reports and parity over captured SQL | Keep `sql-parity.ts` and `report`. Delete the budget and reduction scripts tied to the authored-SQL executor when decision 0002 lands |
 | Full-repository gate | `DLRE:scripts/profiling/workloads/full_repository.py` (committed in DLRE at `ab4d83b3`) | Cold full data-layer workloads. Per invocation it records `files, bytes, expected, actual, peakRssBytes, compilationMs, coldMs, phaseCpuMs` plus `/usr/bin/time -l` resource usage, into `manifest.json` and `invocation.json` | **Reuse as the measurement gate.** It consumes the unified profile (§2.6.4). Compile time is already separate |
 

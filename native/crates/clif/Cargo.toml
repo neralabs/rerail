@@ -6,6 +6,8 @@ publish = false
 description = "Code written once in Cranelift's IR for several backends (decision 0310): the tape's reads, the JIT's inlining pass over them; and the view they read a tape by (no dependency)."
 
 [features]
+# The tests' shared object for reads outside a run (decision 0442).
+test-hooks = ["rerail-blocks?/test-hooks"]
 default = ["ir"]
 # The reads and the pass, in Cranelift's IR, and a JIT of every read (tests run it against a hand-written reader).
 # Without it, the view alone (the tape crate's). The JIT is no feature of its own: the compiler links cranelift-jit
@@ -26,3 +28,5 @@ cranelift-jit = { version = "=0.125.4", optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 cranelift-jit-wasm = { path = "../../wasm/cranelift-jit", optional = true }
+[dev-dependencies]
+rerail-clif = { path = ".", features = ["test-hooks"] }

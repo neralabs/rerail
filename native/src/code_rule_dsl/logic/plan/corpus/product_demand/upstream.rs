@@ -1,8 +1,12 @@
 //! Projected reader demand around a product. An optional restriction is installed only when every read supplies
 //! the selected columns independently and the new demand sits outside the relation's dependency component.
 
-use super::{Context, PREFIX as PRODUCT, atom, connect, plain};
-use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Rule, Term, Value, components_of};
+use super::{Context, PREFIX as PRODUCT, Part, Program, connect, plain, rewritten, same, value, write_demand};
+use crate::code_rule_dsl::logic::front::name::List;
+use crate::code_rule_dsl::logic::front::Value;
+use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
+use crate::code_rule_dsl::logic::program_facts::Field;
+use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Lit, RuleId, RuleRef, T, TermRef, Version, t_of};
 use std::collections::{BTreeMap, BTreeSet};
 
 const PREFIX: &str = "rr_reader_demand_";
@@ -11,332 +15,348 @@ fn is_demand(rel: &str) -> bool {
     rel.starts_with(PREFIX) || rel.starts_with(PRODUCT)
 }
 
-fn eligible(program: &Program, rel: &str) -> bool {
-    program.decls.contains_key(rel)
-        && !program.outputs.iter().any(|r| r == rel)
-        && !program.inputs.iter().any(|r| r == rel)
-        && !program.facts.contains_key(rel)
-        && !program.lattice.contains_key(rel)
-        && !program.natives.contains_key(rel)
-        && !program.natives.values().any(|native| native.reads().contains(&rel))
-        && !program.answers.contains_key(rel)
-        && !program.answers.values().flatten().any(|answer| answer == rel)
-        && !program
-            .gates
-            .iter()
-            .any(|(name, gate)| name == rel || gate.rel == rel || gate.src.as_deref() == Some(rel))
-        && !program.asked_by.contains_key(rel)
-        && !program.demand.iter().any(|demand| demand == "*")
+fn eligible(program: &Program<'_>, rel: &str) -> bool {
+    let f = &program.f;
+    program.columns(rel).is_some()
+        && !f.outputs.iter().any(|r| r == rel)
+        && !f.inputs.iter().any(|r| r == rel)
+        && !f.facts.contains(rel)
+        && !f.lattice.contains_key(rel)
+        && !f.natives.contains_key(rel)
+        && !f.natives.values().any(|native| native.reads().contains(&rel))
+        && !f.answers.contains_key(rel)
+        && !f.answers.values().flatten().any(|answer| answer == rel)
+        && !f.gates.iter().any(|(name, gate)| name == rel || gate.rel == rel || gate.src.as_deref() == Some(rel))
+        && !f.asked_by.contains_key(rel)
+        && !f.demand.iter().any(|demand| demand == "*")
         && !program.qualified(rel, "no_magic")
         && !is_demand(rel)
 }
 
-fn keys(atom: &Atom, columns: &[usize]) -> Option<Vec<Term>> {
-    columns
-        .iter()
-        .map(|&i| atom.args.get(i).filter(|term| plain(term)).cloned())
-        .collect()
+/// `atom`'s arguments at `columns`, where each is plain.
+fn keys<'v>(atom: AtomRef<'v>, columns: &[usize]) -> Option<Vec<TermRef<'v>>> {
+    let args: Vec<TermRef<'v>> = atom.args().collect();
+    columns.iter().map(|&i| args.get(i).copied().filter(|t| plain(*t))).collect()
 }
 
-fn filter_term(term: &Term) -> bool {
+fn vars_of(terms: &[TermRef<'_>]) -> VarSet {
+    let mut out = VarSet::default();
+    for t in terms {
+        term_vars(*t, &mut out);
+    }
+    out
+}
+
+fn filter_term(v: &Version, term: TermRef<'_>) -> bool {
     match term {
-        Term::Call(f, args) => {
-            matches!(f.as_str(), "prefix" | "suffix" | "glob" | "set") && args.iter().all(filter_term)
-        }
+        TermRef::Call(f, args) => matches!(v.text(f), "prefix" | "suffix" | "glob" | "set") && args.into_iter().all(|t| filter_term(v, t)),
         _ => plain(term),
     }
 }
 
 /// Follow relation reads backwards so a guard can drop any atom that would read the relation it bounds.
-fn readers_of<'a>(program: &'a Program, target: &'a str) -> BTreeSet<&'a str> {
+fn readers_of(program: &Program<'_>, target: &str) -> BTreeSet<String> {
+    let v = program.v();
     let mut readers = BTreeMap::<&str, Vec<&str>>::new();
-    for rule in &program.rules {
-        for atom in rule.body.iter().filter_map(Literal::atom) {
-            readers.entry(&atom.rel).or_default().push(&rule.head.rel);
+    for rule in v.rules() {
+        let head = v.rel_name(rule.head().rel());
+        for literal in rule.body() {
+            if let Some(a) = literal.atom() {
+                readers.entry(v.rel_name(a.rel())).or_default().push(head);
+            }
         }
     }
-    for (name, native) in &program.natives {
+    for (name, native) in &program.f.natives {
         for read in native.reads() {
             readers.entry(read).or_default().push(name);
         }
     }
-    for (request, answers) in &program.answers {
-        readers
-            .entry(request)
-            .or_default()
-            .extend(answers.iter().map(String::as_str));
+    for (request, answers) in &program.f.answers {
+        readers.entry(request).or_default().extend(answers.iter().map(String::as_str));
     }
     let mut found = BTreeSet::new();
     let mut pending = vec![target];
     while let Some(next) = pending.pop() {
-        if found.insert(next) {
+        if found.insert(next.to_owned()) {
             pending.extend(readers.get(next).into_iter().flatten().copied());
         }
     }
     found
 }
 
-fn demand_body<'a>(
-    rule: &'a Rule,
-    dependent: &BTreeSet<&str>,
+/// The parts of `rule` a demand for `wanted` reads: its guard (`guard`: the guard's variables, the rule's first
+/// literal) and its positive atoms of independent relations, connected, then its string and equality filters.
+fn demand_body(
+    v: &Version,
+    rule: RuleRef<'_>,
+    guard: Option<VarSet>,
+    dependent: &BTreeSet<String>,
     products: &BTreeSet<String>,
-    wanted: &BTreeSet<String>,
-) -> Option<Vec<Literal>> {
-    let mut groups: Vec<Context<'a>> = Vec::new();
-    for literal in &rule.body {
-        if let Literal::Atom(a) = literal
-            && !a.neg
-            && !a.gated
-            && !dependent.contains(a.rel.as_str())
-            && !products.contains(a.rel.as_str())
-            && a.args.iter().all(|t| plain(t) || matches!(t, Term::Wild))
-        {
-            let vars = a.vars();
-            // A reader's own guard already supplies these columns. Avoid repeating its other joins.
-            if is_demand(&a.rel) && wanted.is_subset(&vars) {
-                return Some(vec![literal.clone()]);
+    wanted: &VarSet,
+) -> Option<Vec<Part>> {
+    let mut groups: Vec<Context> = Vec::new();
+    if let Some(vars) = guard {
+        // The guard is a demand atom: it supplies the columns alone where it binds them all.
+        if wanted.is_subset(&vars) {
+            return Some(vec![Part::Guard]);
+        }
+        connect(&mut groups, Part::Guard, vars, false);
+    }
+    for (i, literal) in rule.body().enumerate() {
+        if let Lit::Atom(a) = literal.view() {
+            let rel = v.rel_name(a.rel());
+            if !a.neg()
+                && !a.gated()
+                && !dependent.contains(rel)
+                && !products.contains(rel)
+                && a.args().all(|t| plain(t) || matches!(t, TermRef::Wild))
+            {
+                let vars = atom_vars(a);
+                // A reader's own guard already supplies these columns. Avoid repeating its other joins.
+                if is_demand(rel) && wanted.is_subset(&vars) {
+                    return Some(vec![Part::Lit(i)]);
+                }
+                connect(&mut groups, Part::Lit(i), vars, false);
             }
-            connect(&mut groups, literal, vars, false);
         }
     }
     let group = groups.into_iter().find(|group| wanted.is_subset(&group.vars))?;
     // Keep already-bound positive string and equality tests. Dropping other filters still gives a superset.
-    Some(
-        group
-            .body
-            .into_iter()
-            .chain(rule.body.iter().filter(|literal| {
-                matches!(literal, Literal::Cmp { l, r, .. } if filter_term(l) && filter_term(r))
-                    && literal.vars().is_subset(&group.vars)
-            }))
-            .cloned()
-            .collect(),
-    )
+    let filters = rule.body().enumerate().filter(|(_, literal)| {
+        matches!(literal.view(), Lit::Cmp { l, r, .. } if filter_term(v, l) && filter_term(v, r)) && lit_vars(*literal).is_subset(&group.vars)
+    });
+    Some(group.body.into_iter().chain(filters.map(|(i, _)| Part::Lit(i))).collect())
 }
 
-fn install(
-    program: &mut Program,
-    rel: &str,
-    cols: &[usize],
-    products: &BTreeSet<String>,
-    require_anchor: bool,
-) -> bool {
+/// A demand's rule `install` writes: of rule `rule`'s read at literal `read` (its key at the columns), its parts.
+struct Proof {
+    rule: RuleId,
+    read: usize,
+    own: bool,
+    parts: Vec<Part>,
+}
+
+fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool) -> Result<bool, String> {
     let name = format!("{PREFIX}{rel}");
-    if program.decls.contains_key(name.as_str()) {
-        return false;
+    if program.columns(&name).is_some() {
+        return Ok(false);
     }
     let dependent = readers_of(program, rel);
+    let v = program.v();
     let mut anchored = false;
     let mut proofs = Vec::new();
-    let mut rows = Vec::new();
-    let mut producers = Vec::new();
+    let mut rows: Vec<List<Value>> = Vec::new();
+    let mut producers = BTreeSet::new();
     let mut readers = 0;
-    for (i, rule) in program.rules.iter().enumerate() {
-        let own = rule.head.rel == rel;
-        let Some(own_key) = (!own).then(Vec::new).or_else(|| keys(&rule.head, cols)) else {
-            return false;
+    for rule in v.rules() {
+        let own = program.head_rel(rule) == rel;
+        let own_key = if own {
+            match keys(rule.head(), cols) {
+                Some(key) => key,
+                None => return Ok(false),
+            }
+        } else {
+            Vec::new()
         };
-        let own_guard = Literal::Atom(atom(name.clone(), &own_key));
         if own {
-            producers.push((i, own_guard.clone()));
+            producers.insert(rule.id());
         }
-        for literal in &rule.body {
-            let Some(read) = literal.atom().filter(|a| a.rel == rel) else {
+        for (i, literal) in rule.body().enumerate() {
+            let Some(read) = literal.atom().filter(|a| v.rel_name(a.rel()) == rel) else {
                 continue;
             };
-            if read.gated {
-                return false;
+            if read.gated() {
+                return Ok(false);
             }
             // For aggregates, the prefix below must bind every chosen column outside the aggregate.
             // Inner columns stay out of the guard, so the aggregate still sees every row of each group.
-            let Some(key) = keys(read, cols) else { return false };
-            if own && key == own_key && matches!(literal, Literal::Atom(_)) && !read.neg {
+            let Some(key) = keys(read, cols) else { return Ok(false) };
+            let same_key = key.len() == own_key.len() && key.iter().zip(&own_key).all(|(a, b)| same(*a, *b));
+            if own && same_key && matches!(literal.view(), Lit::Atom(_)) && !read.neg() {
                 continue;
             }
             readers += 1;
             if readers > 48 {
-                return false;
+                return Ok(false);
             }
-            let head = atom(name.clone(), &key);
-            let wanted = head.vars();
+            let wanted = vars_of(&key);
             if wanted.is_empty() {
                 anchored = true;
-                rows.push(
-                    key.into_iter()
-                        .map(|t| match t {
-                            Term::Int(n) => Value::Int(n),
-                            Term::Str(s) => Value::Str(s),
-                            Term::Branded(n) => Value::Branded(n),
-                            _ => unreachable!("a constant key"),
-                        })
-                        .collect(),
-                );
+                rows.push(key.iter().map(|t| value(v, *t)).collect());
                 continue;
             }
-            let body = if own {
-                // For a recursive walk, start with the parent's requested key and derive the child's key.
-                let mut reader = rule.clone();
-                reader.body.insert(0, own_guard.clone());
-                demand_body(&reader, &dependent, products, &wanted)
-            } else {
-                demand_body(rule, &dependent, products, &wanted)
-            };
-            let Some(body) = body else { return false };
+            // For a recursive walk, start with the parent's requested key and derive the child's key.
+            let guard = own.then(|| vars_of(&own_key));
+            let Some(parts) = demand_body(v, rule, guard, &dependent, products, &wanted) else { return Ok(false) };
             if !own {
-                anchored |= body.iter().any(|literal| match literal {
-                    Literal::Atom(a) => is_demand(&a.rel) && wanted.is_subset(&a.vars()),
-                    Literal::Cmp {
-                        l: Term::Call(f, _), ..
-                    } => {
-                        matches!(f.as_str(), "prefix" | "glob" | "suffix")
+                anchored |= parts.iter().any(|part| {
+                    let Part::Lit(j) = *part else { return false };
+                    match rule.body().nth(j).expect("a literal of the rule").view() {
+                        Lit::Atom(a) => is_demand(v.rel_name(a.rel())) && wanted.is_subset(&atom_vars(a)),
+                        Lit::Cmp { l: TermRef::Call(f, _), .. } => matches!(v.text(f), "prefix" | "glob" | "suffix"),
+                        _ => false,
                     }
-                    _ => false,
                 });
             }
-            proofs.push(Rule {
-                head,
-                body: body.into(),
-            });
+            proofs.push(Proof { rule: rule.id(), read: i, own, parts });
         }
     }
     if producers.is_empty() || readers == 0 || (require_anchor && !anchored) {
-        return false;
+        return Ok(false);
     }
-    let original_len = program.rules.len();
-    let columns = cols.iter().map(|&i| program.decls[rel][i].clone()).collect();
-    program.decls.insert(name.clone().into(), columns);
-    if !rows.is_empty() {
-        program.facts.insert(name.clone(), rows);
+    let columns: Vec<(String, String)> = {
+        let all = program.columns(rel).unwrap_or_default();
+        cols.iter().map(|&i| all[i].clone()).collect()
+    };
+    let mut qualifiers = program.f.qualifiers.clone();
+    qualifiers.entry(name.clone()).or_default().extend(["no_inline".to_owned(), "no_magic".to_owned()]);
+    // This relation is guarded once the restriction holds. Keep explicit demand on other relations.
+    let demand: Vec<String> = program.f.demand.iter().filter(|d| *d != rel).cloned().collect();
+    let made = program.derive(
+        &mut |first, v, r, b| {
+            if !producers.contains(&r.id()) {
+                return Ok(false);
+            }
+            let key = keys(r.head(), cols).expect("a producer's plain key");
+            let guard: Vec<T<'_>> = key.iter().map(|t| t_of(v, r, *t)).collect();
+            let mut rb = rewritten(first, v, r, b).atom(name.as_str(), &guard);
+            for l in r.body() {
+                rb = rb.lit(v, r, l);
+            }
+            rb.finish().map(|_| true)
+        },
+        &mut |v, b| {
+            use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
+            let pairs: Vec<(&str, &str)> = columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+            b.fields().declare(&name, &pairs);
+            if !rows.is_empty() {
+                b.fields().set_facts(&name, &rows);
+            }
+            for proof in &proofs {
+                let r = v.rule(proof.rule).expect("a reader of the version");
+                let read = r.body().nth(proof.read).and_then(|l| l.atom()).expect("the read");
+                let head: Vec<T<'_>> = keys(read, cols).expect("a plain key").iter().map(|t| t_of(v, r, *t)).collect();
+                let guard: Vec<T<'_>> = if proof.own {
+                    keys(r.head(), cols).expect("a producer's plain key").iter().map(|t| t_of(v, r, *t)).collect()
+                } else {
+                    Vec::new()
+                };
+                write_demand(v, r, b, &name, &head, (&name, &guard), &proof.parts)?;
+            }
+            b.fields().set_field(Field::Qualifiers(&qualifiers));
+            b.fields().set_field(Field::Demand(&demand));
+            Ok(())
+        },
+    )?;
+    let apart = Program::components(&made).is_ok_and(|parts| parts.iter().all(|part| !(part.contains(rel) && part.contains(&name))));
+    if apart {
+        program.set(made);
     }
-    for (i, guard) in &producers {
-        program.rules[*i].body.insert(0, guard.clone());
-    }
-    program.rules.extend(proofs);
-    if components_of(program).is_ok_and(|parts| parts.iter().all(|part| !(part.contains(rel) && part.contains(&name))))
-    {
-        // This relation is already guarded. Keep explicit demand on other relations.
-        program.demand.retain(|demand| demand != rel);
-        program
-            .qualifiers
-            .entry(name)
-            .or_default()
-            .extend(["no_inline".to_owned(), "no_magic".to_owned()]);
-        return true;
-    }
-    for (i, _) in &producers {
-        program.rules[*i].body.remove(0);
-    }
-    program.rules.truncate(original_len);
-    program.decls.remove(name.as_str());
-    program.facts.remove(&name);
-    false
+    Ok(apart)
 }
 
-fn node_columns(program: &Program, rel: &str) -> Vec<usize> {
+fn node_columns(program: &Program<'_>, rel: &str) -> Vec<usize> {
     program
-        .decls
-        .get(rel)
-        .into_iter()
-        .flatten()
+        .columns(rel)
+        .unwrap_or_default()
+        .iter()
         .enumerate()
         .filter(|(_, (_, ty))| matches!(ty.as_str(), "node" | "loc"))
         .map(|(i, _)| i)
         .collect()
 }
 
-fn restrict(program: &mut Program, rel: &str, products: &BTreeSet<String>, tuple: bool, require_anchor: bool) -> bool {
+fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String>, tuple: bool, require_anchor: bool) -> Result<bool, String> {
     if products.contains(rel) || !eligible(program, rel) {
-        return false;
+        return Ok(false);
     }
     let nodes = node_columns(program, rel);
-    if (tuple && nodes.len() > 1 && install(program, rel, &nodes, products, require_anchor))
-        || nodes
-            .into_iter()
-            .any(|i| install(program, rel, &[i], products, require_anchor))
-    {
-        return true;
+    if tuple && nodes.len() > 1 && install(program, rel, &nodes, products, require_anchor)? {
+        return Ok(true);
+    }
+    for i in nodes {
+        if install(program, rel, &[i], products, require_anchor)? {
+            return Ok(true);
+        }
     }
     // A symbol can also bound a read, for example a requested qualified name.
-    let symbols: Vec<_> = program.decls[rel]
+    let symbols: Vec<usize> = program
+        .columns(rel)
+        .unwrap_or_default()
         .iter()
         .enumerate()
         .filter(|(_, (_, ty))| matches!(ty.as_str(), "sym" | "symbol"))
         .map(|(i, _)| i)
         .collect();
-    symbols.into_iter().any(|i| install(program, rel, &[i], products, true))
+    for i in symbols {
+        if install(program, rel, &[i], products, true)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Anchor the readers of a mandatory product before its own demand is derived.
-pub(super) fn start(program: &mut Program, products: &BTreeSet<String>) -> BTreeSet<String> {
-    let readers: BTreeSet<_> = program
-        .rules
-        .iter()
-        .filter(|r| {
-            r.body
-                .iter()
-                .filter_map(Literal::atom)
-                .any(|a| products.contains(a.rel.as_str()))
-        })
-        .map(|r| r.head.rel.to_string())
-        .filter(|r| !products.contains(r))
-        .collect();
-    let mut peers = BTreeSet::new();
-    for rule in &program.rules {
-        let negated: Vec<_> = rule
-            .body
-            .iter()
-            .filter_map(Literal::atom)
-            .filter(|atom| atom.neg)
+pub(super) fn start(program: &mut Program<'_>, products: &BTreeSet<String>) -> Result<BTreeSet<String>, String> {
+    let (readers, peers) = {
+        let v = program.v();
+        let readers: BTreeSet<String> = v
+            .rules()
+            .filter(|r| r.body().filter_map(|l| l.atom()).any(|a| products.contains(v.rel_name(a.rel()))))
+            .map(|r| program.head_rel(r).to_owned())
+            .filter(|r| !products.contains(r))
             .collect();
-        for read in negated.iter().filter(|atom| readers.contains(atom.rel.as_str())) {
-            let Some(column) = node_columns(program, &read.rel).first().copied() else {
-                continue;
-            };
-            let Some(Term::Var(anchor)) = read.args.get(column) else {
-                continue;
-            };
-            // Other tests of the anchor or of a fixed name can share the demand. Tests of unrelated keys
-            // keep their own plan, which can be cheaper than enumerating them from the candidate.
-            peers.extend(
-                negated
-                    .iter()
-                    .filter(|atom| {
-                        atom.args.iter().any(|term| {
-                            matches!(term, Term::Var(v) if v == anchor)
-                                || matches!(term, Term::Str(_) | Term::Branded(_))
-                        })
-                    })
-                    .map(|atom| atom.rel.to_string()),
-            );
+        let mut peers = BTreeSet::new();
+        for rule in v.rules() {
+            let negated: Vec<AtomRef<'_>> = rule.body().filter_map(|l| l.atom()).filter(|atom| atom.neg()).collect();
+            for read in negated.iter().filter(|atom| readers.contains(v.rel_name(atom.rel()))) {
+                let Some(column) = node_columns(program, v.rel_name(read.rel())).first().copied() else {
+                    continue;
+                };
+                let Some(TermRef::Var(anchor)) = read.args().nth(column) else {
+                    continue;
+                };
+                // Other tests of the anchor or of a fixed name can share the demand. Tests of unrelated keys
+                // keep their own plan, which can be cheaper than enumerating them from the candidate.
+                peers.extend(
+                    negated
+                        .iter()
+                        .filter(|atom| atom.args().any(|term| matches!(term, TermRef::Var(x) if x == anchor) || matches!(term, TermRef::Str(_) | TermRef::Branded(_))))
+                        .map(|atom| v.rel_name(atom.rel()).to_owned()),
+                );
+            }
         }
-    }
+        (readers, peers)
+    };
     let mut narrowed = BTreeSet::new();
-    for rel in readers.iter().chain(peers.difference(&readers)).take(24) {
-        if restrict(program, rel, products, readers.contains(rel), false) {
-            narrowed.insert(rel.clone());
+    let order: Vec<String> = readers.iter().chain(peers.difference(&readers)).take(24).cloned().collect();
+    for rel in order {
+        if restrict(program, &rel, products, readers.contains(&rel), false)? {
+            narrowed.insert(rel);
         }
     }
-    narrowed
+    Ok(narrowed)
 }
 
 /// Carry keys to the inputs of guarded rules. Restriction stays optional when a helper also has an open reader.
-pub(super) fn propagate(program: &mut Program, products: &BTreeSet<String>, narrowed: &mut BTreeSet<String>) {
+pub(super) fn propagate(program: &mut Program<'_>, products: &BTreeSet<String>, narrowed: &mut BTreeSet<String>) -> Result<(), String> {
     let mut tried = narrowed.clone();
     let mut budget = 96;
     for _ in 0..4 {
-        let candidates: BTreeSet<_> = program
-            .rules
-            .iter()
-            .filter(|r| is_demand(&r.head.rel) || r.body.iter().filter_map(Literal::atom).any(|a| is_demand(&a.rel)))
-            .flat_map(|r| r.body.iter().filter_map(Literal::atom))
-            .map(|a| a.rel.to_string())
-            .filter(|r| !tried.contains(r) && eligible(program, r))
-            .collect();
+        let candidates: BTreeSet<String> = {
+            let v = program.v();
+            v.rules()
+                .filter(|r| is_demand(program.head_rel(*r)) || r.body().filter_map(|l| l.atom()).any(|a| is_demand(v.rel_name(a.rel()))))
+                .flat_map(|r| r.body().filter_map(|l| l.atom()))
+                .map(|a| v.rel_name(a.rel()).to_owned())
+                .filter(|r| !tried.contains(r) && eligible(program, r))
+                .collect()
+        };
         let before = narrowed.len();
         for rel in candidates.into_iter().take(budget) {
             budget -= 1;
             tried.insert(rel.clone());
-            if restrict(program, &rel, products, false, true) {
+            if restrict(program, &rel, products, false, true)? {
                 narrowed.insert(rel);
             }
         }
@@ -344,133 +364,176 @@ pub(super) fn propagate(program: &mut Program, products: &BTreeSet<String>, narr
             break;
         }
     }
+    Ok(())
+}
+
+/// An argument of a witness atom `restore_order_witnesses` appends to a rule: argument `k` of the rule's literal `j`
+/// (`Rule(j, k)`), of the helper's (`Helper(helper, j, k)`), or `_`.
+enum Arg {
+    Rule(usize, usize),
+    Helper(RuleId, usize, usize),
+    Wild,
+}
+
+impl Arg {
+    fn term<'v>(&self, v: &'v Version, r: RuleRef<'v>) -> T<'v> {
+        let arg = |r: RuleRef<'v>, j: usize, k: usize| {
+            let a = r.body().nth(j).and_then(|l| l.atom()).expect("an atom of the rule");
+            t_of(v, r, a.args().nth(k).expect("an argument of the atom"))
+        };
+        match *self {
+            Arg::Rule(j, k) => arg(r, j, k),
+            Arg::Helper(h, j, k) => arg(v.rule(h).expect("the helper"), j, k),
+            Arg::Wild => T::Wild,
+        }
+    }
 }
 
 /// Restate the witness of a node minimum or maximum after reversing its order key. Its original atom tells
 /// placement which document supplied the node. An empty group has no node_order row. Node-order keys in the tape
 /// binding are injective, so a nonempty group's returned node is a witness of the original atom.
-pub(super) fn restore_order_witnesses(program: &mut Program, narrowed: &BTreeSet<String>) -> usize {
-    use crate::code_rule_dsl::logic::front::AggOp;
-    if !program.inputs.iter().any(|r| r == "node_order")
-        || program.facts.contains_key("node_order")
-        || program.natives.contains_key("node_order")
-        || program.rules.iter().any(|r| r.head.rel == "node_order")
+pub(super) fn restore_order_witnesses(program: &mut Program<'_>, narrowed: &BTreeSet<String>) -> Result<usize, String> {
+    let f = &program.f;
+    let v = program.v();
+    if !f.inputs.iter().any(|r| r == "node_order")
+        || f.facts.contains("node_order")
+        || f.natives.contains_key("node_order")
+        || v.rules().any(|r| program.head_rel(r) == "node_order")
     {
-        return 0;
+        return Ok(0);
     }
-    let mut edits = Vec::new();
-    for (index, rule) in program.rules.iter().enumerate() {
-        if !narrowed.contains(rule.head.rel.as_str()) {
+    // Each edit: the rule, the witness's relation, and its arguments.
+    let mut edits: BTreeMap<RuleId, Vec<(String, Vec<Arg>)>> = BTreeMap::new();
+    let mut count = 0;
+    for rule in v.rules() {
+        if !narrowed.contains(program.head_rel(rule)) {
             continue;
         }
-        for literal in &rule.body {
-            let Literal::Agg {
-                var,
-                op: AggOp::Min | AggOp::Max,
-                over: Some(over),
-                atom: aggregate,
-            } = literal
-            else {
+        let body: Vec<_> = rule.body().collect();
+        for (agg_at, literal) in body.iter().enumerate() {
+            let Lit::Agg { var, op: AggRef::Min | AggRef::Max, over: Some(over), atom: aggregate } = literal.view() else {
                 continue;
             };
+            let agg_rel = v.rel_name(aggregate.rel());
             // The synthesized helper projects the ordered node to its preorder key.
-            if !aggregate.rel.starts_with("rr_ordered")
-                || program.inputs.iter().any(|r| *r == aggregate.rel)
-                || program.facts.contains_key(aggregate.rel.as_str())
-                || program.natives.contains_key(aggregate.rel.as_str())
-                || aggregate.neg
-                || aggregate.gated
+            if !agg_rel.starts_with("rr_ordered")
+                || f.inputs.iter().any(|r| r == agg_rel)
+                || f.facts.contains(agg_rel)
+                || f.natives.contains_key(agg_rel)
+                || aggregate.neg()
+                || aggregate.gated()
             {
                 continue;
             }
-            let Some(Term::Var(result)) = rule.body.iter().find_map(|l| match l {
-                Literal::Atom(a)
-                    if !a.neg && a.rel == "node_order" && a.args.get(1) == Some(&Term::Var(var.clone().into())) =>
-                {
-                    a.args.first()
+            // The rule's literal and column of the order's node: `node_order(result, var)`.
+            let Some(result) = body.iter().enumerate().find_map(|(j, l)| match l.view() {
+                Lit::Atom(a) if !a.neg() && v.rel_name(a.rel()) == "node_order" && matches!(a.args().nth(1), Some(TermRef::Var(x)) if x == var) => {
+                    matches!(a.args().next(), Some(TermRef::Var(_))).then_some(j)
                 }
                 _ => None,
             }) else {
                 continue;
             };
-            let mut defs = program.rules.iter().filter(|r| r.head.rel == aggregate.rel);
+            let mut defs = v.rules().filter(|r| program.head_rel(*r) == agg_rel);
             let Some(helper) = defs.next() else { continue };
             if defs.next().is_some() {
                 continue;
             }
-            let mut body = helper.body.iter().filter(|literal| match literal {
-                Literal::Atom(a) => !is_demand(&a.rel),
-                Literal::Cmp { .. } => false,
+            let mut hbody = helper.body().enumerate().filter(|(_, literal)| match literal.view() {
+                Lit::Atom(a) => !is_demand(v.rel_name(a.rel())),
+                Lit::Cmp { .. } => false,
                 _ => true,
             });
-            let (Some(Literal::Atom(source)), Some(Literal::Atom(order)), None) =
-                (body.next(), body.next(), body.next())
-            else {
+            let (Some((source_at, source)), Some((_, order)), None) = (hbody.next(), hbody.next(), hbody.next()) else {
                 continue;
             };
-            let [Term::Var(node), Term::Var(order_key)] = order.args.as_slice() else {
+            let (Lit::Atom(source), Lit::Atom(order)) = (source.view(), order.view()) else { continue };
+            let order_args: Vec<TermRef<'_>> = order.args().collect();
+            let [TermRef::Var(node), TermRef::Var(order_key)] = order_args[..] else {
                 continue;
             };
-            if source.neg || source.gated || order.neg || order.gated || order.rel != "node_order" || node == order_key
-            {
+            if source.neg() || source.gated() || order.neg() || order.gated() || v.rel_name(order.rel()) != "node_order" || node == order_key {
                 continue;
             }
-            let outer: BTreeSet<_> = rule
-                .body
-                .iter()
-                .filter_map(|l| match l {
-                    Literal::Atom(a) if !a.neg => Some(a.vars()),
-                    _ => None,
-                })
-                .flatten()
-                .collect();
-            let mut matched = false;
-            let arguments: Option<Vec<_>> = source
-                .args
-                .iter()
-                .map(|t| match t {
-                    Term::Var(v) if v == node => {
-                        matched = true;
-                        Some(Term::Var(result.clone()))
+            let outer: VarSet = {
+                let mut out = VarSet::default();
+                for l in &body {
+                    if let Lit::Atom(a) = l.view()
+                        && !a.neg()
+                    {
+                        out.extend(&atom_vars(a));
                     }
-                    Term::Var(v) => {
-                        let pos = helper.head.args.iter().position(|h| h == &Term::Var(v.clone()))?;
-                        match aggregate.args.get(pos)? {
-                            Term::Var(v) if !outer.contains(v.as_str()) => Some(Term::Wild),
-                            term if plain(term) || matches!(term, Term::Wild) => Some(term.clone()),
+                }
+                out
+            };
+            let head_args: Vec<TermRef<'_>> = helper.head().args().collect();
+            let agg_args: Vec<TermRef<'_>> = aggregate.args().collect();
+            let mut matched = false;
+            let arguments: Option<Vec<Arg>> = source
+                .args()
+                .enumerate()
+                .map(|(k, t)| match t {
+                    TermRef::Var(x) if x == node => {
+                        matched = true;
+                        Some(Arg::Rule(result, 0))
+                    }
+                    TermRef::Var(x) => {
+                        let pos = head_args.iter().position(|h| matches!(h, TermRef::Var(y) if *y == x))?;
+                        match *agg_args.get(pos)? {
+                            TermRef::Var(y) if !outer.contains(y) => Some(Arg::Wild),
+                            TermRef::Wild => Some(Arg::Wild),
+                            term if plain(term) => Some(Arg::Rule(agg_at, pos)),
                             _ => None,
                         }
                     }
-                    Term::Int(_) | Term::Str(_) | Term::Branded(_) | Term::Wild => Some(t.clone()),
+                    TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_) => Some(Arg::Helper(helper.id(), source_at, k)),
+                    TermRef::Wild => Some(Arg::Wild),
                     _ => None,
                 })
                 .collect();
-            let Some(pos) = helper.head.args.iter().position(|t| t == &Term::Var(order_key.clone())) else {
+            let Some(pos) = head_args.iter().position(|t| matches!(t, TermRef::Var(y) if *y == order_key)) else {
                 continue;
             };
-            if aggregate.args.get(pos) == Some(&Term::Var(over.clone().into()))
+            if matches!(agg_args.get(pos), Some(TermRef::Var(y)) if *y == over)
                 && matched
                 && let Some(arguments) = arguments
             {
-                edits.push((index, Literal::Atom(atom(source.rel.to_string(), &arguments))));
+                edits.entry(rule.id()).or_default().push((v.rel_name(source.rel()).to_owned(), arguments));
+                count += 1;
             }
         }
     }
-    let count = edits.len();
-    for (index, atom) in edits {
-        program.rules[index].body.push(atom);
+    if edits.is_empty() {
+        return Ok(0);
     }
-    count
+    let made = program.derive(
+        &mut |first, v, r, b| {
+            let Some(atoms) = edits.get(&r.id()) else { return Ok(false) };
+            let body: Vec<_> = r.body().collect();
+            let mut rb = rewritten(first, v, r, b);
+            for l in &body {
+                rb = rb.lit(v, r, *l);
+            }
+            for (rel, arguments) in atoms {
+                let args: Vec<T<'_>> = arguments.iter().map(|a| a.term(v, r)).collect();
+                rb = rb.atom(rel.as_str(), &args);
+            }
+            rb.finish().map(|_| true)
+        },
+        &mut |_, _| Ok(()),
+    )?;
+    program.set(made);
+    Ok(count)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code_rule_dsl::logic::rr::parse;
+    use super::super::tests::parse;
 
     #[test]
     fn bound_columns_keep_wildcards_and_scope_the_point_walk() {
-        let mut p = parse(
+        let v = parse(
             "
             .decl kind(n: node, k: symbol)
             .decl child(n: node, c: node, i: number)
@@ -485,13 +548,9 @@ mod tests {
         ",
         )
         .unwrap();
-        assert!(restrict(&mut p, "peel", &BTreeSet::new(), false, false));
-        let specs: Vec<_> = p
-            .rules
-            .iter()
-            .filter(|r| r.head.rel == "rr_reader_demand_peel")
-            .map(ToString::to_string)
-            .collect();
+        let mut p = Program::of(&v);
+        assert!(restrict(&mut p, "peel", &BTreeSet::new(), false, false).unwrap());
+        let specs = p.shown(Some("rr_reader_demand_peel"));
         assert!(specs.iter().any(|r| r.contains("chosen($x)")));
         assert!(specs.iter().any(|r| r.starts_with("rr_reader_demand_peel($c)")
             && r.contains("rr_reader_demand_peel($x)")
@@ -500,7 +559,7 @@ mod tests {
 
     #[test]
     fn a_negated_reader_supplies_its_filter_to_the_tuple_demand() {
-        let mut p = parse(
+        let v = parse(
             "
             .decl attrs(n: node, r: node, s: symbol)
             .decl a(n: node)
@@ -516,26 +575,18 @@ mod tests {
             ",
         )
         .unwrap();
+        let mut p = Program::of(&v);
         let rewritten = super::super::rewrite(&mut p, true).unwrap();
         assert!(rewritten.products.contains("product"));
         assert!(rewritten.readers.contains("reader"));
-        let proof = p
-            .rules
-            .iter()
-            .find(|r| r.head.rel == "rr_reader_demand_reader")
-            .unwrap();
-        assert!(proof.to_string().contains("@prefix"), "{proof}");
-        assert!(p.rules.iter().any(|r| {
-            r.head.rel == "rr_product_demand_product"
-                && r.body
-                    .iter()
-                    .any(|l| l.atom().is_some_and(|a| a.rel == "rr_reader_demand_reader"))
-        }));
+        let proof = p.shown(Some("rr_reader_demand_reader")).remove(0);
+        assert!(proof.contains("@prefix"), "{proof}");
+        assert!(p.shown(Some("rr_product_demand_product")).iter().any(|r| r.contains("rr_reader_demand_reader(")));
     }
 
     #[test]
     fn a_node_maximum_retains_its_group_witness() {
-        let mut p = parse(
+        let v = parse(
             "
             .decl node_order(n: node, k: number)
             .decl site(n: node, b: node)
@@ -549,17 +600,18 @@ mod tests {
             ",
         )
         .unwrap();
+        let mut p = Program::of(&v);
         assert_eq!(
-            restore_order_witnesses(&mut p, &BTreeSet::from(["selected".to_owned()])),
+            restore_order_witnesses(&mut p, &BTreeSet::from(["selected".to_owned()])).unwrap(),
             1
         );
-        let selected = p.rules.iter().find(|r| r.head.rel == "selected").unwrap();
-        assert!(selected.to_string().ends_with("site($n, $b)"), "{selected}");
+        let selected = p.shown(Some("selected")).remove(0);
+        assert!(selected.ends_with("site($n, $b)"), "{selected}");
     }
 
     #[test]
     fn an_open_reader_preserves_the_whole_relation() {
-        let mut p = parse(
+        let v = parse(
             "
             .decl edge(x: node, y: node)
             .input edge
@@ -571,7 +623,8 @@ mod tests {
         ",
         )
         .unwrap();
-        assert!(!restrict(&mut p, "all", &BTreeSet::new(), true, false));
-        assert!(!p.decls.contains_key("rr_reader_demand_all"));
+        let mut p = Program::of(&v);
+        assert!(!restrict(&mut p, "all", &BTreeSet::new(), true, false).unwrap());
+        assert!(p.columns("rr_reader_demand_all").is_none());
     }
 }

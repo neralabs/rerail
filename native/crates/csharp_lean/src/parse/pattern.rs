@@ -372,7 +372,7 @@ impl<'a> P<'a> {
                 n
             }
             T::LParen => {
-                let close = self.matching(0).ok_or_else(|| Refusal::Parse(t.start))?;
+                let close = self.matching(0).ok_or(Refusal::Parse(t.start))?;
                 if !self.paren_is_pattern(0, close) {
                     // `("a")`, `(1)`, `(a + 1)`: a constant's parenthesized expression.
                     self.constant_pattern(s)?

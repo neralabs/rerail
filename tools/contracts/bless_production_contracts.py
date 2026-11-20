@@ -11,7 +11,10 @@ import glob, json, os, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FIELDS = ['ordinal', 'kind', 'dialect', 'producer_kind', 'program_digest', 'result_schema', 'owning_clause_ids',
           'result_limit', 'completion_required']
-QUERY = os.path.join(ROOT, 'fixtures/code-rule-dsl/query')
+sys.path.insert(0, os.path.join(ROOT, 'scripts', 'dsl'))
+from data_layer_rule_audit import fixtures_path  # the repository's one Python fixtures resolver
+
+QUERY = str(fixtures_path('code-rule-dsl', 'query'))
 
 
 def contracts(actual):

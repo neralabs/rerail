@@ -834,6 +834,7 @@ fn the_device_rungs_run_a_tu_again_past_its_room() {
 
 /// Stage 5's spike (0348): each round of `TUS` run on the device as batches of 1 to 128 copies
 /// of itself, against the Cranelift JIT on one core. It prints; it asserts nothing.
+#[cfg(target_os = "macos")]
 #[test]
 #[ignore = "a measurement: run alone, on an idle Mac"]
 fn the_device_words_time_against_the_jit() {

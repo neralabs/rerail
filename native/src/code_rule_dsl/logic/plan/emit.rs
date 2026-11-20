@@ -56,9 +56,8 @@ impl Emitted {
         let rewrite = |query: &mut Query| {
             for block in query.ctes.iter_mut().flat_map(|c| &mut c.arms).chain([&mut query.body]) {
                 block.relations_mut(&mut |relation| {
-                    if let Relation::Derived { rel, .. } = relation {
-                        if let Some(private) = names.get(rel) { *rel = private.clone(); }
-                    }
+                    if let Relation::Derived { rel, .. } = relation
+                        && let Some(private) = names.get(rel) { *rel = private.clone(); }
                 });
                 block.sqlite_order();
             }
@@ -152,7 +151,7 @@ pub fn emit_inputs(placed: super::body::Placed, db:&Connection, name:&str, count
             && derived(rel)
             && prog.declares(rel)
         {
-            model.stats.card.insert(rel.to_owned(), (*rows as f64).max(1.0));
+            model.stats.card.insert(rel, (*rows as f64).max(1.0));
         }
     }
     let decls: Vec<(String, Vec<(String, String)>)> = prog.declared_names().into_iter().map(|rel| { let cols = prog.columns_of(&rel).unwrap_or_default(); (rel, cols) }).collect();

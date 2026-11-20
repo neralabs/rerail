@@ -40,7 +40,8 @@ language or capability.
 
 Each language family has one adapter type, and every engine call site asks it instead of matching on a language.
 
-- **Adapter:** the trait each family's type implements: `Python`, `Ecma`, `Php`, `Blade`, `Rust`, `Vue`, `Sql`, `Rr` or `Json`.
+- **Adapter:** the trait each family's type implements: `Python`, `Ecma`, `Php`, `Blade`, `Rust`, `Vue`, `Sql`, `Rr`,
+  `Json`, `Format`, `Java`, `Csharp`, `Html`, `Css`, `Markdown`, `Kotlin`, `Swift`, `Scala`, `Go` or `C`.
 - **Concern traits:** one per capability (`ScopeRules`, `ValueRules`, ...); a concern the family lacks is `Refused`.
 - **Embedding family:** Blade and Vue read the embedded language's semantics over an embedded program.
 
@@ -55,7 +56,7 @@ Each language family has one adapter type, and every engine call site asks it in
 | `rust` | `rust` | all five | `clippy` |
 | `vue` | `vue` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint` |
 | `sql` | `sql` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
-| `rr` | `rr` (`.rr` rule files, the engine's own grammar `native:rr`) | none: all five `Refused`; rules match its kinds and text | none |
+| `rr` | `rr` (`.rerail` rule files, the engine's own grammar `native:rr`) | none: all five `Refused`; rules match its kinds and text | none |
 | `json` | `json` | none: all five `Refused` (rules read its tree) | none |
 
 <details>
@@ -116,6 +117,30 @@ segments mapping that text to the file's bytes.
 | Suppressions | `eslint`: ESLint directives in `<script>` comments (`suppress::vue::script_directives`, the program's comments at the file bytes they copy), or eslint-plugin-vue's template comment directives (`vue/comment-directive`, `VueDirectives`) |
 | Patterns | Vue's over the component's tree; the dialect's over the program |
 | `languageOptions`, `when` | Ecma's keys |
+
+</details>
+
+### The Java adapter
+
+`adapter/java.rs` reads Java from tree-sitter-java's syntax alone (`ast-grep:Java`, tape tag 18). Its files parse and
+its structural terms run; no semantic capability is read yet.
+
+<details>
+<summary>What runs, and what a rule cannot ask yet</summary>
+
+- **Runs:** `kind`, `pattern`, `regex`, the relations, `field`, `nthChild`, `count`, `layout`, `matches`, and Rerail's
+  own `rerail-ignore` comments (`line_comment`, `block_comment`).
+- **Kept inactive:** a rule naming `resolves`, `binds`, `value`, `compare` (in every text mode, `tokens` included:
+  it is the value capability's), `arguments`, `calls` or `formatArgs`, or whose `transform` reads a value
+  (`toPrecision`, a `value` source). The registry marks each capability `not-supported-yet`, so the rule compiles to
+  `language-not-supported` and waits ([Status lifecycle](#status-lifecycle)).
+- **Refused:** `languageOptions`, `parse` (Java hosts no literal grammar) and every `suppress` kind (no linter's
+  comments are read).
+- **Scope and value** are implemented on `Java` itself, reading nothing, because `Refused` stands in only for
+  arguments, calls and format arguments. Each moves to its own module when its capability is proven.
+- **Grammar gaps** in tree-sitter-java 0.23.5, each a syntax error the engine reads around: a type-use annotation on an
+  array or varargs type (`@Nullable Object @Nullable ... args`), and Java 25's flexible constructor bodies and module
+  imports.
 
 </details>
 
@@ -242,8 +267,8 @@ Each language is one file, `languages/<id>.json`, so changing one language touch
 | `runsOn` | no | Dialect labels its rules run on, its own first; default its own. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | Per capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (no such thing or no plan; a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `oxlint`, `biome`, `phpstan`, `psalm`, `phpcs`, `clippy`, `sqlfluff`) |
-| `embeds` | no | Embedded languages and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks. A rule runs on the program with `ast.embedded: "<via>"` and reaches it from the file's tree with `embedded` ([DSL reference](code-rule-dsl-reference.html#embedded)) |
-| `fragments` | no | Grammars of a part of one of its dialects, which `.rr` rules name in `embed`, `sub_tape` and `parsed`: `{ "name": "annotation", "dialect": "python", "start": "expression" }` is a Python expression, parsed inside a written `( … )`. A name is unique among every dialect label and fragment ([decision 0082](final-shape/decisions/0082-embedded-grammar-names-sql-and-global-guests.md)) |
+| `embeds` | no | Embedded languages and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks, HTML's scripts and styles, Markdown's inline content (`dialects` names the embedded language's dialects an embedding gives: Markdown embeds its own `markdown-inline`). A file's embedded programs are made as it is read and are part of it (decision 0431 §4). A rule runs on the program with `ast.embedded: "<via>"` and reaches it from the file's tree with `embedded` ([DSL reference](code-rule-dsl-reference.html#embedded)) |
+| `fragments` | no | Grammars of a part of one of its dialects, which `.rerail` rules name in `sub_tape` and `parsed`: `{ "name": "annotation", "dialect": "python", "start": "type", "tapeTag": 30 }` is a Python type, as it is read after `x:`; JavaScript's `jsx` starts at `jsx_element` and HTML's `html-element` at `element`. The dialect's hand-written parser reads the text from the node kind `start`, and the tape's root is that node. A fragment's tapes have a tag of their own, never a dialect's. A name is unique among every dialect label and fragment ([decisions 0082](final-shape/decisions/0082-embedded-grammar-names-sql-and-global-guests.md), [0466](final-shape/decisions/0466-a-fragment-is-parsed-from-a-node-kind-by-a-hand-written-parser.md)) |
 
 Each dialect has:
 
@@ -254,7 +279,7 @@ Each dialect has:
   language has at least one dialect with a suffix.
 - **`variant`**, supported only: the engine's `GrammarDialect::<variant>`.
 - **`parser`**, supported only: `tree-sitter`; `forte`, Rerail's port of Forte ([docs/blade-parser.md](blade-parser.md));
-  `rr`, the rule engine's own parser of `.rr` files (decision 0061); or `bitlex`, a Bitlex grammar the transducer
+  `rr`, the rule engine's own parser of `.rerail` files (decision 0061); or `bitlex`, a Bitlex grammar the transducer
   compiles, written in its tree-sitter grammar's ids, with tree-sitter for a file the grammar refuses. Validated; the
   engine picks the parser by dialect, not from this field (JSON's Bitlex parser: `tape::TapeImage::parse`).
 - **`grammar`**, supported only: `vendored:<name>` (built by `build.rs`), `native:<name>` (a parser Rerail implements)
@@ -287,14 +312,14 @@ changing a value's meaning, needs `rerail.language/v2`.
 
 ## Status lifecycle
 
-A language moves from planned, through capabilities one at a time, to supported.
+A language moves from planned to supported; its capabilities become supported one at a time, before or after it does.
 
 1. **Planned.** Dialects have suffixes but no grammar; every capability is `not-supported-yet`. Rules may name the
    language, so its packs can land first, but the engine reads none of it.
 2. **Capabilities, one at a time.** A capability becomes `supported` only when its oracle suite passes: its
    `fixtures/` oracles and the conformance scores of code rules that read it.
 3. **Supported.** The entry flips once its dialects have a grammar, parser and tape tag and its adapter exists. The
-   build fails until each does.
+   build fails until each does. A capability still `not-supported-yet` keeps waiting (Java ships with all five).
 
 <details>
 <summary>What happens to a rule the engine cannot read yet</summary>
@@ -361,21 +386,26 @@ Register the language as planned, add its grammar and adapter, then flip capabil
    capability `not-supported-yet`, suppressions and embeds. Give each dialect the `tapeTag` it reserves (Rust 9, SQL
    10, Vue 12, rr 13, JSON 14, Python's format strings 15 and 16, ESLint directives 17, Java 18, C# 19, HTML 20, CSS 21, Markdown 22 and its inline texts 23, Kotlin 24, Swift 25, Scala 26, Go 27, C 28 and C++ 29 are taken; 11 is free for a second SQL dialect). Run `npm run generate:languages` and commit the
    regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`. Rules and packs can land now.
-2. **Add its grammar.** Vendor or pick one (add a vendored one to `GRAMMARS` in `native/build.rs`). Flip the entry to
+2. **Add its grammar.** Vendor or pick one (add a vendored one to `GRAMMARS` in `native/build.rs`; an `ast-grep` one
+   is a feature of `ast-grep-language` in `native/Cargo.toml`). Flip the entry to
    `supported` with each dialect's `variant`, `parser` and `grammar`. The build fails until `adapter::<Family>` exists.
    Name the language under `ast.languages` in `native/src/code_rule_dsl/capabilities.json` with its grammar (a
    version, or `native:<id>` for a grammar the engine builds in, as `rr` has), or policies cannot target it; a test
    holds those keys equal to the registry's supported languages.
 3. **Write its adapter** in its own file, registered by one `mod` and one `pub(crate) use` line in
    `native/src/code_rule_dsl/language/adapter.rs`. A new family's type implements `Adapter` and each concern trait,
-   or `Refused` for a concern the language will not have.
+   or `Refused` for a concern the language will not have. `Refused` implements arguments, calls and format
+   arguments only: a family that does not read scope or value yet implements those two itself, reading nothing
+   (`adapter/java.rs`).
 4. **Add missing suppression kinds** to the engine, the host schema, the entry and the adapter (below).
 5. **Add an embedding** (`embeds` with a new `via`): `native/src/code_rule_dsl/embed/<via>.rs` implementing
    `Embedder`, plus one `mod` and one `pub(crate) use` line in `embed.rs`. Nothing else in the engine changes.
 6. **Add a kit test:** one `#[test]` function in `native/src/code_rule_dsl/language/adapter/kit.rs` calling
-   `kit::<Family>(&Expect { .. })` with the family's expectations.
+   `kit::<Family>(&Expect { .. })` with the family's expectations. A family that reads no semantic concern yet checks
+   its identity and syntax alone (`identity::<Family>(&Identity { .. })`, as `java` does).
 7. **Flip capabilities** to `supported` only when implemented and proven by their oracle suite; mark ones the language
-   will never have `refused`. Flip `status` last.
+   will never have `refused`. A language may ship `supported` with capabilities still `not-supported-yet`, as Java
+   does.
 
 <details>
 <summary>Steps 2 and 3: generated code and concern traits</summary>
@@ -464,7 +494,7 @@ cp LICENSE packs/laravel/LICENSE
   "version": "0.1.0",
   "license": "Apache-2.0",
   "files": ["pack.json", "rules", "LICENSE", "README.md"],
-  "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" },
+  "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0" },
   "peerDependenciesMeta": { "@neralabs/rerail": { "optional": true } },
   "publishConfig": { "access": "public" }
 }

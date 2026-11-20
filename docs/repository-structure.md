@@ -32,6 +32,21 @@ Each top-level path has one job.
 
 </details>
 
+### Kept as they are
+
+Some trees stay in git outside this layout, by decision, each through a named exemption in the modules of the
+metrics it would fail, with a reason per path:
+
+- **`kept-records` / `workbench`:** the engine line's design notes (`docs/final-shape/`, `docs/rule-engine-direction/`)
+  and its `.rerail` workbench (`docs/rule-syntax/`): rule translations beside their source documents, one `.rerail` per rule
+  with the scripts that generate or check it, and the `.rerail` library the engine embeds. They are records, kept as
+  written.
+- **`engine-layout`:** directories and files of the engine line (`native/`, its tests, `tools/cratify/`) whose layout,
+  names or storage are settled with their owner in a follow-up, listed by exact path, never by glob.
+
+The recordings, corpora and measurement records the engine line made are not kept here: they are the data-layer
+pack's test data in S3 (`packs/data-layer/upstream/lint/`, `packs/data-layer/upstream/benchmarks/`, #3).
+
 ## Running the gate
 
 Run the gate to see which metrics fail and every finding behind them.
@@ -78,7 +93,8 @@ Metrics 1–7 say where each kind of file may live.
 ### 1. `pack.json` outside `packs/<id>/` — target 0
 
 Every `pack.json` is `packs/<id>/pack.json`. Exemption `validator-inputs`: `fixtures/packs/**/pack.json` are
-pack-validator test inputs.
+pack-validator test inputs. Exemption `pack-test-data`: a `pack.json` under `packs/<id>/upstream/` is pack test data
+(a recorded copy, or one in a publish request). Exemption `workbench` ([Kept as they are](#kept-as-they-are)).
 
 ### 2. Rule documents outside `packs/*/{rules,candidates}` — target 0
 
@@ -93,6 +109,8 @@ benchmark or test that needs a pack's rule references the pack's document.
   `fixtures/` may be named `rules`, `candidates`, `probes` or `policies`: those names mark rule sets, which belong
   in a pack.
 - **`validator-inputs`:** `fixtures/packs/**`, whose pack format puts rule documents in `rules/`.
+- **`pack-test-data`:** `packs/<id>/upstream/**`, pack test data (a recorded corpus, or a publish request).
+- **`kept-records`** ([Kept as they are](#kept-as-they-are)).
 
 </details>
 
@@ -123,6 +141,7 @@ Exemptions:
 - **`gate-pins`:** the conformance gate's lists (`conformance/languages/ungated-rules.json`,
   `conformance/languages/pending.json`) and `scripts/pack-data/runtimes/**`, the manifests that pin each runtime
   the derivation runs upstream on.
+- **`kept-records`** and **`engine-layout`** ([Kept as they are](#kept-as-they-are)), each path with its reason in `fixtures.mjs`.
 - For code-rule documents, `packs/<id>/rules/**`.
 
 </details>
@@ -176,19 +195,24 @@ the crate. Other arguments, such as `fixtures_dir!()` or `OUT_DIR`, are skipped.
 Exemption `test-inputs`: a test-only include may read `fixtures/**`, `packs/**` or a `*.generated.*` file. An
 include is test-only when it is:
 
-- in `tests.rs`, `*_tests.rs`, `test_support.rs` or under `native/tests/`; or
+- in `tests.rs`, `*_tests.rs`, `test_support.rs` or in a `tests/` directory under `native/`; or
 - inside the item a `#[cfg(test)]` attribute applies to: its brace-matched body (comments and string and
   character literals skipped), or up to its `;` when it has none.
 
 `#[cfg(test)] mod tests;` declares a module in another file and exempts nothing after it.
+
+Exemptions `workbench` (an include of `docs/rule-syntax/**`, the `.rerail` library the engine embeds) and
+`engine-layout` ([Kept as they are](#kept-as-they-are)).
 
 </details>
 
 ### 5. Test roots — target `test/`, `integration/`, `e2e/`
 
 Every test file is under `test/`, `integration/` or `e2e/`. `e2e/` holds the dashboard's Playwright browser specs,
-kept out of `test/` because vitest runs every spec file under it. Exemption: `data-roots` (upstream projects'
-copied tests). Rust `#[cfg(test)]` modules are part of the crate and not counted.
+kept out of `test/` because vitest runs every spec file under it. Exemptions: `data-roots` (upstream projects'
+copied tests), `workbench-samples` (the workbench explorer's sample sources) and `rule-cases` (a pack rule's cases,
+`docs/rule-syntax/packs/<pack>/cases/<rule>/`, the small repository its `.test` blocks read, named as the code they
+stand for), both [Kept as they are](#kept-as-they-are). Rust `#[cfg(test)]` modules are part of the crate and not counted.
 
 ### 6. Generators follow one known pattern — target 0 misplaced
 
@@ -205,7 +229,8 @@ A generator is any of:
 - any script named `generate`, `generate_*` or `generate-*` (extension `.mjs .cjs .js .ts .mts .py .php`).
 
 Exemption `data-roots`: pack generators sit beside the expected findings they write, under `fixtures/` or
-`packs/<id>/upstream/`; generated files there are not scanned for headers.
+`packs/<id>/upstream/`; generated files there are not scanned for headers. Exemption `engine-layout`
+([Kept as they are](#kept-as-they-are)): the engine line's generators that stay beside their inputs, by exact path.
 
 </details>
 
@@ -272,8 +297,9 @@ Every fixture family maps to a language or pack, or is a declared shared family.
 <summary>Exact rules</summary>
 
 Every `fixtures/<family>/` has `languages/<family>.json` or `packs/<family>/`, or is a declared shared family:
-`ecma` (ECMAScript oracles shared by the javascript and typescript languages and their packs), `host` or `packs`
-(not tied to a language). Every pack holds at least one rule document in `rules/`, or in `candidates/rules/` while
+`ecma` (ECMAScript oracles shared by the javascript and typescript languages and their packs), `host`, `packs`,
+`code-rule-dsl` (the engine's query contracts and goldens) or `simdjson-stage1` (simdjson's stage-1 oracle) (not
+tied to a language). Every pack holds at least one rule document in `rules/`, or in `candidates/rules/` while
 it ships none because all its ports are candidates.
 
 </details>
@@ -286,7 +312,8 @@ Metrics 12–15 keep directories small, imports one-way and each concept in one 
 
 A directory directly holding a `.ts .tsx .mts .cts .js .mjs .cjs .rs .py .php .sh` file directly holds at most
 25 tracked files. Exemptions: `pack-data` (`packs/<id>/{rules,candidates,upstream,licenses}/**`, one file per rule
-or test case), `fixture-data` (`fixtures/**`) and `vendored` (`native/grammars/**`).
+or test case), `fixture-data` (`fixtures/**`), `vendored` (`native/grammars/**`, `native/vendor/**`,
+`forest/src/mldb/**`), and `kept-records` and `engine-layout` ([Kept as they are](#kept-as-they-are)), each directory exactly.
 
 ### 13. Import-direction violations — target 0
 
@@ -328,7 +355,8 @@ A file resolves a fixtures root when it writes any of:
 Compared literals (`startsWith(`, `===`, …), name lists and deeper segments (`join(root, "labels", "fixtures")`)
 do not count.
 
-Exemptions: `data-roots` (generators write beside themselves) and `structure-gate` (this gate and its tests).
+Exemptions: `data-roots` (generators write beside themselves), `structure-gate` (this gate and its tests) and
+`workbench` (two workbench scripts that join `fixtures` onto a tool-pack's directory, [Kept as they are](#kept-as-they-are)).
 
 </details>
 
@@ -380,7 +408,7 @@ TS/JS names are kebab-case; Rust and Python names are snake_case.
 
 The `.generated` infix (#20) is not part of a stem: `builtins.generated.rs` is checked as `builtins`.
 Exemptions: `data-roots` (named after upstream tools and engine modules), `vendored`, `fixture-trees` (framework
-route files such as `pages/_app.tsx`).
+route files such as `pages/_app.tsx`), and `kept-records` and `engine-layout` ([Kept as they are](#kept-as-they-are)).
 
 </details>
 
@@ -400,6 +428,9 @@ line wins; `-filter`, `!filter` or another `filter=` unsets. Patterns follow git
 matches the basename anywhere; otherwise it is anchored to the declaring `.gitattributes`. A checkout without LFS
 content holds text pointers, which pass.
 
+Exemptions: `pack-data-waiting` (a binary in a tool-pack's `publish/`, which #3 keeps from merging) and
+`engine-layout` ([Kept as they are](#kept-as-they-are)).
+
 </details>
 
 ### 20. Generated files are marked and grouped — target 100%
@@ -413,8 +444,9 @@ carries `Generated by <generator path>; do not edit.` within its first three lin
 A file is generated when it is named `*.generated.*`, or its first five lines say "generated by", carry the
 at-sign generated tag, or say "do not edit". Commentable means not JSON and not binary.
 
-Exemptions: `data-roots` (pack test data follows the fixtures convention) and `tool-owned` (`*.lock`,
-`package-lock.json`, `.changeset/README.md`). The manifest and this gate are not scanned.
+Exemptions: `data-roots` (pack test data follows the fixtures convention), `tool-owned` (`*.lock`,
+`package-lock.json`, `.changeset/README.md`), `vendored` (upstream's own markers), and `workbench` and
+`engine-layout` ([Kept as they are](#kept-as-they-are)). The manifest and this gate are not scanned.
 
 </details>
 
@@ -467,7 +499,10 @@ The gate expands every `run:` script in `.github/workflows/ci.yml` through npm s
 - `vitest`, by `--dir`, `--config` directory and filters, minus the package's `vitest.config.*` `exclude` globs;
 - `node --test` and `pytest`;
 - `playwright test`, the spec files under its config's `testDir`;
-- entry points: `node`/`tsx`/`python`/`bash` files.
+- entry points: `node`/`tsx`/`python`/`bash` files, the interpreter named or given by its absolute path
+  (`/usr/bin/python3`).
+
+Exemptions: `data-roots`, `workbench-samples` and `rule-cases` ([Kept as they are](#kept-as-they-are)).
 
 </details>
 

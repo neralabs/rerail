@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { spawnSync, execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { loadNativeBinding, codeRuleSchema } from "../../../../src/engine/index.js";
+import { removeFolderSync } from "../../../support/platform/remove-folder.js";
 const native = loadNativeBinding();
 const capabilities = readFileSync(new URL("../../../../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8");
 function policy(guarded = true, partitionBy: "file" | "repository" = "repository") {
@@ -90,7 +91,7 @@ it("keeps repository gates complete across applies and restores only eligible ev
     await ws.completeStorageRevisionAsync(); expect(ws.evictInactive()).toBe(true);
     const third = await apply(3, "b.py", "admit = 2\n"); expect(third.failures).toEqual([]); expect(third.violations).toHaveLength(2);
     expect(third.violations.map((v: { variables: { row: { files: number } } }) => v.variables.row.files)).toEqual([2, 2]);
-  } finally { ws.close(); rmSync(root, { recursive: true, force: true }); }
+  } finally { ws.close(); removeFolderSync(root); }
 });
 it.skipIf(process.env.RERAIL_REQUIRE_PRODUCER_SHAPE !== "1")("imports prepared positive gate rows without another matcher stream", () => {
   const program = `import {loadNativeBinding} from ${JSON.stringify(new URL("../../../../src/engine/index.ts", import.meta.url).href)};
@@ -130,5 +131,5 @@ it.skipIf(process.env.RERAIL_REQUIRE_PRODUCER_SHAPE !== "1")("complete empty adm
       }
     }
     expect([runtime, connections]).toEqual([0, 0]);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { removeFolderSync(dir); }
 });

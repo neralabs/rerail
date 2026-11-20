@@ -78,7 +78,7 @@ pub fn run(tag: u8, files: &[&File], scratch: &Path, out: &Path) -> Result<Repor
     let mut nodes = 0u64;
     for f in files {
         let (columns, table) = f15_columns(&f.image)?;
-        let t = F15::new(columns, &table)?;
+        let t = F15::new(&f.image, columns, &table)?;
         let mut count = vec![0u64; table.len()];
         for i in 0..t.len() {
             count[t.code(i) as usize] += 1;

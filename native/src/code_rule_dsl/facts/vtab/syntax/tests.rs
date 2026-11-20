@@ -114,7 +114,7 @@ fn relations_hold_t_exporters_rows() {
                 .collect();
             got.insert(row.join("\t"));
         }
-        // T's `op` is `op_t` here (O79): `op` is `core.rr`'s, every anonymous token.
+        // T's `op` is `op_t` here (O79): `op` is `core.rerail`'s, every anonymous token.
         let t_rel = if rel == "op_t" { "op" } else { rel };
         let mut stmt = t.prepare(&format!("SELECT * FROM {t_rel}")).unwrap();
         let expected: BTreeSet<String> = stmt
@@ -163,6 +163,8 @@ fn lookups_agree_with_scans() {
             |r| r.get(0),
         )
         .unwrap();
+    // `+` on every column reference hides the constraint from xBestIndex: SQLite scans and filters.
+    let column = regex::Regex::new(r"\b(n|p|c|d|kind|par|idx) ").unwrap();
     for (rel, filter) in [
         ("node", format!("n = {n}")),
         ("node", "d = 2".to_owned()),
@@ -191,8 +193,7 @@ fn lookups_agree_with_scans() {
             out
         };
         let indexed = key(&format!("SELECT * FROM {rel} WHERE {filter}"));
-        // `+` on every column reference hides the constraint from xBestIndex: SQLite scans and filters.
-        let hidden = regex::Regex::new(r"\b(n|p|c|d|kind|par|idx) ").unwrap().replace_all(&filter, "+$1 ");
+        let hidden = column.replace_all(&filter, "+$1 ");
         let scanned = key(&format!("SELECT * FROM {rel} WHERE {hidden}"));
         assert!(!indexed.is_empty() || filter.contains("0, 7"), "{rel} {filter}: no rows");
         assert_eq!(indexed, scanned, "{rel} {filter}");
@@ -209,7 +210,7 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
     let call = core::kind_atom(tape_tag(python).unwrap(), python.kinds().kind_id("call"));
     let mut tried = 0;
     for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
-        if !["node", "child", "field", "tape"].iter().any(|&v| name == v) {
+        if !["node", "child", "field", "tape"].contains(&name) {
             continue;
         }
         let width = source.columns().len();
@@ -248,6 +249,35 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
         }
     }
     assert!(tried >= 4 * 3, "the four views were tried");
+}
+
+/// Q220: a lookup of `node` by kind (`lookup_read`, a join's `kind($c, #k)` read where the view lies) gives every row
+/// of that kind, each with the values a per-row read gives, from the batch's index by kind (`Batch::by_kind`), for
+/// every kind of four documents, common and rare; and `lookup` gives the same rows.
+#[test]
+fn a_kind_lookup_reads_the_rows_a_per_row_read_finds() {
+    let store = ContentStore::open(&temp("kind-read")).unwrap();
+    let (_, node) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let (n, width) = (node.len(), node.columns().len());
+    let cols: Vec<usize> = (0..width).collect();
+    let mut kinds: BTreeMap<i64, usize> = BTreeMap::new();
+    for r in 0..n {
+        *kinds.entry(node.value(r, 2)).or_default() += 1;
+    }
+    assert!(kinds.values().any(|&k| k * 16 >= n) && kinds.values().any(|&k| k == 1), "the documents have common kinds and single ones");
+    for &kind in kinds.keys() {
+        let per_row: BTreeSet<(usize, Vec<i64>)> = (0..n).filter(|&r| node.value(r, 2) == kind).map(|r| (r, cols.iter().map(|&c| node.value(r, c)).collect())).collect();
+        let mut read = BTreeSet::new();
+        let mut rows = 0;
+        assert!(node.lookup_read(2, kind, &cols, &mut |r, vals| {
+            rows += 1;
+            read.insert((r, vals.to_vec()));
+        }), "kind {kind}: the view reads its lookup");
+        assert_eq!(rows, per_row.len(), "kind {kind}: each row once");
+        assert_eq!(read, per_row, "kind {kind}");
+        let found: Vec<usize> = node.lookup(2, &[kind]).expect("the view looks up by kind");
+        assert_eq!(found, per_row.iter().map(|(r, _)| *r).collect::<Vec<_>>(), "kind {kind}: lookup's rows, in order");
+    }
 }
 
 /// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
@@ -366,7 +396,7 @@ fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, Arc::new(file))), guest: None, module: None }
 }
 
-/// `core.rr`'s relations of `docs` for a program that includes `core.rr` and reads them (`Projection::of`'s shape
+/// `core.rerail`'s relations of `docs` for a program that includes `core.rerail` and reads them (`text_demand::projection_of`'s shape
 /// and reads), each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself. The relations made
 /// for what a program reads are the batch's (`Extra`'s W's values, source lines and places, `tree`'s `op_at` and
 /// `visit_index`), the others `core_rr`'s.
@@ -450,7 +480,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
         .collect()
 }
 
-/// `core.rr`'s base relations over a Python file (decision 0046): comments are nodes and children, `text` is every
+/// `core.rerail`'s base relations over a Python file (decision 0046): comments are nodes and children, `text` is every
 /// node's, `op` every token the tape stores (one the grammar implies is in no tape and no relation, RER-131), literals decode, and
 /// the source-text, token and place relations agree.
 #[test]
@@ -502,26 +532,26 @@ fn core_rr_relations_hold_what_core_rr_says() {
     lacks("token_after", "identifier'f' '('");
 }
 
-/// The shape follows the program: one that includes `core.rr` reads `core.rr`'s, one that declares its base
+/// The shape follows the program: one that includes `core.rerail` reads `core.rerail`'s, one that declares its base
 /// relations itself (T's, the converter's) T's.
 #[test]
 fn programs_that_include_core_rr_read_its_shape() {
-    let core = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
-    let with = crate::code_rule_dsl::logic::rr::parse(&format!("{core}\n.decl q(n: node)\nq(n) :- comment(n, _).\n.output q\n")).unwrap();
-    assert_eq!(Projection::of(&with, BTreeSet::new()).shape, Shape::Core);
-    let without = crate::code_rule_dsl::logic::rr::parse(".decl text(n: number, s: symbol)\n.input text\n.decl q(n: number)\nq(n) :- text(n, _).\n.output q\n").unwrap();
-    assert_eq!(Projection::of(&without, BTreeSet::new()).shape, Shape::T);
+    let core = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    let with = crate::code_rule_dsl::logic::rr::parse_version(&format!("{core}\n.decl q(n: node)\nq(n) :- comment(n, _).\n.output q\n")).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::projection_of(&with, BTreeSet::new()).shape, Shape::Core);
+    let without = crate::code_rule_dsl::logic::rr::parse_version(".decl text(n: number, s: symbol)\n.input text\n.decl q(n: number)\nq(n) :- text(n, _).\n.output q\n").unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::projection_of(&without, BTreeSet::new()).shape, Shape::T);
 }
 
-/// End to end through the corpus runner, a program that includes `core.rr`: its options, `@dot` with an empty head,
-/// `@lower` in Unicode, and comments as `core.rr`'s nodes.
+/// End to end through the corpus runner, a program that includes `core.rerail`: its options, `@dot` with an empty head,
+/// `@lower` in Unicode, and comments as `core.rerail`'s nodes.
 #[test]
 fn core_rr_programs_read_options_and_functors() {
     use crate::code_rule_dsl::logic::plan::corpus;
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("core-rr");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "# hello\nx = 1\n").unwrap();
-    let core = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let core = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
     let program = format!(
         r#"{core}
 .decl part(a: symbol, b: symbol)
@@ -682,7 +712,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     // An ERROR node (its atom's slot 0) is a member, since the set names ERROR (`Within::member`).
     let error = |k: i64| k % i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE) == 0;
     assert!(set.iter().any(|&k| error(k)), "the set names ERROR");
-    let member: Vec<bool> = (0..nodes).map(|r| kind(r)).map(|k| set.contains(&k)).collect();
+    let member: Vec<bool> = (0..nodes).map(&kind).map(|k| set.contains(&k)).collect();
     assert!((0..nodes).any(|r| error(kind(r)) && member[r]), "an ERROR node is a member");
     let below = |n: usize, a: usize| {
         let ((dn, ln, _), (da, la, za)) = (place[n], place[a]);
@@ -840,7 +870,7 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
     let store = ContentStore::open(&temp("container-text-demand")).unwrap();
     let source = format!("items = [{}]\n", "1,".repeat(1000));
     let doc = document(0, "a.py", "python", &source);
-    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
     for (body, source_needed, line_needed) in [
         ("out(t) :- source(_, sp), kind(n, \"identifier\"), text(n, t).", false, false),
         (".decl copied(sp: span)\ncopied(s) :- source(_, s).\nout(t) :- copied(s), alias = s, text(alias, t).", true, false),
@@ -849,8 +879,8 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
         ("out(\"missing\") :- source(_, sp), !text(sp, _).", true, false),
         ("out(t) :- source(_, sp), match_all(\"(?<hit>items)\", sp), text(hit, t).", false, false),
     ] {
-        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
-        let projection = Projection::of(&program, ["source", "src_line", "text", "rx_span"].into_iter().map(str::to_owned).collect());
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let projection = crate::code_rule_dsl::logic::plan::text_demand::projection_of(&program, ["source", "src_line", "text", "rx_span"].into_iter().map(str::to_owned).collect());
         let rows = shaped(&store, vec![doc.clone()], &projection).unwrap();
         let relation = |name| &rows.iter().find(|(n, _)| *n == name).unwrap().1;
         let text = relation("text");
@@ -952,7 +982,7 @@ fn definition_slots_stay_below_the_span_bit() {
     assert!((0..p.locs()).all(|l| !extra.contains(&((p.global(l) as u32) >> INDEX_BITS))), "a node or position takes an `Extra` slot");
 }
 
-/// What core.rr's span ids come to over real files (the capacities `granules::ExtraSpan` and `granules::POSITIONS`
+/// What core.rerail's span ids come to over real files (the capacities `granules::ExtraSpan` and `granules::POSITIONS`
 /// give): over `RERAIL_PARITY_ROOTS` (`fixtures`, the data-layer fixtures' sources, or directories), per Python
 /// document, the most positions (tokens, text and lines), physical, `\n` and tape lines, comments, and matches and
 /// groups of every regex the data-layer pack's `match_all`, `match_group` and `rx_span` name over the source and each
@@ -961,7 +991,9 @@ fn definition_slots_stay_below_the_span_bit() {
 #[ignore]
 fn span_ids_census() {
     use granules::ExtraSpan;
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog");
+    // The data-layer pack's converted programs: pack test data (`npm run fixtures:pull`), not in git.
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
+    assert!(pack.exists(), "{} is missing: pack test data is not in git: run `npm run fixtures:pull`", pack.display());
     let literal = regex::Regex::new(r#"(?:match_all|match_group|rx_span)\("((?:[^"\\]|\\.)*)""#).unwrap();
     let mut patterns: BTreeSet<String> = BTreeSet::new();
     for e in std::fs::read_dir(&pack).unwrap().flatten() {
@@ -1259,9 +1291,7 @@ fn definition_ids_census() {
 
 /// This thread's CPU seconds.
 fn cpu_now() -> f64 {
-    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    rerail_prof::thread_cpu().as_secs_f64()
 }
 
 /// A rule reading the text of a node whose kind no body fixes gets a twin reading `@rr_node_text` (decision 0109);
@@ -1269,7 +1299,7 @@ fn cpu_now() -> f64 {
 /// asks for every node's text at any length.
 #[test]
 fn long_text_twins_where_no_body_fixes_the_kind() {
-    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
     for (body, twins) in [
         ("out(t) :- node(_, n, _, _, _), text(n, t).", 1),
         ("out(t) :- node(_, n, _, _, _), text(n, t), field(n, \"object\", o), text(o, t).", 3),
@@ -1277,10 +1307,11 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
         ("out(t) :- field(_, \"attribute\", n), text(n, t).", 0),
         ("out(\"doc\") :- node(_, n, _, _, _), text(n, \"doc\").", 0),
     ] {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
-        assert_eq!(long_text_twins(&mut program, &[]), twins, "{body}");
-        assert!(text_kind_demand(&program, &[]).any.is_empty(), "{body}: every text is read");
-        assert_eq!(long_text_twins(&mut program, &[]), 0, "{body}: twinned once");
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(program, &Vec::new()).unwrap();
+        assert_eq!(made, twins, "{body}");
+        assert!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).any.is_empty(), "{body}: every text is read");
+        assert_eq!(crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(program, &Vec::new()).unwrap().1, 0, "{body}: twinned once");
     }
 }
 
@@ -1289,7 +1320,7 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
 /// node's place, not the capture's.
 #[test]
 fn text_only_for_the_nodes_read() {
-    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
     let fun = |rule: &str| format!(r#"{{"language": "python", "syntax": "valid", "rule": {rule}}}"#);
     let some = |kinds: &[&str], fields: &[&str]| Some(TextNodes { kinds: kinds.iter().map(|k| k.to_string()).collect(), fields: fields.iter().map(|k| k.to_string()).collect(), ..TextNodes::default() });
     let valued = |values: &[&str]| Some(TextNodes { values: values.iter().map(|k| k.to_string()).collect(), ..TextNodes::default() });
@@ -1297,11 +1328,11 @@ fn text_only_for_the_nodes_read() {
         ("out(t) :- kind(n, \"call\"), text(n, t).".to_owned(), some(&["call"], &[])),
         ("out(t) :- field(_, \"name\", n), text(n, t).".to_owned(), some(&[], &["name"])),
         ("out(t) :- node(_, n, _, _, _), text(n, t).".to_owned(), None),
-        // Only compared with a constant: the nodes whose text it is (names.rr's `literal_str`).
+        // Only compared with a constant: the nodes whose text it is (names.rerail's `literal_str`).
         ("out(l) :- kind(l, \"generic_type\"), child(l, v, 0), text(v, \"Literal\").".to_owned(), valued(&["Literal"])),
-        // A child of a node of a fixed kind: those children (imports.rr's `ribind`).
+        // A child of a node of a fixed kind: those children (imports.rerail's `ribind`).
         ("out(t) :- kind(n, \"dotted_name\"), child(n, c, 0), text(c, t).".to_owned(), Some(TextNodes { parents: BTreeSet::from(["dotted_name".to_owned()]), ..TextNodes::default() })),
-        // A child of a node in a field: the children of the nodes in it (imports.rr's `impmod`).
+        // A child of a node in a field: the children of the nodes in it (imports.rerail's `impmod`).
         ("out(m) :- field(_, \"module_name\", mn), child(mn, dn, 1), text(dn, m).".to_owned(), Some(TextNodes { parent_fields: BTreeSet::from(["module_name".to_owned()]), ..TextNodes::default() })),
         // A child of a node nothing narrows: every node.
         ("out(t) :- child(n, c, 0), text(c, t).".to_owned(), None),
@@ -1309,9 +1340,9 @@ fn text_only_for_the_nodes_read() {
         (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$N"}]}}]}"#)), some(&["identifier"], &[])),
         (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"inside": {"pattern": "$N", "field": "body"}}]}"#)), None),
     ] {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
-        let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
-        assert_eq!(text_kind_demand(&program, &matchers).read, read, "{body}");
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let (program, matchers) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(program).unwrap();
+        assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &matchers).read, read, "{body}");
     }
 }
 
@@ -1334,14 +1365,14 @@ fn a_derived_base_name_narrows_no_text() {
         // `node`'s projection and a rule of the program's own: `kind` is the program's.
         ("kind(n, k) :- node(_, n, k, _, _).\nkind(n, \"call\") :- edge(n, _).", "out(t) :- kind(n, \"call\"), text(n, t)."),
     ] {
-        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}{derives}\n{body}\n")).unwrap();
-        let demand = text_kind_demand(&program, &[]);
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{decls}{derives}\n{body}\n")).unwrap();
+        let demand = crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]);
         assert_eq!(demand.read, None, "{derives} / {body}: every node's text");
         assert!(!demand.any.is_empty(), "{derives} / {body}: a text of a node of any kind");
     }
     // `node`'s projection alone (the lowering's, `rr::lower` `projections`) is `kind` itself: it narrows.
-    let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}kind(n, k) :- node(_, n, k, _, _).\nout(t) :- kind(n, \"call\"), text(n, t).\n")).unwrap();
-    assert_eq!(text_kind_demand(&program, &[]).read, Some(TextNodes { kinds: BTreeSet::from(["call".to_owned()]), ..TextNodes::default() }));
+    let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{decls}kind(n, k) :- node(_, n, k, _, _).\nout(t) :- kind(n, \"call\"), text(n, t).\n")).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).read, Some(TextNodes { kinds: BTreeSet::from(["call".to_owned()]), ..TextNodes::default() }));
 }
 
 /// `node_text` (a node's exact text, at any length) is answered on request (decision 0174): each reader asks for the
@@ -1354,11 +1385,12 @@ fn a_derived_base_name_narrows_no_text() {
 fn node_text_answered_on_request() {
     let decls = ".decl node(d: number, n: node, k: symbol, a: number, b: number)\n.decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl node_text(n: node, s: symbol)\n.input node, child, field, node_text\n.decl out(s: symbol)\n.output out\n.decl named(n: node, s: symbol)\n";
     let requests = |body: &str| -> Option<Vec<String>> {
-        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}{body}\n")).unwrap();
-        if program.inputs.iter().any(|i| i == "node_text") {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{decls}{body}\n")).unwrap();
+        if program.input_names().iter().any(|i| i == "node_text") {
             return None;
         }
-        let mut out: Vec<String> = program.rules.iter().filter(|r| r.head.rel.starts_with("rr_node_text_req") || r.head.rel.starts_with("rr_wide_")).map(|r| format!("{}.", r.to_string().replace('$', ""))).collect();
+        let head = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| program.rel_name(r.head().rel());
+        let mut out: Vec<String> = program.rules().filter(|&r| head(r).starts_with("rr_node_text_req") || head(r).starts_with("rr_wide_")).map(|r| format!("{}.", program.show_rule(r).replace('$', ""))).collect();
         out.sort();
         Some(out)
     };
@@ -1452,7 +1484,7 @@ fn node_order_keys_census() {
 /// siblings, a node no kind or descent proves, or an export holding a node, keeps every node.
 #[test]
 fn a_phase_projects_the_subtrees_its_rules_start_from() {
-    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
     let kinds = |ks: &[&str]| Ok(ks.iter().map(|k| k.to_string()).collect::<BTreeSet<String>>());
     let phase = |body: &str, out: &str| format!("{prelude}\n.phase p\n.export out\n.decl out({out})\n{body}\n.output out\n");
     for (src, want) in [
@@ -1466,9 +1498,8 @@ fn a_phase_projects_the_subtrees_its_rules_start_from() {
         (phase("out(i) :- kind(i, \"import_statement\").", "i: node"), Err(String::new())),
         (format!("{prelude}\n.decl out(t: symbol)\nout(t) :- kind(i, \"import_statement\"), text(i, t).\n.output out\n"), Err(String::new())),
     ] {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(&src).unwrap();
-        let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
-        let got = node_anchors(&program, &matchers);
+        let (program, matchers) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(crate::code_rule_dsl::logic::rr::parse_version(&src).unwrap()).unwrap();
+        let got = crate::code_rule_dsl::logic::plan::text_demand::node_anchors(&program, &program.settings().unwrap(), &matchers);
         let body = src.rsplit(".decl out").next().unwrap_or("");
         match &want {
             Ok(k) => assert_eq!(got.as_ref().ok(), Some(k), "{body}: {got:?}"),
@@ -1482,12 +1513,12 @@ fn a_phase_projects_the_subtrees_its_rules_start_from() {
 /// relation of nodes from anywhere, it kept every node: PostHog's `py_from_name` visited all 41 M nodes.
 #[test]
 fn a_long_text_twin_keeps_its_phases_anchors() {
-    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
     let src = format!("{prelude}\n.phase p\n.export out\n.decl out(t: symbol)\nout(t) :- kind(i, \"import_from_statement\"), field(i, \"name\", n), text(n, t).\n.output out\n");
-    let mut program = crate::code_rule_dsl::logic::rr::parse(&src).unwrap();
-    let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
-    assert!(long_text_twins(&mut program, &matchers) > 0, "the rule reads the text of a node no kind fixes");
-    let got = node_anchors(&program, &matchers);
+    let (program, matchers) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(crate::code_rule_dsl::logic::rr::parse_version(&src).unwrap()).unwrap();
+    let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(program, &matchers).unwrap();
+    assert!(made > 0, "the rule reads the text of a node no kind fixes");
+    let got = crate::code_rule_dsl::logic::plan::text_demand::node_anchors(&program, &program.settings().unwrap(), &matchers);
     assert_eq!(got, Ok(["import_from_statement".to_owned()].into_iter().collect::<BTreeSet<String>>()));
 }
 
@@ -1610,7 +1641,7 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                     assert_eq!(p.depth(l as usize), depth[l as usize], "{label} {format:?} {shape:?}: the depth of local {l}");
                 }
                 // `next_sibling` (a view, decision 0353 step 3): its pairs are each numbered node's numbered direct
-                // children, consecutive, as core.rr's rows were made; each read both ways off the tape.
+                // children, consecutive, as core.rerail's rows were made; each read both ways off the tape.
                 let mut pairs = Vec::new();
                 for (_, x) in p.nodes() {
                     let mut prev = None;
@@ -1887,21 +1918,25 @@ fn the_view_reads_are_the_hosts_rows() {
 typedef struct ViewP { uint64_t d; uint64_t tt; uint64_t ll; uint32_t n; uint32_t nf; } ViewP;
 UKL_REFLECT_STRUCT(ViewP, d, tt, ll, n, nf)
 DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, ViewP, p, , ROBUFFER, uint32_t, tv, "[29]",
-               RWBUFFER, int64_t, out, "[n * 16]", GID0, uint32_t, l, )
+               RWBUFFER, int64_t, out, "[n * 16]", GID0, uint32_t, g, )
 {
+    // A thread a (local, slot): each read is called once with its column a value, so the compiler makes one copy of
+    // each (a column a constant, unrolled, had it make sixteen, each with 16z's decoder: minutes of compile on an M3).
+    uint32_t l = g / 16u, k = g % 16u;
     if (l >= p.n) return;
     uint64_t d = p.d;
     uint32_t n = p.n, nf = p.nf;
     UKL_GLOBAL const uint8_t* tt = (UKL_GLOBAL const uint8_t*)p.tt;
     UKL_GLOBAL const uint8_t* ll = (UKL_GLOBAL const uint8_t*)p.ll;
     uint32_t v[29];
-    for (uint32_t k = 0u; k < 29u; k++) v[k] = tv[k];
-    UKL_GLOBAL int64_t* o = out + l * 16u;
-    for (uint32_t c = 0u; c < 5u; c++) o[c] = (int64_t)clif_view_node(b, d, tt, v, ll, l, c);
-    for (uint32_t c = 0u; c < 3u; c++) o[5u + c] = l + 1u < n ? (int64_t)clif_view_child(b, d, tt, v, ll, l, c) : 0;
-    for (uint32_t c = 0u; c < 3u; c++) o[8u + c] = l < nf ? (int64_t)clif_view_field(b, d, tt, v, ll, l, c) : 0;
-    for (uint32_t c = 0u; c < 3u; c++) o[11u + c] = (int64_t)clif_view_core(b, d, tt, v, ll, l, c);
-    for (uint32_t c = 0u; c < 2u; c++) o[14u + c] = (int64_t)clif_view_line(b, d, tt, v, ll, l, c);
+    for (uint32_t q = 0u; q < 29u; q++) v[q] = tv[q];
+    int64_t r = 0;
+    if (k < 5u) r = (int64_t)clif_view_node(b, d, tt, v, ll, l, k);
+    else if (k < 8u) r = l + 1u < n ? (int64_t)clif_view_child(b, d, tt, v, ll, l, k - 5u) : 0;
+    else if (k < 11u) r = l < nf ? (int64_t)clif_view_field(b, d, tt, v, ll, l, k - 8u) : 0;
+    else if (k < 14u) r = (int64_t)clif_view_core(b, d, tt, v, ll, l, k - 11u);
+    else r = (int64_t)clif_view_line(b, d, tt, v, ll, l, k - 14u);
+    out[l * 16u + k] = r;
 }
 "#;
     let jit = rerail_clif::jit::Reads::new();
@@ -2015,7 +2050,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         .uses(&tt)
                         .uses(&lb)
                         .uses(&cache)
-                        .run(&[u64::from(n).div_ceil(64)], &[64])
+                        .run(&[(u64::from(n) * 16).div_ceil(64)], &[64])
                         .unwrap_or_else(|e| panic!("{e}"));
                     q.flush().await_().unwrap();
                     let got: Vec<i64> = read(&out, want.len());

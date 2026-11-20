@@ -4,7 +4,7 @@
  * A labelled violation must be caught on its line, a clean sample must get no finding, a judged sample must be read;
  * an extra report on a labelled sample is only reviewed. Trees are hand-made and reached through `samplesDirectory`.
  */
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,6 +14,7 @@ import { reportFailures, runPack, type RunOptions } from "../../conformance/lang
 import { conformanceChecks, conformanceOf } from "../../conformance/languages/checks/conformance.js";
 import { fixturesPath } from "../support/oracles.js";
 import { writeSamplesTree, type HandMadeSample } from "../support/samples.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const DATE = "2026-01-01";
 const UNREADABLE = `assert ready\n${"This is not Python: it is prose, ) and ( brackets ] everywhere.\n".repeat(6)}`;
@@ -45,7 +46,7 @@ beforeEach(() => {
   tree = join(directory, "samples-tree");
 });
 
-afterEach(() => rmSync(directory, { recursive: true, force: true }));
+afterEach(() => removeFolderSync(directory));
 
 /** Writes `samples` as examplelint's tree, then scores the pack on its samples (and the fixtures, with `fixtures`). */
 async function score(samples: readonly HandMadeSample[], options: Partial<RunOptions> = {}): Promise<{ paths: string[]; report: T4Report }> {
@@ -259,7 +260,7 @@ describe("stays-silent", () => {
     const partial = await score([{ ...clean, text: "ready = True\nx = (\n" }], { fixtures: true });
     expect(samplesRow(partial.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0, partialFiles: 1 });
     expect(staysSilent(partial.report).ok).toBe(false);
-    rmSync(tree, { recursive: true, force: true });
+    removeFolderSync(tree);
     addEvidenceClause();
     const incomplete = await score([{ ...clean, text: "ready = True\npass\n", context: { "ctx.py": UNREADABLE } }], { fixtures: true });
     expect(samplesRow(incomplete.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0, engineFailures: 0, partialFiles: 1 });
@@ -275,11 +276,11 @@ describe("stays-silent", () => {
     const outside = await score([clean], { fixtures: true });
     expect(samplesRow(outside.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0 });
     expect(staysSilent(outside.report).ok).toBe(false);
-    rmSync(tree, { recursive: true, force: true });
+    removeFolderSync(tree);
     const inside = await score([{ ...clean, path: "tests/app.py" }], { fixtures: true });
     expect(samplesRow(inside.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 1 });
     expect(staysSilent(inside.report).ok).toBe(true);
-    rmSync(tree, { recursive: true, force: true });
+    removeFolderSync(tree);
     restrict(rule => ({ ...rule, scope: { include: ["**/*"], exclude: ["**/tests/**"] } }));
     const excluded = await score([{ ...clean, path: "tests/app.py" }], { fixtures: true });
     expect(samplesRow(excluded.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0 });

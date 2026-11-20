@@ -5,7 +5,7 @@ use crate::code_rule_dsl::facts::vtab::Modules;
 pub fn with_schema<T>(
     db: &mut Database,
     emitted: &plan::emit::Emitted,
-    program: &front::Program,
+    program: &Version,
     producers: &[Producer],
     prepare: impl FnOnce(&mut Database, &str) -> Result<T>,
 ) -> Result<T> {
@@ -67,9 +67,9 @@ pub fn with_schema<T>(
                 .map_err(error)?;
             }
             if named.contains(&typed.to_ascii_lowercase())
-                && let Some(decl) = program.decls.get(rel.as_str())
+                && let Some(decl) = program.columns_of(&rel)
             {
-                let names = catalog::view_columns(decl)
+                let names = catalog::view_columns(&decl)
                     .iter()
                     .map(|c| quote(c))
                     .collect::<Vec<_>>()

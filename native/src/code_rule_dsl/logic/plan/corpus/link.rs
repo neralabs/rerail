@@ -27,14 +27,12 @@ pub(super) trait Part: Sized + Send {
     /// A part from its version.
     fn of_version(v: Arc<Version>) -> Result<Self>;
     /// A part lowered in its library's scope (`Text::lower_in`), given the run's rows (decision 0249); `found`, its
-    /// image as the caller read it with the others' (`images::read_all`).
-    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self>;
+    /// image as the caller read it with the others' (`images::read_images`).
+    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::ImageFound>>, extra: &super::added::Added) -> Result<Self>;
     /// The library linked once (decision 0089).
     fn library(l: &crate::code_rule_dsl::logic::rr::Library) -> Result<Self>;
-    /// The linked program's fields before its rules, which `Merged` merges each part's into.
-    type Fields: FieldsMut;
-    /// No fields.
-    fn fields() -> Self::Fields;
+    /// No fields: the linked program's before its rules, which `Merged` merges each part's into.
+    fn fields() -> Builder<'static>;
     /// A part's header as `into_parts` takes it out.
     type Header;
     /// The header's fields.
@@ -55,18 +53,18 @@ pub(super) trait Part: Sized + Send {
     fn drop_heads(&mut self, gone: &dyn Fn(&str) -> bool);
     /// Bounded to the documents it shows (`preparation::hide::Hide`).
     fn hide(&mut self, bound: u32) -> Result<()>;
-    /// `rr::lower::undo_on_request`.
+    /// `rr::lower::undone_on_request`.
     fn undo_on_request(&mut self) -> Result<()>;
     /// The part alone, as the linked program.
     fn alone(self) -> Result<Self::Linked>;
     /// Its header, taken out, and its rules, renamed by `names`.
     fn into_parts(self, names: &Names) -> (Self::Header, Self::Rules);
-    /// The linked program of `fields` and each part's rules, in order. A rule `core.rr` gives (its head is the
+    /// The linked program of `fields` and each part's rules, in order. A rule `core.rerail` gives (its head is the
     /// engine's) is taken once.
-    fn link(fields: Self::Fields, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked>;
+    fn link(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked>;
     /// `link`, and how many of the linked rules are each part's (in the parts' order), where a link of this form is
     /// kept (decision 0373: `Versioned`'s).
-    fn link_counted(fields: Self::Fields, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<Vec<usize>>)> {
+    fn link_counted(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<Vec<usize>>)> {
         Ok((Self::link(fields, rules, core)?, None))
     }
     /// The linked program as the version a kept link holds, where it is one.
@@ -81,7 +79,7 @@ pub(super) trait Part: Sized + Send {
     }
 }
 
-/// `linked` without the repeats of a rule `core.rr` gives after its first (`Part::link`), and each part's count of
+/// `linked` without the repeats of a rule `core.rerail` gives after its first (`Part::link`), and each part's count of
 /// rules after (`counts`, the parts' rules in order, before).
 fn without_core_repeats(linked: Arc<Version>, counts: &[usize], core: &BTreeSet<String>) -> Result<(Arc<Version>, Vec<usize>)> {
     let mut seen = BTreeSet::new();
@@ -139,8 +137,8 @@ impl Names {
 /// The parts' fields merged (`merge`) into the linked program's (`all`), each part's relations renamed by its
 /// names: declarations, rows, inputs and outputs stated on `all` as they come, the fields of lists and maps gathered
 /// and stated once (`finish`). The combine states the documents read, the text globs and the shared kind sets.
-pub(super) struct Merged<F: FieldsMut> {
-    all: F,
+pub(super) struct Merged {
+    all: Builder<'static>,
     pub(super) doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
     pub(super) text_globs: Vec<String>,
     pub(super) kindsets: BTreeMap<String, Vec<String>>,
@@ -158,8 +156,8 @@ pub(super) struct Merged<F: FieldsMut> {
     settings: Vec<(String, String)>,
 }
 
-impl<F: FieldsMut> Merged<F> {
-    pub(super) fn new(all: F) -> Self {
+impl Merged {
+    pub(super) fn new(all: Builder<'static>) -> Self {
         Merged {
             all,
             doc_scopes: None,
@@ -187,10 +185,10 @@ impl<F: FieldsMut> Merged<F> {
         self.nullary.extend(prog.nullary().iter().map(|rel| rename(rel)));
         for rel in prog.declared_names() {
             let to = rename(&rel);
-            if !self.all.declares(&to) {
+            if !ProgramFields::declares(&self.all, &to) {
                 let cols = prog.columns_of(&rel).unwrap_or_default();
                 let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-                self.all.declare(&to, &pairs);
+                self.all.fields().declare(&to, &pairs);
             }
         }
         for (rel, decl) in prog.lattice() {
@@ -198,7 +196,7 @@ impl<F: FieldsMut> Merged<F> {
         }
         for rel in prog.fact_names() {
             let rows = prog.fact_rows(&rel);
-            self.all.set_facts(&rename(&rel), &rows);
+            self.all.fields().set_facts(&rename(&rel), &rows);
         }
         for (rel, words) in prog.qualifiers() {
             self.qualifiers.entry(rename(&rel)).or_default().extend(words);
@@ -211,10 +209,10 @@ impl<F: FieldsMut> Merged<F> {
             self.natives.insert(rename(&rel), native);
         }
         for rel in prog.input_names() {
-            self.all.add_input(&rename(&rel));
+            self.all.fields().add_input(&rename(&rel));
         }
         for rel in prog.output_names() {
-            self.all.add_output(&rename(&rel));
+            self.all.fields().add_output(&rename(&rel));
         }
         for rel in prog.demand() {
             let rel = rename(&rel);
@@ -258,9 +256,9 @@ impl<F: FieldsMut> Merged<F> {
     }
 
     /// The linked fields, every gathered one stated.
-    pub(super) fn finish(mut self) -> F {
+    pub(super) fn finish(mut self) -> Builder<'static> {
         use crate::code_rule_dsl::logic::program_facts::Field;
-        let all = &mut self.all;
+        let mut all = self.all.fields();
         if !self.nullary.is_empty() {
             all.set_field(Field::Nullary(&self.nullary));
         }
@@ -305,6 +303,7 @@ impl<F: FieldsMut> Merged<F> {
         if !self.kindsets.is_empty() {
             all.set_field(Field::Kindsets(&self.kindsets));
         }
+        drop(all);
         self.all
     }
 }
@@ -338,47 +337,6 @@ impl Versioned {
     }
 }
 
-/// `rr::lower::undo_on_request` of version `v` (`Versioned::undo_on_request`, at once): each attribute it answered on
-/// request an input again, without its requests, answers, eager rows' rule and widened copies.
-pub(super) fn undone_on_request(v: &Arc<Version>) -> Result<Arc<Version>> {
-    undone_with(v, |head, rules| crate::code_rule_dsl::logic::rr::lower::undo_on_request_in(head, rules))
-}
-
-/// Version `v` with `undo` (`rr::lower::undo_on_request_in`, `undo_round`) made of its fields and rules: the rules
-/// it drops by head gone, its fields as it leaves them.
-pub(super) fn undone_with(v: &Arc<Version>, undo: impl FnOnce(&mut dyn FieldsMut, &mut dyn crate::code_rule_dsl::logic::rr::lower::RuleSet)) -> Result<Arc<Version>> {
-    let mut dropped = BTreeSet::new();
-    let mut b = Builder::on(v);
-    undo(&mut b, &mut Kept { v, dropped: &mut dropped });
-    b.retain(|r| !dropped.contains(v.rel_name(r.head().rel())));
-    Ok(b.finish().map_err(plan)?.0)
-}
-
-/// A version part's rules as `undo_on_request` reads and drops them.
-struct Kept<'a> {
-    v: &'a Version,
-    dropped: &'a mut BTreeSet<String>,
-}
-
-impl crate::code_rule_dsl::logic::rr::lower::RuleSet for Kept<'_> {
-    fn drop_heads(&mut self, gone: &dyn Fn(&str) -> bool) {
-        for r in self.v.rules() {
-            let head = self.v.rel_name(r.head().rel());
-            if gone(head) {
-                self.dropped.insert(head.to_owned());
-            }
-        }
-    }
-    fn reads(&self, rel: &str) -> bool {
-        use crate::code_rule_dsl::logic::program_image::Lit;
-        self.v
-            .rules()
-            .filter(|r| !self.dropped.contains(self.v.rel_name(r.head().rel())))
-            .flat_map(|r| r.body())
-            .any(|l| matches!(l.view(), Lit::Atom(a) if self.v.rel_name(a.rel()) == rel))
-    }
-}
-
 /// The renames of a part's rules as they are copied (`Names`).
 struct Renaming<'a> {
     v: &'a Version,
@@ -403,7 +361,6 @@ impl Part for Versioned {
     type Linked = Arc<Version>;
     const KEEPS: bool = true;
     type Rules = (Arc<Version>, BTreeSet<String>, Names);
-    type Fields = Builder<'static>;
     fn fields() -> Builder<'static> {
         Builder::base()
     }
@@ -414,7 +371,7 @@ impl Part for Versioned {
     fn of_version(v: Arc<Version>) -> Result<Self> {
         Ok(Versioned::of(v))
     }
-    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self> {
+    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::ImageFound>>, extra: &super::added::Added) -> Result<Self> {
         let v = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's version in scope: its image, or lowered".into());
             read.lower_in_version(text, library, scoped, store, found)?.expect("a modular text")
@@ -433,7 +390,7 @@ impl Part for Versioned {
     fn edit_head(&mut self, f: &mut dyn FnMut(&mut dyn FieldsMut)) -> Result<()> {
         let edited = {
             let mut b = Builder::on(&self.v);
-            f(&mut b);
+            f(&mut b.fields());
             if b.is_empty() { None } else { Some(b.finish().map_err(plan)?.0) }
         };
         if let Some(v) = edited {
@@ -469,7 +426,7 @@ impl Part for Versioned {
         let Versioned { v, dropped } = self;
         let edited = {
             let mut b = Builder::on(v);
-            crate::code_rule_dsl::logic::rr::lower::undo_on_request_in(&mut b, &mut Kept { v, dropped });
+            crate::code_rule_dsl::logic::rr::lower::undo_on_request_in(&mut b.fields(), &mut crate::code_rule_dsl::logic::rr::lower::KeptRules { v, dropped });
             if b.is_empty() { None } else { Some(b.finish().map_err(plan)?.0) }
         };
         if let Some(e) = edited {
@@ -501,7 +458,7 @@ impl Part for Versioned {
             counts.push(n);
         }
         let (linked, _) = b.finish().map_err(plan)?;
-        // A rule `core.rr` gives, taken once: the copies after the first dropped.
+        // A rule `core.rerail` gives, taken once: the copies after the first dropped.
         let (linked, counts) = without_core_repeats(linked, &counts, core)?;
         Ok((linked, Some(counts)))
     }

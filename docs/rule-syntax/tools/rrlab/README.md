@@ -1,19 +1,19 @@
 # rrlab
 
-rrlab is a lab tool for converting and reviewing rules. It runs a hand-written `.rr` rule on real source files
+rrlab is a lab tool for converting and reviewing rules. It runs a hand-written `.rerail` rule on real source files
 and compares its findings with what the upstream tool recorded on the same fixtures. The real engine is not
 involved. rrlab lowers the rule to plain Soufflé, feeds it tree-sitter facts, and reads back the violation rows.
 
-It is not the engine. Where the two differ, the engine's semantics (`lib/core.rr`) are the reference. The
+It is not the engine. Where the two differ, the engine's semantics (`lib/core.rerail`) are the reference. The
 gaps are listed below.
 
 Three parts:
 
-- `rrlab-facts` (Rust, `src/main.rs`): parses files with tree-sitter and writes Soufflé `.facts` for core.rr's
+- `rrlab-facts` (Rust, `src/main.rs`): parses files with tree-sitter and writes Soufflé `.facts` for core.rerail's
   tape relations.
-- `lower.py` and `patterns.py`: read a rule and its includes (core.rr is always included first), and print a
+- `lower.py` and `patterns.py`: read a rule and its includes (core.rerail is always included first), and print a
   plain Soufflé program.
-- `functors/functors.cpp`: core.rr's `@functors` plus the lowering's text-test helpers, loaded with
+- `functors/functors.cpp`: core.rerail's `@functors` plus the lowering's text-test helpers, loaded with
   `souffle -l`.
 
 `rrlab.py` builds the first and third parts on first use: `cargo build --release --offline` and `c++ -shared`.
@@ -30,10 +30,10 @@ tools/rrlab/rrlab score javascript eslint-curly --all               # every fixt
 tools/rrlab/rrlab score javascript eslint-strict --options '{"sourceType": "script"}'
 
 # Run a rule on files. Options are rerail.policy/v1 `options`; an ESLint array is also accepted.
-tools/rrlab/rrlab run packs/javascript/eslint-curly.rr a.js b.ts --options '["multi", "consistent"]'
+tools/rrlab/rrlab run packs/javascript/eslint-curly.rerail a.js b.ts --options '["multi", "consistent"]'
 
 # Inspect what the rule lowered to, and what a pattern compiles to.
-tools/rrlab/rrlab lower packs/javascript/eslint-one-var.rr > /tmp/one-var.dl
+tools/rrlab/rrlab lower packs/javascript/eslint-one-var.rerail > /tmp/one-var.dl
 tools/rrlab/rrlab pattern typescript 'foo($A, $$$REST)'
 tools/rrlab/rrlab pattern typescript 'class $C { $$$ }' class_body  # with a selector, as `at "class_body"`
 ```
@@ -43,8 +43,8 @@ How `score` finds its inputs:
 - **Recording:** `packs/<pack>/upstream/<tool>/fixtures.expected.json` plus `fixtures/`, read from `--data DIR`,
   else `$RRLAB_DATA`, else this checkout, else the sibling checkout `../Data-layer-rule-expressivity`.
 - **Upstream rule:** looked up by `<rule-id>` in `packs/<pack>/conformance.json`. A rule that file does not list
-  is scored by its `.rr` `code`.
-- **Rule file:** defaults to `docs/rule-syntax/packs/<pack>/<rule-id>.rr`.
+  is scored by its `.rerail` `code`.
+- **Rule file:** defaults to `docs/rule-syntax/packs/<pack>/<rule-id>.rerail`.
 - **Explained mismatches:** unmatched points on a line that `divergences.json` names are explained, as in
   `conformance/languages/score.ts`.
 - **Options:** every fixture runs at default options, as the recording does, unless `--options` is given. When
@@ -57,7 +57,7 @@ for inspection.
 ## Data-layer rules (`rrlab dl`)
 
 ```
-# Score data-layer/bootstrap-cache-health.rr on the data-layer port's recorded linter calls
+# Score data-layer/bootstrap-cache-health.rerail on the data-layer port's recorded linter calls
 tools/rrlab/rrlab dl bootstrap_cache_health
 # Only one entry function, or the tests whose name contains a text
 tools/rrlab/rrlab dl lazy_architecture --entry scan_files --test deleted_cold
@@ -82,7 +82,7 @@ Scope and options:
 reports CODE, at its first error's line or at line 1. `@ed25519_ok` verifies with libsodium when it is installed
 (`brew install libsodium`); otherwise it is a stub that always gives 0, and rrlab warns.
 
-`dfs_first` and `dfs_first_memo` are computed between Soufflé rounds, as `core.rr` specifies them: Soufflé writes the
+`dfs_first` and `dfs_first_memo` are computed between Soufflé rounds, as `core.rerail` specifies them: Soufflé writes the
 edge, target and roots relations, rrlab searches them and feeds the answers back as `rr_dfs{k}`.
 
 `dl.py` has the details.
@@ -91,7 +91,7 @@ edge, target and roots relations, rrlab searches them and feeds the answers back
 
 A rule reads a typing program's answers through relations named `typing_<program>__<output>`, which
 `python/calls` and `python/types` declare and join back to nodes. When a rule's findings or outputs depend on one
-of them, rrlab runs `typing/programs/<program>.rr` first, as the engine does: lowered like any rule, run by
+of them, rrlab runs `typing/programs/<program>.rerail` first, as the engine does: lowered like any rule, run by
 Soufflé over the same facts, and each node column of its output written as four columns (path, kind, start byte,
 end byte). A rule that includes `python/calls` only for its syntax helpers does not run the program.
 
@@ -128,7 +128,7 @@ Notes on the rows that are not clean:
   (`globalReturn`, `impliedStrict`, `commonjs`).
 - **sort-imports `--all`:** the one miss is `import { default as foo, a } from 'module'`
   (no-unused-vars/393.js). tree-sitter-javascript writes `default` there as an anonymous token, so the specifier
-  has no `name` field and `lib/tsx/names.rr`'s `import_binding` gives no row. This is a library gap.
+  has no `name` field and `lib/tsx/names.rerail`'s `import_binding` gives no row. This is a library gap.
 - **node-builtins:** the eslint-plugin-n recording does not run this rule. Its four findings over every fixture
   are `import.meta.dirname`/`filename` under the fixtures' `engines` range, which looks right. Use `run` for
   ad-hoc cases (a `package.json` beside the files gives `engines.node`).
@@ -177,7 +177,7 @@ All documents share one id space, and id 0 is `unset`. Every relation below is w
 - **Approximate:**
   - value / str / strprefix / value_type: string literals unescaped, JS templates without `${}`, JS numbers
     normalised, Python and Rust integers, and the boolean, None, null and undefined keywords. A literal with
-    interpolations (a Python f-string with `{x}`, a PHP "…$x…") has strprefix but no str or value, as core.rr
+    interpolations (a Python f-string with `{x}`, a PHP "…$x…") has strprefix but no str or value, as core.rerail
     and the engine have it.
   - name: identifier-like nodes and dotted chains.
   - comment: the text without its marker.
@@ -185,7 +185,7 @@ All documents share one id space, and id 0 is `unset`. Every relation below is w
   - syntax_error: the first tree-sitter ERROR or MISSING node. For Python this is not Ruff's verdict.
   - visit_index: start order. That differs from CPython's ast order: decorators, defaults, annotations.
 - **From the files under `--root`** (computed in rrlab.py): file, package, package_field (keys joined with `/`,
-  list indices as segments, as `values.rr` reads `engines/node`), package_for (the nearest `package.json`),
+  list indices as segments, as `values.rerail` reads `engines/node`), package_for (the nearest `package.json`),
   option and option_item.
 - **Policy-file inputs:** `.input r(IO=json|lines|file, filename=…)` is read from `--root`. `IO=json` takes
   `path` but not `*` steps or `records`.
@@ -211,7 +211,7 @@ All documents share one id space, and id 0 is `unset`. Every relation below is w
   generated `rr_setN` membership relation. A set can be a kind string, a relation of kinds, or a relation of
   nodes.
 - **Text tests:** glob, prefix, suffix, contains, word, their `i` forms, and match. On a node they read the node's
-  `text`. Each one is an `@rr_*` functor, so a regex is the same price as a glob, as core.rr asks.
+  `text`. Each one is an `@rr_*` functor, so a regex is the same price as a glob, as core.rerail asks.
   - Regexes are Python- or Rust-style: `(?i)`, `(?P<x>)`, `(?<x>)`, `\A`, `\Z` are mapped onto `std::regex`
     ECMAScript.
 - **Captures:** `(?<X>…)` binds X to the captured *text*. A capture used as a span (a finding's `at`, an edit
@@ -230,7 +230,7 @@ All documents share one id space, and id 0 is `unset`. Every relation below is w
 
 ### Functors (`functors/functors.cpp`)
 
-- **Exact:** dot, qname, pkg_up, head, dir, join, glob_sub, package_of (the identity, as core.rr says),
+- **Exact:** dot, qname, pkg_up, head, dir, join, glob_sub, package_of (the identity, as core.rerail says),
   replace_all (`${1}` becomes `$1`), slice, count_matches, json_str (`json.dumps` escaping, surrogate pairs),
   sha256, and place. place hands out a span id, and its path and line go to a side table rrlab reads back.
 - **Approximate:**

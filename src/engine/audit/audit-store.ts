@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, count, desc, eq, getTableColumns, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
@@ -16,8 +16,10 @@ import {
   type AuditResult,
   type AuditSummary,
   type AuditMode,
+  type AuditOrigin,
   type AuditScope,
   type AuditStatus,
+  type AuditRuleProvenance,
 } from "./audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 import {
@@ -25,6 +27,7 @@ import {
   auditResultPages,
   auditUnlistedFailures,
   audits,
+  auditRuleProvenances,
   auditRuleSetRules,
   auditRuleSetUses,
   auditViolations,
@@ -82,9 +85,36 @@ function unlistedFailures(database: RerailDatabase): SQL<number> {
       WHERE unlisted.audit_id = audits.audit_id), 0)`
     : sql<number>`0`;
 }
-/** An `audits` row with `unlistedFailures`, which `record` reads. */
+/**
+ * An audit's rule provenance in a select from `audits`: the copy `audit_rule_provenances` keeps, or the row's own for
+ * an audit an older build wrote. Written with table names, as `unlistedFailures` is.
+ */
+function ruleProvenance(): SQL<AuditRuleProvenance[]> {
+  return sql<AuditRuleProvenance[]>`coalesce((SELECT provenance.rule_provenance_json FROM audit_rule_provenances provenance
+    WHERE provenance.provenance_id = audits.rule_provenance_id), audits.rule_provenance_json)`.mapWith(audits.ruleProvenance);
+}
+/** An `audits` row with its rule provenance and `unlistedFailures`, which `record` reads. */
 function auditColumns(database: RerailDatabase) {
-  return { ...getTableColumns(audits), unlistedFailureCount: unlistedFailures(database) };
+  return { ...getTableColumns(audits), ruleProvenance: ruleProvenance(), unlistedFailureCount: unlistedFailures(database) };
+}
+
+/**
+ * The id of `provenance` in `audit_rule_provenances`, stored first when no audit recorded it yet, so the audits of one
+ * checkout's rules share one copy. Its key is the SHA-256 of its JSON text, as the daemon's move of older audits'
+ * inline provenance keys it (`rule-provenance-move.ts`), so a later audit of the same rules names the copy the move
+ * stored; a test of an upgraded file holds the two to that. For the caller's write transaction: no other writer can
+ * store the same text between the lookup and the insert.
+ */
+function storedRuleProvenanceId(database: RerailDatabase, provenance: readonly AuditRuleProvenance[]): number {
+  const json = JSON.stringify(provenance);
+  const digest = createHash("sha256").update(json).digest("hex");
+  const stored = database.select({ id: auditRuleProvenances.provenanceId }).from(auditRuleProvenances)
+    .where(eq(auditRuleProvenances.digest, digest)).get();
+  if (stored !== undefined) return stored.id;
+  // The text the digest was taken of, rather than the column's JSON mode serializing the provenance again.
+  const inserted = database.$client.prepare<[string, string]>("INSERT INTO audit_rule_provenances (digest, rule_provenance_json) VALUES (?, ?)")
+    .run(digest, json);
+  return Number(inserted.lastInsertRowid);
 }
 
 export interface AuditQuery {
@@ -93,6 +123,7 @@ export interface AuditQuery {
   status?: AuditStatus;
   scope?: AuditScope;
   mode?: AuditMode;
+  origin?: AuditOrigin;
   limit?: number;
   offset?: number;
 }
@@ -214,6 +245,8 @@ export interface AuditReader {
   listRepositoryAuditEntries(query: RepositoryAuditEntryQuery): RepositoryAuditEntryPage | undefined;
   ruleActivity(since: number, repositoryIds?: readonly string[]): Map<string, RuleActivityTotals>;
   listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage;
+  /** The folder each audit of `auditIds` ran in, which its violations' paths are relative to; an unknown id has none. */
+  workspaceRoots(auditIds: readonly string[]): Map<string, string>;
   /** Distinct sessions with a violation from an audit started at or after `since`. */
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number;
 }
@@ -225,14 +258,17 @@ function scopedSessions(column: SQLiteColumn, repositoryId: Repository): SQL {
   return repositoryId === undefined ? sql`1 = 1` : sql`${column} IN (${sessionsOfRepository(repositoryId)})`;
 }
 
+/** The column each `AuditQuery` filter matches exactly. */
+const EXACT_FILTER_COLUMNS = {
+  auditId: audits.auditId, sessionId: audits.sessionId, status: audits.status,
+  scope: audits.scope, mode: audits.mode, origin: audits.origin,
+} as const;
+const EXACT_FILTERS = Object.keys(EXACT_FILTER_COLUMNS) as Array<keyof typeof EXACT_FILTER_COLUMNS>;
+
 function conditions(query: AuditQuery, repositoryId: Repository): SQL | undefined {
   return and(
     repositoryId === undefined ? undefined : scopedSessions(audits.sessionId, repositoryId),
-    query.auditId === undefined ? undefined : eq(audits.auditId, query.auditId),
-    query.sessionId === undefined ? undefined : eq(audits.sessionId, query.sessionId),
-    query.status === undefined ? undefined : eq(audits.status, query.status),
-    query.scope === undefined ? undefined : eq(audits.scope, query.scope),
-    query.mode === undefined ? undefined : eq(audits.mode, query.mode),
+    ...EXACT_FILTERS.map(filter => (query[filter] === undefined ? undefined : eq(EXACT_FILTER_COLUMNS[filter], query[filter]))),
   );
 }
 
@@ -251,6 +287,7 @@ function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
     workspaceRoot: row.workspaceRoot,
     scope: row.scope,
     mode: row.mode,
+    origin: row.origin,
     revision: row.revision,
     catalogRevision: row.catalogRevision,
     ruleRevisions: row.ruleRevisions,
@@ -609,6 +646,13 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
   };
 }
 
+function workspaceRoots(database: RerailDatabase, auditIds: readonly string[]): Map<string, string> {
+  // The ids go in as one JSON array, so a page of any size is one statement with one bound value.
+  const rows = database.select({ auditId: audits.auditId, workspaceRoot: audits.workspaceRoot }).from(audits)
+    .where(sql`${audits.auditId} IN (SELECT value FROM json_each(${JSON.stringify(auditIds)}))`).all();
+  return new Map(rows.map(row => [row.auditId, row.workspaceRoot]));
+}
+
 /** Durable, local-only audit bookkeeping. It never emits session events. */
 export class SqliteAuditStore implements AuditRecorder, AuditReader {
   readonly supportsResultPages = true;
@@ -622,26 +666,35 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
 
   start(input: AuditInput): string {
     const auditId = randomUUID();
-    this.#database
-      .insert(audits)
-      .values({
-        auditId: auditId,
-        sessionId: input.sessionId,
-        workspaceRoot: input.workspaceRoot,
-        scope: input.scope,
-        mode: input.mode,
-        revision: input.revision,
-        catalogRevision: input.catalogRevision,
-        ruleRevisions: input.ruleRevisions,
-        paths: input.paths,
-        ruleProvenance: input.ruleProvenance ?? [],
-        startedAt: Date.now(),
-        finishedAt: null,
-        status: "running",
-        violations: [],
-        failures: [],
-      })
-      .run();
+    const provenance = input.ruleProvenance ?? [];
+    // Immediate: the provenance lookup and the inserts that follow it take the write lock together.
+    this.#database.$client.transaction(() => {
+      this.#database
+        .insert(audits)
+        .values({
+          auditId: auditId,
+          sessionId: input.sessionId,
+          workspaceRoot: input.workspaceRoot,
+          scope: input.scope,
+          mode: input.mode,
+          origin: input.origin ?? "ongoing",
+          revision: input.revision,
+          catalogRevision: input.catalogRevision,
+          ruleRevisions: input.ruleRevisions,
+          paths: input.paths,
+          ruleProvenance: [],
+          // Every audit names a stored copy, `[]` included (one row for all that ran no rules): an audit that names
+          // none is one a Rerail older than `audit-rule-provenance-once` wrote, and the daemon's move of older audits'
+          // provenance waits while such audits come (`rule-provenance-move.ts`).
+          ruleProvenanceId: storedRuleProvenanceId(this.#database, provenance),
+          startedAt: Date.now(),
+          finishedAt: null,
+          status: "running",
+          violations: [],
+          failures: [],
+        })
+        .run();
+    }).immediate();
     return auditId;
   }
   appendResultPage(
@@ -718,11 +771,11 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
   }
 
   interrupt(sessionId: string): void {
-    this.#database
-      .update(audits)
-      .set({ status: "interrupted", finishedAt: Date.now() })
-      .where(and(eq(audits.sessionId, sessionId), eq(audits.status, "running")))
-      .run();
+    const running = and(eq(audits.sessionId, sessionId), eq(audits.status, "running"));
+    // Read first: an update takes the write lock even when it matches no row, waiting up to 5 s for another process's,
+    // and every evaluator's open asks this of a session that mostly runs nothing.
+    if (this.#database.select({ auditId: audits.auditId }).from(audits).where(running).limit(1).get() === undefined) return;
+    this.#database.update(audits).set({ status: "interrupted", finishedAt: Date.now() }).where(running).run();
   }
 
   get(auditId: string): AuditRecord | undefined {
@@ -743,6 +796,9 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
   }
   listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage {
     return listViolationHistory(this.#database, query, repositoryIds);
+  }
+  workspaceRoots(auditIds: readonly string[]): Map<string, string> {
+    return workspaceRoots(this.#database, auditIds);
   }
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number {
     return sessionsWithViolations(this.#database, since, repositoryIds);
@@ -804,6 +860,10 @@ export class SqliteAuditReader implements AuditReader {
     return database === undefined
       ? { violations: [], total: 0, nextCursor: null }
       : listViolationHistory(database, query, repositoryIds ?? this.#repositoryId);
+  }
+  workspaceRoots(auditIds: readonly string[]): Map<string, string> {
+    const database = this.#database.open();
+    return database === undefined ? new Map() : workspaceRoots(database, auditIds);
   }
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number {
     const database = this.#database.open();

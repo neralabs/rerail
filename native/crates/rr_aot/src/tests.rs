@@ -2,7 +2,7 @@
 
 use rerail_rr_syntax as rr;
 
-/// The repository's `.rr` files.
+/// The repository's `.rerail` files.
 fn corpus() -> Vec<String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
@@ -13,7 +13,7 @@ fn corpus() -> Vec<String> {
             let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
             if p.is_dir() && !skip {
                 work.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 files.extend(std::fs::read_to_string(&p).ok());
             }
         }
@@ -69,6 +69,49 @@ fn aot_tapes_are_the_jits() {
     eprintln!("{} files, {taken} taken", files.len());
     assert_eq!(tier1_differ, Vec::<usize>::new(), "files whose tier 1 output is not the JIT's");
     assert_eq!(differ, Vec::<usize>::new(), "files whose tape is not the JIT's");
+}
+
+/// Every corpus file, and the table's in-place cases: tier 2 ahead of time writes the JIT's format 16 tapes (16 and
+/// 16z, presence and all) by the writer's ops, and refuses where it does. The language holds every key the corpus's
+/// format 15 tapes hold, as the engine's holds its grammar's.
+#[test]
+#[ignore = "the corpus: run by name"]
+fn aot_format_16_tapes_are_the_jits() {
+    use rerail_tape_format::f16::Lang;
+    use rerail_tape_format::tape::{CodeTable, f15_columns};
+    let jit = rerail_rr_parser::compiled().expect("compiles");
+    let aot = crate::aot(BOTH).expect("the ahead-of-time build");
+    let mut files = corpus();
+    for src in ["r(x) :- x = a - b - c - d.", "r(x) :- x = (a + b) * (c - d) - e / f.", "r(x) :- x = a /* c */ - b // d\n - c.", "r(n) :- n = min (a, b) : { s(a, b) }."] {
+        files.push(src.to_string());
+    }
+    let mut keys = Vec::new();
+    for f in &files {
+        let Ok(image) = jit.parser.image(f.as_bytes()) else { continue };
+        let (_, table) = f15_columns(&image).expect("a format 15 tape");
+        for e in table.entries() {
+            if !keys.contains(e) {
+                keys.push(e.clone());
+            }
+        }
+    }
+    let lang = Lang::new(CodeTable::new(keys), [1, 2, 2], 1).expect("a language");
+    // One program (the fingerprints): the JIT's numbers are the ahead-of-time run's.
+    let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+    let (mut differ, mut written) = (Vec::new(), 0);
+    for (i, f) in files.iter().enumerate() {
+        for z in [false, true] {
+            let home = |w: rerail_tape_format::f16::Written| w.extent().to_vec();
+            let (a, j) = (aot.parser.image16(f.as_bytes(), &lang, &numbers, z).map(home), jit.parser.image16(f.as_bytes(), &lang, &numbers, z).map(home));
+            written += usize::from(j.is_ok());
+            if a.ok() != j.ok() {
+                differ.push((i, z));
+            }
+        }
+    }
+    eprintln!("{} files, {written} format 16 homes written", files.len());
+    assert!(written > 0, "the JIT writes format 16");
+    assert_eq!(differ, Vec::<(usize, bool)>::new(), "files whose format 16 home is not the JIT's");
 }
 
 /// The word hash's multiplier is a literal where the hash is, as the lean lexer writes its

@@ -33,7 +33,7 @@ use rerail_device::device::{Buffer, BufferRef, ComputeEvent, ComputeFunction, Co
 use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, scan_sized, RadixSpace, ScanSpace, SCAN_SIZES};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 /// What every join kernel's source starts with (`join_common.h`): `JoinP`, the threadgroup's prefix sum.
 pub const COMMON: &str = include_str!("join_common.h");
@@ -104,15 +104,19 @@ pub fn device() -> Result<&'static rerail_device::device::Device, String> {
     shared::layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
 }
 
-/// Why a command the device failed failed: once per process for each reason (a wave's strata are refused to the
-/// CPU with no more than `BackendFailure` otherwise).
+/// Why a command the device failed failed: once a run for each reason (a wave's strata are refused to the CPU with
+/// no more than `BackendFailure` otherwise).
 pub fn say_failure(why: &str) {
-    static SAID: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    let mut said = SAID.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !said.iter().any(|s| s == why) {
-        eprintln!("rerail: a submission the device failed: {why}");
-        said.push(why.to_owned());
-    }
+    /// The reasons said: the run's own (decision 0442).
+    #[derive(Default)]
+    struct Said(Mutex<Vec<String>>);
+    rerail_context::with_local::<Said, _>(|said| {
+        let mut said = said.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !said.iter().any(|s| s == why) {
+            eprintln!("rerail: a submission the device failed: {why}");
+            said.push(why.to_owned());
+        }
+    });
 }
 
 /// The threads of a join kernel's group: every launch's (`Pass::run*`) but a SIMD group's (`Pass::run_bytes_simd`).
@@ -145,9 +149,12 @@ pub struct Pipe {
     name: String,
 }
 
-fn pipes() -> &'static Mutex<HashMap<String, Arc<Pipe>>> {
-    static PIPES: OnceLock<Mutex<HashMap<String, Arc<Pipe>>>> = OnceLock::new();
-    PIPES.get_or_init(Default::default)
+/// The join kernels made, by variant and name: the machine's device's (decision 0442: the machine's).
+#[derive(Default)]
+struct Pipes(Mutex<HashMap<String, Arc<Pipe>>>);
+
+fn pipes() -> Arc<Pipes> {
+    rerail_context::machine::<Pipes>()
 }
 
 /// The kernel `name` of the variant `variant`, its UKL source made by `source` the first time: kept for the
@@ -156,7 +163,7 @@ fn pipes() -> &'static Mutex<HashMap<String, Arc<Pipe>>> {
 /// compile is fatal (decision 0382): the run stops, naming it, and no caller runs another path on it.
 pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<Arc<Pipe>, String> {
     let key = format!("join {variant} {name}");
-    if let Some(p) = pipes().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
+    if let Some(p) = pipes().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
         return Ok(Arc::clone(p));
     }
     device()?;
@@ -165,7 +172,7 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
     args.sort_by_key(|a| a.compute_function_arg_index);
     let buffers = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").map(|a| a.name.clone()).collect();
     let pipe = Arc::new(Pipe { args: args.iter().any(|a| a.name == "a"), function, buffers, name: name.to_owned() });
-    Ok(Arc::clone(pipes().lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(key).or_insert(pipe)))
+    Ok(Arc::clone(pipes().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(key).or_insert(pipe)))
 }
 
 /// A sort's kernels of a lead column of `width` around the library's radix sort: its keys and rows, and its runs.
@@ -206,6 +213,20 @@ pub struct Submitted {
     committed: f64,
     /// Whether this one only watches (`watch`): it waits only while the owner has not.
     watcher: bool,
+    /// The blocks its work uses (decision 0487), the owner's alone: completed once its work has (`wait_ok`, `drop`).
+    fence: Option<Arc<rerail_blocks::ledger::Fence>>,
+}
+
+impl Drop for Submitted {
+    /// Its blocks are held until its work completes: a submission let go unawaited waits for it here first.
+    fn drop(&mut self) {
+        if let Some(f) = self.fence.take()
+            && !f.is_complete()
+        {
+            let _ = self.event.await_();
+            f.complete();
+        }
+    }
 }
 
 /// The host clock Metal's command buffer times are on (`mach_absolute_time`, in seconds).
@@ -220,7 +241,7 @@ pub fn host_clock() -> f64 {
         fn mach_timebase_info(info: *mut Timebase) -> i32;
         fn mach_absolute_time() -> u64;
     }
-    static RATIO: OnceLock<f64> = OnceLock::new();
+    static RATIO: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
     let ratio = *RATIO.get_or_init(|| {
         let mut info = Timebase { numer: 0, denom: 0 };
         // SAFETY: fills the struct.
@@ -260,7 +281,7 @@ pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned:
 impl Submitted {
     /// Another wait for a committed submission: what a sort encoded into it waits for (`Keyed::settle`).
     pub(super) fn watch(&self) -> Submitted {
-        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true }
+        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true, fence: None }
     }
 
     /// Keeps `columns` (what the submission reads) until it completes.
@@ -281,6 +302,9 @@ impl Submitted {
             return (self.event.gpu_seconds(), true);
         }
         let done = crate::score::phase("gpu wait", || self.event.await_());
+        if let Some(f) = &self.fence {
+            f.complete();
+        }
         if let Err(why) = &done {
             say_failure(why);
         }
@@ -404,12 +428,16 @@ pub struct Pass {
     resident: RefCell<Vec<Buffer>>,
     /// The first launch that could not be made: the commit's error.
     error: RefCell<Option<String>>,
+    /// Its submission's uses of blocks (decision 0487): every buffer it binds or makes resident that lies in a block
+    /// holds that block's chunks and memory until the submission completes (its `Submitted`'s wait, or drop), or the
+    /// pass is dropped uncommitted.
+    fence: Arc<rerail_blocks::ledger::Fence>,
 }
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
         let layer = shared::layer().ok_or("no device")?;
-        Ok(Pass { queue: ComputeQueue::new(layer.queue), dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None) })
+        Ok(Pass { queue: ComputeQueue::new(layer.queue), dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None), fence: rerail_blocks::ledger::Fence::new() })
     }
 
     /// The launches made so far.
@@ -418,16 +446,24 @@ impl Pass {
     }
 
     fn launch(&self, pipe: &Pipe, buffers: &[&Buffer], bytes: &[u8], grid: Grid<'_>) {
+        self.launch_at(pipe, &buffers.iter().map(|b| (*b, 0)).collect::<Vec<_>>(), bytes, grid);
+    }
+
+    /// `launch`, each buffer bound at its offset.
+    fn launch_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], grid: Grid<'_>) {
         if self.error.borrow().is_some() {
             return;
+        }
+        for (b, _) in buffers {
+            self.holds(b);
         }
         let made = (|| {
             if buffers.len() != pipe.buffers.len() {
                 return Err(format!("the kernel {} takes {} buffers, given {}", pipe.name, pipe.buffers.len(), buffers.len()));
             }
             let mut l = rerail_gpu::kernels::launch(&self.queue, &pipe.function);
-            for (name, b) in pipe.buffers.iter().zip(buffers) {
-                l = l.buffer(name, b);
+            for (name, (b, at)) in pipe.buffers.iter().zip(buffers) {
+                l = l.buffer_at(name, b, *at);
             }
             if pipe.args {
                 l = l.bytes("a", bytes);
@@ -460,10 +496,25 @@ impl Pass {
         self.launch(pipe, buffers, bytes, Grid::Groups(groups, simd_group() as u64));
     }
 
+    /// `run_bytes`, each buffer bound at its offset (a structure inside a block: decision 0478 step 2c).
+    pub fn run_bytes_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], groups: usize) {
+        self.launch_at(pipe, buffers, bytes, Grid::Groups(groups, GROUP));
+    }
+
+    /// `run_bytes_simd`, each buffer bound at its offset.
+    pub fn run_bytes_simd_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], groups: usize) {
+        self.launch_at(pipe, buffers, bytes, Grid::Groups(groups, simd_group() as u64));
+    }
+
     /// `run_bytes`, its threadgroups the three words at `offset` of `grid` (written by the device before it), at
     /// most `most`.
     pub fn run_bytes_indirect(&self, pipe: &Pipe, buffers: &[&Buffer], bytes: &[u8], grid: &Buffer, offset: u64, most: usize) {
         self.launch(pipe, buffers, bytes, Grid::Indirect { grid, offset, most });
+    }
+
+    /// `run_bytes_indirect`, each buffer bound at its offset.
+    pub fn run_bytes_indirect_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], grid: &Buffer, offset: u64, most: usize) {
+        self.launch_at(pipe, buffers, bytes, Grid::Indirect { grid, offset, most });
     }
 
     /// `run` of `params`, its threadgroups the three words at `offset` of `grid`, at most `most`.
@@ -492,18 +543,30 @@ impl Pass {
     /// Makes `buffers` resident for the launches after it: buffers a kernel reaches by address (a view's directory
     /// and tapes, decision 0353 step 4d), bound by none.
     pub fn use_read(&self, buffers: &[&Buffer]) {
+        for b in buffers {
+            self.holds(b);
+        }
         self.resident.borrow_mut().extend(buffers.iter().map(|b| (*b).clone()));
     }
 
     /// Makes `buffer` resident for the launches after it, to be read and written: a cache a kernel's reads keep (a
     /// 16z batch's blocks, decision 0353 step 4b), reached by address.
     pub fn use_read_write(&self, buffer: &Buffer) {
+        self.holds(buffer);
         self.resident.borrow_mut().push(buffer.clone());
     }
 
     /// Holds the launches after it until the host signals `event` with `value` or more (a gate's, `crate::col`).
     pub fn wait_for_event(&self, event: &SharedEvent, value: u64) {
         self.queue.wait_for_event(event, value);
+    }
+
+    /// The block `b` lies in (by its contents' address), held by this submission's fence.
+    fn holds(&self, b: &Buffer) {
+        let at = b.contents() as usize;
+        if at != 0 {
+            self.fence.uses_address(at);
+        }
     }
 
     /// Commits the launches (checked against the launch budget): what to wait for.
@@ -513,7 +576,8 @@ impl Pass {
         }
         crate::score::phase("gpu commit", shared::guard)?;
         let event = self.queue.flush();
-        Ok(Submitted { event: Arc::new(event), reads: Vec::new(), committed: host_clock(), watcher: false })
+        self.fence.mark_committed();
+        Ok(Submitted { event: Arc::new(event), reads: Vec::new(), committed: host_clock(), watcher: false, fence: Some(self.fence.clone()) })
     }
 
     /// Commits the launches and waits for them: their device seconds.
@@ -1221,21 +1285,27 @@ impl Column {
 /// still being compiled waits for it (`pipeline wait`) rather than compiling it again. A panic leaves them to be
 /// compiled where they are needed (a job's panic would end the process).
 pub fn prewarm() {
-    crate::exec::configure(false);
-    rayon::spawn(|| crate::exec::as_job("the GPU's prewarm", || {
-        let _ = std::panic::catch_unwind(|| super::released(|| {
-            if Fused::can() {
-                let _ = fixed("sort_all");
-                let _ = fixed("probe_all");
-            }
-            let _ = rerail_gpu::library::ready();
-            for w in [Width::W64, Width::W32, Width::W16] {
-                let _ = sort_pipes(w);
-                let _ = gather_pipe(w);
-            }
-            super::tile::prewarm();
-        }));
-    }));
+    crate::exec::configure();
+    // In its caller's run (decision 0442): the pipelines are the caller's machine's, and the job's wall its run's
+    // (`as_job` reads it), so the run is entered first.
+    let run = rerail_context::job_run();
+    rerail_context::cores_spawn(move || {
+        let _run = rerail_context::enter(run);
+        crate::exec::as_job("the GPU's prewarm", || {
+            let _ = std::panic::catch_unwind(|| super::released(|| {
+                if Fused::can() {
+                    let _ = fixed("sort_all");
+                    let _ = fixed("probe_all");
+                }
+                let _ = rerail_gpu::library::ready();
+                for w in [Width::W64, Width::W32, Width::W16] {
+                    let _ = sort_pipes(w);
+                    let _ = gather_pipe(w);
+                }
+                super::tile::prewarm();
+            }));
+        })
+    });
 }
 
 /// A batch's pairs: one buffer the probes reserve their threadgroups' pairs in with one atomic each, so no probe

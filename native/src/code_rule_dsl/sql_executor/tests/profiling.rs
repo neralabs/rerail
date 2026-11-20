@@ -6,7 +6,8 @@ const PROGRAM: &str = ".decl edge(a:number,b:number,w:number)\n.decl root(n:numb
 #[test]
 fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
     let directory = tempfile::tempdir().unwrap();
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
         .args([
             "--exact",
             "code_rule_dsl::sql_executor::tests::profiling::profiled_session_child",
@@ -14,9 +15,8 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             "--nocapture",
         ])
         .env("RERAIL_SQL_PROFILE_DIR", directory.path().join("sql"))
-        .env("RERAIL_PROFILE", directory.path().join("logic"))
-        .status()
-        .unwrap();
+        .env("RERAIL_PROFILE", directory.path().join("logic"));
+    let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
     assert!(status.success());
     let mut native = false;
     let mut preparation = false;

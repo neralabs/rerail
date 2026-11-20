@@ -20,8 +20,9 @@
 typedef struct DeviceCode{uint16_t kind,field;uint8_t flags,classCount;uint16_t reserved;uint16_t classes[8];} DeviceCode;
 UKL_STATIC_ASSERT(sizeof(DeviceCode)==24u,"the code layout");
 #define TAPE_NONE 0xffffffffu
-// A document's first byte in the batch's chunk block: its parts are offsets from it.
-UKL_INLINE UKL_GLOBAL const uint8_t* tape_doc(UKL_GLOBAL const uint8_t* chunk,DocView d){return chunk+d.at;}
+// A document's first byte from the batch's bound block: its parts are offsets from it. `at` and `at_high` are an
+// i64, the slabs' GPU addresses apart where the document is in another slab of the batch (0353 step 4, 0471).
+UKL_INLINE UKL_GLOBAL const uint8_t* tape_doc(UKL_GLOBAL const uint8_t* chunk,DocView d){return chunk+(int64_t)(((uint64_t)d.at_high<<32)|(uint64_t)d.at);}
 // The document of a batch's global node `node`, of `count` views in node order: its number, and its view.
 UKL_INLINE uint32_t doc_index(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){uint32_t first=0u,last=count;while(last-first>1u){uint32_t middle=(first+last)/2u;if(docs[middle].node_base<=node)first=middle;else last=middle;}return first;}
 UKL_INLINE DocView doc_of(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){return docs[doc_index(docs,count,node)];}
@@ -32,9 +33,9 @@ UKL_INLINE DocView doc_of(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t
 UKL_INLINE uint32_t tape_size(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_size(TAPE_READ(s,d),i);}
 // The node's code's number in its document's (format 16: its language's) table.
 UKL_INLINE uint32_t tape_number(UKL_GLOBAL const uint8_t* doc,DocView d,uint32_t i){return clif_tape_number(doc,(CLIF_VIEW_SPACE const uint32_t*)&d,i);}
-// The node's code: its document's table (format 15), or its language's, its block's (format 16): `at + codes`
-// modulo 2^32, so a table before the document is reached too (decision 0336 §7).
-UKL_INLINE UKL_GLOBAL const DeviceCode* tape_code(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return ((UKL_GLOBAL const DeviceCode*)(s+(d.at+d.codes)))+tape_number(tape_doc(s,d),d,i);}
+// The node's code: its document's table (format 15), or its language's, its slab's (format 16): `codes` from the
+// document, modulo 2^32 (an i32), so a table before the document is reached too (decision 0336 §7).
+UKL_INLINE UKL_GLOBAL const DeviceCode* tape_code(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){UKL_GLOBAL const uint8_t* doc=tape_doc(s,d);return ((UKL_GLOBAL const DeviceCode*)(doc+(int32_t)d.codes))+tape_number(doc,d,i);}
 UKL_INLINE uint32_t tape_kind(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->kind;}
 UKL_INLINE uint32_t tape_field(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->field;}
 UKL_INLINE uint32_t tape_flags(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->flags;}
@@ -49,6 +50,9 @@ UKL_INLINE uint32_t tape_parent(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i
 UKL_INLINE uint32_t tape_next_in(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t end){return clif_tape_next_in(TAPE_READ(s,d),i,end);}
 UKL_INLINE uint32_t tape_end_of(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_end_of(TAPE_READ(s,d),i);}
 UKL_INLINE uint32_t tape_next(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_next(TAPE_READ(s,d),i);}
+// The end of a node's siblings (its parent's subtree; 0 at the root): one parent read, a search (CLIF's `parent`), for
+// a walk over the siblings by `tape_next_in`. `tape_next` reads the parent at each hop (0457).
+UKL_INLINE uint32_t tape_siblings_end(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){uint32_t p=tape_parent(s,d,i);return p==TAPE_NONE?0u:tape_end_of(s,d,p);}
 UKL_INLINE uint32_t tape_next_named_in(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t end){uint32_t j=tape_next_in(s,d,i,end);while(j!=TAPE_NONE&&!tape_named(s,d,j))j=tape_next_in(s,d,j,end);return j;}
 UKL_INLINE uint32_t tape_next_named(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){uint32_t p=tape_parent(s,d,i);if(p==TAPE_NONE)return TAPE_NONE;return tape_next_named_in(s,d,i,tape_end_of(s,d,p));}
 UKL_INLINE uint32_t tape_first_child(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_first_child(TAPE_READ(s,d),i);}
@@ -83,6 +87,19 @@ UKL_INLINE bool code_admits(UKL_GLOBAL const uint32_t* rule,UKL_GLOBAL const Dev
  }
  return true;
 }
+// The kind a presence records for a node of kind `kind`: an ERROR node's (0xffff) is ERROR_CODE (0), the tape's folded
+// code (decision 0434 §4; the host's `tape::presence_kind`).
+UKL_INLINE uint32_t presence_kind(uint32_t kind){return kind==0xffffu?0u:kind;}
+// Whether block `block` of document `d` (its nodes 1024*block ..) may hold a node a rule over codes admits, by the
+// tape's presence in its home (decision 0434 §4, step 6), read where it lies by `tape_has_kind`, the read the host's
+// planners and walks make too (`Roots::may_in`): one of its kinds, and each kind its tests name. A tape that holds no
+// presence admits every block.
+UKL_INLINE bool rule_may_in(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* rule,uint32_t block){
+ uint32_t kinds=rule[0],at=1u;
+ if(kinds!=0xffffffffu){bool any=false;for(uint32_t k=0u;k<kinds&&!any;k++)any=clif_tape_has_kind(TAPE_READ(s,d),block,presence_kind(rule[1u+k]))!=0u;if(!any)return false;at+=kinds;}
+ for(uint32_t k=0u,tests=rule[at];k<tests;k++){uint32_t test=rule[at+1u+k];if((test>>16u)==1u&&clif_tape_has_kind(TAPE_READ(s,d),block,presence_kind(test&0xffffu))==0u)return false;}
+ return true;
+}
 // A row of bits over the batch's nodes, the 64 from batch node `b`.
 UKL_INLINE uint64_t root_row(UKL_GLOBAL const uint32_t* row,uint32_t b){
  uint32_t w=b/32u,sh=b%32u;uint64_t mask=(uint64_t)row[w]|((uint64_t)row[w+1u]<<32u);
@@ -90,11 +107,12 @@ UKL_INLINE uint64_t root_row(UKL_GLOBAL const uint32_t* row,uint32_t b){
 }
 // The roots of the rule at `at` among document `d`'s nodes 64*group + lo .. 64*group + hi (file `file` of the batch),
 // as bits of the group's 64. A rule over codes with an anchor (kind 2, decision 0365): its row (set by
-// `label_formula`) and the rule without it.
-UKL_INLINE uint64_t root_mask_in(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* roots,uint32_t at,uint32_t file,uint32_t group,uint32_t lo,uint32_t hi){
+// `label_phase`) and the rule without it.
+// The roots among the group's nodes whose bits `among` holds: a rule over codes reads only those nodes' codes.
+UKL_INLINE uint64_t root_mask_among(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* roots,uint32_t at,uint32_t file,uint32_t group,uint64_t among){
  uint32_t from=group*ROOT_GROUP;if(from>=d.nodes)return 0ul;
- uint32_t count=ukl_min(ROOT_GROUP,d.nodes-from);hi=ukl_min(hi,count);if(lo>=hi)return 0ul;
- uint64_t keep=hi-lo==64u?~0ul:(((1ul<<(hi-lo))-1ul)<<lo);
+ uint32_t count=ukl_min(ROOT_GROUP,d.nodes-from);
+ uint64_t keep=among&(count==64u?~0ul:((1ul<<count)-1ul));if(keep==0ul)return 0ul;
  uint64_t mask=0ul,anchor=~0ul;
  if(roots[at]==2u){anchor=root_row(roots+at+2u,d.node_base+from)&keep;if(anchor==0ul)return 0ul;at+=roots[at+1u];}
  if(roots[at]!=0u){
@@ -103,10 +121,16 @@ UKL_INLINE uint64_t root_mask_in(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBA
   uint32_t files=roots[0];
   if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return 0ul;
   UKL_GLOBAL const uint32_t* rule=roots+at+1u+(files+31u)/32u;
-  for(uint32_t k=lo;k<hi;k++)if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;
+  // A block whose presence rules the rule out has none of its codes read (a group lies in one block).
+  if(!rule_may_in(s,d,rule,from/1024u))return 0ul;
+  for(uint64_t rest=keep&anchor;rest!=0ul;rest&=rest-1ul){uint32_t k=ukl_ctz64(rest);if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;}
  }
  mask&=anchor;
  return mask&keep;
+}
+UKL_INLINE uint64_t root_mask_in(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* roots,uint32_t at,uint32_t file,uint32_t group,uint32_t lo,uint32_t hi){
+ hi=ukl_min(hi,ROOT_GROUP);if(lo>=hi)return 0ul;
+ return root_mask_among(s,d,roots,at,file,group,hi-lo==64u?~0ul:(((1ul<<(hi-lo))-1ul)<<lo));
 }
 // Whether document `d`'s node `node` (file `file` of the batch) is a root of the rule at `at`: one node of
 // `root_mask_in`'s test, an anchored rule's (kind 2, decision 0365) within its anchor's row.

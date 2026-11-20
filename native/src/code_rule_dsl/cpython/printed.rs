@@ -67,6 +67,15 @@ pub(crate) fn printed(source: &str, want: Want) -> Vec<Printed> {
         .collect()
 }
 
+/// The located nodes of `root`'s tree (those with a span), in preorder, an f-string's pieces left out, as `printed`
+/// reads them: what W's worker finds a node among by its span.
+pub(crate) fn located(root: &Node) -> Vec<&Node> {
+    let mut out = Vec::new();
+    walk(root, &mut out);
+    out.retain(|n| n.span.is_some());
+    out
+}
+
 /// The nodes of `n`'s tree in preorder, an f-string's pieces left out (its fields' values are not).
 fn walk<'n>(n: &'n Node, out: &mut Vec<&'n Node>) {
     use super::ast::F;

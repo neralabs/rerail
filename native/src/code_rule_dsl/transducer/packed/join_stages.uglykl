@@ -4,9 +4,9 @@
 //
 // A stage's parameter block (`Stage`), a copy's (`Copy`), a dedup's (`Dedup`) and an index's (`IxP`) lie in a buffer
 // of their own: they are past the parameter block a launch takes on every backend, and a view's directory's address
-// in one is a pointer no backend's kernel arguments may hold. The kernels whose SIMD group does a term's or a row's
-// work (`text_verdicts`, `text_replace`, `text_map`, `row_text`) run in threadgroups of one SIMD group: their loops
-// run as long as their term's bytes say, which every lane of the group agrees on, but no two groups do.
+// in one is a pointer no backend's kernel arguments may hold. The kernel whose SIMD group does a row's work
+// (`row_text`) runs in threadgroups of one SIMD group: its loops run as long as its row's bytes say, which every lane
+// of the group agrees on, but no two groups do.
 
 #define NONE 0xffffffffu
 // The lanes of a SIMD group: a text kernel's threadgroup.
@@ -318,19 +318,6 @@ UKL_INLINE uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t l
     return 0;
 }
 
-// A text buffer (`DevText`): its terms' count, their symbols ascending, each one's offset into its bytes, the bytes.
-UKL_INLINE uint32_t text_count(Longs T) { return (uint32_t)T[0]; }
-UKL_INLINE UKL_GLOBAL const uint32_t* text_offs(Longs T) { return (UKL_GLOBAL const uint32_t*)(T + 1 + T[0]); }
-UKL_INLINE UKL_GLOBAL const uint8_t* text_chars(Longs T) { return (UKL_GLOBAL const uint8_t*)(text_offs(T) + T[0] + 1); }
-
-// Symbol `id`'s text in T (none: the empty text, as a name the store does not hold).
-UKL_INLINE void text_find(Longs T, int64_t id, UKL_PRIVATE uint32_t* off, UKL_PRIVATE uint32_t* len) {
-    uint32_t n = text_count(T), a = 0, b = n;
-    for (uint32_t k = 0; k < 40 && a < b; k++) { uint32_t m = (a + b) / 2; if (T[1 + m] < id) a = m + 1; else b = m; }
-    if (a < n && T[1 + a] == id) { UKL_GLOBAL const uint32_t* o = text_offs(T); *off = o[a]; *len = o[a + 1] - o[a]; }
-    else { *off = 0; *len = 0; }
-}
-
 // A key's value: a slot of binding t, or a constant.
 UKL_INLINE int64_t key_value(StageP s, Longs L, uint32_t t, uint32_t k) {
     return s->key_kind[k] == 1 ? L[(uint64_t)s->key_slot[k] * s->cap_in + t] : s->key_const[k];
@@ -369,11 +356,22 @@ UKL_INLINE bool txt_same(Txt x, uint32_t xs, Txt y, uint32_t ys, uint32_t n) {
     return true;
 }
 
+// Symbol v's bytes where the atoms blocks hold them, through the atoms directory D (decision 0478 step 2e): a value
+// no atom of D's is (no symbol, or one interned after D was made) reads as empty and sets `unheld` (the stratum then
+// runs on the host).
+UKL_INLINE UKL_GLOBAL const uint8_t* sym_text(UKL_GLOBAL const uint8_t* D, int64_t v, UKL_PRIVATE uint32_t* len, UKL_PRIVATE bool* unheld) {
+    uint32_t n = v >= 0 && v <= (int64_t)0xffffffffu ? clif_atoms_len(D, 0ul, (uint32_t)v) : 0xffffffffu;
+    if (n == 0xffffffffu) { *unheld = true; *len = 0; return D; }
+    *len = n;
+    return D + clif_atoms_at(D, 0ul, (uint32_t)v);
+}
+
 // Operand kind 0: key k's symbol; 1: `cat`'s text of keys k and k + 1 (b's alone when a's is empty); 2:
-// `str_concat`'s; 3: key k's arena text.
-UKL_INLINE Txt txt_of(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL uint32_t* A, uint32_t k, uint32_t kind) {
+// `str_concat`'s; 3: key k's arena text. Symbols read in place through D (`sym_text`).
+UKL_INLINE Txt txt_of(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D, UKL_GLOBAL uint32_t* A, uint32_t k, uint32_t kind,
+                      UKL_PRIVATE bool* unheld) {
     Txt x;
-    x.b = text_chars(R);
+    x.b = D;
     x.bl = 0;
     x.dot = 0;
     int64_t v = key_value(s, L, t, k);
@@ -386,12 +384,9 @@ UKL_INLINE Txt txt_of(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL uint32_
         x.al = ok ? len : 0;
         return x;
     }
-    uint32_t off;
-    text_find(R, v, &off, &x.al);
-    x.a = text_chars(R) + off;
+    x.a = sym_text(D, v, &x.al, unheld);
     if (kind != 0) {
-        text_find(R, key_value(s, L, t, k + 1), &off, &x.bl);
-        x.b = text_chars(R) + off;
+        x.b = sym_text(D, key_value(s, L, t, k + 1), &x.bl, unheld);
         x.dot = (kind == 1 && x.al > 0) ? 1 : 0;
     }
     return x;
@@ -407,9 +402,11 @@ UKL_INLINE bool textop_one(uint32_t op, Txt x, uint32_t xs, uint32_t lx, Txt y, 
 
 // With `TEXT_SPLIT` (agg[0] bit 5), X is a set of patterns (`strings::SET_SEP` between them, empty ones too, as
 // `strings::test` splits it): Y passes when any one does. The separators are found a word of eight at a time (an exact
-// mask of the bytes equal to 0x1f), each member compared as one pattern.
-UKL_INLINE bool textop_pass(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL uint32_t* A) {
-    Txt x = txt_of(s, L, t, R, A, 0, s->agg[1] & 15), y = txt_of(s, L, t, R, A, 2, s->agg[1] >> 4);
+// mask of the bytes equal to 0x1f), each member compared as one pattern. A bound pattern (`TEXT_BOUND`, agg[0] bit 6)
+// that holds the separator is no set: `host` set, and the stratum runs on the host. A constant set is split.
+UKL_INLINE bool textop_pass(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D, UKL_GLOBAL uint32_t* A, UKL_PRIVATE bool* unheld,
+                            UKL_PRIVATE bool* host) {
+    Txt x = txt_of(s, L, t, D, A, 0, s->agg[1] & 15, unheld), y = txt_of(s, L, t, D, A, 2, s->agg[1] >> 4, unheld);
     uint32_t lx = txt_len(x), ly = txt_len(y);
     uint32_t op = (s->agg[0] >> 1) & 3;
     bool r = false;
@@ -421,6 +418,7 @@ UKL_INLINE bool textop_pass(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL u
             uint64_t z = txt_word(x, at, lx) ^ 0x1f1f1f1f1f1f1f1ful;
             // Bytes past the text read 0 (z's 0x1f): never a separator.
             uint64_t m = ~(((z & lo7) + lo7) | z | lo7);
+            *host = *host || (m != 0 && (s->agg[0] & 64) != 0);
             for (uint32_t b = 0; b < 8 && m != 0; b++) {
                 uint32_t k = ukl_clz64(m) / 8;
                 uint32_t pos = at + k;
@@ -447,24 +445,17 @@ UKL_INLINE uint32_t txt_chars(Txt x) {
 // A function of names (mode 6), of operands X (keys 0, 1) and Y (keys 2, 3) as mode 7's (kinds agg[1] & 15 and
 // agg[1] >> 4), its value into `bind_slot[0]`: by agg[0], 0 `str_cmp` (their order by bytes, a word of eight at a
 // time, then their lengths, as Rust's `str::cmp`), 1 `strlen` of X (its characters).
-UKL_INLINE int64_t strcmp_value(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL uint32_t* A) {
-    Txt x = txt_of(s, L, t, R, A, 0, s->agg[1] & 15);
+UKL_INLINE int64_t strcmp_value(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D, UKL_GLOBAL uint32_t* A, UKL_PRIVATE bool* unheld) {
+    Txt x = txt_of(s, L, t, D, A, 0, s->agg[1] & 15, unheld);
     if (s->agg[0] == 1) return (int64_t)txt_chars(x);
     uint32_t lx = txt_len(x);
-    Txt y = txt_of(s, L, t, R, A, 2, s->agg[1] >> 4);
+    Txt y = txt_of(s, L, t, D, A, 2, s->agg[1] >> 4, unheld);
     uint32_t ly = txt_len(y), m = ukl_min(lx, ly);
     for (uint32_t at = 0; at < m; at += 8) {
         uint64_t u = txt_word(x, at, m), v = txt_word(y, at, m);
         if (u != v) return u < v ? -1 : 1;
     }
     return lx == ly ? 0 : (lx < ly ? -1 : 1);
-}
-
-// Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
-UKL_INLINE bool text_pass(StageP s, Longs L, uint32_t t, Longs R) {
-    int64_t v = L[(uint64_t)s->agg[0] * s->cap_in + t];
-    bool bit = v >= 0 && (uint64_t)(v >> 6) < (uint64_t)s->nr && ((R[v >> 6] >> (v & 63)) & 1) != 0;
-    return bit == (s->agg[1] != 0);
 }
 
 // Each binding's rows out (`stage_scatter` writes them at their scanned offsets).
@@ -475,6 +466,7 @@ DEFINE_KERNEL2(join, stage_count,
                RWBUFFER, uint32_t, counters, "[counters]",
                RWBUFFER, uint32_t, counts,   "[cap_in + 1]",
                RWBUFFER, uint32_t, A,        "[arena]",
+               ROBUFFER, uint8_t,  D,        "[atoms directory]",
                ROBUFFER, Stage,    s,        "[1]",
                GID0,     uint32_t, t,        )
 {
@@ -483,9 +475,15 @@ DEFINE_KERNEL2(join, stage_count,
     if (t >= n) { counts[t] = 0; return; }
     int64_t kv[8];
     uint32_t lo, hi, how;
-    if (s->mode == 5) { counts[t] = (uint32_t)text_pass(s, L, t, R); return; }
     if (s->mode == 6) { counts[t] = 1; return; }
-    if (s->mode == 7) { counts[t] = (uint32_t)textop_pass(s, L, t, R, A); return; }
+    if (s->mode == 7) {
+        bool unheld = false, host = false;
+        counts[t] = (uint32_t)textop_pass(s, L, t, D, A, &unheld, &host);
+        // A symbol the atoms directory does not hold (`TEXTFN_UNHELD`), a bound pattern holding the separator
+        // (`TEXTFN_HOST`): the stratum on the host.
+        if (s->counter != NONE && (unheld || host)) ukl_atomic_or(&counters[s->counter], (unheld ? 4u : 0u) | (host ? 2u : 0u));
+        return;
+    }
     candidates(s, L, t, R, kv, &lo, &hi, &how);
     if (s->mode == 4) {
         int64_t v = 0;
@@ -538,6 +536,7 @@ DEFINE_KERNEL2(join, stage_scatter,
                RWBUFFER, int64_t,  O,        "[slots * cap_out]",
                RWBUFFER, uint32_t, A,        "[arena]",
                RWBUFFER, uint32_t, counters, "[counters]",
+               ROBUFFER, uint8_t,  D,        "[atoms directory]",
                ROBUFFER, Stage,    s,        "[1]",
                GID0,     uint32_t, t,        )
 {
@@ -549,14 +548,16 @@ DEFINE_KERNEL2(join, stage_scatter,
     if (at >= s->cap_out) return;
     int64_t kv[8];
     uint32_t lo, hi, how;
-    if (s->mode == 5 || s->mode == 7) {
+    if (s->mode == 7) {
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
     if (s->mode == 6) {
         if (offsets[t + 1] <= at) return;
         write_row(s, L, t, R, 0, O, at);
-        O[(uint64_t)s->bind_slot[0] * s->cap_out + at] = strcmp_value(s, L, t, R, A);
+        bool unheld = false;
+        O[(uint64_t)s->bind_slot[0] * s->cap_out + at] = strcmp_value(s, L, t, D, A, &unheld);
+        if (unheld && s->counter != NONE) ukl_atomic_or(&counters[s->counter], 4u);
         return;
     }
     if (s->mode == 4) {
@@ -637,69 +638,6 @@ DEFINE_KERNEL2(join, witness_count,
         if (all) { found = 1; break; }
     }
     counts[t] = found;
-}
-
-// A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
-// a byte a lane at a time, each lane one byte's transition function (a row of the table), the group composing them (a
-// reduction of compositions, its scratch in device memory: a row a lane of `states` bytes a group); the chunk's function
-// takes the state on. A term whose final state, after the end of text, accepts sets its symbol's bit. The groups are
-// persistent: `groups` of them over the terms, a threadgroup each.
-typedef struct TextParams { uint32_t nterms; uint32_t states; uint32_t classes; uint32_t start; uint32_t groups; uint32_t pad0; uint32_t pad1; uint32_t pad2; } TextParams;
-UKL_REFLECT_STRUCT(TextParams, nterms, states, classes, start, groups, pad0, pad1, pad2)
-
-DEFINE_KERNEL2(join, text_verdicts,
-               ROBUFFER, int64_t,    T,       "[text]",
-               ROBUFFER, uint8_t,    table,   "[table]",
-               RWBUFFER, uint32_t,   bits,    "[span / 32 + 1]",
-               RWBUFFER, uint8_t,    scratch, "[groups * lanes * states]",
-               ARGS,     TextParams, a,       ,
-               TGID0,    uint32_t,   sg,      ,
-               LANE,     uint32_t,   lane,    )
-{
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    TextParams p = a;
-    Longs ids = T + 1;
-    UKL_GLOBAL const uint32_t* offs = text_offs(T);
-    UKL_GLOBAL const uint8_t* bytes = text_chars(T);
-    if (sg >= p.groups) return;
-    uint32_t S = p.states, C = p.classes;
-    UKL_GLOBAL const uint8_t* cls = table;
-    UKL_GLOBAL const uint8_t* next = table + 256;
-    UKL_GLOBAL const uint8_t* eoi = next + S * C;
-    UKL_GLOBAL const uint8_t* acc = eoi + S;
-    UKL_GLOBAL uint8_t* f = scratch + (uint64_t)sg * SGW * S;
-    for (uint32_t term = sg; term < p.nterms; term += p.groups) {
-        uint32_t lo = offs[term], hi = offs[term + 1];
-        uint32_t state = p.start;
-        for (uint32_t base = lo; base < hi; base += SGW) {
-            uint32_t at = base + lane;
-            bool has = at < hi;
-            uint32_t c = has ? (uint32_t)cls[bytes[at]] : 0;
-            for (uint32_t q = 0; q < S; q++) f[lane * S + q] = has ? next[q * C + c] : (uint8_t)q;
-            ukl_sg_barrier();
-            for (uint32_t d = 1; d < SGW; d <<= 1) {
-                uint32_t tasks = (SGW / (2 * d)) * S;
-                // The earlier block's function, then the later's, into the earlier's row; then copied to the later's.
-                for (uint32_t k = lane; k < tasks; k += SGW) {
-                    uint32_t right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
-                    f[left * S + q] = f[right * S + f[left * S + q]];
-                }
-                ukl_sg_barrier();
-                for (uint32_t k = lane; k < tasks; k += SGW) {
-                    uint32_t right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
-                    f[right * S + q] = f[left * S + q];
-                }
-                ukl_sg_barrier();
-            }
-            state = f[(SGW - 1) * S + state];
-            ukl_sg_barrier();
-        }
-        state = eoi[state];
-        if (lane == 0 && acc[state] != 0) {
-            int64_t id = ids[term];
-            if (id >= 0) ukl_atomic_or(&bits[(uint64_t)id >> 5], 1u << (uint32_t)(id & 31));
-        }
-    }
 }
 
 // The states after each of m (at most a lane's each) bytes of x, lane l's after byte `first + step * l`, from state `st`: the
@@ -890,54 +828,6 @@ UKL_INLINE bool txt_verdict(UKL_GLOBAL const uint8_t* tab, uint32_t S, uint32_t 
     return acc[eoi[st]] != 0;
 }
 
-// `replace_all` of a regex, once per distinct term (decision 0038's chunked matching), its automata G
-// (`text::table::Replacer`): a SIMD group per term (`rx_replace_txt`), the replacement Z (`lz` bytes). Pass 0 counts
-// each term's replaced length into `lens`; after their scan (the offsets), pass 1 writes O as a text buffer
-// (`DevText`'s: the terms' ids, offsets, bytes). Groups are persistent, a threadgroup each.
-typedef struct ReplaceParams { uint32_t nterms; uint32_t groups; uint32_t lz; uint32_t write; uint32_t states; uint32_t pad0; uint32_t pad1; uint32_t pad2; } ReplaceParams;
-UKL_REFLECT_STRUCT(ReplaceParams, nterms, groups, lz, write, states, pad0, pad1, pad2)
-
-DEFINE_KERNEL2(join, text_replace,
-               ROBUFFER, int64_t,       T,       "[text]",
-               ROBUFFER, uint8_t,       G,       "[automata]",
-               ROBUFFER, uint8_t,       Z,       "[lz]",
-               RWBUFFER, uint32_t,      lens,    "[nterms + 1]",
-               RWBUFFER, int64_t,       O,       "[text]",
-               RWBUFFER, uint8_t,       scratch, "[groups * 2 * lanes * states]",
-               ARGS,     ReplaceParams, a,       ,
-               TGID0,    uint32_t,      sg,      ,
-               LANE,     uint32_t,      lane,    )
-{
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    ReplaceParams p = a;
-    if (sg == 0 && lane == 0) {
-        if (p.write == 0) lens[p.nterms] = 0;
-        else {
-            O[0] = (int64_t)p.nterms;
-            ((UKL_GLOBAL uint32_t*)(O + 1 + p.nterms))[p.nterms] = lens[p.nterms];
-        }
-    }
-    if (sg >= p.groups) return;
-    Longs ids = T + 1;
-    UKL_GLOBAL const uint32_t* offs = text_offs(T);
-    UKL_GLOBAL const uint8_t* bytes = text_chars(T);
-    UKL_GLOBAL uint8_t* f = scratch + (uint64_t)sg * 2 * SGW * p.states;
-    UKL_GLOBAL uint32_t* ooffs = (UKL_GLOBAL uint32_t*)(O + 1 + p.nterms);
-    UKL_GLOBAL uint8_t* obytes = (UKL_GLOBAL uint8_t*)(ooffs + p.nterms + 1);
-    Txt z = txt_raw(Z, p.lz);
-    for (uint32_t term = sg; term < p.nterms; term += p.groups) {
-        Txt x = txt_raw(bytes + offs[term], offs[term + 1] - offs[term]);
-        bool write = p.write != 0;
-        uint32_t len = rx_replace_txt(G, x, z, write, obytes + (write ? lens[term] : 0), f, lane __UKL_ARGS);
-        if (lane == 0) {
-            if (write) {
-                O[1 + term] = ids[term];
-                ooffs[term] = lens[term];
-            } else lens[term] = len;
-        }
-    }
-}
-
 // `replace_all` of literal y (not empty; empty: x itself) in x by z, by a SIMD group: each lane tests whether a match
 // starts at its byte (compared a word of eight at a time), the leftmost of a chunk taken, the next looked for past it
 // (matches not overlapping). The replaced text's length; written to o when `write`.
@@ -974,8 +864,9 @@ UKL_INLINE uint64_t pow10_of(uint32_t k) {
 // (keys 0, 1, kind agg[1] & 15) and Y (keys 2, 3, kind agg[1] >> 4): 0 `cat`'s text of X and Y ("." between when X
 // is not empty), 1 `str_concat`'s, 2 `replace_all` of regex G in X by Y, made into the arena (a bump of the group's
 // lane 0; full: the stage's counter word's bit 1, the value -1); 3 a text test of X by table G (P: its states,
-// classes, start), kept as agg[0] bit 8 wants. P[0]: the groups (persistent, a threadgroup each), P[1]: the states a
-// group's scratch holds.
+// classes, start), kept as agg[0] bit 8 wants; 5 the same test of a symbol, its verdict kept in the rolling cache VC
+// (P[5]: the test's id). Symbols are read through the atoms directory D (decision 0478 step 2e); R is unused. P[0]: the
+// groups (persistent, a threadgroup each), P[1]: the states a group's scratch holds.
 DEFINE_KERNEL2(join, row_text,
                ROBUFFER, int64_t,  L,        "[slots * cap_in]",
                ROBUFFER, int64_t,  R,        "[text]",
@@ -987,6 +878,8 @@ DEFINE_KERNEL2(join, row_text,
                ROBUFFER, uint8_t,  G,        "[automata]",
                RWBUFFER, uint8_t,  scratch,  "[groups * 2 * lanes * states]",
                ROBUFFER, uint32_t, P,        "[8]",
+               ROBUFFER, uint8_t,  D,        "[atoms directory]",
+               RWBUFFER, uint8_t,  VC,       "[rolling cache]",
                ROBUFFER, Stage,    s,        "[1]",
                TGID0,    uint32_t, sg,       ,
                LANE,     uint32_t, lane,     )
@@ -998,14 +891,88 @@ DEFINE_KERNEL2(join, row_text,
     UKL_GLOBAL uint8_t* fs = scratch + (uint64_t)sg * 2 * SGW * P[1];
     uint32_t op = s->agg[0] & 15;
     bool want = ((s->agg[0] >> 8) & 1) != 0;
+    if (op == 5) {
+        // A text test of a symbol, its verdict in the one rolling cache VC (decision 0478 step 2d): each lane looks
+        // up a row's, a SIMD group's rows at once; then the group walks table G over each missed symbol's bytes (read
+        // through the atoms directory D), a lane a byte at a time, and keeps the verdict. A value no atom holds
+        // (negative) fails.
+        uint32_t test = P[5];
+        for (uint32_t base = sg * SGW; base < n; base += groups * SGW) {
+            uint32_t row = base + lane;
+            bool has = row < n;
+            int64_t v = has ? key_value(s, L, row, 0) : -1;
+            bool sym = has && v >= 0 && v <= (int64_t)0xffffffffu;
+            uint32_t got = sym ? clif_verdict_get(VC, 0ul, test, (uint32_t)v) : 1u;
+            uint32_t miss = ukl_sg_ballot(sym && got == 0u __UKL_ARGS);
+            while (miss != 0u) {
+                uint32_t l = ukl_ctz32(miss);
+                miss &= miss - 1u;
+                // A missed symbol is an atom's id (below 2^32): shuffled as a word.
+                uint32_t id = ukl_sg_shuffle((uint32_t)v, l __UKL_ARGS);
+                uint32_t len = clif_atoms_len(D, 0ul, id);
+                bool held = len != 0xffffffffu;
+                Txt x = txt_raw(D + (held ? clif_atoms_at(D, 0ul, id) : 0ul), held ? len : 0u);
+                bool ok = held && txt_verdict(G, P[2], P[3], P[4], x, fs, lane __UKL_ARGS);
+                if (lane == 0 && held) clif_verdict_put(VC, 0ul, test, id, ok ? 2u : 1u);
+                if (lane == l) got = held ? (ok ? 2u : 1u) : 3u;
+            }
+            if (has) counts[row] = (uint32_t)((got == 2u) == want);
+            // An atom the directory does not hold: the stage's counter's bit 2, and the stratum runs on the host.
+            if (ukl_sg_ballot(got == 3u __UKL_ARGS) != 0u && lane == 0 && s->counter != NONE) ukl_atomic_or(&counters[s->counter], 4u);
+        }
+        return;
+    }
     for (uint32_t row = sg; row < n; row += groups) {
-        Txt x = txt_of(s, L, row, R, A, 0, s->agg[1] & 15);
+        bool unheld = false;
+        Txt x = txt_of(s, L, row, D, A, 0, s->agg[1] & 15, &unheld);
+        if (unheld) {
+            // A symbol the atoms directory does not hold: `TEXTFN_UNHELD`, the stratum on the host.
+            if (lane == 0) {
+                if (s->counter != NONE) ukl_atomic_or(&counters[s->counter], 4u);
+                V[row] = -1;
+                counts[row] = 0;
+            }
+            continue;
+        }
         if (op == 3) {
             bool v = txt_verdict(G, P[2], P[3], P[4], x, fs, lane __UKL_ARGS);
             if (lane == 0) counts[row] = (uint32_t)(v == want);
             continue;
         }
-        Txt y = txt_of(s, L, row, R, A, 2, s->agg[1] >> 4), z = y;
+        // A text kept by (functions P[5], source symbol key 7) in the rolling cache VC (`ROW_KEPT`, decision 0478
+        // step 2e): one lane looks it up (an entry's offset from VC, what it found in the low bits); a kept text is
+        // copied into the arena.
+        bool keeps = (s->agg[0] & (1u << 9)) != 0;
+        uint32_t ksym = 0;
+        if (keeps) {
+            int64_t kv = key_value(s, L, row, 7);
+            keeps = kv >= 0 && kv <= (int64_t)0xffffffffu;
+            ksym = (uint32_t)kv;
+        }
+        if (keeps) {
+            uint64_t r = 0;
+            if (lane == 0) r = clif_text_find(VC, 0ul, P[5], ksym);
+            r = (uint64_t)ukl_sg_shuffle((uint32_t)r, 0u __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(r >> 32), 0u __UKL_ARGS) << 32);
+            if ((r & 3ul) == 0ul) {
+                UKL_GLOBAL const uint8_t* e = VC + (r & ~3ul);
+                uint32_t len = *(UKL_GLOBAL const uint32_t*)(e + 12) - 16u;
+                uint32_t off = 0;
+                if (lane == 0) off = ukl_atomic_add(A, len);
+                off = ukl_sg_shuffle(off, 0u __UKL_ARGS);
+                bool full = (uint64_t)off + len > ukl_atomic_load(&A[1]);
+                if (!full) {
+                    UKL_GLOBAL uint8_t* o = (UKL_GLOBAL uint8_t*)A + 16 + off;
+                    for (uint32_t i = lane; i < len; i += SGW) o[i] = e[16 + i];
+                }
+                if (lane == 0) {
+                    if (full && s->counter != NONE) ukl_atomic_or(&counters[s->counter], 1u);
+                    V[row] = full ? -1 : arena_value(off, len);
+                    counts[row] = 1;
+                }
+                continue;
+            }
+        }
+        Txt y = txt_of(s, L, row, D, A, 2, s->agg[1] >> 4, &unheld), z = y;
         uint32_t f = (s->agg[0] >> 16) & 255;
         uint32_t lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0, pad = 0;
         uint64_t u = 0;
@@ -1031,8 +998,8 @@ DEFINE_KERNEL2(join, row_text,
             }
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
-            y = txt_of(s, L, row, R, A, 2, 0);
-            z = txt_of(s, L, row, R, A, 4, 0);
+            y = txt_of(s, L, row, D, A, 2, 0, &unheld);
+            z = txt_of(s, L, row, D, A, 4, 0, &unheld);
             len = lit_replace_txt(x, y, z, false, (UKL_GLOBAL uint8_t*)A, lane __UKL_ARGS);
         } else {
             bool high;
@@ -1073,8 +1040,24 @@ DEFINE_KERNEL2(join, row_text,
                 }
             }
         }
+        if (keeps && !full && !unheld && len <= 4096u) {
+            // Made: kept for the next reader. Its bytes in the arena, written by the group's lanes, copied into an
+            // entry taken for them, then completed (another thread finds it pending until then).
+            ukl_sg_barrier();
+            uint64_t r = 0;
+            if (lane == 0) r = clif_text_open(VC, 0ul, P[5], ksym, len);
+            r = (uint64_t)ukl_sg_shuffle((uint32_t)r, 0u __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(r >> 32), 0u __UKL_ARGS) << 32);
+            if ((r & 3ul) == 1ul) {
+                UKL_GLOBAL uint8_t* e = VC + (r & ~3ul);
+                UKL_GLOBAL const uint8_t* o = (UKL_GLOBAL const uint8_t*)A + 16 + off;
+                for (uint32_t i = lane; i < len; i += SGW) e[16 + i] = o[i];
+                ukl_sg_barrier();
+                if (lane == 0) clif_cache_done(VC, 0ul, r & ~3ul);
+            }
+        }
         if (lane == 0) {
             if (full && s->counter != NONE) ukl_atomic_or(&counters[s->counter], 1u);
+            if (unheld && s->counter != NONE) ukl_atomic_or(&counters[s->counter], 4u);
             V[row] = full ? -1 : arena_value(off, len);
             counts[row] = 1;
         }
@@ -1097,66 +1080,9 @@ DEFINE_KERNEL2(join, row_scatter,
     uint32_t at = offsets[t];
     if (offsets[t + 1] <= at || at >= s->cap_out) return;
     for (uint32_t k = 0; k < s->nslots; k++) O[(uint64_t)k * s->cap_out + at] = L[(uint64_t)k * s->cap_in + t];
-    if ((s->agg[0] & 15) != 3) O[(uint64_t)s->bind_slot[0] * s->cap_out + at] = V[t];
-}
-
-// A text function of constant arguments (`TEXTFN_*`: f), once per distinct term (decision 0038's chunked matching):
-// a SIMD group per term, a byte a lane at a time. The kept range of its text (head: to the first "."; dir: to the last
-// "/"; substr, sql_substr, slice: characters counted by sums over the lanes, their first bytes found by prefixes), or
-// its bytes mapped (lower, upper). `lower` of a term past ASCII sets `flag` (Unicode's mapping is the host's). Pass 0
-// counts each term's length into `lens`; after their scan, pass 1 writes O as a text buffer (`DevText`'s).
-typedef struct MapParams { uint32_t nterms; uint32_t groups; uint32_t f; uint32_t write; int64_t n0; int64_t n1; } MapParams;
-UKL_REFLECT_STRUCT(MapParams, nterms, groups, f, write, n0, n1)
-
-DEFINE_KERNEL2(join, text_map,
-               ROBUFFER, int64_t,   T,    "[text]",
-               RWBUFFER, uint32_t,  lens, "[nterms + 1]",
-               RWBUFFER, int64_t,   O,    "[text]",
-               RWBUFFER, uint32_t,  flag, "[1]",
-               ARGS,     MapParams, a,    ,
-               TGID0,    uint32_t,  sg,   ,
-               LANE,     uint32_t,  lane, )
-{
-    // Its parameter block, a private copy (`a` is a constant reference on Metal, and helpers take its address).
-    MapParams p = a;
-    if (sg == 0 && lane == 0) {
-        if (p.write == 0) lens[p.nterms] = 0;
-        else {
-            O[0] = (int64_t)p.nterms;
-            ((UKL_GLOBAL uint32_t*)(O + 1 + p.nterms))[p.nterms] = lens[p.nterms];
-        }
-    }
-    if (sg >= p.groups) return;
-    Longs ids = T + 1;
-    UKL_GLOBAL const uint32_t* offs = text_offs(T);
-    UKL_GLOBAL const uint8_t* bytes = text_chars(T);
-    UKL_GLOBAL uint32_t* ooffs = (UKL_GLOBAL uint32_t*)(O + 1 + p.nterms);
-    UKL_GLOBAL uint8_t* obytes = (UKL_GLOBAL uint8_t*)(ooffs + p.nterms + 1);
-    uint32_t f = p.f;
-    for (uint32_t term = sg; term < p.nterms; term += p.groups) {
-        UKL_GLOBAL const uint8_t* x = bytes + offs[term];
-        uint32_t n = offs[term + 1] - offs[term];
-        uint32_t from, to;
-        bool high;
-        text_range(f, txt_raw(x, n), p.n0, p.n1, lane, &from, &to, &high __UKL_ARGS);
-        if (f == 0 && high && lane == 0 && p.write == 0) ukl_atomic_or(flag, 1u);
-        uint32_t len = to - from;
-        if (p.write == 0) {
-            if (lane == 0) lens[term] = len;
-            continue;
-        }
-        UKL_GLOBAL uint8_t* o = obytes + lens[term];
-        for (uint32_t i = lane; i < len; i += SGW) {
-            uint8_t c = x[from + i];
-            if (f == 0 || f == 8) c = (c >= 'A' && c <= 'Z') ? (uint8_t)(c + 32) : c;
-            else if (f == 9) c = (c >= 'a' && c <= 'z') ? (uint8_t)(c - 32) : c;
-            o[i] = c;
-        }
-        if (lane == 0) {
-            O[1 + term] = ids[term];
-            ooffs[term] = lens[term];
-        }
-    }
+    // A test (a made text's, `ROW_TEST`; a symbol's, `ROW_VERDICT`) binds nothing: its rows pass as they are.
+    uint32_t op = s->agg[0] & 15;
+    if (op != 3 && op != 5) O[(uint64_t)s->bind_slot[0] * s->cap_out + at] = V[t];
 }
 
 // Rows copied (decision 0325 step 5): `n` rows of `ncols` columns (as many as slot `count_slot` of `totals` says, at
@@ -1412,7 +1338,7 @@ UKL_STATIC_ASSERT(sizeof(LatP) == 80, "LatP: size");
 
 // The relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
 // (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`; written through the writer written
-// once, bounded by its chunks (decision 0427).
+// once, bounded by its chunks (decision 0463).
 UKL_INLINE int64_t lat_r(UKL_GLOBAL const uint8_t* R, UKL_PRIVATE const LatP* p, uint32_t row, uint32_t c) {
     return (int64_t)clif_rel_get(R, p->r_at, row, c);
 }

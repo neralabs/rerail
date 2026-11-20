@@ -11,6 +11,9 @@
 //! The index holds, in order, the offset of each structural byte (`{ } [ ] : ,`) and of each
 //! scalar's first byte (a string's opening quote, a number's or a literal's first byte). Each
 //! thread parses with a parser of its own.
+//!
+//! Nothing on MSVC, as `rerail-simdjson-native` (its C++ does not build there).
+#![cfg(not(all(windows, target_env = "msvc")))]
 
 pub use rerail_simdjson_native::{Error, Kernel, implementation, structurals};
 use rerail_simdjson_native::{KEEP, Sink, release_above};
@@ -263,7 +266,7 @@ unsafe extern "C" fn flush_events(sink: *mut Sink) {
     }
 }
 
-/// `src` walked by `kernel` for format 16 (decision 0426): no column is written; each node's event (`EV_OPEN`, its
+/// `src` walked by `kernel` for format 16 (decision 0434): no column is written; each node's event (`EV_OPEN`, its
 /// code id and start; `EV_LEAF`, its code id, start and end; `EV_CLOSE` and its end; three words each) is given to
 /// `on` in preorder, a window of them at a time, with the codes numbered so far. The walk never edits a node it
 /// gave. `jsonc` reads the file as JSONC (`tape_jsonc_with`). The source's SHA-256, or why it has no tape: then `on`
@@ -364,7 +367,7 @@ impl Writer<'_> {
             self.tape.codes.push((kind, field_id, slot >= OBJECT && field != KEY));
         }
         self.tape.code.extend_from_slice(&id.to_le_bytes());
-        if ord as usize % STRIDE == 0 {
+        if (ord as usize).is_multiple_of(STRIDE) {
             self.base = start;
             self.tape.base.extend_from_slice(&start.to_le_bytes());
         }
@@ -522,8 +525,23 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
 mod tests {
     use super::*;
 
+    /// The process's instructions retired so far (macOS: `proc_pid_rusage`), for the measurements: their difference
+    /// over a run on one thread is its count. Zero elsewhere.
+    fn retired() -> u64 {
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: the call writes the structure, which is plain integers.
+            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+            if unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+                return info.ri_instructions;
+            }
+        }
+        0
+    }
+
     /// The kernel a measurement runs: `RERAIL_SIMDJSON_KERNEL` (its `Kernel` name, as `Haswell`), else the
     /// fastest this CPU runs.
+    #[allow(dead_code, reason = "the kernel choice of the measurements, which run by hand (none is in the suite now)")]
     fn kernel_under_test() -> Kernel {
         match std::env::var("RERAIL_SIMDJSON_KERNEL") {
             Ok(name) => *Kernel::ALL.iter().find(|k| format!("{k:?}") == name).expect("a kernel's name"),
@@ -542,6 +560,7 @@ mod tests {
 
     /// The tape's cost alone, for `/usr/bin/time -l`: `RERAIL_TAPE_RUN` is `none` (read the files), `index`
     /// (parse and index) or `tape`, 10 rounds over the repository's `.json` files up to 1 MB.
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with RERAIL_TAPE_RUN"]
     fn tape_cost() {
@@ -583,11 +602,6 @@ mod tests {
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
         let kernel = kernel_under_test();
-        let retired = || {
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-            info.ri_instructions
-        };
         let mut n = 0usize;
         let mut best = u64::MAX;
         for _ in 0..5 {
@@ -699,10 +713,11 @@ mod tests {
                 let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
                 if p.is_dir() && !skip {
                     work.push(p);
-                } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 4 << 20) {
-                    if let Ok(f) = std::fs::read(&p) {
-                        checked += usize::from(same(&f));
-                    }
+                } else if p.extension().is_some_and(|x| x == "json")
+                    && e.metadata().is_ok_and(|m| m.len() <= 4 << 20)
+                    && let Ok(f) = std::fs::read(&p)
+                {
+                    checked += usize::from(same(&f));
                 }
             }
         }
@@ -710,14 +725,10 @@ mod tests {
     }
 
     /// Instructions a node by the document's shape: simdjson's DOM parse, stage 1, and the v9np stage 2.
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with --nocapture"]
     fn shape_costs() {
-        let retired = || {
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-            info.ri_instructions
-        };
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let kernel = kernel_under_test();
         let n = 20_000;

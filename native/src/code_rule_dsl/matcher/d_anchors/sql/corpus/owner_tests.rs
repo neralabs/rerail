@@ -30,7 +30,7 @@ fn one_sql_publication_serves_independent_memberships_and_coexisting_versions() 
         "versions coexist in one physical index"
     );
     assert!(
-        a.prepared_file("a.ts", 1, &new.index_source_digest())
+        a.prepared_file("a.ts", 1, new.index_source_digest())
             .is_none()
     );
     b.remove("a.ts").unwrap();

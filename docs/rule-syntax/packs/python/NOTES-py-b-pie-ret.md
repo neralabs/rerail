@@ -9,12 +9,12 @@ The rules share three new libraries:
 
 | file | lines | what |
 |---|---|---|
-| `lib/python/bugbear.rr` | 135 | calls of builtins and resolved callees, Ruff's `args`/`keywords` shapes (`bb_pos`, `bb_npos`, `bb_nkw`, `bb_kw`, `bb_star`, `bb_kwsplat`), whole expression statements; Ruff's `is_literal_expr`, `is_identifier`, mangled names, hard keywords; mutable and immutable calls (`is_mutable_expr`, `is_immutable_return_type`); except handlers (type, tuple elements, spelled names, handler order) |
-| `lib/python/bugbear-loops.rr` | 119 | the name walks of B007, B020 and B023: Names in a piece of tree, a for target's stored names, a body's names, B020's iterable reading, names a loop rebinds, the closures B023 examines (safe lambdas) and their free reads |
-| `lib/python/flow-return.rr` | 81 | flake8-return's ReturnVisitor: the defs RET checks (not a lone return, not a generator), a def's own returns, `return` / `return None` / a value, each `if`'s first elif/else and its keyword, the first jump of a body, `else_after_jump` (RET505-508), property decorators |
+| `lib/python/bugbear.rerail` | 135 | calls of builtins and resolved callees, Ruff's `args`/`keywords` shapes (`bb_pos`, `bb_npos`, `bb_nkw`, `bb_kw`, `bb_star`, `bb_kwsplat`), whole expression statements; Ruff's `is_literal_expr`, `is_identifier`, mangled names, hard keywords; mutable and immutable calls (`is_mutable_expr`, `is_immutable_return_type`); except handlers (type, tuple elements, spelled names, handler order) |
+| `lib/python/bugbear-loops.rerail` | 119 | the name walks of B007, B020 and B023: Names in a piece of tree, a for target's stored names, a body's names, B020's iterable reading, names a loop rebinds, the closures B023 examines (safe lambdas) and their free reads |
+| `lib/python/flow-return.rerail` | 81 | flake8-return's ReturnVisitor: the defs RET checks (not a lone return, not a generator), a def's own returns, `return` / `return None` / a value, each `if`'s first elif/else and its keyword, the first jump of a body, `else_after_jump` (RET505-508), property decorators |
 
-`lib/python/flow.rr` was already committed (statement order, `always_raises`), so RET's vocabulary is in
-`flow-return.rr` beside it rather than in it.
+`lib/python/flow.rerail` was already committed (statement order, `always_raises`), so RET's vocabulary is in
+`flow-return.rerail` beside it rather than in it.
 
 The 40 rules have 900 lines, comments and directives included: 15 to 41 lines each.
 
@@ -90,7 +90,7 @@ snapshot only.
 - **L4 (PIE796).** Ruff compares values with ComparableExpr. The rule compares a str literal by its value and
   anything else by its source text without whitespace: `1` and `0x1`, `(1)` and `1` inside a larger expression,
   or `("a", 1)` and `('a', 1)`, compare unequal here and equal in Ruff. This should become `cmp_same` from
-  lib/python/compare.rr (the py-ruf batch's structural comparison) once that library lands.
+  lib/python/compare.rerail (the py-ruf batch's structural comparison) once that library lands.
 - **L5 (PIE810).** "The argument is a name bound to a tuple" uses every binding site the name may read
   (python/names' `ref_site`); Ruff uses the binding in force at that point.
 - **L6 (RET).** A `yield` in a nested def's defaults or annotations makes the outer def a generator in Ruff's
@@ -104,7 +104,7 @@ A separate review ran counterexamples against Ruff 0.16.9 (`scratchpad/rev-py-b-
 
 - **RET505-508:** an `else`/`elif` after a comment was missed: tree-sitter makes the comment a child of the
   if statement, so `next_sibling` landed on it. `first_alternative` takes the alternative with the lowest child
-  index; the shared body is `else_after_jump(kw, w, jump)` in flow-return.rr, and each rule is one line.
+  index; the shared body is `else_after_jump(kw, w, jump)` in flow-return.rerail, and each rule is one line.
 - **B020:** Ruff's NameFinder never visits a lambda's bare-name body (`lambda: x`, `lambda: (x)`), walks a
   comprehension body whole (`lambda: [x for _ in y]` reads x), and on leaving a lambda removes its parameter
   names collected before it or in it, not after it (`sorted(x, key=lambda x: x.k)` is not reported,
@@ -135,17 +135,17 @@ A separate review ran counterexamples against Ruff 0.16.9 (`scratchpad/rev-py-b-
    `strlen` counts bytes). Both are per distinct string, not per node.
 3. **Text test, proposed:** `py_identifier(s)` as a built-in text test (`str.isidentifier`, Unicode XID), or a
    `\p{XID_Start}`/`\p{XID_Continue}` class in the regex dialect. It replaces `bb_identifier`'s approximation and
-   upgrade.rr's ASCII `identifier`.
+   upgrade.rerail's ASCII `identifier`.
 
 ## Duplicates to merge
 
 Same meaning, different names, in other batches' new libraries:
 
-| here (bugbear.rr) | there | note |
+| here (bugbear.rerail) | there | note |
 |---|---|---|
-| `bb_keyword(x)` | upgrade.rr `py_keyword(x)` | identical list |
-| `bb_identifier(v)` | upgrade.rr `identifier(x)` | mine accepts non-ASCII (L1), theirs ASCII only |
-| `bb_nkw(c, k)` | upgrade.rr `nkw(c, n)` | both count `**kw` |
-| `bb_kw(c, k, v)` | upgrade.rr `kw_arg(c, x, v)` | mine takes parentheses off v |
-| `bb_star(c)`, `bb_kwsplat(c)` | upgrade.rr `star_arg(c)`, `kwsplat(c)` | |
-| `bb_arg(c, a)`, `bb_pos(c, i, a)` | ruff.rr `call_item(c, a, j)`, upgrade.rr `arg_item`/`arg`; security.rr `pos_arg` | mine counts `*xs` as a positional (Ruff's `args`) and unparens |
+| `bb_keyword(x)` | upgrade.rerail `py_keyword(x)` | identical list |
+| `bb_identifier(v)` | upgrade.rerail `identifier(x)` | mine accepts non-ASCII (L1), theirs ASCII only |
+| `bb_nkw(c, k)` | upgrade.rerail `nkw(c, n)` | both count `**kw` |
+| `bb_kw(c, k, v)` | upgrade.rerail `kw_arg(c, x, v)` | mine takes parentheses off v |
+| `bb_star(c)`, `bb_kwsplat(c)` | upgrade.rerail `star_arg(c)`, `kwsplat(c)` | |
+| `bb_arg(c, a)`, `bb_pos(c, i, a)` | ruff.rerail `call_item(c, a, j)`, upgrade.rerail `arg_item`/`arg`; security.rerail `pos_arg` | mine counts `*xs` as a positional (Ruff's `args`) and unparens |

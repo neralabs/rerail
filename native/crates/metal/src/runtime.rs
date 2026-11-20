@@ -3,6 +3,8 @@ use std::mem::size_of_val;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
 
 use crate::launch;
 
@@ -17,26 +19,77 @@ use crate::launch;
 pub fn metal_buffer_limit() -> usize {
     rerail_accel::budget::metal()
 }
-#[cfg(not(any(test, feature = "test-hooks")))]
-static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
-/// The most `METAL_BUFFER_BYTES` has held.
-#[cfg(not(any(test, feature = "test-hooks")))]
-static METAL_BUFFER_PEAK: AtomicUsize = AtomicUsize::new(0);
+/// The device's state on this machine (decision 0442: the machine's): the pool's ledger and the most it held, and
+/// the allocations' lock. The compiled pipelines are the store of compiled kernels'
+/// (`rerail_accel::gpu::kernels`, decision 0395).
+/// A reservation holds the ledger it charged, so its drop on any thread goes back to it. A test build off macOS has
+/// none of it: its ledgers are its threads' (`test_pool`), and only Metal's driver is weighed under the lock.
+#[cfg(any(target_os = "macos", not(any(test, feature = "test-hooks"))))]
+#[derive(Default)]
+pub(crate) struct DeviceState {
+    /// The pool's ledger and its most (a test build's are its thread's: `test_pool`).
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    pool: Arc<AtomicUsize>,
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    peak: Arc<AtomicUsize>,
+    #[cfg(target_os = "macos")]
+    allocation: Mutex<()>,
+}
+
+#[cfg(any(target_os = "macos", not(any(test, feature = "test-hooks"))))]
+pub(crate) fn state() -> Arc<DeviceState> {
+    rerail_context::machine::<DeviceState>()
+}
 
 /// The pool's ledger: the bytes reserved now.
 #[cfg(not(any(test, feature = "test-hooks")))]
-fn pool() -> &'static AtomicUsize {
-    &METAL_BUFFER_BYTES
+fn pool() -> Arc<AtomicUsize> {
+    Arc::clone(&state().pool)
 }
 
 /// The most the pool's ledger has held.
 #[cfg(not(any(test, feature = "test-hooks")))]
-fn pool_peak() -> &'static AtomicUsize {
-    &METAL_BUFFER_PEAK
+fn pool_peak() -> Arc<AtomicUsize> {
+    Arc::clone(&state().peak)
+}
+
+/// Whether the driver refuses a buffer of `length` more: past the device's largest buffer, or past the OS's working
+/// set for the device (`recommendedMaxWorkingSetSize`) with what the driver holds. Not past the Metal budget: the
+/// driver's figure counts every buffer Metal knows of, the no-copy wraps of the run's host blocks (row blocks, tapes,
+/// journals) with them, which are the host budget's pages, not device memory the budget bounds. Compared with the
+/// budget, a 1-node wave's buffer was refused with 337 MB of a 2 GB budget free (the driver at 3.7 GB, the pool's own
+/// at 1.7 GB; t62, Q203). The budget is the pool's ledger and leases, checked where they are reserved (`acquire`,
+/// `make_room`).
+#[cfg(target_os = "macos")]
+fn driver_refuses(device: &metal::DeviceRef, length: usize) -> bool {
+    let length = length as u64;
+    let driver = driver_bytes(device);
+    if rerail_prof::on() && driver.saturating_add(length) > metal_buffer_limit() as u64 {
+        rerail_prof::count("capacity.driver_past_budget", 1);
+    }
+    length > device.max_buffer_length() || driver.saturating_add(length) > working_set(device)
+}
+
+/// The OS's working set for the device: what it can hold resident at once.
+#[cfg(target_os = "macos")]
+fn working_set(device: &metal::DeviceRef) -> u64 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(bytes) = test_pool::working_set() {
+        return bytes;
+    }
+    device.recommended_max_working_set_size()
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::test_pool;
+/// What the Metal driver has allocated for the device (a test build's: `test_pool::driver_bytes`).
+#[cfg(all(target_os = "macos", not(any(test, feature = "test-hooks"))))]
+fn driver_bytes(device: &metal::DeviceRef) -> u64 {
+    device.current_allocated_size()
+}
+
+#[cfg(all(target_os = "macos", any(test, feature = "test-hooks")))]
+use test_pool::driver_bytes;
 #[cfg(any(test, feature = "test-hooks"))]
 use test_pool::{pool, pool_peak};
 
@@ -66,6 +119,16 @@ pub fn buffer_free() -> usize {
     metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire))
 }
 
+/// The bytes of `metal_buffer_limit()` a reservation can have now (`BufferReservation::acquire`): past the pool's
+/// ledger, the relational leases and reservations (`gpu::shared::bound_bytes`), less nothing for idle buffers, which
+/// room is made of. Sized from `buffer_free` instead, a matcher wave's workspace was three quarters of the budget
+/// while the chunk's row blocks held 275-384 MB of it: refused at every size, split down to one tape, then failed
+/// (Q203). A test's ledger is its thread's: as `acquire`, the pool's leases are not counted there.
+pub fn buffer_room() -> usize {
+    let bound = if cfg!(any(test, feature = "test-hooks")) { 0 } else { rerail_accel::gpu::shared::bound_bytes() };
+    metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire) + bound)
+}
+
 /// The bytes of Metal buffers alive now (their reservations), in MB.
 pub fn reserved_mb() -> usize {
     pool().load(Ordering::Acquire) >> 20
@@ -76,11 +139,12 @@ pub fn peak_mb() -> usize {
     pool_peak().load(Ordering::Acquire) >> 20
 }
 
-/// What the Metal driver says it has allocated for the device, in MB (Metal's count; elsewhere none).
+/// What the Metal driver says it has allocated for the device, in MB: none where nothing opened the device (it is
+/// not opened to read it), and none off macOS (Metal's count).
 pub fn driver_mb() -> usize {
     #[cfg(target_os = "macos")]
     {
-        crate::METAL_DEVICE.as_ref().map_or(0, |device| (device.current_allocated_size() >> 20) as usize)
+        rerail_accel::gpu::shared::opened_device().map_or(0, |device| (device.current_allocated_size() >> 20) as usize)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -95,7 +159,7 @@ pub use buffer_observation::BufferObservation;
 
 struct BufferReservation {
     bytes: usize,
-    ledger: &'static AtomicUsize,
+    ledger: Arc<AtomicUsize>,
     /// Admitted to the tests' weighted bound (`test_pool`).
     #[cfg(any(test, feature = "test-hooks"))]
     admitted: bool,
@@ -104,15 +168,21 @@ struct BufferReservation {
 }
 
 impl BufferReservation {
-    fn acquire(bytes: usize, ledger: &'static AtomicUsize, limit: usize) -> Result<Self, Error> {
+    fn acquire(bytes: usize, ledger: Arc<AtomicUsize>, limit: usize) -> Result<Self, Error> {
         // The device pool's ledger shares the one Metal budget with the pool's live leases (the residency's slabs,
         // the device blocks, relational work: 0266 §16), so a reservation counts them; room is made in the pool's one
         // order (idle buffers, then the residency's least recently used slabs).
-        let pooled = std::ptr::eq(ledger, pool());
+        let pooled = Arc::ptr_eq(&ledger, &pool());
+        // One account (Q203): the pool's leases and the admissions' reservations not yet leased (`bound_bytes`), as
+        // `make_room` counts them; counting the leases alone, a reservation took room a stratum had been admitted to.
+        // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
+        let bound = || if pooled && !cfg!(any(test, feature = "test-hooks")) { rerail_accel::gpu::shared::bound_bytes() } else { 0 };
+        // Drawn from this thread's admission (a wave's workspace, admitted as a stratum's tables are): its room was
+        // made when it was admitted.
+        let drawn = pooled && rerail_accel::gpu::shared::draw_reserved(bytes);
         let take = || {
-            // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
-            let live = if pooled && !cfg!(any(test, feature = "test-hooks")) { rerail_accel::gpu::shared::held_bytes().0 } else { 0 };
-            ledger.try_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| *next + live <= limit))
+            let bound = if drawn { 0 } else { bound() };
+            ledger.try_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| drawn || *next + bound <= limit))
         };
         let previous = take()
             .or_else(|used| if pooled && rerail_accel::gpu::shared::make_room(bytes) { take() } else { Err(used) })
@@ -258,6 +328,19 @@ impl HostMapped {
 
     fn over(region: MappedRegion) -> Result<Self, Error> {
         let device = crate::lane::device()?;
+        // Metal's driver refuses past the OS's working set for the device; the budget is weighed where the
+        // reservation was taken, never against the driver's count (Q203, `driver_refuses`).
+        #[cfg(target_os = "macos")]
+        if let Some(metal) = rerail_accel::gpu::shared::opened_device() {
+            let st = state();
+            let _allocation = st.allocation.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if driver_refuses(metal, region.length) {
+                if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+                    eprintln!("TEMPO_HOST_MAPPED_REJECT bytes={} driver={}", region.length, driver_bytes(metal));
+                }
+                return Err(Error::BackendCapacity);
+            }
+        }
         // SAFETY: the mapping is held with the buffer, and its holder waits for the commands that use it.
         let buffer = unsafe { rerail_device::device::wrap_host_memory(device, region.pointer.as_ptr(), region.length) }.map_err(|e| {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
@@ -310,7 +393,7 @@ pub fn evaluation_scope() -> launch::LaunchScope {
 /// (`rerail_accel::gpu::kernels`, decision 0395).
 pub fn drop_pipelines() {
     rerail_accel::gpu::kernels::release();
-    if let Ok(mut kernels) = crate::block_program::serial::KERNELS.lock() {
+    if let Ok(mut kernels) = crate::block_program::serial::kernels().0.lock() {
         kernels.clear();
     }
 }
@@ -330,6 +413,33 @@ pub fn pipelines_compiled_here() -> usize {
 #[cfg(test)]
 mod memory_budget_tests {
     use super::*;
+
+    /// Q203: the run's host pages wrapped for the device (row blocks, tapes: no-copy buffers) are the host budget's,
+    /// not device memory the Metal budget bounds. With the driver holding them past the budget, a buffer within the
+    /// budget is still given; the driver's figure refuses only past the OS's working set for the device.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn host_pages_wrapped_past_the_budget_leave_the_budgets_buffers() {
+        use metal::MTLResourceOptions;
+        let Some(device) = crate::METAL_DEVICE.as_ref() else { return };
+        test_pool::measure_driver();
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        let len = (metal_buffer_limit() + (64 << 20)).div_ceil(page) * page;
+        // An anonymous mapping, never touched: the host's pages, wrapped as a run's row blocks are.
+        let host = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
+        assert_ne!(host, libc::MAP_FAILED);
+        let wrap = device.new_buffer_with_bytes_no_copy(host.cast_const(), len as u64, MTLResourceOptions::StorageModeShared, None);
+        assert!(driver_bytes(device) > metal_buffer_limit() as u64, "the driver counts the wrap: {} MB", driver_bytes(device) >> 20);
+        let given = HostMapped::zeroed::<u8>(1 << 20);
+        assert!(given.is_ok(), "a 1 MB buffer within the budget, the driver at {} MB of a {} MB budget", driver_bytes(device) >> 20, metal_buffer_limit() >> 20);
+        drop(given);
+        // Past the working set the driver's figure refuses.
+        test_pool::set_working_set(Some(driver_bytes(device) + (1 << 19)));
+        assert_eq!(HostMapped::zeroed::<u8>(1 << 20).err(), Some(Error::BackendCapacity), "past the working set");
+        test_pool::set_working_set(None);
+        drop(wrap);
+        unsafe { libc::munmap(host, len) };
+    }
 
     /// What relational work may still lease counts its own leases (held and idle in the pool), not only the
     /// buffer pool's reservations: a wave of device joins that checks it stops once its leases fill it.
@@ -386,22 +496,22 @@ mod memory_budget_tests {
 
     #[test]
     fn reservations_enforce_aggregate_limit_and_release_on_drop() {
-        static LEDGER: AtomicUsize = AtomicUsize::new(0);
-        let first = BufferReservation::acquire(60, &LEDGER, 100).unwrap();
+        let ledger = Arc::new(AtomicUsize::new(0));
+        let first = BufferReservation::acquire(60, Arc::clone(&ledger), 100).unwrap();
         assert!(matches!(
-            BufferReservation::acquire(41, &LEDGER, 100),
+            BufferReservation::acquire(41, Arc::clone(&ledger), 100),
             Err(Error::BackendCapacity)
         ));
-        let second = BufferReservation::acquire(40, &LEDGER, 100).unwrap();
+        let second = BufferReservation::acquire(40, Arc::clone(&ledger), 100).unwrap();
         assert!(matches!(
-            BufferReservation::acquire(usize::MAX, &LEDGER, 100),
+            BufferReservation::acquire(usize::MAX, Arc::clone(&ledger), 100),
             Err(Error::BackendCapacity)
         ));
-        assert_eq!(LEDGER.load(Ordering::Acquire), 100);
+        assert_eq!(ledger.load(Ordering::Acquire), 100);
         drop(first);
-        let third = BufferReservation::acquire(60, &LEDGER, 100).unwrap();
+        let third = BufferReservation::acquire(60, Arc::clone(&ledger), 100).unwrap();
         drop((second, third));
-        assert_eq!(LEDGER.load(Ordering::Acquire), 0);
+        assert_eq!(ledger.load(Ordering::Acquire), 0);
     }
 
     #[test]

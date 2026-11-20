@@ -59,12 +59,23 @@ pub mod shared {
         pub waiting: QueueRoot,
     }
 
+    static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
+
+    /// The process's device and queue once something opened them (`get`), without opening them: what a report
+    /// of the device's memory reads, so a run that does no device work never opens it to say so.
+    pub fn opened() -> Option<&'static Shared> {
+        SHARED.get().and_then(Option::as_ref)
+    }
+
     /// The process's device and queue: `None` without a device. The CPU's when `RERAIL_GPU=cpu`
     /// (`device::cpu_chosen`), an OpenCL GPU's when `RERAIL_GPU=opencl`, else the target's GPU's.
     pub fn get() -> Option<&'static Shared> {
-        static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
         SHARED
             .get_or_init(|| {
+                // A measurement aid: `RERAIL_DEVICE_TRACE` prints where the process first opens the device.
+                if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+                    eprintln!("RERAIL_DEVICE_TRACE the device opened at:\n{}", std::backtrace::Backtrace::force_capture());
+                }
                 if crate::device::cpu_chosen() {
                     open_cpu()
                 } else if crate::device::opencl_chosen() {

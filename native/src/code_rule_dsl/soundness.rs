@@ -54,8 +54,11 @@ fn optional_outward_captures(
                 names.extend(pattern.defined_vars().into_iter().map(str::to_owned));
             }
         }
-        AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Compare(_) | AstMatcher::Never => {
-        }
+        AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
+        | AstMatcher::Regex(_)
+        | AstMatcher::Compare(_)
+        | AstMatcher::Never => {}
         AstMatcher::Semantic(semantic) => {
             semantic::optional_outward_captures(semantic, under_any, outward, memo, names)
         }
@@ -144,9 +147,11 @@ fn sound(
         // A value reads the node's own text, like a regex; a builtin name is a value only in a
         // file without syntax errors, so an error region cannot hide the binding that shadows it.
         // Arguments read the call's own argument list, inside the witness, as its pattern does.
-        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
-            true
-        }
+        AstMatcher::Pattern(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
+        | AstMatcher::Regex(_)
+        | AstMatcher::Never => true,
         AstMatcher::Semantic(semantic) => {
             semantic::sound(semantic, negated, outside, optional, memo)
         }
@@ -241,7 +246,8 @@ fn utility_sound(
 fn leaves_witness(matcher: &AstMatcher, memo: &mut UtilitySummary<usize, bool>) -> bool {
     match matcher {
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Never => false,

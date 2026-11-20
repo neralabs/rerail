@@ -60,6 +60,9 @@ pub struct DeviceView<'a> {
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub in_place: Option<ViewInPlace>,
+    /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
+    /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
+    pub home: Option<crate::code_rule_dsl::facts::rows::Part>,
 }
 
 /// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in
@@ -232,7 +235,9 @@ pub trait Source: Send + Sync {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
-    /// device reads where they lie (decision 0325 step 3). `None`: the device copies them (`device_view`, `row_at`).
+    /// device reads where they lie (decision 0325 step 3), a probe reads through the relation's own index, and the CPU's
+    /// index of a whole source finds or builds in its block (setfix), on every target. `None`: the device copies them
+    /// (`device_view`, `row_at`).
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None
     }
@@ -272,6 +277,10 @@ pub trait Source: Send + Sync {
     /// stored frame that does not decode). The statement reading it fails with this message rather
     /// than reading the rows as absent.
     fn failure(&self) -> Option<String> {
+        None
+    }
+    /// `failure`, as known now: never makes rows to find it (a reader that read some asks after it read them).
+    fn failed(&self) -> Option<String> {
         None
     }
     fn indexed(&self, column: usize) -> bool;
@@ -315,10 +324,27 @@ pub trait Source: Send + Sync {
     fn sorted_range(&self, _column: usize, _value: i64) -> Option<std::ops::Range<u32>> {
         None
     }
+    /// `sorted_range`, searched from `at` where it can be: a sequence of probes in the key's order (a scan in the
+    /// column's order, the other side of a merge join, decision 0456 K7) reads the column forward once, not a
+    /// search of all of it a probe. `at` is set to the range's start; any value is correct, a wrong one is slower.
+    fn sorted_range_at(&self, column: usize, value: i64, _at: &mut u32) -> Option<std::ops::Range<u32>> {
+        self.sorted_range(column, value)
+    }
     /// Whether `sorted_rows` serves `column`, asked without building its index: a plan choosing among a source's
     /// columns built every candidate's sorted form to ask, where it reads one.
     fn sorts_rows(&self, column: usize) -> bool {
         self.sorted_rows(column, 0).is_some()
+    }
+    /// The columns its rows lie in order on, in turn (a kept relation's canonical order, decision 0456 K7), when
+    /// they do: a scan of its rows is in that order, with no sort.
+    fn order(&self) -> Option<Vec<usize>> {
+        None
+    }
+    /// Whether its rows are a kept relation's, read where they lie in the store's mapped chain (decision 0456 step
+    /// 6b): rows that are work, which a run keeps as it keeps a relation it holds, where a view of an input's columns
+    /// or an index's relation is made again in less than reading it back costs.
+    fn kept(&self) -> bool {
+        false
     }
 }
 
@@ -419,6 +445,29 @@ pub fn plan_signature(sources: &BTreeMap<String, Arc<dyn Source>>) -> u64 {
 #[derive(Default)]
 pub struct Modules {
     bindings: RefCell<HashMap<String, Binding>>,
+    /// The connections it bound tables on (weakly: a closed one's are gone with it).
+    on: RefCell<Vec<std::sync::Weak<ConnData>>>,
+}
+
+/// What this module keeps for one connection (decision 0442: on the connection, `ConnData`), dropped as it closes.
+#[derive(Default)]
+struct OnVtab {
+    /// The tables bound now, by name.
+    bound: parking_lot::Mutex<HashMap<String, Binding>>,
+    /// The tables its last run bound, emptied (`reuse`): their modules stay registered until it closes, and the next
+    /// run's `bind` of a table of the same shape takes one back.
+    registered: parking_lot::Mutex<HashMap<String, Binding>>,
+    /// The views noted on it (`note_view`).
+    views: parking_lot::Mutex<HashMap<String, UnmadeView>>,
+    /// The tables registered on it that no statement has resolved yet (`register`).
+    unresolved: parking_lot::Mutex<std::collections::BTreeSet<String>>,
+    /// Its deferred set-up (`defer_setup`).
+    setup: parking_lot::Mutex<Setup>,
+}
+
+/// What this module keeps for `db` (`OnVtab`).
+fn on(db: &Connection) -> Arc<OnVtab> {
+    connection_data(db).get::<OnVtab>()
 }
 impl Modules {
     /// Binds `source` to the table `name`, registering it on `db` the first time.
@@ -432,7 +481,7 @@ impl Modules {
     /// Keep the same binding cell when SQL rollback revives an earlier table instance.
     pub fn restore_binding(&self,db:&Connection,name:&str,binding:Binding)->Result<()> {
         register(db,name,binding.clone(),true)?;
-        BOUND.lock().insert((connection_scope(db),name.to_owned()),binding.clone());
+        self.bound_on(db).bound.lock().insert(name.to_owned(),binding.clone());
         self.bindings.borrow_mut().insert(name.into(),binding);
         Ok(())
     }
@@ -442,15 +491,15 @@ impl Modules {
             return binding.set(source);
         }
         // A kept connection's table of this shape from its last run (`reuse`): its module is registered still.
-        let at = connection_scope(db);
+        let on = self.bound_on(db);
         let columns = named(name, source.as_ref());
         let shape = (columns.clone(), (0..source.columns().len()).map(|c| source.text_column(c)).collect::<Vec<_>>(), source.writable());
-        let kept = REGISTERED.lock().remove(&(at, name.to_owned()));
+        let kept = on.registered.lock().remove(name);
         // (A writable table's `temp` virtual table is there still: the run's clean-up drops none it binds, and one it
         // drops is no longer kept, `dropped_temp`.)
         if let Some(binding) = kept.filter(|b| (b.schema.columns.clone(), b.schema.text.clone(), b.schema.writable) == shape) {
             binding.set(source)?;
-            BOUND.lock().insert((at, name.to_owned()), binding.clone());
+            on.bound.lock().insert(name.to_owned(), binding.clone());
             bindings.insert(name.into(), binding);
             return Ok(());
         }
@@ -462,9 +511,19 @@ impl Modules {
         };
         register(db, name, binding.clone(), restored)?;
         if name == "node" { for register in node_tables() { register(db, &binding)?; } demand::register(db)?; }
-        BOUND.lock().insert((connection_scope(db), name.to_owned()), binding.clone());
+        on.bound.lock().insert(name.to_owned(), binding.clone());
         bindings.insert(name.into(), binding);
         Ok(())
+    }
+    /// `db`'s `OnVtab`, with `db` noted as a connection this binds on.
+    fn bound_on(&self, db: &Connection) -> Arc<OnVtab> {
+        let data = connection_data(db);
+        let mut on = self.on.borrow_mut();
+        if !on.iter().any(|w| std::ptr::eq(w.as_ptr(), Arc::as_ptr(&data))) {
+            on.retain(|w| w.strong_count() > 0);
+            on.push(Arc::downgrade(&data));
+        }
+        data.get::<OnVtab>()
     }
     pub fn get(&self, name: &str) -> Option<Binding> {
         self.bindings.borrow().get(name).cloned()
@@ -476,7 +535,7 @@ impl Modules {
             db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{}",quote(name)))?;
         }
         self.bindings.borrow_mut().remove(name);
-        BOUND.lock().remove(&(unsafe { db.handle() } as usize, name.to_owned()));
+        on(db).bound.lock().remove(name);
         let name = CString::new(name).map_err(|_| failure("invalid native module name"))?;
         // SAFETY: the live connection owns its module. SQLite releases its auxiliary
         // data and keeps any already-open cursor's Arc ownership intact.
@@ -495,14 +554,17 @@ impl Drop for Modules {
         if mine.is_empty(){return;}
         // Their modules stay registered on the connection, which may still read them: a later run on it takes one
         // of the same shape back (`REGISTERED`; `reuse` empties them first).
-        let mut registered = REGISTERED.lock();
-        BOUND.lock().retain(|(at,name),binding| {
-            let owned = mine.get(name).is_some_and(|owned|Arc::ptr_eq(&owned.current,&binding.current));
-            if owned {
-                registered.insert((*at, name.clone()), binding.clone());
-            }
-            !owned
-        });
+        for data in self.on.get_mut().iter().filter_map(std::sync::Weak::upgrade) {
+            let Some(on) = data.get_if_any::<OnVtab>() else { continue };
+            let mut registered = on.registered.lock();
+            on.bound.lock().retain(|name,binding| {
+                let owned = mine.get(name).is_some_and(|owned|Arc::ptr_eq(&owned.current,&binding.current));
+                if owned {
+                    registered.insert(name.clone(), binding.clone());
+                }
+                !owned
+            });
+        }
     }
 }
 
@@ -514,18 +576,53 @@ impl Drop for Modules {
 pub struct Db<'a> {
     at: usize,
     conn: Option<&'a Connection>,
+    /// What the engine keeps for the connection (`connection_data`): alive while the connection is borrowed, or, for
+    /// a detached one, while its holder keeps it (`detached`).
+    data: DataRef,
 }
+
+/// A pointer to a connection's `ConnData`, the `Arc`'s.
+#[derive(Clone, Copy)]
+struct DataRef(std::ptr::NonNull<ConnData>);
+// SAFETY: `ConnData` is `Send + Sync`; the pointer is read only while the data lives (`Db`).
+unsafe impl Send for DataRef {}
+unsafe impl Sync for DataRef {}
 
 impl<'a> Db<'a> {
     pub fn of(conn: &'a Connection) -> Self {
-        Db { at: connection_scope(conn), conn: Some(conn) }
+        // SAFETY: the client data of the open `conn` (`client`), alive while `conn` is borrowed.
+        let client = unsafe { &*client(conn) };
+        Db { at: client.0, conn: Some(conn), data: DataRef(std::ptr::NonNull::from(&*client.1)) }
     }
-    /// The scope alone: a job off the connection's thread.
-    pub fn detached(self) -> Db<'static> {
-        Db { at: self.at, conn: None }
+    /// The scope alone, for a job off the connection's thread, and the connection's data, which the job holds while
+    /// it runs.
+    ///
+    /// # Safety
+    /// The returned `Db` is used only while the returned `Arc` lives.
+    pub unsafe fn detached(self) -> (Db<'static>, Arc<ConnData>) {
+        // SAFETY: `data` points into an `Arc` alive while `self` is (the connection's client data).
+        let keep = unsafe {
+            Arc::increment_strong_count(self.data.0.as_ptr());
+            Arc::from_raw(self.data.0.as_ptr())
+        };
+        (Db { at: self.at, conn: None, data: self.data }, keep)
     }
     pub fn at(&self) -> usize {
         self.at
+    }
+    /// The connection's data, held weakly (a plan step's, made before its run binds what it reads).
+    pub fn data_weak(&self) -> std::sync::Weak<ConnData> {
+        // SAFETY: `data` points into an `Arc` alive while `self` may be used.
+        let held = unsafe {
+            Arc::increment_strong_count(self.data.0.as_ptr());
+            Arc::from_raw(self.data.0.as_ptr())
+        };
+        Arc::downgrade(&held)
+    }
+    /// What the engine keeps for the connection (decision 0442).
+    pub fn data(&self) -> &ConnData {
+        // SAFETY: alive while `self` may be used (`Db::of`, `Db::detached`).
+        unsafe { self.data.0.as_ref() }
     }
     pub fn sql(&self) -> rusqlite::Result<&'a Connection> {
         self.conn.ok_or_else(|| rusqlite::Error::ModuleError("SQL read by a stratum off the run's thread (decision 0113): it has only its connection's scope".into()))
@@ -588,36 +685,78 @@ fn node_tables() -> &'static [NodeTables] {
     NODE_TABLES.get().map_or(&[], Vec::as_slice)
 }
 
-pub fn connection_scope(db: &Connection) -> usize {
-    const KEY: &std::ffi::CStr = c"rerail.connection-scope";
-    // Each close bumps the generation: a thread's last connection with its hook set (`LAST`) is known to have it
-    // until some connection closes (whose address the next one may take), without asking SQLite on every lookup.
+/// What the engine keeps for one connection (decision 0442): its own values, by type, each made as it is first asked
+/// for (`get`). It lives in the connection's client data and is dropped as the connection closes, after `Forget::scope`
+/// has taken what it frees elsewhere. A job off the connection's thread holds it through its [`Db`].
+#[derive(Default)]
+pub struct ConnData {
+    values: parking_lot::Mutex<HashMap<std::any::TypeId, Arc<dyn std::any::Any + Send + Sync>>>,
+}
+
+impl ConnData {
+    /// The connection's value of type `T`, made the first time it is asked for.
+    pub fn get<T: Default + Send + Sync + 'static>(&self) -> Arc<T> {
+        let v = Arc::clone(self.values.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| Arc::new(T::default())));
+        v.downcast::<T>().expect("a connection's value's type is its key")
+    }
+    /// The connection's value of type `T`, if it was made.
+    pub fn get_if_any<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        let v = self.values.lock().get(&std::any::TypeId::of::<T>()).cloned()?;
+        v.downcast::<T>().ok()
+    }
+}
+
+/// The connection's client data: its scope (its handle when first seen) and its values.
+type Client = (usize, Arc<ConnData>);
+
+const KEY: &std::ffi::CStr = c"rerail.connection-scope";
+
+/// The client data of `db`, set the first time it is asked for: the connection's scope, and its values.
+fn client(db: &Connection) -> *const Client {
+    // Each close bumps the generation: a thread's last connection with its client data set (`LAST`) is known to have
+    // it until some connection closes (whose address the next one may take), without asking SQLite on every lookup.
     static CLOSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    thread_local!(static LAST: std::cell::Cell<(usize, u64)> = const { std::cell::Cell::new((0, u64::MAX)) });
-    unsafe extern "C" fn closed(at: *mut std::os::raw::c_void) {
+    thread_local!(static LAST: std::cell::Cell<(usize, u64, usize)> = const { std::cell::Cell::new((0, u64::MAX, 0)) });
+    unsafe extern "C" fn closed(client: *mut std::os::raw::c_void) {
         CLOSES.fetch_add(1, Ordering::AcqRel);
-        let at = at as usize;
-        BOUND.lock().retain(|(h, _), _| *h != at);
-        REGISTERED.lock().retain(|(h, _), _| *h != at);
-        VIEWS.lock().retain(|(h, _), _| *h != at);
-        UNRESOLVED.lock().remove(&at);
-        SETUP.lock().remove(&at);
+        // SAFETY: the pointer `client` set, given back once as the connection closes.
+        let client = unsafe { Box::from_raw(client.cast::<Client>()) };
+        let at = client.0;
         if let Some(forget) = FORGET.get() {
-            (forget.scope)(at);
+            (forget.scope)(at, &client.1);
         }
+        drop(client);
     }
     let handle = unsafe { db.handle() };
     let closes = CLOSES.load(Ordering::Acquire);
-    if LAST.get() == (handle as usize, closes) {
-        return handle as usize;
+    let last = LAST.get();
+    if (last.0, last.1) == (handle as usize, closes) {
+        return last.2 as *const Client;
     }
-    unsafe {
-        if rusqlite::ffi::sqlite3_get_clientdata(handle, KEY.as_ptr()).is_null() {
-            rusqlite::ffi::sqlite3_set_clientdata(handle, KEY.as_ptr(), handle.cast(), Some(closed));
+    // SAFETY: `handle` is `db`'s, open; the client data set here is a `Client` box, freed by `closed` alone.
+    let client = unsafe {
+        let mut p = rusqlite::ffi::sqlite3_get_clientdata(handle, KEY.as_ptr());
+        if p.is_null() {
+            p = Box::into_raw(Box::new((handle as usize, Arc::new(ConnData::default())) as Client)).cast();
+            rusqlite::ffi::sqlite3_set_clientdata(handle, KEY.as_ptr(), p, Some(closed));
         }
-    }
-    LAST.set((handle as usize, closes));
-    handle as usize
+        p as *const Client
+    };
+    LAST.set((handle as usize, closes, client as usize));
+    client
+}
+
+/// The scope of what the engine keeps for `db`: its handle when first seen, reused by a connection opened after it
+/// closes, whose own values (`connection_data`) start empty.
+pub fn connection_scope(db: &Connection) -> usize {
+    // SAFETY: the client data of the open `db` (`client`), freed only as it closes.
+    unsafe { (*client(db)).0 }
+}
+
+/// What the engine keeps for `db` (decision 0442): its own values, dropped as it closes.
+pub fn connection_data(db: &Connection) -> Arc<ConnData> {
+    // SAFETY: as `connection_scope`.
+    unsafe { Arc::clone(&(*client(db)).1) }
 }
 
 /// A view of one bound input that a run read in place and did not make in SQL (`plan`): the input, the input's columns
@@ -629,21 +768,18 @@ pub struct UnmadeView {
     pub eqs: Vec<(usize, i64)>,
 }
 
-/// The tables a kept connection's last run bound, emptied (`reuse`), by connection and name: their modules stay
-/// registered until the connection closes, and the next run's `bind` of a table of the same shape takes one back.
-static REGISTERED: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
 
 /// Whether `name` is a table of `db`'s connection's own, bound now or kept for a later bind (`REGISTERED`): its
 /// `temp` virtual table (a writable one's) is the binding's, not what an earlier run left. (A run binds some of
 /// its tables as it goes: the kept strata's `load` hook.)
 pub fn is_bound(db: &Connection, name: &str) -> bool {
-    let key = (connection_scope(db), name.to_owned());
-    BOUND.lock().contains_key(&key) || REGISTERED.lock().contains_key(&key)
+    let on = on(db);
+    on.bound.lock().contains_key(name) || on.registered.lock().contains_key(name)
 }
 
 /// A run dropped `temp.<name>` on `db`'s connection: a kept binding of that name is gone with it.
 pub fn dropped_temp(db: &Connection, name: &str) {
-    REGISTERED.lock().remove(&(connection_scope(db), name.to_owned()));
+    on(db).registered.lock().remove(name);
 }
 
 /// A connection's deferred set-up (`defer_setup`): the statements still to run, each with what undoes it, and what
@@ -653,30 +789,28 @@ struct Setup {
     pending: Vec<(String, Option<String>)>,
     undo: Vec<String>,
 }
-/// Set-up statements a connection runs only once SQL is about to run on it (`defer_setup`, `setup_now`).
-static SETUP: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, Setup>>> = std::sync::LazyLock::new(Default::default);
 
 /// Defers `sql` (statements, run as one batch) until SQL first runs on `db`'s connection (`setup_now`): a run whose
 /// readers are native runs none of it.
 pub fn defer_setup(db: &Connection, sql: &str) {
-    SETUP.lock().entry(connection_scope(db)).or_default().pending.push((sql.to_owned(), None));
+    on(db).setup.lock().pending.push((sql.to_owned(), None));
 }
 
 /// `defer_setup` of a run's own set-up on a connection a later run reuses: once run, `undo` undoes it when the
 /// connection is reused (`reuse`; `DETACH x` for an `ATTACH`).
 pub fn defer_setup_undone(db: &Connection, sql: &str, undo: &str) {
-    SETUP.lock().entry(connection_scope(db)).or_default().pending.push((sql.to_owned(), Some(undo.to_owned())));
+    on(db).setup.lock().pending.push((sql.to_owned(), Some(undo.to_owned())));
 }
 
 /// Runs `db`'s deferred set-up (`defer_setup`), once: before a statement that needs it (a table made, a table of
 /// `x` written).
 pub fn setup_now(db: &Connection) -> Result<()> {
-    let at = connection_scope(db);
-    let pending = std::mem::take(&mut SETUP.lock().entry(at).or_default().pending);
+    let on = on(db);
+    let pending = std::mem::take(&mut on.setup.lock().pending);
     for (sql, undo) in pending {
         db.execute_batch(&sql)?;
         if let Some(undo) = undo {
-            SETUP.lock().entry(at).or_default().undo.push(undo);
+            on.setup.lock().undo.push(undo);
         }
     }
     Ok(())
@@ -688,30 +822,25 @@ pub fn setup_now(db: &Connection) -> Result<()> {
 /// `bind` (`REGISTERED`). What the connection itself holds stays: its functions and modules, its symbols, which of
 /// its tables SQL has yet to connect (`UNRESOLVED`), what its runs left in SQL (`plan::Left`, which the next run drops).
 pub fn reuse(db: &Connection) -> Result<()> {
-    let at = connection_scope(db);
-    let undo = SETUP.lock().remove(&at).map(|s| s.undo).unwrap_or_default();
+    let on = on(db);
+    let undo = std::mem::take(&mut *on.setup.lock()).undo;
     for sql in undo.iter().rev() {
         db.execute_batch(sql)?;
     }
     // SQLite keeps each module's binding until the connection closes: the last run's sources are let go, its tables
     // left empty (a `Modules` may drop while its connection still reads, so this is the connection's next run's).
     // The next run's `bind` takes a table of the same shape back (`REGISTERED`): its module stays registered.
-    let mut registered = REGISTERED.lock();
-    BOUND.lock().retain(|(h, name), binding| {
-        if *h == at {
-            registered.insert((at, name.clone()), binding.clone());
-        }
-        *h != at
-    });
-    for ((h, _), binding) in registered.iter() {
-        if *h == at {
-            binding.clear();
-        }
+    let mut registered = on.registered.lock();
+    for (name, binding) in std::mem::take(&mut *on.bound.lock()) {
+        registered.insert(name, binding);
+    }
+    for binding in registered.values() {
+        binding.clear();
     }
     drop(registered);
-    VIEWS.lock().retain(|(h, _), _| *h != at);
+    on.views.lock().clear();
     if let Some(forget) = FORGET.get() {
-        (forget.engine)(at);
+        (forget.engine)(&connection_data(db));
     }
     Ok(())
 }
@@ -719,8 +848,8 @@ pub fn reuse(db: &Connection) -> Result<()> {
 /// What the evaluator keeps per connection, dropped with it: `scope` when the connection closes (its symbols,
 /// paths and plans with its relations), `engine` when a run reuses it (its relations and components alone).
 pub struct Forget {
-    pub scope: fn(usize),
-    pub engine: fn(usize),
+    pub scope: fn(usize, &ConnData),
+    pub engine: fn(&ConnData),
 }
 
 static FORGET: std::sync::OnceLock<Forget> = std::sync::OnceLock::new();
@@ -731,37 +860,35 @@ pub fn install_forget(forget: Forget) {
 }
 
 /// The tables registered on each connection that no statement has resolved yet (`register`).
-static UNRESOLVED: std::sync::LazyLock<parking_lot::Mutex<HashMap<usize, std::collections::BTreeSet<String>>>> = std::sync::LazyLock::new(Default::default);
 
 /// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
 /// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).
 pub fn resolve_tables(db: &Connection) -> Result<()> {
-    let names = UNRESOLVED.lock().remove(&connection_scope(db)).unwrap_or_default();
+    let on = on(db);
+    let names = std::mem::take(&mut *on.unresolved.lock());
     for name in names {
-        if BOUND.lock().contains_key(&(connection_scope(db), name.clone())) {
+        if on.bound.lock().contains_key(&name) {
             db.prepare(&format!("SELECT * FROM {}", quote(&name)))?;
         }
     }
     Ok(())
 }
 
-static VIEWS: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), UnmadeView>>> = std::sync::LazyLock::new(Default::default);
 
 /// Records `view` as the view `name` on `db`'s connection, until the connection closes or `forget_views`.
 pub(crate) fn note_view(db: &Connection, name: &str, view: UnmadeView) {
-    VIEWS.lock().insert((connection_scope(db), name.to_owned()), view);
+    on(db).views.lock().insert(name.to_owned(), view);
 }
 
 /// Drops the views noted on `db`'s connection: a run starts with none.
 pub fn forget_views(db: &Connection) {
-    let at = connection_scope(db);
-    VIEWS.lock().retain(|(h, _), _| *h != at);
+    on(db).views.lock().clear();
 }
 
 /// The rows of the noted view `name` (`note_view`), read from its bound input: each once, as SQL's view gives them
 /// (a set), column by column.
 pub fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vec<i64>>> {
-    let view = VIEWS.lock().get(&(connection_scope(db), name.to_owned())).cloned()?;
+    let view = on(db).views.lock().get(name).cloned()?;
     let src = bound_source(db, &view.base)?;
     let mut rows: Vec<Vec<i64>> = src.filter_eq(&view.eqs).into_iter().map(|id| view.cols.iter().map(|&c| src.value(id as usize, c)).collect()).collect();
     rows.sort_unstable();
@@ -775,28 +902,25 @@ pub fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vec<i64>>> {
     Some(columns)
 }
 
-static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
-
 /// The source bound now to the table `name` on `db`'s connection, if one is.
 pub fn bound_source(db: impl Scoped, name: &str) -> Option<Arc<dyn Source>> {
-    BOUND.lock().get(&(db.db().at(), name.to_owned())).map(Binding::current)
+    bound_source_in(db.db().data(), name)
 }
 
-/// `bound_source` by the connection's scope (`Scoped::at`), for a callback that holds the scope, not the connection.
-pub fn bound_source_at(at: usize, name: &str) -> Option<Arc<dyn Source>> {
-    BOUND.lock().get(&(at, name.to_owned())).map(Binding::current)
+/// `bound_source` by the connection's data (`connection_data`), for a callback that holds it, not the connection.
+pub fn bound_source_in(data: &ConnData, name: &str) -> Option<Arc<dyn Source>> {
+    data.get_if_any::<OnVtab>()?.bound.lock().get(name).map(Binding::current)
 }
 
 /// Rebind through the existing cell so its owning Modules and prepared cursors agree.
 pub fn replace_bound_source(db:&Connection,name:&str,source:Arc<dyn Source>)->Result<bool>{
-    let binding=BOUND.lock().get(&(unsafe{db.handle()} as usize,name.to_owned())).cloned();
+    let binding=on(db).bound.lock().get(name).cloned();
     if let Some(binding)=binding{binding.set(source)?;Ok(true)}else{Ok(false)}
 }
 
 /// SQL cursor work, by bound input. Snapshot differences attribute fused query work to its leaves.
 pub fn counters(db:&Connection)->BTreeMap<String,[u64;4]> {
-    let scope=unsafe{db.handle()} as usize;
-    BOUND.lock().iter().filter(|((s,_),_)|*s==scope).map(|((_,name),b)|(name.clone(),[b.stats.scans.load(Ordering::Relaxed),b.stats.batches.load(Ordering::Relaxed),b.stats.candidates.load(Ordering::Relaxed),b.stats.columns.load(Ordering::Relaxed)])).collect()
+    on(db).bound.lock().iter().map(|(name,b)|(name.clone(),[b.stats.scans.load(Ordering::Relaxed),b.stats.batches.load(Ordering::Relaxed),b.stats.candidates.load(Ordering::Relaxed),b.stats.columns.load(Ordering::Relaxed)])).collect()
 }
 
 #[repr(C)]
@@ -826,7 +950,7 @@ fn register(db: &Connection, name: &str, binding: Binding, restored:bool) -> Res
     }
     // xConnect is resolved before an authored-query authorizer is installed (`resolve_tables`), not here: a run whose
     // readers are native prepares no statement over its tables.
-    UNRESOLVED.lock().entry(connection_scope(db)).or_default().insert(name.to_owned());
+    on(db).unresolved.lock().insert(name.to_owned());
     Ok(())
     })();
     if result.is_err() {
@@ -1104,11 +1228,10 @@ struct Cursor {
 impl Cursor {
     fn start_stream(&mut self) {
         if !self.cache_rows||self.direct.is_some() {return;}
-        if let Some(rows)=&self.selected {
-            if rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
+        if let Some(rows)=&self.selected
+            && rows.len()>128&&rows.windows(2).all(|w|w[1]==w[0]+1) {
                 self.range=rows[0]..rows[rows.len()-1]+1;self.selected=None;
             }
-        }
         if self.selected.is_none()&&self.range.len()>128 {
             self.stream=self.source.row_stream(self.range.clone(),self.reverse);
             if let Some(stream)=&mut self.stream {self.stream_row=stream.next();}
@@ -1346,6 +1469,9 @@ pub struct Relation {
     /// Every row's id in order, made when a column pushed in order is first probed for a slice of its rows
     /// (`sorted_rows`): such a column's rows of one value are consecutive, and need no index of their own.
     identity: OnceLock<Vec<u32>>,
+    /// Rows a later relation goes on from (`grown`, decision 0431 §6): frozen when they are written into their block,
+    /// so that one takes their writer and its rows follow these in the same block relation.
+    grows: bool,
 }
 struct ColumnIndex {
     rows: Vec<u32>,
@@ -1367,7 +1493,59 @@ impl Relation {
             indexes: columns.iter().map(|_| OnceLock::new()).collect(),
             ordered: columns.iter().map(|_| Some(0)).collect(),
             identity: OnceLock::new(),
+            grows: false,
         }
+    }
+
+    /// This relation as one a later relation goes on from (`grown`): its rows frozen in their block (`Rows::freeze`),
+    /// now if they are written there, else when they are.
+    pub fn growable(mut self) -> Self {
+        self.grows = true;
+        if let Some(cells) = self.cells.take() {
+            let _ = self.cells.set(cells.freeze(self.rows));
+        }
+        self
+    }
+
+    /// These rows and then `more`'s, as a batch grows by a round's documents (decision 0431 §6): this relation's rows
+    /// shared, not rewritten (`Rows::shared`: their writer taken, so the rows that follow go on in the same block
+    /// relation, which the device binds whole), and `more`'s written after them. This relation still reads its own
+    /// rows (a prefix), as the round before read them. Its indexes are made again, over all the rows, when probed.
+    pub fn grown(&self, more: Relation) -> Relation {
+        assert_eq!(self.columns, more.columns, "a relation grown by rows of other columns");
+        let k = self.columns.len();
+        let base = self.cells();
+        let mut r = Relation {
+            columns: self.columns.clone(),
+            staged: Default::default(),
+            rows: self.rows,
+            cells: OnceLock::from(base.shared(self.rows)),
+            indexes: self.columns.iter().map(|_| OnceLock::new()).collect(),
+            ordered: self.ordered.clone(),
+            identity: OnceLock::new(),
+            grows: true,
+        };
+        let Relation { staged, cells, rows, .. } = more;
+        match cells.into_inner() {
+            Some(cells) => {
+                let mut row = vec![0; k];
+                for i in 0..rows as u32 {
+                    row.iter_mut().enumerate().for_each(|(c, v)| *v = cells.get(i, c));
+                    r.push(&row);
+                }
+            }
+            None => staged.into_inner().unwrap_or_else(|e| e.into_inner()).chunks_exact(k).for_each(|row| r.push(row)),
+        }
+        let cells = r.cells.take().expect("the grown rows");
+        let _ = r.cells.set(cells.freeze(r.rows));
+        r
+    }
+    /// A relation of `rows`, staged (`push`), not yet written into a block: rows a relation that goes on from another
+    /// writes once, past that one's (`grown`: a tape value's rows admitted inside a chunk's fixpoint, decision 0431 §8).
+    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>) -> Self {
+        let mut r = Relation::new(columns);
+        rows.for_each(|row| r.push(&row));
+        r
     }
     /// A relation of `rows`: written straight into its block, at their number, when the iterator knows it exactly
     /// (no staging, no growth or move); else staged, as `push` stages them.
@@ -1417,7 +1595,7 @@ impl Relation {
             let mut cells = super::rows::Rows::living(self.columns.len(), super::rows::Life::Source);
             cells.reserve(staged.len());
             cells.extend_from_slice(&staged);
-            cells
+            if self.grows { cells.freeze(self.rows) } else { cells }
         })
     }
     fn index(&self, column: usize) -> &ColumnIndex {
@@ -1462,9 +1640,8 @@ impl Relation {
         // The first position whose value is not `below` (ascending): the fence's entry past it bounds the rows to
         // search to one fence's span.
         // `RERAIL_FENCE=off`: every row searched, as before (to measure the fence).
-        static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_FENCE").is_ok_and(|v| v == "off"));
         let first = |below: &dyn Fn(i64) -> bool| -> usize {
-            if *OFF {
+            if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_FENCE").is_ok_and(|v| v == "off")) {
                 return index.rows.partition_point(|&r| below(self.value(r as usize, column)));
             }
             let j = index.fence.partition_point(|&k| below(k));

@@ -5,8 +5,8 @@ and ran it on every counterexample below. The rules share two libraries:
 
 | file | lines | what |
 |---|---|---|
-| `lib/python/security.rr` | 234 | Bandit's view of a file: a call's qualified name, its arguments and their literals, the imports seen so far, the blacklist test (B001), catch-all handlers, the process-starting functions |
-| `lib/python/security-blacklist.rr` | 120 | generated: the B3xx call lists and the B4xx import lists, 110 rows |
+| `lib/python/security.rerail` | 234 | Bandit's view of a file: a call's qualified name, its arguments and their literals, the imports seen so far, the blacklist test (B001), catch-all handlers, the process-starting functions |
+| `lib/python/security-blacklist.rerail` | 120 | generated: the B3xx call lists and the B4xx import lists, 110 rows |
 | `packs/python/gen-bandit-blacklist.py`, `check-bandit-blacklist.py` | | regenerate the table from the JSON; check it against the JSON (round trip) and, with `--bandit DIR`, against Bandit's `blacklists/*.py` |
 
 `check-bandit-blacklist.py --bandit …/site-packages/bandit` reports `round trip: 20 call lists, 13 import lists,
@@ -73,7 +73,7 @@ The total is 1,007 lines, comments and directives included.
 | `bandit-b615-huggingface-unsafe-download` | 52 | 17 / 0 / 0 | - |
 | `bandit-b702-use-of-mako-templates` | 17 | 3 / 0 / 0 | D16 |
 
-## How Bandit reads a file (lib/python/security.rr)
+## How Bandit reads a file (lib/python/security.rerail)
 
 Bandit does not resolve names. Its tests read one view of the file (`core/context.py`, `node_visitor.py`,
 `utils.get_call_name`), and the library reproduces that view:
@@ -210,8 +210,8 @@ Each counterexample was run through Bandit 1.9.4.
    the assignment of an unused `_` column.
 2. **Bitwise operators.** Soufflé's `band`/`bor`/`bxor` are not accepted by `site/check_rr.py` ("unbound band")
    or by rrlab's `lower.py`. B103 tests bits by arithmetic, `(m / 2) % 2 = 1`. I propose accepting the bitwise
-   words in both, since core.rr says the language is Soufflé.
-3. **`ast.rr`'s `str_const`** depends on `str_part`, which rrlab leaves empty. The library reads `value` and
+   words in both, since core.rerail says the language is Soufflé.
+3. **`ast.rerail`'s `str_const`** depends on `str_part`, which rrlab leaves empty. The library reads `value` and
    `strprefix` directly (`literal`, `string_kind`). No change is needed if the engine provides `str_part`.
 4. **Report line and suppression node from different places.** Bandit reports some findings on a keyword
    value's line and reads `# nosec` over the call's lines. I propose an optional suppression column:

@@ -27,9 +27,13 @@ import sys
 import threading
 import time
 
-CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
+# The checkout's: the installed copy of this script runs for every checkout (the farm hands a
+# checkout's own copy to it), told which.
+CHECKOUT = os.environ.get("RERAIL_FARM_CHECKOUT") or os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
 # The installed farm, the one every worktree's compiles use (scripts/build/farm/setup).
 SHARE = os.path.expanduser("~/.local/share/rerail-farm")
+# How long a session waits for this checkout's copy on a host, while other commands run from it.
+COPY_WAIT = 540
 if not os.path.exists(os.path.join(SHARE, "farm.py")):
     sys.exit("live-test-remote: the farm is not installed (scripts/build/farm/setup); run `relax test --live` here instead")
 sys.path.insert(0, SHARE)
@@ -118,7 +122,29 @@ def main(argv):
             reasons = [f"{h['name']}: {farm.health(h).get('why')}" for h in farm.hosts() if h.get("enabled", True)]
             sys.exit("live-test-remote: no usable host" + (f" ({'; '.join(reasons)})" if reasons else "")
                      + "; run `relax test --live` here instead")
-        host = hosts[0]["name"]
+        names = [h["name"] for h in hosts]
+    else:
+        names = [host]
+    # The session sends each save into this checkout's copy on the host: it takes the copy alone, on
+    # the first host where no command of this checkout runs from it (`farm.CopyUse`), waiting at most
+    # COPY_WAIT for one.
+    use, said, began = None, False, time.time()
+    while True:
+        for name in names:
+            use = farm.CopyUse(name, CHECKOUT, "", alone=True)
+            if use.held:
+                host = name
+                break
+            use.release()
+        if use.held:
+            break
+        if time.time() - began > COPY_WAIT:
+            sys.exit(f"live-test-remote: this checkout's copy on {', '.join(names)} is still in use by its other commands "
+                     f"after {COPY_WAIT} s; run `relax test --live` here, or start this again once they end")
+        if not said:
+            print(f"live-test-remote: this checkout's other commands run from its copy on {', '.join(names)}: waiting for one to end", flush=True)
+            said = True
+        time.sleep(2)
     entry = next((h for h in farm.hosts() if h["name"] == host), {})
     linux = farm.host_os(entry) == "linux"
     if linux and not os.path.exists(linux_relax):
@@ -136,6 +162,7 @@ def main(argv):
     started = time.time()
     roots = [(CHECKOUT, "checkout")] + ([(os.path.realpath(std), "tree")] if std else [])
     t = send(host, files=[relax], roots=roots, verify=True)
+    use.sent()
     print(f"live-test-remote: {host}{' (Linux: a Linux run)' if linux else ''}: checkout, Relax sent ({t.get('files')} files, {t.get('sync')} s)", flush=True)
 
     # As AGENTS.md runs Relax here: every checkout's runs on the host share one run dir, capped.
@@ -159,8 +186,20 @@ def main(argv):
     passed = [None]
 
     def show():
+        # A failed test's section (`---- NAME stdout ----` to the blank line after it): its panic's
+        # message and place, an assertion's left and right. Only the lines naming a panic were
+        # shown before, and a test's difference had to be printed by the test itself.
+        failure = False
         for line in proc.stdout:
-            if line.startswith("testverdict"):
+            if line.startswith("---- ") and line.rstrip().endswith(" stdout ----"):
+                failure = True
+            if failure:
+                print(line.rstrip(), flush=True)
+                failure = line.strip() != "" or line.startswith("---- ")
+                continue
+            if line.startswith("test ") and line.rstrip().endswith("FAILED"):
+                print(line.rstrip(), flush=True)
+            elif line.startswith("testverdict"):
                 since = f" ({time.time() - pushed[0]:.1f} s after the save)" if pushed[0] else \
                     f" ({time.time() - started:.0f} s after the start)"
                 print(line.rstrip() + since, flush=True)

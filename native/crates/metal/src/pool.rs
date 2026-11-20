@@ -51,14 +51,16 @@ impl Block {
     }
 }
 
-static MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static MADE_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The blocks made on this machine's device, and their bytes (decision 0442: the machine's).
+#[derive(Default)]
+struct Made(std::sync::atomic::AtomicUsize, std::sync::atomic::AtomicUsize);
 
 /// The blocks made so far, and their bytes: a warm run makes none (each is a new buffer, every
 /// page faulted in by the host).
 pub fn made() -> (usize, usize) {
     use std::sync::atomic::Ordering::Relaxed;
-    (MADE.load(Relaxed), MADE_BYTES.load(Relaxed))
+    let made = rerail_context::machine::<Made>();
+    (made.0.load(Relaxed), made.1.load(Relaxed))
 }
 
 /// A block of at least `bytes`, its contents whatever its last lease left.
@@ -73,8 +75,9 @@ pub fn lease(bytes: usize) -> Result<Block, Error> {
     let made = lease.fresh();
     if made {
         let length = lease.length() as usize;
-        MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        MADE_BYTES.fetch_add(length, std::sync::atomic::Ordering::Relaxed);
+        let counted = rerail_context::machine::<Made>();
+        counted.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        counted.1.fetch_add(length, std::sync::atomic::Ordering::Relaxed);
         // Every page written once: backed now, not on the device's first touch.
         // SAFETY: `length` bytes of a new buffer, this lease's alone.
         unsafe { std::ptr::write_bytes(lease.host(), 0, length) };

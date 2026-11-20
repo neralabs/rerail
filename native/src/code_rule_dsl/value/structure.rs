@@ -2,7 +2,6 @@
 //! (`Equality`), each language's by its own rules (`ValueRules::structure`: Python's is `python_structure`,
 //! as Ruff compares; PHP's `php_structure`).
 
-
 /// Which of Ruff's equalities a comparison applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Equality {

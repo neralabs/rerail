@@ -513,6 +513,11 @@
       (to_amode flags (stack_addr slot offset1) offset2)
       (stackslot_amode slot offset1 offset2))
 
+;; A base that is the pinned register (rerail's patch): it is read in place, as
+;; `rsp` is, not moved out to a register of its own first.
+(rule 3 (to_amode flags (get_pinned_reg) offset)
+        (Amode.ImmReg offset (preg_to_reg (preg_pinned)) flags))
+
 ;; Same as `to_amode`, except that the base address is computed via the addition
 ;; of the two `Value` arguments provided.
 ;;

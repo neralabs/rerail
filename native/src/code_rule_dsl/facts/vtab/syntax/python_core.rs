@@ -1,4 +1,4 @@
-//! Python's reading of its core.rr facts (`core_rr::DialectFacts`): its strings decoded as CPython decodes them,
+//! Python's reading of its core.rerail facts (`core_rr::DialectFacts`): its strings decoded as CPython decodes them,
 //! its syntax verdict CPython's grammar's, and its strings' constant parts.
 
 use super::core_rr::DialectFacts;

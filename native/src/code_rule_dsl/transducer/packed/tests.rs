@@ -2279,7 +2279,7 @@
     fn benchmark_three_ast_grep_paths() {
         let root = PathBuf::from(
             std::env::var("TEMPO_TRANSDUCER_CORPUS")
-                .unwrap_or_else(|_| "../../nera-data-layer".into()),
+                .unwrap_or_else(|_| "../../data-layer".into()),
         );
         let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
             .ok()
@@ -2404,7 +2404,7 @@
         let ms = |duration: Duration| duration.as_secs_f64() * 1000.0;
         let report = json!({
             "benchmark": "tempo-fixed-word-transducer-v1",
-            "corpus": fs::canonicalize(&root).unwrap(),
+            "corpus": dunce::canonicalize(&root).unwrap(),
             "files": paths.len(), "sourceBytes": source_bytes, "patterns": names,
             "matches": expected.len(), "orderedRangeSha256": digest,
             "iterations": iterations,
@@ -2996,7 +2996,7 @@
     fn benchmark_fts_search_index() {
         let root = PathBuf::from(
             std::env::var("TEMPO_TRANSDUCER_CORPUS")
-                .unwrap_or_else(|_| "../../nera-data-layer".into()),
+                .unwrap_or_else(|_| "../../data-layer".into()),
         );
         let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
             .ok()
@@ -3076,7 +3076,7 @@
         #[allow(unused_mut)]
         let mut report = json!({
             "benchmark": "tempo-contentless-fts-search-index-v1",
-            "corpus": fs::canonicalize(&root).unwrap(),
+            "corpus": dunce::canonicalize(&root).unwrap(),
             "files": paths.len(),
             "sourceBytes": source_bytes,
             "nodes": nodes,
@@ -3141,7 +3141,7 @@
     fn benchmark_anchored_cpu_and_gpu_anchor_scan() {
         let root = PathBuf::from(
             std::env::var("TEMPO_TRANSDUCER_CORPUS")
-                .unwrap_or_else(|_| "../../nera-data-layer".into()),
+                .unwrap_or_else(|_| "../../data-layer".into()),
         );
         let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
             .ok()
@@ -3281,6 +3281,6 @@
         }
         let gpu_fused_terminal = median(gpu_fused_terminal);
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-        let report = json!({"benchmark":"tempo-anchored-transducer-and-anchor-scan-v5","corpus":fs::canonicalize(&root).unwrap(),"files":paths.len(),"sourceBytes":source_bytes,"patterns":names,"matches":expected.len(),"orderedRangeSha256":digest_ranges(&expected),"iterations":iterations,"cpuAnchorBuildMs":ms(anchor_time),"prepareMs":{"gpuAnchorScan":ms(gpu_anchor_prepare)},"compileMs":{"cpuJit":ms(cpu_compile)},"medianMs":{"cpuUnanchored":ms(medians[0]),"cpuInterpreted":ms(medians[1]),"cpuJit":ms(medians[2]),"gpuAnchorScanWarm":ms(medians[3])},"gpuAnchorProfile":{"dispatchAndWaitMs":ms(gpu_anchor_dispatch),"reconstructionMs":ms(gpu_anchor_reconstruction),"fusedTerminalMs":ms(gpu_fused_terminal),"sparseHitCount":gpu_anchor_hits},"anchorSpeedup":ms(medians[0])/ms(medians[1]),"speedupVsCpuInterpreted":{"cpuJit":ms(medians[1])/ms(medians[2])}});
+        let report = json!({"benchmark":"tempo-anchored-transducer-and-anchor-scan-v5","corpus":dunce::canonicalize(&root).unwrap(),"files":paths.len(),"sourceBytes":source_bytes,"patterns":names,"matches":expected.len(),"orderedRangeSha256":digest_ranges(&expected),"iterations":iterations,"cpuAnchorBuildMs":ms(anchor_time),"prepareMs":{"gpuAnchorScan":ms(gpu_anchor_prepare)},"compileMs":{"cpuJit":ms(cpu_compile)},"medianMs":{"cpuUnanchored":ms(medians[0]),"cpuInterpreted":ms(medians[1]),"cpuJit":ms(medians[2]),"gpuAnchorScanWarm":ms(medians[3])},"gpuAnchorProfile":{"dispatchAndWaitMs":ms(gpu_anchor_dispatch),"reconstructionMs":ms(gpu_anchor_reconstruction),"fusedTerminalMs":ms(gpu_fused_terminal),"sparseHitCount":gpu_anchor_hits},"anchorSpeedup":ms(medians[0])/ms(medians[1]),"speedupVsCpuInterpreted":{"cpuJit":ms(medians[1])/ms(medians[2])}});
         println!("TRANSDUCER_BACKEND_BENCHMARK={report}");
     }

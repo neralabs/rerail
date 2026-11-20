@@ -47,13 +47,16 @@ fn device(need: &Need) -> Result<Block, String> {
     Err(format!("a device block of {} bytes with no device", need.bytes))
 }
 
-/// The host blocks made, while they live (their extents; a dropped block's is gone).
-static HOST: std::sync::Mutex<Vec<std::sync::Weak<rerail_blocks::block::Extent>>> = std::sync::Mutex::new(Vec::new());
+/// The host blocks made, while they live (their extents; a dropped block's is gone): the machine's memory account
+/// (decision 0442).
+#[derive(Default)]
+struct Host(std::sync::Mutex<Vec<std::sync::Weak<rerail_blocks::block::Extent>>>);
 
 /// A host block for `need`, counted.
 fn host(need: &Need) -> Block {
     let b = rerail_blocks::alloc::shaped(Block::anon(need.kind, rerail_blocks::alloc::bytes_of(need)), need);
-    let mut live = HOST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let host = rerail_context::machine::<Host>();
+    let mut live = host.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     live.retain(|e| e.strong_count() > 0);
     live.push(b.meter());
     b
@@ -66,7 +69,8 @@ pub fn zeroed_bytes() -> u64 {
 
 /// The host blocks live now: bytes used in them, and of those the bytes their free lists hold.
 pub fn host_held() -> (usize, usize) {
-    let mut live = HOST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let host = rerail_context::machine::<Host>();
+    let mut live = host.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     live.retain(|e| e.strong_count() > 0);
     live.iter().filter_map(std::sync::Weak::upgrade).fold((0, 0), |(u, f), e| {
         (u + e.top.load(std::sync::atomic::Ordering::Relaxed), f + e.free.load(std::sync::atomic::Ordering::Relaxed))
@@ -108,7 +112,8 @@ mod tests {
         let may = policy(&need(Writes::Churn, Device::May)).unwrap();
         assert!(may.has_free_list());
         assert!(!may.in_slab(), "host memory, though the budget has room");
-        // The process's device, whatever its backend (decision 0440 step C).
+        // The process's device, whatever its backend (decision 0440 step C); the pool is macOS's.
+        #[cfg(all(feature = "gpu", target_os = "macos"))]
         if let Some(layer) = crate::gpu::shared::layer() {
             assert!(must.unwrap().in_slab(), "a device block is a slab");
             let at = may.try_alloc_chunk(3 << 20, 1 << 14).unwrap();
@@ -130,6 +135,7 @@ mod tests {
         assert!(!host.in_slab());
         let page = rerail_blocks::block::PAGE;
         assert_eq!(host.reserved(), (40usize << 10).max(rerail_blocks::alloc::EXACT_MIN).div_ceil(page) * page, "its need, in whole pages");
+        #[cfg(all(feature = "gpu", target_os = "macos"))]
         if crate::gpu::shared::layer().is_some() {
             let b = policy(&exact(Device::Must)).unwrap();
             assert!(b.in_slab(), "a pooled buffer");

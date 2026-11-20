@@ -9,7 +9,7 @@
 //! - `up`, the projection's parent of each local id (`Projected::up`, `NONE` above the root and an anchor);
 //! - each node's `start`, `end`, `kind` (the tape's atom) and `field`, by local id, read off the tape through its API
 //!   (0293) when the chunk is made: an interim, until the device's kernels read the tape in the chunk (0293 step 5);
-//! - `core.rr`'s places (`Shape::Core`'s `Loc` views: `line`, `end_line`, `col`, `docof`), added on a `Loc` view's
+//! - `core.rerail`'s places (`Shape::Core`'s `Loc` views: `line`, `end_line`, `col`, `docof`), added on a `Loc` view's
 //!   first device read (`fill_locs`): the document's first row in them, its spans past its nodes (tokens, the whole
 //!   text, lines and end points, as `Projected::span` gives them) and its line starts (`core_rr::Lines`).
 //!
@@ -31,6 +31,8 @@ structure! {
     /// One document of a batch's chunk.
     pub struct ChunkDoc {
         pub key: u32,
+        /// The key of the file it is part of (decision 0431 §4, `Projected::file`): `docof`'s.
+        pub file: u32,
         pub tag: u32,
         /// Nodes (local ids), and the first row of the document in `node` (also `core_node`'s), `child` and `field`.
         pub nodes: u32,
@@ -43,6 +45,8 @@ structure! {
         /// The `Loc` views' first row of the document, and its rows there (nodes, then spans): `fill_locs`.
         pub loc_row: u32,
         pub locs: u32,
+        /// To the spans' 8-byte alignment.
+        pub pad: u32,
         pub core: Span<u32>,
         pub low: Span<u32>,
         pub ord: Span<u32>,
@@ -85,7 +89,7 @@ pub const VIEW_FIELD: u32 = 2;
 pub const VIEW_CORE: u32 = 3;
 // 4 was a kind-set axis read whole, its pairs copied into the chunk and made ids here. Its solve writes a relation of
 // ids of its own now (decision 0353 step 5), read where it lies; the number stays unused, so the others keep theirs.
-/// `core.rr`'s places of nodes and spans (`View::Loc`): their first line, last line, start column and document.
+/// `core.rerail`'s places of nodes and spans (`View::Loc`): their first line, last line, start column and document.
 pub const VIEW_LOC_LINE: u32 = 5;
 pub const VIEW_LOC_END: u32 = 6;
 pub const VIEW_LOC_COL: u32 = 7;
@@ -153,7 +157,7 @@ pub struct ViewsInPlace {
     pub buffers: Vec<rerail_device::device::Buffer>,
     /// Whether every document's lines are in a slab (`LineTable::placed`), so the `line` view is read in place too.
     pub lines: bool,
-    /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, core.rr's
+    /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, core.rerail's
     /// lines in the batch's block), so the `Loc` views are read in place too.
     pub locs: bool,
     /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`), which every
@@ -186,21 +190,73 @@ pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsIn
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
+    build_dir(&chunk.block, &docs_of(batch, [0; 9]))
+}
+
+/// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct DirDoc<'a> {
+    p: &'a Arc<super::Projected>,
+    dialect: &'a super::Dialect,
+    rows: [u32; 9],
+}
+
+/// `batch`'s documents in a directory, each view's rows past `past` of that view.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn docs_of(batch: &Batch, past: [u32; 9]) -> Vec<DirDoc<'_>> {
+    let (nodes, children, fields, locs) = (batch.offsets(View::Node), batch.offsets(View::Child), batch.offsets(View::Field), batch.offsets(View::Loc(Place::Line)));
+    batch
+        .docs
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let (n, loc) = (nodes[i] as u32, locs.get(i).map_or(0, |&r| r as u32));
+            let own = [n, children[i] as u32, fields[i] as u32, n, n, loc, loc, loc, loc];
+            DirDoc { p, dialect: &batch.dialects[p.tag], rows: std::array::from_fn(|v| past[v] + own[v]) }
+        })
+        .collect()
+}
+
+/// Each view's rows of `batch` (`VIEWS`' order).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn rows_of(batch: &Batch) -> [u32; 9] {
+    let last = |v: View| batch.offsets(v).last().map_or(0, |&r| r as u32);
+    let (n, loc) = (last(View::Node), last(View::Loc(Place::Line)));
+    [n, last(View::Child), last(View::Field), n, n, loc, loc, loc, loc]
+}
+
+/// The views' directory of a chunk's batch and the tape values admitted inside its fixpoint (decision 0431 §8,
+/// `values::Layered`): the batch's documents, then each value's batch's, each view's rows of a value past those
+/// before it, as a layered source numbers them. Every document is in the batch's block: `None` where one is not, or
+/// a tape is not where the device reads it.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> {
+    let mut docs = docs_of(batch, [0; 9]);
+    let mut past = rows_of(batch);
+    for v in values {
+        docs.extend(docs_of(v, past));
+        let more = rows_of(v);
+        past = std::array::from_fn(|k| past[k] + more[k]);
+    }
+    build_dir(&batch.block, &docs)
+}
+
+/// The directory of `docs`, made in `b` (`ViewsInPlace`): each one's entry, tape and lines where the device reads them.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     use rerail_clif::view_reads::{ViewDir, ViewRow};
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
     let device = crate::code_rule_dsl::tape::placed::device()?;
-    let b = &chunk.block;
-    let n = batch.docs.len();
+    let n = docs.len();
     let rows: *mut ViewRow = b.alloc_t(n.max(1));
     let dir: *mut ViewDir = b.alloc_t(1);
     let mut slabs: Vec<rerail_device::device::Buffer> = Vec::new();
     let mut entries = Vec::with_capacity(n);
     let mut lines = true;
-    let loc_rows = batch.offsets(View::Loc(Place::Line));
     // The 16z documents' rows, their blocks and their largest block's entry: their cache made after the rows.
     let (mut zrows, mut zblocks, mut zentry) = (Vec::new(), 0usize, 0usize);
-    let mut locs = batch.docs.iter().all(|p| p.extra.is_some());
-    for (i, p) in batch.docs.iter().enumerate() {
+    let mut locs = docs.iter().all(|d| d.p.extra.is_some());
+    for (i, &DirDoc { p, dialect, rows: first_rows }) in docs.iter().enumerate() {
         // Each refusal counted by why: what step 4b (16z laid out apart) and the loads not yet placed leave.
         let refused = |why: &'static str| {
             crate::code_rule_dsl::prof::count(why, 1);
@@ -209,9 +265,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
         if !Arc::ptr_eq(p.block(), b) {
             return refused("views.refused.block");
         }
-        let first = batch.nodes[i] as u32;
-        let loc = loc_rows.get(i).map_or(0, |&r| r as u32);
-        let mut row = ViewRow { rows: [first, batch.children[i] as u32, batch.fields[i] as u32, first, first, loc, loc, loc, loc], ..Default::default() };
+        let mut row = ViewRow { rows: first_rows, ..Default::default() };
         if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(b, p).is_none() {
             // Why, by the guest's placement where it has one.
             let why = match p.extra.as_ref().and_then(|x| x.host.as_ref()).map(|(_, place)| place) {
@@ -267,7 +321,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
                 }
                 None => {}
             }
-            let entry = super::view_docs::ViewEntry::new(b, p, &batch.dialects[p.tag]);
+            let entry = super::view_docs::ViewEntry::new(b, p, dialect);
             row.entry = b.offset_of(entry.desc()) as u64;
             row.tape = address;
             row.view = view;
@@ -365,7 +419,7 @@ fn made_in_order<T: Copy>(b: &Block, span: *const Span<T>, n: usize, values: imp
 // copy (0353 step 4): the node columns (`core`, `up`, `ord`, `fielded`, `start`, `end`, `kind`, `field`), the canonical codes
 // and the projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
 pub fn build(batch: &Batch) -> Chunk {
-    static COLUMNS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(3, "4", "the chunk's node columns and codes (device_chunk::build)");
+    const COLUMNS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(3, "4", "the chunk's node columns and codes (device_chunk::build)");
     COLUMNS.time(|| in_block(&batch.block, || build_in(batch)))
 }
 
@@ -395,6 +449,7 @@ fn build_in(batch: &Batch) -> Chunk {
         unsafe {
             let d = docs.add(i);
             (*d).key = p.key;
+            (*d).file = p.file;
             (*d).tag = u32::from(p.tag);
             (*d).nodes = p.len();
             (*d).node_row = batch.nodes[i] as u32;
@@ -464,7 +519,7 @@ fn build_in(batch: &Batch) -> Chunk {
 // copy (0353 step 4): the facts' line starts copied into the chunk, for a batch whose `line` view is made (its tapes
 // not on the device). It goes with the made views: the views' reads read the lines where `LineTable::placed` put them.
 pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
-    static LINES: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the facts' line starts put into the chunk (fill_lines)");
+    const LINES: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the facts' line starts put into the chunk (fill_lines)");
     *chunk.lines.get_or_init(|| LINES.time(|| in_block(&chunk.block, || {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the facts' lines in the chunk block".into());
         let b = &chunk.block;
@@ -488,15 +543,15 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
 
 /// Puts the `Loc` views' arrays into `batch`'s chunk, once: each document's first row in them, its spans past its
 /// nodes and its line starts; a guest's places too (decision 0055: its host's lines, through its placement), as the
-/// host finds them. False when a document has no places (no `core.rr` extra) or the block cannot hold them: the views
+/// host finds them. False when a document has no places (no `core.rerail` extra) or the block cannot hold them: the views
 /// are then made on the host. A batch with a guest was refused, and its views read on the host for an upload (28 MB
 /// on posthog/hogql).
 // copy (0353 step 4): the line starts and the spans past the nodes copied into the chunk for the `Loc` views. It goes:
 // the views' reads read the lines in place, and the spans where they are written once (Q216).
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
-    static LOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the Loc views' lines and spans put into the chunk (fill_locs)");
+    const LOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the Loc views' lines and spans put into the chunk (fill_locs)");
     *chunk.locs.get_or_init(|| LOCS.time(|| in_block(&chunk.block, || {
-        let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rr's places in the chunk block".into());
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rerail's places in the chunk block".into());
         if batch.docs.iter().any(|p| p.extra.is_none()) {
             return false;
         }

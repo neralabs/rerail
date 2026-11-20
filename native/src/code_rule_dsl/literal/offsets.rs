@@ -61,7 +61,6 @@ pub enum Decode {
     NotString,
 }
 
-
 pub fn push(decoded: &mut Decoded, c: char, start: usize, end: usize) {
     decoded.spans.push(Span {
         at: decoded.text.len() as u32,
@@ -70,7 +69,5 @@ pub fn push(decoded: &mut Decoded, c: char, start: usize, end: usize) {
     });
     decoded.text.push(c);
 }
-
-
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -1,5 +1,4 @@
 use super::publication::{AFTER_PUBLICATION_READ_HOOK, BEFORE_RELATIONSHIP_WRITE_HOOK};
-use super::read_cache::CacheKey;
 use super::reclamation::{
     EXECUTED_COLLECT_SQL, STORE_ABSOLUTE_LIMIT, STORE_HARD_LIMIT, STORE_SOFT_LIMIT, capacity_state,
 };
@@ -11,10 +10,10 @@ use rusqlite::limits::Limit;
 use rusqlite::params;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::io::Cursor;
+use std::time::Duration;
+use super::object_segments::CODEC_RAW;
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
 
 fn temporary_database(label: &str) -> TemporaryDatabase {
     TemporaryDatabase::new(&format!("rerail-content-store-{label}"))
@@ -22,9 +21,12 @@ fn temporary_database(label: &str) -> TemporaryDatabase {
 
 /// A store on a fresh temporary database. Bind the path to a name (`_path`, never `_`): dropping
 /// it removes the database.
+/// A test's store. It releases an ended workspace at the next pass, as before decision 0450 step 3: these tests pin
+/// collection's steps, and `an_ended_workspace_is_aged_and_released_oldest_first` the ageing.
 pub(super) fn store(label: &str) -> (TemporaryDatabase, ContentStore) {
     let path = temporary_database(label);
     let store = ContentStore::open(&path).unwrap();
+    store.set_session_ageing(super::Ageing { bytes: 0, backstop_secs: 0 });
     (path, store)
 }
 
@@ -40,8 +42,8 @@ fn a_test_store_leaves_no_files_behind() {
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
-        // The database, its WAL and its shared-memory file.
-        assert_eq!(files.len(), 3, "{files:?}");
+        // The database, its WAL and its shared-memory file, and the segments the source is in.
+        assert_eq!(files.len(), 4, "{files:?}");
         folder
     };
     // Windows cannot remove a file this process holds open, so there the folder stays when the
@@ -293,8 +295,8 @@ fn bulk_sources_preserve_hashes_bounds_duplicates_and_typed_query_batches() {
     assert_eq!(warm, sources);
     assert_eq!(
         executed.load(Ordering::Relaxed),
-        3,
-        "warm immutable source frames need no SQL"
+        6,
+        "a read again reads the rows again: the store keeps no copies, the bytes are in their segments"
     );
     assert!(store.get_sources_by_hash_bulk(&requests, 1).is_err());
     assert!(
@@ -314,7 +316,7 @@ fn bulk_sources_preserve_hashes_bounds_duplicates_and_typed_query_batches() {
 }
 
 #[test]
-fn bulk_tapes_validate_frames_deduplicate_and_preserve_cache_status() {
+fn bulk_tapes_validate_frames_and_deduplicate() {
     let (_path, store) = store("bulk-tapes");
     let source = store.put_source(b"source", &[]).unwrap();
     let first = store.put_tape(source, 1, 1, 1, b"first tape").unwrap();
@@ -323,10 +325,8 @@ fn bulk_tapes_validate_frames_deduplicate_and_preserve_cache_status() {
         .get_tapes_bulk(&[first, second, first, TapeId(i64::MAX)])
         .unwrap();
     assert_eq!(loaded.len(), 2);
-    assert_eq!(&**loaded[&first].0, b"first tape");
-    assert_eq!(&**loaded[&second].0, b"second tape");
-    let cached = store.get_tapes_bulk(&[first, second]).unwrap();
-    assert!(cached.values().all(|(_, hit)| *hit));
+    assert_eq!(&**loaded[&first], b"first tape");
+    assert_eq!(&**loaded[&second], b"second tape");
     assert!(store.get_tapes_bulk(&[]).unwrap().is_empty());
 }
 
@@ -472,7 +472,6 @@ fn release_memory_drops_process_local_read_caches() {
     assert_eq!(&*store.get_source(source).unwrap(), b"source");
     assert_eq!(&**store.get_tape(tape).unwrap(), b"tape");
     store.release_memory().unwrap();
-    assert!(store.decompressed_cache.lock().unwrap().is_empty());
     assert!(store.local_result_cache.lock().unwrap().is_empty());
 }
 
@@ -512,42 +511,29 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
         tape
     );
     assert_eq!(&**store.get_tape(tape).unwrap(), b"compact tape");
-    {
-        let cache = store.decompressed_cache.lock().unwrap();
-        assert!(cache.contains(CacheKey::Source(HashKey::sha256(b"print('hello')\n"))));
-        assert!(cache.contains(CacheKey::Tape(HashKey::tape_identity(HashKey::sha256(b"print('hello')\n"), b"compact tape"))));
-    }
     // Another source with the same tape bytes (a named-only tape holds no text) has its own tape.
     let other = store.put_source(b"print('world')\n", &[]).unwrap();
     let other_tape = store.put_tape(other, 1, 45, 1, b"compact tape").unwrap();
     assert_ne!(other_tape, tape);
-    assert_eq!(store.tape_by_source(other, 1, 45, 1).unwrap(), Some(other_tape));
+    assert_eq!(
+        store.tape_by_source(other, 1, 45, 1).unwrap(),
+        Some(other_tape)
+    );
     {
         let connection = store.connection.lock().unwrap();
-        let source_frame: (i64, Vec<u8>) = connection
-            .query_row(
-                "SELECT codec_id,frame FROM source_objects WHERE source_id=?1",
-                [first.0],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        let tape_frame: (i64, Vec<u8>) = connection
-            .query_row(
-                "SELECT codec_id,frame FROM tape_objects WHERE tape_id=?1",
-                [tape.0],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(source_frame.0, CODEC_ZSTD);
-        assert_eq!(tape_frame.0, CODEC_ZSTD);
-        assert_eq!(
-            zstd::stream::decode_all(Cursor::new(source_frame.1)).unwrap(),
-            b"print('hello')\n"
-        );
-        assert_eq!(
-            zstd::stream::decode_all(Cursor::new(tape_frame.1)).unwrap(),
-            b"compact tape"
-        );
+        // No row holds an object's bytes: each names its range in a segment, raw (floor 7).
+        for (table, id, len) in [("source_objects", first.0, 15), ("tape_objects", tape.0, 12)] {
+            let key = if table == "source_objects" { "source_id" } else { "tape_id" };
+            let (codec, frame, seg, seg_len): (i64, Vec<u8>, i64, i64) = connection
+                .query_row(
+                    &format!("SELECT codec_id,frame,seg,seg_len FROM {table} WHERE {key}=?1"),
+                    [id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+            assert_eq!((codec, frame.len(), seg_len), (CODEC_RAW, 0, len), "{table}");
+            assert!(seg > 0, "{table}: in a segment");
+        }
     }
     assert!(matches!(
         store.put_tape(first, 1, 45, 1, b"different tape"),
@@ -707,8 +693,8 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
     assert_eq!(result.reconciliation_passes, 2);
     assert!(result.data_statements <= 20);
     assert!(result.max_data_statements_per_pass <= 10);
-    assert_eq!(result.compressed_sources, 2);
-    assert_eq!(result.compressed_tapes, 1);
+    assert_eq!(result.written_sources, 2);
+    assert_eq!(result.written_tapes, 1);
     assert_eq!(result.files.len(), 2);
     assert_eq!(
         store.get_source(result.files[0].source).unwrap(),
@@ -729,23 +715,21 @@ fn overlay_publication_replaces_payload_and_candidates_atomically() {
     assert_eq!(reused.reused_tapes, 1);
     assert_eq!(reused.reconciliation_passes, 1);
     assert!(reused.max_data_statements_per_pass <= 10);
-    assert_eq!(reused.compressed_sources, 0);
-    assert_eq!(reused.compressed_tapes, 0);
-    let (codec, frame): (i64, Vec<u8>) = store
+    assert_eq!(reused.written_sources, 0);
+    assert_eq!(reused.written_tapes, 0);
+    // Each object is in a segment, as it is: no row holds its bytes (floor 7).
+    let (codec, frame, seg, seg_len): (i64, Vec<u8>, i64, i64) = store
         .connection
         .lock()
         .unwrap()
         .query_row(
-            "SELECT codec_id,frame FROM source_objects WHERE source_id=?1",
+            "SELECT codec_id,frame,seg,seg_len FROM source_objects WHERE source_id=?1",
             [result.files[0].source.0],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .unwrap();
-    assert_eq!(codec, CODEC_ZSTD);
-    assert_eq!(
-        zstd::stream::decode_all(Cursor::new(frame)).unwrap(),
-        b"x = 2\n"
-    );
+    assert_eq!((codec, frame.len(), seg_len), (CODEC_RAW, 0, 6));
+    assert!(seg > 0);
 }
 
 #[test]
@@ -778,8 +762,7 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
                     clause: format!("check-{index}"),
                 },
                 context: HashKey::sha256(format!("bulk-context-{}", index % 2).as_bytes()),
-                raw_length: bytes.len(),
-                frame: zstd::stream::encode_all(Cursor::new(bytes), 3).unwrap(),
+                bytes: bytes.to_vec(),
             }
         })
         .collect::<Vec<_>>();
@@ -805,7 +788,7 @@ fn local_results_publish_across_sqlite_variable_limit_chunks() {
             )
             .unwrap()
             .into_iter()
-            .map(|result| (result.candidate.clause, result.bytes))
+            .map(|result| (result.candidate.clause, result.bytes.to_vec()))
             .collect::<Vec<_>>();
         restored.sort();
         let mut expected = (0..12)
@@ -866,14 +849,12 @@ fn local_results_are_scoped_by_context_hash() {
     let first = LocalResultPublication {
         candidate: candidate.clone(),
         context: first_context,
-        raw_length: 5,
-        frame: zstd::stream::encode_all(Cursor::new(b"alpha"), 3).unwrap(),
+        bytes: b"alpha".to_vec(),
     };
     let second = LocalResultPublication {
         candidate,
         context: second_context,
-        raw_length: 4,
-        frame: zstd::stream::encode_all(Cursor::new(b"beta"), 3).unwrap(),
+        bytes: b"beta".to_vec(),
     };
     let stored = store
         .publish_overlay_file(
@@ -896,15 +877,15 @@ fn local_results_are_scoped_by_context_hash() {
         store
             .local_check_results(stored.source, first_context, catalog)
             .unwrap()[0]
-            .bytes,
-        b"alpha"
+            .bytes[..],
+        b"alpha"[..]
     );
     assert_eq!(
         store
             .local_check_results(stored.source, second_context, catalog)
             .unwrap()[0]
-            .bytes,
-        b"beta"
+            .bytes[..],
+        b"beta"[..]
     );
     let by_key = store
         .local_check_results_by_key(
@@ -916,13 +897,67 @@ fn local_results_are_scoped_by_context_hash() {
         )
         .unwrap();
     assert_eq!(
-        by_key[&(HashKey::sha256(b"pass\n"), first_context)][0].bytes,
-        b"alpha"
+        by_key[&(HashKey::sha256(b"pass\n"), first_context)][0].bytes[..],
+        b"alpha"[..]
     );
     assert_eq!(
-        by_key[&(HashKey::sha256(b"pass\n"), second_context)][0].bytes,
-        b"beta"
+        by_key[&(HashKey::sha256(b"pass\n"), second_context)][0].bytes[..],
+        b"beta"[..]
     );
+}
+
+/// Decision 0450 step 2: a result and a tree page are stored as they are, in a segment, and read there in place;
+/// compaction carries them into its one segment; a segment gone makes them a miss, not an error.
+#[test]
+fn results_and_pages_are_read_in_place_and_survive_compaction() {
+    let (_path, store) = store("results-in-segments");
+    let (workspace, catalog) = local_result_workspace(&store, "results-in-segments");
+    let candidate = CandidateClause { rule: HashKey::sha256(b"policy"), clause: "check".to_owned() };
+    let context = HashKey::sha256(b"x.py");
+    let publish = |bytes: &[u8], state_id: i64| {
+        let result = LocalResultPublication { candidate: candidate.clone(), context, bytes: bytes.to_vec() };
+        store
+            .publish_overlay_file(
+                workspace,
+                OverlayFilePublication {
+                    path: "x.py",
+                    state_id,
+                    source: b"pass\n",
+                    aliases: &[],
+                    tape: None,
+                    catalog,
+                    candidates: &[],
+                    local_results: &[result],
+                    candidates_current: false,
+                },
+            )
+            .unwrap()
+    };
+    let stored = publish(b"result", 1);
+    let page_key = TreePageKey { tree: [3; 32], prefix: "src", context: [0; 32], plan: [4; 32] };
+    store.put_tree_pages(&page_key, &[TreePage::new(1, b"page".to_vec())]).unwrap();
+    let read = |store: &ContentStore| {
+        let results = store.local_check_results(stored.source, context, catalog).unwrap();
+        let pages = store.tree_pages(&page_key).unwrap();
+        (results.first().map(|r| (r.bytes.in_place(), r.bytes.to_vec())), pages.map(|(_, p)| (p[0].bytes.in_place(), p[0].bytes.to_vec())))
+    };
+    assert_eq!(read(&store), (Some((true, b"result".to_vec())), Some((true, b"page".to_vec()))));
+    let rows: i64 = store.connection.lock().unwrap().query_row(
+        "SELECT (SELECT count(*) FROM context_check_results WHERE seg > 0) + (SELECT count(*) FROM tree_pages WHERE seg > 0)", [], |r| r.get(0)).unwrap();
+    assert_eq!(rows, 2, "each row names a segment's range");
+    // The same pages stored again leave copies no row names; compaction keeps the named ones, in its one segment.
+    for _ in 0..3 {
+        store.put_tree_pages(&page_key, &[TreePage::new(1, b"page".to_vec())]).unwrap();
+    }
+    assert!(store.compact_object_segments(0).unwrap() > 0);
+    let dir = super::object_segments::object_dir(&store.database_path);
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "one segment left");
+    assert_eq!(read(&store), (Some((true, b"result".to_vec())), Some((true, b"page".to_vec()))));
+    // Their segment gone: a miss.
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        std::fs::remove_file(entry.unwrap().path()).unwrap();
+    }
+    assert_eq!(read(&store), (None, None));
 }
 
 #[test]
@@ -935,8 +970,7 @@ fn a_result_under_a_new_context_of_stored_objects_is_kept() {
             clause: "check".to_owned(),
         },
         context: HashKey::sha256(context),
-        raw_length: bytes.len(),
-        frame: zstd::stream::encode_all(Cursor::new(bytes), 3).unwrap(),
+        bytes: bytes.to_vec(),
     };
     let publish = |results: &[LocalResultPublication]| {
         store
@@ -963,7 +997,7 @@ fn a_result_under_a_new_context_of_stored_objects_is_kept() {
         .local_check_results(stored.source, HashKey::sha256(b"second"), catalog)
         .unwrap();
     assert_eq!(restored.len(), 1);
-    assert_eq!(restored[0].bytes, b"beta");
+    assert_eq!(&restored[0].bytes[..], b"beta");
 }
 
 #[test]
@@ -981,8 +1015,7 @@ fn context_results_cascade_when_sources_and_clauses_are_deleted() {
                 clause: "check".to_owned(),
             },
             context: HashKey::sha256(b"context"),
-            raw_length: 6,
-            frame: zstd::stream::encode_all(Cursor::new(b"result"), 3).unwrap(),
+            bytes: b"result".to_vec(),
         };
         let stored = store
             .publish_overlay_file(
@@ -1076,8 +1109,7 @@ fn reconciliation_revalidates_clause_collected_before_relationship_write() {
     let result = LocalResultPublication {
         candidate: candidate.clone(),
         context: HashKey::sha256(b"context"),
-        raw_length: 6,
-        frame: zstd::stream::encode_all(Cursor::new(b"result"), 3).unwrap(),
+        bytes: b"result".to_vec(),
     };
     let copy = path.to_path_buf();
     BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
@@ -1631,6 +1663,86 @@ fn snapshots_are_shared_and_workspace_overlays_are_isolated() {
     assert_eq!(store.get_source(changed).unwrap(), b"x = 2\n");
 }
 
+/// An ended workspace's data is aged (decision 0450 step 3): the workspaces ended last keep theirs while together
+/// they hold the budget, the older are released, and none outlives the backstop. Registered again, a workspace is a
+/// live session, whatever its age.
+#[test]
+fn an_ended_workspace_is_aged_and_released_oldest_first() {
+    let (_path, store) = store("ageing");
+    let workspace = |n: u8| {
+        let snapshot = store
+            .put_snapshot(published_tree(&store, HashKey::git_sha1([60 + n; 20])), 1, HashKey::sha256(b"grammar"), 1)
+            .unwrap();
+        let source = store.put_source(&[b'a' + n; 1000], &[]).unwrap();
+        store.put_snapshot_file(snapshot, "file.py", source, None).unwrap();
+        // Their leases end at 100 and 101.
+        store.open_workspace(&format!("/aged/{n}"), "repo", "owner", snapshot, 1, 100 + i64::from(n)).unwrap();
+        (snapshot, source)
+    };
+    let (_, first) = workspace(0);
+    let (second_snapshot, second) = workspace(1);
+    // Room for one ended workspace's 1000 bytes, for 1000 s.
+    store.set_session_ageing(super::Ageing { bytes: 1500, backstop_secs: 1000 });
+    let passes = |now| (0..8).for_each(|_| {
+        store.collect(now, 100).unwrap();
+    });
+    let held = |source| store.get_source(source).is_ok();
+    passes(200);
+    assert!(!held(first), "the workspace ended first is past the budget");
+    assert!(held(second), "the workspace ended last is aged, not released");
+    // Registered again, it is live past the backstop; ended, it is past it at once.
+    let again = store.open_workspace("/aged/1", "repo", "owner", second_snapshot, 2, 10_000).unwrap();
+    passes(1_101);
+    assert!(held(second));
+    store.retire_workspace(again).unwrap();
+    passes(1_101);
+    assert!(!held(second));
+}
+
+/// An ended workspace's source and tape are archived (decision 0450 step 4): their bytes compressed into rows and the
+/// segments' bytes freed by compaction. Read again, each is placed back in a segment and read there. A live owner's
+/// object is not archived.
+#[test]
+fn aged_objects_are_archived_and_placed_back_in_a_segment_when_read() {
+    let (_path, store) = store("archive");
+    // Aged, never released.
+    store.set_session_ageing(super::Ageing { bytes: 1 << 40, backstop_secs: 1 << 40 });
+    let snapshot = store
+        .put_snapshot(published_tree(&store, HashKey::git_sha1([80; 20])), 1, HashKey::sha256(b"grammar"), 1)
+        .unwrap();
+    let (text, tape_bytes) = (b"x = 1\n".repeat(200), b"tape ".repeat(200));
+    let alias = HashKey::git_sha1([81; 20]);
+    let source = store.put_source(&text, &[alias]).unwrap();
+    let tape = store.put_tape(source, 1, 1, 1, &tape_bytes).unwrap();
+    store.put_snapshot_file(snapshot, "a.py", source, Some(tape)).unwrap();
+    let live = store.put_source(b"live", &[]).unwrap();
+    store.pin_source(live, "live", 10_000).unwrap();
+    store.open_workspace("/archive", "repo", "owner", snapshot, 1, 100).unwrap();
+    store.collect(200, 100).unwrap();
+    assert!(store.archive_due().unwrap(), "the workspace's end makes an archive due");
+    assert_eq!(store.archive_aged(200, 16).unwrap(), 2, "its source and tape, not the live pin's");
+    assert_eq!(store.archive_aged(200, 16).unwrap(), 0);
+    assert!(!store.archive_due().unwrap(), "a pass that archives nothing clears it");
+    let seg = |sql: &str, id: i64| -> i64 { store.connection.lock().unwrap().query_row(sql, [id], |r| r.get(0)).unwrap() };
+    let source_seg = |id| seg("SELECT seg FROM source_objects WHERE source_id=?1", id);
+    let tape_seg = |id| seg("SELECT seg FROM tape_objects WHERE tape_id=?1", id);
+    assert_eq!((source_seg(source.0), tape_seg(tape.0)), (super::archive::ARCHIVED, super::archive::ARCHIVED));
+    assert!(source_seg(live.0) > 0);
+    assert!(store.compact_object_segments(0).unwrap() > 0, "the archived bytes are freed from their segments");
+    // A clean file's restore by its blob alias places its source back, and reads it there.
+    let by_alias = store.sources_by_alias_in_place(&[alias]).unwrap();
+    assert_eq!(&by_alias[0].as_ref().expect("the source")[..], &text[..], "read again, placed back");
+    assert!(source_seg(source.0) > 0);
+    assert_eq!(store.get_source(source).unwrap(), text);
+    // A SQL module's reader places a tape back from a connection of its own.
+    let place = super::place_archived_tape_at(store.database_path(), tape.0).unwrap().expect("placed");
+    assert_eq!(place[0], tape_seg(tape.0));
+    assert!(super::place_archived_tape_at(store.database_path(), tape.0).unwrap().is_none(), "no longer archived");
+    assert_eq!(&**store.get_tape(tape).unwrap(), &tape_bytes[..]);
+    let archived: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM object_archive", [], |r| r.get(0)).unwrap();
+    assert_eq!(archived, 0);
+}
+
 #[test]
 fn collection_keeps_shared_objects_until_the_last_workspace_retires() {
     let (_path, store) = store("collection");
@@ -1669,27 +1781,30 @@ fn collection_keeps_shared_objects_until_the_last_workspace_retires() {
 }
 
 #[test]
-fn corrupt_zstandard_frames_fail_closed() {
-    let (_path, store) = store("corrupt-frames");
+fn objects_whose_rows_disagree_with_their_segments_fail_closed() {
+    let (_path, store) = store("corrupt-places");
     let source = store.put_source(b"source", &[]).unwrap();
     let tape = store.put_tape(source, 1, 1, 1, b"tape").unwrap();
     {
+        // A range of other bytes than the row's length and hash.
         let connection = store.connection.lock().unwrap();
         connection
-            .execute(
-                "UPDATE source_objects SET frame=x'000102' WHERE source_id=?1",
-                [source.0],
-            )
+            .execute("UPDATE source_objects SET seg_len=seg_len-1 WHERE source_id=?1", [source.0])
             .unwrap();
         connection
-            .execute(
-                "UPDATE tape_objects SET frame=x'000102' WHERE tape_id=?1",
-                [tape.0],
-            )
+            .execute("UPDATE tape_objects SET seg_len=seg_len-1 WHERE tape_id=?1", [tape.0])
             .unwrap();
     }
     assert!(store.get_source(source).is_err());
     assert!(store.get_tape(tape).is_err());
+    {
+        // A segment that is not registered: no bytes there.
+        let connection = store.connection.lock().unwrap();
+        connection
+            .execute("UPDATE source_objects SET seg=seg+1000, seg_len=seg_len+1 WHERE source_id=?1", [source.0])
+            .unwrap();
+    }
+    assert!(store.get_source(source).is_err());
 }
 
 #[test]
@@ -1811,18 +1926,21 @@ fn one_store_uses_independent_thread_connections_for_reads_and_writes() {
     let store = Arc::new(store);
     let writer = Arc::clone(&store);
     let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (read_tx, read_rx) = std::sync::mpsc::channel();
+    // The writer holds its transaction until the read is done: a read that waited on the writer's connection or
+    // transaction would never be done, and the writer's bounded wait says so (an order, not a clock under load).
     let handle = thread::spawn(move || {
         let connection = writer.connection.lock().unwrap();
         connection.execute_batch("BEGIN IMMEDIATE").unwrap();
         started_tx.send(()).unwrap();
-        thread::sleep(Duration::from_millis(150));
+        let read_beside = read_rx.recv_timeout(Duration::from_secs(10)).is_ok();
         connection.execute_batch("COMMIT").unwrap();
+        read_beside
     });
     started_rx.recv().unwrap();
-    let started = Instant::now();
     assert_eq!(store.get_source(source).unwrap(), b"shared");
-    assert!(started.elapsed() < Duration::from_millis(100));
-    handle.join().unwrap();
+    read_tx.send(()).unwrap();
+    assert!(handle.join().unwrap(), "the read waited for the writer's transaction");
 }
 
 #[test]
@@ -1878,7 +1996,9 @@ fn concurrent_open_serializes_schema_creation() {
         .map(|_| {
             let path = path.to_path_buf();
             let barrier = Arc::clone(&barrier);
+            let caller = rerail_prof::code_rule_dsl::logic::profile::caller();
             thread::spawn(move || {
+                let _caller = caller.enter();
                 barrier.wait();
                 ContentStore::open(&path).unwrap()
             })
@@ -1925,6 +2045,32 @@ fn pins_protect_unpublished_objects() {
         store.collect(1, 100).unwrap();
     }
     assert!(store.get_source(source).is_err());
+}
+
+/// A pin's owner is a store session (decision 0450 step 3): once its last source or tape pin lapses, what it pinned is
+/// aged under the budget ended workspaces share, the oldest released first, none past the backstop. An owner that
+/// releases its pins ends with nothing aged.
+#[test]
+fn a_lapsed_owners_pins_are_aged_and_a_released_owners_are_not() {
+    let (_path, store) = store("pin-ageing");
+    store.set_session_ageing(super::Ageing { bytes: 1500, backstop_secs: 1000 });
+    let source = |n: u8| store.put_source(&[b'p' + n; 1000], &[]).unwrap();
+    let (old, new, released) = (source(0), source(1), source(2));
+    store.pin_source(old, "old", 100).unwrap();
+    store.pin_source(new, "new", 101).unwrap();
+    let passes = |now| (0..4).for_each(|_| {
+        store.collect(now, 100).unwrap();
+    });
+    let held = |source| store.get_source(source).is_ok();
+    passes(200);
+    assert!(!held(old), "the owner whose pins lapsed first is past the budget");
+    assert!(held(new), "the owner whose pins lapsed last is aged");
+    passes(1_101);
+    assert!(!held(new), "past the backstop");
+    store.pin_source(released, "released", 10_000).unwrap();
+    assert_eq!(store.release_pins("released").unwrap(), 1);
+    passes(1_101);
+    assert!(!held(released));
 }
 
 #[test]
@@ -2705,7 +2851,7 @@ fn derived_documents_live_and_die_with_their_primary_tape() {
                 .get_tapes_bulk(&[primary, derived_tape])
                 .unwrap()
                 .into_iter()
-                .map(|(tape, (bytes, _))| (tape, bytes.to_vec()))
+                .map(|(tape, bytes)| (tape, bytes.to_vec()))
                 .collect::<HashMap<_, _>>(),
             store.get_sources_bulk(&[derived_source]).unwrap().len(),
         )

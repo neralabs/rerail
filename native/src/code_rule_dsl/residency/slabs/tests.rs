@@ -129,11 +129,12 @@ fn sources_are_admitted_once_and_read_in_place() {
     }
 }
 
-/// Decision 0289 §4: a batch reads one block. Documents admitted into two slabs (a source past a slab's size between
-/// them) are copied into one, each read as before; the residency finds them there, so the next batch over them copies
-/// nothing.
+/// Decision 0353 step 4, 0471: a batch reads its documents where they lie. Documents admitted into two slabs (a source
+/// past a slab's size between them) stay there: the batch binds the first one's slab, names the other as one to make
+/// resident, and each view counts from the bound slab by the slabs' GPU addresses. Nothing is copied (the device reads
+/// them so in `the_device_reads_every_format_as_the_document_does`).
 #[test]
-fn a_batch_over_several_slabs_is_gathered_into_one_block() {
+fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
     if rerail_metal::lane::device().is_err() {
         return;
     }
@@ -161,37 +162,33 @@ fn a_batch_over_several_slabs_is_gathered_into_one_block() {
         let documents: Vec<Arc<Resident>> = first.iter().chain(&rest).cloned().collect();
         // A 16z batch needs its cache's address in each view: refused where buffers have none (OpenCL 1.2).
         if format == Format::F16Z && !rerail_metal::lane::device().unwrap().has_addresses() {
-            assert!(DocTable::one_block(documents).is_none(), "a 16z batch refused without device addresses");
+            assert!(DocTable::new(documents).is_none(), "a 16z batch refused without device addresses");
             drop(held_big);
             continue;
         }
-        let table = DocTable::one_block(documents.clone()).unwrap();
+        let table = DocTable::new(documents.clone()).unwrap();
         let block = table.block.as_ref().expect("one block bound");
-        for (document, gathered) in documents.iter().zip(&table.documents) {
-            assert_eq!(gathered.slab.id, block.id);
-            assert_eq!(gathered.image(), document.image());
-            let v = &gathered.view;
-            assert_eq!(gathered.bytes_at(v.source, v.source_len as usize), document.bytes_at(document.view.source, document.view.source_len as usize));
-            // Format 15's line starts are placed beside its tape; format 16's are its tape's, compared with the image.
-            if v.format == 15 {
-                assert_eq!(u32s(gathered, v.lines, v.line_count as usize), u32s(document, document.view.lines, document.view.line_count as usize));
-            }
-            assert_eq!(gathered.codes(), document.codes());
-            // The view moved with the document: its offsets count from its first byte (format 16's codes are its
-            // language's table, the block's: copied there once).
-            let codes = |view: &DocView| DocView { at: 0, codes: 0, ..*view };
-            assert_eq!(codes(&gathered.view), codes(&document.view));
-            assert_eq!(gathered.table, document.table);
-            if let Some(table) = gathered.table {
-                assert_eq!(Some(gathered.at.wrapping_add(v.codes as usize) as u32 as usize), block.table(table.key), "{format:?}: the block's table");
-            }
+        assert_eq!(block.id, first[0].slab.id, "{format:?}: the first document's slab is bound");
+        assert_eq!(table.slabs.iter().map(|slab| slab.id).collect::<Vec<_>>(), vec![rest[0].slab.id], "{format:?}: the other slab, made resident");
+        for (document, (held, view)) in documents.iter().zip(table.documents.iter().zip(&table.views)) {
+            assert!(Arc::ptr_eq(document, held), "{format:?}: the document itself, not a copy");
+            let address = |slab: &Slab| slab.device_buffer().device_address().expect("a buffer with an address") as i64;
+            let apart = address(&document.slab).wrapping_sub(address(block));
+            assert_eq!(view.offset(), apart + i64::from(document.view.at), "{format:?}: the view counts from the bound slab");
+            // Past the batch's numbering, and a 16z view's cache (its address, its entry size), set for the batch.
+            let rest_of = |view: &DocView| {
+                let mut view = DocView { at: 0, at_high: 0, node_base: 0, source_base: 0, line_base: 0, ..*view };
+                if view.format == rerail_clif::view::F16Z_FORMAT {
+                    (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (0, 0, 0, 0);
+                }
+                view
+            };
+            assert_eq!(rest_of(view), rest_of(&document.view), "{format:?}: its other offsets are its own");
         }
-        // Asked again, the residency gives the gathered documents: one slab already, nothing copied.
+        // Asked again, the residency gives the same documents, where they were.
         let again = admit_docs(&docs).unwrap();
-        assert!(again.iter().all(|document| document.slab.id == block.id));
-        let twice = gather(again.clone()).unwrap();
-        assert!(twice.iter().zip(&again).all(|(a, b)| Arc::ptr_eq(a, b)));
-        drop((table, held_big, twice, again));
+        assert!(again.iter().zip(&documents).all(|(a, b)| Arc::ptr_eq(a, b)), "{format:?}: nothing moved");
+        drop((table, held_big, again));
         drop_all();
     }
 }
@@ -274,23 +271,45 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
             store.put_tape(source_id, i64::from(language::tape_tag(*lang).unwrap()), 1, i64::from(format.store_version()), &bytes).unwrap();
             digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         }
-        // A 16z tape is stored as it is (its blocks are compressed; a load decodes none), the others in zstd frames.
-        let codecs: Vec<i64> = rusqlite::Connection::open(&path).unwrap().prepare("SELECT codec_id FROM tape_objects").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
-        assert!(!codecs.is_empty() && codecs.iter().all(|&c| c == i64::from(format != Format::F16Z)), "{format:?} stored with codecs {codecs:?}");
-        if format == Format::F16Z && !rerail_metal::lane::device().unwrap().has_addresses() {
-            assert!(DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).is_none(), "a 16z batch refused without device addresses");
-            let _ = std::fs::remove_file(path);
+        // Every tape is stored as it is, in a segment (a load is its bytes, read in place; 16z decodes none of its
+        // blocks), its presence with it: no row holds its bytes, whatever its format.
+        let rows: Vec<(i64, i64, i64)> = rusqlite::Connection::open(&path).unwrap().prepare("SELECT codec_id, seg, length(frame) FROM tape_objects").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+        assert!(!rows.is_empty() && rows.iter().all(|&(codec, seg, frame)| codec == 0 && seg > 0 && frame == 0), "{format:?} stored as {rows:?}");
+        // As admitted (one slab), then over two slabs, a source past a slab's size admitted between the first document
+        // and the rest: the batch reads each where it lies, the second slab made resident (decision 0471).
+        for split in [false, true] {
+        let held_big = if split {
+            drop_all();
+            let first = admit(&store, &digests[..1], &grammar).unwrap();
+            let big = admit_sources(&[&vec![b'x'; SLAB_BYTES + (1 << 20)]]).unwrap();
+            let rest = admit(&store, &digests[1..], &grammar).unwrap();
+            assert_ne!(first[0].slab.id, rest[0].slab.id, "{format:?}: the documents are in two slabs");
+            Some((big, first.into_iter().chain(rest).collect::<Vec<_>>()))
+        } else {
+            None
+        };
+        let documents = match &held_big {
+            Some((_, documents)) => documents.clone(),
+            None => admit(&store, &digests, &grammar).unwrap(),
+        };
+        // A 16z batch needs its cache's address in each view, and a batch over two slabs their addresses: refused
+        // where buffers have none (OpenCL 1.2).
+        if (format == Format::F16Z || split) && !rerail_metal::lane::device().unwrap().has_addresses() {
+            assert!(DocTable::new(documents).is_none(), "{format:?}: refused without device addresses");
             continue;
         }
-        let table = DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).unwrap();
+        let table = DocTable::new(documents).unwrap();
+        assert_eq!(table.slabs.len(), usize::from(split), "{format:?}: the batch's other slabs");
         let expected_format = match format {
             Format::F15 => 15,
             Format::F16 => 16,
             _ => rerail_clif::view::F16Z_FORMAT,
         };
         assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
+        // The device reads the presence where the tape's home holds it (decision 0434 §4, step 6), 16 and 16z alike.
+        assert!(table.views.iter().all(|view| (view.presence != 0) == (format != Format::F15)), "{format:?}: the views name the presence");
         assert_eq!(table.cache.is_some(), format == Format::F16Z, "a cache for 16z tapes alone");
-        if format != Format::F15 {
+        if format != Format::F15 && !split {
             // One code table a language in the block (decision 0336 §7): documents of a language read the same one.
             let mut tables = std::collections::HashMap::new();
             for (view, (_, lang)) in table.views.iter().zip(&sources) {
@@ -314,6 +333,9 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
             .buffer("out", &out)
             .buffer("chunk", table.block.as_ref().expect("one block bound").device_buffer())
             .value("args", &Conformance { count: table.nodes as u32, pad: 0 });
+        for slab in &table.slabs {
+            launch = launch.uses(slab.device_buffer());
+        }
         if let Some(cache) = &table.cache {
             launch = launch.uses(cache);
         }
@@ -351,10 +373,11 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
                     source[..span.start].iter().rposition(|&byte| byte == b'\n').map_or(0, |at| at as u32 + 1),
                 ];
                 let g = (view.node_base + node) as usize;
-                assert_eq!(&read[g * FIELDS..][..FIELDS], &expected, "{format:?}: document {doc} node {node}");
+                assert_eq!(&read[g * FIELDS..][..FIELDS], &expected, "{format:?}, over two slabs {split}: document {doc} node {node}");
             }
         }
-        drop(table);
+        drop((table, held_big));
+        }
         drop(store);
         let _ = std::fs::remove_file(path);
     }

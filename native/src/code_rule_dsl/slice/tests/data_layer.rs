@@ -3,7 +3,7 @@
 //! time and memory, and (`RERAIL_DL_W=1`) its keys against W's engine on the same files.
 //!
 //!   RERAIL_DL_POLICY=<policy.json>[:<policy.json>…] RERAIL_DL_ROOT=<dir>
-//!   [RERAIL_DL_LOGIC=<program.rr>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
+//!   [RERAIL_DL_LOGIC=<program.rerail>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
 //!   cargo test --profile profiling --lib -- slice::tests::data_layer::data_layer_bench --ignored --nocapture
 //!
 //! A clause the path cannot run is reported with its reason, and left out of the policy the slice
@@ -16,11 +16,18 @@ use crate::code_rule_dsl::matcher::gated_match_tree;
 use crate::code_rule_dsl::transducer::packed::LoweredMatcher;
 
 /// Peak resident set of the process, in MB (`ru_maxrss` is bytes on macOS, KB elsewhere).
+#[cfg(unix)]
 fn peak_rss_mb() -> u64 {
     let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
     let raw = usage.ru_maxrss as u64;
     if cfg!(target_os = "macos") { raw >> 20 } else { raw >> 10 }
+}
+
+/// Peak working set of the process, in MB (`rerail_prof::windows_peak_working_set`, bytes).
+#[cfg(windows)]
+fn peak_rss_mb() -> u64 {
+    rerail_prof::windows_peak_working_set() >> 20
 }
 
 /// Why a clause does not run on the slice's path, or `None` when it lowers.
@@ -41,13 +48,16 @@ fn refusal(clause: &serde_json::Value) -> Option<String> {
 
 /// The authored program of `RERAIL_DL_LOGIC`, empty without one; each `define`'s options at
 /// `options` where given.
-fn authored(options: &serde_json::Map<String, serde_json::Value>) -> crate::code_rule_dsl::logic::front::Program {
-    let Ok(path) = std::env::var("RERAIL_DL_LOGIC") else { return Default::default() };
-    let mut program = crate::code_rule_dsl::logic::rr::parse(&std::fs::read_to_string(&path).unwrap()).unwrap_or_else(|e| panic!("{path}: {e}"));
-    for document in &mut program.policies {
+fn authored(options: &serde_json::Map<String, serde_json::Value>) -> std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version> {
+    let Ok(path) = std::env::var("RERAIL_DL_LOGIC") else { return crate::code_rule_dsl::waves::policies::nothing().unwrap() };
+    let program = crate::code_rule_dsl::logic::rr::parse_version(&std::fs::read_to_string(&path).unwrap()).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let mut documents = program.policies().unwrap();
+    for document in &mut documents {
         with_options(document, options);
     }
-    program
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&program);
+    b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Policies(&documents));
+    b.finish().unwrap().0
 }
 
 /// `document` with each `define`'s option defaults set to `options`' values.
@@ -64,6 +74,7 @@ fn with_options(document: &mut serde_json::Value, options: &serde_json::Map<Stri
 }
 
 /// Each policy split into what the slice runs (compiled) and the clauses it refused, with reasons.
+#[allow(clippy::type_complexity)]
 fn split(path: &Path) -> Result<((String, CompiledCodeRuleDsl), Vec<(String, String)>), String> {
     let mut document: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut refused = Vec::new();
@@ -205,10 +216,10 @@ fn data_layer_bench() {
 }
 
 /// The data-layer fixtures on the final shape's path: each recorded pytest event of one check
-/// (`RERAIL_DL_RECORDING`, `RERAIL_DL_CHECK`, e.g. `gate/data-layer/fixtures/host/data-layer-port/
-/// batch-06-recording.json` and `serverplan_quality`) is a root of its files, audited cold with the
-/// policy compiled at the event's options; its keys (code, path, line) are compared with the
-/// recorded findings. Prints per entry point how many events agree.
+/// (`RERAIL_DL_RECORDING`, `RERAIL_DL_CHECK`, e.g. `packs/data-layer/upstream/lint/authored/fixtures/host/
+/// data-layer-port/batch-06-recording.json`, fetched by `npm run fixtures:pull`, and `serverplan_quality`)
+/// is a root of its files, audited cold with the policy compiled at the event's options; its keys (code,
+/// path, line) are compared with the recorded findings. Prints per entry point how many events agree.
 #[test]
 #[ignore = "the data-layer fixtures; RERAIL_DL_POLICY, RERAIL_DL_RECORDING, RERAIL_DL_CHECK, --ignored --nocapture"]
 fn data_layer_fixtures() {

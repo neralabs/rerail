@@ -69,20 +69,12 @@ pub trait Backing: Send + Sync {
 
 /// The bytes zeroed as blocks' memory was handed out again (a free list's chunk, a dirty block's allocation).
 pub fn zeroed_bytes() -> u64 {
-    ZEROED.load(Relaxed)
+    rerail_context::with_local::<Zeroed, _>(|z| z.0.load(Relaxed))
 }
 
-/// `zeroed_bytes` counted on this thread alone: what a caller's own allocations zeroed, which the other threads'
-/// (a test's neighbours) do not move.
-pub fn zeroed_bytes_here() -> u64 {
-    ZEROED_HERE.with(std::cell::Cell::get)
-}
-
-static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-thread_local! {
-    static ZEROED_HERE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
+/// The run's count (decision 0442: a measurement of the run's).
+#[derive(Default)]
+struct Zeroed(std::sync::atomic::AtomicU64);
 
 /// Zeroes `len` bytes at `p`, counted (`zeroed_bytes`).
 ///
@@ -90,8 +82,7 @@ thread_local! {
 /// `p..p + len` is writable memory of a block.
 unsafe fn zero(p: *mut u8, len: usize) {
     unsafe { std::ptr::write_bytes(p, 0, len) };
-    ZEROED.fetch_add(len as u64, Relaxed);
-    ZEROED_HERE.with(|z| z.set(z.get() + len as u64));
+    rerail_context::with_local::<Zeroed, _>(|z| z.0.fetch_add(len as u64, Relaxed));
 }
 
 /// What a block has used, and holds free (its free list's bytes): shared with a ledger that counts live blocks
@@ -123,6 +114,8 @@ pub struct Block {
     /// space at about 20 ms a GiB (0266 §12), so it is made once and remade only when the block outgrows it.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     gpu: std::sync::Mutex<Option<(rerail_device::device::Buffer, usize)>>,
+    /// Its ledger (decision 0487): its live chunks, the GPU's queued uses, and when chunks and memory may go.
+    ledger: Arc<crate::ledger::Ledger>,
 }
 
 unsafe impl Send for Block {}
@@ -130,6 +123,41 @@ unsafe impl Sync for Block {}
 
 fn round_up(n: usize, to: usize) -> usize {
     n.div_ceil(to) * to
+}
+
+
+/// How a file-backed block's writes reach the disk (decision 0481).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Flush {
+    /// Each write-back waits until the pages are on the disk (`msync` with `MS_SYNC`, then a barrier on macOS,
+    /// `fdatasync` elsewhere) before the store commits what names them: the store survives a power loss.
+    Synced,
+    /// The default: nothing waits, and the OS writes the pages back at its own pace. The store survives the
+    /// process's end (the pages are the OS's), not a power loss or a crash of the OS before they are written.
+    #[default]
+    Os,
+    /// Nothing is flushed, and the store's SQLite syncs nothing either: tests, whose stores are thrown away.
+    None,
+}
+
+impl Flush {
+    /// Whether a write-back waits for the disk.
+    pub fn waits(self) -> bool {
+        self == Flush::Synced
+    }
+
+    /// The mode `RERAIL_FLUSH` names (`synced`, `os`, `none`), else `default`. An unknown value is refused.
+    pub fn from_env_or(default: Flush) -> Result<Flush, String> {
+        match std::env::var("RERAIL_FLUSH") {
+            Err(_) => Ok(default),
+            Ok(v) => match v.as_str() {
+                "synced" => Ok(Flush::Synced),
+                "os" => Ok(Flush::Os),
+                "none" => Ok(Flush::None),
+                other => Err(format!("RERAIL_FLUSH={other}: not synced, os or none")),
+            },
+        }
+    }
 }
 
 impl Block {
@@ -168,10 +196,14 @@ impl Block {
 
     fn make(base: *mut u8, reserved: usize, top: usize, file: Option<File>, writable: bool, backing: Option<Box<dyn Backing>>) -> Block {
         let dirty = backing.is_some();
+        let ext = Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) });
+        // Only an anonymous block's pages go to the OS: a slab's are the device buffer's, and a file's are written back.
+        let ledger = crate::ledger::Ledger::new(base, reserved, file.is_none() && backing.is_none(), ext.clone());
         Block {
             base,
             reserved,
-            ext: Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) }),
+            ext,
+            ledger,
             mapped: file.is_some(),
             file,
             writable,
@@ -190,8 +222,14 @@ impl Block {
         if self.free == 0 {
             let heads = self.alloc(crate::free::CLASSES * 8, 64);
             self.free = heads;
+            self.ledger.track(heads, self.used());
         }
         self
+    }
+
+    /// Its ledger (decision 0487): what is live in it, and what the GPU has queued on it.
+    pub fn ledger(&self) -> &Arc<crate::ledger::Ledger> {
+        &self.ledger
     }
 
     fn heads(&self) -> *const std::sync::atomic::AtomicU64 {
@@ -227,6 +265,7 @@ impl Block {
         // SAFETY: the block's own heads; its chunks lie in it.
         if let Some(at) = unsafe { crate::free::pop(self.base, self.heads(), class) } {
             self.ext.free.fetch_sub(size, Relaxed);
+            self.ledger.taken(at, size);
             if let Some((p, len)) = self.spare_pages(at, size) {
                 // SAFETY: the chunk's pages past its link, which `free_chunk` gave back; it is ours now.
                 unsafe { crate::mem::reuse_pages(p, len) };
@@ -250,17 +289,19 @@ impl Block {
     /// the OS too (Q76: a dead relation's pages otherwise stayed in the footprint until its chunks were taken again),
     /// and are marked in use again when the list hands the chunk out. Returns the bytes given to the OS.
     pub fn free_chunk(&self, at: usize, bytes: usize) -> usize {
+        self.release_chunk(at, crate::free::class_of(bytes).1, crate::ledger::Freeing { pieces: false, pages: true })
+    }
+
+    /// A live chunk of `len` bytes at `at` freed through the ledger (decision 0487): at once, or when the GPU work
+    /// queued on the block completes. The bytes given to the OS now.
+    fn release_chunk(&self, at: usize, len: usize, how: crate::ledger::Freeing) -> usize {
         if self.free == 0 || !self.writable {
             return 0;
         }
-        let (_, size) = crate::free::class_of(bytes);
-        // SAFETY: the chunk is the caller's and nothing reads it after; its first page, which holds the link, stays.
-        let given = self.spare_pages(at, size).map_or(0, |(p, len)| unsafe { crate::mem::give_back(p, len) });
-        self.push_free(at, bytes);
-        given
+        self.ledger.free(at, len, how)
     }
 
-    /// A chunk of `bytes`' class at `at` onto the free list, its pages as they are.
+    /// A chunk of `bytes`' class at `at`, never live (the rest of a fitted chunk), onto the free list.
     fn push_free(&self, at: usize, bytes: usize) {
         if self.free == 0 || !self.writable {
             return;
@@ -282,9 +323,10 @@ impl Block {
         }
         let (_, size) = crate::free::class_of(bytes);
         let keep = self.fit_kept(bytes);
+        self.ledger.untaken_tail(at, size, keep);
         // Never written: their pages are not resident (fresh from the front, or given back when last freed), so none
         // is given back again (a call to the OS each).
-        self.free_pieces(at + keep, size - keep, false);
+        self.free_pieces(at + keep, size - keep);
         Some((at, keep))
     }
 
@@ -311,33 +353,25 @@ impl Block {
     /// whose bytes are few beside its relation's (an index's 4 a row), where giving its pages to the OS costs calls
     /// and buys little.
     pub fn free_chunk_resident(&self, at: usize, bytes: usize) {
-        self.push_free(at, bytes);
+        self.release_chunk(at, crate::free::class_of(bytes).1, crate::ledger::Freeing { pieces: false, pages: false });
     }
 
     /// `free_chunk_fit`, its pages left resident (`free_chunk_resident`).
     pub fn free_chunk_fit_resident(&self, at: usize, kept: usize) {
-        if self.free != 0 {
-            self.free_pieces(at, kept, false);
-        }
+        self.release_chunk(at, kept, crate::ledger::Freeing { pieces: true, pages: false });
     }
 
     /// Gives back a chunk `try_alloc_chunk_fit` gave (`kept` bytes at `at`): its pieces, each a class's chunk.
     pub fn free_chunk_fit(&self, at: usize, kept: usize) {
-        if self.free != 0 {
-            self.free_pieces(at, kept, true);
-        }
+        self.release_chunk(at, kept, crate::ledger::Freeing { pieces: true, pages: true });
     }
 
-    /// `bytes` at `at` (a multiple of the least class) to the free list, as chunks of classes, the largest first; their
-    /// pages given back to the OS when `written` (`free_chunk`).
-    fn free_pieces(&self, mut at: usize, mut bytes: usize, written: bool) {
+    /// `bytes` at `at` (a multiple of the least class), never live, to the free list as chunks of classes, the
+    /// largest first.
+    fn free_pieces(&self, mut at: usize, mut bytes: usize) {
         while bytes > 0 {
             let piece = 1usize << (usize::BITS - 1 - bytes.leading_zeros());
-            if written {
-                self.free_chunk(at, piece);
-            } else {
-                self.push_free(at, piece);
-            }
+            self.push_free(at, piece);
             at += piece;
             bytes -= piece;
         }
@@ -378,6 +412,7 @@ impl Block {
     /// reference inside it is self-relative. Nothing may hold a reference into this block, and no command read it.
     pub fn relocate(self, backing: Box<dyn Backing>) -> Block {
         assert!(self.writable, "only an open block moves");
+        assert!(self.ledger.quiet(), "block ledger: a block moved with GPU work queued on it (decision 0487 R7)");
         let used = self.used();
         assert!(backing.len() >= used, "a backing of {} bytes for a block of {used}", backing.len());
         let base = backing.base();
@@ -411,6 +446,10 @@ impl Block {
             return Ok(b.clone());
         }
         let len = kept.as_ref().map_or(1 << 20, |k| k.1 * 2).max(used.div_ceil(1 << 20) << 20).min(self.reserved);
+        // A measurement aid: `RERAIL_DEVICE_TRACE` prints where a block of 4 MB or more is wrapped for the device.
+        if len >= 4 << 20 && std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+            eprintln!("RERAIL_DEVICE_TRACE a block wrapped, {} MB:\n{}", len >> 20, std::backtrace::Backtrace::force_capture());
+        }
         // SAFETY: the block's pages outlive the wrap: it is kept by the block, and let go before they are unmapped.
         let b = unsafe { rerail_device::device::wrap_host_memory(device, self.base, len)? };
         *kept = Some((b.clone(), len));
@@ -456,7 +495,10 @@ impl Block {
 
     /// `try_alloc`; a dirty block's memory is zeroed only when `zeroed` asks it.
     fn alloc_filled(&self, size: usize, align: usize, zeroed: bool) -> Option<usize> {
-        assert!(self.writable, "alloc in a frozen block");
+        // A read-only block (a frozen file's mapping, `share`) has no room: an index a reader would add goes elsewhere.
+        if !self.writable {
+            return None;
+        }
         let mut cur = self.ext.top.load(Relaxed);
         loop {
             let start = round_up(cur, align);
@@ -466,6 +508,9 @@ impl Block {
             }
             match self.ext.top.compare_exchange_weak(cur, end, AcqRel, Relaxed) {
                 Ok(_) => {
+                    if self.free != 0 {
+                        self.ledger.taken_front(start, size);
+                    }
                     if self.dirty && zeroed {
                         unsafe { zero(self.base.add(start), size) };
                     }
@@ -481,7 +526,11 @@ impl Block {
     /// allocation of a block that is not dirty is zero, as the mapping gave it.
     pub fn shrink_last(&self, at: usize, size: usize, keep: usize) -> bool {
         assert!(keep <= size);
-        self.ext.top.compare_exchange(at + size, at + keep, AcqRel, Relaxed).is_ok()
+        let shrunk = self.ext.top.compare_exchange(at + size, at + keep, AcqRel, Relaxed).is_ok();
+        if shrunk && self.free != 0 {
+            self.ledger.untaken_tail(at, size, keep);
+        }
+        shrunk
     }
 
     /// `n` zeroed `T`s, or `None` when the block cannot hold them.
@@ -498,6 +547,11 @@ impl Block {
         unsafe { self.base.add(off) as *mut T }
     }
 
+    /// Whether `p` lies in this block's reserved range.
+    pub fn holds<T>(&self, p: *const T) -> bool {
+        (p as usize).wrapping_sub(self.base as usize) < self.reserved
+    }
+
     pub fn offset_of<T>(&self, p: *const T) -> usize {
         let o = p as usize - self.base as usize;
         assert!(o < self.reserved);
@@ -506,6 +560,11 @@ impl Block {
 
     pub fn base_ptr(&self) -> *mut u8 {
         self.base
+    }
+
+    /// Whether it may be written: an open block's, not a frozen file's mapping or a shared handle (`share`).
+    pub fn is_writable(&self) -> bool {
+        self.writable
     }
 
     pub fn reserved(&self) -> usize {
@@ -569,6 +628,7 @@ impl Block {
             if self.was_free_listed && keep < self.reserved {
                 unsafe { crate::mem::release(self.base.add(keep), self.reserved - keep) };
                 self.reserved = keep;
+                self.ledger.resized(keep);
             }
             unsafe { crate::mem::protect_read(self.base, self.reserved) };
         }
@@ -589,8 +649,10 @@ impl Block {
                 continue;
             }
             // SAFETY: the block's own heads, and no one takes or gives chunks during a freeze (its one owner's).
-            unsafe { crate::free::each(self.base, self.heads(), class, |at| crate::mem::free_pages(self.base.add(at), size)) };
+            // Through the ledger: only the whole pages inside each chunk, none holding a live byte (R6).
+            unsafe { crate::free::each(self.base, self.heads(), class, |at| { let _ = self.ledger.give_back(at, size); }) };
         }
+        self.ledger.untrack_list();
         self.free = 0;
         self.ext.free.store(0, Relaxed);
         self.was_free_listed = true;
@@ -654,12 +716,19 @@ impl Block {
         Ok(b)
     }
 
-    /// What is written in a block mapped from its file on the disk: its dirty pages written back, then the file
-    /// flushed (a barrier on macOS, `fdatasync` elsewhere). Nothing to do for a block with no file.
+    /// What is written in a block mapped from its file on the disk, with `Flush::Synced`: its dirty pages written
+    /// back, then the file flushed (a barrier on macOS, `fdatasync` elsewhere). Otherwise nothing: the OS writes the
+    /// pages back at its own pace (decision 0481). Nothing to do for a block with no file.
     #[cfg(unix)]
-    pub fn sync_mapped(&self) -> io::Result<()> {
-        // SAFETY: the block's own mapping, its whole length.
-        if unsafe { libc::msync(self.base.cast(), self.reserved, libc::MS_SYNC) } != 0 {
+    pub fn sync_mapped(&self, flush: Flush) -> io::Result<()> {
+        if !flush.waits() {
+            return Ok(());
+        }
+        // The pages written: nothing past `used` is (a kept file's reservation is hundreds of MB, its facts a few;
+        // asked of the whole, the kernel walked every page of it, Q361).
+        let written = self.used().next_multiple_of(PAGE).min(self.reserved);
+        // SAFETY: the block's own mapping, its first `written` bytes.
+        if unsafe { libc::msync(self.base.cast(), written, libc::MS_SYNC) } != 0 {
             return Err(io::Error::last_os_error());
         }
         let Some(f) = &self.file else { return Ok(()) };
@@ -711,14 +780,26 @@ impl Block {
 }
 
 impl Drop for Block {
+    /// Its memory goes through its ledger: at once, or when the GPU work queued on it completes (R5).
     fn drop(&mut self) {
-        if self.backing.is_none() {
-            // A file's mapping was never `reserve`'s: it is unmapped without counting.
-            if self.mapped {
-                crate::mem::uncounted(self.reserved);
+        let backing = self.backing.take();
+        let (base, reserved, mapped) = (self.base as usize, self.reserved, self.mapped);
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let wrap = self.gpu.get_mut().unwrap_or_else(|e| e.into_inner()).take();
+        self.ledger.let_go(Box::new(move || {
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            drop(wrap);
+            match backing {
+                Some(slab) => drop(slab),
+                None => {
+                    // A file's mapping was never `reserve`'s: it is unmapped without counting.
+                    if mapped {
+                        crate::mem::uncounted(reserved);
+                    }
+                    unsafe { crate::mem::release(base as *mut u8, reserved) };
+                }
             }
-            unsafe { crate::mem::release(self.base, self.reserved) };
-        }
+        }));
     }
 }
 
@@ -734,27 +815,20 @@ impl Deref for Frozen {
 }
 
 /// A run of `T`s in a shared block, read as a slice by the host: an array the host builds once and the device then
-/// reads in the same block (decision 0289 §3). The block lives as long as any of its `Cells`.
-pub struct Cells<T: crate::Pod> {
-    block: Arc<Block>,
-    at: usize,
-    len: usize,
-    _t: std::marker::PhantomData<T>,
-}
+/// reads in the same block (decision 0289 §3). A frozen region (decision 0491): its block lives, and its chunk stays
+/// taken, as long as any of its `Cells`, or a GPU use of it, does.
+pub struct Cells<T: crate::Pod>(crate::region::Frozen<T>);
 
 impl<T: crate::Pod> Cells<T> {
     /// Up to `capacity` `T`s, zero, filled by `fill`, which returns how many it used: the rest is given back to the
-    /// block when nothing was allocated after it. `None` when the block cannot hold `capacity`.
+    /// block when nothing was allocated after it (`region::Mutable::truncate`). `None` when the block cannot hold
+    /// `capacity`.
     pub fn build(block: &Arc<Block>, capacity: usize, fill: impl FnOnce(&mut [T]) -> usize) -> Option<Self> {
-        let size = capacity * size_of::<T>();
-        let at = block.try_alloc(size, align_of::<T>().max(8))?;
-        // SAFETY: `at..at + size` was just allocated to this call alone, zero (a dirty block zeroes it), and zero
-        // is a `T` (`Pod`).
-        let cells = unsafe { std::slice::from_raw_parts_mut(block.ptr::<T>(at), capacity) };
-        let len = fill(cells);
+        let mut m = crate::region::Mutable::<T>::alloc(block, capacity, "cells")?;
+        let len = fill(&mut m.write());
         assert!(len <= capacity, "cells filled past their capacity");
-        block.shrink_last(at, size, len * size_of::<T>());
-        Some(Cells { block: Arc::clone(block), at, len, _t: std::marker::PhantomData })
+        m.truncate(len);
+        Some(Cells(m.freeze()))
     }
 
     /// `src` copied into `block`.
@@ -768,19 +842,23 @@ impl<T: crate::Pod> Cells<T> {
 
     /// The block it is in.
     pub fn block(&self) -> &Arc<Block> {
-        &self.block
+        self.0.region().block()
+    }
+
+    /// Its region, as the device binds it.
+    pub fn frozen(&self) -> &crate::region::Frozen<T> {
+        &self.0
     }
 
     pub fn as_ptr(&self) -> *const T {
-        self.block.ptr(self.at)
+        self.0.as_ptr()
     }
 }
 
 impl<T: crate::Pod> Deref for Cells<T> {
     type Target = [T];
     fn deref(&self) -> &[T] {
-        // SAFETY: `build` filled `len` `T`s at `at`, and nothing writes them after it returns.
-        unsafe { std::slice::from_raw_parts(self.block.ptr::<T>(self.at), self.len) }
+        &self.0
     }
 }
 

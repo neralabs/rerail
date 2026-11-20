@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18), step 6 at the probes (2026-11-19; at the writes: Q330). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -412,3 +412,116 @@ earlier run planned, which are written with the kept plans when the run ends.
 - `a_later_run_reads_the_prepared_plans_an_earlier_one_made`: a run keeps the plans it made by the version's
   identity; a later run of the same program, built again, reads them through the store's rows (loaded 1, computed 0).
 
+**At scale** (2026-11-18, corpus0 x B-now, profiling build, a new store, one M3 at load 50-70): 463 findings,
+d067ec2ebf6f, as before. 2,313 lines took a prepared plan, against 13,279 searched and 4,042 greedy: about one line
+in eight. The run's parts made 7 versions' prepared plans and read 39 back from the store (later runs of the
+process reading what earlier ones kept, Q183). A second run over the same store answered from its stored results in
+2.5 s and planned nothing. So step 5 holds and pays, but run-time planning is still in a cold run's profile: the
+lines it plans are those of rules over AST matches, aggregates and relations with no size. Moving them is sizes
+inferred for more derived relations (unions and recursion keep only `local`) and prepared aggregate rules. (A debug
+build stops before planning at the check after `simplify`: Q226, apart from this step.)
+
+**Wider: the inputs the engine makes, and derived relations sized from their rules** (2026-11-18). Of the 8,968
+rules a corpus0 x B-now run did not prepare, the first literal that stopped 7,158 was a derived relation with no
+size and 1,726 an input with no layout (`RERAIL_PREPARED_WHY=FILE` lists each; 23 were aggregates). So:
+
+- The inputs: `core.rr` declares `doc`'s, `op`'s and `within`'s facts, and the layouts analysis gives an input the
+  transducer makes from a kind set (`nearest`'s, an axis's) the engine's (`front::ast::made_from_a_kind_set`,
+  `Origin::Made`): inferred, not written into the program, so neither side's request record moves (a pass that
+  wrote them as about rows moved it; the debug run's check after the merges caught it).
+- Derived relations: components in dependency order, each relation no fact sizes is sized from its rules' plans,
+  their rows summed (a union's only where every branch is planned), a head column's distinct values those of the
+  body column that binds it; a recursion's rows its base rules' times a nominal depth (8). `RERAIL_DERIVED_ESTIMATES
+  =off` leaves them out.
+
+Measured on corpus0 x B-now (profiling build, a new store each, M3 at load 60-130): taken as they were, the plans
+over estimated relations ran the joins 70% longer (`engine run (joins)` 43.9 s -> 74.4 s, 1,053 -> 1,453 billion
+instructions): an estimate carried up the strata errs, and an order chosen for it costs what the error does. The
+inputs' facts alone were neutral (1,018 billion). So a prepared plan keeps the rows per node it assumed of each
+relation only an estimate sized, and a run takes it only while those relations, made by then, are within
+`PRICE_DRIFT` of it (`Prepared::take`); else the line is searched (step 6's check, for the sizes a plan assumed).
+With it: 1,020 -> 1,024 billion instructions (off -> on), 463 findings, d067ec2ebf6f; 3,193 lines taken, 2,870
+refused, 14,565 searched against 15,146. Planning is 1-3% of the run's CPU (search 0.3 s, statistics about 2.7 s
+of 94 s); a wrong order costs ten times that. The criterion "a run plans none of the relations that have shapes"
+is met for the relations whose facts size them; for the rest it waits on estimates good enough to keep (Q290).
+
+**A later run on the same store** (2026-11-18). The measurement above gave each run a new store. A second run on
+the store of a first, over the corpus edited so that nothing is reused, searches about 5,000 lines with prepared plans
+or without: the kept plans (decision 0038) answer the rest. Instructions: 963 billion off, 987 with prepared plans
+(+2.5%, within the runs' spread), 967 with derived estimates off. Making a version's plans again from the sizes a
+run saw (Q290) cost 31% and was dropped. So on a warm store prepared plans save no planning, and on a cold one they
+save little (planning is 1-3% of the run). The criterion that a run plans none of the relations with shapes is met
+where facts size them; for derived relations it is open (Q290), as is reading plans across stores (Q291).
+
+**Taken by default; a slow one searched where it runs** (2026-11-18, the user's design). A prepared plan is taken
+as it is, estimates and all: the run's planning stays lean for the plans that are right, approximations are
+accepted, and the drift check that sent a line to the search (above) is gone. A wrong one is found where it runs:
+
+- **Horribly slow:** at each chunk, a line running its prepared order past `RERAIL_JOIN_SLOW` (8) times what the plan
+  priced it at, at least a search's work (`SEARCH_WORK`), is searched (`Model::prepared_horribly_slow`). Its price is
+  the plan's own, so the check is a lookup. The slow flag of decision 0203 §3 cannot find it: that compares the work
+  with the running order priced under the run's statistics, and a worse order is priced right there.
+- **Heavy:** a line reaching decision 0203's check (100,000 rows, then each doubling) on its prepared order is
+  searched too.
+- **Searched once a line, a run** (`Model::prepared_heavy`): from then on `Prepared::take` gives it none and its
+  plans are searched, the wider search and trials of 0203 included. A probe is planned again at the next round; a
+  seed's new order goes on under the handoff (decisions 0206, 0271), which goes back to the old one where it runs
+  slower a row. The searched order is the one kept (`decide`), so a later run starts from it.
+- The plan's assumed sizes beside what the run holds go in the profile's decision for the line: estimate and actual,
+  for the misprediction classifier (O166) to learn from.
+
+corpus0 x B-now, profiling, M3: joins 38.1 s off, 38.5 s on (cold, a new store); a second run on the store over the
+corpus edited, 38.7 s on against about 37.5 s off. 48 lines a run searched as slow. User CPU 88.1 s off, 88.4 s on;
+instructions 1,039 billion off, 1,075-1,090 on (+3.5-5%, spread over many spans, none of them planning's).
+463 findings, d067ec2ebf6f, in all. Before this check (prepared plans taken and kept with no check) the joins ran
+70% longer. Still to come from the design: the background learning that improves the wrongly planned and the
+critical path's plans through the classifier (O166, decision 0203 §5).
+
+**A constant on a `values` column is planned at run time** (2026-11-18, work queue Q297). A `values(c, …)` fact gives
+column `c`'s distinct values, not how many rows hold a given one, and kinds and field names are far from even. On
+PostHog (M3, cold, 157 chunks), `param(…) :- kind($p, #k1025), child($ps, $p, _), field($f, #f65559, $ps), text($p,
+$x)` was prepared with `kind` first (one kind in 200; this one, an identifier, is 16 % of the nodes): 10.4 M rows,
+where the run's search, from the kinds' and fields' frequencies, led with `field` (0.4 %): 253 k. `param`'s two rules
+and `tp_decl`'s made 104 M rows of work where the search's orders made 5 M, about 15 s of CPU. So a rule that tests a
+constant on a column a `values` fact answers is not prepared; it is planned at run time from the constant's
+statistics, which item 5 keeps where no fact answers. Constants on other columns (`child`'s dense `i`) stay
+prepared. Measured: 2,307 and 2,226 G instructions and 444–447 M join work, against 2,500 G and 555 M with every such rule
+prepared; same findings. Test: `a_rule_over_shaped_relations_is_planned_with_the_program` (`o`, testing
+`kind2(p, "x")`, is not prepared; `s`, the same rule with no constant, is).
+## Step 6: the checks (2026-11-19)
+
+
+**At the probes.** The executors count each step of a running line's order: the rows into it and the rows it made
+(decision 0203). Where a step probes a relation on columns that hold a key of it, or the source of a fan-out
+(`Shapes::probe_limit`), the fact bounds what a probe returns: one row for a key, the class's bound for a fan-out
+(`one`; `few`, 16; `many` bounds nothing). Past `BROKEN_BY` (8) times that bound, a probe on average, over 64
+probes at least, the fact is broken (`Shapes::broken_at`; "a fan-out class broken by large factors"). The check is
+made where 0203's are, a line at a time at its check (`Model::layout_broken`): a probe's at each chunk, a seed's or
+whole plan's at its cut. It reads the counts the executors keep, and no rows.
+**A broken fact.** It is the run's (`shapes::Broken`, a run local), noted once a relation, and named in the profile
+("broken layout facts"), on stderr in a strict run, and on the plan-cache counts line with the probe steps checked.
+For the rest of the run the relation is planned from statistics:
+- The run's shapes leave it out, and every relation whose facts were inferred from it (the relations its rules
+  read, kept with the shapes), in the model that found it and in every later one (`Shapes::for_run`).
+- A prepared plan reading a relation left out, or assuming a size of one, is not taken (`Prepared::take`).
+- A line that ran a prepared order priced by the fact is searched now (`prepared_heavy`).
+- A base relation left out has its columns measured at the next chunk (`sampled_statistics_unanswered`).
+**At the writes: not built (Q330).** A key the rules infer is proved from the facts of the relations they read, and
+the base relations, the only ones core.rr declares keys of, are tape views whose rows are never written. So a key that
+rows could break where they are written is a key a derived relation declares, and no program declares one. Every key
+a probe is bounded by is checked at the probes.
+**Tests** (Relax, here): `a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics` (within the class, and too
+few probes, break nothing; 200 rows a probe of `few` over 100 probes breaks it, noted once; the relation and those
+inferred from it left out, in a later model too; a prepared plan reading it not taken).
+**At scale** (corpus0 x B-now, profiling build, an M1 Max at load 10-15): 3,350 probe steps checked, no fact broken,
+463 findings d067ec2ebf6f; 985.8 G instructions in one run and 1,004.9 and 1,017.7 G in two others, against 982.7 and
+1,045.8 G before.
+## Derived relations' estimates: off (2026-11-19, Q290)
+The "Wider" step sized each derived relation that no fact sizes from its rules' plans. Measured directly (Q290,
+`RERAIL_SIZES_LOG` and `scripts/profiling/derived_sizes.py`), those estimates were within 2x of the rows a run held for
+15% of relations, 4% weighted by the plans that read them: the facts carry no grammar's kind skew and no kind's fields.
+Sizes a run held do transfer, 85% within 2x from corpus0 to hogql, but they do not save the plans. Sized right, and
+even from the same corpus's own run, the run costs more: 1,203 G instructions against 957-969 G with the estimates off,
+because more lines take a plan priced by the facts' distributions, not by the run's statistics. So derived relations
+are sized by an estimate only under `RERAIL_DERIVED_ESTIMATES=on`, a measurement aid. A rule over a derived relation
+that facts do not size is planned at run time. Rules over relations whose facts size them are prepared as before.

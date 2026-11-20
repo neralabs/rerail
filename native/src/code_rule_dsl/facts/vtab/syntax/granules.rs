@@ -33,7 +33,7 @@
 //! (home, key), each in the first free slot from its home. So the slots are a function of the set of keys, not of
 //! the order the definitions appear in, and adding one moves at most a granule it clashes with. Slot 0 is the
 //! document's own (its root); the top `SPAN_SLOTS` slots are its spans' (its text, lines and tokens, which are
-//! positions, in order), and the `EXTRA_SLOTS` below them `Extra`'s spans' (`ExtraSpan`: core.rr's source, lines,
+//! positions, in order), and the `EXTRA_SLOTS` below them `Extra`'s spans' (`ExtraSpan`: core.rerail's source, lines,
 //! comments and matches made beside the projection), a slot range for each kind.
 //!
 //! **Overflow** never falls back to preorder: up to `SPAN_SLOTS << INDEX_BITS` positions (4 M), each `ExtraSpan`
@@ -55,6 +55,8 @@ use std::sync::Arc;
 
 pub(super) const SLOT_BITS: u32 = rerail_clif::ids::SLOT_BITS;
 pub const INDEX_BITS: u32 = rerail_clif::ids::INDEX_BITS;
+// A kept column splits a node id at its granule (decision 0456 K2): the bit is this one.
+const _: () = assert!(INDEX_BITS == rerail_blocks::packed::ID_SPLIT, "a kept id column splits at the granule's index bits");
 /// Indexes in one slot.
 pub const INDEX: u32 = 1 << INDEX_BITS;
 const SLOTS: u32 = 1 << SLOT_BITS;
@@ -72,7 +74,7 @@ const EXTRA_FIRST: u32 = SPAN_FIRST - EXTRA_SLOTS;
 /// Slots granules take: `1..EXTRA_FIRST`.
 const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
 
-/// The kinds of `Extra`'s spans (core.rr's `span`s made beside the projection: `super::Extra::document`), each in slots
+/// The kinds of `Extra`'s spans (core.rerail's `span`s made beside the projection: `super::Extra::document`), each in slots
 /// of its own between the granules' and the positions', so no node, position or other kind has its id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExtraSpan {
@@ -172,8 +174,7 @@ fn is_container_owner(kind: &str) -> bool {
 /// What kind `kind` is to the granules (`DEF`, `WRAPPER`, `BODY`, `OWNER`): the names above, made into a table by
 /// kind code once per grammar (`Dialect::granule_kind`), so cutting reads a byte for each node.
 pub fn kind_flags(kind: &str) -> u8 {
-    u8::from(is_def(kind)) * DEF | u8::from(is_wrapper(kind)) * WRAPPER | u8::from(is_body(kind)) * BODY
-        | u8::from(is_container_owner(kind)) * OWNER
+    (u8::from(is_def(kind)) * DEF) | (u8::from(is_wrapper(kind)) * WRAPPER) | (u8::from(is_body(kind)) * BODY) | (u8::from(is_container_owner(kind)) * OWNER)
 }
 pub const DEF: u8 = 1;
 pub const WRAPPER: u8 = 2;
@@ -316,12 +317,11 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
                 start[l] = Some(Start::Stmt);
             }
             // A wrapper claims its first definition child, which then starts no granule of its own.
-            if start[l].is_some() && is(l, WRAPPER) {
-                if let Some(c) = p.children(l as u32).find(|&c| is(c as usize, DEF)) {
+            if start[l].is_some() && is(l, WRAPPER)
+                && let Some(c) = p.children(l as u32).find(|&c| is(c as usize, DEF)) {
                     claimed[c as usize] = true;
                     start[l] = Some(Start::Def);
                 }
-            }
             if claimed[l] {
                 start[l] = None;
             }

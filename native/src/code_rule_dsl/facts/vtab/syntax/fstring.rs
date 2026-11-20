@@ -1,4 +1,4 @@
-//! W's `parse: {grammar: pythonFString}` (`literal::parse_python_fstring`) as core.rr's relations, made by a batch
+//! W's `parse: {grammar: pythonFString}` (`literal::parse_python_fstring`) as core.rerail's relations, made by a batch
 //! only for a program that reads them (`FStrings::new`'s `reads`), off the document's tape (`Document::tape`):
 //!
 //! ```text
@@ -47,8 +47,8 @@ impl super::ProducerRun for FStrings {
     fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         FStrings::document(self, p, d, dialect, own, string)
     }
-    fn relations(self: Box<Self>, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
-        FStrings::relations(*self, atom)
+    fn relations(&mut self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
+        FStrings::relations(self, atom)
     }
 }
 
@@ -110,17 +110,17 @@ impl FStrings {
         Ok(())
     }
 
-    /// The relations read, their strings as atoms (`atom` of a string index).
-    pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
+    /// The relations read of the rows made since the last call, their strings as atoms (`atom` of a string index).
+    pub(super) fn relations(&mut self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         let mut out = Vec::new();
         if self.piece {
             let mut r = Relation::new(&["n", "i", "kind", "v"]);
-            self.pieces.iter().for_each(|&[n, i, k, v]| r.push(&[n, i, atom(k), atom(v)]));
+            std::mem::take(&mut self.pieces).into_iter().for_each(|[n, i, k, v]| r.push(&[n, i, atom(k), atom(v)]));
             out.push(("fstring_piece", r));
         }
         if !self.markers.is_empty() {
             let mut r = Relation::new(&["n", "marker", "v"]);
-            self.templates.iter().for_each(|&[n, m, v]| r.push(&[n, atom(m), atom(v)]));
+            std::mem::take(&mut self.templates).into_iter().for_each(|[n, m, v]| r.push(&[n, atom(m), atom(v)]));
             out.push(("fstring_template", r));
         }
         out

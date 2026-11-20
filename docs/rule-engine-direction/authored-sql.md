@@ -54,8 +54,8 @@ The relational engine is about 7,000 lines of Rust: `relational.rs`, `relational
   - `f52817fc`: deferred SQL facts and native forest;
   - `c4bd76bf`: shared syntax facts.
   - 19 commits on the branch touch the relational engine.
-- **Stated rationale.** From `docs/data-layer-batch-five.md:86-99` and `docs/data-layer-engine-gaps.md:144-158`: "Actual ports proved two further execution shapes… Relational clauses join projected source facts, group exported families, and compute recursive reachability with native reference edges." The clause was justified by the need to reproduce what the Python oracle scripts do.
-- **The governing requirement.** From `docs/data-layer-rule-port.md:83`: "Model the exact state tracked by the oracle." Rules are admitted "as exact only after its diagnostics and coverage match the oracle" (`:264`). Batch five boasts: "No oracle source, expected findings, or existing AST work limit changed to obtain parity" (`batch-five.md:117`).
+- **Stated rationale.** From `docs/data-layer-batch-five.md:86-99` and `docs/data-layer-engine-gaps.md:144-158` (both removed; at 7efcac9c67): "Actual ports proved two further execution shapes… Relational clauses join projected source facts, group exported families, and compute recursive reachability with native reference edges." The clause was justified by the need to reproduce what the Python oracle scripts do.
+- **The governing requirement.** From `docs/data-layer-rule-port.md:83` (removed; at 7efcac9c67): "Model the exact state tracked by the oracle." Rules are admitted "as exact only after its diagnostics and coverage match the oracle" (`:264`). Batch five boasts: "No oracle source, expected findings, or existing AST work limit changed to obtain parity" (`batch-five.md:117`).
   - The root-cause table in batch five shows the cost of that bar. One example: "Dead-code parity had 42 extra and one missing diagnostic | Plain imports vanished through SQL null arithmetic…" (`:114`). The SQL had to reproduce the oracle's own quirks.
 - **Consequence.** The oracle scripts are imperative Python analyzers: scope tracking, import resolution, class hierarchy, call graphs and taint propagation. Exact-parity porting therefore demanded a Turing-ish escape hatch, and the escape hatch became SQL. The branch then spent its performance work on SQL materialization:
   - `batch-six.md:148`: "733 of the active worker's 760 samples in relational evaluation. Of these, 716 included SQL stage materialization."
@@ -73,7 +73,7 @@ The relational engine is about 7,000 lines of Rust: `relational.rs`, `relational
 | data-layer-serverplan-quality | 6 |
 | execution-authority-bypass, impl-direct-execution, internal-dead-code, legacy-execution-surfaces, public-api-triples, serverplan-dispatch-architecture, serverplan-target-architecture | 1 each |
 
-Also: `fixtures/host/data-layer-port/profiling/{batched-sql,evidence,native-relations-metrics}.json` and `test/scripts/test_sql_variants.py`.
+Also: `packs/data-layer/upstream/benchmarks/authored/profiling/{batched-sql,evidence,native-relations-metrics}.json` and `test/scripts/test_sql_variants.py`.
 
 ### What the SQL computes, by semantic primitive
 

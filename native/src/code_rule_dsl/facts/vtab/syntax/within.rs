@@ -1,8 +1,8 @@
 //! Containment read off the tree, made per looked-up node (decision 0050), in two modes:
 //!
-//! - **`within(n, a)`** (`Mode::Tree`, the language's built-in, `core.rr`): `n` is strictly below `a`. The
+//! - **`within(n, a)`** (`Mode::Tree`, the language's built-in, `core.rerail`): `n` is strictly below `a`. The
 //!   containers of `n` are its ancestors; the nodes `a` holds are its subtree, a preorder interval.
-//! - **`span_within(inner, outer)`** (`Mode::Span`, what `simplify::span_containment` makes of two span
+//! - **`span_within(inner, outer)`** (`Mode::Span`, what `simplify::SpanContainment` makes of two span
 //!   comparisons): `outer`'s span holds `inner`'s, in one document. Exactly the pairs of `node(d, inner, _, s, e), node(d, outer, _, s2, e2),
 //! s2 <= s, e <= e2`, read off the tree instead of compared for every pair of a file's nodes:
 //!
@@ -13,7 +13,7 @@
 //! - **The nodes it holds** (`outer` bound): its subtree, its ancestors with the same span, and the
 //!   document's nodes of zero width inside its span.
 //!
-//! - **The kind-set axes** (`Mode::Axis`, `core.rr`'s `nearest`, `inside` and `has`; decisions 0036 and 0057): `rr_nearest_<set>(n, a)`, `a` the nearest strict ancestor of `n` of a kind in
+//! - **The kind-set axes** (`Mode::Axis`, `core.rerail`'s `nearest`, `inside` and `has`; decisions 0036 and 0057): `rr_nearest_<set>(n, a)`, `a` the nearest strict ancestor of `n` of a kind in
 //!   the set; `rr_inside_<set>(n, a)`, every such ancestor; `rr_has_<set>(n, a)`, `n` of a kind in the set and `a`
 //!   each of its strict ancestors. The same climbs and subtree intervals, filtered by the set.
 //!
@@ -159,6 +159,11 @@ impl Within {
             shared: Mutex::new(FxHashMap::default()),
             batch,
         }
+    }
+
+    /// The same, solved where `binding` places it (`solved`).
+    pub fn bound(self, binding: crate::code_rule_dsl::facts::nearest::Binding) -> Self {
+        Within { binding, ..self }
     }
 
     /// The same, reading the documents' tapes in `format` rather than as held (a test's comparison of formats).
@@ -442,6 +447,23 @@ impl Within {
     /// one is registered: `None` sends it to the host's.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn solved_in_chunk(&self) -> Option<Solved> {
+        self.solved_in(&[self.batch.chunk()]).map(|c| Solved { start: Vec::new(), rows: c.rows, start_in_chunk: Some(c.start) })
+    }
+
+    /// Its solve and those of `more`, the axis over a chunk's tape values (decision 0431 §8), made on the device in
+    /// one relation: its rows, then each one's of `more`, as the device binds a layered source's (`values::Layered`).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn solved_with(&self, more: &[&Within]) -> Option<crate::code_rule_dsl::facts::rows::Part> {
+        if !self.solvable() || more.iter().any(|w| w.mode != self.mode) {
+            return None;
+        }
+        let chunks: Vec<&super::device_chunk::Chunk> = std::iter::once(self).chain(more.iter().copied()).map(|w| w.batch.chunk()).collect();
+        self.solved_in(&chunks).map(|c| c.rows)
+    }
+
+    /// The axis solved on the device over `chunks`, in one relation (`nearest::ChunkAxis`).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn solved_in(&self, chunks: &[&super::device_chunk::Chunk]) -> Option<crate::code_rule_dsl::facts::nearest::InChunk> {
         use crate::code_rule_dsl::facts::core::KIND_STRIDE;
         use crate::code_rule_dsl::facts::nearest::chunk_axis;
         let solve = chunk_axis().filter(|_| self.binding == Binding::Metal)?;
@@ -458,8 +480,8 @@ impl Within {
             bits
         });
         let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
-        match solve(self.batch.chunk(), bits.as_deref(), inside) {
-            Ok(c) => Some(Solved { start: Vec::new(), rows: c.rows, start_in_chunk: Some(c.start) }),
+        match solve(chunks, bits.as_deref(), inside) {
+            Ok(c) => Some(c),
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0289)", || format!("solved on the host: {why}"));
                 None
@@ -743,6 +765,9 @@ impl Within {
 }
 
 impl Source for Within {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
     /// Read whole by the device: the batch's solve, the relation it was written into, where it lies (decision 0353
     /// step 5).
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {

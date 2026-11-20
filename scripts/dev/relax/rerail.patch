@@ -268,6 +268,135 @@ index 64fedf3a..2d5b07bf 100644
  mod arm64_walk {
      use super::{Raw, MAX_FRAMES};
  
+diff --git a/libs/relax/compiler/src/jit.rs b/libs/relax/compiler/src/jit.rs
+index 1205bea4..db683e31 100644
+--- a/libs/relax/compiler/src/jit.rs
++++ b/libs/relax/compiler/src/jit.rs
+@@ -8686,6 +8686,11 @@ impl Unit {
+     }
+ 
+     pub fn put_body(&mut self, id: u32, body: std::sync::Arc<Body>) {
++        // (the body its closures were lowered from ahead in this epoch, when one is: the same
++        // body, one Arc, so their takes find the parent's body they were lowered from:
++        // FrontShared::canon_bodies)
++        let epoch = self.tcx.collect_epoch.load(Ordering::SeqCst);
++        let body = canon_get(&self.front, id, body.file, epoch).unwrap_or(body);
+         if let Some(old) = self.bodies.remove(&id) {
+             if old.file != body.file {
+                 self.old_bodies.insert((id, old.file), old);
+@@ -22727,7 +22732,7 @@ pub unsafe fn compile_tier1(up: *mut Unit, id: u32) -> bool {
+         let _preemptible = crate::preempt::Preemptible::on();
+         typeck_ahead(&front, d, args, 1, false, true);
+         let _want = WantConsts::on();
+-        match lower_ahead(&front, c, true) {
++        match lower_ahead_drained(&front, c) {
+             AF_OK => unmade.remove(&c),
+             why => unmade.insert(c, why),
+         };
+@@ -26983,6 +26988,27 @@ fn prefront_slot(front: &FrontShared, id: u32) -> bool {
+     false
+ }
+ 
++/// lower_ahead of an O3 snapshot's inline candidate around the owner's evaluations, as
++/// prefront_slot makes a front: what its lowering noted unevaluated is drained (const_drain, this
++/// thread holding nothing it waits on) and it is lowered again, WANT_ROUNDS times at most. The
++/// owner drains after each request it serves anyway, but after its reply: the next round's lowering
++/// raced that drain, and when it won, a candidate whose body named a constant nobody had evaluated
++/// yet (warm code: no lowering here evaluated it) failed its SPLIT_TRIES and was left out of the
++/// build until the drain came by (o3_left_out, "needs unit": a jemalloc wrapper inlined into an
++/// engine test's hot fn, now and then).
++fn lower_ahead_drained(front: &FrontShared, c: u32) -> u8 {
++    let mut why = AF_OTHER;
++    for _ in 0..WANT_ROUNDS {
++        let noted = want_notes();
++        why = lower_ahead(front, c, true);
++        if why == AF_OK || want_notes() == noted {
++            break;
++        }
++        owner::call(owner::Class::Job, const_drain);
++    }
++    why
++}
++
+ fn prefront_slot_once(front: &FrontShared, id: u32) -> bool {
+     match front.slot_keys.get(&id) {
+         Some(FnKey::Closure(..)) => return prefront_closure(front, id),
+@@ -27039,6 +27065,28 @@ fn prefront_closure(front: &FrontShared, id: u32) -> bool {
+ /// no front off the owner ("no body": prefront_twin takes an instance's body only), and the O3
+ /// build of a hot caller that inlines it left it out (a large app: a view's draw closures, a text
+ /// layout's closure, all unverified).
++/// The canonical body of closure parent `parent` in file `file` for collect epoch `epoch`
++/// (FrontShared::canon_bodies), if a closure's front registered one.
++fn canon_get(front: &FrontShared, parent: u32, file: u32, epoch: u64) -> Option<std::sync::Arc<Body>> {
++    front.canon_bodies.lock().unwrap_or_else(|e| e.into_inner()).get(&(parent, file)).filter(|(e, _)| *e == epoch).map(|(_, b)| b.clone())
++}
++
++/// Registers `body` as `parent`'s canonical body for `epoch` unless one is registered (the first
++/// wins), and returns the canonical one. Entries of other epochs go.
++fn canon_body(front: &FrontShared, parent: u32, epoch: u64, body: std::sync::Arc<Body>) -> std::sync::Arc<Body> {
++    let mut m = front.canon_bodies.lock().unwrap_or_else(|e| e.into_inner());
++    if let Some((e, b)) = m.get(&(parent, body.file)) {
++        if *e == epoch {
++            return b.clone();
++        }
++    }
++    crate::zone_alloc::kept_with(|| {
++        m.retain(|_, (e, _)| *e == epoch);
++        m.insert((parent, body.file), (epoch, body.clone()));
++    });
++    body
++}
++
+ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u32>) -> bool {
+     let Some(key @ FnKey::Closure(cfile, _, parent)) = front.slot_keys.get(&id) else { return prefront_fail(AF_NOT_BODY) };
+     let up = front.unit.load(Ordering::Relaxed);
+@@ -27052,8 +27100,10 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
+     // from the disk cache): made again here, as lower_ahead_as makes an instance's. The closures of
+     // a parent built long ago are what turns hot later (a benchmark's or a frame's callback): their
+     // O3 builds bailed on this for the whole run and the closure ran baseline code
+-    let body = match kept {
+-        Some(b) => b,
++    let epoch_now = u.tcx.collect_epoch.load(Ordering::SeqCst);
++    let canon = canon_get(front, parent, cfile, epoch_now);
++    let body = match canon.or(kept) {
++        Some(b) => canon_body(front, parent, epoch_now, b),
+         None => {
+             let Some(FnKey::Inst(d, args)) = front.slot_keys.get(&parent) else {
+                 prefront_fail(AF_NO_PARENT);
+@@ -27064,7 +27114,7 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
+             let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::typeck::try_codegen_body(&u.prog, &u.tcx, d, &args)));
+             let missing = !crate::program::take_missing().is_empty();
+             match made {
+-                Ok(Some(b)) if !missing && b.file == cfile => b,
++                Ok(Some(b)) if !missing && b.file == cfile => canon_body(front, parent, epoch_now, b),
+                 Err(p) if !p.is::<crate::preempt::NeedsUnit>() && !crate::preempt::is_cancelled(&*p) => std::panic::resume_unwind(p),
+                 _ => {
+                     prefront_fail(AF_NO_PARENT);
+@@ -27727,6 +27777,16 @@ pub struct FrontShared {
+     /// inline const blocks' bytes): any thread's lowering reads it here, the tiers of one instance
+     /// share one value. A source change bumps the epoch in the key, so nothing stale is read.
+     body_consts: crate::conc::MemoMap<(u64, u32, u32, bool), (u64, u32)>,
++    /// The checked body of a closure parent its closures are lowered from ahead, by (parent slot,
++    /// file), for one collect epoch (canon_body): every closure of that parent lowered ahead in
++    /// the epoch is lowered from this one body, and the parent's own take installs it rather than
++    /// its own copy, so the identity the closures' takes check holds. Two checks of one instance in
++    /// one epoch are the same body, but not the same Arc: each closure re-made the parent's body
++    /// (the unit had dropped it), or the parent's take installed the one its own front checked,
++    /// and the siblings were refused at every take ("closure parent body differs") until their O3
++    /// builds left them out (an engine's hot closures of one parent, every run). Only a closure's
++    /// front registers a body: the parents of closures lowered ahead, not every checked body.
++    canon_bodies: relax_session::sync::Mutex<HashMap<(u32, u32), (u64, std::sync::Arc<Body>)>>,
+     /// Ahead checks are queued during startup and UI bursts.
+     ahead_enabled: bool,
+     /// bodies checked ahead after the first present: those no build took are dropped when a
+@@ -27802,6 +27862,7 @@ impl FrontShared {
+             // helper's lowering of main raced the exit with its layout errors, limits/issue-55878)
+             tls: crate::conc::MemoMap::with_bits(8),
+             body_consts: crate::conc::MemoMap::with_bits(12),
++            canon_bodies: Default::default(),
+             ahead_enabled: options.tyck_ahead && !options.const_fuel,
+             ahead_post: Default::default(),
+         }
 diff --git a/libs/relax/compiler/src/lib.rs b/libs/relax/compiler/src/lib.rs
 index 5e831c36..4dcb73ca 100644
 --- a/libs/relax/compiler/src/lib.rs
@@ -396,6 +525,94 @@ index eb9e99f2..fff2cdde 100644
 +        fn st_blocks(&self) -> u64 { self.stat().st_blocks as u64 }
 +    }
 +}
+diff --git a/libs/relax/compiler/std/std/panic.rs b/libs/relax/compiler/std/std/panic.rs
+index 2e0416b4..70db549e 100644
+--- a/libs/relax/compiler/std/std/panic.rs
++++ b/libs/relax/compiler/std/std/panic.rs
+@@ -179,7 +179,33 @@ pub(crate) fn record_payload(message: fmt::Arguments<'_>) {
+     });
+ }
+ 
++thread_local! {
++    /// Where this thread's panic was, as `file:line:col` (the payload's companion): what the test
++    /// harness says of a failed test, as libtest's captured output does.
++    static LOCATION: core::cell::RefCell<Option<String>> = const { core::cell::RefCell::new(None) };
++}
++
++/// Called with the payload (sys::rt): the latest panic's location (one a test caught itself is
++/// replaced by the one that failed it).
++pub(crate) fn record_location(loc: &core::panic::Location<'_>) {
++    let _ = LOCATION.try_with(|c| {
++        if let Ok(mut c) = c.try_borrow_mut() {
++            *c = Some(alloc::format!("{}:{}:{}", loc.file(), loc.line(), loc.column()));
++        }
++    });
++}
++
++/// The location of the panic that just ended this thread's catch point (taken).
++pub(crate) fn take_location() -> Option<String> {
++    LOCATION.try_with(|c| c.try_borrow_mut().ok().and_then(|mut c| c.take())).ok().flatten()
++}
++
+ pub(crate) fn clear_payload() {
++    let _ = LOCATION.try_with(|c| {
++        if let Ok(mut c) = c.try_borrow_mut() {
++            *c = None;
++        }
++    });
+     let _ = PAYLOAD.try_with(|c| {
+         if let Some(p) = c.take() {
+             drop(unsafe { Box::from_raw(p.as_ptr()) });
+diff --git a/libs/relax/compiler/std/std/relax/test.rs b/libs/relax/compiler/std/std/relax/test.rs
+index 920e21e6..3e20c3e4 100644
+--- a/libs/relax/compiler/std/std/relax/test.rs
++++ b/libs/relax/compiler/std/std/relax/test.rs
+@@ -177,6 +177,16 @@ fn calc_result(d: &Desc, panic: Option<&(dyn crate::any::Any + Send)>) -> Outcom
+     }
+ }
+ 
++/// libtest's text of a test's panic: `thread '<test>' panicked at <file:line:col>:` then the message.
++fn panic_text(name: &str, p: &(dyn crate::any::Any + Send)) -> String {
++    let msg = p.downcast_ref::<String>().map(|e| e.as_str()).or_else(|| p.downcast_ref::<&'static str>().copied())
++        .unwrap_or("Box<dyn Any>");
++    match crate::panic::take_location() {
++        Some(at) => format!("thread '{}' panicked at {}:\n{}", name, at, msg),
++        None => format!("thread '{}' panicked:\n{}", name, msg),
++    }
++}
++
+ fn run_one(d: &Desc, fault: usize, reach: usize, verbose: bool) -> Outcome {
+     let record: Option<extern "C" fn(usize, u32)> = if reach == 0 { None } else { Some(unsafe { crate::mem::transmute(reach) }) };
+     if let Some(record) = record { record(d.index, 0); }
+@@ -204,7 +214,13 @@ fn run_one(d: &Desc, fault: usize, reach: usize, verbose: bool) -> Outcome {
+     } else { false };
+     let result = if faulted { Outcome::Failed(Some(String::from("a hardware fault in test code"))) } else { match r {
+         Ok(()) => calc_result(d, None),
+-        Err(p) => calc_result(d, Some(&*p)),
++        Err(p) => match calc_result(d, Some(&*p)) {
++            // A failing panic: what libtest's captured output shows of it (std's panic hook prints
++            // it there), its message and where it was. Relax captures no output, and its runtime's
++            // report of the panic is a JSON line; without this the failures section was empty.
++            Outcome::Failed(None) => Outcome::Failed(Some(panic_text(&d.name, &*p))),
++            o => o,
++        },
+     } };
+     if let (Some(began), Some(caught), Some(body_begin)) = (began, caught, body_begin.get()) {
+         let body_end = body_end.get().unwrap_or(caught);
+diff --git a/libs/relax/compiler/std/std/sys/rt.rs b/libs/relax/compiler/std/std/sys/rt.rs
+index 85681d4b..48464759 100644
+--- a/libs/relax/compiler/std/std/sys/rt.rs
++++ b/libs/relax/compiler/std/std/sys/rt.rs
+@@ -41,6 +41,9 @@ fn report_panic(message: core::fmt::Arguments<'_>, location: Option<&core::panic
+     #[cfg(not(relax_web))]
+     {
+     crate::panic::record_payload(message);
++    if let Some(loc) = location {
++        crate::panic::record_location(loc);
++    }
+     if crate::panic::take_resuming() {
+         return;
+     }
 diff --git a/libs/relax/compiler/tests/cast_open_slice_referent.rs b/libs/relax/compiler/tests/cast_open_slice_referent.rs
 new file mode 100644
 index 00000000..a3a893dd

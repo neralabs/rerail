@@ -2,13 +2,19 @@
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
-// under the same names: the glob's name and the private one are one item.
-#![allow(dead_code, unused_imports, hidden_glob_reexports)]
+// under the same names: the glob's name and the private one are one item. The mounts also widen what the crates
+// above read (the split's facades, not a design).
+#![allow(dead_code, unused_imports, hidden_glob_reexports, private_interfaces, private_bounds)]
+// What the split widened for the crates above is no public API (`len`, `()` errors, `new`); the long
+// signatures and tuple types are the sources' own.
+#![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
+#![allow(clippy::type_complexity, clippy::too_many_arguments)]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 pub use rerail_store::content_store;
+pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 extern crate self as rerail_sessions;
 #[path = "../../../src/code_rule_dsl"]
@@ -79,6 +85,7 @@ pub mod code_rule_dsl {
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
     pub use rerail_lang::code_rule_dsl::json;
+    pub use rerail_lang::code_rule_dsl::regexes;
     pub use rerail_lang::code_rule_dsl::language;
     pub use rerail_lang::code_rule_dsl::lines;
     
@@ -89,14 +96,14 @@ pub mod code_rule_dsl {
             pub mod caches {
                 pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::logic::front::{Error, Literal, Program, Term};
+                use crate::code_rule_dsl::logic::front::Error;
                 #[allow(unused_imports)]
                 use std::collections::BTreeSet;
             }
             pub mod yaml {
                 pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Program, Rule, Term};
+                use crate::code_rule_dsl::logic::front::Error;
                 #[allow(unused_imports)]
                 use serde_json::Value;
             }
@@ -107,18 +114,9 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
             #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
-        }
-        pub mod magic {
-            pub use rerail_rr::code_rule_dsl::logic::magic::*;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BTreeSet};
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
         }
         pub mod profile {
             pub use rerail_prof::code_rule_dsl::logic::profile::*;
@@ -142,7 +140,7 @@ pub mod code_rule_dsl {
             pub mod aggregate_demand {
                 pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand::*;
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Program, Rule, Term};
+                use crate::code_rule_dsl::logic::front::{self, AggOp};
                 #[allow(unused_imports)]
                 use std::collections::{BTreeMap, BTreeSet};
             }
@@ -150,8 +148,6 @@ pub mod code_rule_dsl {
                 pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
                 #[allow(unused_imports)]
                 use std::collections::{BTreeMap, BTreeSet};
-                #[allow(unused_imports)]
-                use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::logic::front::Error;
             }
@@ -166,18 +162,12 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::Error;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::Program;
-            #[allow(unused_imports)]
             #[cfg(any(test, feature = "test-hooks"))]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::drop_unread_core;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::aggregate_demand::retype_helpers;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::is_core;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::WORLD;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::print::print;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use syntax::quote;
             #[allow(unused_imports)]
@@ -195,8 +185,6 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::text::{Domain, Lowered, Source, Spelling, lower};
             #[allow(unused_imports)]
             use rusqlite::Connection;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::front::ast::{Atom, Literal, Program, Term};
         }
     }
     pub use rerail_lang::code_rule_dsl::module_path;

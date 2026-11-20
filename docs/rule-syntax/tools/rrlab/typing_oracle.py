@@ -20,8 +20,8 @@ RULE = """.policy "rrlab-typing-oracle" revision 1
 .description "every answer of the Python typing program, for scoring"
 .language python
 .mode log
-#include "python/calls.rr"
-#include "python/types.rr"
+#include "python/calls.rerail"
+#include "python/types.rerail"
 .violation TGT(at: node, f: node) "target"
 .violation OPEN(at: node) "open"
 .violation TY(at: node, t: symbol) "{t}"
@@ -45,7 +45,7 @@ def score(args, Run, here):
     files = sorted(os.path.relpath(os.path.join(d, f), project) for d, _, fs in os.walk(project) for f in fs
                    if f.endswith(".py"))
     src = {f: open(os.path.join(project, f), "rb").read() for f in files}
-    rule = os.path.join(here, "target", f"typing-oracle-{os.getpid()}.rr")
+    rule = os.path.join(here, "target", f"typing-oracle-{os.getpid()}.rerail")
     os.makedirs(os.path.dirname(rule), exist_ok=True)
     open(rule, "w").write(RULE)
     run = Run(rule, files, project)

@@ -712,7 +712,8 @@ fn exact_scans(native: &BlockNative) -> Vec<usize> {
         Some("all") => scans.map(|(at, _)| at).collect(),
         Some(v) => v.split(',').filter_map(|x| x.trim().parse().ok()).collect(),
         None => {
-            let learned = LEARNED.lock().ok().and_then(|m| m.get(&fingerprint(native)).cloned()).unwrap_or_default();
+            let st_ = kept_programs();
+            let learned = st_.learned.lock().ok().and_then(|m| m.get(&fingerprint(native)).cloned()).unwrap_or_default();
             let mut exact: Vec<usize> = scans.filter(|(_, i)| matches!(i, BlockInst::Toggle(_))).map(|(at, _)| at).collect();
             exact.extend(learned);
             exact.sort_unstable();
@@ -726,7 +727,6 @@ fn exact_scans(native: &BlockNative) -> Vec<usize> {
 /// scan whose speculated start was wrong in more than one segment in `PROMOTE` is made exact in
 /// the program's later runs. A wrong start costs a run again of its segment (and of the ones
 /// after, while its end differs); an exact scan costs a level's pass over every segment.
-static LEARNED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, Vec<usize>>>> = std::sync::LazyLock::new(Default::default);
 const PROMOTE: usize = 1000;
 
 fn fingerprint(native: &BlockNative) -> u64 {
@@ -932,29 +932,58 @@ fn carried_serial(at: usize, inst: &BlockInst, out: &mut String) {
 /// the positions and totals from the finished words.
 /// `generate_serial`'s sources by what they are made from: each program, the pass's stores and
 /// slots, what runs have learned of each, and the switches the generator reads. A batch's
-/// source is made once, not at every run: made in a debug build, a pass of `.rr`'s took 26 s.
-static SOURCES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, (std::sync::Arc<String>, usize, usize)>>> = std::sync::LazyLock::new(Default::default);
+/// source is made once, not at every run: made in a debug build, a pass of `.rerail`'s took 26 s.
 
 /// A source's kernels by its key (`serial_source`) and name: found without hashing the source
 /// again, as `lane::kernel` does (twelve kernels a pass, its source near a megabyte).
-pub(crate) static KERNELS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(u64, &'static str), lane::Kernel>>> = std::sync::LazyLock::new(Default::default);
 
 /// Sources generated and kernels compiled by this process's serial runs: a benchmark reads it
 /// around its timed runs, which must make none (`prewarm` makes them first).
-static COMPILES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// The sources generated and kernels compiled so far (`COMPILES`).
+/// What the serial programs' runs keep of callers' programs (decision 0442: the caller's, `rerail_context::Shared`):
+/// each program's generated sources, what its runs learned, the sources that learn nothing more, its shapes and passes.
+#[derive(Default)]
+struct Programs {
+    learned: std::sync::Mutex<std::collections::HashMap<u64, Vec<usize>>>,
+    sources: std::sync::Mutex<std::collections::HashMap<u64, (std::sync::Arc<String>, usize, usize)>>,
+    settled: std::sync::Mutex<std::collections::HashSet<u64>>,
+    shapes: std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<Shape>>>,
+    passes: std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<rerail_compiler::block_native::Passes>>>,
+}
+
+fn kept_programs() -> std::sync::Arc<Programs> {
+    rerail_context::shared::<Programs>()
+}
+
+/// A source's kernels by its key (`serial_source`) and name, found without hashing the source again, as
+/// `lane::kernel` does (twelve kernels a pass, its source near a megabyte): the device's, on this machine (decision
+/// 0442).
+#[derive(Default)]
+pub(crate) struct Kernels(pub(crate) std::sync::Mutex<std::collections::HashMap<(u64, &'static str), lane::Kernel>>);
+
+pub(crate) fn kernels() -> std::sync::Arc<Kernels> {
+    rerail_context::machine::<Kernels>()
+}
+
+/// The run's count of sources generated and kernels compiled (a benchmark reads it around its timed runs, which must
+/// make none).
+#[derive(Default)]
+struct Compiles(std::sync::atomic::AtomicUsize);
+
+/// The sources generated and kernels compiled so far in the run under way.
 pub fn compiles() -> usize {
-    COMPILES.load(std::sync::atomic::Ordering::Relaxed)
+    rerail_context::local::<Compiles>().0.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 fn kernel(key: u64, source: &str, name: &'static str) -> Result<lane::Kernel, Error> {
-    if let Some(hit) = KERNELS.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
+    let st_ = kernels();
+    if let Some(hit) = st_.0.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
         return Ok(hit);
     }
-    COMPILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let made = lane::kernel(source, name, None);
-    if let Ok(mut m) = KERNELS.lock() {
+    let st_ = kernels();
+    if let Ok(mut m) = st_.0.lock() {
         m.insert((key, name), made.clone());
     }
     Ok(made)
@@ -965,14 +994,15 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for p in programs {
         format!("{p:?}").hash(&mut h);
-        LEARNED.lock().ok().and_then(|m| m.get(&fingerprint(p)).cloned()).hash(&mut h);
+        kept_programs().learned.lock().ok().and_then(|m| m.get(&fingerprint(p)).cloned()).hash(&mut h);
     }
     io.hash(&mut h);
     for k in ["RERAIL_SERIAL_EXACT", "RERAIL_SERIAL_LANES", "RERAIL_SERIAL_CONE"] {
         std::env::var(k).ok().hash(&mut h);
     }
     let key = h.finish();
-    if let Some((source, sw, counted)) = SOURCES.lock().ok().and_then(|m| m.get(&key).cloned()) {
+    let st_ = kept_programs();
+    if let Some((source, sw, counted)) = st_.sources.lock().ok().and_then(|m| m.get(&key).cloned()) {
         return (key, source, sw, counted);
     }
     // `RERAIL_SERIAL_CACHE=dir`: sources kept on disk by key, for runs by hand (a profile, a
@@ -983,21 +1013,23 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
             let mut n = head.split(' ').filter_map(|x| x.parse::<usize>().ok());
             if let (Some(sw), Some(counted)) = (n.next(), n.next()) {
                 let made = (std::sync::Arc::new(source.to_owned()), sw, counted);
-                if let Ok(mut m) = SOURCES.lock() {
+                let st_ = kept_programs();
+                if let Ok(mut m) = st_.sources.lock() {
                     m.insert(key, made.clone());
                 }
                 return (key, made.0, made.1, made.2);
             }
         }
     }
-    COMPILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let (source, sw, counted) = generate_serial(programs, io);
     if let Some(path) = &disk {
         let _ = std::fs::create_dir_all(path.parent().unwrap_or(path));
         let _ = std::fs::write(path, format!("{sw} {counted}\n{source}"));
     }
     let made = (std::sync::Arc::new(source), sw, counted);
-    if let Ok(mut m) = SOURCES.lock() {
+    let st_ = kept_programs();
+    if let Ok(mut m) = st_.sources.lock() {
         m.insert(key, made.clone());
     }
     (key, made.0, made.1, made.2)
@@ -1638,7 +1670,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
             })),
             // A reader's kind and marks by its start mask (`Records::retags`).
             // A token a reader says is no word (`records::pass`).
-            unword = r.retags.iter().map(|t| format!(" if (record_bit(out, f, {}u, s)) word = 0u;", t.o)).collect::<String>(),
+            unword = r.retags.iter().filter(|t| !t.part).map(|t| format!(" if (record_bit(out, f, {}u, s)) word = 0u;", t.o)).collect::<String>(),
             retags = r
                 .retags
                 .iter()
@@ -1745,8 +1777,15 @@ fn records_source(programs: &[&BlockNative]) -> String {
                     })
                     .collect();
                 let wb = if r.unless.is_empty() { String::new() } else { format!(" const uint32_t wb = j >= 0 ? record_word_{p}(bytes, f, starts[j], lasts[j] + 1u - starts[j]) : 0u;") };
+                // An extra keeps the marks of its own gap (`Records::own`), from the record
+                // before.
+                let own: String = (0..r.marks.len())
+                    .filter(|&m| r.own >> m & 1 == 1 && r.gaps >> m & 1 == 1 && r.tested_only >> m & 1 == 0)
+                    .map(|m| format!(" if (record_any(out, f, {}u, from, s)) marks |= {}u;", r.marks[m].0, 1u32 << m))
+                    .collect();
+                let own = if own.is_empty() { String::new() } else { format!(" else {{ const uint32_t from = k > 0u ? starts[k - 1u] + 1u : 0u;{own} }}") };
                 format!(
-                    " marks &= ~{gaps}u; if (!{here}) {{ int32_t j = I32(k) - 1; while (j >= 0 && {before}) j--; const uint32_t from = j >= 0 ? starts[j] + 1u : 0u;{pend}{wb}{tests} }}",
+                    " marks &= ~{gaps}u; if (!{here}) {{ int32_t j = I32(k) - 1; while (j >= 0 && {before}) j--; const uint32_t from = j >= 0 ? starts[j] + 1u : 0u;{pend}{wb}{tests} }}{own}",
                     pend = pend(),
                     gaps = r.gaps,
                     here = is_extra("s"),
@@ -1828,7 +1867,8 @@ fn learn(key: u64, forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], r
         }
         let promoted: Vec<usize> = state.parts.iter().zip(&wrong).filter(|&(_, &n)| n * PROMOTE > seen).map(|(&(at, ..), _)| at).collect();
         if !promoted.is_empty() {
-            if let Ok(mut m) = LEARNED.lock() {
+            let st_ = kept_programs();
+            if let Ok(mut m) = st_.learned.lock() {
                 let known = m.entry(fingerprint(native)).or_default();
                 for at in promoted {
                     if !known.contains(&at) {
@@ -1840,17 +1880,17 @@ fn learn(key: u64, forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], r
         }
     }
     if !grew {
-        if let Ok(mut m) = SETTLED.lock() {
+        let st_ = kept_programs();
+        if let Ok(mut m) = st_.settled.lock() {
             m.insert(key);
         }
     }
 }
 
 /// The sources (`serial_source`'s keys) whose runs learn nothing more (`learn`).
-static SETTLED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<u64>>> = std::sync::LazyLock::new(Default::default);
 
 fn settled(key: u64) -> bool {
-    SETTLED.lock().is_ok_and(|m| m.contains(&key))
+    kept_programs().settled.lock().is_ok_and(|m| m.contains(&key))
 }
 
 /// What a run's buffers and launches take from its programs' levels, made once a source.
@@ -1866,8 +1906,8 @@ struct Shape {
 }
 
 fn shape_of(key: u64, programs: &[&BlockNative]) -> std::sync::Arc<Shape> {
-    static SHAPES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<Shape>>>> = std::sync::LazyLock::new(Default::default);
-    if let Some(hit) = SHAPES.lock().ok().and_then(|m| m.get(&key).cloned()) {
+    let st_ = kept_programs();
+    if let Some(hit) = st_.shapes.lock().ok().and_then(|m| m.get(&key).cloned()) {
         return hit;
     }
     let levels: Vec<Levels> = programs.iter().map(|n| Levels::of(n)).collect();
@@ -1877,7 +1917,8 @@ fn shape_of(key: u64, programs: &[&BlockNative]) -> std::sync::Arc<Shape> {
         stride: group_stride(programs),
         with_groups: group_levels(programs),
     });
-    if let Ok(mut m) = SHAPES.lock() {
+    let st_ = kept_programs();
+    if let Ok(mut m) = st_.shapes.lock() {
         m.insert(key, shape.clone());
     }
     shape
@@ -1969,10 +2010,6 @@ fn run_split_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: 
 
 /// The files' bytes admitted once a run, every pass of it reading them where they are.
 fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
-    // An `early` (decision 0330) or a prefix (0335) is the CPU's for now, as at `run_batch`.
-    if programs.iter().any(|p| crate::block_program::starts_late(p)) {
-        return Err(Error::UnsupportedBackend);
-    }
     let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
     let sources = match digests {
         Some(d) if d.len() == files.len() => crate::slabs::admit_sources_digested(&bytes, d)?,
@@ -2058,19 +2095,20 @@ fn blocks_of(len: usize, delay: u8) -> usize {
 /// as made; each backward pass's fills from the files' last blocks to their first
 /// (`back_kernels`). The slots stay in the device's buffer from pass to pass. One program a
 /// batch.
-/// A program's passes (`BlockNative::passes`), made once a program: in a debug build `.rr`'s
+/// A program's passes (`BlockNative::passes`), made once a program: in a debug build `.rerail`'s
 /// took most of a second, at every run.
 fn passes_of(program: &BlockNative) -> std::sync::Arc<rerail_compiler::block_native::Passes> {
     use std::hash::{Hash, Hasher};
-    static PASSES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<rerail_compiler::block_native::Passes>>>> = std::sync::LazyLock::new(Default::default);
     let mut h = std::collections::hash_map::DefaultHasher::new();
     format!("{program:?}").hash(&mut h);
     let key = h.finish();
-    if let Some(hit) = PASSES.lock().ok().and_then(|m| m.get(&key).cloned()) {
+    let st_ = kept_programs();
+    if let Some(hit) = st_.passes.lock().ok().and_then(|m| m.get(&key).cloned()) {
         return hit;
     }
     let made = std::sync::Arc::new(program.passes());
-    if let Ok(mut m) = PASSES.lock() {
+    let st_ = kept_programs();
+    if let Ok(mut m) = st_.passes.lock() {
         m.insert(key, made.clone());
     }
     made
@@ -2140,7 +2178,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
                     ("back", fills, passes.slots).hash(&mut h);
                     h.finish()
                 };
-                let made = |name| match KERNELS.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
+                let made = |name| match kernels().0.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
                     Some(hit) => Ok(hit),
                     None => kernel(key, &back_kernels(fills, passes.slots), name),
                 };
@@ -2225,9 +2263,6 @@ fn back_kernels(fills: &[(u16, u16, u16)], slots: u16) -> String {
 
 /// `run_serial` over programs without passes, or one forward pass of a program in passes (`io`).
 fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std::sync::Arc<crate::slabs::ResidentSource>], segments: Segments, io: Option<&Io<'_>>, read: bool) -> Result<(SerialRun, Option<Kept>), Error> {
-    if programs.iter().any(|p| crate::block_program::starts_late(p)) {
-        return Err(Error::UnsupportedBackend);
-    }
     ready()?;
     let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
     let refs: Vec<&BlockNative> = forms.iter().collect();

@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::matcher::{AstMatcher, StopBy};
@@ -37,9 +37,11 @@ fn describe_matcher(matcher: &AstMatcher, language: GrammarDialect) -> Value {
         }
         AstMatcher::Kind(kind) => json!({ "kind": kind.potential_kinds().map(|kinds|
             kinds.iter().map(|id| kind_name(id as u16)).collect::<Vec<_>>()) }),
+        AstMatcher::Supertype(supertype) => {
+            json!({ "supertype": kind_name(supertype.class), "kinds":
+            supertype.kinds.iter().map(|&id| kind_name(id)).collect::<Vec<_>>() })
+        }
         AstMatcher::Regex(_) => json!({ "regex": true }),
-        AstMatcher::Supertype(supertype) => json!({ "supertype": kind_name(supertype.class),
-            "kinds": supertype.kinds.iter().map(|&id|kind_name(id)).collect::<Vec<_>>() }),
         AstMatcher::Never => json!({ "never": true }),
         AstMatcher::TestUnknown(_) => json!({ "testUnknown": true }),
         AstMatcher::All(items) | AstMatcher::Any(items) => {
@@ -203,7 +205,13 @@ thread_local! {
     static PHASE_STACK: RefCell<Vec<(Phase, u128)>> = const { RefCell::new(Vec::new()) };
 }
 
-static ACTIVE_SESSION: LazyLock<Mutex<Option<ProfileSession>>> = LazyLock::new(|| Mutex::new(None));
+/// The apply's profile, for the jobs its pool threads take (`WorkerProfile`): the run's (decision 0442).
+#[derive(Default)]
+struct ActiveSession(Mutex<Option<ProfileSession>>);
+
+fn active_session() -> Arc<ActiveSession> {
+    crate::code_rule_dsl::logic::profile::local::<ActiveSession>()
+}
 
 fn with_profile(f: impl FnOnce(&mut Profile)) {
     PROFILE.with(|profile| {
@@ -300,7 +308,8 @@ impl WorkerProfile {
         if PROFILE.with(|profile| profile.borrow().is_some()) {
             return Self(false);
         }
-        let session = ACTIVE_SESSION
+        let session = active_session()
+            .0
             .lock()
             .expect("profile session mutex poisoned")
             .clone();
@@ -429,7 +438,13 @@ pub(super) fn record_transient(navigation_bytes: usize) {
 }
 
 /// W's retained-bytes report (`workspace/memory.rs`), which P's profile dropped.
-pub(super) fn record_retained(source: usize, tape: usize, grammar: usize, dispatch: usize, results: usize) {
+pub(super) fn record_retained(
+    source: usize,
+    tape: usize,
+    grammar: usize,
+    dispatch: usize,
+    results: usize,
+) {
     with_profile(|profile| {
         profile.retained_source_bytes = Some(source);
         profile.retained_tape_bytes = Some(tape);
@@ -494,7 +509,8 @@ impl ApplyProfile {
             revision,
             ..Profile::default()
         }));
-        *ACTIVE_SESSION
+        *active_session()
+            .0
             .lock()
             .expect("profile session mutex poisoned") = Some(Arc::clone(&session));
         PROFILE.with(|profile| *profile.borrow_mut() = Some(session));
@@ -527,7 +543,8 @@ impl Drop for ApplyProfile {
         }
         navigation::flush();
         let session = PROFILE.with(|profile| profile.borrow_mut().take());
-        *ACTIVE_SESSION
+        *active_session()
+            .0
             .lock()
             .expect("profile session mutex poisoned") = None;
         if let Some(session) = session {

@@ -908,9 +908,9 @@ fn doc_pieces<'s>(
 #[cfg(test)]
 pub mod tests {
     use super::{PhpcsIndex, PhpcsVersion, before_on_line};
+    use crate::code_rule_dsl::fixtures::oracle;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::lines::{LineTable, Terminators};
-    use crate::code_rule_dsl::fixtures::oracle;
     use ast_grep_core::tree_sitter::LanguageExt;
     use serde_json::Value;
 

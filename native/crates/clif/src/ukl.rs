@@ -105,7 +105,7 @@ fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::
                 // Whether the use of argument `k` reads only its low 32 bits.
                 let reads_low = |k: usize| -> bool {
                     match data.opcode() {
-                        Opcode::Iadd | Opcode::Isub | Opcode::Imul | Opcode::Band | Opcode::Bor | Opcode::Bxor | Opcode::Bnot => result_low,
+                        Opcode::Iadd | Opcode::Isub | Opcode::Imul | Opcode::Band | Opcode::BandNot | Opcode::Bor | Opcode::Bxor | Opcode::Bnot => result_low,
                         Opcode::IaddImm | Opcode::ImulImm | Opcode::IrsubImm | Opcode::BandImm | Opcode::BorImm | Opcode::BxorImm | Opcode::IshlImm => result_low,
                         Opcode::Ishl => k == 1 || result_low,
                         Opcode::Ushr | Opcode::Sshr => k == 1,
@@ -212,6 +212,7 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     // read's own parameters are its arguments.
     for (k, &p) in dfg.block_params(entry).iter().enumerate() {
         if family != Family::Tape && k == 0 {
+            // The descriptor: its offset from `t`.
             writeln!(out, " {}=a0;", name(p)).unwrap();
         } else if k < family.pointers() {
             writeln!(out, " {}=0;", name(p)).unwrap();
@@ -586,6 +587,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             | Opcode::Isub
             | Opcode::Imul
             | Opcode::Band
+            | Opcode::BandNot
             | Opcode::Bor
             | Opcode::Bxor
             | Opcode::Bnot
@@ -651,6 +653,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Udiv => set(format!("{}/{}", args[0], args[1])),
         Opcode::Urem => set(format!("{}%{}", args[0], args[1])),
         Opcode::Band => set(format!("{}&{}", args[0], args[1])),
+        Opcode::BandNot => set(format!("{}&~{}", args[0], args[1])),
         Opcode::Bor => set(format!("{}|{}", args[0], args[1])),
         Opcode::Bxor => set(format!("{}^{}", args[0], args[1])),
         Opcode::Bnot => set(format!("~{}", args[0])),
@@ -751,8 +754,12 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::AtomicLoad => set(format!("ukl_atomic_load_at(t,{})", wide_addr(&args[0]))),
         Opcode::AtomicStore => format!("ukl_atomic_store_at(t,{},((uint32_t)({})));", wide_addr(&args[1]), args[0]),
         Opcode::AtomicRmw => {
-            let InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } = data else { return Err("an atomic other than an add".into()) };
-            set(format!("ukl_atomic_add_at(t,{},((uint32_t)({})))", wide_addr(&args[0]), args[1]))
+            let how = match data {
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } => "ukl_atomic_add_at",
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Or, .. } => "ukl_atomic_or_at",
+                _ => return Err("an atomic other than an add or an or".into()),
+            };
+            set(format!("{how}(t,{},((uint32_t)({})))", wide_addr(&args[0]), args[1]))
         }
         Opcode::AtomicCas => set(format!("ukl_atomic_cas_at(t,{},((uint32_t)({})),((uint32_t)({})))", wide_addr(&args[0]), args[1], args[2])),
         Opcode::Fence => "ukl_fence_device();".to_owned(),

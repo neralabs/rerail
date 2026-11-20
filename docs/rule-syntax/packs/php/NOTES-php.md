@@ -5,11 +5,11 @@ The 15 rules have 428 lines (plus a 75-line generated table), against 587 in the
 
 | file | what |
 |---|---|
-| `lib/php/names.rr` | which global function a call names (as written, or with `use function` followed), positional and named arguments, `$this`, `&&`/`and` logicals |
-| `lib/php/phpdoc.rr` | the `/** */` comment before a declaration or statement, and its `@return` / `@var` types (and the `@phpstan-` / `@psalm-` forms) |
-| `lib/php/values.rr` | constant values without types: literals, `self::C`, a variable with one write that runs first; truthiness, `===`; the `if (c)` conditions PHPStan's if.always* rules report |
-| `lib/php/arrays.rr` | the key of each element of an array literal, as PHP casts and numbers them, literal spreads unpacked |
-| `lib/php/format.rr` | printf and scanf formats as PHP 8 parses them: values needed, variables assigned, invalid formats |
+| `lib/php/names.rerail` | which global function a call names (as written, or with `use function` followed), positional and named arguments, `$this`, `&&`/`and` logicals |
+| `lib/php/phpdoc.rerail` | the `/** */` comment before a declaration or statement, and its `@return` / `@var` types (and the `@phpstan-` / `@psalm-` forms) |
+| `lib/php/values.rerail` | constant values without types: literals, `self::C`, a variable with one write that runs first; truthiness, `===`; the `if (c)` conditions PHPStan's if.always* rules report |
+| `lib/php/arrays.rerail` | the key of each element of an array literal, as PHP casts and numbers them, literal spreads unpacked |
+| `lib/php/format.rerail` | printf and scanf formats as PHP 8 parses them: values needed, variables assigned, invalid formats |
 
 ## Scores
 
@@ -21,7 +21,7 @@ psalm rules also match on columns, all exact. "ex" counts findings that `diverge
 |---|---|---|---|
 | phpcs-generic-code-analysis-empty-statement | 34 | 42/0/0 | |
 | phpcs-generic-php-backtick-operator | 16 | 2/0/0 | |
-| phpcs-generic-php-deprecated-functions | 20 | 1/0/0 | table in `.facts.rr` (gen/check scripts) |
+| phpcs-generic-php-deprecated-functions | 20 | 1/0/0 | table in `.facts.rerail` (gen/check scripts) |
 | phpcs-generic-php-forbidden-functions | 19 | 11/0/0 | |
 | phpcs-generic-php-lower-case-constant | 18 | 41/0/0 | |
 | phpcs-generic-php-no-silenced-errors | 48 | 4/0/0 | keeps the pack's two exceptions (a) |
@@ -78,7 +78,7 @@ XPG positional `%1$d` counts as one assignment, not as its number. The 2 explain
 format variable with two possible values, which PHPStan tracks as a union.
 
 (c) **Array keys.** The JSON compares explicit keys' text only; PHPStan numbers keyless elements and unpacks
-spreads. `lib/php/arrays.rr` does both (PHP 8.3 numbering, after negative keys too), and php/values follows
+spreads. `lib/php/arrays.rerail` does both (PHP 8.3 numbering, after negative keys too), and php/values follows
 `self::EQ` and `$key2 = 'key'`. That turns 11 of the 21 lines `divergences.json` lists as `rerail-unknown` into TPs
 (duplicate-keys.php:32, 63, 67, 69, 76, 105; bug-15244.php:49; bug-15247.php:19, 34; bug-15247-php81.php:14, 19).
 Still unknown: keys past nine digits (PHP_INT_MAX numbering, bug-15244.php:38, bug-15247.php:66), `$idx++` keys
@@ -105,7 +105,7 @@ None to existing files. Harness notes for rrlab, none blocking:
    Core's `str` also unescapes PHP single-quoted strings as double-quoted ones and leaves octal `"\101"` as `101`;
    php/values works around the first.
 2. rrlab maps `(?i)` but not a scoped `(?i:…)` group; the rules avoid it (`@lower` and a set instead).
-3. `match_all` is empty in rrlab, so `lib/php/format.rr` reduces a format with `@replace_all` and counts with
+3. `match_all` is empty in rrlab, so `lib/php/format.rerail` reduces a format with `@replace_all` and counts with
    `@count_matches` instead; with match_all a format could be tokenised directly, one row per placeholder.
 
 ## Duplicates to merge

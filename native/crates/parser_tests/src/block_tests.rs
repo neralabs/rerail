@@ -137,8 +137,9 @@ const BODY_OPCODES: &[&str] = &[
     "splat", "vconst", "imul_imm",
     // The packed carried state (decision 0070): a field's bits read with a mask.
     "band_imm",
-    // The extracts' flattening (simdjson's): a position per set bit, eight at a time.
-    "ctz", "istore32", "icmp_imm", "jump",
+    // The extracts' flattening (simdjson's): a position per set bit, eight at a time, from the
+    // word reversed, each the leading zeros, its bit cleared by a shift and an XOR (0421).
+    "bitrev", "clz", "ushr", "istore32", "icmp_imm", "jump",
     // A toggle's prefix XOR as one carry-less multiply (0346), its escaped quotes' correction
     // behind a cold branch (0381).
     "clmul",
@@ -973,9 +974,9 @@ pub const STAGE1: &str = include_str!("../../../../fixtures/simdjson-stage1/stag
 
 /// simdjson's own stage 1 on each file (`fixtures/simdjson-stage1/stage1_indexes.cpp`): path,
 /// length, number of structural indexes, FNV-1a of the indexes as little-endian u32s.
-const STAGE1_EXPECTED: &str = include_str!("../../../../fixtures/simdjson-stage1/expected.txt");
+pub(crate) const STAGE1_EXPECTED: &str = include_str!("../../../../fixtures/simdjson-stage1/expected.txt");
 
-fn repo_file(path: &str) -> Vec<u8> {
+pub(crate) fn repo_file(path: &str) -> Vec<u8> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     std::fs::read(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
@@ -993,7 +994,7 @@ fn indexes(words: &[u64]) -> Vec<u32> {
     out
 }
 
-fn fnv(indexes: &[u32]) -> u64 {
+pub(crate) fn fnv(indexes: &[u32]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     for v in indexes {
         for b in v.to_le_bytes() {
@@ -1008,21 +1009,45 @@ fn fnv(indexes: &[u32]) -> u64 {
 fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
     let block = &p.block_programs[0];
     let native = native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0);
-    let mut out = vec![
-        // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
-        ("cpu interpreter".to_owned(), block.run(bytes)),
-    ];
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    {
-        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret_extract, run_generated_extract};
-        for width in LaneWidth::ALL {
-            let w = width.bytes();
-            out.push((format!("metal interpreter, {w}-byte lanes"), interpret_extract(block, bytes, width).expect("runs")));
-            let (got, _) = run_generated_extract(&native, bytes, width, ClassStrategy::Planes).expect("runs");
-            out.push((format!("generated msl, {w}-byte lanes"), got));
-        }
+    // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
+    let mut out = vec![("cpu interpreter".to_owned(), block.run(bytes))];
+    out.extend(metal_extract_runs(block, &native, bytes));
+    out
+}
+
+/// The Metal executors' runs with the extract pass (`extract_executors`), each lane width's interpreter and
+/// generated MSL.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn metal_extract_runs(block: &block::BlockProgram, native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret_extract, run_generated_extract};
+    let mut out = Vec::new();
+    for width in LaneWidth::ALL {
+        let w = width.bytes();
+        out.push((format!("metal interpreter, {w}-byte lanes"), interpret_extract(block, bytes, width).expect("runs")));
+        let (got, _) = run_generated_extract(native, bytes, width, ClassStrategy::Planes).expect("runs");
+        out.push((format!("generated msl, {w}-byte lanes"), got));
     }
     out
+}
+
+/// No Metal executors off macOS.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn metal_extract_runs(_: &block::BlockProgram, _: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
+    Vec::new()
+}
+
+/// Generated MSL's run with the extract pass, 64-byte lanes (a large file's, `extract_executors` for the rest).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn metal_extract_generated(native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_extract};
+    let (got, _) = run_generated_extract(native, bytes, LaneWidth::W64, ClassStrategy::Planes).expect("runs");
+    vec![("generated msl".to_owned(), got)]
+}
+
+/// No Metal executors off macOS.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn metal_extract_generated(_: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
+    Vec::new()
 }
 
 /// The extract pass writes a plane's set bits as positions, none past the end, on every
@@ -1082,19 +1107,24 @@ fn extract_round_trips_and_refusals() {
 
 /// Stage 1's three outputs on `bytes` are simdjson's: the same structural indexes, no control
 /// character inside a string, and no unclosed string.
-fn check_stage1(name: &str, bytes: &[u8], outputs: &[Vec<u64>], want: (usize, u64)) {
+fn check_stage1(name: &str, bytes: &[u8], run: &BlockRun, want: (usize, u64)) {
+    let outputs = &run.outputs;
     let found = indexes(&outputs[0]);
     assert_eq!((found.len(), fnv(&found)), want, "{name}: structural indexes differ from simdjson's");
     assert!(outputs[1].iter().all(|&w| w == 0), "{name}: a control character inside a string");
     let last = bytes.len() - 1;
     assert_eq!(outputs[2][last / 64] >> (last % 64) & 1, 0, "{name}: an unclosed string");
-    assert!(!utf8_invalid(bytes, outputs), "{name}: invalid UTF-8");
+    assert!(!utf8_invalid(run), "{name}: invalid UTF-8");
 }
 
-/// Stage 1's UTF-8 verdict: an error bit anywhere, or a sequence open at the last byte.
-fn utf8_invalid(bytes: &[u8], outputs: &[Vec<u64>]) -> bool {
-    let open = bytes.len().checked_sub(1).is_some_and(|last| outputs[4][last / 64] >> (last % 64) & 1 == 1);
-    outputs[3].iter().any(|&w| w != 0) || open
+/// Stage 1's UTF-8 verdict: its totals, simdjson's error (decision 0421), a sequence cut short
+/// at the end included (the byte past the stream). The CPU's compiled code keeps no row of
+/// them, only the flags; the others' rows say the same.
+fn utf8_invalid(run: &BlockRun) -> bool {
+    let row = run.outputs[3..5].iter().flatten().any(|&w| w != 0);
+    let total = run.totals.iter().any(|&t| t != 0);
+    assert!(run.totals.is_empty() || total >= row, "a row bit the totals leave out");
+    if run.totals.is_empty() { row } else { total }
 }
 
 /// Inputs around every UTF-8 rule: each boundary character, overlong forms, surrogates, values
@@ -1133,10 +1163,20 @@ fn utf8_inputs() -> Vec<Vec<u8>> {
 fn stage1_utf8_equals_std_on_every_executor() {
     let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
     let ex = Executors::new(&p);
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
     for bytes in utf8_inputs() {
         let want = std::str::from_utf8(&bytes).is_err();
+        let tail = &bytes[bytes.len().saturating_sub(12)..];
+        // The compiled code's flag; the others' rows (no totals in `every`).
+        assert_eq!(utf8_invalid(&compiled.extract(&bytes)), want, "cranelift's total: {tail:x?}");
+        assert_eq!(utf8_invalid(&p.block_programs[0].run(&bytes)), want, "the interpreter's total: {tail:x?}");
         for (name, got) in ex.every(&bytes) {
-            assert_eq!(utf8_invalid(&bytes, &got), want, "{name}: {:x?}", &bytes[bytes.len().saturating_sub(12)..]);
+            if name == "cranelift" {
+                continue;
+            }
+            let run = BlockRun { outputs: got, positions: Vec::new(), totals: Vec::new(), codes: Vec::new() };
+            assert_eq!(utf8_invalid(&run), want, "{name}: {tail:x?}");
         }
     }
 }
@@ -1165,16 +1205,11 @@ fn stage1_equals_simdjson_on_every_executor() {
             extract_executors(&p, &bytes)
         } else {
             let mut runs = vec![("cranelift".to_owned(), compiled.extract(&bytes))];
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
-            {
-                use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_extract};
-                let (got, _) = run_generated_extract(&native, &bytes, LaneWidth::W64, ClassStrategy::Planes).expect("runs");
-                runs.push(("generated msl".to_owned(), got));
-            }
+            runs.extend(metal_extract_generated(&native, &bytes));
             runs
         };
         for (name, got) in runs {
-            check_stage1(&format!("{path}, {name}"), &bytes, &got.outputs, want);
+            check_stage1(&format!("{path}, {name}"), &bytes, &got, want);
             if name == "cranelift" {
                 continue; // no `extract` lowering on the CPU (docs/parser-generators/20-the-ir.md)
             }
@@ -1217,8 +1252,11 @@ fn stage1_cost_per_block() {
         // look-back runs out of polls; repeated launches are timed, and counted).
         let mut masks = native.clone();
         masks.extracts.clear();
-        use metal_program_backend::block_program::REPEATED_LAUNCHES;
-        let before = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed);
+        use metal_program_backend::block_program::RepeatedLaunches;
+        // The count is the run's (decision 0442).
+        let _run = rerail_context::test_run();
+        let repeated = rerail_context::local::<RepeatedLaunches>();
+        let before = repeated.0.load(std::sync::atomic::Ordering::Relaxed);
         for (what, program) in [("masks", &masks), ("masks + extract", &native)] {
             for strategy in ClassStrategy::ALL {
                 for width in LaneWidth::ALL {
@@ -1233,7 +1271,7 @@ fn stage1_cost_per_block() {
                 }
             }
         }
-        let repeats = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed) - before;
+        let repeats = repeated.0.load(std::sync::atomic::Ordering::Relaxed) - before;
         println!("repeated launches: {repeats} over 60 runs");
     }
 }
@@ -1341,6 +1379,23 @@ fn stage1_loop_is_simdjsons_size() {
     let lines = machine_loop(&compiled.loops_disassembly());
     eprintln!("stage 1 loop: {} instructions (at most 150)", lines.len());
     assert!(lines.len() <= 150, "stage 1's loop: {} instructions (at most 150):\n{}", lines.len(), lines.join("\n"));
+}
+
+/// Decision 0421: stage 1's loop is no longer than clang's build of simdjson's (344,
+/// `scripts/dev/simdjson-stage1-loop`). Its masks are simdjson's five, each reduced once (four
+/// `addp`s): the UTF-8 error is a total, ORed on the vectors and reduced where the loop leaves.
+/// Its positions are written from the word reversed once, as clang writes them: one `rbit`.
+#[test]
+#[cfg(target_arch = "aarch64")]
+fn stage1_loop_is_no_longer_than_clangs() {
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let lines = machine_loop(&compiled.loops_disassembly());
+    let count = |op: &str| lines.iter().filter(|l| l.split_whitespace().next() == Some(op)).count();
+    assert!(lines.len() <= 344, "stage 1's loop: {} instructions, clang's 344", lines.len());
+    assert_eq!(count("addp"), 20, "five masks reduced, four `addp`s each");
+    assert_eq!(count("rbit"), 1, "the word reversed once for its positions");
 }
 
 /// A lab: the Cranelift loop of the program in the `.rir` file `RERAIL_RIR`, its size and its

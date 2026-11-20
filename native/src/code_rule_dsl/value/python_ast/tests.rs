@@ -1,6 +1,8 @@
 use super::*;
 
+/// A module's whole `SyntaxError` is CPython's (the worker, the gate's oracle): run where CPython 3.13 is.
 #[test]
+#[ignore = "the gate's oracle: needs CPython 3.13 (python3.13) on the path"]
 fn syntax_error_facts_are_batched_and_do_not_walk_invalid_modules() {
     let documents =
         ["def invalid(\n", "raise RuntimeError('never execute')\n"].map(|source| Document {
@@ -40,7 +42,7 @@ use serde_json::Value;
 #[test]
 fn dumps_and_signed_fingerprints_match_cpython_3_13() {
     let oracle: Value =
-        serde_json::from_str(oracle!("python/ast-dump/cpython.expected.json")).unwrap();
+        serde_json::from_str(oracle!("python/value/ast-dump/cpython.expected.json")).unwrap();
     assert!(oracle["python"].as_str().unwrap().starts_with("3.13."));
     let mut documents = Vec::new();
     let mut expected = Vec::new();

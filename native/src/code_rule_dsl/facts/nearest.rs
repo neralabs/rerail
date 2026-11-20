@@ -52,7 +52,9 @@ pub struct InChunk {
 /// What makes an axis's solve in a chunk: `members` per dialect tag (256) and kind code (1,024) a bit, `None` for
 /// every kind (containment); `inside` for every ancestor in the set, else the nearest.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub type ChunkAxis = fn(&crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk, Option<&[u32]>, bool) -> Result<InChunk, String>;
+/// Several chunks' rows go in one relation, each chunk's past those before (a chunk's batch and its tape values,
+/// decision 0431 §8); the starts are the first's.
+pub type ChunkAxis = fn(&[&crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk], Option<&[u32]>, bool) -> Result<InChunk, String>;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 static CHUNK_AXIS: std::sync::OnceLock<ChunkAxis> = std::sync::OnceLock::new();

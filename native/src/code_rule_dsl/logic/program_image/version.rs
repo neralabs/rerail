@@ -9,7 +9,7 @@
 //! less what the edit removes or replaces, plus what it adds.
 use super::handles::{AtomRef, RuleRef};
 use super::{AtomId, Cell, Image, RelId, RuleId, bad};
-use crate::code_rule_dsl::logic::front::{ast::Program, name::Lists};
+use crate::code_rule_dsl::logic::front::name::Lists;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
@@ -133,6 +133,17 @@ impl Version {
     /// The base `bytes` hold, read where they are, not copied (`Image::open_shared`, decision 0394).
     pub fn open_shared(bytes: super::SharedBytes) -> Result<Arc<Version>, String> {
         Version::base_of(Image::open_shared(bytes)?)
+    }
+
+    /// The base its writer wrote (`Builder::image`), read where it was written: no copy, and the writer's own checks
+    /// (`Placing::finish`, decision 0464).
+    pub fn of_image(image: Image) -> Result<Arc<Version>, String> {
+        Version::base_of(image)
+    }
+
+    /// The overlay of `parent` and the delta its writer wrote (`Builder::image`), read where it was written.
+    pub fn over_image(parent: &Arc<Version>, delta: Image) -> Result<Arc<Version>, String> {
+        Version::overlay_of(parent, delta)
     }
 
     fn base_of(image: Image) -> Result<Arc<Version>, String> {
@@ -275,6 +286,15 @@ impl Version {
         match self {
             Version::Base { image, .. } => Some(image.bytes()),
             _ => None,
+        }
+    }
+    /// Its own image, as it is held (decision 0464: a record's piece takes it so, uncopied): a base's, or an overlay's
+    /// delta; `None` for a view, which has none.
+    pub fn own_image(&self) -> Option<&Arc<Image>> {
+        match self {
+            Version::Base { image, .. } => Some(image),
+            Version::Overlay { delta, .. } => Some(delta),
+            Version::View { .. } => None,
         }
     }
     /// What it is made of over its parent (decision 0333 §2): a base's image bytes, an overlay's parent and delta
@@ -499,37 +519,10 @@ impl Version {
         self.owner(2).outputs_hash()
     }
 
-    /// The program this version is, as the tree: a decode, counted (`trees_decoded`) and, when profiling, named by
-    /// the caller's place (the decision "a tree decoded from its version"), so what still reads a tree is seen.
-    #[track_caller]
-    pub fn program(&self, lists: &Lists) -> Result<Program, String> {
-        let at = std::panic::Location::caller();
-        DECODED.with(|d| d.set((d.get().0 + 1, Some(at))));
-        crate::code_rule_dsl::logic::profile::decision("a tree decoded from its version", || format!("{}:{}", at.file(), at.line()));
-        super::Tree::new(self, lists).program()
-    }
-
     /// A new base of this version's program, keeping its atom and relation ids (rule ids are renumbered from 0).
     pub fn fold(&self) -> Result<Arc<Version>, String> {
         super::Builder::folding(self).finish().map(|(v, _)| v)
     }
-}
-
-thread_local! {
-    /// The trees this thread decoded from versions (`Version::program`): a count, and the place of the last.
-    static DECODED: std::cell::Cell<(usize, Option<&'static std::panic::Location<'static>>)> = const { std::cell::Cell::new((0, None)) };
-}
-
-/// How many trees this thread decoded from versions so far (`Version::program`), and where the last was
-/// (`file:line`): a run reads its versions on its own thread, so a check around a run on one thread reads that run's.
-pub fn trees_decoded() -> (usize, Option<String>) {
-    let (n, at) = DECODED.with(|d| d.get());
-    (n, at.map(|l| format!("{}:{}", l.file(), l.line())))
-}
-
-/// Forgets this thread's decodes (`trees_decoded`): a check counts a run's alone.
-pub fn forget_trees_decoded() {
-    DECODED.with(|d| d.set((0, None)));
 }
 
 /// Whether `a` and `b` are one program, as a debug check compares a version with the tree's image: the same size, the

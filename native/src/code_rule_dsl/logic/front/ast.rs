@@ -2,22 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use crate::code_rule_dsl::logic::front::name::{List, Name};
-
-/// A term. Its names and texts are `Name`s, interned for the process as relation names are: a program read or
-/// copied makes no string for a name it has met before (decision 0166).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Term {
-    Var(Name),
-    Wild,
-    Int(i64),
-    Str(Name),
-    Top,
-    Call(Name, List<Term>),
-    /// An atom a string became when the program was lowered for a store (`plan::lower`, decision 0270): never an
-    /// integer, so no pass takes one for the other, and a program moved to another store finds every name it holds.
-    Branded(Branded),
-}
+use crate::code_rule_dsl::logic::front::name::Name;
 
 /// What an atom names (decision 0270): a name is the store's (interned, numbered as the store met it); a kind or a
 /// field is the grammar's (`kind_atom`, `field_atom`), the same in every store.
@@ -68,52 +53,6 @@ impl fmt::Display for Branded {
     }
 }
 
-impl Term {
-    pub fn vars(&self, out: &mut BTreeSet<String>) {
-        match self {
-            Term::Var(v) => {
-                out.insert(v.to_string());
-            }
-            Term::Call(_, args) => args.iter().for_each(|a| a.vars(out)),
-            _ => {}
-        }
-    }
-
-    /// The integer the run holds for a constant: an integer's, or a branded atom's (decision 0270).
-    pub fn integer(&self) -> Option<i64> {
-        match self {
-            Term::Int(i) => Some(*i),
-            Term::Branded(a) => Some(a.value()),
-            _ => None,
-        }
-    }
-
-    /// `@cat` over variables only: the one builtin that can run backwards, splitting a bound result.
-    pub fn is_cat(&self) -> bool {
-        matches!(self, Term::Call(f, args) if f == "cat" && args.iter().all(|a| matches!(a, Term::Var(_))))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Atom {
-    pub rel: Name,
-    pub args: List<Term>,
-    pub neg: bool,
-    /// A negation held until its relation's `done_` gate passes (magic sets, row 4): not a negative edge.
-    pub gated: bool,
-}
-
-impl Atom {
-    pub fn vars(&self) -> BTreeSet<String> {
-        // A head's `@dot(p, s)` names p and s too.
-        let mut out = BTreeSet::new();
-        for a in &self.args {
-            a.vars(&mut out);
-        }
-        out
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AggOp {
     Count,
@@ -127,137 +66,6 @@ pub enum AggOp {
     /// `join x by (k, …) sep "s" : { … }`: the distinct `(k, …, x)` rows' `x` texts ordered by `k, …` then `x`
     /// (symbols by code point, numbers by value), separated by `sep`; `""` when there are none.
     Join { by: Vec<String>, sep: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Literal {
-    Atom(Atom),
-    Cmp { l: Term, op: &'static str, r: Term },
-    /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max`, `sum` and `join` likewise).
-    Agg { var: String, op: AggOp, over: Option<String>, atom: Atom },
-    /// `nearest($n, $a, kindset)`: `$a` is `$n`'s nearest strict ancestor of a kind in the set.
-    Nearest { n: String, a: String, kindset: String },
-    /// `ast($document, $node, { matcher }, NAME: $v, …)`: the matcher's text, lowered to a transducer program (§3),
-    /// and the metavariables it exports, each `(NAME, v)` binding `$v` to what `$NAME` captured.
-    Ast { document: String, node: String, matcher: String, captures: Vec<(String, String)> },
-}
-
-impl Literal {
-    pub fn vars(&self) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        match self {
-            Literal::Atom(a) => out = a.vars(),
-            Literal::Cmp { l, r, .. } => {
-                l.vars(&mut out);
-                r.vars(&mut out);
-            }
-            Literal::Agg { var, over, atom, .. } => {
-                out = atom.vars();
-                out.insert(var.clone());
-                out.extend(over.clone());
-            }
-            Literal::Nearest { n, a, .. } => out.extend([n.clone(), a.clone()]),
-            Literal::Ast { document, node, captures, .. } => {
-                out.extend([document.clone(), node.clone()]);
-                out.extend(captures.iter().map(|(_, v)| v.clone()));
-            }
-        }
-        out
-    }
-
-    /// The atom a literal reads a relation through: itself, or an aggregate's.
-    pub fn atom(&self) -> Option<&Atom> {
-        match self {
-            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
-            _ => None,
-        }
-    }
-}
-
-/// A comparison's variables once it runs, or `None` if it cannot run yet: `$x = e` assigns an unbound `$x` once
-/// `e`'s variables are bound; `$m = @cat($q, $x)` with `$m` bound splits it, binding `$q` and `$x` where unbound;
-/// otherwise every variable must be bound. T's `cmp_binds`.
-pub fn cmp_binds(l: &Term, op: &str, r: &Term, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
-    let mut rv = BTreeSet::new();
-    r.vars(&mut rv);
-    if op == "=" && let Term::Var(x) = l && !bound.contains(x.as_str()) {
-        return rv.is_subset(bound).then(|| BTreeSet::from([x.to_string()]));
-    }
-    let mut all = rv.clone();
-    l.vars(&mut all);
-    if all.is_subset(bound) {
-        return Some(BTreeSet::new());
-    }
-    if op == "=" && matches!(l, Term::Var(_)) && r.is_cat() {
-        return Some(rv.difference(bound).cloned().collect());
-    }
-    None
-}
-
-impl fmt::Display for Term {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Term::Var(v) => write!(f, "${v}"),
-            Term::Wild => f.write_str("_"),
-            Term::Int(n) => write!(f, "{n}"),
-            Term::Str(s) => f.write_str(&serde_json::to_string(s).expect("a string serializes")),
-            Term::Top => f.write_str("top"),
-            Term::Call(name, args) => write!(f, "@{name}({})", join(args)),
-            Term::Branded(b) => write!(f, "{b}"),
-        }
-    }
-}
-
-impl fmt::Display for Atom {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}({})", if self.neg { "!" } else { "" }, self.rel, join(&self.args))
-    }
-}
-
-impl fmt::Display for Literal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Literal::Atom(a) => write!(f, "{a}"),
-            Literal::Cmp { l, op, r } => write!(f, "{l} {op} {r}"),
-            Literal::Agg { var, op: AggOp::Count, atom, .. } => write!(f, "${var} = count {{ {atom} }}"),
-            Literal::Agg { var, op: AggOp::Join { by, sep }, over, atom } => {
-                let by: Vec<String> = by.iter().map(|b| format!("${b}")).collect();
-                let sep = serde_json::to_string(sep).expect("a string serializes");
-                write!(f, "${var} = join ${} by ({}) sep {sep} : {{ {atom} }}", over.as_deref().unwrap_or_default(), by.join(", "))
-            }
-            Literal::Agg { var, op, over, atom } => {
-                let op = match op {
-                    AggOp::Min => "min",
-                    AggOp::Sum => "sum",
-                    AggOp::Product => "product",
-                    _ => "max",
-                };
-                write!(f, "${var} = {op} ${} : {{ {atom} }}", over.as_deref().unwrap_or_default())
-            }
-            Literal::Nearest { n, a, kindset } => write!(f, "nearest(${n}, ${a}, {kindset})"),
-            Literal::Ast { document, node, matcher, captures } => {
-                write!(f, "ast(${document}, ${node}, {matcher}")?;
-                captures.iter().try_for_each(|(name, v)| write!(f, ", {name}: ${v}"))?;
-                f.write_str(")")
-            }
-        }
-    }
-}
-
-impl fmt::Display for Rule {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} :- {}", self.head, join(&self.body))
-    }
-}
-
-pub fn join<T: fmt::Display>(items: &[T]) -> String {
-    items.iter().map(T::to_string).collect::<Vec<_>>().join(", ")
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Rule {
-    pub head: Atom,
-    pub body: List<Literal>,
 }
 
 /// A relation's lattice column: the last, after `keys` key columns.
@@ -289,66 +97,9 @@ pub enum Value {
     Branded(Branded),
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Program {
-    /// Each relation's columns: (name, type).
-    pub decls: BTreeMap<Name, List<(Name, Name)>>,
-    /// Logically nullary relations encoded with one physical unit column.
-    pub nullary: BTreeSet<String>,
-    pub lattice: BTreeMap<String, LatticeDecl>,
-    pub facts: BTreeMap<String, Vec<List<Value>>>,
-    pub rules: Vec<Rule>,
-    pub inputs: Vec<String>,
-    pub outputs: Vec<String>,
-    pub kindsets: BTreeMap<String, Vec<String>>,
-    /// `.demand` relations, or `*` for every derived one.
-    pub demand: Vec<String>,
-    /// Set by `magic`: demanded relations computed in full, and why.
-    pub demand_dropped: Vec<(String, String)>,
-    /// Set by `magic`: the extras its magic rules kept.
-    pub magic_extras: Option<usize>,
-    pub magic_report: Option<Report>,
-    /// Gated negations (`magic::gate_negations`), by their `done_` relation, in the order they were made.
-    pub gates: Vec<(String, Gate)>,
-    /// `.policy { … }`: lint-rule documents, each without its matchers, which are the rules' `ast` atoms (`yaml`).
-    pub policies: Vec<serde_json::Value>,
-    /// `.rr` setting directives (`.mode block`, `.scope include "…"`, …), by name, as written (`logic::rr`).
-    pub settings: Vec<(String, String)>,
-    /// Relations the evaluator makes from their inputs' rows rather than from rules (`dfs_first`), by name. Each
-    /// has one rule over its inputs, which orders it after them; its rows are the native operator's.
-    pub natives: BTreeMap<String, Native>,
-    /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
-    /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
-    pub rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
-    pub ast_patterns: std::collections::BTreeSet<String>,
-    pub doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
-    pub answers: BTreeMap<String, Vec<String>>,
-    /// `.scope text`'s globs: a document matching one that has no grammar of the run (`.md`, `.rst`) is read as text
-    /// only, its `doc`, `source` and `src_line` and no tree, when a scope selects it. Every program's, in a combined
-    /// one.
-    pub text_globs: Vec<String>,
-    /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
-    /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
-    pub qualifiers: BTreeMap<String, BTreeSet<String>>,
-    /// The columns declared `tape` (decision 0103 §3), by relation: stored as `sym`, checked before lowering
-    /// (`rr::tape_type`) and printed back as `tape`.
-    pub tapes: BTreeMap<String, BTreeSet<usize>>,
-    /// The rules lowering made to ask for a node's attribute (decision 0174's `rr_node_text_req` …), by request
-    /// relation: for each of its rules, in order, the relations whose readers it serves. `prune` keeps a request
-    /// rule only while one of them is reached, as a reader's request is kept with the reader.
-    pub asked_by: BTreeMap<String, Vec<BTreeSet<String>>>,
-    /// Join shape directives (`.shape`, O-join-shape-directives), each on the rules of its relation and every form
-    /// made from them.
-    pub shapes: Vec<Shape>,
-    /// What each relation's rows are known to be (`.layout`, decision 0361), by relation: facts about the rows, so
-    /// they hold for every form made from its rules. Several lines add up; each fact once, in the order first written.
-    pub layouts: BTreeMap<String, Vec<LayoutFact>>,
-}
-
 /// A join shape directive written after a rule (`.shape posarg after pv`, `.shape retparam bound f`): in the rules of
-/// `head`, and in every form made from them (their deltas' and maintenance's, `shape_base`), the literal of `lit` is
-/// joined only once `wait` holds. A rule's driving delta is never held back. The planner searches within it, so a
-/// directive narrows the search; it does not fix an order.
+/// `head`, the literal of `lit` is joined only once `wait` holds. A rule's driving delta is never held back. The
+/// planner searches within it, so a directive narrows the search; it does not fix an order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shape {
     pub head: String,
@@ -364,17 +115,6 @@ pub enum ShapeWait {
     After(String),
     /// Once these variables are bound.
     Bound(Vec<String>),
-}
-
-/// The relation a form's relation was made from, for matching directives (`Shape`): `pv__ins` and `pv__old` are
-/// `pv`'s.
-pub fn shape_base(rel: &str) -> &str {
-    const SUFFIXES: [&str; 12] = ["__ins", "__del", "__plus", "__minus", "__old", "__redo", "__held", "__gone", "__cand", "__chk", "__live", "__prev"];
-    let mut r = rel;
-    while let Some(s) = SUFFIXES.iter().find_map(|s| r.strip_suffix(s)) {
-        r = s;
-    }
-    r
 }
 
 impl Shape {
@@ -695,8 +435,9 @@ pub fn add_layout(to: &mut Vec<LayoutFact>, facts: impl IntoIterator<Item = Layo
     }
 }
 
-/// `Program::readers_of_rules` over the rules' heads alone, in order: a pass that holds its rules in another form
-/// (the version's `Hide`) reads the record as the tree's does.
+/// Each rule's readers in the request record (`asked_by`, the `asked_by` field), by its place among the rules whose
+/// heads are `heads`, in order: `None` for a rule of no request relation, or of one whose rules no longer match the
+/// record (then its own relation, which keeps it wherever its relation is needed).
 pub fn readers_of_heads(asked_by: &BTreeMap<String, Vec<BTreeSet<String>>>, heads: &[&str]) -> Vec<Option<BTreeSet<String>>> {
     if asked_by.is_empty() {
         return vec![None; heads.len()];
@@ -715,8 +456,9 @@ pub fn readers_of_heads(asked_by: &BTreeMap<String, Vec<BTreeSet<String>>>, head
 }
 
 /// The request record's step for a copy with head `head` of the rule at `from`, before it is appended to the rules
-/// whose heads are `heads` (`Program::push_rule_from`): a copy under another name is a reader where its source is,
-/// and a copy of a request rule serves its source's readers.
+/// whose heads are `heads`: a copy under another name is no request rule, but reads what its source reads, so where
+/// its source is a reader, so is it (a guest's copy of a reader, read in its place, asks what the reader asked); and a
+/// copy of a request rule serves its source's readers.
 pub fn record_copy(asked_by: &mut BTreeMap<String, Vec<BTreeSet<String>>>, heads: &[&str], from: usize, head: &str) {
     if let Some(&src) = heads.get(from)
         && src != head
@@ -736,112 +478,13 @@ pub fn record_copy(asked_by: &mut BTreeMap<String, Vec<BTreeSet<String>>>, heads
 }
 
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
-pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach"];
-
-impl Program {
-    /// Whether `.decl rel(…)` carries the qualifier `word` (one of `QUALIFIERS`).
-    pub fn qualified(&self, rel: &str, word: &str) -> bool {
-        self.qualifiers.get(rel).is_some_and(|q| q.contains(word))
-    }
-
-    /// Each rule's readers in the request record (`asked_by`), by its place in `rules`: `None` for a rule of no
-    /// request relation, or of one whose rules no longer match the record (then its own relation, which keeps it).
-    pub fn readers_of_rules(&self) -> Vec<Option<BTreeSet<String>>> {
-        let heads: Vec<&str> = self.rules.iter().map(|r| r.head.rel.as_str()).collect();
-        readers_of_heads(&self.asked_by, &heads)
-    }
-
-    /// Replaces the rules, each with the places in the old `rules` it came from, and carries the request record
-    /// (`asked_by`) across: a request rule serves the readers of the rules it came from, together, and one that
-    /// came from none (or from a rule the record did not cover) its own relation, which keeps it wherever its
-    /// relation is needed (`front::prune`). A pass that rewrites, splits, merges or drops request rules states their
-    /// sources here, and the record holds through it.
-    pub fn set_rules_from(&mut self, rules: Vec<(Rule, Vec<usize>)>) {
-        let carry = self.carry();
-        self.set_rules_carried(&carry, rules);
-    }
-    /// Appends `rule`, a copy made from the rule at `from`: a copy of a request rule serves the readers its source
-    /// serves (`set_rules_from`). A copy under another name is no request rule, but reads what its source reads: where
-    /// its source is a reader, so is it (a guest's copy of a reader, read in its place, asks what the reader asked).
-    pub fn push_rule_from(&mut self, rule: Rule, from: usize) {
-        if !self.asked_by.is_empty() {
-            let heads: Vec<&str> = self.rules.iter().map(|r| r.head.rel.as_str()).collect();
-            record_copy(&mut self.asked_by, &heads, from, rule.head.rel.as_str());
-        }
-        self.rules.push(rule);
-    }
-    /// Renames readers in the request record, as a pass that merges or folds relations renames their reads
-    /// (`simplify::merge_identical`, hiding's `FoldOwn`): a request of a merged reader serves the relation it was
-    /// merged into.
-    pub fn rename_readers(&mut self, rename: impl Fn(&str) -> Option<String>) {
-        for readers in self.asked_by.values_mut().flatten() {
-            if readers.iter().any(|b| rename(b).is_some()) {
-                *readers = std::mem::take(readers).into_iter().map(|b| rename(&b).unwrap_or(b)).collect();
-            }
-        }
-    }
-    /// For relations `gone` that a pass inlines into their readers, the relations whose rules read them (through other
-    /// relations `gone`), taken before the pass: what `replace_readers` puts in their place.
-    pub fn inlined_readers<'a>(&self, gone: impl IntoIterator<Item = &'a String>) -> BTreeMap<String, BTreeSet<String>> {
-        let gone: BTreeSet<&str> = gone.into_iter().map(String::as_str).collect();
-        if self.asked_by.is_empty() || gone.is_empty() {
-            return BTreeMap::new();
-        }
-        let mut direct: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-        for r in &self.rules {
-            for a in r.body.iter().filter_map(Literal::atom).filter(|a| gone.contains(a.rel.as_str())) {
-                direct.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
-            }
-        }
-        gone.iter()
-            .map(|g| {
-                let (mut out, mut seen, mut todo) = (BTreeSet::new(), BTreeSet::from([*g]), vec![*g]);
-                while let Some(x) = todo.pop() {
-                    for &h in direct.get(x).into_iter().flatten() {
-                        if !gone.contains(h) {
-                            out.insert(h.to_owned());
-                        } else if seen.insert(h) {
-                            todo.push(h);
-                        }
-                    }
-                }
-                ((*g).to_owned(), out)
-            })
-            .filter(|(_, out)| !out.is_empty())
-            .collect()
-    }
-    /// Puts each reader `inlined` names in the record in place of its readers (`inlined_readers`): a request of a
-    /// relation inlined into its readers serves them.
-    pub fn replace_readers(&mut self, inlined: &BTreeMap<String, BTreeSet<String>>) {
-        if inlined.is_empty() {
-            return;
-        }
-        for readers in self.asked_by.values_mut().flatten() {
-            if readers.iter().any(|b| inlined.contains_key(b)) {
-                *readers = std::mem::take(readers).into_iter().flat_map(|b| inlined.get(&b).cloned().unwrap_or_else(|| BTreeSet::from([b]))).collect();
-            }
-        }
-    }
-    /// The request record by rule (`readers_of_rules`), taken before a pass that takes the rules apart; empty when
-    /// the program has no requests.
-    pub fn carry(&self) -> Carry {
-        Carry(if self.asked_by.is_empty() { Vec::new() } else { self.readers_of_rules() })
-    }
-    /// `set_rules_from`, the old rules' readers taken (`carry`) before the rules were.
-    pub fn set_rules_carried(&mut self, carry: &Carry, rules: Vec<(Rule, Vec<usize>)>) {
-        if self.asked_by.is_empty() {
-            self.rules = rules.into_iter().map(|(r, _)| r).collect();
-            return;
-        }
-        let asked = carried_record(&self.asked_by, &carry.0, rules.iter().map(|(r, from)| (r.head.rel.as_str(), from.as_slice())));
-        self.asked_by = asked;
-        self.rules = rules.into_iter().map(|(r, _)| r).collect();
-    }
-}
+pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach", "sorted"];
 
 /// The request record after a pass that writes `rules` (each a head and the places of the old rules it came from), the
-/// old rules' readers `old` (`Program::carry`): a request rule serves the readers of the rules it came from, together,
-/// and one that came from none (or from a rule the record did not cover) its own relation (`Program::set_rules_from`).
+/// old rules' readers `old` (`readers_of_heads`, taken before the pass took the rules apart): a request rule serves
+/// the readers of the rules it came from, together, and one that came from none (or from a rule the record did not
+/// cover) its own relation, which keeps it wherever its relation is needed. A pass that rewrites, splits, merges or
+/// drops request rules states their sources here, and the record holds through it.
 pub fn carried_record<'r>(asked_by: &BTreeMap<String, Vec<BTreeSet<String>>>, old: &[Option<BTreeSet<String>>], rules: impl IntoIterator<Item = (&'r str, &'r [usize])>) -> BTreeMap<String, Vec<BTreeSet<String>>> {
     let mut asked: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
     for (req, from) in rules {
@@ -864,9 +507,6 @@ pub fn carried_record<'r>(asked_by: &BTreeMap<String, Vec<BTreeSet<String>>>, ol
     }
     asked
 }
-
-/// Each rule's readers in a program's request record, by its place (`Program::carry`).
-pub struct Carry(Vec<Option<BTreeSet<String>>>);
 
 /// A `.scope` entry taken from a policy option (`.scope dirs option("applicationRoots")`), as `doc_scopes` holds it
 /// until the run's options are known: `rr-option:<form>:<name>`, `form` one of `dirs`, `include`, `exclude`. As a glob
@@ -912,7 +552,7 @@ pub enum SpanIn {
     Capture(String, String),
 }
 
-/// A relation made natively from relations of the program (`Program::natives`).
+/// A relation made natively from relations of the program (the program's `natives` field).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Native {
     /// `dfs_first(r, hit, first, edge, target)`; with `roots`, `dfs_first_memo` (roots in the order of their
@@ -923,7 +563,7 @@ pub enum Native {
     MatchAll { input: String, pattern: String, groups: Vec<String>, positions: bool },
     /// A text test (`@op(s, patterns) = 1`) over a column the program derives: the rows of `input` whose `column`
     /// passes it, each distinct string tested by the run's vocabulary with every other test at once (decision 0037),
-    /// once a run (`logic::strings::as_relations`). A row is there as its input row is and its string passes.
+    /// once a run (`preparation::text::TextRelations`). A row is there as its input row is and its string passes.
     TextTest { input: String, column: usize, op: String, patterns: Vec<String> },
     /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
     /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
@@ -997,11 +637,29 @@ pub const RESERVED: &str = "rr_";
 pub const AXIS: &str = "rr_inside_";
 
 /// The prefix of the descendant axis's relation: `rr_has_<set>(n, a)`, n of a kind in the set and a any strict
-/// ancestor of n (`core.rr`'s `has(a, n, set)`: the set tests the descendant).
+/// ancestor of n (`core.rerail`'s `has(a, n, set)`: the set tests the descendant).
 pub const DESCENDANTS: &str = "rr_has_";
 
 /// The prefix of a `nearest(n, a, set)` literal's relation: `rr_nearest_<set>(n, a)` (`plan::lower`).
 pub const NEAREST: &str = "rr_nearest_";
+
+/// The layout of a relation the transducer makes from a kind set (an axis's, or `nearest`'s), `(n, a)` rows, wherever
+/// it is declared (decision 0361 step 5): what the planner sizes it by with the program. `nearest` holds one
+/// ancestor a node; `inside` the few of a set above it; `has` every ancestor of a node of the set, about a tree's
+/// depth. An ancestor column holds a share of the rows' values (a few nodes of the set hold many below them). `None`
+/// for another relation.
+pub fn made_from_a_kind_set(rel: &str) -> Option<Vec<LayoutFact>> {
+    let ancestors = LayoutFact::Values { col: 1, values: Values::OneIn(4) };
+    if rel.starts_with(NEAREST) {
+        Some(vec![LayoutFact::Key(vec![0]), LayoutFact::Local, ancestors])
+    } else if rel.starts_with(AXIS) {
+        Some(vec![LayoutFact::Fanout { from: vec![0], to: vec![1], fan: Fan::About(2) }, LayoutFact::Local, ancestors])
+    } else if rel.starts_with(DESCENDANTS) {
+        Some(vec![LayoutFact::Fanout { from: vec![0], to: vec![1], fan: Fan::About(8) }, LayoutFact::Local, ancestors])
+    } else {
+        None
+    }
+}
 
 /// Whether `rel` is a tree axis's relation, which the transducer makes: `(n, a)` rows.
 pub fn is_axis(rel: &str) -> bool {
@@ -1019,7 +677,7 @@ pub fn axis(rel: &str) -> Option<(&str, bool)> {
     rel.strip_prefix(DESCENDANTS).map(|set| (set, true)).or_else(|| rel.strip_prefix(AXIS).map(|set| (set, false)))
 }
 
-/// A kind set's one member meaning every kind of the dialect: core.rr's `within(n, a)` is the tree axis over it
+/// A kind set's one member meaning every kind of the dialect: core.rerail's `within(n, a)` is the tree axis over it
 /// (`rr::lower::core`); lowering for a dialect makes it the dialect's kinds (`plan::lower`).
 pub const EVERY_KIND: &str = "*";
 
@@ -1043,95 +701,6 @@ pub struct Gate {
     pub level: usize,
     pub quiet: Vec<String>,
     pub deps: Vec<String>,
-}
-
-/// A term's parts by their addresses (`Shallow`): its names and its call's arguments.
-impl crate::code_rule_dsl::logic::front::name::Shallow for Term {
-    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
-        use std::hash::Hasher;
-        match self {
-            Term::Var(v) => {
-                h.write_u8(0);
-                h.write_usize(v.address());
-            }
-            Term::Wild => h.write_u8(1),
-            Term::Int(i) => {
-                h.write_u8(2);
-                h.write_i64(*i);
-            }
-            Term::Str(s) => {
-                h.write_u8(3);
-                h.write_usize(s.address());
-            }
-            Term::Top => h.write_u8(4),
-            Term::Call(f, args) => {
-                h.write_u8(5);
-                h.write_usize(f.address());
-                h.write_usize(args.address());
-            }
-            Term::Branded(b) => {
-                h.write_u8(6);
-                h.write_u8(b.class as u8);
-                h.write_u32(b.atom);
-            }
-        }
-    }
-    fn shallow_eq(&self, other: &Term) -> bool {
-        match (self, other) {
-            (Term::Call(f, a), Term::Call(g, b)) => f == g && a.same(b),
-            (a, b) => a == b,
-        }
-    }
-}
-
-impl Atom {
-    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
-        use std::hash::Hasher;
-        h.write_usize(self.rel.address());
-        h.write_usize(self.args.address());
-        h.write_u8(u8::from(self.neg) | u8::from(self.gated) << 1);
-    }
-    fn shallow_eq(&self, other: &Atom) -> bool {
-        self.rel == other.rel && self.args.same(&other.args) && self.neg == other.neg && self.gated == other.gated
-    }
-}
-
-/// A literal's parts by their addresses (`Shallow`): its atom's relation and arguments, its terms.
-impl crate::code_rule_dsl::logic::front::name::Shallow for Literal {
-    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
-        use std::hash::{Hash, Hasher};
-        match self {
-            Literal::Atom(a) => {
-                h.write_u8(0);
-                a.shallow_hash(h);
-            }
-            Literal::Cmp { l, op, r } => {
-                h.write_u8(1);
-                l.shallow_hash(h);
-                op.hash(h);
-                r.shallow_hash(h);
-            }
-            Literal::Agg { var, op, over, atom } => {
-                h.write_u8(2);
-                var.hash(h);
-                op.hash(h);
-                over.hash(h);
-                atom.shallow_hash(h);
-            }
-            other => {
-                h.write_u8(3);
-                other.hash(h);
-            }
-        }
-    }
-    fn shallow_eq(&self, other: &Literal) -> bool {
-        match (self, other) {
-            (Literal::Atom(a), Literal::Atom(b)) => a.shallow_eq(b),
-            (Literal::Cmp { l, op, r }, Literal::Cmp { l: l2, op: op2, r: r2 }) => op == op2 && l.shallow_eq(l2) && r.shallow_eq(r2),
-            (Literal::Agg { var, op, over, atom }, Literal::Agg { var: v2, op: o2, over: w2, atom: a2 }) => var == v2 && op == o2 && over == w2 && atom.shallow_eq(a2),
-            (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b) && !matches!(a, Literal::Atom(_) | Literal::Cmp { .. } | Literal::Agg { .. }) && a == b,
-        }
-    }
 }
 
 impl Value {

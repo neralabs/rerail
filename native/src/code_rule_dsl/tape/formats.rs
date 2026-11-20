@@ -28,8 +28,9 @@ pub enum Format {
 
 /// Format 16's and 16z's stored layout: 3 since decision 0336 §6 (a newline index after the side lists, its count
 /// in the header; 16z holds it raw after the checkpoints). Layout 2 (0336: region starts in the header; 16z's blocks
-/// one piece an array, raw, LZ4 or a repeat) had keys 216 and 1216; layout 1, 16 and 1016.
-const F16_LAYOUT: u32 = 4;
+/// one piece an array, raw, LZ4 or a repeat) had keys 216 and 1216; layout 1, 16 and 1016. Layout 5 (decision 0434
+/// §4, step 6): the tape's presence stored after it, in its home.
+const F16_LAYOUT: u32 = 5;
 
 impl Format {
     pub const ALL: [Format; 3] = [Format::F15, Format::F16, Format::F16Z];
@@ -41,8 +42,7 @@ impl Format {
         if let Some(format) = AS_RUN.with(std::cell::Cell::get) {
             return format;
         }
-        static RUN: OnceLock<Format> = OnceLock::new();
-        *RUN.get_or_init(|| match std::env::var("RERAIL_TAPE").as_deref() {
+        rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_TAPE").as_deref() {
             Err(_) | Ok("" | "16") => Format::F16,
             Ok("15") => Format::F15,
             Ok("16z") => Format::F16Z,
@@ -80,7 +80,7 @@ thread_local! {
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// The format 15 images this thread converted to format 16 or 16z (`TapeImage::in_format`): a parser's tape
-    /// made in format 15 first, which no format 16 run's parser does (decision 0426, R12).
+    /// made in format 15 first, which no format 16 run's parser does (decision 0434, R12).
     static CONVERTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -142,7 +142,7 @@ impl Columns15 {
 
     /// The view the tape's reads take (decision 0310), its offsets from its bytes' first (`laid_out`): made from
     /// the columns' places, as cheap as the columns' slices; its spans held to the source's `source_len` bytes (its
-    /// image's: decision 0427).
+    /// image's: decision 0463).
     pub fn view(&self, source_len: usize) -> rerail_clif::view::TapeView {
         let (_, at) = self.laid_out();
         let w = |k: usize| u32::from(self.widths[k]);
@@ -191,7 +191,7 @@ impl Code {
 /// its code (`number`): `None` where the run stores format 15, or the language has no format 16 table (said once).
 fn sixteen(language: GrammarDialect, number: impl Fn(&'static Lang, u32) -> Option<u32> + Send + Sync + 'static) -> Option<rerail_tape_format::Sixteen> {
     let (lang, tag, z) = run_16(language)?;
-    Some(rerail_tape_format::Sixteen { lang, tag, z, blocks: false, number: Arc::new(move |key| number(lang, key)) })
+    Some(rerail_tape_format::Sixteen { lang, tag, z, blocks: true, number: Arc::new(move |key| number(lang, key)) })
 }
 
 /// The language's format 16 table, its tag and whether the run stores 16z: `None` where the run stores format 15, or
@@ -209,7 +209,7 @@ pub fn run_16(language: GrammarDialect) -> Option<(&'static Lang, u8, bool)> {
     Some((lang, tag, format == Format::F16Z))
 }
 
-/// The cursor walk's format 16 output (`tape::TreeOut`; decision 0426 §2): each node given to format 16's ops as the
+/// The cursor walk's format 16 output (`tape::TreeOut`; decision 0434 §2): each node given to format 16's ops as the
 /// walk opens and closes it, its number the language's for its code, looked up once a code a document. A code the
 /// table lacks, or a node past format 16's bounds, makes `finish` `None` (said once a language): the walk is run
 /// again for format 15.
@@ -217,7 +217,7 @@ pub(super) struct TreeOps {
     language: GrammarDialect,
     lang: &'static Lang,
     tag: u8,
-    w: f16::Writer<'static>,
+    w: f16::Writer,
     /// The open nodes' ends.
     ends: Vec<u32>,
     numbers: rustc_hash::FxHashMap<Code, u32>,
@@ -231,7 +231,7 @@ impl TreeOps {
     /// run stores format 15 (`run_16`).
     pub(super) fn of_run(language: GrammarDialect, source: &[u8], nodes: usize) -> Option<Self> {
         let (lang, tag, z) = run_16(language)?;
-        let w = f16::Writer::new(lang, source, tag, z, false, nodes);
+        let w = f16::Writer::new(lang, source, tag, z, true, nodes);
         Some(TreeOps { language, lang, tag, w, ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
     }
 
@@ -270,11 +270,11 @@ impl TreeOps {
     }
 
     /// The tape, or `None` where the nodes are not a format 16 tape (said once a language).
-    pub(super) fn finish(self) -> Option<f16::Written> {
+    pub(super) fn finish(self) -> Option<f16::Finished> {
         let why = match self.bad {
             Some(why) => why,
             None => match self.w.finish() {
-                Ok(f) => return Some(f.tape),
+                Ok(f) => return Some(f),
                 Err(e) => e,
             },
         };
@@ -309,7 +309,7 @@ impl super::TreeOut for TreeOps {
     }
 }
 
-/// The sink a lean parser's writer is given (`rerail_*_lean::tape_into`; decisions 0293, 0426): the tape in the run's
+/// The sink a lean parser's writer is given (`rerail_*_lean::tape_into`; decisions 0293, 0434): the tape in the run's
 /// format. Where the run stores format 16 or 16z, the writer passes its nodes to format 16's ops as the parse commits
 /// them, each key numbered in the language's table through its code (`code_of`): no format 15 column is made. Format
 /// 15's columns (`TapeImage::written`) where the run stores 15, the language has no format 16 table, a code is not in
@@ -344,7 +344,7 @@ impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
         let language = self.grammar.lang;
         if let Some(t) = &self.target {
             match w.finish_16()? {
-                Ok(f) => return Ok(TapeImage::written_16(f.tape, language, self.source, None, self.budget)),
+                Ok(f) => return Ok(TapeImage::written_16(f, language, self.source, None, self.budget)),
                 Err(e) => keeps_15(language, t.tag, &e),
             }
             // The window gave back the nodes passed on: the parse runs again for format 15 (`again`).
@@ -388,25 +388,28 @@ impl TapeImage {
         // One pass over format 15's columns, to format 16 or straight to 16z's blocks.
         #[cfg(any(test, feature = "test-hooks"))]
         CONVERTED.set(CONVERTED.get() + 1);
-        let held = match f16::write_from(lang, &F15::over(c.laid_out().0, c.view(self.source_len), table), &number, source, tag, format == Format::F16Z) {
-            Ok(f16::Written::F16(t)) => Held::F16(Arc::new(t)),
-            Ok(f16::Written::F16Z(t)) => Held::F16Z(Arc::new(t)),
+        let f = match f16::write_from_with_presence(lang, &F15::over(c.laid_out().0, c.view(self.source_len), table), &number, source, tag, format == Format::F16Z) {
+            Ok(f) => f,
             Err(e) => {
                 keeps_15(self.language, tag, &e);
                 return self;
             }
         };
+        let held = match f.tape {
+            f16::Written::F16(t) => Held::F16(Arc::new(t)),
+            f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
+        };
         Self { held, ..self }
     }
 
-    /// A lean parser's tape written in format 16 or 16z (`lean`), with its source's digest: `digest`, where the parse
-    /// computed it (simdjson's kernels), else computed here.
-    pub fn written_16(written: f16::Written, language: GrammarDialect, source: &str, digest: Option<[u8; 32]>, budget: &dyn Fn() -> bool) -> Result<Self, String> {
+    /// A lean parser's tape written in format 16 or 16z (`lean`), with its presence and its source's digest: `digest`,
+    /// where the parse computed it (simdjson's kernels), else computed here.
+    pub fn written_16(written: f16::Finished, language: GrammarDialect, source: &str, digest: Option<[u8; 32]>, budget: &dyn Fn() -> bool) -> Result<Self, String> {
         let digest = match digest {
             Some(d) => d,
             None => super::source_digest(source, &budget)?,
         };
-        let held = match written {
+        let held = match written.tape {
             f16::Written::F16(t) => Held::F16(Arc::new(t)),
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
         };
@@ -423,14 +426,14 @@ impl TapeImage {
     }
 }
 
-/// A `.rr` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
+/// A `.rerail` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
 /// writer, as `lean` writes the other languages', else format 15's image.
 pub(super) enum RrTape {
     Image(Vec<u8>),
-    Written(f16::Written),
+    Written(f16::Finished),
 }
 
-/// The finish the `.rr` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
+/// The finish the `.rerail` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
 /// keys are the codes (`kf | flags << 16`, no supertypes).
 struct Rr<'s> {
     source: &'s str,
@@ -455,7 +458,7 @@ impl rerail_tape_format::Finish for Rr<'_> {
     fn finish<L: rerail_tape_format::Layout>(&mut self, mut w: Writer<L>) -> Result<RrTape, Redo> {
         if w.writes_16() {
             match w.finish_16()? {
-                Ok(f) => return Ok(RrTape::Written(f.tape)),
+                Ok(f) => return Ok(RrTape::Written(f)),
                 Err(e) => keeps_15(GrammarDialect::Rr, rerail_tape_format::RR_TAG, &e),
             }
             // As `Lean`'s: the parse runs again for format 15.
@@ -468,7 +471,7 @@ impl rerail_tape_format::Finish for Rr<'_> {
     }
 }
 
-/// `source`'s tape from the `.rr` parser, in the run's format (`Rr`).
+/// `source`'s tape from the `.rerail` parser, in the run's format (`Rr`).
 pub(super) fn rr_tape(source: &str) -> RrTape {
     rerail_rr_syntax::lean::tape_into(source, &mut Rr { source, f15: false })
 }
@@ -509,6 +512,16 @@ impl DocTape {
     #[inline]
     pub fn reader(&self) -> &AnyTape<'_> {
         &self.reader
+    }
+
+    /// The image, shared: a document over the same tape holds it (`TapeDoc::over`).
+    pub fn image_arc(&self) -> &Arc<TapeImage> {
+        &self.image
+    }
+
+    /// The source the tape is over.
+    pub fn source(&self) -> &Arc<String> {
+        &self.source
     }
 
     pub fn image(&self) -> &TapeImage {

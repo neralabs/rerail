@@ -91,6 +91,16 @@ UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, u
                 v = j < 6u ? BMC(((uint64_t)s.b | ((uint64_t)s.imm << 32)) >> ((uint64_t)(gl * W) & 63ul)) : BMC(BMC(0) - BMC(((gl * W) >> j) & 1u));
                 break;
             }
+            case 17u: v = BMC(a >> s.imm); break;
+            case 18u: {
+                // `prefix n w`: n in a, w in b and imm; the low n bits of the file's first word where its first n bytes
+                // are w's (Q215: a file's start read ahead).
+                B4 c = load16(bytes, f, 0u);
+                uint64_t first = (uint64_t)c.x | ((uint64_t)c.y << 32);
+                uint64_t cut = s.a >= 8u ? ~(uint64_t)0 : ((uint64_t)1 << (8u * s.a)) - 1u;
+                v = (gl == 0u && f.len >= s.a && (first & cut) == ((uint64_t)s.b | ((uint64_t)s.imm << 32))) ? BMC(((uint64_t)1 << s.a) - 1u) : BMC(0);
+                break;
+            }
             default: break;
         }
         slots[at * 32u + l] = v;

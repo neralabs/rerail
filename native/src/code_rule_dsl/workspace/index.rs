@@ -13,6 +13,7 @@
 use super::api::{WORKSPACE_BUSY, WorkspaceApplyTask, close_poisoned, cpu_slot};
 use super::crossfile::CrossFileScheduler;
 use super::global::record_evidence;
+use super::ingest::{RepositoryContext, repository_context};
 use super::ingest::{Request, WireFile, make_file};
 use super::persisted::{candidate_catalog, file_context, restore_complete_results};
 use super::storage::StorageContext;
@@ -22,7 +23,6 @@ use super::{
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
-use super::ingest::{RepositoryContext, repository_context};
 use crate::content_store::{
     CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredPathObjects,
 };
@@ -85,6 +85,8 @@ pub struct RepositoryIndexOptions {
 pub struct WorkspaceIndexTask {
     pub(super) state: Arc<Mutex<WorkspaceState>>,
     pub(super) closed: Arc<AtomicBool>,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    pub(super) shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
     pub options: RepositoryIndexOptions,
 }
 
@@ -100,6 +102,8 @@ impl WorkspaceIndexTask {
         Self {
             state,
             closed,
+            // A test's index runs on the tests' shared object.
+            shared: crate::code_rule_dsl::logic::profile::default_shared(),
             options: RepositoryIndexOptions {
                 max_files: u32::MAX,
                 max_source_bytes: u32::MAX,
@@ -355,7 +359,16 @@ impl WorkspaceIndexTask {
             .collect::<HashSet<_>>();
         let max_files = self.options.max_files as usize;
         let mut git_ignore = if self.options.follow_gitignore {
-            crate::git_ignore::GitIgnore::open(&repository.worktree_root).map_err(invalid)?
+            // Under the Git read time limit, as every engine open of a repository.
+            let root = repository.worktree_root.clone();
+            crate::git_access::pool::run(
+                "opening Git's ignore rules",
+                &repository.worktree_root,
+                crate::git_access::pool::GIT_READ_TIME_LIMIT,
+                move || crate::git_ignore::GitIgnore::open(&root),
+            )
+            .map_err(|error| invalid(error.message))?
+            .map_err(invalid)?
         } else {
             None
         };
@@ -723,7 +736,7 @@ impl WorkspaceIndexTask {
         repository: &git_workspace::GitWorkspace,
         mut index: RepositoryIndex,
     ) -> Result<String> {
-        let Some(_slot) = cpu_slot().try_lock() else {
+        let Some(_slot) = cpu_slot().try_lock_arc() else {
             self.lock()?.repository_index = Some(index);
             return Err(invalid(WORKSPACE_BUSY));
         };
@@ -762,6 +775,7 @@ impl WorkspaceIndexTask {
             let mut apply = WorkspaceApplyTask {
                 state: Arc::clone(&self.state),
                 closed: Arc::clone(&self.closed),
+                shared: Arc::clone(&self.shared),
                 request_json: String::new(),
                 request_buffer: None,
                 request_direct: Some(Request {
@@ -789,6 +803,8 @@ impl Task for WorkspaceIndexTask {
     /// chunk keeps its plan and reports busy, so the host retries.
     fn compute(&mut self) -> Result<String> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
             let (storage, repository, index) = self.take_repository_index()?;
             let index = match index {

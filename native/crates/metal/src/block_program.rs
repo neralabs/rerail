@@ -56,7 +56,11 @@ pub fn head(width: LaneWidth) -> String {
 /// read-modify-write reads the coherent copy: one launch. Family 9 on (the M3, the M5) the load
 /// sees it, and stays a load there. OpenCL's load is a read-modify-write already.
 fn poll_rmw() -> bool {
-    static RMW: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    // A fact of the machine's device, found once (decision 0442: the machine's). Metal's alone: no other backend
+    // polls by a read-modify-write.
+    #[derive(Default)]
+    struct PollRmw(std::sync::OnceLock<bool>);
+    *rerail_context::machine::<PollRmw>().0.get_or_init(|| {
         #[cfg(target_os = "macos")]
         {
             lane::device().is_ok_and(|d| d.metal().is_some()) && crate::device().is_ok_and(|d| !d.supports_family(metal::MTLGPUFamily::Apple9))
@@ -65,8 +69,7 @@ fn poll_rmw() -> bool {
         {
             false
         }
-    });
-    *RMW
+    })
 }
 
 /// The device the batches run on, where they can: a group is a SIMD group of 32 lanes, so a
@@ -177,7 +180,11 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
         BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
         BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
-        BlockInst::Early(..) | BlockInst::Prefix(..) => unreachable!("refused at `run_batch`: Metal runs no `early` or prefix yet"),
+        // `a >> k` in the word (decision 0330): `a` has no bits past a file's first `EARLY_BITS`,
+        // all in its first lane.
+        BlockInst::Early(a, k) => [17, u32::from(a), 0, u32::from(k)],
+        // `n` in `a`, the bytes in `b` and `imm` (decision 0335).
+        BlockInst::Prefix(n, w) => [18, u32::from(n), w as u32, (w >> 32) as u32],
         // `j` in `a`; below 6 the period's pattern in `b` and `imm`.
         BlockInst::Position(j) => {
             let pattern = (0..64u32).filter(|i| u32::from(j) < 6 && i >> j & 1 == 1).fold(0u64, |a, i| a | 1 << i);
@@ -249,28 +256,21 @@ pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
 /// The rows of a batch's slabs (`MAX_SLABS`), in every kernel that reads a file's bytes.
 const SLAB_BUFFERS: [&str; crate::slabs::MAX_SLABS] = ["s0", "s1", "s2", "s3"];
 
-/// Launches repeated because a look-back ran out of polls.
-pub static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// Whether a program starts a file's stream late, which Metal does not generate yet: an
-/// `early` (decision 0330), a file's first lane shifted down; or a prefix (decision 0335), its
-/// positions (`prefix`) and the token loop's first state past it. Both are the CPU's for now.
-pub(crate) fn starts_late(p: &BlockNative) -> bool {
-    p.insts.iter().any(|i| matches!(i, BlockInst::Early(..) | BlockInst::Prefix(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
-}
+/// Launches repeated because a look-back ran out of polls: the run's count (decision 0442).
+#[derive(Default)]
+pub struct RepeatedLaunches(pub std::sync::atomic::AtomicUsize);
 
 /// What `program` needs that generated UKL lacks (decision 0202's `metal-form` list), if any: a
 /// `run_batch` of it is refused. A fixed point (`rounds`) is the CPU's for now: each lane would run
 /// its rounds in its own frame, within `block::MAX_ROUNDS`, to the same values. A `back_fill`
-/// likewise: a backward pass over the groups' summaries, not generated yet. An `early` too
-/// (decision 0330): a file's first lane shifted down, not generated yet.
+/// likewise: a backward pass over the groups' summaries, not generated yet. An `early` (decision
+/// 0330) and a prefix (0335) run: the first is a shift in the file's first word, the second its
+/// first bytes compared there.
 pub fn missing_form(program: &BlockNative) -> Option<&'static str> {
     if !program.groups.is_empty() {
         Some("a fixed point (rounds)")
     } else if program.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_))) {
         Some("a back fill or a load")
-    } else if starts_late(program) {
-        Some("an early start (a file's first lane shifted down)")
     } else {
         None
     }
@@ -443,7 +443,7 @@ pub fn run_batch(
             return Err(Error::BackendFailure);
         }
         if launches > 0 {
-            REPEATED_LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            rerail_context::with_local::<RepeatedLaunches, _>(|r| r.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
             // SAFETY: two words, written between launches, when no kernel runs.
             unsafe { std::ptr::write_bytes(tickets.host().cast::<u32>(), 0, 2) };
         }
@@ -1158,7 +1158,7 @@ fn emit(p: usize, native: &BlockNative, width: LaneWidth, chosen: &[usize], word
     let mut out = String::new();
     let back = insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
     let loaded = base.is_empty();
-    if !loaded && (back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_)))) {
+    if !loaded && (back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::Prefix(..)))) {
         for c in 0..chunks {
             out.push_str(&format!("  const B4 c{c} = load16(bytes, f, {base} + {c}u);\n"));
         }
@@ -1262,7 +1262,15 @@ fn emit(p: usize, native: &BlockNative, width: LaneWidth, chosen: &[usize], word
             }
             BlockInst::Position(j) => format!("BMC(0) - BMC((U32({offset}) >> {j}u) & 1u)"),
             BlockInst::Carry(_) => unreachable!("a carry is its group's loop's (`emit`)"),
-            BlockInst::Early(..) | BlockInst::Prefix(..) => unreachable!("refused at `run_batch`: Metal runs no `early` or prefix yet"),
+            // `a >> k` in the word (decision 0330): `a` has no bits past a file's first
+            // `EARLY_BITS`, which lie in its first word at every width.
+            BlockInst::Early(a, k) => format!("BMC(v{a} >> {k}u)"),
+            // The low `n` bits of the file's first word where its first `n` bytes are `w`'s
+            // (decision 0335): the word's first chunk, compared once.
+            BlockInst::Prefix(n, w) => {
+                let cut = if n >= 8 { u64::MAX } else { (1u64 << (8 * n)) - 1 };
+                format!("(({offset}) == 0u && len >= {n}u && ((U64(c0.x) | (U64(c0.y) << 32u)) & {cut:#x}ul) == {w:#x}ul) ? BMC({:#x}ul) : BMC(0)", (1u64 << n) - 1)
+            }
             BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
             // A slot word of a pass before (`native_ir::Passes`): the forward carry's, a block a
             // word, in the output buffer `out`.

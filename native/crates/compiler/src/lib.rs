@@ -8,6 +8,9 @@
 //! pressure (`native_cpu_pressure`). The engine (`code_rule_dsl::transducer::packed`)
 //! re-exports each under the same name.
 
+// The compiler's passes hand each other plain tuples of tables; naming each would add nothing.
+#![allow(clippy::type_complexity)]
+
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 
@@ -40,6 +43,7 @@ pub mod native_cpu_shape;
 pub mod clif_ukl;
 pub mod clif_rust;
 pub mod rust_stream;
+pub mod rust_block;
 pub mod native_cpu_stream;
 pub mod native_cpu_pp;
 pub mod native_cpu_tape;

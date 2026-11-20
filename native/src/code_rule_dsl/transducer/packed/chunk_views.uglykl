@@ -68,7 +68,7 @@ UKL_INLINE uint32_t doc_of_node(DocP docs, uint32_t ndocs, uint32_t row) {
 
 // Row `r`'s value `v` in column `c` of the relation `out` makes (decision 0325 step 5: a relation in its block, its
 // rows' descriptor at `rows_at`), through the writer written once: a row past its chunks is counted, not written
-// (decision 0427).
+// (decision 0463).
 UKL_INLINE void view_put(UKL_GLOBAL uint8_t* out, uint64_t rows_at, uint32_t r, uint32_t c, int64_t v) {
     clif_rows_put((UKL_GLOBAL const uint8_t*)out, rows_at, r, c, (uint64_t)v);
 }
@@ -88,7 +88,7 @@ DEFINE_KERNEL2(join, view_expand,
     DocP docs = ITEMS(ChunkDoc, root->docs);
     uint32_t view = p[1];
     if (view >= 5u && view <= 8u) {
-        // core.rr's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
+        // core.rerail's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
         uint32_t lo = 0u, hi = root->ndocs;
         while (hi - lo > 1u) {
             uint32_t m = (lo + hi) / 2u;
@@ -112,7 +112,7 @@ DEFINE_KERNEL2(join, view_expand,
             if (p[7 + c] == 0u) {
                 v = loc_global(d, l);
             } else if (view == 8u) {
-                v = (int64_t)d->key;
+                v = (int64_t)d->file;
             } else if (placed) {
                 v = (int64_t)(view == 5u ? pl[0] : (view == 6u ? pl[1] : pl[2]));
             } else {
@@ -138,7 +138,9 @@ DEFINE_KERNEL2(join, view_expand,
     for (uint32_t c = 0u; c < p[3]; c++) {
         uint32_t col = p[7 + c];
         int64_t v;
-        if ((view == 0u || view == 3u) && col == 0u) {
+        if (view == 0u && col == 0u) {
+            v = (int64_t)d->file;
+        } else if (view == 3u && col == 0u) {
             v = (int64_t)d->key;
         } else if (view == 3u && col == 1u) {
             v = (int64_t)id;
@@ -203,8 +205,8 @@ DEFINE_KERNEL2(join, axis_count,
 
 // Each node row's rows from its start (the scanned counts), nearest first: the ids of `n` and `a`, written once into
 // the axis's relation (decision 0353 step 5) through the writer written once, bounded by its chunks. p4 is the rows
-// the relation holds, the total (`start[n]`) read before: a total past it writes nothing. b0: the relation's rows'
-// descriptor's offset in `out`'s block.
+// the relation holds, the totals read before: a chunk's rows past it write nothing. p7: the first row of this chunk's,
+// past the chunks' before. b0: the relation's rows' descriptor's offset in `out`'s block.
 DEFINE_KERNEL2(join, axis_write,
                ROBUFFER, uint8_t,  B,     "[block]",
                ROBUFFER, uint32_t, start, "[a.p1 + 1]",
@@ -212,12 +214,12 @@ DEFINE_KERNEL2(join, axis_write,
                ARGS,     JoinP,    a,     ,
                GID0,     uint32_t, v,     )
 {
-    if (v >= a.p1 || start[a.p1] > a.p4) return;
+    if (v >= a.p1 || a.p7 + start[a.p1] > a.p4) return;
     uint64_t rows_at = (uint64_t)a.b0;
     UKL_GLOBAL const ChunkRoot* root = (UKL_GLOBAL const ChunkRoot*)(B + a.p0);
     DocP docs = ITEMS(ChunkDoc, root->docs);
     DocP d = &docs[doc_of_node(docs, root->ndocs, v)];
-    uint32_t at = start[v];
+    uint32_t at = a.p7 + start[v];
     uint32_t l = v - d->node_row;
     int64_t n_id = global_of(d, l);
     uint32_t up = parent_of(d, l);

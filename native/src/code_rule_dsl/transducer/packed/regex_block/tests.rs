@@ -110,7 +110,7 @@
             runs.push((true, Some(rerail_accel::Lane::Gpu)));
         }
         for (device, lane) in runs {
-            let (got, ran) = super::ends_on(ex(device), &filters, &sources, &files, device, lane).unwrap();
+            let (got, ran) = super::ends_on(&ex(device), &filters, &sources, &files, device, lane).unwrap();
             if let Some(lane) = lane {
                 assert_eq!(ran == RanOn::Metal, lane == rerail_accel::Lane::Gpu, "{lane:?}: {ran:?}");
             }
@@ -138,7 +138,7 @@
         let sources: Vec<Arc<String>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.to_owned())).collect();
         let files: Vec<(usize, usize)> = (0..sources.len()).flat_map(|d| (0..filters.len()).map(move |f| (d, f))).collect();
         let check = |what: &str| {
-            let (got, ran) = super::ends_on(ex, &filters, &sources, &files, true, Some(rerail_accel::Lane::Gpu)).unwrap();
+            let (got, ran) = super::ends_on(&ex, &filters, &sources, &files, true, Some(rerail_accel::Lane::Gpu)).unwrap();
             assert_eq!(ran, RanOn::Metal, "{what}");
             for ((d, f), got) in files.iter().zip(&got) {
                 assert_eq!(*got, filters[*f].ends(sources[*d].as_bytes()), "program {f}, {what}");

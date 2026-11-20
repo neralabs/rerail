@@ -44,8 +44,9 @@ fn every_grammar_builds() {
     }
 }
 
-/// The automata built with the build (`token_automata`), which a process decodes, are the ones its grammar's JSON
-/// builds: the same kinds, implied tokens, parents and tokens, for every grammar the engine holds.
+/// The automata built with the build (`token_automata`), which a process reads a kind at a time, are the ones its
+/// grammar's JSON builds: the same kinds, every move, implied word and kept token of each kind that leaves a token
+/// out, the same implied tokens, parents and tokens, for every grammar the engine holds.
 #[test]
 fn the_automata_built_with_the_build_are_the_grammars() {
     use GrammarDialect::*;
@@ -55,12 +56,31 @@ fn the_automata_built_with_the_build_are_the_grammars() {
         let fresh = TokenGrammar::from_json(json, &language).unwrap();
         let built = TokenGrammar::of(lang, &language).unwrap_or_else(|| panic!("{lang:?}: no automata built with the build"));
         assert_eq!(built.kind_count(), fresh.kind_count(), "{lang:?}");
+        assert_eq!(built.automata_text(), fresh.automata_text(), "{lang:?}");
         assert_eq!(built.implied_tokens(), fresh.implied_tokens(), "{lang:?}");
-        // The census the token tests read, as the build wrote it.
+        // The census the token tests read, as the build wrote it (read in place): whole, and as a lookup finds a
+        // kind's.
+        use std::collections::{BTreeMap, BTreeSet};
         let census = crate::code_rule_dsl::tape::token_census::Lang::of(lang).unwrap_or_else(|| panic!("{lang:?}: no census"));
-        assert_eq!(census.implied, fresh.implied_tokens(), "{lang:?}");
-        assert_eq!(census.parents, fresh.parents(), "{lang:?}");
-        assert_eq!(census.tokens, fresh.token_texts(), "{lang:?}");
+        let (expected_implied, expected_parents) = (fresh.implied_tokens(), fresh.parents());
+        let pair = |(token, field): (&str, &str)| (token.to_owned(), field.to_owned());
+        let implied: BTreeMap<String, BTreeSet<(String, String)>> = census.implied().map(|(kind, pairs)| (kind.to_owned(), pairs.map(pair).collect())).collect();
+        let parents: BTreeMap<String, BTreeSet<String>> = census.parents().map(|(kind, parents)| (kind.to_owned(), parents.map(str::to_owned).collect())).collect();
+        assert_eq!(implied, expected_implied, "{lang:?}");
+        assert_eq!(parents, expected_parents, "{lang:?}");
+        assert_eq!(census.tokens().map(str::to_owned).collect::<BTreeSet<_>>(), fresh.token_texts(), "{lang:?}");
+        for (kind, pairs) in &expected_implied {
+            assert_eq!(&census.implied_of(kind).map(pair).collect::<BTreeSet<_>>(), pairs, "{lang:?} {kind}");
+        }
+        for (kind, parents) in &expected_parents {
+            assert_eq!(census.parents_of(kind).as_ref(), Some(parents), "{lang:?} {kind}");
+        }
+        assert_eq!(census.parents_of("no such kind"), None, "{lang:?}");
+        for kind in expected_implied.keys().chain(expected_parents.keys()).map(String::as_str).chain(["comment", "line_comment", "block_comment"]) {
+            assert_eq!(census.is_extra(kind), fresh.is_extra(kind), "{lang:?} {kind}");
+        }
+        let distinct: Vec<(String, String)> = expected_implied.values().flatten().cloned().collect::<BTreeSet<_>>().into_iter().collect();
+        assert_eq!(census.distinct().iter().map(|&pairs| pair(pairs)).collect::<Vec<_>>(), distinct, "{lang:?}");
         compared += 1;
     }
     assert!(compared >= 8, "{compared} grammars compared");

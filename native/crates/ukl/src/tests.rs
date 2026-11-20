@@ -13,7 +13,7 @@ fn tokens(text: &str) -> Vec<String> {
     let mut lx = PpLexer::new(b, Options::cpp(20, true));
     let mut v = Vec::new();
     loop {
-        let t = lx.next();
+        let t = lx.next_token();
         if t.kind == P::Eof {
             break;
         }

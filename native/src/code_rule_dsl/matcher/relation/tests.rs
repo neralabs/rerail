@@ -444,6 +444,56 @@
         );
     }
 
+    /// A `has` to the end over a node holding a token the tape leaves out (`has: {regex: "^var$"}`,
+    /// a gap test: `var` is implied by `variable_declaration`) remembers each node's answer for
+    /// the file, as the same relation over a stored token does: nested calls cost work linear in
+    /// their depth (typescript-eslint-no-shadow's `var` scopes ran 3.9 times main's time, walking
+    /// every enclosing scope's subtree for each name). Walking every call's subtree reports the same.
+    #[test]
+    fn gap_relations_grow_linearly_with_call_depth() {
+        use crate::code_rule_dsl::language::GrammarDialect;
+        use crate::code_rule_dsl::tape::token_census::Lang;
+        let implied = Lang::of(GrammarDialect::TypeScript).expect("census");
+        assert!(implied.tests_implied(&regex::Regex::new("(?:^var$)").expect("regex"), None), "`var` is implied");
+        let rule = json!({
+            "kind": "call_expression",
+            "has": { "stopBy": "end", "has": { "regex": "^var$" } },
+        });
+        let found = |result: &Value| result["violations"].as_array().map(Vec::len);
+        let mut units = Vec::new();
+        for depth in [100, 200, 400] {
+            let nested = |keyword: &str| {
+                format!(
+                    "{}g(function () {{ {keyword} x = 1; }}){}",
+                    "f(0, ".repeat(depth),
+                    ")".repeat(depth)
+                )
+            };
+            let source = format!(
+                "export const a = {};\nexport const b = {};\n",
+                nested("var"),
+                nested("let")
+            );
+            let (remembered, spent) = values_clause(&rule, &source, false);
+            assert_eq!(found(&remembered), Some(depth + 1), "depth {depth}");
+            let (walked, walk_spent) = values_clause(&rule, &source, true);
+            assert_eq!(walked, remembered, "depth {depth}, every subtree walked");
+            units.push((spent, walk_spent));
+        }
+        for pair in units.windows(2) {
+            let ((before, _), (after, _)) = (pair[0], pair[1]);
+            assert!(
+                after <= before * 9 / 4,
+                "twice the depth spends at most about twice the units: {units:?}"
+            );
+        }
+        let ((_, walked_200), (remembered_400, walked_400)) = (units[1], units[2]);
+        assert!(
+            walked_400 >= walked_200 * 3 && walked_400 >= remembered_400 * 4,
+            "the walk over every call's subtree grows with the square: {units:?}"
+        );
+    }
+
     /// Remembered answers of `value` tests along every relation to the end give the violations
     /// walking again gives, under `not`, `any` and `all`, where values are known, unknown (a
     /// parameter, a call) and followed through bindings.
@@ -495,4 +545,43 @@ r([1, u, 2, 3], [4, 5, u, 6]);
             reported += remembered.len();
         }
         assert!(reported > 20, "the rules report findings: {reported}");
+    }
+
+    /// A sibling walk to the end spends the matcher calls a walk over the full tree spends, implied tokens and all
+    /// (`charged`): a named-only tape leaves out an array's `[`, `,` and `]`, which a full tree's walk tests as
+    /// candidates, so the same work budget would buy its walk twice the integers (the audit's out-of-work file ran
+    /// out later, and slower, than on main's full tapes).
+    #[test]
+    fn a_sibling_walk_spends_what_a_walk_over_the_full_tree_does() {
+        use crate::code_rule_dsl::budget::{matcher_calls, reset_matcher_calls};
+        use crate::code_rule_dsl::language::GrammarDialect;
+        use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
+        use ast_grep_core::AstGrep;
+        use ast_grep_core::tree_sitter::LanguageExt;
+        use std::sync::Arc;
+        let source = format!("x = [{}];\n", (0..200).map(|n| n.to_string()).collect::<Vec<_>>().join(", "));
+        let grammar = Grammar::new(GrammarDialect::TypeScript).expect("grammar");
+        let image = TapeImage::parse(&grammar, &source, &|| false).expect("parses").expect("encodes");
+        let tape = AstGrep::doc(TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).expect("restores"));
+        let full = GrammarDialect::TypeScript.ast_grep(&source);
+        for relation in ["follows", "precedes"] {
+            let compiled = compile_typescript_rule(json!({ "kind": "number", relation: { "stopBy": "end", "kind": "string" } }))
+                .unwrap_or_else(|error| panic!("{}", error.reason));
+            let matcher = &grammar_matchers(&compiled)[0];
+            reset_matcher_calls();
+            for number in tape.root().dfs().filter(|node| node.kind() == "number") {
+                let mut work = usize::MAX;
+                assert!(matcher.match_root(number, &mut work).expect("fits").is_none());
+            }
+            let on_tape = matcher_calls();
+            reset_matcher_calls();
+            for number in full.root().dfs().filter(|node| node.kind() == "number") {
+                let mut work = usize::MAX;
+                assert!(matcher.match_root(number, &mut work).expect("fits").is_none());
+            }
+            let on_full = matcher_calls();
+            // 200 numbers, each walking past the others and the 199 commas and a bracket.
+            assert_eq!(on_tape, on_full, "{relation}");
+            assert!(on_full > 2 * 200 * 199 / 2, "{relation}: {on_full}");
+        }
     }

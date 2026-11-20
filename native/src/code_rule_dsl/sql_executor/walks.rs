@@ -135,11 +135,10 @@ fn rewrite_scoped(
         if let E::Scalar(query) | E::Exists { query, .. } = e {
             rewrite_scoped(query, names, &aliases);
         }
-        if let E::Qualified { alias, column } = e {
-            if let Some(columns) = aliases.get(alias) {
+        if let E::Qualified { alias, column } = e
+            && let Some(columns) = aliases.get(alias) {
                 *e = columns.access(&format!("rr_lift_{alias}"), column);
             }
-        }
     };
     for (e, _) in &mut block.columns {
         e.visit_mut(&mut replace);
@@ -161,14 +160,13 @@ fn rewrite_scoped(
                 rel: names[name].0.clone(),
                 delta: false,
             };
-        } else if let Rel::Input { schema, rel } = &item.relation {
-            if let Some(columns) = select::input_columns(rel) {
+        } else if let Rel::Input { schema, rel } = &item.relation
+            && let Some(columns) = select::input_columns(rel) {
                 item.relation = Rel::Batch {
                     rel: rel.clone(),
                     source: select::Source::positional(&format!("{schema}{rel}"), columns),
                 };
             }
-        }
     }
     for (i, (_, name)) in block.columns.iter_mut().enumerate() {
         *name = Some(format!("c{i}"));
