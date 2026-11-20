@@ -3,10 +3,10 @@
 // read, for as long as it runs; a removed worktree's ones are dropped once Git lists its repository's worktrees again
 // and the folder is found gone, while every checkout that stays keeps its own.
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { keptConfigCount } from "../../../../src/engine/catalog/checkouts/git-placement.js";
@@ -19,6 +19,7 @@ import {
 import { runGit } from "../../../../src/engine/git.js";
 import { linkFolder } from "../../../support/platform/links.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
+import { shortSpelling } from "../../support/short-path.js";
 
 vi.mock("../../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/git.js")>();
@@ -89,11 +90,12 @@ function gitProcessesSince(started: number): number {
 }
 
 /**
- * A repository `main` with `count` worktrees beside it, each holding a folder `sub`: with `ownConfig`, the repository
- * reads a `config.worktree` of each worktree's own (`extensions.worktreeConfig`), so each is placed by Git.
+ * A repository `main` with `count` worktrees beside it, in `at` or a new folder, each holding a folder `sub`: with
+ * `ownConfig`, the repository reads a `config.worktree` of each worktree's own (`extensions.worktreeConfig`), so each
+ * is placed by Git.
  */
-async function withWorktrees(count: number, ownConfig: boolean): Promise<{ main: string; worktrees: string[] }> {
-  const root = await temporaryRoot();
+async function withWorktrees(count: number, ownConfig: boolean, at?: string): Promise<{ main: string; worktrees: string[] }> {
+  const root = at ?? await temporaryRoot();
   const main = repository(join(root, "main"));
   mkdirSync(join(main, "sub"));
   if (ownConfig) git(main, "config", "extensions.worktreeConfig", "true");
@@ -158,6 +160,60 @@ describe("what the catalog keeps for a worktree leaves with it", () => {
     const started = vi.mocked(runGit).mock.calls.length;
     askAgain(main, ...worktrees.slice(2));
     expect(gitProcessesSince(started)).toBe(0);
+  });
+});
+
+describe("what the catalog keeps for a worktree leaves with it however the repository's folder was reached", () => {
+  /**
+   * Six worktrees beside a repository `main` in `root`, each with a `config.worktree` of its own and a `.git` file
+   * naming its Git folder by a relative path, as `git worktree add --relative-paths` (Git 2.48 and later) writes it,
+   * each asked after through `spelt`, another spelling of `root`. A config file's path is then spelt from the folder
+   * as asked, and Git and the files may each spell the common Git folder their own way. Four are removed with Git, and
+   * Git lists the repository's worktrees again: what was kept for each of them leaves, as when asked by its real path.
+   */
+  async function removedOnceAskedThrough(root: string, spelt: string): Promise<void> {
+    const { main, worktrees } = await withWorktrees(6, true, root);
+    for (const worktree of worktrees) writeFileSync(join(worktree, ".git"), `gitdir: ../main/.git/worktrees/${basename(worktree)}\n`);
+    const asked = [main, ...worktrees].map(checkout => join(spelt, basename(checkout)));
+    askAfter(...asked);
+    const before = kept();
+
+    for (const worktree of worktrees.slice(0, 4)) git(main, "worktree", "remove", "--force", worktree);
+    expectGitsRegistries(asked[0]!);
+
+    expect(keptSince(before)).toEqual({ heldTopLevels: -4, gitAcceptances: -4, gitPlacedCommons: 0, configs: -4 });
+    const started = vi.mocked(runGit).mock.calls.length;
+    askAgain(asked[0]!, ...asked.slice(5));
+    expect(gitProcessesSince(started)).toBe(0);
+  }
+
+  it("through a link to its folder (a junction on Windows)", async () => {
+    const root = await temporaryRoot();
+    const link = join(await temporaryRoot(), "reached");
+    linkFolder(root, link);
+    await removedOnceAskedThrough(root, link);
+  });
+
+  it("in another letter case, where the file system ignores letter case (Windows, macOS)", async context => {
+    const root = await temporaryRoot();
+    const spelt = root === root.toLowerCase() ? root.toUpperCase() : root.toLowerCase();
+    if (!existsSync(spelt)) {
+      // A file system that matches names by their letter case, as Linux's do: no other spelling reaches the folder.
+      context.skip();
+      return;
+    }
+    await removedOnceAskedThrough(root, spelt);
+  });
+
+  it("by its 8.3 short name, where the volume makes them (Windows)", async context => {
+    const root = await temporaryRoot();
+    const short = shortSpelling(root);
+    if (short === undefined) {
+      // Not Windows, or a volume with 8.3 names turned off: there is no short spelling to reach the folder by.
+      context.skip();
+      return;
+    }
+    await removedOnceAskedThrough(root, short);
   });
 });
 

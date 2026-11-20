@@ -22,9 +22,9 @@ import {
   statSync,
   type Stats,
 } from "node:fs";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathsOwnedByCurrentUser } from "../../native/native.js";
-import { checkoutRealpath, realpathNamesInTurn, storedPath } from "../checkout-control.js";
+import { checkoutRealpath, realpathNamesInTurn, storedForm, storedPath } from "../checkout-control.js";
 
 /** What Git reads to place a folder holding a `.git` entry, as it was when read. */
 export interface PlacementInputs {
@@ -662,17 +662,20 @@ export interface ConfigFacts {
 }
 
 /**
- * Each config file's facts with the text they were read from, so an unchanged text is not parsed again. A file's entry
- * leaves once the file is found gone ({@link forgetGoneConfigs}).
+ * Each config file's facts with the text they were read from, so an unchanged text is not parsed again, and the folder
+ * holding the file in its {@link storedForm}, read with a new text: a `.git` file naming its Git folder by a relative
+ * path spells the file's path from the folder as it was asked, through a link or in another letter case. A file's
+ * entry leaves once the file is found gone ({@link forgetGoneConfigs}).
  */
-const configs = new Map<string, { readonly text: string; readonly facts: ConfigFacts }>();
+const configs = new Map<string, { readonly text: string; readonly facts: ConfigFacts; readonly folder: string }>();
 
 /**
- * Drops the facts kept for each config file in `folder`, or below it, that is gone, such as the `config.worktree` of a
- * worktree Git removed from the common Git folder `folder`. One lstat per file kept there.
+ * Drops the facts kept for each config file in `common`, a common Git folder in its {@link storedForm}, or below it,
+ * that is gone, such as the `config.worktree` of a worktree Git removed from it, however the file's path was spelt.
+ * One lstat per file kept there, and none for another folder's.
  */
-export function forgetGoneConfigs(folder: string): void {
-  for (const path of configs.keys()) if (path.startsWith(`${folder}${sep}`) && look(path) === "none") configs.delete(path);
+export function forgetGoneConfigs(common: string): void {
+  for (const [path, { folder }] of configs) if (`${folder}${sep}`.startsWith(`${common}${sep}`) && look(path) === "none") configs.delete(path);
 }
 
 /** How many config files' facts are kept: for tests, which count what a removed worktree leaves behind. */
@@ -687,7 +690,7 @@ function configFactsAt(path: string): ConfigFacts | undefined {
   const known = configs.get(path);
   if (known?.text === read.text) return known.facts;
   const facts = configFacts(read.text);
-  configs.set(path, { text: read.text, facts });
+  configs.set(path, { text: read.text, facts, folder: storedForm(dirname(path)) });
   return facts;
 }
 

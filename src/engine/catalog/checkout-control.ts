@@ -66,6 +66,18 @@ export function storedPath(path: string): string {
 }
 
 /**
+ * {@link storedPath}, or `path` as given where the system cannot resolve it: one spelling for each folder, whatever link,
+ * letter case or 8.3 short name reached it, to match two paths by. Never for opening.
+ */
+export function storedForm(path: string): string {
+  try {
+    return storedPath(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
  * The native realpath of `path` with nothing taken off its text first, so the system resolves its names in turn and
  * follows each link before the `..` after it, as Git resolves a path it reads from a file on Linux and macOS; `resolve`
  * and the JS realpath cancel `link/..` as text. Throws where the system cannot resolve it. On Windows Node takes a `..`

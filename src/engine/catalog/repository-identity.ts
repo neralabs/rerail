@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { checkoutRealpath, physicalPath, storedPath } from "./checkout-control.js";
+import { checkoutRealpath, physicalPath, storedForm, storedPath } from "./checkout-control.js";
 import {
   filePlacementInputs,
   forgetGoneConfigs,
@@ -57,9 +57,10 @@ const LOCATE_ARGS = ["rev-parse", "--show-toplevel", "--path-format=absolute", "
  * Git's answers for the folders it took for their own checkout's top level, each kept while what Git read to give it,
  * the real paths it printed and whether Git takes the folders for the user's are unchanged
  * ({@link PlacementInputs.stamp}): a daemon asks after every registered worktree each time a repository starts, in every
- * session's runtime, and once a checkout is recorded every runtime asks again.
+ * session's runtime, and once a checkout is recorded every runtime asks again. Each holds the answer's common Git folder
+ * in its {@link storedForm} too, read with the placement inputs ({@link forgetGone}).
  */
-const heldTopLevels = new Map<string, { readonly stamp: string; readonly location: RepositoryIdentityLocation }>();
+const heldTopLevels = new Map<string, { readonly stamp: string; readonly location: RepositoryIdentityLocation; readonly common: string }>();
 
 /**
  * The common Git folders of the checkouts Git placed in this process, by real path, each with the identity the folder
@@ -189,7 +190,8 @@ function holdTopLevel(folder: string, inputs: PlacementInputs, located: Located)
 
 /** Keeps `located`, an answer naming `folder` as its own top level, and when Git gave it, that Git placed its repository. */
 function keepTopLevel(folder: string, inputs: PlacementInputs, located: Located): void {
-  heldTopLevels.set(folder, { stamp: inputs.stamp, location: located.location });
+  // The answer names the common Git folder the inputs name ({@link answersInputs}): its stored form is read there.
+  heldTopLevels.set(folder, { stamp: inputs.stamp, location: located.location, common: inputs.realCommon });
   if (located.byGit) rememberGitPlaced(storedPath(dirname(located.location.identityPath)));
 }
 
@@ -382,23 +384,29 @@ function registryAsPlaced(checkout: string): WorktreeRegistry | undefined | type
  * added, removed, moved or pruned), what is kept for the repository's folders that are gone leaves ({@link forgetGone}).
  */
 function keepList(place: RegistryPlace, registry: WorktreeRegistry & { readonly contents: string }): void {
-  if (worktreeRegistries.get(place.commonDirectory)?.contents !== registry.contents) forgetGone(place.gitCommon);
+  if (worktreeRegistries.get(place.commonDirectory)?.contents !== registry.contents) forgetGone(storedForm(place.commonDirectory));
   worktreeRegistries.set(place.commonDirectory, registry);
 }
 
 /**
- * Drops each answer kept for a folder whose answer names `common` as its common Git folder once the folder is gone, and
- * the config facts kept for files in `common` that are gone: a removed worktree's answers, its own and those of the
- * folders in it, leave with it, and a checkout that stays keeps its own. No ask takes an answer kept for a folder that
- * is gone ({@link registryPlace}, {@link placed}), so none that leaves would have served again. One existence check per
- * answer kept for the repository, and none for another repository's: a share that stops answering holds only the lists
- * of its own repositories, whose folders Git's list reads too.
+ * Drops each answer kept for a folder whose answer names `common`, a common Git folder in its {@link storedForm}, once
+ * the folder is gone, and the config facts kept for files in `common` that are gone: a removed worktree's answers, its
+ * own and those of the folders in it, leave with it, and a checkout that stays keeps its own. Each answer is matched by
+ * the stored form of its common Git folder, read when it was kept, since an answer Git printed and one read from the
+ * files can spell that folder two ways (on macOS a letter case, on Windows a drive letter's case or an 8.3 short
+ * name), and a config file's path is spelt from the folder as asked. No ask takes an answer kept for
+ * a folder that is gone ({@link registryPlace}, {@link placed}), so none that leaves would have served again. One
+ * existence check per answer kept for the repository, and none for another repository's: a share that stops answering
+ * holds only the lists of its own repositories, whose folders Git's list reads too.
  */
 function forgetGone(common: string): void {
-  for (const kept of [heldTopLevels, gitAcceptances]) {
-    for (const [folder, { location }] of kept) if (dirname(location.identityPath) === common && !existsSync(folder)) kept.delete(folder);
-  }
+  for (const kept of [heldTopLevels, gitAcceptances]) forgetGoneFrom(kept, common);
   forgetGoneConfigs(common);
+}
+
+/** Drops from `kept` each answer whose common Git folder is `common` once its folder is gone ({@link forgetGone}). */
+function forgetGoneFrom(kept: Map<string, { readonly common: string }>, common: string): void {
+  for (const [folder, answer] of kept) if (answer.common === common && !existsSync(folder)) kept.delete(folder);
 }
 
 /** How many answers each map keeps: for tests, which count what a removed worktree leaves behind. */
@@ -441,8 +449,6 @@ function forget(checkout: string, commonDirectory: string): void {
 interface RegistryPlace {
   /** The physical common directory Git reads for the checkout. */
   readonly commonDirectory: string;
-  /** That directory as the checkout's answer names it, as every answer kept for a checkout of the repository names it. */
-  readonly gitCommon: string;
   readonly unstamped: boolean;
 }
 
@@ -463,9 +469,7 @@ function registryPlace(checkout: string): RegistryPlace | undefined {
     return undefined;
   }
   const location = placed(requested, true);
-  if (!location.git) return undefined;
-  const gitCommon = dirname(location.identityPath);
-  return { commonDirectory: physicalPath(gitCommon), gitCommon, unstamped: keptUnstamped(requested) };
+  return location.git ? { commonDirectory: physicalPath(dirname(location.identityPath)), unstamped: keptUnstamped(requested) } : undefined;
 }
 
 /**
@@ -483,12 +487,14 @@ function keptUnstamped(requested: string): boolean {
  * Git's lookup, and of folders Git places in a repository above them. Each is kept under the facts of the folder's own
  * `.git` and what Git's search reads in each folder from it up to the top level Git named (`searched`, {@link
  * keepAcceptance}), or, when the folder's own facts cannot be read, with no stamp: the registry then has Git list it at
- * each ask ({@link storedList}). A refusal is not kept.
+ * each ask ({@link storedList}). A refusal is not kept. Each holds the answer's common Git folder in its {@link
+ * storedForm} too, read once Git answered ({@link forgetGone}).
  */
 const gitAcceptances = new Map<string, {
   readonly stamp: string | undefined;
   readonly searched: readonly string[];
   readonly location: RepositoryIdentityLocation;
+  readonly common: string;
 }>();
 
 /** Git's acceptance of `requested` kept for the worktree registry while the facts it was kept under are unchanged. */
@@ -542,7 +548,8 @@ function keepAcceptance(requested: string, facts: string | undefined, located: L
   }
   const searched = upToTop(located.searched, located.location.workspaceRoot);
   const stamp = stampOf(facts, searched.map(folder => folder.entries));
-  gitAcceptances.set(requested, { stamp, searched: searched.map(folder => folder.folder), location: located.location });
+  const common = storedForm(dirname(located.location.identityPath));
+  gitAcceptances.set(requested, { stamp, searched: searched.map(folder => folder.folder), location: located.location, common });
 }
 
 /**
