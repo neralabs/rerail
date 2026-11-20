@@ -7,10 +7,10 @@
  */
 import { h, setAttr, setText, setContent, icon, pendingIcon } from "../dom.js";
 import { fmt, plural, whenLabel, clock, shortSessionId } from "../format.js";
-import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, notRunningReason, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
+import { ruleMode, modeLabel, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, notRunningReason, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeCaption, fires, allFires, isMeasured, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
-import { MODE_READ_ONLY, enforcementTag, modeEnforcementOf, updateEnforcementTag } from "./enforcement.js";
+import { MODE_READ_ONLY, enforcementTag, updateEnforcementTag } from "./enforcement.js";
 import { outcomesOf } from "../history-model.js";
 import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, askHint, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
 import { sheetState, syncSheetState, askRule } from "./rule-sheet-actions.js";
@@ -105,7 +105,7 @@ function renderModes(stored) {
   // A rule that runs nowhere does nothing on a violation: the line says what it is set to, for when it runs again.
   setText(p.modeText, notRunningReason(stored) === null
     ? MODE_PLAIN[ruleMode(stored)] ?? ""
-    : `Set to ${modeEnforcementOf(stored).label}. Nothing is logged or steered while it does not run.`);
+    : `Set to ${modeLabel(stored)}. Nothing is logged or steered while it does not run.`);
 }
 
 /** The three cards' count and caption: logged and declined in the range, logged since install; dashes if uncounted. */
