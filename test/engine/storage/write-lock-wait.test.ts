@@ -26,8 +26,27 @@ async function databaseFile(): Promise<string> {
   const database = new Database(path);
   // As every Rerail database is: a writer in WAL mode leaves readers be and holds only the write lock.
   database.pragma("journal_mode = WAL");
+  database.exec("CREATE TABLE held (at REAL)");
   database.close();
   return path;
+}
+
+/** A connection of its own that holds the write lock of the database at `path`. */
+function holding(path: string): Database.Database {
+  const holder = new Database(path);
+  holder.exec("BEGIN IMMEDIATE");
+  return holder;
+}
+
+/**
+ * Gives `holder`'s lock back once `epochNow` reaches `at`, having written a row first when `writes`, as a holder that
+ * changes the database does (`rerail reset`, a migration); resolves to when it gave it back.
+ */
+async function releaseAt(holder: Database.Database, at: number, now: () => number, writes: boolean): Promise<number> {
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, at - now())));
+  if (writes) holder.prepare("INSERT INTO held (at) VALUES (?)").run(at);
+  holder.exec("COMMIT");
+  return now();
 }
 
 describe("waiting for the write lock", () => {
@@ -50,6 +69,52 @@ describe("waiting for the write lock", () => {
       expect(Number(process.hrtime.bigint() - stopped) / 1e6).toBeLessThan(1_000);
     } finally {
       holder.close();
+    }
+  }, 30_000);
+
+  // A holder that changed the database adds its pages to the write-ahead log as it commits, a moment before it gives the
+  // lock back: the wait tries then, not at the next of SQLite's 100 ms pauses.
+  it("answers within moments of a release whose commit changed the database, between two of SQLite's tries", async () => {
+    const { busyTryAtMs, epochNow, waitForWriteLock } = await import("../../../src/engine/storage/write-lock-wait.js");
+    const path = await databaseFile();
+    const holder = holding(path);
+    try {
+      const since = epochNow();
+      const answered = waitForWriteLock(path, undefined, since).then(() => epochNow());
+      // 15 ms after one of the tries SQLite's busy handler makes from `since`, 85 ms before the next.
+      const released = await releaseAt(holder, since + busyTryAtMs(15) + 15, epochNow, true);
+      expect(await answered - released).toBeLessThan(50);
+    } finally {
+      holder.close();
+    }
+  }, 30_000);
+
+  // As the caller's own statement would have, waiting in SQLite's busy handler from the moment it met the lock: a wait
+  // whose tries counted from its own start, which comes milliseconds later, would find a release that much later.
+  it("tries no later than SQLite's busy handler would, counted from when its caller met the lock, not from its own start", async () => {
+    const { busyTryAtMs, epochNow, waitForWriteLock } = await import("../../../src/engine/storage/write-lock-wait.js");
+    for (let round = 0; round < 3; round += 1) {
+      // How long a wait takes to start and answer: tries counted from its start would fall that much after the call.
+      const free = epochNow();
+      await waitForWriteLock(await databaseFile());
+      const start = epochNow() - free;
+      const path = await databaseFile();
+      const holder = holding(path);
+      try {
+        const calledAt = epochNow();
+        // Midway between two of the tries counted from the wait's start, and 10 ms before one of the busy handler's
+        // counted from a caller that met the lock half a second before the call.
+        const release = calledAt + start + busyTryAtMs(15) + 50;
+        const since = release + 10 - busyTryAtMs(18);
+        const answered = waitForWriteLock(path, undefined, since).then(() => epochNow());
+        const released = await releaseAt(holder, release, epochNow, false);
+        let next = 0;
+        while (since + busyTryAtMs(next) < released) next += 1;
+        // Up to 20 ms for the answer's way back and a timer's step.
+        expect(await answered).toBeLessThanOrEqual(since + busyTryAtMs(next) + 20);
+      } finally {
+        holder.close();
+      }
     }
   }, 30_000);
 
