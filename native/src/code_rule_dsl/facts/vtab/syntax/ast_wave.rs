@@ -90,6 +90,9 @@ impl AstWave for Wave {
     ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
         matched(batch, tapes, self, binding, atoms)
     }
+    fn relations(&self) -> Vec<String> {
+        self.list.iter().map(|m| m.rel.clone()).collect()
+    }
 }
 
 /// A chunk's matcher wave as one launch of the executor (decision 0107), as every other dispatch: priced by its tape

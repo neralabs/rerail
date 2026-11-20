@@ -82,11 +82,15 @@ rasg(s, x, r, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identif
 // param(f, x, i): function f's i-th parameter is named x. First rule: a bare `x`. Second: a wrapped one whose
 // first child is the identifier: `x: int`, `x=1`, `x: int = 1`, `*x`, `**x`. Third: `*x: int`.
 .decl param(f: node, x: symbol, i: number)
-param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
-param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), child(p, id, 0), kind(id, "identifier"), text(id, x).
+param(f, x, i) :- param_list(f, ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
+param(f, x, i) :- param_list(f, ps), child(ps, p, i), child(p, id, 0), kind(id, "identifier"), text(id, x).
 // Third: a typed splat, `*x: int` and `**x: int`, whose first child is the splat.
-param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), kind(p, "typed_parameter"), child(p, sp, 0),
+param(f, x, i) :- param_list(f, ps), child(ps, p, i), kind(p, "typed_parameter"), child(p, sp, 0),
     child(sp, id, 0), kind(id, "identifier"), text(id, x).
+// param_list(f, ps): f's parameter list. Only a function and a lambda have one (the grammar's `parameters` field), and
+// naming them starts the joins at the functions: from `kind(p, "identifier")` they went through every name.
+.decl param_list(f: node, ps: node)
+param_list(f, ps) :- (kind(f, "function_definition") ; kind(f, "lambda")), field(f, "parameters", ps).
 // Targets whose value is not tracked: patterns, loop and comprehension variables, `with`/`except` names, walrus,
 // augmented assignment, and names a `global`/`nonlocal` declaration hands to another scope.
 // patkind(k): node kinds that destructure: `a, b = ...`, `[a, *rest] = ...`, `(a, b) = ...`.
@@ -220,7 +224,11 @@ tp_decl(d, x) :- kind(d, "splat_type"), child(d, i, _), kind(i, "identifier"), t
 tp_decl(d, x) :- kind(d, "constrained_type"), child(d, ty, 0), child(ty, i, 0), kind(i, "identifier"), text(i, x).
 // tp_ref(n, x): n names type parameter x inside the definition that declares it.
 .decl tp_ref(n: node, x: symbol)
-tp_ref(n, x) :- tp_name(o, x), nameref(n, x), within(n, o).
+tp_ref(n, x) :- tp_doc(d), docof(n, d), nameref(n, x), tp_name(o, x), docof(o, d), within(n, o).
+// tp_doc(d): a document that declares type parameters (PEP 695); only its names are tested against them. Joined on x
+// alone, every name read met each parameter of its spelling in the batch, to be dropped by `within`.
+.decl tp_doc(d: number)
+tp_doc(d) :- tp_name(o, _), docof(o, d).
 // look(n, x, s): the lookup of reference n stops at scope s, which binds x. At most one s per reference.
 .decl look(n: node, x: symbol, s: node)
 look(n, x, s) :- walk(n, x, s), bound_in(s, x).

@@ -60,4 +60,44 @@ It is wrong, for three reasons:
 
 ## Measured
 
-To be filled as the steps land.
+`all`, native, cold (the cost store, the image store and the tape cache fresh for each run), `--profile profiling`,
+on this machine (Mac17,6, an M5), at load 6–15. "Before" is W's Rust summary and linker (the commit before
+de541884e); "after" is `python/references.rr` on the run's path. The program is `internal_dead_code` in both runs,
+with the library included after. Every output relation's row count is equal (one new relation, `rr_embed_req`, holds the
+library's 4,323 requests to parse string annotations and is no finding).
+
+| Run | CPU s | wall s | instructions | peak MB |
+|---|---|---|---|---|
+| before (W's Rust) | 38–40 | 9–12 | 495 G | — |
+| after, first run | 338.5 | 75.5 | 4,924 G | 2,007 |
+| after, `rf_forward` from the annotations, `rf_dec_code` over decorators | 131.3 | 26.9 | 1,910 G | 2,002 |
+| after, a guest round keeps the files' matcher rows | 134.6 (load 15) | 36.0 | 1,820 G | 1,983 |
+| after, `rf_in_annot` down from annotations, `tp_ref` gated by `tp_doc` | 114.2 | 25.3 | 1,663 G | 1,988 |
+| after, `param_list` (a function's or a lambda's) | 105.5 | 24.1 | 1,599 G | 2,002 |
+
+What each step removed:
+- **`rf_forward`**: the first run spent 173 s of 251 s of join CPU in one rule. It joined the module's latest binding of
+  each name with every identifier of its document and then tested the text (1.15 G rows, none kept). The rule now
+  starts from the annotations' names (`rf_annot_head`).
+- **`rf_dec_code`**: the `min` over a decorator's children ranged over every node's children: 14 s.
+- **The guest rounds** (decision 0055): each round that made guests (the string annotations) built the batch again
+  and ran the ast matcher wave again over every file of the chunk: 17 s. The wave reads no guest, and a node's id is
+  its document's key and local id, so `with_matchers` now takes the rows of the build before (`kept`). The rest of
+  that rebuild, projecting the nodes again (about 6 s), remains.
+- **`within(i, a)` from every name** (`rf_annot_head`, `tp_ref`): each walked every name's ancestors to find a few
+  annotations or PEP 695 definitions. They now walk down from the annotations (`rf_in_annot`), or test only the
+  documents that declare type parameters (`tp_doc`).
+- **`param`**: the prepared plans start a rule at `kind(p, "identifier")` (3 M rows) rather than at
+  `field(f, "parameters", ps)`. `param_list` names the two kinds that have the field, so the plans start at the
+  functions.
+
+**Where it stands: after costs about 2.7 times before's CPU (105 s against 38–40 s).** The rest is no single
+explosion. It is the volume of the scope rules `python/names.rr` derives for every name in the corpus (`walk`,
+`wstart`, `nameref`, `bind_only`, `rf_bind`, `rf_in`: 1–2 s each, 7–19 rows a row kept), at the engine's 70–100 ns a
+join row. W's Rust walked each file once. Open:
+- the cross-file `reach_edges` rule of the program (6 s): the planner orders `structural_protocol` last on equal
+  sizes;
+- `rf_seen_at`, which starts from its demand (2.2 M rows) rather than from `rf_value_last` (17 k);
+- the projection a guest round makes again.
+
+Metal (R7) is not yet measured.

@@ -247,8 +247,8 @@ a(q) :- def(_, q), q = "m0.f0".
 b(q, m) :- a(q), edge(m, _).
 .decl c(m: symbol)
 c(m) :- b(_, m).
-.decl first(q: symbol)
-first(q) :- a(_), q = min q2 : { a(q2) }.
+.decl first(k: number)
+first(k) :- a(_), k = min n : { def(n, q2), a(q2) }.
 .output c
 .output first
 "#;

@@ -5672,7 +5672,7 @@ fn run_observed(
                 (!keys.is_empty() && keys.iter().all(|k| held.contains_key(k))).then(|| keys.iter().flat_map(|k| missing_of(&held[k])).collect::<BTreeSet<String>>())
             };
             let narrowed = coned.map(|wanted| cone_projection(&wanted));
-            syntax::with_matchers(&store, docs, &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))
+            syntax::with_matchers(&store, docs, &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection), None).map_err(|e| Error::Plan(e.to_string()))
         };
         let now = thread_usage();
         (built, (now.0 - from.0, now.1 - from.1))
@@ -6311,13 +6311,15 @@ fn run_observed(
                     // Made from the entries, the batch is built once, after the last round: no slice reads it between.
                     if replay.is_none() {
                         let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
-                        sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
+                        let kept = Some(chunk_matchers.rows_in(&sources));
+                        sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, &projection, kept).map_err(|e| Error::Plan(e.to_string()))?;
                     }
                 }
                 if replay.is_some() && docs.len() > documents_len {
                     let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
                     let narrowed = cone.as_ref().map(|wanted| cone_projection(wanted));
-                    sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
+                    let kept = Some(chunk_matchers.rows_in(&sources));
+                    sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection), kept).map_err(|e| Error::Plan(e.to_string()))?;
                 }
                 if made.unseen > 0 {
                     let unseen = made.unseen;

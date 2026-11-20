@@ -136,8 +136,16 @@ rf_bind(i, x, m) :- rf_forward(i, x, m).
 // reads is a forward reference: it reads the module's latest binding of x first, unless that one is a deletion
 // (W's scope table, `forward_module`). Read from a function, `x: T` then names the module's T, not a local import's.
 .decl rf_forward(i: node, x: symbol, m: node)
-rf_forward(i, x, m) :- rf_annot(a), within(i, a), rf_head(i), docof(i, d), rf_future(d), text(i, x), kind(m, "module"),
-    docof(m, d), rf_mlatest(m, x, _, form), form != "del".
+rf_forward(i, x, m) :- rf_annot_head(i, x, d), kind(m, "module"), docof(m, d), rf_mlatest(m, x, _, form), form != "del".
+// rf_annot_head(i, x, d): name read i, of x, inside an annotation of document d that reads its annotations late. Its own
+// relation, so the join starts from the annotations' names, not from every binding against every identifier.
+.decl rf_annot_head(i: node, x: symbol, d: number)
+rf_annot_head(i, x, d) :- rf_in_annot(i), rf_head(i), docof(i, d), rf_future(d), text(i, x).
+// rf_in_annot(n): n is inside an annotation, found down from each annotation: `within(i, a)` from every name read
+// went up every name's ancestors (20M rows on `all` for 48k kept).
+.decl rf_in_annot(n: node)
+rf_in_annot(a) :- rf_annot(a).
+rf_in_annot(c) :- rf_in_annot(p), child(p, c, _).
 // rf_annot(a): an annotation: a parameter's or an assignment's type, a function's return type.
 .decl rf_annot(a: node)
 rf_annot(a) :- (kind(p, "typed_parameter") ; kind(p, "typed_default_parameter") ; kind(p, "assignment")), field(p, "type", a).
@@ -406,9 +414,13 @@ rf_spelled(d, q, @concat(a, @substr(q, @strlen(m), @strlen(q)))) :- rf_path_modu
     rf_qn(f, q), docof(f, d), @substr(q, 0, @strlen(m) + 1) = @concat(m, ".").
 // rf_shadowed(f): a later definition of the same qualified name replaces f.
 .decl rf_shadowed(f: node)
-rf_shadowed(f) :- rf_qn(f, q), rf_qn(g, q), docof(f, d), docof(g, d), g > f, rf_redefines(g, f).
+rf_shadowed(f) :- rf_redefines(g, f).
+// rf_same_qn(f, g): g is a later definition of f's qualified name, in f's document. The pairs are joined on the name
+// first: two definitions of one scope are not a pair to try.
+.decl rf_same_qn(f: node, g: node)
+rf_same_qn(f, g) :- rf_qn(f, q), rf_qn(g, q), g > f, docof(f, d), docof(g, d).
 .decl rf_redefines(g: node, f: node)
-rf_redefines(g, f) :- rf_qn(f, q), rf_qn(g, q), g > f, nearest(f, s, scope), nearest(g, s, scope), !rf_dcond(g).
+rf_redefines(g, f) :- rf_same_qn(f, g), nearest(f, s, scope), nearest(g, s, scope), !rf_dcond(g).
 .decl rf_dcond(g: node)
 rf_dcond(g) :- rf_def(g, _), nearest(g, a, rf_condstop), kind(a, k), rf_condk(k).
 // rf_class_def(q): q names classes only.
@@ -628,14 +640,14 @@ rf_init_def(f, c) :- references_field(_, _), rf_def(f, "__init__"), rf_is_functi
 .decl rf_init_later(f: node)
 rf_init_later(f) :- rf_init_def(f, c), rf_init_def(g, c), docof(f, d), docof(g, d), g > f.
 .decl rf_init_arg(f: node, p: node, x: symbol, ty: symbol)
-rf_init_arg(f, p, x, "<unannotated>") :- rf_init(f, _), field(f, "parameters", ps), child(ps, p, _), kind(p, "identifier"),
+rf_init_arg(f, p, x, "<unannotated>") :- rf_init(f, _), param_list(f, ps), child(ps, p, _), kind(p, "identifier"),
     text(p, x).
-rf_init_arg(f, p, x, "<unannotated>") :- rf_init(f, _), field(f, "parameters", ps), child(ps, p, _),
+rf_init_arg(f, p, x, "<unannotated>") :- rf_init(f, _), param_list(f, ps), child(ps, p, _),
     kind(p, "default_parameter"), field(p, "name", n), kind(n, "identifier"), text(n, x).
-rf_init_arg(f, p, x, ty) :- rf_init(f, _), field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_parameter"),
+rf_init_arg(f, p, x, ty) :- rf_init(f, _), param_list(f, ps), child(ps, p, _), kind(p, "typed_parameter"),
     child(p, n, 0), kind(n, "identifier"), text(n, x), field(p, "type", a), text(a, at),
     ty = @trim(@rx_replace(at, "(?s)[\\[|].*$", "")).
-rf_init_arg(f, p, x, ty) :- rf_init(f, _), field(f, "parameters", ps), child(ps, p, _),
+rf_init_arg(f, p, x, ty) :- rf_init(f, _), param_list(f, ps), child(ps, p, _),
     kind(p, "typed_default_parameter"), field(p, "name", n), kind(n, "identifier"), text(n, x), field(p, "type", a),
     text(a, at), ty = @trim(@rx_replace(at, "(?s)[\\[|].*$", "")).
 // A `/` after p makes it positional-only.
@@ -674,7 +686,10 @@ rf_dec_name(f, x) :- references_given(1), rf_is_function(f), nearest(f, k, rf_dc
     rf_unparen(e, u), rf_dec_callee(u, c), rf_dec_last(c, x).
 // The decorator's first child that is not a comment.
 .decl rf_dec_code(dec: node, e: node)
-rf_dec_code(dec, e) :- child(dec, e, i), i = min j : { child(dec, e2, j), !kind(e2, "comment") }.
+rf_dec_code(dec, e) :- rf_dec_child(dec, e, i), i = min j : { rf_dec_child(dec, _, j) }.
+// rf_dec_child(dec, e, j): child j of decorator dec, not a comment; the minimum ranges over decorators' children only.
+.decl rf_dec_child(dec: node, e: node, j: number)
+rf_dec_child(dec, e, j) :- kind(dec, "decorator"), child(dec, e, j), !kind(e, "comment").
 .decl rf_unparen(e: node, u: node)
 rf_unparen(e, e) :- rf_dec_code(_, e), !kind(e, "parenthesized_expression").
 rf_unparen(e, u) :- rf_dec_code(_, e), kind(e, "parenthesized_expression"), rf_unparen_in(e, u).

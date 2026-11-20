@@ -2019,3 +2019,40 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
     }
     assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
 }
+
+/// A batch rebuilt with guests keeps its files' matcher rows (`with_matchers`' `kept`): the wave reads no guest, and
+/// a node's id is its document's, so the rows of the build before hold. Each round of guests ran the wave again over
+/// every file of the chunk: 17 s of 131 s of CPU on `all` once the reference graph's rules read string annotations
+/// (decision 0476).
+#[test]
+fn a_batch_rebuilt_with_guests_keeps_its_matcher_rows() {
+    struct Refused;
+    impl AstWave for Refused {
+        fn len(&self) -> usize {
+            1
+        }
+        fn matched(
+            &self,
+            _: &Batch,
+            _: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+            _: crate::code_rule_dsl::facts::nearest::Binding,
+            _: &crate::content_store::atoms::Atoms,
+        ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+            panic!("the wave ran again over the files a build before had matched");
+        }
+        fn relations(&self) -> Vec<String> {
+            vec!["rr_ast_1_1".to_owned()]
+        }
+    }
+    let store = ContentStore::open(&temp("kept-matchers")).unwrap();
+    let matchers = Matchers::new(Arc::new(Refused));
+    let mut rows = Relation::new(&["n"]);
+    rows.push(&[7]);
+    let before: Vec<(String, Arc<dyn Source>)> = vec![("rr_ast_1_1".to_owned(), Arc::new(rows)), ("other".to_owned(), Arc::new(Relation::new(&["n"])))];
+    let kept = matchers.rows_in(&before);
+    assert_eq!(kept.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["rr_ast_1_1"]);
+    let tests = crate::code_rule_dsl::logic::strings::Vocabulary::default();
+    let out = with_matchers(&store, documents(), &[], &matchers, &tests, crate::code_rule_dsl::facts::nearest::Binding::Cpu, &Projection::default(), Some(kept)).unwrap();
+    let (_, matched) = out.iter().find(|(n, _)| n == "rr_ast_1_1").expect("the kept rows are bound");
+    assert!(Arc::ptr_eq(matched, &before[0].1), "the build before's rows, not a copy");
+}

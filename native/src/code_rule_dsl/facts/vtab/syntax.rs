@@ -4580,7 +4580,7 @@ pub fn with_nearest(
     binding: crate::code_rule_dsl::facts::nearest::Binding,
     projection: &Projection,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-    with_matchers(store, documents, sets, &Matchers::default(), tests, binding, projection)
+    with_matchers(store, documents, sets, &Matchers::default(), tests, binding, projection, None)
 }
 
 /// A program's `ast` matchers (decision 0106) as one wave over a batch's tapes (decision 0107), which the engine
@@ -4598,6 +4598,8 @@ pub trait AstWave: Send + Sync {
         binding: crate::code_rule_dsl::facts::nearest::Binding,
         atoms: &crate::content_store::atoms::Atoms,
     ) -> StoreResult<Vec<(String, Arc<dyn Source>)>>;
+    /// The relations `matched` returns, one per matcher.
+    fn relations(&self) -> Vec<String>;
 }
 
 /// A program's matchers, as the engine compiled them; none by default.
@@ -4613,6 +4615,15 @@ impl Matchers {
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    /// The matchers' relations, as `with_matchers` binds them.
+    pub fn relations(&self) -> Vec<String> {
+        self.0.as_ref().map_or_else(Vec::new, |wave| wave.relations())
+    }
+    /// `sources`' rows of these matchers: a batch's, to keep when it is rebuilt with guests only (`with_matchers`).
+    pub fn rows_in(&self, sources: &[(String, Arc<dyn Source>)]) -> Vec<(String, Arc<dyn Source>)> {
+        let names: BTreeSet<String> = self.relations().into_iter().collect();
+        sources.iter().filter(|(n, _)| names.contains(n)).map(|(n, s)| (n.clone(), Arc::clone(s))).collect()
     }
 }
 
@@ -4650,8 +4661,14 @@ pub fn with_matchers(
     tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
     binding: crate::code_rule_dsl::facts::nearest::Binding,
     projection: &Projection,
+    kept: Option<Vec<(String, Arc<dyn Source>)>>,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
+    // `kept`: the matchers' rows over this batch's tapes, from a build of the same files before guests joined it. The
+    // wave reads no guest (it has no tape), and a node's id is its document's key and local id, so the rows hold as
+    // they were: the wave is not run again over the files for each round of guests.
+    let none = Matchers::default();
+    let matchers = if kept.is_some() { &none } else { matchers };
     let metal = matches!(binding, crate::code_rule_dsl::facts::nearest::Binding::Metal);
     let tapes: Vec<(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)> = if matchers.is_empty() {
         Vec::new()
@@ -4671,6 +4688,7 @@ pub fn with_matchers(
             out.extend(wave.matched(&batch, &tapes, binding, &store.atoms_handle())?);
         }
     }
+    out.extend(kept.into_iter().flatten());
     let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());

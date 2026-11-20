@@ -1734,7 +1734,7 @@ pub(crate) mod logic {
         #[allow(unused_imports)]
         use std::time::Instant;
     }
-    #[path = "plan"]
+    #[cfg_attr(test, path = "plan")]
     pub mod plan {
         pub use rerail_logic::code_rule_dsl::logic::plan::*;
         // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
@@ -1749,7 +1749,8 @@ pub(crate) mod logic {
             #[cfg(test)]
             pub mod engine_tests;
         }
-        #[path = "corpus"]
+        // Only its tests are files of their own.
+        #[cfg_attr(test, path = "corpus")]
         pub mod corpus {
             pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
             // The base tests compile and evaluate rule documents through the engine (`test_support`).
