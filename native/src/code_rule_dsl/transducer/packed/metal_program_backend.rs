@@ -61,8 +61,6 @@ pub(super) fn release_workspaces() -> bool {
     let released = METAL_WORKSPACE_POOL.lock().map(|mut pool| std::mem::take(&mut *pool)).unwrap_or_default();
     !released.is_empty()
 }
-pub use rerail_metal::METAL_DEVICE;
-
 struct MetalWorkspace {
     totals: WorkspaceTotals,
     scheduler_bytes: u32,

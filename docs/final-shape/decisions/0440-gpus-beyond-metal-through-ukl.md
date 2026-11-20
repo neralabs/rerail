@@ -1274,6 +1274,11 @@ for word on Metal and OpenCL at full size and on the CPU at 1/64 (`ENCODINGS_GPU
 autorelease pool), so the crate's `metal` is a macOS dev-dependency now, not a dependency. `Block::gpu_buffer` went
 with its last caller; `release_gpu_buffer` is `release_device_buffer`.
 
+**C: a machine's samples keyed by the process's device (2026-11-19).** The cost store's machine key named Metal's
+device, so a run on OpenCL or the CPU's backend keyed its GPU-lane samples as a machine with no GPU. It names the
+device layer's (`Device::name`: the GPU's model, `OpenCL <device>`, or `CPU`; CUDA's the backend's until step E
+reads the driver's). The engine's unused re-export of `METAL_DEVICE` is gone.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

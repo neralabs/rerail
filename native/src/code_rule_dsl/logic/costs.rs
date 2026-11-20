@@ -57,8 +57,10 @@ fn path() -> Option<PathBuf> {
 /// This machine, as its samples are keyed: the architecture, its cores, and its GPU.
 pub fn machine() -> String {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    // The process's device, whatever its backend (decision 0440 step C): a run on OpenCL or the CPU's backend keys
+    // its samples apart from the GPU's. accel's device lane is macOS's until step E.
     #[cfg(target_os = "macos")]
-    let gpu = rerail_accel::gpu::shared::get().map(|s| s.device.name().to_owned()).unwrap_or_default();
+    let gpu = rerail_accel::gpu::shared::layer().map(|l| l.device.name()).unwrap_or_default();
     #[cfg(not(target_os = "macos"))]
     let gpu = String::new();
     format!("{} {cores} cores {gpu}", std::env::consts::ARCH).trim().to_owned()
