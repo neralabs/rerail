@@ -28,6 +28,9 @@ inline uint clif_rel_dead(device const uchar* t,ulong a0,uint a1);
 inline ulong clif_rel_group(device const uchar* t,ulong a0,uint a1,ulong a2);
 inline uint clif_rel_group_row(device const uchar* t,ulong a0,uint a1,uint a2);
 inline ulong clif_rel_key_mix(device const uchar* t,ulong a0,ulong a1,ulong a2);
+inline ulong clif_bloom_hash(device const uchar* t,ulong a0,ulong a1);
+inline ulong clif_bloom_mask(device const uchar* t,ulong a0,ulong a1);
+inline uint clif_bloom_may(device const uchar* t,ulong a0,ulong a1);
 inline ulong clif_rows_col(device const uchar* t,ulong a0,uint a1){
  ulong v0=0;
  uint v1=0;
@@ -248,4 +251,96 @@ inline ulong clif_rel_key_mix(device const uchar* t,ulong a0,ulong a1,ulong a2){
  ulong v5=ulong((ulong)(v4)>>(uint(29)&63u));
  ulong v6=v4^v5;
  return v6;
+}
+inline ulong clif_bloom_hash(device const uchar* t,ulong a0,ulong a1){
+ ulong v0=0;
+ ulong v1=0;
+ v0=a0;
+ v1=a1;
+ uint v2=uint(v1);
+ ulong v3=ulong((ulong)(v1)>>(uint(32)&63u));
+ uint v4=uint(v3);
+ uint v5=v4*uint(18446744072069020081ul);
+ uint v6=v2^v5;
+ uint v7=uint((uint)(v6)>>(uint(16)&31u));
+ uint v8=v6^v7;
+ uint v9=v8*uint(18446744071661406827ul);
+ uint v10=uint((uint)(v9)>>(uint(13)&31u));
+ uint v11=v9^v10;
+ uint v12=v11*uint(18446744072681074229ul);
+ uint v13=uint((uint)(v12)>>(uint(16)&31u));
+ uint v14=v12^v13;
+ uint v15=v14*uint(668265263ul);
+ uint v16=uint((uint)(v15)>>(uint(15)&31u));
+ uint v17=v15^v16;
+ ulong v18=ulong(v14);
+ ulong v19=ulong(v17);
+ ulong v20=ulong((ulong)(v19)<<(uint(32)&63u));
+ ulong v21=v20|v18;
+ return v21;
+}
+inline ulong clif_bloom_mask(device const uchar* t,ulong a0,ulong a1){
+ ulong v0=0;
+ ulong v1=0;
+ v0=a0;
+ v1=a1;
+ ulong v2=ulong(0ul);
+ ulong v3=ulong((ulong)(v1)>>(uint(0)&63u));
+ ulong v4=v3&ulong(63ul);
+ ulong v5=ulong(1ul);
+ ulong v6=ulong((ulong)(v5)<<(uint(v4)&63u));
+ ulong v7=v2|v6;
+ ulong v8=ulong((ulong)(v1)>>(uint(6)&63u));
+ ulong v9=v8&ulong(63ul);
+ ulong v10=ulong(1ul);
+ ulong v11=ulong((ulong)(v10)<<(uint(v9)&63u));
+ ulong v12=v7|v11;
+ ulong v13=ulong((ulong)(v1)>>(uint(12)&63u));
+ ulong v14=v13&ulong(63ul);
+ ulong v15=ulong(1ul);
+ ulong v16=ulong((ulong)(v15)<<(uint(v14)&63u));
+ ulong v17=v12|v16;
+ ulong v18=ulong((ulong)(v1)>>(uint(18)&63u));
+ ulong v19=v18&ulong(63ul);
+ ulong v20=ulong(1ul);
+ ulong v21=ulong((ulong)(v20)<<(uint(v19)&63u));
+ ulong v22=v17|v21;
+ ulong v23=ulong((ulong)(v1)>>(uint(24)&63u));
+ ulong v24=v23&ulong(63ul);
+ ulong v25=ulong(1ul);
+ ulong v26=ulong((ulong)(v25)<<(uint(v24)&63u));
+ ulong v27=v22|v26;
+ return v27;
+}
+inline uint clif_bloom_may(device const uchar* t,ulong a0,ulong a1){
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ uint v4=0;
+ v0=a0;
+ v1=a1;
+ v2=ulong(*(device const ulong*)(t+(v0+ulong(long(8)))));
+ uchar v3=uchar((ulong)(v2)==(ulong)(ulong(0ul)));
+ if(v3!=0){
+  uint v5=uint(1ul);
+  {uint t0=v5;v4=t0;}
+ }else{
+  ulong v6=ulong((ulong)(v1)>>(uint(32)&63u));
+  ulong v7=v2+ulong(18446744073709551615ul);
+  ulong v8=v6&v7;
+  ulong v9=ulong(*(device const ulong*)(t+v0));
+  ulong v10=v0+ulong(0ul);
+  ulong v11=v10+v9;
+  ulong v12=ulong((ulong)(v8)<<(uint(3)&63u));
+  ulong v13=v11+v12;
+  ulong v14=ulong(*(device const ulong*)(t+v13));
+  ulong v15=clif_bloom_mask(t,v0,v1);
+  ulong v16=v14&v15;
+  uchar v17=uchar((ulong)(v16)==(ulong)(v15));
+  uint v18=uint(1ul);
+  uint v19=uint(0ul);
+  uint v20=v17!=0?v18:v19;
+  {uint t0=v20;v4=t0;}
+ }
+ return v4;
 }

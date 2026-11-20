@@ -2,8 +2,8 @@
 //! the statistics' (a column's membership and the keys two columns share).
 //!
 //! ```text
-//! h     = hash(key)                       // setfix's sketch hash: the same keys, the same h, everywhere
-//! word  = (h >> 40) & (words - 1)         // one 64-bit word holds all of a key's bits
+//! h     = hash(key)                       // `rerail_blocks::bloom::hash`, the read written once in CLIF: 32-bit
+//! word  = (h >> 32) & (words - 1)         //   multiplies, the host's and the kernels' alike; setfix's sketches hash by it
 //! mask  = bit(h) | bit(h >> 6) | ... (5)  // 5 bits of the word, from 6-bit fields of h
 //! add:  words[word] |= mask               // a device builds it with 32-bit atomics: bit b of word w is bit b & 31
 //! test: words[word] & mask == mask        //   of the 32-bit word 2w + b / 32, the same bytes
@@ -31,22 +31,17 @@ pub const KEPT_BITS_PER_KEY: usize = 8;
 /// The most words a kept filter has (1 MiB, a million keys at a byte each). Past it, it fills and tells less.
 pub const MAX_KEPT_WORDS: usize = 1 << 17;
 
-/// Setfix's sketch hash (`native::setfix::sketch::mix`), which the HyperLogLog sketches hash by too.
-#[inline]
+/// The hash a filter places a key by, which setfix's sketches hash by too (`native::setfix::sketch::mix`): the
+/// blocks' (`rerail_blocks::bloom::hash`), written once in CLIF for the host and the kernels.
+#[inline(always)]
 pub fn hash(v: i64) -> u64 {
-    let mut x = v as u64 ^ 0x9e37_79b9_7f4a_7c15;
-    x ^= x >> 30;
-    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    x ^= x >> 27;
-    x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
-    x ^ (x >> 31)
+    rerail_blocks::bloom::hash(v)
 }
 
-/// A key's word (of `words`, a power of two) and its bits there.
-#[inline]
+/// A key's word (of `words`, a power of two) and its bits there (`rerail_blocks::bloom::place`).
+#[inline(always)]
 pub fn place(h: u64, words: usize) -> (usize, u64) {
-    let mask = (0..K).fold(0u64, |m, i| m | 1 << ((h >> (6 * i)) & 63));
-    ((h >> 40) as usize & (words - 1), mask)
+    rerail_blocks::bloom::place(h, words)
 }
 
 /// The words for `keys` distinct keys: `BITS_PER_KEY` each, a power of two within the bounds.
@@ -225,77 +220,77 @@ impl Words for Filter {
 }
 
 /// A column's filter kept as its rows come (decision 0477). One writer adds to it, the column's sketch, while it is
-/// read where it is: by the planner's statistics and the screens, which hold it (`Arc`) and never copy it. A word
-/// is a plain load and store (relaxed atomics: no read-modify-write, the writer is one), and a reader reads words as
-/// they are: a key added is in every reading after the add. A screen reads only a filter its rows are all in.
+/// read where it is: by the planner's statistics, the screens and the device's joins, which hold it (`Arc`) and never
+/// copy it. It lies in a block of the run's relations (`facts::rows::FactsBloom`, a `rerail_blocks::bloom::Bloom`):
+/// the device binds that block and tests it with the same read (`bloom_may`) the host makes. A word is a plain load
+/// and store (relaxed atomics: no read-modify-write, the writer is one), and a reader reads words as they are: a key
+/// added is in every reading after the add. A screen reads only a filter its rows are all in.
 pub struct Kept {
-    words: Box<[std::sync::atomic::AtomicU64]>,
+    bloom: crate::code_rule_dsl::facts::rows::FactsBloom,
 }
 
 impl Kept {
     /// An empty filter of `words` words (a power of two).
     pub fn new(words: usize) -> Kept {
-        assert!(words.is_power_of_two(), "a filter's words are a power of two");
-        Kept { words: (0..words).map(|_| std::sync::atomic::AtomicU64::new(0)).collect() }
+        Kept { bloom: crate::code_rule_dsl::facts::rows::FactsBloom::new(words) }
+    }
+
+    /// Where it lies: its block, which the device binds, and its descriptor there.
+    pub fn in_block(&self) -> &crate::code_rule_dsl::facts::rows::FactsBloom {
+        &self.bloom
     }
 
     /// Adds the key whose hash is `h`, and says whether it was new (not every one of its bits set before). Its one
     /// writer only (the sketch that keeps it, by `&mut` of its own).
-    #[inline]
+    #[inline(always)]
     pub fn add_hashed(&self, h: u64) -> bool {
-        use std::sync::atomic::Ordering::Relaxed;
-        let (w, m) = place(h, self.words.len());
-        let word = &self.words[w];
-        let was = word.load(Relaxed);
-        if was & m == m {
-            return false;
-        }
-        word.store(was | m, Relaxed);
-        true
+        self.bloom.add_hashed(h)
     }
 
     /// Whether `key` may be in: false is certain.
-    #[inline]
+    #[inline(always)]
     pub fn may_hold(&self, key: i64) -> bool {
         self.may_hold_hashed(hash(key))
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn may_hold_hashed(&self, h: u64) -> bool {
-        let (w, m) = place(h, self.words.len());
-        self.words[w].load(std::sync::atomic::Ordering::Relaxed) & m == m
+        self.bloom.may_hold_hashed(h)
     }
-
 
     /// Whether it holds more keys than it is sized for and may grow (`kept_words_for`).
     pub fn outgrown(&self) -> bool {
-        self.words.len() < MAX_KEPT_WORDS && Words::keys(self) * KEPT_BITS_PER_KEY as f64 > (self.words.len() * 64) as f64
+        self.bloom.len() < MAX_KEPT_WORDS && Words::keys(self) * KEPT_BITS_PER_KEY as f64 > (self.bloom.len() * 64) as f64
     }
 
     pub fn bytes(&self) -> usize {
-        self.words.len() * 8
+        self.bloom.len() * 8
     }
 }
 
 impl Words for Kept {
     fn len(&self) -> usize {
-        self.words.len()
+        self.bloom.len()
     }
     fn word(&self, i: usize) -> u64 {
-        self.words[i].load(std::sync::atomic::Ordering::Relaxed)
+        self.bloom.word(i)
     }
 }
 
 /// A new filter of the same words: a cloned sketch writes its own (two writers of one filter could lose a bit).
 impl Clone for Kept {
     fn clone(&self) -> Kept {
-        Kept { words: (0..self.words.len()).map(|i| std::sync::atomic::AtomicU64::new(Words::word(self, i))).collect() }
+        let k = Kept::new(self.bloom.len());
+        for (to, from) in k.bloom.words().iter().zip(self.bloom.words()) {
+            to.store(from.load(std::sync::atomic::Ordering::Relaxed), std::sync::atomic::Ordering::Relaxed);
+        }
+        k
     }
 }
 
 impl std::fmt::Debug for Kept {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Kept({} words, {} bits set)", self.words.len(), Words::ones(self))
+        write!(f, "Kept({} words, {} bits set)", self.bloom.len(), Words::ones(self))
     }
 }
 

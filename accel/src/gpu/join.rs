@@ -786,10 +786,10 @@ pub struct Keyed {
     nruns: Held,
     /// Columns 1.. in the sorted order (column 0 is the runs' keys).
     others: Vec<Column>,
-    /// The runs' keys as a blocked Bloom filter (decision 0477; the device's hash, `SCREEN_HASH`) and its 64-bit
-    /// words, made in the sort's command buffer where the sort has `SCREENED_ROWS` rows: a probe tests a left key
-    /// with one load before its search of the runs, and one the filter refuses has no pairs.
-    filter: Option<(Held, u32)>,
+    /// The screen of its keys (decision 0477): a probe tests a left key with a hash and one load before its search
+    /// of the runs, and one the screen refuses has no pairs. Made in the sort's command buffer from the runs where the
+    /// sort has `SCREENED_ROWS` rows, or a column's kept filter bound where it lies (`screen_by`).
+    screen: Option<Screen>,
     /// The sort's command buffer while it may still run (`settle`), then its runs and GPU time (as bits).
     pending: std::sync::Mutex<Option<Submitted>>,
     runs: std::sync::atomic::AtomicUsize,
@@ -797,47 +797,83 @@ pub struct Keyed {
     pub bytes: usize,
 }
 
-/// The device's screen filter (`Keyed::filter`): a blocked Bloom filter of the sort's runs' keys, made and read by
-/// the device only, so its hash is the device's: 32-bit multiplies (native, where the host format's 64-bit ones are
-/// emulated: a probe paid more for that hash than for the search it spared). A key's 64-bit word is its second
-/// hash's low bits, and its 5 bits 6-bit fields of the first.
-const SCREEN_HASH: &str = r#"
-static inline uint2 screen_hash(ulong key) {
-    uint h = uint(key) ^ (uint(key >> 32) * 0x9e3779b1u);
-    h ^= h >> 16; h *= 0x85ebca6bu; h ^= h >> 13; h *= 0xc2b2ae35u; h ^= h >> 16;
-    uint w = h * 0x27d4eb2fu;
-    return uint2(h, w ^ (w >> 15));
+/// A screen (`Keyed::screen`): a blocked Bloom filter, the host's own format and reads (`rerail_blocks::bloom`: the
+/// hash, the mask and the test written once in CLIF, `clif_bloom_*` in `RELATION_READS`), its descriptor `at` bytes
+/// into `held`'s buffer. The device's own, made from a sort's runs (descriptor at 0, words at 64), or a block's: a
+/// column's kept filter, which the host's sketch keeps and the device reads where it lies.
+pub struct Screen {
+    held: Held,
+    at: u32,
 }
 
-static inline ulong screen_mask(uint h) {
-    ulong m = 0;
-    for (uint i = 0; i < 5; i++) m |= 1ul << ((h >> (6 * i)) & 63);
-    return m;
-}
-"#;
+/// No screen: a probe's `at` of none.
+pub const NO_SCREEN: u32 = u32::MAX;
 
-/// The kernel that makes a sort's screen filter: a thread a run, its key (the sort word plus `base[0]`) into its
-/// word's two 32-bit halves with atomics. `p`: the rows (a bound on the runs), the filter's words.
-fn screen_source(key: Width) -> String {
+impl Screen {
+    /// The device's own of `words` words (a power of two), zeroed, its descriptor written.
+    fn own(words: usize) -> Result<Screen, String> {
+        let held = Held::zeroed(64 + 8 * words)?;
+        // SAFETY: the buffer's first 16 bytes, a `bloom::Bloom`'s span: its words 64 bytes on, `words` of them.
+        unsafe {
+            let p = held.buffer.contents().cast::<u64>();
+            *p = 64;
+            *p.add(1) = words as u64;
+        }
+        Ok(Screen { held, at: 0 })
+    }
+
+    /// Its words' bytes (an own screen's; a kept one is its block's).
+    fn bytes(&self) -> usize {
+        if self.at == 0 { self.held.buffer.length() as usize } else { 0 }
+    }
+}
+
+/// The screens' reads: the blocks' (`clif_bloom_*`, the host's own), a probe's test and a builder's add.
+fn screen_reads() -> String {
     format!(
-        r#"#include <metal_stdlib>
-using namespace metal;
-{SCREEN_HASH}
-kernel void screen_bloom(device const {k}* rkeys [[buffer(0)]], device const uint* nruns [[buffer(1)]], device atomic_uint* words [[buffer(2)]],
-                         constant uint* p [[buffer(3)]], constant long* base [[buffer(4)]], uint r [[thread_position_in_grid]]) {{
-    if (r >= p[0] || r >= nruns[0]) return;
-    uint2 h = screen_hash(ulong(rkeys[r]) + ulong(base[0]));
-    ulong m = screen_mask(h.x);
-    uint w = h.y & (p[1] - 1);
+        r#"{reads}
+// Whether the screen (a `bloom::Bloom` at byte `at` of `f`; none at NO_SCREEN) may hold `key`: a hash and one load.
+// A key it refuses is in no run (decision 0477).
+static inline bool may_hold(device const uchar* f, uint at, ulong key) {{
+    if (at == 0xffffffffu) return true;
+    return clif_bloom_may(f, ulong(at), clif_bloom_hash(f, 0ul, key)) != 0u;
+}}
+
+// Adds `key` to the screen at byte `at` of `f`: its word's two 32-bit halves set with atomics (bit b of 64-bit word
+// w is bit b & 31 of 32-bit word 2w + b / 32, the host's bytes).
+static inline void screen_add(device uchar* f, uint at, ulong key) {{
+    ulong h = clif_bloom_hash(f, 0ul, key);
+    ulong m = clif_bloom_mask(f, 0ul, h);
+    device const long* d = (device const long*)(f + at);
+    uint w = uint(h >> 32) & uint(ulong(d[1]) - 1ul);
+    device atomic_uint* words = (device atomic_uint*)(f + ulong(at) + ulong(d[0]));
     if (uint(m) != 0) atomic_fetch_or_explicit(&words[2 * w], uint(m), memory_order_relaxed);
     if (uint(m >> 32) != 0) atomic_fetch_or_explicit(&words[2 * w + 1], uint(m >> 32), memory_order_relaxed);
 }}
 "#,
+        reads = rerail_blocks::RELATION_READS
+    )
+}
+
+/// The kernel that makes a sort's screen: a thread a run, its key (the sort word plus `base[0]`) added. `p`: the
+/// rows (a bound on the runs).
+fn screen_source(key: Width) -> String {
+    format!(
+        r#"#include <metal_stdlib>
+using namespace metal;
+{reads}
+kernel void screen_bloom(device const {k}* rkeys [[buffer(0)]], device const uint* nruns [[buffer(1)]], device uchar* f [[buffer(2)]],
+                         constant uint* p [[buffer(3)]], constant long* base [[buffer(4)]], uint r [[thread_position_in_grid]]) {{
+    if (r >= p[0] || r >= nruns[0]) return;
+    screen_add(f, 0u, ulong(rkeys[r]) + ulong(base[0]));
+}}
+"#,
+        reads = screen_reads(),
         k = key.ty()
     )
 }
 
-/// The fewest rows a sort is screened for (`Keyed::filter`): below them a search of its runs is a few cached steps.
+/// The fewest rows a sort is screened for (`Keyed::screen`): below them a search of its runs is a few cached steps.
 pub const SCREENED_ROWS: usize = 4096;
 
 /// A sort's filter words: a byte a row (at most its distinct keys), a power of two, 256 B to 4 MiB (a sort of 4 M
@@ -905,6 +941,20 @@ impl Keyed {
         f64::from_bits(self.gpu.load(std::sync::atomic::Ordering::Relaxed))
     }
 
+    /// Screens its probes by a column's kept filter (decision 0477): a `bloom::Bloom` at byte `at` of `buffer` (its
+    /// block's), kept bound while `keep` lives, which must hold every key of its column 0. It takes the place of the
+    /// screen the sort made, if any: the device reads the host's filter where it lies.
+    pub fn screen_by(&mut self, buffer: Buffer, at: usize, keep: Box<dyn std::any::Any + Send + Sync>) {
+        assert!(at > 0 && at < NO_SCREEN as usize, "a filter's descriptor in a block, past its header");
+        self.bytes -= self.screen.as_ref().map_or(0, Screen::bytes);
+        self.screen = Some(Screen { held: Held::kept(buffer, keep), at: at as u32 });
+    }
+
+    /// Whether its probes are screened.
+    pub fn screened(&self) -> bool {
+        self.screen.is_some()
+    }
+
     /// `columns` sorted by column 0 on the device, in one command buffer, committed and not waited for: a probe
     /// of it on this thread's queue runs after it. The intermediates are in scratch, the sort's order, runs and
     /// gathered columns in buffers of their own. (Metal holds every buffer a command buffer uses until it completes,
@@ -947,17 +997,17 @@ impl Keyed {
         let kb = parts.key.bytes();
         let bytes = 4 * n + (n + 1) * (4 + kb) + others.iter().map(Column::bytes).sum::<usize>();
         // Its runs' keys' filter, one thread a run: read from the runs where the sort wrote them.
-        let filter = if n >= SCREENED_ROWS && let Some(words) = screen_words(n) {
+        let screen = if n >= SCREENED_ROWS && let Some(words) = screen_words(n) {
             let bloom = pipeline(&format!("screen {:?}", parts.key.bytes()), "screen_bloom", || screen_source(parts.key))?;
-            let f = Held::zeroed(8 * words)?;
-            pass.run(&bloom, &[&parts.rkeys.buffer, &parts.nruns.buffer, &f.buffer], &[n as u32, words as u32], &[base], groups(n));
-            Some((f, words as u32))
+            let f = Screen::own(words)?;
+            pass.run(&bloom, &[&parts.rkeys.buffer, &parts.nruns.buffer, &f.held.buffer], &[n as u32], &[base], groups(n));
+            Some(f)
         } else {
             None
         };
-        let bytes = bytes + filter.as_ref().map_or(0, |(_, w)| 8 * *w as usize);
+        let bytes = bytes + screen.as_ref().map_or(0, Screen::bytes);
         let SortParts { perm, starts, rkeys, nruns, key } = parts;
-        let keyed = Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, filter, pending: std::sync::Mutex::new(None), runs: std::sync::atomic::AtomicUsize::new(usize::MAX), gpu: std::sync::atomic::AtomicU64::new(0), bytes };
+        let keyed = Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, screen, pending: std::sync::Mutex::new(None), runs: std::sync::atomic::AtomicUsize::new(usize::MAX), gpu: std::sync::atomic::AtomicU64::new(0), bytes };
         Ok((keyed, reads))
     }
 }
@@ -1094,10 +1144,11 @@ pub struct ColStats {
 /// The kernels of `column_stats` for a sort word `key`.
 fn col_stats_source(key: Width) -> String {
     let k = key.ty();
+    let reads = rerail_blocks::RELATION_READS;
     format!(
         r#"#include <metal_stdlib>
 using namespace metal;
-
+{reads}
 // Each run's length (0 past the runs), 1,024 a threadgroup, four a thread; the group's sums of lengths squared and
 // cubed into `part` (two words a group).
 kernel void col_stats(device const uint* starts [[buffer(0)]], device const uint* nruns [[buffer(1)]], device uint* lens [[buffer(2)]],
@@ -1154,16 +1205,6 @@ kernel void col_top(device const uint* perm [[buffer(0)]], device const uint* le
     out[3 + k + t] = len;
 }}
 
-// The engine's sketch hash (`logic::bloom::hash`, setfix's `mix`).
-static inline ulong bloom_hash(ulong x) {{
-    x ^= 0x9e3779b97f4a7c15ul;
-    x ^= x >> 30;
-    x *= 0xbf58476d1ce4e5b9ul;
-    x ^= x >> 27;
-    x *= 0x94d049bb133111ebul;
-    return x ^ (x >> 31);
-}}
-
 // The column's distinct values into a blocked Bloom filter (`logic::bloom`): a thread a run (one a distinct value),
 // its key less the base back to the value, five bits of one 64-bit word, set as the word's two 32-bit halves with
 // atomics (the same bytes as the host's words). `words` zeroed; `p[1]` its 64-bit words, a power of two; the base the
@@ -1172,13 +1213,10 @@ kernel void col_bloom(device const {k}* rkeys [[buffer(0)]], device const uint* 
                       device atomic_uint* words [[buffer(3)]], constant uint* p [[buffer(4)]], constant long* base [[buffer(5)]],
                       uint r [[thread_position_in_grid]]) {{
     if (r >= p[0] || r >= nruns[0]) return;
-    ulong h = bloom_hash(ulong(rkeys[r]) + ulong(p[2] != 0 ? span[0] : base[0]));
-    uint w = uint(h >> 40) & (p[1] - 1);
-    uint lo = 0, hi = 0;
-    for (uint i = 0; i < 5; i++) {{
-        uint b = uint(h >> (6 * i)) & 63;
-        if (b < 32) lo |= 1u << b; else hi |= 1u << (b - 32);
-    }}
+    ulong h = clif_bloom_hash((device const uchar*)words, 0ul, ulong(rkeys[r]) + ulong(p[2] != 0 ? span[0] : base[0]));
+    ulong m = clif_bloom_mask((device const uchar*)words, 0ul, h);
+    uint w = uint(h >> 32) & (p[1] - 1);
+    uint lo = uint(m), hi = uint(m >> 32);
     if (lo != 0) atomic_fetch_or_explicit(&words[2 * w], lo, memory_order_relaxed);
     if (hi != 0) atomic_fetch_or_explicit(&words[2 * w + 1], hi, memory_order_relaxed);
 }}
@@ -1430,28 +1468,19 @@ fn probe_source(left: &[Width], key: Width, right: &[Width]) -> String {
     let kt = key.ty();
     let lcols: String = left.iter().enumerate().map(|(i, w)| format!(", device const {}* l{i} [[buffer({})]]", w.ty(), 4 + i)).collect();
     let rcols: String = right.iter().enumerate().map(|(i, w)| format!(", device const {}* r{} [[buffer({})]]", w.ty(), i + 1, 4 + k + i)).collect();
-    // The runs' filter is the input after the columns (`Keyed::filter`; with no filter, `p`'s words are 0).
+    // The screen is the input after the columns (`Keyed::screen`; with none, `p`'s offset is `NO_SCREEN`).
     let f = 4 + k + right.len();
     let n = f + 1;
     let mut test = String::from("true");
     for i in 1..k {
         test.push_str(&format!(" && ulong(l{i}[t]) + ulong(base[{i}]) == ulong(r{i}[q]) + ulong(base[{}])", k + i));
     }
-    let args = format!("device const {kt}* rkeys [[buffer(0)]], device const uint* starts [[buffer(1)]], device const uint* nruns [[buffer(2)]], device const uint* perm [[buffer(3)]]{lcols}{rcols}, device const ulong* bloom [[buffer({f})]]");
+    let args = format!("device const {kt}* rkeys [[buffer(0)]], device const uint* starts [[buffer(1)]], device const uint* nruns [[buffer(2)]], device const uint* perm [[buffer(3)]]{lcols}{rcols}, device const uchar* bloom [[buffer({f})]]");
     format!(
         r#"#include <metal_stdlib>
 using namespace metal;
 
-{SCREEN_HASH}
-// Whether the runs' filter (`words` 64-bit words, none at 0) may hold `key`: one load. A key it refuses is in no run
-// (decision 0477).
-static inline bool may_hold(device const ulong* bloom, uint words, ulong key) {{
-    if (words == 0) return true;
-    uint2 h = screen_hash(key);
-    ulong m = screen_mask(h.x);
-    return (bloom[h.y & (words - 1)] & m) == m;
-}}
-
+{reads}
 // The run of a left row's key 0 (`lo`, and whether there is one): a bounded binary search of the runs' keys.
 static inline bool find(ulong key, device const {kt}* rkeys, uint runs, long rbase, thread uint& lo) {{
     lo = 0;
@@ -1491,6 +1520,7 @@ kernel void probe_scatter({args}, device const uint* offsets [[buffer({n})]], de
     }}
 }}
 "#,
+        reads = screen_reads(),
         n1 = n + 1,
         n2 = n + 2,
         n3 = n + 3
@@ -1543,14 +1573,14 @@ impl ProbeJob {
         let mut inputs: Vec<&BufferRef> = vec![&right.rkeys.buffer, &right.starts.buffer, &right.nruns.buffer, &right.perm.buffer];
         inputs.extend(left.iter().map(|c| &*c.buffer.buffer));
         inputs.extend(right.others.iter().map(|c| &*c.buffer.buffer));
-        // The runs' filter, or (none: its words are 0) a buffer the kernels do not read.
-        inputs.push(right.filter.as_ref().map_or(&*right.rkeys.buffer, |(f, _)| &*f.buffer));
+        // The screen, or (none: its offset is `NO_SCREEN`) a buffer the kernels do not read.
+        inputs.push(right.screen.as_ref().map_or(&*right.rkeys.buffer, |f| &*f.held.buffer));
         inputs
     }
 
-    /// The runs' filter's words (0: none).
+    /// The screen's descriptor's offset (`NO_SCREEN`: none).
     fn screen(right: &Keyed) -> u32 {
-        right.filter.as_ref().map_or(0, |(_, w)| *w)
+        right.screen.as_ref().map_or(NO_SCREEN, |f| f.at)
     }
 
     /// The probe of `right` by `left`, encoded after whatever `pass` holds (a sort of `right` in it is read in order).
@@ -1796,10 +1826,12 @@ struct ProbeJob {
     device const uint* perm;
     device const ulong* l[3];
     device const uchar* r[2];
+    // The sort's screen (`Keyed::screen`): a `bloom::Bloom` at byte `screen_at`; `screen_at` NO_SCREEN for none.
+    device const uchar* screen;
     long lbase[3];
     long kbase;
     long rbase[2];
-    uint nl, k, kw, pad;
+    uint nl, k, kw, screen_at;
     uint rw[2];
     uint pad2[2];
 };
@@ -1910,7 +1942,8 @@ kernel void probe_all(device const ProbeJob* jobs [[buffer(0)]], device const ui
         c[i] = 0;
         run[i] = 0xFFFFFFFFu;
         uint lo;
-        if (r < nl && find(j.l[0][r] + ulong(j.lbase[0]), j, runs, lo)) {
+        ulong key = r < nl ? j.l[0][r] + ulong(j.lbase[0]) : 0;
+        if (r < nl && may_hold(j.screen, j.screen_at, key) && find(key, j, runs, lo)) {
             run[i] = lo;
             for (uint q = j.starts[lo]; q < j.starts[lo + 1]; q++) c[i] += uint(same(j, r, q));
         }
@@ -1968,19 +2001,20 @@ struct ProbeDesc {
     perm: u64,
     l: [u64; 3],
     r: [u64; 2],
+    screen: u64,
     lbase: [i64; 3],
     kbase: i64,
     rbase: [i64; 2],
     nl: u32,
     k: u32,
     kw: u32,
-    pad: u32,
+    screen_at: u32,
     rw: [u32; 2],
     pad2: [u32; 2],
 }
 
 fn fused_pipe(name: &'static str) -> Result<ComputePipelineState, String> {
-    pipeline("fused", name, || FUSED_SOURCE.to_owned())
+    pipeline("fused", name, || FUSED_SOURCE.replacen("using namespace metal;\n", &format!("using namespace metal;\n{}", screen_reads()), 1))
 }
 
 /// A batch's small sorts and probes, described as they are encoded and dispatched together at the end
@@ -2036,7 +2070,7 @@ impl Fused {
             rkeys,
             nruns,
             others,
-            filter: None,
+            screen: None,
             pending: std::sync::Mutex::new(None),
             runs: std::sync::atomic::AtomicUsize::new(usize::MAX),
             gpu: std::sync::atomic::AtomicU64::new(0),
@@ -2066,6 +2100,11 @@ impl Fused {
         d.starts = self.addr(&right.starts.buffer);
         d.nruns = self.addr(&right.nruns.buffer);
         d.perm = self.addr(&right.perm.buffer);
+        d.screen_at = NO_SCREEN;
+        if let Some(f) = &right.screen {
+            d.screen = self.addr(&f.held.buffer);
+            d.screen_at = f.at;
+        }
         for (i, c) in left.iter().enumerate() {
             d.l[i] = self.addr(&c.buffer.buffer);
             d.lbase[i] = c.base;
@@ -2210,6 +2249,61 @@ mod tests {
         assert_eq!(got, want);
     }
 
+    /// Decision 0477, one format: the device's screen of a sort's keys is, word for word, the filter the host makes of
+    /// them in a block (`rerail_blocks::bloom`), and a sort screened by that host filter, bound where it lies, gives a
+    /// probe the host join's pairs, alone and in the fused dispatch (which tests a sort's screen too), as does the
+    /// sort's own screen.
+    #[test]
+    fn the_devices_screen_is_the_hosts_filter() {
+        if device().is_err() {
+            return;
+        }
+        use rerail_blocks::bloom::{Bloom, hash};
+        let right: Vec<i64> = (0..20_000i64).map(|i| i * 6 - 50_000).collect();
+        let left: Vec<i64> = (0..60_000i64).map(|i| i * 3 - 80_000).collect();
+        // copy: not block data (a test's literal keys)
+        let own = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
+        own.settle();
+        let words = screen_words(right.len()).unwrap();
+        let block = std::sync::Arc::new(rerail_blocks::Block::anon(rerail_blocks::block::kind::FACTS, 1 << 20).with_free_list());
+        let at = Bloom::try_create(&block, words).unwrap();
+        // SAFETY: the descriptor just made in `block`.
+        let host = unsafe { &*block.ptr::<Bloom>(at) };
+        for &k in &right {
+            host.add_hashed(hash(k));
+        }
+        let f = own.screen.as_ref().expect("a screened sort");
+        // SAFETY: the screen's words, 64 bytes on, written by its sort's command buffer, which completed.
+        let dev = unsafe { std::slice::from_raw_parts(f.held.buffer.contents().cast::<u8>().add(64).cast::<u64>(), words) };
+        assert!((0..words).all(|i| dev[i] == host.word(i)), "the device's screen is the host's filter");
+        // copy: not block data (a test's literal keys)
+        let mut kept = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
+        kept.screen_by(block.gpu_buffer(device().unwrap()), at, Box::new(block.clone()));
+        let mut want = crate::rows::join(&[&left], &[&right]);
+        want.sort_unstable();
+        assert!(!want.is_empty());
+        let raw = crate::col::Col::from(left.clone());
+        for right in [&own, &kept] {
+            // copy: not block data (a test's literal keys)
+            let mut got = probe(&[Column::upload(&left).unwrap()], right, 0).unwrap().pairs;
+            got.sort_unstable();
+            assert_eq!(got, want, "a probe");
+            let queue = queue().unwrap();
+            let command = queue.new_command_buffer();
+            let pass = Pass::new(command);
+            let mut fused = Fused::default();
+            let mut arena = Arena::new(2 * left.len(), probe_blocks(left.len())).unwrap();
+            let one = fused.probe(&[Column::raw(&raw).unwrap()], right, &mut arena).unwrap();
+            let mut keep = Vec::new();
+            fused.dispatch(&pass, &arena, &mut keep).unwrap();
+            pass.end();
+            commit_wait(command).unwrap();
+            let mut got = one.pairs(&arena).expect("the pairs fit");
+            got.sort_unstable();
+            assert_eq!(got, want, "a fused probe");
+        }
+    }
+
     /// Decision 0477: a sort of `SCREENED_ROWS` rows or more is screened by its runs' filter, made on the device from
     /// its runs. A probe whose keys mostly miss (2,000,000 left keys, 1% of them among 200,000 or 4,000,000 right
     /// ones, the others between them; 16 and 64-bit sorts) finds the host join's pairs with the filter and without
@@ -2228,8 +2322,8 @@ mod tests {
             }
             let screened = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
             let mut plain = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
-            plain.filter = None;
-            assert!(screened.filter.is_some());
+            plain.screen = None;
+            assert!(screened.screen.is_some());
             let column = || vec![Column::upload(&left).unwrap()];
             let (with, without) = (probe(&column(), &screened, 0).unwrap(), probe(&column(), &plain, 0).unwrap());
             // Interleaved, 20 each: a probe's GPU time moves by a fifth between runs at a millisecond.

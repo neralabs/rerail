@@ -303,6 +303,11 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus.rs", "UseStore"),
+    // A switch: the run's mode of deferred joins (decision 0477), bound by its caller.
+    ("code_rule_dsl/logic/plan/corpus/preparation.rs", "DeferredJoins"),
+    // The invocation's source locations, bound for the run while its caller holds them (decision 0393): an open
+    // thing's, gone with the binding.
+    ("code_rule_dsl/logic/profile/author_joins.rs", "Held"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "BatchUnderWay"),
     // A registry of an open thing: the holders of the rule files' shared tape-cache handle, and the handle.

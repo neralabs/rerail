@@ -87,6 +87,10 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
     Read { family: Family::Relation, name: "rel_group_row", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_row },
     Read { family: Family::Relation, name: "rel_key_mix", params: &[I64, I64], ret: I64, hot: true, body: crate::relation::rel_key_mix },
+    // A blocked Bloom filter's (decision 0477): the descriptor is a `bloom::Bloom`.
+    Read { family: Family::Relation, name: "bloom_hash", params: &[I64], ret: I64, hot: true, body: crate::relation::bloom_hash },
+    Read { family: Family::Relation, name: "bloom_mask", params: &[I64], ret: I64, hot: true, body: crate::relation::bloom_mask },
+    Read { family: Family::Relation, name: "bloom_may", params: &[I64], ret: I32, hot: true, body: crate::relation::bloom_may },
     // A projection's numbering's (decision 0353 step 2): the descriptor is an `ids::Numbering`.
     Read { family: Family::Relation, name: "num_is", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::is },
     Read { family: Family::Relation, name: "num_rank", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::rank },

@@ -269,6 +269,83 @@ impl std::ops::Deref for Part {
 unsafe impl Send for Held {}
 unsafe impl Sync for Held {}
 
+/// A new block for `life`'s relations, of room for `need` bytes and as much again: the open one from now on.
+fn open_new(open: &mut Option<Arc<Facts>>, chunk: Option<&Arc<Chunk>>, live_blocks: &Live, life: Life, need: usize) -> Result<Arc<Facts>, String> {
+    let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?));
+    if let Some(c) = chunk {
+        c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
+    }
+    let mut live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
+    live[life as usize].retain(|w| w.strong_count() > 0);
+    live[life as usize].push(Arc::downgrade(&f));
+    *open = Some(f.clone());
+    Ok(f)
+}
+
+/// A column's blocked Bloom filter (decision 0477, `rerail_blocks::bloom`) in a block of the run's relations: the
+/// block the relations whose keys it holds are made in, so the device binds it as it binds them and reads it where
+/// it lies, as the host does. Its chunks go back to the block's free list when it is dropped.
+pub struct FactsBloom {
+    facts: Arc<Facts>,
+    at: usize,
+}
+
+// SAFETY: the filter lies in `facts`' block, which it keeps; its one writer is its owner (`Bloom::add_hashed`).
+unsafe impl Send for FactsBloom {}
+unsafe impl Sync for FactsBloom {}
+
+impl FactsBloom {
+    /// An empty filter of `words` words (a power of two), in the open block of the run's relations or a new one.
+    pub fn new(words: usize) -> FactsBloom {
+        FactsBloom::try_new(words).unwrap_or_else(|e| panic!("a filter of {words} words: {e}"))
+    }
+
+    pub fn try_new(words: usize) -> Result<FactsBloom, String> {
+        let life = Life::Run;
+        let need = 8 * words + 128;
+        let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
+        let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
+        let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+        for fresh in [false, true] {
+            let facts = match &*open {
+                Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
+                _ => open_new(&mut open, chunk.as_ref(), &live_blocks, life, need)?,
+            };
+            if let Some(at) = rerail_blocks::bloom::Bloom::try_create(&facts.block, words) {
+                return Ok(FactsBloom { facts, at });
+            }
+        }
+        unreachable!("a new block of {} bytes holds a filter of {need}", 2 * need + MARGIN)
+    }
+
+    /// Its block, which the device binds it by.
+    pub fn facts(&self) -> &Arc<Facts> {
+        &self.facts
+    }
+
+    /// Its descriptor's offset in its block.
+    pub fn at(&self) -> usize {
+        self.at
+    }
+}
+
+impl std::ops::Deref for FactsBloom {
+    type Target = rerail_blocks::bloom::Bloom;
+    #[inline(always)]
+    fn deref(&self) -> &rerail_blocks::bloom::Bloom {
+        // SAFETY: `at` is a filter's descriptor in `facts`' block, which this keeps.
+        unsafe { &*self.facts.block.ptr::<rerail_blocks::bloom::Bloom>(self.at) }
+    }
+}
+
+impl Drop for FactsBloom {
+    fn drop(&mut self) {
+        let block = &self.facts.block;
+        // SAFETY: as `deref`; this is its one holder, and nothing reads it after.
+        unsafe { &*block.ptr::<rerail_blocks::bloom::Bloom>(self.at) }.release(block);
+    }
+}
+
 impl Part {
     /// An empty relation of `k` columns with room for `rows` rows, in the open block or a new one.
     fn new(life: Life, k: usize, rows: usize) -> Part {
@@ -308,17 +385,7 @@ impl Part {
                     f
                 }
                 Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
-                _ => {
-                    let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?));
-                    if let Some(c) = &chunk {
-                        c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
-                    }
-                    let mut live = live_blocks.0.lock().unwrap_or_else(|e| e.into_inner());
-                    live[life as usize].retain(|w| w.strong_count() > 0);
-                    live[life as usize].push(Arc::downgrade(&f));
-                    *open = Some(f.clone());
-                    f
-                }
+                _ => open_new(&mut open, chunk.as_ref(), &live_blocks, life, need)?,
             };
             if let Some(rel) = Relation::try_create(&facts.block, &spec, None)
                 && rel.rows.try_reserve(&facts.block, rows as u64)

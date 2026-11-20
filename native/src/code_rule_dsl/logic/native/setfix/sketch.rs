@@ -155,10 +155,14 @@ impl Sketch {
     /// Estimated fraction of the probe column's distinct keys present in the build column.
     /// Inclusion-exclusion can lose a small intersection in the sketch error. This only prices a plan.
     pub(super) fn overlap(&self, other: &Self) -> f64 {
-        let left = self.ndv();
-        let right = other.ndv();
-        let union = Self::estimate(self.registers.iter().zip(other.registers.iter()).map(|(&a, &b)| a.max(b)),
-            self.rows.saturating_add(other.rows));
+        if self.rows == 0 || other.rows == 0 {
+            return 0.0;
+        }
+        // The three estimates alike, none clamped to its rows: a side's estimate clamped where the union's is not
+        // made a sketch overlap itself less than whole when its estimate ran over its rows.
+        let left = Self::estimate(self.registers.iter().copied(), u64::MAX);
+        let right = Self::estimate(other.registers.iter().copied(), u64::MAX);
+        let union = Self::estimate(self.registers.iter().zip(other.registers.iter()).map(|(&a, &b)| a.max(b)), u64::MAX);
         (left.saturating_add(right).saturating_sub(union).min(left.min(right)) as f64) / left.max(1) as f64
     }
 

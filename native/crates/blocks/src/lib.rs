@@ -21,6 +21,7 @@
 
 pub mod alloc;
 pub mod block;
+pub mod bloom;
 pub mod chunk;
 pub mod col;
 #[cfg(unix)]
