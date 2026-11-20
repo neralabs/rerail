@@ -1,16 +1,16 @@
 # A first session's walk of many worktrees takes about half the memory
 
-For [pull request #812](https://github.com/neralabs/rerail/pull/812), head 550728530. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #812](https://github.com/neralabs/rerail/pull/812), head da345bfc3. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
 **May a walk answer for a worktree by another's rule engine holding the same rules, and sessions share each checkout's Git ignore reader?**
 
-**We recommend:** approve it: on the 0.2.0 engine the first session's walk of 190 checkouts takes 578 MB where `main` takes 1,898 MB; answers are `main`'s or Git's, network shares included.
+**We recommend:** approve it: on the 0.2.0 engine the first session's walk of 61 checkouts takes 377 to 516 MB where `main` takes 903 to 1,045 MB; answers are `main`'s or Git's (network shares: stand-in cases).
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 2,857 lines in 15 files: 1,099 ship, 1,758 are tests and text | Careful. It changes which engine answers a walk's questions. | Nothing. No CI result at this head yet. | 4 |
+| 3,166 lines in 15 files: 1,232 ship, 1,934 are tests and text | Careful. It changes which engine answers a walk's questions. | Nothing. No CI result at this head yet. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -34,7 +34,7 @@ Found in November 2026 on Linux x64 and Windows 11 machines, measuring #726's st
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Walk answered without new engines, medium risk, 201 lines; B, One Git ignore reader per checkout, medium risk, 898 lines. Read first: checkout-code-rule-router.ts, git_ignore.rs, git-ignore-matchers.ts. To skim: 1,756 lines of tests and 2 lines of half the memory; same-step force-adds checked..">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Walk answered without new engines, medium risk, 219 lines; B, One Git ignore reader per checkout, medium risk, 1,013 lines. Read first: checkout-code-rule-router.ts, git_ignore.rs, git-ignore-matchers.ts. To skim: 1,932 lines of tests and 2 lines of half the memory; same-step force-adds checked..">
 
 1. **Read first**, 8 min: `checkout-code-rule-router.ts`: `#accepts`, `#readsIn`, `#laneWithRulesOf`, `#refreshAnsweredCatalogs`. Can a worktree be answered by an engine whose rules read paths its own would not?
 2. **Read first**, 10 min: `git_ignore.rs`: `sources_unchanged`, `Sources`, `refresh`, `FileStamp`. Which ignore change or index write would a new reader see that this one misses?
@@ -59,14 +59,14 @@ Start at change A: it decides which engine answers. Change B decides what a late
 
 <details><summary><b>5. The changes</b></summary>
 
-**A. Walk answered without new engines**, medium risk. First session, 190 checkouts of 1,000 files: 1,898 MB at `main`, 578 MB here, on Linux x64 (the 0.2.0 engine).
+**A. Walk answered without new engines**, medium risk. First session, 190 checkouts, open-file limit 92: 1,898 MB at `main`, 578 MB here (Linux x64, 0.2.0 engine).
 
 - **Problem:** A session's first walk asks of every file of every worktree whether a rule reads it. `main` opens a rule engine in each worktree to answer, with the checkout's rules, a content store and its Git index.
 - **Who meets it:** Everyone who opens a session in a repository with many worktrees, once per daemon start. #726 measured 846 MB with 110 worktrees on 0.1.5.
 - **What it does:** `#accepts` answers for a worktree with no engine by an open engine at the same rules version (`#laneWithRulesOf`, `rulesVersion`, `readsPath`), through that worktree's own Git ignore rules; its catalog is read again with the engines' own.
 - **Risk:** Medium. The answer comes from another engine: a rule whose reach depended on more than its catalog version would read differently. None does at `main`.
 - **Check:** Is a catalog version enough to say two worktrees read the same paths, and is every worktree answered by another read again when the rules are?
-- **Picture:** After the first session in a repository of 190 checkouts of 1,000 files with the four suggested rule packs, the daemon holds 1,898 MB at main 7efcac9c6 and 578 MB with this change, on Linux x64 (medians of 10 pairs).
+- **Picture:** After the first session in a repository of 190 checkouts of 1,000 files with the four suggested rule packs, the daemon holds 1,898 MB at main 7efcac9c6 and 578 MB with this change, on Linux x64, under an open-file limit of 92 (medians of 10 pairs).
 - **Method:** A generated repository of 190 checkouts of 1,000 files with the four suggested rule packs; a fresh daemon under an open-file limit of 92, then three sessions through real Claude Code hooks; resident memory once the daemon settles. 10 pairs, alternating order, on one Linux x64 machine; the median of each side.
 
 **B. One Git ignore reader per checkout**, medium risk. Sessions share each checkout's ignore reader: the engine 96 MB less a later session, at 153 checkouts.
@@ -111,11 +111,11 @@ Start at change A: it decides which engine answers. Change B decides what a late
 
 <details><summary><b>7. How it fits</b></summary>
 
-Nothing has to merge first: it stands on `main` at 7efcac9c6, the 0.2.0 engine, which it merged in.
+Nothing has to merge first: it stands on `main` at a81b07ac3, with the 0.2.0 engine; `main` cccb25a8d edits none of its files.
 
-This pull request is based on main at 7efcac9c6, the 0.2.0 engine, and needs no other change.
+This pull request is based on main at a81b07ac3, with the 0.2.0 engine, and needs no other change.
 
-**Open pull requests that share a file.** Refresh before posting: the trial merges with other open pull requests date from before the engine change.
+**Open pull requests that share a file.** #884 also edits `engine-service.ts`; a trial merge with this head has no conflict.
 
 </details>
 
@@ -129,7 +129,7 @@ This pull request is based on main at 7efcac9c6, the 0.2.0 engine, and needs no 
 **Limits that stay**
 
 - An engine that has opened keeps the ignore rules it read for the rest of the session, as at `main`.
-- Where no stamp is kept (a read within its file's clock step, an index time ahead of the clock, a network share), each question reads the index's 20-byte checksum; under `index.skipHash`, which writes none, it parses the index.
+- Where no stamp is kept (a read within its file's clock step, an index time ahead of the clock, a share), a question reads the index's 20-byte checksum, or under `index.skipHash` the whole index.
 - The volume is found once per reader by its file system's name: a driver that reports NTFS, APFS or HFS+ while giving a new file an earlier one's identity would keep a stamp that cannot tell them.
 
 </details>
@@ -153,6 +153,6 @@ The description on GitHub is the record: "How you tested it" holds the runs at `
 | Linux x64 | CI's integration job at this head; `main`'s own index re-read case, 200 runs a build, on a machine whose file times step every 4 ms; each reader line taken out (before the engine change) | 90 tests passed, 4 skipped. The case failed 3 times at `main` and none here. Each of ten mutants of the reader fails a case. |
 | Windows 11 | 35 test files reaching the reader, with this head's engine; the new cases 20 runs in a row; the engine's tests at `main` and here (before the engine change) | 729 passed, 5 skipped; 8 failures outside `main`'s record (time-outs, two walk checks) passed 3 of 3 runs again, where `main` failed one bound once. The new cases pass 20 runs. The engine fails the same 14 cases as `main` on one machine. |
 
-**Sources.** The branch at 550728530 and its diff against `main` 7efcac9c6, read on 19 November 2026; runs on Linux x64 and Windows 11 machines of ours.
+**Sources.** The branch at da345bfc3 and its diff against `main` cccb25a8d (merge base a81b07ac3), read on 19 November 2026; runs on Linux x64 and Windows 11 machines of ours.
 
 </details>
