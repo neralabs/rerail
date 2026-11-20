@@ -572,8 +572,8 @@ describe("coreFloor", () => {
     expect(coreFloor(["held"], ["java"], ["stored"], [])).toBe([HELD_OFF_SINCE, java, stored].sort(semver.compare).at(-1));
   });
 
-  it("is 0.2.0, the release that first reads a rule written in .rerail, for a pack that ships one", () => {
-    expect(coreFloor([], ["python"], [], ["django-practice-count-not-len"])).toBe("0.2.0");
+  it("is 0.2.1, the release that first reads a rule written in .rerail, for a pack that ships one", () => {
+    expect(coreFloor([], ["python"], [], ["django-practice-count-not-len"])).toBe("0.2.1");
     expect(coreFloor([], ["python"], [], [])).toBeUndefined();
   });
 });

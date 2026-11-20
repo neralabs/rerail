@@ -1,1 +1,0 @@
-A session quiet for 30 minutes, or 24 hours while it is still owed a check, steer or finding, now stays open while its daemon runs: the dashboard shows it live, `rerail settings` no longer calls it inactive, and `rerail reset` no longer removes it as ended. Its next tool call still waits up to 20 seconds for its rules.

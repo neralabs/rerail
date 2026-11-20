@@ -1,1 +1,0 @@
-The session's record now keeps only the file's digest, as for a direct edit, when an edit reaches a file in a folder named like one holding secrets through a folder link (`conf` to `.aws`), a Windows junction or a short folder name, or reaches a file named like one holding secrets by its Windows short name (`WP-CON~1.PHP`).

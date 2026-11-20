@@ -1,1 +1,0 @@
-On Windows, Rerail no longer starts a program by a drive-root path such as `\tools\git.exe`. In a PATH entry or `CLAUDE_CODE_GIT_BASH_PATH`, it gets the current folder's drive and is passed over inside the current repository; a bash passed over or missing leaves the status line as with the variable unset. In a conflict hook, it gets the checkout's drive.

@@ -1,1 +1,0 @@
-`rerail rules test` takes a `.rerail` rule file and runs the tests it carries (`.test ... .end` blocks), reporting each as passed or failed; `--json` lists every test's failures and findings. A file that is missing, does not parse or holds no tests is an error. It works from any install: the package ships the library these tests read.
