@@ -175,8 +175,8 @@ outside this batch.
 
 ## What the pack costs a user
 
-Measured to decide which rules the pack starts on. Every rule starts on until this is measured again on an engine
-that runs the mid-size app.
+Measured to decide which rules the pack starts on. Every rule starts on until this is measured again with the
+product's store and budgets.
 
 **Method.** A release `rerail-engine` (`cargo build --release --manifest-path native/Cargo.toml --bin rerail-engine`)
 of `main` at `1328a4e386`, on an idle 32-vCPU, 64 GB Linux machine with nothing else running. All 27 rules in one
@@ -190,6 +190,8 @@ select-for-update-outside-atomic, sync-orm-reached-from-async), each group run o
 scope is `**/*.py`, so every rule takes the edited file: a run of only the rules whose scope takes it is (c). The apps
 are pinned commits of [the corpus](README.md#the-corpus); the edited files were `bookmarks/services/assets.py`,
 `netbox/virtualization/forms/model_forms.py` and `cms/djangoapps/api/v1/views/course_runs.py`.
+
+Before bulk-not-loop's bound (below):
 
 | App (Python files) | Step | Wall | CPU | Peak memory | Findings |
 |---|---|--:|--:|--:|--:|
@@ -205,14 +207,18 @@ are pinned commits of [the corpus](README.md#the-corpus); the edited files were 
 | | the 23 other rules, unchanged and after the edit | killed at 324 s and 208 s | 1,364 s and 619 s | 55-57 GB (out of memory) | none |
 | | the 4 call-graph rules, unchanged | 197 s | 682 s | 9.9 GB | 99 |
 
-On this engine an edit costs a whole run: the store answers a run only when nothing it read changed. The pack does not
-finish on netbox or edx-platform within 64 GB, though netbox ran the whole pack in 164 s at 4.5 GB on an earlier
-`main` ([ENGINE-BUGS.md](ENGINE-BUGS.md), bug 2) with these rules unchanged: the out-of-memory runs come from the
-engine. The call-graph rules alone finish on edx-platform.
+On this engine an edit costs a whole run: the store answers a run only when nothing it read changed.
 
 Each rule alone, first run on a fresh store, linkding: bulk-not-loop takes 54.0 s, 73.7 s CPU and 4.9 GB (2 findings);
 every other rule 0.7 to 6.4 s and 0.2 to 0.8 GB, the four call-graph rules 4.9 to 6.4 s of those. On netbox the four
 call-graph rules together finish a first run in 98.5 s, 291 s CPU and 7.1 GB (16 findings).
+
+The cause was bulk-not-loop's `bnl_number`, which paired every attribute name of the run with every node: a run that
+keeps its cross-file part in the store evaluated all of it. It now takes only the field and step pairs of the
+assignments the rule tests (`bnl_step`), with the same findings: 2 on linkding, 30 on netbox, and on edx-platform the
+59 the whole pack reported before. With that bound, `rerail scan --pack django` from the installed tarball (the
+product's child process, store kept, 16 threads) completes on linkding in 19.7 s at 1.4 GB (18 findings) and on netbox
+in 172 s at 8.4 GB (1,050 findings, 950 of them lazy-translation-at-import, as in the README).
 
 ## Overlap with existing tools (partial)
 
