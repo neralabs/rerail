@@ -357,19 +357,17 @@ fn a_panic_holding_the_cpu_slot_leaves_the_next_apply_free_to_run() {
         request_buffer: None,
         request_direct: None,
     };
-    // Another test's apply may hold the slot for a moment: each try waits for its release, which
-    // wakes this thread, and waits again only when another apply took the slot first. A slot the
-    // panic left held is never released, and the bound fails the test rather than hanging it.
+    // Retried as the host retries a busy slot: another test's apply may hold it for a moment, but
+    // a slot the panic left held would answer busy until the deadline.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let outcome = loop {
-        let free = super::api::cpu_slot().try_lock_until(deadline);
-        assert!(
-            free.is_some(),
-            "the CPU slot stayed held after the apply holding it panicked"
-        );
-        drop(free);
         match task.compute() {
-            Err(error) if error.reason == super::api::WORKSPACE_BUSY => continue,
+            Err(error)
+                if error.reason == super::api::WORKSPACE_BUSY
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
             outcome => break outcome,
         }
     };

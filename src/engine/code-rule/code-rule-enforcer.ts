@@ -2,11 +2,12 @@ import { type Dirent, type Stats } from "node:fs";
 import { lstat, mkdtemp, opendir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
-import { setImmediate as yieldToHost } from "node:timers/promises";
+import { setImmediate as yieldToHost, setTimeout as pause } from "node:timers/promises";
 import { diffLines } from "diff";
 import { z } from "zod";
 import {
   encodeCodeRuleWorkspaceRequest,
+  isWorkspaceBusy,
   loadNativeBinding,
   RESULT_PAGE_BYTES,
   type NativeCodeRuleDslWorkspace,
@@ -17,7 +18,6 @@ import {
   type NativePackageFactsReader,
   type NativeRepositoryIndexOptions,
 } from "../native/native.js";
-import { evaluationSlot } from "../native/evaluation-slot.js";
 import type { CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
 import {
   buildSteer,
@@ -663,12 +663,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #pump: Promise<void> | undefined;
   #busy = false;
   #closing = false;
-  /** Aborted at `interrupt`: a call still waiting for the engine's evaluation slot leaves the line (`evaluationSlot`). */
-  readonly #interrupted = new AbortController();
-  /** Settles when a check pump ends or the session closes, then is replaced: what `#waitForEvaluationIdle` waits on. */
-  #checksDrained = Promise.withResolvers<void>();
-  /** The workspaces whose repository index has had a chunk: the first one plans the index (`#indexChunk`). */
-  readonly #indexed = new WeakSet<NativeCodeRuleDslWorkspace>();
   #closed = false;
   readonly #scopeAudits = new Set<Promise<unknown>>();
   readonly #generatedEditAudits = new Set<Promise<unknown>>();
@@ -1038,8 +1032,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       stored.auditId ??= this.#startAudit(stored.scope, stored.mode, stored.revision, [path], null);
     }
     this.#closing = true;
-    this.#interrupted.abort(new Error("Policy execution interrupted by session closure"));
-    this.#checksMayHaveDrained();
     if (this.#sessionId !== undefined) {
       if (options?.interruptAudits === false) this.#interruptOwnAudits();
       else this.#record(() => this.#audits.interrupt(this.#sessionId!));
@@ -1204,7 +1196,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       .finally(() => {
         this.#pump = undefined;
         if (!this.#closing && this.#pending.size > 0) this.#schedule();
-        this.#checksMayHaveDrained();
       });
   }
 
@@ -1564,17 +1555,23 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return { sourcePaths: [], stopped: true, files };
   }
 
-  /**
-   * One index chunk, from its place in the line for the engine's evaluation slot: a check that asked first runs before
-   * it. A scan's workspace is its own, and its first chunk plans the index without the slot, so that one runs beside
-   * the line (`EvaluationSlot.runBeside`).
-   */
-  #indexChunk(workspace: NativeCodeRuleDslWorkspace, nested: NestedCheckoutWalk): Promise<string> {
-    const options = { ...REPOSITORY_INDEX_OPTIONS, nestedCheckouts: [...nested.pruned], followGitignore: this.#followGitignore };
-    const chunk = () => workspace.indexRepositoryAsync(options);
-    const planned = this.#indexed.has(workspace);
-    this.#indexed.add(workspace);
-    return planned ? evaluationSlot.run(chunk, this.#interrupted.signal) : evaluationSlot.runBeside(chunk, this.#interrupted.signal);
+  /** One index chunk, retried while an interactive apply holds the evaluation slot. */
+  async #indexChunk(workspace: NativeCodeRuleDslWorkspace, nested: NestedCheckoutWalk): Promise<string> {
+    let backoff = 2;
+    while (!this.#closing) {
+      try {
+        return await workspace.indexRepositoryAsync({
+          ...REPOSITORY_INDEX_OPTIONS,
+          nestedCheckouts: [...nested.pruned],
+          followGitignore: this.#followGitignore,
+        });
+      } catch (error) {
+        if (!isWorkspaceBusy(error)) throw error;
+        await pause(backoff);
+        backoff = Math.min(backoff * 2, 25);
+      }
+    }
+    throw new Error("Policy execution interrupted by session closure");
   }
 
   async #walkAuditSources(
@@ -1718,19 +1715,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         this.#auditFindings.set(path, { revision, mode, violations: violations.filter((violation) => violation.path === path) });
   }
 
-  /**
-   * Waits until this session has no edit check queued or running, or it closes: a scan's next chunk, batch or final
-   * apply yields to the session's own checks. It looks again only when a check pump ends or the session closes
-   * (`#checksMayHaveDrained`).
-   */
   async #waitForEvaluationIdle(): Promise<void> {
-    while (!this.#closing && (this.#busy || this.#pending.size > 0)) await this.#checksDrained.promise;
-  }
-
-  /** Wakes every scan step waiting in `#waitForEvaluationIdle`, to look at the session's checks again. */
-  #checksMayHaveDrained(): void {
-    this.#checksDrained.resolve();
-    this.#checksDrained = Promise.withResolvers<void>();
+    while (!this.#closing && (this.#busy || this.#pending.size > 0)) await pause(2);
   }
   async *#auditFiles(
     workspace: NativeCodeRuleDslWorkspace,
@@ -2060,8 +2046,17 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   async #applyRequest(workspace: NativeCodeRuleDslWorkspace, request: ApplyRequest): Promise<Evaluation> {
     const revision = await this.#nextRevision(workspace);
-    this.#interrupted.signal.throwIfAborted();
-    return this.#recordApplied(workspace, request, await this.#applyOnce(workspace, revision, request));
+    let backoff = 2;
+    while (!this.#closing) {
+      try {
+        return this.#recordApplied(workspace, request, await this.#applyOnce(workspace, revision, request));
+      } catch (error) {
+        if (!isWorkspaceBusy(error)) throw error;
+        await pause(backoff);
+        backoff = Math.min(backoff * 2, 25);
+      }
+    }
+    throw new Error("Policy execution interrupted by session closure");
   }
 
   /** The revision `workspace`'s next apply takes, recorded as its current one once its storage is attached. */
@@ -2075,15 +2070,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return revision;
   }
 
-  /**
-   * One apply of `request` at `revision`: inline when it is small, on the session's own workspace and no call holds or
-   * waits for the evaluation slot, else buffered from its place in the line for the slot.
-   */
+  /** One apply of `request` at `revision`: inline when it is small and on the session's own workspace, else buffered. */
   async #applyOnce(workspace: NativeCodeRuleDslWorkspace, revision: number, request: ApplyRequest): Promise<WorkspaceResult> {
-    const inline = evaluationSlot.idle && this.#appliesInline(workspace, request) ? workspace.tryApply(JSON.stringify({ revision, ...request })) : undefined;
-    const result =
-      inline ??
-      (await evaluationSlot.run(() => workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, ...request })), this.#interrupted.signal));
+    const inline = this.#appliesInline(workspace, request) ? workspace.tryApply(JSON.stringify({ revision, ...request })) : undefined;
+    const result = inline ?? (await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, ...request })));
     return workspaceResultSchema.parse(JSON.parse(result));
   }
 
