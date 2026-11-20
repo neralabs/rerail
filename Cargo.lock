@@ -345,6 +345,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "char_str"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9cba78a5abb515610e10af297615434b019755b5d7be14e559ff5340dff50c4"
+dependencies = [
+ "castaway",
+ "itoa",
+ "ryu",
+]
+
+[[package]]
 name = "clru"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3289,9 +3300,9 @@ dependencies = [
  "rerail-store",
  "rerail-transducer",
  "rerail-w",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -3402,9 +3413,9 @@ dependencies = [
  "rerail-vue-lean",
  "rerail-w",
  "roaring",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -3474,9 +3485,9 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-store",
  "rerail-tape-format",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -3606,9 +3617,9 @@ dependencies = [
  "rerail-store",
  "rerail-tape-format",
  "rerail-vue-lean",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -3678,9 +3689,9 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-store",
  "rerail-w",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -3750,9 +3761,9 @@ dependencies = [
  "rerail-store",
  "rerail-transducer",
  "rerail-w",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -3820,9 +3831,9 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-store",
  "rerail-w",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -3890,9 +3901,9 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-store",
  "rerail-w",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -3960,9 +3971,9 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-store",
  "rerail-w",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -4030,9 +4041,9 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-store",
  "rerail-w",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -4105,9 +4116,9 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-store",
  "roaring",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -4222,9 +4233,9 @@ dependencies = [
  "rerail-accel",
  "rerail-prof",
  "rerail-rr-syntax",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -4299,9 +4310,9 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -4389,9 +4400,9 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-simd8",
  "rerail-tape-format",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -4477,9 +4488,9 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-sessions",
  "rerail-store",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -4621,9 +4632,9 @@ dependencies = [
  "rerail-store",
  "rerail-transducer",
  "rerail-w",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -4712,9 +4723,9 @@ dependencies = [
  "rerail-store",
  "rerail-tree-watch",
  "rerail-w",
- "ruff_python_ast",
+ "ruff_python_ast 0.0.22",
  "ruff_python_parser",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
  "rusqlite",
  "rustc-hash",
  "serde",
@@ -4763,14 +4774,35 @@ dependencies = [
  "aho-corasick",
  "arrayvec",
  "bitflags 2.13.2",
- "char_str",
+ "char_str 0.0.2",
  "compact_str 0.10.0",
  "get-size2",
  "is-macro",
  "memchr",
- "ruff_python_trivia",
- "ruff_source_file",
- "ruff_text_size",
+ "ruff_python_trivia 0.0.10",
+ "ruff_source_file 0.0.10",
+ "ruff_text_size 0.0.10",
+ "rustc-hash",
+ "thin-vec",
+ "thiserror",
+]
+
+[[package]]
+name = "ruff_python_ast"
+version = "0.0.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5bd02b9405a7e86ed6e6aacc4e59c56133056710905b349f21a869f8b4fe08f8"
+dependencies = [
+ "aho-corasick",
+ "arrayvec",
+ "bitflags 2.13.2",
+ "char_str 0.0.4",
+ "compact_str 0.10.0",
+ "is-macro",
+ "memchr",
+ "ruff_python_trivia 0.0.22",
+ "ruff_source_file 0.0.22",
+ "ruff_text_size 0.0.22",
  "rustc-hash",
  "thin-vec",
  "thiserror",
@@ -4787,9 +4819,9 @@ dependencies = [
  "drop_bomb",
  "get-size2",
  "memchr",
- "ruff_python_ast",
- "ruff_python_trivia",
- "ruff_text_size",
+ "ruff_python_ast 0.0.10",
+ "ruff_python_trivia 0.0.10",
+ "ruff_text_size 0.0.10",
  "rustc-hash",
  "stacker",
  "static_assertions",
@@ -4806,10 +4838,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16eef02a116ba556c4492a3c1c00fd0413e8df2e9d96b81d13df686effcd5f4d"
 dependencies = [
  "itertools 0.15.0",
- "ruff_source_file",
- "ruff_text_size",
+ "ruff_source_file 0.0.10",
+ "ruff_text_size 0.0.10",
  "rustc-hash",
  "unicode-ident",
+]
+
+[[package]]
+name = "ruff_python_trivia"
+version = "0.0.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7737931983c94972d8349ab1912c9bdd217797dbae8443396856be68f80e62d6"
+dependencies = [
+ "itertools 0.15.0",
+ "memchr",
+ "ruff_source_file 0.0.22",
+ "ruff_text_size 0.0.22",
+ "rustc-hash",
+ "unicode-ident",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -4819,7 +4866,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a79181d6bc7477e06fb3aefdd618622b7ff5e6d99f8e829610172ab161a30275"
 dependencies = [
  "memchr",
- "ruff_text_size",
+ "ruff_text_size 0.0.10",
+]
+
+[[package]]
+name = "ruff_source_file"
+version = "0.0.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8817991fb23fd89d9c7e31668e513a4d17801d2349efb5a74fc765bd9c6f63d9"
+dependencies = [
+ "memchr",
+ "ruff_text_size 0.0.22",
 ]
 
 [[package]]
@@ -4830,6 +4887,12 @@ checksum = "80cdd98100ecff240f6a3f67d162726e13e92cfe60ef8f1b3c57c8fcb18e52f7"
 dependencies = [
  "get-size2",
 ]
+
+[[package]]
+name = "ruff_text_size"
+version = "0.0.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "012da5266aedc8e80cf437981526c85a7f55645ea2b063375e0a19bf05365c21"
 
 [[package]]
 name = "rusqlite"
