@@ -3332,10 +3332,6 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   from a directory's entries) do not get a second load posted ahead of the failing one's error, and the test passes
   without the stopped check too. The full shape on Metal did, 3 of 13 times.
 - **Record**: the fix 1fc292eb2; the runs in working-data/bench-1118/ab41-t54.txt.
-- **On Native-and-GPU-strata** (its Q224, merged at d719a840ef, 2026-11-19):
-  - **Open**: no test fails a load's chunk (the builder is local to `run_observed`, and no hook fails a load), and
-  12 more cold Metal runs are owed for the 20.
-  - **Record**: —
 
 ### Q232. (Q40 on Go-C-and-C-support) Step 22 reads float chains and long floats in tier 1 (0413)
 
@@ -3615,14 +3611,6 @@ device-budget failures surfaced as a bare `BackendFailure`: a `String` error tur
 (`compiler::Error::from`), so a refusal names no cause; naming it is part of Q86.
 
 Q86 (step 6's prices) waits for step 4: most of what it prices goes.
-- **On Native-and-GPU-strata** (its Q87, merged at d719a840ef, 2026-11-19):
-  4. Step 5 is built for the batch's solve (2026-11-18, 0353 step 5): the axis's ids written once into a relation of
-   its own in a run's block, with room for its two indexes, read in place by the CPU and the device. hogql 16z:
-   copies 125.9 MB a run against 792.4 MB, refusals at run time 2 a run against 5–22, findings 1,629. Left: `has`'s
-   probe on the device (with 4b's parent probes), then step 6.
-  Q68 after step 5: the refusals that remain on hogql are 2 a run (binding tables, one index of 0.8 M rows). The
-  device-budget failures surfaced as a bare `BackendFailure`: a `String` error turned into `Error` loses its text
-  (`compiler::Error::from`), so a refusal names no cause; naming it is part of Q68.
 
 ### Q58. 0325's FACTS blocks raise a CPU run's footprint, and the memory line cuts a third more chunks
 
@@ -5458,8 +5446,6 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Since the fix**: 184 hogql runs (16z and 16 in turn, three at a time, M3; batches of 30, 36, 40, 36 and 42),
   all 1,629, no panic, no bound fired; the device join's 29 tests pass.
 - **Done when**: 180 format 16 runs, three at a time, have no panic. Met (184).
-- **On Native-and-GPU-strata** (its Q256, merged at d719a840ef, 2026-11-19):
-  - **Done when**: 180 format 16 runs, three at a time, have no panic.
 
 ### Q269. (Q190 on oscar until 2026-11-18) The packed transducer's JIT runs the 128-comment quantifier stress 13× slower than its interpreter
 
@@ -6372,12 +6358,12 @@ Open:
   through a relation's declared key or a fan-out of one, few or at most 16 rows (`.layout`, 0361), as a variable
   set to a constant already was. calls.rerail declares `.layout qv fanout(q, k -> v, few)`, and calls_rust.rerail
   declares `.layout modn fanout(q -> m, few)` (the program models one crate: a qualified name is one module).
+  A refusal now names its product rules and the read it could not key. The 30 oracle tests pass on the M1 Max, with
+  the pass's 11 tests (one new), the RIR dumps, the production contracts and the file-local typing tests.
 - **At the merge of investigate-bend-vs-datalog** (c61fae98f, 2026-11-20): that branch fixes a variable every positive
   read of which is a lookup on constants (`qv("builtins.object", "cls", $c)`), without a layout, the user's choice there
   (356f1b5164, a day before this item's fan-outs). Both are taken: the lookup on constants after `fixed_vars`. This
   item's test asserted the rule without its layout refused, which the user's rule fixes: that half now asserts it fixed.
-  A refusal now names its product rules and the read it could not key. The 30 oracle tests pass on the M1 Max, with
-  the pass's 11 tests (one new), the RIR dumps, the production contracts and the file-local typing tests.
 - **Also seen** (Q263 on django-bugs, 2026-11-19): the same refusal in `base` on the M1 Max and the M3, in
   `quoted_annotations_are_read_as_their_code`,
   `a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_attribute`,
