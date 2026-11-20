@@ -1,5 +1,5 @@
-//! The parsers on Metal, against the CPU: every ladder step's tier 1 as generated MSL equals the
-//! interpreter (`every_step_on_metal_equals_the_interpreter`), and the JSON forms' Metal
+//! The parsers on Metal, against the CPU: every JSON grammar's tier 1 as generated MSL equals the
+//! interpreter (`every_grammar_on_metal_equals_the_interpreter`), and the JSON forms' Metal
 //! measurements over a corpus (`json_metal_bench`, `json_metal_serial_bench`, run by name). The
 //! backend is the Metal crate's (`rerail_metal::block_program`).
 
@@ -8,14 +8,14 @@ use rerail_compiler::ladder::*;
 use rerail_compiler::{block, block_native as native_ir};
 use rerail_metal::block_program;
 
-/// Every step's tier 1 on Metal, generated MSL (one lane width, the class planes), equals the
+/// Each JSON grammar's tier 1 on Metal, generated MSL (one lane width, the class planes), equals the
 /// CPU interpreter on every document: outputs and extracted positions. A step whose program needs
 /// a form generated MSL lacks (`block_program::missing_form`: a fixed point, a back fill or load)
 /// is refused by that name and counted, not compared; most steps run.
 #[test]
-fn every_step_on_metal_equals_the_interpreter() {
+fn every_grammar_on_metal_equals_the_interpreter() {
     use block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-    let steps = steps_in(DIR);
+    let steps = grammars();
     let compiled: Vec<Compiled> = steps.iter().map(|(n, s)| compile_step(n, s)).collect();
     let docs: Vec<Vec<Vec<u8>>> = compiled.iter().zip(&steps).map(|(c, (n, _))| documents(&Lang::of(&c.stmts), seed(n), &|b| reference(c, b).is_some()).0).collect();
     let all: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
@@ -33,7 +33,9 @@ fn every_step_on_metal_equals_the_interpreter() {
         let k = run_on[f.program];
         let want = compiled[k].program.block_programs[0].run_files(&[f.bytes]).remove(0);
         if got.outputs != want.outputs || got.positions != want.positions {
-            differ.push(format!("{}: {:?}", steps[k].0, String::from_utf8_lossy(f.bytes)));
+            let outs: Vec<usize> = (0..want.outputs.len()).filter(|&o| got.outputs.get(o) != want.outputs.get(o)).collect();
+            let pos: Vec<usize> = (0..want.positions.len()).filter(|&o| got.positions.get(o) != want.positions.get(o)).collect();
+            differ.push(format!("{}: outputs {outs:?}, extracts {pos:?} differ: {:?}", steps[k].0, String::from_utf8_lossy(f.bytes)));
         }
     }
     eprintln!("{} files over {} steps on Metal, {} refused", files.len(), run_on.len(), refused.len());
@@ -60,7 +62,7 @@ fn json_metal_serial_bench() {
     let segments = Segments { blocks: env("RERAIL_SEG", 29), warm: env("RERAIL_SEG_WARM", 1) };
     println!("{} files, {} bytes, {segments:?}", files.len(), total);
     println!("form\tgpu_ms\tGB/s\tfirst_ms\tagain_ms\tsinks_ms\tsegments\treruns\trounds");
-    for name in ["14-json", "15-jsonc"] {
+    for name in ["json-rfc", "jsonc"] {
         if std::env::var("RERAIL_FORM").is_ok_and(|f| !name.starts_with(&f)) {
             continue;
         }
@@ -130,7 +132,7 @@ fn json_metal_bench() {
     };
     println!("{} files, {} bytes", files.len(), total);
     println!("form\twidth\tgpu_ms\tGB/s\tlaunches");
-    for name in ["14-json", "15-jsonc"] {
+    for name in ["json-rfc", "jsonc"] {
         if std::env::var("RERAIL_FORM").is_ok_and(|f| !name.starts_with(&f)) {
             continue;
         }
@@ -194,7 +196,7 @@ escape \"l\" when lone
         }
     }
     let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
-    let forms = [("early", compile_step("early", EARLY)), ("14-json", form("14-json")), ("15-jsonc", form("15-jsonc"))];
+    let forms = [("early", compile_step("early", EARLY)), ("json-rfc", form("json-rfc")), ("jsonc", form("jsonc"))];
     for (name, c) in &forms {
         let native = &c.native.block_programs[0];
         let late = native.insts.iter().any(|i| matches!(i, native_ir::BlockInst::Early(..) | native_ir::BlockInst::Prefix(..)));

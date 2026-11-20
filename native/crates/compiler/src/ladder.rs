@@ -1,18 +1,12 @@
-//! The Bitlex ladder's checks (the engine's tests and this crate's use them): thirteen languages, from one keyword to a data language with nested
-//! records, lists, texts, escapes, numbers and two kinds of comment, a step at a time. Each is
-//! parsed by its Bitlex file alone (`bitlex_ladder/`), with no Rust between the bytes and the
-//! nodes.
+//! The checks of a Bitlex grammar against the reference (the engine's tests and this crate's use them): JSON's
+//! grammars (`json_parser/`: `json-rfc`, `jsonc`, the token loop's `json` and `json-simdjson`), and any other grammar
+//! given (`.rr`'s, Kotlin's, the C directives'). Each is parsed by its Bitlex file alone, with no Rust between the
+//! bytes and the nodes.
 //!
-//! The languages are made up, so that no step is a known format: records are `< >`, lists
-//! `( )`, items are separated by `;`, an entry is `#key# = value`, texts are between `#`, a caret
-//! escapes, the booleans are `vrai` and `fausse`, nothing is `nul`, a number has a tilde for minus
-//! and a decimal comma (`~3,14e~2`), and comments are `-- …` and `{- … -}`.
+//! No grammar's test code knows its language: the documents are drawn from the grammar's own tree grammar, its
+//! tokens' keywords and checks, and then mutated a byte at a time.
 //!
-//! Each step adds one construct to the one before. No step's test code knows its language: the
-//! documents are drawn from the step's own tree grammar, its tokens' keywords and checks, and
-//! then mutated a byte at a time.
-//!
-//! For each step and document, the same nodes (or the same refusal, where the file goes to
+//! For each grammar and document, the same nodes (or the same refusal, where the file goes to
 //! tree-sitter) from:
 //!
 //! 1. the reference: the evaluator and tree parser of `tools/bitlex`, which run Bitlex without
@@ -22,7 +16,7 @@
 //!    reading tier 1's buffers as written.
 //!
 //! Tier 1 on Cranelift and on Metal (generated MSL) equals its interpreter bit for bit. And each
-//! step has the shape the compiler promises: tier 1's body has no branch but the loop's and the
+//! grammar has the shape the compiler promises: tier 1's body has no branch but the loop's and the
 //! extracts' flattening (it is branchless per block), and tier 2 has one loop, over the tokens
 //! (and one over 64-byte blocks inside each `check`); neither calls anything.
 
@@ -83,24 +77,26 @@ impl Ids {
     }
 }
 
-pub const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder");
+/// JSON's grammars.
+pub const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser");
 
-/// The ladder's files, in order.
-pub fn steps() -> Vec<(String, String)> {
-    steps_in(DIR)
+/// JSON's two reference forms, by name: `json-rfc` (RFC 8259, as simdjson accepts it) and `jsonc` (with comments, as
+/// tree-sitter-json parses it). The token loop's forms in `DIR` (`json`, `json-simdjson`) have their own shape and are
+/// checked by `rerail_parser_tests::json`.
+pub fn grammars() -> Vec<(String, String)> {
+    grammars_in(DIR).into_iter().filter(|(n, _)| n == "json-rfc" || n == "jsonc").collect()
 }
 
-/// The steps of a ladder in `dir`, in order: its `.bitlex` files (not those of its
-/// subdirectories, which are other ladders).
-pub fn steps_in(dir: &str) -> Vec<(String, String)> {
+/// The grammars in `dir`, by name: its `.bitlex` files.
+pub fn grammars_in(dir: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = std::fs::read_dir(dir)
-        .expect("the ladder's directory")
+        .expect("the grammars' directory")
         .map(|e| e.expect("an entry").path())
         .filter(|p| p.extension().is_some_and(|x| x == "bitlex"))
         .map(|p| (p.file_stem().unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&p).expect("reads")))
         .collect();
     out.sort();
-    // `RERAIL_LADDER`: only the steps whose names hold it.
+    // `RERAIL_LADDER`: only the grammars whose names hold it.
     let only = std::env::var("RERAIL_LADDER").ok();
     out.retain(|(n, _)| only.as_deref().is_none_or(|o| n.contains(o)));
     out
@@ -635,7 +631,7 @@ fn tier1_made(c: &Compiled) -> Vec<usize> {
     made
 }
 
-/// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from
+/// A ladder's checks (`every_grammar_parses_as_the_reference`) over `steps`, mutations drawn from
 /// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
 /// reference's nodes: a difference with another parser, if any. The differences, one per step at
 /// most.

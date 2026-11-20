@@ -1,18 +1,18 @@
-//! C's and C++'s directives in Bitlex (decision 0327, mode (a) compiled): the grammar of
-//! `bitlex_ladder/`'s last step, compiled once a process through the Bitlex compiler to tier 1
+//! C's and C++'s directives in Bitlex (decision 0327, mode (a) compiled): the grammar
+//! `directives.bitlex`, compiled once a process through the Bitlex compiler to tier 1
 //! and tier 2 on Cranelift, as `.rr`'s (`rerail_rr_parser`) and Kotlin's are.
 //!
 //! Its tape is the directive tape: a `directives` root and a node a directive, of its kind
 //! (`KINDS`), from its `#` to its line's last token's end, its operands fields' nodes below it.
 //! Its rows (`rows`) and operands (`operands`) are the lean scan's (`rerail_c_pp::directives`),
 //! which is its reference. A file the grammar refuses (a construct
-//! the ladder does not read yet) goes to the lean scan, so a row is never wrong.
+//! it does not read) goes to the lean scan, so a row is never wrong.
 
 use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
 
-/// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/06-raw.bitlex");
+/// The grammar.
+pub const GRAMMAR: &str = include_str!("../directives.bitlex");
 
 /// The tape's kinds, by id: the root, the directives' kinds (their names the lean scan's
 /// `Kind::name`), then the tokens' leaves and the operands' nodes.
@@ -68,7 +68,7 @@ pub fn interpreted_read(src: &[u8]) -> Option<Read> {
     read(&rerail_compiler::stream::image(&nodes, &program.readings.extras, 0, src)).ok()
 }
 
-/// `grammar` compiled: a ladder step's text.
+/// `grammar` compiled: a grammar's text.
 pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
     compile_kinds(grammar, KINDS, FIELDS)
 }
@@ -359,7 +359,7 @@ pub mod expand;
 pub mod tokens;
 
 /// `src`'s mode (a) facts: from the compiled grammar's tape where it reads the file, else (a
-/// construct the ladder does not read, or a grammar that does not compile) the lean scan's.
+/// construct the grammar does not read, or a grammar that does not compile) the lean scan's.
 pub fn facts(src: &[u8], opts: rerail_c_pp::Options) -> Facts {
     // The grammar reads raw strings: a configuration without them (C, not GNU) has the lean scan
     // read a file that may have one.

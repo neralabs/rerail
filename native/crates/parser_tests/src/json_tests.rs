@@ -1,17 +1,17 @@
-//! The ladder's two JSON forms (`bitlex_ladder/14-json.bitlex`, `15-jsonc.bitlex`) against
+//! JSON's two reference forms (`json_parser/json-rfc.bitlex`, `jsonc.bitlex`) against
 //! simdjson and tree-sitter-json (docs/parser-generators/21-json-against-simdjson.md).
 //!
-//! The ladder's own test checks them as it checks every step. These add what only JSON has:
+//! `ladder_tests` checks them as it checks every grammar. These add what only JSON has:
 //! outside oracles, on files from outside.
 //!
 //! - **JSONTestSuite** (`RERAIL_JSON_SUITE`, its `test_parsing` directory): every `y_` file
-//!   (valid JSON) is accepted by both forms; every `n_` file (invalid) is refused by step 14;
-//!   step 15 refuses each too, unless it is valid once comments are allowed. Each file's
+//!   (valid JSON) is accepted by both forms; every `n_` file (invalid) is refused by `json-rfc`;
+//!   `jsonc` refuses each too, unless it is valid once comments are allowed. Each file's
 //!   compiled nodes equal the reference's.
 //! - **A corpus** (`RERAIL_JSON_CORPUS`, simdjson's benchmark files): both forms accept each,
 //!   with the same nodes, equal to tree-sitter-json's where it finds no error.
 //! - **simdjson** (`RERAIL_SIMDJSON`, `tools/json-compare/simdjson_check`): its verdict on every
-//!   file above, against step 14's.
+//!   file above, against `json-rfc`'s.
 //!
 //! And `json_bench`, CPU time per file of each tier and of tree-sitter-json.
 //!
@@ -137,13 +137,13 @@ fn simdjson_forms_starts_are_simdjsons_indexes() {
     }
 }
 
-/// Page 40, stage 2: the simdjson form's trees are `14-json`'s, by the interpreter and by
+/// Page 40, stage 2: the simdjson form's trees are `json-rfc`'s, by the interpreter and by
 /// Cranelift, though its tier 1 records only simdjson's structurals and tier 2 reads each
 /// string's parts. Strings with escapes at every offset of a block's edge, invalid documents,
 /// and the corpus (`RERAIL_JSON_CORPUS`, where set).
 #[test]
 fn simdjson_forms_trees_are_14_jsons() {
-    let (sj, j14) = (simdjson_form(), form("14-json"));
+    let (sj, j14) = (simdjson_form(), form("json-rfc"));
     let inputs = tree_inputs();
     let (mut parsed, mut refused) = (0, 0);
     for (k, f) in inputs.iter().enumerate() {
@@ -609,11 +609,11 @@ fn json_suite_accuracy() {
 }
 
 fn suite() {
-    let (json, jsonc) = (form("14-json"), form("15-jsonc"));
+    let (json, jsonc) = (form("json-rfc"), form("jsonc"));
     let paths = files_in("RERAIL_JSON_SUITE");
     let simd = simdjson(&paths);
     let mut problems: Vec<String> = Vec::new();
-    // By the suite's class: [files, step 14 accepts, step 15 accepts, simdjson accepts, tree-sitter accepts].
+    // By the suite's class: [files, `json-rfc` accepts, `jsonc` accepts, simdjson accepts, tree-sitter accepts].
     let mut table: std::collections::BTreeMap<char, [usize; 5]> = std::collections::BTreeMap::new();
     let mut differ_simd: Vec<String> = Vec::new();
     let mut jsonc_takes: Vec<String> = Vec::new();
@@ -639,7 +639,7 @@ fn suite() {
         row[4] += usize::from(t);
         match class {
             'y' if a.is_none() || b.is_none() => problems.push(format!("{name}: valid JSON refused (14: {}, 15: {})", a.is_some(), b.is_some())),
-            'n' if a.is_some() => problems.push(format!("{name}: invalid JSON accepted by step 14")),
+            'n' if a.is_some() => problems.push(format!("{name}: invalid JSON accepted by `json-rfc`")),
             'n' if b.is_some() => jsonc_takes.push(name.clone()),
             _ => {}
         }
@@ -652,16 +652,16 @@ fn suite() {
         if let Some(s) = s
             && s != a.is_some()
         {
-            differ_simd.push(format!("{name} (simdjson {s}, step 14 {})", a.is_some()));
+            differ_simd.push(format!("{name} (simdjson {s}, `json-rfc` {})", a.is_some()));
         }
     }
     eprintln!("class  files  step14  step15  simdjson  tree-sitter-json   (files accepted)");
     for (c, r) in &table {
         eprintln!("{c}_     {:5}  {:6}  {:6}  {:8}  {:5}", r[0], r[1], r[2], r[3], r[4]);
     }
-    eprintln!("step 15 accepts, of the n_ files: {jsonc_takes:?}");
+    eprintln!("`jsonc` accepts, of the n_ files: {jsonc_takes:?}");
     eprintln!("tree-sitter-json refuses valid or accepts invalid: {ts_wrong:?}");
-    eprintln!("step 14 and simdjson differ on {}: {differ_simd:#?}", differ_simd.len());
+    eprintln!("`json-rfc` and simdjson differ on {}: {differ_simd:#?}", differ_simd.len());
     assert!(problems.is_empty(), "{} problems:\n{}", problems.len(), problems.join("\n"));
 }
 
@@ -670,7 +670,7 @@ fn suite() {
 #[test]
 #[ignore = "needs a corpus: run by name with RERAIL_JSON_CORPUS (and RERAIL_SIMDJSON)"]
 fn json_corpus_accuracy() {
-    let (json, jsonc) = (form("14-json"), form("15-jsonc"));
+    let (json, jsonc) = (form("json-rfc"), form("jsonc"));
     let paths = files_in("RERAIL_JSON_CORPUS");
     let simd = simdjson(&paths);
     let mut problems: Vec<String> = Vec::new();
@@ -685,7 +685,7 @@ fn json_corpus_accuracy() {
             _ => None,
         };
         eprintln!(
-            "{name}: {} bytes; step 14 {}, step 15 {}, simdjson {s:?}, tree-sitter {}; nodes {}; equal to tree-sitter's: {same_ts:?}",
+            "{name}: {} bytes; `json-rfc` {}, `jsonc` {}, simdjson {s:?}, tree-sitter {}; nodes {}; equal to tree-sitter's: {same_ts:?}",
             bytes.len(),
             a.is_some(),
             b.is_some(),
@@ -740,7 +740,7 @@ fn json_bench() {
                 (name, c)
             })
             .collect(),
-        Err(_) => vec![("14-json".to_owned(), form("14-json")), ("15-jsonc".to_owned(), form("15-jsonc"))],
+        Err(_) => vec![("json-rfc".to_owned(), form("json-rfc")), ("jsonc".to_owned(), form("jsonc"))],
     };
     let paths = files_in("RERAIL_JSON_CORPUS");
     let files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
@@ -810,7 +810,7 @@ fn json_bench() {
 #[test]
 #[ignore = "a dump: run by name with RERAIL_DUMP_TIER2"]
 fn json_tier2_by_word() {
-    let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "14-json".to_owned());
+    let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "json-rfc".to_owned());
     // Each function's IR kept, for its Rust (`rerail_clif::rust`).
     rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
     let c = if name == "simdjson" { simdjson_form() } else { form(&name) };
@@ -858,7 +858,7 @@ fn json_tier2_by_word() {
     std::fs::write(format!("{dir}/{name}.ir.rs"), ir).expect("writes");
 }
 
-/// Cranelift's optimizer on JSON (doc 28): step 14 compiled four ways (optimizer off, on tier
+/// Cranelift's optimizer on JSON (doc 28): `json-rfc` compiled four ways (optimizer off, on tier
 /// 1, on tier 2, on both) in one process, then timed in turns: each round runs every form over
 /// every file, tier 1 then tier 2, and each form keeps its best round. In turns, so the
 /// machine's load falls on every form alike.
@@ -867,7 +867,7 @@ fn json_tier2_by_word() {
 fn json_optimizer_bench() {
     use std::sync::atomic::Ordering::Relaxed;
     let rounds: usize = std::env::var("RERAIL_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
-    let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "14-json".to_owned());
+    let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "json-rfc".to_owned());
     let paths = files_in("RERAIL_JSON_CORPUS");
     let files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
     let bytes: usize = files.iter().map(Vec::len).sum();
@@ -927,11 +927,11 @@ fn json_optimizer_bench() {
 /// files, each with comments put between tokens (after a leaf outside a string, after a string,
 /// or at the start), where tree-sitter-json's own tree says the tokens end. Step 15's nodes equal
 /// tree-sitter-json's on every one, comments placed where it places them. Comments holding a
-/// quote, which step 15 sends to tree-sitter by design, are counted apart.
+/// quote, which `jsonc` sends to tree-sitter by design, are counted apart.
 #[test]
 #[ignore = "needs JSONTestSuite and a corpus: run by name with RERAIL_JSON_SUITE and RERAIL_JSON_CORPUS"]
 fn jsonc_comments_equal_tree_sitter() {
-    let jsonc = form("15-jsonc");
+    let jsonc = form("jsonc");
     let mut paths: Vec<PathBuf> = files_in("RERAIL_JSON_SUITE").into_iter().filter(|p| base(p).starts_with("y_")).collect();
     paths.extend(files_in("RERAIL_JSON_CORPUS").into_iter().filter(|p| std::fs::metadata(p).is_ok_and(|m| m.len() < 100_000)));
     const CLEAN: [(&str, bool); 8] = [("// c", true), ("//", true), ("// a, [1] é\r", true), ("/* c */", false), ("/**/", false), ("/***/", false), ("/* a * b / c */", false), ("/*\n{\n*/", false)];
@@ -1013,7 +1013,7 @@ fn json_shapes() {
                 (name, c)
             })
             .collect(),
-        Err(_) => ["14-json", "15-jsonc"].iter().map(|&n| (n.to_owned(), form(n))).collect(),
+        Err(_) => ["json-rfc", "jsonc"].iter().map(|&n| (n.to_owned(), form(n))).collect(),
     };
     for (name, c) in &forms {
         let name = name.as_str();
@@ -1105,7 +1105,7 @@ fn json_tier1_vectors_equal_the_interpreter() {
         b"{\"a\": [1, 2.5e3, true]}", b" ", b"\"", b"\\", b"x", b"\\u00e9", b"\xc3\xa9", b"\xe2\x82\xac", b"\xf0\x9f\x98\x80",
         b"\x80", b"\xc3", b"\xed\xa0\x80", b"\xf5\x80\x80\x80", b"\xef\xbb\xbf", b"\x00", b"\\ud83d\\ude00",
     ];
-    for name in ["14-json", "15-jsonc"] {
+    for name in ["json-rfc", "jsonc"] {
         let c = form(name);
         let mut rng = rerail_compiler::ladder::Rng(0x9e37_79b9_7f4a_7c15);
         let mut files: Vec<Vec<u8>> = Vec::new();
@@ -1159,7 +1159,7 @@ fn json_tier1_vectors_equal_the_interpreter() {
 /// check of it, and no value differs for it through block 0.
 #[test]
 fn json_edge_values_are_its_ends_checks() {
-    for name in ["14-json", "15-jsonc"] {
+    for name in ["json-rfc", "jsonc"] {
         let c = form(name);
         let (prefix, stripped) = native_cpu_block::host_stripped(&c.native.block_programs[0]).expect("the host strips the byte order mark");
         assert_eq!(prefix, b"\xef\xbb\xbf", "{name}: the prefix");
@@ -1177,22 +1177,22 @@ fn json_edge_values_are_its_ends_checks() {
         // A ratchet on the values the edge part makes again, apart from the body's size: lower
         // it as the compiler improves. (It was a third of the body's; the body shrank as the
         // number and `\u` checks went to tier 2, 0398 and 0399, and the edge's count less.)
-        let most = if name == "14-json" { EDGE_VALUES_14 } else { EDGE_VALUES_15 };
+        let most = if name == "json-rfc" { EDGE_VALUES_14 } else { EDGE_VALUES_15 };
         assert!(at.len() <= most, "{name}: {} of {} differ (budget {most})", at.len(), edge.len());
     }
 }
 
-/// The values an edge block differs in (a ratchet): 14-json's 90 before 0389, 47 after, 41 with
+/// The values an edge block differs in (a ratchet): json-rfc's 90 before 0389, 47 after, 41 with
 /// its number and `\u` checks tier 2's.
 const EDGE_VALUES_14: usize = 41;
-/// 15-jsonc's: 63 before 0389, 64 after, 56 with its checks tier 2's.
+/// jsonc's: 63 before 0389, 64 after, 56 with its checks tier 2's.
 const EDGE_VALUES_15: usize = 56;
 
 /// JSON's tier 1 has no general body (0383): its full body runs on the edge blocks too, with
 /// its edge part, as simdjson's stage 1 runs one body and a `finish()`.
 #[test]
 fn json_tier1_has_no_general_body() {
-    for name in ["14-json", "15-jsonc"] {
+    for name in ["json-rfc", "jsonc"] {
         let c = form(name);
         for (k, pass) in c.parser.tier1.passes.iter().enumerate().filter(|(_, p)| !p.back) {
             assert!(!pass.general, "{name}: tier 1's pass {k} calls a general body");
@@ -1205,7 +1205,7 @@ fn json_tier1_has_no_general_body() {
 /// classes all in it, and none looked up again in a place inside the own part.
 #[test]
 fn json_classes_are_one_pair_a_place() {
-    for name in ["14-json", "15-jsonc"] {
+    for name in ["json-rfc", "jsonc"] {
         let c = form(name);
         let native = &c.native.block_programs[0];
         let state = native_cpu_block::State::of(native);
@@ -1227,7 +1227,7 @@ fn json_gated_regions_equal_the_interpreter() {
         b"1", b"-12.5e+30", b"0", b"01", b"1.", b"-", b"2e", b"123456789012345678901234567890", b"\"\\u00e9\"", b"\"\\ud83d\\ude00\"",
         b"\"\\u12\"", b"true", b"nul", b"[1,2]",
     ];
-    for name in ["14-json", "15-jsonc"] {
+    for name in ["json-rfc", "jsonc"] {
         let c = form(name);
         // Each region behind its branch in the full body (one: the ASCII test is a branch in it,
         // 0364), none computed in place. A region with a test before its gate's has two.
@@ -1264,7 +1264,7 @@ fn json_gated_regions_equal_the_interpreter() {
 #[test]
 #[ignore = "a probe: run by hand with RERAIL_JSON_FILES"]
 fn jsonc_refusals_by_reason() {
-    let c = form("15-jsonc");
+    let c = form("jsonc");
     let list = std::fs::read_to_string(std::env::var("RERAIL_JSON_FILES").expect("set RERAIL_JSON_FILES")).expect("reads");
     let mut reasons: std::collections::BTreeMap<String, (usize, String)> = Default::default();
     for path in list.lines().filter(|l| !l.is_empty()) {

@@ -3858,7 +3858,7 @@ The tier 2 ratchets rose: per rule, 371 states and 8,860 words to 380 and 9,348;
 2,590 arms to 271 and 2,621.
 
 **Seen (2026-11-12), decision 0130.** The engine's parser (`syntax.rs`) and the lean parser (`lean.rs`) read a
-`.test` … `.end` block into a `test_block` node. The Bitlex grammar (`rr_syntax/bitlex_ladder/21-named-only.bitlex`,
+`.test` … `.end` block into a `test_block` node. The Bitlex grammar (`rr_syntax/bitlex_ladder/21-named-only.bitlex`, now `rr_parser/rr.bitlex` (0499),
 compiled by `rerail-rr-parser`) does not: it reads each of the block's lines as a setting and does not refuse the
 file, so its tape differs from the engine's on a file with tests. The compiled parser is on no read path yet
 (`transducer/packed.rs`), and its corpus test (`corpus_tapes_are_the_engines`) is ignored and was not run.

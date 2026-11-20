@@ -32,6 +32,15 @@ second pass over the source. In a profile of `twitter.json` it was about 13% of 
    the file's coordinates: the host puts a stripped prefix (the byte order mark) back, and a prefix holds no newline.
    So no offset is added. In a debug build the run checks the index against the scan.
 
+5. **Amended 2026-11-20 (0499): only where tier 1's body stores them.** A token loop's tier 1 (`.rr`'s, 0177) has a
+   body that makes no mask, as the lean lexer makes none: the loop reads each mask from the bytes where it needs it,
+   and no row is stored for an output the record pass makes (`cpu_unstored`). The newline output shares its value
+   with a line comment's end rule, which the loop reads from the bytes, so its rows were never stored. The index
+   made from those words was empty, and the debug check caught it on the AOT test's `.rr` grammar (`"\n"`).
+   `CompiledBlock::newlines` is now the output only where the CPU's body stores its rows. A token loop's tier 1
+   offers none, and its index is the scan's. `tier2_tests::the_newline_output_is_every_newline` checks both: JSON's
+   forms store it, the `.rr` grammar does not.
+
 ## Measured
 
 `json_tests::simdjson_form_against_simdjson`, `--profile profiling`, arm64, one thread, load about 44:

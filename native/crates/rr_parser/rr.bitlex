@@ -1,4 +1,16 @@
-# `.rr`, step 22: a rule file's tests.
+# `.rr`, the rule language, as the engine's parser (logic/rr/syntax.rs, the reference) reads it, with a named-only
+# tape (docs/parser-generators/32-named-only-rr-tapes.md). It reads:
+#   - `//` and `/* */` comments, `#include "…"` lines;
+#   - settings (`.mode x`, `.scope dirs "a", "b"`: a word and the rest of its line), declarations
+#     (`.decl r(a: number, b: flat<x>) inline`) and the other directives;
+#   - clauses (`r(x, "a", 1), s(_) :- t(x, f(y), k: z), u().`), with strings, backtick literals, `!`,
+#     `must`/`may`, arithmetic, comparisons, disjunctions and groups, a parenthesized term at a literal's start;
+#   - aggregates (`n = count : { s(_) }`, `m = sum v by k sep "," : { t(k, v) }`, `min (…) : { … }`), an
+#     aggregate as another's value;
+#   - violations, edits, JSON objects and policy documents (nested to any depth), a `.violation`'s continuation
+#     words;
+#   - floats, `\u` escapes in strings, a column in braces that is no single name;
+#   - a rule file's tests:
 #
 #   .fixtures app
 #       .fixture "a.py" ```x = 1```
@@ -8,15 +20,13 @@
 #       .expect B101 at "a.py":1
 #   .end
 #
-# The engine's parser (logic/rr/syntax.rs) is the reference (decision 0130). A `.test` or a
-# `.fixtures` block runs to its `.end`; its statements are a file's, but for another block:
-# blocks do not nest. Its `.`, its word, `uses` and its `,`, and the `.end` are implied; its
-# name, `exactly` and each set `uses` names are stored. What this step adds:
+# A `.test` or a `.fixtures` block runs to its `.end` (decision 0130); its statements are a file's, but for
+# another block: blocks do not nest. Its `.`, its word, `uses` and its `,`, and the `.end` are implied; its
+# name, `exactly` and each set `uses` names are stored:
 #   - `test_tail`, `fixtures_tail`: the setting opened at the `.` is the block.
 #   - `end_on`: the `.` of a `.end`, which ends a block's statements. Not hidden: a `.end`
 #     outside a block refuses the file, as the engine refuses it.
 #   - `in_block`: a block's statements are read with it set, and no block opens there.
-# The rest is step 21's.
 
 lexer rr
 

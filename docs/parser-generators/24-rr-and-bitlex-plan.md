@@ -287,6 +287,9 @@ The other is a run of four backticks or more.
 
 ## 3. The `.rr` ladder
 
+> **Since decision 0499 (2026-11-20)** only the last step is kept: `native/crates/rr_parser/rr.bitlex`, checked by
+> `rr_tests` against the engine's parser. The steps below are its history.
+
 The steps are in `native/crates/rr_syntax/bitlex_ladder/`. Each one is a `.bitlex` file and passes the ladder tests
 before the next one starts. The last step is the whole language, checked against the
 reference on the corpus.

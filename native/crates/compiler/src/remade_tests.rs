@@ -107,8 +107,8 @@ fn remade_positions_payoff() {
 #[test]
 fn a_word_made_value_reads_made_operands() {
     use crate::block::BlockOp;
-    let source = std::fs::read_to_string(format!("{}/14-json.bitlex", crate::ladder::DIR)).expect("the ladder's JSON");
-    let c = crate::ladder::compile_step("14-json", &source);
+    let source = std::fs::read_to_string(format!("{}/json-rfc.bitlex", crate::ladder::DIR)).expect("the ladder's JSON");
+    let c = crate::ladder::compile_step("json-rfc", &source);
     let mut p = c.program.block_programs[0].clone();
     let prefix = p.ops.iter().position(|op| matches!(op, BlockOp::Prefix(..))).expect("a prefix");
     p.ops[prefix] = BlockOp::Const(0);

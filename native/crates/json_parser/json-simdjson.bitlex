@@ -9,10 +9,10 @@
 # compiler splits the tokens (the user, 2026-11-18): tier 1 records where each token starts,
 # and tier 2 finds its end and reads a string's parts, as simdjson's stage 2 does.
 #
-# From step 14:
-# Step 14: JSON as simdjson accepts it: RFC 8259, every byte valid UTF-8.
+# From `json-rfc.bitlex`:
+# JSON as simdjson accepts it: RFC 8259, every byte valid UTF-8.
 #
-# After the made-up languages, the same constructs for a real one. It accepts what simdjson's
+# It accepts what simdjson's
 # parser accepts and refuses what it refuses (a refused file goes to tree-sitter), and writes
 # tree-sitter-json's named nodes, as the engine's named-only tapes hold them: the tokens
 #   '{' '}' '[' ']' ',' ':' '"'
