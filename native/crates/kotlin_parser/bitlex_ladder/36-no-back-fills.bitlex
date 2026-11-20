@@ -453,10 +453,6 @@ mark recv       = rstart & decl_run, before simple_identifier | backtick_name (s
 mark dotted     = code & dot & decl_run | del_brace, before "." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), before "{"
 # A function type's receiver's first name (`fn_recv`): where a type starts, the type rule's
 # decision, as the lean parser's at the type's first token.
-# A function type's receiver's first name: names, dots and type arguments from it to a `.`
-# before a `(`.
-mask frecv_at   = w & ~prev(w | dot | text("<") | text(">")) & ~text("suspend")
-mark fn_recv    = frecv_at, before simple_identifier (simple_identifier | "." | "<" | ">")* "." "("
 # A decimal number with a fraction, an exponent or an `f`: a real one.
 mark real       = empty, at integer_literal when count(frac_dot | e_at | f_at) at least 1
 # A backtick name before `::`: no rule takes it, so the file is refused where it holds. It
@@ -526,6 +522,9 @@ mark named      = tokens simple_identifier "=" | "+=" | "-=" | "*=" | "/=" | "%=
 mark named      = tokens "!" with semi "in" | "is"
 # An enum class's `enum`, a soft word elsewhere.
 mark enum_class = tokens "enum" "class"
+# A function type's receiver's first name: names, dots and type arguments from it to a `.`
+# before a `(`; not `suspend`, and not after a `.`, `<` or `>`.
+mark fn_recv    = tokens after ~("." | "<" | ">") simple_identifier (simple_identifier | "." | "<" | ">")* "." "(", unless before "suspend"
 # A property's accessor: its `get` or `set` after a line break, or on the line of a visibility
 # word after one, as the lean parser's `declaration_ahead` asks `accessor_ahead` at the token: where
 # no `.` or `:` follows it, and, for `get`, no `(` with arguments.

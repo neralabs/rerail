@@ -372,3 +372,18 @@ share their first element and are now one, so the mark orders stay within 32.
 
 The corpus is unchanged (448 the same, 0 differ). The Kotlin (52) and `kotlin_aot` (4) tests
 pass. The block program went from 1,495 operations to 1,471.
+
+## Item 3, `fn_recv`: a token mark (2026-11-19)
+
+`frecv_at` was a word's start not touching a `.`, `<` or `>` and not `suspend`, at every byte.
+It is now `tokens after ~("." | "<" | ">") simple_identifier … "." "(", unless before "suspend"`.
+The mark is hidden, so it is asked only where a type starts, and there a spaced `< A.()` does not
+come. The corpus is unchanged (448 the same, 0 differ). The Kotlin (52) and `kotlin_aot` (4)
+tests pass. The block program went from 1,471 operations to 1,450.
+
+What is left of item 3 is the declaration's run: `recv`, `dotted` and the escape "a nullable
+receiver" all read `decl_run`, a fill from `fun`, `val` or `var` to the declaration's stop, with
+`tp_body` and `rstart` under it. The lean parser has no such run. `receiver_end` is a forward scan
+from the token after the keyword, taken by the declaration's rule. That is one change for the
+three: the receiver becomes the rule's lookahead at its token. Stage 1's marks' cone is now 329
+values, from 512, and 38 of those are `recv`'s own.
