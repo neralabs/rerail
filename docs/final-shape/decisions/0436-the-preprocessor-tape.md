@@ -141,7 +141,7 @@ host never reads a length or a verdict to decide the next step. Its passes, in o
    scatter; it stops when nothing expands.
 7. **Output:** count, prefix sum, scatter.
 
-The 0421 spike (`rerail_c_pp::stream::parallel`, host Rust) stays as a cross-check of the
+The 0466 spike (`rerail_c_pp::stream::parallel`, host Rust) stays as a cross-check of the
 passes' arrays (user, 2026-11-18). The serial pass is the reference for the output.
 
 ## Requirements, each held by a test

@@ -37,7 +37,7 @@ pub enum TokenElem {
     Without(String),
 }
 
-/// A depth a run counts (`(C)* nest (O to C) …`, Q271), as the lean parsers' forward scans count
+/// A depth a run counts (`(C)* nest (O to C) …`, Q326), as the lean parsers' forward scans count
 /// one (`type_args_end`, `lambda_params_end`): a token of the run among `open`'s choices goes one
 /// deeper, one among `close`'s one out. The elements after the run are tried only where every
 /// depth is 0, and a closer where its depth is 0 ends the run: it fails there unless they hold.
@@ -2421,7 +2421,7 @@ mod tier2_tests {
             Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone(), word(",")])], vec![], vec![])], vec![word("->")]])], false))
         );
         assert!(parse("lexer t\nmark k = tokens \"{\" (name | \",\")* \"->\"\n").is_ok());
-        // A run that counts depths (Q271): each `(O to C)` one; none, a token both, a `~`: refused.
+        // A run that counts depths (Q326): each `(O to C)` one; none, a token both, a `~`: refused.
         let angle = Nest { open: vec![word("<")], close: vec![word(">")] };
         let paren = Nest { open: vec![word("(")], close: vec![word(")")] };
         assert_eq!(

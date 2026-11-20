@@ -1,4 +1,4 @@
-// ukl/grid.h: a persistent grid's device-wide barrier, and the primitives written as its phases (decision 0460 §4).
+// ukl/grid.h: a persistent grid's device-wide barrier, and the primitives written as its phases (decision 0468 §4).
 //
 // A persistent grid is G threadgroups resident together, each walking its own share of the work. Between two of its
 // phases, every group waits for every other at `ukl_grid_barrier`: the writes of every group before it are seen by

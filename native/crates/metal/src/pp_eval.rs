@@ -1,7 +1,7 @@
 //! The preprocessor's evaluator over tapes (decision 0436), plain MSL passes (`pp_eval.metal`).
 //!
 //! A unit is its files: each a source's bytes and its preprocessor tape (`rerail_c_pp::tape`,
-//! format 16, decision 0460 §1), documents of the slab residency. The evaluator reads them where
+//! format 16, decision 0468 §1), documents of the slab residency. The evaluator reads them where
 //! they are: the unit's documents gathered into one slab (`slabs::gather`), their views listed
 //! (`Unit::of`). Writing a tape into its room is its loader's (the store's load, 0353 step 4a;
 //! a test's stand-in for it): `placement` says where the parts go and makes the view. The host

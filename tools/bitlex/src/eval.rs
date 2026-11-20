@@ -1443,7 +1443,7 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
 mod run_tests {
     use super::*;
 
-    /// A run that counts depths (Q271), as `type_args_end` does: the rest only where `<` and `(`
+    /// A run that counts depths (Q326), as `type_args_end` does: the rest only where `<` and `(`
     /// are closed, and a closer at depth 0 ends the run.
     #[test]
     fn a_run_counts_its_depths() {

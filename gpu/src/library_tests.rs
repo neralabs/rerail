@@ -611,7 +611,7 @@ fn grid_ctl() -> crate::device::Buffer {
     buffer_of(&[0u32; 3]).unwrap()
 }
 
-/// R6 of decision 0460: 10,000 grid barriers in a row, at 1, 8 and 32 groups, each round's reads seeing every
+/// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups, each round's reads seeing every
 /// group's writes before it, and no barrier failed.
 #[test]
 fn grid_barriers_see_every_groups_writes() {
@@ -658,7 +658,7 @@ fn a_grid_past_residency_fails_its_barrier() {
     assert_eq!(c[2], 1, "{}: a grid of {groups} groups of {lsz} met its barrier", crate::device::backend());
 }
 
-/// R5 of decision 0460: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
+/// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
 /// boundaries, at 1, 8 and 32 groups, its count read on the device.
 #[test]
 fn the_grid_scan_equals_the_host() {

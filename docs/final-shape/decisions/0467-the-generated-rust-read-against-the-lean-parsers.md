@@ -1,4 +1,4 @@
-# 0431: The generated Rust read against the lean parser's, and the gaps closed in turn
+# 0467: The generated Rust read against the lean parser's, and the gaps closed in turn
 
 Status: decided (2026-11-19). Follows 0429 ("the generated Rust beside the lean parser's") and
 0430. The user: "evaluate the Rust code generated. Is it reasonably idiomatic and does it have

@@ -1,4 +1,4 @@
-# 0421: The preprocessor as parallel passes: a spike of the shape
+# 0466: The preprocessor as parallel passes: a spike of the shape
 
 Status: draft (2026-11-18). Follows 0408, whose gate missed. A spike: no product path calls it.
 The placement of the passes (transducer side programs, or `.rr` rules for the directives) waits

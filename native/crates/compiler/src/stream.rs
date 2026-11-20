@@ -973,7 +973,7 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0 || (e.offset == 0 && !e.end) || (e.offset == -1 && e.not && e.end)) && m.elems.iter().filter(|e| e.offset >= 0).rev().skip(1).all(|e| !e.end);
         let offsets = offsets && after;
         // A run's depths only on a run: each side of kinds and words, its counter below
-        // `NESTS`, each counter with an opener and a closer (Q287).
+        // `NESTS`, each counter with an opener and a closer (Q326).
         let nests = m.elems.iter().all(|e| {
             let counters = |open: bool| e.nests.iter().filter(|n| n.open == open).fold(0u8, |a, n| a | 1 << n.counter);
             (e.run || (e.nests.is_empty() && e.ending.is_none()))
@@ -1028,7 +1028,7 @@ pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: Op
 fn token_follows(rest: &[&crate::program::TokenElem], at: Option<usize>, last: Option<usize>, codes: &[u32], after: &dyn Fn(usize) -> Option<usize>) -> bool {
     let Some((e, tail)) = rest.split_first() else { return true };
     if e.run {
-        // Its depths (Q287): the rest only where each is 0; a closer at 0 ends the run.
+        // Its depths (Q326): the rest only where each is 0; a closer at 0 ends the run.
         // Its `ending` (Q274): the rest only where its last record is one the test takes.
         let mut depth = [0u32; crate::program::NESTS];
         let (mut at, mut last) = (at, last);

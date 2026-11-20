@@ -1,7 +1,7 @@
-# 0460: The preprocessor's device passes read in place, in one block, in a fixed handful of launches
+# 0468: The preprocessor's device passes read in place, in one block, in a fixed handful of launches
 
 Status: accepted (2026-11-19); being built in the steps below. Revises 0448 (§2's memory, §3's
-passes) and 0436 (R1, the tape's format). Numbered past the highest in any worktree (0459).
+passes) and 0436 (R1, the tape's format). Numbered past the highest in any worktree (0464).
 
 The user, on 0448 as built:
 
@@ -141,7 +141,7 @@ with the unit, because each primitive's number of levels was chosen by its capac
 |---|---|
 | final-rerail-shape at 7d8d2afa8 (UKL and the device layer, 0426, 0427, 0435) | Yes (9398ce1d7) |
 | The hub at 5fbc02057 | Yes (ef1042656) |
-| CUDA-support's 9f34a5480 (the label passes' runner on the lane) | Not merged: 14 hunks in the label passes' runner, which final-rerail-shape rewrote since (0447, 0449, 0459). It is for the line that holds both. These passes need none of it |
+| CUDA-support's 9f34a5480 (the label passes' runner on the lane) | Not merged: 14 hunks in the label passes' runner, which final-rerail-shape rewrote since (0447, 0449, 0464). It is for the line that holds both. These passes need none of it |
 | Native-and-GPU-strata at a5c411cb8 (0445's row blocks, 0450) | Not merged: its new CLIF backend operations (coherent loads and stores, atomic `or`, compare-and-swap, fences) are written for the MSL backend, which UKL's replaced here. Merging means porting them to `clif/src/ukl.rs` and regenerating the reads, which is for the line that holds both. These passes use `Block`, the pool and the slabs, all already here |
 
 ## Requirements, each held by a test

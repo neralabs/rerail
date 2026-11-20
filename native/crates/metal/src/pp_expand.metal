@@ -1569,7 +1569,7 @@ inline Vo px_va_opts(Ux u, Ar a, PpDef d, device PxList& L, uint lane) {
 // --- The built-ins ---------------------------------------------------------------------------------
 
 // The physical line of tape node `g` (from 1): by its file's tape's newline index (decision
-// 0460 §2).
+// 0468 §2).
 inline uint px_line(Ux u, uint g) {
     At at = node_at(u.files, u.data, u.bases, u.n_files, g);
     return tape_line_of(at.t, node_start(at.t, at.i)) + 1u;

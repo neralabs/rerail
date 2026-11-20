@@ -15,7 +15,7 @@ fn same<T: PartialEq + std::fmt::Debug>(a: T, b: T, what: impl std::fmt::Display
 /// Files of the corpora (`RERAIL_PP_COUNT` of each language, 40 by default), each with its tape.
 /// A unit of `files` (each a source and whether it is C++), as the evaluator reads it: each
 /// file's format 16 tape (`image_16`) and its source placed in the slab residency, where the
-/// device reads them (decision 0460 §1). The bytes written into each room stand in for the
+/// device reads them (decision 0468 §1). The bytes written into each room stand in for the
 /// store's load of a stored tape (0353 step 4a).
 fn place(files: &[(&[u8], bool)]) -> Unit {
     use sha2::{Digest as _, Sha256};
@@ -55,7 +55,7 @@ fn corpus_in() -> Vec<(Vec<u8>, Vec<u8>, bool)> {
     out
 }
 
-/// R2 of decision 0460: the evaluator reads its files where the residency placed them. Its source
+/// R2 of decision 0468: the evaluator reads its files where the residency placed them. Its source
 /// copies no tape and no source into a buffer of its own (0448's `Unit::load` did), reads no tape
 /// through a reader of its own (the kernels' reads are the CLIF reads), and keeps no line index of
 /// its own (R3: `__LINE__` is the tape's newline index's).
@@ -75,7 +75,7 @@ fn the_evaluator_copies_no_tape() {
     assert!(msl.contains("clif_tape_start") && msl.contains("clif_tape_line"), "the evaluator reads through the CLIF reads");
 }
 
-/// R4 of decision 0460: an evaluation's stores are at offsets in one block, its arena
+/// R4 of decision 0468: an evaluation's stores are at offsets in one block, its arena
 /// (`pp_blocks::Arena`), leased from the GPU pool within the one budget: neither the front passes
 /// nor the expansion makes a buffer of its own.
 #[test]

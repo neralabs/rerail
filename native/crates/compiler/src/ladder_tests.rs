@@ -124,7 +124,7 @@ tree kotlin {
     assert_eq!(check_documents("drops", &c, b"pai.*\n/ ", &[], &fixed, &|_, _, _, _| None), None);
 }
 
-/// A token mark's run that counts depths (Q287), as the lean parser's `type_args_end` does: a
+/// A token mark's run that counts depths (Q326), as the lean parser's `type_args_end` does: a
 /// `<` opens type arguments where its `>` closes the depth and a `(` follows, with `<` `>` and
 /// `(` `)` counted between. The reference's nodes equal the interpreter's and Cranelift's.
 #[test]

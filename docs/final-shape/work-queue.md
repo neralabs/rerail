@@ -3033,7 +3033,7 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - **Waits on the user:** stage M (the pass-through mask, which would also shorten the CPU's
   path), and whether the device keeps expansion at all. Question 3 below.
 
-### Q289. (Q42 until 2026-11-19: Q42 is the store test's) The preprocessor as parallel passes (0421): a spike of the shape
+### Q328. (Q42 until 2026-11-19: Q42 is the store test's) The preprocessor as parallel passes (0466): a spike of the shape
 
 - **Done** (2026-11-18): `rerail_c_pp::stream::parallel`, P0–P4 as passes over arrays, the serial
   pass's own expansion for each invocation alone. Both corpora under clang's profile: 3,132 of
@@ -3101,7 +3101,7 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
    than 100× slower than one core: a thread's chain of dependent loads, about 9 µs a token.
    Open: (a) stop the device path for expansion here, keeping 0408's code as the measured basis;
    (b) build stage M (the pass-through mask) for the CPU's path only; (c) both.
-4. **Q289: where the parallel preprocessor's passes live.** The spike (0421) shows the shape holds
+4. **Q328: where the parallel preprocessor's passes live.** The spike (0466) shows the shape holds
    on both corpora. Options: (a) the passes as a transducer side program (column operations:
    scans, sorts by key, searches, gathers, scatters), the directives' fixpoint in the same ops;
    (b) the directives' level (definitions by position, tests, activity, the include tree) as
@@ -5671,7 +5671,7 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Done when**: the four pass, or an assertion is shown to state a behaviour the observer no longer has on
   purpose, and is changed with the reason.
 
-### Q287. (Q222 on Swift-Kotlin-Scala-support, Q271 until the merge of final-rerail-shape) A run of tokens that counts a depth, as `type_args_end` does
+### Q326. (Q222 on Swift-Kotlin-Scala-support, Q326 until the merge of final-rerail-shape) A run of tokens that counts a depth, as `type_args_end` does
 
 - **What**: a token run (`(A | B)*`, 0416) ends at the first place its rest holds. The lean
   parser's `type_args_end` counts `<` and `>` (and `(`, `)`), and ends where the depth closes.
@@ -5800,7 +5800,7 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Done when**: the two JSON steps run on Metal and equal the interpreter, including files that
   start with the mark, and the test passes.
 
-### Q288. (Q281 until the merge of final-rerail-shape) The journal's wait bound (Q184) was dropped by a merge: `since_within` ignores `wait`
+### Q327. (Q281 until the merge of final-rerail-shape) The journal's wait bound (Q184) was dropped by a merge: `since_within` ignores `wait`
 
 - **What**: 89f4abfec (Q184) made `journal::fsevents::since_within` answer `Lost` once the
   journal took longer than the caller's `wait` (the observer's bound, at least 2 ms a root),

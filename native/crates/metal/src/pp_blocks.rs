@@ -7,7 +7,7 @@
 //! Scratch is placed when a block is made, for a capacity the host knows (the arena's), so
 //! encoding never allocates. A count past the capacity is the caller's to refuse before.
 //!
-//! Every store an evaluation's passes use is at an offset in one block, its arena (decision 0460
+//! Every store an evaluation's passes use is at an offset in one block, its arena (decision 0468
 //! §3, `Arena`): leased once a run within the one budget, and bound at each store's offset.
 
 use crate::Error;
@@ -20,7 +20,7 @@ use std::rc::Rc;
 /// A store's alignment in its arena: every binding offset and every type's.
 const ALIGN: usize = 256;
 
-/// An evaluation's arena (decision 0460 §3): one `rerail_blocks::Block`, leased from the GPU pool
+/// An evaluation's arena (decision 0468 §3): one `rerail_blocks::Block`, leased from the GPU pool
 /// within the one budget (`lease_block_within`). Its stores are laid out as the passes' structures
 /// declare them (`zeroed`, `from_slice`), then the block is leased once (`lease`), before any pass
 /// is encoded; a store's initial words are written into it then. A rung is a larger arena.
@@ -161,7 +161,7 @@ impl Bound for metal::Buffer {
 /// (`<ukl/reads/tape.h>`, the view read where the batch holds it), the front passes
 /// (`pp_eval.metal`), these blocks, the work queue (`work_queue.metal`) and the expansion
 /// (`pp_expand.metal`); preprocessed for Metal once (`rerail_ukl::metal_source`, decision 0440
-/// §3.3) until the passes are UKL themselves (decision 0460 §5).
+/// §3.3) until the passes are UKL themselves (decision 0468 §5).
 pub fn source() -> Result<&'static str, Error> {
     static SOURCE: std::sync::LazyLock<Result<String, String>> = std::sync::LazyLock::new(|| {
         let text = format!(

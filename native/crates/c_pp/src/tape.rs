@@ -160,7 +160,7 @@ pub fn image(src: &[u8], opts: Options) -> Vec<u8> {
     }
 }
 
-/// The tape as format 16 (decision 0460 §1): the same nodes as `image`'s, written in one pass
+/// The tape as format 16 (decision 0468 §1): the same nodes as `image`'s, written in one pass
 /// with the source's newline index. Every reader reads this one; `image`'s format 15 is the
 /// Bitlex grammar's comparison (0436 R4) until its tier 2 writes format 16 (0426).
 pub fn image_16(src: &[u8], opts: Options) -> Tape16 {

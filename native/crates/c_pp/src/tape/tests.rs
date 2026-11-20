@@ -28,7 +28,7 @@ fn check(src: &[u8], opts: Options) -> Result<(), String> {
     sixteen(src, opts, &v)
 }
 
-/// The format 16 tape (0460 R1) has format 15's nodes, each its kind, field, bytes and subtree,
+/// The format 16 tape (0468 R1) has format 15's nodes, each its kind, field, bytes and subtree,
 /// and its newline index gives each node's line.
 fn sixteen(src: &[u8], opts: Options, v: &View<'_>) -> Result<(), String> {
     use rerail_tape_format::tape::Tape;
@@ -72,7 +72,7 @@ fn the_pp_tape_kinds_are_numbered_as_named() {
     }
 }
 
-/// R1 (0460): the tape is a format 16 image with its newline index, the nodes format 15's
+/// R1 (0468): the tape is a format 16 image with its newline index, the nodes format 15's
 /// (`image`, the Bitlex grammar's comparison), its root the file.
 #[test]
 fn the_pp_tape_is_a_format_16_image() {

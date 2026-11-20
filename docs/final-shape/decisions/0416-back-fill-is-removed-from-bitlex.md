@@ -170,13 +170,13 @@ tokens share a mask (`dotted`, `generic`).
 
 The forward scans differed from the lean parser's in two places:
 - A run stopped at the first place its rest held, not where a depth closes (`type_args_end`
-  counts `<` and `>`). Now it counts them (`nest`, below, Q287).
+  counts `<` and `>`). Now it counts them (`nest`, below, Q326).
 - A run passes line breaks: they are no tokens. The annotation before `if` / `when` ran to
   a line break before. The lean parser reads tokens too, and passes them: on a line break
   before the `if`, and a declaration after, the tapes are the same (Q272). An annotation before
   any other expression is now told as `declaration_ahead` tells it (`ending`, below, Q274).
 
-## A run's depths: `nest` (Q287)
+## A run's depths: `nest` (Q326)
 
 The lean parser's forward scans count brackets. `type_args_end` keeps a depth of `<` and one of
 `(`: it ends at the `>` that closes the first `<`, and gives up at a `)` with no `(`.
