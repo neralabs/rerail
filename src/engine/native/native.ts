@@ -252,6 +252,13 @@ export interface NativeGitIgnoreMatcher {
    * ignored folder names the folder's pattern. Null when Git does not ignore it; throws as `ignored` does.
    */
   ignoredBy(relativePath: string, isDirectory: boolean): NativeGitIgnoreMatch | null;
+  /**
+   * Whether a matcher opened now at this root would read the rules this one read: the configuration, read again as Git
+   * reads it (the system, global and repository files, their includes and conditions), chooses the same excludes file
+   * and pattern case, and the root `.gitignore`, `info/exclude` and the excludes file are as this matcher read them.
+   * When it would, each folder's `.gitignore` is read again as the next path enters the folder.
+   */
+  sourcesUnchanged(): boolean;
 }
 
 /** A pattern of Git's exclude stack that ignores a path (`NativeGitIgnoreMatcher.ignoredBy`). */
@@ -458,7 +465,12 @@ export interface NativeTreeWatcher {
    * network or remote file system, a WSL path, past Linux's watch budget, Windows with no oplock, an OS with no
    * adapter). Watching a root already watched replaces its folder set.
    */
-  watch(root: string, folders: string[]): boolean;
+  watch(root: string, folders: readonly string[]): boolean;
+  /**
+   * Watches `root` as `watch` does, but only with room the Linux watch budget has left: a root `watch` asks for that
+   * needs the room takes it, and this root's watch ends. Elsewhere, as `watch`. An engine built before it lacks it.
+   */
+  watchSpare?(root: string, folders: readonly string[]): boolean;
   /** Stops watching `root` and releases every handle on it, so `git worktree remove` and renames work at once. */
   unwatch(root: string): void;
   /** Takes every notice since the last take, at most one per root. Never blocks on the OS. */

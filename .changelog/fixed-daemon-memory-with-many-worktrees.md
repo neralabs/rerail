@@ -1,0 +1,1 @@
+The daemon's first session in a repository with many worktrees takes about half the memory it took: its walk of the other worktrees no longer opens rule checking in each of them, and sessions share each checkout's Git ignore rules while those stay unchanged. Each later session still adds about as much memory as before.
