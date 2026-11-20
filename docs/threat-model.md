@@ -325,7 +325,8 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   serves this computer alone, on loopback, on T9's three conditions.
 - The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
   and created with `wx` (`src/engine/catalog/repository-identity.ts`).
-- A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
+- The default ledger root, `<checkout>/.rerail/sessions`, gets a `.gitignore` of `*`, rewritten whenever it differs
+  unless another account's Rerail keeps it (T8), and nothing in a ledger root in `.rerail/` is written
   through a symlink (`src/engine/storage/ledger-paths.ts`).
 
 </details>
@@ -597,9 +598,12 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
 - **Erasure.** Database writers use `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM`, and checkpoints
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
-  checkout's ledgers and held steers, and `daemon.log`, then rewrites the database file. Daemon and sessions keep
-  running: ledgers and `daemon.log` are rewritten in place, never through a symlink, without losing concurrent
-  appends, and held steers under their hook's lock. A failing step (`VACUUM` included) is reported, the rest still run, and the command exits 1.
+  checkout's ledgers and held steers, and `daemon.log`, then rewrites the database file. In a records folder or
+  held-steer folder this account may not list (one another account shares), it scrubs those of the sessions the
+  database records and names the folder in its summary; what a session it does not record left there stays. Daemon
+  and sessions keep running: ledgers and `daemon.log` are rewritten in place, never through a symlink, without losing
+  concurrent appends, and held steers under their hook's lock. A failing step (`VACUUM` included) is reported, the
+  rest still run, and the command exits 1.
   `rerail update` suggests it once.
 - **Removing everything.** `rerail install --remove --delete-data` deletes the databases, every `~/.rerail-clean-*`
   backup, the content cache and every recorded checkout's `.rerail/sessions`, rather than backing them up, then
@@ -667,18 +671,25 @@ maker's alone.
 - Every folder from the innermost `.rerail` down is checked with `lstat`; a symlink or non-folder is refused. Ledger
   and pending-steer files open without following a symlink (`openNoFollow`).
 - A refusal names the path in the daemon log, and the hook fails open.
-- `ignoreInGit` rewrites `.gitignore` whenever it is not Rerail's own `*` file, so a planted `!*` cannot expose ledgers
-  to `git add -A`.
+- `ignoreInGit` rewrites `.gitignore` in the default root whenever it is not Rerail's own `*` file, so a planted `!*`
+  cannot expose ledgers to `git add -A`; a rewrite that fails fails the session. It keeps one only when it is another
+  account's to write: a file this account may not read that another account owns (on Windows, where no owner is read,
+  one this account may also not add a file beside), or none at all where this account may not add a file, as in a
+  records folder another account repaired. A refused write left to that account is named in the daemon log.
 - A `.rerail/sessions` the repository's own commit makes, which on Windows outside the profile folder takes its
   parent's ACL, is given one of its own when the daemon first opens a session there: each file and folder in it, those
-  already there included, grants its maker, SYSTEM and Administrators alone, and an account that could add a folder
-  there may still add one, never list it. That session's own folder is private before the session writes
-  (`makeLedgerFolder` with `repair`). Elsewhere it loses the group's and others'
+  already there included, grants its maker, SYSTEM and Administrators alone, and an account an entry the folder
+  inherits let add a folder there may still add one, never list it (an entry set on the folder itself for an account
+  is left as it is). Every `icacls` on the records folder or a folder in it runs with `/l`, so a junction swapped in
+  for one cannot redirect a grant to a folder this user owns. That session's own folder is private before the session
+  writes (`makeLedgerFolder` with `repair`). Elsewhere it loses the group's and others'
   read (`2775` becomes `2731`): no other account lists it, and one that shares it still makes its own `0700` session
   folder there. On Windows, one
-  whose ACL Rerail cannot read or change is named in the daemon log.
+  whose ACL Rerail cannot read or change is named in the daemon log. Only the checkout's default records folder is
+  repaired: a `RERAIL_STORAGE_ROOT` below a `.rerail` folder is checked for symlinks but keeps its mode and ACL.
 
-**What remains:** a `RERAIL_STORAGE_ROOT` outside any `.rerail` folder is not checked. Replayed ledgers are still
+**What remains:** a `RERAIL_STORAGE_ROOT` outside any `.rerail` folder is not checked; one inside a `.rerail` folder is
+checked for symlinks but neither repaired nor given a `.gitignore`. Replayed ledgers are still
 trusted state; planting one needs the session id, whose hash names the folder.
 
 </details>

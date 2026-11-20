@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync, rmSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { type MakeDirectoryOptions, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { withHomeLock } from "../../../src/engine/native/file-lock.js";
 import { makeLedgerFolder } from "../../../src/engine/storage/ledger-paths.js";
 import { keepFolderPrivate, keepFoundFolderPrivate, makeRerailHome, openToOthers } from "../../../src/engine/storage/private-files.js";
-import { icaclsInherits, insideProfile, sddlOtherReaders, sddlWriters, whoamiUserSid, WINDOWS_ACL, type WindowsAcl } from "../../../src/engine/storage/windows-acl.js";
+import {
+  icaclsInherits, insideProfile, sddlInheritedWriters, sddlOtherReaders, sddlWriters, whoamiUserSid, WINDOWS_ACL, type WindowsAcl,
+} from "../../../src/engine/storage/windows-acl.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const USER = "S-1-5-21-1-2-3-1001";
@@ -16,8 +18,11 @@ const ENTRA_USER = "S-1-12-1-1111111111-2222222222-3333333333-4444444444";
 /** A profile no test folder is under, so every folder here counts as outside it. */
 const ELSEWHERE = String.raw`C:\Users\nobody-here`;
 
-// Spied, each call still the real one, so a case can make the read of this user's home fail.
+// Spied, each call still the real one, so a case can make the read of this user's home fail, stand in for `icacls`,
+// or end a records folder's repair just as a session's folder is made.
 vi.mock("node:os", { spy: true });
+vi.mock("node:child_process", { spy: true });
+vi.mock("node:fs/promises", { spy: true });
 
 /** What `execFile` rejects with for an `icacls` it cut at its time limit. */
 function timedOut(): Error {
@@ -66,6 +71,10 @@ function recordingAcl(inherited = true, writers: string[] = []): WindowsAcl & { 
       calls.push(`writers ${path}`);
       return Promise.resolve(writers);
     },
+    inheritedWriters: path => {
+      calls.push(`inherited writers ${path}`);
+      return Promise.resolve(writers);
+    },
     keepEachOwnersOwn: (path, sharing) => {
       restricted.push([path, true]);
       calls.push(`each owner's own ${path} for ${sharing.join(" ")}`);
@@ -101,6 +110,9 @@ async function temporaryRoot(): Promise<string> {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.mocked(execFile).mockReset();
+  vi.mocked(execFileSync).mockReset();
+  vi.mocked(mkdir).mockReset();
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
@@ -161,7 +173,7 @@ describe("an owner-only ACL on Windows", () => {
     const acl: WindowsAcl = { restrictToOwner: () => {
       throw new Error("icacls failed");
     }, restrictFolderToOwner: () => Promise.resolve(), otherReaders: () => [], inherits: () => Promise.resolve(false),
-    writers: () => Promise.resolve([]), keepEachOwnersOwn: () => Promise.resolve(), letAddFiles: () => Promise.resolve() };
+    writers: () => Promise.resolve([]), inheritedWriters: () => Promise.resolve([]), keepEachOwnersOwn: () => Promise.resolve(), letAddFiles: () => Promise.resolve() };
     expect(() => keepFolderPrivate(String.raw`D:\rerail`, { acl, platform: "win32", profile: ELSEWHERE, made: true })).not.toThrow();
     expect(written).toHaveBeenCalledWith(expect.stringContaining("icacls failed"));
   });
@@ -286,8 +298,8 @@ describe("an owner-only ACL on Windows", () => {
   it("reads and repairs a records folder again at the next session once the read of its ACL, or its repair, failed in a way that may pass", async () => {
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const notStarted = Object.assign(new Error("spawn icacls.exe EAGAIN"), { code: "EAGAIN", syscall: "spawn icacls.exe" });
-    // The read and `icacls /save` (`writers`) each have a time limit; any `icacls` may not start.
-    for (const [failing, error] of [["inherits", timedOut()], ["writers", timedOut()], ["writers", notStarted]] as const) {
+    // The read and `icacls /save` (`inheritedWriters`) each have a time limit; any `icacls` may not start.
+    for (const [failing, error] of [["inherits", timedOut()], ["inheritedWriters", timedOut()], ["inheritedWriters", notStarted]] as const) {
       const sessions = join(await temporaryRoot(), ".rerail", "sessions");
       await mkdir(sessions, { recursive: true });
       const acl = recordingAcl();
@@ -390,6 +402,52 @@ describe("an owner-only ACL on Windows", () => {
     expect(started).toHaveLength(3);
   });
 
+  it("gives a session's folder its owner-only ACL when the records folder's repair ends after that folder was made", async () => {
+    const sessions = join(await temporaryRoot(), ".rerail", "sessions");
+    await mkdir(sessions, { recursive: true });
+    const acl = recordingAcl();
+    const { promise: passedOn, resolve: passOn } = Promise.withResolvers<undefined>();
+    vi.spyOn(acl, "keepEachOwnersOwn").mockReturnValueOnce(passedOn);
+    const windows = { acl, platform: "win32" as const, profile: ELSEWHERE, repair: true };
+    await makeLedgerFolder(join(sessions, "a".repeat(64)), windows);
+    // The repair ends once the next session's folder is there, before that session asks whether it has: Windows may
+    // have gone over the records folder before that folder was made, which then keeps the open ACL it took.
+    const { mkdir: makeFolder } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    vi.mocked(mkdir).mockImplementationOnce((async (path: string, options?: MakeDirectoryOptions) => {
+      const made = await makeFolder(path, options);
+      passOn(undefined);
+      await new Promise(resolve => setImmediate(resolve));
+      return made;
+    }) as typeof mkdir);
+    await makeLedgerFolder(join(sessions, "b".repeat(64)), windows);
+    expect(acl.restricted).toContainEqual([join(sessions, "b".repeat(64)), true]);
+    // A session's folder made once the repair has ended takes the records folder's new ACL.
+    await makeLedgerFolder(join(sessions, "c".repeat(64)), windows);
+    expect(acl.restricted).not.toContainEqual([join(sessions, "c".repeat(64)), true]);
+  });
+
+  it("repairs a records folder again at the next session, its ACL unchanged meanwhile, when a folder every account shares there could not be shared in a way that may pass", async () => {
+    const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const sessions = join(await temporaryRoot(), ".rerail", "sessions");
+    const locks = join(sessions, "claude-code-locks");
+    await mkdir(locks, { recursive: true });
+    const acl = recordingAcl(true, ["S-1-5-11"]);
+    vi.spyOn(acl, "letAddFiles").mockRejectedValueOnce(timedOut());
+    const windows = { acl, platform: "win32" as const, profile: ELSEWHERE, repair: true };
+    await makeLedgerFolder(join(sessions, "a".repeat(64)), windows);
+    while (!written.mock.calls.some(([line]) => String(line).startsWith(`rerail: could not let other accounts that record here use ${locks}:`))) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await new Promise(resolve => setImmediate(resolve));
+    await makeLedgerFolder(join(sessions, "b".repeat(64)), windows);
+    while (!acl.calls.some(call => call.startsWith("each owner's own "))) await new Promise(resolve => setImmediate(resolve));
+    // The first repair ended before the records folder's list changed, so other accounts' hooks kept their way into
+    // the shared folder; the second shared it first, then changed that list.
+    expect(acl.calls).toEqual([
+      `inherited writers ${sessions}`, `inherited writers ${sessions}`, `add files ${locks} for S-1-5-11`, `each owner's own ${sessions} for S-1-5-11`,
+    ]);
+  });
+
   it("keeps for each account that could make a folder in a found records folder that right, after letting it add files to each folder every account shares there", async () => {
     const checkout = await temporaryRoot();
     const sessions = join(checkout, ".rerail", "sessions");
@@ -398,7 +456,7 @@ describe("an owner-only ACL on Windows", () => {
     const acl = recordingAcl(true, ["S-1-5-11"]);
     const repair = await keepFoundFolderPrivate(sessions, { acl, platform: "win32", profile: ELSEWHERE, shared: name => name.endsWith("-locks") || name.endsWith("-pending") });
     await repair.kept;
-    expect(acl.calls.slice(0, 1)).toEqual([`writers ${sessions}`]);
+    expect(acl.calls.slice(0, 1)).toEqual([`inherited writers ${sessions}`]);
     expect(acl.calls.slice(1, 3).sort()).toEqual([`add files ${join(sessions, "claude-code-locks")} for S-1-5-11`, `add files ${join(sessions, "codex-pending")} for S-1-5-11`]);
     // The records folder's own list changes last, once every account that records there can still lock and hold steers.
     expect(acl.calls.slice(3)).toEqual([`each owner's own ${sessions} for S-1-5-11`]);
@@ -432,6 +490,40 @@ describe("an owner-only ACL on Windows", () => {
     expect(sddlWriters(`D:PAI(A;;FA;;;${USER})(A;OICIIO;FA;;;CO)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200a4;;;AU)`, USER)).toEqual(["S-1-5-11"]);
     expect(sddlWriters(`D:PAI(A;OICI;FA;;;${USER})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)`, USER)).toEqual([]);
     expect(sddlWriters("D:NO_ACCESS_CONTROL", USER)).toEqual(["S-1-1-0"]);
+  });
+
+  it("keeps, as a records folder stops inheriting, the right to make a folder there for the accounts an inherited entry gives it, never one an entry set on the folder names", () => {
+    // Authenticated Users and Users may change what is in it by inheritance; an entry set on the folder lets one account
+    // write, and others name Users (a denial) and another account that also inherits the right (read only).
+    const found = "D:AI(A;;FW;;;S-1-5-21-1-2-3-1002)(A;;FR;;;S-1-5-21-1-2-3-1003)(D;;WD;;;BU)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;SY)"
+      + "(A;ID;0x1301bf;;;AU)(A;OICIID;0x1301bf;;;BU)(A;ID;0x1301bf;;;S-1-5-21-1-2-3-1003)";
+    expect(sddlInheritedWriters(found, USER)).toEqual(["S-1-5-11"]);
+    expect(sddlWriters(found, USER)).toEqual(["S-1-5-21-1-2-3-1002", "S-1-5-11", "S-1-5-32-545", "S-1-5-21-1-2-3-1003"]);
+    expect(sddlInheritedWriters("D:NO_ACCESS_CONTROL", USER)).toEqual([]);
+  });
+
+  it("runs each icacls of a records folder's repair on a link there itself, never on what it points to, and each but the one that passes the new ACL on within its time limit", async () => {
+    const runs: Array<[readonly string[], number | undefined]> = [];
+    vi.mocked(execFile).mockImplementation(((_file: string, args: readonly string[], options: { timeout?: number }, done: (error: Error | null, stdout: string, stderr: string) => void) => {
+      runs.push([args, options.timeout]);
+      const save = args.indexOf("/save");
+      if (save >= 0) writeFileSync(args[save + 1] ?? "", Buffer.from("sessions\r\nD:AI(A;OICIID;0x1301bf;;;AU)\r\n", "utf16le"));
+      done(null, "", "");
+    }) as unknown as typeof execFile);
+    // This user's SID, which whoami gives on Windows.
+    if (process.platform !== "win32") vi.mocked(execFileSync).mockImplementation(() => `"desktop-1\\me","${USER}"\r\n`);
+    const sessions = String.raw`C:\src\demo\.rerail\sessions`;
+    await WINDOWS_ACL.inherits(sessions);
+    expect(await WINDOWS_ACL.inheritedWriters(sessions)).toEqual(["S-1-5-11"]);
+    expect(await WINDOWS_ACL.writers(sessions)).toEqual(["S-1-5-11"]);
+    await WINDOWS_ACL.letAddFiles(`${sessions}\\claude-code-locks`, ["S-1-5-11"]);
+    await WINDOWS_ACL.keepEachOwnersOwn(sessions, ["S-1-5-11"]);
+    await WINDOWS_ACL.restrictFolderToOwner(`${sessions}\\${"a".repeat(64)}`);
+    expect(runs.map(([args]) => [args[0], args.includes("/l")])).toEqual([
+      [sessions, true], [sessions, true], [sessions, true], [`${sessions}\\claude-code-locks`, true], [sessions, true], [`${sessions}\\${"a".repeat(64)}`, true],
+    ]);
+    expect(runs.map(([, timeout]) => timeout)).toEqual([30_000, 30_000, 30_000, 30_000, undefined, 30_000]);
+    expect(runs[3]?.[0]).toEqual([`${sessions}\\claude-code-locks`, "/grant", "*S-1-5-11:(X,WD,RA,S)", "/l", "/q"]);
   });
 
   it.runIf(process.platform === "win32")("keeps each account's records its own in a records folder under a drive, and lets each account that could make a folder there still make one", async () => {

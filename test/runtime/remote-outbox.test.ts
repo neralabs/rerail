@@ -363,7 +363,7 @@ describe("remote sink outbox", () => {
     // The home is already there, so nothing gives it an ACL now: an earlier release made it with its parent's, under C:\.
     const restricted: Array<[string, boolean]> = [];
     const acl = { restrictToOwner: (path: string, folder: boolean): void => { restricted.push([path, folder]); }, otherReaders: (): string[] => [], inherits: () => Promise.resolve(true), restrictFolderToOwner: () => Promise.resolve(),
-      writers: () => Promise.resolve([]), keepEachOwnersOwn: () => Promise.resolve(), letAddFiles: () => Promise.resolve() };
+      writers: () => Promise.resolve([]), inheritedWriters: () => Promise.resolve([]), keepEachOwnersOwn: () => Promise.resolve(), letAddFiles: () => Promise.resolve() };
     const windows = { acl, platform: "win32" as const, profile: String.raw`C:\Users\nobody-here` };
     addRemote({ url: "https://rerail.example", token: "t", content: true, name: "team" }, home, clock, windows);
     expect(restricted).toEqual([[join(home, "remote-tokens"), true]]);

@@ -27,6 +27,22 @@ vi.mock("../../src/engine/storage/private-files.js", async () => {
   };
 });
 
+/**
+ * The paths a rename onto is refused, as Windows refuses one another program holds open for the whole retry: EPERM, in
+ * the error that names the program to close.
+ */
+const refusedRenames = vi.hoisted(() => new Set<string>());
+vi.mock("../../src/engine/file-replace.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/file-replace.js")>("../../src/engine/file-replace.js");
+  return {
+    ...actual,
+    renameWithRetry: async (from: string, to: string, options?: Parameters<typeof actual.renameWithRetry>[2]) => {
+      if (!refusedRenames.has(to)) return await actual.renameWithRetry(from, to, options);
+      throw Object.assign(new Error(`EPERM: Windows refused for 2 s to rename ${from} to ${to}, as another program held one of them open.`), { code: "EPERM" });
+    },
+  };
+});
+
 /** A Git checkout with no ignores of its own, and the session storage root where hooks put it by default. */
 async function checkoutWithSessionStorage(): Promise<{ checkout: string; storageRoot: string; databasePath: string }> {
   const root = await realpath(await temporaryDirectory({ started: false }));
@@ -158,6 +174,28 @@ describe("session records in a checkout", () => {
     expect((await lstat(join(storageRoot, ".gitignore"))).isFile()).toBe(true);
   });
 
+  it("fail to open where a repository committed a .gitignore folder, which no file can replace", async () => {
+    const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
+    await mkdir(join(storageRoot, ".gitignore"), { recursive: true });
+    await writeFile(join(storageRoot, ".gitignore", "README"), "committed\n");
+    await expect(openOneSession(checkout, storageRoot, databasePath)).rejects.toThrow();
+    expect((await lstat(join(storageRoot, ".gitignore"))).isDirectory()).toBe(true);
+  });
+
+  it("fail to open where a .gitignore a repository planted cannot be replaced, rather than leave its !* in force", async () => {
+    const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
+    const gitignore = join(storageRoot, ".gitignore");
+    await mkdir(storageRoot, { recursive: true });
+    await writeFile(gitignore, "!*\n");
+    refusedRenames.add(gitignore);
+    try {
+      await expect(openOneSession(checkout, storageRoot, databasePath)).rejects.toThrow("EPERM: Windows refused");
+    } finally {
+      refusedRenames.delete(gitignore);
+    }
+    expect(await readFile(gitignore, "utf8")).toBe("!*\n");
+  });
+
   it("write the .gitignore readable by the person only, like the ledgers", async ({ skip }) => {
     skip(!POSIX_MODES, NO_POSIX_MODES);
     const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
@@ -206,6 +244,39 @@ describe("session records in a checkout", () => {
     expect(ledger).toContain("Add a priority score to each todo");
   });
 
+  it("leave a .gitignore another account owns and this one may not read in place, so that account's Git still reads it", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
+    skip(process.getuid?.() === 0, "root reads a file whatever its mode");
+    const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
+    const gitignore = join(storageRoot, ".gitignore");
+    await mkdir(storageRoot, { recursive: true });
+    await writeFile(gitignore, "# Created by Rerail: session records stay out of Git.\n*\n");
+    await chmod(gitignore, 0o000);
+    const { ino } = await lstat(gitignore);
+    // The file's owner, this account's uid, reads as another account's.
+    const uid = vi.spyOn(process, "getuid").mockReturnValue(process.getuid!() + 1);
+    try {
+      await openOneSession(checkout, storageRoot, databasePath);
+    } finally {
+      uid.mockRestore();
+    }
+    expect((await lstat(gitignore)).ino).toBe(ino);
+    expect((await stat(gitignore)).mode & 0o777).toBe(0);
+  });
+
+  it("rewrite a .gitignore this account owns but may not read, which no other account's Rerail keeps", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
+    skip(process.getuid?.() === 0, "root reads a file whatever its mode");
+    const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
+    const gitignore = join(storageRoot, ".gitignore");
+    await mkdir(storageRoot, { recursive: true });
+    await writeFile(gitignore, "!*\n");
+    await chmod(gitignore, 0o000);
+    await openOneSession(checkout, storageRoot, databasePath);
+    expect(await readFile(gitignore, "utf8")).toBe("# Created by Rerail: session records stay out of Git.\n*\n");
+    expect(execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: checkout, encoding: "utf8" })).toBe("");
+  });
+
   it("are kept where this account may make its session's folder but no file, as in a records folder another account repaired, which writes the .gitignore", async () => {
     const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
     const folder = join(storageRoot, createHash("sha256").update("gitignore").digest("hex"));
@@ -245,6 +316,16 @@ describe("session records in a checkout", () => {
     const storageRoot = join(elsewhere, ".rerail", "sessions");
     await openOneSession(checkout, storageRoot, databasePath);
     await expect(stat(join(storageRoot, ".gitignore"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("leave the folder below a .rerail on a custom storage root's path as it is, since it may hold the person's files", async () => {
+    const { checkout, databasePath } = await checkoutWithSessionStorage();
+    const team = join(dirname(checkout), ".rerail", "team");
+    await mkdir(team, { recursive: true });
+    await openToOtherAccounts(team);
+    await openOneSession(checkout, join(team, "records"), databasePath);
+    expect(repairs.filter(({ folder }) => folder === team)).toEqual([]);
+    if (POSIX_MODES) expect((await stat(team)).mode & 0o777).toBe(0o755);
   });
 
   it("ignore the default root in Git when RERAIL_STORAGE_ROOT names it, relative to the checkout", async () => {

@@ -140,15 +140,16 @@ function recordsFolderOf(directory: string): string | undefined {
 /**
  * Keeps the records folder `folder` on `directory` its owner's alone whoever made it ({@link keepFoundFolderPrivate}),
  * once per folder in this process ({@link recordsFolderRepair}). A session that opens there waits for the folder's ACL
- * to be read, not for the repair: while that runs, shared by every session that opens there meanwhile, and once the
- * read or the repair failed, the session's own folder gets the owner-only ACL of its own first. Git makes that folder
- * for a repository that commits a file in it, and a person or a release before 0.1.5 may have made it, each with its
- * parent's ACL on Windows, which every record in it took.
+ * to be read, not for the repair: unless the repair had ended at `since`, read before the session's own folder was
+ * made, that folder gets the owner-only ACL of its own first, so while the repair runs, shared by every session that
+ * opens there meanwhile, and once the read or the repair failed. Git makes that folder for a repository that commits a
+ * file in it, and a person or a release before 0.1.5 may have made it, each with its parent's ACL on Windows, which
+ * every record in it took.
  */
-async function keepRecordsFolderPrivate(directory: string, folder: string, found: BigIntStats | undefined, machine: PrivateMachine): Promise<void> {
+async function keepRecordsFolderPrivate(directory: string, folder: string, found: BigIntStats | undefined, since: number, machine: PrivateMachine): Promise<void> {
   const repair = await recordsFolderRepair(folder, machine, found);
   // A storage root that is `.rerail` itself makes each session's folder the records folder, whose repair is its own.
-  await (resolve(directory) === folder ? repair.kept : repair.keepInside(directory));
+  await (resolve(directory) === folder ? repair.kept : repair.keepInside(directory, since));
 }
 
 /**
@@ -193,10 +194,16 @@ function changedSince(before: BigIntStats, now: BigIntStats): boolean {
 export async function makeLedgerFolder(directory: string, options: LedgerFolderOptions = {}): Promise<void> {
   const { repair = false, ...machine } = options;
   const records = repair ? recordsFolderOf(directory) : undefined;
-  // Read before this session's own folder is made there, which sets the records folder's change time as any new entry does.
-  const found = records === undefined ? undefined : await lstat(records, { bigint: true }).catch(() => undefined);
+  // Both read before this session's own folder is made there: the records folder, whose change time that sets as any
+  // new entry does, and the time, so a repair that ends after the folder was made, and may have passed over the
+  // records folder before it was there, still has it given its owner-only ACL.
+  const found = records === undefined ? undefined : await lstat(records, { bigint: true }).catch((error: unknown) => {
+    if (errno(error) === "ENOENT") return undefined;
+    throw error;
+  });
+  const since = performance.now();
   await ledgerFolder(directory, true, machine);
-  if (records !== undefined) await keepRecordsFolderPrivate(directory, records, found, machine);
+  if (records !== undefined) await keepRecordsFolderPrivate(directory, records, found, since, machine);
 }
 
 /**

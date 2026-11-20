@@ -969,22 +969,34 @@ fn describe(found: Discovery, mut head: HeadWalk) -> Result<GitWorkspace, Discov
 /// Rerail's session records folder, `.rerail/sessions` in any folder (`src/runtime/session-paths.ts`).
 const RECORDS_FOLDER: &str = ".rerail/sessions";
 
-/// Whether `path` is a records folder ([`RECORDS_FOLDER`]). Rerail writes a `.gitignore` of `*`
+/// Whether `path` is a records folder ([`RECORDS_FOLDER`]), its case folded as `case` folds it,
+/// as the built-in ignore and status's pathspec fold theirs. Rerail writes a `.gitignore` of `*`
 /// there, so Git lists nothing in it. On a checkout several accounts share, the folder lets each
 /// other account pass through it and make its own folder there, but not list it, and that
 /// `.gitignore` is its maker's alone: a walk by another account can neither list the folder nor
 /// read that Git ignores what it holds. So no walk enters it, for any account.
-fn records_folder(path: &gix::bstr::BStr) -> bool {
-    path == RECORDS_FOLDER || path.ends_with(b"/.rerail/sessions")
+fn records_folder(path: &[u8], case: gix::ignore::glob::pattern::Case) -> bool {
+    let Some(start) = path.len().checked_sub(RECORDS_FOLDER.len()) else {
+        return false;
+    };
+    let (parent, folder) = path.split_at(start);
+    let named = match case {
+        gix::ignore::glob::pattern::Case::Fold => {
+            folder.eq_ignore_ascii_case(RECORDS_FOLDER.as_bytes())
+        }
+        gix::ignore::glob::pattern::Case::Sensitive => folder == RECORDS_FOLDER.as_bytes(),
+    };
+    named && (parent.is_empty() || parent.ends_with(b"/"))
 }
 
 /// What status's walk for untracked files emits, kept as gix's own status keeps it: never an entry
 /// of a type Git cannot track (a socket, a FIFO). Unlike that walk, it never enters a records
 /// folder ([`records_folder`]) nor names one: gix stops a walk at the first folder it cannot list,
 /// where Git warns and goes on.
-#[derive(Default)]
 struct UntrackedWalk {
     entries: Vec<gix::dir::Entry>,
+    /// The repository's `core.ignoreCase` folding, which [`records_folder`] applies.
+    case: gix::ignore::glob::pattern::Case,
 }
 
 impl gix::dir::walk::Delegate for UntrackedWalk {
@@ -994,7 +1006,7 @@ impl gix::dir::walk::Delegate for UntrackedWalk {
         _collapsed_directory_status: Option<gix::dir::entry::Status>,
     ) -> gix::dir::walk::Action {
         if entry.disk_kind != Some(gix::dir::entry::Kind::Untrackable)
-            && !records_folder(&entry.rela_path)
+            && !records_folder(&entry.rela_path, self.case)
         {
             self.entries.push(entry.to_owned());
         }
@@ -1007,7 +1019,7 @@ impl gix::dir::walk::Delegate for UntrackedWalk {
         for_deletion: Option<gix::dir::walk::ForDeletionMode>,
         worktree_root_is_repository: bool,
     ) -> bool {
-        !records_folder(&entry.rela_path)
+        !records_folder(&entry.rela_path, self.case)
             && entry.status.can_recurse(
                 entry.disk_kind,
                 entry.pathspec_match,
@@ -1031,17 +1043,22 @@ fn status_patterns(scope: &str) -> Vec<gix::bstr::BString> {
 }
 
 /// The untracked files and repositories in the worktree under `patterns`, as status lists them:
-/// gix's walk with status's own options and [`UntrackedWalk`] as its delegate.
+/// gix's walk with status's own options and [`UntrackedWalk`] as its delegate, folding case as
+/// `case` does.
 fn untracked_entries(
     repository: &gix::Repository,
     index: &gix::index::State,
     patterns: &[gix::bstr::BString],
+    case: gix::ignore::glob::pattern::Case,
 ) -> Result<Vec<gix::dir::Entry>, DiscoveryError> {
     let options = repository
         .dirwalk_options()
         .map_err(|error| discovery_error("cannot prepare Git status", error))?
         .emit_untracked(gix::dir::walk::EmissionMode::Matching);
-    let mut walk = UntrackedWalk::default();
+    let mut walk = UntrackedWalk {
+        entries: Vec::new(),
+        case,
+    };
     let interrupt = std::sync::atomic::AtomicBool::new(false);
     repository
         .dirwalk(index, patterns, &interrupt, options, &mut walk)
@@ -1150,8 +1167,10 @@ fn status_flags(
 ) -> Result<BTreeMap<String, OverlayFlags>, DiscoveryError> {
     let patterns = status_patterns(&found.scope);
     let walker = found.repository.clone().into_sync();
+    let case = found.ignore.case;
     let (changes, untracked) = rerail_accel::exec::scoped(|scope| {
-        let walk = scope.spawn(|| untracked_entries(&walker.to_thread_local(), index, &patterns));
+        let walk =
+            scope.spawn(|| untracked_entries(&walker.to_thread_local(), index, &patterns, case));
         let changes = changed_items(found, index, head.tree, &patterns);
         // A panic of the walk goes on in this thread, as it would have had the walk run here.
         let untracked = match walk.join() {
@@ -2015,6 +2034,29 @@ mod tests {
         assert!(!ignored(&rules, "generated/keep.py"));
         assert!(ignored(&rules, "tmp/keep.py"));
     }
+
+    /// A records folder named in another case is one where `core.ignoreCase` folds case, as on
+    /// Windows, so the walk skips it there as the built-in ignore and status's pathspec do.
+    #[test]
+    fn a_records_folder_is_matched_with_the_repository_case_folding() {
+        use gix::ignore::glob::pattern::Case;
+        for path in [".rerail/sessions", "sub/.rerail/sessions"] {
+            assert!(records_folder(path.as_bytes(), Case::Sensitive), "{path}");
+            assert!(records_folder(path.as_bytes(), Case::Fold), "{path}");
+        }
+        for path in [".Rerail/sessions", "sub/.RERAIL/Sessions"] {
+            assert!(records_folder(path.as_bytes(), Case::Fold), "{path}");
+            assert!(!records_folder(path.as_bytes(), Case::Sensitive), "{path}");
+        }
+        for path in [
+            "sub.rerail/sessions",
+            ".rerail/sessions/kept.py",
+            "sessions",
+        ] {
+            assert!(!records_folder(path.as_bytes(), Case::Fold), "{path}");
+        }
+    }
+
     #[test]
     fn clean_trees_comparisons_are_linear_for_many_trees_and_overlays() {
         let count = 2_000;

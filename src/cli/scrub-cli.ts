@@ -51,13 +51,15 @@ interface DatabaseReport {
   eraseFailure?: string;
 }
 
-/** What `rerail scrub` rewrote below the checkouts' session folders, and the files it left. */
+/** What `rerail scrub` rewrote below the checkouts' session folders, the files it left, and the folders it could not list. */
 interface SessionFilesReport {
   lines: number;
   files: number;
   pendingFiles: number;
   checkouts: number;
   skipped: string[];
+  /** Each folder this account may not list, with what it scrubbed there through the database ({@link listedOrRecorded}). */
+  unlisted: string[];
 }
 
 function message(error: unknown): string {
@@ -379,16 +381,15 @@ function logLine(line: string): string | undefined {
  * Scrubs the steers hooks hold between hooks (`<sessions>/<host>-pending/<session>.json`). A hook reads and replaces
  * one only while it holds that session's lock, and so does this (`withPendingFileLock`), so neither replaces a steer
  * the other wrote. A folder or file that is a link is skipped, never followed. In a held-steer folder this account may
- * not list, those of the sessions the database records ({@link listedOrRecorded}).
+ * not list, those of the sessions the database records, the folder named in `report` as unlisted ({@link listedOrRecorded}).
  */
 async function scrubPending(sessions: string, sessionIds: readonly string[], report: SessionFilesReport): Promise<void> {
   for (const host of PENDING_HOSTS) {
     const folder = join(sessions, `${host}-pending`);
     if (!realDirectory(folder)) continue;
     const recorded = () => sessionIds.map(id => pendingPath(sessions, host, id)).filter(path => realFile(path));
-    for (const path of await listedOrRecorded(folder, entry => entry.isFile() && entry.name.endsWith(".json"), recorded)) {
-      await scrubPendingFile(path, folder, report);
-    }
+    const paths = await listedOrRecorded(folder, entry => entry.isFile() && entry.name.endsWith(".json"), recorded, "held steer file", report);
+    for (const path of paths) await scrubPendingFile(path, folder, report);
   }
 }
 
@@ -418,11 +419,19 @@ function realFile(path: string): boolean {
 
 /**
  * The paths in `folder` it lists that `listed` keeps, or, where this account may not list it, the `recorded` ones: those
- * the database's session ids name. In a records folder another account shares, this one may make its own session
- * folders and held steers but list neither the records folder nor a held-steer folder another account made
- * (`keepFoundFolderPrivate`, `shareLikeParent`).
+ * the database's session ids name, the folder then named in `report` as unlisted with how many `kind`s the database
+ * named there, since what a session it does not record left there is not scrubbed. That is no failure: in a records
+ * folder another account shares, this one may make its own session folders and held steers but list neither the
+ * records folder nor a held-steer folder another account made (`keepFoundFolderPrivate`, `shareLikeParent`), and
+ * running again lists them no better.
  */
-async function listedOrRecorded(folder: string, listed: (entry: Dirent) => boolean, recorded: () => string[]): Promise<string[]> {
+async function listedOrRecorded(
+  folder: string,
+  listed: (entry: Dirent) => boolean,
+  recorded: () => string[],
+  kind: string,
+  report: SessionFilesReport,
+): Promise<string[]> {
   const paths: string[] = [];
   try {
     for await (const entry of await opendir(folder)) if (listed(entry)) paths.push(join(folder, entry.name));
@@ -430,7 +439,9 @@ async function listedOrRecorded(folder: string, listed: (entry: Dirent) => boole
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "EACCES" && code !== "EPERM") throw error;
-    return recorded();
+    const found = recorded();
+    report.unlisted.push(`${folder} (${code}): scrubbed the ${plural(found.length, kind)} the database records there`);
+    return found;
   }
 }
 
@@ -441,9 +452,9 @@ interface RecordedSessions {
 }
 
 /** The session folders in `sessions`, a checkout's records folder, as {@link listedOrRecorded} finds them. */
-async function sessionFolders(sessions: string, sessionIds: readonly string[]): Promise<string[]> {
+async function sessionFolders(sessions: string, sessionIds: readonly string[], report: SessionFilesReport): Promise<string[]> {
   const recorded = () => sessionIds.map(id => sessionDirectory(sessions, id)).filter(folder => realDirectory(folder));
-  return await listedOrRecorded(sessions, entry => entry.isDirectory(), recorded);
+  return await listedOrRecorded(sessions, entry => entry.isDirectory(), recorded, "session folder", report);
 }
 
 /**
@@ -452,12 +463,12 @@ async function sessionFolders(sessions: string, sessionIds: readonly string[]): 
  * that is a link, or not a folder, is skipped, never followed; so is a ledger that is a link.
  */
 async function scrubSessionFiles(recorded: RecordedSessions): Promise<SessionFilesReport> {
-  const report: SessionFilesReport = { lines: 0, files: 0, pendingFiles: 0, checkouts: 0, skipped: [] };
+  const report: SessionFilesReport = { lines: 0, files: 0, pendingFiles: 0, checkouts: 0, skipped: [], unlisted: [] };
   for (const checkout of recorded.checkouts) {
     const sessions = recordsFolder(checkout);
     if (sessions === undefined) continue;
     report.checkouts += 1;
-    for (const folder of await sessionFolders(sessions, recorded.sessionIds)) await scrubLedger(join(folder, "events.jsonl"), report);
+    for (const folder of await sessionFolders(sessions, recorded.sessionIds, report)) await scrubLedger(join(folder, "events.jsonl"), report);
     await scrubPending(sessions, recorded.sessionIds, report);
   }
   return report;
@@ -607,6 +618,7 @@ export async function runScrubCommand(args: readonly string[], usage: () => stri
     `Scrubbed ${plural(files.lines, "line")} in ${plural(files.files, "session ledger")} and ${plural(files.pendingFiles, "held steer file")} `
     + `across ${plural(files.checkouts, "checkout")}; ${plural(daemonLogLines, "line")} of daemon.log.\n`,
   );
+  for (const unlisted of files.unlisted) process.stdout.write(`Could not list ${unlisted}; a session it does not record is left.\n`);
   for (const skipped of files.skipped) process.stdout.write(`Left ${skipped}; run rerail scrub again.\n`);
   return complete && files.skipped.length === 0 ? 0 : 1;
 }

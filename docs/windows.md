@@ -675,19 +675,25 @@ preimages and held steers.
   for a repository that commits a file in it; a person, or Rerail 0.1.4, may have made it) gets it when the daemon
   first opens a session there: the daemon reads the folder's ACL with `icacls` once per folder in its life and, when
   the folder still inherits its parent's, gives it one under which what each account makes there is that account's
-  alone. The person may list the folder; each account its parent's ACL let add a folder there may still add one, pass
-  through it and read its attributes and ACL, never list it; each file and folder in it, the records already there
-  included, grants its maker (CREATOR OWNER), SYSTEM and Administrators alone. Before that, each agent host's lock and
-  held-steer folder there (`<host>-locks`, `<host>-pending`) lets those accounts add files, and one made later gets
-  the same entry from whoever makes it, so an account sharing the checkout keeps recording. Windows takes
-  about 0.1 to 0.2 ms per file or folder already there to pass the ACL on, and no session waits for that: a session
-  waits only for the read, and one that opens while the ACL is passed on first gives its own folder the same ACL, one
-  more `icacls`, so what it writes in its own folder is private from its first byte. An entry someone set on that
-  folder itself for another account stays. A session, lock or held-steer folder another account made before the first
+  alone. The person may list the folder; each account an entry the folder inherits from its parent let add a folder
+  there, and that no entry set on the folder itself names, may still add one, pass through it and read its attributes
+  and ACL, never list it; an account such an entry names keeps what that entry gives it. Each file and folder in it,
+  the records already there included, grants its maker (CREATOR OWNER), SYSTEM and Administrators alone. Before that,
+  each agent host's lock and held-steer folder there (`<host>-locks`, `<host>-pending`) lets those accounts add files,
+  and one made later gets the same entry from whoever makes it, so an account sharing the checkout keeps recording. If
+  a lock or held-steer folder cannot be shared because `icacls` hit its time limit or did not start, the repair stops
+  before the records folder's ACL changes, and the next session tries again. Each `icacls` that reads or sets a
+  records folder's ACL, or that of a folder in it, runs with `/l`: a junction or symbolic link another account puts in
+  place of one has its own ACL read or changed, never that of what it points to. Windows takes about 0.1 to 0.2 ms per
+  file or folder already there to pass the ACL on, and no session waits for that: a session waits only for the read,
+  and one whose own folder is made before the ACL has been passed on (while it is, or just before it is done) first
+  gives its own folder the same ACL, one more `icacls`, so what it writes in its own folder is private from its first
+  byte. A session, lock or held-steer folder another account made before the first
   repair keeps the ACL it had, as on 0.1.5, since only its maker may change it: the daemon log names a lock or
   held-steer folder, and every account's hooks still lock there through the entries it inherited. Rerail's Git status reads nothing in a records folder (its
-  walk never enters one, and its built-in ignores name it), so an account that may not list the folder, or read a
-  file Git put there, keeps its repository reuse there.
+  walk never enters one, and its built-in ignores name it, in any letter case where `core.ignoreCase` is on, as Git
+  for Windows sets it), so an account that may not list the folder, or read a file Git put there, keeps its
+  repository reuse there.
   `rerail remote add` gives the `remote-tokens` folder the ACL before it writes a token there, so a remote's token is
   private before any daemon launch. A failure is reported on stderr, a daemon's log, with `icacls`'s reason, and never
   fails the caller.

@@ -7,7 +7,9 @@
  *
  * Both work through programs Windows ships, by absolute path and with no window: `icacls` sets an ACL and tells
  * whether one is inherited, Windows PowerShell's `Get-Acl` reads one in SDDL, which names every account by SID whatever
- * the system's language. This is the Windows half of `private-files.ts`, which callers use.
+ * the system's language. This is the Windows half of `private-files.ts`, which callers use. Each `icacls` that reads or
+ * sets a records folder's ACL, or one of a folder in it, runs with `/l`: where another account has put a junction or a
+ * symbolic link in place of that folder, it reads or changes that link's own ACL, never the one of what it points to.
  */
 import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
@@ -43,8 +45,8 @@ export interface WindowsAcl {
    * Gives folder `path` the ACL {@link restrictToOwner} gives, holding no thread while Windows passes it to everything
    * already in the folder, which takes time in step with what is there: about 0.1 to 0.2 ms an entry. Windows sets the
    * folder's own ACL after everything in it, so a run cut short, as by the daemon stopping, leaves the folder still
-   * inheriting, and the next daemon sets it again. Nobody waits for it on a records folder; a session waits for it
-   * only on its own new folder, whose few entries take one `icacls` start, so it has no time limit.
+   * inheriting, and the next daemon sets it again. A session waits for it on its own new folder, whose few entries take
+   * one `icacls` start, so it has the time limit every other `icacls` here has: one that hangs never holds the session.
    */
   restrictFolderToOwner(path: string): Promise<void>;
   /**
@@ -53,6 +55,12 @@ export interface WindowsAcl {
    * `icacls /save`, holding no thread.
    */
   writers(path: string): Promise<string[]>;
+  /**
+   * The accounts, by SID, that an entry `path` takes from its parent lets add a folder in it, as {@link writers} names
+   * them, leaving out each account an entry set on `path` itself names: those a repair that stops `path` inheriting
+   * keeps that right for ({@link keepEachOwnersOwn}), so an entry someone set there for an account stays as they set it.
+   */
+  inheritedWriters(path: string): Promise<string[]>;
   /**
    * Gives records folder `path` an ACL of its own under which what each account makes there is that account's alone:
    * this user may list the folder, each of `writers` may only pass through it, read its attributes and ACL and make a
@@ -158,6 +166,24 @@ function writerOf(ace: string): string | undefined {
   return allowsObject && grantsAddFolder(rights) ? account : undefined;
 }
 
+/** The account an access control entry names, by SID when its short name has one known here. */
+function accountOf(ace: string): string {
+  const account = ace.split(";")[5] ?? "";
+  return ALIAS_SIDS[account] ?? account;
+}
+
+/** Whether an access control entry was taken from the parent's ACL (`ID`), not set on the object itself. */
+function inherited(ace: string): boolean {
+  return /ID/u.test(ace.split(";")[1] ?? "");
+}
+
+/** The accounts, by SID, `entries` let make a folder in the folder itself, as {@link sddlWriters} names them. */
+function writersIn(entries: readonly string[], user: string): string[] {
+  const trusted = new Set([user, SYSTEM_SID, ADMINISTRATORS_SID, CREATOR_OWNER_SID, OWNER_RIGHTS_SID]);
+  const sids = entries.map(writerOf).map(account => (account === undefined ? undefined : ALIAS_SIDS[account] ?? account));
+  return [...new Set(sids.filter((sid): sid is string => sid?.startsWith("S-1-") === true && !trusted.has(sid)))];
+}
+
 /**
  * The accounts, by SID, an SDDL security descriptor's DACL lets make a folder in the folder itself, besides `user`,
  * SYSTEM, Administrators, CREATOR OWNER and OWNER RIGHTS. A NULL DACL lets everyone (`S-1-1-0`). A short name with no
@@ -165,10 +191,18 @@ function writerOf(ace: string): string | undefined {
  */
 export function sddlWriters(sddl: string, user: string): string[] {
   const entries = daclEntries(sddl);
-  if (entries === null) return [EVERYONE_SID];
-  const trusted = new Set([user, SYSTEM_SID, ADMINISTRATORS_SID, CREATOR_OWNER_SID, OWNER_RIGHTS_SID]);
-  const sids = entries.map(writerOf).map(account => (account === undefined ? undefined : ALIAS_SIDS[account] ?? account));
-  return [...new Set(sids.filter((sid): sid is string => sid?.startsWith("S-1-") === true && !trusted.has(sid)))];
+  return entries === null ? [EVERYONE_SID] : writersIn(entries, user);
+}
+
+/**
+ * The accounts, by SID, an inherited entry (`ID`) of an SDDL security descriptor's DACL lets make a folder in the folder
+ * itself, as {@link sddlWriters} names them, leaving out each account an entry set on the folder itself names, allow or
+ * deny, which `icacls /grant:r` for that account would replace. A NULL DACL has no inherited entry, so it names none.
+ */
+export function sddlInheritedWriters(sddl: string, user: string): string[] {
+  const entries = daclEntries(sddl) ?? [];
+  const named = new Set(entries.filter(ace => !inherited(ace)).map(accountOf));
+  return writersIn(entries.filter(inherited), user).filter(sid => !named.has(sid));
 }
 
 /**
@@ -191,7 +225,10 @@ function ownerOnlyArguments(path: string, folder: boolean): string[] {
 
 const icaclsLater = promisify(execFile);
 
-/** Runs `icacls` with `args`, holding no thread; a refusal's error message carries what `icacls` said on stderr. */
+/**
+ * Runs `icacls` with `args`, holding no thread, cut at its time limit like every `icacls` here but the one that passes
+ * a records folder's new ACL on; a refusal's error message carries what `icacls` said on stderr.
+ */
 async function icacls(args: readonly string[]): Promise<string> {
   const { stdout } = await icaclsLater(windowsSystemProgram("icacls.exe"), args, { encoding: "utf8", timeout: 30_000 });
   return stdout;
@@ -204,7 +241,7 @@ async function icacls(args: readonly string[]): Promise<string> {
 async function savedSddl(path: string): Promise<string> {
   const saved = join(tmpdir(), `rerail-acl-${process.pid}-${randomUUID()}.txt`);
   try {
-    await icacls([path, "/save", saved, "/q"]);
+    await icacls([path, "/save", saved, "/l", "/q"]);
     const lines = (await readFile(saved)).toString("utf16le").split(/\r?\n/u);
     return lines.find(line => line.includes("D:")) ?? "";
   } finally {
@@ -220,7 +257,7 @@ export const WINDOWS_ACL: WindowsAcl = {
   },
   async restrictFolderToOwner(path) {
     // The rejected error's message carries `icacls`'s stderr, as `restrictToOwner`'s does.
-    await icaclsLater(windowsSystemProgram("icacls.exe"), ownerOnlyArguments(path, true), { encoding: "utf8" });
+    await icacls([...ownerOnlyArguments(path, true), "/l"]);
   },
   otherReaders(path) {
     // The path goes in the environment, so no quoting of it reaches PowerShell's parser.
@@ -231,20 +268,23 @@ export const WINDOWS_ACL: WindowsAcl = {
   },
   async inherits(path) {
     // `icacls` starts in milliseconds where Windows PowerShell's `Get-Acl` takes up to seconds.
-    return icaclsInherits(await icacls([path]));
+    return icaclsInherits(await icacls([path, "/l"]));
   },
   async writers(path) {
     return sddlWriters(await savedSddl(path), currentUserSid());
   },
+  async inheritedWriters(path) {
+    return sddlInheritedWriters(await savedSddl(path), currentUserSid());
+  },
   async keepEachOwnersOwn(path, writers) {
-    // No time limit: Windows passes the new ACL to everything already in the folder, as `restrictFolderToOwner` does.
+    // No time limit: Windows passes the new ACL to everything already in the folder, in time in step with what is there.
     await icaclsLater(windowsSystemProgram("icacls.exe"), [
       path, "/inheritance:r", "/grant:r", `*${currentUserSid()}:F`, `*${CREATOR_OWNER_SID}:(OI)(CI)(IO)F`,
-      `*${SYSTEM_SID}:(OI)(CI)F`, `*${ADMINISTRATORS_SID}:(OI)(CI)F`, ...writers.map(sid => `*${sid}:(X,AD,RA,RC,S)`), "/q",
+      `*${SYSTEM_SID}:(OI)(CI)F`, `*${ADMINISTRATORS_SID}:(OI)(CI)F`, ...writers.map(sid => `*${sid}:(X,AD,RA,RC,S)`), "/l", "/q",
     ], { encoding: "utf8" });
   },
   async letAddFiles(path, writers) {
-    await icacls([path, "/grant", ...writers.map(sid => `*${sid}:(X,WD,RA,S)`), "/q"]);
+    await icacls([path, "/grant", ...writers.map(sid => `*${sid}:(X,WD,RA,S)`), "/l", "/q"]);
   },
 };
 

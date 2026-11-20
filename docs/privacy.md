@@ -137,7 +137,9 @@ text in memory (`src/engine/secret-scrub.ts`).
   since they may be passwords.
 
 Hashes, UUIDs, lockfile integrity strings and code are kept. Secrets in unknown formats can still be stored.
-`rerail scrub` covers the database, its pre-update copy, recorded checkouts' ledgers and `daemon.log`.
+`rerail scrub` covers the database, its pre-update copy, recorded checkouts' ledgers and held steers, and `daemon.log`.
+In a records folder it may not list, it covers only the sessions the database records, and its summary names that
+folder.
 
 </details>
 
@@ -163,7 +165,8 @@ daemon first opens a session there under which each record is its maker's alone,
 another account's earlier ones, which keep the list they had: an
 account you share the checkout with still records its own sessions there, but lists nothing in it and reads no one
 else's records. What a session writes in its own folder is private from its first byte. Elsewhere, such a folder loses the group's and others' read then (`2775` becomes
-`2731`): no other account lists it, and one you share it with still records its own sessions there.
+`2731`): no other account lists it, and one you share it with still records its own sessions there. A root
+`RERAIL_STORAGE_ROOT` names keeps the access list or mode it has.
 
 <details>
 <summary>What is covered and repaired</summary>
@@ -189,7 +192,8 @@ A repository controls its own `.rerail/` folder, so this stops it redirecting yo
 the error and log; the agent continues without Rerail.
 
 Exception: a symlinked or edited `.rerail/sessions/.gitignore` is overwritten with `*`, so a committed `!*` cannot make
-`git add -A` commit your records.
+`git add -A` commit your records. One Rerail cannot overwrite stops the session's records instead; one another
+account's Rerail wrote and you may not read is left as it is.
 
 </details>
 

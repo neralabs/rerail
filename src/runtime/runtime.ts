@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
@@ -949,18 +949,28 @@ const SESSION_RECORDS_GITIGNORE = "# Created by Rerail: session records stay out
  * repository's own ignores. Only the default root is Rerail's alone: a custom one (`RERAIL_STORAGE_ROOT`) may hold the
  * person's own files, so it is left as it is. In Rerail's own folder the file is rewritten whenever it holds anything
  * else, or is no regular file: a repository that commits one with `!*` would otherwise have the person's next
- * `git add -A` commit their prompts and pre-edit source. One this account may not read was written by another account
- * that records its own sessions in the same folder, private to it, and that account's Rerail keeps it. Where this
- * account may make its session's folder but no file, as in a records folder another account repaired on Windows, that
- * account, the one that may list the folder and whose Git could add what is in it, writes the file.
+ * `git add -A` commit their prompts and pre-edit source. A rewrite that fails fails the session, as one onto a
+ * `.gitignore` folder or onto a file another program holds open does, except where the file is another account's to
+ * write. One this account may not read and another account owns is kept, not replaced: that account's Rerail wrote
+ * it, and a file this account put there would be one that account's Git may not read. One this account owns is
+ * rewritten even when it may not read it. On Windows, whose lstat names no owner, one this account may not read is
+ * rewritten too, and kept only when this account may not add a file to the folder, as in a records folder another
+ * account repaired. There, with no file at the path either, the account that may list the folder, the one whose Git
+ * could add what is in it, writes it. Each time this account leaves the file to another one, stderr names it.
  */
 async function ignoreInGit(storageRoot: string): Promise<void> {
   const path = join(storageRoot, ".gitignore");
-  const text = await gitignoreText(path, storageRoot);
-  if (text === SESSION_RECORDS_GITIGNORE || text === ANOTHER_ACCOUNTS) return;
-  await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE).catch((error: unknown) => {
-    if (!accessRefused(error)) throw error;
-  });
+  const found = await foundGitignore(path, storageRoot);
+  if (found.kind === "another account's" || (found.kind === "text" && found.text === SESSION_RECORDS_GITIGNORE)) return;
+  try {
+    await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE);
+  } catch (error) {
+    if (!newFileRefused(error)) throw error;
+    const { kind } = await foundGitignore(path, storageRoot);
+    const anotherAccounts = kind === "missing" || kind === "another account's" || (kind === "unreadable" && process.platform === "win32");
+    if (!anotherAccounts) throw error;
+    process.stderr.write(`rerail: left ${path} to the account that may add files to ${storageRoot}: this account may not, and that account's Rerail writes it\n`);
+  }
 }
 
 /** Whether a file operation failed because this account may not do it there (EACCES, or EPERM as Windows reports it). */
@@ -969,19 +979,42 @@ function accessRefused(error: unknown): boolean {
   return code === "EACCES" || code === "EPERM";
 }
 
-/** What {@link gitignoreText} gives for a file this account may not read. */
-const ANOTHER_ACCOUNTS = Symbol("another account's file");
+/**
+ * Whether `error`, from `writeLedgerFile`, is the refusal to make its new file beside the one it replaces: this account
+ * may not add a file to the folder. That new file is the only one it opens; its rename fails with another call's error.
+ */
+function newFileRefused(error: unknown): boolean {
+  return accessRefused(error) && (error as NodeJS.ErrnoException).syscall === "open";
+}
 
-/** The text of the `.gitignore` at `path`; undefined when it is missing or no regular file. */
-async function gitignoreText(path: string, storageRoot: string): Promise<string | undefined | typeof ANOTHER_ACCOUNTS> {
+/**
+ * What is at a storage root's `.gitignore`: its text, nothing, something that is no regular file, a file this account
+ * may not read that another account owns, or one it may not read whose owner is this account or, on Windows, whose
+ * lstat names no owner (its uid is always 0), not known. A file Windows refuses even to lstat, as one in a folder this
+ * account may not list, is one this account may not read.
+ */
+type FoundGitignore =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "missing" | "not a file" | "another account's" | "unreadable" };
+
+async function foundGitignore(path: string, storageRoot: string): Promise<FoundGitignore> {
+  let stats: Stats;
   try {
-    return (await lstat(path)).isFile() ? await readLedgerFile(path, storageRoot) : undefined;
+    stats = await lstat(path);
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return undefined;
-    if (code === "EACCES" || code === "EPERM") return ANOTHER_ACCOUNTS;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
+    if (accessRefused(error)) return { kind: "unreadable" };
     throw error;
   }
+  if (!stats.isFile()) return { kind: "not a file" };
+  let text: string | undefined;
+  try {
+    text = await readLedgerFile(path, storageRoot);
+  } catch (error) {
+    if (!accessRefused(error)) throw error;
+    return { kind: process.platform !== "win32" && stats.uid !== process.getuid?.() ? "another account's" : "unreadable" };
+  }
+  return text === undefined ? { kind: "missing" } : { kind: "text", text };
 }
 
 /** Replays a session ledger into its registry and returns the turn the session had reached. */
@@ -2250,9 +2283,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
   async #openLedger(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
-    // Written before the folder's repair starts, so on Windows the new ACL Windows passes on reaches it too.
+    // A root RERAIL_STORAGE_ROOT names elsewhere is the person's own and used as it is: no .gitignore is written there,
+    // and the folder below a `.rerail` on its path keeps its mode and ACL. In the default root the .gitignore is
+    // written before the folder's repair starts, so on Windows the new ACL Windows passes on reaches it too.
     if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
-    await makeLedgerFolder(directory, { repair: true });
+    await makeLedgerFolder(directory, { repair: this.#storageRootIsDefault });
     keepFolderPrivate(directory);
     const path = join(directory, "events.jsonl");
     const { values, appendState } = await readLines(path);
