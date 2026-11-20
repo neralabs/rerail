@@ -6,7 +6,7 @@
 import type { AuditMode, AuditRecorder, AuditRuleProvenance, AuditScope } from "../audit/audit.js";
 import type { CodeRuleEdit } from "../code-rule/code-rule.js";
 import type { CodeRuleDslCatalog, RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
-import type { SteerTarget } from "../code-rule/steer-publication.js";
+import type { SteerTarget } from "../code-rule/edit-findings/steer-publication.js";
 import { RrAuditRun, type RrAuditResults } from "./rr-audit-run.js";
 import { editRunTiming, RerailEditRuns } from "./rr-edit-runs.js";
 import { type RrRunTiming, RrRunQueue, rrRunQueue } from "./rr-run-queue.js";

@@ -3,12 +3,12 @@
  * them, in a background steer the runtime delivers at the session's next boundary. The native evaluation's findings and
  * the `.rerail` runs' go out the same way.
  */
-import type { AuditRuleProvenance } from "../audit/audit.js";
-import { steers } from "../catalog/rule-mode.js";
-import { checkoutPathBoundary, sensitiveByName } from "../path-boundary.js";
-import { compareDeterministicStrings } from "../stable-json.js";
-import { buildSteer, type CodeRuleViolation, type RuleSteerDelivery, type SteerSourceOf } from "./code-rule.js";
-import type { SteerShell, SteerTrigger } from "./rerail-steer.js";
+import type { AuditRuleProvenance } from "../../audit/audit.js";
+import { steers } from "../../catalog/rule-mode.js";
+import { checkoutPathBoundary, sensitiveByName } from "../../path-boundary.js";
+import { compareDeterministicStrings } from "../../stable-json.js";
+import { buildSteer, type CodeRuleViolation, type RuleSteerDelivery, type SteerSourceOf } from "../code-rule.js";
+import type { SteerShell, SteerTrigger } from "../rerail-steer.js";
 
 /** Where a checkout's steers go: the session, how its paths are shown there, and the shell its commands are written for. */
 export interface SteerTarget {

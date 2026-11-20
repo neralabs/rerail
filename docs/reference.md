@@ -775,6 +775,34 @@ Delivery is not an audit: it has no acceptance callback, acknowledgement persist
 
 </details>
 
+#### Rules written in .rerail
+
+A pack's rules written in `.rerail` ([pack format](pack-format.md#rules-written-in-rerail)) run through a separate
+engine path: a short-lived process reads the checkout's files from disk and runs the rules over all of them. They
+run at different times from JSON rules.
+
+| When | What runs | Recorded as |
+| --- | --- | --- |
+| A session writes a file in the scope of a `.rerail` rule | Once the checkout has had no write for 10 seconds, or the agent's turn ends, the rules that take the written files run over the whole checkout. | An audit of its own (`ongoing`), separate from the edit's JSON audit. |
+| `rerail scan`, an audit request, the first repository audit | Every active `.rerail` rule, beside the JSON rules. | The same audit as the JSON rules; it finishes when both have. |
+
+- **Steering.** An edit's check never waits for its `.rerail` run. The run's findings are selected as the session's
+  scope says (`ai-output`: lines written since the file's last run; `touched-files`: the whole written files) and
+  steer at the session's next boundary, as a late steer does. Findings of a rule in `log` mode are recorded only.
+- **One run at a time per checkout.** Writes made while a run goes on wait for the next run, which carries every
+  session's writes since. A run is never started with writes newer ones made stale. A change to the checkout's
+  `.rerail` rules (a rule turned off, a pack updated or removed) stops a session's running run, records it
+  `superseded`, and runs its files again with the new rules; a session that ends stops its run and records it
+  `interrupted`.
+- **Budgets.** A run after edits may take 5 minutes, a scan's run the scan's own budget; `RERAIL_RR_DEADLINE_MS`
+  replaces both. A run is also bounded by memory (`RERAIL_RR_MEMORY_MB`) and threads (`RERAIL_RR_THREADS`).
+  `RERAIL_RR_QUIET_MS` replaces the 10-second quiet period. A run stopped at a budget gives each of its rules a
+  `budget-exceeded` failure that names the setting to raise; the other rules' results stand.
+- **Which files.** A `.rerail` run reads the files Git lists in the checkout (tracked, and untracked ones Git does
+  not ignore), leaving out folders whose names start with `.` and `target`. It reads no file Git ignores, even
+  where the repository's audits are set not to follow `.gitignore`. Findings in a checkout nested in this one are
+  left to that checkout's own rules.
+
 #### Command reference
 
 OMP and Pi expose these natively, with slash-completion descriptions; Claude Code and Cursor as user-level prompt commands; Codex as `$rerail-*` skills.

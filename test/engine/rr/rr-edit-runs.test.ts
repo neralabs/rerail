@@ -91,7 +91,7 @@ describe("a session's .rerail runs after its edits", () => {
     write(1, written("app/a.py"), written("legacy/b.py"));
     await vi.waitFor(() => expect(runs).toHaveLength(1));
     expect(runs[0]!.run.policies).toEqual([appOnly.path, legacyLogged.path]);
-    expect(started).toMatchObject([{ scope: "touched-files", origin: undefined, revision: 1, paths: ["app/a.py", "legacy/b.py"] }]);
+    expect(started).toMatchObject([{ scope: "touched-files", mode: "steer", revision: 1, paths: ["app/a.py", "legacy/b.py"] }]);
     expect(started[0]!.ruleProvenance?.map(entry => entry.ruleId)).toEqual(["rr-legacy-logged", "rr-app-only"]);
     runs[0]!.end(completed([
       finding("rr-legacy-logged", "app/a.py", 0, 0, 5),

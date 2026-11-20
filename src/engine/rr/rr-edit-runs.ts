@@ -7,8 +7,8 @@
 import type { AuditMode, AuditRecorder, AuditResult, AuditScope } from "../audit/audit.js";
 import type { CodeRuleEdit, CodeRuleViolation } from "../code-rule/code-rule.js";
 import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
-import { editViolations, type ReportBase } from "../code-rule/generated-lines.js";
-import { deliverSteer, steerSourceOf, type SteerTarget } from "../code-rule/steer-publication.js";
+import { editViolations, type ReportBase } from "../code-rule/edit-findings/generated-lines.js";
+import { deliverSteer, steerSourceOf, type SteerTarget } from "../code-rule/edit-findings/steer-publication.js";
 import { leftRun, type RrClaim, type RrRunOwner, type RrRunQueue, type RrRunTiming } from "./rr-run-queue.js";
 import type { RrRunOutcome } from "./rr-runner.js";
 import { insideAny, takes } from "./rr-rule-scope.js";

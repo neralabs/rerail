@@ -284,6 +284,8 @@ are given there as for every rule.
   needs one and checks the pack with the engine again.
 - **A pack the engine refuses.** A file the engine cannot read or check leaves the whole pack out, with the engine's
   words, as a JSON rule that does not compile does.
+- **When it runs.** After a session's writes, once the checkout is quiet or the turn ends, and in every scan: see
+  [Rules written in .rerail](reference.md#rules-written-in-rerail) in the reference.
 
 <details>
 <summary>What a rule written in .rerail cannot do yet</summary>

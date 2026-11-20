@@ -4,8 +4,8 @@
  * findings into what the agent is told shares this choice: the native evaluation and the `.rerail` runs.
  */
 import { diffLines } from "diff";
-import type { AuditScope } from "../audit/audit.js";
-import type { CodeRuleEdit, CodeRuleViolation } from "./code-rule.js";
+import type { AuditScope } from "../../audit/audit.js";
+import type { CodeRuleEdit, CodeRuleViolation } from "../code-rule.js";
 
 type ByteRange = { start: number; end: number };
 

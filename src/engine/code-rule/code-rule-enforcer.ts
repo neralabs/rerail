@@ -3,8 +3,8 @@ import { lstat, mkdtemp, opendir, readFile, realpath, rm, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { setImmediate as yieldToHost, setTimeout as pause } from "node:timers/promises";
-import { editViolations, type ReportBase } from "./generated-lines.js";
-import { deliverSteer, steerSourceOf, type SteerTarget } from "./steer-publication.js";
+import { editViolations, type ReportBase } from "./edit-findings/generated-lines.js";
+import { deliverSteer, steerSourceOf, type SteerTarget } from "./edit-findings/steer-publication.js";
 import { CheckoutRerailRuns, type StreamedAuditResults } from "../rr/rr-checkout-runs.js";
 import { z } from "zod";
 import {
@@ -1053,15 +1053,18 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   interrupt(options?: AuditorCloseOptions): void {
     if (this.#closing) return;
-    for (const [path, stored] of this.#pending) {
-      // Cancelled before evaluation: preserve the work without claiming a compiled-rule revision.
-      stored.auditId ??= this.#startAudit(stored.scope, stored.mode, stored.revision, [path], null);
-    }
+    this.#keepPendingAudits();
     this.#rerail?.close();
     this.#closing = true;
     this.#interruptSessionAudits(options);
     this.#workspace?.workspace.close();
     this.#replacement?.workspace.close();
+  }
+
+  /** Edits cancelled before evaluation keep their work, without claiming a compiled-rule revision. */
+  #keepPendingAudits(): void {
+    for (const [path, stored] of this.#pending)
+      stored.auditId ??= this.#startAudit(stored.scope, stored.mode, stored.revision, [path], null);
   }
 
   /** Ends the session's running audits, or only this evaluator's where the session's are not its to end. */
