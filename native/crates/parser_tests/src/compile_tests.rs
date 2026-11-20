@@ -187,23 +187,30 @@ fn every_total_is_one_flag_on_every_executor() {
     assert!(want.iter().any(|w| w[0] == 0) && want.iter().any(|w| w[0] == 1), "both kinds of file");
     let files: Vec<&[u8]> = cases.iter().map(Vec::as_slice).collect();
     let batch: Vec<block::BatchFile<'_>> = files.iter().map(|&bytes| block::BatchFile { bytes, program: 0 }).collect();
-    let runs: Vec<(String, Vec<block::BlockRun>)> = vec![("cpu interpreter".into(), block.run_files(&files)), ("cranelift".into(), cranelift.run_files(&files))];
-    // The Metal executors' runs (macOS only).
-    #[cfg(target_os = "macos")]
-    let mut runs = runs;
-    #[cfg(target_os = "macos")]
-    {
-        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
-        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-        runs.push(("metal generated".into(), run_split(&[&native], &batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files));
-        runs.push(("metal forward carry".into(), run_serial_split(&[&native], &batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files));
-    }
-    let _ = &batch;
+    let mut runs: Vec<(String, Vec<block::BlockRun>)> = vec![("cpu interpreter".into(), block.run_files(&files)), ("cranelift".into(), cranelift.run_files(&files))];
+    runs.extend(metal_batch_runs(&native, &batch));
     for (executor, got) in runs {
         for (k, run) in got.iter().enumerate() {
             assert_eq!(run.totals, want[k], "{executor}, file {k}: {:?}", String::from_utf8_lossy(&cases[k]));
         }
     }
+}
+
+/// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks.
+#[cfg(target_os = "macos")]
+fn metal_batch_runs(native: &block_native::BlockNative, batch: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+    vec![
+        ("metal generated".into(), run_split(&[native], batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files),
+        ("metal forward carry".into(), run_serial_split(&[native], batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files),
+    ]
+}
+
+/// No Metal executors off macOS.
+#[cfg(not(target_os = "macos"))]
+fn metal_batch_runs(_: &block_native::BlockNative, _: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
+    Vec::new()
 }
 
 /// Masks that read later bytes, by delays: `next`, `lasts`, the last byte, `next` of a value

@@ -41,17 +41,17 @@ pub(super) fn inputs_made(p: &Placed, rels: &[String]) -> Result<Placed> {
     let mut inputs: Vec<&str> = f.inputs().collect();
     for rel in rels {
         if f.facts(rel).is_some() {
-            b.drop_facts(rel);
+            b.fields().drop_facts(rel);
         }
         if f.native(rel).is_some() {
-            b.drop_native(rel);
+            b.fields().drop_native(rel);
         }
         if !inputs.contains(&rel.as_str()) {
             inputs.push(rel);
         }
     }
     if inputs.len() != f.inputs().len() {
-        b.set_inputs(&inputs);
+        b.fields().set_inputs(&inputs);
     }
     edited(p, b)
 }
@@ -68,7 +68,7 @@ fn without(p: &Placed, gone: &[usize]) -> Result<Placed> {
 /// `p` with outputs `outs`, in order.
 fn with_outputs(p: &Placed, outs: &[String]) -> Result<Placed> {
     let mut b = Builder::on(&p.v);
-    b.set_outputs(outs);
+    b.fields().set_outputs(outs);
     edited(p, b)
 }
 
@@ -144,7 +144,7 @@ pub(super) fn run(p: &Placed, db: &Connection, inputs: Inputs, lowered: Option<l
     run_with(p,db,inputs,lowered,hooks,BTreeSet::new())
 }
 
-/// Whether terms `a` and `b` of one rule of `v` are equal, term by term (`front::Term`'s equality).
+/// Whether terms `a` and `b` of one rule of `v` are equal, term by term.
 fn same_terms(v: &Version, mut a: Terms<'_>, mut b: Terms<'_>) -> bool {
     loop {
         match (a.next(), b.next()) {

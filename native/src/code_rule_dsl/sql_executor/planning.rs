@@ -203,7 +203,7 @@ impl Evaluation {
 }
 
 pub fn digest(
-    program: &front::Program,
+    program: &Version,
     dialect: &str,
     lattice_extensions: &BTreeMap<String, schedule::LatticeOperations>,
 ) -> String {
@@ -212,8 +212,10 @@ pub fn digest(
         .expect("registered lattice operations serialize to JSON");
     super::super::json::hex_digest(
         format!(
-            "{dialect}\0{}\0{program:?}\0{extensions}",
-            rusqlite::version_number()
+            "{dialect}\0{}\0{:016x}:{}\0{extensions}",
+            rusqlite::version_number(),
+            program.digest(),
+            program.size()
         )
         .as_bytes(),
     )

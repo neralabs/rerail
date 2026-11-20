@@ -124,7 +124,7 @@ impl ObjectFrame {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    /// Its bytes, read in place: refused where they are not `raw_length` long, as its row says.
+    /// Its bytes, read in place (at the segment's 64-byte alignment, decision 0464): refused where they are not `raw_length` long, as its row says.
     pub fn bytes(&self, raw_length: usize) -> std::io::Result<ObjectBytes> {
         if self.0.len() != raw_length {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "an object's length"));
@@ -515,6 +515,11 @@ impl ContentStore {
             out.push(Some(frame.bytes(length).map_err(|e| StoreError::Corrupt(format!("a source's bytes: {e}")))?));
         }
         Ok(out)
+    }
+
+    /// The source `alias` names, read where the store holds it (`sources_by_alias_in_place`).
+    pub fn source_by_alias_in_place(&self, alias: HashKey) -> StoreResult<Option<ObjectBytes>> {
+        Ok(self.sources_by_alias_in_place(&[alias])?.pop().flatten())
     }
 
     /// The object segments' bytes, and the bytes their rows name (`PLACED`): what compaction would leave.

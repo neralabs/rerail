@@ -4,7 +4,8 @@
 use super::facts::core::{self, Built};
 use super::facts::vtab::{Relation, Source, syntax};
 use super::logic::sql::select;
-use super::logic::{front, plan, rr, strings};
+use super::logic::{plan, rr, strings};
+use super::logic::program_image::{Builder, Cell, Version, fields::ProgramFields, manager::Pipeline};
 use super::waves::{owner::Database, schedule};
 use crate::content_store::ContentStore;
 use napi::{Error, Result};
@@ -393,7 +394,7 @@ impl CodeRuleSqlExecutor {
                 Some(cols) => (corpus::Form::Lines, cols.clone()),
                 None => (corpus::Form::Rows, value),
             };
-            let decl: Vec<(front::Name, front::Name)> = serde_json::from_value(decl).map_err(error)?;
+            let decl: Vec<(String, String)> = serde_json::from_value(decl).map_err(error)?;
             let columns = if decl.is_empty() { vec!["__presence".to_owned()] } else { catalog::view_columns(&decl) };
             self.check_input(rel, &columns, decl.len())?;
             let types = decl.iter().map(|(_, t)| t.clone()).map(String::from).collect();
@@ -471,9 +472,14 @@ impl CodeRuleSqlExecutor {
     #[napi]
     pub fn lower(&mut self, program: String, dialect: String) -> Result<String> {
         self.profiled("lower", |this| {
-            let program = producers::prune(rr::parse(&program).map_err(error)?);
+            let program = producers::prune(rr::parse_version(&program).map_err(error)?)?;
             let arities: BTreeMap<_, _> = program
-                .decls.keys().map(|name| (name.clone(), program::logical_arity(&program, name)))
+                .declared_names()
+                .into_iter()
+                .map(|name| {
+                    let arity = program::logical_arity(&*program, &name);
+                    (name, arity)
+                })
                 .collect();
             let (emitted, _) = this.compile(program, &dialect)?;
             serde_json::to_string(&json!({"setup": emitted.setup, "program": emitted.program, "logical_arities":arities,"indexes":indexes::wanted(&emitted),"analysis":emitted.analysis.as_ref()}))
@@ -498,7 +504,7 @@ impl CodeRuleSqlExecutor {
     ) -> Result<String> {
         self.profiled("run", |this| {
             this.run_program(
-                session_program(rr::parse(&program).map_err(error)?),
+                session_program(rr::parse_version(&program).map_err(error)?)?,
                 &dialect,
                 max_waves.unwrap_or(1024),
             )
@@ -515,7 +521,7 @@ impl CodeRuleSqlExecutor {
     ) -> Result<String> {
         self.profiled("run_file", |this| {
             this.run_program(
-                session_program(rr::parse_file(Path::new(&path)).map_err(error)?),
+                session_program(rr::parse_file_version(Path::new(&path)).map_err(error)?)?,
                 &dialect,
                 max_waves.unwrap_or(1024),
             )
@@ -615,12 +621,11 @@ impl CodeRuleSqlExecutor {
 }
 
 /// A program as a session runs it: its node attributes (`value`, `node_text`, `token`) the inputs the snapshot binds
-/// for every node, not answered on request (decision 0174's rewrite undone, `lower::undo_on_request`). Answered, each
+/// for every node, not answered on request (decision 0174's rewrite undone, `lower::undone_on_request`). Answered, each
 /// is a relation of the program beside the session's input of that name, though no rule reads it ("value: SQL output
 /// already exists"). Then pruned (`producers::prune`).
-fn session_program(mut program: front::Program) -> front::Program {
-    rr::lower::undo_on_request(&mut program);
-    producers::prune(program)
+fn session_program(program: Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    producers::prune(rr::lower::undone_on_request(&program).map_err(error)?)
 }
 
 fn reserved(name: &str) -> bool {
@@ -681,17 +686,22 @@ impl CodeRuleSqlExecutor {
 
     fn run_program(
         &mut self,
-        program: front::Program,
+        program: Arc<Version>,
         dialect: &str,
         max_waves: u32,
     ) -> Result<String> {
         self.statistics.materialize(&self.db)?;
         let planning_digest = self.planning.as_ref()
             .map(|_| planning::digest(&program, dialect, &self.lattice_extensions));
-        let outputs = program.outputs.clone();
-        let declared = Arc::new(program.clone());
+        let outputs = program.output_names();
+        let declared = Arc::clone(&program);
         let arities: BTreeMap<_, _> = program
-            .decls.keys().map(|name| (name.clone(), program::logical_arity(&program, name)))
+            .declared_names()
+            .into_iter()
+            .map(|name| {
+                let arity = program::logical_arity(&*program, &name);
+                (name, arity)
+            })
             .collect();
         let (mut emitted, producers) = self.compile(program, dialect)?;
         let objects = self.output_objects(&emitted)?;

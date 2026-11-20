@@ -1,4 +1,5 @@
     use super::*;
+    use std::collections::BTreeSet;
 
     /// Each `ast` atom without captures reads its matcher's relation, one per distinct matcher; `docof` joins the node
     /// to its document only where the rule reads the document; an atom with captures is left as written.
@@ -12,27 +13,34 @@
 a(c) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
 b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
 "#;
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
-        assert_eq!(absorb(&mut prog.clone(), false), 1);
-        let mut captured = prog.clone();
-        assert_eq!(absorb(&mut captured, true), 2, "with captures, the field the head reads is part of the matcher");
-        let b = captured.rules.iter().find(|r| r.head.rel == "b").unwrap().body.clone();
-        assert_eq!(b.len(), 1);
-        let Literal::Ast { captures, matcher, node, .. } = &b[0] else { panic!("not a matcher: {:?}", b[0]) };
-        assert_eq!(node, "c");
-        assert_eq!(captures, &vec![("C1".to_owned(), "f".to_owned())], "the field's node captured");
-        let m: serde_json::Value = serde_json::from_str(matcher).unwrap();
+        use crate::code_rule_dsl::logic::plan::corpus::preparation::text::tree_parts_as_matchers;
+        use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, Version};
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+        fn rule<'v>(v: &'v Version, head: &str) -> RuleRef<'v> {
+            v.rules().find(|r| v.rel_name(r.head().rel()) == head).unwrap()
+        }
+        assert_eq!(tree_parts_as_matchers(prog.clone(), false).unwrap().1, 1);
+        let (captured, made) = tree_parts_as_matchers(prog.clone(), true).unwrap();
+        assert_eq!(made, 2, "with captures, the field the head reads is part of the matcher");
+        let b = rule(&captured, "b");
+        assert_eq!(b.body().count(), 1);
+        let Lit::Ast { captures, matcher, node, .. } = b.body().next().unwrap().view() else { panic!("not a matcher: {}", captured.show_rule(b)) };
+        assert_eq!(captured.text(b.var(node)), "c");
+        let captures: Vec<(String, String)> = captures.map(|(n, s)| (captured.text(n).to_owned(), captured.text(b.var(s)).to_owned())).collect();
+        assert_eq!(captures, vec![("C1".to_owned(), "f".to_owned())], "the field's node captured");
+        let m: serde_json::Value = serde_json::from_str(captured.text(matcher)).unwrap();
         assert_eq!(m["rule"]["all"][1]["has"]["pattern"], "$C1");
-        assert_eq!(absorb(&mut prog, false), 1);
-        let body = |head: &str| prog.rules.iter().find(|r| r.head.rel == head).unwrap().body.clone();
+        let (prog, made) = tree_parts_as_matchers(prog, false).unwrap();
+        assert_eq!(made, 1);
+        let body = |head: &str| rule(&prog, head);
         let a = body("a");
-        assert_eq!(a.len(), 1);
-        let Literal::Ast { matcher, node, .. } = &a[0] else { panic!("not a matcher: {:?}", a[0]) };
-        assert_eq!(node, "c");
-        let m: serde_json::Value = serde_json::from_str(matcher).unwrap();
+        assert_eq!(a.body().count(), 1);
+        let Lit::Ast { matcher, node, .. } = a.body().next().unwrap().view() else { panic!("not a matcher: {}", prog.show_rule(a)) };
+        assert_eq!(prog.text(a.var(node)), "c");
+        let m: serde_json::Value = serde_json::from_str(prog.text(matcher)).unwrap();
         assert_eq!(m["rule"]["all"][1]["has"]["field"], "function");
         assert_eq!(m["rule"]["all"][1]["has"]["kind"], "attribute");
-        assert_eq!(body("b").len(), 3, "a field the head reads stays a join");
+        assert_eq!(body("b").body().count(), 3, "a field the head reads stays a join");
     }
 
     /// A matcher whose every read joins its node with a column only another matcher's roots fill is bound only at
@@ -139,23 +147,24 @@ a(n) :- ast(d, n, {"language": "python", "rule": {"kind": "call"}}).
 b(n, d) :- ast(d, n, {"language": "python", "rule": {"kind": "call"}}).
 c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x).
 "#;
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
-        let found = lower(&mut prog);
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+        let (prog, found) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(prog).unwrap();
         assert_eq!(found.len(), 2, "one distinct matcher without captures, one with");
         let rel = &found[0].0;
-        let body = |head: &str| prog.rules.iter().find(|r| r.head.rel == head).unwrap().body.clone();
-        let reads = |head: &str| body(head).iter().filter_map(|l| l.atom().map(|a| a.rel.clone())).collect::<Vec<_>>();
+        let body = |head: &str| prog.rules().find(|r| prog.rel_name(r.head().rel()) == head).unwrap();
+        let reads = |head: &str| body(head).body().filter_map(|l| l.atom().map(|a| prog.rel_name(a.rel()).to_owned())).collect::<Vec<_>>();
         assert_eq!(reads("a"), vec![rel.clone()]);
         assert_eq!(reads("b"), vec![rel.clone(), "docof".to_owned()]);
         // A captured matcher's relation has the root and a column a capture (decision 0107).
         assert_eq!(found[1].0, "rr_ast_1_1");
         assert_eq!(found[1].2, vec!["X".to_owned()]);
         assert_eq!(reads("c"), vec!["rr_ast_1_1".to_owned()]);
-        let Some(Literal::Atom(c)) = body("c").into_iter().next() else { panic!("not an atom") };
-        assert_eq!(c.args, vec![Term::Var("n".into()), Term::Var("x".into())]);
+        let c = body("c");
+        let Some(first) = c.body().next().and_then(|l| l.atom()) else { panic!("not an atom") };
+        assert_eq!(first.args().map(|t| prog.show_term(c, t)).collect::<Vec<_>>(), vec!["$n".to_owned(), "$x".to_owned()]);
         assert_eq!(columns("rr_ast_1_1"), &["n", "x1"]);
         assert_eq!(columns("rr_ast_0"), &["n"]);
-        assert!(prog.inputs.contains(rel) && prog.decls.contains_key(rel.as_str()));
+        assert!(prog.input_names().contains(rel) && prog.declares(rel));
     }
 
     /// A `filePath` test below a matcher's root conjuncts (here in an `any`) is the document's: the matcher holds in

@@ -441,7 +441,6 @@ const STATE: &[(&str, &str)] = &[
     // of the compilation, not a result kept.
     ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
     // A count of the trees this thread decoded from versions, and where the last was (0281's measure): a counter.
-    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
     // A run's changed reads' given versions (decision 0364 step 3), by the run's scope, removed with its tables.

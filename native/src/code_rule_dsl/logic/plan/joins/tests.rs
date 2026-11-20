@@ -1,8 +1,41 @@
 use super::*;
-use crate::code_rule_dsl::logic::plan::{KeepPlans, Model, Stats, atom_sig, body};
+use crate::code_rule_dsl::logic::plan::{KeepPlans, Model, Stats, body};
 use crate::code_rule_dsl::logic::plan::Inputs;
-use crate::code_rule_dsl::logic::rr::parse;
+use crate::code_rule_dsl::logic::program_image::{Lit, TermRef, Version};
+use crate::code_rule_dsl::logic::rr::parse_version as parse;
 use std::collections::{BTreeSet, HashSet};
+
+/// The relations `v`'s rules derive.
+fn derived_of(v: &Version) -> HashSet<String> {
+    v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect()
+}
+
+/// An argument of a test rule's atom, as a test runs the rule by hand: an integer, a variable by name, or another.
+enum Arg {
+    Int(i64),
+    Var(String),
+    Other,
+}
+
+/// The body atoms of `v`'s first rule, in order, each its relation and its arguments (`None` for another literal).
+fn atoms(v: &Version) -> Vec<Option<(String, Vec<Arg>)>> {
+    let r = v.rules().next().expect("a rule");
+    r.body()
+        .map(|l| match l.view() {
+            Lit::Atom(a) => Some((
+                v.rel_name(a.rel()).to_owned(),
+                a.args()
+                    .map(|t| match t {
+                        TermRef::Int(i) => Arg::Int(i),
+                        TermRef::Var(x) => Arg::Var(v.text(r.var(x)).to_owned()),
+                        _ => Arg::Other,
+                    })
+                    .collect(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
 
 /// The memo is the process's: tests that write it take turns.
 static SERIAL: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
@@ -172,11 +205,11 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let _serial = SERIAL.lock();
     clear();
     let p = parse(".decl a(x: number, y: number)\n.decl b(y: number, z: number)\n.decl h(x: number, z: number)\nh(x, z) :- a(x, y), b(y, z).\n.output h\n").unwrap();
-    let placed = body::Placed::of_program(&p).unwrap();
+    let placed = body::Placed::whole(p.clone());
     let pf = placed.fields().unwrap();
     let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let derived: HashSet<String> = derived_of(&p);
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&pf), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     for (rel, rows) in [("a", 50.0), ("b", 100.0)] {
         model.stats.card.insert(rel, rows);
         for c in 0..2 {
@@ -184,15 +217,13 @@ fn exact_statistics_and_the_memo_change_the_plan() {
             model.stats.fan.insert((rel, c), 1.0);
         }
     }
-    let r = &p.rules[0];
-    let v = body::alone(r).unwrap();
-    let b = body::nth(&v, 0);
-    let lead = |order: &[Step]| r.body[order[0].at].atom().map(|a| a.rel.to_string()).unwrap();
+    let b = body::nth(&p, 0);
+    let lead = |order: &[Step]| b.rel(b.atom(order[0].at).unwrap()).to_owned();
     let ((order, work, _), _) = model.plan_inner(pf, &b, None, None, false).unwrap();
     assert_eq!(lead(&order), "a", "{work}");
-    let bound: BTreeSet<String> = ["x", "y"].map(String::from).into();
-    let atom_b = r.body[1].atom().unwrap();
-    put_exact(1, b.observed_key(), vec![(atom_sig(atom_b, &bound), [50, 50_000])]);
+    let mut bound = body::VarSet::new();
+    (0..b.len()).filter(|&i| b.atom(i).is_some()).take(1).for_each(|i| bound.extend(&b.vars(i)));
+    put_exact(1, b.observed_key(), vec![(b.sig(1, &bound), [50, 50_000])]);
     let ((order, work, _), _) = model.plan_inner(pf, &b, None, None, false).unwrap();
     assert_eq!(lead(&order), "b", "exact: {work}");
     clear();
@@ -444,11 +475,11 @@ fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
 #[test]
 fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
     let p = parse(".decl r(f: number, x: number)\n.decl h(a: number, b: number)\nh(a, b) :- r(f, a), r(f, b), r(f, c).\n.output h\n").unwrap();
-    let placed = body::Placed::of_program(&p).unwrap();
+    let placed = body::Placed::whole(p.clone());
     let pf = placed.fields().unwrap();
     let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let derived: HashSet<String> = derived_of(&p);
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&pf), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     let counts: Vec<(i64, u64)> = (0..100).map(|v| (v, 1)).chain([(1000, 300)]).collect();
     let h = crate::code_rule_dsl::logic::plan::table::HeavyCol::of_counts(counts);
     model.stats.card.insert("r", h.rows);
@@ -456,9 +487,7 @@ fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
     model.stats.fan.insert(("r", 0), h.sq / h.rows);
     model.ndv.insert(("r", 1), h.rows);
     model.stats.fan.insert(("r", 1), 1.0);
-    let r = &p.rules[0];
-    let v = body::alone(r).unwrap();
-    let b = body::nth(&v, 0);
+    let b = body::nth(&p, 0);
     let last = |m: &Model| *m.plan_rule_step_rows(pf, &b, None).unwrap().1.last().unwrap();
     let by_fan = last(&model);
     assert!((by_fan / (h.sq * h.sq / h.rows) - 1.0).abs() < 0.01, "{by_fan}");
@@ -474,14 +503,11 @@ fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
 /// size and one count of calls, with unlike edges among their nodes, have unlike work.
 #[test]
 fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
-    use crate::code_rule_dsl::logic::front::{Literal, Term};
     use crate::code_rule_dsl::logic::native::component::InRel;
     use crate::code_rule_dsl::logic::plan::{Step, Walker};
     use std::collections::HashMap;
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl e(a: number, b: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 1), r(f, m), k(m, 2), r(f, j), e(n, j), k(j, 3).\n.output h\n").unwrap();
-    let rule = &p.rules[0];
-    let rule_v = body::alone(rule).unwrap();
-    let rb = body::nth(&rule_v, 0);
+    let rb = body::nth(&p, 0);
     // Two functions of 30 nodes: 3 calls (kind 1), 2 returns (kind 2), the rest identifiers (kind 3). Function 1's
     // calls have an edge to every node; function 2's, one each.
     let (mut r, mut k, mut e): (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new(), Vec::new());
@@ -499,21 +525,22 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
     let rels: HashMap<&str, std::sync::Arc<InRel>> = [("r", rel(&r)), ("k", rel(&k)), ("e", rel(&e))].into_iter().collect();
     let order: Vec<Step> = [3, 2, 0, 1, 4, 5, 6].into_iter().map(|at| Step { at, mode: None }).collect();
     // The order run by hand: every binding enumerated, each step adding the bindings it reads.
+    let body_atoms = atoms(&p);
     let run = |start: [i64; 2]| -> f64 {
         let mut binds: Vec<HashMap<String, i64>> = vec![[("m".to_owned(), start[0])].into_iter().collect()];
         let mut work = 0.0;
         for s in order.iter().skip(1) {
             work += binds.len() as f64;
-            let Literal::Atom(a) = &rule.body[s.at] else { unreachable!() };
-            let rows = match a.rel.as_ref() { "r" => &r, "k" => &k, _ => &e };
+            let (rel, args) = body_atoms[s.at].as_ref().expect("an atom");
+            let rows = match rel.as_str() { "r" => &r, "k" => &k, _ => &e };
             let mut next = Vec::new();
             for b in &binds {
                 for row in rows.iter() {
                     let mut nb = b.clone();
-                    let ok = a.args.iter().zip(row).all(|(t, &v)| match t {
-                        Term::Int(i) => *i == v,
-                        Term::Var(x) => match nb.get(x.as_ref()) { Some(&w) => w == v, None => { nb.insert(x.to_string(), v); true } },
-                        _ => true,
+                    let ok = args.iter().zip(row).all(|(t, &v)| match t {
+                        Arg::Int(i) => *i == v,
+                        Arg::Var(x) => match nb.get(x.as_str()) { Some(&w) => w == v, None => { nb.insert(x.clone(), v); true } },
+                        Arg::Other => true,
                     });
                     if ok { next.push(nb) }
                 }
@@ -574,14 +601,11 @@ fn a_sampled_probe_reads_its_limit_and_estimates_its_matches() {
 /// of its lead's rows, exactly where the samples hold every row, and it ranks them where their prices misled.
 #[test]
 fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
-    use crate::code_rule_dsl::logic::front::{Literal, Term};
     use crate::code_rule_dsl::logic::native::component::InRel;
     use crate::code_rule_dsl::logic::plan::{Step, WalkSnap};
     use std::collections::HashMap;
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl e(a: number, b: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 1), r(f, m), k(m, 2), r(f, j), e(n, j), k(j, 3).\n.output h\n").unwrap();
-    let rule = &p.rules[0];
-    let rule_v = body::alone(rule).unwrap();
-    let rb = body::nth(&rule_v, 0);
+    let rb = body::nth(&p, 0);
     // The triangle's functions (decision 0232's test): 30 nodes each, 3 calls, 2 returns; function 1's calls have an
     // edge to every node, function 2's one each.
     let (mut r, mut k, mut e): (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new(), Vec::new());
@@ -597,25 +621,26 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
     }
     let table = |rel: &str| -> &Vec<[i64; 2]> { match rel { "r" => &r, "k" => &k, _ => &e } };
     // An order run by hand from every row of its lead, each step adding the bindings it reads.
+    let body_atoms = atoms(&p);
     let run = |order: &[usize]| -> f64 {
-        let Literal::Atom(lead) = &rule.body[order[0]] else { unreachable!() };
-        let bind = |b: &HashMap<String, i64>, a: &crate::code_rule_dsl::logic::front::Atom, row: &[i64; 2]| -> Option<HashMap<String, i64>> {
+        let lead = body_atoms[order[0]].as_ref().expect("an atom");
+        let bind = |b: &HashMap<String, i64>, args: &[Arg], row: &[i64; 2]| -> Option<HashMap<String, i64>> {
             let mut nb = b.clone();
-            for (t, &v) in a.args.iter().zip(row) {
+            for (t, &v) in args.iter().zip(row) {
                 match t {
-                    Term::Int(i) if *i != v => return None,
-                    Term::Var(x) => match nb.get(x.as_ref()) { Some(&w) if w != v => return None, Some(_) => {}, None => { nb.insert(x.to_string(), v); } },
+                    Arg::Int(i) if *i != v => return None,
+                    Arg::Var(x) => match nb.get(x.as_str()) { Some(&w) if w != v => return None, Some(_) => {}, None => { nb.insert(x.clone(), v); } },
                     _ => {}
                 }
             }
             Some(nb)
         };
-        let mut binds: Vec<HashMap<String, i64>> = table(&lead.rel).iter().filter_map(|row| bind(&HashMap::new(), lead, row)).collect();
+        let mut binds: Vec<HashMap<String, i64>> = table(&lead.0).iter().filter_map(|row| bind(&HashMap::new(), &lead.1, row)).collect();
         let mut work = 0.0;
         for &at in &order[1..] {
             work += binds.len() as f64;
-            let Literal::Atom(a) = &rule.body[at] else { unreachable!() };
-            binds = binds.iter().flat_map(|b| table(&a.rel).iter().filter_map(|row| bind(b, a, row)).collect::<Vec<_>>()).collect();
+            let (rel, args) = body_atoms[at].as_ref().expect("an atom");
+            binds = binds.iter().flat_map(|b| table(rel).iter().filter_map(|row| bind(b, args, row)).collect::<Vec<_>>()).collect();
         }
         // Decision 0273: and the rows the last step makes.
         work + binds.len() as f64
@@ -647,9 +672,7 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     use std::collections::HashMap;
     // From the calls: each call's function, then the function's nodes, then their kinds.
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- k(n, 1), r(f, n), r(f, m), k(m, 2).\n.output h\n").unwrap();
-    let rule = &p.rules[0];
-    let rule_v = body::alone(rule).unwrap();
-    let rb = body::nth(&rule_v, 0);
+    let rb = body::nth(&p, 0);
     // 1,000 functions of 30 nodes with 5 calls, and 2 of 2,000 nodes with 50: 2% of the calls, 56% of the work.
     let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
     let mut add = |f: i64, nodes: i64, calls: i64| for i in 0..nodes {
@@ -688,9 +711,7 @@ fn a_walk_past_a_rare_check_starts_from_the_checks_rows() {
     use std::collections::HashMap;
     // From every node, a check on a kind 10 nodes of 30,000 have, then the function's nodes and their kinds.
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 9), r(f, m), k(m, 2).\n.output h\n").unwrap();
-    let rule = &p.rules[0];
-    let rule_v = body::alone(rule).unwrap();
-    let rb = body::nth(&rule_v, 0);
+    let rb = body::nth(&p, 0);
     let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
     for f in 1..=1000i64 {
         for i in 0..30 {
@@ -717,9 +738,7 @@ fn a_wildcard_in_a_check_is_no_column_of_its_probe() {
     use std::collections::HashMap;
     // 100 functions of 10 nodes; half the nodes have a kind, whatever it is (`k(n, _)`).
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, m: number)\nh(f, m) :- r(f, n), k(n, _), r(f, m).\n.output h\n").unwrap();
-    let rule = &p.rules[0];
-    let rule_v = body::alone(rule).unwrap();
-    let rb = body::nth(&rule_v, 0);
+    let rb = body::nth(&p, 0);
     let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
     for f in 1..=100i64 {
         for i in 0..10 {
@@ -751,7 +770,7 @@ fn a_maintenance_rule_starts_from_its_source_rules_order() {
     // written as `maintain::write_ir` writes it: the source's literals, `e`'s over its lost rows, and a test the
     // rewrite adds.
     let p = parse(".decl e(x: number, y: number)\n.decl q(y: number)\n.decl h(x: number, y: number)\nh(x, y) :- e(x, y), q(y).\n.decl a(x: number)\n.decl c(y: number, z: number)\n.decl g(x: number, z: number)\ng(x, z) :- a(x), e(x, y), c(y, z).\n.output h\n.output g\n").unwrap();
-    let placed = Placed::of_program(&p).unwrap();
+    let placed = Placed::whole(p.clone());
     let src_id = placed.id(0);
     let mut b = Builder::under(&placed.v);
     let (x, y) = (T::Var("x"), T::Var("y"));

@@ -931,21 +931,23 @@ impl Observer {
                 self.stored_roots.push(root.clone());
             }
             let volume = self.volume(&root);
-            // A cursor is of the volume it was taken on: kept under the volume's id with the root.
-            let cursor = volume.and_then(|v| self.db.as_ref()?.meta.get(&cursor_key(&root, v)).cloned());
-            // A cursor is the journal's own text (an FSEvents id, a Watchman clock); one kept as a number is an id.
-            let cursor = cursor.and_then(|c| match c {
-                rusqlite::types::Value::Text(t) => Some(t),
+            // A cursor is of the volume it was taken on: kept under the volume's id with the root. It is the journal's
+            // own text (an FSEvents id, a Watchman clock); one kept as a number is an id.
+            let kept = |v: [u8; 16]| match self.db.as_ref()?.meta.get(&cursor_key(&root, v))? {
+                rusqlite::types::Value::Text(t) => Some(t.clone()),
                 rusqlite::types::Value::Integer(i) => Some(i.to_string()),
                 _ => None,
-            });
+            };
             // A small root is checked by its directories' listings (decision 0400): what FSEvents replays to a new
             // process is not all that changed before it (t46), and listing each directory that holds an answer costs
-            // less than waiting for the replay.
+            // less than waiting for the replay. Its cursor is kept under the volume's id, or under none where the
+            // system names no volume (`check_listed`), and read back so.
             if self.listable(&root) {
+                let cursor = kept(volume.unwrap_or([0; 16]));
                 self.check_listed(root, volume, cursor.as_deref());
                 continue;
             }
+            let cursor = volume.and_then(kept);
             // The journal is waited for no longer than checking every answer kept under the root by its `stat`
             // would take (Q221: planning costs no more than running, 0122); slower, it is checked so.
             let kept = self.entries.range::<Path, _>((std::ops::Bound::Included(root.as_path()), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(&root)).count();
@@ -1230,12 +1232,15 @@ impl Observer {
     /// The root `root` is asked as: the widest stored root above it on the same volume, else itself. A journal's
     /// cursor is the volume's (an FSEvents id), so the outer root's answers for what is under it too: an inner root
     /// asked on its own started a stream of its own, whose cookie could miss its wait (2 s, then lost), or had no
-    /// cursor of its own (lost at once), and each lost root was settled and written again every run.
+    /// cursor of its own (lost at once), and each lost root was settled and written again every run. Where the system
+    /// names no volume (Linux: the roots are checked by their listings, whose cursor is the observer's own journal's),
+    /// the roots are of one, as `check_listed` keys their cursors and `collect` keeps them: collection drops an inner
+    /// root's cursor as answered by the root above, so the inner root must be asked as that root.
     fn outermost(&mut self, root: &Path) -> PathBuf {
         let mut above: Vec<PathBuf> = self.stored_roots.iter().filter(|r| under(&root, r) && r.as_path() != root).cloned().collect();
         above.sort_by_key(|r| r.as_os_str().len());
-        let here = self.volume(root);
-        above.into_iter().find(|r| here.is_some() && self.volume(r) == here).unwrap_or_else(|| root.to_path_buf())
+        let here = self.volume(root).unwrap_or([0; 16]);
+        above.into_iter().find(|r| self.volume(r).unwrap_or([0; 16]) == here).unwrap_or_else(|| root.to_path_buf())
     }
 
     /// `root`'s volume, asked once a process.

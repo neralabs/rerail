@@ -129,7 +129,7 @@ impl RulePass for Rounds<'_> {
                 continue;
             };
             let input = fs_input(answer);
-            b.declare(&input, &f.columns(answer).ok_or_else(|| format!("{answer} has no declaration"))?);
+            b.fields().declare(&input, &f.columns(answer).ok_or_else(|| format!("{answer} has no declaration"))?);
             let vars: Vec<String> = (0..width).map(|c| format!("rr_c{c}")).collect();
             let vars: Vec<T<'_>> = vars.iter().map(|x| T::Var(x.as_str())).collect();
             b.rule().head(answer, &vars).atom(req, &vars[..keys]).atom(input.as_str(), &vars).finish()?;
@@ -138,7 +138,7 @@ impl RulePass for Rounds<'_> {
             inputs.retain(|r| r != answer);
             self.fs.push(((*answer).to_owned(), input));
         }
-        b.add_qualifiers(&kept);
+        b.fields().add_qualifiers(&kept);
         for (answer, input) in &self.fs {
             for p in produced.iter_mut().filter(|(r, _)| r == answer) {
                 p.0 = input.clone();
@@ -150,12 +150,12 @@ impl RulePass for Rounds<'_> {
             }
         }
         self.requests = answers.keys().filter_map(|r| Some(((*r).to_owned(), f.arity(r)?))).collect();
-        b.set_inputs(&inputs);
-        b.set_answers(&BTreeMap::new());
-        b.keep_relation_fields(&|_| true, &|_| true, &|_| false);
+        b.fields().set_inputs(&inputs);
+        b.fields().set_answers(&BTreeMap::new());
+        b.fields().keep_relation_fields(&|_| true, &|_| true, &|_| false);
         // The rounds hand on rows (requests to the driver, the cone's relations to the rest), never output lines: so
         // each is kept in the frames as any derived relation, with its rows.
-        b.set_outputs::<&str>(&[]);
+        b.fields().set_outputs::<&str>(&[]);
         self.inputs = inputs;
         self.produced = produced;
         Ok(())

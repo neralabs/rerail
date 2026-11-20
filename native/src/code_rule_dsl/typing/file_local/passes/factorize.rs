@@ -6,7 +6,7 @@
 //! (`p4_outer(f, x) :- p4_read(_, x, f, _), fz_a(f, p), fz_b(p, x)`): their join is the cross part's ordinary join,
 //! per key, from the columns they bind.
 //!
-//! - **Each part** keeps its own comparisons and negations (`keeps::factors`), and is reduced by the others' keys
+//! - **Each part** keeps its own comparisons and negations (`keeps::factors_of`), and is reduced by the others' keys
 //!   (`fz_a(f, p) :- …, fzk_b(p)`, `fzk_b(p) :- bound_in(p, x)`): every row stored then joins, so a part never holds
 //!   more rows than the product it replaces.
 //! - **When:** decided from the program alone, before the first chunk: the per-file memo's key is a digest of the

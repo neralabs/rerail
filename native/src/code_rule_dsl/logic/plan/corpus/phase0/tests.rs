@@ -43,7 +43,7 @@
             assert_eq!(kept.digest(), derived.digest(), "{}:\nkept {}\nderived {}", file.display(), kept.describe(), derived.describe());
         }
         // A name with no file is refused as before.
-        let err = crate::code_rule_dsl::logic::rr::parse("#include \"no/such.rerail\"\n").err().expect("refused").to_string();
+        let err = crate::code_rule_dsl::logic::rr::parse_version("#include \"no/such.rerail\"\n").err().expect("refused").to_string();
         assert!(err.contains("no such file in the library"), "{err}");
     }
 

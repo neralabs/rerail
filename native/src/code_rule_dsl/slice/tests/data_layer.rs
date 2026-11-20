@@ -48,13 +48,16 @@ fn refusal(clause: &serde_json::Value) -> Option<String> {
 
 /// The authored program of `RERAIL_DL_LOGIC`, empty without one; each `define`'s options at
 /// `options` where given.
-fn authored(options: &serde_json::Map<String, serde_json::Value>) -> crate::code_rule_dsl::logic::front::Program {
-    let Ok(path) = std::env::var("RERAIL_DL_LOGIC") else { return Default::default() };
-    let mut program = crate::code_rule_dsl::logic::rr::parse(&std::fs::read_to_string(&path).unwrap()).unwrap_or_else(|e| panic!("{path}: {e}"));
-    for document in &mut program.policies {
+fn authored(options: &serde_json::Map<String, serde_json::Value>) -> std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version> {
+    let Ok(path) = std::env::var("RERAIL_DL_LOGIC") else { return crate::code_rule_dsl::waves::policies::nothing().unwrap() };
+    let program = crate::code_rule_dsl::logic::rr::parse_version(&std::fs::read_to_string(&path).unwrap()).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let mut documents = program.policies().unwrap();
+    for document in &mut documents {
         with_options(document, options);
     }
-    program
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&program);
+    b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Policies(&documents));
+    b.finish().unwrap().0
 }
 
 /// `document` with each `define`'s option defaults set to `options`' values.

@@ -489,9 +489,9 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
     let dir = temp("supertype");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = f(y)\nreturn g(x)\n").unwrap();
-    let backends = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit];
-    #[cfg(target_os = "macos")]
-    let backends = [backends.as_slice(), &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit]].concat();
+    // The device's backends where there is one (Metal).
+    let device = if cfg!(target_os = "macos") { &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit][..] } else { &[] };
+    let backends = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit].into_iter().chain(device.iter().copied());
     let mut reference = None;
     for backend in backends {
         let store = ContentStore::open(&temp("supertype-store").with_extension("sqlite")).unwrap();
@@ -529,9 +529,9 @@ fn the_backends_find_the_same_keys_on_real_files() {
     assert!(paths.len() == 4 || std::env::var_os("RERAIL_S7_FIXTURES").is_some() || std::env::var_os("RERAIL_S7_FILES").is_some(), "{} files", paths.len());
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut stores = vec![dir.clone()];
-    let backends = [("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)];
-    #[cfg(target_os = "macos")]
-    let backends = [backends.as_slice(), &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)]].concat();
+    // The device's backends where there is one (Metal).
+    let device = if cfg!(target_os = "macos") { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };
+    let backends = [("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)].into_iter().chain(device.iter().copied());
     let mut reference: Option<(Keys, BTreeMap<(String, String), Coverage>)> = None;
     for (name, backend) in backends {
         let path = temp(&format!("phase4-{name}")).with_extension("sqlite");

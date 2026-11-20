@@ -1,62 +1,72 @@
 use super::passes::Parts as _;
+use super::fields::ProgramFields;
 use super::version::{Made, Version};
-use super::{AtomId, Builder, CmpOp, Extents, Grouped, Image, Lit, R, RelId, RuleId, Strings, T, TermRef, Tree, decode, encode};
-use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Lists, Native, Program, Rule, Term, Value};
+use super::{AtomId, Builder, CmpOp, Extents, Grouped, Image, Lit, R, RelId, RuleId, RuleRef, Strings, T, TermRef};
+use crate::code_rule_dsl::logic::front::{AggOp, LatticeDecl, Native, Value, ast::Gate};
+use crate::code_rule_dsl::logic::program_facts::Field;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::program_image::manager::VersionAnalyses as _;
 
-fn same(a: &Program, b: &Program) {
-    assert_eq!(format!("{a:?}"), format!("{b:?}"));
+/// `a` and `b` are the same program: the same text, and the same digest (every part's hash).
+fn same(a: &Version, b: &Version) {
+    assert_eq!(a.show(), b.show());
+    assert_eq!(a.digest(), b.digest(), "the digests of\n{}", a.show());
 }
 
-fn atom(rel: &str, args: Vec<Term>) -> Atom {
-    Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }
+/// `from` made again by another route: a derivation of all its parts, with the rules `keep` takes copied in their
+/// order, then `edit`'s changes.
+fn remade(from: &Version, keep: impl Fn(RuleRef<'_>) -> bool, edit: impl FnOnce(&mut Builder<'_>)) -> Arc<Version> {
+    let mut b = Builder::derive(from);
+    for r in from.rules().filter(|r| keep(*r)) {
+        b.copy(from, r);
+    }
+    edit(&mut b);
+    b.finish().unwrap().0
 }
 
-fn v(x: &str) -> Term {
-    Term::Var(x.to_owned().into())
+/// Every part of a program: names, the least number, strings that need escapes, each literal and aggregate, gated
+/// negations, a relation with no rows, and the `.about` parts.
+fn every_part_on(b: &mut Builder<'_>) {
+    b.fields().declare("r", &[("c", "int"), ("d", "sym")]);
+    b.fields().declare("nearest", &[("x", "int")]);
+    b.fields().set_inputs(&["a", "b"]);
+    b.fields().set_outputs(&["r"]);
+    b.fields().set_facts("k", &[vec![Value::Int(i64::MIN), Value::Str("q\"\\\n\u{1}é".into())].into(), vec![Value::Int(-3), Value::Str(String::new().into())].into()]);
+    b.fields().set_facts("empty", &[]);
+    let x = || T::Var("x");
+    let y = || T::Var("y");
+    b.rule()
+        .head("r", &[x(), T::Call("cat", vec![T::Var("top"), T::Str("s")])])
+        .atom("a", &[x(), T::Var("count_"), T::Var("min")])
+        .atom_with("b", &[T::Wild, T::Top], true, false)
+        .atom_with("done_x", &[x()], true, true)
+        .cmp(x(), CmpOp::Le, T::Int(i64::MIN))
+        .cmp(T::Call("rx", vec![x(), T::Str("^a$")]), CmpOp::Eq, T::Int(1 << 40))
+        .finish()
+        .unwrap();
+    b.rule()
+        .head("nearest", &[T::Var("n")])
+        .agg(T::Var("n"), &AggOp::Count, None, "a", &[x(), T::Wild])
+        .agg(T::Var("m"), &AggOp::Min, Some(y()), "a", &[y()])
+        .agg(T::Var("s"), &AggOp::Sum, None, "a", &[y()])
+        .agg(T::Var("j"), &AggOp::Join { by: vec!["k".into(), "sep".into()], sep: ", ".into() }, Some(y()), "ast", &[y(), T::Var("k"), T::Var("sep")])
+        .agg(T::Var("j2"), &AggOp::Join { by: vec![], sep: "".into() }, Some(y()), "a", &[y()])
+        .ast(T::Var("d"), T::Var("n"), "{\"kind\": \"call\"}", &[("NAME", T::Var("v"))])
+        .finish()
+        .unwrap();
+    b.rule().head("unit", &[]).finish().unwrap();
+    b.fields().set_field(Field::Natives(&[("reach_x".to_owned(), Native::Reach { seed: "s".into(), edge: "e".into() })].into()));
+    b.fields().set_field(Field::Kindsets(&[("Scope".to_owned(), vec!["module".to_owned(), "class".to_owned()])].into()));
+    b.fields().set_field(Field::Demand(&["*".to_owned()]));
+    b.fields().set_field(Field::Settings(&[("mode".to_owned(), "block".to_owned()), ("input".to_owned(), "r(IO=json)".to_owned())]));
+    b.fields().set_field(Field::Nullary(&["unit".to_owned()].into()));
 }
 
-/// Every part of a program, as `program_text`'s own test has them: names, the least number, strings that need
-/// escapes, each literal and aggregate, gated negations, a relation with no rows, and the `.about` parts.
-fn every_part() -> Program {
-    let mut prog = Program::default();
-    prog.decls.insert("r".into(), [("c".into(), "int".into()), ("d".into(), "sym".into())].into());
-    prog.decls.insert("nearest".into(), [("x".into(), "int".into())].into());
-    prog.inputs = vec!["a".into(), "b".into()];
-    prog.outputs = vec!["r".into()];
-    prog.facts.insert("k".into(), vec![[Value::Int(i64::MIN), Value::Str("q\"\\\n\u{1}é".into())].into(), [Value::Int(-3), Value::Str(String::new().into())].into()]);
-    prog.facts.insert("empty".into(), vec![]);
-    let mut gated = atom("done_x", vec![v("x")]);
-    gated.neg = true;
-    gated.gated = true;
-    let mut neg = atom("b", vec![Term::Wild, Term::Top]);
-    neg.neg = true;
-    prog.rules = vec![
-        Rule { head: atom("r", vec![v("x"), Term::Call("cat".into(), [v("top"), Term::Str("s".into())].into())]), body: vec![
-            Literal::Atom(atom("a", vec![v("x"), v("count_"), v("min")])),
-            Literal::Atom(neg),
-            Literal::Atom(gated),
-            Literal::Cmp { l: v("x"), op: "<=", r: Term::Int(i64::MIN) },
-            Literal::Cmp { l: Term::Call("rx".into(), [v("x"), Term::Str("^a$".into())].into()), op: "=", r: Term::Int(1 << 40) },
-        ].into() },
-        Rule { head: atom("nearest", vec![v("n")]), body: vec![
-            Literal::Agg { var: "n".into(), op: AggOp::Count, over: None, atom: atom("a", vec![v("x"), Term::Wild]) },
-            Literal::Agg { var: "m".into(), op: AggOp::Min, over: Some("y".into()), atom: atom("a", vec![v("y")]) },
-            Literal::Agg { var: "s".into(), op: AggOp::Sum, over: None, atom: atom("a", vec![v("y")]) },
-            Literal::Agg { var: "j".into(), op: AggOp::Join { by: vec!["k".into(), "sep".into()], sep: ", ".into() }, over: Some("y".into()), atom: atom("ast", vec![v("y"), v("k"), v("sep")]) },
-            Literal::Agg { var: "j2".into(), op: AggOp::Join { by: vec![], sep: "".into() }, over: Some("y".into()), atom: atom("a", vec![v("y")]) },
-            Literal::Nearest { n: "x".into(), a: "p".into(), kindset: "Scope".into() },
-            Literal::Ast { document: "d".into(), node: "n".into(), matcher: "{\"kind\": \"call\"}".into(), captures: vec![("NAME".into(), "v".into())] },
-        ].into() },
-        Rule { head: atom("unit", vec![]), body: vec![].into() },
-    ];
-    prog.natives.insert("reach_x".into(), Native::Reach { seed: "s".into(), edge: "e".into() });
-    prog.kindsets.insert("Scope".into(), vec!["module".into(), "class".into()]);
-    prog.demand = vec!["*".into()];
-    prog.settings = vec![("mode".into(), "block".into()), ("input".into(), "r(IO=json)".into())];
-    prog.nullary.insert("unit".into());
-    prog
+fn every_part() -> Arc<Version> {
+    let mut b = Builder::base();
+    every_part_on(&mut b);
+    b.finish().unwrap().0
 }
 
 fn pack_files() -> Vec<std::path::PathBuf> {
@@ -67,97 +77,55 @@ fn pack_files() -> Vec<std::path::PathBuf> {
 }
 
 /// Every seventh pack program, as the text's test samples them.
-fn pack_programs() -> Vec<(std::path::PathBuf, Program)> {
+fn pack_programs() -> Vec<(std::path::PathBuf, Arc<Version>)> {
     let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
-    files.into_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file(&p).ok()?))).collect()
+    files.into_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect()
 }
 
-/// Every part of a program reads back from its image as written.
+/// Every part of a program reads back from its image as written, and so does every sampled pack program: its image,
+/// opened, is the program, rule by rule, by head and by reader.
 #[test]
 fn a_program_reads_back_from_its_image() {
-    let prog = every_part();
-    let bytes = encode(&prog).unwrap();
-    same(&decode(&bytes, &Lists::default()).unwrap(), &prog);
-    // And as its text reads it.
-    let text = crate::code_rule_dsl::logic::program_text::print(&prog).unwrap();
-    same(&decode(&bytes, &Lists::default()).unwrap(), &crate::code_rule_dsl::logic::program_text::read(&text).unwrap());
-}
-
-/// Every pack program, as read from its file, reads back from its image; and its handles say what its tree says:
-/// each rule's head, its literals, its variables' names, rules by head and the atoms that read each relation.
-#[test]
-fn pack_programs_read_back_from_their_images() {
-    let lists = Lists::default();
+    let v = every_part();
+    let back = Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
+    same(&back, &v);
+    handles_agree(&back, &v);
+    assert!(back.show().contains("$j = join $y by ($k, $sep) sep \", \" : { ast($y, $k, $sep) }"), "{}", back.show());
     let mut n = 0;
     for (path, prog) in pack_programs() {
-        let Ok(bytes) = encode(&prog) else { continue };
-        let back = decode(&bytes, &lists).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        assert_eq!(format!("{back:?}"), format!("{prog:?}"), "{}", path.display());
-        handles_agree(&Version::open(&bytes).unwrap(), &prog);
+        let back = Version::open(prog.fold().unwrap().base_bytes().unwrap()).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        same(&back, &prog);
+        handles_agree(&back, &prog);
         n += 1;
     }
     assert!(n > 50, "{n}");
 }
 
-/// A version's handles agree with `p`, its program as the tree: rule by rule, by head, and by reader.
-fn handles_agree(v: &Version, p: &Program) {
-    let rules: Vec<_> = v.rules().collect();
-    assert_eq!(rules.len(), p.rules.len());
-    for (r, t) in rules.iter().zip(&p.rules) {
-        assert_eq!(v.rel_name(r.head().rel()), t.head.rel.as_str());
-        assert_eq!(r.head().arity(), t.head.args.len());
-        assert_eq!(r.body().count(), t.body.len());
-        for (l, lt) in r.body().zip(t.body.iter()) {
-            match (l.view(), lt) {
-                (Lit::Atom(a), Literal::Atom(at)) => {
-                    assert_eq!((v.rel_name(a.rel()), a.neg(), a.gated(), a.arity()), (at.rel.as_str(), at.neg, at.gated, at.args.len()));
-                    for (x, xt) in a.args().zip(at.args.iter()) {
-                        if let (TermRef::Var(s), Term::Var(name)) = (x, xt) {
-                            assert_eq!(v.text(r.var(s)), name.as_str());
-                        }
-                    }
-                }
-                (Lit::Cmp { op, .. }, Literal::Cmp { op: ot, .. }) => assert_eq!(op.as_str(), *ot),
-                (Lit::Agg { var, atom: a, .. }, Literal::Agg { var: vt, atom: at, .. }) => assert_eq!((v.text(r.var(var)), v.rel_name(a.rel())), (vt.as_str(), at.rel.as_str())),
-                (Lit::Nearest { kindset, .. }, Literal::Nearest { kindset: kt, .. }) => assert_eq!(v.text(kindset), kt),
-                (Lit::Ast { matcher, .. }, Literal::Ast { matcher: mt, .. }) => assert_eq!(v.text(matcher), mt),
-                _ => panic!("literal kinds differ"),
-            }
-        }
+/// `a`'s handles say what `b`'s say: rule by rule (as written), by head, and by reader, by name.
+fn handles_agree(a: &Version, b: &Version) {
+    let (ra, rb): (Vec<_>, Vec<_>) = (a.rules().collect(), b.rules().collect());
+    assert_eq!(ra.iter().map(|r| a.show_rule(*r)).collect::<Vec<_>>(), rb.iter().map(|r| b.show_rule(*r)).collect::<Vec<_>>());
+    let order = |v: &Version, rs: &[RuleRef<'_>]| -> std::collections::HashMap<RuleId, usize> { let _ = v; rs.iter().enumerate().map(|(k, r)| (r.id(), k)).collect() };
+    let (oa, ob) = (order(a, &ra), order(b, &rb));
+    let names: BTreeSet<String> = ra.iter().flat_map(|r| std::iter::once(a.rel_name(r.head().rel()).to_owned()).chain(r.reads().map(|x| a.rel_name(x.rel()).to_owned()))).collect();
+    for rel in names {
+        let (xa, xb) = (a.rel(&rel).unwrap_or_else(|| panic!("relation {rel}")), b.rel(&rel).unwrap_or_else(|| panic!("relation {rel}")));
+        let heads = |v: &Version, x: RelId, o: &std::collections::HashMap<RuleId, usize>| v.heads(x).map(|r| o[&r.id()]).collect::<Vec<_>>();
+        assert_eq!(heads(a, xa, &oa), heads(b, xb, &ob), "heads of {rel}");
+        let readers = |v: &Version, x: RelId, o: &std::collections::HashMap<RuleId, usize>| v.readers(x).map(|(r, at)| {
+            assert_eq!(at.rel(), x);
+            o[&r.id()]
+        }).collect::<Vec<_>>();
+        assert_eq!(readers(a, xa, &oa), readers(b, xb, &ob), "readers of {rel}");
     }
-    // By head, and by reader, each rule as `rules` gives it.
-    let order: std::collections::HashMap<RuleId, usize> = rules.iter().enumerate().map(|(k, r)| (r.id(), k)).collect();
-    for rel in p.rules.iter().map(|r| r.head.rel.as_str()).chain(p.rules.iter().flat_map(|r| r.body.iter()).filter_map(|l| match l {
-        Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
-        _ => None,
-    })) {
-        let r = v.rel(rel).unwrap_or_else(|| panic!("relation {rel}"));
-        let got: Vec<usize> = v.heads(r).map(|x| order[&x.id()]).collect();
-        let want: Vec<usize> = p.rules.iter().enumerate().filter(|(_, x)| x.head.rel.as_str() == rel).map(|(k, _)| k).collect();
-        assert_eq!(got, want, "heads of {rel}");
-        let got: Vec<usize> = v.readers(r).map(|(x, a)| {
-            assert_eq!(a.rel(), r);
-            order[&x.id()]
-        }).collect();
-        let want: Vec<usize> = p.rules.iter().enumerate().flat_map(|(k, x)| x.body.iter().filter(move |l| matches!(l, Literal::Atom(a) | Literal::Agg { atom: a, .. } if a.rel.as_str() == rel)).map(move |_| k)).collect();
-        assert_eq!(got, want, "readers of {rel}");
-    }
-}
-
-/// What the image has no form for is refused, as the text refuses it.
-#[test]
-fn the_image_refuses_what_it_cannot_keep() {
-    let mut prog = every_part();
-    prog.rules[0].body.push(Literal::Cmp { l: v("x"), op: "~", r: Term::Int(1) });
-    assert!(encode(&prog).is_err());
 }
 
 /// A damaged image is refused at open, never read wrong: bad magic, a short image, a region past the end, a node
 /// whose size overruns its rule, a slot past its rule's variables, a node of no kind.
 #[test]
 fn a_damaged_image_is_refused() {
-    let bytes = encode(&every_part()).unwrap();
+    let bytes = every_part().fold().unwrap().base_bytes().unwrap().to_vec();
     let mut b = bytes.clone();
     b[0] = b'X';
     assert!(Image::open(&b).is_err());
@@ -240,148 +208,164 @@ fn a_grouped_index_appends_to_its_tails() {
     assert_eq!(values[3..43].to_vec(), (100..140).collect::<Vec<_>>());
 }
 
-/// A large pack program, for the versions' tests: the largest pack file that reads and has an image.
-fn big() -> Program {
+/// A large pack program, for the versions' tests: the largest pack file that reads, with more than 40 rules and two
+/// declarations.
+fn big() -> Arc<Version> {
     let mut files = pack_files();
     files.sort_by_key(|p| std::cmp::Reverse(std::fs::metadata(p).map_or(0, |m| m.len())));
-    files.iter().find_map(|p| crate::code_rule_dsl::logic::rr::parse_file(p).ok().filter(|p| encode(p).is_ok() && p.rules.len() > 40 && p.decls.len() > 2)).expect("a large pack program")
+    files.iter().find_map(|p| crate::code_rule_dsl::logic::rr::parse_file_version(p).ok().filter(|p| p.rules().count() > 40 && p.declared_names().len() > 2)).expect("a large pack program")
 }
 
-fn base(p: &Program) -> Arc<Version> {
-    Version::open(&encode(p).unwrap()).unwrap()
-}
-
-/// `to` made from `from` by `diff`: the version, and what form it took.
-fn edit(from: &Arc<Version>, to: &Program) -> (Arc<Version>, Made) {
-    from.diff(to).unwrap().finish().unwrap()
+/// The first rule's head relation of `v`.
+fn first_head(v: &Version) -> String {
+    v.rel_name(v.rules().next().unwrap().head().rel()).to_owned()
 }
 
 /// A view keeps a base's rules in ranges; an overlay adds, removes and replaces parts; three stacked are the program
-/// they say, by rule, by head and by reader, and their digests are the digest of that program made whole.
+/// they say, by rule, by head and by reader, and their digests are the digest of that program made again whole.
 #[test]
 fn views_and_overlays_are_the_programs_they_say() {
-    let lists = Lists::default();
-    let p0 = big();
-    let v0 = base(&p0);
+    let v0 = big();
+    let (shown0, digest0) = (v0.show(), v0.digest());
+    let head0 = first_head(&v0);
+    let x = || T::Var("x");
     // A view: the first and last thirds.
-    let n = p0.rules.len();
-    let removed: Vec<u32> = (n as u32 / 3..2 * n as u32 / 3).collect();
+    let n = v0.rule_end();
+    let removed: Vec<u32> = (n / 3..2 * n / 3).collect();
     let mut b = v0.builder();
     for &g in &removed {
         b.remove(RuleId(g));
     }
     let (v1, made) = b.finish().unwrap();
     assert_eq!(made, Made::View);
-    let mut p1 = p0.clone();
-    p1.rules = p0.rules.iter().enumerate().filter(|(k, _)| !removed.contains(&(*k as u32))).map(|(_, r)| r.clone()).collect();
-    same(&v1.program(&lists).unwrap(), &p1);
+    let p1 = remade(&v0, |r| !removed.contains(&r.id().0), |_| {});
+    same(&v1, &p1);
     handles_agree(&v1, &p1);
-    assert_eq!(v1.digest(), base(&p1).digest());
     // A view of the view: one more rule out.
     let mut b = v1.builder();
     b.remove(RuleId(0));
     let (v1v, made) = b.finish().unwrap();
     assert_eq!(made, Made::View);
-    let mut p1v = p1.clone();
-    p1v.rules.remove(0);
-    same(&v1v.program(&lists).unwrap(), &p1v);
-    assert_eq!(v1v.digest(), base(&p1v).digest());
-    // An overlay on the view: its delta over the view's base.
-    let mut p1b = p1.clone();
-    p1b.rules.remove(0);
-    p1b.rules.push(Rule { head: atom("on_the_view", vec![v("x")]), body: vec![Literal::Atom(atom(&p0.rules[0].head.rel, vec![v("x")]))].into() });
-    let (v1b, made) = edit(&v1, &p1b);
-    assert_eq!((made, v1b.depth()), (Made::Overlay, 1));
-    same(&v1b.program(&lists).unwrap(), &p1b);
+    same(&v1v, &remade(&v0, |r| r.id().0 != 0 && !removed.contains(&r.id().0), |_| {}));
+    // An overlay on the view: its delta over the view.
+    let on_view = |b: &mut Builder<'_>| {
+        b.rule().head("on_the_view", &[x()]).atom(head0.as_str(), &[x()]).finish().unwrap();
+    };
+    let mut b = v1.builder();
+    b.remove(RuleId(0));
+    on_view(&mut b);
+    let (v1b, made) = b.finish().unwrap();
+    assert_eq!((made, v1b.depth()), (Made::Overlay, 2));
+    let p1b = remade(&v0, |r| r.id().0 != 0 && !removed.contains(&r.id().0), on_view);
+    same(&v1b, &p1b);
     handles_agree(&v1b, &p1b);
-    assert_eq!(v1b.digest(), base(&p1b).digest());
     // An overlay on the base: two rules out, one in, a declaration changed, one gone, a fact relation added, the
     // inputs changed.
-    let new_rule = Rule { head: atom("made_here", vec![v("x")]), body: vec![Literal::Atom(atom(&p0.rules[0].head.rel, vec![v("x")]))].into() };
-    let mut p2 = p0.clone();
-    p2.rules.remove(5);
-    p2.rules.remove(1);
-    p2.rules.push(new_rule.clone());
-    let (d_changed, d_gone) = { let mut k = p0.decls.keys(); (k.next().unwrap().clone(), k.next().unwrap().clone()) };
-    p2.decls.insert(d_changed.clone(), [("only".into(), "int".into())].into());
-    p2.decls.remove(&d_gone);
-    p2.decls.insert("made_here".into(), [("x".into(), "int".into())].into());
-    p2.facts.insert("made_facts".into(), vec![[Value::Int(7)].into()]);
-    p2.inputs.push("one_more".into());
-    let b = v0.diff(&p2).unwrap();
-    assert_eq!(b.size(), 2 + 1 + 2 + 1 + 1);
+    let decls = v0.declared_names();
+    let (d_changed, d_gone) = (decls[0].clone(), decls[1].clone());
+    let inputs: Vec<String> = v0.input_names().into_iter().chain(["one_more".to_owned()]).collect();
+    let made_here = |b: &mut Builder<'_>| {
+        b.rule().head("made_here", &[x()]).atom(head0.as_str(), &[x()]).finish().unwrap();
+    };
+    let parts = |b: &mut Builder<'_>, facts: bool| {
+        b.fields().declare(&d_changed, &[("only", "int")]);
+        b.fields().undeclare(&d_gone);
+        b.fields().declare("made_here", &[("x", "int")]);
+        if facts {
+            b.fields().set_facts("made_facts", &[vec![Value::Int(7)].into()]);
+        }
+        b.fields().set_inputs(&inputs);
+    };
+    let mut b = v0.builder();
+    b.remove(RuleId(5));
+    b.remove(RuleId(1));
+    made_here(&mut b);
+    parts(&mut b, true);
     let (v2, made) = b.finish().unwrap();
     assert_eq!(made, Made::Overlay);
-    same(&v2.program(&lists).unwrap(), &p2);
+    let p2 = remade(&v0, |r| ![1, 5].contains(&r.id().0), |b| {
+        made_here(b);
+        parts(b, true);
+    });
+    same(&v2, &p2);
     handles_agree(&v2, &p2);
-    assert_eq!(v2.digest(), base(&p2).digest());
-    // Two more overlays on it: a stack three deep.
-    let mut p3 = p2.clone();
-    p3.rules.truncate(p3.rules.len() - 3);
-    p3.facts.remove("made_facts");
-    p3.outputs.push("made_here".into());
-    let (v3, made) = edit(&v2, &p3);
+    // Two more overlays on it: a stack three deep. The last three rules out (two of the base's and the new one), the
+    // facts gone, an output added.
+    let ids: Vec<RuleId> = v2.rules().map(|r| r.id()).collect();
+    let last: Vec<RuleId> = ids[ids.len() - 3..].to_vec();
+    let outputs: Vec<String> = v0.output_names().into_iter().chain(["made_here".to_owned()]).collect();
+    let mut b = v2.builder();
+    for &id in &last {
+        b.remove(id);
+    }
+    b.fields().drop_facts("made_facts");
+    b.fields().set_outputs(&outputs);
+    let (v3, made) = b.finish().unwrap();
     assert_eq!(made, Made::Overlay);
-    let mut p4 = p3.clone();
-    p4.rules.insert(0, new_rule.clone());
-    let (v4, _) = edit(&v3, &p4);
-    assert_eq!(v4.depth(), 3);
-    // The added rule goes last in an overlay: its order is the version's, and the program is the same up to it.
-    let mut p4_order = p3.clone();
-    p4_order.rules.push(new_rule);
-    same(&v4.program(&lists).unwrap(), &p4_order);
-    handles_agree(&v4, &p4_order);
-    assert_eq!(v4.digest(), base(&p4_order).digest());
+    let mut b = v3.builder();
+    made_here(&mut b);
+    let (v4, _) = b.finish().unwrap();
+    // v3 is two layers: a view (its rules out) and the overlay of its fields over it.
+    assert_eq!(v4.depth(), 4);
+    // The added rule goes last in an overlay: its order is the version's.
+    let p4 = remade(&v0, |r| ![1, 5].contains(&r.id().0) && !last.contains(&r.id()), |b| {
+        parts(b, false);
+        b.fields().set_outputs(&outputs);
+        made_here(b);
+    });
+    same(&v4, &p4);
+    handles_agree(&v4, &p4);
     // The base is unchanged by all of it.
-    same(&v0.program(&lists).unwrap(), &p0);
+    assert_eq!((v0.show(), v0.digest()), (shown0, digest0));
 }
 
-/// `p`'s part as the tree makes it (`file_local::assemble`): the rules whose head `keep` takes, the natives, lattices
-/// and gates of those relations, and `inputs`, `outputs`.
-fn tree_part(p: &Program, keep: &dyn Fn(&str) -> bool, inputs: &[String], outputs: &[String]) -> Program {
-    let mut t = p.clone();
-    t.rules.retain(|r| keep(&r.head.rel));
-    t.natives.retain(|rel, _| keep(rel));
-    t.lattice.retain(|rel, _| keep(rel));
-    t.gates.retain(|(rel, _)| keep(rel));
-    t.asked_by.retain(|rel, _| keep(rel));
-    t.inputs = inputs.to_vec();
-    t.outputs = outputs.to_vec();
-    t
-}
-
-/// A split part is a view of many ranges with its fields overlaid (decision 0244): it is the program the tree's part
-/// is, by rule, head and reader, with its digest; it costs its ranges and fields; and a view of it (the run's edits,
-/// the session's cut) is the program the tree's edit is.
+/// A split part is a view of many ranges with its fields overlaid (decision 0244): it is the program made again of the
+/// rules its heads keep, with those relations' natives, lattices and gates and its own inputs and outputs, by rule,
+/// head and reader, with its digest; it costs its ranges and fields; and a view of it (the run's edits, the session's
+/// cut) is the program that edit makes.
 #[test]
 fn a_part_is_a_view_with_its_fields_overlaid() {
-    use crate::code_rule_dsl::logic::front::{LatticeDecl, ast::Gate};
-    let lists = Lists::default();
-    let mut p = big();
+    let big = big();
     // Fields of relations in both parts: a native, lattices and gates of each.
-    let heads: Vec<String> = { let mut h: Vec<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect(); h.sort(); h.dedup(); h };
+    let heads: Vec<String> = { let mut h: Vec<String> = big.rules().map(|r| big.rel_name(r.head().rel()).to_owned()).collect(); h.sort(); h.dedup(); h };
     assert!(heads.len() > 8, "{}", heads.len());
+    let mut lattice = BTreeMap::new();
+    let mut gates = Vec::new();
     for (i, rel) in heads.iter().take(6).enumerate() {
-        p.lattice.insert(rel.clone(), LatticeDecl { keys: 1, ty: "int".into(), merge: (i % 2 == 0).then(|| "max".into()), widen: (i == 1).then_some(3) });
-        p.gates.push((rel.clone(), Gate { rel: rel.clone(), level: i, src: (i == 2).then(|| "s".into()), quiet: vec![heads[i + 1].clone()], deps: vec![] }));
+        lattice.insert(rel.clone(), LatticeDecl { keys: 1, ty: "int".into(), merge: (i % 2 == 0).then(|| "max".into()), widen: (i == 1).then_some(3) });
+        gates.push((rel.clone(), Gate { rel: rel.clone(), level: i, src: (i == 2).then(|| "s".into()), quiet: vec![heads[i + 1].clone()], deps: vec![] }));
     }
-    p.natives.insert(heads[0].clone(), Native::Reach { seed: heads[1].clone(), edge: heads[2].clone() });
-    p.natives.insert(heads[1].clone(), Native::Reach { seed: heads[2].clone(), edge: heads[3].clone() });
-    // Facts named as about relations are (`gate`, `lattice`): the fields' overlay hides none of them.
-    p.facts.insert("gate".into(), vec![[Value::Int(1)].into()]);
-    p.facts.insert("lattice".into(), vec![[Value::Str("x".into())].into()]);
-    let v0 = base(&p);
+    let mut natives = BTreeMap::new();
+    natives.insert(heads[0].clone(), Native::Reach { seed: heads[1].clone(), edge: heads[2].clone() });
+    natives.insert(heads[1].clone(), Native::Reach { seed: heads[2].clone(), edge: heads[3].clone() });
+    let v0 = {
+        let mut b = Builder::on(&big);
+        b.fields().set_field(Field::Lattice(&lattice));
+        b.fields().set_field(Field::Gates(&gates));
+        b.fields().set_field(Field::Natives(&natives));
+        // Facts named as about relations are (`gate`, `lattice`): the fields' overlay hides none of them.
+        b.fields().set_facts("gate", &[vec![Value::Int(1)].into()]);
+        b.fields().set_facts("lattice", &[vec![Value::Str("x".into())].into()]);
+        b.finish().unwrap().0.fold().unwrap()
+    };
     // Every other relation, so the part interleaves the program's rules: many ranges.
-    let mine: std::collections::BTreeSet<&str> = heads.iter().step_by(2).map(String::as_str).collect();
+    let mine: BTreeSet<&str> = heads.iter().step_by(2).map(String::as_str).collect();
     let keep = |rel: &str| mine.contains(rel);
-    let inputs: Vec<String> = p.inputs.iter().take(2).cloned().chain(["exported".to_owned()]).collect();
+    let inputs: Vec<String> = v0.input_names().into_iter().take(2).chain(["exported".to_owned()]).collect();
     let outputs: Vec<String> = heads.iter().step_by(4).cloned().collect();
     let part = v0.part(keep, &inputs, &outputs, super::PartFields { natives: &keep, lattice: &keep, gates: &keep }).unwrap();
-    let want = tree_part(&p, &keep, &inputs, &outputs);
-    same(&part.program(&lists).unwrap(), &want);
+    let fields_of = |b: &mut Builder<'_>| {
+        b.fields().set_field(Field::Natives(&natives.iter().filter(|(r, _)| keep(r)).map(|(r, n)| (r.clone(), n.clone())).collect()));
+        b.fields().set_field(Field::Lattice(&lattice.iter().filter(|(r, _)| keep(r)).map(|(r, l)| (r.clone(), l.clone())).collect()));
+        b.fields().set_field(Field::Gates(&gates.iter().filter(|(r, _)| keep(r)).cloned().collect::<Vec<_>>()));
+        b.fields().set_field(Field::Asked(&ProgramFields::asked(&*v0).into_iter().filter(|(r, _)| keep(r)).collect()));
+        b.fields().set_inputs(&inputs);
+        b.fields().set_outputs(&outputs);
+    };
+    let want = remade(&v0, |r| keep(v0.rel_name(r.head().rel())), fields_of);
+    same(&part, &want);
     handles_agree(&part, &want);
-    assert_eq!(part.digest(), base(&want).digest());
-    assert_eq!(part.size(), want.rules.len());
+    assert_eq!(part.size(), want.rules().count());
     // A view, its fields an overlay over it: one image of its own, the fields' delta, and no rule.
     let Version::Overlay { parent, delta, .. } = &*part else { panic!("the fields are an overlay") };
     let Version::View { parent: over, .. } = &**parent else { panic!("the rules are a view") };
@@ -395,27 +379,25 @@ fn a_part_is_a_view_with_its_fields_overlaid() {
     }
     let (cut, made) = b.finish().unwrap();
     assert_eq!(made, Made::View);
-    let mut want_cut = want.clone();
-    want_cut.rules = want.rules.iter().enumerate().filter(|(k, _)| k % 6 != 0).map(|(_, r)| r.clone()).collect();
-    same(&cut.program(&lists).unwrap(), &want_cut);
+    let want_cut = remade(&v0, |r| keep(v0.rel_name(r.head().rel())) && !out.contains(&r.id()), fields_of);
+    same(&cut, &want_cut);
     handles_agree(&cut, &want_cut);
-    assert_eq!(cut.digest(), base(&want_cut).digest());
     let mut b = Builder::on(&cut);
-    let more: Vec<String> = want_cut.inputs.iter().cloned().chain(["delta_in".to_owned()]).collect();
-    b.set_inputs(&more);
+    let more: Vec<String> = inputs.iter().cloned().chain(["delta_in".to_owned()]).collect();
+    b.fields().set_inputs(&more);
     let cut_in = b.finish_overlay().unwrap();
-    want_cut.inputs = more;
-    same(&cut_in.program(&lists).unwrap(), &want_cut);
-    assert_eq!(cut_in.digest(), base(&want_cut).digest());
+    same(&cut_in, &remade(&v0, |r| keep(v0.rel_name(r.head().rel())) && !out.contains(&r.id()), |b| {
+        fields_of(b);
+        b.fields().set_inputs(&more);
+    }));
 }
 
 /// A view may have up to a quarter of its parent's rules as ranges (decision 0244): past `MAX_RANGES` a large
 /// program's view of many ranges is still a view, and past a quarter it is an overlay.
 #[test]
 fn a_view_may_have_a_quarter_of_its_parents_rules_as_ranges() {
-    let p = big();
-    let v0 = base(&p);
-    let n = p.rules.len() as u32;
+    let v0 = big();
+    let n = v0.rule_end();
     let edit = |every: u32| {
         let mut b = v0.builder();
         for g in (0..n).step_by(every as usize) {
@@ -436,10 +418,15 @@ fn a_view_may_have_a_quarter_of_its_parents_rules_as_ranges() {
 /// rules'.
 #[test]
 fn ids_are_the_same_through_a_stack_and_a_fold() {
-    let mut p0 = every_part();
-    // Enough rules that two more are an overlay, not a fold.
-    p0.rules.extend((0..8).map(|k| Rule { head: atom(&format!("pad_{k}"), vec![v("x")]), body: vec![Literal::Atom(atom("a", vec![v("x")]))].into() }));
-    let v0 = base(&p0);
+    let v0 = {
+        let mut b = Builder::base();
+        every_part_on(&mut b);
+        // Enough rules that two more are an overlay, not a fold.
+        for k in 0..8 {
+            b.rule().head(format!("pad_{k}").as_str(), &[T::Var("x")]).atom("a", &[T::Var("x")]).finish().unwrap();
+        }
+        b.finish().unwrap().0
+    };
     let mut b = v0.builder();
     // "^a$" is a string constant of the base (no relation: a native's seed `s` is one); here it becomes a relation.
     let s = v0.find("^a$").unwrap();
@@ -472,54 +459,37 @@ fn ids_are_the_same_through_a_stack_and_a_fold() {
     for r in 0..v1.rel_end() {
         assert_eq!(f.rel_name(RelId(r)), v1.rel_name(RelId(r)));
     }
-    let lists = Lists::default();
-    same(&f.program(&lists).unwrap(), &v1.program(&lists).unwrap());
+    same(&f, &v1);
 }
 
-/// A rule written term by term is the rule the tree's encoder writes, hash for hash; and a rule copied from a version
-/// of other ids (by its texts), or of the same (by its nodes), is the rule it was, as are its copied literals.
+/// A rule written term by term is copied into a version of other ids (by its texts), or of the same (by its nodes),
+/// as the rule it was, hash for hash, as are its copied literals; and a body before its head, or no head, is refused.
 #[test]
-fn the_builder_writes_what_the_tree_writes() {
-    let lists = Lists::default();
-    let p0 = every_part();
-    let v0 = base(&p0);
-    let rule = Rule { head: atom("p", vec![v("x"), Term::Int(1 << 40)]), body: vec![
-        Literal::Atom(atom("a", vec![v("x"), Term::Wild, Term::Call("f".into(), [Term::Str("z".into())].into())])),
-        Literal::Atom(Atom { neg: true, ..atom("b", vec![v("x"), Term::Top]) }),
-        Literal::Cmp { l: v("x"), op: "<", r: Term::Int(3) },
-    ].into() };
-    let mut by_tree = v0.builder();
-    let tree_id = by_tree.add(&rule).unwrap();
+fn the_builder_copies_rules_by_texts_and_by_nodes() {
+    let v0 = every_part();
     let mut by_terms = v0.builder();
-    let terms_id = by_terms.rule().head("p", &[T::Var("x"), T::Int(1 << 40)])
+    let id = by_terms.rule().head("p", &[T::Var("x"), T::Int(1 << 40)])
         .atom("a", &[T::Var("x"), T::Wild, T::Call("f", vec![T::Str("z")])])
         .not("b", &[T::Var("x"), T::Top])
         .cmp(T::Var("x"), CmpOp::Lt, T::Int(3))
         .finish().unwrap();
-    assert_eq!(tree_id, terms_id);
-    let (a, _) = by_tree.finish().unwrap();
-    let (b, _) = by_terms.finish().unwrap();
-    assert_eq!(a.rule(tree_id).unwrap().hash(), b.rule(terms_id).unwrap().hash());
-    assert_eq!(a.digest(), b.digest());
-    same(&a.program(&lists).unwrap(), &b.program(&lists).unwrap());
+    let (a, _) = by_terms.finish().unwrap();
+    let r = a.rule(id).unwrap();
+    assert_eq!(a.show_rule(r), "p($x, 1099511627776) :- a($x, _, @f(\"z\")), !b($x, top), $x < 3");
     // Copied into a version of other ids: a new base, with none of `a`'s names.
     let mut other = Builder::base();
-    let r = a.rule(tree_id).unwrap();
     let copied = other.copy(&a, r);
     let lit = r.body().nth(1).unwrap();
-    let head = r.head();
-    let parts = other.rule().head_from(&a, r, head).lit(&a, r, lit).finish().unwrap();
+    let parts = other.rule().head_from(&a, r, r.head()).lit(&a, r, lit).finish().unwrap();
     let (o, _) = other.finish().unwrap();
     assert_eq!(o.rule(copied).unwrap().hash(), r.hash());
-    let mut tree = Tree::new(&o, &lists);
-    assert_eq!(format!("{:?}", tree.rule(o.rule(copied).unwrap())), format!("{rule:?}"));
-    let want = Rule { head: rule.head.clone(), body: vec![rule.body[1].clone()].into() };
-    assert_eq!(format!("{:?}", tree.rule(o.rule(parts).unwrap())), format!("{want:?}"));
+    assert_eq!(o.show_rule(o.rule(copied).unwrap()), a.show_rule(r));
+    assert_eq!(o.show_rule(o.rule(parts).unwrap()), "p($x, 1099511627776) :- !b($x, top)");
     // Copied within its stack: the same nodes.
     let mut again = a.builder();
-    let id = again.copy(&a, a.rule(tree_id).unwrap());
+    let id2 = again.copy(&a, a.rule(id).unwrap());
     let (c, _) = again.finish().unwrap();
-    assert_eq!(c.rule(id).unwrap().hash(), r.hash());
+    assert_eq!(c.rule(id2).unwrap().hash(), r.hash());
     // A body before its head, or no head, is refused.
     let mut bad = v0.builder();
     assert!(bad.rule().atom("a", &[]).head("p", &[]).finish().is_err());
@@ -529,27 +499,26 @@ fn the_builder_writes_what_the_tree_writes() {
     assert_eq!(ok, RuleId(v0.rule_end()));
     let (kept, _) = bad.finish().unwrap();
     assert_eq!(kept.size(), v0.size() + 1);
-    same(&kept.program(&lists).unwrap(), &{
-        let mut p = p0.clone();
-        p.rules.push(Rule { head: atom("kept", vec![]), body: vec![].into() });
-        p
-    });
+    same(&kept, &remade(&v0, |_| true, |b| {
+        b.rule().head("kept", &[]).finish().unwrap();
+    }));
 }
 
 /// An edit that reaches half its parent is folded into a new base, which is the program.
 #[test]
 fn an_edit_of_half_its_parent_folds() {
-    let lists = Lists::default();
-    let p0 = big();
-    let v0 = base(&p0);
-    let mut p1 = p0.clone();
-    p1.rules.truncate(p0.rules.len() / 3);
-    p1.inputs.push("x".into());
-    let (v1, made) = edit(&v0, &p1);
+    let v0 = big();
+    let n = v0.rule_end();
+    let inputs: Vec<String> = v0.input_names().into_iter().chain(["x".to_owned()]).collect();
+    let mut b = v0.builder();
+    for g in n / 3..n {
+        b.remove(RuleId(g));
+    }
+    b.fields().set_inputs(&inputs);
+    let (v1, made) = b.finish().unwrap();
     assert_eq!(made, Made::Folded);
     assert_eq!(v1.depth(), 0);
-    same(&v1.program(&lists).unwrap(), &p1);
-    assert_eq!(v1.digest(), base(&p1).digest());
+    same(&v1, &remade(&v0, |r| r.id().0 < n / 3, |b| b.fields().set_inputs(&inputs)));
 }
 
 /// An overlay's delta is the size of its edit, not of its parent: one rule added to a program ten times larger
@@ -557,248 +526,187 @@ fn an_edit_of_half_its_parent_folds() {
 #[test]
 fn a_delta_is_the_size_of_its_edit() {
     let small = big();
-    let mut large = small.clone();
-    for k in 0..9 {
-        large.rules.extend(small.rules.iter().map(|r| {
-            let mut r = r.clone();
-            r.head.rel = format!("{}_{k}", r.head.rel).into();
-            r
-        }));
-    }
-    let rule = Rule { head: atom("one", vec![v("x")]), body: vec![Literal::Atom(atom("two", vec![v("x")]))].into() };
+    let large = {
+        let mut b = Builder::on(&small);
+        for k in 0..9 {
+            for r in small.rules() {
+                let head = format!("{}_{k}", small.rel_name(r.head().rel()));
+                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(&small, r, t)).collect();
+                let mut w = b.rule().head(head.as_str(), &args);
+                for l in r.body() {
+                    w = w.lit(&small, r, l);
+                }
+                w.finish().unwrap();
+            }
+        }
+        b.finish().unwrap().0
+    };
+    assert_eq!(large.depth(), 0, "ten times the rules: a new base");
     let mut sizes = Vec::new();
-    for p in [&small, &large] {
-        let parent = base(p);
+    for parent in [&small, &large] {
         let mut b = parent.builder();
-        b.add(&rule).unwrap();
+        b.rule().head("one", &[T::Var("x")]).atom("two", &[T::Var("x")]).finish().unwrap();
         let (v, made) = b.finish().unwrap();
         assert_eq!(made, Made::Overlay);
         let Version::Overlay { delta, .. } = &*v else { unreachable!() };
-        sizes.push((encode(p).unwrap().len(), delta.bytes().len()));
+        sizes.push((parent.fold().unwrap().base_bytes().unwrap().len(), delta.bytes().len()));
     }
     assert!(sizes[1].0 > 5 * sizes[0].0, "{sizes:?}");
     assert_eq!(sizes[0].1, sizes[1].1, "{sizes:?}");
     assert!(sizes[1].1 < 2048, "{sizes:?}");
 }
 
-/// The analyses over `v` say what their tree forms say of `p`, `v`'s program: the strata (as sets, the version's
-/// dependencies first), the edges, what the outputs need, the projections, what answers produce, and whether the
-/// composed path accepts it.
-fn analyses_agree(v: &Version, p: &Program) {
-    use super::{About, analyses};
-    use crate::code_rule_dsl::logic::front;
-    use std::collections::{BTreeMap, BTreeSet};
-    let about = About::of(v);
-    let name = |r: RelId| v.rel_name(r).to_owned();
-    match (front::strata(p), analyses::strata(v, &about)) {
-        (Ok((sccs, edges)), Ok(s)) => {
-            let want: BTreeSet<BTreeSet<String>> = sccs.into_iter().collect();
-            let got: BTreeSet<BTreeSet<String>> = s.sccs.iter().map(|c| c.iter().map(|&r| name(r)).collect()).collect();
-            assert_eq!(got, want, "strata");
-            let at: std::collections::HashMap<RelId, usize> = s.sccs.iter().enumerate().flat_map(|(i, c)| c.iter().map(move |&r| (r, i))).collect();
-            for (h, w, _) in s.edges.iter() {
-                if let (Some(a), Some(b)) = (at.get(&h), at.get(&w)) {
-                    assert!(b <= a, "{} before {}", name(w), name(h));
-                }
-            }
-            let mut got: front::Edges = BTreeMap::new();
-            for (h, w, neg) in s.edges.iter() {
-                got.entry(name(h)).or_default().insert((name(w), neg));
-            }
-            let want: front::Edges = edges.into_iter().filter(|(_, e)| !e.is_empty()).collect();
-            assert_eq!(got, want, "edges");
-        }
-        (Err(a), Err(b)) => assert_eq!(std::mem::discriminant(&a), std::mem::discriminant(&b), "{a} / {b}"),
-        (a, b) => panic!("strata: tree {:?}, version {:?}", a.map(|_| ()), b.map(|_| ())),
-    }
-    let want = front::needed(p, p.outputs.clone());
-    let need = analyses::needed(v, &about, v.outputs().map(|o| v.rel_of(o).expect("an output is a relation")));
-    let got: BTreeSet<String> = (0..v.rel_end()).map(RelId).filter(|r| need[r.index()]).map(name).collect();
-    assert_eq!(got, want, "needed");
-    let want: BTreeMap<String, Vec<(usize, i64)>> = crate::code_rule_dsl::logic::plan::projections(p).into_iter().collect();
-    let got: BTreeMap<String, Vec<(usize, i64)>> = analyses::projections(v).into_iter().map(|(r, e)| (name(r), e)).collect();
-    assert_eq!(got, want, "projections");
-    let want: Vec<(String, String)> = p.answers.iter().flat_map(|(req, ps)| ps.iter().map(move |x| (x.clone(), req.clone()))).collect();
-    let got: Vec<(String, String)> = about.produced().map(|(x, req)| (name(x), name(req))).collect();
-    assert_eq!(got, want, "produced");
-    let produced: BTreeMap<String, String> = crate::code_rule_dsl::logic::answers::produced(p).into_iter().map(|(a, b)| (a.to_owned(), b.to_owned())).collect();
-    assert_eq!(got.into_iter().collect::<BTreeMap<_, _>>(), produced, "produced, by relation");
-    // The composed path's, over the program's version, its components in the tree's order.
-    let want = crate::code_rule_dsl::logic::plan::compose::accepts(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap()).ok();
-    let got = analyses::accepts(v, &about).ok();
-    assert_eq!(got, want, "accepts");
-    // The components by name are the tree's, in its order, and so is the error where a negation closes a cycle.
-    let want = front::components_of(p).map_err(|e| e.to_string());
-    let got = analyses::components_by_name(v, &about).map_err(|e| e.to_string());
-    assert_eq!(got, want, "components by name");
-}
-
 /// A program with what the analyses read beside rules: answers, a lattice its aggregate is monotone in, a native,
 /// projections with constants, and a stratum through a gated negation.
-fn analysed() -> Program {
-    let mut p = Program::default();
-    let neg = |mut a: Atom| { a.neg = true; a };
-    let mut gated = neg(atom("done_q", vec![v("x")]));
-    gated.gated = true;
-    p.rules = vec![
-        Rule { head: atom("e", vec![v("x"), v("y")]), body: vec![Literal::Atom(atom("in", vec![v("x"), v("y"), Term::Int(3)]))].into() },
-        Rule { head: atom("p", vec![v("x")]), body: vec![Literal::Atom(atom("e", vec![v("x"), Term::Wild]))].into() },
-        Rule { head: atom("p", vec![v("y")]), body: vec![Literal::Atom(atom("p", vec![v("x")])), Literal::Atom(atom("e", vec![v("x"), v("y")]))].into() },
-        Rule { head: atom("q", vec![v("x")]), body: vec![Literal::Atom(atom("p", vec![v("x")])), Literal::Atom(gated)].into() },
-        Rule { head: atom("best", vec![v("x"), v("n")]), body: vec![Literal::Atom(atom("p", vec![v("x")])), Literal::Agg { var: "n".into(), op: AggOp::Max, over: Some("y".into()), atom: atom("best", vec![v("x"), v("y")]) }].into() },
-        Rule { head: atom("lone", vec![v("x")]), body: vec![Literal::Atom(neg(atom("q", vec![v("x")]))), Literal::Atom(atom("p", vec![v("x")]))].into() },
-        Rule { head: atom("ask", vec![v("x")]), body: vec![Literal::Atom(atom("lone", vec![v("x")]))].into() },
-        Rule { head: atom("out", vec![v("x")]), body: vec![Literal::Atom(atom("told", vec![v("x")])), Literal::Atom(atom("r", vec![v("x")]))].into() },
-    ];
-    p.answers.insert("ask".into(), vec!["told".into()]);
-    p.lattice.insert("best".into(), crate::code_rule_dsl::logic::front::LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None });
-    p.natives.insert("r".into(), Native::Reach { seed: "lone".into(), edge: "e".into() });
-    p.rules.push(Rule { head: atom("r", vec![v("x")]), body: vec![Literal::Atom(atom("seed", vec![v("x")]))].into() });
+fn analysed_on(b: &mut Builder<'_>) {
+    let x = || T::Var("x");
+    let y = || T::Var("y");
+    b.rule().head("e", &[x(), y()]).atom("in", &[x(), y(), T::Int(3)]).finish().unwrap();
+    b.rule().head("p", &[x()]).atom("e", &[x(), T::Wild]).finish().unwrap();
+    b.rule().head("p", &[y()]).atom("p", &[x()]).atom("e", &[x(), y()]).finish().unwrap();
+    b.rule().head("q", &[x()]).atom("p", &[x()]).atom_with("done_q", &[x()], true, true).finish().unwrap();
+    b.rule().head("best", &[x(), T::Var("n")]).atom("p", &[x()]).agg(T::Var("n"), &AggOp::Max, Some(y()), "best", &[x(), y()]).finish().unwrap();
+    b.rule().head("lone", &[x()]).not("q", &[x()]).atom("p", &[x()]).finish().unwrap();
+    b.rule().head("ask", &[x()]).atom("lone", &[x()]).finish().unwrap();
+    b.rule().head("out", &[x()]).atom("told", &[x()]).atom("r", &[x()]).finish().unwrap();
+    b.rule().head("r", &[x()]).atom("seed", &[x()]).finish().unwrap();
     // Padding, so that a small edit is an overlay or a view, not a fold.
     for k in 0..24 {
-        p.rules.push(Rule { head: atom("pad", vec![v("x")]), body: vec![Literal::Atom(atom("in", vec![v("x"), v("y"), Term::Int(k)]))].into() });
+        b.rule().head("pad", &[x()]).atom("in", &[x(), y(), T::Int(k)]).finish().unwrap();
     }
-    p.inputs = vec!["in".into(), "seed".into()];
-    p.outputs = vec!["out".into(), "best".into(), "pad".into()];
-    p
+    b.fields().set_field(Field::Answers(&[("ask".to_owned(), vec!["told".to_owned()])].into()));
+    b.fields().set_field(Field::Lattice(&[("best".to_owned(), LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None })].into()));
+    b.fields().set_field(Field::Natives(&[("r".to_owned(), Native::Reach { seed: "lone".into(), edge: "e".into() })].into()));
+    b.fields().set_inputs(&["in", "seed"]);
+    b.fields().set_outputs(&["out", "best", "pad"]);
 }
 
-/// The analyses over a version agree with their tree forms: on the pack programs, on a program with answers,
-/// lattices and natives, on one that is not stratifiable, and on versions of a stack, whose ids are not a base's.
+fn analysed() -> Arc<Version> {
+    let mut b = Builder::base();
+    analysed_on(&mut b);
+    b.finish().unwrap().0
+}
+
+/// The composed path accepts a program of its own kind: joins of inputs, one recursive stratum.
 #[test]
-fn the_analyses_over_a_version_say_what_the_tree_says() {
-    let mut n = 0;
-    for (_, prog) in pack_programs() {
-        let Ok(bytes) = encode(&prog) else { continue };
-        analyses_agree(&Version::open(&bytes).unwrap(), &prog);
-        n += 1;
-    }
-    assert!(n > 50, "{n}");
-    let p = analysed();
-    let b = base(&p);
-    analyses_agree(&b, &p);
-    analyses_agree(&base(&every_part()), &every_part());
-    // Not stratifiable: `lone` read negatively in its own component.
-    let mut bad = p.clone();
-    bad.rules.push(Rule { head: atom("q", vec![v("x")]), body: vec![Literal::Atom(atom("lone", vec![v("x")]))].into() });
-    analyses_agree(&base(&bad), &bad);
-    // An overlay that adds a relation and a native, and a view that drops one.
-    let mut more = p.clone();
-    more.rules.push(Rule { head: atom("extra", vec![v("x")]), body: vec![Literal::Atom(atom("out", vec![v("x")]))].into() });
-    more.natives.insert("far".into(), Native::Reach { seed: "extra".into(), edge: "e".into() });
-    more.outputs.push("far".into());
-    let (o, made) = edit(&b, &more);
-    assert_eq!(made, Made::Overlay);
-    analyses_agree(&o, &more);
-    let mut less = p.clone();
-    less.rules.retain(|r| r.head.rel.as_str() != "lone");
-    let (w, made) = edit(&b, &less);
-    assert_eq!(made, Made::View);
-    analyses_agree(&w, &less);
-    // The composed path's own kind of program.
-    let plain = Program { rules: p.rules[..3].to_vec(), inputs: vec!["in".into()], outputs: vec!["p".into()], ..Program::default() };
-    analyses_agree(&base(&plain), &plain);
-    assert_eq!(super::analyses::accepts(&base(&plain), &super::About::of(&base(&plain))).ok(), Some(true));
+fn the_composed_path_accepts_a_plain_program() {
+    let mut b = Builder::base();
+    let x = || T::Var("x");
+    let y = || T::Var("y");
+    b.rule().head("e", &[x(), y()]).atom("in", &[x(), y(), T::Int(3)]).finish().unwrap();
+    b.rule().head("p", &[x()]).atom("e", &[x(), T::Wild]).finish().unwrap();
+    b.rule().head("p", &[y()]).atom("p", &[x()]).atom("e", &[x(), y()]).finish().unwrap();
+    b.fields().set_inputs(&["in"]);
+    b.fields().set_outputs(&["p"]);
+    let plain = b.finish().unwrap().0;
+    assert_eq!(super::analyses::accepts(&plain, &super::About::of(&plain)).ok(), Some(true));
 }
 
-/// The passes over a version make what the tree passes make of `p`: `normalize` (as a program, by digest, and its
-/// sentinels), each derived rule's source, then `stated_apart` over the normalized version. The analyses agree on
-/// what they make.
-fn passes_agree(p: &Program) {
+/// What the planner's passes over a version make of `p` (`passes::normalize`, then `passes::stated_apart` over what it
+/// made): the sentinels are the relations of no columns and the lattices of no keys (and the declared nullary ones),
+/// each declared with its presence column; every derived rule has its source, and each of `p`'s gave one rule, or a
+/// fact (a ground rule); each relation's stated facts beside its rules go apart, to a relation of its own.
+fn passes_hold(v: &Arc<Version>) {
+    use super::fields::ProgramFields;
     use super::passes;
-    use crate::code_rule_dsl::logic::plan;
-    let lists = Lists::default();
-    let v = base(p);
-    let (tree, sentinels) = match (plan::sql_kernel::normalize(p), passes::normalize(&v)) {
-        (Ok(t), Ok(g)) => (t, g),
-        (Err(_), Err(_)) => return,
-        (a, b) => panic!("normalize: tree {:?}, version {:?}", a.map(|_| ()).map_err(|e| e.to_string()), b.map(|_| ())),
-    };
-    let ((tp, ts), (nv, ns)) = (tree, sentinels);
-    same(&nv.program(&lists).unwrap(), &tp);
-    assert_eq!(nv.digest(), base(&tp).digest(), "normalized digest");
-    let names: std::collections::BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
-    assert_eq!(names, ts, "sentinels");
+    use std::collections::BTreeSet;
+    let Ok((nv, ns)) = passes::normalize(&v) else { return };
+    let names: BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
+    let lattice = ProgramFields::lattice(&**v);
+    let nullary = ProgramFields::nullary(&**v);
+    let want: BTreeSet<String> = v
+        .declared_names()
+        .into_iter()
+        .filter(|r| v.columns_of(r).is_some_and(|c| c.is_empty()) || lattice.get(r).is_some_and(|l| l.keys == 0) || nullary.contains(r))
+        .collect();
+    assert_eq!(names, want, "sentinels");
+    for r in &names {
+        let (before, after) = (v.columns_of(r).unwrap().len(), nv.columns_of(r).unwrap().len());
+        assert!(after == before + 1 || (after == before && nullary.contains(r)), "{r}: {before} columns, then {after}");
+    }
     // Every derived rule came from one of `v`'s; each of `v`'s gave one rule, or a fact (a ground rule). A program
     // normalize leaves as it was is its input (the manager keeps no new base of it).
-    if Arc::ptr_eq(&nv, &v) {
-        assert_eq!(nv.digest(), base(&tp).digest());
-    } else {
-    for r in nv.rules() {
-        let s = r.source().expect("a derived rule's source");
-        assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
+    if !Arc::ptr_eq(&nv, &v) {
+        for r in nv.rules() {
+            let s = r.source().expect("a derived rule's source");
+            assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
+        }
+        for r in v.rules() {
+            let made = nv.derived(r.id()).count();
+            assert!(made == 1 || (made == 0 && r.body().next().is_none()), "{} made {made}", v.rel_name(r.head().rel()));
+        }
     }
-    for r in v.rules() {
-        let made = nv.derived(r.id()).count();
-        assert!(made == 1 || (made == 0 && r.body().next().is_none()), "{} made {made}", v.rel_name(r.head().rel()));
+    let (sv, pairs) = passes::stated_apart(&nv).unwrap();
+    for &(a, b) in &pairs {
+        let (a, b) = (sv.rel_name(a), sv.rel_name(b));
+        assert!(sv.declares(b) && !sv.has_fact_rows(a), "{a}'s facts apart as {b}:\n{}", sv.show());
+        assert!(sv.rules().any(|r| sv.rel_name(r.head().rel()) == a && r.body().filter_map(|l| l.atom()).any(|x| sv.rel_name(x.rel()) == b)), "{a} reads {b}:\n{}", sv.show());
     }
-    }
-    let mut tp2 = tp.clone();
-    let pairs = plan::stated_apart(&mut tp2);
-    let (sv, got) = passes::stated_apart(&nv).unwrap();
-    same(&sv.program(&lists).unwrap(), &tp2);
-    assert_eq!(sv.digest(), base(&tp2).digest(), "stated apart digest");
-    let got: Vec<(String, String)> = got.iter().map(|&(a, b)| (sv.rel_name(a).to_owned(), sv.rel_name(b).to_owned())).collect();
-    assert_eq!(got, pairs, "stated apart");
-    analyses_agree(&sv, &tp2);
 }
 
 /// A program the passes change everywhere: relations of no columns (declared, ruled, with facts), a lattice of no
 /// keys and one of keys, `top` in heads, bodies, calls and comparisons, ground rules, and stated facts beside rules.
-fn normalizable() -> Program {
-    use crate::code_rule_dsl::logic::front::LatticeDecl;
-    let mut p = analysed();
-    p.decls.insert("flag".into(), [].into());
-    p.decls.insert("in".into(), [("a".into(), "int".into()), ("b".into(), "int".into()), ("c".into(), "int".into())].into());
-    p.decls.insert("best".into(), [("x".into(), "int".into()), ("n".into(), "int".into())].into());
-    p.decls.insert("lo".into(), [("n".into(), "int".into())].into());
-    p.decls.insert("e".into(), [("x".into(), "int".into()), ("y".into(), "int".into())].into());
-    p.lattice.insert("lo".into(), LatticeDecl { keys: 0, ty: "min".into(), merge: None, widen: None });
-    p.facts.insert("flag".into(), vec![[].into()]);
-    p.facts.insert("e".into(), vec![[Value::Int(1), Value::Int(2)].into()]);
-    p.facts.insert("lo".into(), vec![[Value::Int(7)].into()]);
-    p.rules.extend([
-        Rule { head: atom("flag", vec![]), body: vec![Literal::Atom(atom("p", vec![Term::Wild]))].into() },
-        Rule { head: atom("lo", vec![v("n")]), body: vec![Literal::Atom(atom("best", vec![Term::Wild, v("n")])), Literal::Atom(atom("flag", vec![]))].into() },
-        Rule { head: atom("lo", vec![Term::Top]), body: vec![].into() },
-        Rule { head: atom("best", vec![Term::Int(0), Term::Top]), body: vec![].into() },
-        Rule { head: atom("seen", vec![v("x"), v("m")]), body: vec![
-            Literal::Atom(atom("lo", vec![v("n")])),
-            Literal::Cmp { l: v("m"), op: "=", r: v("n") },
-            Literal::Cmp { l: v("m"), op: "!=", r: Term::Top },
-            Literal::Atom(atom("in", vec![v("x"), Term::Call("max".into(), [v("m"), Term::Top].into()), Term::Wild])),
-        ].into() },
-    ]);
-    p
+fn normalizable_on(b: &mut Builder<'_>) {
+    analysed_on(b);
+    b.fields().declare("flag", &[]);
+    b.fields().declare("in", &[("a", "int"), ("b", "int"), ("c", "int")]);
+    b.fields().declare("best", &[("x", "int"), ("n", "int")]);
+    b.fields().declare("lo", &[("n", "int")]);
+    b.fields().declare("e", &[("x", "int"), ("y", "int")]);
+    b.fields().set_field(Field::Lattice(&[
+        ("best".to_owned(), LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None }),
+        ("lo".to_owned(), LatticeDecl { keys: 0, ty: "min".into(), merge: None, widen: None }),
+    ].into()));
+    b.fields().set_facts("flag", &[Vec::<Value>::new().into()]);
+    b.fields().set_facts("e", &[vec![Value::Int(1), Value::Int(2)].into()]);
+    b.fields().set_facts("lo", &[vec![Value::Int(7)].into()]);
+    let (x, n, m) = (|| T::Var("x"), || T::Var("n"), || T::Var("m"));
+    b.rule().head("flag", &[]).atom("p", &[T::Wild]).finish().unwrap();
+    b.rule().head("lo", &[n()]).atom("best", &[T::Wild, n()]).atom("flag", &[]).finish().unwrap();
+    b.rule().head("lo", &[T::Top]).finish().unwrap();
+    b.rule().head("best", &[T::Int(0), T::Top]).finish().unwrap();
+    b.rule()
+        .head("seen", &[x(), m()])
+        .atom("lo", &[n()])
+        .cmp(m(), CmpOp::Eq, n())
+        .cmp(m(), CmpOp::Ne, T::Top)
+        .atom("in", &[x(), T::Call("max", vec![m(), T::Top]), T::Wild])
+        .finish()
+        .unwrap();
 }
 
-/// The passes over a version are the tree's passes, on every sampled pack program and on a program they change
-/// everywhere; and a `top` of two domains is refused by both.
+/// The planner's passes over a version hold (`passes_hold`) on every sampled pack program and on a program they change
+/// everywhere; and a `top` of two domains is refused.
 #[test]
-fn the_passes_over_a_version_are_the_tree_passes() {
+fn the_planners_passes_over_a_version_hold() {
     let mut n = 0;
     for (_, prog) in pack_programs() {
-        if encode(&prog).is_err() {
-            continue;
-        }
-        passes_agree(&prog);
+        passes_hold(&prog);
         n += 1;
     }
     assert!(n > 50, "{n}");
-    let p = normalizable();
-    crate::code_rule_dsl::logic::plan::sql_kernel::normalize(&p).expect("the tree normalizes it");
-    passes_agree(&p);
-    let (nv, _) = super::passes::normalize(&base(&p)).unwrap();
-    assert!(nv.rules().count() < p.rules.len(), "ground rules became facts");
+    let p = {
+        let mut b = Builder::base();
+        normalizable_on(&mut b);
+        b.finish().unwrap().0
+    };
+    passes_hold(&p);
+    let (nv, _) = super::passes::normalize(&p).expect("it normalizes");
+    assert!(nv.rules().count() < p.rules().count(), "ground rules became facts");
     // `top` beside variables of two lattices.
-    let mut two = p.clone();
-    two.rules.push(Rule { head: atom("out", vec![v("x")]), body: vec![
-        Literal::Atom(atom("lo", vec![v("a")])),
-        Literal::Atom(atom("best", vec![v("x"), v("b")])),
-        Literal::Cmp { l: Term::Call("max".into(), [v("a"), v("b")].into()), op: "<", r: Term::Top },
-    ].into() });
-    assert!(crate::code_rule_dsl::logic::plan::sql_kernel::normalize(&two).is_err());
-    assert!(super::passes::normalize(&base(&two)).is_err());
+    let two = {
+        let mut b = Builder::base();
+        normalizable_on(&mut b);
+        b.rule()
+            .head("out", &[T::Var("x")])
+            .atom("lo", &[T::Var("a")])
+            .atom("best", &[T::Var("x"), T::Var("b")])
+            .cmp(T::Call("max", vec![T::Var("a"), T::Var("b")]), CmpOp::Lt, T::Top)
+            .finish()
+            .unwrap();
+        b.finish().unwrap().0
+    };
+    assert!(super::passes::normalize(&two).is_err());
 }
 
 /// A rule rewritten as it is copied keeps what the rewrite does not change, records its source, and takes more
@@ -820,8 +728,7 @@ fn a_rewrite_copies_what_it_does_not_change() {
             !matches!(l.view(), Lit::Nearest { .. })
         }
     }
-    let p = every_part();
-    let v = base(&p);
+    let v = every_part();
     let mut b = Builder::derive(&v);
     let mut ids = Vec::new();
     for r in v.rules() {
@@ -849,86 +756,48 @@ fn a_rewrite_copies_what_it_does_not_change() {
     for r in d.rules() {
         assert_eq!(f.rule(r.id()).unwrap().source(), r.source());
     }
-    // Encoded again, the image opens and reads back.
-    same(&Version::open(&encode(&d.program(&Lists::default()).unwrap()).unwrap()).unwrap().program(&Lists::default()).unwrap(), &d.program(&Lists::default()).unwrap());
-}
-
-/// The planner's reading of a rule (`plan::body::Body`) says what the tree says of it, on the pack programs and on a
-/// program of every part: each literal's text, variables, whether it joins and when it can run (after each prefix of the
-/// body, and after each literal alone), each constant, and the key the rule's observations are kept under.
-#[test]
-fn the_planners_reading_of_a_rule_is_the_trees() {
-    use crate::code_rule_dsl::logic::plan::{self, body::{Body, VarSet, made}};
-    use std::collections::BTreeSet;
-    let mut progs: Vec<Program> = pack_programs().into_iter().map(|(_, p)| p).collect();
-    progs.push(every_part());
-    progs.push(analysed());
-    let mut n = 0;
-    for prog in &progs {
-        let v = made(&prog.rules).unwrap();
-        for (k, rule) in prog.rules.iter().enumerate() {
-            let b = Body::of(&v, v.rule(RuleId(k as u32)).unwrap());
-            assert_eq!(b.show_head(), rule.head.to_string());
-            assert_eq!(b.len(), rule.body.len(), "{rule}");
-            assert_eq!(b.observed_key(), plan::obs_rule(&rule.head, &rule.body), "{rule}");
-            let names = |s: &VarSet| -> BTreeSet<String> { s.iter().map(|x| b.var(x).to_owned()).collect() };
-            let slots = |names: &BTreeSet<String>| -> VarSet { VarSet::of(v.rule(RuleId(k as u32)).unwrap().vars().enumerate().filter(|(_, a)| names.contains(v.text(*a))).map(|(i, _)| super::Slot(i as u32))) };
-            let mut bounds: Vec<BTreeSet<String>> = vec![BTreeSet::new()];
-            for l in rule.body.iter() {
-                let mut next = bounds.last().unwrap().clone();
-                next.extend(l.vars());
-                bounds.push(next);
-                bounds.push(l.vars());
-            }
-            for (i, l) in rule.body.iter().enumerate() {
-                assert_eq!(b.show(i), l.to_string());
-                assert_eq!(names(b.vars(i)), l.vars(), "{l}");
-                assert_eq!(b.is_join(i), plan::is_join(l), "{l}");
-                for bound in &bounds {
-                    assert_eq!(b.ready(i, &slots(bound)), plan::ready(l, bound), "{l} with {bound:?} bound");
-                }
-                if let (Some(a), Some(t)) = (b.atom(i), l.atom()) {
-                    assert_eq!(b.rel(a), t.rel.as_str());
-                    for (x, y) in a.args().zip(t.args.iter()) {
-                        assert_eq!(b.constant(x), plan::constant(y));
-                    }
-                }
-                n += 1;
-            }
-        }
-    }
-    assert!(n > 1000, "{n}");
+    // Its image opens and reads back as the program.
+    same(&Version::open(f.base_bytes().unwrap()).unwrap(), &d);
 }
 
 /// `every_part` with a field of every other kind `plan::run` reads: a native of each kind, lattices with a merge and a
 /// widening, answers, gates, qualifiers, tape columns and demand in an order.
-fn every_field() -> Program {
-    use crate::code_rule_dsl::logic::front::{ast::Gate, LatticeDecl};
-    let mut p = every_part();
-    p.natives.insert("dfs_x".into(), Native::DfsFirst { edge: "e".into(), target: "t".into(), roots: Some("roots".into()) });
-    p.natives.insert("dfs_y".into(), Native::DfsFirst { edge: "e".into(), target: "t".into(), roots: None });
-    p.natives.insert("match_x".into(), Native::MatchAll { input: "src".into(), pattern: "(a)(b)?".into(), groups: vec!["g2".into(), "g1".into()], positions: true });
-    p.natives.insert("match_y".into(), Native::MatchAll { input: "src".into(), pattern: "c".into(), groups: vec![], positions: false });
-    p.natives.insert("tt_x".into(), Native::TextTest { input: "src".into(), column: 0, op: "contains".into(), patterns: vec!["b".into(), "a".into()] });
-    p.natives.insert("comp_x".into(), Native::Components { edge: "e".into(), own: "own".into() });
-    p.natives.insert("through_x".into(), Native::ReachThrough { reach: "reach_x".into(), map: "m".into() });
-    p.natives.insert("py_x".into(), Native::Python { kind: "calls".into(), input: "src".into(), targets: Some("tg".into()) });
-    p.natives.insert("py_y".into(), Native::Python { kind: "defs".into(), input: "src".into(), targets: None });
-    p.natives.insert("cand_x".into(), Native::PythonCandidates { input: "src".into(), targets: "tg".into(), context: "ctx".into(), member: "mem".into() });
-    p.lattice.insert("best".into(), LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None });
-    p.lattice.insert("joined".into(), LatticeDecl { keys: 2, ty: "sym".into(), merge: Some("type_join".into()), widen: Some(3) });
-    p.answers.insert("ask".into(), vec!["told".into(), "also".into()]);
-    p.answers.insert("ask2".into(), vec!["told2".into()]);
-    p.gates.push(("done_x".into(), Gate { src: Some("x_demand".into()), rel: "x".into(), level: 2, quiet: vec!["q1".into(), "q0".into()], deps: vec!["done_y".into()] }));
-    p.gates.push(("done_y".into(), Gate { src: None, rel: "y".into(), level: 1, quiet: vec![], deps: vec![] }));
-    p.qualifiers.insert("r".into(), ["inline".to_owned(), "no_magic".to_owned()].into());
-    p.qualifiers.insert("nearest".into(), ["no_inline".to_owned()].into());
-    p.tapes.insert("r".into(), [1usize].into());
-    p.demand = vec!["r".into(), "*".into(), "nearest".into()];
-    p
+fn every_field() -> Arc<Version> {
+    let mut b = Builder::base();
+    every_part_on(&mut b);
+    let natives: BTreeMap<String, Native> = [
+        ("reach_x", Native::Reach { seed: "s".into(), edge: "e".into() }),
+        ("dfs_x", Native::DfsFirst { edge: "e".into(), target: "t".into(), roots: Some("roots".into()) }),
+        ("dfs_y", Native::DfsFirst { edge: "e".into(), target: "t".into(), roots: None }),
+        ("match_x", Native::MatchAll { input: "src".into(), pattern: "(a)(b)?".into(), groups: vec!["g2".into(), "g1".into()], positions: true }),
+        ("match_y", Native::MatchAll { input: "src".into(), pattern: "c".into(), groups: vec![], positions: false }),
+        ("tt_x", Native::TextTest { input: "src".into(), column: 0, op: "contains".into(), patterns: vec!["b".into(), "a".into()] }),
+        ("comp_x", Native::Components { edge: "e".into(), own: "own".into() }),
+        ("through_x", Native::ReachThrough { reach: "reach_x".into(), map: "m".into() }),
+        ("py_x", Native::Python { kind: "calls".into(), input: "src".into(), targets: Some("tg".into()) }),
+        ("py_y", Native::Python { kind: "defs".into(), input: "src".into(), targets: None }),
+        ("cand_x", Native::PythonCandidates { input: "src".into(), targets: "tg".into(), context: "ctx".into(), member: "mem".into() }),
+    ]
+    .into_iter()
+    .map(|(r, n)| (r.to_owned(), n))
+    .collect();
+    b.fields().set_field(Field::Natives(&natives));
+    b.fields().set_field(Field::Lattice(&[
+        ("best".to_owned(), LatticeDecl { keys: 1, ty: "max".into(), merge: None, widen: None }),
+        ("joined".to_owned(), LatticeDecl { keys: 2, ty: "sym".into(), merge: Some("type_join".into()), widen: Some(3) }),
+    ].into()));
+    b.fields().set_field(Field::Answers(&[("ask".to_owned(), vec!["told".to_owned(), "also".to_owned()]), ("ask2".to_owned(), vec!["told2".to_owned()])].into()));
+    b.fields().set_field(Field::Gates(&[
+        ("done_x".to_owned(), Gate { src: Some("x_demand".into()), rel: "x".into(), level: 2, quiet: vec!["q1".into(), "q0".into()], deps: vec!["done_y".into()] }),
+        ("done_y".to_owned(), Gate { src: None, rel: "y".into(), level: 1, quiet: vec![], deps: vec![] }),
+    ]));
+    b.fields().set_field(Field::Qualifiers(&[("r".to_owned(), ["inline".to_owned(), "no_magic".to_owned()].into()), ("nearest".to_owned(), ["no_inline".to_owned()].into())].into()));
+    b.fields().set_field(Field::Tapes(&[("r".to_owned(), [1usize].into())].into()));
+    b.fields().set_field(Field::Demand(&["r".to_owned(), "*".to_owned(), "nearest".to_owned()]));
+    b.finish().unwrap().0
 }
 
-/// A native's fields, as the tree writes them.
+/// A native's fields, by name, as the program states them.
 fn native_tree(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, s: &super::NativeSpec) -> Native {
     use super::NativeSpec as S;
     let r = |x: RelId| f.rel_name(x).to_owned();
@@ -946,12 +815,24 @@ fn native_tree(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, s: &su
     }
 }
 
-/// Every field `plan::run` reads of `p` (all but its rules, `again` and `together`), read through `Fields` from its
-/// image, says what the tree says, by text.
-fn fields_agree(p: &Program) {
+/// Every field `plan::run` reads of `v` (all but its rules), read through `Fields` from its image, says what the
+/// program's own readers (`ProgramFields`) say, by text.
+fn fields_agree(v: &Arc<Version>) {
     use crate::code_rule_dsl::logic::plan::{body::Placed, fields::Fields};
-    use std::collections::BTreeSet;
-    let placed = Placed::of_program(p).unwrap();
+    // The program's own readers (`ProgramFields`), the reference.
+    let (inputs, outputs) = (v.input_names(), v.output_names());
+    let decls: BTreeMap<String, Vec<(String, String)>> = v.declared_names().into_iter().map(|r| {
+        let cols = v.columns_of(&r).unwrap();
+        (r, cols)
+    }).collect();
+    let facts: BTreeMap<String, Vec<_>> = v.fact_names().into_iter().map(|r| {
+        let rows = ProgramFields::fact_rows(&**v, &r);
+        (r, rows)
+    }).collect();
+    let (lattice, natives, answers, pgates) = (ProgramFields::lattice(&**v), ProgramFields::natives(&**v), ProgramFields::answers(&**v), ProgramFields::gates(&**v));
+    let (qualifiers, tapes, kindsets, nullary) = (ProgramFields::qualifiers(&**v), ProgramFields::tapes(&**v), ProgramFields::kindsets(&**v), ProgramFields::nullary(&**v));
+    let (demand, shapes) = (ProgramFields::demand(&**v), ProgramFields::shapes(&**v));
+    let placed = Placed::whole(v.clone());
     let f = Fields::of(&placed).expect("a whole image");
     // Read once, and shared by the clones.
     let again = placed.clone();
@@ -960,17 +841,17 @@ fn fields_agree(p: &Program) {
     fn strs(xs: &[String]) -> Vec<&str> {
         xs.iter().map(String::as_str).collect()
     }
-    assert_eq!(f.inputs().collect::<Vec<_>>(), strs(&p.inputs));
-    assert_eq!(f.outputs().collect::<Vec<_>>(), strs(&p.outputs));
-    for r in &p.inputs {
+    assert_eq!(f.inputs().collect::<Vec<_>>(), strs(&inputs));
+    assert_eq!(f.outputs().collect::<Vec<_>>(), strs(&outputs));
+    for r in &inputs {
         assert!(f.is_input(r), "{r}");
     }
-    for r in &p.outputs {
+    for r in &outputs {
         assert!(f.is_output(r), "{r}");
     }
     // Declarations.
-    assert_eq!(f.decls().len(), p.decls.len());
-    for (rel, cols) in &p.decls {
+    assert_eq!(f.decls().len(), decls.len());
+    for (rel, cols) in &decls {
         let want: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         assert_eq!(f.columns(rel.as_str()), Some(want.clone()), "{rel}");
         assert_eq!(f.arity(rel.as_str()), Some(cols.len()));
@@ -979,8 +860,8 @@ fn fields_agree(p: &Program) {
         }
     }
     // Facts.
-    assert_eq!(f.fact_rels().len(), p.facts.len());
-    for (rel, rows) in &p.facts {
+    assert_eq!(f.fact_rels().len(), facts.len());
+    for (rel, rows) in &facts {
         let got: Vec<Vec<String>> = f.facts(rel).unwrap_or_else(|| panic!("facts of {rel}")).rows().map(|row| row.map(|c| f.cell_text(c)).collect()).collect();
         let want: Vec<Vec<String>> = rows.iter().map(|row| row.iter().map(|x| match x {
             Value::Int(i) => i.to_string(),
@@ -991,23 +872,23 @@ fn fields_agree(p: &Program) {
         assert_eq!(f.has_facts(rel), !rows.is_empty());
     }
     // Lattices.
-    assert_eq!(f.lattices().len(), p.lattice.len());
-    for (rel, l) in &p.lattice {
+    assert_eq!(f.lattices().len(), lattice.len());
+    for (rel, l) in &lattice {
         let d = f.lattice_decl(rel).unwrap_or_else(|| panic!("lattice {rel}"));
         assert_eq!((d.keys, f.text(d.ty), d.merge.map(|m| f.text(m)), d.widen), (l.keys, l.ty.as_str(), l.merge.as_deref(), l.widen), "{rel}");
         assert_eq!(f.lattice_name(rel), Some(l.lattice()));
         assert!(f.lattice(rel));
     }
     // Natives, each of its fields.
-    assert_eq!(f.natives().len(), p.natives.len());
-    for (rel, n) in &p.natives {
+    assert_eq!(f.natives().len(), natives.len());
+    for (rel, n) in &natives {
         let got = f.native(rel).unwrap_or_else(|| panic!("native {rel}"));
         assert_eq!(&native_tree(&f, &got.spec), n, "{rel}");
         assert_eq!(got.reads.iter().map(|&r| f.rel_name(r)).collect::<Vec<_>>(), n.reads(), "{rel}");
     }
     // Answers, in order.
-    assert_eq!(f.answers().len(), p.answers.values().map(Vec::len).sum::<usize>());
-    for (req, ps) in &p.answers {
+    assert_eq!(f.answers().len(), answers.values().map(Vec::len).sum::<usize>());
+    for (req, ps) in &answers {
         assert_eq!(f.answers_of(req), strs(ps), "{req}");
         assert!(f.request(req) && f.answer(req));
     }
@@ -1015,49 +896,46 @@ fn fields_agree(p: &Program) {
     // A gate's key, source, relation, level, and its two lists.
     type Gate = (String, Option<String>, String, usize, Vec<String>, Vec<String>);
     let gates: Vec<Gate> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
-    let want: Vec<_> = p.gates.iter().map(|(k, g)| (k.clone(), g.src.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
+    let want: Vec<_> = pgates.iter().map(|(k, g)| (k.clone(), g.src.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
     assert_eq!(gates, want);
-    for (k, _) in &p.gates {
+    for (k, _) in &pgates {
         assert!(f.gate(k) && f.demanded_or_gate(k));
     }
     // Qualifiers, tapes, kind sets, nullary and demand.
-    for (rel, ws) in &p.qualifiers {
+    for (rel, ws) in &qualifiers {
         assert_eq!(f.qualifiers_of(rel).into_iter().collect::<BTreeSet<_>>(), ws.iter().map(String::as_str).collect(), "{rel}");
         for w in ws {
             assert!(f.qualified(rel, w));
         }
     }
-    assert_eq!(f.about.qualifiers.len(), p.qualifiers.values().map(BTreeSet::len).sum::<usize>());
-    for (rel, cols) in &p.tapes {
+    assert_eq!(f.about.qualifiers.len(), qualifiers.values().map(BTreeSet::len).sum::<usize>());
+    for (rel, cols) in &tapes {
         assert_eq!(f.tapes_of(rel), cols.iter().copied().collect::<Vec<_>>(), "{rel}");
     }
-    assert_eq!(f.tapes().len(), p.tapes.values().map(BTreeSet::len).sum::<usize>());
-    assert_eq!(f.kindsets().len(), p.kindsets.len());
-    for (set, kinds) in &p.kindsets {
+    assert_eq!(f.tapes().len(), tapes.values().map(BTreeSet::len).sum::<usize>());
+    assert_eq!(f.kindsets().len(), kindsets.len());
+    for (set, kinds) in &kindsets {
         let got: Vec<&str> = f.kindset(set).unwrap_or_else(|| panic!("kind set {set}")).iter().map(|&k| f.text(k)).collect();
         assert_eq!(got, strs(kinds), "{set}");
     }
-    assert_eq!(f.nullaries().collect::<BTreeSet<_>>(), p.nullary.iter().map(String::as_str).collect());
-    for r in &p.nullary {
+    assert_eq!(f.nullaries().collect::<BTreeSet<_>>(), nullary.iter().map(String::as_str).collect());
+    for r in &nullary {
         assert!(f.nullary(r));
     }
-    assert_eq!(f.demand().collect::<Vec<_>>(), strs(&p.demand));
-    for r in &p.demand {
+    assert_eq!(f.demand().collect::<Vec<_>>(), strs(&demand));
+    for r in &demand {
         assert!(f.demanded(r));
     }
     // Shapes, in order.
-    assert_eq!(f.shapes().iter().map(|s| (f.text(s.head), f.text(s.lit), f.text(s.text))).collect::<Vec<_>>(), p.shapes.iter().map(|s| (s.head.as_str(), s.lit.as_str(), s.text.as_str())).collect::<Vec<_>>());
+    assert_eq!(f.shapes().iter().map(|s| (f.text(s.head), f.text(s.lit), f.text(s.text))).collect::<Vec<_>>(), shapes.iter().map(|s| (s.head.as_str(), s.lit.as_str(), s.text.as_str())).collect::<Vec<_>>());
 }
 
-/// A version's fields (`plan::fields::Fields`, read once from its `Placed`) say what the tree's fields say: on the pack
-/// programs, and on programs with a field of every kind.
+/// A version's fields (`plan::fields::Fields`, read once from its `Placed`) say what its program's readers say: on the
+/// pack programs, and on programs with a field of every kind.
 #[test]
-fn a_versions_fields_say_what_the_tree_says() {
+fn a_versions_fields_say_what_its_readers_say() {
     let mut n = 0;
     for (_, prog) in pack_programs() {
-        if encode(&prog).is_err() {
-            continue;
-        }
         fields_agree(&prog);
         n += 1;
     }
@@ -1067,61 +945,53 @@ fn a_versions_fields_say_what_the_tree_says() {
     fields_agree(&every_field());
 }
 
-/// A relation's identity (`plan::identities`) is a digest of the tree's `Debug` text, written now from the version's
-/// handles (`plan::tree_text`): it must be the tree's byte for byte, for every rule and every relation's fields, or
-/// every kept stratum's key would change.
+/// A relation's identity (`plan::identities`, 0173 step 6) is of its rules' and parts' hashes as the version keeps
+/// them: the same for the same program made again (parsed again, or derived with its rules copied), and another when
+/// a rule of its stratum, its declaration or its facts change.
 #[test]
-fn the_tree_text_from_handles_is_the_trees() {
-    use crate::code_rule_dsl::logic::plan::{body::{Placed, Versions}, tree_text};
-    let mut progs: Vec<Program> = pack_programs().into_iter().map(|(_, p)| p).collect();
-    let mut all = every_field();
-    all.natives.insert("reach_x".into(), Native::Reach { seed: "s".into(), edge: "e".into() });
-    progs.push(all);
-    progs.push(analysed());
-    let (mut rules, mut rels) = (0, 0);
-    for prog in &progs {
-        let vs = Versions::with(prog, Placed::of_program(prog).unwrap());
-        for r in &prog.rules {
-            assert_eq!(tree_text::rule(&vs.body(r).unwrap()), format!("{r:?}"));
-            rules += 1;
-        }
-        let f = vs.fields(0).unwrap();
-        let names: std::collections::BTreeSet<&str> = prog.decls.keys().map(|k| k.as_str())
-            .chain(prog.facts.keys().map(|k| k.as_str())).chain(prog.natives.keys().map(|k| k.as_str()))
-            .chain(prog.lattice.keys().map(|k| k.as_str())).chain(prog.nullary.iter().map(|k| k.as_str()))
-            .chain(prog.rules.iter().map(|r| r.head.rel.as_str())).chain(["no_such_relation"]).collect();
-        for rel in names {
-            // Facts are a set: their text is of their rows sorted by text, whatever order a program holds them in.
-            let facts = prog.facts.get(rel).map(|rows| tree_text::sorted_facts(rows));
-            let shape = (prog.decls.get(rel), &facts, prog.natives.get(rel), prog.lattice.get(rel), prog.nullary.contains(rel));
-            assert_eq!(tree_text::shape(&f, rel), format!("{shape:?}"), "{rel}");
-            assert_eq!(tree_text::leaf(&f, rel), format!("{:?}\n{:?}", prog.decls.get(rel), facts), "{rel}");
-            rels += 1;
-        }
-    }
-    assert!(rules > 1000 && rels > 300, "{rules} rules, {rels} relations");
+fn a_relations_identity_is_its_versions_hashes() {
+    use crate::code_rule_dsl::logic::plan::{self, body, body::Placed, fields::Fields};
+    let ids = |text: &str| {
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+        let placed = Placed::whole(v.clone());
+        let f = Fields::of(&placed).unwrap();
+        let vs = body::Versions::of_placed(placed.clone());
+        let rules: Vec<_> = (0..v.rules().count()).map(body::RuleKey::program).collect();
+        let sccs = [BTreeSet::from(["r".to_owned()])];
+        (plan::identities(f, &vs, &sccs, &[rules])["r"], plan::leaf_identity(f, "e"))
+    };
+    let base = ".decl e(x: number, y: number)\n.input e\n.decl r(x: number, y: number)\n.output r\ne(1, 2).\nr(x, y) :- e(x, y).\n";
+    let (r, e) = ids(base);
+    assert_eq!(ids(base), (r, e), "made again, the same");
+    assert_ne!(ids(&base.replace("r(x, y) :- e(x, y)", "r(y, x) :- e(x, y)")).0, r, "a rule edit");
+    assert_ne!(ids(&base.replace(".decl r(x: number, y: number)", ".decl r(x: number, z: number)")).0, r, "a declaration edit");
+    let (r2, e2) = ids(&base.replace("e(1, 2).", "e(1, 3)."));
+    assert_ne!(e2, e, "a fact edit changes the input's identity");
+    assert_ne!(r2, r, "and every identity that reads it");
 }
 
 // ---- the pass manager (decision 0281) ----
 
 /// A program of three heads over two inputs, with stated facts: `e` read by `p` and `q`, `f` by `r`'s twelve rules.
 fn managed() -> Arc<Version> {
-    let mut p = Program::default();
+    let mut b = Builder::base();
     for (n, k) in [("e", 2), ("f", 1), ("p", 1), ("q", 1), ("r", 1)] {
-        p.decls.insert(n.into(), (0..k).map(|i| (format!("c{i}").into(), "int".into())).collect());
+        let cols: Vec<String> = (0..k).map(|i| format!("c{i}")).collect();
+        b.fields().declare(n, &cols.iter().map(|c| (c.as_str(), "int")).collect::<Vec<_>>());
     }
-    p.facts.insert("f".into(), vec![[Value::Int(1)].into()]);
-    p.inputs = vec!["e".into()];
-    p.outputs = vec!["p".into(), "r".into()];
-    p.rules = vec![
-        Rule { head: atom("p", vec![v("x")]), body: vec![Literal::Atom(atom("e", vec![v("x"), Term::Wild]))].into() },
-        Rule { head: atom("q", vec![v("y")]), body: vec![Literal::Atom(atom("e", vec![Term::Wild, v("y")]))].into() },
-        Rule { head: atom("r", vec![v("x")]), body: vec![Literal::Atom(atom("f", vec![v("x")]))].into() },
-        Rule { head: atom("r", vec![v("x")]), body: vec![Literal::Atom(atom("p", vec![v("x")]))].into() },
-    ];
+    b.fields().set_facts("f", &[vec![Value::Int(1)].into()]);
+    b.fields().set_inputs(&["e"]);
+    b.fields().set_outputs(&["p", "r"]);
+    let (x, y) = (|| T::Var("x"), || T::Var("y"));
+    b.rule().head("p", &[x()]).atom("e", &[x(), T::Wild]).finish().unwrap();
+    b.rule().head("q", &[y()]).atom("e", &[T::Wild, y()]).finish().unwrap();
+    b.rule().head("r", &[x()]).atom("f", &[x()]).finish().unwrap();
+    b.rule().head("r", &[x()]).atom("p", &[x()]).finish().unwrap();
     // Rules that read neither `e` nor `q`, so an edit of `e`'s readers is a small part of the program.
-    p.rules.extend((1..9).map(|k| Rule { head: atom("r", vec![Term::Int(k)]), body: vec![Literal::Atom(atom("f", vec![Term::Int(k)]))].into() }));
-    base(&p)
+    for k in 1..9 {
+        b.rule().head("r", &[T::Int(k)]).atom("f", &[T::Int(k)]).finish().unwrap();
+    }
+    b.finish().unwrap().0
 }
 
 /// Renames every read of `from` to `to`, and counts the rules it is shown.
@@ -1189,7 +1059,7 @@ struct DropFacts;
 impl super::manager::ProgramPass for DropFacts {
     const NAME: &'static str = "drop facts";
     fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
-        w.on()?.drop_facts("f");
+        w.on()?.fields().drop_facts("f");
         cx.decide("dropped", || "f".into());
         Ok(())
     }
@@ -1296,24 +1166,32 @@ impl super::manager::RulePass for RenameAll {
 }
 
 /// `v` less rules `gone`, plus `add`: an overlay, as a session's edit of a program is.
-fn edited(v: &Arc<Version>, gone: &[RuleId], add: &[Rule]) -> Arc<Version> {
+fn edited(v: &Arc<Version>, gone: &[RuleId], add: &[Add]) -> Arc<Version> {
     let mut b = Builder::on(v);
     for &g in gone {
         b.remove(g);
     }
     for r in add {
-        b.add(r).unwrap();
+        let x = || T::Var("x");
+        match *r {
+            Add::ReadsE(head) => b.rule().head(head, &[x()]).atom("e", &[x(), T::Wild]),
+            Add::ROfF(k) => b.rule().head("r", &[T::Int(k)]).atom("f", &[T::Int(k)]),
+            Add::PReadsQ => b.rule().head("p", &[x()]).atom("q", &[x()]),
+        }
+        .finish()
+        .unwrap();
     }
     let (out, made) = b.finish().unwrap();
     assert_eq!(made, Made::Overlay);
     out
 }
 
-fn reads_e(head: &str) -> Rule {
-    Rule { head: atom(head, vec![v("x")]), body: vec![Literal::Atom(atom("e", vec![v("x"), Term::Wild]))].into() }
-}
-fn r_of_f(k: i64) -> Rule {
-    Rule { head: atom("r", vec![Term::Int(k)]), body: vec![Literal::Atom(atom("f", vec![Term::Int(k)]))].into() }
+/// A rule an edit adds: `head(x) :- e(x, _)`, `r(k) :- f(k)`, or `p(x) :- q(x)`.
+#[derive(Clone, Copy)]
+enum Add {
+    ReadsE(&'static str),
+    ROfF(i64),
+    PReadsQ,
 }
 
 /// A rule pass run again over an edit of its input (0281 §3) visits the edit's added rules alone, drops what came
@@ -1327,10 +1205,10 @@ fn a_rule_pass_run_again_visits_the_edits_rules_alone() {
     let readers: Vec<RuleId> = v0.readers(e).map(|(r, _)| r.id()).collect();
     let r3 = v0.rules().nth(6).unwrap().id();
     // Edit 1: one reader of `e` and one other rule out; one reader and one other rule in.
-    let v1 = edited(&v0, &[readers[0], r3], &[reads_e("q"), r_of_f(20)]);
+    let v1 = edited(&v0, &[readers[0], r3], &[Add::ReadsE("q"), Add::ROfF(20)]);
     let added1: Vec<RuleId> = super::manager::Delta::of(&v0, &v1).added;
     // Edit 2: edit 1's added reader out, and one more reader in.
-    let v2 = edited(&v1, &[added1[0]], &[reads_e("p")]);
+    let v2 = edited(&v1, &[added1[0]], &[Add::ReadsE("p")]);
 
     let scratch = |v: &Arc<Version>, by_rules: bool| {
         let mut p = Pipeline::new("scratch", v.clone());
@@ -1391,7 +1269,7 @@ fn a_stored_run_reruns_on_an_edit_in_a_new_process() {
     let e = v0.rel("e").unwrap();
     let readers: Vec<RuleId> = v0.readers(e).map(|(r, _)| r.id()).collect();
     let r3 = v0.rules().nth(6).unwrap().id();
-    let v1 = edited(&v0, &[readers[0], r3], &[reads_e("q"), r_of_f(20)]);
+    let v1 = edited(&v0, &[readers[0], r3], &[Add::ReadsE("q"), Add::ROfF(20)]);
     // Each process reads its program afresh: no version of the last process's is shared.
     let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
     let scratch = |v: &Arc<Version>| {
@@ -1434,6 +1312,15 @@ fn a_stored_run_reruns_on_an_edit_in_a_new_process() {
     ContentStore::forget(&path);
 }
 
+/// `text`'s version with request record `asked` (decision 0331), as one base image, as a lowered program's is.
+fn asked_base(text: &str, asked: &[(&str, Vec<BTreeSet<String>>)]) -> Arc<Version> {
+    let read = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+    let mut b = Builder::on(&read);
+    b.fields().set_asked(&asked.iter().map(|(r, by)| ((*r).to_owned(), by.clone())).collect());
+    let (v, _) = b.finish().unwrap();
+    Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap()
+}
+
 /// A rebased version (`manager::rebase`) holds the last input's rules in its order and the new program's others after
 /// them: the request record is restated by rule, so each request rule keeps the readers the new program gave it
 /// (decision 0331). Taken by place, `q`'s two rules swapped their readers: `a_library_held_once_is_read_by_each_policy_in_its_own_scope`
@@ -1442,21 +1329,19 @@ fn a_stored_run_reruns_on_an_edit_in_a_new_process() {
 fn a_rebased_version_keeps_each_request_rules_readers() {
     use std::collections::BTreeSet;
     let program = |order: &[usize], extra: &str| {
-        let rules = ["q($n) :- k($n), $n < 3.", "q($n) :- k($n), $n > 5."];
+        let rules = ["q(n) :- k(n), n < 3.", "q(n) :- k(n), n > 5."];
         let mut text = String::from(".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n");
         for &i in order {
             text.push_str(rules[i]);
             text.push('\n');
         }
-        text.push_str("a($n) :- q($n).\nb($n) :- q($n).\n");
+        text.push_str("a(n) :- q(n).\nb(n) :- q(n).\n");
         text.push_str(extra);
-        let mut p = crate::code_rule_dsl::logic::front::parse(&text).unwrap();
         // The rule `< 3` serves `a`, the rule `> 5` serves `b`, wherever each lies.
-        p.asked_by.insert("q".into(), order.iter().map(|&i| BTreeSet::from([["a", "b"][i].to_owned()])).collect());
-        Builder::of_program(&p).unwrap().finish().unwrap().0
+        asked_base(&text, &[("q", order.iter().map(|&i| BTreeSet::from([["a", "b"][i].to_owned()])).collect())])
     };
     let last = program(&[0, 1], "");
-    let new = program(&[1, 0], ".decl c(n: number)\nc($n) :- a($n).\n");
+    let new = program(&[1, 0], ".decl c(n: number)\nc(n) :- a(n).\n");
     let v = super::manager::rebase(&last, &new).unwrap().expect("an edit of the last input");
     // The case: `q`'s rules lie in the last input's order, the new program's reversed.
     let first = |x: &Version| x.heads(x.rel("q").unwrap()).next().map(|r| x.show_rule(r)).unwrap();
@@ -1477,8 +1362,7 @@ fn a_rerun_runs_a_step_whole_when_the_edit_reaches_past_its_rules() {
     p.rules(&mut Keep).rules(&mut RenameAll { from: "f", to: "f2", needs: true, seen: 0 }).program(&mut DropQ);
     let mut last = p.done().unwrap();
     // `q` is read by an output's rule now: `Needed` changes, so the pass that asked for it runs whole.
-    let reads_q = Rule { head: atom("p", vec![v("x")]), body: vec![Literal::Atom(atom("q", vec![v("x")]))].into() };
-    for (add, ran) in [(r_of_f(30), Ran::Delta), (reads_q, Ran::Whole)] {
+    for (add, ran) in [(Add::ROfF(30), Ran::Delta), (Add::PReadsQ, Ran::Whole)] {
         let v = edited(last.input(), &[], &[add]);
         let mut p = Pipeline::again(last, v.clone());
         p.rules(&mut Keep).rules(&mut RenameAll { from: "f", to: "f2", needs: true, seen: 0 }).program(&mut DropQ);
@@ -1586,6 +1470,48 @@ fn a_new_process_reruns_only_the_passes_after_a_stored_step() {
     assert_eq!(runs, [0, 0, 0], "found again under the same part");
 }
 
+/// A run that keeps a pipeline's steps, and a later run that finds them, each name the steps' sources in its manifest
+/// (Q146, decision 0464 §7): the step facts and each step's image, the same sources both times, so a collection between
+/// the two runs keeps them. Read as the run's manifest reads them, by an item at the record's end.
+#[test]
+fn a_found_step_names_its_sources_as_its_keeper_did() {
+    use super::manager::{Pipeline, Ran};
+    use crate::code_rule_dsl::logic::program_text::StoredSteps;
+    use crate::content_store::{ContentStore, SourceId};
+    static NAMED: std::sync::Mutex<Vec<SourceId>> = std::sync::Mutex::new(Vec::new());
+    fn takes(cx: &crate::content_store::record::Apply<'_>, _: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        *NAMED.lock().unwrap() = cx.store.take_named_sources();
+        Ok(())
+    }
+    let path = crate::code_rule_dsl::fixtures::temp();
+    let v = managed();
+    let run = || -> (Vec<Ran>, Vec<SourceId>) {
+        let store = ContentStore::open(&path).unwrap();
+        let ran = {
+            let _waves = crate::content_store::write_back::run_waves();
+            let steps = StoredSteps(&store);
+            let mut p = Pipeline::keyed("test", v.clone(), &steps);
+            p.program(&mut DropFacts).program(&mut DropQ);
+            let (_, stages) = p.finish().unwrap();
+            store.record("test/the manifest's names", Vec::new(), &(), None, takes);
+            store.written().unwrap();
+            stages.iter().map(|s| s.ran).collect()
+        };
+        drop(store);
+        ContentStore::forget(&path);
+        let mut named = std::mem::take(&mut *NAMED.lock().unwrap());
+        named.sort_by_key(|id| format!("{id:?}"));
+        named.dedup();
+        (ran, named)
+    };
+    let (ran, kept) = run();
+    assert_eq!(ran, [Ran::Whole; 2]);
+    assert!(kept.len() >= 3, "each step's facts and the images: {kept:?}");
+    let (ran, found) = run();
+    assert_eq!(ran, [Ran::Stored; 2], "both steps found");
+    assert_eq!(found, kept, "the run that finds them names what the run that kept them named");
+}
+
 /// A chain of edits past `REBASE_DEPTH` runs again over each one (decision 0385): at that depth the last run is made
 /// shallow, each deep version flat (a view of one base, its ids, size and digest the deep one's), so the next edit is
 /// still an edit of its input; the output is a run from scratch's every time.
@@ -1606,7 +1532,7 @@ fn a_chain_of_edits_past_the_rebase_depth_runs_again_over_each() {
     let mut flattened = 0;
     for i in 0..2 * REBASE_DEPTH + 2 {
         let gone = prog.rules().nth(6).unwrap().id();
-        prog = fresh(&edited(&prog, &[gone], &[r_of_f(30 + i as i64)]));
+        prog = fresh(&edited(&prog, &[gone], &[Add::ROfF(30 + i as i64)]));
         let deep = last.input().clone();
         last = last.shallow();
         if deep.depth() >= REBASE_DEPTH {
@@ -1622,13 +1548,12 @@ fn a_chain_of_edits_past_the_rebase_depth_runs_again_over_each() {
         last = p.done().unwrap();
         assert_eq!(last.stages()[0].ran, Ran::Delta, "edit {i}: run again over the edit");
         let want = scratch(&prog);
-        assert_eq!((last.output().digest(), last.output().size()), (want.digest(), want.size()), "edit {i}: the program a run from scratch makes");
+        assert_eq!((last.output().digest(), last.output().size()), (want.digest(), want.size()), "edit {i}: the program a run from scratch makes: {}", super::differences(&want, last.output()));
     }
     assert!(flattened >= 2, "made flat {flattened} times");
 }
 
-/// `program_facts`' own tests, which read text through `rr::parse` and the planner: above the image's crate
-/// (decision 0377).
+/// `program_facts`' own tests, which read and write through the image: above the image's crate (decision 0377).
 mod program_facts_tests {
     /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
     /// (strings counted, then the rows written), and they decode to the facts.
@@ -1678,56 +1603,23 @@ mod program_facts_tests {
         assert_eq!(crate::code_rule_dsl::logic::program_facts::decode(&got).unwrap(), facts);
     }
 
-    /// A program reads back the same off its facts decoded: in any order of rows, and with ids that are not dense (a
-    /// map, not a vector, indexes them).
-    #[test]
-    fn a_program_reads_back_the_same_in_any_order() {
-        use crate::code_rule_dsl::logic::front::Value;
-        use crate::code_rule_dsl::logic::program_facts::Facts;
-        let prog = crate::code_rule_dsl::logic::rr::parse(
-            ".decl e(a:number, b:number)\n.input e\n.decl p(a:number, b:number)\n.output p\n\
-             p(x, y) :- e(x, y).\np(x, z) :- p(x, y), e(y, z), !e(z, x), z != @add(x, 1).\n.decl c(n:number)\nc(n) :- n = count : { e(_, _) }.\n",
-        )
-        .unwrap();
-        let mut facts = Facts::new();
-        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "q", &prog);
-        let owned = crate::code_rule_dsl::logic::program_facts::program(&facts, "q").unwrap();
-        let bytes = crate::code_rule_dsl::logic::program_facts::encode(&facts);
-        assert_eq!(format!("{owned:?}"), format!("{:?}", crate::code_rule_dsl::logic::program_facts::program(&crate::code_rule_dsl::logic::program_facts::decode(&bytes).unwrap(), "q").unwrap()));
-        // Ids spread out (each times 1000) and rows reversed: read back the same.
-        let spread = |v: &Value| match v { Value::Int(i) => Value::Int(i * 1000), v => v.clone() };
-        let mut far = Facts::new();
-        for (rel, rows) in &facts {
-            // The columns that are ids (a term's, atom's, literal's or rule's), not values.
-            let ids: &[usize] = match rel.as_str() {
-                "term" | "atom" => &[1],
-                "arg" | "call_arg" | "body" => &[1, 3],
-                "rule" | "lit_atom" => &[1, 2],
-                "lit_cmp" => &[1, 2, 4],
-                "lit_agg" => &[1, 4],
-                _ => &[],
-            };
-            let mut rows: Vec<Vec<Value>> = rows.iter().map(|r| r.iter().enumerate().map(|(c, v)| if ids.contains(&c) { spread(v) } else { v.clone() }).collect()).collect();
-            rows.reverse();
-            far.insert(rel.clone(), rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
-        }
-        let bytes = crate::code_rule_dsl::logic::program_facts::encode(&far);
-        assert_eq!(format!("{:?}", crate::code_rule_dsl::logic::program_facts::program(&crate::code_rule_dsl::logic::program_facts::decode(&bytes).unwrap(), "q").unwrap()), format!("{owned:?}"));
-    }
-
-    /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same
-    /// documents, not all of them.
+    /// The documents a program reads (`doc_scopes`) and its text globs survive its image: a stored program read back
+    /// reads the same documents, not all of them.
     #[test]
     fn document_scopes_read_back_as_written() {
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
+        use crate::code_rule_dsl::logic::program_facts::Field;
+        use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
         for scopes in [None, Some(vec![(vec!["impl/**".to_owned(), "api/**".to_owned()], vec!["**/tests/**".to_owned()]), (vec![], vec![])])] {
-            prog.doc_scopes = scopes.clone();
-            prog.text_globs = if scopes.is_some() { vec!["**/*.md".to_owned(), "docs/*.rst".to_owned()] } else { Vec::new() };
-            let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
-            crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
-            let back = crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap();
-            assert_eq!(back.doc_scopes, scopes);
-            assert_eq!(back.text_globs, prog.text_globs);
+            let globs = if scopes.is_some() { vec!["**/*.md".to_owned(), "docs/*.rst".to_owned()] } else { Vec::new() };
+            let mut b = Builder::base();
+            b.fields().declare("a", &[("n", "node")]);
+            b.fields().set_outputs(&["a"]);
+            b.fields().set_field(Field::DocScopes(scopes.as_deref()));
+            b.fields().set_field(Field::TextGlobs(&globs));
+            let v = b.finish().unwrap().0;
+            let back = Version::open(v.base_bytes().unwrap()).unwrap();
+            assert_eq!(ProgramFields::doc_scopes(&*back), scopes);
+            assert_eq!(ProgramFields::text_globs(&*back), globs);
         }
     }
 
@@ -1735,24 +1627,33 @@ mod program_facts_tests {
     /// program is the program prepared, and its file-local part has the same memo key (`memo::program_digest`).
     #[test]
     fn a_relation_of_no_facts_reads_back_as_one() {
-        let mut prog = crate::code_rule_dsl::logic::front::Program::default();
-        prog.facts.insert("none".into(), Vec::new());
-        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)].into()]);
-        let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
-        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
-        assert_eq!(crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap().facts, prog.facts);
+        use crate::code_rule_dsl::logic::front::Value;
+        use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
+        let mut b = Builder::base();
+        b.fields().set_facts("none", &[]);
+        b.fields().set_facts("one", &[vec![Value::Int(1)].into()]);
+        let v = b.finish().unwrap().0;
+        let back = Version::open(v.base_bytes().unwrap()).unwrap();
+        assert_eq!(ProgramFields::fact_names(&*back), ["none", "one"]);
+        assert!(ProgramFields::states_facts(&*back, "none") && ProgramFields::fact_rows(&*back, "none").is_empty());
+        assert_eq!(ProgramFields::fact_rows(&*back, "one"), [crate::code_rule_dsl::logic::front::List::from(vec![Value::Int(1)])]);
     }
 
-    /// The AST patterns a program matches survive its facts: a stored program read back (a prepared program,
+    /// The AST patterns a program matches survive its image: a stored program read back (a prepared program,
     /// O-stored-patterns) still asks the batch for `ast_match` rows. Without them, a run that reuses it finds no
     /// pattern matches.
     #[test]
     fn ast_patterns_read_back_as_written() {
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
-        prog.ast_patterns = ["$O[:-$K]".to_owned(), "print($$$A)".to_owned()].into();
-        let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
-        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
-        assert_eq!(crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
+        use crate::code_rule_dsl::logic::program_facts::Field;
+        use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
+        let patterns: std::collections::BTreeSet<String> = ["$O[:-$K]".to_owned(), "print($$$A)".to_owned()].into();
+        let mut b = Builder::base();
+        b.fields().declare("a", &[("n", "node")]);
+        b.fields().set_outputs(&["a"]);
+        b.fields().set_field(Field::AstPatterns(&patterns));
+        let v = b.finish().unwrap().0;
+        let back = Version::open(v.base_bytes().unwrap()).unwrap();
+        assert_eq!(ProgramFields::ast_patterns(&*back), patterns);
     }
 }
 
@@ -1763,8 +1664,7 @@ mod program_facts_tests {
 #[test]
 fn a_rewrite_renames_an_aggregates_result_too() {
     use super::{Rewrite, Slot};
-    let p = crate::code_rule_dsl::logic::rr::parse(".decl e(x: number)\n.input e\n.decl out(n: number)\nout(n) :- n = count : { e(_) }, n > 1.\n.output out\n").unwrap();
-    let v = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    let v = crate::code_rule_dsl::logic::rr::parse_version(".decl e(x: number)\n.input e\n.decl out(n: number)\nout(n) :- n = count : { e(_) }, n > 1.\n.output out\n").unwrap();
     let r = v.rules().find(|r| v.rel_name(r.head().rel()) == "out").expect("out's rule");
     let n = r.vars().position(|a| v.text(a) == "n").expect("its variable n");
     let mut b = Builder::base();
@@ -1786,7 +1686,15 @@ fn a_rewrite_renames_an_aggregates_result_too() {
 fn managed_asked() -> Arc<Version> {
     let v = managed();
     let mut b = v.builder();
-    b.set_asked(&std::collections::BTreeMap::from([("q".to_owned(), vec![std::collections::BTreeSet::from(["p".to_owned()])])]));
+    b.fields().set_asked(&std::collections::BTreeMap::from([("q".to_owned(), vec![std::collections::BTreeSet::from(["p".to_owned()])])]));
+    let (o, _) = b.finish().unwrap();
+    Version::open(o.fold().unwrap().base_bytes().unwrap()).unwrap()
+}
+
+/// `v` with request record `asked`, as one base image (`managed_asked`'s way).
+fn asked_of(v: &Arc<Version>, asked: &super::about::Asked) -> Arc<Version> {
+    let mut b = v.builder();
+    b.fields().set_asked(asked);
     let (o, _) = b.finish().unwrap();
     Version::open(o.fold().unwrap().base_bytes().unwrap()).unwrap()
 }
@@ -1810,15 +1718,15 @@ fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
     let mut last = p.done().unwrap();
     assert_eq!(last.output().asked(), scratch(&v0).asked());
     let mut prog = v0.clone();
-    for (i, (add, ran)) in [(r_of_f(30), Ran::Delta), (r_of_f(31), Ran::Delta), (reads_e("q"), Ran::Whole), (r_of_f(32), Ran::Delta)].into_iter().enumerate() {
+    for (i, (add, ran)) in [(Add::ROfF(30), Ran::Delta), (Add::ROfF(31), Ran::Delta), (Add::ReadsE("q"), Ran::Whole), (Add::ROfF(32), Ran::Delta)].into_iter().enumerate() {
         let gone: Vec<RuleId> = if ran == Ran::Delta { vec![prog.rules().filter(|r| prog.rel_name(r.head().rel()) == "r").nth(5).unwrap().id()] } else { Vec::new() };
         prog = fresh(&edited(&prog, &gone, &[add]));
         if ran == Ran::Whole {
             // A request's rule added with its entry in the record, which states each rule's readers (decision 0331):
-            // a record of another length than its relation's rules is no record (`AskedByRule::of`, 0276 steps 3-4).
-            let mut b = prog.builder();
-            b.set_asked(&std::collections::BTreeMap::from([("q".to_owned(), vec![std::collections::BTreeSet::from(["p".to_owned()]); 2])]));
-            prog = fresh(&b.finish().unwrap().0);
+            // `p` reads both of `q`'s rules. A record of another length than its relation's rules is no record
+            // (`AskedByRule::of`, 0276 steps 3-4).
+            let by = |r: &str| std::collections::BTreeSet::from([r.to_owned()]);
+            prog = asked_of(&prog, &std::collections::BTreeMap::from([("q".to_owned(), vec![by("p"), by("p")])]));
         }
         let v = rebase(last.input(), &prog).unwrap().expect("an edit of the last input");
         let mut p = Pipeline::again(last, v);
@@ -1828,19 +1736,19 @@ fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
         let want = scratch(&prog);
         assert!(!want.asked().is_empty(), "edit {i}: a record to carry");
         assert_eq!(last.output().asked(), want.asked(), "edit {i}: the record a run from scratch states");
-        assert_eq!((last.output().digest(), last.output().size()), (want.digest(), want.size()), "edit {i}: the program a run from scratch makes");
+        assert_eq!((last.output().digest(), last.output().size()), (want.digest(), want.size()), "edit {i}: the program a run from scratch makes: {}", super::differences(&want, last.output()));
     }
 }
 
 /// A stored run is read where the store placed it (decision 0394): its images, its analyses' rows and its facts in
 /// one segment, uncompressed, read there mapped, and each version opened over the mapping, not decompressed, hashed
-/// or copied. An image the store held inline (a prepared program's, `store_encoded`) is moved there by the keep. Its
-/// request record is kept with its steps (decision 0393), so a rerun in a new process over an edit states a run from
-/// scratch's.
+/// or copied. The input's image is in a segment from its first write, as every object is (Q270: no inline rows), and
+/// the keep leaves it there. Its request record is kept with its steps (decision 0393), so a rerun in a new process
+/// over an edit states a run from scratch's.
 #[test]
 fn a_stored_run_is_read_in_place() {
     use super::manager::{Pipeline, Ran, Runs, rebase};
-    use crate::code_rule_dsl::logic::program_text::{Opened, StoredRuns, image_key, store_encoded};
+    use crate::code_rule_dsl::logic::program_text::{Opened, StoredRuns, image_key};
     use crate::content_store::ContentStore;
     use sha2::{Digest as _, Sha256};
     let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
@@ -1856,15 +1764,15 @@ fn a_stored_run_is_read_in_place() {
         let store = ContentStore::open(&path).unwrap();
         let bytes = v0.base_bytes().unwrap();
         let digest: [u8; 32] = Sha256::digest(bytes).into();
-        store_encoded(&store, &digest, true, bytes).unwrap();
+        store.put_source(bytes, &[image_key(&digest)]).unwrap();
         let held = |store: &ContentStore| store.sources_by_alias_in_place(&[image_key(&digest)]).unwrap().remove(0).expect("the input's image held");
-        assert!(!held(&store).in_place(), "a prepared program's image is held inline");
+        assert!(held(&store).in_place(), "the input's image is in a segment from its write (Q270)");
         let mut p = Pipeline::keeping("test", v0.clone());
         p.get::<super::analyses::Needed>().unwrap();
         p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
         let run = p.done().unwrap();
         StoredRuns(&store).keep(&key, &run).unwrap();
-        assert!(held(&store).in_place(), "the keep moved the input's image into the segment");
+        assert!(held(&store).in_place(), "the keep leaves the input's image in place");
         // Kept again under the same key: its facts kept once, no error.
         StoredRuns(&store).keep(&key, &run).unwrap();
         drop(store);
@@ -1875,7 +1783,7 @@ fn a_stored_run_is_read_in_place() {
     assert!(opened.images >= 2, "{opened:?}");
     assert_eq!(opened, Opened { images: opened.images, in_place: opened.images, facts_in_place: true, rows_in_place: true }, "every image, the rows and the facts read in place");
     assert!(last.input().is_shared() && last.output().is_shared(), "opened over the mapping, not copied");
-    let prog = fresh(&edited(&v0, &[v0.rules().nth(6).unwrap().id()], &[r_of_f(40)]));
+    let prog = fresh(&edited(&v0, &[v0.rules().nth(6).unwrap().id()], &[Add::ROfF(40)]));
     let v = rebase(last.input(), &prog).unwrap().expect("an edit of the last input");
     let mut p = Pipeline::again(last, v);
     p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
@@ -1894,15 +1802,11 @@ fn a_stored_run_is_read_in_place() {
 #[test]
 fn a_record_by_place_is_compared_by_rule() {
     use std::collections::BTreeSet;
-    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\nq(x) :- a(x).\nq(x) :- b(x).\n";
-    let image = |swap: bool, readers: [&str; 2]| {
-        let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-        if swap {
-            p.rules.swap(0, 1);
-        }
-        p.asked_by.insert("q".into(), readers.iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect());
-        Builder::of_program(&p).unwrap().finish().unwrap().0
+    let text = |swap: bool| {
+        let (x, y) = if swap { ("b", "a") } else { ("a", "b") };
+        format!(".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\nq(x) :- {x}(x).\nq(x) :- {y}(x).\n")
     };
+    let image = |swap: bool, readers: [&str; 2]| asked_base(&text(swap), &[("q", readers.iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect())]);
     let (first, moved, wrong) = (image(false, ["r1", "r2"]), image(true, ["r2", "r1"]), image(true, ["r1", "r2"]));
     assert_ne!(first.digest(), moved.digest(), "the record by place differs");
     assert!(super::same_program(&first, &moved), "{}", super::differences(&first, &moved));
@@ -1920,7 +1824,7 @@ fn a_request_record_a_step_drops_stays_dropped() {
     impl super::manager::ProgramPass for DropRecord {
         const NAME: &'static str = "drop the record";
         fn run(&mut self, _: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
-            w.on()?.keep_asked(&|r| r != "q");
+            w.on()?.fields().keep_asked(&|r| r != "q");
             Ok(())
         }
     }
@@ -1935,10 +1839,7 @@ fn a_request_record_a_step_drops_stays_dropped() {
     }
     let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\nq(x) :- a(x).\nq(x) :- b(x).\n\
                 .decl s(x: number)\n.output s\ns(x) :- a(x).\n.decl t(x: number)\n.output t\nt(x) :- b(x).\n";
-    let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-    p.asked_by.insert("q".into(), vec![BTreeSet::from(["r1".to_owned()]), BTreeSet::from(["r2".to_owned()])]);
-    p.asked_by.insert("s".into(), vec![BTreeSet::from(["r3".to_owned()])]);
-    let v = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    let v = asked_base(text, &[("q", vec![BTreeSet::from(["r1".to_owned()]), BTreeSet::from(["r2".to_owned()])]), ("s", vec![BTreeSet::from(["r3".to_owned()])])]);
     let mut pipe = super::manager::Pipeline::new("test", v);
     pipe.program(&mut DropRecord).program(&mut DropT);
     let out = pipe.finish().unwrap().0;
@@ -1962,8 +1863,7 @@ mod layouts {
 
     /// The facts of each relation `rules` derive over `BASE`.
     fn of(rules: &str) -> (Arc<Version>, Layouts) {
-        let p = crate::code_rule_dsl::logic::rr::parse(&format!("{BASE}{rules}")).unwrap();
-        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let v = crate::code_rule_dsl::logic::rr::parse_version(&format!("{BASE}{rules}")).unwrap();
         let l = crate::code_rule_dsl::logic::program_image::manager::analysis::<Layouts>(&v).unwrap();
         (v.clone(), (*l).clone())
     }
@@ -2015,8 +1915,7 @@ mod layouts {
     #[test]
     fn the_python_library_infers_facts_of_its_derived_relations() {
         let text = ".policy \"t:a\" revision 1\n.language python\n#include \"python/ast.rerail\"\n.violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).\n";
-        let p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
         let l = crate::code_rule_dsl::logic::program_image::manager::analysis::<Layouts>(&v).unwrap();
         let by = |o: fn(&Origin) -> bool| l.0.values().filter(|fs| fs.iter().any(|(_, x)| o(x))).count();
         let (declared, inferred) = (by(|o| *o == Origin::Declared), by(|o| matches!(o, Origin::Rule(_))));
@@ -2044,17 +1943,73 @@ mod layouts {
 /// their identities, so an order-sensitive digest lost every kept round when a library file went.
 #[test]
 fn facts_in_another_order_are_the_same_program() {
-    use crate::code_rule_dsl::logic::plan::{body::{Placed, Versions}, leaf_identity};
-    let prog = every_part();
-    let mut reordered = prog.clone();
-    reordered.facts.get_mut("k").expect("every part has facts k").reverse();
-    assert_ne!(prog.facts["k"], reordered.facts["k"], "the rows in another order");
-    let (a, b) = (Placed::of_program(&prog).unwrap(), Placed::of_program(&reordered).unwrap());
+    use crate::code_rule_dsl::logic::plan::{body::Placed, fields::Fields, leaf_identity};
+    let with = |rows: &[i64]| {
+        let mut b = Builder::base();
+        b.fields().declare("k", &[("x", "int")]);
+        b.fields().set_facts("k", &rows.iter().map(|&x| vec![Value::Int(x)].into()).collect::<Vec<_>>());
+        b.rule().head("r", &[T::Var("x")]).atom("k", &[T::Var("x")]).finish().unwrap();
+        Placed::whole(b.finish().unwrap().0)
+    };
+    let (a, b) = (with(&[1, 2, 3]), with(&[3, 1, 2]));
     assert_eq!(a.digest(), b.digest(), "the program's digest");
-    let (va, vb) = (Versions::with(&prog, a), Versions::with(&reordered, b));
-    assert_eq!(leaf_identity(va.fields(0).unwrap(), "k"), leaf_identity(vb.fields(0).unwrap(), "k"), "the relation's identity");
+    assert_eq!(leaf_identity(Fields::of(&a).unwrap(), "k"), leaf_identity(Fields::of(&b).unwrap(), "k"), "the relation's identity");
     // Other rows are another program.
-    let mut other = prog.clone();
-    other.facts.get_mut("k").unwrap().pop();
-    assert_ne!(Placed::of_program(&prog).unwrap().digest(), Placed::of_program(&other).unwrap().digest());
+    assert_ne!(a.digest(), with(&[1, 2]).digest());
+}
+
+/// A rule written literal by literal on an open rule (`Builder::open_rule`, the lowering's writer, decision 0276 A3)
+/// is the rule `RuleBuilder` writes, byte for byte; a rule ended once (`close_rule_once`) leaves out its repeat.
+#[test]
+fn an_open_rule_writes_what_the_rule_builder_writes() {
+    let x = || T::Var("x");
+    let join = AggOp::Join { by: vec!["k".into()], sep: ", ".into() };
+    let mut a = Builder::base();
+    a.rule()
+        .head("r", &[x(), T::Call("cat", vec![T::Top, T::Str("s")])])
+        .atom("a", &[x(), T::Wild])
+        .atom_with("b", &[x()], true, true)
+        .cmp(x(), CmpOp::Le, T::Int(i64::MIN))
+        .agg(T::Var("j"), &join, Some(T::Var("y")), "a", &[T::Var("y"), T::Var("k")])
+        .ast(T::Var("d"), x(), "{\"kind\": \"call\"}", &[("NAME", T::Var("v"))])
+        .finish()
+        .unwrap();
+    let mut b = Builder::base();
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..2 {
+        let mut o = b.open_rule();
+        b.put_head(&mut o, "r", &[x(), T::Call("cat", vec![T::Top, T::Str("s")])]);
+        b.put_atom(&mut o, "a", &[x(), T::Wild], false, false);
+        b.put_atom(&mut o, "b", &[x()], true, true);
+        b.put_cmp(&mut o, x(), CmpOp::Le, T::Int(i64::MIN));
+        b.put_agg(&mut o, "j", &join, Some("y"), "a", &[T::Var("y"), T::Var("k")]);
+        b.put_ast(&mut o, "d", "x", "{\"kind\": \"call\"}", &[("NAME", "v")]);
+        b.close_rule_once(o, &mut seen).unwrap();
+    }
+    assert_eq!(a.image().unwrap().bytes(), b.image().unwrap().bytes());
+    let mut c = Builder::base();
+    let o = c.open_rule();
+    assert!(c.close_rule(o).is_err(), "a rule with no head is refused");
+    assert_eq!(c.finish().unwrap().0.rules().count(), 0);
+}
+
+/// A derivation's kept rules copied as runs of nodes (`Builder::keep_run`, 0276 §3) are the rules `keep` copies one
+/// by one: the same program, rule hashes and sources, and an image that opens as it; a gap in the run (a rule left
+/// out) splits it.
+#[test]
+fn a_run_of_kept_rules_is_the_rules_kept_one_by_one() {
+    let v = every_part();
+    let kept: Vec<RuleRef<'_>> = v.rules().enumerate().filter(|(i, _)| i % 3 != 1).map(|(_, r)| r).collect();
+    let mut one = Builder::derive(&v);
+    for r in &kept {
+        one.keep(&v, *r);
+    }
+    let (one, _) = one.finish().unwrap();
+    let mut run = Builder::derive(&v);
+    run.keep_run(&v, &kept);
+    let (run, _) = run.finish().unwrap();
+    same(&one, &run);
+    assert!(one.rules().map(|r| (r.hash(), r.source())).eq(run.rules().map(|r| (r.hash(), r.source()))));
+    assert!(run.rules().all(|r| r.source().is_some()));
+    same(&Version::open(run.fold().unwrap().base_bytes().unwrap()).unwrap(), &run);
 }

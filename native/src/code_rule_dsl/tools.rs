@@ -185,8 +185,8 @@ pub const CAPABILITIES: &str = include_str!("capabilities.json");
 /// Read a public `.rerail` file, including its core prelude and libraries. The CLI and migration
 /// harness use the same reader as the engine; they never strip directives or run a lab interpreter.
 pub fn read_rr(path: &std::path::Path) -> Result<String, String> {
-    let program = super::logic::rr::parse_file(path).map_err(|e| e.to_string())?;
-    super::logic::rr::print(&program).map_err(|e| e.to_string())
+    let program = super::logic::rr::parse_file_version(path).map_err(|e| e.to_string())?;
+    super::logic::rr::print_version(&program).map_err(|e| e.to_string())
 }
 
 /// Convert whole AST policies for review. Unsupported clauses refuse the entire candidate.
@@ -541,14 +541,27 @@ pub fn run_program_checked(
             }
         }
         if wanted {
-            // The spans' rules added to the program read: its tree at this edge, made a version again.
-            let spans = rr::parse(&rules).map_err(|e| e.to_string())?;
-            let mut tree = program.program(&Default::default()).map_err(|e| e.to_string())?;
-            tree.decls.extend(spans.decls);
-            tree.inputs.extend(spans.inputs);
-            tree.outputs.extend(spans.outputs);
-            tree.rules.extend(spans.rules);
-            program = rr::version_of(&tree).map_err(|e| e.to_string())?;
+            // The spans' rules, read as a program of their own, added to the program read: an edit of its version
+            // (decision 0276 stage 6: no tree), their declarations, inputs and outputs with them.
+            let spans = rr::parse_version(&rules).map_err(|e| e.to_string())?;
+            let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&program);
+            for rel in spans.declared_names() {
+                if !program.declares(&rel) {
+                    let cols = spans.columns_of(&rel).unwrap_or_default();
+                    b.fields().declare(&rel, &cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>());
+                }
+            }
+            for rel in spans.input_names().into_iter().filter(|r| !program.has_input(r)) {
+                b.fields().add_input(&rel);
+            }
+            for rel in spans.output_names().into_iter().filter(|r| !program.has_output(r)) {
+                b.fields().add_output(&rel);
+            }
+            for r in spans.rules() {
+                b.copy(&spans, r);
+            }
+            let (edited, _) = b.finish()?;
+            program = edited;
         }
     }
     // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
@@ -1065,13 +1078,16 @@ mod settings_tests {
         // Rows given to a program that declares `env`, and to no other (decision 0249).
         use crate::code_rule_dsl::logic::front::Value;
         let added = crate::code_rule_dsl::logic::plan::corpus::added::Added::settings(&settings);
-        let mut declares = crate::code_rule_dsl::logic::rr::parse(".decl env(key: symbol, value: symbol)\n").unwrap();
-        added.add_to(&mut declares);
-        let rows: Vec<Vec<Value>> = declares.facts["env"].iter().map(|r| r.to_vec()).collect();
+        use crate::code_rule_dsl::logic::program_image::{Builder, fields::ProgramFields};
+        let mut declares = Builder::base();
+        declares.fields().declare("env", &[("key", "symbol"), ("value", "symbol")]);
+        added.add_to(&mut declares.fields());
+        let rows: Vec<Vec<Value>> = declares.fact_rows("env").iter().map(|r| r.to_vec()).collect();
         assert_eq!(rows, [vec![Value::Str("quote".into()), Value::Str("a\"b".into())], vec![Value::Str("python.version".into()), Value::Str("3.13".into())]]);
-        let mut not = crate::code_rule_dsl::logic::rr::parse(".decl envy(x: symbol)\n").unwrap();
-        added.add_to(&mut not);
-        assert!(!not.facts.contains_key("env"));
+        let mut not = Builder::base();
+        not.fields().declare("envy", &[("x", "symbol")]);
+        added.add_to(&mut not.fields());
+        assert!(!not.has_fact_rows("env"));
     }
 
     #[test]

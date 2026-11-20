@@ -137,24 +137,46 @@ fn authored_rr_batched_positive_documents_preserve_all_four_labels() {
     assert_eq!(actual,expected,"authored .rerail positive comparison: {report}");
 }
 
+/// What `v`'s outputs need, by name (`analyses::needed`).
+fn needed_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> BTreeSet<String> {
+    use crate::code_rule_dsl::logic::program_image::{RelId, about::About, analyses};
+    let about = About::of(v);
+    let need = analyses::needed(v, &about, v.outputs().map(|o| v.rel_of(o).expect("an output is a relation")));
+    (0..v.rel_end()).map(RelId).filter(|r| need[r.index()]).map(|r| v.rel_name(r).to_owned()).collect()
+}
+
+/// `v`'s natives, by relation.
+fn natives_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> std::collections::BTreeMap<String, crate::code_rule_dsl::logic::front::Native> {
+    crate::code_rule_dsl::logic::program_image::fields::ProgramFields::natives(v)
+}
+
+/// `v`'s natives as its image keeps them: opened again from its bytes.
+fn natives_kept(v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> std::collections::BTreeMap<String, crate::code_rule_dsl::logic::front::Native> {
+    let folded = v.fold().unwrap();
+    natives_of(&crate::code_rule_dsl::logic::program_image::Version::open(folded.base_bytes().unwrap()).unwrap())
+}
+
+/// The relations `v`'s file-local split keeps local (`FileLocal`).
+fn local_of(v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> BTreeSet<String> {
+    crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(v).unwrap().local.iter().cloned().collect()
+}
+
 /// The async family must not build the general name-analysis universe before target filtering.
 #[test]
 fn async_demand_uses_semantic_batches_without_global_name_derivations() {
-    use crate::code_rule_dsl::logic::{front, rr};
+    use crate::code_rule_dsl::logic::rr;
     let base = crate::code_rule_dsl::logic::rr::library().parent().expect("rule library parent").join("packs/python");
     for rule in RULES {
-        let p = rr::parse(&tools::flatten(&base.join(rule)).unwrap()).unwrap();
-        let mut facts=std::collections::BTreeMap::new();
-        crate::code_rule_dsl::logic::program_facts::write(&mut facts,"p",&p);
-        let restored=crate::code_rule_dsl::logic::program_facts::program(&facts,"p").unwrap();
-        assert_eq!(p.natives,restored.natives,"semantic producer metadata lost in prepared program");
-        let needed = front::needed(&p, p.outputs.clone());
-        let local=crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0).unwrap().local.clone();
-        for name in p.natives.keys().filter(|n|needed.contains(*n)) {
+        let p = rr::parse_version(&tools::flatten(&base.join(rule)).unwrap()).unwrap();
+        let natives = natives_of(&p);
+        assert_eq!(natives,natives_kept(&p),"semantic producer metadata lost in prepared program");
+        let needed = needed_of(&p);
+        let local=local_of(&p);
+        for name in natives.keys().filter(|n|needed.contains(*n)) {
             assert!(local.contains(name),"{rule}: demanded operator escaped its syntax batch: {name}");
         }
         assert!(!needed.contains("unbound_ref"), "{rule} still derives every unbound reference");
-        assert!(p.natives.iter().any(|(name,_)| needed.contains(name) && name.contains("python_qualified")), "{rule} has no demanded semantic producer");
+        assert!(natives.iter().any(|(name,_)| needed.contains(name) && name.contains("python_qualified")), "{rule} has no demanded semantic producer");
     }
 }
 
@@ -162,7 +184,7 @@ fn async_demand_uses_semantic_batches_without_global_name_derivations() {
 #[test]
 fn semantic_operators_do_not_claim_document_locality_for_cross_file_demands() {
     use crate::code_rule_dsl::logic::{front,rr};
-    let p=rr::parse(r#"
+    let p=rr::parse_version(r#"
 #include "core.rerail"
 .decl wanted(n:node)
 .decl targets(q:symbol)
@@ -172,15 +194,15 @@ wanted(n) :- node(_,n,_,_,_).
 targets(q) :- text(_,q).
 out(n,q) :- python_qualified(n,q,wanted,targets).
 "#).unwrap();
-    let local=crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0).unwrap().local.clone();
-    assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::Python{..})).all(|(name,_)|!local.contains(name)));
+    let local=local_of(&p);
+    assert!(natives_of(&p).iter().filter(|(_,n)|matches!(n,front::Native::Python{..})).all(|(name,_)|!local.contains(name)));
 }
 
 
 #[test]
 fn semantic_helpers_share_exact_contracts_without_relation_name_collisions() {
     use crate::code_rule_dsl::logic::{front::Native,rr};
-    let p=rr::parse(r#"
+    let p=rr::parse_version(r#"
 #include "core.rerail"
 .decl a_b(n:node)
 .decl a(n:node)
@@ -193,11 +215,12 @@ out(n,q) :- python_qualified(n,q,a_b,c).
 out(n,q) :- python_qualified(n,q,a,b_c).
 out(n,q) :- python_qualified(n,q,a_b,c).
 "#).unwrap();
-    let contracts:BTreeSet<_>=p.natives.values().filter_map(|n|match n {
+    let natives=natives_of(&p);
+    let contracts:BTreeSet<_>=natives.values().filter_map(|n|match n {
         Native::Python{input,targets,..}=>Some((input.as_str(),targets.as_deref().unwrap())), _=>None,
     }).collect();
     assert_eq!(contracts,BTreeSet::from([("a_b","c"),("a","b_c")]));
-    assert_eq!(p.natives.len(),2,"identical contracts should still share one producer");
+    assert_eq!(natives.len(),2,"identical contracts should still share one producer");
 }
 
 /// Diagnostic replays deliberately execute additional statements. The production budget test stays unchanged.
@@ -213,26 +236,26 @@ fn complete_async_family_sql_shape_lab() {
 
 #[test]
 fn candidate_contract_lowers_before_projection_and_roundtrips() {
-    use crate::code_rule_dsl::logic::{front,rr,program_facts};
+    use crate::code_rule_dsl::logic::{front,rr};
     let root=crate::code_rule_dsl::logic::rr::library().parent().expect("rule library parent").join("packs/python");
     for name in RULES {
-        let p=rr::parse(&tools::flatten(&root.join(name)).unwrap()).unwrap();
-        assert!(p.natives.values().any(|n|matches!(n,front::Native::PythonCandidates{context,member,..} if context=="async_function"&&member=="open")));
-        let needed=front::needed(&p,p.outputs.to_vec());
+        let p=rr::parse_version(&tools::flatten(&root.join(name)).unwrap()).unwrap();
+        let natives=natives_of(&p);
+        assert!(natives.values().any(|n|matches!(n,front::Native::PythonCandidates{context,member,..} if context=="async_function"&&member=="open")));
+        let needed=needed_of(&p);
         assert!(!needed.contains("text")&&!needed.contains("py_attribute")&&!needed.contains("py_exec_context"),"broad scalar dependencies remain for {name}");
-        let local=crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0).unwrap().local.clone();
-        assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|local.contains(rel)));
-        let mut facts=std::collections::BTreeMap::new();program_facts::write(&mut facts,"p",&p);
-        let restored=program_facts::program(&facts,"p").unwrap();assert_eq!(p.natives,restored.natives);
-        let printed=rr::print(&p).unwrap();let reparsed=rr::parse(&printed).unwrap();
-        assert_eq!(p.natives.values().filter(|n|matches!(n,front::Native::PythonCandidates{..})).count(),reparsed.natives.values().filter(|n|matches!(n,front::Native::PythonCandidates{..})).count());
+        let local=local_of(&p);
+        assert!(natives.iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|local.contains(rel)));
+        assert_eq!(natives,natives_kept(&p));
+        let printed=rr::print_version(&p).unwrap();let reparsed=rr::parse_version(&printed).unwrap();
+        assert_eq!(natives.values().filter(|n|matches!(n,front::Native::PythonCandidates{..})).count(),natives_of(&reparsed).values().filter(|n|matches!(n,front::Native::PythonCandidates{..})).count());
     }
 }
 
 #[test]
 fn candidate_dynamic_targets_remain_cross_file() {
     use crate::code_rule_dsl::logic::{front,rr};
-    let p=rr::parse(r#"
+    let p=rr::parse_version(r#"
 #include "core.rerail"
 .decl docs(d:number)
 docs(d) :- doc(d,_,_).
@@ -242,8 +265,8 @@ targets(q) :- text(_,q).
 out(c,f,r,o) :- python_candidates(c,f,r,o,docs,targets,"async_function","open").
 .output out
 "#).unwrap();
-    let local=crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0).unwrap().local.clone();
-    assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|!local.contains(rel)));
+    let local=local_of(&p);
+    assert!(natives_of(&p).iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|!local.contains(rel)));
 }
 
 /// Empty positive inputs must reject a join before its expanding prefix. A later
@@ -295,21 +318,23 @@ asked(k) :- rr_embed_req(s,"annotation"), kind(s,k).
 
 #[test]
 fn long_text_fallback_exposes_its_candidate_keys_to_planning() {
-    use crate::code_rule_dsl::{facts::vtab::syntax, logic::{rr,front::{Literal,Term}}};
-    let mut p=rr::parse(r#"
+    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    let p = crate::code_rule_dsl::logic::rr::parse_version(r#"
 #include "core.rerail"
 .decl result(t:symbol)
 result(t) :- node(_,n,_,_,_), text(n,t).
 .output result
 "#).unwrap();
-    assert_eq!(syntax::long_text_twins(&mut p,&[]),1);
-    for rule in &p.rules {
-        for node in rule.body.iter().filter_map(|lit| match lit {
-            Literal::Cmp { r:Term::Call(f,args),.. } if f=="rr_node_text" => args.first(),
-            _=>None,
+    let (p, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(p, &Vec::new()).unwrap();
+    assert_eq!(made, 1);
+    for rule in p.rules() {
+        for node in rule.body().filter_map(|lit| match lit.view() {
+            Lit::Cmp { r: TermRef::Call(f, mut args), .. } if p.text(f) == "rr_node_text" => args.next(),
+            _ => None,
         }) {
-            assert!(rule.body.iter().any(|lit| matches!(lit,Literal::Atom(a) if !a.neg && a.rel=="rr_long_text_node" && a.args==[node.clone()])),
-                "long-text fallback must expose its sparse node domain before joins: {rule}");
+            let node = p.show_term(rule, node);
+            assert!(rule.body().filter_map(|l| l.atom()).any(|a| !a.neg() && p.rel_name(a.rel()) == "rr_long_text_node" && a.args().map(|t| p.show_term(rule, t)).collect::<Vec<_>>() == [node.clone()]),
+                "long-text fallback must expose its sparse node domain before joins: {}", p.show_rule(rule));
         }
     }
 }

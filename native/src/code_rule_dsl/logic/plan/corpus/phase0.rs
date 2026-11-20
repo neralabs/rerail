@@ -691,7 +691,7 @@ pub mod benchmarks {
     #[ignore = "a benchmark: RERAIL_P0_RULES=<a pack's directory>"]
     fn benchmark_phase_0_rules() {
         let dir = std::path::PathBuf::from(std::env::var("RERAIL_P0_RULES").expect("RERAIL_P0_RULES"));
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rr")).collect();
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rerail")).collect();
         files.sort();
         let before = super::super::observe(|o| {
             o.begin();

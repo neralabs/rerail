@@ -24,7 +24,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::Error;
-use super::syntax::{Head, Item, Lit, Term};
+use super::clause::{At, HeadAt, L, LitAt, Reads, T};
+use super::from_tape::{RrFile, S, Stmt};
+use super::tape::Field;
 
 /// The relations: the argument holding the node, the one holding the token's text (`None`: the token is the
 /// second argument, a node whose text the program tests), and whether the token is the node's own child.
@@ -40,42 +42,48 @@ const READS: &[(&str, usize, Option<usize>, bool)] = &[
 ];
 
 /// A clause's literals, groups and negations flattened: `(relation, arguments, negated)`.
-fn atoms<'a>(lits: &'a [Lit], out: &mut Vec<(&'a str, &'a [Term], bool)>) {
+fn atoms(f: &RrFile, lits: &[LitAt], out: &mut Vec<(String, Vec<At>, bool)>) {
     for lit in lits {
-        match lit {
-            Lit::Atom { rel, args, neg } => out.push((rel, args, *neg)),
-            Lit::Group { alts, .. } => alts.iter().for_each(|alt| atoms(alt, out)),
+        match f.lit(lit) {
+            L::Atom { rel, args, neg } => out.push((rel, args, neg)),
+            L::Group { alts, .. } => alts.iter().for_each(|alt| atoms(f, alt, out)),
             _ => {}
         }
     }
 }
 
-fn eqs<'a>(lits: &'a [Lit], out: &mut Vec<(&'a Term, &'a Term)>) {
+fn eqs(f: &RrFile, lits: &[LitAt], out: &mut Vec<(At, At)>) {
     for lit in lits {
-        match lit {
-            Lit::Cmp { l, op: "=", r } => out.push((l, r)),
-            Lit::Group { alts, .. } => alts.iter().for_each(|alt| eqs(alt, out)),
+        match f.lit(lit) {
+            L::Cmp { l, op: "=", r } => out.push((l, r)),
+            L::Group { alts, .. } => alts.iter().for_each(|alt| eqs(f, alt, out)),
             _ => {}
         }
     }
 }
 
-fn var(term: &Term) -> Option<&str> {
-    if let Term::Var(v) = term { Some(v) } else { None }
+/// Terms `args`, read.
+fn tvs(f: &RrFile, args: &[At]) -> Vec<T> {
+    args.iter().map(|a| f.tv(a)).collect()
+}
+
+fn var(f: &RrFile, term: &At) -> Option<String> {
+    if let T::Var(v) = f.tv(term) { Some(v) } else { None }
 }
 
 fn exact(s: &str) -> String {
     format!("^{}$", regex::escape(s))
 }
 
-/// One clause, flattened.
+/// One clause, read off file `f`'s tape, its atoms and equalities flattened.
 struct Clause<'a> {
+    f: &'a RrFile,
     file: &'a std::path::Path,
     line: usize,
-    heads: &'a [Head],
-    body: &'a [Lit],
-    atoms: Vec<(&'a str, &'a [Term], bool)>,
-    eqs: Vec<(&'a Term, &'a Term)>,
+    heads: Vec<HeadAt>,
+    body: Vec<LitAt>,
+    atoms: Vec<(String, Vec<At>, bool)>,
+    eqs: Vec<(At, At)>,
 }
 
 impl Clause<'_> {
@@ -88,15 +96,15 @@ impl Clause<'_> {
     fn texts(&self, v: &str) -> Vec<String> {
         let mut out = Vec::new();
         for (rel, args, _) in &self.atoms {
-            match (*rel, *args) {
-                ("text", [Term::Var(x), Term::Str(s)]) if x == v => out.push(exact(s)),
-                ("match", [Term::Str(re), Term::Var(x)]) if x == v => out.push(format!("^(?:{re})$")),
+            match (rel.as_str(), tvs(self.f, args).as_slice()) {
+                ("text", [T::Var(x), T::Str(s)]) if x == v => out.push(exact(s)),
+                ("match", [T::Str(re), T::Var(x)]) if x == v => out.push(format!("^(?:{re})$")),
                 _ => {}
             }
         }
         for (l, r) in &self.eqs {
-            match (l, r) {
-                (Term::Var(x), Term::Str(s)) | (Term::Str(s), Term::Var(x)) if x == v => out.push(exact(s)),
+            match (self.f.tv(l), self.f.tv(r)) {
+                (T::Var(x), T::Str(s)) | (T::Str(s), T::Var(x)) if x == v => out.push(exact(&s)),
                 _ => {}
             }
         }
@@ -118,9 +126,9 @@ impl Columns {
         let mut facts: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut derived: BTreeSet<&str> = BTreeSet::new();
         for clause in clauses {
-            for head in clause.heads {
-                match (clause.atoms.is_empty(), head.args.as_slice()) {
-                    (true, [Term::Str(s)]) => {
+            for head in &clause.heads {
+                match (clause.atoms.is_empty(), tvs(clause.f, &head.args).as_slice()) {
+                    (true, [T::Str(s)]) => {
                         facts.entry(head.rel.clone()).or_default().insert(s.clone());
                     }
                     _ => {
@@ -134,12 +142,12 @@ impl Columns {
         // relation gives the variable there known kinds.
         // Only those a token's read is checked by: the relations of the clauses that read a token (`READS`), and what
         // they derive from. A program's libraries' other relations were brought to the fixpoint too, every round.
-        let mut wanted: BTreeSet<&str> = clauses.iter().filter(|c| c.reads_tokens()).flat_map(|c| c.atoms.iter().map(|(r, ..)| *r)).collect();
+        let mut wanted: BTreeSet<&str> = clauses.iter().filter(|c| c.reads_tokens()).flat_map(|c| c.atoms.iter().map(|(r, ..)| r.as_str())).collect();
         loop {
             let more: BTreeSet<&str> = clauses
                 .iter()
                 .filter(|c| c.heads.iter().any(|h| wanted.contains(h.rel.as_str())))
-                .flat_map(|c| c.atoms.iter().map(|(r, ..)| *r))
+                .flat_map(|c| c.atoms.iter().map(|(r, ..)| r.as_str()))
                 .filter(|r| !wanted.contains(r))
                 .collect();
             if more.is_empty() {
@@ -153,12 +161,9 @@ impl Columns {
             let mut next: BTreeMap<(String, usize), Option<BTreeSet<String>>> = BTreeMap::new();
             for clause in deriving.iter().copied() {
                 let given = Self::clause_kinds(clause, &facts, &kinds);
-                for head in clause.heads {
+                for head in &clause.heads {
                     for (at, arg) in head.args.iter().enumerate() {
-                        let here = match arg {
-                            Term::Var(v) => given.get(v.as_str()).cloned(),
-                            _ => None,
-                        };
+                        let here = var(clause.f, arg).and_then(|v| given.get(v.as_str()).cloned());
                         let entry = next.entry((head.rel.clone(), at)).or_insert_with(|| Some(BTreeSet::new()));
                         *entry = match (entry.take(), here) {
                             (Some(mut a), Some(b)) => {
@@ -182,13 +187,13 @@ impl Columns {
         for clause in clauses {
             for (rel, args, _) in &clause.atoms {
                 for (at, arg) in args.iter().enumerate() {
-                    let found = match arg {
-                        Term::Var(v) => clause.texts(v),
-                        Term::Str(s) => vec![exact(s)],
+                    let found = match clause.f.tv(arg) {
+                        T::Var(v) => clause.texts(&v),
+                        T::Str(s) => vec![exact(&s)],
                         _ => Vec::new(),
                     };
                     if !found.is_empty() {
-                        texts.entry(((*rel).to_owned(), at)).or_default().extend(found);
+                        texts.entry((rel.clone(), at)).or_default().extend(found);
                     }
                 }
             }
@@ -199,55 +204,56 @@ impl Columns {
     /// The kinds a clause gives its variables: a conjunction's literals each narrow them; a group's alternatives
     /// give the union of theirs, for the variables every alternative gives.
     fn clause_kinds(clause: &Clause<'_>, facts: &BTreeMap<String, BTreeSet<String>>, columns: &BTreeMap<(String, usize), Option<BTreeSet<String>>>) -> BTreeMap<String, BTreeSet<String>> {
-        Self::conjunction(clause.body, clause, facts, columns)
+        Self::conjunction(&clause.body, clause, facts, columns)
     }
 
     /// Each atom of a conjunction, with the kinds its scope gives: the enclosing conjunctions' and its own; an
     /// atom in a group's alternative sees that alternative's kinds too.
-    fn scoped_reads<'a>(
-        lits: &'a [Lit],
+    fn scoped_reads(
+        lits: &[LitAt],
         outer: &BTreeMap<String, BTreeSet<String>>,
         clause: &Clause<'_>,
         facts: &BTreeMap<String, BTreeSet<String>>,
         columns: &BTreeMap<(String, usize), Option<BTreeSet<String>>>,
-        out: &mut Vec<(&'a str, &'a [Term], BTreeMap<String, BTreeSet<String>>)>,
+        out: &mut Vec<(String, Vec<At>, BTreeMap<String, BTreeSet<String>>)>,
     ) {
         let mut local = outer.clone();
         for (v, set) in Self::conjunction(lits, clause, facts, columns) {
             local.entry(v).and_modify(|have| *have = have.intersection(&set).cloned().collect()).or_insert(set);
         }
         for lit in lits {
-            match lit {
-                Lit::Atom { rel, args, .. } => out.push((rel.as_str(), args.as_slice(), local.clone())),
-                Lit::Group { alts, .. } => alts.iter().for_each(|alt| Self::scoped_reads(alt, &local, clause, facts, columns, out)),
+            match clause.f.lit(lit) {
+                L::Atom { rel, args, .. } => out.push((rel, args, local.clone())),
+                L::Group { alts, .. } => alts.iter().for_each(|alt| Self::scoped_reads(alt, &local, clause, facts, columns, out)),
                 _ => {}
             }
         }
     }
 
-    fn conjunction(lits: &[Lit], clause: &Clause<'_>, facts: &BTreeMap<String, BTreeSet<String>>, columns: &BTreeMap<(String, usize), Option<BTreeSet<String>>>) -> BTreeMap<String, BTreeSet<String>> {
+    fn conjunction(lits: &[LitAt], clause: &Clause<'_>, facts: &BTreeMap<String, BTreeSet<String>>, columns: &BTreeMap<(String, usize), Option<BTreeSet<String>>>) -> BTreeMap<String, BTreeSet<String>> {
         let mut given: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut give = |v: &str, set: BTreeSet<String>| {
             given.entry(v.to_owned()).and_modify(|have| *have = have.intersection(&set).cloned().collect()).or_insert(set);
         };
         // A kind term: a constant, a variable a relation of kinds holds (`list_kind(k)`), or one equal to constants
         // (`(k = "a" ; k = "b")`).
-        let kind_of = |term: &Term| -> Option<BTreeSet<String>> {
+        let f = clause.f;
+        let kind_of = |term: &T| -> Option<BTreeSet<String>> {
             match term {
-                Term::Str(k) => Some(BTreeSet::from([k.clone()])),
-                Term::Var(k) => clause
+                T::Str(k) => Some(BTreeSet::from([k.clone()])),
+                T::Var(k) => clause
                     .atoms
                     .iter()
-                    .find_map(|(rel, args, neg)| match args {
-                        [Term::Var(x)] if x == k && !neg => facts.get(*rel).cloned(),
+                    .find_map(|(rel, args, neg)| match tvs(f, args).as_slice() {
+                        [T::Var(x)] if x == k && !neg => facts.get(rel).cloned(),
                         _ => None,
                     })
                     .or_else(|| {
                         let set: BTreeSet<String> = clause
                             .eqs
                             .iter()
-                            .filter_map(|(l, r)| match (l, r) {
-                                (Term::Var(x), Term::Str(s)) | (Term::Str(s), Term::Var(x)) if x == k => Some(s.clone()),
+                            .filter_map(|(l, r)| match (f.tv(l), f.tv(r)) {
+                                (T::Var(x), T::Str(s)) | (T::Str(s), T::Var(x)) if x == *k => Some(s),
                                 _ => None,
                             })
                             .collect();
@@ -257,32 +263,32 @@ impl Columns {
             }
         };
         for lit in lits {
-            match lit {
-                Lit::Atom { neg: true, .. } => {}
-                Lit::Atom { rel, args, .. } => match (rel.as_str(), args.as_slice()) {
+            match f.lit(lit) {
+                L::Atom { neg: true, .. } => {}
+                L::Atom { rel, args, .. } => match (rel.as_str(), tvs(f, &args).as_slice()) {
                     // `kind`, `node`; `has(m, c, kinds)`'s descendant; `inside` and `nearest`'s ancestor.
-                    ("kind", [Term::Var(n), k]) | ("node", [_, Term::Var(n), k, _, _]) => {
+                    ("kind", [T::Var(n), k]) | ("node", [_, T::Var(n), k, _, _]) => {
                         if let Some(set) = kind_of(k) {
                             give(n, set);
                         }
                     }
-                    ("has", [_, Term::Var(n), Term::Str(k)]) | ("inside" | "nearest", [_, Term::Var(n), Term::Str(k)]) => {
+                    ("has", [_, T::Var(n), T::Str(k)]) | ("inside" | "nearest", [_, T::Var(n), T::Str(k)]) => {
                         give(n, BTreeSet::from([k.clone()]));
                     }
-                    ("has", [_, Term::Var(n), Term::Var(set)]) | ("inside" | "nearest", [_, Term::Var(n), Term::Var(set)])
+                    ("has", [_, T::Var(n), T::Var(set)]) | ("inside" | "nearest", [_, T::Var(n), T::Var(set)])
                         if facts.contains_key(set.as_str()) =>
                     {
                         give(n, facts[set.as_str()].clone());
                     }
                     (rel, args) => {
                         for (at, arg) in args.iter().enumerate() {
-                            if let (Term::Var(n), Some(Some(set))) = (arg, columns.get(&(rel.to_owned(), at))) {
+                            if let (T::Var(n), Some(Some(set))) = (arg, columns.get(&(rel.to_owned(), at))) {
                                 give(n, set.clone());
                             }
                         }
                     }
                 },
-                Lit::Group { alts, neg: false } => {
+                L::Group { alts, neg: false } => {
                     let each: Vec<BTreeMap<String, BTreeSet<String>>> = alts.iter().map(|alt| Self::conjunction(alt, clause, facts, columns)).collect();
                     if let Some((first, rest)) = each.split_first() {
                         for (v, set) in first {
@@ -304,29 +310,32 @@ impl Columns {
 }
 
 /// Refuses a program whose clauses read a token the tape may leave out (above), for the program's `.language`.
-pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>)]) -> Result<(), Error> {
-    let language = files.iter().flat_map(|(_, statements)| statements).find_map(|(item, _)| match item {
-        Item::Setting { key, text } if key == "language" => Some(text.trim().trim_matches('"').to_owned()),
+pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<Stmt>)]) -> Result<(), Error> {
+    let language = files.iter().flat_map(|(_, statements)| statements).find_map(|s| match s.what()? {
+        S::Setting { key, text } if key == "language" => Some(text.trim().trim_matches('"').to_owned()),
         _ => None,
     });
     let Some(dialect) = language.as_deref().and_then(crate::code_rule_dsl::language::dialect_by_label) else { return Ok(()) };
+    // Each clause's heads and body, read off its tape.
     let clauses: Vec<Clause<'_>> = files
         .iter()
         .flat_map(|(file, statements)| statements.iter().map(move |s| (file, s)))
-        .filter_map(|(file, (item, line))| match item {
-            Item::Clause { heads, body, .. } => {
-                let (mut all, mut equal) = (Vec::new(), Vec::new());
-                atoms(body, &mut all);
-                eqs(body, &mut equal);
-                Some(Clause { file, line: *line, heads, body, atoms: all, eqs: equal })
-            }
-            _ => None,
+        .filter(|(_, s)| s.what() == Some(S::Clause))
+        .map(|(file, s)| {
+            let (f, n) = (&**s.file(), s.node());
+            f.check_clause(n)?;
+            let body = f.tape().get(n, Field::Body).map_or_else(Vec::new, |b| f.body_at(b, 0));
+            let (mut all, mut equal) = (Vec::new(), Vec::new());
+            atoms(f, &body, &mut all);
+            eqs(f, &body, &mut equal);
+            Ok(Clause { f, file: file.as_path(), line: s.line(), heads: f.heads_at(n), body, atoms: all, eqs: equal })
         })
-        .collect();
+        .collect::<Result<_, Error>>()?;
     // `.stored r "why"`: r's rules read tokens the grammar keeps where they look.
     let mut stored = BTreeSet::new();
-    for (item, line) in files.iter().flat_map(|(_, statements)| statements) {
-        if let Item::Setting { key, text } = item
+    for st in files.iter().flat_map(|(_, statements)| statements) {
+        let line = st.line();
+        if let Some(S::Setting { key, text }) = st.what()
             && key == "stored"
         {
             let (rel, why) = text.trim().split_once(char::is_whitespace).unwrap_or((text.trim(), ""));
@@ -340,22 +349,22 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>
     let mut refused = BTreeSet::new();
     for clause in clauses.iter().filter(|c| c.reads_tokens() && !c.heads.iter().any(|h| stored.contains(&h.rel))) {
         let mut scoped = Vec::new();
-        Columns::scoped_reads(clause.body, &BTreeMap::new(), clause, &columns.facts, &columns.kinds, &mut scoped);
+        Columns::scoped_reads(&clause.body, &BTreeMap::new(), clause, &columns.facts, &columns.kinds, &mut scoped);
         for (rel, args, given) in &scoped {
-            let rel = *rel;
+            let rel = rel.as_str();
             let Some(&(_, node, text, own)) = READS.iter().find(|(r, ..)| *r == rel) else { continue };
             let token = match text {
                 Some(at) => args.get(at),
                 None => args.get(1),
             };
-            let mut regexes = match token {
-                Some(Term::Str(s)) if text.is_some() => vec![exact(s)],
-                Some(Term::Var(v)) => {
-                    let mut found = clause.texts(v);
+            let mut regexes = match token.map(|t| clause.f.tv(t)) {
+                Some(T::Str(s)) if text.is_some() => vec![exact(&s)],
+                Some(T::Var(v)) => {
+                    let mut found = clause.texts(&v);
                     // Where the token's text goes to the head, the tests where the head is read.
-                    for head in clause.heads {
+                    for head in &clause.heads {
                         for (at, arg) in head.args.iter().enumerate() {
-                            if var(arg) == Some(v.as_str()) {
+                            if var(clause.f, arg).as_deref() == Some(v.as_str()) {
                                 found.extend(columns.texts.get(&(head.rel.clone(), at)).into_iter().flatten().cloned());
                             }
                         }
@@ -371,7 +380,7 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<super::syntax::Statement>
             }
             regexes.sort();
             regexes.dedup();
-            let at = args.get(node).and_then(var).and_then(|n| given.get(n));
+            let at = args.get(node).and_then(|a| var(clause.f, a)).and_then(|n| given.get(&n));
             // The token's parent: the node (its own token, or its first or last leaf), or the node's parent (the
             // token beside it).
             let parents = match (own || matches!(rel, "first_token" | "last_token"), at) {
@@ -408,7 +417,7 @@ mod tests {
     #[test]
     fn a_parent_kind_derived_through_rules_is_named() {
         let refused = |src: &str| {
-            let statements = super::super::from_tape::statements(src, &super::super::nodes(src)).unwrap();
+            let statements = super::super::from_tape::RrFile::read(src).unwrap().statements();
             super::refuse(&[(std::path::PathBuf::from("t.rerail"), statements)]).unwrap_err().to_string()
         };
         let direct = refused(".language python\nr(n) :- kind(n, \"if_statement\"), op(n, \":\").\n");

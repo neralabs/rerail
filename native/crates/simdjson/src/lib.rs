@@ -525,6 +525,20 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
 mod tests {
     use super::*;
 
+    /// The process's instructions retired so far (macOS: `proc_pid_rusage`), for the measurements: their difference
+    /// over a run on one thread is its count. Zero elsewhere.
+    fn retired() -> u64 {
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: the call writes the structure, which is plain integers.
+            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+            if unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+                return info.ri_instructions;
+            }
+        }
+        0
+    }
+
     /// The kernel a measurement runs: `RERAIL_SIMDJSON_KERNEL` (its `Kernel` name, as `Haswell`), else the
     /// fastest this CPU runs.
     #[allow(dead_code, reason = "the kernel choice of the measurements, which run by hand (none is in the suite now)")]
@@ -589,17 +603,6 @@ mod tests {
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
         let kernel = kernel_under_test();
-        let retired = || -> u64 {
-            // (macOS's count; 0 on a Linux host, which builds these tests too)
-            #[cfg(target_os = "macos")]
-            {
-                let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-                unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-                info.ri_instructions
-            }
-            #[cfg(not(target_os = "macos"))]
-            0
-        };
         let mut n = 0usize;
         let mut best = u64::MAX;
         for _ in 0..5 {
@@ -728,17 +731,6 @@ mod tests {
     #[ignore = "a measurement: run by name with --nocapture"]
     #[cfg(target_os = "macos")]
     fn shape_costs() {
-        let retired = || -> u64 {
-            // (macOS's count; 0 on a Linux host, which builds these tests too)
-            #[cfg(target_os = "macos")]
-            {
-                let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-                unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-                info.ri_instructions
-            }
-            #[cfg(not(target_os = "macos"))]
-            0
-        };
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let kernel = kernel_under_test();
         let n = 20_000;

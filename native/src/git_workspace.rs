@@ -1035,6 +1035,10 @@ mod tests {
     use super::*;
     use crate::content_store::test_support::TemporaryDatabase;
 
+    /// A repository is discovered from a directory inside it, with no `git` process: its files in order, its
+    /// ignored ones left out, an edit an overlay of the clean trees, a source read and aliased to its blob, and its
+    /// snapshot published once. Over a repository of its own: the checkout the test was built in need not be one (a
+    /// farm host's copy of the tree has no `.git`).
     #[test]
     fn discovers_current_repository_without_a_git_process() {
         let fixture = tempfile::tempdir().unwrap();
@@ -1112,6 +1116,8 @@ mod tests {
         );
         let source_id = workspace.store_source(&store, "native/build.rs").unwrap();
         assert_eq!(store.source_by_alias(alias).unwrap(), Some(source_id));
+        assert!(workspace.overlays.iter().any(|overlay| overlay.path == "native/src/edited.rs"), "the edit is an overlay");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn run_git(directory: &Path, arguments: &[&str]) {
@@ -1139,7 +1145,9 @@ mod tests {
         run_git(root, &["config", "user.email", "rerail-tests@example.com"]);
         run_git(root, &["config", "user.name", "Rerail tests"]);
         for (path, contents) in files {
-            std::fs::write(root.join(path), contents).unwrap();
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents).unwrap();
         }
         let mut paths = vec!["add", "--"];
         paths.extend(files.iter().map(|(path, _)| *path));

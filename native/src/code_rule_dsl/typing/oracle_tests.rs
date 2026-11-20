@@ -467,7 +467,7 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
     std::fs::create_dir_all(&rule_dir).unwrap();
     let rule = rule_dir.join("rule.rerail");
     std::fs::write(&rule, format!("#include \"python/calls.rerail\"\n#include \"python/types.rerail\"\n{keyed}")).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let through = rule_dir.join("out");
     let report = corpus::run(&text, &project, None, &through, "program", Binding::Cpu, 1 << 18).unwrap();
     let phases: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
@@ -499,7 +499,7 @@ at(p, s, \"open\") :- call_open(c), node(d, c, _, s, _), doc(d, p, _).
     std::fs::create_dir_all(&rule_dir).unwrap();
     let path = rule_dir.join("rule.rerail");
     std::fs::write(&path, rule).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
     let out = rule_dir.join("out");
     corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let mut got: BTreeSet<(String, u64)> = BTreeSet::new();
@@ -1258,7 +1258,7 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
     std::fs::create_dir_all(&rule_dir).unwrap();
     let rule = rule_dir.join("rule.rerail");
     std::fs::write(&rule, format!("{rule_src}\n{spans}")).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = rule_dir.join("out");
     let report = corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     assert!(report.phase_runs.iter().any(|r| r.name == "types"), "the typing phase ran");
@@ -1511,10 +1511,10 @@ fn spike_liveness_of_the_calls_program() {
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
     let text = format!("{}\n{}", program(&calls_name()), jedi_spans(&calls_name()));
-    let prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap();
-    let live = liveness::program(&prog);
-    println!("liveness: {} rules over {} relations", live.rules.len(), live.decls.len());
-    let text = format!("{text}\n{}", crate::code_rule_dsl::logic::rr::print(&live).unwrap());
+    let prog = crate::code_rule_dsl::logic::rr::parse_version(&text).unwrap();
+    let live = liveness::program(&prog).unwrap();
+    println!("liveness: {} rules over {} relations", live.rules().count(), live.declared_names().len());
+    let text = format!("{text}\n{}", crate::code_rule_dsl::logic::rr::print_version(&live).unwrap());
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("liveness");
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
@@ -1583,7 +1583,7 @@ rets(f, a) :- struct__ret(f, a).
 ats(s, p, l) :- struct__at(s, p, l).
 .output units, modules, defs, imports, bindings, bases, members, params, rets, ats
 "#;
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let count = |rel: &str| output::shown(&out, rel).map_or(0, |t| t.len());
     let show = |what: &str, r: &corpus::Report| {
@@ -1662,11 +1662,11 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
     std::fs::create_dir_all(&base).unwrap();
     assert!(std::process::Command::new("cp").arg("-R").arg(&given).arg(&root).status().unwrap().success());
     // The reader: every export of types.rerail handed on as an output.
-    let types = crate::code_rule_dsl::logic::rr::parse(&program("types")).unwrap();
-    let exports = crate::code_rule_dsl::logic::plan::corpus::phases::declared(&types).unwrap().exports;
+    let types = crate::code_rule_dsl::logic::rr::parse_version(&program("types")).unwrap();
+    let exports = crate::code_rule_dsl::logic::plan::corpus::phases::declared(&*types).unwrap().exports;
     let mut reader = String::new();
     for e in &exports {
-        let cols = &types.decls[e.as_str()];
+        let cols = types.columns_of(e).unwrap();
         let decl = cols.iter().map(|(c, t)| format!("{c}: {t}")).collect::<Vec<_>>().join(", ");
         let vars = (0..cols.len()).map(|i| format!("v{i}")).collect::<Vec<_>>().join(", ");
         reader.push_str(&format!(".decl types__{e}({decl})\n.decl out_{e}({decl})\nout_{e}({vars}) :- types__{e}({vars}).\n.output out_{e}\n"));

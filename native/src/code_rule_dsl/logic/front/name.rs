@@ -564,36 +564,15 @@ impl<T: Clone + Shallow> ListTable<T> {
     }
 }
 
-/// A run's distinct lists, one table for each kind: the programs a run reads from their stored texts share every
-/// list they have in common. The run holds it, and it goes with the run.
+/// A run's distinct lists, one table for each kind: the programs a run reads share every list they have in common.
+/// The run holds it, and it goes with the run.
 #[derive(Default)]
 pub struct Lists {
-    terms: ListTable<crate::code_rule_dsl::logic::front::ast::Term>,
-    literals: ListTable<crate::code_rule_dsl::logic::front::ast::Literal>,
     columns: ListTable<(Name, Name)>,
     values: ListTable<crate::code_rule_dsl::logic::front::ast::Value>,
-    /// The stacks a read gathers its lists on, kept between reads so their room is made once a run.
-    stacks: Mutex<Stacks>,
-}
-
-/// Where a read gathers each kind of list (`program_text::from_tape`), empty between reads.
-#[derive(Default)]
-pub struct Stacks {
-    pub terms: Vec<crate::code_rule_dsl::logic::front::ast::Term>,
-    pub literals: Vec<crate::code_rule_dsl::logic::front::ast::Literal>,
-    pub columns: Vec<(Name, Name)>,
-    pub values: Vec<crate::code_rule_dsl::logic::front::ast::Value>,
 }
 
 impl Lists {
-    pub fn terms(&self, items: &[crate::code_rule_dsl::logic::front::ast::Term]) -> List<crate::code_rule_dsl::logic::front::ast::Term> {
-        self.terms.get(items)
-    }
-
-    pub fn literals(&self, items: &[crate::code_rule_dsl::logic::front::ast::Literal]) -> List<crate::code_rule_dsl::logic::front::ast::Literal> {
-        self.literals.get(items)
-    }
-
     pub fn columns(&self, items: &[(Name, Name)]) -> List<(Name, Name)> {
         self.columns.get(items)
     }
@@ -602,73 +581,53 @@ impl Lists {
         self.values.get(items)
     }
 
-    /// The stacks, for one read: the run's, when no other read holds them.
-    pub fn take_stacks(&self) -> Stacks {
-        std::mem::take(&mut *self.stacks.lock().expect("the stacks"))
-    }
-
-    /// The stacks back, emptied, their room kept.
-    pub fn give_stacks(&self, mut stacks: Stacks) {
-        stacks.terms.clear();
-        stacks.literals.clear();
-        stacks.columns.clear();
-        stacks.values.clear();
-        *self.stacks.lock().expect("the stacks") = stacks;
-    }
-
-    /// How many distinct lists of each kind it holds: terms, literals, columns, values.
-    pub fn sizes(&self) -> [usize; 4] {
-        [self.terms.len(), self.literals.len(), self.columns.len(), self.values.len()]
+    /// How many distinct lists of each kind it holds: columns, values.
+    pub fn sizes(&self) -> [usize; 2] {
+        [self.columns.len(), self.values.len()]
     }
 }
 
 #[cfg(test)]
 mod list_tests {
     use super::*;
-    use crate::code_rule_dsl::logic::front::ast::Term;
+    use crate::code_rule_dsl::logic::front::ast::Value;
 
-    fn var(v: &str) -> Term {
-        Term::Var(Name::new(v))
+    fn text(v: &str) -> Value {
+        Value::Str(Name::new(v))
     }
 
     #[test]
     fn a_shared_list_is_copied_before_it_changes() {
-        let a: List<Term> = [var("x"), var("y")].into();
+        let a: List<Value> = [text("x"), text("y")].into();
         let mut b = a.clone();
         assert!(a.same(&b), "a clone is the one list");
-        b.make_mut()[0] = var("z");
+        b.make_mut()[0] = text("z");
         assert!(!a.same(&b));
-        assert_eq!(a, [var("x"), var("y")]);
-        assert_eq!(b, [var("z"), var("y")]);
+        assert_eq!(a, [text("x"), text("y")]);
+        assert_eq!(b, [text("z"), text("y")]);
         // Held once, it changes in place.
         let before = b.address();
-        b.make_mut()[1] = var("w");
+        b.make_mut()[1] = text("w");
         assert_eq!(b.address(), before);
-        b.push(var("v"));
-        b.retain(|t| *t != var("w"));
-        assert_eq!(b, [var("z"), var("v")]);
+        b.push(text("v"));
+        b.retain(|t| *t != text("w"));
+        assert_eq!(b, [text("z"), text("v")]);
         let kept = b.address();
         b.retain(|_| true);
         assert_eq!(b.address(), kept, "a retain that keeps every item makes nothing");
         b.clear();
         assert!(b.is_empty() && b.address() == 0 && b == List::new());
-        assert_eq!(a.clone().into_iter().rev().collect::<Vec<_>>(), [var("y"), var("x")]);
+        assert_eq!(a.clone().into_iter().rev().collect::<Vec<_>>(), [text("y"), text("x")]);
     }
 
     #[test]
     fn a_runs_table_finds_a_list_by_its_parts() {
         let lists = Lists::default();
-        let inner = lists.terms(&[var("a"), Term::Int(1)]);
-        let call = |args: &List<Term>| Term::Call(Name::new("f"), args.clone());
-        let one = lists.terms(&[call(&inner), var("b")]);
-        let two = lists.terms(&[call(&inner), var("b")]);
+        let one = lists.values(&[text("a"), Value::Int(1)]);
+        let two = lists.values(&[text("a"), Value::Int(1)]);
         assert!(one.same(&two), "the same parts: the one list");
-        // Equal arguments made elsewhere: an equal list, found less often but never wrongly.
-        let elsewhere: List<Term> = [var("a"), Term::Int(1)].into();
-        let three = lists.terms(&[call(&elsewhere), var("b")]);
-        assert_eq!(three, one);
-        assert!(!lists.terms(&[call(&inner), var("c")]).same(&one));
-        assert_eq!(lists.sizes()[0], 4);
-        assert!(lists.terms(&[]).is_empty() && lists.sizes()[0] == 4, "the empty list is not kept");
+        assert!(!lists.values(&[text("a"), Value::Int(2)]).same(&one));
+        assert_eq!(lists.sizes()[1], 2);
+        assert!(lists.values(&[]).is_empty() && lists.sizes()[1] == 2, "the empty list is not kept");
     }
 }

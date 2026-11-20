@@ -222,8 +222,10 @@ impl<'a> Run<'a, '_> {
     ) -> Option<Arc<JoinSpec>> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
+            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`): another spec.
+            d.u64(u64::from(b.head_bound()));
             if bare {
-                // The tree's head of no terms, as `digest_atom` writes it.
+                // A head of no terms, as `Body::digest_atom` writes it.
                 d.str(b.rel(b.head()));
                 d.u64(0);
                 d.u64(0);

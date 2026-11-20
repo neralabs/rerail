@@ -27,12 +27,12 @@
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
         let passes = || (0..2).for_each(|_| { store.collect(now, 256).unwrap(); });
         passes();
-        assert!(lookup_version(&store, &key, &Default::default()).unwrap().is_some(), "kept through another run's collection");
+        assert!(lookup_version(&store, &key).unwrap().is_some(), "kept through another run's collection");
         // Once the run that combined it ends, the pins go: named by no manifest here, the entry is collected.
         drop(Pins::new(&store, &key));
         store.written().unwrap();
         passes();
-        assert!(lookup_version(&store, &key, &Default::default()).unwrap().is_none(), "named by no manifest, collected once its pins are released");
+        assert!(lookup_version(&store, &key).unwrap().is_none(), "named by no manifest, collected once its pins are released");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -49,7 +49,7 @@
         let key = [7u8; 32];
         record_version(&store, "the combined program", &key, &read, &program, &[]);
         store.settle(&queued(&key));
-        let back = lookup_version(&store, &key, &Default::default()).unwrap().expect("kept");
+        let back = lookup_version(&store, &key).unwrap().expect("kept");
         assert_eq!((back.size(), back.digest()), (program.size(), program.digest()));
         assert!(retains_read(&store, &key, &read).unwrap());
         assert!(!retains_read(&store, &key, &read[..1]).unwrap(), "the destination must have the same include observations");
@@ -57,21 +57,21 @@
         let (text, _) = named(&key);
         assert!(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())]).unwrap()[0].is_some());
         // Another key finds nothing.
-        assert!(lookup_version(&store, &[8u8; 32], &Default::default()).unwrap().is_none());
+        assert!(lookup_version(&store, &[8u8; 32]).unwrap().is_none());
         // A file appearing where an include found none combines again.
         // Each edit comes in a later run (`flush` ends one): a run reads its files as they were when it first looked
         // (decision 0105).
         let next_run = || super::super::observe(|o| o.flush());
         std::fs::write(&missing, "b").unwrap();
         next_run();
-        assert!(lookup_version(&store, &key, &Default::default()).unwrap().is_none());
+        assert!(lookup_version(&store, &key).unwrap().is_none());
         std::fs::remove_file(&missing).unwrap();
         next_run();
-        assert!(lookup_version(&store, &key, &Default::default()).unwrap().is_some());
+        assert!(lookup_version(&store, &key).unwrap().is_some());
         // So does an edited library file.
         std::fs::write(&lib, "c").unwrap();
         next_run();
-        assert!(lookup_version(&store, &key, &Default::default()).unwrap().is_none());
+        assert!(lookup_version(&store, &key).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -105,6 +105,6 @@
             rr::retain_read_program(&path, &rr::library_root(), &files, &program);
             store.settle(&queued(&key));
             assert!(retains_read(&store, &key, &files).unwrap());
-            assert!(lookup_read(&store, &key, &Default::default()).unwrap().is_some());
+            assert!(lookup_read(&store, &key).unwrap().is_some());
         });
     }

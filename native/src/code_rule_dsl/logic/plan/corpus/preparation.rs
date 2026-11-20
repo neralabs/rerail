@@ -10,18 +10,19 @@ use std::sync::Arc;
 mod merge;
 pub(super) mod combining;
 pub(super) mod hide;
-pub(crate) mod on_request;
+pub mod on_request;
 pub(super) mod whole;
 pub(crate) mod lowering_tail;
-mod demand;
-mod magic;
-mod prune;
+pub mod demand;
+pub mod magic;
+pub mod prune;
 mod rank;
 pub mod simplify;
 mod nearest;
 pub mod parts;
 pub mod text;
-pub use merge::{DropRepeated, MergeIdentical};
+pub use merge::{DropRepeated, MergeIdentical, congruence};
+pub use prune::Prune;
 pub use nearest::Nearest;
 
 /// A check of the program that writes nothing (what every relation read is bound by, `corpus::bound`): its error
@@ -47,7 +48,7 @@ impl ProgramPass for InputsRead {
         let inputs: Vec<&str> = v.inputs().map(|a| v.text(a)).collect();
         let kept: Vec<&str> = inputs.iter().copied().filter(|i| v.rel(i).is_some_and(|r| read.contains(&r.0)) || outputs.contains(i)).collect();
         if kept.len() != inputs.len() {
-            w.on()?.set_inputs(&kept);
+            w.on()?.fields().set_inputs(&kept);
         }
         Ok(())
     }
@@ -118,7 +119,7 @@ pub struct Front {
     pub vocabulary: crate::code_rule_dsl::logic::strings::Vocabulary,
 }
 
-/// `version` pruned to the rules its outputs read (`front::prune`), before the run prepares the program.
+/// `version` pruned to the rules its outputs read (`preparation::Prune`), before the run prepares the program.
 pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
     let mut p = Pipeline::new("pruned", version);
     p.program(&mut prune::Prune::default());
@@ -189,8 +190,11 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
 /// The passes that follow the program's image, over `version`: the program that runs, a base (what the store keeps),
 /// with what they found; the pipeline's stages traced. The joins pushed are made per rule, so two programs' copies
 /// of one library rule made two: after the rows are located, they are merged again, and so are the relations over
-/// them, before the program splits. The merges (`merge`) run as `corpus::merge_and_drop_repeats`
-/// runs them, or the merge alone with `RERAIL_SAME=off`.
+/// them, before the program splits. The merges (`merge`) run as `MergeIdentical` between two `DropRepeated`, or
+/// the merge alone with `RERAIL_SAME=off`. One merge finds every class at once: its congruence is the greatest, and
+/// it compares a relation's rules as a set, so a repeated rule does not keep a relation from its twin. The merge's
+/// renaming can make rules repeat; they are dropped after it, and make nothing more mergeable. (A loop of merges
+/// until no rule repeated was 2-3 congruences a call, 1.5 s of the dl1 batch's 13.8 s CPU.)
 /// `bound` checks every relation read is bound, after `nearest` is read from the transducer.
 pub fn run(version: Arc<Version>, factorize: bool, last: Option<Run>, bound: impl FnMut(&Version) -> Result<(), String>) -> Result<(Arc<Version>, Found, Run), String> {
     let mut p = kept(PREPARATION, version, last)?;
@@ -271,16 +275,24 @@ fn kept(name: &'static str, version: Arc<Version>, last: Option<Run>) -> Result<
 mod tests {
     use super::*;
 
+    /// `p` with the readers of each of `q`'s rules, in order (its `asked` rows).
+    fn asked(p: &Arc<Version>, readers: Vec<std::collections::BTreeSet<String>>) -> Arc<Version> {
+        use crate::code_rule_dsl::logic::program_facts::Field;
+        use crate::code_rule_dsl::logic::program_image::{Builder, fields::FieldsMut};
+        let mut b = Builder::on(p);
+        b.fields().set_field(Field::Asked(&std::collections::BTreeMap::from([("q".to_owned(), readers)])));
+        b.finish().unwrap().0
+    }
+
     /// An input no rule reads leaves the inputs (an output stays one); the rules reordered keep each rule; the
     /// program that comes out is a base, which the store keeps.
     #[test]
     fn the_passes_after_the_image_prune_the_inputs_and_reorder_the_rules() {
-        let p = crate::code_rule_dsl::logic::rr::parse(
+        let v = crate::code_rule_dsl::logic::rr::parse_version(
             ".decl a(x: number)\n.decl b(x: number)\n.decl c(x: number)\n.input a, b, c\n.decl p(x: number)\n.decl q(x: number)\n\
              p(x) :- a(x).\nq(x) :- p(x).\n.output p, q, c\n",
         )
         .unwrap();
-        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
         let (out, _, _) = run(v.clone(), true, None, |_| Ok(())).unwrap();
         assert!(out.base_bytes().is_some(), "a base");
         let inputs: Vec<&str> = out.inputs().map(|a| out.text(a)).collect();
@@ -296,25 +308,23 @@ mod tests {
     /// holds one entry a rule after the pipeline; readers merged are named by their class.
     #[test]
     fn the_request_record_follows_the_preparation_steps() {
-        let mut p = crate::code_rule_dsl::logic::rr::parse(
+        let p = crate::code_rule_dsl::logic::rr::parse_version(
             ".decl k(x: number)\n.input k\n.decl q(x: number)\n.decl a(x: number)\n.decl b(x: number)\n\
              q(x) :- k(x), x < 3.\nq(x) :- k(x), x > 5.\na(x) :- q(x).\nb(x) :- q(x), x != 1.\n.output a, b\n",
         )
         .unwrap();
         let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<std::collections::BTreeSet<String>>();
-        p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
-        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let v = asked(&p, vec![by(&["a"]), by(&["b"])]);
         let (out, _, _) = run(v, true, None, |_| Ok(())).unwrap();
         assert_eq!(out.asked_against_rules(), [("q".to_owned(), 2, 2)]);
         assert_eq!(out.asked()["q"], [by(&["a"]), by(&["b"])]);
-        // Two equal readers merged: the record names the class (`simplify::merge_identical`'s rename, the tree's).
-        let mut p = crate::code_rule_dsl::logic::rr::parse(
+        // Two equal readers merged: the record names the class (`MergeIdentical`'s rename).
+        let p = crate::code_rule_dsl::logic::rr::parse_version(
             ".decl k(x: number)\n.input k\n.decl q(x: number)\n.decl a(x: number)\n.decl a2(x: number)\n.decl o(x: number)\n\
              q(x) :- k(x), x < 3.\nq(x) :- k(x), x > 5.\na(x) :- q(x).\na2(x) :- q(x).\no(x) :- a(x), a2(x).\n.output o\n",
         )
         .unwrap();
-        p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["a2"])]);
-        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let v = asked(&p, vec![by(&["a"]), by(&["a2"])]);
         let (out, _, _) = run(v, true, None, |_| Ok(())).unwrap();
         assert!(out.rel("a2").is_none_or(|r| out.heads(r).next().is_none()), "a2 merged into a");
         assert_eq!(out.asked()["q"], [by(&["a"]), by(&["a"])]);

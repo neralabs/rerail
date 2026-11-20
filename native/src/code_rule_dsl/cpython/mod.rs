@@ -14,7 +14,8 @@
 //!   `signature_sha256`; `printed`: those of each located node of a file, and the tree-sitter kinds W's worker read
 //!   as each class.
 //!
-//! Real CPython runs only as the test oracle of `parity` (ignored tests, on the boxes).
+//! Real CPython runs only as the test oracle of `parity` (ignored tests, on the boxes), and as the gate's oracle for a
+//! module's whole `SyntaxError` (`value::python_ast`'s `syntax_error`, which only the gate's replay asks for).
 
 pub mod ast;
 pub mod dump;

@@ -222,8 +222,10 @@ The gate's 14 failures:
 On a host, two more things differ from this checkout. The store's git tests made repositories
 under the host's own git config, and a host that signs its commits failed 10 of them; their git
 now runs without the global and system config. And
-`git_workspace::tests::discovers_current_repository_without_a_git_process` reads this checkout's
-`.git`, which the mirror does not send, so it fails on a host only. A command over ssh also starts
+`git_workspace::tests::discovers_current_repository_without_a_git_process` read this checkout's
+`.git`, which the mirror does not send, so it failed on a host only; it is
+`discovers_a_repository_from_inside_it_without_a_git_process` now, over a repository of its own
+(2026-11-19). A command over ssh also starts
 with 256 open files (a terminal has far more), and 17 of the engine's session, plan and executor
 tests ran out of them in parallel; `test-remote` and `live-test-remote` now raise the limit to
 `kern.maxfilesperproc` first.

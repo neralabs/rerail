@@ -82,7 +82,7 @@ impl GitPolicyInputs {
         if read.files != files {
             return None;
         }
-        program_text::load_image(store, &read.program, &Default::default())
+        program_text::load_image(store, &read.program)
             .ok()?
             .map(|(program, _)| program)
     }
@@ -174,7 +174,7 @@ fn reopen(root: &Path, store: &ContentStore, graph: [u8; 32]) -> Option<ReadProg
         });
     }
     let program = if read.files == current {
-        let (program, _) = program_text::load_image(store, &read.program, &Default::default()).ok()??;
+        let (program, _) = program_text::load_image(store, &read.program).ok()??;
         inputs.keep_version(store, &current, &program);
         program
     } else {

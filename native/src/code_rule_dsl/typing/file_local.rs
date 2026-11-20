@@ -332,8 +332,8 @@ pub fn assemble(
         let cross = version.part(&in_cross, &cross_inputs, &cross_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
         Parts { local, cross }
     };
-    crate::code_rule_dsl::logic::version_trace::note_versions("split.local", &version, &versions.local);
-    crate::code_rule_dsl::logic::version_trace::note_versions("split.cross", &version, &versions.cross);
+    crate::code_rule_dsl::logic::version_trace::note("split.local", &version, &versions.local);
+    crate::code_rule_dsl::logic::version_trace::note("split.cross", &version, &versions.cross);
     // The split's constants are the file-local part's own (its split's, read from its version): checked in a debug
     // build, as `corpus` reads `constants` for the part.
     #[cfg(debug_assertions)]

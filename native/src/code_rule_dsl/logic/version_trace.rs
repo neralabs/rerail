@@ -1,29 +1,18 @@
 //! `RERAIL_VERSION_TRACE=<dir>`: a measurement aid for decision 0173's version simulation. Each place a program is
-//! made from another (the survey's E1 to E6) notes the two: each distinct program's text, once, as `<digest>.rerail`
-//! (or its `Debug` form, `<digest>.dbg`, where the text has no form for it), and a line `site\tfrom\tto` in
-//! `trace.tsv`. Off, it costs one environment read a making.
-use super::front::Program;
+//! made from another (the survey's E1 to E6) notes the two: each distinct program's text, printed from its version,
+//! once, as `<digest>.vrr`, and a line `site\tfrom\tto` in `trace.tsv`. Off, it costs one environment read a making.
 use std::hash::BuildHasher;
 use std::io::Write;
 use std::path::Path;
 
-/// Whether the trace is on: a caller that holds versions decodes them for `note` only then.
+/// Whether the trace is on.
 pub fn on() -> bool {
     std::env::var_os("RERAIL_VERSION_TRACE").is_some()
 }
 
-pub fn note(site: &str, from: &Program, to: &Program) {
-    let Some(dir) = std::env::var_os("RERAIL_VERSION_TRACE") else { return };
-    let dir = Path::new(&dir);
-    let _ = std::fs::create_dir_all(dir);
-    let (f, t) = (save(dir, from), save(dir, to));
-    if let Ok(mut out) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("trace.tsv")) {
-        let _ = out.write_all(format!("{site}\t{f}\t{t}\n").as_bytes());
-    }
-}
-
-/// `note` of two versions, each printed from its handles (`Version::show`, 0276 §6) as `<digest>.vrr`.
-pub fn note_versions(site: &str, from: &super::program_image::Version, to: &super::program_image::Version) {
+/// Notes program `from` made into `to` at `site`, each printed from its handles (`Version::show`, 0276 §6) as
+/// `<digest>.vrr`.
+pub fn note(site: &str, from: &super::program_image::Version, to: &super::program_image::Version) {
     let Some(dir) = std::env::var_os("RERAIL_VERSION_TRACE") else { return };
     let dir = Path::new(&dir);
     let _ = std::fs::create_dir_all(dir);
@@ -31,14 +20,6 @@ pub fn note_versions(site: &str, from: &super::program_image::Version, to: &supe
     if let Ok(mut out) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("trace.tsv")) {
         let _ = out.write_all(format!("{site}\t{f}\t{t}\n").as_bytes());
     }
-}
-
-fn save(dir: &Path, prog: &Program) -> String {
-    let (text, ext) = match super::program_text::print(prog) {
-        Ok(t) => (t, "rerail"),
-        Err(_) => (format!("{prog:?}"), "dbg"),
-    };
-    save_text(dir, text, ext)
 }
 
 fn save_text(dir: &Path, text: String, ext: &str) -> String {

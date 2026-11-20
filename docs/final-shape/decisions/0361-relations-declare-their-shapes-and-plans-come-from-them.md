@@ -68,6 +68,21 @@ Recursion keeps a fact only when it is declared, or proved by the base case and 
 - 0137's `.shape B after A` and `.shape B bound x` stay as the per-rule escape hatch. The test that tells you to
   remove an unneeded directive then also covers declared facts the planner no longer needs.
 
+### A product's side (2026-11-19, Q249)
+
+The preparation refuses a rule whose head pairs two nodes from unconnected reads of the corpus: the product of
+every node with every node (`product_demand`). A node does not count as a side when it holds few values whatever the
+corpus. Either way below is enough:
+
+- **Constants.** The node is set to a constant, or every read of it is a lookup on constants alone:
+  `named("builtins.object", "cls", c)` reads `c` and nothing else but constants. No declaration is needed.
+- **A declared shape.** The node is reached from fixed values (or constants) through a relation's declared key or
+  few-row fan-out: `.layout named fanout(q, k -> v, few)` fixes `v` wherever `q` and `k` are fixed, and the reach
+  follows a chain (`member(m, y)` under `.layout member fanout(m -> n, few)` fixes `y` once `m` is).
+
+A refusal names the rules that make the products and says both ways. A node bound by a lookup with a wildcard
+(`named(_, "cls", c)`) is fixed by neither, since the wildcard ranges over the corpus.
+
 ## Decided with the user (2026-11-17)
 
 1. **A line per relation, `.layout`.** `.decl` stays as Soufflé reads it:

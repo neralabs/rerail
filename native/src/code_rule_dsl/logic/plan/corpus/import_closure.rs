@@ -2,16 +2,16 @@
 //! document's closure (`rr_cx_reach`) and the modules it sees (`rr_cx_sees`). A program that reads an `rr_cx_`
 //! relation has these rules added (`corpus.rs`, `reads_components`): a lookup by name kept to what the reader
 //! imports. They were the cross-file memo's (decision 0076); the memo is removed and they stay (decision 0450 §3).
-use super::{Error, Result, front};
+use super::{Error, Result};
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
-use crate::code_rule_dsl::logic::program_image::{Builder, Version};
+use crate::code_rule_dsl::logic::program_image::{Builder, RuleRef, Version};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-/// `components.rerail`, parsed.
-fn parsed() -> Result<front::Program> {
+/// `components.rerail`, read as a version (its includes with it).
+fn parsed() -> Result<Arc<Version>> {
     let path = crate::code_rule_dsl::logic::rr::library().join("components.rerail");
-    crate::code_rule_dsl::logic::rr::parse_file(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))
+    crate::code_rule_dsl::logic::rr::parse_file_version(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))
 }
 
 /// Adds `components.rerail` to the program's version: the rules `taken` gives, and the natives, declarations,
@@ -21,52 +21,52 @@ fn parsed() -> Result<front::Program> {
 /// (`kind`, core.rerail's) is a rule now: no longer an input, as its lowering would have made it.
 pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     use crate::code_rule_dsl::logic::program_facts::Field;
-    let mut components = parsed()?;
-    let rules = taken(&mut components, |rel| v.columns_of(rel), |rel| v.rel(rel).is_some_and(|r| v.heads(r).next().is_some()));
-    let own = front::Program { rules: rules.clone(), decls: components.decls.clone(), ..Default::default() };
-    let (image, _) = Builder::of_program(&own).and_then(|b| b.finish()).map_err(Error::Plan)?;
+    let image = parsed()?;
+    let rules = taken(&image, |rel| v.columns_of(rel), |rel| v.rel(rel).is_some_and(|r| v.heads(r).next().is_some()));
     let mut needed: BTreeSet<String> = BTreeSet::new();
     for r in &rules {
-        needed.insert(r.head.rel.to_string());
-        needed.extend(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()));
+        needed.insert(image.rel_name(r.head().rel()).to_owned());
+        needed.extend(r.body().filter_map(|l| l.atom()).map(|a| image.rel_name(a.rel()).to_owned()));
     }
     let mut b = Builder::on(v);
     // The fields first: a copied rule's relations are declared.
-    let views: BTreeSet<String> = rules.iter().map(|r| r.head.rel.to_string()).filter(|h| !h.starts_with("rr_cx_")).collect();
-    b.retain_inputs(|i| !views.contains(i));
+    let views: BTreeSet<String> = rules.iter().map(|r| image.rel_name(r.head().rel()).to_owned()).filter(|h| !h.starts_with("rr_cx_")).collect();
+    b.fields().retain_inputs(|i| !views.contains(i));
     let mut natives = v.native_map().map_err(Error::Plan)?;
     let natives_were = natives.len();
-    let taken: Vec<_> = components.natives.iter().filter(|(rel, _)| needed.contains(*rel)).collect();
+    let theirs = image.native_map().map_err(Error::Plan)?;
+    let taken: Vec<_> = theirs.iter().filter(|(rel, _)| needed.contains(*rel)).collect();
     for (rel, native) in taken {
         needed.extend(native.reads().into_iter().map(str::to_owned));
         natives.entry(rel.clone()).or_insert_with(|| native.clone());
     }
     if natives.len() != natives_were {
-        b.set_field(Field::Natives(&natives));
+        b.fields().set_field(Field::Natives(&natives));
     }
     let missing: BTreeSet<String> = needed.iter().filter(|rel| !v.declares(rel)).cloned().collect();
-    for (rel, cols) in components.decls.iter().filter(|(rel, _)| missing.contains(rel.as_str())) {
+    for rel in &missing {
+        let Some(cols) = image.columns_of(rel) else { continue };
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        b.declare(rel, &pairs);
+        b.fields().declare(rel, &pairs);
     }
     let mut qualifiers = v.qualifier_map().map_err(Error::Plan)?;
     let mut qualified = false;
-    for (rel, words) in components.qualifiers.iter().filter(|(rel, _)| missing.contains(*rel)) {
+    for (rel, words) in image.qualifier_map().map_err(Error::Plan)?.iter().filter(|(rel, _)| missing.contains(*rel)) {
         let had = qualifiers.entry(rel.clone()).or_default();
         let n = had.len();
         had.extend(words.iter().cloned());
         qualified |= had.len() != n;
     }
     if qualified {
-        b.set_field(Field::Qualifiers(&qualifiers));
+        b.fields().set_field(Field::Qualifiers(&qualifiers));
     }
-    for (rel, rows) in components.facts.iter().filter(|(rel, _)| missing.contains(*rel)) {
+    for rel in ProgramFields::fact_names(&*image).iter().filter(|rel| missing.contains(*rel)) {
         if !ProgramFields::has_fact_rows(&**v, rel) {
-            b.add_facts(rel, rows);
+            b.fields().add_facts(rel, &ProgramFields::fact_rows(&*image, rel));
         }
     }
-    for input in components.inputs.iter().filter(|rel| missing.contains(*rel)) {
-        b.add_input(input);
+    for input in image.input_names().iter().filter(|rel| missing.contains(*rel)) {
+        b.fields().add_input(input);
     }
     // A rule the program holds already is taken once (by its hash and its text).
     let held: std::collections::HashMap<u64, Vec<String>> = v.rules().fold(std::collections::HashMap::new(), |mut m, r| {
@@ -74,7 +74,7 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
         m
     });
     let mut added: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for r in image.rules() {
+    for &r in &rules {
         let text = image.show_rule(r);
         if held.get(&r.hash()).is_some_and(|ts| ts.contains(&text)) || !added.insert(text) {
             continue;
@@ -84,24 +84,21 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     b.finish().map(|(v, _)| v).map_err(Error::Plan)
 }
 
-/// The rules taken from `components.rerail`: its own (`rr_cx_*` heads), and those its lowering made of core.rerail's views for
-/// what they read (`kind` over `node`, `lower::projections`) where the program derives none: the program is pruned
-/// before the closure is added, so a program that reads only `rr_cx_reach` holds no `kind` rule. Not what else
+/// The rules taken from `components.rerail`: its own (`rr_cx_*` heads), and those its lowering made of core.rerail's
+/// views for what they read (`kind` over `node`, `lower::projections`) where the program derives none: the program is
+/// pruned before the closure is added, so a program that reads only `rr_cx_reach` holds no `kind` rule. Not what else
 /// `core.rerail` brings, and not a relation the program declares otherwise (`declared`: its columns): it keeps its own
 /// declaration, and its input or rule as its lowering made it.
-fn taken(
-    components: &mut front::Program,
-    declared: impl Fn(&str) -> Option<Vec<(String, String)>>,
-    derives: impl Fn(&str) -> bool,
-) -> Vec<front::Rule> {
-    let rules = std::mem::take(&mut components.rules);
-    let heads = |rel: &str| rules.iter().any(|r| r.head.rel.to_string() == rel);
-    let mut want: BTreeSet<String> = rules.iter().map(|r| r.head.rel.to_string()).filter(|h| h.starts_with("rr_cx_")).collect();
+fn taken<'v>(image: &'v Version, declared: impl Fn(&str) -> Option<Vec<(String, String)>>, derives: impl Fn(&str) -> bool) -> Vec<RuleRef<'v>> {
+    let head = |r: &RuleRef<'_>| image.rel_name(r.head().rel()).to_owned();
+    let heads = |rel: &str| image.rel(rel).is_some_and(|r| image.heads(r).next().is_some());
+    let mut want: BTreeSet<String> = image.rules().map(|r| head(&r)).filter(|h| h.starts_with("rr_cx_")).collect();
     let mut todo: Vec<String> = want.iter().cloned().collect();
     while let Some(rel) = todo.pop() {
-        for r in rules.iter().filter(|r| r.head.rel.to_string() == rel) {
-            for read in r.body.iter().filter_map(front::Literal::atom).map(|a| a.rel.to_string()) {
-                let same_decl = declared(&read).is_none_or(|d| components.decls.get(read.as_str()).is_some_and(|c| c.iter().map(|(n, t)| (n.as_str(), t.as_str())).eq(d.iter().map(|(n, t)| (n.as_str(), t.as_str())))));
+        let Some(id) = image.rel(&rel) else { continue };
+        for r in image.heads(id) {
+            for read in r.body().filter_map(|l| l.atom()).map(|a| image.rel_name(a.rel()).to_owned()) {
+                let same_decl = declared(&read).is_none_or(|d| image.columns_of(&read).is_some_and(|c| c == d));
                 if !want.contains(&read) && same_decl && heads(&read) && !derives(&read) {
                     want.insert(read.clone());
                     todo.push(read);
@@ -109,5 +106,5 @@ fn taken(
             }
         }
     }
-    rules.into_iter().filter(|r| want.contains(&r.head.rel.to_string())).collect()
+    image.rules().filter(|r| want.contains(&head(r))).collect()
 }
