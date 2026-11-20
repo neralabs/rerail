@@ -112,6 +112,48 @@ pub fn set_change_time(path: &Path, when: std::time::SystemTime) {
     );
 }
 
+/// Tests only: whether the case `name` of the test module `module` (its `module_path!()`) ran in a
+/// process of its own with a Git setup installed, as the product's host installs one when it
+/// starts. On Windows no clean file takes the restore's stat shortcut until a setup names the
+/// system attributes file Git reads (`git_access::opener::system_attributes`), and a setup holds
+/// for its whole process, so there the case runs again in a child process whose outcome this
+/// asserts: `true`. In that child, and on every other system, `false`: the case runs here.
+#[cfg(all(any(test, feature = "test-hooks"), not(windows)))]
+pub fn ran_with_a_git_setup(_module: &str, _name: &str) -> bool {
+    false
+}
+
+/// Tests only, on Windows: as above.
+#[cfg(all(any(test, feature = "test-hooks"), windows))]
+pub fn ran_with_a_git_setup(module: &str, name: &str) -> bool {
+    const SYSTEM_CONFIG: &str = "RERAIL_TEST_GIT_SYSTEM_CONFIG";
+    if let Some(config) = std::env::var_os(SYSTEM_CONFIG) {
+        crate::git_access::setup::install(std::sync::Arc::new(crate::git_access::setup::GitSetup {
+            system_config: Some(PathBuf::from(config)),
+            installation_config: None,
+        }));
+        return false;
+    }
+    let folder =
+        std::env::temp_dir().join(format!("rerail-git-setup-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("gitconfig"), b"").unwrap();
+    let test = format!("{}::{name}", module.split_once("::").map_or(module, |(_, path)| path));
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([test.as_str(), "--exact", "--nocapture", "--test-threads=1"])
+        .env(SYSTEM_CONFIG, folder.join("gitconfig"))
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&folder).unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{test} in a process with a Git setup:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
 /// `when` as a file time: 100 ns intervals from 1601.
 #[cfg(all(any(test, feature = "test-hooks"), windows))]
 fn file_time_of(when: std::time::SystemTime) -> i64 {
@@ -1360,6 +1402,12 @@ mod tests {
     /// every system, so the file is hashed and its new bytes are not taken for the blob's.
     #[test]
     fn a_clean_files_stat_proves_its_bytes_until_a_same_size_write_puts_its_time_back() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_clean_files_stat_proves_its_bytes_until_a_same_size_write_puts_its_time_back",
+        ) {
+            return;
+        }
         let root = fixture_directory("stat-proof");
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("a.py");
@@ -1399,6 +1447,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_clean_file_whose_read_is_denied_is_proven_by_its_stat_alone() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_clean_file_whose_read_is_denied_is_proven_by_its_stat_alone",
+        ) {
+            return;
+        }
         let root = fixture_directory("stat-denied");
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("a.py");
@@ -1434,6 +1488,12 @@ mod tests {
     #[test]
     fn a_clean_file_held_by_another_handle_is_proven_by_its_stat_alone() {
         use std::os::windows::fs::OpenOptionsExt;
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_clean_file_held_by_another_handle_is_proven_by_its_stat_alone",
+        ) {
+            return;
+        }
         let root = fixture_directory("stat-held");
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("a.py");
@@ -1524,6 +1584,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_clean_file_whose_change_time_moved_is_read_once_until_a_write() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_clean_file_whose_change_time_moved_is_read_once_until_a_write",
+        ) {
+            return;
+        }
         let (root, path, workspace) = committed_long_ago("stat-remembered", b"print(1)\n");
         let hour = std::time::Duration::from_secs(3_600);
         set_change_time(&path, written_long_ago() + hour);
@@ -1571,6 +1637,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_file_a_rename_put_in_place_is_read_whatever_its_change_time() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_file_a_rename_put_in_place_is_read_whatever_its_change_time",
+        ) {
+            return;
+        }
         let (root, path, workspace) = committed_long_ago("stat-renamed", b"print(1)\n");
         let changed = written_long_ago() + std::time::Duration::from_secs(3_600);
         set_change_time(&path, changed);
@@ -1603,6 +1675,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_write_through_a_hard_link_moves_the_change_time_its_other_name_shows() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_write_through_a_hard_link_moves_the_change_time_its_other_name_shows",
+        ) {
+            return;
+        }
         let (root, path, workspace) = committed_long_ago("stat-linked", b"print(1)\n");
         let link = root.join("b.py");
         std::fs::hard_link(&path, &link).unwrap();
@@ -1660,18 +1738,33 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_cloud_file_recalled_on_data_access_is_taken_by_its_stat() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_cloud_file_recalled_on_data_access_is_taken_by_its_stat",
+        ) {
+            return;
+        }
         not_all_on_disk_is_taken_by_its_stat("stat-recall-data", 0x0040_0000);
     }
 
     #[cfg(windows)]
     #[test]
     fn a_cloud_file_recalled_on_open_is_taken_by_its_stat() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_cloud_file_recalled_on_open_is_taken_by_its_stat",
+        ) {
+            return;
+        }
         not_all_on_disk_is_taken_by_its_stat("stat-recall-open", 0x0004_0000);
     }
 
     #[cfg(windows)]
     #[test]
     fn an_offline_file_is_taken_by_its_stat() {
+        if ran_with_a_git_setup(module_path!(), "an_offline_file_is_taken_by_its_stat") {
+            return;
+        }
         not_all_on_disk_is_taken_by_its_stat("stat-offline", 0x0000_1000);
     }
 
@@ -1681,6 +1774,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_file_with_no_change_time_is_taken_by_its_stat_with_no_query() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_file_with_no_change_time_is_taken_by_its_stat_with_no_query",
+        ) {
+            return;
+        }
         let (root, path, _) = committed_long_ago("stat-no-change-time", b"print(1)\n");
         let blob = HashKey::git_sha1([7; 20]);
         let mut memory = VerifiedFiles::new(None, &root);
@@ -1704,6 +1803,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_restore_asks_a_volume_about_its_change_times_once() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_restore_asks_a_volume_about_its_change_times_once",
+        ) {
+            return;
+        }
         let (root, path, _) = committed_long_ago("stat-volume-once", b"print(1)\n");
         let blob = HashKey::git_sha1([7; 20]);
         let moved = WorktreeStat::as_if(&path, Some((2, 1)), 0);
@@ -1733,6 +1838,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_change_time_as_new_as_the_read_is_not_remembered() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "a_change_time_as_new_as_the_read_is_not_remembered",
+        ) {
+            return;
+        }
         let (root, path, workspace) = committed_long_ago("stat-recent", b"print(1)\n");
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3_600);
         set_change_time(&path, later);

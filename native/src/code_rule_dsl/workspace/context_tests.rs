@@ -3949,6 +3949,12 @@ fn backdated_repository(tag: &str, files: &[(&str, &[u8])]) -> TempDir {
 /// restore does not trust discovery's clean status for it.
 #[test]
 fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_after_discovery() {
+    if git_workspace::ran_with_a_git_setup(
+        module_path!(),
+        "a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_after_discovery",
+    ) {
+        return;
+    }
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = backdated_repository(
         "restore-stat",
@@ -3997,6 +4003,12 @@ fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_after_discovery() {
 /// does too, and only the restore's stat proof can tell.
 #[test]
 fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_before_discovery() {
+    if git_workspace::ran_with_a_git_setup(
+        module_path!(),
+        "a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_before_discovery",
+    ) {
+        return;
+    }
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = backdated_repository(
         "restore-stat-before",
@@ -4052,6 +4064,12 @@ fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_before_discovery() {
 #[cfg(windows)]
 #[test]
 fn a_warm_index_restores_a_clean_file_whose_read_is_denied() {
+    if git_workspace::ran_with_a_git_setup(
+        module_path!(),
+        "a_warm_index_restores_a_clean_file_whose_read_is_denied",
+    ) {
+        return;
+    }
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = backdated_repository(
         "restore-denied",
@@ -4093,6 +4111,12 @@ fn a_warm_index_restores_a_clean_file_whose_read_is_denied() {
 #[cfg(windows)]
 #[test]
 fn a_warm_index_reads_a_file_whose_change_time_moved_once_until_it_is_written() {
+    if git_workspace::ran_with_a_git_setup(
+        module_path!(),
+        "a_warm_index_reads_a_file_whose_change_time_moved_once_until_it_is_written",
+    ) {
+        return;
+    }
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = backdated_repository(
         "restore-remembered",
@@ -4154,6 +4178,12 @@ fn a_warm_index_reads_a_file_whose_change_time_moved_once_until_it_is_written() 
 #[test]
 fn a_warm_index_restores_a_file_whose_data_is_offline_with_no_read() {
     use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_OFFLINE};
+    if git_workspace::ran_with_a_git_setup(
+        module_path!(),
+        "a_warm_index_restores_a_file_whose_data_is_offline_with_no_read",
+    ) {
+        return;
+    }
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = backdated_repository(
         "restore-offline",
