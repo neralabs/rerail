@@ -1,6 +1,7 @@
 # 0465. A level's formulas as phases, a thread a word (a measure)
 
-Status: accepted as a measure (2026-11-19), behind `RERAIL_FORMULA_PHASES=1`, off by default. Follows 0464. Its
+Status: accepted as a measure (2026-11-19); its decision 1 superseded by 0483, where the phases are the only path
+(the switch `RERAIL_FORMULA_PHASES` is gone). Follows 0464. Its
 epilogue's rule test at set bits only (§3) is on for `label_formula` too.
 
 ## Intro

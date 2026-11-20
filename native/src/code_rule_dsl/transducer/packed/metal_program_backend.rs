@@ -865,7 +865,7 @@ fn execute_packed_once(
     // where the files were, and the block where the node records were. The kernel reads nothing from the
     // children, source and line start slots; the block stands in for them.
     let table = crate::code_rule_dsl::residency::slabs::admit_docs(files)?;
-    let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or(Error::BackendCapacity)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or(Error::BackendCapacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
@@ -947,6 +947,14 @@ fn execute_packed_once(
         ("outputStorage", output_storage_buffer.buffer()),
     ] {
         launch = launch.buffer(name, buffer);
+    }
+    // The batch's other slabs, which its reads reach from the block by the views' offsets (decision 0353 step 4,
+    // 0471), and the 16z documents' cache.
+    for slab in &table.slabs {
+        launch = launch.uses(slab.device_buffer());
+    }
+    if let Some(cache) = &table.cache {
+        launch = launch.uses(cache);
     }
     // A thread a lane, and no more: `run_batch` reads its lane by its thread.
     launch.threads_exact(lanes, 32);

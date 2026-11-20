@@ -158,6 +158,7 @@ fn native_shards_match_the_original_batch_and_both_probe_directions() {
                 tape: None,
                 guest: None,
                 module: None,
+                unpackaged: false,
             }
         })
         .collect();

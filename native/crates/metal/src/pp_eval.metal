@@ -1,7 +1,8 @@
 // The preprocessor's evaluator over tapes (decision 0436): plain MSL passes over a unit's files,
 // each a source's bytes and its preprocessor tape (format 16, decision 0468 §1), both where the
-// slab residency placed them: `data` is the slab the unit's documents were gathered into, and
-// `files` their views (`DocView`, the residency's layout). The tape is read through the reads
+// slab residency placed them: `data` is the first document's slab, the others reached from it by
+// the slabs' addresses (0353 step 4, 0471), and `files` their views (`DocView`, the residency's
+// layout). The tape is read through the reads
 // written once in CLIF (`<ukl/reads/tape.h>`, decision 0310), each node where it lies: nothing is
 // decoded into another array. Every size a pass needs is made on the device (counts, a prefix
 // sum, and the next dispatch's arguments).
@@ -9,8 +10,12 @@
 // Preprocessed before Metal compiles it (`rerail_ukl::metal_source`): the view's definition and
 // the reads come first (`pp_eval::source`), the view read where the batch holds it.
 
-// A file of the unit: its document's view. Its parts are offsets from its `at` in `data`.
+// A file of the unit: its document's view. Its parts are offsets from its first byte, `at` and
+// `at_high` (an i64) from `data`.
 typedef DocView PpFile;
+
+// A file's first byte from `data`: `at` and `at_high`, an i64.
+inline long pf_at(PpFile f) { return long((ulong(f.at_high) << 32) | ulong(f.at)); }
 
 // The tape's kinds the passes read (`rerail_c_pp::tape`).
 constant uint K_IDENTIFIER = 28u;
@@ -27,14 +32,14 @@ struct Tape {
 inline Tape tape_at(device const uchar* data, device const PpFile* files, uint f) {
     Tape t;
     t.v = files + f;
-    t.d = data + t.v->at;
-    // The language's table: `at + codes`, modulo 2^32 (`slabs::codes_offset`).
-    t.codes = data + (t.v->at + t.v->codes);
+    t.d = data + pf_at(*t.v);
+    // The language's table: `codes` from the document's first byte, modulo 2^32 (`slabs::codes_offset`).
+    t.codes = t.d + int(t.v->codes);
     return t;
 }
 
-// A file's source: its first byte's offset in `data`, and its length.
-inline uint pf_src(PpFile f) { return f.at + f.source; }
+// A file's source: its first byte's offset from `data`.
+inline long pf_src(PpFile f) { return pf_at(f) + long(f.source); }
 
 // Node `i`'s key: its code's kind and field (`kind | field << 10`; a preprocessor tape's codes
 // have no flags), from its number in the language's table (`DeviceCode`s, 24 bytes each).
@@ -160,7 +165,8 @@ kernel void pp_names(device const PpFile* files [[buffer(0)]], device const ucha
     ulong key = 0ul;
     if (node_kind(t, i) == K_IDENTIFIER) {
         uint s = node_start(t, i);
-        key = name_key((device const ulong*)data, pf_src(files[f]) + s, node_end(t, i) - s);
+        // From the document's first byte, 16-byte aligned in its slab.
+        key = name_key((device const ulong*)t.d, files[f].source + s, node_end(t, i) - s);
     }
     keys[g] = key;
 }

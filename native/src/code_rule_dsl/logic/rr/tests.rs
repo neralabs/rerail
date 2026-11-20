@@ -765,8 +765,8 @@ fn native_aggregates_and_text_functions_run() {
 .input node, doc
 .decl kv(k: number, v: number)
 kv(1, 5). kv(1, 3). kv(1, 9). kv(2, 4).
-.decl ks(k: number, s: symbol)
-ks(1, "b"). ks(1, "a"). ks(2, "c").
+.decl ks(k: number, s: number)
+ks(1, 20). ks(1, 10). ks(2, 30).
 .decl lo(k: number, v: number)
 lo(k, v) :- kv(k, _), v = min x : { kv(k, x) }.
 .decl hi(k: number, v: number)

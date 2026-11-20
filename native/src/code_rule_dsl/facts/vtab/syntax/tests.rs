@@ -34,7 +34,7 @@ pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
         .enumerate()
         .map(|(d, (path, source))| {
             let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
         })
         .collect()
 }
@@ -392,7 +392,7 @@ fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
     let (core::Built::Facts(facts), Some(tape)) = core::build_with_tape(&file, true).unwrap() else { panic!("{path} did not parse") };
     let facts = Arc::new(facts);
-    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, Arc::new(file))), guest: None, module: None }
+    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, Arc::new(file))), guest: None, module: None, unpackaged: false }
 }
 
 /// `core.rr`'s relations of `docs` for a program that includes `core.rr` and reads them (`text_demand::projection_of`'s shape
@@ -587,7 +587,7 @@ fn within_holds_exactly_the_contained_pairs() {
     for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
         let path = format!("broken{at}.py");
         let facts = facts(&path, source);
-        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None });
+        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false });
     }
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
@@ -686,7 +686,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     let source = "def f(:\n    return [1, 2\nclass C:\n    x = (\ny = f(1) + g(2)\n";
     let broken = facts("broken.py", source);
     assert!(broken.errors().iter().any(|&id| broken.flags(id) & 8 != 0), "broken.py has ERROR nodes");
-    docs.push(Document { key: 4, core: "/w#core:broken.py".into(), digest: core::digest(&broken), path: "broken.py".into(), facts: broken, tape: None, guest: None, module: None });
+    docs.push(Document { key: 4, core: "/w#core:broken.py".into(), digest: core::digest(&broken), path: "broken.py".into(), facts: broken, tape: None, guest: None, module: None, unpackaged: false });
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
@@ -1590,10 +1590,13 @@ fn node_ids_in_place_equal_the_numbered_ones() {
         return;
     }
     let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
+    // An anchor first, then the root's own tokens (`;`) far past its subtree: the index reaches them.
+    let tail: String = format!("def f():\n    return 1\n{}a = 1; b = 2\n", (0..200).map(|i| format!("v{i} = {i}\n")).collect::<String>());
     let cases: &[(&str, &str)] = &[
         ("python", "if a is not b and c not in d:\n    pass\n"),
         ("python", "import os\nX = 1\n\n# c\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]  # t\n\nclass C(B):\n    y: int = 3\n    def m(self):\n        def inner():\n            pass\n        return inner\n\nif X:\n    print(f(1))\n"),
         ("python", &many),
+        ("python", &tail),
         ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\ninterface I { y: string }\nfunction g(n: number) { if (n) { return n; } }\n"),
         ("tsx", "export function A() { return <div className=\"x\">{[1].map(v => <B key={v} />)}</div>; }\nconst y = 2;\n"),
         ("javascript", "const a = 1;\nexport default class Z extends Y { static s = 1; get g() { return 1 } }\nfunction* h() { yield 1 }\n"),

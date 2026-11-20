@@ -221,10 +221,14 @@ impl Grammar {
     /// The grammar of a dialect, built once per process and shared by every document of it: built per document, a
     /// run over 300 files held 61 MB of grammars at its peak (Q74), and built each one's kind table again.
     pub fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
+        // Read-locked for a grammar built already: every parse worker asks it for each document (0472).
         static GRAMMARS: std::sync::LazyLock<
-            std::sync::Mutex<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
+            std::sync::RwLock<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
         > = std::sync::LazyLock::new(Default::default);
-        let mut grammars = GRAMMARS.lock().map_err(|_| "grammar cache poisoned")?;
+        if let Some(grammar) = GRAMMARS.read().map_err(|_| "grammar cache poisoned")?.get(&lang) {
+            return Ok(Arc::clone(grammar));
+        }
+        let mut grammars = GRAMMARS.write().map_err(|_| "grammar cache poisoned")?;
         if let Some(grammar) = grammars.get(&lang) {
             return Ok(Arc::clone(grammar));
         }
@@ -3289,28 +3293,12 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         let parent = self.up();
         (parent != NONE).then(|| self.at(parent, UNKNOWN))
     }
-    /// The parent, then (where asked further) the rest of the path, from one descent from the root
-    /// (`Tape::path`): each ancestor with its own parent known, so a climb reads no parent.
+    /// The parent, then its parent, and so on: a parent read each, at most `K - 1` sibling steps in format 16. A
+    /// climb mostly stops a few levels up (the nearest function or class), where a descent from the root
+    /// (`Tape::path`) read every sibling before the path at each level: in a module of hundreds of statements, the
+    /// reference graph's climbs from its parameters were a sixth of its time (0484, Q343).
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
-        let first = self.parent();
-        let me = *self;
-        let mut path: Option<Vec<usize>> = None;
-        let mut given = 0usize;
-        std::iter::from_fn(move || {
-            if given == 0 {
-                given = 1;
-                return first;
-            }
-            let path = path.get_or_insert_with(|| {
-                read!("parent");
-                let mut path = Vec::new();
-                me.tape.path(me.index as usize, &mut path);
-                path
-            });
-            let at = path.len().checked_sub(1 + given)?;
-            given += 1;
-            Some(me.at(path[at] as u32, if at == 0 { NONE } else { path[at - 1] as u32 }))
-        })
+        std::iter::successors(self.parent(), Self::parent)
     }
     fn children(&self) -> impl ExactSizeIterator<Item = Self> {
         let (tape, index) = (self.tape, self.index as usize);
@@ -3391,7 +3379,9 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn range(&self) -> Range<usize> {
         read!("span");
         read_at!("tape span", self.index);
-        self.start() as usize..self.end() as usize
+        // The end from the start in hand (format 16: the start plus the length), not a second search for the start.
+        let start = self.tape.start(self.index as usize);
+        start as usize..self.tape.end_with_start(self.index as usize, start) as usize
     }
     fn start_pos(&self) -> Position {
         read!("points");

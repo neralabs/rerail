@@ -3436,7 +3436,7 @@ fn run_observed_within(
             // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
             // only where the observer cannot vouch for it).
             // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
-            let renamed = package_root_modules(root, &files);
+            let (renamed, _) = package_root_modules(root, &files);
             let of_label: Vec<&String> = files.iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label)).collect();
             // The run's one read of each (decision 0300): the bytes are held for phase 1's and this run's builders.
             let digests = world::bytes_digests_held(&of_label.iter().map(|p| root.join(p)).collect::<Vec<_>>(), Some(&own_sources));
@@ -3601,12 +3601,15 @@ fn run_observed_within(
     // And the tree's Python files named by their package roots, not their paths (`package_root_modules`): `doc` and
     // `pkg` then agree with the imports that name them. A file's memoised rows hold its `doc` row, so the memo is
     // keyed by these names too (below).
-    let renamed_modules: BTreeMap<String, String> = if t.is_none() {
+    // The Python files no regular package holds (core.rr's `unpackaged`), which memoised `doc` rows key on too.
+    let (renamed_modules, unpackaged): (BTreeMap<String, String>, BTreeSet<String>) = if t.is_none() {
         let tree: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !given_modules.contains_key(p)).collect();
         package_root_modules(root, &tree)
     } else {
-        BTreeMap::new()
+        (BTreeMap::new(), BTreeSet::new())
     };
+    // The memo keys fold the folders in for a program that reads them only (`memo::with_unpackaged`).
+    let reads_unpackaged = v.declares("unpackaged");
     given_modules.extend(renamed_modules.iter().map(|(p, m)| (p.clone(), Arc::from(m.as_str()))));
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
@@ -4660,10 +4663,15 @@ fn run_observed_within(
     // (`plan_digest`: the engine build, the grammar, the node ids' scheme), as what it keeps counts those entries:
     // another build's keeper counted entries this build's plan does not hold, so it could not count a file out
     // (Q71), and its counts are of rows this build may make otherwise.
-    let memo_whole = memo::plan_digest(&memo::with_modules(memo::with_tree_demand(memo_program, memo_tree_stats), &renamed_modules));
+    let unpackaged_folders: BTreeSet<&str> = if reads_unpackaged {
+        unpackaged.iter().map(|p| p.rsplit_once('/').map_or("", |(dir, _)| dir)).collect()
+    } else {
+        BTreeSet::new()
+    };
+    let memo_whole = memo::plan_digest(&memo::with_unpackaged(memo::with_modules(memo::with_tree_demand(memo_program, memo_tree_stats), &renamed_modules), &unpackaged_folders));
     // The frames' space: the plan without the program (decision 0225 §2), so an entry made before a rule's edit is
     // read for the relations the edit did not reach (`memo_ids`).
-    let memo_program = memo::with_modules(memo::with_tree_demand(memo_space, memo_tree_stats), &renamed_modules);
+    let memo_program = memo::with_unpackaged(memo::with_modules(memo::with_tree_demand(memo_space, memo_tree_stats), &renamed_modules), &unpackaged_folders);
     // The memo plan's parts: a plan that differs between two runs of the same tree misses every entry.
     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
         let hex = |d: &[u8; 32]| d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -5696,7 +5704,7 @@ fn run_observed_within(
         if text_document(path, label) && !host(path) {
             let facts = Arc::new(core::text(Arc::new(source)));
             let digest = core::digest(&facts);
-            return Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape: None }));
+            return Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape: None, unpackaged: unpackaged.contains(path) }));
         }
         let own = if host(path) { crate::code_rule_dsl::language::label_of_path(path).unwrap_or(label) } else { label };
         let file = core::Source { language: own.to_owned(), source: Arc::new(source) };
@@ -5752,7 +5760,7 @@ fn run_observed_within(
         let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
         let digest = core::digest(&facts);
         drop(digest_span);
-        Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape }))
+        Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape, unpackaged: unpackaged.contains(path) }))
     };
     // Files resolved a window at a time (`resolve`), so a window's sources are all the builder holds unparsed: one
     // window at a time, in order, each a job of its own, and each file's tree and facts then built as a job.
@@ -8308,7 +8316,7 @@ fn run_observed_within(
         let _doc = crate::code_rule_dsl::logic::profile::span(|| "a document from its tape (decision 0458)".into());
         let document = |facts: Arc<core::Facts>, tape| {
             let digest = core::digest(&facts);
-            syntax::Document { key: key as u32, path: path.to_owned(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape }
+            syntax::Document { key: key as u32, path: path.to_owned(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape, unpackaged: unpackaged.contains(path) }
         };
         if text_document(path, label) {
             return Ok(Some(document(Arc::new(core::text(Arc::new(source))), None)));
@@ -11325,17 +11333,26 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
 /// hosts send). Below a source root the two differ: `src/shop/base.py` is `shop.base`, which `from shop.base import
 /// Base` names, not `src.shop.base`. A file in no package (a script, or a folder of the root without `__init__.py`)
 /// keeps its path's name, as does one whose names keep a dot.
-pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[String]) -> BTreeMap<String, String> {
+///
+/// Also the Python files no regular package holds: a file of the root, or one whose folder has no `__init__.py`
+/// (core.rr's `unpackaged`). Ruff names such a file's module by its stem and resolves no relative import from it.
+pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[String]) -> (BTreeMap<String, String>, BTreeSet<String>) {
     let mut packages: HashMap<String, bool> = HashMap::new();
     let mut is_package = |dir: &str| *packages.entry(dir.to_owned()).or_insert_with(|| root.join(dir).join("__init__.py").is_file());
-    let mut out = BTreeMap::new();
+    let (mut out, mut unpackaged) = (BTreeMap::new(), BTreeSet::new());
     for p in paths.iter().filter(|p| p.ends_with(".py") || p.ends_with(".pyi")) {
-        let Some((dir, _)) = p.rsplit_once('/') else { continue };
+        let Some((dir, _)) = p.rsplit_once('/') else {
+            unpackaged.insert(p.clone());
+            continue;
+        };
         // Climbs while each folder holds an `__init__.py`; `top` is the package root's first segment's index.
         let segments: Vec<&str> = dir.split('/').collect();
         let mut top = segments.len();
         while top > 0 && is_package(&segments[..top].join("/")) {
             top -= 1;
+        }
+        if top == segments.len() {
+            unpackaged.insert(p.clone());
         }
         if top == segments.len() || top == 0 {
             // In no package, or the root's own folders are packages up to the tree's root: the path's name.
@@ -11346,7 +11363,7 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
             out.insert(p.clone(), m);
         }
     }
-    out
+    (out, unpackaged)
 }
 
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files

@@ -79,6 +79,9 @@ pub(in crate::code_rule_dsl) struct Files {
     config: Config,
     /// The directories the corpus marks as packages (`__init__.py`), from which each file's module follows.
     packages: HashSet<String>,
+    /// Whether the run's shape is core.rr's (the program declares every relation core.rr does, `Projection::of`):
+    /// the shape its node ids are ranks in.
+    core: bool,
     files: Mutex<Vec<File>>,
 }
 
@@ -89,7 +92,9 @@ impl Files {
             return Ok(None);
         }
         let packages = paths.iter().filter_map(|p| package_marker_directory(p)).map(str::to_owned).collect();
-        Ok(Some(Files { config: Config::of(prog)?, packages, files: Mutex::new(Vec::new()) }))
+        let names = crate::code_rule_dsl::facts::core::core_names();
+        let core = !names.is_empty() && names.iter().all(|r| prog.declares(r.as_str()));
+        Ok(Some(Files { config: Config::of(prog)?, packages, core, files: Mutex::new(Vec::new()) }))
     }
 
     /// Document `key` at `path`, with its source, core facts and tape: summarized as W's stateless evaluation
@@ -104,7 +109,7 @@ impl Files {
         let has_errors = !crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(tape).is_empty();
         let root = ast_grep_core::AstGrep::doc(tape.clone());
         let (summary, _) = calls::summarize(root.root(), GrammarDialect::Python, path, file.module.as_deref(), has_errors, file.source.len(), None);
-        let nodes = syntax::definitions(key, facts).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
+        let nodes = syntax::definitions(key, facts, self.core).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
         self.files.lock().expect("reference files").push((Arc::from(path), Arc::new(summary), nodes));
         Ok(())
     }

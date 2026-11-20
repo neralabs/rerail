@@ -628,7 +628,7 @@ pub fn stored_documents(graph: &(impl Graph + ?Sized), scope: &str, paths: &[Str
             return Err(StoreError::Invalid(format!("stale core facts for {core}")));
         }
         let key = graph.store().atom(&crate::code_rule_dsl::facts::observe::path_name(scope, path))?.ok_or_else(|| StoreError::Corrupt(format!("{path} has no atom")))?;
-        out.push(crate::code_rule_dsl::facts::vtab::syntax::Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), tape: None, guest: None, module: None });
+        out.push(crate::code_rule_dsl::facts::vtab::syntax::Document { key, path: path.clone(), core, digest, facts: Arc::new(facts), tape: None, guest: None, module: None, unpackaged: false });
     }
     Ok(out)
 }

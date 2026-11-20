@@ -2,8 +2,8 @@
 //!
 //! A unit is its files: each a source's bytes and its preprocessor tape (`rerail_c_pp::tape`,
 //! format 16, decision 0468 §1), documents of the slab residency. The evaluator reads them where
-//! they are: the unit's documents gathered into one slab (`slabs::gather`), their views listed
-//! (`Unit::of`). Writing a tape into its room is its loader's (the store's load, 0353 step 4a;
+//! they are: the first document's slab bound, the others made resident and reached from it by
+//! the slabs' addresses (0353 step 4, 0471), their views listed (`Unit::of`). Nothing is copied. Writing a tape into its room is its loader's (the store's load, 0353 step 4a;
 //! a test's stand-in for it): `placement` says where the parts go and makes the view. The host
 //! then encodes the passes and waits; every size a pass needs is made on the device, and no
 //! pass's result comes back to the host to decide the next.
@@ -23,10 +23,12 @@ pub fn source() -> Result<&'static str, Error> {
 
 pub use crate::slabs::DocView;
 
-/// A unit's files on the device: its documents, in one slab, and their views.
+/// A unit's files on the device: its documents, where the residency placed them, and their views.
 pub struct Unit {
-    /// The documents, gathered into one slab: the lease the kernels read through.
+    /// The documents, held for the unit's life. The first one's slab is the one the kernels bind.
     pub documents: Vec<Arc<Resident>>,
+    /// The unit's other slabs, which its passes make resident (`Enc::resident`).
+    pub slabs: Vec<Arc<crate::slabs::Slab>>,
     /// Their views, in the unit's file order (`PpFile` in the MSL): placed in each run's arena
     /// (`Front::files`).
     pub views: Vec<DocView>,
@@ -118,15 +120,31 @@ pub fn placement<'a>(
 }
 
 impl Unit {
-    /// The unit of `documents` (in its file order): gathered into one slab, which the kernels
-    /// read, and their views listed.
+    /// The unit of `documents` (in its file order), read where they lie: each view's offset counts
+    /// from the first document's slab, by the slabs' addresses (0471). A device with no buffer
+    /// addresses reads a unit in one slab only.
     pub fn of(documents: Vec<Arc<Resident>>) -> Result<Unit, Error> {
-        let documents = crate::slabs::gather(documents)?;
-        let views: Vec<DocView> = documents.iter().map(|d| d.view).collect();
+        let block = documents.first().map(|d| Arc::clone(&d.slab));
+        let base = block.as_ref().map(|b| b.device_buffer().device_address());
+        let mut slabs: Vec<Arc<crate::slabs::Slab>> = Vec::new();
+        let mut views = Vec::with_capacity(documents.len());
+        for d in &documents {
+            let mut view = d.view;
+            if block.as_ref().is_some_and(|b| b.id != d.slab.id) {
+                let (Some(Some(base)), Some(at)) = (base, d.slab.device_buffer().device_address()) else {
+                    return Err(Error::BackendCapacity);
+                };
+                view.set_offset((at as i64).wrapping_sub(base as i64).wrapping_add(i64::from(d.view.at)));
+                if !slabs.iter().any(|s| s.id == d.slab.id) {
+                    slabs.push(Arc::clone(&d.slab));
+                }
+            }
+            views.push(view);
+        }
         let file_nodes: Vec<u32> = views.iter().map(|v| v.nodes).collect();
         let node_bound = file_nodes.iter().map(|&n| n as usize).sum::<usize>().max(1);
         let dir_bound = file_nodes.iter().map(|&n| n as usize / 2).sum::<usize>().max(1);
-        Ok(Unit { views, documents, node_bound, dir_bound, file_nodes })
+        Ok(Unit { views, documents, slabs, node_bound, dir_bound, file_nodes })
     }
 
     /// The unit's files.
@@ -138,7 +156,7 @@ impl Unit {
         self.views.is_empty()
     }
 
-    /// The slab the unit's documents are in, as the kernels bind it (`None`: no documents).
+    /// The first document's slab, as the kernels bind it (`None`: no documents).
     pub fn data(&self) -> Option<&metal::BufferRef> {
         self.documents.first().map(|d| &**d.slab.buffer())
     }
@@ -313,12 +331,21 @@ impl Front {
 
 /// Encodes `f`'s passes in one command buffer, commits it and waits: the launches it made.
 pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error> {
+    run_reading(&[], f)
+}
+
+/// `run` over `unit`: each pass makes the unit's other slabs resident.
+pub fn run_over(unit: &Unit, f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error> {
+    run_reading(&unit.slabs, f)
+}
+
+fn run_reading(resident: &[Arc<crate::slabs::Slab>], f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error> {
     let device = crate::device()?;
     let scope = crate::launch::LaunchScope::enter();
     let queue = crate::pool::queue(&device)?;
     let command = queue.new_command_buffer();
     command.set_label("Rerail pp evaluator");
-    let encoded = f(&Enc { command, source: source()? });
+    let encoded = f(&Enc { command, source: source()?, resident });
     if let Err(e) = encoded {
         command.commit();
         command.wait_until_completed();
@@ -344,7 +371,7 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
     let arena = Arena::new();
     let front = Front::new(&arena, unit, nodes)?;
     arena.lease()?;
-    run(|enc| front.encode(enc, unit))?;
+    run_over(unit, |enc| front.encode(enc, unit))?;
     front.read()
 }
 

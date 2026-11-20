@@ -5,7 +5,7 @@
 //! The rows are T's: over each document's named nodes other than comments, in preorder,
 //!
 //! ```text
-//! doc(d, path, module)   pkg(d, p)             node(d, n, kind, start, end_)
+//! doc(d, path, module)   pkg(d, p)   unpackaged(d)   node(d, n, kind, start, end_)
 //! child(p, c, idx)       field(p, f, c)        tape(n, par, size, depth)
 //! text(n, s)             intval(n, v)          op(n, s)
 //! ```
@@ -718,6 +718,9 @@ pub struct Document {
     /// The module a loaded document is (t21 E2: `load(path, module, …)`, the module its resolution gave); `None` for
     /// a file of the corpus, whose module follows from its path.
     pub module: Option<Arc<str>>,
+    /// A Python file no regular package holds: one of the root, or whose folder has no `__init__.py` (core.rr's
+    /// `unpackaged`, `corpus::package_root_modules`).
+    pub unpackaged: bool,
 }
 
 /// W's values (`Extra`) and the AST patterns' matches (`ast_match`, matched over the tape), which a batch reads off
@@ -1241,8 +1244,11 @@ impl Projected {
         };
         // The walk: which tape nodes the projection numbers, marked in its rank index (`ranks`) in the block. A node's
         // local id is its rank among them, in preorder.
-        let (lo, hi) = (ranges.first().map_or(first, |r| r.0), ranges.last().map_or(first, |r| r.1).max(first + 1));
         let core_tokens = shape == Shape::Core && dialect.is_some() && !withheld;
+        // Walked by anchors, the root's tokens (below) lie anywhere in the document, past the last anchored subtree
+        // too: the index then reaches the document's end.
+        let root_tokens = ranges.len() > 1 && core_tokens && f.named(first);
+        let (lo, hi) = (ranges.first().map_or(first, |r| r.0), if root_tokens { end } else { ranges.last().map_or(first, |r| r.1) }.max(first + 1));
         let ranks = ranks::Ranks::build(block, lo, hi, |marks| {
             if withheld {
                 return;
@@ -1250,7 +1256,7 @@ impl Projected {
             // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a
             // `;` between two statements) are in no range, yet are tokens of an included node, as `Projected::span`
             // reads them.
-            if ranges.len() > 1 && core_tokens && f.named(first) {
+            if root_tokens {
                 let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
                 for c in f.children(first) {
                     if !f.named(c) && f.end(c) > f.start(c) && outside(c) {
@@ -2722,7 +2728,7 @@ impl Batch {
             strings.len() - 1
         };
         // Rows with string indexes; the indexes become atoms once the batch's strings are interned.
-        let (mut doc, mut pkg) = (Vec::new(), Vec::new());
+        let (mut doc, mut pkg, mut unpackaged) = (Vec::new(), Vec::new(), Vec::new());
         // `path_part(d, s)`: each directory of a document's path and its file name; `file_name(d, s)`: the last.
         let (mut path_part, mut file_name): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
         // `text`, `intval`, T's `op` and the text relations (`NodeRows`).
@@ -2951,6 +2957,9 @@ impl Batch {
                 };
                 pkg.push([key, string(&package) as i64]);
             }
+            if py_file && d.unpackaged {
+                unpackaged.push(key);
+            }
             let parts: Vec<&str> = d.path.split('/').filter(|s| !s.is_empty()).collect();
             if let Some(last) = parts.last() {
                 file_name.push([key, string(last) as i64]);
@@ -3137,6 +3146,7 @@ impl Batch {
             (LONG_TEXT_NODES, relation(&["n"], &mut long_text_nodes.iter().map(|&n| vec![n]))),
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", pairs(&["d", "p"], &pkg, [false, true])),
+            ("unpackaged", relation(&["d"], &mut unpackaged.iter().map(|&d| vec![d]))),
             ("path_part", pairs(&["d", "s"], &path_part, [false, true])),
             ("file_name", pairs(&["d", "s"], &file_name, [false, true])),
             ("intval", pairs(&["n", "v"], &rows.intval, [false, false])),
@@ -4025,10 +4035,12 @@ pub fn field_atom(tag: u8, code: u16) -> u32 {
 }
 
 /// Document `key`'s `function_definition` and `class_definition` nodes by byte range (start, end), as ids of
-/// `node`: what W's call summaries name a definition by (`calls::summary::Def`).
-pub fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(u32, u32), i64>> {
+/// `node` in the run's shape (`core`: core.rr's, else T's; a node's id is its rank among the shape's numbered nodes,
+/// so T's ids name other nodes of a run in core.rr's shape): what W's call summaries name a definition by
+/// (`calls::summary::Def`).
+pub fn definitions(key: u32, facts: &Arc<Facts>, core: bool) -> StoreResult<HashMap<(u32, u32), i64>> {
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(facts))?;
-    let p = Projected::new(key, Arc::clone(facts), Some(&dialect), Shape::T, false, None);
+    let p = Projected::new(key, Arc::clone(facts), Some(&dialect), if core { Shape::Core } else { Shape::T }, false, None);
     Ok(p.node_ids()
         .filter(|&(_, id, _)| matches!(dialect.name(facts, id), "function_definition" | "class_definition"))
         .map(|(_, id, n)| ((facts.start(id), facts.end(id)), n))

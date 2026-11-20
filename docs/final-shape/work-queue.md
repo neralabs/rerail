@@ -6925,7 +6925,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   - the store's observer and journal tests (35);
   - the rr tests other than the open three.
 
-### Q324. A level's formulas as phases: the pushes' chains are the time (0465)
+### Q324. A level's formulas as phases: the pushes' chains are the time (0465; done in 0483)
 
 - **Found** (2026-11-19, 0465): `label_phase` runs a level's word steps and one-hop pushes in one dispatch a phase
   for the whole batch. Its word steps cost about 32 µs a dispatch, but its pushes are chains within a thread: up to 7
@@ -6937,6 +6937,10 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   2. range steps (descendants, following, reaches: ops 8, 10, 11, 15, 16, 23–25) as scans between blocks, so a
      level runs on one kernel;
   3. then compare a level's phases with 0464's size classes, and remove the loser.
+- **Done** (2026-11-19, 0483): the parents once a batch (`label_parents`), the range steps as scans and the climbs, so
+  every formula runs on `label_phase`; `label_formula` and 0464's size classes are removed. The SIMD spread was not
+  built: the pushes are under 1 ms once a parent is one load. Left: `label_leaves` (7.4–11 ms on s1000), the
+  epilogue (2–3 ms), and a descendant scan in one dispatch (decoupled look-back).
 
 ### Q325. Roll-up 11 (final-rerail-shape onto rr-align): what the merge chose, and what stays open
 
@@ -7205,7 +7209,8 @@ on an M3 or M5:
   `pasting_`, `stringizing_` and `va_opt_is_the_serial_passes`. Its output loses tokens: `"1 \"main.c\" 3  "` for
   `"1 \"main.c\" 3 5 \"main.c\""`, and `"B "` for `"A B"`. At ce2c4019c83, and once on the roll-up, `pasting_` did
   not end: sampled, the host waited in `waitUntilCompleted` for `expand_from`'s command buffer.
-  `a_unit_past_its_room_runs_again_larger` fails beside them at 4 threads, and passes alone.
+  `a_unit_past_its_room_runs_again_larger` fails beside them at 4 threads. At roll-up 17 and 18 it fails alone too: with
+  `cpp` its fan-out gives 8 tokens for 12,288 (the rung-1 run without `cpp` agrees), so it is ignored with them.
 - **The persistent grid (0468 R5, R6)**: `grid_barriers_see_every_groups_writes` and the grid's scan, segmented scan
   and sort fail at 8 groups: "a barrier failed" (bounded, never hangs). They fail at 1 test thread too.
 - **The AOT words**: `the_aot_words_are_the_interpreters` and `the_words_translate_to_rust` overflow the test
@@ -7415,3 +7420,68 @@ on an M3 or M5:
   - the store's two Q219 tests;
   - the engine's `scope_tests` (5), with `a_loaders_cursor_is_made_while_the_symbols_are_written`.
 - **Open**: nothing new.
+
+### Q343. After 0484: the parse workers, the serial phases, and small label runs
+
+- **Found** (2026-11-19, 0484), on all (3,089 files, 9.6 M nodes; about 20 s on an M1 Max):
+  - the parse workers take 13.4 s of CPU (4.3 ms a file);
+  - the run uses 3.3–3.6 of 10 cores, with 13–48 s of its threads ready and no core;
+  - the run's thread spends 8–10 s in serial phases: cross 2.7–5.1 s, stats 2.1–2.5 s (400,000–800,000
+    involuntary switches), combine 2.2–3.0 s;
+  - the large program's label runs are 283 runs with a median of 6 files, where s1000's were 6 runs with a median of
+    36. Each run pays its fixed costs.
+- **Next**, in order:
+  1. Why the pool oversubscribes its cores, and the parse workers' CPU a file.
+     **Answered** (0472): it does not. The waits were locks (the scalar pool, the residency, the grammars) and the
+     machine's load, and the measured binary was renamed, which leaves the main thread out of the pool (the
+     load-time constructor's name test). The parse workers' phase is 7.4 s on all (8.1–8.5 s): W's reference graph
+     5.9 s of it. Open: the summary as a tape pass; the interner's waits; the store writer's one lock.
+  2. `stats`' switches, `cross`' `public_best_*` waits, `combine`'s fixpoint waits.
+     **Done** (0472): `public_best_*` were the pool's threads waiting on the scalar pool's one lock; sharded, `cross`
+     6.2 → 3.0–3.3 s, `stats` 1.0 s. `combine`'s waits are the chunks' parse and evaluation on the workers.
+  3. Trace where the small label runs come from, then batch them to a chunk's size.
+     **Done** (0471): they were a wave halved until its files shared a slab (`gather` found no room). A batch now
+     reads each document in its own slab; 78 runs on all, one a wave. The cold run's exit was the device joins'
+     caches, capped per thread: now one cap for every thread's.
+  4. A cold first Metal run of all exited 1 (its log was lost). Reproduce it with a fresh binary path.
+     **Done** (0471): the panic of a one-file wave the budget had no room for, the device joins' caches holding
+     127 MB; two cold runs of a new binary passed.
+
+### Q344. Roll-up 18 (final-rerail-shape onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): final-rerail-shape at 1e61e440295, renumbered on a commit of its own first:
+  - its decisions 0463, 0465 and 0466 are 0483, 0484 and 0485 here (0459 → 0464 and 0461 → 0465 as at
+    roll-up 11). 0471, 0472 and 0476 keep their numbers.
+  - its Q271, Q283 and Q284 are Q288, Q324 and Q343.
+- **Taken from theirs**:
+  - 0483: the label passes' phases are the only path (`label_parents`, 64-word phases, chain levels run
+    again on `Error::ChainLevels`). `label_formula` and its size classes are gone.
+  - 0471: a batch reads its tapes in every slab they lie in. `DocTable::new` sets each view's offset by its
+    slab's address; the slabs are made resident on each launch; `gather` and `Resident::copied` are gone.
+    The preprocessor's evaluator reads its units the same way (`Unit::of`, `run_over`).
+  - 0472: the tape room's slab, sharded names and the sharded scalar pool.
+  - 0476: references.rr, `unpackaged` documents, and the refusal of a min or max over a symbol.
+- **Kept from ours**:
+  - the lane API: launches name their slots, buffers and uses, with no Metal encoders.
+  - 0442: theirs' `TAPE_SLAB` static is a field of `Residency`. The names table is a shared object.
+    `HELD` (the set fixpoint's device bytes held) is a machine object, which each `Resident` subtracts from
+    when dropped.
+  - `TapeView` holds both ours' `presence` and theirs' `at_high`: 128 bytes. The generated reads
+    (`ukl/reads/view.h`) are regenerated.
+- **Made to fit**:
+  - The refusal reads a column's declared type as stored (`sym`), not only `symbol`. Before that it never fired.
+  - Five rules took a min over a symbol to pick "any one" of a node's types (`type_first` in calls.rr,
+    calls_cx.rr, calls.rdl, the docs' calls.rr, and `pt_type_first` in points-to.rr). Candidates are now
+    every type's supertypes. `type_miss` and `proven_type` read `type_of` for them, which gives the same
+    `proven_type`, and the oracle tests agree. make_cx.py's patterns follow.
+  - Two tests had a min over a symbol and now use a number or a node: `native_aggregates_and_text_functions_run`
+    and the R4 maintain test.
+- **Checked** on the m1max:
+  - the workspace check is clean;
+  - c-directives, clif, and the device-metal phase programs;
+  - the engine's label kernels, a batch over several slabs, every format on the device, `unpackaged`, and
+    the reference-edge fixtures;
+  - the lowering report: 201 programs, none refused;
+  - the typing oracle tests, and the rows, front and maintain tests named above.
+- **Open**: `a_unit_past_its_room_runs_again_larger` (c-directives) fails before this roll-up too, alone. It is
+  ignored under Q330.

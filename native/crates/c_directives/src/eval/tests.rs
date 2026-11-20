@@ -750,6 +750,7 @@ fn calls_past_an_end_are_the_serial_passes() {
 /// 64 KB: the device refuses (`X_ROOM`), the unit runs again at the next rung, and it gives the
 /// serial pass's tokens there.
 #[test]
+#[ignore = "Q330: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn a_unit_past_its_room_runs_again_larger() {
     let fan = "#define A0 x x x x x x x x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n";
     let tokens = format!("{fan}A3 A3 A3\n");

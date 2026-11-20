@@ -50,7 +50,7 @@ fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) {
     let _scope = LaunchScope::enter();
     let queue = crate::pool::queue(&device).unwrap();
     let command = queue.new_command_buffer();
-    f(&Enc { command, source: source().unwrap() }).unwrap();
+    f(&Enc { command, source: source().unwrap(), resident: &[] }).unwrap();
     commit_checked(command).unwrap();
     wait_checked(command).unwrap();
 }
@@ -166,7 +166,7 @@ fn an_evaluation_is_one_command_buffer() {
         // A second buffer, waited on mid-evaluation: a host read between passes.
         let queue = crate::pool::queue(&device)?;
         let other = queue.new_command_buffer();
-        Enc { command: other, source: source()? }.run("pb_args", None, &[&n.buffer, &args.buffer], &[0], Grid::Groups(1))?;
+        Enc { command: other, source: source()?, resident: &[] }.run("pb_args", None, &[&n.buffer, &args.buffer], &[0], Grid::Groups(1))?;
         commit_checked(other)?;
         wait_checked(other)
     });

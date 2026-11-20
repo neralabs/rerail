@@ -1297,6 +1297,46 @@ fn modules_are_named_from_their_package_roots_and_relative_imports_of_any_depth_
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// `unpackaged(d)` holds for a Python file no regular package holds: one at the tree's root, or in a folder with no
+/// `__init__.py`. Ruff names such a file by its stem and resolves no relative import in it, and
+/// `python/references.rr` does the same, from this fact alone, so its file-local part reads no other document. A
+/// folder that gains an `__init__.py` makes its files packaged in the next run (the memo keys on the folders).
+#[test]
+fn a_python_file_no_package_holds_is_unpackaged() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("unpackaged");
+    let _ = std::fs::remove_dir_all(&base);
+    let src = base.join("tree");
+    for (path, text) in [
+        ("top.py", "x = 1\n"),
+        ("loose/x.py", "x = 1\n"),
+        ("pkg/__init__.py", ""),
+        ("pkg/m.py", "x = 1\n"),
+        ("pkg/sub/n.py", "x = 1\n"),
+    ] {
+        let p = src.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let rule = base.join("unpackaged.rr");
+    std::fs::write(
+        &rule,
+        ".language python\n.scope include \"**/*.py\"\n\
+         .decl loose(p: symbol)\nloose(p) :- unpackaged(d), doc(d, p, _).\n.output loose\n",
+    )
+    .unwrap();
+    let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
+    let out = base.join("out");
+    let run = || {
+        let _ = std::fs::remove_dir_all(&out);
+        super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        crate::code_rule_dsl::logic::plan::output::shown(&out, "loose").unwrap_or_default()
+    };
+    assert_eq!(run(), [["loose/x.py"], ["pkg/sub/n.py"], ["top.py"]]);
+    std::fs::write(src.join("loose/__init__.py"), "").unwrap();
+    assert_eq!(run(), [["pkg/sub/n.py"], ["top.py"]]);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A request's context is every literal beside it (`rr::lower`'s `request_context`): `type_ctx(r) :- type_ctx(s),
 /// str_node(s), parsed(s, "annotation", r)` asks to parse the strings in a type context, not every string of the
 /// file. Its context was the inputs alone (`str_node`), and a module of 111k string pairs (netbox's `un_locode.py`)

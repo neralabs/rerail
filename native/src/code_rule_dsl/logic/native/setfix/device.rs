@@ -94,8 +94,14 @@ fn table_max() -> usize { rerail_accel::budget::metal_share(48 << 20) }
 fn batch_max() -> usize { rerail_accel::budget::metal_share(64 << 20) }
 /// The largest text arena a batch runs again with; past it, the stratum's texts are made on the host.
 fn arena_max() -> usize { rerail_accel::budget::metal_share(64 << 20) }
-/// the most bytes the relations kept on the device may take on a thread;
+/// the most bytes the relations kept on the device may take, every thread's together (`Held`);
 fn resident_max() -> usize { rerail_accel::budget::metal_share(80 << 20) }
+/// The bytes every thread's kept relations (`Resident`) hold on the device: the machine's (decision 0442). They hold
+/// the device's Metal budget, which is the machine's, as the buffer pool's ledger is. Each thread's cache was capped
+/// alone before: on all, two to four threads' caches held 127 MB of a 512 MB budget, which nothing else could take
+/// back, and the ast matcher's waves were refused down to a file each (0471).
+#[derive(Default)]
+struct Held(std::sync::atomic::AtomicUsize);
 /// the budget a submission leaves for its stages run again after an overflow: with less left, the rules after go
 /// into the next submission.
 fn headroom() -> usize { rerail_accel::budget::metal_share(48 << 20) }
@@ -1236,6 +1242,9 @@ struct Resident {
     unions: Vec<(Vec<(Weak<InRel>, usize)>, Vec<i64>, Rc<mj::DevText>)>,
     bytes: usize,
     clock: u64,
+    /// The machine's count its bytes are in (`Held`): the machine of the run that first kept one, so its drop takes
+    /// them from the same count.
+    held: Option<Arc<Held>>,
 }
 
 thread_local! {
@@ -1247,21 +1256,49 @@ thread_local! {
 
 impl Resident {
     /// Drops entries whose relation the engine dropped, then the least recently used while over the budget.
+    /// The cap is every thread's caches together (`Held`): the others' bytes count against this thread's room.
     fn trim(&mut self, room: usize) {
         self.entries.retain(|e| e.owner.live());
         self.unions.retain(|(cols, _, _)| cols.iter().all(|(r, _)| r.strong_count() > 0));
-        if self.bytes() + room > resident_max() {
+        let others = self.held().0.load(std::sync::atomic::Ordering::Relaxed).saturating_sub(self.bytes);
+        if self.bytes() + others + room > resident_max() {
             self.unions.clear();
         }
-        while self.bytes() + room > resident_max() && !self.entries.is_empty() {
+        while self.bytes() + others + room > resident_max() && !self.entries.is_empty() {
             let at = self.entries.iter().enumerate().min_by_key(|(_, e)| e.used).map(|(k, _)| k).expect("an entry");
             self.entries.swap_remove(at);
         }
-        self.bytes = self.bytes();
+        self.set_bytes(self.bytes());
+    }
+
+    /// Records what this thread's cache holds now, in its own count and in every thread's (`Held`).
+    fn set_bytes(&mut self, bytes: usize) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let held = self.held();
+        if bytes >= self.bytes {
+            held.0.fetch_add(bytes - self.bytes, Relaxed);
+        } else {
+            held.0.fetch_sub(self.bytes - bytes, Relaxed);
+        }
+        self.bytes = bytes;
+    }
+
+    /// The machine's count of every thread's bytes (`Held`).
+    fn held(&mut self) -> Arc<Held> {
+        Arc::clone(self.held.get_or_insert_with(crate::code_rule_dsl::logic::profile::machine::<Held>))
     }
 
     fn bytes(&self) -> usize {
         self.entries.iter().map(|e| e.bytes).sum::<usize>() + self.unions.iter().map(|u| u.2.bytes()).sum::<usize>()
+    }
+}
+
+impl Drop for Resident {
+    /// A thread's cache goes with its thread: its bytes leave every thread's count.
+    fn drop(&mut self) {
+        if let Some(held) = &self.held {
+            held.0.fetch_sub(self.bytes, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 
@@ -1273,7 +1310,7 @@ fn unrun<T>(r: Result<T, String>) -> Result<T, String> {
         RESIDENT.with_borrow_mut(|res| {
             res.entries.clear();
             res.unions.clear();
-            res.bytes = 0;
+            res.set_bytes(0);
         });
         crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "device caches dropped after a refusal", 1);
     }
@@ -1370,7 +1407,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                     let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
                     res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
-                    res.bytes = res.bytes();
+                    { let b = res.bytes(); res.set_bytes(b); }
                     res.entries.len() - 1
                 } else {
                 let k = want.len();
@@ -1379,7 +1416,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 // and the pool's free buffers give theirs back first.
                 if mj::device_bytes_left() < 8 * k * n + headroom() {
                     res.entries.clear();
-                    res.bytes = 0;
+                    res.set_bytes(0);
                     mj::give_back();
                 }
                 // A whole view its batch's chunk block makes (decision 0289 §2): its columns made on the device.
@@ -1400,7 +1437,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                     let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
                     res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
-                    res.bytes = res.bytes();
+                    { let b = res.bytes(); res.set_bytes(b); }
                     res.entries.len() - 1
                 } else if let Some(d) = made {
                     let device = rerail_accel::gpu::join::device()?;
@@ -1417,7 +1454,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                     let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
                     res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
-                    res.bytes = res.bytes();
+                    { let b = res.bytes(); res.set_bytes(b); }
                     res.entries.len() - 1
                 } else {
 // copy (0353 step 6): rows uploaded from the host (decision 0353).
@@ -1464,7 +1501,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                 let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
                 res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
-                res.bytes = res.bytes();
+                { let b = res.bytes(); res.set_bytes(b); }
                 res.entries.len() - 1
                 }
                 }
@@ -1747,7 +1784,7 @@ fn texts(cols: &[(Arc<InRel>, usize)], consts: &[i64], rep: &mut Report, names: 
         rep.upload_by[profile::UPLOAD_NAMES].1 += thread_cpu() - c0;
         res.trim(t.bytes());
         res.unions.push((cols.iter().map(|(r, c)| (Arc::downgrade(r), *c)).collect(), consts.to_vec(), t.clone()));
-        res.bytes = res.bytes();
+        { let b = res.bytes(); res.set_bytes(b); }
         Ok(t)
     })
 }
@@ -2031,7 +2068,7 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
             Err(e) if !cleared && e.contains("BackendCapacity") => {
                 RESIDENT.with_borrow_mut(|r| {
                     r.entries.clear();
-                    r.bytes = 0;
+                    r.set_bytes(0);
                 });
                 mj::give_back();
                 cleared = true;

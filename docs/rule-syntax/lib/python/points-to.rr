@@ -1596,13 +1596,11 @@ pt_tsub(n, t, x) :- type_of(n, t), pt_cls_q(c, t), docof(n, d9), docof(c, e9), r
 pt_tsup_open(n, t) :- type_of(n, t), pt_cls_q(c, t), docof(n, d9), docof(c, e9), rr_cx_reach(d9, e9), pt_anc(c, b), pt_base_open(b).
 pt_tsup_open(n, t) :- type_of(n, t), pt_cls_q(c, t), docof(n, d9), docof(c, e9), rr_cx_reach(d9, e9), pt_anc(c, b), pt_basex(b, e), pt_extb(e), !pt_builtin_ref(e, "object").
 .decl pt_type_miss(n: node, u: symbol)
-pt_type_miss(n, u) :- pt_type_first(n, t0), pt_tsub(n, t0, u), type_of(n, t), !pt_tsub(n, t, u).
-// pt_type_first(n, t): one type of n, the least by symbol atom (the run's interning, not the text: any one will do).
-// Every type of a proven n is a subtype of u, this one among them, so u's candidates are its supertypes alone.
-.decl pt_type_first(n: node, t: symbol)
-pt_type_first(n, t) :- type_of(n, _), t = min t2 : { type_of(n, t2) }.
+// u is a supertype of one of n's types and not of another. Every type of a proven n is a subtype of u, so
+// u's candidates are any type's supertypes (no "first" type: a min over symbols has no order, 0476).
+pt_type_miss(n, u) :- pt_tsub(n, t0, u), type_of(n, t0), type_of(n, t), !pt_tsub(n, t, u).
 .decl proven_type(n: node, u: symbol)
-proven_type(n, u) :- pt_type_first(n, t), pt_tsub(n, t, u), !type_open(n), !pt_type_miss(n, u).
+proven_type(n, u) :- type_of(n, t), pt_tsub(n, t, u), !type_open(n), !pt_type_miss(n, u).
 .decl possible_type(n: node, u: symbol)
 possible_type(n, u) :- type_of(n, t), pt_tsub(n, t, u).
 .decl possible_open(n: node)

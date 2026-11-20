@@ -247,7 +247,7 @@ fn metal<'a>(
             }
         }
     }
-    // Decision 0365: a walk starts within its anchor, evaluated on the device (`label_formula`). A recursive group's
+    // Decision 0365: a walk starts within its anchor, evaluated on the device (`label_phase`). A recursive group's
     // anchors read its own labels as every node (Q133), so they hold in every round: each is evaluated once, before
     // the group's rounds (`Runner::anchors`).
     if anchors_on() {

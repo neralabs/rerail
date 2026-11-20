@@ -136,7 +136,7 @@ pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evalu
     let front = Front::new(&arena, unit, false)?;
     let defs = Defs::new(&arena, unit, rung)?;
     arena.lease()?;
-    crate::pp_eval::run(|enc| {
+    crate::pp_eval::run_over(unit, |enc| {
         front.encode(enc, unit)?;
         defs.encode(enc, unit, &front)
     })?;
@@ -817,7 +817,7 @@ pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Err
         let vis = Vis::new(&arena, unit, lay)?;
         let exp = Exp::new(&arena, unit, lay, rung)?;
         arena.lease()?;
-        let launches = crate::pp_eval::run(|enc| {
+        let launches = crate::pp_eval::run_over(unit, |enc| {
             front.encode(enc, unit)?;
             defs.encode(enc, unit, &front)?;
             vis.encode(enc, unit, &front, &defs)?;
@@ -858,7 +858,7 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
         let defs = Defs::new(&arena, unit, rung)?;
         let vis = Vis::new(&arena, unit, lay)?;
         arena.lease()?;
-        crate::pp_eval::run(|enc| {
+        crate::pp_eval::run_over(unit, |enc| {
             front.encode(enc, unit)?;
             defs.encode(enc, unit, &front)?;
             vis.encode(enc, unit, &front, &defs)

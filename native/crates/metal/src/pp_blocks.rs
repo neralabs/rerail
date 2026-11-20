@@ -193,6 +193,8 @@ const BLOCK: usize = 1024;
 pub struct Enc<'a> {
     pub command: &'a CommandBufferRef,
     pub source: &'a str,
+    /// The slabs each pass makes resident: a unit's documents past the bound one (`pp_eval::Unit`).
+    pub resident: &'a [std::sync::Arc<crate::slabs::Slab>],
 }
 
 impl Enc<'_> {
@@ -206,6 +208,9 @@ impl Enc<'_> {
         e.set_compute_pipeline_state(&pipe);
         let bound: Vec<(&BufferRef, u64)> = buffers.iter().map(|b| b.bound()).collect();
         e.checked_set_buffers_at(self.command, &bound);
+        for slab in self.resident {
+            e.use_resource(slab.buffer(), metal::MTLResourceUsage::Read);
+        }
         for (k, w) in words.iter().enumerate() {
             e.set_bytes((buffers.len() + k) as u64, 4, std::ptr::from_ref(w).cast());
         }

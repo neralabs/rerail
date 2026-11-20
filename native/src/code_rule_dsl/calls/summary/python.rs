@@ -205,11 +205,7 @@ impl<'t> Extractor<'t> {
         }
         Summary {
             module,
-            names: self
-                .names
-                .iter()
-                .map(|name| Name::new(family, name))
-                .collect(),
+            names: Name::new_all(family, self.names.iter().map(|name| &**name)),
             defs: self.defs,
             edges: self.edges,
             references: self.references,
@@ -273,13 +269,18 @@ impl<'t> Extractor<'t> {
                 }
             }
             if let Some(table) = self.table {
-                let head_of_attribute = node.parent().is_some_and(|parent| {
-                    parent.kind() == "attribute"
-                        && parent
-                            .field("object")
-                            .is_some_and(|object| object.range() == node.range())
-                });
-                let call_target = node.parent().is_some_and(|parent| {
+                // Read only for an identifier or an attribute, the only nodes the tests below take them for: the
+                // parent read and its field's range were made for every node (0472).
+                let named = kind == "identifier" || kind == "attribute";
+                let parent = if named { node.parent() } else { None };
+                let head_of_attribute = kind == "identifier"
+                    && parent.as_ref().is_some_and(|parent| {
+                        parent.kind() == "attribute"
+                            && parent
+                                .field("object")
+                                .is_some_and(|object| object.range() == node.range())
+                    });
+                let call_target = parent.as_ref().is_some_and(|parent| {
                     parent.kind() == "call"
                         && parent
                             .field("function")
