@@ -471,7 +471,7 @@ struct Census {
 
 fn derive() -> Census {
     let dir = pack().join("candidates/rules");
-    // The 60 rules of Pulling-it-all-together's rewrite (`candidates/rules-ast`); the 10 candidates copied later
+    // The 60 rules of PIAT's rewrite (`candidates/rules-ast`); the 10 candidates copied later
     // from Data-layer-rule-expressivity (`require_each` and other new forms) are outside the census (O72).
     let converted = pack().join("candidates/rules-ast");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)

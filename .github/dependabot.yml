@@ -54,6 +54,11 @@ updates:
       # version of the other: they must move together.
       ast-grep:
         patterns: ["ast-grep-*"]
+      # ruff_python_parser, ruff_python_ast and ruff_text_size are pinned to one release (`=` in native/Cargo.toml) and
+      # build only against each other, so they move together. A ruff release can need a newer Rust than
+      # rust-toolchain.toml pins; that update waits for the toolchain bump.
+      ruff:
+        patterns: ["ruff_*"]
       cargo-minor-patch:
         update-types: [minor, patch]
   # Every action and reusable workflow is pinned to a commit SHA with its release as a `# vX.Y.Z` comment; Dependabot
