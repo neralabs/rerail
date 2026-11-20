@@ -51,6 +51,13 @@ pub(crate) trait Backend {
     /// the root, used by adapters that watch folder by folder). False when the root cannot be
     /// watched here; the adapter then holds nothing for it.
     fn watch(&mut self, root: &str, folders: &[String]) -> bool;
+    /// Watches `root` as [`Backend::watch`] does, but only with room a watch budget has left
+    /// (Linux), giving that room up, its watch ended, to any root watched with `watch` that
+    /// needs it; it stays spare until it is let go of or watched with `watch`. Adapters with no
+    /// budget watch it as any root.
+    fn watch_spare(&mut self, root: &str, folders: &[String]) -> bool {
+        self.watch(root, folders)
+    }
     /// Releases every handle on `root`; a root not watched is no-op.
     fn unwatch(&mut self, root: &str);
     /// Releases every root and stops the adapter's thread, waiting for it.
@@ -112,20 +119,16 @@ impl TreeWatcher {
     /// Watching a root already watched replaces its folder set.
     #[napi(catch_unwind)]
     pub fn watch(&mut self, root: String, folders: Vec<String>) -> Result<bool> {
-        let notices = Arc::clone(&self.notices);
-        let Some(backend) = self.backend() else {
-            return Ok(false);
-        };
-        // A root not watched until now (or whose watch ended) starts from nothing the adapter
-        // still holds for it.
-        if notices.start(&root) {
-            backend.unwatch(&root);
-        }
-        let watched = backend.watch(&root, &folders);
-        if !watched {
-            notices.stop(&root);
-        }
-        Ok(watched)
+        Ok(self.watch_as(&root, &folders, false))
+    }
+
+    /// Watches `root` as `watch` does, but only with room the watch budget has left (Linux): a
+    /// root watched with `watch` that needs that room takes it, and this root's watch ends
+    /// ([`Backend::watch_spare`]). A root watched so stays spare until it is let go of or watched
+    /// with `watch`.
+    #[napi(catch_unwind)]
+    pub fn watch_spare(&mut self, root: String, folders: Vec<String>) -> Result<bool> {
+        Ok(self.watch_as(&root, &folders, true))
     }
 
     /// Stops watching `root` and releases every handle on it.
@@ -162,6 +165,39 @@ impl TreeWatcher {
 }
 
 impl TreeWatcher {
+    /// `watch`, or with `spare` `watch_spare`.
+    fn watch_as(&mut self, root: &str, folders: &[String], spare: bool) -> bool {
+        let notices = Arc::clone(&self.notices);
+        let Some(backend) = self.backend() else {
+            return false;
+        };
+        // A root not watched until now (or whose watch ended) starts from nothing the adapter
+        // still holds for it.
+        if notices.start(root) {
+            backend.unwatch(root);
+        }
+        let watched = if spare {
+            backend.watch_spare(root, folders)
+        } else {
+            backend.watch(root, folders)
+        };
+        if !watched {
+            notices.stop(root);
+        }
+        watched
+    }
+
+    /// A watcher over `backend`, which reports into `notices`.
+    #[cfg(all(test, target_os = "linux"))]
+    fn over(notices: Arc<Notices>, backend: Box<dyn Backend>) -> Self {
+        Self {
+            notices,
+            backend: Some(backend),
+            unavailable: false,
+            closed: false,
+        }
+    }
+
     /// The open adapter, opening it on first use; none once closed or where none opens.
     fn backend(&mut self) -> Option<&mut Box<dyn Backend>> {
         if self.closed || self.unavailable {

@@ -61,7 +61,7 @@ For your own conventions, name a pack's `package.json` `rerail-pack-<id>` or `@<
 
 ### Rule documents
 
-A code rule is a `rerail.policy/v1` document: a path `scope` plus regex, AST or relational clauses, each with the violation it reports. The [code-rule DSL reference](code-rule-dsl-reference.html) documents every construct; [Tool-call rules](tool-call-rules.md) covers tool calls.
+A code rule is a `rerail.policy/v1` document: a path `scope` plus regex or AST clauses (and `relational` ones, in [internal testing](internal-testing.md)), each with the violation it reports. The [code-rule DSL reference](code-rule-dsl-reference.html) documents every construct; [Tool-call rules](tool-call-rules.md) covers tool calls.
 
 A conversation rule file:
 
@@ -471,7 +471,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `library_rules_upsert` | `PUT /api/library-rules/{id}` | Create or replace your rule (`attach: true` adds it to the target); a By Rerail id stores an edited copy. |
 | `library_rules_remove` | `DELETE /api/library-rules/{id}` | Delete your rule, its attachments and settings. |
 | `sessions_list` | `GET /api/sessions?since=&limit=&cursor=` | Sessions newest first with counts, `steeredViolations`, `declinedViolations`, `lastEventAt`; `total`, `nextCursor`. |
-| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran, tool edits left unchecked because Git ignores the file (`ignoredEdits`), changes seen that make Git's ignore rules ignore more (`ignoreRuleChanges`); and `declined`, the steers the coding agent declined with `rerail feedback`: each note's reason and the audit it answers, and how many steered violations that covers. |
+| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran, tool edits left unchecked because Git ignores the file (`ignoredEdits`), changes seen that make Git's ignore rules ignore more (`ignoreRuleChanges`), the places the shell-write check could not fully check, each once in the session (`discoveryGaps`, the places recorded, at most 1,000; `discoveryGapsMore` when it met more), and for a person the first 20 with path and reason (`discoveryGapPlaces`); and `declined`, the steers the coding agent declined with `rerail feedback`: each note's reason and the audit it answers, and how many steered violations that covers. |
 | `session_events` | `GET /api/sessions/{sessionId}/events?after=&before=&limit=` | Ordered events, at most 500 per page, forward from `after` or the page before `before`; `nextAfter` continues. Agents get some payloads withheld ([details](#what-a-coding-agent-may-read)). |
 | `work_links_list` | `GET /api/sessions/{sessionId}/work-links` | A session's external references. |
 | `work_links_add` | `PUT /api/sessions/{sessionId}/work-links` | `{ kind, reference, url? }`; re-linking updates the url. |
@@ -822,6 +822,7 @@ A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `
 - The pass lists files the rule couldn't check and counts in-scope binary files, which no rule reads.
 - Text output shows the first five matches and files; `--json` shows all. Path and `file`-query matches have no line.
 - A bare rule document, such as `.rerail/rules/<name>.json`, gets validation and the repository pass only.
+- A `.rerail` rule file, in the new rule language: `rules test` runs the tests it carries (`.test ... .end`) and reports each as passed or failed (`--json`: every test with its failures and findings). Those tests read programs the package does not ship, so it runs only from a Rerail checkout, or with `RERAIL_SOURCE_ROOT` naming one; elsewhere it refuses.
 
 `rerail rules add` sets the repository up with only that rule if needed. A rule already added here stays where it is when the draft names no `folder`; `"folder": ""` widens it to the whole repository. It never replaces a rule shipped by Rerail. Your copy of one takes no `folder`. It is refused where the repository does not add the original, and where your copy of it is already added; `rules show` names that copy, the one to change. Your copy made for another repository is refused where its original runs and the copy is not added, since both would steer. `rerail rules approve` with no names lists everything awaiting approval and its source.
 

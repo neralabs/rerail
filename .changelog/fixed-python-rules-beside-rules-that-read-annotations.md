@@ -1,0 +1,1 @@
+A Python code rule that does not read string annotations no longer finds code inside one, such as `x: "1 in []"`, when another rule that reads them runs beside it: it finds what it finds when it runs alone.
