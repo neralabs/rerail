@@ -7682,6 +7682,36 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   GPU lane's (CUDA's too), and the GPU tests failed on a host whose device was absent; off macOS they now skip
   without one, as the blocks tests do (64 of 64 on a Linux host with a device and on one without).
 
+### Q396. (Q265 on Native-GPU-strata) A cold hogql run takes 99.7 B instructions, against 81 B before the hub merge: the cross part's base relations (0458), not the rules
+
+- **Asked** (the user, 2026-11-20): Q337's runs took 91-97 B instructions, against 75-80 B before; get to the
+  bottom of it.
+- **Measured** (this Mac, CPU binding with `RERAIL_GPU=cpu` and no Metal, cold stores, load 13): this morning's
+  engine with this morning's rules (97afb09273), 81.0 and 81.9 B instructions, 4.8 s of spans' CPU, 1.75 s wall;
+  the merged engine (51ddaaeaaa) with its rules, 99.7 and 99.7 B, 6.2 s CPU, 3.1 s wall. Both give 1,629
+  findings. Neither engine runs the other's rules (each library reads relations its own engine's core declares), so
+  the split is by span (`tmp/gpu/q36/spandiff.py`, the two runs' `spans.tsv`):
+  - **+0.90 s:** `stats/measure the base rows held/a base relation measured`, two relations of 1.24 M and 1.51 M
+    rows, on the main thread. New with 0261fb5375 (0458 steps 1-3): the cross part's base relations are read off
+    the corpus batch, and with no kept statistics (a cold store) `syntax::measured` measures them whole.
+  - **+0.28 s:** `local/export to cross/base rows for the memo` (0.000 s before), and +0.07 s in `memo remember`:
+    each memoised chunk's entries now keep the base rows of the corpus views, read a value at a time
+    (`source.value(r, c)`), though the cross part reads none of them (0458).
+  - **The rules (#898):** the strata's joins differ by +0.02 s once the two spans above are out (+0.4 s in the
+    first pair of runs, at a higher load): new strata (`pre_65`, `pre_75`, `parsed`) cost about what `param` and
+    `tp_decl` no longer do.
+- **Done** (2026-11-20): `measured` read every value by its row, three times a column (the documents, the key
+  test, the pairs): each read locates its row in the batch (`Batch::locate`) and decodes its node, the hot frames of
+  the earlier sample (`generated_reads::f16`, `Viewed::value_at`, `Projected::span`). It now reads through the
+  source's walk (`for_rows`). The 1.24 M-row measure went from 0.58 s to 0.25-0.28 s; the 1.51 M-row one stays
+  0.32-0.40 s, as its cost is the sort of each column's (value, document) pairs. Test:
+  `a_views_measured_statistics_are_its_per_row_reads`.
+- **Left:**
+  - the measure's sorts (0.65 s, one thread): a view's statistics answered by the tape, or measured by each chunk
+    as it is evaluated (on the pool) and merged, as before 0458;
+  - the memo's base rows of the corpus views (0.33 s): kept only if a later run reads them; else not made (0353:
+    they are the tape's rows written again).
+
 ### Q338. (Q263 on Native-GPU-strata) A relation's statistics kept by delta are on the heap (0478 R5) — done (0478 step 6f)
 
 - **Seen** (2026-11-19, closing 0478 step 6): `InRel::stats` and `Rel::stats` (`KeptStats`, decision 0096,

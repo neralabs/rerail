@@ -200,6 +200,37 @@ fn lookups_agree_with_scans() {
     }
 }
 
+/// A view's statistics (`measured`, read through its walk) are those its per-row reads give: rows, ndv, sq and sqd
+/// of every column of `node`, `child`, `field` and `tape` over several documents. The measure of the cross part's
+/// base relations (decision 0458) had read each value by its row, locating it in the batch: 0.9 s of a hogql run.
+#[test]
+fn a_views_measured_statistics_are_its_per_row_reads() {
+    let store = ContentStore::open(&temp("measured")).unwrap();
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        if !["node", "child", "field", "tape"].contains(&name) {
+            continue;
+        }
+        let n = source.len();
+        let per_row: Vec<(String, i64, i64, i64, i64)> = source
+            .columns()
+            .into_iter()
+            .enumerate()
+            .map(|(c, col)| {
+                let mut pairs: Vec<(i64, i64)> = (0..n).map(|r| (source.value(r, c), source.value(r, 0) >> 32)).collect();
+                pairs.sort_unstable();
+                let mut values: BTreeMap<i64, BTreeMap<i64, i64>> = BTreeMap::new();
+                for (v, d) in pairs {
+                    *values.entry(v).or_default().entry(d).or_default() += 1;
+                }
+                let sq = values.values().map(|d| d.values().sum::<i64>().pow(2)).sum();
+                let sqd = values.values().flat_map(|d| d.values()).map(|k| k * k).sum();
+                (col, n as i64, values.len() as i64, sq, sqd)
+            })
+            .collect();
+        assert_eq!(super::measured(source.as_ref()), per_row, "{name}");
+    }
+}
+
 /// A view's filter scan, document by document, holds the rows a per-row read finds: over several documents, for
 /// filters on each column of `node`, `child`, `field` and `tape`, and on two at once. It is the view's own scan (a
 /// merge had left it outside the `Source` impl, where the trait's per-row scan shadowed it).

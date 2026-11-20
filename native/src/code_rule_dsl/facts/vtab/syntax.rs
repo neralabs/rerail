@@ -4439,8 +4439,12 @@ pub fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
 /// `statistics`, measured from the rows (a source that keeps its own calls this once).
 pub fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
     let rows = source.len();
-    // Each row's document (the first column's high half), read once for every column.
-    let docs: Vec<i64> = (0..rows).map(|row| source.value(row, 0) >> 32).collect();
+    // Each row's document (the first column's high half), read once for every column. Every read here is the
+    // source's walk (`for_rows`): a view of a batch's documents reads each document's nodes once, where a read by
+    // row locates the row in the batch first (0.9 s for a hogql run's two largest base relations, three such reads
+    // a value).
+    let mut docs: Vec<i64> = Vec::with_capacity(rows);
+    source.for_rows(&[0], &mut |_, v| docs.push(v[0] >> 32));
     // One sort per column by (value, document): a run of one value is its postings (ndv, and the sum of squares of
     // their lengths), and within it a run of one document is that document's (the sum of squares per document).
     source
@@ -4448,12 +4452,13 @@ pub fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
         .into_iter()
         .enumerate()
         .map(|(c, name)| {
+            let mut values: Vec<(i64, i64)> = Vec::with_capacity(rows);
+            source.for_rows(&[c], &mut |r, v| values.push((v[0], docs[r])));
             // A key column (strictly increasing, as a node column of a relation in node order): every value once,
             // and so every (document, value) once. No sort.
-            if (1..rows).all(|row| source.value(row - 1, c) < source.value(row, c)) {
+            if values.windows(2).all(|w| w[0].0 < w[1].0) {
                 return (name, rows as i64, rows as i64, rows as i64, rows as i64);
             }
-            let mut values: Vec<(i64, i64)> = (0..rows).map(|row| (source.value(row, c), docs[row])).collect();
             values.sort_unstable();
             let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
             let shadow = crate::code_rule_dsl::logic::plan::sketch::shadowing();
