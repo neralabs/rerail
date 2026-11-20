@@ -3126,6 +3126,7 @@ pub mod tests {
             let t0 = Table::one(slots, &[]).unwrap();
             let t1 = Table::new(slots, na).unwrap();
             let mut scan = Stage { mode: JOIN, nbinds: 2, ..Stage::default() };
+            // copy: not block data (a test's literal stage)
             scan.bind_slot[..2].copy_from_slice(&[0, 1]);
             scan.bind_kind[..2].copy_from_slice(&[BIND_RIGHT, BIND_RIGHT]);
             scan.bind_idx[..2].copy_from_slice(&[0, 1]);
