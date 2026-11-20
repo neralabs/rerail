@@ -3370,6 +3370,16 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - **Waits on the user:** 5b–5e (a complete `clif_msl`, rounds as batches) build out a shape the
   numbers say loses to one core. Question 3 below.
 
+### Q348. (Q282 on Swift-Kotlin-Scala-support) At the merge with Go-C-and-C++: 0480's kind bit onto the row kinds, 0413 in `rust_block`
+
+- **What**: 0451 decided a kind that shares a first byte is the record's own kind (F step 2),
+  not 0480's code bit (`Records::kind_rows`). 0413 adds `run R once D` and `CheckThen::Cut`,
+  which `rust_block` does not write; its field-by-field match fails the build until it does.
+  Numbered past Go-C-and-C++'s Q281. Their Q278 is this branch's Q346 (the reference's `, ends`).
+- **Done when**: after the merge, a keyword row's kind is its own in the token loop; token marks
+  test it; `kind_rows` and its masks are gone; 0480's test and the preprocessor's cases pass on
+  every executor; `rust_block` writes `once` and `Cut`; `aot_tapes_are_the_jits` passes.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -5982,7 +5992,17 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   in the interpreter and Cranelift. Kotlin's grammar is checked against the lean parser's tapes,
   which agree with the compiled side, so nothing caught it.
 - **Done when**: the reference places a settling mark's extras as tier 2 does, and the test's
-  grammar says `settles` again.
+  grammar says `settles` again. `, drops W` (0416) is the same: the reference keeps the extra the
+  compiled side drops; it drops it too.
+- **Done** (2026-11-18): each settling mark token carries its least bit and whether its `drops`
+  holds at its token (`eval::Token::settle`). Where the grammar takes it (`tree::Parser::settled`,
+  undone with the nodes where a way is given up), the nodes open there end past the extras before
+  the bit, and those extras are placed by span inside them. A dropped extra makes no node; where
+  no other extra is left before it, the nodes end past it, as the machine's (a node closed with
+  none pending ends at the last node made). `a_gap_mark_is_decided_by_the_token_after` says
+  `settles` again (it fails on the old reference), and `a_settling_mark_drops_in_the_reference`
+  checks `drops`, both against every executor. Kotlin's grammar is still compared with the lean
+  parser's tapes only, not with the reference. Reviewer not yet run.
 
 ### Q236. (Q221 on Swift-Kotlin-Scala-support) The C directives' Metal reads refuse with `UnsupportedBackend` in this worktree
 
@@ -7074,3 +7094,130 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   the sketch's arrays as block arrays. Their numbers stay the same (the statkeep tests).
 - **Done when:** `RelStats` keeps no heap collection, its tests pass, and hogql gives its 1,629 findings at the same
   instructions.
+
+### Q339. (Q222 on Swift-Kotlin-Scala-support) A run of tokens that counts a depth, as `type_args_end` does
+
+- **What**: a token run (`(A | B)*`, 0416) ends at the first place its rest holds. The lean
+  parser's `type_args_end` counts `<` and `>` (and `(`, `)`), and ends where the depth closes.
+  `lambda_params_end` stops at an unmatched closer. Kotlin's `generic` holds at `a<b>c>(d)` where
+  the lean parser's does not (no corpus file has one).
+- **Done when**: a run can count a pair of tokens (as tier 1's `count(up, down)` does), Kotlin's
+  type arguments and lambda parameters use it, and a test has the nested case.
+- **Done** (2026-11-18): a run's `nest (O to C) …` (0416, "A run's depths"), in Bitlex's reference,
+  the interpreter, Cranelift and the generated Rust; Kotlin's `generic` and `lam_params` count as
+  `type_args_end` and `lambda_params_end` do. Tests: `a_run_counts_its_depths` (eval, ladder),
+  `depths_are_the_lean_parsers`. Corpus unchanged; AOT tapes the JIT's. Reviewer not yet run.
+
+### Q340. (Q223 on Swift-Kotlin-Scala-support) A token run cannot stop at a line break
+
+- **What**: line breaks are no tokens, so a run passes them. Kotlin's annotation before `if` /
+  `when` ran to a line break before (`@A(x)` then `if` on the next line was no annotated `if`).
+  The lean parser reads an annotation and then any expression, without asking.
+- **Done when**: the annotated expression is the lean parser's (an annotation, then an
+  expression, with no peek), or a run can name a gap mark as a stop. A test has the line break.
+- **Done** (2026-11-18): no difference is left. `@A(x)` and `if` on the next line, and a declaration
+  on the line after, give the lean parser's tape (the run passes line breaks as the lean parser
+  passes them: it reads tokens): `annotated_expressions_are_the_lean_parsers`. What the run cannot
+  say is refused, to the lean parser: Q342.
+
+### Q342. (Q225 on Swift-Kotlin-Scala-support) Kotlin: an annotated expression where the lean parser's `declaration_ahead` decides
+
+- **What**: in a statement, the lean parser skips annotations (`skip_annotation`) and modifiers
+  and asks for a declaration's keyword (`declaration_ahead`); where there is none, the `@` is an
+  annotation over any expression. The grammar marks only `@A(…)` before `if` or `when` (a run to
+  the `)`), so `@A if …`, `@A(x) foo()` and `@A foo()` are refused (no wrong tape;
+  `annotated_expressions_are_the_lean_parsers` lists them). A run can not say "annotations, then
+  modifiers": an annotation's name and a modifier are both names.
+- **Done when**: the statement's `@` is decided as `declaration_ahead` decides (a token mark with
+  the annotation's structure, or the tree reading the annotations and then choosing, as the lean
+  parser does), and the refused cases are the lean parser's.
+- **Done** (2026-11-18): a run's `ending (C)` (0416): `ann_expr` runs over the annotations to one's
+  last token and asks that no declaration follows. The three cases and more give the lean
+  parser's tapes (`annotated_expressions_are_the_lean_parsers`); corpus 431 / 60 / 0 (was 429 /
+  62); `a_run_ends_on_a_token` on every executor; `aot_tapes_are_the_jits`. Reviewer not yet run.
+
+### Q343. (Q226 on Swift-Kotlin-Scala-support) Metal's step 13 differs from the interpreter (`every_step_on_metal_equals_the_interpreter`)
+
+- **What**: `parser_tests`' `every_step_on_metal_equals_the_interpreter` fails: 48 files of the
+  compiler ladder's step 13 (block comments) differ on Metal. Seen 2026-11-18 at 9e3876507 and
+  without the overlap change after it, so it predates both; since 0422 step 13 is the compiler
+  ladder's first step, which every test reads.
+- **Done when**: the cause is named and Metal's records equal the interpreter's on step 13.
+
+### Q341. (Q224 on Swift-Kotlin-Scala-support) `deprecated back_fill` leaves the language
+
+- **What**: Kotlin's step 36 has no back fill (0416). Kotlin's step 35, the `.rr` ladder's steps 15
+  to 21, and the tests of the IR's backward pass still say `deprecated back_fill`.
+- **Done when**: the `.rr` steps are moved as Kotlin's was, or they stop being compiled. Step 35 is
+  history, kept or dropped from the tests. The IR's tests write the `BackFill` op directly, and
+  the parse refuses `back_fill` with no way back.
+- **Done** (2026-11-18): the `.rr` steps 15–21 are moved (token marks, step 22's regions); Kotlin's
+  steps 1–35 are an uncompiled record (0416); `deprecated back_fill` is refused; the IR's tests
+  make their back fill with `syntax::backward`. Reviewer not yet run.
+
+### Q344. (Q227 on Swift-Kotlin-Scala-support) Kotlin: context over tokens in the token loop (0429)
+
+- **What**: tier 1's CPU body is 1,500 operations a block (144 machine instructions a byte); about
+  420 are keyword tests, and the fills and marks over them add more. 0429 answers them once a
+  token in the token loop, in four steps: the analysis, the word tests, the fills over tokens as
+  state, and the gap marks read through the state.
+- **Done when**: the CPU body holds no token-level mask (`tier1_cones` lists none left), with the
+  tapes unchanged.
+
+### Q345. (Q228 on Swift-Kotlin-Scala-support) A hidden mark taken before another live hidden mark: the compiled tier 2 refuses where the reference parses
+
+- **What**: tried for 0429's class header. Kotlin's grammar had one `semi` (no `class_head`
+  split) and a hidden `mark head_ctor = lf_end, before "constructor"`, declared before `semi`
+  and taken by `class_rest` before `[primary_constructor]`. With it, `class A⏎constructor(x: Int)⏎`
+  parses in Bitlex's reference, but the compiled tier 2 (interpreter and Cranelift alike)
+  refuses it at the `:` (byte 21, "no state takes the token"). Without the line break, and in
+  `fun f(x: Int)`, it parses. `semi` is still live, hidden, at the `constructor` token after
+  `head_ctor` is taken.
+- **Done when**: the compiled tier 2 equals the reference on that grammar and text (a ladder
+  test of two hidden gap marks at one token, the first taken), and 0429's class header step can
+  use it.
+- **Done** (2026-11-18, 0430 step 1b): in a state the level enters only by taking a mark, a
+  hidden mark that ends levels does not end it (the line break's one decision is made). With it,
+  `class A⏎constructor(x: Int)` is the lean parser's tape on every executor, and Kotlin's class
+  header is the class rule's (`head_ctor`). `ladder_tests::a_taken_mark_is_the_line_breaks_decision` checks the
+  rule on the interpreter and Cranelift (it fails without it), and Kotlin's
+  `constructor_lines_are_the_lean_parsers` the class header.
+
+### Q346. (Q229 on Swift-Kotlin-Scala-support) Bitlex's reference does not implement a mark's `, ends`
+
+- **What**: `, ends` (a hidden mark where a nested level that may end and does not take it
+  ends) is parsed but read nowhere in `tools/bitlex/src/tree.rs`. The reference's nested levels
+  skip every hidden mark they cannot take (`past_marks`, follow none). So the reference accepts
+  `class A⏎private⏎constructor(x: Int)`, which the compiled side and the lean parser refuse: its
+  `primary_constructor` reads over the line break.
+- **Done when**: the reference ends a nested level at an `ends` mark as the compiled side does
+  (0430 step 1b's rule included), and Kotlin's refused texts are refused by the reference too.
+
+### Q347. (Q230 on Swift-Kotlin-Scala-support) Gap marks set in the token loop while the extra's mark is set after it
+
+- **What**: the token loop's merge (`record_tokens`) tells an extra by its mark's bit in the
+  code. A gap mark the loop sets itself (`loop_marks`' lifted marks, from bytewise masks) is
+  given to the token unless that bit is set. Where the extra's mark is set after the tokens
+  (`late_marks`: not a reader's and not bytewise at its first byte), the loop takes an extra
+  for a grammar token and puts the gap mark's bit on the comment. 0430 step 2 found this for
+  the blank marks: `blank_marks` now asks for the extra's mark to be the loop's. `loop_marks`
+  does not ask it yet.
+- **Done when**: `loop_marks` applies the same condition, or the loop tells an extra by its
+  kind, with a ladder test of a bytewise gap mark and an extra whose mark is late.
+- **Done** (2026-11-18): `loop_marks` lifts a gap mark only where the extra's mark is the
+  loop's (`extra_known`, shared with `blank_marks`); else the mark is set after the tokens.
+  Only a lifted mark the loop keeps in the code shows the fault (tier 2 tests the lazy ones
+  itself): `ladder_tests::a_loop_gap_mark_waits_for_a_late_extra` has one a `without` reads,
+  and fails without the condition (`"// a, [1] é\r\n/*\n\n*/"`, the comment took the bit).
+
+### Q349. Cranelift refuses corpus program `0565-mix-seed_205` by 0423's check
+
+- **Found** (2026-11-20, at the roll-up's Swift-Kotlin-Scala-support merge):
+  `corpus_tests::corpus_cranelift_equals_the_interpreter` fails at compile, before any run:
+  `0565-mix-seed_205.bitlex: cranelift: RefusedShape("region 0's value %48 on the vectors made
+  outside its branch (decision 0423)")`. The hub's own code fails the same (its compiler, Bitlex,
+  metal and parser_tests crates at 80c563a99 on the M3, `RERAIL_CORPUS_FILES=0565-mix-seed_205`),
+  so it predates the merge. The program is masks alone: `next(next(digit, 1), 5)`,
+  `span(after_odd_run(x), 20) & after(high) & starts(ws)` and `after_odd_run(prev(bs & alpha, 54))`.
+- **Done when**: the program's gated region keeps its vectors inside its branch (or the gate is
+  not taken for it), and the corpus test passes whole.

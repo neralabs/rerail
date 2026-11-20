@@ -1,7 +1,8 @@
-//! The Bitlex ladder's checks (the engine's tests and this crate's use them): thirteen languages, from one keyword to a data language with nested
-//! records, lists, texts, escapes, numbers and two kinds of comment, a step at a time. Each is
-//! parsed by its Bitlex file alone (`bitlex_ladder/`), with no Rust between the bytes and the
-//! nodes.
+//! The Bitlex ladder's checks (the engine's tests and this crate's use them). The ladder was built
+//! a step at a time, from one keyword to a data language with nested records, lists, texts,
+//! escapes, numbers and two kinds of comment; the tree keeps its last step (13), and JSON and
+//! JSONC (14, 15), and git's history the rest (decision 0422). Each is parsed by its Bitlex file
+//! alone (`bitlex_ladder/`), with no Rust between the bytes and the nodes.
 //!
 //! The languages are made up, so that no step is a known format: records are `< >`, lists
 //! `( )`, items are separated by `;`, an entry is `#key# = value`, texts are between `#`, a caret
@@ -97,6 +98,53 @@ pub fn dir() -> String {
         .to_string_lossy()
         .into_owned()
 }
+
+/// A grammar whose gap mark (`semi`) is read from the blank run before each token, with two
+/// comment kinds as extras (`ladder_tests::a_gap_mark_read_from_the_blanks`): each extra keeps
+/// the blank marks of its own gap (`Records::extra`). The Metal tests run it too.
+pub const BLANKS_STEP: &str = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class dq        = '"'
+class word      = 'a'..'z'
+class punct     = '(' ')' ';'
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+regions hidden {
+  line  = line_open .. lf outside
+  block = block_open .. block_end
+  str   = dq .. dq
+}
+mask code       = ~hidden & ~o_line & ~o_block & ~o_str
+mask last_byte  = ~next(~empty)
+error "a comment or a string open at the end of the file" by tokens when (f_block | f_str) & last_byte
+mask w          = code & word
+mask name       = fill(w, ~w)
+error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
+token line_comment = start slash & o_line read line
+token multiline_comment = start slash & o_block read block
+token string    = start o_str read str
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start code & punct
+keywords simple_identifier { "k" }
+keywords punct { "(" ")" ";" } required
+skip ws
+mark semi       = lf & code unless after ";", end, ends
+tree t {
+  node source_file whole = (statement (semi | ';'))*
+  choice statement nested = call | simple_identifier | string
+  node call             = 'k' '(' [simple_identifier | string] ')'
+  hidden semi
+  extra line_comment multiline_comment
+}
+"#;
+
+/// A text of `BLANKS_STEP` whose comments lie after a line break, one after another too, and
+/// on their token's line: semi's bits of its records are 0, 0, 1, 1, 0, 1.
+pub const BLANKS_TEXT: &[u8] = b"a // x\n// y\n/* z */ /* w */\nb\n";
 
 /// The ladder's files, in order.
 pub fn steps() -> Vec<(String, String)> {
@@ -704,6 +752,9 @@ pub fn check_documents(
         let compiled = c.parser.parse(&bytes).ok().map(as_ids);
         let tier1 = c.parser.tier1.extract(&bytes);
         if !tier1_agrees(&tier1, &run, &made, lazy) {
+            if std::env::var_os("RERAIL_LADDER_CODES").is_some() {
+                eprintln!("codes interp {:x?}\n      cpu    {:x?}\nstarts {:?}", run.codes, tier1.codes, run.positions.first());
+            }
             return Some(format!("{}: tier 1 compiled differs from its interpreter", show()));
         }
         if interp != want || compiled != want {

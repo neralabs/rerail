@@ -3636,6 +3636,7 @@ dependencies = [
  "rerail-kotlin-aot",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
+ "rerail-simd8",
 ]
 
 [[package]]

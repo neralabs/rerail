@@ -3705,6 +3705,8 @@ mod transducer {
         #[cfg_attr(test, path = ".")]
         pub mod rir {
             pub use rerail_transducer::code_rule_dsl::transducer::packed::rir::*;
+            // The grammar's names; the compiler's `program::Names` comes in by `super::*` too.
+            pub use rerail_transducer::code_rule_dsl::transducer::packed::rir::Names;
             #[cfg(test)]
             #[path = "rir_tests.rs"]
             pub mod tests;

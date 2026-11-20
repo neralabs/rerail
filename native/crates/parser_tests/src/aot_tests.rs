@@ -337,5 +337,6 @@ fn ladder_steps_rust_tapes_are_the_jits() {
         }
     }
     eprintln!("{taken} steps taken ({direct} direct), {written} format 16 homes the JIT's ({long} of documents of 3,000 nodes or more); refused:\n{}", refused.join("\n"));
-    assert!(taken >= if only.is_some() || pick.is_some() { 1 } else { 30 } && long > 0, "the steps the Rust backend takes");
+    // 8 with the ladders' last steps and the probes (decision 0422).
+    assert!(taken >= if only.is_some() || pick.is_some() { 1 } else { 8 } && long > 0, "the steps the Rust backend takes");
 }

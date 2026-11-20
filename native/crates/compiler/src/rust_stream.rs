@@ -41,6 +41,8 @@ use std::fmt::Write;
 /// The program's facts the words read.
 struct Facts<'a> {
     native: &'a Structure,
+    /// A mark loses an extra (`SETTLE m=2`): the token taken makes it again.
+    loses: bool,
     /// The marks the records hold, and the live bits at a token and at the stream's end
     /// (`native_cpu_stream`'s `in_code`, `rest_bits`, `end_bits`).
     in_code: usize,
@@ -52,6 +54,8 @@ struct Facts<'a> {
     kind_reps: Option<Vec<u8>>,
     end_kind: Option<u8>,
     word_kind_of: Vec<u8>,
+    /// The parts' own kinds (`records::Retag::part`): a token of one may be any word.
+    part_kinds: Vec<usize>,
     framed: bool,
     context: bool,
     /// Each function's entry place.
@@ -81,6 +85,12 @@ struct Facts<'a> {
     /// The stream's end as a start: past the last token, `TOKEN` gives the file's length as its
     /// start, with no branch (`sentinel`), as simdjson's index ends with one past the last.
     sentinel: bool,
+    /// The grammar's names (`Words::names`), as Rust: each function's (by its entry), each node
+    /// kind's constant (`k::…`), each record kind's (`t::…`) and each word's (`w::…`).
+    fn_names: HashMap<usize, String>,
+    kind_names: HashMap<u16, String>,
+    token_names: HashMap<u8, String>,
+    word_names: Vec<String>,
 }
 
 impl Facts<'_> {
@@ -338,6 +348,117 @@ impl Fetched {
     }
 }
 
+impl Facts<'_> {
+    /// The function of the rule entered at `pc`.
+    fn function(&self, pc: usize) -> String {
+        self.fn_names.get(&pc).cloned().unwrap_or_else(|| format!("r{pc}"))
+    }
+
+    /// Node kind `k` (as a `u16`).
+    fn kind(&self, k: u16) -> String {
+        self.kind_names.get(&k).map_or_else(|| format!("{k}"), |n| format!("k::{n}"))
+    }
+
+    /// Node kind `k` and field bits `f` (`kind_field`, a `u32`).
+    fn kind_field(&self, k: u16, f: u32) -> String {
+        match (self.kind_names.get(&k), f) {
+            (Some(n), 0) => format!("k::{n} as u32"),
+            (Some(n), f) => format!("k::{n} as u32 | {f:#x}"),
+            (None, f) => format!("{}", u32::from(k) | f),
+        }
+    }
+
+    /// String `s`'s word, as a record names it (`S::word`).
+    fn word(&self, s: u16) -> String {
+        self.word_names.get(usize::from(s)).map_or_else(|| format!("{}", u32::from(s) + 1), |n| format!("w::{n}"))
+    }
+
+    /// Record kind `k`, the stream's end past them (`end_kind`).
+    fn token(&self, k: usize) -> String {
+        if self.end_kind.is_some_and(|e| usize::from(e) == k) {
+            return "t::END".into();
+        }
+        u8::try_from(k).ok().and_then(|k| self.token_names.get(&k)).map_or_else(|| format!("{k}"), |n| format!("t::{n}"))
+    }
+
+    /// The named constants: `k`, `t` and `w`.
+    fn constants(&self, out: &mut String) {
+        let mut k: Vec<(&u16, &String)> = self.kind_names.iter().collect();
+        k.sort();
+        out.push_str("/// The node kinds, by the grammar's names.\nmod k {\n");
+        for (v, n) in k {
+            writeln!(out, "    pub const {n}: u16 = {v};").unwrap();
+        }
+        out.push_str("}\n\n/// The record kinds (a token's, by its first byte), by the grammar's names.\nmod t {\n");
+        let mut t: Vec<(&u8, &String)> = self.token_names.iter().collect();
+        t.sort();
+        for (v, n) in t {
+            writeln!(out, "    pub const {n}: u32 = {v};").unwrap();
+        }
+        if let Some(e) = self.end_kind {
+            writeln!(out, "    /// The stream's end, a kind past the records'.\n    pub const END: u32 = {e};").unwrap();
+        }
+        out.push_str("}\n\n/// The words, as a record names them (a string's index, plus one).\nmod w {\n");
+        for (i, n) in self.word_names.iter().enumerate() {
+            writeln!(out, "    pub const {n}: u32 = {};", i + 1).unwrap();
+        }
+        out.push_str("}\n\n");
+    }
+}
+
+/// The Rust keywords, which a grammar's name may be.
+const KEYWORDS: &[&str] = &[
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", "abstract", "become", "box", "do", "final", "macro", "override", "priv", "try", "typeof", "unsized", "virtual", "yield", "gen",
+];
+
+/// A grammar's name (a rule's, a kind's, a word's: `import_header`, `"`, `?.`) as a Rust name:
+/// its letters, digits and `_`, each other character by its name; upper case for a constant.
+fn rust_name(name: &str, upper: bool) -> String {
+    rust_name_of(name, upper)
+}
+
+/// `rust_name`, for the other generators (`rust_block`).
+pub(crate) fn rust_name_of(name: &str, upper: bool) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        let part = match c {
+            c if c.is_ascii_alphanumeric() || c == '_' => {
+                out.push(if upper { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() });
+                continue;
+            }
+            '"' => "quote", '\'' => "tick", '`' => "backtick", '.' => "dot", ',' => "comma", ':' => "colon", ';' => "semi",
+            '(' => "lparen", ')' => "rparen", '[' => "lbrack", ']' => "rbrack", '{' => "lbrace", '}' => "rbrace",
+            '<' => "lt", '>' => "gt", '=' => "eq", '!' => "bang", '?' => "question", '+' => "plus", '-' => "minus",
+            '*' => "star", '/' => "slash", '%' => "percent", '&' => "amp", '|' => "bar", '^' => "caret", '~' => "tilde",
+            '@' => "at", '#' => "hash", '$' => "dollar", '\\' => "backslash", ' ' => "space",
+            _ => "x",
+        };
+        if !out.is_empty() && !out.ends_with('_') {
+            out.push('_');
+        }
+        out.push_str(&if upper { part.to_ascii_uppercase() } else { part.to_owned() });
+        out.push('_');
+    }
+    let mut out = out.trim_end_matches('_').to_owned();
+    if out.is_empty() || out.starts_with(|c: char| c.is_ascii_digit()) || KEYWORDS.contains(&out.as_str()) {
+        out.insert(0, if upper { 'N' } else { 'r' });
+        out.insert(1, '_');
+    }
+    out
+}
+
+/// Each number's name, distinct: the second of one name gets its number after it.
+fn distinct<K: Copy + std::fmt::Display + std::hash::Hash + Eq>(names: impl Iterator<Item = (K, String)>) -> HashMap<K, String> {
+    let mut seen: HashMap<String, usize> = HashMap::default();
+    let mut out = HashMap::default();
+    for (k, n) in names {
+        let c = seen.entry(n.clone()).or_default();
+        *c += 1;
+        out.insert(k, if *c == 1 { n } else { format!("{n}_{k}") });
+    }
+    out
+}
+
 /// Tier 2's program as Rust source: `tier2_entry(ctx)`, the harness's entry
 /// (`native_cpu_stream::Entry`), with its fingerprint, `SOURCE`.
 pub fn rust_source(native: &Structure) -> Result<String, String> {
@@ -387,7 +508,8 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         crate::native_cpu_block::lazy_marks(r, &|o| bw.can(o))
     });
     let lazy_bits: u64 = lazy.iter().fold(0, |a, &(k, _)| a | 1 << k);
-    let rest_bits: u64 = (if in_code >= 64 { 0 } else { u64::MAX << in_code }) | lazy_bits;
+    // The code's token marks with no bit (`Records::alone`): live at every token, as past it.
+    let rest_bits: u64 = (if in_code >= 64 { 0 } else { u64::MAX << in_code }) | lazy_bits | records.map_or(0, |r| u64::from(r.alone));
     let mut end_bits = rest_bits;
     for b in &native.structural {
         if let Op::Mark { order, end: true, .. } = b.operation
@@ -402,6 +524,7 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
     });
     let end_kind = kind_reps.as_ref().and_then(|r| u8::try_from(r.len()).ok());
     let word_kind_of: Vec<u8> = records.filter(|_| starts).map_or_else(Vec::new, |r| r.words.iter().map(|w| r.kinds[usize::from(w[0])]).collect());
+    let part_kinds: Vec<usize> = records.map_or(Vec::new(), |r| r.retags.iter().filter(|t| t.part).map(|t| usize::from(t.kind)).collect());
     let words = &native.structural;
     let framed = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::MadeUnset | On::Inner, .. }));
     let context = words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. } | Op::Push { flag: Some(_), .. }));
@@ -413,11 +536,22 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
     }
     let phase = crate::native_cpu_stream::phases(native, &crate::native_cpu_stream::push_targets(native));
     let flagged = phase.contains(&(crate::stream::TAKEN | crate::stream::UNTAKEN));
+    let names = &native.names;
+    let fn_names = distinct(names.rules.iter().filter_map(|(i, n)| native.rules.get(usize::from(*i)).map(|&pc| (usize::from(pc), rust_name(n, false)))));
+    // A rule's function and the harness's own share no name.
+    let fn_names = fn_names.into_iter().map(|(pc, n)| (pc, if n == "tier2_entry" || n.starts_with('r') && n[1..].bytes().all(|b| b.is_ascii_digit()) { format!("rule_{n}") } else { n })).collect();
+    let kind_names = distinct(names.kinds.iter().map(|(k, n)| (*k, rust_name(n, true))));
+    let token_names = distinct(names.tokens.iter().map(|(k, n)| (*k, rust_name(n, true))));
+    let word_names: Vec<String> = {
+        let d = distinct(native.strings.iter().enumerate().map(|(i, s)| (i, rust_name(&String::from_utf8_lossy(s), true))));
+        (0..native.strings.len()).map(|i| d[&i].clone()).collect()
+    };
+    let loses = native.structural.iter().any(|b| matches!(b.operation, Op::LoseLast { .. }));
     if fetch.is_some() && (flagged || native.extras.len() > 0) {
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
-    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen };
+    let mut facts = Facts { native, loses, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, part_kinds, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, fn_names, kind_names, token_names, word_names };
     facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {
@@ -452,13 +586,14 @@ fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixte
     out.push_str("// Generated by rerail_compiler::rust_stream from tier 2's native IR. Do not edit.\n");
     out.push_str("#![allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, non_snake_case, dead_code, clippy::all)]\n\n");
     out.push_str("use core::arch::aarch64::*;\n\n");
+    facts.constants(&mut out);
     prelude(&mut out, &facts)?;
     for &e in &facts.entries {
         rule(&mut out, &facts, e)?;
     }
     if facts.sixteen {
         // The writer's ops, the host's own (`f16::Writer`'s), compiled with the run.
-        out.push_str("\n/// The tape's writer's ops (decision 0434 §6), as `rerail_tape_format` compiles them.\nmod w {\n");
+        out.push_str("\n/// The tape's writer's ops (decision 0434 §6), as `rerail_tape_format` compiles them\n/// (`ops`: `w` is the words', as the lean lexers name them).\nmod ops {\n");
         out.push_str(rerail_tape_format::WRITER_RUST);
         out.push_str("}\n");
     }
@@ -514,20 +649,33 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
         block_base: 0, coded: 0, ncodes: 0, wide: 0,
         room_nodes: c.room_nodes as usize, room_supers: c.room_supers as usize,
         next: 0, start: 0, end: 0, rec_end: 0, code: 0, last_end: 0, at_end: false, need: true, part_at: 0, live: 0,
-        nodes: 0, nopen: 0, pending: 0, keep: 0, supers: 0, last_made: 0, moved: 0,
+        nodes: 0, nopen: 0, pending: 0, keep: 0, supers: 0, lost: 0, last_made: 0, moved: 0,
         counts: [0; COUNTS], depth: 0, ret: [0; DEPTH as usize],
     };
 ",
     );
     let args = if x.context { ", 0, 0" } else { "" };
-    writeln!(out, "    match r0(&mut s{args}) {{\n        Ok(_) => 0,\n        Err(true) => u64::MAX,\n        Err(false) => REFUSED,\n    }}\n}}\n").unwrap();
+    writeln!(out, "    match {}(&mut s{args}) {{", x.function(0)).unwrap();
+    writeln!(out, "        Ok(_) => 0,\n        Err(true) => u64::MAX,\n        Err(false) => REFUSED,\n    }}\n}}\n").unwrap();
 
     out.push_str("impl S {\n");
     // The room: the most a token's path writes (`Bounds`), a call open's pops where returns chain.
     let pops = |per: u64| if per > 0 { format!(" + self.depth as usize * {per}") } else { String::new() };
     writeln!(
         out,
-        "    /// The tape's room for the path to the next token (`native_cpu_stream::Bounds`).
+        "    /// A call one level deeper, as the lean parser's `deeper()`: refused past `DEPTH`.
+    #[inline(always)]
+    fn deeper(&mut self, rule: impl FnOnce(&mut S) -> Result<bool, bool>) -> Result<bool, bool> {{
+        if self.depth == DEPTH {{
+            return Err(false);
+        }}
+        self.depth += 1;
+        let again = rule(self)?;
+        self.depth -= 1;
+        Ok(again)
+    }}
+
+    /// The tape's room for the path to the next token (`native_cpu_stream::Bounds`).
     #[inline(always)]
     fn room(&mut self) -> R {{
         if self.nodes as usize + {}{} > self.room_nodes || self.supers as usize + {}{} > self.room_supers {{
@@ -577,6 +725,15 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     }
     for (i, m) in n.token_marks.iter().enumerate() {
         pattern(out, i, m, n.extras.first().map(|e| e.0));
+        if i == 0 || n.token_marks[i - 1].order != m.order {
+            patterns(out, i, &n.token_marks);
+        }
+    }
+    for (i, m) in n.gap_patterns.iter().enumerate() {
+        gap_pattern(out, i, m);
+        if i == 0 || n.gap_patterns[i - 1].order != m.order {
+            gap_patterns(out, i, &n.gap_patterns);
+        }
     }
     // The refusing token marks' tests, at a token whose code has a bit of theirs.
     let refusing: Vec<String> = n
@@ -761,6 +918,9 @@ struct S {
     /// The nodes made, open; the deferred extras' leaves, and the end before them; the
     /// supertypes.
     nodes: u32, nopen: u32, pending: u32, keep: u32, supers: u32,
+    /// An extra a mark lost (`SETTLE m=2`): its kind and field, plus one (0: none), made again
+    /// by the next `TOKEN` that takes a token.
+    lost: u32,
     /// The node made last at the innermost level (one more than its row); the node the last
     /// wrap moved.
     last_made: u32, moved: u32,
@@ -876,7 +1036,7 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
             return Err(false);
         }}
         loop {{
-{before}            let i = self.next as usize;
+{before}{lost}            let i = self.next as usize;
             if i == self.n {{
                 self.at_end = true;
                 self.live = {:#x};{end_code}
@@ -893,7 +1053,8 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
     }}
 ",
         if flagged { ", where this one's bytes are taken" } else { "" },
-        x.end_bits
+        x.end_bits,
+        lost = if x.loses { "            if self.lost != 0 {\n                // A lost extra: after the token's leaf, of no width at its start.\n                let k = self.lost - 1;\n                self.lost = 0;\n                let at = self.start;\n                self.leaf::<true, true>(k, at);\n            }\n" } else { "" }
     )
     .unwrap();
     Ok(())
@@ -1109,18 +1270,35 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end }
     }
 
-    /// `SETTLE`: the pending extras, from the first, while output `o` does not hold at their
-    /// starts, settled: the nodes closed next keep them.
+    /// `SETTLE`: the pending extras, from the first, while their codes have no bit `k` (the
+    /// marks of an extra's own gap: a line end before it), settled: the nodes closed next keep
+    /// them. They are the records before the token's (the one lost last left out).
     #[inline(always)]
-    fn settle_before(&mut self, o: usize) {
-        let first = self.nodes - self.pending;
-        let mut i = first;
-        while i < self.nodes && !self.bit(o, unsafe { (*self.row(i)).start }) {
+    fn settle_before(&mut self, k: u32) {
+        let token = $TOKEN_AT;
+        let from = token - self.pending as usize - usize::from(self.lost != 0);
+        let mut i = 0;
+        while i < self.pending as usize && unsafe { *self.codes.add((from + i) * self.rs) } >> (16 + k) & 1 == 0 {
             i += 1;
         }
-        if i > first {
-            self.keep = unsafe { (*self.row(i - 1)).end };
-            self.pending = self.nodes - i;
+        if i > 0 {
+            let first = self.nodes - self.pending;
+            self.keep = unsafe { (*self.row(first + i as u32 - 1)).end };
+            self.pending -= i as u32;
+        }
+    }
+
+    /// `SETTLE m=2` (a mark's `loses`), where its question holds at the token: the extra
+    /// pending last taken out, its kind kept (`lost`): the `TOKEN` that takes the token makes
+    /// it again after it, of no width. With none left pending, the nodes closed next end at the
+    /// token before.
+    #[inline(always)]
+    fn lose(&mut self) {
+        self.pending -= 1;
+        self.nodes -= 1;
+        self.lost = unsafe { *(self.row(self.nodes) as *const u32) } + 1;
+        if self.pending == 0 {
+            self.last_end = self.keep;
         }
     }
 
@@ -1435,7 +1613,11 @@ $COMMIT_CLOSE        Ok(())
     }
 "#;
     let inner_test = if inner { "*Self::col(self.head, r) & WRAPPED == 0 || *Self::col(self.head, r + 1) & WRAPPED != 0" } else { "true" };
+    // The current token's record: `next - 1`, but at the end, where `next` stays at the count;
+    // with the end as a start (`sentinel`), `next` is one past it there too.
+    let token_at = if x.sentinel { "self.next as usize - 1".to_owned() } else { format!("self.next as usize - usize::from(!{})", x.at_end("self")) };
     let s = src
+        .replace("$TOKEN_AT", &token_at)
         .replace("$DROPPED_IN", dropped_in)
         .replace("$EARLY", early)
         .replace("$HEAD_N", &w("\n            *Self::col(self.head, n) = 0;"))
@@ -1473,7 +1655,7 @@ $COMMIT_CLOSE        Ok(())
     out.push_str(&s.replace("$CLASS_FIRST", &first).replace("$CLASS_BITS", &bits).replace(
         "$COMMIT_CLOSE",
         if x.sixteen && x.coded {
-            "        // SAFETY: the writer's state, its room reserved for the run (`f16::Writer::reserve_run`).\n        unsafe { w::w_close(self.writer, u64::from(end)) };\n"
+            "        // SAFETY: the writer's state, its room reserved for the run (`f16::Writer::reserve_run`).\n        unsafe { ops::w_close(self.writer, u64::from(end)) };\n"
         } else if x.coded {
             ""
         } else {
@@ -1507,8 +1689,8 @@ $COMMIT_CLOSE        Ok(())
         // SAFETY: the writer's state, its room reserved for the run (`f16::Writer::reserve_run`); the
         // stack's room is the bound's.
         unsafe {
-            w::w_open(self.writer, number, u64::from(self.start));
-            w::w_commit(self.writer);
+            ops::w_open(self.writer, number, u64::from(self.start));
+            ops::w_commit(self.writer);
             *Self::col(self.open, self.nopen) = 0;
         }
         self.nopen += 1;
@@ -1524,8 +1706,8 @@ $COMMIT_CLOSE        Ok(())
         self.pending = 0;
         // SAFETY: as `open16`'s.
         unsafe {
-            w::w_leaf(self.writer, number, u64::from(self.start), u64::from(end));
-            w::w_commit(self.writer);
+            ops::w_leaf(self.writer, number, u64::from(self.start), u64::from(end));
+            ops::w_commit(self.writer);
         }
         self.nodes += 1;
         Ok(())
@@ -1674,7 +1856,7 @@ $COMMIT_ALL        let total = self.finish(nodes);
         // The root closed in the ops, and no image: the host finishes the writer (`CompiledStream::write16`).
         // Values past format 15's widths do not reach format 16.
         let end = if x.coded {
-            "        // SAFETY: as `close`'s.\n        unsafe { w::w_close(self.writer, u64::from(self.len)) };\n        let total = 0;"
+            "        // SAFETY: as `close`'s.\n        unsafe { ops::w_close(self.writer, u64::from(self.len)) };\n        let total = 0;"
         } else {
             // The nodes not yet passed, and the root closed (`native_cpu_tape::pass`).
             "        self.pass16(self.passed, nodes, 0);\n        let total = 0;"
@@ -1712,7 +1894,7 @@ const PASS16: &str = "    /// Nodes `from..to` passed to the writer's ops in pre
                     if j + *self.size_c.add(j as usize) as u32 > i {
                         break;
                     }
-                    if w::w_close(self.writer, u64::from((*self.row(j)).end)) != 0 {
+                    if ops::w_close(self.writer, u64::from((*self.row(j)).end)) != 0 {
                         return;
                     }
                 }
@@ -1726,7 +1908,7 @@ const PASS16: &str = "    /// Nodes `from..to` passed to the writer's ops in pre
                     self.fail16(NUMBER, i);
                     return;
                 }
-                if w::w_open(self.writer, number, u64::from((*self.row(i)).start)) != 0 || w::w_commit(self.writer) != 0 {
+                if ops::w_open(self.writer, number, u64::from((*self.row(i)).start)) != 0 || ops::w_commit(self.writer) != 0 {
                     return;
                 }
                 i += 1;
@@ -1751,7 +1933,7 @@ const PASS16: &str = "    /// Nodes `from..to` passed to the writer's ops in pre
             if number == u32::MAX {
                 self.fail16(NUMBER, at);
             } else {
-                w::w_retag(self.writer, at, number);
+                ops::w_retag(self.writer, at, number);
             }
         }
     }
@@ -1905,7 +2087,18 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
     };
     let free = no_extra("c");
     let mut body = String::new();
-    let test = |el: &crate::program::TokenElem| -> String {
+    let test = element_test;
+    // The next record that is no extra, after `at`: past the last, `past`.
+    let advance = |past: &str| format!("        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n");
+    pattern_body(out, i, m, &mut body, &free, &test, &advance);
+}
+
+/// A token element's test of a record's code `c` (`TokenElem::holds`): a kind of its set or a
+/// word of its (a `not` element none), and its `with` and `without` marks.
+fn element_test(el: &crate::program::TokenElem) -> String {
+    let mut all = Vec::new();
+    // Of no kinds and words, a `not` element is any record: no test of its choices.
+    if el.kinds != 0 || !el.words.is_empty() || !el.not {
         let mut t = Vec::new();
         if el.kinds != 0 {
             // Not one of the kinds' hard keywords (`TokenElem::except`).
@@ -1923,10 +2116,27 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
         }
         let t = if t.is_empty() { "false".into() } else { t.join(" || ") };
         // A `not` element: none of its choices.
-        if el.not { format!("!({t})") } else { t }
-    };
-    let mut ahead = 0i8;
-    for el in &m.elems {
+        // One `matches!` needs no parentheses to be negated.
+        let one = t.starts_with("matches!(") && !t.contains(" || ");
+        all.push(if el.not && one { format!("!{t}") } else if el.not { format!("!({t})") } else if all.is_empty() && el.without == 0 && el.with == 0 { t } else { format!("({t})") });
+    }
+    // `without M`: none of the marks' bits in the code (`TokenElem::without`).
+    if el.without != 0 {
+        all.push(format!("c >> {} & {:#x} == 0", crate::records::MARK_SHIFT, el.without));
+    }
+    // `with M`: all of the marks' bits in the code (`TokenElem::with`).
+    if el.with != 0 {
+        all.push(format!("c >> {} & {:#x} == {:#x}", crate::records::MARK_SHIFT, el.with, el.with));
+    }
+    if all.is_empty() { "true".into() } else { all.join(" && ") }
+}
+
+/// `pattern`'s body: the elements' tests in turn, and the run's.
+fn pattern_body(out: &mut String, i: usize, m: &TokenMark, body: &mut String, free: &str, test: &dyn Fn(&crate::program::TokenElem) -> String, advance: &dyn Fn(&str) -> String) {
+    // The token's own element, those before the run; the run (decision 0416) tries the rest
+    // (`pattern_{i}_rest`) from each of its records on, as a forward scan.
+    let run = m.elems.iter().position(|e| e.run);
+    for el in m.elems.iter().take(run.unwrap_or(m.elems.len())) {
         match el.offset {
             0 => writeln!(body, "        let c = unsafe {{ *self.codes.add(here * self.rs) }};\n        if !({}) {{ return false; }}", test(el)).unwrap(),
             o if o < 0 => {
@@ -1938,18 +2148,99 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
                     writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
                 }
             }
-            o => {
+            _ => {
                 // No record left: an `end` element holds there (it is the last), any other fails.
-                let past = if el.end { "true" } else { "false" };
-                for _ in ahead..o {
-                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};").unwrap();
-                }
-                ahead = o;
+                body.push_str(&advance(if el.end { "true" } else { "false" }));
                 writeln!(body, "        if !({}) {{ return false; }}", test(el)).unwrap();
             }
         }
     }
-    writeln!(out, "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}        true\n    }}\n").unwrap();
+    let Some(r) = run else {
+        writeln!(out, "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}        true\n    }}\n").unwrap();
+        return;
+    };
+    let mut rest = String::new();
+    for el in &m.elems[r + 1..] {
+        rest.push_str(&advance(if el.end { "true" } else { "false" }));
+        writeln!(rest, "        if !({}) {{ return false; }}", test(el)).unwrap();
+    }
+    // The run's depths (Q339): the rest only where each is 0; a closer at 0 ends the run.
+    let run_el = &m.elems[r];
+    let counters = run_el.nests.iter().map(|n| usize::from(n.counter) + 1).max().unwrap_or(0);
+    let (depths, mut zero) = if counters == 0 { (String::new(), String::new()) } else { (format!("        let mut d = [0u32; {counters}];\n"), format!("d == [0; {counters}] && ")) };
+    // Its `ending` (Q342): the record it took last, `at`, one the test takes.
+    if let Some(x) = &run_el.ending {
+        write!(zero, "{{ let c = unsafe {{ *self.codes.add(at * self.rs) }}; {} }} && ", test(x)).unwrap();
+    }
+    let mut nest = String::new();
+    for n in &run_el.nests {
+        let k = n.counter;
+        if n.open {
+            writeln!(nest, "            if {} {{ d[{k}] += 1; }}", test(&n.test)).unwrap();
+        } else {
+            writeln!(nest, "            if {} {{ if d[{k}] == 0 {{ return false; }} d[{k}] -= 1; }}", test(&n.test)).unwrap();
+        }
+    }
+    writeln!(
+        out,
+        "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}{depths}        loop {{\n            if {zero}self.pattern_{i}_rest(at) {{ return true; }}\n    {}            if !({}) {{ return false; }}\n{nest}        }}\n    }}\n\n    /// Token mark {i}'s tokens after its run, from the record after `at`.\n    #[inline(always)]\n    fn pattern_{i}_rest(&self, mut at: usize) -> bool {{\n{rest}        true\n    }}\n",
+        advance("false").replace("\n        ", "\n            "),
+        test(run_el)
+    )
+    .unwrap();
+}
+
+/// A gap pattern's entry (`Words::gap_patterns`, decision 0451): each element the record at its
+/// offset from the token's, as the lexer wrote them, extras included; its `starting`, the
+/// record's first byte, as the lean lexer's `asi` reads the byte after a comment. At the
+/// stream's end, no token: none holds.
+fn gap_pattern(out: &mut String, i: usize, m: &TokenMark) {
+    let mut body = String::new();
+    for el in &m.elems {
+        let o = el.offset;
+        let none = if el.end { "true" } else { "false" };
+        let at = if o < 0 { format!("here.checked_sub({})", -i32::from(o)) } else if o == 0 { "Some(here)".into() } else { format!("Some(here + {o}).filter(|&j| j < self.n)") };
+        let j = if o == 0 { "        let j = here;\n".to_string() } else { format!("        let Some(j) = {at} else {{ return {none} }};\n") };
+        body.push_str(&j);
+        let test = element_test(el);
+        if test != "true" {
+            // A `~` of one `matches!`: its test, not negated twice.
+            let fails = match test.strip_prefix('!').filter(|t| t.starts_with("matches!(") && !t.contains(" && ")) {
+                Some(t) => t.to_string(),
+                None => format!("!({test})"),
+            };
+            writeln!(body, "        let c = unsafe {{ *self.codes.add(j * self.rs) }};\n        if {fails} {{ return false; }}").unwrap();
+        }
+        // `starting`: the token's first byte, as the lean lexer's `asi` matches it.
+        if el.first != [0; 4] {
+            let bytes: Vec<String> = (0..=255u8).filter(|&b| el.first_holds(b)).map(|b| byte_literal(usize::from(b))).collect();
+            writeln!(body, "        let b = unsafe {{ *self.bytes.add(*self.starts.add(j * self.rs) as usize) }};\n        if !matches!(b, {}) {{ return false; }}", bytes.join(" | ")).unwrap();
+        }
+    }
+    writeln!(out, "    /// Gap pattern entry {i}'s records follow.\n    #[inline(never)]\n    fn gap_{i}(&self) -> bool {{\n        if self.at_end {{ return false; }}\n        let here = self.next as usize - 1;\n{body}        true\n    }}\n").unwrap();
+}
+
+/// A gap pattern's entries together, from `first`, as the token marks' (`patterns`).
+fn gap_patterns(out: &mut String, first: usize, marks: &[TokenMark]) {
+    let order = marks[first].order;
+    let these: Vec<usize> = (first..marks.len()).take_while(|&i| marks[i].order == order).collect();
+    let none: Vec<String> = these.iter().filter(|&&i| marks[i].unless).map(|i| format!("!self.gap_{i}()")).collect();
+    let one: Vec<String> = these.iter().filter(|&&i| !marks[i].unless).map(|i| format!("self.gap_{i}()")).collect();
+    let one = if one.is_empty() { "true".to_string() } else { format!("({})", one.join(" || ")) };
+    let all: Vec<String> = none.into_iter().chain(std::iter::once(one)).collect();
+    writeln!(out, "    /// Gap pattern {order}'s question: its entries together.\n    #[inline(always)]\n    fn gaps_{first}(&self) -> bool {{\n        {}\n    }}\n", all.join(" && ")).unwrap();
+}
+
+/// The token marks of one order together, from entry `first` (`program::patterns_hold`): none
+/// of the `unless` ones and, where there are others, one of them.
+fn patterns(out: &mut String, first: usize, marks: &[TokenMark]) {
+    let order = marks[first].order;
+    let these: Vec<usize> = (first..marks.len()).take_while(|&i| marks[i].order == order).collect();
+    let none: Vec<String> = these.iter().filter(|&&i| marks[i].unless).map(|i| format!("!self.pattern_{i}()")).collect();
+    let one: Vec<String> = these.iter().filter(|&&i| !marks[i].unless).map(|i| format!("self.pattern_{i}()")).collect();
+    let one = if one.is_empty() { "true".to_string() } else { format!("({})", one.join(" || ")) };
+    let all: Vec<String> = none.into_iter().chain(std::iter::once(one)).collect();
+    writeln!(out, "    /// Mark {order}'s tokens follow: its entries together.\n    #[inline(always)]\n    fn patterns_{first}(&self) -> bool {{\n        {}\n    }}\n", all.join(" && ")).unwrap();
 }
 
 /// A local check's word form (`program::local_value` over the 64 places of a word, a bit
@@ -2210,7 +2501,7 @@ impl Plan {
 /// A `match` over `values` (each value's place), `0..len`: the runs of a place one arm, the
 /// place with the most runs the default where every value has one; else a value with no
 /// place refuses.
-fn arms(p: &mut Plan, scrutinee: &str, values: &[u16]) -> String {
+fn arms(p: &mut Plan, scrutinee: &str, values: &[u16], name: &dyn Fn(usize) -> String) -> String {
     let mut by: BTreeMap<u16, Vec<(usize, usize)>> = BTreeMap::new();
     let mut i = 0;
     while i < values.len() {
@@ -2227,7 +2518,7 @@ fn arms(p: &mut Plan, scrutinee: &str, values: &[u16]) -> String {
         if t == REFUSE || Some(t) == dflt {
             continue;
         }
-        let pats: Vec<String> = runs.iter().map(|&(a, b)| if a == b { format!("{a}") } else { format!("{a}..={b}") }).collect();
+        let pats: Vec<String> = runs.iter().map(|&(a, b)| if a == b { name(a) } else { format!("{}..={}", name(a), name(b)) }).collect();
         let j = p.to(t);
         writeln!(s, "{} => {{ {j} }}", pats.join(" | ")).unwrap();
     }
@@ -2240,6 +2531,16 @@ fn arms(p: &mut Plan, scrutinee: &str, values: &[u16]) -> String {
     }
     s.push_str("}\n");
     s
+}
+
+/// A byte as a pattern: a printable ASCII byte as its literal (`b'.'`).
+fn byte_literal(b: usize) -> String {
+    match u8::try_from(b) {
+        Ok(c @ (b'!'..=b'~')) if c != b'\'' && c != b'\\' => format!("b'{}'", c as char),
+        Ok(b'\'') => "b'\\''".into(),
+        Ok(b'\\') => "b'\\\\'".into(),
+        _ => format!("{b:#04x}"),
+    }
 }
 
 /// A switch's `match`: on the record's kind (a kind whose words the switch names, on its word
@@ -2284,7 +2585,11 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
         let mut by_word = String::new();
         let mut values = vec![REFUSE; 256];
         for (k, &tk) in t.iter().enumerate() {
-            let named: Vec<(u16, u16)> = sw.words.iter().copied().filter(|&(w, _)| k < reps.len() && x.word_kind_of.get(usize::from(w)).is_some_and(|&y| usize::from(y) == k)).collect();
+            // A word whose target is its kind's needs no arm of its own. A part's own kind may be
+            // any word, but only in a state that meets it (its byte's target no refusal): a state
+            // outside its region never reads one (`bitlex_masks::row_modes`).
+            let part = x.part_kinds.contains(&k) && tk != REFUSE;
+            let named: Vec<(u16, u16)> = sw.words.iter().copied().filter(|&(w, to)| to != tk && k < reps.len() && (part || x.word_kind_of.get(usize::from(w)).is_some_and(|&y| usize::from(y) == k))).collect();
             if named.is_empty() {
                 values[k] = tk;
                 continue;
@@ -2292,13 +2597,13 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
             let mut inner = String::from("match s.word() {\n");
             for (w, to_w) in named {
                 let j = p.to(to_w);
-                writeln!(inner, "{} => {{ {j} }}", u32::from(w) + 1).unwrap();
+                writeln!(inner, "{} => {{ {j} }}", x.word(w)).unwrap();
             }
             let j = p.to(tk);
             writeln!(inner, "_ => {{ {j} }}\n}}").unwrap();
-            writeln!(by_word, "{k} => {{ {inner} }}").unwrap();
+            writeln!(by_word, "{} => {{ {inner} }}", x.token(k)).unwrap();
         }
-        let rest = arms(&mut p, "kind", &values);
+        let rest = arms(&mut p, "kind", &values, &|k| x.token(k));
         let body = if by_word.is_empty() { rest } else { format!("match kind {{\n{by_word}_ => {{ {rest} }}\n}}\n") };
         // The end's kind: the record's, or (the end as a start) the end's own.
         let kind = match x.end_kind {
@@ -2318,12 +2623,12 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
         out.push_str("match s.word() {\n");
         for &(w, t) in &sw.words {
             let j = p.to(t);
-            writeln!(out, "{} => {{ {j} }}", u32::from(w) + 1).unwrap();
+            writeln!(out, "{} => {{ {j} }}", x.word(w)).unwrap();
         }
         out.push_str("_ => {}\n}\n");
     }
     writeln!(out, "let at = s.start + {};\nif at >= s.rec_end {{ return Err(false); }}", sw.offset).unwrap();
-    out.push_str(&arms(&mut p, "unsafe { *s.bytes.add(at as usize) }", &sw.targets));
+    out.push_str(&arms(&mut p, "unsafe { *s.bytes.add(at as usize) }", &sw.targets, &byte_literal));
     out.push_str("}\n");
     p.code = out;
     p
@@ -2338,7 +2643,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
 /// as simdjson's `case 't'` writes its own tape word.
 fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>, known: Option<u32>) -> Result<String, String> {
     let n = x.native;
-    let kind_of = |k: u16| -> String { if k == REMEMBERED { "{ if word == 0 { return Err(false) } word as u16 }".into() } else { format!("{k}") } };
+    let kind_of = |k: u16| -> String { if k == REMEMBERED { "{ if word == 0 { return Err(false) } word as u16 }".into() } else { x.kind(k) } };
     // The token's end, as this word reads it: its phase's (`phases`), or the run's field.
     let taken = x.phase[pc] == crate::stream::TAKEN;
     let end = if x.flagged {
@@ -2387,8 +2692,8 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
         Op::Span { last: false, len } => format!("if s.start + {len} != s.rec_end {{ return Err(false); }}\n{}{}", if x.flagged { "s.end = s.rec_end;\ns.need = true;\n" } else { "" }, jump(0)?),
         Op::Span { last: true, .. } => format!("{}{}", if x.flagged { "s.end = s.rec_end;\ns.need = true;\n" } else { "" }, jump(0)?),
         Op::Empty { total } => format!("if s.total({total}) != 0 {{ return Err(false); }}\n{}", jump(0)?),
-        Op::Word { string, test: true } => format!("if s.word() == {} {{ {} }} else {{ {} }}", u32::from(string) + 1, jump(0)?, jump(1)?),
-        Op::Word { string, test: false } => format!("if s.word() != {} {{ return Err(false); }}\n{}", u32::from(string) + 1, jump(0)?),
+        Op::Word { string, test: true } => format!("if s.word() == {} {{\n{}\n}}{}", x.word(string), jump(0)?, or_else(&jump(1)?)),
+        Op::Word { string, test: false } => format!("if s.word() != {} {{ return Err(false); }}\n{}", x.word(string), jump(0)?),
         Op::Open { kind } => {
             let kf = u32::from(kind) | u32::from(field_after(x, pc).unwrap_or(0)) << 16;
             let code = if x.coded {
@@ -2402,7 +2707,9 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             } else {
                 String::new()
             };
-            format!("s.open({kf});\n{code}{}", jump(0)?)
+            // A node not coded where made: its kind and field by the grammar's names.
+            let open = if code.is_empty() { x.kind_field(kind, u32::from(field_after(x, pc).unwrap_or(0)) << 16) } else { format!("{kf}") };
+            format!("s.open({open});\n{code}{}", jump(0)?)
         }
         Op::Close { this } => {
             let sure = x.one.as_ref().is_some_and(|o| o.stacked);
@@ -2419,7 +2726,7 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
                 (true, f) if constant.is_some() => format!("{}", constant.flatten().unwrap_or(0) | f),
                 (true, 0) => "s.word_kind()?".to_string(),
                 (true, f) => format!("s.word_kind()? | {f}"),
-                (false, f) => format!("{}", u32::from(kind) | f),
+                (false, f) => x.kind_field(kind, f),
             };
             if x.coded {
                 let (field, classes) = key_after(x, pc);
@@ -2436,7 +2743,16 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             format!("s.leaf::<{deferred}, {extra}>({k}, {end});\n{}", jump(0)?)
         }
         Op::Settle { .. } => format!("s.pending = 0;\n{}", jump(0)?),
-        Op::SettleBefore { mask } => format!("s.settle_before({});\n{}", mask_output(n, mask)?, jump(0)?),
+        Op::SettleBefore { mark } => format!("s.settle_before({mark});\n{}", jump(0)?),
+        // The next node made takes the dropped one's row and cells.
+        // The extra pending last made again at the token, of no width: its row and cells.
+        // Taken out, its kind kept: the `TOKEN` that takes the token makes it again after it.
+        // The lean lexer's `asi`: a comment pending, then the question at the token.
+        Op::LoseLast { pattern, flag } => match flag {
+            Some(f) => format!("if flags & {} != 0 && s.pending != 0 && s.lost == 0 && s.gaps_{pattern}() {{\n    s.lose();\n}}\n{}", 1u32 << f, jump(0)?),
+            None => format!("if s.pending != 0 && s.lost == 0 && s.gaps_{pattern}() {{\n    s.lose();\n}}\n{}", jump(0)?),
+        },
+        Op::DropLast { pattern } => format!("if s.pending != 0 && s.gaps_{pattern}() {{ s.pending -= 1; s.nodes -= 1; if s.pending == 0 {{ s.last_end = s.start; }} }}\n{}", jump(0)?),
         Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
             let k = u32::from(order);
             // A token mark past the code's (decision 0407): live at every token, its tokens
@@ -2446,27 +2762,28 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
                 // A lazy gap mark with a pattern (`before`, decision 0416): its gap, then its token.
                 let lazy = x.lazy.iter().any(|&(m, _)| u32::from(m) == k);
                 match pattern {
-                    Some(i) if lazy => format!("(if s.at_end {{ {end} }} else {{ s.lazy_{k}() && s.pattern_{i}() }})"),
-                    Some(i) => format!("(if s.at_end {{ {end} }} else {{ s.pattern_{i}() }})"),
+                    Some(i) if lazy => format!("(if s.at_end {{ {end} }} else {{ s.lazy_{k}() && s.patterns_{i}() }})"),
+                    Some(i) => format!("(if s.at_end {{ {end} }} else {{ s.patterns_{i}() }})"),
                     None if lazy => format!("(s.at_end || s.lazy_{k}())"),
                     None => "true".into(),
                 }
             } else {
                 let o = mask_output(n, mask)?;
-                let w = mark_word.map_or(String::new(), |s| format!("s.word() == {} && ", u32::from(s) + 1));
+                let w = mark_word.map_or(String::new(), |s| format!("s.word() == {} && ", x.word(s)));
                 format!("(if s.at_end {{ {end} }} else {{ {w}s.bit({o}, s.start) }})")
             };
             let take = if keep { String::new() } else { format!("s.live &= !((2u64 << {k}) - 1);\n") };
-            format!("if s.live >> {k} & 1 != 0 && {here} {{\n{take}{}\n}} else {{\n{}\n}}", jump(0)?, jump(1)?)
+            let here = if here == "true" { String::new() } else { format!(" && {here}") };
+            format!("if s.live >> {k} & 1 != 0{here} {{\n{take}{}\n}}{}", jump(0)?, or_else(&jump(1)?))
         }
-        Op::Row { mask } => format!("if s.bit({}, s.start) {{ {} }} else {{ {} }}", mask_output(n, mask)?, jump(0)?, jump(1)?),
-        Op::Retag { kind, on: On::Here } => format!("s.here_kind({kind})?;\n{}", jump(0)?),
+        Op::Row { mask } => format!("if s.bit({}, s.start) {{\n{}\n}}{}", mask_output(n, mask)?, jump(0)?, or_else(&jump(1)?)),
+        Op::Retag { kind, on: On::Here } => format!("s.here_kind({})?;\n{}", x.kind(kind), jump(0)?),
         Op::Retag { kind, on: On::Moved } => format!("s.moved_kind({});\n{}", kind_of(kind), jump(0)?),
         Op::Retag { kind, on: On::Made } => format!("s.made_kind::<{}>({})?;\n{}", kind == DEAD, kind_of(kind), jump(0)?),
         Op::Reread { reading } => format!("s.reread_{reading}({})?;\n{}", if x.context { "word" } else { "0" }, jump(0)?),
-        Op::Wrap { kind } => format!("s.wrap({kind})?;\n{}", jump(0)?),
-        Op::Merge { kind, fold: true } => format!("s.fold({kind})?;\n{}", jump(0)?),
-        Op::Merge { kind, fold: false } => format!("s.merge({kind}, {end})?;\n{}", jump(0)?),
+        Op::Wrap { kind } => format!("s.wrap({})?;\n{}", x.kind(kind), jump(0)?),
+        Op::Merge { kind, fold: true } => format!("s.fold({})?;\n{}", x.kind(kind), jump(0)?),
+        Op::Merge { kind, fold: false } => format!("s.merge({}, {end})?;\n{}", x.kind(kind), jump(0)?),
         // In a format 16 run the node's field and supertypes are in its number, taken at its word (`key_after`).
         Op::NodeField { on: On::Here, .. } | Op::NodeSuper { .. } if x.sixteen && x.coded => jump(0)?,
         Op::NodeField { field, on: On::Here } => format!("unsafe {{ (*s.row(s.nodes - 1)).field = {field} }};\n{}", jump(0)?),
@@ -2487,13 +2804,13 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             } else {
                 String::new()
             };
-            format!("if s.depth == DEPTH {{ return Err(false); }}\ns.depth += 1;\nlet again = r{callee}(s{args})?;\ns.depth -= 1;\nif again {{ {} }} else {{ {} }}", jump(1)?, jump(0)?)
+            format!("if s.deeper(move |s| {}(s{args}))? {{\n{}\n}}{}", x.function(callee), jump(1)?, or_else(&jump(0)?))
         }
         Op::Remember { kind: WORD_KIND } => format!("word = s.word_kind()?;\n{}", jump(0)?),
         Op::Remember { kind } => format!("word = {kind};\n{}", jump(0)?),
         Op::Flag { flag, op: FlagOp::Set } => format!("flags |= {};\n{}", 1u32 << flag, jump(0)?),
         Op::Flag { flag, op: FlagOp::Clear } => format!("flags &= !{};\n{}", 1u32 << flag, jump(0)?),
-        Op::Flag { flag, op: FlagOp::Test } => format!("if flags & {} != 0 {{ {} }} else {{ {} }}", 1u32 << flag, jump(0)?, jump(1)?),
+        Op::Flag { flag, op: FlagOp::Test } => format!("if flags & {} != 0 {{\n{}\n}}{}", 1u32 << flag, jump(0)?, or_else(&jump(1)?)),
         Op::Count { count, up: true, max } => format!("s.counts[{count}] += 1;\nif s.counts[{count}] > {max} {{ return Err(false); }}\n{}", jump(0)?),
         Op::Count { count, up: false, .. } => format!("s.counts[{count}] = s.counts[{count}].saturating_sub(1);\n{}", jump(0)?),
         Op::Check { check } => format!("s.check_{check}()?;\n{}", jump(0)?),
@@ -2503,6 +2820,92 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
         Op::Goto { .. } => jump(0)?,
         ref op => return Err(format!("word {pc}: {op:?} is not tier 2's")),
     })
+}
+
+/// An `if`'s `else`: `else if …` where the branch is one `if` chain (as a hand-written chain of
+/// tests reads), else `else { … }`.
+fn or_else(e: &str) -> String {
+    let t = e.trim();
+    if t.starts_with("if ") && one_if(t) {
+        format!(" else {t}")
+    } else {
+        format!(" else {{\n{e}\n}}")
+    }
+}
+
+/// Whether `t`, an `if`, is one statement: every brace that closes at its outer level is followed
+/// by `else` or the end.
+fn one_if(t: &str) -> bool {
+    let t = &no_literals(t);
+    let mut depth = 0i32;
+    for (i, c) in t.char_indices() {
+        match c {
+            '(' | '{' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let rest = t[i + 1..].trim_start();
+                    if !(rest.is_empty() || rest.starts_with("else")) {
+                        return false;
+                    }
+                }
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// `s` with each byte literal's contents left out (`b'{'` is `b''`): its braces are no code's.
+fn no_literals(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut cs = s.chars().peekable();
+    while let Some(c) = cs.next() {
+        out.push(c);
+        if c == 'b' && cs.peek() == Some(&'\'') {
+            out.push(cs.next().expect("a quote"));
+            while let Some(d) = cs.next() {
+                if d == '\\' {
+                    cs.next();
+                } else if d == '\'' {
+                    out.push(d);
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `body` indented by its braces, four spaces a level from `base` (the generated code has no
+/// braces in strings or characters; a comment's are not counted).
+fn indent(body: &str, base: usize) -> String {
+    let mut out = String::with_capacity(body.len() * 2);
+    let mut depth = base as i32;
+    for line in body.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        let code = no_literals(l.split("//").next().unwrap_or(""));
+        let lead = code.chars().take_while(|c| matches!(c, '}' | ')' | ']')).count() as i32;
+        let level = (depth - lead).max(0);
+        for _ in 0..level {
+            out.push_str("    ");
+        }
+        out.push_str(l);
+        out.push('\n');
+        for c in code.chars() {
+            match c {
+                '(' | '{' | '[' => depth += 1,
+                ')' | '}' | ']' => depth -= 1,
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 /// The function of the rule entered at `entry`: its words reachable from there, structured.
@@ -2527,11 +2930,11 @@ fn rule(out: &mut String, x: &Facts<'_>, entry: usize) -> Result<(), String> {
     let only_jump: Vec<bool> = (0..nodes.len()).map(|k| first[k].len() == 1 && word(x, nodes[k], &|j| Ok(format!("{MARK}{j}"))).is_ok_and(|c| c == format!("{MARK}0"))).collect();
     let shape = Shape::threaded(first, &sizes, &only_jump).ok_or_else(|| format!("rule at {entry}: an irreducible graph"))?;
     let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> { word(x, nodes[node], jump) };
-    let body = shape.tree(&emit, 0)?;
+    let body = indent(&shape.tree(&emit, 0)?, 1);
     let params = if x.context { ", mut word: u32, mut flags: u32" } else { "" };
     // The call's number a `RETURN` matches on, from its container's row (`OneFn::stacked`).
     let ret = if x.one.as_ref().is_some_and(|o| o.stacked) { "    let mut ret: u32 = 0;\n" } else { "" };
-    writeln!(out, "/// The rule entered at word {entry}.\n#[inline(never)]\nfn r{entry}(s: &mut S{params}) -> Result<bool, bool> {{\n    let mut d: u32 = 0;\n{ret}{body}}}\n").unwrap();
+    writeln!(out, "/// The rule entered at word {entry}.\n#[inline(never)]\nfn {}(s: &mut S{params}) -> Result<bool, bool> {{\n    let mut d: u32 = 0;\n{ret}{body}}}\n", x.function(entry)).unwrap();
     Ok(())
 }
 
@@ -3189,7 +3592,8 @@ fn part_plan(x: &Facts<'_>, fx: &Fetched, pc: usize) -> Plan {
         }
     }
     to[0] = pf.part;
-    let by_word = arms(&mut p, "s.word()", &to);
+    // Code 0 is no word; word `w`'s is `w + 1`, by its name.
+    let by_word = arms(&mut p, "s.word()", &to, &|c| if c == 0 { "0".to_owned() } else { x.word(c as u16 - 1) });
     p.code = format!(
         "{}s.last_end = s.rec_end;
 let at = s.part_at;

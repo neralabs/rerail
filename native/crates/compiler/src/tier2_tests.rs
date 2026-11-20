@@ -58,7 +58,8 @@ const DOCUMENTS: &[&str] = &[
 fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
     let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
     steps.sort();
-    assert!(steps.len() >= 15, "{} steps", steps.len());
+    // The test language's last step, JSON and JSONC (decision 0422).
+    assert_eq!(steps.len(), 3, "{} steps", steps.len());
     let mut parsed = 0;
     for path in steps {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
@@ -84,7 +85,8 @@ fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
         }
     }
     // Not refusals alone: many documents parse, so the nodes are compared too.
-    assert!(parsed >= 30, "{parsed} documents parsed");
+    // 18 with the three steps (decision 0422).
+    assert!(parsed >= 15, "{parsed} documents parsed");
 }
 
 /// A document whose tape does not fit 2-byte columns (70,000 blanks after its first separator: a
@@ -118,7 +120,8 @@ fn a_tape_past_two_byte_columns_is_read_at_four() {
             wide += usize::from(image[rerail_tape_format::header::WIDTHS + 1] == 4);
         }
     }
-    assert!(wide >= 10, "{wide} documents written at 4-byte offsets");
+    // 5 with the three steps (decision 0422).
+    assert!(wide >= 5, "{wide} documents written at 4-byte offsets");
 }
 
 /// Decision 0434 §6, R17: tier 2 writes format 16 (and 16z) as it parses, passing its nodes to the writer's ops at
@@ -182,7 +185,8 @@ fn tier2_writes_format_16_by_the_ops() {
             long += usize::from(t.len() > 1024);
         }
     }
-    assert!(written >= 40 && long >= 3, "{written} documents, {long} past a block");
+    // 29 with the three steps, 3 past a block (decision 0422).
+    assert!(written >= 25 && long >= 3, "{written} documents, {long} past a block");
 }
 
 /// The crate's assembler takes a parser's program only: a matcher's rows are the engine's.
@@ -672,5 +676,6 @@ fn a_mask_leaves_its_vector_where_it_is_read() {
             }
         }
     }
-    assert!(checked > 100, "{checked} masks");
+    // 57 with the three steps (decision 0422).
+    assert!(checked >= 50, "{checked} masks");
 }
