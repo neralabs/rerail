@@ -230,11 +230,12 @@ fn grammars_rust_tapes_are_the_jits() {
             let c = compile_step(&name, &source);
             let (widths, tag) = c.parser.tier2.widths_tag();
             let (w16, t16) = c.parser.sixteen().expect("a format 16 tier 2").widths_tag();
-            // The grammar's documents and its language, before its Rust: the language is every key the documents' tapes
-            // hold (format 15's tables, joined), as the engine's language holds every key of its grammar, and the
-            // source's numbers are its literals (decision 0516).
+            // The grammar's documents and its language, before its Rust: the language is every key a direct run writes
+            // (`rust_stream::direct_entries`), then every other key the documents' tapes hold (format 15's tables,
+            // joined), as the engine's language holds every key of its grammar, and the source's numbers are its
+            // literals (decision 0516).
             let docs = documents(&c, &name, set);
-            let mut keys: Vec<rerail_tape_format::tape::Entry> = Vec::new();
+            let mut keys: Vec<rerail_tape_format::tape::Entry> = rust_stream::direct_entries(&c.native, w16, t16).unwrap_or_default();
             for doc in &docs.0 {
                 let Ok(f15) = c.parser.image(doc) else { continue };
                 let (_, table) = rerail_tape_format::tape::f15_columns(&f15).expect("a format 15 tape");

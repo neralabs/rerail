@@ -593,6 +593,18 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 42, done: each word once, one room check, coded refusals, the source laid out (decision 0519)
+
+These close the five gaps found when the generated JSON Rust was set beside simdjson's and the lean parser's:
+
+| | simdjson / the lean parser | before | now |
+|---|---|---|---|
+| A string, an atom, a number | `parse_string`, `is_valid_*_atom`, `parse_number`; `string`, `primitive`: one each, called from each place | the loop and the tests written again at each place (four string loops) | `fn string`, `fn atom`, `fn number`, one each, called from each place |
+| The stack's room | sized once from the input | `open_node` tests `open_cap` every node | reserved for the grammar's bound (`open_bound`), tested once at the start |
+| The tests' language | — | the files' keys: a word no file reached refused | every key a direct run writes (`direct_entries`), then the files' |
+| An error | a `Code`, after `cold_path()` | `Err(false)` | `refuse(why::…)`, `#[cold]`, its reason returned and named by the host |
+| The source's form | indented, labels named by state | flat, `'b21`, `'m129` | indented, `'token_130: loop`, `break 'to_close_22;` |
+
 ## Step 41, done: the kinds' numbers constants (D7, decision 0516); the tape's reads written directly (0510)
 
 **D7.** A direct run's node numbers are literals at their words, as the lean parser writes a kind's constant and

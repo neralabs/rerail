@@ -340,6 +340,9 @@ pub struct CompiledStream {
     pub row_calls: usize,
     /// A format 16 run whose nodes go to the writer's ops at their words, with no row (`rust_stream::direct_keys`).
     pub direct: bool,
+    /// Its most nodes open (`rust_stream::open_bound`): the writer's stack reserved for them up front, so the Rust's
+    /// run checks the stack's room once, where it starts.
+    pub open_bound: Option<u64>,
     /// Its functions of clusters (`compile_cut`: one, the token loop's alone), and their tail
     /// calls of each other: one where a jump left its cluster.
     pub clusters: usize,
@@ -524,6 +527,44 @@ pub fn callee(native: &Structure, pc: usize) -> usize {
 pub const RETURNED: u64 = 0;
 /// The top bit, flipped in the run's end values inside the clusters' functions (`RETURNED`).
 pub const ENDED: u64 = 1 << 63;
+
+/// Why a run in Rust (`rust_stream`) refused a file: the value it returns is `MARK | why`, which no word's place is
+/// (the JIT's run returns one more than the word that refused). Each refusal in its source names its reason, as the
+/// lean parser's `Code`s do; `ROOM` is no refusal but the tape's room run out (`OVERFLOW`).
+pub mod refusal {
+    pub const MARK: u64 = 1 << 62;
+    /// Each reason, by its code.
+    pub const NAMES: [(&str, &str); 18] = [
+        ("ROOM", "out of the tape's room"),
+        ("BYTE", "no word takes the token's byte here"),
+        ("WORD", "the token's word is not one this place takes"),
+        ("SPAN", "the token's length is not the one this place takes"),
+        ("EMPTY", "a total that must be empty is not"),
+        ("END", "the file ends where a token is wanted"),
+        ("STRING", "a region not closed, or an escape at the file's end"),
+        ("CHECK", "a local check of the token's bytes fails"),
+        ("TOKEN", "a token mark that refuses"),
+        ("DEPTH", "calls nested past the depth"),
+        ("RETURN", "a return to no call"),
+        ("COUNT", "a count past its most"),
+        ("STOP", "a word that refuses (`STOP`)"),
+        ("NUMBER", "no number in the language for the node"),
+        ("WRITER", "the format 16 writer's ops failed (the writer keeps why)"),
+        ("NODES", "a node word with no node it needs (a close, a retag, a fold, an accept)"),
+        ("WIDTH", "the tape's widths cannot hold the nodes"),
+        ("FIELD", "a provisional field at the end"),
+    ];
+
+    /// The reason of `r`, a run's value: `None` where it is no refusal of a run in Rust.
+    pub fn of(r: u64) -> Option<&'static str> {
+        (r & MARK != 0 && r != u64::MAX).then(|| NAMES.get((r & !MARK) as usize).map_or("an unknown reason", |n| n.1))
+    }
+
+    /// `r`, a refusal, said: its reason, or the word that refused.
+    pub fn text(r: u64) -> String {
+        of(r).map_or_else(|| format!("at word {}", r.wrapping_sub(1)), |why| format!("({why})"))
+    }
+}
 
 /// Native calls nested at most this deep (`Cut::calls`): past it, the file is refused (to the
 /// fallback), as the machine's stack is the calls'. A rule's frame is at most about 350 bytes
@@ -7191,7 +7232,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::rust_stream::open_bound(native, widths, tag) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -8083,7 +8124,7 @@ impl CompiledStream {
         let mut tape = self.tape(self.tokens(self.records_of(tier1), bytes.len()));
         let r = self.run_raw(bytes, tier1, &mut tape);
         if r != 0 {
-            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
+            return Err(Refused { pc: r as usize - 1, why: refusal::of(r).unwrap_or("the compiled words refuse"), at: None });
         }
         Ok(tape.nodes())
     }
@@ -8126,7 +8167,9 @@ impl CompiledStream {
             // With each block's presence, as every other producer's writer (decision 0434 §4, step 6).
             let Doc16 { source, lang, numbers, z, lines } = *doc;
             w.begin_with(&rerail_tape_format::f16::Document { lang, source, tag: self.tag, z, blocks: true, nodes }, lines);
-            w.reserve_run(nodes, depth.min(nodes));
+            // The stack: the program's bound of open nodes where it has one (`open_bound`, which the Rust's run checks
+            // once), else a guess, then the nodes' room.
+            w.reserve_run(nodes, self.open_bound.map_or(depth.min(nodes), |b| b as usize));
             tape.writer = w.state_address();
             tape.numbers = numbers.0.as_ptr();
             match call(&mut tape) {
@@ -8139,7 +8182,7 @@ impl CompiledStream {
                     full = true;
                     tape = self.full_tape(tokens);
                 }
-                r => return Err(format!("tier 2 refuses the file at word {}", r.wrapping_sub(1))),
+                r => return Err(format!("tier 2 refuses the file {}", refusal::text(r))),
             }
         }
     }
@@ -8445,7 +8488,7 @@ impl Parser {
     fn words_with(&self, t2: &CompiledStream, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> Result<(), Refused> {
         let r = self.words_raw(t2, batch, tape);
         if r != 0 {
-            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
+            return Err(Refused { pc: r as usize - 1, why: refusal::of(r).unwrap_or("the compiled words refuse"), at: None });
         }
         Ok(())
     }
