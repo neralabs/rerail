@@ -540,7 +540,15 @@ pub(in crate::code_rule_dsl) fn text_row(
 ) -> Option<std::sync::Arc<Vec<u32>>> {
     use rayon::prelude::*;
     let _texts = crate::code_rule_dsl::prof::Stage::start("size.texts");
-    let per_file = files.par_iter().map(|tape| walk.slot(program, slot, tape)).collect::<Option<Vec<_>>>()?;
+    // Each job in its caller's run (decision 0442): a slot's text test reads the run's lowered texts.
+    let caller = rerail_prof::code_rule_dsl::logic::profile::caller();
+    let per_file = files
+        .par_iter()
+        .map(|tape| {
+            let _in = caller.enter();
+            walk.slot(program, slot, tape)
+        })
+        .collect::<Option<Vec<_>>>()?;
     let mut bits = vec![0_u32; words];
     for (file, base) in per_file.iter().zip(bases) {
         for (index, &word) in file.iter().enumerate() {
@@ -569,9 +577,12 @@ pub(in crate::code_rule_dsl) fn text_rows(
     crate::code_rule_dsl::prof::count("size.text_slots", slots.len());
     // Each (slot, file)'s bits, `None` where an evaluation failed: one task each, so a large
     // file's slots spread over the threads.
+    // Each job in its caller's run (decision 0442): a slot's text test reads the run's lowered texts.
+    let caller = rerail_prof::code_rule_dsl::logic::profile::caller();
     let per_pair = (0..slots.len() * files.len())
         .into_par_iter()
         .map(|pair| {
+            let _in = caller.enter();
             let (walk, program, slot) = slots[pair / files.len()];
             walk.slot(program, slot, &files[pair % files.len()])
         })
