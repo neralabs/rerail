@@ -21,7 +21,7 @@ vi.mock("node:child_process", async importOriginal => {
   return { ...original, spawn };
 });
 
-import { gitCrlfPaths } from "../../src/engine/git.js";
+import { gitCrlfPaths, lineEndingAttributesFrom } from "../../src/engine/git.js";
 import { gitCrlfReader, type GitCrlfReader } from "../../src/engine/git-crlf-reader.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -189,4 +189,10 @@ describe("gitCrlfReader", () => {
       }
     }
   }, 60_000);
+
+  it("answers no path whose check-attr output was cut before its three attributes, so none is kept", () => {
+    // Output cut at the timeout: `b.txt` got its `text` and no `crlf` or `eol`, which a `.gitattributes` may set.
+    const cut = "a.txt\0text\0set\0a.txt\0crlf\0unspecified\0a.txt\0eol\0crlf\0b.txt\0text\0unset\0b.txt\0crlf\0";
+    expect([...lineEndingAttributesFrom(cut)]).toEqual([["a.txt", { text: "set", crlf: "unspecified", eol: "crlf" }]]);
+  });
 });

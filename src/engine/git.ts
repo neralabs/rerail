@@ -1467,18 +1467,32 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
  * without Git, outside a repository or past the timeout.
  */
 async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
-  const attributes = new Map<string, { text: string; crlf: string; eol: string }>();
   const chunks: Buffer[] = [];
   await streamGit(cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
     input: paths.map(path => `${path}\0`).join(""), onData: chunk => chunks.push(chunk), signal,
   });
-  // `<path> NUL <attribute> NUL <value> NUL`, once per path and attribute.
-  const fields = Buffer.concat(chunks).toString("utf8").split("\0");
+  return lineEndingAttributesFrom(Buffer.concat(chunks).toString("utf8"));
+}
+
+/** The attributes `lineEndingAttributes` asks `check-attr` for, each of which it prints for every path it answers. */
+const LINE_ENDING_ATTRIBUTES = ["text", "crlf", "eol"] as const;
+
+/**
+ * `check-attr -z`'s output, `<path> NUL <attribute> NUL <value> NUL` once per path and attribute, by path: only the
+ * paths whose three attributes all arrived. Output cut at the timeout leaves its last path partly read, which says
+ * nothing of the attributes that did not arrive, so that path is not answered, as the paths after it are not.
+ */
+function lineEndingAttributesFrom(output: string): Map<string, LineEndingAttributes> {
+  const values = new Map<string, Map<string, string>>();
+  const fields = output.split("\0");
   for (let at = 0; at + 2 < fields.length; at += 3) {
-    const [path, name, value] = [fields[at]!, fields[at + 1]!, fields[at + 2]!];
-    const entry = attributes.get(path) ?? { text: "unspecified", crlf: "unspecified", eol: "unspecified" };
-    if (name === "text" || name === "crlf" || name === "eol") entry[name] = value;
-    attributes.set(path, entry);
+    const byName = values.get(fields[at]!) ?? new Map<string, string>();
+    values.set(fields[at]!, byName.set(fields[at + 1]!, fields[at + 2]!));
+  }
+  const attributes = new Map<string, LineEndingAttributes>();
+  for (const [path, byName] of values) {
+    if (LINE_ENDING_ATTRIBUTES.every(name => byName.has(name)))
+      attributes.set(path, { text: byName.get("text")!, crlf: byName.get("crlf")!, eol: byName.get("eol")! });
   }
   return attributes;
 }
@@ -1513,7 +1527,7 @@ export async function gitCrlfPaths(
 }
 
 // The pieces of `gitCrlfPaths` a reader that keeps its answers by the stamps of their inputs asks again (`git-crlf-reader.ts`).
-export { crlfRule, lineEndingAttributes, type LineEndingAttributes, type LineEndingConfig };
+export { crlfRule, lineEndingAttributes, lineEndingAttributesFrom, type LineEndingAttributes, type LineEndingConfig };
 
 /** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
