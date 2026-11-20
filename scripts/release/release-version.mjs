@@ -29,7 +29,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { acceptedFloor, admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreRefusals, coreTag, coreTagRefusal, heldOffRules, isOpenRange, newerFloor, nextCoreVersion, packRuleDocuments, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, releasedCoreVersions, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
+import { acceptedFloor, admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, newerFloor, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, publishedPackDocuments, releasedCoreRefusals, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
 import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
@@ -176,16 +176,21 @@ function versionCore() {
 const core = versionCore();
 
 /**
- * What each released core from 0.1.5 refuses of the published packs' rules (core.mjs): a Map from version
- * to `{ pack: [rule id] }`. Read once, the first time a floor is asked for, with every released core installed and run.
+ * What each released core from 0.1.5 refuses of the published packs' rules: a Map from version to `{ pack: [rule id] }`.
+ * In CI, release-pr.yml's core-refusals job works it out without the release app's token and hands it on as
+ * $RELEASE_CORE_REFUSALS; this script never runs a released core beside that token. Run by hand, it installs and runs
+ * them itself (releasedCoreRefusals in core.mjs). Read once, the first time a floor is asked for.
  */
-let releasedCoreRefusals;
+let refusalsByVersion;
 function coreRefusalsByVersion() {
-  if (releasedCoreRefusals !== undefined) return releasedCoreRefusals;
-  const documents = Object.fromEntries(listPacks().filter((pack) => !pack.private).map((pack) => [pack.id, packRuleDocuments(join(ROOT, `packs/${pack.id}`))]));
-  const versions = releasedCoreVersions(git(["tag", "--list", "v*"]).split("\n"));
-  releasedCoreRefusals = new Map(versions.map((version) => [version, coreRefusals(version, documents)]));
-  return releasedCoreRefusals;
+  if (refusalsByVersion !== undefined) return refusalsByVersion;
+  const handed = process.env.RELEASE_CORE_REFUSALS;
+  if ((handed === undefined || handed === "") && process.env.GITHUB_ACTIONS === "true") {
+    throw new Error("RELEASE_CORE_REFUSALS is not set: in CI the released cores' check runs in release-pr.yml's core-refusals job, never here");
+  }
+  const refusals = handed === undefined || handed === "" ? releasedCoreRefusals(publishedPackDocuments(listPacks(), ROOT)) : JSON.parse(handed);
+  refusalsByVersion = new Map(Object.entries(refusals));
+  return refusalsByVersion;
 }
 
 /** Each pack's floor once worked out, so a pack is judged once a run. */

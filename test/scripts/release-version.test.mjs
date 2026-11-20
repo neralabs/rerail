@@ -65,8 +65,9 @@ const commit = ({ git }, message) => {
  */
 const NPM_RUNS = process.platform !== "win32";
 
+/** Runs release-version.mjs in `root`. No released core is installed: the check's result is handed in as none refusing. */
 function releaseVersion({ root }) {
-  execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe" });
+  execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe", env: { ...process.env, RELEASE_CORE_REFUSALS: "{}" } });
 }
 
 describe.runIf(NPM_RUNS)("release-version.mjs, the pull request's description", () => {

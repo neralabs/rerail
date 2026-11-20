@@ -399,19 +399,21 @@ export function isOpenRange(range) {
 // exports `validateCodeRule` from `@neralabs/rerail/rules`, the check its own catalog makes before it loads a rule. A
 // core that refuses one rule of a pack leaves the whole pack out, so the Release pull request (release-version.mjs)
 // raises a released pack's core range to the oldest release from which every release accepts all its rules, and the
-// maps above still judge the cores before 0.1.5, which can't check. Each core is installed once into a cache folder
-// ($RERAIL_RELEASE_CORES, else ~/.cache/rerail-release-cores, which release-pr.yml keeps between runs) and runs in a
-// process of its own, so two releases' native engines never load into one process.
+// maps above still judge the cores before 0.1.5, which can't check. Each core is installed into a folder of its own
+// ($RERAIL_RELEASE_CORES, else ~/.cache/rerail-release-cores) and runs in a process of its own, so two releases'
+// native engines never load into one process. In CI that happens in release-pr.yml's core-refusals job, which holds no
+// write token and keeps no cache: a core's code never runs beside the release app's token.
 
 /** The first core release that exports `validateCodeRule` from `@neralabs/rerail/rules`. */
 export const FIRST_CHECKING_CORE = "0.1.5";
 
-/** The plain core versions `tags` (git tags, `v<version>`) release from FIRST_CHECKING_CORE on, oldest first. */
-export function releasedCoreVersions(tags) {
-  return tags
-    .map((tag) => /^v(\d+\.\d+\.\d+)$/u.exec(tag)?.[1])
-    .filter((version) => version !== undefined && semver.gte(version, FIRST_CHECKING_CORE))
-    .sort(semver.compare);
+/**
+ * The plain core versions in `published` (npm's list of core's versions: what anyone can have installed, a release
+ * candidate on `next` included, and never a version tagged but not published yet) from FIRST_CHECKING_CORE on, oldest
+ * first.
+ */
+export function releasedCoreVersions(published) {
+  return published.filter((version) => /^\d+\.\d+\.\d+$/u.test(version) && semver.gte(version, FIRST_CHECKING_CORE)).sort(semver.compare);
 }
 
 /**
@@ -482,6 +484,21 @@ for (const [pack, rules] of Object.entries(JSON.parse(input))) {
 }
 process.stdout.write(JSON.stringify(refused));
 `;
+
+/** Each pack's rule documents (packRuleDocuments) for the `packs` (`{ id, private }`, as listPacks gives them) that publish. */
+export function publishedPackDocuments(packs, root) {
+  return Object.fromEntries(packs.filter((pack) => !pack.private).map((pack) => [pack.id, packRuleDocuments(join(root, "packs", pack.id))]));
+}
+
+/**
+ * What each core version npm has from 0.1.5 refuses of `documents` (`{ pack: { rule id: document } }`): `{ version:
+ * { pack: [rule id] } }`. It installs and runs every one of those cores, so it belongs in a job holding no write token
+ * (release-pr.yml's core-refusals), which hands only this result on.
+ */
+export function releasedCoreRefusals(documents) {
+  const published = JSON.parse(execFileSync("npm", ["view", CORE_NAME, "versions", "--json"], { encoding: "utf8" }));
+  return Object.fromEntries(releasedCoreVersions([published].flat()).map((version) => [version, coreRefusals(version, documents)]));
+}
 
 /**
  * The rules core `version` refuses, for each pack in `documents` (`{ pack: { rule id: document } }`): `{ pack: [rule

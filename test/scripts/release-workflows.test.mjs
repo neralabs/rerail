@@ -120,13 +120,19 @@ describe("every release workflow", () => {
 describe("release-pr.yml", () => {
   const { jobs } = workflow("release-pr.yml");
 
-  it("keeps the released cores the rules are checked against between runs, keyed by the release tags, before versioning", () => {
-    const steps = jobs["pull-request"].steps;
-    const cache = steps.findIndex((step) => String(step.uses ?? "").startsWith("actions/cache@") && step.with?.path === "~/.cache/rerail-release-cores");
-    expect(cache).toBeGreaterThan(-1);
-    expect(steps[cache].with.key).toContain("steps.cores.outputs.key");
-    expect(cache).toBeLessThan(runs(steps, "release-version.mjs"));
-    expect(runs(steps, "git tag --list 'v*'")).toBeLessThan(cache);
+  it("runs the released cores in a job that holds no write token, installing them fresh, never from a cache", () => {
+    const check = jobs["core-refusals"];
+    expect(check.permissions).toEqual({ contents: "read" });
+    expect(JSON.stringify(check)).not.toMatch(/secrets\.|app-token|actions\/cache/u);
+    expect(JSON.stringify(workflow("release-pr.yml"))).not.toContain("actions/cache");
+    expect(check.outputs.refusals).toBe("${{ steps.check.outputs.refusals }}");
+  });
+
+  it("hands the Release pull request only the refusals, and versions nothing when the check did not pass", () => {
+    const job = jobs["pull-request"];
+    expect(job.needs).toContain("core-refusals");
+    expect(job.if).toContain("needs.core-refusals.result == 'success'");
+    const version = job.steps.find((step) => String(step.run ?? "").includes("release-version.mjs"));
+    expect(version.env.RELEASE_CORE_REFUSALS).toBe("${{ needs.core-refusals.outputs.refusals }}");
   });
 });
-

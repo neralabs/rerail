@@ -10,7 +10,9 @@ export function admitsRefusingCore(range: string, floor: string | undefined, cor
 export function coreBeforeFloor(coreVersion: string, floor: string | undefined): boolean;
 export function isOpenRange(range: string): boolean;
 export const FIRST_CHECKING_CORE: string;
-export function releasedCoreVersions(tags: readonly string[]): string[];
+export function releasedCoreVersions(published: readonly string[]): string[];
+export function publishedPackDocuments(packs: readonly { id: string; private?: boolean }[], root: string): Record<string, Record<string, unknown>>;
+export function releasedCoreRefusals(documents: Record<string, Record<string, unknown>>): Record<string, Record<string, string[]>>;
 export function acceptedFloor(
   versions: readonly string[],
   refusedBy: (version: string) => readonly string[],

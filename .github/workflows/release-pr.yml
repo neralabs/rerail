@@ -60,13 +60,51 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: node scripts/release/core-tag.mjs
 
+  # What each core version npm has from 0.1.5 refuses of the packs' rules, as that core's own validateCodeRule checks
+  # them (releasedCoreRefusals in scripts/release/core.mjs), for the floors the Release pull request raises ranges to.
+  # A released core is code this workflow did not build, so it runs here, in a job with a read-only token and no
+  # secret, installed fresh from npm (which checks each tarball's integrity) and never from a cache. Only the JSON
+  # result goes on to the pull-request job.
+  core-refusals:
+    name: Check the packs' rules with each released core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      refusals: ${{ steps.check.outputs.refusals }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - id: check
+        name: Check every published pack's rules with each released core
+        env:
+          RERAIL_RELEASE_CORES: ${{ runner.temp }}/release-cores
+        run: |
+          node --input-type=module --eval '
+            import { appendFileSync } from "node:fs";
+            import { publishedPackDocuments, releasedCoreRefusals } from "./scripts/release/core.mjs";
+            import { listPacks, ROOT } from "./scripts/release/packs.mjs";
+            const refusals = releasedCoreRefusals(publishedPackDocuments(listPacks(), ROOT));
+            for (const [version, packs] of Object.entries(refusals)) {
+              for (const [pack, rules] of Object.entries(packs)) if (rules.length > 0) console.log(`core ${version} refuses ${rules.length} of ${pack}: ${rules.join(", ")}`);
+            }
+            appendFileSync(process.env.GITHUB_OUTPUT, `refusals=${JSON.stringify(refusals)}\n`);
+          '
+
   # After tag-core, so a version it just tagged counts as released and core is bumped only for later changes. The
   # pull request is opened with the app's token, not GITHUB_TOKEN, so CI runs on it. It runs even when tag-core fails, so
   # a core tag that can't be created never stops the packs' releases: an untagged core version is left alone.
   pull-request:
     name: Release pull request
-    needs: tag-core
-    if: ${{ !cancelled() }}
+    needs: [tag-core, core-refusals]
+    if: ${{ !cancelled() && needs.core-refusals.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -93,21 +131,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: git fetch --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" 'refs/tags/v*:refs/tags/v*'
 
-      # Each released core from 0.1.5 checks the packs' rules (acceptedFloor in scripts/release/core.mjs), installed once:
-      # the cache is keyed by the release tags, so a new core release installs one more and the rest are kept.
-      - id: cores
-        name: List the released cores the packs' rules are checked against
-        run: echo "key=$(git tag --list 'v*' | sort | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore the released cores
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/rerail-release-cores
-          key: release-cores-${{ steps.cores.outputs.key }}
-          restore-keys: release-cores-
-
+      # The packs' floors take what each released core refuses from the core-refusals job, as JSON, through the
+      # environment: no released core runs in this job, beside the app's token.
       - id: version
         name: Version every releasable package
+        env:
+          RELEASE_CORE_REFUSALS: ${{ needs.core-refusals.outputs.refusals }}
         run: node scripts/release/release-version.mjs "$RUNNER_TEMP/release-pr.md"
 
       # The commit is the app's bot user's, as GitHub attributes it.

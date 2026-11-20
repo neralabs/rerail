@@ -5,13 +5,13 @@ import { describe, expect, it } from "vitest";
 import { acceptedFloor, newerFloor, releasedCoreVersions } from "../../scripts/release/core.mjs";
 
 describe("releasedCoreVersions", () => {
-  it("lists each plain core release that can check a rule (0.1.5 and later), oldest first", () => {
-    const tags = ["v0.2.0", "v0.1.0", "v0.1.4", "v0.1.5", "v0.2.1-next.1", "@neralabs/rerail-pack-python@0.1.11", "release-0123"];
-    expect(releasedCoreVersions(tags)).toEqual(["0.1.5", "0.2.0"]);
+  it("lists each plain core version npm has that can check a rule (0.1.5 and later), oldest first", () => {
+    const published = ["0.1.0-next.4", "0.1.0", "0.1.4", "0.2.0", "0.1.5", "0.2.1-next.1"];
+    expect(releasedCoreVersions(published)).toEqual(["0.1.5", "0.2.0"]);
   });
 
   it("lists none before 0.1.5, which exported no validateCodeRule", () => {
-    expect(releasedCoreVersions(["v0.1.0", "v0.1.4"])).toEqual([]);
+    expect(releasedCoreVersions(["0.1.0", "0.1.4"])).toEqual([]);
   });
 });
 
