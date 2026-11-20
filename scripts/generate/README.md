@@ -24,6 +24,7 @@ the UI files project.
 
 | Generated file | Generator | Command |
 |---|---|---|
+| `native/src/ignored_directories.generated.json` | `scripts/generate/walk/ignored-directories.ts` | `npm run generate:ignored-directories`, from the host's `IGNORED_DIRECTORIES` (`src/engine/code-rule/ignored-directories.ts`); `test/engine/code-rule/worktree-walks/ignored-directories.test.ts` fails when it is stale |
 | `native/src/code_rule_dsl/scope/data/es_globals.generated.json` | `scripts/generate/scope/es-globals.mjs` | `node scripts/generate/scope/es-globals.mjs <tools>/node_modules/eslint` (eslint 10.11.0) |
 | `native/src/code_rule_dsl/scope/data/ts_lib_globals.generated.json` | `scripts/generate/scope/ts-lib-globals.mjs` | `node scripts/generate/scope/ts-lib-globals.mjs <tools>/node_modules/@typescript-eslint/scope-manager` (8.70.1) |
 | `native/src/code_rule_dsl/scope/data/php_builtins.generated.json` | `scripts/generate/scope/php-builtins.php` | `php -n scripts/generate/scope/php-builtins.php` (PHP 8.5.11 with the extensions in `scripts/generate/scope/php-runtime.json`) |

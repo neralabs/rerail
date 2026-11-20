@@ -1,0 +1,139 @@
+.policy "rerail-command-sigil" revision 2
+.description "Take the command sigil a coding agent types from its adapter capabilities, not from a Codex test or a slash hard-coded before a Rerail command in text a Codex user can read."
+.language typescript
+.mode steer
+.scope include "src/**/*.ts"
+.scope exclude "src/hosts/omp/**", "src/hosts/pi/**", "src/hosts/claude/**", "src/hosts/cursor/**", "src/engine/adapter-contract.ts", "src/harness/host-commands.ts", "src/harness/setup-picker.ts", "src/harness/native-session-client.ts", "src/harness/native-semantic-tools.ts", "src/presentation/omp-presentation.ts", "src/cli/show-me.ts", "**/*.test.ts", "**/*.d.ts"
+// Codex types a Rerail command as `$rerail-start`, the other agents as `/rerail-start`; which one an agent takes is
+// ADAPTER_CAPABILITIES[host].commandSigil (src/engine/adapter-contract.ts). Two clauses, as the JSON's:
+//   isCodex(host) ? `$${name}` : `/${name}`          SIGIL_DECIDED_HERE (a test of the agent choosing $ or /)
+//   { codex: "$" }   ["codex", "$"]   case "codex": return "$";   if (codex) return "$";   SIGIL_DECIDED_HERE
+//   const commandSigil = "/";                          SIGIL_DECIDED_HERE (a lone sigil given to a name ending in sigil)
+//   "Start it with /rerail-start."                     SLASH_COMMAND_IN_TEXT (a slash command in a string)
+//   `Start it with ${sigil}rerail-start.`   test.describe("/rerail-start", …)   app.get("/rerail", …)   not reported
+// The JSON's `regex` tests a node's text, as ast-grep's do (a search; `^`/`$` anchor the whole text); its `inside`
+// without `stopBy` is the parent, with `stopBy: end` any ancestor.
+
+.decl literal_kind(k: symbol)
+literal_kind("string"). literal_kind("template_string").
+
+.violation SIGIL_DECIDED_HERE(at: node) "Read the sigil from ADAPTER_CAPABILITIES[host].commandSigil (src/engine/adapter-contract.ts), passing the host in if missing, instead of choosing $ or / here; keep only logic over several agents."
+// A ternary on the agent with $ on one side and / on the other, or on Codex with $ on either side.
+SIGIL_DECIDED_HERE(t) :- field(t, "condition", c), match("(?s:.*)(?i:codex|host|agent|harness)(?s:.*)", c),
+    ternary_sigil(t, "consequence", a), ternary_sigil(t, "alternative", b), a != b.
+SIGIL_DECIDED_HERE(t) :- field(t, "condition", c), match("(?s:.*)(?i:codex)(?s:.*)", c), ternary_sigil(t, _, "$").
+// A Codex key or entry with its lone sigil: { codex: "$" }, { [CODEX_ID]: "/" }, ["codex", "$"].
+SIGIL_DECIDED_HERE(p) :- kind(p, "pair"), field(p, "key", k), match("(?:codex|[\\\"']codex[\\\"']|\\[\\s*CODEX_ID\\s*\\])", k),
+    field(p, "value", v), match("[\\\"'`][$/][\\\"'`]", v).
+SIGIL_DECIDED_HERE(a) :- kind(a, "array"), match("\\[\\s*(?:[\\\"']codex[\\\"']|CODEX_ID)\\s*,\\s*[\\\"'`]\\$[\\\"'`]\\s*\\]", a).
+// case "codex": with a lone "$" anywhere in the case.
+SIGIL_DECIDED_HERE(s) :- kind(s, "switch_case"), field(s, "value", v), match("(?:[\\\"']codex[\\\"']|CODEX_ID)", v),
+    has(s, x, literal_kind), match("[\\\"'`]\\$[\\\"'`]", x).
+// A lone "$" or "/" given to a name ending in sigil: a property, a declaration, an assignment, a parameter default.
+SIGIL_DECIDED_HERE(x) :- literal_kind(k), kind(x, k), match("[\\\"'`][$/][\\\"'`]", x), child(p, x, _), sigil_holder(p).
+// if (…codex…) return "$";
+SIGIL_DECIDED_HERE(i) :- kind(i, "if_statement"), field(i, "condition", c), match("(?s:.*)(?i:codex)(?s:.*)", c),
+    field(i, "consequence", b), match("(?:\\{\\s*)?return\\s+(?:[\\\"'`]\\$[\\\"'`]|`\\$\\$\\{|[\\\"'`]\\$rerail)(?s:.*)", b).
+
+// ternary_sigil(t, side, s): side ("consequence" or "alternative") of ternary t holds sigil s before a command:
+// $ in `$${…}`, "$" or `$rerail`; / in `/${…}`, "/" or `/rerail`.
+.decl ternary_sigil(t: node, side: symbol, s: symbol)
+ternary_sigil(t, side, "$") :- kind(t, "ternary_expression"), (side = "consequence" ; side = "alternative"),
+    field(t, side, x), match("(?s:.*)(?:\\$\\$\\{|[\\\"'`]\\$[\\\"'`]|\\$rerail)(?s:.*)", x).
+ternary_sigil(t, side, "/") :- kind(t, "ternary_expression"), (side = "consequence" ; side = "alternative"),
+    field(t, side, x), match("(?s:.*)(?:/\\$\\{|[\\\"'`]/[\\\"'`]|/rerail)(?s:.*)", x).
+// sigil_holder(p): p gives its value to a name ending in sigil (any case).
+.decl sigil_holder(p: node)
+sigil_holder(p) :- kind(p, "pair"), field(p, "key", k), isuffix("sigil", k).
+sigil_holder(p) :- kind(p, "variable_declarator"), field(p, "name", k), isuffix("sigil", k).
+sigil_holder(p) :- kind(p, "assignment_expression"), field(p, "left", k), isuffix("sigil", k).
+sigil_holder(p) :- (kind(p, "required_parameter") ; kind(p, "optional_parameter")), field(p, "pattern", k),
+    isuffix("sigil", k).
+
+.violation SLASH_COMMAND_IN_TEXT(at: node) "Codex types this as $…, not /…: build it from ADAPTER_CAPABILITIES[host].commandSigil, or commandIn (setup-screens.ts) for several agents, passing them in. Leave it where only OMP or Pi shows it."
+SLASH_COMMAND_IN_TEXT(f) :- slash_command(f), !sigil_given(f).
+// slash_command(f): string piece f holds /rerail or /rerail-<word> as a command: after a space, bracket, quote or
+// `*`, or at its start unless a `${…}` comes right before it (`${base}/rerail` is a path).
+.decl slash_command(f: node)
+slash_command(f) :- kind(f, "string_fragment"), match("(?s:.*)(?:[\\s(\\[\\\"'`*\\u201c\\u2018]/rerail(?:-[a-z]+)*(?:$|[^\\w/.-]|\\.(?:\\s|$)))(?s:.*)", f).
+slash_command(f) :- kind(f, "string_fragment"), match("/rerail(?:-[a-z]+)*(?:$|[^\\w/.-]|\\.(?:\\s|$))(?s:.*)", f), !after_substitution(f).
+.decl after_substitution(f: node)
+after_substitution(f) :- kind(f, "string_fragment"), next_sibling(s, f), kind(s, "template_substitution").
+// sigil_given(f): left alone: a $rerail beside it, a describe() title, a string a $-or-/ ternary picks, a route.
+.decl sigil_given(f: node)
+sigil_given(f) :- slash_command(f), contains("$rerail", f).
+sigil_given(f) :- slash_command(f), inside(f, a, "arguments"), child(c, a, _), kind(c, "call_expression"),
+    field(c, "function", g), kind(g, "member_expression"), suffix(".describe", g).
+sigil_given(f) :- slash_command(f), child(s, f, _), literal_kind(k), kind(s, k), child(t, s, _),
+    kind(t, "ternary_expression"), match("(?s:.*)(?:\\$\\$\\{|[\\\"'`]\\$[\\\"'`]|\\$rerail)(?s:.*)", t).
+sigil_given(f) :- slash_command(f), inside(f, a, "arguments"), child(c, a, _), kind(c, "call_expression"),
+    field(c, "function", g), match("(?:(?s:.*)\\.)?(?:get|post|put|patch|delete|all|use|route|fetch)", g).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_slash_command_in_text_is_reported exactly
+    .fixture "src/harness/setup-screens.ts" ```
+        export function renderNotNow(lane: SetupLane): string {
+          const start = lane === "terminal" ? "rerail start" : "/rerail-start";
+          return `Start Rerail in this repo whenever you’re ready with ${start}.`;
+        }
+        ```
+    .expect SLASH_COMMAND_IN_TEXT at "src/harness/setup-screens.ts":2
+.end
+
+.test choosing_the_sigil_is_reported exactly
+    .fixture "src/harness/commands.ts" ```
+        export function sigilOf(host: string, name: string, codex: boolean, agent: string) {
+          const a = isCodex(host) ? `$${name}` : `/${name}`;
+          const b = agent === "pi" ? "/rerail" : "$rerail";
+          const c = codex ? "$" : other;
+          const table = { codex: "$", [CODEX_ID]: "/" };
+          const entry = ["codex", "$"];
+          switch (host) {
+            case "codex":
+              return "$";
+          }
+          const commandSigil = "/";
+          function show(sigil = "$") {}
+          if (host === "codex") return "$";
+        }
+        ```
+    .expect SIGIL_DECIDED_HERE at "src/harness/commands.ts":2
+    .expect SIGIL_DECIDED_HERE at "src/harness/commands.ts":3
+    .expect SIGIL_DECIDED_HERE at "src/harness/commands.ts":4
+    .expect SIGIL_DECIDED_HERE at "src/harness/commands.ts":5
+    .expect SIGIL_DECIDED_HERE at "src/harness/commands.ts":6
+    .expect SIGIL_DECIDED_HERE at "src/harness/commands.ts":8
+    .expect SIGIL_DECIDED_HERE at "src/harness/commands.ts":11
+    .expect SIGIL_DECIDED_HERE at "src/harness/commands.ts":12
+    .expect SIGIL_DECIDED_HERE at "src/harness/commands.ts":13
+.end
+
+.test slash_commands_in_text_are_reported exactly
+    .fixture "src/cli/help.ts" ```
+        const a = "Run /rerail-start to begin.";
+        const b = `/rerail-stop`;
+        const c = "(/rerail)";
+        ```
+    .expect SLASH_COMMAND_IN_TEXT at "src/cli/help.ts":1
+    .expect SLASH_COMMAND_IN_TEXT at "src/cli/help.ts":2
+    .expect SLASH_COMMAND_IN_TEXT at "src/cli/help.ts":3
+.end
+
+// The pack's passing example, the commands' left-alone places, a choice over neither agent, and an excluded host.
+.test sigils_from_the_capabilities_pass exactly
+    .fixture "src/harness/rerail-summary.ts" ```
+        const notOnLines = ({ repositoryName, sigil }: RerailSummaryInput): string[] =>
+          [`○ Rerail is not on in ${repositoryName}.`, `  Start it with ${sigil}rerail-start.`];
+        ```
+    .fixture "src/harness/other.ts" ```
+        const path = `${base}/rerail-start`;
+        const both = "Type $rerail-start or /rerail-start.";
+        test.describe("/rerail-start command", () => {});
+        app.get("/rerail", handler);
+        const url = "https://example.com/rerail/x";
+        const plain = lane === "terminal" ? "a" : "b";
+        ```
+    .fixture "src/hosts/pi/commands.ts" ```
+        const help = "Run /rerail-start.";
+        ```
+.end
