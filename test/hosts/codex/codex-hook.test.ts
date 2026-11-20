@@ -149,7 +149,7 @@ describe("Codex one-shot hook", () => {
     const daemon = await countingDaemon(join(root, "home"));
     try {
       const common = { session_id: "codex-session", cwd: root };
-      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const dashboard = `${daemon.origin}?repository=clone%3Aapp&checkout=%2Fwork%2Fapp`;
       const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
       await handleCodexEvent({ ...common, hook_event_name: "Stop", turn_id: "t1", last_assistant_message: "Done." }, answering(scriptedLoop({ "turn-end": steer }), { dashboard }), join(root, "sessions"));
 
