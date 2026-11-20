@@ -99,13 +99,13 @@ mod tests {
         let may = policy(&need(Writes::Churn, Device::May)).unwrap();
         assert!(may.has_free_list());
         assert!(!may.in_slab(), "host memory, though the budget has room");
-        #[cfg(target_os = "macos")]
-        if let Some(s) = crate::gpu::shared::get() {
+        // The process's device, whatever its backend (decision 0440 step C).
+        if let Some(layer) = crate::gpu::shared::layer() {
             assert!(must.unwrap().in_slab(), "a device block is a slab");
             let at = may.try_alloc_chunk(3 << 20, 1 << 14).unwrap();
             assert!(at > 0);
             let used = may.used();
-            let wrap = may.gpu_buffer(&s.device).length() as usize;
+            let wrap = may.device_buffer(layer.device).unwrap().length() as usize;
             assert!(wrap >= used && wrap <= (2 * used).max(1 << 20).min(may.reserved()), "a wrap of {wrap} bytes for {used} used");
             return;
         }
@@ -121,8 +121,7 @@ mod tests {
         assert!(!host.in_slab());
         let page = rerail_blocks::block::PAGE;
         assert_eq!(host.reserved(), (40usize << 10).max(rerail_blocks::alloc::EXACT_MIN).div_ceil(page) * page, "its need, in whole pages");
-        #[cfg(target_os = "macos")]
-        if crate::gpu::shared::get().is_some() {
+        if crate::gpu::shared::layer().is_some() {
             let b = policy(&exact(Device::Must)).unwrap();
             assert!(b.in_slab(), "a pooled buffer");
             assert!(b.reserved() < crate::gpu::shared::SLAB_MIN, "of its size ({} bytes), not a slab's least", b.reserved());

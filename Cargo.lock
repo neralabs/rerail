@@ -3175,7 +3175,7 @@ dependencies = [
  "metal",
  "rayon",
  "rerail-device",
- "rerail-ukl",
+ "rerail-gpu",
 ]
 
 [[package]]

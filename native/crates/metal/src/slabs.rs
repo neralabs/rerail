@@ -131,11 +131,6 @@ impl Slab {
         unsafe { std::slice::from_raw_parts(self.host().add(at), len) }
     }
 
-    /// Its buffer, as Metal's kernels not yet on the device layer bind it (decision 0440 step C moves each).
-    pub fn buffer(&self) -> &metal::Buffer {
-        self.buffer.metal().expect("a slab's buffer is Metal's while the residency is")
-    }
-
     /// Its buffer in the device layer, as UKL kernels bind it on every backend.
     pub fn device_buffer(&self) -> &rerail_device::device::Buffer {
         &self.buffer
@@ -797,7 +792,7 @@ mod tests {
         // An object past `SLAB_BYTES` gets a class of its own: 64 MiB + 1 MiB is in the 80 MiB class.
         let big = vec![0xA5_u8; SLAB_BYTES + (1 << 20)];
         let first = admit_sources(&[&big]).unwrap();
-        let address = first[0].slab.buffer().gpu_address();
+        let address = first[0].slab.device_buffer().device_address();
         assert_eq!(first[0].bytes(), &big[..]);
         drop(first);
         assert!(evict(), "the residency's slab retired");
@@ -805,7 +800,7 @@ mod tests {
         // A smaller source, of the same class: the buffer comes back, dirty, and its room reads zero past the bytes.
         let small = vec![0x11_u8; SLAB_BYTES + (1 << 19)];
         let again = admit_sources(&[&small]).unwrap();
-        assert_eq!(again[0].slab.buffer().gpu_address(), address, "the evicted slab's buffer served the next lease");
+        assert_eq!(again[0].slab.device_buffer().device_address(), address, "the evicted slab's buffer served the next lease");
         assert_eq!(again[0].bytes(), &small[..]);
         // SAFETY: the room's margin, inside the slab, written by no one but the zeroing.
         let margin = unsafe { std::slice::from_raw_parts(again[0].slab.host().add(again[0].offset + small.len()), SOURCE_MARGIN) };

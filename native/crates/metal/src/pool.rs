@@ -142,12 +142,11 @@ pub fn drop_all() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::METAL_DEVICE;
 
     /// A returned block serves the next lease of its size class, written over in place.
     #[test]
     fn blocks_are_reused_by_size_class() {
-        if METAL_DEVICE.is_none() {
+        if crate::lane::device().is_err() {
             return;
         }
         // 3 MiB + 1: a class (3.5 MiB) no other test leases.
@@ -155,11 +154,11 @@ mod tests {
         let a = upload(&vec![7_u32; bytes.div_ceil(4)]).unwrap();
         assert!(a.byte_length() >= bytes);
         assert_eq!(a.read::<u32>(3), [7, 7, 7]);
-        let first = a.buffer().gpu_address();
+        let first = a.device_buffer().device_address();
         drop(a);
         let b = zeroed::<u8>(bytes).unwrap();
         assert!(!b.made, "the returned block served the lease");
-        assert_eq!(b.buffer().gpu_address(), first);
+        assert_eq!(b.device_buffer().device_address(), first);
         assert_eq!(b.read::<u32>(3), [0, 0, 0]);
     }
 }

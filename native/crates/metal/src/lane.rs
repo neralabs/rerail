@@ -31,6 +31,7 @@ pub type Kernel = Arc<ComputeFunction>;
 
 /// The process's device in the device layer, or `UnsupportedBackend` without one.
 pub fn device() -> Result<&'static Device, Error> {
+    crate::pool_hooks();
     rerail_accel::gpu::shared::layer().map(|l| l.device).ok_or(Error::UnsupportedBackend)
 }
 

@@ -462,15 +462,6 @@ impl PrivateInputUpload {
 }
 
 impl MappedBuffer {
-    /// A residency slab (PIAT §20.2, §20.4): `length` bytes, page-rounded, of an anonymous mapping
-    /// with one retained no-copy shared buffer over it. Untouched pages stay unmapped, so a slab
-    /// costs what is written to it; its whole length is reserved against the buffer budget.
-    #[track_caller]
-    pub fn slab(length: usize) -> Result<Self, Error> {
-        let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-        Self::from_mapping(device, Arc::new(MappedRegion::zeroed(length)?))
-    }
-
     /// The buffer's bytes as the host writes them.
     pub fn host(&self) -> *mut u8 {
         self.buffer.contents().cast()

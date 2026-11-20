@@ -1246,6 +1246,21 @@ whatever its backend, and a tape is read in place where that device's buffers ha
 `node`, `child`, `field`, `core_node` and `line` views in place as Metal does (`views_made_on_the_device_are_the_hosts_rows`:
 10 of 10 on both), and OpenCL 1.2 makes them. The vtab's gate on Metal is gone.
 
+**C: the blocks crate's kernels in UKL (2026-11-19).** The join's kernels (`rerail_blocks::gpu`) are UKL, their
+structures declared by `ukl_of` (the field trait is `KernelField` now, its MSL half gone: nothing read it). The crate
+is below the device layer, so it holds the source and its callers launch it: the `paces` lab (its join and overflow
+rerun, 126 checks on Metal, the CPU and OpenCL) and the tests (`the_device_reads_a_relation_as_the_host_does`,
+`a_kernels_writes_are_written_back`), through `rerail-gpu` as a dev-dependency.
+
+- **The pool's hooks are installed by the device layer's entry too** (`POOL_HOOKS`): the ledger's reservations and
+  the residency's evictor were installed only by `METAL_DEVICE`'s first touch, which a process on the device layer
+  alone need never make.
+- Gone with their last users: `Slab::buffer` (Metal's), `MappedBuffer::slab`. The pool's, the slabs' and accel's
+  block tests read the device layer's buffers and addresses, and gate on its device: accel's two block tests had
+  gated on Metal's `Shared`, and failed under `RERAIL_GPU=cpu`, whose pool leases slabs.
+- **A race fixed:** `a_wrap_of_host_memory_leaves_the_metal_budget_unchanged` compared the pool's whole idle count
+  across a trim while other tests lease and return small buffers from the same pool; it checks its own 64 MB.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.
