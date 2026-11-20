@@ -1768,7 +1768,8 @@ fn an_axis_counts_its_rows_without_its_solve() {
 
 /// Decision 0353 step 5: a solvable axis's answer is one relation of ids in a block, written once: each row's two
 /// ids, as `value` reads them, in its order, every column at its place, which the device reads where it lies
-/// (`Source::in_block`). Asked again, it is the same relation. Span containment has no solve, and no such relation.
+/// (`Source::in_block`), with room for an index on each column. Asked again, it is the same relation. Span
+/// containment has no solve, and no such relation.
 #[test]
 fn a_solved_axis_is_one_relation_of_ids_in_a_block() {
     use crate::code_rule_dsl::facts::core::kind_atom;
@@ -1797,6 +1798,8 @@ fn a_solved_axis_is_one_relation_of_ids_in_a_block() {
         }
         let again = source.in_block().expect("again");
         assert!(Arc::ptr_eq(&again.facts, &ib.facts) && again.at == ib.at, "{name}: written once");
+        // An index on each column is built in its block: a reader's probe does not copy it (`DevIndex::moved`).
+        assert!(ib.own_index(&[0]).is_some() && ib.own_index(&[1]).is_some(), "{name}: room for an index on each column");
     }
     assert!(within::Within::new(Arc::clone(&batch), within::Mode::Span).in_block().is_none(), "span containment has no solve");
 }

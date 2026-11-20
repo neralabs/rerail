@@ -419,8 +419,9 @@ impl Within {
         use crate::code_rule_dsl::facts::rows::{Life, Rows};
         self.ids.get_or_init(|| {
             let pairs = self.pairs();
-            let mut rows = Rows::living(2, Life::Source);
-            rows.reserve(2 * pairs.len());
+            // Room past its rows for an index on each column, which a reader that probes it builds there (decision
+            // 0325 step 5): without it, the device's index copied the relation whole (`DevIndex::moved`).
+            let mut rows = Rows::with_index_room(2, Life::Source, pairs.len(), 2);
             for &p in pairs {
                 rows.extend_from_slice(&[self.batch.id((p >> 32) as usize), self.batch.id((p & 0xffff_ffff) as usize)]);
             }
