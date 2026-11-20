@@ -54,6 +54,18 @@ Samples on all, an M1 Max (`sample`, 12–15 s of a run). The share of `calls::s
 | lock waits (`swtch_pri`, `cvwait`) in `Name::new` / `new_all` | 32% | 15–18% |
 | `Tape::end`, `start`, `path`, `next_sibling` | 28% | 14%, spread over the walk's `range` and text reads |
 
+## After (0472)
+
+Two more reads taken out of W's walk, on all, native, an M1 Max at load 4–8, alternating runs:
+
+- `walk` read every node's parent and its field's range for `head_of_attribute` and `call_target`; only an
+  identifier or an attribute is tested with them. Read for those alone: the reference graph 6.41–6.57 → 6.10–6.23 s.
+- `TapeNode::range` read the start, then the end, and format 16's end searched for the start again. The end is now
+  the start plus the length (`end_with_start`): 6.11–6.13 → 5.87–5.90 s, instructions 497 → 492 G.
+
+The parse workers' phase is 7.42 s (8.0–8.2 s before both). The rows were ed502024; the tape and summary tests (160)
+pass.
+
 ## What is next
 
 - **The interner per run, or after the parallel part.** The table is process state: per run, or each summary's names

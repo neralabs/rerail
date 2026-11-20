@@ -3241,7 +3241,9 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn range(&self) -> Range<usize> {
         read!("span");
         read_at!("tape span", self.index);
-        self.start() as usize..self.end() as usize
+        // The end from the start in hand (format 16: the start plus the length), not a second search for the start.
+        let start = self.tape.start(self.index as usize);
+        start as usize..self.tape.end_with_start(self.index as usize, start) as usize
     }
     fn start_pos(&self) -> Position {
         read!("points");
