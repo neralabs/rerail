@@ -110,6 +110,12 @@ describe("an installed pack's rule this Rerail no longer runs", () => {
       expect(packRules.find(rule => rule.id === RULE)).toMatchObject({ on: true, inactive: INACTIVE });
       expect(packRules.filter(rule => rule.inactive !== undefined)).toHaveLength(1);
 
+      // Its activity is not measured, as for any rule kept inactive: it is never evaluated.
+      for (const query of [new URLSearchParams({ since: "0", repository: repositoryKey }), new URLSearchParams({ since: "0" })]) {
+        const activity = (await (await app.request(`/api/rules/activity?${query}`)).json() as { rules: Record<string, unknown> }).rules;
+        expect(activity[RULE]).toMatchObject({ measured: false, inactive: INACTIVE });
+      }
+
       // The count set-up and `rerail start` say is the one the session note says: the compiled rules.
       const running = rules.filter(entry => entry.on && entry.inactive === undefined).length;
       const database = openRerailDatabase(databasePath);

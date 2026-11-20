@@ -893,22 +893,28 @@ function guardRepositoriesUsing(stores: RerailApiStores, caller: ApiCaller, rule
 
 /**
  * The rules `rules_activity` reports: those present in the repository, or without one every By Rerail rule and
- * every rule created by you. An unknown repository has none.
+ * every rule created by you. An unknown repository has none. `notRun` says why this Rerail no longer runs an installed
+ * pack's rule, as `RuleCatalog.notRun` does.
  */
-export function activityRules(stores: RerailApiStores, key: string | undefined): { id: string; kind: "code" | "conversation"; rule: unknown }[] {
+export function activityRules(
+  stores: RerailApiStores,
+  key: string | undefined,
+): { id: string; kind: "code" | "conversation"; rule: unknown; notRun: string | null }[] {
   const db = stores.database();
   const ruleCatalog = stores.ruleCatalog();
   if (key === undefined) {
     return [
-      ...[...ruleCatalog.documents.values()].map(document => ({ id: document.rule.id, kind: document.kind, rule: document.rule as unknown })),
-      ...listLibraryRules(db).map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, rule: rule.document.rule as unknown })),
+      ...[...ruleCatalog.documents.values()].map(document => ({
+        id: document.rule.id, kind: document.kind, rule: document.rule as unknown, notRun: ruleCatalog.notRun.get(document.rule.id) ?? null,
+      })),
+      ...listLibraryRules(db).map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, rule: rule.document.rule as unknown, notRun: null })),
     ];
   }
   const repository = findRepository(db, key);
   if (repository === undefined) return [];
   const present = new Map(listRepositoryRules(db, ruleCatalog, repository.repositoryKey).rules
-    .map(rule => [rule.document.rule.id, { kind: rule.document.kind, rule: rule.document.rule as unknown }] as const));
-  return [...present].map(([id, { kind, rule }]) => ({ id, kind, rule }));
+    .map(rule => [rule.document.rule.id, { kind: rule.document.kind, rule: rule.document.rule as unknown, notRun: rule.notRun }] as const));
+  return [...present].map(([id, entry]) => ({ id, ...entry }));
 }
 
 function startOrStop(

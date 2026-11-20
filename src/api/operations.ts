@@ -353,10 +353,10 @@ interface RuleActivityCounts {
  * evaluated, so neither is measured.
  */
 function catalogRuleActivity(
-  { id, kind, rule }: ReturnType<typeof activityRules>[number],
+  { id, kind, rule, notRun }: ReturnType<typeof activityRules>[number],
   counts: RuleActivityCounts,
 ): RuleActivity {
-  const { inactive } = inactiveOf(kind, rule);
+  const { inactive } = inactiveOf(kind, rule, notRun);
   const totals = kind === "conversation" ? undefined : counts.activity.get(id);
   return {
     measured: kind !== "conversation" && inactive === undefined,
