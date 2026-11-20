@@ -3395,6 +3395,8 @@ mod json_probe {
     /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_RUST=<path>`:
     /// tier 1 written as Rust there (`clif_rust`, the ahead-of-time form), to read its shape;
     /// `RERAIL_JSON_ASM=<path>`, its machine code.
+    // simdjson's kernels are not built with MSVC (rerail-simdjson-native).
+    #[cfg(not(all(windows, target_env = "msvc")))]
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn json_tier1_by_pass() {

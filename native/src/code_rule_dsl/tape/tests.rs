@@ -7674,6 +7674,8 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
 #[test]
 fn the_lean_parsers_write_each_format_directly() {
     use super::formats::{Format, as_run};
+    // Not on MSVC, which builds none of simdjson's C++.
+    #[cfg(not(all(windows, target_env = "msvc")))]
     use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
     use rerail_tape_format::tape::Tape;
     type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
@@ -7704,7 +7706,9 @@ fn the_lean_parsers_write_each_format_directly() {
         (GrammarDialect::MarkdownInline, many("Some *text* and `code` {i} [a](b) "), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
         (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
         // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma.
+        #[cfg(not(all(windows, target_env = "msvc")))]
         (GrammarDialect::Json, format!("[{}{{}}]", many("{\"k{i}\": [{i}, \"s\\n{i}\", true, null, {}, []], \"\": \"\"},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
+        #[cfg(not(all(windows, target_env = "msvc")))]
         (GrammarDialect::Json, format!("// head\n[{}1,]", many("/* {i} */ {\"k\": {i}, // c\n\"v\": {/* in */}},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
     ];
     let mut direct = Vec::new();

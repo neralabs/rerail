@@ -136,8 +136,9 @@ fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>>
     Ok(owners.into_iter().filter(|o| o.split(':').nth(1).and_then(|p| p.parse::<i32>().ok()).is_some_and(process_gone)).collect())
 }
 
-/// Whether no process `pid` exists on this host.
-pub(super) fn process_gone(pid: i32) -> bool {
+/// Whether no process `pid` exists on this host: never this process, and on Windows when the system knows no
+/// running process of that id.
+pub fn process_gone(pid: i32) -> bool {
     if pid <= 0 || pid as u32 == std::process::id() {
         return false;
     }
@@ -147,7 +148,31 @@ pub(super) fn process_gone(pid: i32) -> bool {
         let r = unsafe { libc::kill(pid, 0) };
         r != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        const STILL_ACTIVE: u32 = 259;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+            fn GetExitCodeProcess(process: *mut std::ffi::c_void, code: *mut u32) -> i32;
+            fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+        }
+        // SAFETY: a handle opened here, asked for its exit code and closed.
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid as u32);
+            if h.is_null() {
+                // No such process, or one this process may not query (then it exists).
+                const ERROR_INVALID_PARAMETER: i32 = 87;
+                return std::io::Error::last_os_error().raw_os_error() == Some(ERROR_INVALID_PARAMETER);
+            }
+            let mut code = 0u32;
+            let ok = GetExitCodeProcess(h, &mut code) != 0;
+            CloseHandle(h);
+            ok && code != STILL_ACTIVE
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         false
     }

@@ -2882,8 +2882,7 @@ fn test_tape_cache() -> &'static std::path::PathBuf {
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let Some(pid) = name.strip_prefix(PREFIX).and_then(|rest| rest.split('.').next()).and_then(|p| p.parse::<i32>().ok()) else { continue };
-            // SAFETY: signal 0 checks that the process exists and sends nothing.
-            if pid != std::process::id() as i32 && unsafe { libc::kill(pid, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            if crate::content_store::process_gone(pid) {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
@@ -2895,8 +2894,12 @@ fn test_tape_cache() -> &'static std::path::PathBuf {
                 }
             }
         }
+        // The C runtime's, on every platform (libc's crate has it on Unix only).
+        unsafe extern "C" {
+            fn atexit(f: extern "C" fn()) -> std::ffi::c_int;
+        }
         // SAFETY: `remove` is a plain function that runs once, at exit.
-        unsafe { libc::atexit(remove) };
+        unsafe { atexit(remove) };
         dir.join(format!("{PREFIX}{}.sqlite", std::process::id()))
     });
     &PATH

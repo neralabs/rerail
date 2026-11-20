@@ -165,6 +165,27 @@ fn steps(dir: &str) -> Vec<(String, String)> {
     paths.iter().map(|p| (p.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned(), std::fs::read_to_string(p).expect("a step"))).collect()
 }
 
+/// The system's loader: a library opened and kept, and its symbols.
+mod loader {
+    use std::ffi::{c_char, c_void};
+    #[cfg(unix)]
+    pub unsafe fn open(path: *const c_char) -> *mut c_void {
+        unsafe { libc::dlopen(path, libc::RTLD_NOW) }
+    }
+    #[cfg(unix)]
+    pub unsafe fn symbol(h: *mut c_void, name: *const c_char) -> *mut c_void {
+        unsafe { libc::dlsym(h, name) }
+    }
+    #[cfg(windows)]
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "LoadLibraryA"]
+        pub fn open(path: *const c_char) -> *mut c_void;
+        #[link_name = "GetProcAddress"]
+        pub fn symbol(h: *mut c_void, name: *const c_char) -> *mut c_void;
+    }
+}
+
 /// The sources built into one library, each a module with its entry `rerail_tier2_entry_{k}`; the entries, in order.
 fn build(sources: &[String]) -> Vec<Entry> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -172,7 +193,7 @@ fn build(sources: &[String]) -> Vec<Entry> {
     // A directory a set of sources: the loader gives back the library already loaded at a path.
     let dir = std::env::temp_dir().join(format!("rerail-ladder-aot-{}-{:x}", std::process::id(), std::hash::Hasher::finish(&h)));
     std::fs::create_dir_all(&dir).expect("a directory");
-    let (rs, lib) = (dir.join("ladder.rs"), dir.join("libladder.dylib"));
+    let (rs, lib) = (dir.join("ladder.rs"), dir.join(format!("ladder.{}", std::env::consts::DLL_EXTENSION)));
     let mut text = String::new();
     for (k, src) in sources.iter().enumerate() {
         text.push_str(&format!("mod s{k} {{\n{src}\n}}\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn rerail_tier2_entry_{k}(ctx: u64) -> u64 {{\n    unsafe {{ s{k}::tier2_entry(ctx) }}\n}}\n"));
@@ -183,14 +204,14 @@ fn build(sources: &[String]) -> Vec<Entry> {
     let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
     // SAFETY: a library rustc just built from the sources above; kept loaded for the process.
     let entries = unsafe {
-        let h = libc::dlopen(path.as_ptr(), libc::RTLD_NOW);
-        assert!(!h.is_null(), "dlopen");
+        let h = loader::open(path.as_ptr());
+        assert!(!h.is_null(), "loading {}", lib.display());
         (0..sources.len())
             .map(|k| {
                 let name = std::ffi::CString::new(format!("rerail_tier2_entry_{k}")).expect("a name");
-                let f = libc::dlsym(h, name.as_ptr());
-                assert!(!f.is_null(), "dlsym");
-                std::mem::transmute::<*mut libc::c_void, Entry>(f)
+                let f = loader::symbol(h, name.as_ptr());
+                assert!(!f.is_null(), "rerail_tier2_entry_{k} in {}", lib.display());
+                std::mem::transmute::<*mut std::ffi::c_void, Entry>(f)
             })
             .collect()
     };

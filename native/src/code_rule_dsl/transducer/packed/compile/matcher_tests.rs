@@ -1025,11 +1025,8 @@ fn anchored_walks_find_the_unanchored_roots() {
         unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
         drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
         let cpu = || {
-            // SAFETY: getrusage writes the struct it is given.
-            let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-            let time = |t: libc::timeval| std::time::Duration::from_micros(t.tv_sec as u64 * 1_000_000 + t.tv_usec as u64);
-            time(usage.ru_utime) + time(usage.ru_stime)
+            let (user, system) = crate::code_rule_dsl::prof::process_usage();
+            std::time::Duration::from_secs_f64(user + system)
         };
         let cpu_before = cpu();
         let started = std::time::Instant::now();
