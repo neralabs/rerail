@@ -5248,7 +5248,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   `Early` or a prefix in the program), no device in the process, or a single-program check.
 - **Done when**: the cause is named and the two tests pass on a Mac with Metal.
 
-### Q237. (Q105 on Typing-support-final-shape at 4ea96a066) Five `rerail-logic` tests fail that read nothing of 0276 §3's port
+### Q237. (Q105 on Typing-support-final-shape at 4ea96a066) (done) Five `rerail-logic` tests fail that read nothing of 0276 §3's port
 
 - **Found** (2026-11-18, running `rerail-logic`'s tests for Q83): `facts_only::every_table_is_facts_or_listed`
   (`content_store/schema.rs`'s `frame_segments`, `guest_keys`, `object_segments` in no list),
@@ -5260,7 +5260,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Done when**: each list names what it lists once, and the strings tests assert by content, not number.
 - **Record**: done (2026-11-19, Typing-support at 049b9aaa6, a Linux farm host): all five pass.
 
-### Q238. (Q106 on Typing-support-final-shape at 4ea96a066) Relax's JIT refuses `sha2`'s `sha512h` inline asm
+### Q238. (Q106 on Typing-support-final-shape at 4ea96a066) (done) Relax's JIT refuses `sha2`'s `sha512h` inline asm
 
 - **Found** (2026-11-18, running `rr::tests` under Relax for 0276 step 5):
   `rr::tests::shared_signing_library_verifies_an_existing_empty_allowlist` stops at "compile error in
@@ -5434,7 +5434,7 @@ regression of the maintain mode's plans (0328 §4), not a stale test.
   recheck's spec is written from the head-bound body, and the spec's cache key says which it is. R7 passes; the 139
   maintain, session, recheck and plan tests pass.
 
-### Q293. (Q252 until 2026-11-19; the hub's Q252 is a chain's reach) CPython ran on the product's path: `value::python_ast` started `python3.13` for each demand batch
+### Q293. (Q252 until 2026-11-19; the hub's Q252 is a chain's reach) (done) CPython ran on the product's path: `value::python_ast` started `python3.13` for each demand batch
 
 Seen 2026-11-19 (Typing-support), on a Linux farm host without CPython 3.13: 9 of `rerail-lang-python`'s tests
 failed, "Canonical Python AST facts require CPython 3.13". The relational producer
@@ -5452,7 +5452,28 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   and CPython's offsets differ by the kind of error. Its test is ignored with that reason.
 - **Done when**: `cpython::syntax` gives the error's span as CPython 3.13 does, checked by `parity` against CPython
   on a box, and the worker is deleted.
-- **Record**: —
+- **Record**: done (2026-11-20, Typing-support). `cpython::syntax` gives each error a `Span` by how CPython raises
+  it, read from CPython 3.13's sources and probes:
+  - at the token its parser failed at, or at a node an action names: columns + 1, in characters of `text`, clamped
+    one past its end;
+  - at the tokenizer's cursor (`_syntaxerror_range`: an unterminated string put back past its first character, an
+    invalid character, a stray bracket), the end there too, `text` without its line end;
+  - at a token with no column (an `INDENT`, the `ENDMARKER`, the tokenizer's dedent): the cursor's place on its
+    line, end -1;
+  - at a bracket never closed or a line continuation: column + 1, end 0.
+
+  `text` has its line end where the tokenizer read no further than the error's line: the token after the error's
+  last one, or, at a failed token, past the expression beside it (`invalid_expression`). `value::python_ast` writes
+  `syntax_error` natively, as the worker's `json.dumps(..., ensure_ascii=True)` did. `python_ast/worker.py` and the
+  `oracle` path are deleted, and `syntax_errors_are_cpythons_whole` replaces the ignored test: 41 errors recorded
+  from CPython 3.13.18, every span kind and escapes.
+
+  `syntax_error_parity` compares the span too, against CPython 3.13.12 on a farm Mac:
+  - the fixtures (the replay's input): 152 of 152 rejects equal in line, message and span;
+  - 1,680 seeded mutants of corpus0's Python files: 734 of the 737 whose line and message agree equal in span. The
+    3 others are Ruff's recovery (noted APPROX in `read_failed`).
+
+  Line and message on the mutants, 792 and 746 of 851, are Q389.
 
 ### Q294. (done) Linking every pack's library waits minutes on the store's msync of kept facts (Linux)
 
@@ -5624,3 +5645,16 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   SLF001 on PostHog bounded as Release-debugging measured.
 - **State** (2026-11-20, the merge into Typing-support): the rewrite is a step on the version there (0477, item 1):
   the tree forms are gone, so it was ported, its five tests with it. Its pricing is as open as before.
+
+### Q389. `cpython::syntax`'s line and message where Ruff recovers otherwise than CPython
+
+- **Found** (2026-11-20, Q293): on 1,680 seeded mutants of corpus0's Python files (truncated, a character dropped,
+  a bracket, quote, backslash, `$`, tab or newline put in, a line's indentation changed), CPython 3.13 rejects 851.
+  The engine's verdict is right on all 1,680, but its line differs on 59 and its message on 105. On the fixtures
+  (the replay's input) all 152 agree. The differences are where the first error Ruff reports is not the one CPython
+  raises: a keyword-argument error inside a call whose bracket is never closed, where CPython reports the bracket.
+- **To do**: generate the mutants again (`scripts/dev/python-syntax-mutants.py`, seeded), run
+  `cpython::parity::syntax_error_parity` with `RERAIL_PARITY_ROOTS=fixtures:<mutants>` on a box with CPython 3.13,
+  and follow CPython's choice in each class of difference, as `syntax_error` already does for tokenizer errors and
+  brackets left open.
+- **Done when**: line and message agree on the mutants but for differences named APPROX with their count.

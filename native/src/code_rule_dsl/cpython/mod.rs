@@ -3,7 +3,8 @@
 //! what CPython's `ast` module would answer, for CPython 3.13 (`VERSION`), the version W's `pythonAst` worker required
 //! and nera-data-layer's `.python-version` names:
 //!
-//! - `syntax`: `ast.parse`'s verdict, the line and message of its `SyntaxError` (core.rr's `syntax_error(d, l, msg)`).
+//! - `syntax`: `ast.parse`'s verdict, the line and message of its `SyntaxError` (core.rr's `syntax_error(d, l, msg)`),
+//!   and where it is: its `offset`, `text`, `end_lineno` and `end_offset` (`value::python_ast`'s `syntax_error`).
 //! - `literal`: `json.dumps(ast.literal_eval(node), sort_keys=True, separators=(",", ":"))` of each expression, W's
 //!   pythonAst `literal_json` (core.rr's `literal_json(n, v)`).
 //! - `value`: Python values as CPython builds and prints them (a str with lone surrogates, an int of any size, the
@@ -14,8 +15,7 @@
 //!   `signature_sha256`; `printed`: those of each located node of a file, and the tree-sitter kinds W's worker read
 //!   as each class.
 //!
-//! Real CPython runs only as the test oracle of `parity` (ignored tests, on the boxes), and as the gate's oracle for a
-//! module's whole `SyntaxError` (`value::python_ast`'s `syntax_error`, which only the gate's replay asks for).
+//! Real CPython runs only as the test oracle of `parity` (ignored tests, on the boxes).
 
 pub mod ast;
 pub mod dump;

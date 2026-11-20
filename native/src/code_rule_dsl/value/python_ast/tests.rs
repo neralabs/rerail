@@ -1,8 +1,30 @@
 use super::*;
 
-/// A module's whole `SyntaxError` is CPython's (the worker, the gate's oracle): run where CPython 3.13 is.
+/// A module's whole `SyntaxError` (`msg`, `lineno`, `offset`, `text`, `end_lineno`, `end_offset`), as the worker's
+/// `json.dumps(..., ensure_ascii=True)` wrote it: each case recorded from CPython 3.13.18 (`python3.13 -I -S`,
+/// `syntax_errors.jsonl`, one `[source, syntax_error]` per line), its spans of each kind (a token's, a node's, the
+/// tokenizer's cursor, a token with no column, a bracket never closed) and its escapes.
 #[test]
-#[ignore = "the gate's oracle: needs CPython 3.13 (python3.13) on the path"]
+fn syntax_errors_are_cpythons_whole() {
+    let mut wrong = Vec::new();
+    for line in include_str!("syntax_errors.jsonl").lines() {
+        let (source, want): (String, String) = serde_json::from_str(line).unwrap();
+        let document = Document {
+            requests: vec![Request { start: 0, end: source.len(), kind: "module".into(), fields: vec!["syntax_error".into()] }],
+            source: source.clone(),
+        };
+        match batch(&[document]) {
+            Ok(rows) if rows[0][0]["syntax_error"] == want => {}
+            Ok(rows) => wrong.push(format!("{source:?}:\n  CPython {want}\n  engine  {}", rows[0][0]["syntax_error"])),
+            Err(e) => wrong.push(format!("{source:?}: CPython {want}, engine fails: {}", e.0)),
+        }
+    }
+    assert!(wrong.is_empty(), "{} of the recorded errors differ:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+/// The batch parses each module once and walks none for its `syntax_error`; a module that parses has none (`null`);
+/// one that does not fails the batch where another field is asked of it (the worker's `raise`).
+#[test]
 fn syntax_error_facts_are_batched_and_do_not_walk_invalid_modules() {
     let documents =
         ["def invalid(\n", "raise RuntimeError('never execute')\n"].map(|source| Document {

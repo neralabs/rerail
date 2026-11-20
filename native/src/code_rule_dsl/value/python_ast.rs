@@ -1,19 +1,12 @@
 //! Canonical CPython 3.13 AST facts of a demand batch, computed natively (`code_rule_dsl::cpython`): no Python runs.
-//! SQL selects the roots. A node is found as W's `pythonAst` worker (`python_ast/worker.py`) found it, by its span and
-//! the classes its kind may be, and each field is the worker's: `dump`, `dump_sha256`, `body_sha256`,
-//! `signature_sha256`, `unparse`, `repr_unparse`, `literal_json`, `identifier`, and the text fields `column` and a
-//! name's `identifier`, which parse nothing.
-//!
-//! One field is CPython's still: a module's `syntax_error`, the whole `SyntaxError` (`msg`, `lineno`, `offset`,
-//! `text`, `end_lineno`, `end_offset`), which only the gate's conformance replay asks for (`pythonAstBatch`). The
-//! native verdict (`cpython::syntax`) is the line and message alone, so a batch that asks it runs the worker, the
-//! gate's oracle. The relational producer (`residency::admission::relational::python_ast`) never asks it.
+//! SQL selects the roots. A node is found as W's `pythonAst` worker (deleted, work queue Q293) found it, by its span
+//! and the classes its kind may be, and each field is the worker's: `dump`, `dump_sha256`, `body_sha256`,
+//! `signature_sha256`, `unparse`, `repr_unparse`, `literal_json`, `identifier`, the text fields `column` and a name's
+//! `identifier`, which parse nothing, and a module's `syntax_error`: the whole `SyntaxError` (`msg`, `lineno`,
+//! `offset`, `text`, `end_lineno`, `end_offset`, `cpython::syntax`), which only the gate's conformance replay asks
+//! for (`pythonAstBatch`).
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    io::Write,
-    process::{Command, Stdio},
-};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct Error(pub String);
@@ -56,9 +49,6 @@ pub fn batch_with_metrics(documents: &[Document]) -> Result<Response, Error> {
     }
     if documents.iter().map(|d| d.source.len()).sum::<usize>() > 8 * 1024 * 1024 {
         return Err(Error("Python AST batch exceeds its source capacity".into()));
-    }
-    if documents.iter().any(|d| d.requests.iter().any(|r| r.fields.iter().any(|f| f == "syntax_error"))) {
-        return oracle(documents);
     }
     native(documents)
 }
@@ -109,7 +99,25 @@ fn native(documents: &[Document]) -> Result<Response, Error> {
             match ast::module(source) {
                 Some(tree) => Some(tree),
                 None => {
-                    return Err(match crate::code_rule_dsl::cpython::syntax::syntax_error(source) {
+                    let verdict = crate::code_rule_dsl::cpython::syntax::syntax_error(source);
+                    // A module that does not parse gives its `SyntaxError` where that is all that is asked of it,
+                    // else the batch fails (the worker's `raise`).
+                    if let Ok(Some(e)) = &verdict
+                        && document.requests.iter().all(|r| r.kind == "module" && r.fields == ["syntax_error"])
+                    {
+                        let value = syntax_error_json(e);
+                        let mut rows = Vec::with_capacity(document.requests.len());
+                        for _ in &document.requests {
+                            bytes += value.len();
+                            if bytes > 64 * 1024 * 1024 {
+                                return Err(Error("Python AST batch exceeds its output capacity".into()));
+                            }
+                            rows.push(Row::from([("syntax_error".to_owned(), value.clone())]));
+                        }
+                        out.push(rows);
+                        continue;
+                    }
+                    return Err(match verdict {
                         Ok(Some(e)) => failed(format!("SyntaxError: {} (line {})", e.msg, e.line)),
                         Ok(None) => failed("no tree for a module that parses"),
                         Err(raised) => failed(format!("{}: {}", raised.class, raised.message)),
@@ -195,6 +203,8 @@ fn native(documents: &[Document]) -> Result<Response, Error> {
             for field in &r.fields {
                 let none = || failed(format!("no {field} for {} at {}..{}", node.class, r.start, r.end));
                 let value = match field.as_str() {
+                    // The module parsed: no error.
+                    "syntax_error" if r.kind == "module" => "null".to_owned(),
                     "dump" => dumps().get(node).map(str::to_owned).ok_or_else(none)?,
                     "dump_sha256" => dumps().sha256(node).ok_or_else(none)?,
                     "body_sha256" | "signature_sha256" if !def => return Err(failed("Function fingerprints require a function definition")),
@@ -230,65 +240,47 @@ fn native(documents: &[Document]) -> Result<Response, Error> {
     Ok(Response { version: [3, 13], documents: out, parses, module_walks })
 }
 
-/// The batch from CPython's worker (`python_ast/worker.py`, `python3.13 -I -S`): the gate's oracle, for a module's
-/// whole `SyntaxError`.
-fn oracle(documents: &[Document]) -> Result<Response, Error> {
-    let input = serde_json::to_vec(
-        &serde_json::json!({"format":"rerail.python-ast/v1","documents":documents}),
-    )
-    .map_err(|e| Error(e.to_string()))?;
-    let executable = if cfg!(windows) {
-        "python.exe"
-    } else {
-        "python3.13"
-    };
-    let mut child = Command::new(executable)
-        .args(["-I", "-S", "-c", include_str!("python_ast/worker.py")])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            Error(format!(
-                "Canonical Python AST facts require CPython 3.13 ({executable}): {e}"
-            ))
-        })?;
-    let write = child.stdin.take().expect("piped stdin").write_all(&input);
-    let output = child.wait_with_output().map_err(|e| Error(e.to_string()))?;
-    if !output.status.success() {
-        return Err(Error(format!(
-            "CPython AST batch failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    write.map_err(|e| Error(e.to_string()))?;
-    if output.stdout.len() > 64 * 1024 * 1024 {
-        return Err(Error("Python AST batch exceeds its output capacity".into()));
-    }
-    let response: Response =
-        serde_json::from_slice(&output.stdout).map_err(|e| Error(e.to_string()))?;
-    if response.version != [3, 13] || response.documents.len() != documents.len() {
-        return Err(Error(
-            "Canonical Python AST response shape differs from its request".into(),
-        ));
-    }
-    for (document, rows) in documents.iter().zip(&response.documents) {
-        if rows.len() != document.requests.len() {
-            return Err(Error(
-                "Canonical Python AST row count differs from its demand".into(),
-            ));
+/// A module's `SyntaxError` as the worker gave it: `json.dumps` (`ensure_ascii`, no spaces) of its `msg`, `lineno`,
+/// `offset`, `text`, `end_lineno` and `end_offset`, in that order; each `null` but `msg` where CPython gives none (a
+/// null byte).
+fn syntax_error_json(e: &crate::code_rule_dsl::cpython::syntax::SyntaxError) -> String {
+    let mut out = String::from("{\"msg\":");
+    json_ascii(&mut out, &e.msg);
+    match &e.at {
+        Some(at) => {
+            out.push_str(&format!(",\"lineno\":{},\"offset\":{},\"text\":", at.lineno, at.offset));
+            json_ascii(&mut out, &at.text);
+            out.push_str(&format!(",\"end_lineno\":{},\"end_offset\":{}}}", at.end_lineno, at.end_offset));
         }
-        for (request, row) in document.requests.iter().zip(rows) {
-            if row.len() != request.fields.len()
-                || request.fields.iter().any(|f| !row.contains_key(f))
-            {
-                return Err(Error(
-                    "Canonical Python AST fields differ from their demand".into(),
-                ));
+        None => out.push_str(",\"lineno\":null,\"offset\":null,\"text\":null,\"end_lineno\":null,\"end_offset\":null}"),
+    }
+    out
+}
+
+/// `text` as a JSON string, as Python's `json.dumps(..., ensure_ascii=True)` writes it: printable ASCII as it is, `"`
+/// and `\` escaped, the short escapes of `\n`, `\r`, `\t`, `\b`, `\f`, every other character `\uxxxx` (lowercase hex;
+/// past the BMP, its surrogate pair).
+fn json_ascii(out: &mut String, text: &str) {
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            ' '..='~' => out.push(c),
+            _ => {
+                let mut units = [0u16; 2];
+                for unit in c.encode_utf16(&mut units) {
+                    out.push_str(&format!("\\u{unit:04x}"));
+                }
             }
         }
     }
-    Ok(response)
+    out.push('"');
 }
 #[cfg(test)]
 pub mod tests;
