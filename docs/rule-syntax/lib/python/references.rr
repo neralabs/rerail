@@ -168,7 +168,13 @@ rf_param_of(i, f) :- rf_bind(i, x, f), param(f, x, _).
 .decl rf_local(i: node, t: node)
 rf_local(i, t) :- rf_expr(i, i, t), rf_bind(i, x, s), !kind(s, "module"), !defn(s, x, _), !param(s, x, _).
 rf_local(i, t) :- rf_expr(i, i, t), rf_param_of(i, t).
+// A parameter its function rebinds before the read: the read is of the assignment, a local (W's walk finds the
+// latest binding before the read; a read in the assignment's own value is before it).
+rf_local(i, t) :- rf_expr(i, i, t), rf_bind(i, x, s), !kind(s, "module"), param(s, x, _), asg(s, x, _, a), a < i,
+    !within(i, a).
 rf_local(i, t) :- rf_expr(i, i, t), rf_bind(i, x, s), kind(s, "lambda"), param(s, x, _), nearest(s, t, fdef).
+// A type parameter's read (tp_ref): W's walk finds it in the definition's type-parameter scope, a local.
+rf_local(i, t) :- rf_expr(i, i, t), tp_ref(i, _).
 
 // ---- the module's bindings of a name, as a function's body reads them --------------------------------------------
 // rf_mbind(m, x, site, form): module or class scope m binds x at site, in form ("def", "class", "assign", "import",
@@ -272,6 +278,14 @@ rf_fn_follows(i, s, x, site) :- rf_fn_seen(i, s, x, site), rf_fn_n(s, x, 1).
 rf_fn_follows(i, s, x, site) :- rf_fn_seen(i, s, x, site), rf_fn_n(s, x, k), k > 1, !rf_fcond(site), !rf_crossing(i, s),
     !rf_in_loop(i).
 rf_fn_follows(i, s, x, site) :- rf_fn_seen(i, s, x, site), rf_fn_n(s, x, k), k > 1, !rf_fcond(site), rf_crossing(i, s).
+// A read of s's last binding, unconditional, in a loop too: W reads the bindings live at the end of the body, and that
+// is the one.
+rf_fn_follows(i, s, x, site) :- rf_fn_seen(i, s, x, site), rf_fn_n(s, x, k), k > 1, !rf_fcond(site), !rf_crossing(i, s),
+    rf_fn_last(s, x, site).
+.decl rf_fn_last_at(s: node, x: symbol, u: number)
+rf_fn_last_at(s, x, u) :- rf_fn_n(s, x, k), k > 1, u = max t : { rf_fn_at(s, x, _, t) }.
+.decl rf_fn_last(s: node, x: symbol, site: node)
+rf_fn_last(s, x, site) :- rf_fn_last_at(s, x, u), rf_fn_at(s, x, site, u).
 // rf_fcond(site): a function's binding site runs only on some paths through its body.
 .decl rf_fcond(site: node)
 rf_fcond(site) :- rf_fn_at(_, _, site, _), nearest(site, a, rf_condstop), kind(a, k), rf_condk(k).
@@ -306,7 +320,11 @@ rf_import_target(a, q) :- import_alias(i, a, m, "", _), kind(i, "import_statemen
 rf_named(e, t) :- rf_expr(n, e, t), kind(e, "identifier"), kind(n, "call").
 rf_named(e, t) :- rf_expr(e, e, t), kind(e, "identifier"), !rf_local(e, t), text(e, x), !rf_builtin(e, x).
 .decl rf_builtin(e: node, x: symbol)
-rf_builtin(e, x) :- rf_expr(e, e, _), kind(e, "identifier"), text(e, x), builtin(x).
+rf_builtin(e, x) :- rf_expr(e, e, _), kind(e, "identifier"), text(e, x), builtin(x), !rf_after_310(x).
+// rf_after_310(x): a builtin Python 3.10 lacks. W's graph reads the builtins of Ruff's default target, 3.10, so these
+// are module names to it.
+.decl rf_after_310(x: symbol)
+rf_after_310("BaseExceptionGroup"). rf_after_310("ExceptionGroup"). rf_after_310("PythonFinalizationError").
 .decl rf_resolved(e: node, q: symbol)
 rf_resolved(e, q) :- rf_named(e, _), rf_names(e, q).
 .decl rf_has_resolved(e: node)
@@ -340,7 +358,7 @@ rf_param_site(o, p) :- rf_plain_attr(_, _, o, _), rf_bind(o, x, s), param(s, x, 
     child(ps, p, i).
 rf_ref(t, "type", m, ty, f) :- rf_plain_attr(_, t, o, f), rf_param_site(o, p), nearest(p, t, fdef),
     kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter"), field(p, "type", an), text(an, at),
-    ty = @trim(@rx_replace(at, "(?s)[\\[|].*$", "")), @instr(ty, ".") = 0, docof(o, d), rf_module(d, m), m != "",
+    ty = @trim(@rx_replace(at, "(?s)\\s*[\\[|].*$", "")), @instr(ty, ".") = 0, docof(o, d), rf_module(d, m), m != "",
     !rf_param_splat(p).
 .decl rf_param_splat(p: node)
 rf_param_splat(p) :- child(p, c, _), (kind(c, "list_splat_pattern") ; kind(c, "dictionary_splat_pattern")).
@@ -387,7 +405,7 @@ rf_member_import(k, q) :- rf_mlast(m, x, site), rf_mbind(m, x, site, "import"), 
 rf_field_decl(c, x, ty) :- kind(a, "assignment"), field(a, "type", an), field(a, "left", l), kind(l, "identifier"),
     text(l, x), child(st, a, 0), kind(st, "expression_statement"), child(b, st, _), kind(b, "block"),
     field(k, "body", b), kind(k, "class_definition"), rf_qn(k, c), text(an, at),
-    ty = @trim(@rx_replace(at, "(?s)[\\[|].*$", "")).
+    ty = @trim(@rx_replace(at, "(?s)\\s*[\\[|].*$", "")).
 // A class's bases, by short name, in order: (class, the base's slot, the base's short name).
 .decl rf_base(c: symbol, i: number, short: symbol, m: symbol)
 rf_base(c, i, short, m) :- kind(k, "class_definition"), field(k, "superclasses", al), child(al, e, i),
@@ -547,9 +565,14 @@ rf_renamed(q, @dot(t, r), h) :- rf_hit(q, p, r, h), rf_alias_target(p, t).
 // A class: its attribute r, or its field's type's member.
 .decl rf_only_classes(c: symbol)
 rf_only_classes(c) :- rf_class_name(c), !rf_nonclass_name(c).
-rf_link(q, d) :- rf_hit(q, c, f, _), !rf_aliased(c), rf_only_classes(c), @instr(f, ".") = 0, rf_method(c, f, d).
+// The class's order is keyed by its own name (rf_base_class): a name spelling it by its file's path reads that one's.
+rf_link(q, d) :- rf_hit(q, c, f, _), !rf_aliased(c), rf_only_classes(c), @instr(f, ".") = 0, rf_class_own(c, k),
+    rf_method(k, f, d).
+.decl rf_class_own(c: symbol, k: symbol)
+rf_class_own(c, k) :- rf_named_def(c, f), rf_is_class(f), rf_qn(f, k).
 .decl rf_class_field(q: symbol, c: symbol, x: symbol, f: symbol)
-rf_class_field(q, c, x, f) :- rf_hit(q, c, r, _), !rf_aliased(c), rf_only_classes(c), split_dot(r, x, f), @instr(x, ".") = 0.
+rf_class_field(q, k, x, f) :- rf_hit(q, c, r, _), !rf_aliased(c), rf_only_classes(c), split_dot(r, x, f), @instr(x, ".") = 0,
+    rf_class_own(c, k).
 rf_link(q, d) :- rf_class_field(q, c, x, f), rf_field_type(c, x, ty, m), rf_type_class(m, ty, k), rf_method(k, f, d).
 // A module no binding gives the member of: nothing (W's reference graph keeps no star import, `as_references`).
 // Through an alias.
@@ -646,10 +669,10 @@ rf_init_arg(f, p, x, "<unannotated>") :- rf_init(f, _), param_list(f, ps), child
     kind(p, "default_parameter"), field(p, "name", n), kind(n, "identifier"), text(n, x).
 rf_init_arg(f, p, x, ty) :- rf_init(f, _), param_list(f, ps), child(ps, p, _), kind(p, "typed_parameter"),
     child(p, n, 0), kind(n, "identifier"), text(n, x), field(p, "type", a), text(a, at),
-    ty = @trim(@rx_replace(at, "(?s)[\\[|].*$", "")).
+    ty = @trim(@rx_replace(at, "(?s)\\s*[\\[|].*$", "")).
 rf_init_arg(f, p, x, ty) :- rf_init(f, _), param_list(f, ps), child(ps, p, _),
     kind(p, "typed_default_parameter"), field(p, "name", n), kind(n, "identifier"), text(n, x), field(p, "type", a),
-    text(a, at), ty = @trim(@rx_replace(at, "(?s)[\\[|].*$", "")).
+    text(a, at), ty = @trim(@rx_replace(at, "(?s)\\s*[\\[|].*$", "")).
 // A `/` after p makes it positional-only.
 .decl rf_positional_only(f: node, p: node)
 rf_positional_only(f, p) :- rf_init_arg(f, p, _, _), field(f, "parameters", ps), child(ps, sep, _),

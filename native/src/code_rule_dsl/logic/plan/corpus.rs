@@ -1086,6 +1086,8 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     let _ = std::fs::write(path.with_extension("local.rr"), rules(&split.versions.local));
     let _ = std::fs::write(path.with_extension("cross.rr"), rules(&split.versions.cross));
     let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
+    // Why each cross-file relation is: the first rule the split found not to stay on one document.
+    let _ = std::fs::write(path.with_extension("causes.txt"), split.causes.iter().map(|(r, c)| format!("{r}\t{c}\n")).collect::<String>());
     const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
     let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(0);
     let cross = &split.versions.cross;

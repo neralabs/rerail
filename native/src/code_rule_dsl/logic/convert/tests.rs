@@ -7,6 +7,7 @@ use crate::code_rule_dsl::test_support::CAPABILITIES;
 use std::path::{Path, PathBuf};
 
 mod reference_tests;
+mod reference_stage_tests;
 
 /// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";

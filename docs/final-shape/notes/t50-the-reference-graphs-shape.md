@@ -289,6 +289,57 @@ Target after all steps: per-file rules about 10 s, the cross part about 4 s, the
 the low 40s of CPU s against W's 38–40, with every piece of it in rules, and every operator able to run on the device.
 This is an estimate, to be replaced by measurements step by step.
 
+## 4. W's pass and the rules, stage by stage
+
+`logic/convert/tests/reference_stage_tests.rs` sets each stage of W's pass beside the rules that stand for it. Each
+side's rows are compared, and each side's CPU is timed:
+
+| Stage | W's code | The rules (heads summed by `stage_of`) | Rows compared |
+|---|---|---|---|
+| scope | `ScopeTable::build_in` | `names.rr`'s heads but the walk's | `load`: each name read |
+| lookup | `resolve_python_index` per read | `wstart`, `walk`, `look`, `miss`, `in_first_iter`, `builtin_ref` | `look`: the scope each read lands on |
+| summary | `calls::summarize` | `references.rr` above `// ==== across files` | `def`, `ref`: W's spelled names |
+| link | `Graph::link_references` | `references.rr` below it | `link`, `open_name`, `edge`, `open` |
+
+`each_stage_of_ws_reference_graph_is_the_rules_on_the_projects` runs it on the calls oracle's projects. `…_on_the_cases`
+runs it on one small case per difference found so far. `reference_stages_timed` (ignored; `RERAIL_STAGE_CORPUS`) times it
+on a corpus, and with `RERAIL_STAGE_DIFFS=1` it prints every differing row.
+
+On s1000 every stage's rows are now equal: 341,263 reads and lookups, 21,164 definitions, 89,966 references, 53 links,
+101 open names. The differences fixed to get there were all in the rules, each with a case:
+
+- a typed splat's name;
+- a type parameter's name, PEP 696's default form included;
+- a type parameter read;
+- a class reached by its path's spelling;
+- a dotted `case` pattern's tail, which is an attribute;
+- an annotation or default, which is read in the scope around the definition;
+- a `global` name, read after its function binds it;
+- `nonlocal` resolved through a chain of `nonlocal` declarations;
+- a class body reading a name it binds only later;
+- `type(self).x = v`, which tree-sitter parses as a type alias;
+- a nested function rebinding its own parameter;
+- a union annotation written over several lines (SQLite's `trim` removes spaces only);
+- the builtins of Python 3.10;
+- a scope's last binding when it is unconditional.
+
+CPU per stage on s1000 (profiling build, one farm host, 2026-11-20). W's times vary 2–7× between runs on the farm's
+hosts; this run's W total of 1.2 s matches the earlier quiet runs:
+
+| Stage | W s | rules s | rules/W |
+|---|---|---|---|
+| scope | 0.215 | 2.848 | 13.3 |
+| lookup | 0.023 | 1.237 | 53.6 |
+| summary | 0.752 | 6.170 | 8.2 |
+| link | 0.182 | 2.459 | 13.5 |
+| (engine: the run outside the strata) | — | 16.9 | — |
+| (generated strata) | — | 5.7 | — |
+| (outputs) | — | 1.9 | — |
+
+Two ratios are the worst. The first is the lookup, at 54×: a scope walk materialized as `walk` rows, which step 5's
+keyed nearest replaces. The second is the time outside the strata, which is larger than all the stages together.
+Steps 1 and 8 address that part.
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.
