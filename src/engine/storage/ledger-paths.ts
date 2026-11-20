@@ -117,31 +117,49 @@ export interface LedgerFolderOptions extends PrivateMachine {
   readonly repair?: boolean;
 }
 
-/** The session records folders this process keeps private: each one's file id then, and its repair once its ACL is read. */
-const keptRecordsFolders = new Map<string, { readonly ino: bigint; readonly repair: Promise<FoundFolderRepair> }>();
+/** A session records folder this process keeps private: its file id then, and its repair once its ACL is read. */
+interface KeptRecordsFolder {
+  readonly ino: bigint;
+  readonly repair: Promise<FoundFolderRepair>;
+}
+
+/** The session records folders this process keeps private, each until its repair fails. */
+const keptRecordsFolders = new Map<string, KeptRecordsFolder>();
 
 /**
  * Keeps the session records folder on `directory`, the one just below the innermost `.rerail`, its owner's alone
- * whoever made it ({@link keepFoundFolderPrivate}), once per folder in this process: again only when a folder with
- * another file id has taken its place. A session that opens there waits for the folder's ACL to be read, not for the
- * repair: while that runs, shared by every session that opens there meanwhile, and once it failed, the session's own
- * folder gets the owner-only ACL of its own first. Git makes that folder for a repository that commits a file in it, and a person or a
- * release before 0.1.5 may have made it, each with its parent's ACL on Windows, which every record in it took.
+ * whoever made it ({@link keepFoundFolderPrivate}), once per folder in this process: again when a folder with another
+ * file id has taken its place, and at the next session after a read of its ACL or its repair failed. A session that
+ * opens there waits for the folder's ACL to be read, not for the repair: while that runs, shared by every session that
+ * opens there meanwhile, and once the read or the repair failed, the session's own folder gets the owner-only ACL of
+ * its own first. Git makes that folder for a repository that commits a file in it, and a person or a release before
+ * 0.1.5 may have made it, each with its parent's ACL on Windows, which every record in it took.
  */
 async function keepRecordsFolderPrivate(directory: string, machine: PrivateMachine): Promise<void> {
   const segments = resolve(directory).split(sep);
   const start = segments.lastIndexOf(LEDGER_FOLDER);
   if (start <= 0 || segments.length < start + 2) return;
   const folder = segments.slice(0, start + 2).join(sep);
-  const { ino } = await lstat(folder, { bigint: true });
-  let kept = keptRecordsFolders.get(folder);
-  if (kept?.ino !== ino) {
-    kept = { ino, repair: keepFoundFolderPrivate(folder, { ...machine, shared: name => SHARED_FOLDER.test(name) }) };
-    keptRecordsFolders.set(folder, kept);
-  }
-  const repair = await kept.repair;
+  const repair = await recordsFolderRepair(folder, machine);
   // A storage root that is `.rerail` itself makes each session's folder the records folder, whose repair is its own.
   await (segments.length === start + 2 ? repair.kept : repair.keepInside(directory));
+}
+
+/**
+ * The repair of the records folder `folder` this process keeps, or a new one when it keeps none or a folder with another
+ * file id has taken its place. One whose read or repair failed is dropped once it has, so a failure that passes, as an
+ * `icacls` past its time limit, never leaves the records already there open for the rest of the daemon's life.
+ */
+async function recordsFolderRepair(folder: string, machine: PrivateMachine): Promise<FoundFolderRepair> {
+  const { ino } = await lstat(folder, { bigint: true });
+  const known = keptRecordsFolders.get(folder);
+  if (known?.ino === ino) return await known.repair;
+  const kept: KeptRecordsFolder = { ino, repair: keepFoundFolderPrivate(folder, { ...machine, shared: name => SHARED_FOLDER.test(name) }) };
+  keptRecordsFolders.set(folder, kept);
+  void kept.repair.then(repair => repair.kept, () => false).then(done => {
+    if (!done && keptRecordsFolders.get(folder) === kept) keptRecordsFolders.delete(folder);
+  });
+  return await kept.repair;
 }
 
 /**

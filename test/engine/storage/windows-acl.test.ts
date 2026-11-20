@@ -259,6 +259,23 @@ describe("an owner-only ACL on Windows", () => {
     }
   });
 
+  it("reads and repairs a records folder again at the next session once the read of its ACL, or its repair, failed", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    for (const failing of ["inherits", "keepEachOwnersOwn"] as const) {
+      const sessions = join(await temporaryRoot(), ".rerail", "sessions");
+      await mkdir(sessions, { recursive: true });
+      const acl = recordingAcl();
+      // Fails once, as an `icacls` past its time limit does, then works.
+      vi.spyOn(acl, failing).mockRejectedValueOnce(new Error("icacls timed out"));
+      const windows = { acl, platform: "win32" as const, profile: ELSEWHERE, repair: true };
+      for (const id of ["a", "b"]) {
+        await makeLedgerFolder(join(sessions, id.repeat(64)), windows);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      expect(acl.calls, failing).toContain(`each owner's own ${sessions} for `);
+    }
+  });
+
   it("lets sessions that open while their records folder is repaired go on at once, each one's folder its owner's first", async () => {
     const checkout = await temporaryRoot();
     const sessions = join(checkout, ".rerail", "sessions");

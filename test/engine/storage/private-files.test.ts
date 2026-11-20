@@ -61,17 +61,23 @@ describe.skipIf(process.platform === "win32")("what Rerail keeps private", () =>
     }
   });
 
-  it("opens every session in a records folder whose mode cannot be changed, as on a file system with no modes, and says so", async () => {
+  it("opens every session in a records folder whose mode change the system refuses, says so, and tries again at the next", async () => {
     const sessions = join(await temporaryDirectory(), ".rerail", "sessions");
     await mkdir(sessions, { recursive: true });
     await chmod(sessions, 0o755);
     const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    vi.mocked(chmodSync).mockImplementationOnce(() => {
-      throw Object.assign(new Error(`EPERM: operation not permitted, chmod '${sessions}'`), { code: "EPERM" });
+    vi.mocked(chmodSync).mockImplementation(path => {
+      throw Object.assign(new Error(`EPERM: operation not permitted, chmod '${String(path)}'`), { code: "EPERM" });
     });
-    await makeLedgerFolder(join(sessions, "a".repeat(64)), { repair: true });
-    await makeLedgerFolder(join(sessions, "b".repeat(64)), { repair: true });
-    expect(await mode(join(sessions, "b".repeat(64)))).toBe(0o700);
+    for (const id of ["a", "b"]) {
+      // What the daemon runs as it opens a session (`#openLedger`).
+      const session = join(sessions, id.repeat(64));
+      await makeLedgerFolder(session, { repair: true });
+      keepFolderPrivate(session);
+      expect(await mode(session)).toBe(0o700);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    expect(vi.mocked(chmodSync).mock.calls.filter(([path]) => path === sessions)).toHaveLength(2);
     expect(written).toHaveBeenCalledWith(expect.stringContaining(`rerail: could not keep ${sessions} to this user alone`));
   });
 
