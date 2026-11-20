@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -23,6 +23,9 @@ import { claudeCodeReportedPreimage, type ReportedPreimage } from "../../../src/
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import type * as Git from "../../../src/engine/git.js";
+import type * as CrlfReader from "../../../src/engine/git-crlf-reader.js";
+import type * as HeadReader from "../../../src/engine/git-head-reader.js";
+import { readGitHead } from "../../../src/engine/git-head-reader.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
@@ -36,6 +39,11 @@ const discovery = vi.hoisted(() => ({
   opens: new Map<string, Array<() => Promise<void>>>(),
   /** The modified and change time `lstat` gives a file, as a copy that keeps its source's times leaves where no change time is kept. */
   stamps: new Map<string, number>(),
+  /**
+   * An entry about to be looked at there by `lstat`, before it is; not a checkout's `.git` entry while a reader of
+   * Git's files reads that checkout (`gitFileReads`), which is no look for the entry.
+   */
+  looks: new Map<string, Array<() => Promise<void>>>(),
 }));
 /**
  * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, a Git
@@ -63,12 +71,53 @@ const listings = vi.hoisted(() => ({
   next: [] as Array<{ asked(checkout: string): void; released: Promise<void> }>, delayMs: 0,
   asked: [] as Array<{ checkout: string; asked: number; answered: number | undefined }>,
 }));
+/**
+ * The checkout of each read of Git's files that runs now, `HEAD`'s (`readGitHead`) or the line-ending settings'
+ * (`readGitCrlfPaths`). Each reads the checkout's `.git` entry to find its Git folders, through an `lstat` before the
+ * open on Windows (`openNoFollow`), and a `HEAD` read checks the entry's owner with one, as Git does.
+ */
+const gitFileReads = vi.hoisted(() => {
+  const reading: string[] = [];
+  return {
+    reading,
+    async during<T>(checkout: string, read: () => Promise<T>): Promise<T> {
+      reading.push(checkout);
+      try {
+        return await read();
+      } finally {
+        reading.splice(reading.indexOf(checkout), 1);
+      }
+    },
+  };
+});
+/** How many reads of a checkout's `HEAD` (`readGitHead`) have ended, whether from Git's files or by asking Git. */
+const headReads = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../../../src/engine/git-head-reader.js", async importOriginal => {
+  const actual = await importOriginal<typeof HeadReader>();
+  return {
+    ...actual,
+    readGitHead: async (...args: Parameters<typeof actual.readGitHead>) => {
+      try {
+        return await gitFileReads.during(args[0], () => actual.readGitHead(...args));
+      } finally {
+        headReads.count += 1;
+      }
+    },
+  };
+});
+vi.mock("../../../src/engine/git-crlf-reader.js", async importOriginal => {
+  const actual = await importOriginal<typeof CrlfReader>();
+  return {
+    ...actual,
+    readGitCrlfPaths: (...args: Parameters<typeof actual.readGitCrlfPaths>) => gitFileReads.during(args[0], () => actual.readGitCrlfPaths(...args)),
+  };
+});
 /** For each path in it, the next file handles opened there call these, in turn, once closed (`readEnded`). */
 const closedReads = vi.hoisted(() => new Map<string, Array<() => void>>());
 /** For each path in it, the times every `lstat` there reports in place of the file's own (`holdTimes`). */
 const heldTimes = vi.hoisted(() => new Map<string, { mtimeMs: number; ctimeMs: number; mtime: Date; ctime: Date }>());
 /** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
-const heldGit = vi.hoisted(() => ({ reads: 0 }));
+const heldGit = vi.hoisted(() => ({ reads: 0, started: undefined as (() => void) | undefined }));
 /** How many of the files a walk read were made into text (`LentBytes.text`), for the tests that pin what a walk keeps. */
 const decodedReads = vi.hoisted(() => ({ count: 0 }));
 /** Each buffer a file read filled while `watching`, by `readFile` or a file handle's `read`, for what a walk allocates. */
@@ -98,7 +147,14 @@ vi.mock("node:child_process", async importOriginal => {
     }
     return (actual.spawn as (...forwarded: unknown[]) => ReturnType<typeof actual.spawn>)(...call);
   };
-  return { ...actual, spawn };
+  // `heldGit.started` is called once a held program has been started in Git's place, so a test waits for that start.
+  const spawnTold = (...call: Parameters<typeof actual.spawn>) => {
+    const held = heldGit.reads;
+    const child = spawn(...call);
+    if (heldGit.reads < held) heldGit.started?.();
+    return child;
+  };
+  return { ...actual, spawn: spawnTold };
 });
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
@@ -138,6 +194,7 @@ vi.mock("node:fs/promises", async importOriginal => {
     // would leave `mtime` and `ctime` disagreeing with them. No case sets both: each case sets one map, and the
     // clean-up after each case empties both.
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      if (!gitFileReads.reading.includes(dirname(String(args[0])))) await discovery.looks.get(String(args[0]))?.shift()?.();
       const info = await actual.lstat(...args);
       const at = discovery.stamps.get(String(args[0]));
       const times = heldTimes.get(String(args[0])) ?? (at === undefined ? undefined : { mtimeMs: at, ctimeMs: at });
@@ -335,7 +392,9 @@ afterEach(async () => {
   discovery.directories.clear();
   discovery.opens.clear();
   discovery.stamps.clear();
+  discovery.looks.clear();
   heldGit.reads = 0;
+  heldGit.started = undefined;
   asyncGitCalls.before = undefined;
   readBuffers.watching = false;
   readBuffers.seen.clear();
@@ -2678,14 +2737,24 @@ describe("CodeRuleBridge", () => {
   });
 
   it("closes mid-walk with no Git it started still running in the folder, which can then be removed at once", async () => {
+    // The daemon's one HEAD reader asks Git once per process where Git's configuration files are (`git var`), a Git no
+    // session owns: asked here first, in another repository, so the Git held below is one the session started.
+    const other = await workspace();
+    git(other, "init", "--quiet");
+    await readGitHead(other);
     const root = await workspace();
     git(root, "init", "--quiet");
     const bridge = new CodeRuleBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
       onIgnoreRulesChanged: () => undefined,
     });
 
+    // The ignore rules ask Git for their exclude files and the baseline walk reads HEAD, neither waited for by the open.
+    // That Git answers in milliseconds, often before the open returns, so the session's first Git runs here until it is
+    // ended, and the close meets it running.
+    heldGit.reads = 1;
+    const heldStarted = new Promise<void>(resolve => { heldGit.started = resolve; });
     await bridge.openWorkspace("session-1");
-    // The baseline walk reads HEAD and the ignore rules ask Git for their exclude files, neither waited for by the open.
+    await heldStarted;
     expect(runningIn(root)).not.toEqual([]);
     await bridge.close();
 
@@ -2695,12 +2764,20 @@ describe("CodeRuleBridge", () => {
   });
 
   it("reopens with no Git the earlier session started still running in the folder", async () => {
+    // The daemon's one HEAD reader asks Git once per process where Git's configuration files are (`git var`): asked
+    // here first, in another repository, so the Git held below is the first session's own HEAD read.
+    const other = await workspace();
+    git(other, "init", "--quiet");
+    await readGitHead(other);
     const root = await workspace();
     git(root, "init", "--quiet");
     const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
-    // The first session's walk reads HEAD first, through a Git that runs until it is ended.
+    // The first session's walk reads HEAD first, through a Git that runs until it is ended. The read looks at Git's own
+    // files before it starts that Git, so the Git starts a moment after the open returns.
     heldGit.reads = 1;
+    const heldStarted = new Promise<void>(resolve => { heldGit.started = resolve; });
     await bridge.openWorkspace("session-1");
+    await heldStarted;
     const first = runningIn(root);
     expect(first).not.toEqual([]);
 
@@ -3415,14 +3492,14 @@ function listsBranches(args: readonly string[]): boolean {
 /**
  * Has a command at work meanwhile run `acts` in turn as the next walk asks Git about its changes: each just before a Git
  * process `at` names, once the walk's Git verdicts have read `HEAD` (the walk reads it as it starts, then its verdicts
- * read it again). Returns the acts not run yet, which a case expects none of once its walk is done: a file the command
+ * read it again). Those reads are counted as they end (`headReads`), since a read answered from Git's own files starts
+ * no Git process. Returns the acts not run yet, which a case expects none of once its walk is done: a file the command
  * left staged and uncommitted is audited as well, so the case would pass with no commit made while Git was read.
  */
 function whileVerdictsRead(at: (args: readonly string[]) => boolean, ...acts: Array<() => void>): ReadonlyArray<() => void> {
-  let heads = 0;
+  const heads = headReads.count;
   asyncGitCalls.before = args => {
-    if (readsHead(args)) heads += 1;
-    else if (heads >= 2 && at(args)) acts.shift()?.();
+    if (!readsHead(args) && headReads.count - heads >= 2 && at(args)) acts.shift()?.();
   };
   return acts;
 }
@@ -3496,12 +3573,16 @@ async function shell(bridge: CodeRuleBridge, run: () => void | Promise<void>): P
   await run();
   return await bridge.finish("shell-1");
 }
-/** How many Git processes `run` started to read a checkout's `HEAD`, and to list its unmerged entries. */
+/**
+ * How many times `run` read a checkout's `HEAD` (`readGitHead`, which asks Git only when its files cannot answer), and
+ * how many Git processes it started to list a checkout's unmerged entries.
+ */
 async function gitReads(run: () => Promise<unknown>): Promise<{ heads: number; entries: number }> {
   asyncGitCalls.args.length = 0;
+  const before = headReads.count;
   await run();
   const named = (name: string) => asyncGitCalls.args.filter(args => args.includes(name)).length;
-  return { heads: named("--verify"), entries: named("--unmerged") };
+  return { heads: headReads.count - before, entries: named("--unmerged") };
 }
 /**
  * Makes `repository` one on `ours`, which changed `src/gone.py`; `other` removed it, so merging `other` stops on a
@@ -4292,6 +4373,156 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
+  // `git worktree remove` deletes a worktree's files, its `.git` entry among them, before Git stops listing it. A first
+  // walk that read the worktree whole took every file Git wrote there as possibly a write since the session opened, and,
+  // with no checkout left for Git to read them against, recorded every one.
+  it.each([
+    ["outside the session's folder", false],
+    ["inside the session's folder", true],
+  ])("records nothing of a worktree added during the session whose `.git` entry went before its first walk read Git, %s", async (_name, inside) => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const place = inside ? join(root, "wt") : join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", place, "other");
+    const worktree = await realpath(place);
+    await mkdir(join(worktree, "deep", "deeper"), { recursive: true });
+    roots.push(worktree);
+    // The walk reads each level whole before the next, so this gate holds it once it has read every file there.
+    const walk = holdDiscovery("directories", join(worktree, "deep", "deeper"));
+    await bridge.checkpoint("turn");
+    await walk.entered;
+    await rm(join(worktree, ".git"));
+    walk.release();
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  // A walk of a worktree the session already knew that reads Git once `git worktree remove` has deleted the worktree's
+  // files and its `.git` entry finds each file it saw there deleted, and, with no checkout left for Git to read them
+  // against, recorded every deletion. Inside the session's folder the Git of the checkout around the worktree answers,
+  // and its `HEAD`, which lacks those files, took them as Git's.
+  it("records nothing of a worktree the session knew whose files and `.git` entry went before its walk read Git", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    // Git still lists the worktree: `roots` keeps it, as its folder under `.git/worktrees` goes last.
+    await removeFolder(join(worktree, "src"));
+    await rm(join(worktree, ".git"));
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  // The look for the `.git` entry finds it, so Git's verdicts judge the deletion as any other.
+  it("records a deletion in a worktree the session knew whose `.git` entry stays", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await rm(join(worktree, "src", "a.py"));
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([[[{
+      path: repositoryPath(root, join(worktree, "src", "a.py")), language: "python",
+      previousReadError: "Source was deleted without a captured preimage", deleted: true,
+    }], "log"]]);
+  });
+
+  // A walk shows the session first each file of a folder the last walk could not read, as of a worktree new to it.
+  it("records nothing of a worktree whose `.git` entry went before a walk that first read a folder there read Git", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    await mkdir(join(worktree, "deep"));
+    discovery.directories.set(join(worktree, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await writeFile(join(worktree, "deep", "new.py"), "violation\n");
+    await rm(join(worktree, ".git"));
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("records a write a walk that first reads a folder of a worktree finds there, its `.git` entry kept", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    await mkdir(join(worktree, "deep"));
+    discovery.directories.set(join(worktree, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await writeFile(join(worktree, "deep", "new.py"), "violation\n");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode])).toEqual([
+      [[repositoryPath(root, join(worktree, "deep", "new.py"))], "log"],
+    ]);
+  });
+
+  /**
+   * A session opened beside two worktrees of `root` on `other`, the walk's baseline taken, with a write in `writer`'s
+   * `src/a.py`. `other` is the worktree a case then changes.
+   */
+  async function besideAWrite(root: string) {
+    const { worktree: writer, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const place = join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", "--detach", place, "other");
+    const other = await realpath(place);
+    roots.push(other);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await writeFile(join(writer, "src", "a.py"), "old\nviolation\nmine\n");
+    return { writer, other, bridge, auditGeneratedEdits };
+  }
+
+  /**
+   * The Git processes started in `checkout` from the walk's look for its `.git` entry on, which comes once Git has
+   * answered there for a walk that finds a file of it gone; `act` runs as the look comes.
+   */
+  async function startedFromTheLook(bridge: CodeRuleBridge, checkout: string, act: () => Promise<void>) {
+    let looked: number | undefined;
+    discovery.looks.set(join(checkout, ".git"), [async () => {
+      await act();
+      looked = asyncGitCalls.args.length;
+    }]);
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const startedThere = asyncGitCalls.args.slice(looked).filter(args => args[args.indexOf("-C") + 1] === checkout);
+    return { looked: looked !== undefined, startedThere };
+  }
+
+  /** The one batch a walk audits: the write `besideAWrite` made, its preimage recovered from `HEAD`. */
+  function writeAudited(root: string, writer: string) {
+    return [[[{
+      path: repositoryPath(root, join(writer, "src", "a.py")), language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n",
+    }], "log"]];
+  }
+
+  // A walk recovers the preimage of each write it keeps from the Git of that write's checkout. A worktree being removed
+  // gives it no edit, so no Git starts there to recover a preimage.
+  it("starts no Git in a worktree whose `.git` entry went once Git answered, recovering another worktree's preimage", async () => {
+    const root = await twoBranches();
+    const { writer, other: removed, bridge, auditGeneratedEdits } = await besideAWrite(root);
+    await writeFile(join(removed, "src", "a.py"), "old\nviolation\ntheirs\n");
+    await rm(join(removed, "src", "new.py"));
+    expect(await startedFromTheLook(bridge, removed, () => rm(join(removed, ".git")))).toEqual({ looked: true, startedThere: [] });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual(writeAudited(root, writer));
+  });
+
+  // Nor does a worktree whose every change Git wrote: none of them is audited.
+  it("starts no Git in a worktree whose changes Git wrote, recovering another worktree's preimage", async () => {
+    const root = await twoBranches();
+    const { writer, other: switched, bridge, auditGeneratedEdits } = await besideAWrite(root);
+    // `main` lacks `src/new.py`, so the walk looks for the `.git` entry there.
+    git(switched, "checkout", "--quiet", "--detach", "main");
+    expect(await startedFromTheLook(bridge, switched, async () => {})).toEqual({ looked: true, startedThere: [] });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual(writeAudited(root, writer));
+  });
+
   it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {
     const root = await twoBranches();
     const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
@@ -4843,14 +5074,65 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
   });
 
+  it("asks Git for a change's line endings only at the first pass that finds it, while no attributes or settings file changes", async () => {
+    const root = await twoBranches();
+    await writeFile(join(root, ".gitattributes"), "*.py text\n");
+    commitAll(root);
+    // A file is taken by its stamp only once it is the reader's settle time (2 s) old: the clock the reader measures that
+    // on runs 2.1 s ahead from here on, as after a wait.
+    const now = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + 2_100);
+    const asked: number[] = [];
+    try {
+      const { bridge } = await opened(root);
+      const lineEndings = (args: readonly string[]): boolean => args.includes("check-attr") || args.includes("core.autocrlf") || args.includes("core.eol");
+      for (const round of [1, 2, 3]) {
+        asyncGitCalls.args.length = 0;
+        await shell(bridge, () => writeFile(join(root, "src", "a.py"), `old\n${round}\n`));
+        asked.push(asyncGitCalls.args.filter(lineEndings).length);
+      }
+    } finally {
+      clock.mockRestore();
+    }
+    expect(asked.slice(1)).toEqual([0, 0]);
+  }, 30_000);
+
+  it("takes each shell write's preimage from Git's blob without asking Git for each line-ending setting", async () => {
+    const root = await workspace();
+    const files = ["a.py", "b.py", "c.py"].map(name => join(root, "src", name));
+    for (const file of files) await writeFile(file, "old\n");
+    git(root, "init", "--quiet");
+    // Git writes the files as committed, LF, as `twoBranches` sets it.
+    git(root, "config", "core.autocrlf", "false");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "seed");
+    await awaitClockAfter(...files);
+    // A file is taken by its stamp only once it is the reader's settle time (2 s) old: the clock the reader measures that
+    // on runs 2.1 s ahead from here on, as after a wait.
+    const now = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + 2_100);
+    const asked: number[] = [];
+    try {
+      const { bridge, auditGeneratedEdits } = await opened(root);
+      // Each shell write is the session's first sight of its file, so its preimage comes from Git's blob of it.
+      for (const file of files) {
+        asyncGitCalls.args.length = 0;
+        await shell(bridge, () => writeFile(file, "old\nmine\n"));
+        asked.push(asyncGitCalls.args.filter(args => args.includes("core.autocrlf") || args.includes("core.eol")).length);
+      }
+      expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits.map(edit => edit.previousText))).toEqual([["old\n"], ["old\n"], ["old\n"]]);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(asked).toEqual([0, 0, 0]);
+  }, 30_000);
+
   it("reads one checkout each pass for a session opened in a subfolder of it, once a walk has found a change there too", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(join(root, "src"), { sourceRoot: () => root });
     await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"));
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
-    asyncGitCalls.args.length = 0;
-    await bridge.checkpoint("turn");
-    expect(asyncGitCalls.args.filter(args => args.includes("--verify"))).toHaveLength(1);
+    expect((await gitReads(() => bridge.checkpoint("turn"))).heads).toBe(1);
   });
 
   it("audits a shell edit of a file a modify/delete conflict left as it was, where the conflict's pass found no change", async () => {

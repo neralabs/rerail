@@ -44,9 +44,11 @@ fn regex_matches_stop_at_the_deadline() {
 /// A Python pack code rule (a path under `packs/python/`: `rules/` or `candidates/rules/`), as
 /// the conformance runner registers it.
 fn python_pack_code_rule(rule: &str) -> CompiledCodeRuleDsl {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/python")
-        .join(rule);
+    let path = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("../packs/python")
+    .join(rule);
     CodeRuleDslRuntime::compile(
         std::fs::read_to_string(&path).expect("pack policy"),
         "json".to_owned(),

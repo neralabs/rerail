@@ -518,6 +518,10 @@ The managed installation uses `~/.cache/rerail/content-v5.sqlite`, and on Window
 a roaming profile's reach (earlier releases kept it in `~/.cache/rerail` there too; the uninstall removes that copy); a
 build from a Git checkout uses `<checkout>/.rerail/content-v5.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
 
+Rerail 0.2.0 moved the store from `content-v1.sqlite` to `content-v5.sqlite`, so the first run after updating from an
+earlier version rebuilds it. The old file (with its `-wal` and `-shm`) is no longer read and stays beside the new one
+until you delete it; the managed installation's goes when `rerail install --remove` deletes the content cache folder.
+
 <details>
 <summary>Which store a build uses</summary>
 
@@ -528,7 +532,7 @@ build from a Git checkout uses `<checkout>/.rerail/content-v5.sqlite`. `RERAIL_C
   changes the store the installed version reads.
 - **Neither** (say, an `npx` copy): no store, reported on its first scan.
 
-The file name follows the store's compatibility floor (`v3` today) and changes when the floor rises.
+The file name follows the store's compatibility floor (`v5` today) and changes when the floor rises.
 
 </details>
 

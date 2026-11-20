@@ -13,7 +13,8 @@
  * every file of every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
 import { sep } from "node:path";
-import { gitHead, gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
+import { gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
+import { readGitHead } from "../git-head-reader.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 import type { TreeWatch } from "./tree-watch.js";
 import { lookMoved, type WalkFiles, type WorktreeLook, WorktreeLooks } from "./worktree-look.js";
@@ -131,6 +132,11 @@ export interface WatcherWalk {
   readonly worktrees: ReadonlySet<string>;
   /** The checkout the session folder is in, physical; undefined when none is. */
   readonly checkout: string | undefined;
+  /**
+   * The folder where Git registers the repository's linked worktrees, physical (`CodeRuleAuditor.worktreeRegistry`):
+   * watched, so Git adding a worktree, or one removed and added again at its path, asks for a walk. None when unknown.
+   */
+  readonly registry?: string | undefined;
   /** Those of `worktrees` the session takes for the first time, or had a subtree of it could not read. */
   readonly firstSight: ReadonlySet<string>;
   /** When the session opened, on the filesystem's clock. */
@@ -197,6 +203,8 @@ interface Watching {
   takingPart: WatcherWalk | undefined;
   /** The worktrees it watched as the last walk began. */
   worktrees: ReadonlySet<string>;
+  /** `WatcherWalk.registry` as the last walk began. */
+  registry: string | undefined;
   closed: boolean;
 }
 
@@ -312,6 +320,11 @@ function leftOut(roots: ReadonlySet<string>, walks: Iterable<WatcherWalk>): Set<
   return skip;
 }
 
+/** What a session's walk has the notices watch: its worktrees, and the folder where Git registers them. */
+function rootsOf({ worktrees, registry }: { readonly worktrees: ReadonlySet<string>; readonly registry?: string | undefined }): ReadonlySet<string> {
+  return registry === undefined ? worktrees : new Set([...worktrees, registry]);
+}
+
 /** The innermost of `roots` that `path` lies inside; undefined when it lies in none. A worktree's read leaves out those inside it. */
 function worktreeAround(roots: ReadonlySet<string>, path: string): string | undefined {
   let around: string | undefined;
@@ -393,7 +406,7 @@ export class WorktreeWalks {
   #wake: (() => void) | undefined;
   /** Times the walk that reads the worktree whose last read is next due (`WORKTREE_FULL_WALK_MS`). */
   #reread: NodeJS.Timeout | undefined;
-  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree is watched. */
+  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree or a registry folder is watched. */
   #pump: NodeJS.Timeout | undefined;
   /** Whether a walk is reading: it takes the notices itself, and asks for the walk they call for as it ends. */
   #walking = false;
@@ -421,7 +434,7 @@ export class WorktreeWalks {
   watch(watcher: WorktreeWatcher): WorktreeWatch {
     const watching: Watching = {
       watcher, requested: false, asked: 0, answered: 0, nextWalkAt: 0, taking: undefined, waiting: undefined, takingPart: undefined,
-      worktrees: new Set(), closed: false,
+      worktrees: new Set(), registry: undefined, closed: false,
     };
     this.#watching.push(watching);
     if (this.#watching.length === 1) this.#onWatching?.(true);
@@ -539,7 +552,7 @@ export class WorktreeWalks {
     return Date.now() - kept.readAt >= this.#fullWalkMs;
   }
 
-  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree is watched, and stops once not. */
+  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree or a registry folder is watched, and stops once not. */
   #armPump(): void {
     const pumping = this.#watching.length > 0 && this.#notices.watchingAny();
     if (pumping && this.#pump === undefined) {
@@ -563,7 +576,7 @@ export class WorktreeWalks {
   #askNoticed(): void {
     const noticed = this.#notices.noticed();
     if (noticed.size === 0) return;
-    for (const watching of this.#watching) if ([...watching.worktrees].some(root => noticed.has(root))) watching.requested = true;
+    for (const watching of this.#watching) if ([...rootsOf(watching)].some(root => noticed.has(root))) watching.requested = true;
     this.#schedule();
   }
 
@@ -596,7 +609,7 @@ export class WorktreeWalks {
     watching.requested = false;
     watching.waiting = undefined;
     this.#watching.splice(this.#watching.indexOf(watching), 1);
-    this.#forget(this.#watching.map(other => other.worktrees));
+    this.#forget(this.#watching.map(other => rootsOf(other)));
     // A walk timed for its ask alone is called off; one timed for another session's waits on.
     this.#wake?.();
     if (this.#watching.length > 0) return;
@@ -609,7 +622,10 @@ export class WorktreeWalks {
     await git.stop();
   }
 
-  /** Drops what was kept of each worktree no session watches, and stops watching it. */
+  /**
+   * Drops what was kept of each worktree no session watches, and stops watching it, and each folder where Git registers
+   * worktrees that no session names.
+   */
   #forget(watched: ReadonlyArray<ReadonlySet<string>>): void {
     const roots = new Set(watched.flatMap(worktrees => [...worktrees]));
     for (const root of this.#kept.keys()) if (!roots.has(root)) this.#kept.delete(root);
@@ -621,7 +637,8 @@ export class WorktreeWalks {
   /** One walk, for every session asking and every session sharing a worktree with one; returns the sessions that asked. */
   async #walkOnce(): Promise<Watching[]> {
     const starts = this.#start();
-    this.#forget([...starts.values()].map(walk => walk.worktrees));
+    this.#forget([...starts.values()].map(walk => rootsOf(walk)));
+    this.#watchRegistries(starts.values());
     const askers = [...starts.keys()].filter(watching => watching.requested);
     const walking = this.#walkers(starts);
     if (walking.size === 0) return askers;
@@ -649,9 +666,15 @@ export class WorktreeWalks {
         continue;
       }
       watching.worktrees = walk.worktrees;
+      watching.registry = walk.registry;
       starts.set(watching, walk);
     }
     return starts;
+  }
+
+  /** Watches the folder where Git registers the worktrees, as each session named it as this walk began. */
+  #watchRegistries(walks: Iterable<WatcherWalk>): void {
+    for (const { registry } of walks) if (registry !== undefined) this.#notices.watchRegistry(registry);
   }
 
   /**
@@ -709,7 +732,7 @@ export class WorktreeWalks {
   async #find(root: string, begun: WalkBegun): Promise<WorktreeFindings | undefined> {
     const kept = this.#kept.get(root);
     // Asked first, of every worktree: it starts the watch before a first read.
-    const noticed = this.#notices.changed(root);
+    const noticed = await this.#notices.changed(root);
     const look = await this.#lookAt(root, begun.files, kept);
     const state: WorktreeState = { ...begun.checkouts.get(root)!, observedAt: begun.observedAt, skipped: skippedIn(root, begun.skip), look };
     const findings = kept !== undefined && !noticed && !this.#mustRead(root, kept, state)
@@ -721,7 +744,8 @@ export class WorktreeWalks {
   /**
    * What Git says of the checkouts inside each of `roots` as the walk begins: the unmerged entries of each one its last
    * read passed or a session holds anything of, which cost a `stat` while its index file is as it was, and the `HEAD` of
-   * each a session asks for (`WatcherWalk.heads`), which costs a Git process. Those a session holds are read even when
+   * each a session asks for (`WatcherWalk.heads`), which costs a Git process only once a file Git reads it from changed
+   * (`readGitHead`). Those a session holds are read even when
    * nothing of their worktree was kept (a walk none of its sessions took part in dropped it), or the session would
    * take the walk against entries and a `HEAD` older than it. A checkout whose entries Git could not list is left out,
    * so the last entries a session took stay its snapshot.
@@ -736,21 +760,30 @@ export class WorktreeWalks {
     const inner = new Map<string, Omit<InnerCheckouts, "passed">>();
     const git = this.#git;
     for (const root of roots) {
-      const heads = new Map<string, string>();
-      const unmerged = new Map<string, ReadonlyMap<string, string>>();
-      for (const checkout of new Set([...this.#kept.get(root)?.findings.checkouts ?? [], ...held.get(root) ?? []])) {
-        if (checkout === root) continue;
-        if (asked.has(checkout)) {
-          const head = await git.run(signal => gitHead(checkout, { signal }));
-          if (head === undefined) continue;
-          heads.set(checkout, head);
-        }
-        const entries = await git.run(signal => this.#readUnmerged(checkout, { signal }));
-        if (entries !== undefined) unmerged.set(checkout, entries);
-      }
-      inner.set(root, { heads, unmerged });
+      const checkouts = new Set([...this.#kept.get(root)?.findings.checkouts ?? [], ...held.get(root) ?? []]);
+      checkouts.delete(root);
+      inner.set(root, await this.#readCheckoutsInside(git, checkouts, asked));
     }
     return inner;
+  }
+
+  /**
+   * `#readInner` for one worktree's `checkouts`: the `HEAD` of each one in `asked`, read through the daemon's one HEAD
+   * reader like every other walk's, and the unmerged entries of each. One whose `HEAD` names no commit is left out.
+   */
+  async #readCheckoutsInside(git: GitReads, checkouts: ReadonlySet<string>, asked: ReadonlySet<string>): Promise<Omit<InnerCheckouts, "passed">> {
+    const heads = new Map<string, string>();
+    const unmerged = new Map<string, ReadonlyMap<string, string>>();
+    for (const checkout of checkouts) {
+      if (asked.has(checkout)) {
+        const head = await git.run(signal => readGitHead(checkout, { signal }));
+        if (head === undefined) continue;
+        heads.set(checkout, head);
+      }
+      const entries = await git.run(signal => this.#readUnmerged(checkout, { signal }));
+      if (entries !== undefined) unmerged.set(checkout, entries);
+    }
+    return { heads, unmerged };
   }
 
   /** `before`, with the unmerged entries now of each checkout inside `root` that `before` had none of: a read passed it first. */
@@ -808,7 +841,7 @@ export class WorktreeWalks {
     const checkouts = new Map<string, CheckoutState>();
     const git = this.#git;
     for (const root of roots) {
-      const head = await git.run(signal => gitHead(root, { signal }));
+      const head = await git.run(signal => readGitHead(root, { signal }));
       if (head === undefined) {
         checkouts.set(root, { head, unmerged: undefined, trackedIgnored: undefined });
         continue;
