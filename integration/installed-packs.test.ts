@@ -16,6 +16,8 @@ import { join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { RULE_PACK_LIST } from "../src/engine/catalog/pack-list.generated.js";
+
 const NPM = process.env.RERAIL_INSTALLED_PACKS_NPM === "1";
 /** A registry round trip per pack, several per test. */
 const NPM_TIMEOUT_MS = 300_000;
@@ -95,6 +97,44 @@ async function daemonGet<T>(path: string): Promise<T> {
   return await response.json() as T;
 }
 
+/**
+ * The listed packs this repository has never released and npm does not have: a new pack is listed when it merges and
+ * published by hand right after (docs/publishing-a-new-pack.md), and until then set-up names it as one it could not
+ * use. Never released is read from the repository alone: the Release pull request's `changeset version` takes a pack
+ * off `0.1.0` (`npm run version:packs`) and `scripts/release/release-version.mjs` writes its first `CHANGELOG.md`
+ * (`releasedPackChangelog`), so a pack still at `0.1.0` with no `CHANGELOG.md` was never released. Any other pack npm
+ * lacks is not tolerated, and a never-released pack npm has must load like the rest.
+ */
+function unreleasedPacks(): string[] {
+  return RULE_PACK_LIST.filter(pack => {
+    const directory = join(PACKAGE_ROOT, "packs", pack.id);
+    const { version } = JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { version: string };
+    return version === "0.1.0" && !existsSync(join(directory, "CHANGELOG.md")) && !onNpm(pack.packageName);
+  }).map(pack => pack.packageName);
+}
+
+/** Whether npm has `name`: false only when npm answers E404 for it. */
+function onNpm(name: string): boolean {
+  try {
+    execFileSync("npm", ["view", name, "name"], { env: environment, stdio: "pipe" });
+    return true;
+  } catch (error) {
+    const stderr = error instanceof Error && "stderr" in error ? String(error.stderr) : "";
+    if (/\bE404\b/u.test(stderr)) return false;
+    throw error;
+  }
+}
+
+/** The lines set-up prints under "Rule packs set-up could not use:", one per pack, in the order it fetched them. */
+function unusable(stdout: string): string[] {
+  const lines = stdout.split("\n");
+  const heading = lines.indexOf("  Rule packs set-up could not use:");
+  if (heading < 0) return [];
+  const block = lines.slice(heading + 1);
+  const end = block.findIndex(line => !line.startsWith("    "));
+  return (end < 0 ? block : block.slice(0, end)).map(line => line.trim());
+}
+
 interface RepositoryRules {
   rules: { rule: { id: string }; on: boolean }[];
   unavailable: { sourceId: string; reason: string }[];
@@ -118,9 +158,9 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     const confirm = await rerail(answerArgs(read.stdout, 1));
     // A TypeScript project: the TypeScript pack fits its dependency, complexity its *.ts source, and JavaScript its
     // source too, holding eslint-eqeqeq, which the pack starts off and the lint config turns on. Every published pack
-    // loads.
+    // loads; a listed pack never released yet (unreleasedPacks) is named as not published.
     for (const id of ["javascript", "typescript", "complexity"]) expect(confirm.stdout).toMatch(new RegExp(`--packs \\S*\\b${id}@\\d+\\.\\d+\\.\\d+`, "u"));
-    expect(confirm.stdout).not.toContain("Rule packs set-up could not use");
+    expect(unusable(confirm.stdout)).toEqual(unreleasedPacks().map(name => expect.stringContaining(`npm cannot read ${name}: it is not published`)));
     expect(confirm.stdout).toContain("eslint-eqeqeq starts on");
     expect(existsSync(join(home, "packs", "package.json"))).toBe(false);
 
