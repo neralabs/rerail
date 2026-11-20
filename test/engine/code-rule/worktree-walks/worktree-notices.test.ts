@@ -325,6 +325,23 @@ describe("WorktreeNotices", () => {
     expect([await subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
   });
 
+  it("tries to watch at the next walk a Linux worktree whose folder went after its read, before the watch followed the read's folders", async () => {
+    const watch = new ScriptedWatch();
+    const folders = new Map([["/w", "a"]]);
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "linux", now: () => 0, folderAt: async root => folders.get(root) ?? "" });
+    await subject.changed("/w");
+    subject.reading("/w");
+    // Gone as the read ends: the engine refuses a path with no folder.
+    folders.delete("/w");
+    watch.refused.add("/w");
+    subject.read("/w", seen);
+    expect(watch.calls.at(-1)).toBe("unwatch /w");
+    // Made again: the next walk watches it, though `WATCH_RETRY_MS` has not passed.
+    folders.set("/w", "b");
+    watch.refused.delete("/w");
+    expect(await states(subject, ["/w"])).toEqual([[true, true]]);
+  });
+
   it("watches again at once a worktree whose watch ended once another folder stands at its path, and waits while the same folder, or none, does", async () => {
     const watch = new ScriptedWatch();
     const clock = { now: 0 };

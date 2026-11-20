@@ -329,8 +329,8 @@ export class WorktreeNotices {
 
   /**
    * The engine refused to watch `root`: it is tried again after `WATCH_RETRY_MS`. Its path is read again after the
-   * refusal, and nothing there (it went after the walk listed it, or as its watch began) is no failed watch: the walk
-   * Git's registry asks for once the worktree is made again watches it. A path that could not be read is a failed watch.
+   * refusal, and nothing there (it went after the walk listed or read it) is no failed watch: the walk Git's registry
+   * asks for once the worktree is made again watches it. A path that could not be read is a failed watch.
    * A `retain` that let go of `root` meanwhile forgot it, so nothing is recorded.
    */
   async #refused(root: string): Promise<void> {
@@ -390,7 +390,7 @@ export class WorktreeNotices {
   /**
    * Watches the folders the read walked into, in place of those of the last. A folder watched now was not while the
    * read ran, so the next walk reads the worktree again. One the watch cannot follow (past the watch budget) is read on
-   * every walk until the retry.
+   * every walk until the retry (`#refused`), unless its folder went after the read.
    */
   #follow(root: string, watched: Watched, folders: ReadonlySet<string>): void {
     const added = [...folders].some(folder => !watched.folders.has(folder));
@@ -398,7 +398,7 @@ export class WorktreeNotices {
     if (!this.#watch!.watch(root, [...folders])) {
       this.#watched.delete(root);
       this.#watch!.unwatch(root);
-      this.#failed.set(root, this.#now());
+      void this.#refused(root);
       return;
     }
     watched.folders = folders;
