@@ -31,7 +31,6 @@ sha2 = { version = "0.10", features = ["asm"] }
 rerail-tape-format = { path = ".", features = ["test-hooks"] }
 # The reads in Cranelift's IR, JIT-compiled and run against this crate's readers (decision 0310).
 rerail-clif = { path = "../clif" }
-
-# The writer's ops in MSL, run on the device against the reference writer (decision 0434 §6, R15).
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-metal = "0.33.0"
+# The reads and the writer's ops as UKL, run on the process's GPU (Metal, CUDA) against this crate's readers and
+# writer (decisions 0440 step 6, 0434 §6 R15).
+rerail-gpu = { path = "../../../gpu" }

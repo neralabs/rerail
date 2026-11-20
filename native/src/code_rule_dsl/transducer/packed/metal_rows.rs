@@ -31,7 +31,8 @@ pub use rerail_accel::gpu::tile::{Form, Resident};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use rerail_accel::gpu::tile::{Joined, tile_join};
 use super::metal_backend::launch::{commit_checked, gpu_seconds};
-use super::metal_parallel::encode;
+use super::metal_backend::launch::CheckedComputeEncoder;
+use metal::{BufferRef, CommandBufferRef, ComputePipelineState, MTLSize};
 use std::fmt::Write as _;
 
 /// A row program's input column: a gathered column, or the document of one (`x >> 32`).
@@ -239,4 +240,43 @@ pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, param
 /// A failure of the one Metal manager (`rerail_accel::gpu`), in the backend's terms.
 fn device_err(_: String) -> Error {
     Error::BackendFailure
+}
+
+/// One checked dispatch of `pipeline` in an encoder of its own: `buffers` bound in order, `parameters` after
+/// them, `groups` threadgroups of 256 threads (or as many as `indirect` says).
+fn encode(
+    command: &CommandBufferRef,
+    pipeline: &ComputePipelineState,
+    label: &str,
+    buffers: &[&BufferRef],
+    parameters: &[u32],
+    groups: usize,
+    indirect: Option<(&BufferRef, u64)>,
+) {
+    let encoder = command.new_compute_command_encoder();
+    encoder.set_label(label);
+    encoder.set_compute_pipeline_state(pipeline);
+    encoder.checked_set_buffers(command, buffers);
+    if !parameters.is_empty() {
+        encoder.set_bytes(
+            buffers.len() as u64,
+            std::mem::size_of_val(parameters) as u64,
+            parameters.as_ptr().cast(),
+        );
+    }
+    if let Some((buffer, offset)) = indirect {
+        encoder.checked_dispatch_thread_groups_indirect(
+            command,
+            buffer,
+            offset,
+            MTLSize::new(256, 1, 1),
+        );
+    } else {
+        encoder.checked_dispatch_thread_groups(
+            command,
+            MTLSize::new(groups as u64, 1, 1),
+            MTLSize::new(256, 1, 1),
+        );
+    }
+    encoder.end_encoding();
 }

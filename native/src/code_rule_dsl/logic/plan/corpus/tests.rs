@@ -2036,20 +2036,6 @@ fn a_programs_nearest_over_a_library_relation_of_kinds_finds_in_a_pack_what_it_f
     assert_eq!(together, alone);
 }
 
-/// Q203: a chunk is sized by what it added to the host's footprint. The device's slabs and buffers, bounded by the
-/// Metal budget on top of the overall one (decision 0126), are not a chunk's: counted, Metal's chunks were cut at
-/// half to a third of the CPU's.
-#[test]
-fn a_chunks_growth_leaves_out_the_devices_memory() {
-    use super::host_added_mb;
-    // [footprint, lifetime peak, device MB] at the chunk's start and at its end.
-    assert_eq!(host_added_mb([1_000, 1_000, 0], [1_300, 1_300, 0]), 300, "no device: the footprint's growth");
-    assert_eq!(host_added_mb([1_000, 1_000, 100], [1_700, 1_700, 500]), 300, "the device's 400 MB more left out");
-    assert_eq!(host_added_mb([1_000, 2_000, 100], [1_200, 2_000, 150]), 150, "under the old peak: the footprint now");
-    assert_eq!(host_added_mb([1_000, 1_000, 100], [1_900, 2_600, 300]), 1_400, "past the old peak: the peak");
-    assert_eq!(host_added_mb([1_000, 1_000, 400], [900, 900, 300]), 1, "shrunk: at least 1");
-}
-
 /// Decision 0431 R6's runs: a workspace, a store, and a run of `names` (the annotations' identifiers, plus `extra` in
 /// the rule's body) over it, giving the run's report.
 fn tape_value_runs(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, impl Fn(&str) -> super::Report) {

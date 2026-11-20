@@ -899,6 +899,18 @@ impl Part {
         Part::new(Life::Run, k, rows)
     }
 
+    /// A relation of `k` columns living `life` long, room for `rows` rows alone in a block, and past them for
+    /// `indexes` indexes of its own over its rows, one for each key its readers probe it by (`Rows::with_index_room`'s
+    /// part; an axis's, by `n` and by `a`, decision 0353 step 5): a key past them copies the relation
+    /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written. Not
+    /// leased from the device's budget.
+    pub fn with_index_room(life: Life, k: usize, rows: usize, indexes: usize) -> Part {
+        let cap = rows.next_power_of_two().max(1);
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
+        let room = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>();
+        Part::try_new_with(life, k, rows, room, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+    }
+
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
     /// goes on writing round after round (a lattice head, its held rows updated in place, its new keys' rows past
     /// them), its rows' chunks and its key map growing in the block (`reserve`), never moved. Its block reserves
@@ -924,17 +936,6 @@ impl Part {
         unsafe { self.rel().rows.claim_reserved(n) };
     }
 
-    /// Row `i`'s value in column `c` written where it lies: a derived value put in its place (a device fold's text
-    /// made its symbol).
-    ///
-    /// # Safety
-    /// Row `i` is reserved, and no reader or other writer touches it meanwhile.
-    pub unsafe fn put(&self, i: u32, c: usize, v: i64) {
-        debug_assert!(!self.capped(), "a capped part is never written");
-        // SAFETY: the caller's.
-        unsafe { self.rel().rows.put(i, c, v) };
-    }
-
     /// Its indexes forgotten (`Relation::forget_indexes`): its rows' values were changed in place (a lattice's fold,
     /// decision 0384 step 5).
     ///
@@ -957,14 +958,15 @@ impl Part {
         InBlock { facts: self.facts.clone(), at: self.rel_at(), rows, dead: 0, kills: None, part: Some(self.clone()) }
     }
 
-    /// `for_writes`' relation alone in a run's block, with room for `indexes` indexes of its rows, one for each key its
-    /// readers probe it by (an axis's, by `n` and by `a`: decision 0353 step 5): a key past them copies the relation
-    /// (`DevIndex::moved`). A derived fact like a rule's head, not leased from the device's budget.
-    pub fn for_writes_indexed(k: usize, rows: usize, indexes: usize) -> Part {
-        let cap = rows.next_power_of_two().max(1);
-        let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
-        let room = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>();
-        Part::try_new_with(Life::Run, k, rows, room, false).unwrap_or_else(|e| panic!("a run's relation of {rows} rows: {e}"))
+    /// Row `i`'s value in column `c` written where it lies: a derived value put in its place (a device fold's text
+    /// made its symbol, an axis's ids as the host writes them).
+    ///
+    /// # Safety
+    /// Row `i` is reserved, and no reader or other writer touches it meanwhile.
+    pub unsafe fn put(&self, i: u32, c: usize, v: i64) {
+        debug_assert!(!self.capped(), "a capped part is never written");
+        // SAFETY: the caller's.
+        unsafe { self.rel().rows.put(i, c, v) };
     }
 
     /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
@@ -1293,10 +1295,7 @@ impl Rows {
     /// probed by its own indexes, not host tables (decision 0325 step 5). The room is the block's address space: its
     /// pages are taken as an index is written.
     pub fn with_index_room(k: usize, life: Life, rows: usize, indexes: usize) -> Rows {
-        let cap = rows.next_power_of_two().max(1);
-        let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
-        let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
-        let part = Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"));
+        let part = Part::with_index_room(life, k, rows, indexes);
         Rows { k, life, hint: rows, tail: Some(part), ..Rows::default() }
     }
 

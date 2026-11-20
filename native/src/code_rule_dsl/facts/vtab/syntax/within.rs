@@ -383,7 +383,7 @@ impl Within {
         start.push(len);
         // A derived fact like a rule's head, in a run's block alone, with room for an index by each column (strata
         // probe an axis by `n` and by `a`), as the device's solve writes it.
-        let rows = Part::for_writes_indexed(2, len as usize, 2);
+        let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, 2);
         let mut at = 0u32;
         for v in 0..n {
             let id = self.batch.id(v);
@@ -782,9 +782,8 @@ impl Source for Within {
     /// length, and the solve made for that count alone held 780 MB of a PostHog run's 2.5 GB peak.
     fn len(&self) -> usize {
         if self.solvable() {
-            // Solved, its relation's rows; else counted from the tree, not solved for a count.
-            if let Some(s) = self.solved.get() {
-                return s.rows.len() as usize;
+            if self.solved.get().is_some() {
+                return self.solved_rows().len() as usize;
             }
             return self.shape().rows as usize;
         }

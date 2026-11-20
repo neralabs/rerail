@@ -6,6 +6,8 @@ the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied
 "What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API, read in place),
 0310 (reads written once, three backends) and 0325 (relations are blocks).
 
+Amended between memory domains by 0440 §7.2 (the user, 2026-11-18): within one domain (a host's RAM and its unified GPUs) this holds as written; between domains (a discrete GPU's memory, another host) a block is copied as the same bytes, never into another data structure, and the engine keeps the copies coherent.
+
 ## Intro
 
 **The problem.** The engine holds its data in blocks: each document's tape, and every relation the rules derive
@@ -489,14 +491,11 @@ Each step ends with:
          against 119.7–128.3 B (noise); the Metal binding, 1 pair at load 45, 102.7 B against 112.9 B, peak
          1,207 MB against 1,289 MB. Checks: the JIT's reads of a 16z tape of 6 blocks equal `F16Z`'s, node by
          node, and the JIT executor's outputs over one equal format 15's.
-       - One decoder (2026-11-18): the tape crate's `F16Z` decodes a block with `tape_lz4`, the reads' LZ4 decoder
-         (`z_lz4`, which `tape_z_block` inlines for the JIT and the kernels) translated by the Rust backend, into its
-         thread's two blocks, then reads them with the generated format 16 reads. `lz4_sys` only compresses (the
-         writer). The Rust backend checks a load against the tape's bytes when it is read-only and not aligned (the
-         tape's own); the decoder's loads of its slot (a match's copies) are bounded by the decoder itself
-         (decision 0403), and a read that takes an address (`tape_lz4`'s destination) is `unsafe`. The kernels'
-         MSL leaves `tape_lz4` out (`HOST_ONLY`). Check: `the_reads_decoder_decodes_what_lz4_compressed` (400
-         blocks of literals and matches at every offset, a block cut short); hogql 16z, findings 1,629.
+       - The tape crate's `F16Z` still decodes with `lz4_sys` into its thread's two blocks, then reads them with the
+         generated format 16 reads: the same block, decoded by a second decoder. Built once (f9451f0dd: `tape_lz4`,
+         the CLIF decoder translated by the Rust backend, its slot's loads bounded by the decoder) and taken out
+         again the same day: decision 0434 (the Oscar worktree) rewrites 16z as four pieces a block, and this
+         branch stays off the 16 and 16z paths until it lands. The one decoder is redone on 0434's form then.
        - The device's views read a 16z batch in place (2026-11-18; `views.refused.z_on_device` gone): the join
          kernels include the reads with the 16z case (`metal_tape_reads_z.metal`); a batch whose tapes are 16z
          gets one cache (`device_chunk::zcache_spec`), which every stage that reads its views shares, resident
@@ -689,7 +688,7 @@ Each step ends with:
        cut: containment's room 8 rows a node), it filled the budget: refusals rose from 5–38 to 23–52 a run.
      - On the device: `axis_count` and the scan (one submission), the total read, then `axis_write` writes each row's
        two ids (`global_of`) through `view_put`, the writer written once, bounded by the relation's chunks
-       (decision 0403). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
+       (decision 0463). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
        relation.
      - On the CPU: the climb counts, then writes `batch.id` of each side into the same kind of relation.
      - Every reader reads it in place: `value` and `documents_of` through `Part::get`, the device through

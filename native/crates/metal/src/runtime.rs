@@ -338,6 +338,65 @@ impl MappedRegion {
     }
 }
 
+/// A buffer of the device layer's over an anonymous mapping of the host's (decision 0440 step C): what
+/// [`MappedBuffer`] is to Metal, on every backend. Its whole length is reserved against the buffer budget, and
+/// untouched pages stay unmapped, so it costs what is written to it. The kernels read and write it in place (the
+/// device layer's `wrap_host_memory`, no copy). Its holder waits for every command that uses it before dropping it:
+/// a command holds the buffer, not the mapping.
+pub struct HostMapped {
+    region: Arc<MappedRegion>,
+    buffer: rerail_device::device::Buffer,
+}
+
+impl HostMapped {
+    /// `count` values of `T`, zero (pages unwritten until used).
+    #[track_caller]
+    pub fn zeroed<T>(count: usize) -> Result<Self, Error> {
+        let bytes = count.checked_mul(std::mem::size_of::<T>()).ok_or(Error::BackendCapacity)?;
+        Self::over(MappedRegion::zeroed(bytes)?)
+    }
+
+    /// A buffer holding `values` (at least a page long).
+    #[track_caller]
+    pub fn from_slice<T: Copy>(values: &[T]) -> Result<Self, Error> {
+        // SAFETY: the values' bytes, all initialized (`Copy` records of the batch's ABI).
+        let bytes = unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), size_of_val(values)) };
+        Self::over(MappedRegion::new(bytes)?)
+    }
+
+    fn over(region: MappedRegion) -> Result<Self, Error> {
+        let device = crate::lane::device()?;
+        // SAFETY: the mapping is held with the buffer, and its holder waits for the commands that use it.
+        let buffer = unsafe { rerail_device::device::wrap_host_memory(device, region.pointer.as_ptr(), region.length) }.map_err(|e| {
+            if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+                eprintln!("TEMPO_HOST_MAPPED_REJECT bytes={} error={e}", region.length);
+            }
+            Error::BackendCapacity
+        })?;
+        Ok(Self { region: Arc::new(region), buffer })
+    }
+
+    /// The buffer, as kernels bind it.
+    pub fn buffer(&self) -> &rerail_device::device::Buffer {
+        &self.buffer
+    }
+
+    /// The buffer as Metal's kernels not yet on the device layer bind it (decision 0440 step C moves each).
+    pub fn metal(&self) -> &metal::Buffer {
+        self.buffer.metal().expect("a mapped buffer on Metal")
+    }
+
+    /// Its bytes as the host writes them.
+    pub fn host(&self) -> *mut u8 {
+        self.region.pointer.as_ptr()
+    }
+
+    /// Its length in bytes (page-rounded).
+    pub fn byte_length(&self) -> usize {
+        self.region.length
+    }
+}
+
 impl Drop for MappedRegion {
     fn drop(&mut self) {
         unsafe {
@@ -501,7 +560,7 @@ impl MappedBuffer {
                     device.max_buffer_length()
                 );
             }
-            rerail_prof::count("capacity.metal_pool_driver", 1);
+            rerail_prof::count("capacity.metal_longest_buffer", 1);
             if rerail_prof::on() {
                 // What the driver held then, and the pool's own part of it (the most seen).
                 let mut stages = rerail_prof::stages();
@@ -565,7 +624,7 @@ impl MappedBuffer {
                     std::panic::Location::caller()
                 );
             }
-            rerail_prof::count("capacity.metal_pool_driver", 1);
+            rerail_prof::count("capacity.metal_longest_buffer", 1);
             if rerail_prof::on() {
                 // What the driver held then, and the pool's own part of it (the most seen).
                 let mut stages = rerail_prof::stages();
@@ -778,21 +837,6 @@ pub fn pipeline_named_constant(
     constant: Option<u32>,
 ) -> Result<ComputePipelineState, Error> {
     crate::device()?;
-    // A measurement's sources (`RERAIL_METAL_DUMP=<dir>`): each library's source, by its digest, and the pipelines
-    // made of it, to compile apart and cold (`scripts/dev/metal/compile-time.swift`; the system's shader cache keeps
-    // a compile by its code, so a comment added to the source still finds it).
-    if let Some(dir) = std::env::var_os("RERAIL_METAL_DUMP") {
-        use sha2::Digest as _;
-        let digest: [u8; 32] = sha2::Sha256::digest(source.as_bytes()).into();
-        let stem = std::path::Path::new(&dir).join(digest[..6].iter().map(|b| format!("{b:02x}")).collect::<String>());
-        if !stem.with_extension("metal").exists() {
-            let _ = std::fs::write(stem.with_extension("metal"), source);
-        }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(stem.with_extension("pipelines")) {
-            use std::io::Write as _;
-            let _ = writeln!(f, "{name} {}", constant.map_or(-1, i64::from));
-        }
-    }
     #[cfg(any(test, feature = "test-hooks"))]
     let before = rerail_accel::gpu::kernels::made_here();
     let pipeline = compiled(name, || rerail_accel::gpu::kernels::pipeline(source, name, constant));

@@ -1,9 +1,9 @@
 //! A document's tape as its reads are told where it lies: byte offsets from a base (the document's
 //! first byte in its batch's chunk block on the device, decision 0289 §4; the tape's own bytes on the
 //! host), its format, its widths. One definition: the device's `DocView` is this, and its MSL is
-//! written from it ([`msl`]), with each field's offset asserted against Rust's.
+//! written from it ([`ukl`]), with each field's offset asserted against Rust's.
 
-/// A document's view (124 bytes, u32s; the device's `DocView`, `metal_tape.metal`).
+/// A document's view (124 bytes, u32s; the device's `DocView`, `device_tape.h`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TapeView {
@@ -54,42 +54,42 @@ pub struct TapeView {
 }
 const _: () = assert!(std::mem::size_of::<TapeView>() == 124);
 
-/// The view's MSL: `struct TapeView`, `DocView` its name in the kernels, and each field's offset and
+/// The view in UKL: `struct TapeView`, `DocView` its name in the kernels, and each field's offset and
 /// the size asserted against this definition's, so the kernels cannot read a layout of their own.
-pub fn msl() -> String {
+pub fn ukl() -> String {
     use std::mem::offset_of;
     let fields: [(&str, &str, usize); 21] = [
-        ("uint", "at", offset_of!(TapeView, at)),
-        ("uint", "nodes", offset_of!(TapeView, nodes)),
-        ("uint", "node_base", offset_of!(TapeView, node_base)),
-        ("uint", "format", offset_of!(TapeView, format)),
-        ("uint", "widths", offset_of!(TapeView, widths)),
-        ("uint", "columns[5]", offset_of!(TapeView, columns)),
-        ("uint", "stride", offset_of!(TapeView, stride)),
-        ("uint", "side[4]", offset_of!(TapeView, side)),
-        ("uint", "parts[4]", offset_of!(TapeView, parts)),
-        ("uint", "cut", offset_of!(TapeView, cut)),
-        ("uint", "per", offset_of!(TapeView, per)),
-        ("uint", "codes", offset_of!(TapeView, codes)),
-        ("uint", "source", offset_of!(TapeView, source)),
-        ("uint", "source_len", offset_of!(TapeView, source_len)),
-        ("uint", "lines", offset_of!(TapeView, lines)),
-        ("uint", "line_count", offset_of!(TapeView, line_count)),
-        ("uint", "code_count", offset_of!(TapeView, code_count)),
-        ("uint", "source_base", offset_of!(TapeView, source_base)),
-        ("uint", "line_base", offset_of!(TapeView, line_base)),
-        ("uint", "tape", offset_of!(TapeView, tape)),
-        ("uint", "presence", offset_of!(TapeView, presence)),
+        ("uint32_t", "at", offset_of!(TapeView, at)),
+        ("uint32_t", "nodes", offset_of!(TapeView, nodes)),
+        ("uint32_t", "node_base", offset_of!(TapeView, node_base)),
+        ("uint32_t", "format", offset_of!(TapeView, format)),
+        ("uint32_t", "widths", offset_of!(TapeView, widths)),
+        ("uint32_t", "columns[5]", offset_of!(TapeView, columns)),
+        ("uint32_t", "stride", offset_of!(TapeView, stride)),
+        ("uint32_t", "side[4]", offset_of!(TapeView, side)),
+        ("uint32_t", "parts[4]", offset_of!(TapeView, parts)),
+        ("uint32_t", "cut", offset_of!(TapeView, cut)),
+        ("uint32_t", "per", offset_of!(TapeView, per)),
+        ("uint32_t", "codes", offset_of!(TapeView, codes)),
+        ("uint32_t", "source", offset_of!(TapeView, source)),
+        ("uint32_t", "source_len", offset_of!(TapeView, source_len)),
+        ("uint32_t", "lines", offset_of!(TapeView, lines)),
+        ("uint32_t", "line_count", offset_of!(TapeView, line_count)),
+        ("uint32_t", "code_count", offset_of!(TapeView, code_count)),
+        ("uint32_t", "source_base", offset_of!(TapeView, source_base)),
+        ("uint32_t", "line_base", offset_of!(TapeView, line_base)),
+        ("uint32_t", "tape", offset_of!(TapeView, tape)),
+        ("uint32_t", "presence", offset_of!(TapeView, presence)),
     ];
-    let mut s = String::from("struct TapeView {\n");
+    let mut s = String::from("#include <ukl/backend.h>\ntypedef struct TapeView {\n");
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
     }
-    s += "};\ntypedef TapeView DocView;\n";
-    s += &format!("static_assert(sizeof(TapeView) == {}, \"TapeView: size\");\n", std::mem::size_of::<TapeView>());
+    s += "} TapeView;\ntypedef TapeView DocView;\n";
+    s += &format!("UKL_STATIC_ASSERT(sizeof(TapeView) == {}, \"TapeView: size\");\n", std::mem::size_of::<TapeView>());
     for (_, name, at) in fields.iter() {
         let name = name.split('[').next().unwrap_or(name);
-        s += &format!("static_assert(__builtin_offsetof(TapeView, {name}) == {at}, \"TapeView.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(TapeView, {name}) == {at}, \"TapeView.{name}\");\n");
     }
     s
 }
@@ -435,14 +435,14 @@ pub mod at {
 }
 
 #[cfg(test)]
-mod msl_tests {
-    /// The MSL lists every field: their words add up to the view's.
+mod ukl_tests {
+    /// The UKL lists every field: their words add up to the view's.
     #[test]
-    fn the_views_msl_names_every_word() {
-        let msl = super::msl();
+    fn the_views_ukl_names_every_word() {
+        let msl = super::ukl();
         let words: usize = msl
             .lines()
-            .filter_map(|l| l.trim().strip_prefix("uint "))
+            .filter_map(|l| l.trim().strip_prefix("uint32_t "))
             .map(|f| f.trim_end_matches(';').split_once('[').map_or(1, |(_, n)| n.trim_end_matches(']').parse::<usize>().unwrap()))
             .sum();
         assert_eq!(4 * words, std::mem::size_of::<super::TapeView>(), "{msl}");
