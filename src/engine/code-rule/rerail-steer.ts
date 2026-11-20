@@ -337,8 +337,6 @@ export function rewoundSteer(content: string, { restored, deleted }: RewoundPath
 export type HeadlineLinkStyle = "hyperlink" | "markdown" | "plain";
 
 const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
-/** What markdown reads as syntax in a line: a rule's title or a conflict's words relayed as markdown show as written. */
-const MARKDOWN_SPECIAL = /[\\`*_{}[\]()<>#+!|~]/gu;
 
 /**
  * The one line the person sees for a steer: `◆ Rerail · <rule>  steered  ·  why?`, with the link in `style`. A coding
@@ -350,12 +348,13 @@ export function headlineText({ header, url }: SteerHeadline, style: HeadlineLink
 
 /**
  * A line led by `◆ Rerail · ` (the word replaced by `mark` when given), then `word` linked to `url` in `style`. In
- * markdown the line's own text is escaped, so a rule's title shows as written and cannot add a link or emphasis.
+ * markdown the line's own text is inline code, so a rule's title shows as written: no link, bare address or emphasis
+ * of its own.
  */
 function linkedLine(header: string, url: string | undefined, word: string, style: HeadlineLinkStyle, mark?: string): string {
   const plain = header.replace(CONTROL, "");
   const marked = mark === undefined ? plain : plain.replace(/^([○◆]) Rerail · /u, (_, glyph: string) => `${glyph} ${mark} · `);
-  const text = style === "markdown" ? marked.replace(MARKDOWN_SPECIAL, "\\$&") : marked;
+  const text = style === "markdown" ? inlineCode(marked) : marked;
   if (url === undefined) return text;
   const target = url.replace(CONTROL, "");
   if (style === "hyperlink") return `${text}  ·  \u001b]8;;${target}\u0007${word}\u001b]8;;\u0007`;

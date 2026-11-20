@@ -242,7 +242,7 @@ describe("Cursor plugin contract", () => {
     expect(followUp.followup_message).toContain("- a.ts:2:7 — Do not write bad. [test:no-bad]");
     // The person sees none of a hook's text in Cursor, so the agent is asked to relay the rule's line (with no dashboard
     // running here, the rule stays unlinked and the line carries no link).
-    expect(followUp.followup_message).toContain("Begin your next reply with these lines, exactly as written:\n◆ Rerail · test:no-bad  steered");
+    expect(followUp.followup_message).toContain("Begin your next reply with these lines, exactly as written:\n`◆ Rerail · test:no-bad  steered`");
     // Carried once.
     expect(await handleCursorEvent({ ...common, loop_count: 1 }, scriptedLoop({}), storage)).toEqual({});
 
