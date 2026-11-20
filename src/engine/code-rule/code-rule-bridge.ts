@@ -3002,9 +3002,8 @@ export class CodeRuleBridge {
    * Git command, and, in the session folder, any other writer's (`#claimOwnWrites`). Neither kind is reported as this
    * session's edit. Of those, only a source this session had changed is still audited, as the source it now is with no
    * generated lines and in `log` mode: the evaluator holds its older text, and steers queued for that text are out of
-   * date. Any other is the same to the evaluator as the files it never saw. The walk of the other worktrees drops the
-   * changes of a checkout it shows the session first that is no longer one once its Git has been read
-   * (`#checkoutStands`).
+   * date. Any other is the same to the evaluator as the files it never saw. The walk of the other worktrees drops every
+   * change of a checkout whose `.git` entry is gone once its Git has been read (`#checkoutStands`).
    */
   async #separateOwnWrites(
     discovery: SourceDiscovery,
@@ -3025,19 +3024,20 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Whether `checkout` is still the checkout whose Git gave the walk its verdicts. The walk of the other worktrees takes
-   * every file stamped since the session opened in a worktree it shows the session first (`#firstSightPaths`), and only
-   * Git's verdicts tell Git's own files from writes there. `git worktree remove` deletes the worktree's `.git` entry
-   * before Git stops listing the worktree, and a Git started there once the entry is gone reads no checkout, or the one
-   * around the worktree, so every file would be taken for a write. There the entry is looked for once Git has answered:
-   * still there, Git read this checkout; gone, the worktree is being removed or was, its files went with it, as a
-   * worktree gone before the walk is applied took its own (`#syncWorktrees`), and none of them is an edit.
+   * Whether `checkout` is still the checkout whose Git gave the walk its verdicts. In another worktree only Git's
+   * verdicts tell Git's own files from writes: at the walk's first sight of it, every file stamped since the session
+   * opened (`#firstSightPaths`); later, each file it saw there that is gone. `git worktree remove` deletes the
+   * worktree's files, its `.git` entry among them, before Git stops listing the worktree, and a Git started there once
+   * the entry is gone reads no checkout, or the one around the worktree, so each of those files would be taken for a
+   * write. So the entry is looked for once Git has answered: still there, Git read this checkout; gone, the worktree is
+   * being removed or was, its files went with it, as a worktree gone before the walk is applied took its own
+   * (`#syncWorktrees`), and none of them is an edit.
    */
   async #checkoutStands(discovery: SourceDiscovery, walk: WalkStart, checkout: string): Promise<boolean> {
     if (walk.inSession) return true;
     const named = sessionPath(discovery.root, checkout);
     const worktree = walk.worktrees.has(named) ? named : rootHolding(walk.worktrees, named);
-    return worktree === undefined || !this.#mayFirstSee(discovery, worktree) || await stillACheckout(checkout);
+    return worktree === undefined || await stillACheckout(checkout);
   }
 
   /**
