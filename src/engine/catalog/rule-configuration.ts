@@ -28,7 +28,7 @@ import { readLibraryRow } from "./rule-library.js";
 import type { CodeRuleDslValue } from "../code-rule/code-rule.js";
 import type { RuleMode } from "./rule-mode.js";
 import type { RulePackRule } from "./rule-packs.js";
-import type { RuleDocument } from "./rule-store.js";
+import { ruleKindOf, type RuleDocument } from "./rule-store.js";
 import { libraryRules, repositories, ruleAttachments, ruleSettings, type RuleKind } from "../storage/schema.js";
 import { clearSetupReview } from "./setup-review.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
@@ -216,7 +216,7 @@ function compareSettings(left: SettingRow, right: SettingRow): number {
 }
 
 function bundledPresenceFields(document: RuleDocument): Pick<Presence, "revision" | "payloadHash"> {
-  return { revision: document.kind === "code" ? document.rule.revision : 1, payloadHash: ruleDocumentDigest(document) };
+  return { revision: document.kind === "conversation" ? 1 : document.rule.revision, payloadHash: ruleDocumentDigest(document) };
 }
 
 /** Resolves effective rules at any path from rows read once. */
@@ -267,7 +267,7 @@ class ConfigurationResolver {
   /** Every rule present at `path` (relative to the repository root), with its effective `on` and `mode`. */
   at(path: string, kind: RuleKind): EffectiveRule[] {
     return [...this.#presences(path).values()]
-      .filter(presence => presence.document.kind === kind)
+      .filter(presence => ruleKindOf(presence.document) === kind)
       .map(presence => this.#effective(presence, path))
       .sort((left, right) => compareDeterministicStrings(left.document.rule.id, right.document.rule.id));
   }
@@ -341,16 +341,22 @@ class ConfigurationResolver {
 
   /**
    * The option values settings give a code rule by Rerail, per option: the nearest owner's setting for the rule over
-   * the whole repository (folder `""`) that sets the option. A library rule takes none.
+   * the whole repository (folder `""`) that sets the option. A library rule takes none. A rule written in `.rerail`
+   * takes none either, and values given it are reported as a configuration error (`configureBundledCodeRule`).
    */
   #config(presence: Presence): { config: RuleConfig | null; deciders: Record<string, Decider> } {
+    if (presence.document.kind === "conversation" || presence.source.kind === "library_rule") return { config: null, deciders: {} };
+    return this.#ruleConfig(presence.document.rule.id);
+  }
+
+  /** The option values the settings of each owner, nearest first, give rule `id` over the whole repository. */
+  #ruleConfig(id: string): { config: RuleConfig | null; deciders: Record<string, Decider> } {
     const config: Record<string, CodeRuleDslValue> = {};
     const deciders: Record<string, Decider> = {};
-    if (presence.document.kind !== "code" || presence.source.kind === "library_rule") return { config: null, deciders };
-    const id = presence.document.rule.id;
+    const configures = (setting: SettingRow): setting is SettingRow & { config: RuleConfig } =>
+      setting.targetKind === "rule" && setting.targetId === id && setting.folder === "" && setting.config !== null;
     for (const owner of this.#owners) {
-      for (const setting of this.#settingsByOwner.get(`${owner.kind}\0${owner.id}`) ?? []) {
-        if (setting.targetKind !== "rule" || setting.targetId !== id || setting.folder !== "" || setting.config === null) continue;
+      for (const setting of (this.#settingsByOwner.get(`${owner.kind}\0${owner.id}`) ?? []).filter(configures)) {
         for (const [name, value] of Object.entries(setting.config)) {
           if (Object.hasOwn(config, name)) continue;
           config[name] = value;

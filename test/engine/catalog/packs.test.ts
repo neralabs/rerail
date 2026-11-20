@@ -14,9 +14,9 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, rerailRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
-import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, shippedLanguages } from "../../../scripts/release/core.mjs";
+import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, shippedLanguages } from "../../../scripts/release/core.mjs";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -717,6 +717,135 @@ describe("validatePack", () => {
     });
   });
 
+  describe("rules written in .rerail", () => {
+    const ASSERT = "rr-sample-assert";
+    /** Rewrites the text of the pack's `.rerail` rule `id`. */
+    const editRule = (id: string, edit: (text: string) => string) => (directory: string): void => {
+      const path = join(directory, "rules", `${id}.rerail`);
+      writeFileSync(path, edit(readFileSync(path, "utf8")));
+    };
+    /** Rewrites rule `id`'s entry in pack.json. */
+    const editEntry = (id: string, edit: (rule: Record<string, unknown>) => Record<string, unknown>) => (directory: string): void =>
+      editJson(join(directory, "pack.json"), pack => ({
+        ...pack,
+        rules: z.array(z.record(z.string(), z.unknown())).parse(pack.rules).map(rule => (rule.id === id ? edit(rule) : rule)),
+      }));
+    const examples = (caught: unknown, passes: unknown) => (rule: Record<string, unknown>): Record<string, unknown> => ({ ...rule, examples: { caught, passes } });
+    const passes = { path: "src/a.py", text: "x = 1\n" };
+    const unparsed = "pack.json does not parse; see check 1";
+
+    it("passes a pack of .rerail rules, one including the pack's own library file under rules/, every rule ok", { timeout: TIMEOUT }, async () => {
+      const validation = await validatePack(join(FIXTURES, "rr-sample"));
+      expect(failing(validation)).toEqual({});
+      expect(validation.rules.map(({ id, status }) => [id, status])).toEqual([[ASSERT, "ok"], ["rr-sample-print-call", "ok"]]);
+    });
+
+    const rerailCases: [string, (directory: string) => void, Partial<Record<PackCheckName, unknown[]>>][] = [
+      [
+        "a .rerail file in rules/ that no rule lists or includes",
+        directory => writeFileSync(join(directory, "rules", "lib", "unused.rerail"), "// read by no rule\n"),
+        { rules: ["rules/lib/unused.rerail is not listed in pack.json"] },
+      ],
+      [
+        "a rule the engine refuses",
+        editRule(ASSERT, text => text.replace('kind(a, "assert_statement")', "no_such_relation(a)")),
+        { rules: [expect.stringMatching(/^rr-sample-assert: rules\/rr-sample-assert\.rerail is refused by the engine: \S/u)] },
+      ],
+      [
+        "a rule whose .policy id is not its entry's",
+        editRule(ASSERT, text => text.replace('.policy "rr-sample-assert"', '.policy "rr-sample-other"')),
+        { rules: ["rr-sample-assert: rules/rr-sample-assert.rerail has id rr-sample-other"] },
+      ],
+      [
+        "a rule on block mode",
+        editRule(ASSERT, text => text.replace(".mode steer", ".mode block")),
+        { rules: ["rr-sample-assert: rules/rr-sample-assert.rerail cannot ship in a pack yet: block mode is not supported yet for a .rerail rule; use steer or log"] },
+      ],
+      [
+        "a rule pack.json starts on block mode",
+        editEntry(ASSERT, rule => ({ ...rule, mode: "block" })),
+        { rules: ["rr-sample-assert: rules/rr-sample-assert.rerail cannot ship in a pack yet: block mode is not supported yet for a .rerail rule; use steer or log"] },
+      ],
+      [
+        "a rule that sets suppress",
+        editRule(ASSERT, text => text.replace('runs with -O."\n', 'runs with -O."\n    suppress nosec "B101"\n')),
+        { proof: ["rr-sample-assert: a violation sets suppress; a pack's own rule has no upstream tool's comments to honour"] },
+      ],
+      [
+        "a rule with no .test block",
+        editRule(ASSERT, text => text.slice(0, text.indexOf(".test "))),
+        { proof: ["rr-sample-assert: has no .test block; a rule written in .rerail proves itself with at least one"] },
+      ],
+      [
+        "a rule with no examples",
+        editEntry(ASSERT, ({ examples: _examples, ...rule }) => rule),
+        { proof: [`rr-sample-assert: no examples and no port entry in conformance.json`] },
+      ],
+      [
+        "a caught example the rule does not catch",
+        editEntry(ASSERT, examples(passes, passes)),
+        { examples: ["rr-sample-assert: the caught example (src/a.py) produces no A001 finding"] },
+      ],
+      [
+        "a caught example whose only finding is in a file it is read with",
+        editEntry(ASSERT, examples({ ...passes, with: [{ path: "src/b.py", text: "assert x\n" }] }, passes)),
+        { examples: ["rr-sample-assert: the caught example (src/a.py) produces no A001 finding"] },
+      ],
+      [
+        "a passes example the rule catches",
+        editEntry(ASSERT, examples({ path: "src/a.py", text: "assert x\n" }, { path: "src/a.py", text: "assert y\n" })),
+        { examples: ["rr-sample-assert: the passes example (src/a.py) produces A001"] },
+      ],
+      [
+        "an example outside the rule's scope",
+        editEntry(ASSERT, examples({ path: "src/a.js", text: "assert x\n" }, passes)),
+        { examples: ["rr-sample-assert: the caught example's path src/a.js is outside the rule's scope"] },
+      ],
+      [
+        "a .test block that fails",
+        editRule(ASSERT, text => text.replace('.expect A001 at "app/views.py":2', '.expect A001 at "app/views.py":3')),
+        { examples: [expect.stringMatching(/^rr-sample-assert: its \.test asserts_are_reported \(line \d+\) fails: \S/u)] },
+      ],
+      [
+        "an example read with its own file",
+        editEntry(ASSERT, examples({ path: "src/a.py", text: "assert x\n", with: [{ path: "./src/a.py", text: "x = 1\n" }] }, passes)),
+        { rules: [expect.stringContaining("is the example's own path")], proof: [unparsed], examples: [unparsed] },
+      ],
+      [
+        "an example read with a file outside its repository",
+        editEntry(ASSERT, examples({ path: "src/a.py", text: "assert x\n", with: [{ path: "../b.py", text: "x = 1\n" }] }, passes)),
+        { rules: [expect.stringContaining("must stay inside the example's repository")], proof: [unparsed], examples: [unparsed] },
+      ],
+      [
+        "a description with code in it",
+        editRule(ASSERT, text => text.replace("instead of asserting", "instead of `assert`")),
+        { text: ["rules/rr-sample-assert.rerail: description holds code (backticks): Raise an exception instead of `assert`, since Python strips asserts when it runs with optimization."] },
+      ],
+    ];
+
+    it.each(rerailCases)("fails %s", { timeout: TIMEOUT }, async (_name, change, expected) => {
+      const validation = await validatePack(changed("rr-sample", change));
+      expect(failing(validation)).toEqual(expected);
+      expect(validation.pass).toBe(false);
+    });
+
+    it("fails a JSON rule whose example names files to be read with", async () => {
+      const validation = await validatePack(changed("valid", editEntry("pass-statement", examples(
+        { path: "src/a.py", text: "def f():\n    pass\n", with: [{ path: "src/b.py", text: "x = 1\n" }] },
+        { path: "src/a.py", text: "def f():\n    return 1\n" },
+      ))));
+      expect(failing(validation).rules).toEqual([expect.stringContaining("with is for a rule written in .rerail")]);
+    });
+
+    it("fails check 5 once core reads .rerail rules, while the core range admits older cores", { timeout: TIMEOUT }, async () => {
+      const raised = (directory: string): void => editJson(join(directory, "package.json"), manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": raisedCoreRange(RERAIL_DOCUMENTS_SINCE) } }));
+      expect(failing(await validatePack(join(FIXTURES, "rr-sample"), { coreVersion: RERAIL_DOCUMENTS_SINCE }))).toEqual({
+        package: [`package.json: the core range >=0.1.0-0 admits Rerail older than ${RERAIL_DOCUMENTS_SINCE}, which reads no rule written in .rerail (rr-sample-assert, rr-sample-print-call); raise it to >=${RERAIL_DOCUMENTS_SINCE}-0`],
+      });
+      expect(failing(await validatePack(changed("rr-sample", raised), { coreVersion: RERAIL_DOCUMENTS_SINCE }))).toEqual({});
+    });
+  });
+
   describe("check 8: text", () => {
     it("reads no sentence end in an abbreviation or quoted text, and no tool name in a quoted value", () => {
       const document = { description: "Use field init shorthand, e.g. Point { x } for Point { x: x }, not 'eslint' style.", clauses: [] };
@@ -940,20 +1069,23 @@ describe("languageRangeFailure", () => {
 describe("the core range the release writes", () => {
   const floors = packs.flatMap(id => {
     const directory = join(PACKS, id);
-    const heldOff = heldOffRules(JSON.parse(readFileSync(join(directory, "pack.json"), "utf8")));
+    const packJson: unknown = JSON.parse(readFileSync(join(directory, "pack.json"), "utf8"));
+    const heldOff = heldOffRules(packJson);
     const languages = shippedLanguages(directory);
-    const floor = coreFloor(heldOff, languages);
-    return floor === undefined ? [] : [{ id, heldOff, languages, floor }];
+    const rerail = rerailRules(packJson);
+    const floor = coreFloor(heldOff, languages, rerail);
+    return floor === undefined ? [] : [{ id, heldOff, languages, rerail, floor }];
   });
 
   it("is due for the packs holding a rule off or shipping a rule in a language added since", () => {
     expect(floors.map(({ id }) => id)).toEqual(["complexity", "python"]);
   });
 
-  it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, floor }) => {
-    expect(heldOffRangeFailure(">=0.1.0-0", heldOff, floor) ?? languageRangeFailure(">=0.1.0-0", languages, floor)).toBeDefined();
-    expect(heldOffRangeFailure(raisedCoreRange(floor), heldOff, floor)).toBeUndefined();
-    expect(languageRangeFailure(raisedCoreRange(floor), languages, floor)).toBeUndefined();
+  it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, rerail, floor }) => {
+    const failures = (range: string): (string | undefined)[] =>
+      [heldOffRangeFailure(range, heldOff, floor), languageRangeFailure(range, languages, floor), rerailRangeFailure(range, rerail, floor)];
+    expect(failures(">=0.1.0-0").some(failure => failure !== undefined)).toBe(true);
+    expect(failures(raisedCoreRange(floor))).toEqual([undefined, undefined, undefined]);
   });
 });
 

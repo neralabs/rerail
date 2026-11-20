@@ -10,6 +10,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import semver from "semver";
 import { CodeRuleCompileError, EngineUnavailableError, readsLeftOutToken, relationalRulesOff, storableCodeRule } from "../code-rule/code-rule-compile.js";
+import type { CodeRule } from "../code-rule/code-rule-schema.js";
+import { describeRerailRules } from "./rerail-rules/rerail-rule.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { CURRENT_LINK, defaultRerailHome } from "../storage/rerail-home.js";
@@ -26,6 +28,7 @@ import {
 } from "./rule-packs.js";
 import { packCompileChecks, type PackCompileChecks } from "./pack-compile-checks.js";
 import { engineRegexIssues } from "./rule-regexes.js";
+import type { ConversationRule } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
 
 /** In the Rerail home: the npm prefix rule packs are installed into. */
@@ -231,27 +234,41 @@ function comparePackPrecedence(left: LoadedRulePack, right: LoadedRulePack): num
   return rank(left) - rank(right) || compareDeterministicStrings(left.pack.packageName ?? "", right.pack.packageName ?? "");
 }
 
+/** Why the engine refuses conversation rule `rule`'s patterns, or undefined. */
+function conversationRefusal(rule: ConversationRule): string | undefined {
+  // Internal testing: conversation rules in a pack, as every conversation rule (docs/internal-testing.md).
+  const [issue] = engineRegexIssues(rule);
+  return issue === undefined ? undefined : `${issue.path.join(".")} ${issue.message}`;
+}
+
 /**
- * Why the engine rejects `document`, in its own words, or undefined; throws `EngineUnavailableError` without the
- * engine. A code rule must compile; a conversation rule's patterns must be ones the engine accepts, so a bad pattern
- * leaves the pack out here rather than failing a session when it loads the rule.
- * Two refusals are no problem of the pack: a code rule reading a token a tape may leave out (`readsLeftOutToken`) is an
- * older pack's form this engine no longer answers, and a `relational` clause waits for its experiment
- * (`relationalRulesOff`). Its pack loads, and the live catalog skips that rule alone and reports it with the reason, as
- * it does every rule that fails to compile when it loads.
+ * Why the engine refuses to compile code rule `rule`, or undefined. Two refusals are no problem of the pack: a code
+ * rule reading a token a tape may leave out (`readsLeftOutToken`) is an older pack's form this engine no longer
+ * answers, and a `relational` clause waits for its experiment (`relationalRulesOff`). Its pack loads, and the live
+ * catalog skips that rule alone and reports it with the reason, as it does every rule that fails to compile when it
+ * loads.
  */
-function engineRefusal(document: RuleDocument): string | undefined {
-  if (document.kind === "conversation") {
-    // Internal testing: conversation rules in a pack, as every conversation rule (docs/internal-testing.md).
-    const [issue] = engineRegexIssues(document.rule);
-    return issue === undefined ? undefined : `${issue.path.join(".")} ${issue.message}`;
-  }
+function codeRuleRefusal(rule: CodeRule): string | undefined {
   try {
-    storableCodeRule(document.rule);
+    storableCodeRule(rule);
     return undefined;
   } catch (error) {
     if (!(error instanceof CodeRuleCompileError)) throw error;
-    return readsLeftOutToken(error.reason) || error.reason === relationalRulesOff(document.rule) ? undefined : error.reason;
+    return readsLeftOutToken(error.reason) || error.reason === relationalRulesOff(rule) ? undefined : error.reason;
+  }
+}
+
+/**
+ * Why the engine rejects `document`, in its own words, or undefined; throws `EngineUnavailableError` without the
+ * engine. A code rule must compile; a conversation rule's patterns must be ones the engine accepts, so a bad pattern
+ * leaves the pack out here rather than failing a session when it loads the rule. A `.rerail` rule was read and checked
+ * by the engine when its pack was read (`readRulePack`), which fails for one the engine refuses.
+ */
+function engineRefusal(document: RuleDocument): string | undefined {
+  switch (document.kind) {
+    case "conversation": return conversationRefusal(document.rule);
+    case "code": return codeRuleRefusal(document.rule);
+    case "rerail": return undefined;
   }
 }
 
@@ -373,7 +390,7 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
   };
   packDirectories.forEach((directory, at) => {
     try {
-      const loaded = readRulePack(directory);
+      const loaded = readRulePack(directory, options.compileChecks?.describe ?? describeRerailRules);
       const localSource = options.localSources?.get(directory);
       read.push({ at, directory, loaded: localSource === undefined ? loaded : { ...loaded, pack: { ...loaded.pack, localSource } } });
     } catch (error) {

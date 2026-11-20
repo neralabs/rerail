@@ -35,7 +35,8 @@ import { CODE_RULE_FORMAT, codeRuleSchema, type CodeRule } from "../engine/code-
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { folderContains, normalizeFolder, type CheckoutContext, type EffectiveRule, type LibraryRule, type RuleCatalog } from "../engine/catalog/repository-model.js";
-import type { RuleDocument } from "../engine/catalog/rule-store.js";
+import type { JsonRuleDocument } from "../engine/catalog/rule-store.js";
+import type { RerailRule } from "../engine/catalog/rerail-rules/rerail-rule.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
 import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage } from "../engine/experimental-features.js";
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
@@ -838,9 +839,15 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
   }
 }
 
-/** A rule as a draft (`{ kind, rule }`), with what the person should know about changing it. */
-export interface ShownRule {
-  readonly draft: RuleDocument;
+/**
+ * A rule as a draft (`{ kind, rule }`), with what the person should know about changing it; for a rule written in
+ * `.rerail`, which no draft can copy yet, its file's text instead.
+ */
+export type ShownRule = ShownDraft | { readonly source: string; readonly notes: readonly string[] };
+
+/** A rule shown as a draft `rules add` takes. */
+interface ShownDraft {
+  readonly draft: JsonRuleDocument;
   readonly notes: readonly string[];
 }
 
@@ -864,10 +871,10 @@ function ownRuleNote(database: RerailDatabase, own: LibraryRule, name: string, k
  * there (unless that is Log only while its pack waits for approval). Its shipped document when those values no longer
  * apply.
  */
-function runningDocument(running: EffectiveRule, bundled: RuleDocument): RuleDocument {
+function runningDocument(running: EffectiveRule, bundled: JsonRuleDocument): JsonRuleDocument {
   if (running.configError !== null) return bundled;
   const mode = running.decidedBy.mode.by === "awaiting-approval" ? bundled.rule.mode : running.mode;
-  return { ...running.document, rule: { ...running.document.rule, mode } } as RuleDocument;
+  return { ...running.document, rule: { ...running.document.rule, mode } } as JsonRuleDocument;
 }
 
 /** What saving an edit of the By Rerail rule `id` does in the repository `name`, given where it runs there. */
@@ -880,7 +887,7 @@ function rerailRuleNote(id: string, name: string, presences: readonly EffectiveR
 }
 
 /** The By Rerail rule `id` as it runs in `repo`'s repository, with what saving an edit of it there does. */
-function rerailRuleShown(database: RerailDatabase, ruleCatalog: RuleCatalog, bundled: RuleDocument, repo: string, id: string): ShownRule {
+function rerailRuleShown(database: RerailDatabase, ruleCatalog: RuleCatalog, bundled: JsonRuleDocument, repo: string, id: string): ShownDraft {
   const checkout = lookupCheckout(database, repo);
   if (checkout === undefined) return { draft: bundled, notes: [notAddedText(id, repositoryName(repo))] };
   const name = repositoryName(checkout.checkoutPath);
@@ -894,22 +901,32 @@ function rerailRuleShown(database: RerailDatabase, ruleCatalog: RuleCatalog, bun
   return { draft: runningDocument(running, bundled), notes: [rerailRuleNote(id, name, presences)] };
 }
 
+/** A pack's rule written in `.rerail`, shown as its file's text: `rules add` cannot store a copy of one yet. */
+function rerailFileShown(rule: RerailRule, ruleCatalog: RuleCatalog): ShownRule {
+  const packId = ruleCatalog.packOf.get(rule.id);
+  const pack = packId === undefined ? undefined : ruleCatalog.packs.get(packId);
+  return {
+    source: rule.source,
+    notes: [`${rule.id} is written in .rerail and ships in the rule pack ${pack?.name ?? packId}. Rules created by you are JSON, so rules add cannot store a copy of it yet; turn it on or off, or change its mode, in the dashboard.`],
+  };
+}
+
 /**
  * `document` with its pack's title for the By Rerail rule, from the pack's manifest, where the document has none: a
  * copy keeps the name the dashboard shows, and `rules add` takes it. A manifest title a rule may not carry (over 200
  * characters) is left out, and `rules show` says the draft needs one.
  */
-function withPackTitle(document: RuleDocument, ruleCatalog: RuleCatalog): RuleDocument {
+function withPackTitle(document: JsonRuleDocument, ruleCatalog: RuleCatalog): JsonRuleDocument {
   if (document.rule.title !== undefined) return document;
   const id = document.rule.id;
   const packId = ruleCatalog.packOf.get(id);
   const title = packId === undefined ? undefined : ruleCatalog.packs.get(packId)?.rules.find(rule => rule.id === id)?.title;
   if (title === undefined || !ruleTitleSchema.safeParse(title).success) return document;
-  return { ...document, rule: { ...document.rule, title } } as RuleDocument;
+  return { ...document, rule: { ...document.rule, title } } as JsonRuleDocument;
 }
 
 /** The note `rules show` adds for a draft with no title, which `rules add` refuses. */
-function untitledNotes(document: RuleDocument): string[] {
+function untitledNotes(document: JsonRuleDocument): string[] {
   return document.rule.title === undefined ? [`${document.rule.id} has no title, and rules add needs one: add rule.title, the rule in plain words.`] : [];
 }
 
@@ -932,6 +949,7 @@ export function showRule(id: string, repo: string, databasePath = defaultRerailD
     if (bundled === undefined) {
       throw new RuleDraftError(`there is no rule ${id}: it is neither yours nor in an installed pack. A worktree's own rules are files in its .rerail/rules/`);
     }
+    if (bundled.kind === "rerail") return rerailFileShown(bundled.rule, ruleCatalog);
     const shown = rerailRuleShown(database, ruleCatalog, bundled, repo, id);
     const draft = withPackTitle(shown.draft, ruleCatalog);
     return { draft, notes: [...shown.notes, ...untitledNotes(draft)] };
@@ -1124,7 +1142,7 @@ function runShow(id: string, repo: string, stdout: CommandOutput, stderr: Comman
     return 1;
   }
   // The draft alone on stdout, so it can be saved as a file; what the person should know goes to stderr.
-  stdout.write(`${JSON.stringify(shown.draft, null, 2)}\n`);
+  stdout.write("draft" in shown ? `${JSON.stringify(shown.draft, null, 2)}\n` : shown.source);
   for (const note of shown.notes) stderr.write(`● ${note}\n`);
   return 0;
 }
