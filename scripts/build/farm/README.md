@@ -291,8 +291,9 @@ Linux hosts are. Nothing of the farm runs on Windows itself. Set up once, as an 
 - In the account's `.wslconfig`: `networkingMode=mirrored` (WSL has the PC's address), `memory`,
   `processors`, `vmIdleTimeout=-1`, and `instanceIdleTimeout=-1` under `[general]`. The Hyper-V
   firewall lets WSL's VMs take connections in (`Set-NetFirewallHyperVVMSetting` for WSL's creator
-  id, a rule for the port), and a task at startup, as the account (S4U), runs
-  `wsl.exe -d Ubuntu-24.04 -u root -- sleep infinity`, so WSL runs from boot with no one signed in.
+  id, a rule for the port), and a task with no trigger, as the account (S4U), runs
+  `wsl.exe -d Ubuntu-24.04 -u root -- sleep infinity`: the farm starts it when a command needs the
+  PC, with no one signed in, and ends the distribution once it idles ("Guests").
 - In Ubuntu: systemd (`/etc/wsl.conf`), the packages a Linux host has (build-essential, cmake,
   clang, libclang-dev, libssl-dev, pkg-config, git, zstd, python3, docker.io), a `farm` user in
   `docker` with this Mac's key, and sshd on a port of its own (Windows' sshd has 22), password
@@ -306,7 +307,7 @@ A Mac host can run a Linux host beside itself: an Ubuntu 24.04 ARM VM made with 
 Virtualization framework, no licence; Parallels needs a valid one to start a VM), reached by ssh
 through the Mac (`ProxyJump`, Lima's forwarded ssh port). Its configuration: `cpus`, `memory`,
 `disk` (sparse), no mounts, a provision script with the Linux host's packages and a `farm` user in
-`docker` holding the build machine's key; `limactl start-at-login` starts it with the Mac. Then
+`docker` holding the build machine's key; not started with the Mac (a guest: "Guests"). Then
 rustup and cargo-nextest as above, its entry in `farm.json`, `setup`. An ARM VM gave
 `test-mac-compiles`' 42 outputs as this Mac's bytes (2026-11-19), so it takes this Mac's compiles
 too. Its CPU is the Mac's when it idles: a VM's vCPUs take nothing while no command runs.
@@ -359,7 +360,7 @@ no containers. So the Linux entry takes none (`"tests": false, "mirror": false`;
 Set up once, from the Mac (`prlctl exec VM ...` runs as SYSTEM, until Windows' sshd is up; its
 command line is short, so a longer script goes in by chunks):
 
-- The VM: CPUs and memory (`prlctl set`), autostart with the Mac, nested virtualisation off.
+- The VM: nested virtualisation off, no autostart (a guest, sized as it starts: "Guests").
 - In Windows, the farm account, OpenSSH, long paths, the farm directory out of Defender's
   scanning, no sleep, as on a PC; the WSL feature only (not `VirtualMachinePlatform`), Microsoft's
   WSL MSI (arm64), `wsl --set-default-version 1`. `wsl --install` turns
@@ -373,6 +374,40 @@ command line is short, so a longer script goes in by chunks):
   nextest's `windows-arm` build, and VS Build Tools with the ARM64 tools.
 
 The VM's disk is this Mac's: its entries' `max_target_gb` keeps the targets in it small.
+
+### Guests
+
+A host that is a VM on another machine is a guest (`guest.py`): a Linux VM on a Mac (Lima,
+OrbStack), a Windows VM on a Mac (Parallels), WSL on a Windows PC. A VM holds the memory it was
+given while it runs, and gives little of it back as it idles (Apple's Virtualization framework and
+Parallels keep what the guest has touched), so a guest runs only while the farm uses it:
+
+- **Started when a command needs it.** `test-remote` starts a stopped guest of the command's OS
+  when it would otherwise wait (no running host of that OS has a free test slot, or there is none),
+  in the background, and takes the first slot that frees, a running host's or the guest's once it
+  answers. One guest a command (another machine's before this Mac's, then the most cores): a
+  second command that would wait starts the next. `--host GUEST` starts it and waits for it. A start that fails is not tried again for 10
+  minutes. Compiles (`mac_compiles`) use a guest only while it runs: a compile is too short to boot
+  a VM for.
+- **Sized as it starts**, from what its machine has then: all its machine's cores (a VM's idle
+  vCPUs take nothing, and the scheduler shares busy ones; half on this Mac), and its share of the
+  memory (`memory_fraction`, 0.5, a quarter on this Mac; or `memory_gb`), never more than the
+  machine has available less 4 GB. Under 8 GB available it does not start.
+- **Stopped once idle**: `guests watch`, this Mac's LaunchAgent (`setup` installs it when the
+  configuration has a guest), looks every minute, and stops a guest none of whose test slots,
+  compile slots or checkout copies (a Relax session's) has been held for `idle_minutes` (10). It
+  holds them all while it stops it, so nothing starts there meanwhile. WSL: the distribution ends,
+  then WSL's VM (`wsl --shutdown`, the farm account's own VM; the PC's user's WSL is apart).
+
+Its entry: `"guest": {"on": "local" or the ssh name of its machine, "kind": "lima" | "orb" |
+"parallels" | "wsl", "vm": its name}`, and the optional `cpus`, `memory_gb`, `memory_fraction`,
+`idle_minutes`. A Windows host on it (`shares`) is the same guest. `farm.health` takes a stopped
+guest as not usable without probing it, and with no back-off. Nothing starts a guest at boot (no
+Lima start-at-login, no Parallels autostart, no trigger on a PC's WSL task).
+
+`scripts/build/farm/guests` lists them (state, size, when each stops); `guests start NAME` and
+`guests stop NAME` do it by hand. The dashboard shows each guest on its machine's card, and its own
+card after it, with its state, size and when it stops.
 
 ### Mac compiles on a Linux host
 

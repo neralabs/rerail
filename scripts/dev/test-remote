@@ -91,6 +91,31 @@ def needs_macos(argv, trees):
     return bool(trees) or "metal" in " ".join(argv).lower()
 
 
+def stopped_guests(oses):
+    """The guests (guest.py) of one of `oses` that take test commands and are stopped now: each one
+    machine, so a Windows host and its Linux side (`shares`) count once, the one of `oses`."""
+    out, seen = [], set()
+    for h in farm.hosts():
+        if not h.get("enabled", True) or not h.get("tests", True) or farm.host_os(h) not in oses:
+            continue
+        base = farm.shared_base(h)
+        if base.get("guest") and base["name"] not in seen and farm.health(h).get("guest") == "stopped":
+            seen.add(base["name"])
+            out.append(h)
+    return out
+
+
+def wait_for_guest(host):
+    """`host`'s health once its guest is up, or once its start failed (at most START_SECONDS and a minute)."""
+    deadline = time.time() + guest.START_SECONDS + 60
+    while time.time() < deadline:
+        h = farm.health(host)
+        if h.get("ok") or h.get("guest") == "stopped":
+            return h
+        time.sleep(3)
+    return farm.health(host)
+
+
 def choose(named, oses, roots):
     """A usable host of one of `oses`, its test slot and this checkout's copy there (`farm.CopyUse`
     of the tree `roots` hold), each held until exit; or (None, None, None, why)."""
@@ -101,6 +126,9 @@ def choose(named, oses, roots):
         if farm.host_os(host) not in oses:
             return None, None, None, f"{named} is a {farm.host_os(host)} host, and this command runs on {' or '.join(oses)} (--os)"
         h = farm.health(host, fresh=True)
+        if not h.get("ok") and h.get("guest") in ("stopped", "starting") and guest.request_start(host):
+            say(f"{named}: starting the guest (guest.py; up to {guest.START_SECONDS // 60} min)")
+            h = wait_for_guest(host)
         if not h.get("ok"):
             return None, None, None, f"{named} is not usable: {h.get('why')}"
         candidates = [host]
@@ -113,12 +141,25 @@ def choose(named, oses, roots):
             with concurrent.futures.ThreadPoolExecutor(max(len(hosts), 1)) as pool:
                 list(pool.map(lambda h: farm.health(h, fresh=True), hosts))
             candidates = [h for h in farm.usable("tests") if farm.host_os(h) in oses]
-        if not candidates:
+        if not candidates and stopped_guests(oses):
+            # No running host of these: a guest that can be one is started, and the command waits
+            # for it (below), as for a slot.
+            pass
+        elif not candidates:
             reasons = [f"{h['name']}: {farm.health(h).get('why') or 'not ' + ' or '.join(oses)}" for h in farm.hosts()
                        if h.get("enabled", True) and h.get("tests", True)]
             return None, None, None, "no usable host" + (f" ({'; '.join(reasons)})" if reasons else " (none configured)")
     said = False
+    starting = []
     while True:
+        # A guest started for this command (below) that is up now is a candidate too.
+        for g in starting:
+            if g not in candidates and farm.health(g).get("ok"):
+                candidates.append(g)
+        if starting and not any(farm.health(g).get("guest") == "starting" or farm.health(g).get("ok") for g in starting) \
+                and not any(farm.health(h).get("ok") for h in candidates):
+            return None, None, None, "no usable host, and the guests started for it did not come up (" + \
+                "; ".join(f"{g['name']}: {farm.health(g).get('why')}" for g in starting) + ")"
         # The host with the most of its test slots free, then the most cores to spare; any slot that
         # frees on any host is taken, not only the first host's.
         free = []
@@ -161,8 +202,19 @@ def choose(named, oses, roots):
                 f[6].release()
                 f[7].release()
             best = free[0]
+            best[6].used()
             return best[5], best[6], best[7], None
-        if not said:
+        if not starting:
+            # It would wait: the stopped guests that can take it are started (guest.py), and it
+            # takes the first slot that frees, a running host's or a guest's once it is up.
+            # One a command: another machine's before this Mac's (where the edit loop runs), then the
+            # most cores; a second command that would wait starts the next.
+            order = sorted(stopped_guests(oses), key=lambda g: (farm.shared_base(g)["guest"]["on"] == "local", -g.get("cores", 0)))
+            starting = next(([g] for g in order if guest.request_start(g)), [])
+            if starting:
+                say("starting " + ", ".join(f"{g['name']} (a guest on {farm.shared_base(g)['guest']['on']})" for g in starting)
+                    + f": it takes the command once it is up, unless a slot frees first (up to {guest.START_SECONDS // 60} min)")
+        if not said and candidates:
             say("every test slot of every usable host is taken"
                 + (f", or this checkout's copy there runs another command from other files ({', '.join(other_tree)})" if other_tree else "")
                 + ": waiting for the first that frees (" + ", ".join(f"{h['name']} {farm.test_slots(h)}" for h in candidates) + ")")
@@ -220,9 +272,10 @@ def main(argv):
     if not os.path.exists(os.path.join(SHARE, "farm.py")):
         here(argv, directory, "the farm is not installed (scripts/build/farm/setup)", remote_only)
     sys.path.insert(0, SHARE)
-    global farm, mirror
+    global farm, mirror, guest
     import farm
     import mirror
+    import guest
     try:
         tree = int(open(os.path.join(CHECKOUT, "scripts/build/farm/farm.py")).read().split("\nVERSION = ", 1)[1].split()[0])
     except (OSError, IndexError, ValueError):

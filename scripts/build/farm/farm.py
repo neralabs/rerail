@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 42
+VERSION = 43
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -278,6 +278,15 @@ class Lock:
             fcntl.flock(self.f, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
         except BlockingIOError:
             self.held = False
+        self.path = path
+
+    def used(self):
+        """Stamps the lock's time: a slot taken for a job (not one taken to count the free ones). A
+        guest's watcher (guest.py) reads its slots' times to see a job that ran between its looks."""
+        try:
+            os.utime(self.path)
+        except OSError:
+            pass
 
     def release(self):
         if self.held:
@@ -1306,6 +1315,15 @@ def health(host, fresh=False):
     path = state("health", name)
     h = read_json(path, None)
     now = time.time()
+    if shared_base(host).get("guest"):
+        # A guest that is not running (guest.py): not usable, without a probe or a back-off; a
+        # command that needs it starts it (`guest.request_start`).
+        g = read_json(state("guests", shared_base(host)["name"] + ".json"), {})
+        if g.get("state") in ("stopped", "starting", "stopping"):
+            why = {"stopped": "a guest, stopped: it starts when a command needs it",
+                   "starting": "a guest, starting", "stopping": "a guest, stopping"}[g["state"]]
+            return dict(h or {}, ok=False, why=why + (f" ({g['why']})" if g.get("why") and g["state"] == "stopped" else ""),
+                        guest=g["state"])
     if h is not None and not fresh:
         if h.get("ok") and now - h.get("checked", 0) < HEALTHY_SECONDS:
             return h
@@ -1613,6 +1631,7 @@ def remote_slot(args=(), rustc=""):
                 lock = Lock(state("slots", f"{host['name']}.{i}"), blocking=False)
                 if lock.held:
                     CHANNEL[0] = str(i)
+                    lock.used()
                     return host, lock
                 lock.release()
     return None, None

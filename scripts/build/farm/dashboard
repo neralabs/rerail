@@ -32,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import farm  # noqa: E402
+import guest  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 HISTORY = 100          # samples kept: 5 minutes at 3 s
@@ -55,9 +56,28 @@ class Machine:
             return ["/usr/bin/python3", "-u", SAMPLER, "--local"]
         return farm.ssh(self.name, "exec /usr/bin/python3 -u -c " + shlex.quote(open(SAMPLER).read()), "dash")
 
+    def guest(self):
+        """This machine's guest record and settings (guest.py), when it is a guest."""
+        base, g = guest.spec(self.host)
+        if g is None:
+            return None
+        r = guest.record(base["name"])
+        return {"kind": g["kind"], "on": g["on"], "placement": guest.placement(g), "vm": g["vm"],
+                "state": r.get("state", "unknown"), "cpus": r.get("cpus"), "memory_gb": r.get("memory_gb"),
+                "since": r.get("since"), "last_busy": r.get("last_busy"), "busy": r.get("busy"),
+                "stop_at": r.get("stop_at"), "why": r.get("why"), "boot_s": r.get("boot_s"),
+                "idle_minutes": g.get("idle_minutes", guest.IDLE_MINUTES)}
+
     def run(self):
         backoff = 5
         while True:
+            # A guest that is not running is not asked (an ssh to it would fail, or start it).
+            g = self.host is not None and self.guest()
+            if g and g["state"] != "running":
+                with self.lock:
+                    self.connected, self.error = False, f"a guest, {g['state']}"
+                time.sleep(3)
+                continue
             started = time.time()
             try:
                 self.session()
@@ -131,6 +151,7 @@ class Machine:
                            "link": farm.link_of(self.host), "enabled": self.host.get("enabled", True),
                            "tests": self.host.get("tests", True), "mirror": self.host.get("mirror", True),
                            "slots": farm.test_slots(self.host), "down_until": h.get("down_until")}
+            out["guest"] = self.guest()
         return out
 
 
@@ -168,10 +189,20 @@ class Handler(BaseHTTPRequestHandler):
 def main(argv):
     port = int(argv[argv.index("--port") + 1]) if "--port" in argv else 8740
     MACHINES.append(Machine(LOCAL))
-    for host in farm.hosts():
-        # One card a machine: a Windows host's machine is its Linux entry's (`shares`).
-        if host.get("enabled", True) and not host.get("shares"):
-            MACHINES.append(Machine(host["name"], host))
+    hosts = [h for h in farm.hosts() if h.get("enabled", True) and not h.get("shares")]
+    # One card a machine: a Windows host's machine is its Linux entry's (`shares`). A guest's card
+    # comes after its machine's (guest.py: this Mac, or a farm host).
+    parents = {h["name"]: (guest.placement(h["guest"]) if h.get("guest") else None) for h in hosts}
+    order = [LOCAL] + [h["name"] for h in hosts if not parents[h["name"]]]
+    for h in hosts:
+        if parents[h["name"]]:
+            at = order.index(parents[h["name"]]) if parents[h["name"]] in order else len(order) - 1
+            while at + 1 < len(order) and parents.get(order[at + 1]) == parents[h["name"]]:
+                at += 1
+            order.insert(at + 1, h["name"])
+    by_name = {h["name"]: h for h in hosts}
+    for name in order[1:]:
+        MACHINES.append(Machine(name, by_name[name]))
     for m in MACHINES:
         threading.Thread(target=m.run, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
@@ -226,6 +257,9 @@ svg.spark{width:100%;height:34px;display:block;margin-top:3px}
 .why{color:var(--text2);font-size:12px;margin-top:6px}
 .foot{color:var(--muted);font-size:11px;margin-top:8px}
 .off{opacity:.55}
+.guestcard{border-left:3px solid var(--farm)}
+.place{color:var(--text2);font-size:12px;margin-top:2px}
+.gl{margin:4px 0 0;padding:0;list-style:none;font-size:12px;color:var(--text2)} .gl b{color:var(--text);font-weight:600}
 </style></head><body>
 <header><h1>Farm</h1><span class="sum" id="sum">connecting…</span></header>
 <div class="legend"><span><i class="sw" style="background:var(--farm)"></i>farm (tests, Relax, compiles; here: Rerail's builds)</span>
@@ -265,13 +299,30 @@ function lineSpark(h, i, color, label, max) {
   return `<svg class="spark" style="height:24px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><title>${esc(label)}</title>` +
     `<polyline points="${p}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>`;
 }
-function card(m) {
-  const d = m.last, f = m.farm || {};
+const KIND = {lima: "Lima VM", orb: "OrbStack machine", parallels: "Parallels VM", wsl: "WSL"};
+const STATE_COLOR = {running: "var(--good)", starting: "var(--warn)", stopping: "var(--warn)", stopped: "var(--muted)"};
+function guestLine(g) {
+  const now = Date.now() / 1000, size = g.cpus ? `${g.cpus} CPUs, ${g.memory_gb} GB` : "not sized yet";
+  let when = "";
+  if (g.state === "running") when = g.busy ? "in use" : g.stop_at ? "idle, stops in " + Math.max(0, Math.round((g.stop_at - now) / 60)) + " min" : "";
+  else if (g.state === "stopped") when = "since " + ago(g.since) + " · starts when a command needs it";
+  else if (g.state === "starting") when = "for " + ago(g.since).replace(" ago", "");
+  return `<i class="dot" style="background:${STATE_COLOR[g.state] || "var(--bad)"}"></i><b>${esc(g.state)}</b> · ${esc(size)}` +
+    `${when ? " · " + esc(when) : ""}${g.why && g.state !== "running" ? " · " + esc(g.why) : ""}`;
+}
+function card(m, all) {
+  const d = m.last, f = m.farm || {}, gs = m.guest;
   let status, color;
   if (m.connected) { status = "connected"; color = "var(--good)"; }
   else { status = "not connected"; color = "var(--bad)"; }
   let html = `<div class="top"><div><span class="name">${esc(m.name)}</span> <span class="model">${esc(d ? d.model || "" : "")}</span></div>` +
     `<span class="badge"><i class="dot" style="background:${color}"></i>${status}${m.rtt_ms != null && m.connected ? " · " + m.rtt_ms + " ms" : ""}</span></div>`;
+  if (gs) html += `<div class="place">${esc(KIND[gs.kind] || gs.kind)} “${esc(gs.vm)}” on <b>${esc(gs.placement || "its Windows PC")}</b></div>` +
+    `<div class="why">guest: ${guestLine(gs)}</div>`;
+  const mine = all.filter(o => o.guest && o.guest.placement === m.name);
+  if (mine.length) html += `<div class="row"><span class="lab">Guests</span><ul class="gl" style="margin:0">` +
+    mine.map(o => `<li><b>${esc(o.name)}</b> (${esc(KIND[o.guest.kind] || o.guest.kind)}): ${guestLine(o.guest)}</li>`).join("") + "</ul></div>";
+  if (gs && gs.state !== "running") return html;
   if (!m.local) {
     const ok = f.ok;
     html += `<div class="why">farm: <b style="color:${ok ? "var(--good)" : "var(--bad)"}">${ok ? "✓ usable" : "✕ not usable"}</b>` +
@@ -320,14 +371,15 @@ function card(m) {
 async function tick() {
   try {
     const s = await (await fetch("/api/state", {cache: "no-store"})).json();
-    const on = s.machines.filter(m => m.connected && m.last);
+    // (a guest's cores and memory are its machine's, counted on that machine's card)
+    const on = s.machines.filter(m => m.connected && m.last && !(m.guest && m.guest.placement));
     let cores = 0, farm = 0, fleet = 0, own = 0, jobs = 0, memAv = 0, memT = 0;
     for (const m of on) { const d = m.last, n = d.cores; cores += n; farm += d.cpu.farm * n; fleet += d.cpu.fleet * n; own += d.cpu.other * n;
       jobs += (d.jobs || []).length; memAv += d.mem.available; memT += d.mem.total; }
-    $("#sum").innerHTML = `<b>${on.length}</b> of ${s.machines.length} machines connected · <b>${cores}</b> cores: farm <b>${farm.toFixed(1)}</b>, ` +
+    $("#sum").innerHTML = `<b>${s.machines.filter(m => m.connected && m.last).length}</b> of ${s.machines.length} machines connected · <b>${cores}</b> cores: farm <b>${farm.toFixed(1)}</b>, ` +
       `fleet <b>${fleet.toFixed(1)}</b>, own <b>${own.toFixed(1)}</b>, idle <b>${Math.max(0, cores - farm - fleet - own).toFixed(1)}</b> · ` +
       `<b>${jobs}</b> farm jobs · memory ${GB(memAv)} available of ${GB(memT)}`;
-    $("#grid").innerHTML = s.machines.map(m => `<section class="card ${m.connected ? "" : "off"}">${card(m)}</section>`).join("");
+    $("#grid").innerHTML = s.machines.map(m => `<section class="card ${m.connected ? "" : "off"} ${m.guest ? "guestcard" : ""}">${card(m, s.machines)}</section>`).join("");
   } catch (e) { $("#sum").textContent = "the dashboard's server is not answering: " + e; }
 }
 tick(); setInterval(tick, 2000);

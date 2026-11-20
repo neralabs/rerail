@@ -23,7 +23,7 @@ if [ -n "$installed" ] && [ "$installed" -gt "$mine" ] && [ -z "$force" ]; then
   exit 1
 fi
 mkdir -p "$share/bin" "$config"
-for f in farm.py mirror.py rustc-wrapper farm-rustc farm-cc farm-agent status diagnose free-local dashboard sampler; do
+for f in farm.py mirror.py guest.py guests rustc-wrapper farm-rustc farm-cc farm-agent status diagnose free-local dashboard sampler; do
   install -m 0755 "$here/$f" "$share/$f.tmp" && mv "$share/$f.tmp" "$share/$f"
 done
 install -m 0755 "$here/../../dev/clean-target" "$share/clean-target.tmp" && mv "$share/clean-target.tmp" "$share/clean-target"
@@ -55,6 +55,30 @@ while read -r host kind; do
     echo "$host: unreachable or without rustup, skipped"
   fi
 done
+# The guests' watcher (guest.py; README, "Guests"): stops each guest once idle. A LaunchAgent, kept
+# running, when the configuration has a guest; restarted so it runs this version.
+agent=software.nera.rerail-farm-guests
+plist=$HOME/Library/LaunchAgents/$agent.plist
+if [ "$(uname)" = Darwin ] && python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import farm; sys.exit(0 if any(h.get("guest") for h in farm.hosts()) else 1)' "$share"; then
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Caches/rerail-farm"
+  cat > "$plist.tmp" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$agent</string>
+  <key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>$share/guests</string><string>watch</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$HOME/Library/Caches/rerail-farm/guests.log</string>
+  <key>StandardErrorPath</key><string>$HOME/Library/Caches/rerail-farm/guests.log</string>
+</dict></plist>
+PLIST
+  mv "$plist.tmp" "$plist"
+  launchctl bootout "gui/$(id -u)/$agent" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$plist" && echo "guests: the watcher runs (stops each guest once idle)"
+fi
 # Keeps the farm's files on the hosts out of their backups (and reports Spotlight's indexing of them).
 "$here/host-privacy" || true
 "$share/status" || true
