@@ -1,6 +1,6 @@
 # Behavior reference
 
-Repository: Nera's private data-layer repository
+Repository: a data-layer code base that is not public
 
 Commit: `2b1504adc4291daaf080b2e932962b134da1a69a`
 

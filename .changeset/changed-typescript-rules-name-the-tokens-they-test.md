@@ -2,4 +2,4 @@
 "@neralabs/rerail-pack-typescript": patch
 ---
 
-Rules that test punctuation such as `,`, `=>` or `require` now name the token and report at it, so they run on the rule engine that leaves implied tokens off its syntax trees. What they report is unchanged.
+With Rerail 0.2.0, rules that test punctuation or keywords such as `,`, `=>` or `require` run again; 0.2.0 skips the previous version's. What they report is unchanged.

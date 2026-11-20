@@ -1,10 +1,10 @@
-# Review: the Pulling-it-all-together design and the work since
+# Review: the PIAT design and the work since
 
 Date: 2026-10-26. Branch `wolfeel`, at main `5cf4246e`.
 
 This is the starting point for re-integrating the Rerail rule-engine worktrees into one final shape. It covers:
 
-1. the Pulling-it-all-together (PIAT) design;
+1. the PIAT design (a branch of this repository);
 2. what each stream has learned since PIAT took its snapshots;
 3. what that means for the final shape.
 
@@ -12,7 +12,7 @@ Sources, with tips as surveyed:
 
 | Stream | Ref | Since PIAT snapshot |
 |---|---|---|
-| PIAT | `Pulling-it-all-together` `85098ee3` | (the design itself; 118 commits on main) |
+| PIAT | a branch of this repository, `85098ee3` | (the design itself; 118 commits on main) |
 | Shared-structural-execution | `shared-structural-execution` `85098ee3` | same commit as PIAT; no work of its own |
 | Typing-support | `Typing-support` `e031592d` | 14 commits, all new (`spikes/datalog-engines/`) |
 | DLRE | `Data-layer-rule-expressivity` `a1fcdeb9` | 89 commits since `d3470da2` |
@@ -20,7 +20,7 @@ Sources, with tips as surveyed:
 | SSC | `sql-capture-demand-spikes` `b3e97cd4` | 10 commits since `c17d2e47` |
 | Facts-engine | `facts-engine` `5b0d63a7`, `facts-plan` `a582db97` | 19 and 8 commits since `685db3f7` |
 | Facts work on main | `origin/main`, one contributor's commits | engine-relevant commits since 2026-10-14 |
-| Tempo Metal | `scale-test-the-re-railer` `ed69e91f8` | 64 commits since `a091aa063` |
+| The predecessor's Metal work | a branch of the predecessor repository, `ed69e91f8` | 64 commits since `a091aa063` |
 
 Numbers are the streams' own recorded measurements. Nothing was re-run for this review.
 
@@ -43,7 +43,7 @@ Numbers are the streams' own recorded measurements. Nothing was re-run for this 
 
 ### Why it bogged down
 
-1. **What it executed contradicted what it planned.** The architecture said transducer-first: N1562's packed IR as phase 2, Tempo's Metal executor as phase 3. Shape-fixes §1 itself says that publishing every node into a positional index "should not be on the path of local rules".
+1. **What it executed contradicted what it planned.** The architecture said transducer-first: N1562's packed IR as phase 2, the predecessor's Metal executor as phase 3. Shape-fixes §1 itself says that publishing every node into a positional index "should not be on the path of local rules".
 
    The last 36 hours went into DLRE's anchor-selection lowering instead:
    - set algebra over postings, run as about 430 SQLite stage statements per batch for serverplan_quality;
@@ -58,7 +58,7 @@ Numbers are the streams' own recorded measurements. Nothing was re-run for this 
    - its exact-parity harness;
    - the 60 ported data-layer rules as the gate.
 
-   The gate's failures then set the agenda, and phases 2–7 never started. Meanwhile the sources moved. N1562 restructured into `query/plan/render/`. SSC's tip routes through code it has since rejected. Tempo still does not complete the corpus. A merge plan pinned to snapshot SHAs goes stale within a day while every stream is moving.
+   The gate's failures then set the agenda, and phases 2–7 never started. Meanwhile the sources moved. N1562 restructured into `query/plan/render/`. SSC's tip routes through code it has since rejected. The predecessor still does not complete the corpus. A merge plan pinned to snapshot SHAs goes stale within a day while every stream is moving.
 
 3. **The spec ran ahead of the evidence.**
    - About 3,100 normative lines: IR extensions E1–E16, the v9np tape, residency slabs, fusion.
@@ -252,19 +252,19 @@ DLRE still gates on exact parity and still keeps authored SQL. CPU fixes were ma
 
 PIAT's own M2 finding still holds: the packed IR lowers none of the M2/M7 rules, while the M2 prototype's fused executor met the 1 ns/program-node target.
 
-### Tempo Metal: not integrable yet
+### The predecessor's Metal work: not integrable yet
 
 **Measured:**
 - The 5-file differential agrees on all 109,114 matches in 431 dispatches.
 - The full 335-pattern × 2,079-file run **still fails**. At the latest commit it stopped at 595 dispatches with 1.98 GB of tracked Metal memory. Each fix moved the failure point between the dispatch cap and an allocation refusal.
 - No single-file latency has been measured.
-- The executor drives a host-side, generation-by-generation frontier sized by readback. It has no device-side enqueue and reads Tempo's own `TapeDoc`, not v7.
+- The executor drives a host-side, generation-by-generation frontier sized by readback. It has no device-side enqueue and reads the predecessor's own `TapeDoc`, not v7.
 
 **What it means (corrected).** Batching the whole corpus is right, and it is the only shape in which Metal pays. What fails is the program form Metal is asked to execute: a path-forking transducer whose frontier carries cursor and repeat frames. Its handover names "dynamic frontier continuation", successor generations dominate the launches, and ledger L1 records per-task tuples at 1.99 GB. That is the same continuation-state shape SSC's cohort scheduler lost with on CPU.
 
-The fix is to lift unbounded relations into set operators: each node enters the frontier at most once per stratum, and the arena is bounded at plan time (`metal-enqueue.md` §3). Those operators then run as GPU-scheduled waves over the whole batch. The bounded remainder is a candidate kernel, which is Tempo's register class.
+The fix is to lift unbounded relations into set operators: each node enters the frontier at most once per stratum, and the arena is bounded at plan time (`metal-enqueue.md` §3). Those operators then run as GPU-scheduled waves over the whole batch. The bounded remainder is a candidate kernel, which is the predecessor's register class.
 
-Tempo's kernels, IR encoding, verifier, oracles and budget harness carry over. See `01-design.md`.
+The predecessor's kernels, IR encoding, verifier, oracles and budget harness carry over. See `01-design.md`.
 
 An earlier version of this section proposed re-aiming Metal at per-file requests. That was wrong: per-file execution removes the batching that makes the GPU viable.
 

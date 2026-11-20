@@ -27,7 +27,7 @@ Do not run tree recursion as recursion on the GPU. A preorder tape with a subtre
 - anything the verifier cannot stratify;
 - any document over the batch limits.
 
-## Why the Tempo and N1562 executors hit their guards
+## Why the predecessor's and N1562's executors hit their guards
 
 The cause is not recursion. It is three things:
 
@@ -37,7 +37,7 @@ The cause is not recursion. It is three things:
 
 N1562's runtime uses per-path pending, capture, cursor and repeat arenas with atomic quotas. Its memory scales with live paths × state.
 
-Set semantics (decision 0001) removes the containment and ordering costs, and the range formulation removes path enumeration. Tempo's own shape spike already showed that broad grid kernels with count/scan/scatter work: 34 invocations and 40 ms at production volumes.
+Set semantics (decision 0001) removes the containment and ordering costs, and the range formulation removes path enumeration. The predecessor's own shape spike already showed that broad grid kernels with count/scan/scatter work: 34 invocations and 40 ms at production volumes.
 
 ## Technique verdicts
 
@@ -145,7 +145,7 @@ All times are GPU ms. "ovf" counts roots that overflowed the stack, and brackets
 ## Recommendations
 
 1. **Adopt stratified range execution as the Metal model** within decision 0004.
-   - IR instruction words remain for local tests and bounded paths (Tempo classes 1–3).
+   - IR instruction words remain for local tests and bounded paths (the predecessor's classes 1–3).
    - Relations, `EXISTS` and nesting lower to set operators, not to `FORK` path enumeration.
 2. **Decision 0003 must require fixed-width `size` and `parent` per document,** plus kind postings from the index.
 3. **Add the verifier rules and capability flags,** with `Unknown` plus a CPU/JIT rerun as the only fallback.

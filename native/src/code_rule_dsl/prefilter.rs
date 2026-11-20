@@ -1,6 +1,6 @@
 //! The prefilter (docs/final-shape/03-architecture.md §6, §16; 05 Phase 3): SQL over per-tape
 //! access paths selects candidate (tape, preorder) sets; transducers confirm them. Adapted from
-//! Pulling-it-all-together's anchor store (`matcher/anchors/sql/store.rs`), which followed
+//! PIAT's anchor store (`matcher/anchors/sql/store.rs`), which followed
 //! the SQL index prototype's `tape_store.py`.
 //!
 //! P's store owned a private database: a `file` table with a second copy of every tape, language,

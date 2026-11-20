@@ -1,6 +1,6 @@
 # Rerail rule pack: Data-layer architecture rules
 
-This private pack contains sixty authored candidates from the pinned data-layer revision.
+This pack is not published to npm. It contains sixty authored candidates from the pinned revision of the data-layer code base.
 All six batches pass their recorded source-detection gates; retained integration contracts remain documented.
 The policies are in `candidates/rules/` and are not activated by the pack manifest.
 

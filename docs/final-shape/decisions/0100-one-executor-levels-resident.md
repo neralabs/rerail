@@ -51,7 +51,7 @@ The level's CPU strata run meanwhile.
   - **Agrees.** A launch is per relation and form, never per row.
 - **Ledger row 26.** Acceptance is structural: the work is proportional to the inputs and results.
   - **Agrees.** Residency removes repeated uploads and sorts, and the gate counts submissions per chunk.
-- **Tempo-metal's host-driven generations** stopped at 595 dispatches (0027).
+- **Predecessor-metal's host-driven generations** stopped at 595 dispatches (0027).
   - **Agrees.** The host plans per level, not per round. Recursion inside a level stays on the work queue (0027).
 - **Decisions.**
   - 0010 (waves). SQL and the planner still choose what runs. A level is the planner's order, grouped.

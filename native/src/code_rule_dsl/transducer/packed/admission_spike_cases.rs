@@ -94,6 +94,31 @@ fn first_difference(expected: &[Output], actual: &[Output]) -> Option<serde_json
     })
 }
 
+fn native_difference(
+    program: &Program,
+    native: Option<&CaptureRows>,
+    actual: &Result<Vec<Output>, Error>,
+) -> Option<serde_json::Value> {
+    let expected = native?;
+    let actual = capture_rows(program, actual.as_ref().ok()?);
+    (0..expected.len().max(actual.len())).find_map(|index| {
+        (expected.get(index) != actual.get(index)).then(|| {
+            serde_json::json!({
+                "index": index, "native": expected.get(index), "variant": actual.get(index),
+            })
+        })
+    })
+}
+
+/// Native QueryCursor does not implement the predecessor's host predicates or transforms.
+/// Compare only structural patterns, and only when both run the full root set.
+fn native_comparable(program: &Program, full_root_set: bool) -> bool {
+    program.predicates.is_empty()
+        && program.capture_predicates.is_empty()
+        && program.directives.is_empty()
+        && full_root_set
+}
+
 fn compare_case(
     name: &str,
     query: Option<&str>,
@@ -113,15 +138,8 @@ fn compare_case(
             "early experiment diverged from independent CPU oracle: {name}"
         );
     }
-    // Native QueryCursor does not implement Tempo's host predicates or transforms.
-    // Compare only structural patterns, and only when both run the full root set.
     let native = query
-        .filter(|_| {
-            program.predicates.is_empty()
-                && program.capture_predicates.is_empty()
-                && program.directives.is_empty()
-                && roots == all_roots
-        })
+        .filter(|_| native_comparable(program, roots == all_roots))
         .map(|q| native_rows(q, source, &tape));
     for (strategy, actual, measured) in std::iter::once((Strategy::Early, expected.clone(), early))
         .chain(
@@ -148,16 +166,7 @@ fn compare_case(
                 actual == expected
             })
         });
-        let native_difference = native.as_ref().and_then(|expected| {
-            let actual = capture_rows(program, actual.as_ref().ok()?);
-            (0..expected.len().max(actual.len())).find_map(|index| {
-                (expected.get(index) != actual.get(index)).then(|| {
-                    serde_json::json!({
-                        "index": index, "native": expected.get(index), "variant": actual.get(index),
-                    })
-                })
-            })
-        });
+        let native_difference = native_difference(program, native.as_ref(), &actual);
         let comparable = measured.stop.is_none() && baseline_complete;
         let difference = match (&expected, &actual) {
             (Ok(a), Ok(b)) => first_difference(a, b),

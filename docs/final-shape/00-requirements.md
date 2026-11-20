@@ -68,7 +68,7 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 | C13 | C | Git tree hashes and their relationships are facts the engine works with | W26 | §15 |
 | C14 | I | Derivation tables `derivation(id, producer, rev, key_hash, status, reason, output_hash, cost)` and `derivation_input(id, ord, input_hash, name_id)`; names are mutable bindings to hashes changed only by observers; validity is one SQL join | Typing 23:44 | §14 |
 | C15 | I | No DRed and no level witness: an invalidated fact is recomputed from its inputs | ours | §2 |
-| C16 | I | Git tree facts: `git_tree`, `git_tree_entry`, `git_blob_alias`, `snapshot`, `overlay`, `clean(prefix)`, `context_chain`; Git events diff root trees to seed the push path; subtree-keyed derivations give a cutoff per directory | Tempo E31–E34; main schemas 9/10 | §15 |
+| C16 | I | Git tree facts: `git_tree`, `git_tree_entry`, `git_blob_alias`, `snapshot`, `overlay`, `clean(prefix)`, `context_chain`; Git events diff root trees to seed the push path; subtree-keyed derivations give a cutoff per directory | The predecessor's E31–E34; main schemas 9/10 | §15 |
 | C17 | X | Cross-file derivations record the tree hashes of the prefixes they read as coarse read-set entries | ours | §15 |
 | C18 | X | Interim-fact format: append-only columnar runs of u32 atoms per relation, spilling to a flat file at the cap, merged into SQLite in bulk | ours | §10.2 |
 | C19 | I | A counter of re-runs against facts that actually changed measures spurious invalidation | ours | §10.4 |
@@ -119,7 +119,7 @@ Sources: user statements in the PIAT, Typing-support and wolfeel sessions; memor
 | F2 | C | Data-dependent recursion on Metal; device-side enqueue | P25 14:43, 16:11; W26 | §7 |
 | F3 | C | Pinned GPU memory caches program source and tapes; wave preparation fills it | W26 18:32 | §5 |
 | F4 | C | Pinned GPU memory is dropped two minutes after each full execution | W26 18:32 | §5 |
-| F5 | C | Learn from Tempo's cached, pinned, page-allocated uncompressed tapes | P25 17:09 | §5 |
+| F5 | C | Learn from the predecessor's cached, pinned, page-allocated uncompressed tapes | P25 17:09 | §5 |
 | F6 | C | Prefiltering and memoised facts keep the incremental working set to very few files | W26 18:43 | §10.1 |
 | F7 | I | Residency: zstd frames decompress directly into 64 MiB slabs with one retained no-copy shared `MTLBuffer` per slab; batches reference documents and never copy | PIAT spec §20 | §5 |
 | F8 | X | Shared vs private Metal storage (Q-R1); pin cost per GB (Q-R7) | PIAT §20.12 | §10.1 |
@@ -222,4 +222,4 @@ All confirmed.
 | H4 | Regex count estimate |
 | I11 | k |
 | I15 | `possible` tag |
-| Others | Cold cost of the repository-wide facts (estimated 1.5–2.5 s); facts by vtab (M3); lattice waves on Metal; Tempo subtree-reuse RSS rise (399 → 678 MB) |
+| Others | Cold cost of the repository-wide facts (estimated 1.5–2.5 s); facts by vtab (M3); lattice waves on Metal; the predecessor's subtree-reuse RSS rise (399 → 678 MB) |

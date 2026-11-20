@@ -4,7 +4,7 @@ This report is read-only. Its sources:
 
 - **Rerail tape history.** `native/src/code_rule_dsl/tape.rs` at each version commit. Copies are in `scratchpad/tape/tape-v{3,4,5,6a,6b,7}.rs`.
 - **Rerail tape modules.** `tape/wire.rs` and `tape/index.rs`, and DLRE's SQL anchor store (`matcher/anchors/sql/`).
-- **Executor and Tempo tapes.** N1562 `packed/metal_batch_abi.rs`, and Tempo `scale-test-the-re-railer/tempo/native/src/policy_dsl/tape.rs`.
+- **Executor and the predecessor's tapes.** N1562 `packed/metal_batch_abi.rs`, and the predecessor's `<predecessor>/native/src/policy_dsl/tape.rs` (a branch of the predecessor repository).
 - **SQL index prototype** at `9449260`: `DESIGN.md` (D), `DESIGN_HISTORY.md` (DH), `README.md` (R), `results/storage_report.md` (SR), and the two indexes in `docs/rule-engine-direction/prior-work/`.
 
 ## 0. Headline
@@ -23,7 +23,7 @@ This report is read-only. Its sources:
      - flags live in sorted side lists;
      - ERROR is a code 0 plus a list lookup;
      - contextual kind aliases are a per-file string table plus an override list.
-2. **Version numbers collide.** Tempo's `TMPTAPE4` (predecessor lineage) and Rerail's `TMPTAPE4` share a magic but have different tables. Tempo's has `supertypes`; Rerail's has `syntax_errors`. Tempo's Metal executor is still on Tempo's v4.
+2. **Version numbers collide.** The predecessor's `TMPTAPE4` (predecessor lineage) and Rerail's `TMPTAPE4` share a magic but have different tables. The predecessor's has `supertypes`; Rerail's has `syntax_errors`. The predecessor's Metal executor is still on the predecessor's v4.
 3. **Regularity is lost at exactly the fields a SQL, GPU or JIT consumer needs per node:** span start/end, the error kind, the extra/missing flags, aliases, and parent and size in large files.
    - The consequence is visible in DLRE. Its SQL path rebuilds row-per-node caches (`decoded_properties`, `decoded_spans`, `decoded_children`), which is the spike's rejected sidecar shape (D S089).
    - N1562 expands every node to a 44-byte `MetalNode` before any GPU or JIT work.
@@ -42,7 +42,7 @@ This report is read-only. Its sources:
 
 Legend: **IRR** marks an irregularity, meaning node *i* cannot be decoded with fixed-stride arithmetic alone.
 
-| | SQL index prototype rec6 v2 (D S047) | Tempo "v4" | Rerail v3 (`042d82eb`, 2026-10-08, port from the predecessor repository) | Rerail v4 (`aac1ff23`, 10-13, Forte Blade) | Rerail v5 (`2a303bfa`, 10-15, multi-region embedding) | Rerail v6 (`08053152`, 10-16, documents first pass) | Rerail v7 (`4e57c59d`/`1fbb06c7`, 10-16/19, "documents as their own tapes") |
+| | SQL index prototype rec6 v2 (D S047) | The predecessor's "v4" | Rerail v3 (`042d82eb`, 2026-10-08, port from the predecessor repository) | Rerail v4 (`aac1ff23`, 10-13, Forte Blade) | Rerail v5 (`2a303bfa`, 10-15, multi-region embedding) | Rerail v6 (`08053152`, 10-16, documents first pass) | Rerail v7 (`4e57c59d`/`1fbb06c7`, 10-16/19, "documents as their own tapes") |
 |---|---|---|---|---|---|---|---|
 | Header | none; per-file columns in `t_file` | magic, lang, version, len, digest, table lengths | magic `TMPTAPE3`, lang, 3 reserved, version, source len, SHA-256, 11 u64 lengths | `TMPTAPE4`; 12 lengths (adds syntax_errors) | `TMPTAPE5`; adds program count | `TMPTAPE6`; `HEADER_BYTES = 56+12·8` | `TMPTAPE7`; `HEADER_BYTES = 56+11·8` |
 | Record | 6 B `[kf:2][par:2][size:2]`, `kf = kind10 \| field6<<10` | same | same | same | same | same | same |
@@ -82,7 +82,7 @@ Legend: **IRR** marks an irregularity, meaning node *i* cannot be decoded with f
   - DLRE paid for the irregularity by materializing `decoded_properties`/`decoded_spans`/`decoded_children` rows, which re-creates the S089 sidecar (spike: 211 B/node on SQLite, 88% of the store).
 - **GPU (Metal) and CPU JIT transducers.** These need coalesced fixed-stride loads and no data-dependent branch per node.
   - Sentinel checks plus binary-searched overflow, varint decode and sorted-list membership tests are all divergent branches and dependent loads.
-  - That is why N1562 expands to 44 B/node `MetalNode` before launch, and why Tempo's full-corpus run spends memory on expansion (about 2 GB tracked).
+  - That is why N1562 expands to 44 B/node `MetalNode` before launch, and why the predecessor's full-corpus run spends memory on expansion (about 2 GB tracked).
 - **Random access by preorder index** (anchors from postings, demand points, rehydration of one finding). The ideal is O(1) per field; today span start/end is O(K) and error/extra/missing/alias are O(log n).
 
 **v7 features that break fixed-stride O(1) access to node i:**
@@ -236,7 +236,7 @@ optional columns (present iff listed in the directory; same stride rule):
 - **Aliases and ERROR as codes.** Contextual alias names (tree-sitter alias sequences) are static per grammar, so they are enumerated at **grammar registration** into spare codes of the 10-bit space (E21, E23). The grammar table maps each code to (display name, named, native `kind_id`), so matcher parity keeps the native id.
   - This must be verified: catalog plus alias count stays ≤ 1023 for every Rerail grammar (the spike's maximum was 582 visible kinds).
   - Fallback if a grammar exceeds 10 bits: widen `kf` to u32 for that grammar only (width flag bit2), never a per-file string table.
-- **Supertypes (Tempo).** Supertype membership by kind is grammar-static. Context-dependent supertype paths, if still needed, become an optional regular column, not a pair list.
+- **Supertypes (the predecessor).** Supertype membership by kind is grammar-static. Context-dependent supertype paths, if still needed, become an optional regular column, not a pair list.
 
 **Multi-document:** as in section 3.
 
@@ -269,7 +269,7 @@ optional columns (present iff listed in the directory; same stride rule):
   - DLRE's anchor store drops `spans`/`checkpoints`/`parb`/`sizb`/`parovf`/`sizeovf` and the `decoded_*` caches, and reads `start`/`len`/`par`/`size` by stride.
   - N1562's `MetalNode` packing can upload columns directly. Its derived fields (`next_named`, `child_start`/`child_count`, `descendant_end = i + size`) are computed on the device in one pass, or by the CPU as an optional column.
 - **Index and statistics.** Global kind tokens `lang·1024 + local` in `search_kind_fts` (Option B), so `fts5vocab` statistics are per language.
-- **Migration.** Bump the version and use a distinct magic, so it never collides with Tempo's or Rerail's `TMPTAPE*`. Re-encode from the stored source; parsing is cheap relative to publication (the spike: parsing 1.9% of build time).
+- **Migration.** Bump the version and use a distinct magic, so it never collides with the predecessor's or Rerail's `TMPTAPE*`. Re-encode from the stored source; parsing is cheap relative to publication (the spike: parsing 1.9% of build time).
 
 **Things in v7 that are really needed and must be carried regularly:**
 
