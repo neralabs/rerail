@@ -185,8 +185,9 @@ describe("waiting for the write lock", () => {
     await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
     const sources = fileURLToPath(new URL("../../../", import.meta.url));
     const installed = createRequire(import.meta.url).resolve("better-sqlite3");
-    // The bundles keep better-sqlite3 out, found where the package is installed: here, this checkout's.
-    const external: Plugin = { name: "installed", setup: build => { build.onResolve({ filter: /^better-sqlite3$/u }, () => ({ path: pathToFileURL(installed).href, external: true })); } };
+    // The bundles keep better-sqlite3 out, found where the package is installed: here, this checkout's. esbuild reads the
+    // filter as a Go regular expression, which takes no flags.
+    const external: Plugin = { name: "installed", setup: build => { build.onResolve({ filter: /^better-sqlite3$/ }, () => ({ path: pathToFileURL(installed).href, external: true })); } };
     const options: BuildOptions = { bundle: true, platform: "node", format: "esm", plugins: [external], logLevel: "silent" };
     await build({ ...options, entryPoints: [join(sources, "src/engine/storage/write-lock-wait-worker.ts")], outfile: join(root, worker) });
     await build({
