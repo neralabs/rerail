@@ -258,8 +258,8 @@ pub fn p1_of(cfg: Config, io: &mut dyn Files, path: &str) -> Result<P1, &'static
         };
         depth_of.push(depth);
         let mut inst = P1Inst { file: tu.insts[i as usize].file, parent, dir, depth, dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), gap_tokens: Vec::new() };
-        for (d, dir) in tab.dirs.iter().enumerate() {
-            // A push or a pop is a row of the device's table (decision 0467 §3), as of `vis`.
+        // A push or a pop is a row of the device's table (decision 0467 §3), as `vis` reads it.
+        for d in 0..n {
             let active = state.active(tab, i, d);
             inst.dir_slots.push(lay.dir_pos(tab, i, d) >> SUB);
             inst.dir_active.push(active);

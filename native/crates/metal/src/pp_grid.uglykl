@@ -160,33 +160,76 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     EACH(w, W(ND)) p1_dir_slot(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, P1_GSHIFT), AT(const uint32_t, P1_GC), AT(const uint32_t, P1_BASE), AT(uint32_t, DSLOT), w);
     EACH(w, W(NG)) p1_gap_slot(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, N_GAPS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, P1_GSHIFT), AT(const uint32_t, P1_GC), AT(const uint32_t, P1_BASE), AT(uint32_t, GSLOT), w);
     // --- The visibility: the rows, the stretches, the lookups (the text map is the front's) --
-    // The definitions' flags, done.
+    // The definitions' flags, done; the stretches' order, the slots'.
     BARRIER();
-    EACH(j, W(ND)) pe_row_flag(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DACTIVE), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const PpDef, DEFS), AT(const uint64_t, DIR_KEYS), AT(const uint32_t, DIR_ACTS), AT(uint32_t, RFLAG), AT(uint32_t, N_STACK), j);
-    BARRIER();
-    SCAN(N(N_DIRS), RFLAG, RAT, RTOTAL);
-    EACH(j, W(ND)) pe_rows(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DSLOT), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint64_t, DIR_KEYS), AT(const uint32_t, DIR_ACTS), AT(const uint32_t, RFLAG), AT(const uint32_t, RAT), AT(uint64_t, SORT_KEYS), AT(uint64_t, NAME_KEYS), AT(uint32_t, VALUES), AT(uint32_t, RTYPES), W(N_BUILTIN), j);
     EACH(j, W(NG)) pe_gap_keys(AT(const uint32_t, GSLOT), AT(const uint32_t, N_GAPS), AT(uint64_t, GKEYS), j);
-    ONE(i) pe_rows_total(AT(const uint32_t, RTOTAL), AT(uint32_t, N_ROWS), W(N_BUILTIN), i);
+    // --- P1's conditionals, to their fixpoint (decision 0467 §4) -----------------------------
+    EACH(i, ni) p1_grp_counts(nodes, AT(const uint32_t, N_INSTS), AT(const uint32_t, DIR_GROUPS), AT(uint32_t, P1_GCOUNT), i);
     BARRIER();
-    SORT(N(N_ROWS), 64u, SORT_KEYS, SORT_VA, SORT_KB, SORT_VB, SORT_HIST);
+    SCAN(ni, P1_GCOUNT, P1_GRPF, P1_NGRP);
+    EACH(q, W(NQ)) p1_grp_init(AT(const uint32_t, P1_GRPF), AT(const uint32_t, N_INSTS), AT(const uint32_t, P1_NGRP), AT(uint32_t, P1_GA), q);
+    EACH(r, W(P1_ITERS)) AT(uint32_t, P1_ICHANGED)[r] = 0u;
     SORT(N(N_GAPS), 32u, GKEYS, GSORT_VA, GSORT_KB, GSORT_VB, GSORT_HIST);
-    TICK();
-    // Push and pop (decision 0467 §3), where the unit has them.
-    if (N(N_STACK) != 0u) {
-        uint32_t nr = N(N_ROWS);
-        EACH(c, nr) pe_stack_match(AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, RTYPES), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, STK_MATCH), AT(uint32_t, VBAD), c);
+    uint32_t iter = 0u;
+    for (; iter < W(P1_ITERS); iter++) {
+        uint32_t nq = N(P1_NGRP);
+        EACH(w, W(ND)) p1_dir_act(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, P1_GRPF), AT(const uint32_t, P1_GA), AT(uint32_t, DACTIVE), w);
+        EACH(w, W(NG)) p1_gap_act(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, N_GAPS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, P1_GRPF), AT(const uint32_t, P1_GA), AT(uint32_t, GACTIVE), w);
+        EACH(q, nq) p1_taken_reset(AT(const uint32_t, P1_NGRP), AT(uint32_t, P1_TAKEN), q);
+        ONE(x) { AT(uint32_t, N_STACK)[0] = 0u; }
+        EACH(r, W(STK_ROUNDS)) AT(uint32_t, STK_CHANGED)[r] = 0u;
+        EACH(r, W(P1_JUMPS)) AT(uint32_t, P1_JCHANGED)[r] = 0u;
+        // The builtins' rows' sort keys, again (the last iteration's sort moved them).
+        EACH(p, W(N_BUILTIN)) AT(uint64_t, SORT_KEYS)[p] = AT(const uint64_t, NAME_KEYS)[p] & 0xffffffff00000000ul;
         BARRIER();
-        EACH(c, nr) pe_stack_src(AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, RTYPES), AT(const uint32_t, FLOORS), W(N_UNITS), AT(const uint32_t, STK_MATCH), AT(uint32_t, STK_SRC), AT(uint32_t, VBAD), c);
+        EACH(j, W(ND)) pe_row_flag(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DACTIVE), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const PpDef, DEFS), AT(const uint64_t, DIR_KEYS), AT(const uint32_t, DIR_ACTS), AT(uint32_t, RFLAG), AT(uint32_t, N_STACK), j);
         BARRIER();
-        for (uint32_t round = 0u; round < W(STK_ROUNDS); round++) {
-            EACH(c, nr) pe_stack_jump(AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint32_t, RTYPES), AT(uint32_t, STK_SRC), AT(uint32_t, STK_CHANGED) + round, c);
+        SCAN(N(N_DIRS), RFLAG, RAT, RTOTAL);
+        EACH(j, W(ND)) pe_rows(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DSLOT), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint64_t, DIR_KEYS), AT(const uint32_t, DIR_ACTS), AT(const uint32_t, RFLAG), AT(const uint32_t, RAT), AT(uint64_t, SORT_KEYS), AT(uint64_t, NAME_KEYS), AT(uint32_t, VALUES), AT(uint32_t, RTYPES), W(N_BUILTIN), j);
+        ONE(x) pe_rows_total(AT(const uint32_t, RTOTAL), AT(uint32_t, N_ROWS), W(N_BUILTIN), x);
+        BARRIER();
+        SORT(N(N_ROWS), 64u, SORT_KEYS, SORT_VA, SORT_KB, SORT_VB, SORT_HIST);
+        // Push and pop (decision 0467 §3), where the unit has them.
+        if (N(N_STACK) != 0u) {
+            uint32_t nr = N(N_ROWS);
+            EACH(c, nr) pe_stack_match(AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, RTYPES), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, STK_MATCH), AT(uint32_t, VBAD), c);
             BARRIER();
-            if (AT(const uint32_t, STK_CHANGED)[round] == 0u) break;
+            EACH(c, nr) pe_stack_src(AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, RTYPES), AT(const uint32_t, FLOORS), W(N_UNITS), AT(const uint32_t, STK_MATCH), AT(uint32_t, STK_SRC), AT(uint32_t, VBAD), c);
+            BARRIER();
+            for (uint32_t round = 0u; round < W(STK_ROUNDS); round++) {
+                EACH(c, nr) pe_stack_jump(AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint32_t, RTYPES), AT(uint32_t, STK_SRC), AT(uint32_t, STK_CHANGED) + round, c);
+                BARRIER();
+                if (AT(const uint32_t, STK_CHANGED)[round] == 0u) break;
+            }
+            EACH(c, nr) pe_stack_values(AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint32_t, RTYPES), AT(const uint32_t, STK_MATCH), AT(const uint32_t, STK_SRC), AT(uint32_t, VALUES), c);
+            BARRIER();
         }
-        EACH(c, nr) pe_stack_values(AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint32_t, RTYPES), AT(const uint32_t, STK_MATCH), AT(const uint32_t, STK_SRC), AT(uint32_t, VALUES), c);
+        // The tests, the chains' taken arms, the groups.
+        EACH(w, W(ND)) p1_tests(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint64_t, DIR_KEYS),
+                               AT(const uint32_t, DACTIVE), AT(const uint32_t, DSLOT), AT(const uint32_t, P1_IFVAL), AT(const uint32_t, P1_GRPF),
+                               AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, VALUES), AT(const uint32_t, FLOORS), W(N_UNITS),
+                               AT(uint32_t, P1_TAKEN), AT(uint32_t, VBAD), w);
         BARRIER();
+        EACH(i, ni) p1_grp_roots(AT(const uint32_t, P1_GRPF), AT(const uint32_t, N_INSTS), AT(uint32_t, P1_OWN), AT(uint32_t, P1_PAR), i);
+        EACH(w, W(ND)) p1_grp_arms(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, P1_GRPF), AT(const uint32_t, P1_TAKEN), AT(uint32_t, P1_OWN), AT(uint32_t, P1_PAR), w);
+        BARRIER();
+        uint32_t jr = 0u;
+        for (; jr < W(P1_JUMPS); jr++) {
+            bool even = jr % 2u == 0u;
+            EACH(q, nq) p1_grp_jump(AT(const uint32_t, P1_NGRP), even ? AT(const uint32_t, P1_OWN) : AT(const uint32_t, P1_OWN2), even ? AT(const uint32_t, P1_PAR) : AT(const uint32_t, P1_PAR2),
+                                    even ? AT(uint32_t, P1_OWN2) : AT(uint32_t, P1_OWN), even ? AT(uint32_t, P1_PAR2) : AT(uint32_t, P1_PAR), AT(uint32_t, P1_JCHANGED) + jr, q);
+            BARRIER();
+            if (AT(const uint32_t, P1_JCHANGED)[jr] == 0u) break;
+        }
+        if (jr == W(P1_JUMPS)) { ONE(x) ukl_atomic_or(AT(uint32_t, VBAD), 1u << 28); break; }
+        // The jumping's last round wrote the second buffers on an even round.
+        UKL_GLOBAL const uint32_t* own = jr % 2u == 0u ? AT(const uint32_t, P1_OWN2) : AT(const uint32_t, P1_OWN);
+        EACH(q, nq) p1_grp_settle(AT(const uint32_t, P1_NGRP), own, AT(uint32_t, P1_GA), AT(uint32_t, P1_ICHANGED) + iter, q);
+        BARRIER();
+        if (AT(const uint32_t, P1_ICHANGED)[iter] == 0u) break;
     }
+    if (iter == W(P1_ITERS)) ONE(x) ukl_atomic_or(AT(uint32_t, VBAD), 1u << 28);
+    TICK();
     EACH(p, W(NG)) pe_gap_counts(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, GACTIVE), AT(const uint32_t, N_GAPS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(const PpDir, ROWS), AT(const uint32_t, BASES), AT(const uint32_t, TOTAL), AT(const uint32_t, TRANK), AT(const uint32_t, TTOTAL), AT(uint32_t, GCOUNTS), AT(uint32_t, GFIRSTS), AT(const uint32_t, GSORT_VA), AT(const uint64_t, GKEYS), AT(uint32_t, SSLOT), nf, p);
     TICK();
     BARRIER();

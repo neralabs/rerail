@@ -315,7 +315,7 @@ fn unit_of(p1: &rerail_c_pp::stream::parallel::P1, cpp: bool) -> (Unit, rerail_m
     use rerail_metal::pp_expand::{Layout, NO_PARENT, PpNode};
     let tapes: Vec<Vec<u8>> = p1.files.iter().map(|s| image(s, crate::pp::options(cpp))).collect();
     let unit = place(&p1.files.iter().map(|s| (s.as_slice(), cpp)).collect::<Vec<_>>());
-    let mut lay = Layout { nodes: Vec::new(), dir_active: Vec::new(), gap_active: Vec::new(), builtins: p1.builtins.iter().map(|n| name_key(n)).collect(), relex_options: {
+    let mut lay = Layout { nodes: Vec::new(), if_values: Vec::new(), builtins: p1.builtins.iter().map(|n| name_key(n)).collect(), relex_options: {
         let o = crate::pp::options(cpp);
         rerail_metal::pp_expand::relex_options(o.cpp, o.colons, o.digit_separators, o.raw_strings)
     }, file_literals: {
@@ -335,8 +335,9 @@ fn unit_of(p1: &rerail_c_pp::stream::parallel::P1, cpp: bool) -> (Unit, rerail_m
     }).collect() }, unit_gaps: vec![0] };
     for i in &p1.insts {
         lay.nodes.push(PpNode { file: i.file, parent: if i.parent == u32::MAX { NO_PARENT } else { i.parent }, pdir: i.dir, depth: i.depth, unit: 0 });
-        lay.dir_active.extend(i.dir_active.iter().map(|&a| u32::from(a)));
-        lay.gap_active.extend(i.gap_active.iter().map(|&a| u32::from(a)));
+        // An `#if`'s or `#elif`'s value where it is read: whether the group it opens (its stretch
+        // after) is active (0467 step 5 evaluates them).
+        lay.if_values.extend((0..i.dir_active.len()).map(|d| u32::from(i.gap_active[d + 1])));
     }
     (unit, lay, tapes)
 }
@@ -348,12 +349,17 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
     use rerail_metal::pp_expand::{L_BUILTIN, L_DATE, L_FILE, L_IDENT, L_LINE, L_NONE, L_NOT_NAME, L_TIME, L_TIMESTAMP, lookups};
     let p1 = p1_of(cfg, io, path)?;
     let (unit, lay, _) = unit_of(&p1, cpp);
-    let (ev, got, (dslot, gslot)) = lookups(&unit, &lay).unwrap();
+    let (ev, got, out) = lookups(&unit, &lay).unwrap();
     // R1 of decision 0467: the layout the device made from the spike's tree is the spike's.
     let want_d: Vec<u32> = p1.insts.iter().flat_map(|i| i.dir_slots.iter().map(|&s| s as u32)).collect();
     let want_g: Vec<u32> = p1.insts.iter().flat_map(|i| i.gap_slots.iter().map(|&s| s as u32)).collect();
-    same(dslot, want_d, format!("{what}: the directives' slots"));
-    same(gslot, want_g, format!("{what}: the stretches' slots"));
+    same(out.dir_slots, want_d, format!("{what}: the directives' slots"));
+    same(out.gap_slots, want_g, format!("{what}: the stretches' slots"));
+    // R3: the activity the device's iterations settled on is the spike's.
+    let want_d: Vec<u32> = p1.insts.iter().flat_map(|i| i.dir_active.iter().map(|&a| u32::from(a))).collect();
+    let want_g: Vec<u32> = p1.insts.iter().flat_map(|i| i.gap_active.iter().map(|&a| u32::from(a))).collect();
+    same(out.dir_active, want_d, format!("{what}: the directives' activity"));
+    same(out.gap_active, want_g, format!("{what}: the stretches' activity"));
     same(got.len(), p1.lookups.len(), format!("{what}: the active text's tokens"));
     for (k, (&g, want)) in got.iter().zip(&p1.lookups).enumerate() {
         let g = match g {
@@ -370,6 +376,32 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
     let defs = p1.lookups.iter().filter(|l| matches!(l, Lookup::Def { .. })).count();
     let builtins = p1.lookups.iter().filter(|l| matches!(l, Lookup::Builtin)).count();
     Ok([got.len(), defs, builtins])
+}
+
+/// R3 of decision 0467: the device iterates the `#ifdef` family, the chains and the groups to
+/// their fixpoint, and every directive's and stretch's activity is the spike's (checked inside
+/// `lookups_agree`), with every name's meaning. Nested chains, `#elifdef` and `#elifndef`,
+/// `#else`, a test that depends on a definition made under an earlier test (a chain of them,
+/// so the iterations are several), guards, a stray `#endif`, built-ins tested.
+#[test]
+fn the_groups_are_the_spikes() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::Search;
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#ifdef A\na\n#elifndef B\nb\n#define B\n#else\nc\n#endif\n#ifdef B\nB_on\n#endif\n")],
+        &[("main.c", "#define A\n#ifdef A\n#define B\n#ifdef B\n#define C\n#ifndef C\nno\n#else\n#define D\n#endif\n#endif\n#endif\n#ifdef D\nyes\n#endif\n")],
+        &[("main.c", "#ifndef X\n#define X\n#ifdef Y\ny\n#elifdef X\nx\n#elifndef Z\nz\n#endif\n#endif\n#ifdef __LINE__\nline\n#endif\n#ifndef\nempty\n#endif\n#endif\n")],
+        &[("main.c", "#include \"g.h\"\n#include \"g.h\"\n#ifdef G\ng\n#endif\n#ifdef H\nh\n#endif\n"), ("g.h", "#ifndef G\n#define G\n#ifdef G\n#define H\n#endif\nbody\n#endif\n")],
+        &[("main.c", "#if 1\n#ifdef Q\nq\n#else\n#define Q\n#endif\n#elif 1\nnot\n#else\nnot\n#endif\n#ifdef Q\nQ\n#endif\n#if 0\n#define R\n#elif 1\n#ifdef R\nr\n#endif\n#endif\n")],
+        &[("main.c", "#ifdef P0\n#else\n#define P1\n#endif\n#ifdef P1\n#define P2\n#endif\n#ifdef P2\n#define P3\n#endif\n#ifdef P3\n#define P4\n#endif\n#ifdef P4\nall\n#endif\n")],
+    ];
+    for (k, files) in shapes.iter().enumerate() {
+        for cpp in [false, true] {
+            let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+            let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+            lookups_agree(Config::new(crate::pp::options(cpp)), &mut io, "main.c", cpp, &format!("shape {k}")).unwrap();
+        }
+    }
 }
 
 /// R2 of decision 0467: `push_macro` and `pop_macro` are rows of the device's table, a pop's

@@ -114,3 +114,122 @@ UKL_INLINE void p1_gap_slot(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uin
     uint32_t first = k == 0u ? 0u : rows[dir_bases[insts[i].file] + k - 1u].text_before;
     gslot[w] = base[i] + k + first + (gshift[w] - gc[w]);
 }
+
+// --- The conditionals (decision 0467 §4): the groups' activity, to its fixpoint -----------------
+//
+// An instance has a word for each of its file's groups (from its `grp_first`): group 0 the
+// file's own, always active; group `g` the one its arm opens. An iteration, from the last one's
+// groups:
+// - each directive's activity and each stretch's: its group's;
+// - the definitions' table from the active rows (the visibility's passes);
+// - each arm's test at its slot, where its chain's parent group is active: `#else` true, the
+//   `#ifdef` family a lookup of its name, `#if` and `#elif` the given values (until step 5);
+// - each chain's taken arm, its first true (an atomic minimum of the arms' directive indices);
+// - each group's activity, its arm taken and its parent active: a pointer jumping over the
+//   groups' nesting.
+// The iterations end when one leaves the groups as it found them: every test reads only
+// definitions before it, so that fixpoint is the serial reading.
+
+#define K_ELIF (15u)
+
+// Instance `i`'s group count (its file's), for the scan of its first group word.
+UKL_INLINE void p1_grp_counts(UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* dir_groups, UKL_GLOBAL uint32_t* counts, uint32_t i) {
+    if (i < n_nodes[0]) counts[i] = dir_groups[nodes[i].file];
+}
+
+// The instance a group word is of.
+UKL_INLINE uint32_t p1_grp_inst(UKL_GLOBAL const uint32_t* grp_first, uint32_t n, uint32_t q) {
+    uint32_t lo = 0u, hi = n;
+    for (uint32_t k = 0u; k < 32u && hi - lo > 1u; k++) {
+        uint32_t mid = (lo + hi) / 2u;
+        if (grp_first[mid] <= q) lo = mid; else hi = mid;
+    }
+    return lo;
+}
+
+// The first iteration's groups: each instance's own, nothing else.
+UKL_INLINE void p1_grp_init(UKL_GLOBAL const uint32_t* grp_first, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_grp, UKL_GLOBAL uint32_t* ga, uint32_t q) {
+    if (q >= n_grp[0]) return;
+    ga[q] = grp_first[p1_grp_inst(grp_first, n_nodes[0], q)] == q ? 1u : 0u;
+}
+
+// Directive word `w`'s row, and its instance.
+UKL_INLINE uint32_t p1_row_of(UKL_GLOBAL const PpInst* insts, uint32_t n, UKL_GLOBAL const uint32_t* dir_bases, uint32_t w, UKL_PRIVATE uint32_t* inst) {
+    uint32_t i = p1_inst_of(insts, n, w, false);
+    *inst = i;
+    return dir_bases[insts[i].file] + (w - insts[i].dir_first);
+}
+
+// An iteration's start: each directive's activity and each stretch's, from the groups; the
+// chains' taken arms none.
+UKL_INLINE void p1_dir_act(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint32_t* grp_first, UKL_GLOBAL const uint32_t* ga, UKL_GLOBAL uint32_t* dactive, uint32_t w) {
+    if (w >= n_dirs[0]) return;
+    uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
+    dactive[w] = ga[grp_first[i] + rows[r].group];
+}
+UKL_INLINE void p1_gap_act(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint32_t* grp_first, UKL_GLOBAL const uint32_t* ga, UKL_GLOBAL uint32_t* gactive, uint32_t w) {
+    if (w >= n_gaps[0]) return;
+    uint32_t i = p1_inst_of(insts, n_nodes[0], w, true), k = w - insts[i].gap_first;
+    uint32_t grp = k == 0u ? 0u : rows[dir_bases[insts[i].file] + k - 1u].after;
+    gactive[w] = ga[grp_first[i] + grp];
+}
+UKL_INLINE void p1_taken_reset(UKL_GLOBAL const uint32_t* n_grp, UKL_GLOBAL uint32_t* taken, uint32_t q) {
+    if (q < n_grp[0]) taken[q] = PP_NONE;
+}
+
+// Arm word `w`'s test, where its chain's parent group is active: true takes the chain at its
+// index, the least such the chain's first true arm.
+UKL_INLINE void p1_tests(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint64_t* dir_keys,
+                         UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL const uint32_t* dslot, UKL_GLOBAL const uint32_t* if_values, UKL_GLOBAL const uint32_t* grp_first,
+                         UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* floors, uint32_t n_units,
+                         UKL_GLOBAL uint32_t* taken, UKL_GLOBAL uint32_t* bad, uint32_t w) {
+    if (w >= n_dirs[0] || dactive[w] == 0u) return;
+    uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
+    PpDir d = rows[r];
+    if (d.chain == NO_CHAIN || d.kind < K_IF || d.kind > K_ELSE) return;
+    bool v;
+    if (d.kind == K_ELSE) v = true;
+    else if (d.kind == K_IF || d.kind == K_ELIF) v = if_values[w] != 0u;
+    else {
+        uint64_t key = dir_keys[r];
+        bool defined = key != 0ul && visible(sorted, perm, n_rows[0], name_keys, values, floors, n_units, key, dslot[w], bad) != L_NONE;
+        v = defined == (d.kind == K_IFDEF || d.kind == K_ELIFDEF);
+    }
+    if (v) ukl_atomic_min(&taken[grp_first[i] + d.chain], w - insts[i].dir_first);
+}
+
+// Each group's own flag (its arm taken; group 0 always) and its parent group's word.
+UKL_INLINE void p1_grp_roots(UKL_GLOBAL const uint32_t* grp_first, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL uint32_t* own, UKL_GLOBAL uint32_t* par, uint32_t i) {
+    if (i >= n_nodes[0]) return;
+    own[grp_first[i]] = 1u;
+    par[grp_first[i]] = grp_first[i];
+}
+UKL_INLINE void p1_grp_arms(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint32_t* grp_first,
+                            UKL_GLOBAL const uint32_t* taken, UKL_GLOBAL uint32_t* own, UKL_GLOBAL uint32_t* par, uint32_t w) {
+    if (w >= n_dirs[0]) return;
+    uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
+    PpDir d = rows[r];
+    if (d.chain == NO_CHAIN || d.kind < K_IF || d.kind > K_ELSE) return;
+    uint32_t q = grp_first[i] + d.after;
+    own[q] = taken[grp_first[i] + d.chain] == w - insts[i].dir_first ? 1u : 0u;
+    par[q] = grp_first[i] + d.group;
+}
+
+// A round of the jumping, from one pair of buffers into the other: a group is active where it and
+// every group above it is taken. `changed` is set where a pointer moved.
+UKL_INLINE void p1_grp_jump(UKL_GLOBAL const uint32_t* n_grp, UKL_GLOBAL const uint32_t* own, UKL_GLOBAL const uint32_t* par, UKL_GLOBAL uint32_t* own2, UKL_GLOBAL uint32_t* par2, UKL_GLOBAL uint32_t* changed, uint32_t q) {
+    if (q >= n_grp[0]) return;
+    uint32_t p = par[q];
+    own2[q] = own[q] & own[p];
+    par2[q] = par[p];
+    if (par[p] != p) ukl_atomic_store(changed, 1u);
+}
+
+// The iteration's groups against the last's: the state the next reads, and whether it moved.
+UKL_INLINE void p1_grp_settle(UKL_GLOBAL const uint32_t* n_grp, UKL_GLOBAL const uint32_t* own, UKL_GLOBAL uint32_t* ga, UKL_GLOBAL uint32_t* changed, uint32_t q) {
+    if (q >= n_grp[0]) return;
+    if (ga[q] != own[q]) {
+        ga[q] = own[q];
+        ukl_atomic_store(changed, 1u);
+    }
+}

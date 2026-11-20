@@ -159,17 +159,26 @@ pub struct PpNode {
     pub unit: u32,
 }
 
+/// P1's answer on the device, read back for tests: each directive's and stretch's slot (§2), and
+/// whether it is active (§4), in the layout's words.
+#[derive(Debug)]
+pub struct P1Out {
+    pub dir_slots: Vec<u32>,
+    pub gap_slots: Vec<u32>,
+    pub dir_active: Vec<u32>,
+    pub gap_active: Vec<u32>,
+}
+
 /// A root's parent.
 pub const NO_PARENT: u32 = u32::MAX;
 
-/// The unit's include tree and its activity: P1's state. The device lays it out (decision 0467
-/// §2); the activity is the spike's, the test input of 0448, until the tests run on the device
-/// (0467 step 3). By instance, in the unit's order; by directive and by stretch (a file's `k`-th,
-/// before its directive `k`; the last after them all) of each instance, whether it is active.
+/// The unit's include tree: P1's input. The device lays it out (decision 0467 §2) and decides its
+/// conditionals (§4). By instance, in the unit's order; by directive of each instance, an `#if`'s
+/// or `#elif`'s value, the spike's (the test input of 0448) until the device evaluates them
+/// (0467 step 5): read only at those directives.
 pub struct Layout {
     pub nodes: Vec<PpNode>,
-    pub dir_active: Vec<u32>,
-    pub gap_active: Vec<u32>,
+    pub if_values: Vec<u32>,
     /// The built-in macros' names' keys: rows at slot 0.
     pub builtins: Vec<u64>,
     /// The dialect's options as the paste relexer reads them (`relex_options`).
@@ -190,8 +199,7 @@ impl Layout {
         let first = parts.first()?.0;
         let mut lay = Layout {
             nodes: Vec::new(),
-            dir_active: Vec::new(),
-            gap_active: Vec::new(),
+            if_values: Vec::new(),
             builtins: first.builtins.clone(),
             relex_options: first.relex_options,
             file_literals: Vec::new(),
@@ -200,18 +208,25 @@ impl Layout {
         let mut files = 0u32;
         for (u, &(l, n_files)) in parts.iter().enumerate() {
             assert!(l.builtins == first.builtins && l.relex_options == first.relex_options, "a batch of one dialect");
-            lay.unit_gaps.push(lay.gap_active.len() as u32);
+            lay.unit_gaps.push(lay.gaps() as u32);
             let i0 = lay.nodes.len() as u32;
             lay.nodes.extend(l.nodes.iter().map(|n| PpNode { file: n.file + files, parent: if n.parent == NO_PARENT { NO_PARENT } else { n.parent + i0 }, pdir: n.pdir, depth: n.depth, unit: u as u32 }));
-            // copy: not block data (P1's activity words, 0448's test input, joined on the host)
-            lay.dir_active.extend_from_slice(&l.dir_active);
-            // copy: not block data (P1's activity words, as above)
-            lay.gap_active.extend_from_slice(&l.gap_active);
+            // copy: not block data (the `#if` values, 0448's test input, joined on the host)
+            lay.if_values.extend_from_slice(&l.if_values);
             lay.file_literals.extend(l.file_literals[..n_files].iter().cloned());
             files += n_files as u32;
         }
         lay.file_literals.extend(first.file_literals[first.file_literals.len() - 3..].iter().cloned());
         Some(lay)
+    }
+
+    /// The layout's directive words and stretch words: a directive each of each instance's file,
+    /// and a stretch more than its directives.
+    pub fn dirs(&self) -> usize {
+        self.if_values.len()
+    }
+    pub fn gaps(&self) -> usize {
+        self.if_values.len() + self.nodes.len()
     }
 
     /// The tree's depth.
@@ -279,6 +294,22 @@ pub struct Vis {
     p1_usize: Buf,
     p1_utotal: Buf,
     p1_base: Buf,
+    // P1's conditionals (decision 0467 §4): each instance's group count and first group word,
+    // the groups (the state an iteration reads), each chain's taken arm, the jumping's two pairs
+    // of buffers, the rounds' and iterations' flags, and the given `#if` values.
+    nq: usize,
+    p1_gcount: Buf,
+    p1_grpf: Buf,
+    p1_ngrp: Buf,
+    p1_ga: Buf,
+    p1_taken: Buf,
+    p1_own: Buf,
+    p1_par: Buf,
+    p1_own2: Buf,
+    p1_par2: Buf,
+    p1_jchanged: Buf,
+    p1_ichanged: Buf,
+    p1_ifval: Buf,
     gactive: Buf,
     pub(crate) n_gaps: Buf,
     n_builtin: u32,
@@ -321,6 +352,9 @@ pub fn top_bound(unit: &Unit, lay: &Layout) -> usize {
 
 /// The pointer-jumping rounds a pop's value takes at most (2^32 pops' chains).
 const STACK_ROUNDS: usize = 32;
+/// The jumping rounds over the groups' nesting (2^20 deep), and P1's iterations, at most.
+const P1_JUMPS: usize = 20;
+const P1_ITERS: usize = 64;
 
 const NO_NODE: [PpNode; 1] = [PpNode { file: 0, parent: NO_PARENT, pdir: 0, depth: 0, unit: 0 }];
 
@@ -329,7 +363,9 @@ impl Vis {
         let words = |v: &[u32]| arena.from_slice(if v.is_empty() { &[0] } else { v });
         let zeroed = |k: usize| arena.zeroed::<u32>(k.max(1));
         let top = top_bound(unit, lay);
-        let (nd, ng, nb, ni) = (lay.dir_active.len(), lay.gap_active.len(), lay.builtins.len(), lay.nodes.len());
+        let (nd, ng, nb, ni) = (lay.dirs(), lay.gaps(), lay.builtins.len(), lay.nodes.len());
+        // Group words: a file has a group more than its arms, so at most one more than its directives.
+        let nq = nd + ni;
         let rows = nd + nb;
         // The built-ins' rows, at slot 0: the configuration's, written before the passes.
         let mut sk = vec![0u64; rows.max(1)];
@@ -346,7 +382,7 @@ impl Vis {
             insts: arena.zeroed::<PpInst>(ni.max(1))?,
             n_insts: words(&[ni as u32])?,
             dslot: zeroed(nd)?,
-            dactive: words(&lay.dir_active)?,
+            dactive: zeroed(nd)?,
             n_dirs: zeroed(1)?,
             gslot: zeroed(ng)?,
             floors: zeroed(lay.units() as usize)?,
@@ -363,7 +399,20 @@ impl Vis {
             p1_usize: zeroed(lay.units() as usize)?,
             p1_utotal: zeroed(1)?,
             p1_base: zeroed(ni)?,
-            gactive: words(&lay.gap_active)?,
+            gactive: zeroed(ng)?,
+            nq,
+            p1_gcount: zeroed(ni)?,
+            p1_grpf: zeroed(ni)?,
+            p1_ngrp: zeroed(1)?,
+            p1_ga: zeroed(nq)?,
+            p1_taken: zeroed(nq)?,
+            p1_own: zeroed(nq)?,
+            p1_par: zeroed(nq)?,
+            p1_own2: zeroed(nq)?,
+            p1_par2: zeroed(nq)?,
+            p1_jchanged: zeroed(P1_JUMPS)?,
+            p1_ichanged: zeroed(P1_ITERS)?,
+            p1_ifval: words(&lay.if_values)?,
             n_gaps: zeroed(1)?,
             n_builtin: nb as u32,
             nd,
@@ -404,6 +453,10 @@ impl Vis {
         l.at("P1_DFIRST", &self.p1_dfirst).at("P1_GFIRST", &self.p1_gfirst).at("P1_SIZE", &self.p1_size).at("P1_CSIZE", &self.p1_csize);
         l.at("P1_GC", &self.p1_gc).at("P1_GHEADS", &self.p1_gheads).at("P1_GSHIFT", &self.p1_gshift).at("P1_USIZE", &self.p1_usize);
         l.at("P1_UTOTAL", &self.p1_utotal).at("P1_BASE", &self.p1_base);
+        l.word("NQ", self.nq as u32).at("P1_GCOUNT", &self.p1_gcount).at("P1_GRPF", &self.p1_grpf).at("P1_NGRP", &self.p1_ngrp).at("P1_GA", &self.p1_ga);
+        l.at("P1_TAKEN", &self.p1_taken).at("P1_OWN", &self.p1_own).at("P1_PAR", &self.p1_par).at("P1_OWN2", &self.p1_own2).at("P1_PAR2", &self.p1_par2);
+        l.at("P1_JCHANGED", &self.p1_jchanged).at("P1_ICHANGED", &self.p1_ichanged).at("P1_IFVAL", &self.p1_ifval);
+        l.word("P1_JUMPS", P1_JUMPS as u32).word("P1_ITERS", P1_ITERS as u32);
         l.at("RFLAG", &self.rflag).at("RAT", &self.rat).at("RTOTAL", &self.rscan.total);
         l.at("SORT_KEYS", &self.sort_keys).at("NAME_KEYS", &self.name_keys).at("VALUES", &self.values).at("N_ROWS", &self.n_rows);
         l.at("RTYPES", &self.rtypes).at("N_STACK", &self.n_stack).at("STK_MATCH", &self.stk_match).at("STK_SRC", &self.stk_src).at("STK_CHANGED", &self.stk_changed).word("STK_ROUNDS", STACK_ROUNDS as u32);
@@ -415,9 +468,10 @@ impl Vis {
 
     /// The layout P1 made on the device (decision 0467 §2), read back for tests: each directive's
     /// slot and each stretch's, in the layout's words.
-    pub fn slots(&self) -> (Vec<u32>, Vec<u32>) {
+    pub fn p1(&self) -> P1Out {
         // SAFETY: the device finished; the stores hold `nd` and `ng` words.
-        unsafe { (std::slice::from_raw_parts(self.dslot.host().cast::<u32>(), self.nd).to_vec(), std::slice::from_raw_parts(self.gslot.host().cast::<u32>(), self.ng).to_vec()) }
+        let words = |b: &Buf, n: usize| unsafe { std::slice::from_raw_parts(b.host().cast::<u32>(), n).to_vec() };
+        P1Out { dir_slots: words(&self.dslot, self.nd), gap_slots: words(&self.gslot, self.ng), dir_active: words(&self.dactive, self.nd), gap_active: words(&self.gactive, self.ng) }
     }
 
     /// The lookups, read back for tests (after the command buffer is done).
@@ -744,8 +798,8 @@ pub fn expand(unit: &Unit, lay: &Layout) -> Result<Expanded, Error> {
 
 /// The front passes, the definitions and the lookups over `unit` laid out as `lay`, in one
 /// command buffer: each active stretch token's meaning (`L_*`, or the directive row of its
-/// definition), in the layout's order; and the slots P1 laid out (`Vis::slots`).
-pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, (Vec<u32>, Vec<u32>)), Error> {
+/// definition), in the layout's order; and P1's answer (`Vis::p1`).
+pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
     let (mut rung, mut groups) = (0, crate::pp_arena::groups());
     loop {
         let arena = Arena::new();
@@ -769,7 +823,7 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
             }
             continue;
         }
-        return Ok((front.read()?, vis.read()?, vis.slots()));
+        return Ok((front.read()?, vis.read()?, vis.p1()));
     }
 }
 

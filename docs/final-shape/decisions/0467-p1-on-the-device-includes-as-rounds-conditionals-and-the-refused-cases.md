@@ -193,3 +193,26 @@ row.
     pops with no push, across an include, other names between, a malformed push), C and C++:
     every name's meaning equals the spike's. All 19 evaluator tests pass; the corpus is
     unchanged (3,132 equal, the same 3 refused, 4 launches each).
+- **Step 3: the `#ifdef` family, the chains and the groups, iterated on the device (§4; R3).**
+  - The host gives no activity any more. `Layout` holds the tree and, until step 5, each
+    `#if`'s and `#elif`'s value (`if_values`, the spike's, read only at those directives).
+  - Each instance has a group word for each of its file's groups (a scan of the front's group
+    counts). The first iteration has each instance's own group active, nothing else, as the
+    spike's `fresh`.
+  - An iteration, all in `pp_setup`: each directive's and stretch's activity from its group;
+    the definitions' table from the active rows (flags, scan, rows, sort, push and pop); each
+    arm's test where its chain's parent group is active (`#else` true, the `#ifdef` family a
+    lookup of the name at the directive's slot, a missing name as the spike reads it); each
+    chain's taken arm by an atomic minimum of its true arms' indices; each group's activity by
+    a pointer jumping over the groups' nesting (own flag and parent, two pairs of buffers, at
+    most 20 rounds); then the groups against the last iteration's.
+  - The iterations end at the first that changes no group word; at most 64, past which the
+    unit is refused. The rows' table the expansion reads is the last iteration's, made from the
+    fixpoint's activity.
+  - The stretches' sort moved out of the loop: it depends on the slots alone.
+  - R3: `the_groups_are_the_spikes` (six shapes: nested chains, `#elifdef`/`#elifndef`,
+    dependent tests in a chain of five, guards, built-ins tested, a nameless `#ifndef`), and
+    `lookups_agree` compares every directive's and stretch's activity with the spike's on every
+    shape and the first 40 corpus units: equal.
+  - All 20 evaluator tests pass. The corpus: 3,132 units equal, the same 3 refused, 4 launches
+    each; GPU time 160 ms against 147 ms (M5 Max, under the other sessions' load).
