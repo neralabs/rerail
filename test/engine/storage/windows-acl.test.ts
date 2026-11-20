@@ -243,6 +243,22 @@ describe("an owner-only ACL on Windows", () => {
     expect(written).toHaveBeenCalledWith(`rerail: could not keep ${sessions} to this user alone, so other accounts may read what Rerail writes there: Access is denied.\n`);
   });
 
+  it("gives each later session's folder its owner-only ACL once the records folder's repair, or the read of its ACL, failed", async () => {
+    const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const refused = () => Promise.reject(new Error("Access is denied."));
+    for (const failing of [{ keepEachOwnersOwn: refused }, { inherits: refused }]) {
+      const sessions = join(await temporaryRoot(), ".rerail", "sessions");
+      await mkdir(sessions, { recursive: true });
+      const acl = { ...recordingAcl(), ...failing };
+      const windows = { acl, platform: "win32" as const, profile: ELSEWHERE, repair: true };
+      await makeLedgerFolder(join(sessions, "a".repeat(64)), windows);
+      // Once the failure is named, the folder still has its inherited ACL, which a new session's folder would take.
+      while (!written.mock.calls.some(([line]) => String(line).startsWith(`rerail: could not keep ${sessions} `))) await new Promise(resolve => setImmediate(resolve));
+      await makeLedgerFolder(join(sessions, "b".repeat(64)), windows);
+      expect(acl.restricted, Object.keys(failing)[0]).toContainEqual([join(sessions, "b".repeat(64)), true]);
+    }
+  });
+
   it("lets sessions that open while their records folder is repaired go on at once, each one's folder its owner's first", async () => {
     const checkout = await temporaryRoot();
     const sessions = join(checkout, ".rerail", "sessions");

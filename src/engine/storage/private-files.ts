@@ -66,9 +66,9 @@ export interface FoundFolderRepair {
   readonly kept: Promise<void>;
   /**
    * Resolves once `inner`, a folder inside the repaired one, is its owner's alone, so what is written there next is
-   * private from its first byte: at once when no new ACL is being passed on, since `inner` then has the folder's; while
-   * one is, after one `icacls` gives `inner` the owner-only ACL of its own, which takes time in step with what is in
-   * `inner` alone.
+   * private from its first byte: at once when the folder has its own ACL, since `inner` then has the folder's; while a
+   * new one is passed on, or when it could not be read or set, after one `icacls` gives `inner` the owner-only ACL of
+   * its own, which takes time in step with what is in `inner` alone.
    */
   keepInside(inner: string): Promise<void>;
 }
@@ -113,18 +113,26 @@ async function keepEachOwnersOwn(folder: string, acl: WindowsAcl, shared: (name:
   await acl.keepEachOwnersOwn(folder, writers);
 }
 
-/** Gives `folder` its ACL in the background ({@link keepEachOwnersOwn}), and each folder inside it one of its own while that runs. */
+/** Gives `inner` the owner-only ACL of its own; a refusal is named on stderr and never fails the caller. */
+async function keepOwnersAlone(inner: string, acl: WindowsAcl): Promise<void> {
+  await acl.restrictFolderToOwner(inner).catch((error: unknown) => cannotKeep(inner, error));
+}
+
+/**
+ * Gives `folder` its ACL in the background ({@link keepEachOwnersOwn}), and each folder inside it one of its own until
+ * that has succeeded: a repair that failed leaves the folder's inherited ACL, which a new folder there would take.
+ */
 function repairUnderWay(folder: string, acl: WindowsAcl, shared: (name: string) => boolean): FoundFolderRepair {
   let passingOn = true;
-  const kept = keepEachOwnersOwn(folder, acl, shared).catch((error: unknown) => {
-    cannotKeep(folder, error);
-  }).finally(() => {
+  const kept = keepEachOwnersOwn(folder, acl, shared).then(() => {
     passingOn = false;
+  }, (error: unknown) => {
+    cannotKeep(folder, error);
   });
   return {
     kept,
     async keepInside(inner) {
-      if (passingOn) await acl.restrictFolderToOwner(inner).catch((error: unknown) => cannotKeep(inner, error));
+      if (passingOn) await keepOwnersAlone(inner, acl);
     },
   };
 }
@@ -140,17 +148,32 @@ function repairUnderWay(folder: string, acl: WindowsAcl, shared: (name: string) 
  * own is left as it is. It resolves once the ACL is read: Windows passes a new one on in the background, in time in
  * step with what is in the folder, and {@link FoundFolderRepair.keepInside} keeps a folder in it private meanwhile, so
  * nobody waits for that. A folder it cannot read or change (another account's, or one on a file system with no ACLs)
- * is named on stderr, which a daemon writes to its log, and never fails the caller.
+ * is named on stderr, which a daemon writes to its log, and never fails the caller; on Windows each folder kept inside
+ * it then gets the owner-only ACL of its own.
  */
 export async function keepFoundFolderPrivate(folder: string, machine: FoundFolder = {}): Promise<FoundFolderRepair> {
   const { acl = WINDOWS_ACL, platform = process.platform, profile = homedir(), shared = () => false } = machine;
-  if (platform !== "win32") {
-    keepNamesPrivate(folder);
-    return NOTHING_TO_REPAIR;
-  }
+  if (platform !== "win32") return keptNamesPrivate(folder);
   if (insideProfile(folder, profile)) return NOTHING_TO_REPAIR;
-  const inherits = await acl.inherits(folder).catch((error: unknown) => cannotKeep(folder, error));
+  let inherits: boolean;
+  try {
+    inherits = await acl.inherits(folder);
+  } catch (error) {
+    // Whether a new folder there would take an open ACL is not known, so each one gets the owner-only ACL of its own.
+    cannotKeep(folder, error);
+    return { kept: Promise.resolve(), keepInside: inner => keepOwnersAlone(inner, acl) };
+  }
   return inherits ? repairUnderWay(folder, acl, shared) : NOTHING_TO_REPAIR;
+}
+
+/** {@link keepNamesPrivate}, with a refusal, as a file system with no modes gives, named on stderr and never failing the caller. */
+function keptNamesPrivate(folder: string): FoundFolderRepair {
+  try {
+    keepNamesPrivate(folder);
+  } catch (error) {
+    cannotKeep(folder, error);
+  }
+  return NOTHING_TO_REPAIR;
 }
 
 /**

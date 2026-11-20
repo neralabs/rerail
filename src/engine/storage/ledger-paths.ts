@@ -124,8 +124,8 @@ const keptRecordsFolders = new Map<string, { readonly ino: bigint; readonly repa
  * Keeps the session records folder on `directory`, the one just below the innermost `.rerail`, its owner's alone
  * whoever made it ({@link keepFoundFolderPrivate}), once per folder in this process: again only when a folder with
  * another file id has taken its place. A session that opens there waits for the folder's ACL to be read, not for the
- * repair: while that runs, shared by every session that opens there meanwhile, the session's own folder gets the
- * owner-only ACL of its own first. Git makes that folder for a repository that commits a file in it, and a person or a
+ * repair: while that runs, shared by every session that opens there meanwhile, and once it failed, the session's own
+ * folder gets the owner-only ACL of its own first. Git makes that folder for a repository that commits a file in it, and a person or a
  * release before 0.1.5 may have made it, each with its parent's ACL on Windows, which every record in it took.
  */
 async function keepRecordsFolderPrivate(directory: string, machine: PrivateMachine): Promise<void> {

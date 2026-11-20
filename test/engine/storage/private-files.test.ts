@@ -1,17 +1,23 @@
 import { spawnSync } from "node:child_process";
+import { chmodSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { makeLedgerFolder } from "../../../src/engine/storage/ledger-paths.js";
 import { keepFilesPrivate, keepFolderPrivate, makeRerailHome, openToOthers } from "../../../src/engine/storage/private-files.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
+// Spied, each call still the real one, so a case can make one `chmod` fail as a file system with no modes does.
+vi.mock("node:fs", { spy: true });
+
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
+  vi.mocked(chmodSync).mockReset();
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
@@ -53,6 +59,20 @@ describe.skipIf(process.platform === "win32")("what Rerail keeps private", () =>
       expect((await lstat(sessions)).mode & 0o7777, found.toString(8)).toBe(kept);
       expect(await mode(session)).toBe(0o700);
     }
+  });
+
+  it("opens every session in a records folder whose mode cannot be changed, as on a file system with no modes, and says so", async () => {
+    const sessions = join(await temporaryDirectory(), ".rerail", "sessions");
+    await mkdir(sessions, { recursive: true });
+    await chmod(sessions, 0o755);
+    const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.mocked(chmodSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error(`EPERM: operation not permitted, chmod '${sessions}'`), { code: "EPERM" });
+    });
+    await makeLedgerFolder(join(sessions, "a".repeat(64)), { repair: true });
+    await makeLedgerFolder(join(sessions, "b".repeat(64)), { repair: true });
+    expect(await mode(join(sessions, "b".repeat(64)))).toBe(0o700);
+    expect(written).toHaveBeenCalledWith(expect.stringContaining(`rerail: could not keep ${sessions} to this user alone`));
   });
 
   it("is a secret with no group or other permission, and one with any is named with its mode", async () => {
