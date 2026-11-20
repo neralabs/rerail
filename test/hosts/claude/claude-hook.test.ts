@@ -302,8 +302,6 @@ describe("Claude Code hook with a running daemon", () => {
       format: "rerail.policy/v1", id: "test:needle", revision: 1, mode: "log", scope: { include: ["**/*.py"], exclude: [] },
       clauses: [{ id: "needle", violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
     });
-    // POSIX takes a folder's rights away with its mode, unless the tests run as root, who reads it all the same.
-    const denies = process.platform !== "win32" && process.getuid?.() !== 0;
     const denied: string[] = [];
     afterEach(async () => {
       for (const folder of denied.splice(0)) await restoreAccess(folder);
@@ -382,11 +380,26 @@ describe("Claude Code hook with a running daemon", () => {
       denied.push(folder);
       return await denyAccess(folder);
     }
+    /** Whether a denial holds for this process, asked of a scratch folder under `root` before any session walks. */
+    async function denialHolds(root: string): Promise<boolean> {
+      const scratch = join(root, "denial-probe");
+      await mkdir(scratch);
+      const holds = await deny(scratch);
+      await restoreAccess(scratch);
+      return holds;
+    }
+    /** Why a folder the user is denied is a place: EACCES on POSIX; on Windows EPERM, whose look again finds it still there. */
+    function deniedReason(folder: string, place: string): unknown {
+      if (process.platform !== "win32") return `EACCES: permission denied, opendir '${folder}'`;
+      return expect.stringMatching(new RegExp(`^EPERM: operation not permitted, opendir '.+[\\\\/]${place.replaceAll("/", "[\\\\/]")}'$`));
+    }
 
     it("records ten places that never change once each over 20 turn ends, and answers each Stop as before", { timeout: 180_000 }, async () => {
       const root = await temporaryDirectory({ started: false });
       const repository = await startedRepository(root);
-      // Folders the user may not read; on Windows, where no test can take a folder's rights away, Python files too large to read.
+      // Folders the user may not read, where a denial holds for this process; where it does not (root, or a Windows token
+      // holding the backup privilege), Python files too large to read.
+      const denies = await denialHolds(root);
       const places = Array.from({ length: 10 }, (_, index) => `src/pkg${index}`);
       for (const place of places) {
         await mkdir(join(repository, place));
@@ -396,10 +409,10 @@ describe("Claude Code hook with a running daemon", () => {
       const session = claudeSession(repository, "places-session");
       await session.start();
       await session.walked();
-      if (denies) for (const place of places) await deny(join(repository, place));
+      if (denies) for (const place of places) expect(await deny(join(repository, place))).toBe(true);
       for (let turn = 0; turn < 20; turn += 1) expect(await session.turn()).toEqual({});
 
-      const reasons = places.map(place => (denies ? `EACCES: permission denied, opendir '${join(repository, place)}'` : "Source exceeds 1000000 byte policy limit"));
+      const reasons = places.map(place => (denies ? deniedReason(join(repository, place), place) : "Source exceeds 1000000 byte policy limit"));
       expect(gapRows("places-session")).toHaveLength(10);
       expect(gapPlaces("places-session")).toEqual(places.map((place, index) => ({ path: denies ? place : `${place}/big.py`, reason: reasons[index] })));
     });
