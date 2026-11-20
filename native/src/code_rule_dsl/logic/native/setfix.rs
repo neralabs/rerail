@@ -8840,7 +8840,7 @@ pub mod posted_tests {
         let source = |rows: i64| {
             let mut input = Rel::new("kind", b"ii");
             for i in 0..rows { input.push(&[i, i % 5]); } // copy: not block data (a test's input rows)
-            Derived::new(Arc::new(InRel::moved(input)), None)
+            Derived::source(Arc::new(InRel::moved(input)), None)
         };
         let viewing = |src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| {
             let (flat, _) = view_rows(src.as_ref(), &[0, 1]);
