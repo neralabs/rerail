@@ -669,6 +669,9 @@ UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint
 // read in it, two rows of one name from one invocation, a row from a directive's line, a name
 // with an escape.
 #define X_PRAGMA (16384u)
+// A top's items past the work bound (`Ar::work`, `WORDS` 14): an expansion that would hold a
+// launch too long. Not room: no store ran out, so no rung is larger for it (decision 0478 §10).
+#define X_WORK (32768u)
 // A token's flags: painted (never a candidate again); space before it (or a line's start).
 #define T_NOEXP (1u)
 #define T_SPACE (2u)
@@ -700,8 +703,6 @@ typedef struct PxScratch { uint32_t start, end, kind; } PxScratch;
 // A chain's lists at most, and an idle worker's polls.
 #define MAX_CHAIN (1024u)
 #define POLLS (4096u)
-// A top's items at most this many times the queue's room (a linear queue's bound was 1).
-#define PX_FUEL (4u)
 
 // A list: its parent (a list, or `TOP`: the frame that holds its call's `)`), its definition's
 // row (`NO_DEF`: an argument), its stretch's slot, its tokens in the arena, the range of its
@@ -1093,6 +1094,8 @@ typedef struct Ar {
     // their records (then their heads).
     UklPool pool, lpool, apool;
     uint32_t tok_cap, list_cap, arg_cap, out_cap;
+    // A top's items at most (`X_WORK` past it).
+    uint32_t work;
     UKL_GLOBAL uint8_t* sbytes; UKL_GLOBAL PxScratch* stoks; uint32_t sb_cap, st_cap;
     // `__COUNTER__`'s uses (`CNT`: whether they are counted, their count, each one's list and
     // scratch token), and their room.
@@ -2733,7 +2736,7 @@ UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8
     a.pool.heads = cols + 5u * tc; a.pool.next = cols;
     a.lpool.next = (UKL_GLOBAL uint32_t*)(lists + words[2]); a.lpool.heads = a.lpool.next + words[2];
     a.apool.next = (UKL_GLOBAL uint32_t*)(args + words[3]); a.apool.heads = a.apool.next + words[3];
-    a.tok_cap = words[1]; a.list_cap = words[2]; a.arg_cap = words[3]; a.out_cap = words[4];
+    a.tok_cap = words[1]; a.list_cap = words[2]; a.arg_cap = words[3]; a.out_cap = words[4]; a.work = words[14];
     a.sbytes = sbytes; a.stoks = stoks; a.sb_cap = words[8]; a.st_cap = words[9];
     a.cnt = cnt; a.cnt_cap = cnt_cap; a.tf = tf;
     uint32_t polls = 0u;
@@ -2745,14 +2748,13 @@ UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8
             // items, for the blocks, the ids and the ring's slots to be given back (decision 0478
             // §10).
             uint32_t mark = ukl_atomic_load(&a.ctl[15]);
-            // A top's items at most `PX_FUEL` times the queue's room: with blocks used again
-            // and the ring, nothing else ends an expansion that would not (a launch would hold
-            // the GPU for minutes). Past it the run is refused for room, its use the queue's
-            // (`CTL` 13), so the next rung's queue, and fuel, is larger.
+            // A top's items at most `a.work`: with blocks used again and the ring, nothing else
+            // ends an expansion that would not (a launch would hold the GPU for minutes). Past it
+            // the unit is refused for work (`X_WORK`), not room: tying the bound to the queue's
+            // room made a unit that does much and holds little climb the rungs for work alone.
             uint32_t taken = ukl_atomic_load(&a.q.control[0]);
-            if (taken >= PX_FUEL * a.q.capacity) {
-                px_refuse(a.ctl, X_ROOM);
-                ukl_atomic_max(&a.ctl[13], taken);
+            if (taken >= a.work) {
+                px_refuse(a.ctl, X_WORK);
                 stop = 1u;
             }
             else if (px_past_marks(a.ctl) || (mark != 0xffffffffu && ukl_wq_taken(a.q) > a.q.capacity / 2u)) stop = 1u;

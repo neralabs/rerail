@@ -1030,6 +1030,11 @@ pub const X_COUNTER_SPELLED: u32 = 8192;
 /// A `_Pragma` that would make a row (`once`, `push_macro`, `pop_macro`), or whose operand is a
 /// macro's.
 pub const X_PRAGMA: u32 = 16384;
+/// A top's items past the work bound (`WORK`): not room, so no rung is larger for it.
+pub const X_WORK: u32 = 32768;
+/// A top's items at most (`RERAIL_PP_WORK` for tests): a launch's time bounded by its work, not
+/// by any room (decision 0478 §10).
+pub const WORK: u32 = 1 << 18;
 
 /// The expansion's tries for room. A refused run stops where its first room ran out, so each try
 /// uncovers about one room's need (seven rooms); the budget's lease bounds the sizes.
@@ -1152,7 +1157,7 @@ impl Exp {
         // drain's decision between runs (17: `PX_DRAIN`), the lists' and the arguments' entries'
         // marks (18, 19: a 32nd of each room past its front).
         // The tokens' front between two givings: a 32nd of the room (at most 32 givings from the
-        // front's growth, within `PX_GIVES`); less to test them.
+        // front's growth); less to test them.
         let gap = std::env::var("RERAIL_PP_GIVE_GAP").ok().and_then(|v| v.parse::<usize>().ok()).map_or(tok / 32, |g| g.min(tok)).max(1);
         let mut ctl = [0u32; 20];
         ctl[4] = lit_bytes as u32;
@@ -1161,7 +1166,12 @@ impl Exp {
         ctl[19] = (args / 32).max(1) as u32;
         ctl[5] = nf as u32;
         // The lists' and the arguments' entries' fronts between two givings: a 32nd of each room.
-        let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options, gap as u32, (lists / 32).max(1) as u32, (args / 32).max(1) as u32];
+        // The work bound, and the givings' bound: each store's room over its gap (its mark passed
+        // once a gap of growth), and the ring's pauses (half its room of items each) within the work.
+        let work = std::env::var("RERAIL_PP_WORK").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(WORK);
+        let (lgap, agap) = ((lists / 32).max(1), (args / 32).max(1));
+        let gives = tok.div_ceil(gap) + lists.div_ceil(lgap) + args.div_ceil(agap) + 2 * work as usize / (q / 2).max(1) + 8;
+        let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options, gap as u32, lgap as u32, agap as u32, work, gives as u32];
         Ok(Exp {
             list_cap: lists as u32,
             out_cap: out as u32,

@@ -1273,6 +1273,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         (X_PRAGMA, "a _Pragma that makes a row"),
         (X_COUNTER_SPELLED, "# or ## of __COUNTER__'s value"),
         (X_BARRIER, "a grid barrier"),
+        (X_WORK, "the work bound"),
     ];
     let (mut same_units, mut tokens, mut launches, mut rounds) = (0, 0, 0, 0);
     let mut ran = Ran::default();
@@ -1537,6 +1538,73 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
             assert_eq!(rung, 0, "{what}: grew to rung {rung}");
         }
     }
+}
+
+/// R1 of decision 0520: what a chain holds at once is flat in its length. The chains of
+/// `reclaimed_tokens_keep_a_chain_at_rung_0` at 25, 50 and 100 levels, each store's most use
+/// (`Exp::room`, as the serial pass's): a store whose use grows with the chain's length holds what
+/// no item reads again, which is what made Boost's units climb the rungs.
+#[test]
+#[ignore = "decision 0520: passes once a list is its pieces (step 2)"]
+fn a_chains_use_is_flat_in_its_length() {
+    use rerail_metal::pp_expand::ROOM_STORES;
+    let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
+    let chain = |levels: usize, body: &dyn Fn(usize) -> String| {
+        let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define L0(s) [s]\n");
+        for k in 1..=levels {
+            t += &format!("#define L{k}(s) {}\n", body(k));
+        }
+        t += &format!("L{levels}({state})\nend\n");
+        t
+    };
+    let shapes: [(&str, &dyn Fn(usize) -> String); 3] = [
+        ("plain", &|k| format!("L{}(s)", k - 1)),
+        ("an argument scanned", &|k| format!("L{}(ID(s))", k - 1)),
+        ("an exit", &|k| format!("CAT(L, {})(s)", k - 1)),
+    ];
+    let mut flat = true;
+    for (what, body) in &shapes {
+        let uses: Vec<Vec<u32>> = [25, 50, 100]
+            .iter()
+            .map(|&n| {
+                let text = chain(n, body);
+                let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+                let got = got.unwrap_or_else(|why| panic!("{what}, {n} levels: refused {why}"));
+                same(show(&got), show(&want), what);
+                room.iter().map(|&(used, _)| used).collect()
+            })
+            .collect();
+        for (s, name) in ROOM_STORES.iter().enumerate() {
+            // The output and the scratch grow with the input (the state written out once, the
+            // literals and the `#line` rows' room, two tokens a directive), and the queue's ring is
+            // used to half its room between pauses; every other store's use at 100 levels is at
+            // most its use at 25 and a 16th more.
+            let (a, b, c) = (uses[0][s], uses[1][s], uses[2][s]);
+            eprintln!("{what}: {name}: {a} {b} {c}");
+            let grows = ["output", "scratch bytes", "scratch tokens", "queue items"].contains(name);
+            if !grows && c > a + a / 16 + 64 {
+                flat = false;
+            }
+        }
+    }
+    assert!(flat, "a store's use grows with the chain's length (above)");
+}
+
+/// `expanded`, with the run's own figures (its rooms' use).
+fn expanded_x(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS]) {
+    use rerail_c_pp::files::Search;
+    let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+    let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+    let mut serial = Spelled::default();
+    let m2 = m.clone();
+    let mut io = Search::new(Vec::new(), move |p: &str| m2.get(p).cloned());
+    let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+    assert!(pp.run("main.c"));
+    drop(pp);
+    let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
+    let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
+    let got = if s.part.x.refused != 0 { Err(s.part.x.refused) } else { Ok(part_tokens(&s.part, &s.loaded.files, &tapes)) };
+    (got, serial.0, s.part.x.room)
 }
 
 /// Plan step 11 of decision 0448 (the built-ins): `__LINE__` is the line of the outermost call's

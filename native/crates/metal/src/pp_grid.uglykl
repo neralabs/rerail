@@ -108,14 +108,15 @@
 // The queue's workers over a top, launched again in the kernel while work remains, a bounded
 // number of times. Between runs, where a store's front passed its mark (`px_past_marks`, the
 // workers stopped there), the blocks and ids no item reads again are given back (decision 0478
-// §10), `PX_GIVES` times at most; then the marks are past every room. 64 a store (the tokens,
-// the lists, the arguments' entries): a 32nd of a room each, twice each room's growth.
+// §10). Their count is bounded by the host (`WORDS` 15): a store's mark is a gap past its front,
+// so each room is passed a bounded number of times, and the ring's pauses by the work bound. A
+// cap below that (192 givings) stopped every giving for the rest of a long top, and each store
+// then grew with the work.
 #define PX_RUNS (8u)
-#define PX_GIVES (192u)
 #define PX_DRAIN(T, CLOSES)                                                                          \
     {                                                                                                  \
-        uint32_t runs_ = 0u, gives_ = 0u;                                                              \
-        for (uint32_t it_ = 0u; it_ < PX_RUNS + PX_GIVES + 1u; it_++) {                                \
+        uint32_t runs_ = 0u, gives_ = 0u, gmax_ = AT(const uint32_t, WORDS)[15];                       \
+        for (uint32_t it_ = 0u; it_ < PX_RUNS + gmax_ + 1u; it_++) {                                   \
             PX_WORK_ON(T, CLOSES);                                                                   \
             BARRIER();                                                                                 \
             /* One thread decides (`CTL` 17): done, run again, or give back first. Every thread reading \
@@ -132,8 +133,8 @@
             uint32_t next_ = ukl_atomic_load(&c_[17]);                                                 \
             if (next_ == 0u) break;                                                                    \
             if (next_ == 2u) {                                                                         \
-                if (gives_ < PX_GIVES) { PX_GIVE(); gives_++; }                                        \
-                else { ONE(x) px_marks_off(c_); BARRIER(); }                                           \
+                if (gives_ == gmax_) { ONE(x) px_refuse(c_, X_QUEUE); break; }                          \
+                PX_GIVE(); gives_++;                                                                   \
                 continue;                                                                              \
             }                                                                                          \
             if (++runs_ == PX_RUNS) { ONE(x) px_refuse(c_, X_QUEUE); break; }                          \
