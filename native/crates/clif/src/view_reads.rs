@@ -225,13 +225,13 @@ impl B<'_, '_> {
     }
 }
 
-/// `view_node(l, col)`: column `col` of the `node` view's row of numbered node `l`: the document, the id, the kind
-/// atom, the start, the end (`Viewed::value_of`).
+/// `view_node(l, col)`: column `col` of the `node` view's row of numbered node `l`: the document (a program's file,
+/// decision 0431 §4), the id, the kind atom, the start, the end (`Viewed::value_of`).
 pub fn node(b: &mut B<'_, '_>) -> Value {
     let (l, col) = (b.arg(0), b.arg(1));
     let is = |b: &mut B<'_, '_>, k: i64| b.f.ins().icmp_imm(IntCC::Equal, col, k);
     let c = is(b, 0);
-    b.either(I64, c, |b| b.entry_u32(at::KEY), |b| {
+    b.either(I64, c, |b| b.entry_u32(at::FILE), |b| {
         let c = is(b, 1);
         b.either(I64, c, |b| b.node_id(l), |b| {
             let x = b.tape_node(l);

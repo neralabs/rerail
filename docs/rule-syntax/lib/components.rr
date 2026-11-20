@@ -53,14 +53,14 @@ rr_cx_module(d, q) :- doc(d, _, q), q != "".
 .decl rr_cx_own(d: number, h: symbol)
 rr_cx_own(d, h) :- doc(d, p, _), tape_of(d, t), h = @sha256(cat(p, "\t", t)).
 
-// Guest document g (a string's code, decision 0055) stands in host document h. Its tree is made from the host's bytes,
-// so the host's digest covers it, and rows about either name the other's nodes: they share a component.
+// A file h's program, the document g underneath (decision 0431 §4: `rr_program`, the engine's), stands in h. Its tree
+// is made from the file's bytes, so the file's digest covers it, and rows about either name the other's nodes: they
+// share a component. A tape value (decision 0431: a string a rule parses) is no file's (no `doc` row) and joins
+// none: one tape is every file's that holds its text, and a function of that text alone.
+.decl rr_program(d: number, file: number, grammar: symbol)
+.input rr_program
 .decl rr_cx_guest(g: number, h: number)
-rr_cx_guest(g, h) :- guest(g, h, _, _).
-// A program that reads guests through `parsed` (T's shape, as calls.rr does) may have no `guest` rows. A tape value
-// (decision 0431: a string a rule parses) is no file's (no `doc` row) and joins none: one tape is every file's that
-// holds its text, and a function of that text alone.
-rr_cx_guest(g, h) :- parsed(s, _, r), docof(s, h), docof(r, g), g != h, doc(g, _, _).
+rr_cx_guest(g, h) :- rr_program(g, h, _).
 
 // d depends on e.
 // Stored (decision 0099, priced by the recursion's delta plans): unfolded into rr_cx_reach's recursion, each new

@@ -1199,7 +1199,7 @@ pub struct Guest {
     /// `at`: the host's node or span (`host << 32 | local`).
     pub at: i64,
     pub grammar: String,
-    /// "program" or "fragment" (`doc_role`).
+    /// "program" (a file's) or "fragment" (a string's).
     pub role: String,
     /// The core id of the guest's root: a fragment's expression inside its wrapper, else the tree's root. The
     /// document is that node's subtree.
@@ -2332,6 +2332,9 @@ pub struct Batch {
     /// in `docs` itself, each step read a different projection's line (Q220: `Batch::node` was a fifth of a join's
     /// view reads).
     keys: Vec<u32>,
+    /// The programs among the documents (decision 0431 §4), by file: `(file, document)`, ascending; a lookup of `node`
+    /// by its document reads a file's programs' rows with its own.
+    programs: Vec<(u32, usize)>,
     /// Each document's tape, for W's values answered on request (`LongTexts::value_any`, decision 0174), and its values,
     /// read off it at the first request; empty where no program asks for values.
     valued: Vec<Option<Arc<Valued>>>,
@@ -3848,6 +3851,11 @@ impl Batch {
         let batch = Arc::new(Batch {
             docs: docs.clone(),
             keys: if alone { docs.iter().map(|p| p.key).collect() } else { grown.keys.clone() },
+            programs: {
+                let mut programs: Vec<(u32, usize)> = docs.iter().enumerate().filter(|(_, p)| p.file != p.key).map(|(d, p)| (p.file, d)).collect();
+                programs.sort_unstable();
+                programs
+            },
             valued: if alone { added_valued.clone() } else { grown.valued.clone() },
             dialects: dialects.clone(),
             nodes,
@@ -3904,6 +3912,11 @@ impl Batch {
             d
         });
         (&self.docs[doc], row - offsets[doc])
+    }
+    /// The documents of file `file`'s programs (decision 0431 §4).
+    fn programs_of(&self, file: u32) -> impl Iterator<Item = usize> + '_ {
+        let at = self.programs.partition_point(|&(f, _)| f < file);
+        self.programs[at..].iter().take_while(move |&&(f, _)| f == file).map(|&(_, d)| d)
     }
     /// The document of key `d`, by index (the last one found tried first, as `locate`).
     fn doc(&self, d: i64) -> Option<usize> {
@@ -4297,9 +4310,11 @@ impl Source for Viewed {
             return self.for_rows(&[column], &mut |r, row| each(r, if row[0] >= 1 << 32 { row[0] >> 32 } else { row[0] }));
         }
         let offsets = self.batch.offsets(self.view);
+        let node = matches!(self.view, View::Node) && column == 0;
         for (doc, p) in self.batch.docs.iter().enumerate() {
+            let d = if node { p.file } else { p.key };
             for r in offsets[doc]..offsets[doc + 1] {
-                each(r, i64::from(p.key));
+                each(r, i64::from(d));
             }
         }
     }
@@ -4337,7 +4352,8 @@ impl Viewed {
     /// documents (a kind, a tape node), else in every document.
     fn lookup_docs(&self, column: usize, values: &[i64], only: Option<usize>) -> Option<Vec<usize>> {
         let b = &*self.batch;
-        let kept = |doc: &usize| only.is_none_or(|o| o == *doc);
+        // A lookup kept to a file keeps to its programs too (decision 0431 §4).
+        let kept = |doc: &usize| only.is_none_or(|o| o == *doc || b.docs[*doc].file == b.docs[o].key);
         let mut rows = Vec::new();
         for &v in values {
             if column == self.own() {
@@ -4356,8 +4372,14 @@ impl Viewed {
             } else if matches!(self.view, View::Sibling) && column == 0 {
                 // The row of `a`'s next sibling: a hop along the tape's siblings.
                 rows.extend(b.node(v).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
-            } else if matches!(self.view, View::Node | View::Core) && column == 0 {
+            } else if matches!(self.view, View::Core) && column == 0 {
                 rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes[doc]..b.nodes[doc + 1]));
+            } else if matches!(self.view, View::Node) && column == 0 {
+                // A file's rows, then its programs' (decision 0431 §4).
+                let Ok(file) = u32::try_from(v) else { continue };
+                for doc in b.doc(v).into_iter().chain(b.programs_of(file)) {
+                    rows.extend(b.nodes[doc]..b.nodes[doc + 1]);
+                }
             } else if matches!(self.view, View::Core) && column == 1 {
                 // A tape node of each document that has it as a node; the statement filters `d`.
                 let Ok(t) = u32::try_from(v) else { continue };
@@ -4624,7 +4646,9 @@ impl Viewed {
         let id = || (at.node)() as usize;
         let parent = at.up;
         match (self.view, column) {
-            (View::Node | View::Core, 0) => i64::from(p.key),
+            // A program's nodes are its file's (decision 0431 §4); `core` keeps to the document underneath.
+            (View::Node, 0) => i64::from(p.file),
+            (View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id() as i64,
             (View::Node, 2) => self.batch.dialects[p.tag].kind(&p.facts, id() as u32),
             (View::Node, 3) => i64::from(p.facts.start(id() as u32)),

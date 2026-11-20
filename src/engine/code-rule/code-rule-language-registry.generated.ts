@@ -529,7 +529,16 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "calls": "not-supported-yet",
       "formatArgs": "not-supported-yet"
     },
-    "suppressions": []
+    "suppressions": [],
+    "embeds": [
+      {
+        "language": "markdown",
+        "via": "inline-content",
+        "dialects": [
+          "markdown-inline"
+        ]
+      }
+    ]
   },
   {
     "format": "rerail.language/v1",

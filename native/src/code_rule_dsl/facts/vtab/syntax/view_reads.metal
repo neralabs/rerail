@@ -163,7 +163,7 @@ inline ulong clif_view_node(device const uchar* t,ulong a0,device const uchar* t
  v5=a5;
  uchar v6=uchar((uint)(v5)==(uint)(uint(0ul)));
  if(v6!=0){
-  uint v8=uint(*(device const uint*)(t+v0));
+  uint v8=uint(*(device const uint*)(t+(v0+ulong(long(116)))));
   ulong v9=ulong(v8);
   {ulong t0=v9;v7=t0;}
  }else{

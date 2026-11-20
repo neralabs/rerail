@@ -7,7 +7,8 @@ the facts that the program produces and not changed next time it's run?". On a g
 parsed string is named by its tape ("do a"); and the split below ("okay, I agree with that"). Supersedes 0055's guest
 documents (§4, "What was built" 3–4) and 0391 (guest keys) but for a file's programs (§4). On a program's node ids,
 §4's second choice, a key of its own from 0391's registry (2026-11-19, the user: "okay, let's try b"). On how a
-rule names a program, by its file and place (§4, Q267's first choice; 2026-11-19, the user: "pick a for the decision"). Keeps 0055's model of a tape as content, 0058 (hiding,
+rule names a program, by its file and place (§4, Q267's first choice; 2026-11-19, the user: "pick a for the decision").
+Step 3 done (2026-11-19). Keeps 0055's model of a tape as content, 0058 (hiding,
 normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0426 (format 16, unchanged).
 Work queue Q261.
 
@@ -90,6 +91,23 @@ code may be named by which rules asked for it, or in what order.
    and its programs). The key of its own stays underneath, in a node's id alone: hiding's one comparison and the
    batch's order keys are on it. The other choice, `node`'s document left a program's key where a batch holds
    programs, kept a program a document to the rules.
+   As built (step 3, a program named by its file and place): `node`'s document column is the program's file on the
+   CPU (`Viewed::value_of`), in CLIF (`view_reads::node`, `at::FILE`) and on the device (`view_expand`, `d.file`);
+   `core` keeps the document underneath. A lookup of `node` by document reads a file's rows, then its programs'
+   (`Batch::programs`, an index by file), and one kept to a document (`lookup_in`) keeps to the file and its programs.
+   `guest`, `doc_role`, `doc_root`, `embed` and `embed_value` are gone from core.rr; the engine's own rules (the
+   findings' syntax errors, the memo's components, `components.rr`) read `rr_program(d, file, grammar)`, the document
+   underneath, which no library a rule reads declares. The libraries' `embed` rules are the languages' declarations:
+   Vue's view and Blade's compiled view (as before), HTML's scripts and styles (`raw-text`), and Markdown's inline
+   content (`inline-content`, `embed::inline_content`; the registry's `embeds` names the dialects an embedding gives,
+   so Markdown embeds its own `markdown-inline`). A rule reaches a program as `parsed(at, grammar, root)` at its host
+   node; the JSON rules' `embedded` enters one so (`parsed(_, "typescript", g)`). A grammar named by a constant with
+   `at` bound by the rule's other literals asks for the string there (a tape value) where no program stands; a
+   wildcard or a grammar named by a variable asks for nothing. Hiding's scope analysis takes a document column one
+   way: a document's facts flow to its nodes (a tape value's document is its own), a node gives its document scope
+   but not its grammar (a program's document is its file, no one grammar's), so a kind read through a file's
+   document is qualified (`"javascript:call_expression"`). A program's facts are read off its embedder's parse
+   (`core::build_parsed`), not parsed again.
    As built (step 3, the programs at load): a file's programs are made with its chunk's batch, before any rule runs:
    each embedding its language declares (`GrammarDialect::embeds`) builds them from the file's tape, read in place
    where its facts hold it (`Guests::programs`; `embed::host`), so the batch is built once with them, no slice round
@@ -102,7 +120,8 @@ code may be named by which rules asked for it, or in what order.
    (`languages/html.json`, `embed::raw_text`). `program()`, a library's request through an embedding, reads the
    host's tape where it lies too, not parsing the host again. Left: a program's text is parsed twice, once by its
    embedder (`Parse::read`) and once for its tape; the libraries' other `embed` rules (Vue, Blade, Markdown, `rr`)
-   and the guest documents underneath (`doc_role`, `doc_root`, `guest`).
+   and the guest documents underneath (`doc_role`, `doc_root`, `guest`): done below (a program named by its file and
+   place).
    A first scheme put its
    nodes in the file's key, as granules in a reserved slot range. It met 0058's hiding, which shows a node by one
    comparison on its document's key (and on document columns), and Tim's 0168 (PR #508), which keeps that one
@@ -232,9 +251,11 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
 2. Tape values: node ids by tape key and preorder, `guest_of`, findings placed through the string (R2, R3, R9); the
    packs' `docof(n, d), guest(d, _, s, _)` over parsed strings rewritten (14 uses in 2 files; the `guest` rows left
    are the grammar's programs, step 3's).
-3. Programs as the file's (3a done: HTML declares its embeds, an embedder builds a program per place). The rest
-   waits on the numbering above (decided: a key of its own, §4): made by the host's parse at load, `with_matchers` once a chunk,
-   guest documents go (R1, R5, R8).
+3. Programs as the file's, done (2026-11-19): HTML, Vue, Blade and Markdown declare their programs, made from the
+   file's tape at its load, the batch built once a chunk (`with_matchers`, or the grower where a value may come), a
+   program named by its file and place, `node`'s document the file's, the guest relations and `embed` gone (§4, as
+   built; R1, R5, R8). Left (Q268): `@parse` and `@splice` values still made by the slice's rounds; the rule-file
+   language's embeds; the host's parse building the programs it drops.
 4. (Before 3's rest.) 4a, done: a tape value is found by its text's sha and grammar among the tapes the root's last
    runs named, read before the first wave (the run's grammar's with the files', the others' by the tags the program's
    requests name, every tag where one is not a constant), else parsed and queued for the store with its text, which

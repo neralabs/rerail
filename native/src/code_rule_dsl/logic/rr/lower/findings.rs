@@ -240,8 +240,8 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
             let head = Atom { rel: "violation".into(), args: [Term::Str(policy.clone().into()), Term::Str(what.clone().into()), Term::Str(code.clone().into()), v("rr_p"), v("rr_l"), Term::Int(0)].into(), neg: false, gated: false };
             let body = if what == "syntax_error" {
                 let line = if line_one { Term::Wild } else { v("rr_l") };
-                // A file's own error: a guest's is `.on guest_error`'s.
-                let not_guest = Literal::Atom(Atom { rel: "guest".into(), args: [v("rr_d"), Term::Wild, Term::Wild, Term::Wild].into(), neg: true, gated: false });
+                // A file's own error: a program's is `.on guest_error`'s.
+                let not_guest = Literal::Atom(Atom { rel: "rr_program".into(), args: [v("rr_d"), Term::Wild, Term::Wild].into(), neg: true, gated: false });
                 let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), not_guest];
                 body.extend(scoped.iter().cloned());
                 if line_one {
@@ -266,7 +266,7 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
         for (grammar, code) in guest_errors {
             let head = Atom { rel: "violation".into(), args: [Term::Str(policy.clone().into()), Term::Str("guest_error".into()), Term::Str(code.clone().into()), v("rr_p"), v("rr_l"), Term::Int(0)].into(), neg: false, gated: false };
             let g = grammar.map_or(Term::Wild, |g| Term::Str(g.into()));
-            let body = vec![atom("syntax_error", vec![v("rr_d"), v("rr_l"), Term::Wild]), atom("guest", vec![v("rr_d"), Term::Wild, Term::Wild, g.clone()]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
+            let body = vec![atom("syntax_error", vec![v("rr_d"), v("rr_l"), Term::Wild]), atom("rr_program", vec![v("rr_d"), Term::Wild, g.clone()]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild])];
             for (rel, cols) in [
                 ("syntax_error", &[("d", "int"), ("l", "int"), ("msg", "sym")][..]),
                 ("doc", &[("d", "int"), ("path", "sym"), ("module", "sym")][..]),
@@ -380,10 +380,11 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
         vec![atom("rr_scope_drop", vec![v("rr_p")], true)]
     }
 
-    /// `guest(g, host, at, grammar)` as an input (`core.rr` declares it; a program without it has it here).
+    /// `rr_program(d, file, grammar)` as an input: the document underneath a file's program (decision 0431 §4), which
+    /// no library a rule reads declares (a rule names a program by its file and place).
     fn guest_input(&mut self) {
-        self.prog.declare_absent("guest", &[("g", "int"), ("host", "int"), ("at", "node"), ("grammar", "sym")]);
-        self.prog.add_input("guest");
+        self.prog.declare_absent("rr_program", &[("d", "int"), ("file", "int"), ("grammar", "sym")]);
+        self.prog.add_input("rr_program");
     }
 
     /// Decision 0055's settings as `guest_policy` facts, which the corpus runner and the batch read:

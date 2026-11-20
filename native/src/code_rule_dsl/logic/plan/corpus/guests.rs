@@ -1,30 +1,24 @@
-//! Guest documents (decision 0055): the code a file holds in another grammar, or in its own grammar as a string,
-//! made into documents of the chunk before the policy runs.
+//! Guests (decisions 0055, 0431): the code a file holds in another grammar, or in its own grammar as a string.
 //!
-//! A chunk's guests come from requests its rules make:
-//! - `embed(d, at, grammar, role)` and `embed_value(d, at, grammar, role, text)`: a library's declared embeds
-//!   (`.guests off` leaves them out);
-//! - `rr_embed_req(at, grammar)`: what a rule's `parsed(at, grammar, r)` or `sub_tape(at, grammar, t)` asks for, from
-//!   the literals that bind `at` (`rr::lower`). Its role is "fragment".
+//! - A file's programs (an HTML script, a Vue view, a Markdown inline): its language's declaration (`embeds`), made
+//!   from its tape with the chunk's batch (`programs`, decision 0431 §4), each a document underneath whose nodes are
+//!   the file's.
+//! - A string a rule parses (`rr_embed_req(at, grammar)`: what a rule's `parsed(at, grammar, r)` or
+//!   `sub_tape(at, grammar, t)` asks for, from the literals that bind `at`, `rr::lower`): a tape value, admitted in
+//!   the program's fixpoint (`admit`, decision 0431 §8).
+//! - A tape operation's value (`@parse(g, x)`, `@splice`): made by the slice's rounds (`make`), at most [`DEPTH`].
 //!
-//! The rules that make requests (the embed slice) run over the chunk, the guests are parsed and the batch is rebound
-//! with them, and the slice runs again over the new documents: a string inside a parsed annotation is asked for in
-//! the next round. At most [`DEPTH`] rounds; each round's guests are parts of the last round's.
-//!
-//! A guest's text:
+//! A string's text:
 //! - a string node, for any grammar: its contents. A plain one (no escapes, no `r` prefix) is a copied stretch of the
 //!   host, so its nodes have the file's lines and columns; an escaped one, or a concatenation of strings, is its
 //!   decoded value, and every node stands at the string. A bytes literal or an f-string gives no guest, as Ruff
 //!   parses neither as a type;
-//! - a Markdown `inline` or `pipe_table_cell` node: its text without its `block_continuation`s, as tree-sitter-md
-//!   gives its inline grammar (decision 0238); each piece is a copied stretch, so its nodes have the file's places;
-//! - any other node: its text, copied;
-//! - `embed_value`'s text, standing at `at`.
+//! - any other node: its text, copied.
 //!
 //! A grammar name is a dialect label (`python`, `sql`, `typescript`, …) or `annotation`: Python's expression, parsed
 //! as `( … )` with the expression inside the parentheses as its root, as rrlab does. A text a rule parses is a tape value
 //! (decision 0431): equal texts in one run are parsed once (`parse`), and its tape is stored with its text, so a later
-//! run finds it and parses nothing (R6). A program's tape (`taped`) is not stored yet (step 3).
+//! run finds it and parses nothing (R6). A program's tape (`taped`, read off its embedder's parse) is not stored yet.
 
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::facts::vtab::syntax::{self, Document, Guest, Made, Placement};
@@ -34,11 +28,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::program_image::Version;
 
-/// Rounds of the embed slice per chunk: embeds of embeds, to this depth. A guard, not a limit anyone should reach.
+/// Rounds of the slice per chunk: values of values, to this depth. A guard, not a limit anyone should reach.
 pub(super) const DEPTH: usize = 4;
-
-/// The relations requests are read from.
-pub(super) const LIBRARY: [&str; 2] = ["embed", "embed_value"];
 /// The guest relations the request `DEMAND` answers in the fixpoint (decision 0431 §8): a value's nodes are reached
 /// only through them, so a reader of any is ordered after the strings are asked.
 pub(super) const ANSWERED: [&str; 5] = ["parsed", "sub_tape", "guest_of", "guest_place", "host_node"];
@@ -86,12 +77,12 @@ pub(super) const SPLICE: &str = "rr_splice_req";
 pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
 /// The relations a rule reads guests and values through (`rr::lower`'s guest relations): a program none of whose
 /// needed rules reads one makes no guest.
-pub(super) const READS: [&str; 12] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
+pub(super) const READS: [&str; 10] = ["parsed", "sub_tape", "rr_program", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
 /// Every relation a request is read from: a run with a rule deriving one makes guests.
-pub(in crate::code_rule_dsl) const REQUESTS: [&str; 5] = ["embed", "embed_value", DEMAND, PARSE, SPLICE];
+pub(in crate::code_rule_dsl) const REQUESTS: [&str; 3] = DEMANDS;
 /// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's): the
 /// requests, which the runner reads by name, and the guest policy.
-pub(super) const SHARED: [&str; 6] = ["embed", "embed_value", DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
+pub(super) const SHARED: [&str; 4] = [DEMAND, PARSE, SPLICE, crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY];
 
 /// What a guest request gave (`Guests::guest`).
 pub(super) enum Got {
@@ -106,21 +97,19 @@ pub(super) enum Got {
 /// One document asked for.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) enum Request {
-    /// The code at host node `at`, in `grammar`, with its text when it is a value (`embed_value`). `tape`: a string a
-    /// rule parses (`parsed`, `sub_tape`, `embed_value`), made a tape value (decision 0431); else a library's
-    /// `embed`, a program its file holds. Sorted first, a program is made before a rule's request for the same place.
-    Guest { tape: bool, at: i64, grammar: String, role: String, text: Option<String> },
+    /// The string at host node `at` a rule parses as `grammar` (`parsed`, `sub_tape`): a tape value (decision 0431),
+    /// or the program its file holds there (made with the batch).
+    Guest { at: i64, grammar: String },
     /// `@parse(grammar, text)`, asked at location `at` (the asking document's).
     Parse { at: i64, grammar: String, text: String },
     /// `@splice(_, node, with)`: node's tape, with node's text replaced by tape `with`'s.
     Splice { node: i64, with: String },
 }
 
-/// The location a slice's output line asks at (`requests`): `embed`'s and `embed_value`'s second column, a demand's
-/// first. Whose request it is: that location's file's (decision 0225 §2).
+/// The location a slice's output line asks at (`requests`): a demand's first column. Whose request it is: that
+/// location's file's (decision 0225 §2).
 pub(super) fn asked_at(rel: &str, rows: &crate::code_rule_dsl::logic::plan::output::Rows, i: usize) -> Option<i64> {
     let col = match rel {
-        "embed" | "embed_value" => 1,
         DEMAND | PARSE | SPLICE => 0,
         _ => return None,
     };
@@ -130,8 +119,7 @@ pub(super) fn asked_at(rel: &str, rows: &crate::code_rule_dsl::logic::plan::outp
     }
 }
 
-/// The requests of a slice run's outputs, in order. A library's embeds are made whatever a program shows: `.guests
-/// off` hides them from its rules (decision 0058 §1), and `guest` still reaches them.
+/// The requests of a slice run's outputs, in order.
 pub(super) fn requests(outputs: &BTreeMap<String, std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>>) -> Vec<Request> {
     use crate::code_rule_dsl::logic::plan::output::Cell;
     let mut out = Vec::new();
@@ -139,20 +127,9 @@ pub(super) fn requests(outputs: &BTreeMap<String, std::sync::Arc<crate::code_rul
     let rows = |rel: &str, n: usize| {
         outputs.get(rel).filter(|r| r.width() == n).into_iter().flat_map(move |r| (0..r.len()).map(move |i| (0..n).map(|c| r.cell(i, c)).collect::<Vec<Cell<'_>>>()))
     };
-    for c in rows("embed", 4) {
-        if let [_, Cell::Int(at), Cell::Text(g), Cell::Text(r)] = c[..] {
-            out.push(Request::Guest { tape: false, at, grammar: g.to_owned(), role: r.to_owned(), text: None });
-        }
-    }
-    for c in rows("embed_value", 5) {
-        if let [_, Cell::Int(at), Cell::Text(g), Cell::Text(r), Cell::Text(t)] = c[..] {
-            // A library's value placed at a node: its file's, as an embed is (decision 0431).
-            out.push(Request::Guest { tape: false, at, grammar: g.to_owned(), role: r.to_owned(), text: Some(t.to_owned()) });
-        }
-    }
     for c in rows(DEMAND, 2) {
         if let [Cell::Int(at), Cell::Text(g)] = c[..] {
-            out.push(Request::Guest { tape: true, at, grammar: g.to_owned(), role: "fragment".to_owned(), text: None });
+            out.push(Request::Guest { at, grammar: g.to_owned() });
         }
     }
     // `at`, the location that asked, says whose the value is; equal texts are one value (`Guests::value`).
@@ -247,9 +224,6 @@ fn host_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option<(St
     if is_string(kind) {
         return string_text(label, kind, f.text(id), start, node);
     }
-    if label == "markdown" && matches!(kind, "inline" | "pipe_table_cell") {
-        return Some(markdown_inline_text(f, id));
-    }
     if kind == "concatenated_string" {
         let mut value = String::new();
         let mut pieces = Vec::new();
@@ -278,36 +252,6 @@ fn host_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option<(St
         return Some((value, Placement::Mapped { pieces: pieces.into(), within: node }));
     }
     Some((f.text(id).to_owned(), Placement::Copied { delta: i64::from(start), within: node }))
-}
-
-/// The text of a Markdown `inline` or `pipe_table_cell` node, as tree-sitter-md's `MarkdownParser` gives its inline
-/// parser: the node's bytes without its named children after the first (its `block_continuation`s, a container's
-/// `> ` or indent on a continued line). The pieces are copied stretches of the host, so its nodes have the file's
-/// lines and columns.
-pub fn markdown_inline_text(f: &core::Facts, id: u32) -> (String, Placement) {
-    let (start, end) = (f.start(id), f.end(id));
-    let src = f.source.as_bytes();
-    let mut text = Vec::new();
-    let mut pieces = Vec::new();
-    let mut from = start;
-    // tree-sitter-md leaves the first child in (its loop starts at the second), as here.
-    for &c in f.children(id).iter().skip(1) {
-        if syntax::kind_name(f, c) != "block_continuation" {
-            continue;
-        }
-        let (a, b) = (f.start(c), f.end(c));
-        pieces.push(syntax::normalized::Piece { d: text.len() as u32, s: i64::from(from), escape: false });
-        text.extend_from_slice(&src[from as usize..a as usize]);
-        from = b;
-    }
-    pieces.push(syntax::normalized::Piece { d: text.len() as u32, s: i64::from(from), escape: false });
-    text.extend_from_slice(&src[from as usize..end as usize]);
-    pieces.push(syntax::normalized::Piece { d: text.len() as u32, s: i64::from(end), escape: false });
-    let text = String::from_utf8(text).expect("cut at node bounds, which are characters'");
-    if pieces.len() == 2 {
-        return (text, Placement::Copied { delta: i64::from(start), within: [start, end] });
-    }
-    (text, Placement::Mapped { pieces: pieces.into(), within: [start, end] })
 }
 
 /// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
@@ -370,7 +314,6 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
     let mut tags = std::collections::BTreeSet::new();
     for r in v.rules() {
         let column = match v.rel_name(r.head().rel()) {
-            "embed" | "embed_value" => 2,
             DEMAND | PARSE => 1,
             _ => continue,
         };
@@ -484,7 +427,7 @@ impl Guests {
         }
         let got = {
             let by_key: HashMap<u32, &Document> = docs.iter().map(|d| (d.key, d)).collect();
-            self.guest(&by_key, true, at, grammar, "fragment", None, parses)?
+            self.guest(&by_key, at, grammar, parses)?
         };
         match &got {
             Got::New(d) => docs.push(d.clone()),
@@ -514,7 +457,7 @@ impl Guests {
                 continue;
             }
             let made = match r {
-                Request::Guest { tape, at, grammar, role, text } => match self.guest(&by_key, tape, at, &grammar, &role, text, parses)? {
+                Request::Guest { at, grammar } => match self.guest(&by_key, at, &grammar, parses)? {
                     Got::New(d) => Some(d),
                     Got::Placed(key, place) => {
                         places.push((key, place));
@@ -553,28 +496,21 @@ impl Guests {
         Ok(out)
     }
 
-    /// The guest at host node `at`: a program its host holds (a library's `embed`), or a string a rule parses
-    /// (`tape`), made a tape value (decision 0431): one per grammar and text, its places the strings it was parsed
-    /// at; a text made already gains a place.
-    #[allow(clippy::too_many_arguments)]
-    fn guest(&mut self, by_key: &HashMap<u32, &Document>, tape: bool, at: i64, grammar_name: &str, role: &str, text: Option<String>, parses: &Parses<'_>) -> Result<Got, String> {
+    /// The guest at host node `at` a rule parses as `grammar_name`: the program its host holds through an embedding
+    /// of that name (made with the batch, `seed`, else made here), or the string there, made a tape value (decision
+    /// 0431): one per grammar and text, its places the strings it was parsed at; a text made already gains a place.
+    fn guest(&mut self, by_key: &HashMap<u32, &Document>, at: i64, grammar_name: &str, parses: &Parses<'_>) -> Result<Got, String> {
         let host_key = (at >> 32) as u32;
         let Some(host) = by_key.get(&host_key).copied() else { return Ok(Got::Not) };
         if let Some(via) = embedding(host, grammar_name) {
-            return Ok(self.program(host, at, via, role)?.map_or(Got::Not, Got::New));
+            return Ok(self.program(host, at, via, "program")?.map_or(Got::Not, Got::New));
         }
         let Some((label, wrap)) = grammar(grammar_name) else { return Ok(Got::Not) };
-        // Shown to rules that do not name it: code in the run's language. An annotation (a type expression, Python's
-        // in a Python run) is not code: the rules that read one reach it through `parsed`. Shown, a string the
-        // demand asked for only because its rule's inputs hold it (every string, for `type_ctx`) was code to every
-        // rule: `"--host"` was `--host`, a doubled minus (B002 on 157 argparse lines).
-        // A tape value (decision 0431) is never code to such rules: its nodes are no file's, so a finding on one has
-        // no place. In the run's language it is in the annotations' range.
-        let range = match (label == self.run, grammar_name == "annotation" || tape) {
-            (true, false) => Range::Code,
-            (true, true) => Range::Annotation,
-            (false, _) => Range::Hidden,
-        };
+        // A tape value is never code to rules that do not name it: its nodes are no file's, so a finding on one has no
+        // place. In the run's language it is in the annotations' range (a type expression, Python's in a Python run);
+        // shown, a string the demand asked for only because its rule's inputs hold it (every string, for `type_ctx`)
+        // was code to every rule: `"--host"` was `--host`, a doubled minus (B002 on 157 argparse lines).
+        let range = if label == self.run { Range::Annotation } else { Range::Hidden };
         if !self.seen.sees(range) {
             self.unseen += 1;
             return Ok(Got::Not);
@@ -582,34 +518,9 @@ impl Guests {
         let ids = self.numbering(host)?;
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
         let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(Got::Not) };
-        let placed = match text {
-            Some(text) => {
-                let Some((id, _)) = ids.node(local) else { return Ok(Got::Not) };
-                Some((text, Placement::At([host.facts.start(id), host.facts.end(id)])))
-            }
-            None => host_text(host, ids, local),
-        };
-        let Some((text, place)) = placed else { return Ok(Got::Not) };
+        let Some((text, place)) = host_text(host, ids, local) else { return Ok(Got::Not) };
         let (text, place) = if wrap { wrapped(text, place) } else { (text, place) };
-        if tape {
-            return self.tape_value(host, host_key, at, grammar_name, role, label, wrap, text, place, range, parses);
-        }
-        let Some((facts, root, digest)) = parse(&host.path, label, wrap, text, parses)? else { return Ok(Got::Not) };
-        let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], range, &host.path);
-        let file = self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key));
-        self.host_of.insert(i64::from(key), file);
-        let file = file as u32;
-        let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
-        Ok(Got::New(Document {
-            key,
-            path: host.path.clone(),
-            core: format!("{}#guest:{grammar_name}:{at}", host.core),
-            digest,
-            facts,
-            guest: Some(Arc::new(Guest { host: host_key, file, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
-            module: host.module.clone(),
-            tape: None,
-        }))
+        self.tape_value(host, host_key, at, grammar_name, "fragment", label, wrap, text, place, range, parses)
     }
 
     /// String `at` of `host`, its `text` parsed as `label`: a tape value (decision 0431), keyed by its grammar and
@@ -720,7 +631,7 @@ impl Guests {
             }
         };
         let host_key = (at >> 32) as u32;
-        let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text)? else { return Ok(None) };
+        let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, program.parse)? else { return Ok(None) };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &host.path);
         let file = self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key));
         self.host_of.insert(i64::from(key), file);
@@ -927,12 +838,13 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, parses: &Parses<'_>)
     Ok(parsed)
 }
 
-/// An embedded program's text parsed as `label`, with its tape kept beside the facts (decision 0222): the rules over
-/// a view read W's values (`value`, a key's text) as over a file, and a value is read off the document's tape. Not
-/// memoised: a host embeds one program. Its tape is not stored, as a guest's (`parse`, Q30).
-fn taped(path: &str, label: &str, text: String) -> Result<Option<(Parsed, Tape)>, String> {
+/// An embedded program's facts, read off the tape or tree its embedder parsed its text into (`parse`), with its tape
+/// kept beside them (decision 0222): the rules over a view read W's values (`value`, a key's text) as over a file,
+/// and a value is read off the document's tape. Its tape is not stored (Q30).
+fn taped(path: &str, label: &str, text: String, parse: crate::code_rule_dsl::embed::Parse) -> Result<Option<(Parsed, Tape)>, String> {
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(text) };
-    let built = core::build_with_tape(&file, true).map_err(|e| format!("{path}: {e}"))?;
+    // Read off the embedder's parse, not parsed again.
+    let built = core::build_parsed(&file, parse, true).map_err(|e| format!("{path}: {e}"))?;
     let (Built::Facts(facts), tape) = built else { return Ok(None) };
     let digest = core::digest(&facts);
     let tape = tape.map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));

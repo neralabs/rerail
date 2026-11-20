@@ -33,6 +33,7 @@
 // cratify: `compiled_view` is rerail-lang-php's (it mounts it)
 // cratify: `script_block` is rerail-lang-ecma's (it mounts it)
 pub mod host;
+pub mod inline_content;
 pub mod raw_text;
 pub mod segments;
 #[cfg(any(test, feature = "test-hooks"))]

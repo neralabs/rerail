@@ -1266,18 +1266,29 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
         }
     }
     // A tape's documents and a document's nodes are the tape's, and a base atom's locations are in one document.
+    // A document column is one way (decision 0431 §4): a document's nodes are its guest's (a tape value's, its own
+    // document), but a node's document may be its file (a program's nodes are the file's), so a node gives it scope,
+    // not its grammar. `(from, to)`: from's facts flow to `to`, its grammar too unless `to` is the document.
     let mut groups: Vec<Vec<Slot>> = Vec::new();
+    let mut to_document: Vec<(Slot, Slot)> = Vec::new();
     const PAIR: &[usize] = &[0, 1];
     for a in positive() {
-        let cols: &[usize] = match a.rel.as_str() {
+        let (cols, document): (&[usize], Option<usize>) = match a.rel.as_str() {
             // A node's parent is in its document (`tape(n, par, size, depth)`, the climbs' walk).
-            "tape_of" | "doc_root" | "tape" => PAIR,
+            "tape_of" | "tape" => (PAIR, None),
             // A tree axis's node and its ancestor (`rr_has_<set>(n, a)`, `rr_inside_<set>(n, a)`): `has(r, c, "field")`
             // over a guest's root r makes c the guest's node.
-            r if front::is_axis(r) => PAIR,
-            r => base.get(r).map_or(&[], Vec::as_slice),
+            r if front::is_axis(r) => (PAIR, None),
+            r => (base.get(r).map_or(&[], Vec::as_slice), front::document_column(r)),
         };
-        let vars: Vec<Slot> = cols.iter().filter_map(|&c| a.args.get(c).and_then(S::var)).collect();
+        let doc = document.filter(|d| cols.contains(d)).and_then(|d| a.args.get(d).and_then(S::var));
+        let vars: Vec<Slot> = cols.iter().filter(|&&c| Some(c) != document).filter_map(|&c| a.args.get(c).and_then(S::var)).collect();
+        if let Some(d) = doc {
+            for &x in vars.iter().filter(|&&x| x != d) {
+                groups.push(vec![d, x]);
+                to_document.push((x, d));
+            }
+        }
         if vars.len() > 1 {
             groups.push(vars);
         }
@@ -1293,6 +1304,21 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
     loop {
         let mut changed = false;
         for g in &groups {
+            // A node and its document: the document's facts flow to the node, the node's to the document without
+            // its grammar.
+            let one_way = match g.as_slice() {
+                [d, x] if to_document.contains(&(*x, *d)) => Some((*d, *x)),
+                _ => None,
+            };
+            if let Some((d, x)) = one_way {
+                if let Some(f) = facts.get(&d).cloned() {
+                    changed |= facts.entry(x).or_default().join(&f);
+                }
+                if let Some(f) = facts.get(&x).cloned() {
+                    changed |= facts.entry(d).or_default().join(&Fact { grammar: None, ..f });
+                }
+                continue;
+            }
             let mut all = Fact::default();
             for x in g {
                 if let Some(f) = facts.get(x) {

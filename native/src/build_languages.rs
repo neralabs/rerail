@@ -138,6 +138,10 @@ struct Dialect {
 struct Embed {
     language: String,
     via: String,
+    /// The embedded language's dialects the embedding gives, by label; every one where empty. A language embeds
+    /// itself only through a dialect of its own other than the host's (Markdown's inline grammar, decision 0431 §4).
+    #[serde(default)]
+    dialects: Vec<String>,
 }
 
 /// A supported dialect's grammar: one `build.rs` generates from a vendored `grammar.json`, one
@@ -466,8 +470,8 @@ fn validate_entry(name: &str, stem: &str, entry: &Entry, vendored: &[&str]) {
             embed.via
         );
         assert!(
-            embed.language != entry.id,
-            "{name}: a language does not embed itself"
+            embed.language != entry.id || !embed.dialects.is_empty(),
+            "{name}: a language embeds itself only through dialects it names"
         );
     }
 }
@@ -528,6 +532,14 @@ fn validate_registry(entries: &[(String, Entry)]) {
                 "{name}: embeds unknown language {}",
                 embed.language
             );
+            let (_, embedded) = entries.iter().find(|(_, e)| e.id == embed.language).expect("validated embedded language");
+            for label in &embed.dialects {
+                assert!(
+                    embedded.dialects.iter().any(|d| &d.label == label),
+                    "{name}: embeds {}'s dialect {label}, which it has not",
+                    embed.language
+                );
+            }
         }
     }
     for (name, entry) in entries
@@ -718,6 +730,10 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
                         .expect("validated embedded language")
                         .dialects
                         .iter()
+                        .filter(move |embedded| {
+                            (embed.dialects.is_empty() || embed.dialects.contains(&embedded.label))
+                                && embedded.label != dialect.label
+                        })
                         .map(move |dialect| {
                             format!(
                                 "(Via::{}, GrammarDialect::{})",
@@ -1160,6 +1176,29 @@ mod tests {
         let generated = Registry::new("embeds", &[one, two]).generate();
         assert!(generated.contains("pub enum Via {\n    CompiledView,\n"));
         assert!(generated.contains("Self::One => &[(Via::CompiledView, GrammarDialect::Two)],"));
+    }
+
+    /// Markdown's inline grammar (decision 0431 §4): a language embeds a dialect of its own it names, and a dialect
+    /// never embeds itself.
+    #[test]
+    fn a_language_embeds_a_dialect_of_its_own_it_names() {
+        let mut one = supported("one", ".one", 1);
+        one["dialects"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "label": "one-inline", "variant": "OneInline", "suffixes": [], "parser": "tree-sitter", "grammar": "vendored:one", "tapeTag": 2 }));
+        one["embeds"] = json!([{ "language": "one", "via": "inline-content", "dialects": ["one-inline"] }]);
+        let generated = Registry::new("self-embeds", &[one]).generate();
+        assert!(generated.contains("Self::One => &[(Via::InlineContent, GrammarDialect::OneInline)],"), "{generated}");
+        assert!(generated.contains("Self::OneInline => &[],"), "{generated}");
+    }
+
+    #[test]
+    #[should_panic(expected = "a language embeds itself only through dialects it names")]
+    fn a_language_does_not_embed_itself_whole() {
+        let mut one = supported("one", ".one", 1);
+        one["embeds"] = json!([{ "language": "one", "via": "inline-content" }]);
+        Registry::new("self-embeds-whole", &[one]).generate();
     }
 
     #[test]

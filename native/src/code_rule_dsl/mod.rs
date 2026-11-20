@@ -4693,6 +4693,8 @@ pub(crate) fn install_languages() {
         (language::Via::CompiledView, &embed::compiled_view::CompiledView),
         #[cfg(feature = "lang-html")]
         (language::Via::RawText, &embed::raw_text::RawText),
+        #[cfg(feature = "lang-markdown")]
+        (language::Via::InlineContent, &embed::inline_content::InlineContent),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
         #[cfg(any(test, feature = "test-hooks"))]

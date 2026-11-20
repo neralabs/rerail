@@ -266,28 +266,29 @@
 // ---- guests: code inside code (decisions 0055, 0431) -------------------------------------------------------
 // Python `x: "List[int]"`: parsed(str, "annotation", root) gives the tree of the code inside the string, so
 // rules can resolve names in string annotations. A rule's parsed(s, "g", r) or sub_tape(s, "g", t) asks for
-// the string at s (the literals beside it that bind s say which s); a library asks for a program with embed.
+// the string at s (the literals beside it that bind s say which s).
 // A string a rule parses is a tape value (decision 0431): one tape per grammar and text, the same nodes for every
 // string that holds the text. Its nodes are no file's: their lines and columns are in the tape's own text, and a
 // file's place of one is its string's (guest_of(n, s), then s's line). Cost: one parse per distinct text.
-// A program a library embeds (an HTML script, a Vue view) is its file's code, at the file's lines.
+// A program the file's grammar holds (an HTML script or style, a Vue view, a Markdown inline, a Blade view's PHP)
+// is its file's code, made as the file is read (its language's `embeds`, decision 0431 §4): parsed(at, g, r) gives
+// its root at the host node it stands at (the file's root for a whole file's program), its nodes are the file's
+// (node's d, docof), at the file's lines, and a rule names it by its file and place, never by a key of its own:
+//   calls(c) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression").
 // Grammars: "annotation" (a Python expression), or a language label ("python", "sql", "typescript", …).
 // Guests have no source, src_line or line_count rows.
 .decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation", …)
 .decl sub_tape(at: node, grammar: symbol, t: tape)       // the tape (content key) of the guest at `at`
-.decl guest(g: number, host: number, at: node, grammar: symbol)  // document g is the code at host node `at`
-.decl doc_role(d: number, role: symbol)                  // "primary" (a file), "fragment", or an embed's role
-.decl doc_root(d: number, n: node)                       // the root of document d's tree
 .decl tape_of(d: number, t: tape)                        // document d places tape t; equal texts share a tape
 .decl guest_policy(k: symbol, v: symbol)                 // the program's `.guests` and `.on guest_error` settings
 .decl host_node(n: node, h: node)                        // h is the innermost host node over guest node n
 .decl guest_of(n: node, s: node)                         // n is a node of the code parsed at s (decision 0431); a
                                                          // tape value's node has a row for each string of its text
 .decl guest_place(n: node, s: node, l: number, c: number) // n, parsed at s, stands at line l, column c of s's file
-.input sub_tape, guest, doc_role, doc_root, tape_of, host_node, guest_of, guest_place
+.input sub_tape, tape_of, host_node, guest_of, guest_place
 // What a rule sees (decision 0058): files, and guests in the run's language unless `.guests off`. A rule that
 // reaches a guest through one of the relations above sees it whatever its grammar, and names its kinds in that
-// grammar: guest(g, _, _, "sql"), node(g, n, "object_reference", _, _) is SQL's object_reference ("sql:…" also
+// grammar: parsed(s, "sql", r), within(n, r), kind(n, "object_reference") is SQL's object_reference ("sql:…" also
 // names one). A guest made from a string is parsed from its str: the decoded text, placed through the escapes.
 // Tape operations, made on demand in the chunk that asks (value documents: no host, their own lines):
 //   t = @parse("sql", q)     parse_of(q, "sql", t)     q parsed as SQL; tape_of(d, t) gives its document
@@ -297,11 +298,6 @@
 .decl unparse_of(t: tape, x: symbol)
 .decl splice_of(t: tape, n: node, t2: tape, t3: tape)
 .input parse_of, unparse_of, splice_of
-// embed(d, at, "sql", "query"): a library declares that the code at node `at` of document d is a guest of that
-// grammar and role (`.guests off` leaves these out). embed_value(d, at, g, role, text) for a computed text,
-// which stands at `at`. Rules derive them; the engine makes the guests.
-.decl embed(d: number, at: node, grammar: symbol, role: symbol) extensible
-.decl embed_value(d: number, at: node, grammar: symbol, role: symbol, text: symbol) extensible
 // ---- the environment and the files beyond the corpus (t21) ----
 // env(k, v): the run's settings (`rerail.env` at the corpus root, `--env k=v`). dir_entry(dir, name, is_dir) and
 // file_line(path, i, text) (from 1): the entries of a directory and the lines of a file, and file_digest(path, c):
@@ -649,17 +645,12 @@
 .decl input_error(path: symbol, kind: symbol, detail: symbol)  // missing, unreadable, malformed, signature, stale, failed
 .input input_error
 
-// ---- embedded languages (proposed) ------------------------------------------------------------------------------
-// Code inside code (SQL in a Python string, a template's expressions, a string annotation) is to be a guest
-// document: parsed with its own grammar, with its own nodes, and declared by libraries rather than built in.
-//   guest(g, host, at, grammar)   document g is the text at `at` of document host, parsed as grammar
-//   doc_role(d, r)                "primary" (a file), "program" or "fragment" (a guest)
-//   host_node(n, h)               h is the innermost host node spanning guest node n
-//   root(d, n)                    the root of document d; for a fragment, the expression inside its wrapper
-//   embed(at, grammar, role)      a library rule that declares a guest (embeds of embeds up to depth 4)
-// parsed(s, g, root) becomes a view over guest and root, and `.scope embedded false` keeps a policy to primary
-// documents. A tape may also become a value: `@parse(grammar, text)` and, for fixes, `@splice` and `@unparse`.
-// Built as decisions 0055 and 0058 (the guests section above); `.guests off` is the `.scope` here.
+// ---- embedded languages ------------------------------------------------------------------------------------------
+// Code inside code: built as decisions 0055, 0058 and 0431 (the guests section above). A string a rule parses is a
+// tape value, `parsed(s, g, root)`; a program a file's grammar holds is the file's, declared by its language, at the
+// file's lines, reached by `parsed` at its host node; `host_node(n, h)` gives the host node a guest node stands for;
+// `@parse(grammar, text)`, `@splice` and `@unparse` make and read tapes as values. `.guests off` keeps a policy to
+// files.
 
 // ---- edits (native applier) -----------------------------------------------------------------------------------
 // Addition 4. A fix is a set of edits. Rules derive edits like any other rows: a rule ending in `=> e1, e2`

@@ -211,13 +211,31 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else { return Ok((Built::Unparsed, None)); };
     let image = image?;
     drop(parse);
+    facts_of_image(file, &grammar, image.primary, Terminators::of(language), keep)
+}
+
+/// [`build_with_tape`] of an embedded program (decision 0431 §4), read off the tape or tree its embedder parsed
+/// (`embed::Parse`), not parsed again.
+pub fn build_parsed(file: &dyn SourceFile, parse: crate::code_rule_dsl::embed::Parse, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
+    use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage}};
+    let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
+    let grammar = Grammar::embedded(language)?;
+    let primary = match parse {
+        crate::code_rule_dsl::embed::Parse::Tape(image) => image,
+        crate::code_rule_dsl::embed::Parse::Tree(tree) => TapeImage::encode_tree_image(tree.root_node(), &grammar, file.source(), None, &|| false)?,
+    };
+    facts_of_image(file, &grammar, primary, Terminators::of(language), keep)
+}
+
+/// The facts of `file` read off its parsed tape `primary`, with the tape where `keep`.
+fn facts_of_image(file: &dyn SourceFile, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, primary: crate::code_rule_dsl::tape::TapeImage, terminators: crate::code_rule_dsl::lines::Terminators, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
     // Where the device reads tapes, the parse's in a slab's room too (decision 0353 step 4a): a guest's, a run's
     // without a store.
-    let primary = placed_where_read(image.primary, &grammar)?;
-    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
-    let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
+    let primary = placed_where_read(primary, grammar)?;
+    let lines = Arc::new(LineTable::placed(file.source(), terminators));
+    let doc = kept_tape(keep, file, grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
+    let facts = read_off(doc.as_ref(), file, grammar, primary, lines)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.len() as u64);
     Ok((Built::Facts(facts), doc))
 }
@@ -930,9 +948,9 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "rx_span" => &["p", "c", "j", "g", "m"],
         "ast_match" => &["p", "n", "g", "c"],
         // Decision 0055's (`facts::vtab::syntax::guests`).
-        "guest" => &["g", "host", "at", "grammar"],
-        "doc_role" => &["d", "r"],
-        "doc_root" => &["d", "n"],
+        // The document underneath a file's program and its grammar (decision 0431 §4), for the lowering's findings
+        // alone: a rule names a program by its file and place (`parsed`).
+        "rr_program" => &["d", "file", "grammar"],
         "tape_of" => &["d", "t"],
         "sub_tape" => &["at", "grammar", "t"],
         "host_node" => &["n", "h"],

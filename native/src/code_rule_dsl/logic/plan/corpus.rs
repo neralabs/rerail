@@ -685,8 +685,9 @@ const NOT_MADE: [(&str, &str); 0] = [];
 /// (decision 0331).
 const GUEST_ROUNDS_KEY: [u8; 32] = *b"rerail.guest-rounds/v1\0\0\0\0\0\0\0\0\0\0";
 
-/// The embed slice of a lowered program (decisions 0055, 0058): the rules its requests need (`embed`, `embed_value`
-/// and the demands), with those as its outputs; `None` when no rule makes a request. It is cut from the whole
+/// The embed slice of a lowered program (decisions 0055, 0058): the rules its tape operations' requests need
+/// (`@parse`'s and `@splice`'s demands), with those as its outputs; `None` when no rule makes one. A file's programs
+/// are its language's (decision 0431 §4) and a string a rule parses is asked in the fixpoint (§8): neither needs it. It is cut from the whole
 /// program, not its file-local part, and runs over each chunk: a guest or a value is made from its chunk's
 /// documents, so a demand whose context the split would run cross-file (`q(_, x)`, a value's nodes) is still asked
 /// in the chunk.
@@ -698,8 +699,8 @@ fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> 
     use crate::code_rule_dsl::logic::program_image::RuleId;
     let derives = |r: &str| v.rel(r).is_some_and(|id| v.heads(id).next().is_some());
     // A rule's `parsed` or `sub_tape` asks inside the program's fixpoint (decision 0431 §8, `parsing`): the slice
-    // makes a library's embeds and the tape operations' values alone.
-    let wanted: Vec<&str> = guests::LIBRARY.iter().copied().chain(guests::DEMANDS.into_iter().filter(|d| *d != guests::DEMAND)).filter(|r| derives(r)).collect();
+    // makes the tape operations' values alone.
+    let wanted: Vec<&str> = guests::DEMANDS.into_iter().filter(|d| *d != guests::DEMAND).filter(|r| derives(r)).collect();
     if wanted.is_empty() {
         return Ok(None);
     }
@@ -2016,7 +2017,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
-    // A library's rule may ask for guests too (`vue/view.rr`'s view, decision 0222): read once, it is no program's.
+    // A library's rule may ask for guests or read them too: read once, it is no program's.
     let makes_guests = makes_guests || library.as_ref().is_some_and(|l| guests::REQUESTS.iter().any(|r| l.has_head(r)) || reads_guests(l.rules()));
     // The node attributes answered on request (decision 0174) are the combined program's, made once below over all
     // its readers: a part lowered on its own (a program's own part, without the library's rules) could not see
@@ -3700,7 +3701,7 @@ fn run_observed(
     crate::code_rule_dsl::logic::profile::decision("guest requests", || {
         if reads_guests { "made: a rule the outputs need reads guests".into() } else { "none: no rule the outputs need reads a guest".into() }
     });
-    let requests: Vec<&str> = guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|_| reads_guests).chain(world_requests).collect();
+    let requests: Vec<&str> = guests::DEMANDS.into_iter().filter(|_| reads_guests).chain(world_requests).collect();
     edit_fields(&mut v, |p| {
         for &rel in requests.iter().filter(|rel| shape.made.contains(**rel)) {
             p.b.add_output(rel);
@@ -4544,7 +4545,7 @@ fn run_observed(
     // file's requests under them (`memo::GUESTS`).
     let slice_ids: BTreeMap<String, [u8; 32]> = match &slice {
         Some(s) => {
-            let rels: BTreeSet<String> = guests::LIBRARY.iter().chain(&guests::DEMANDS).map(|r| (*r).to_owned()).collect();
+            let rels: BTreeSet<String> = guests::DEMANDS.iter().map(|r| (*r).to_owned()).collect();
             memo::identities(&s.placed()?, &rels, options, &phased, &base_rows).map_err(Error::Plan)?.into_iter().map(|(r, id)| {
                 use sha2::{Digest as _, Sha256};
                 let mut h = Sha256::new();
@@ -6481,7 +6482,7 @@ fn run_observed(
                     };
                     previous = asked.clone();
                     if memoised {
-                        slice_rounds.push(asked.iter().filter(|(r, _)| guests::LIBRARY.contains(&r.as_str()) || guests::DEMANDS.contains(&r.as_str())).map(|(r, l)| (r.clone(), Arc::clone(l))).collect());
+                        slice_rounds.push(asked.iter().filter(|(r, _)| guests::DEMANDS.contains(&r.as_str())).map(|(r, l)| (r.clone(), Arc::clone(l))).collect());
                     }
                     // The documents made, and the tape values given a place more (decision 0431), added to `docs`.
                     let changed = made.make(guests::requests(&asked), &mut docs, &guest_parses).map_err(Error::Plan)?;

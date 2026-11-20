@@ -46,7 +46,8 @@ export const languageEntrySchema = z
     builtWith: name.optional(),
     capabilities: z.record(z.string(), support),
     suppressions: z.array(name),
-    embeds: z.array(z.object({ language: name, via: name }).strict()).optional(),
+    /** `dialects`: the embedded language's dialects the embedding gives, every one where absent; a language embeds itself only through dialects it names (Markdown's inline grammar). */
+    embeds: z.array(z.object({ language: name, via: name, dialects: z.array(name).min(1).optional() }).strict()).optional(),
     /** Grammars of a part of a dialect (decision 0082): `name` is `dialect` parsed from `start`. The engine reads them; the host does not. */
     fragments: z.array(z.object({ name, dialect: name, start: z.enum(["expression"]) }).strict()).optional(),
   })
@@ -65,7 +66,7 @@ export const languageEntrySchema = z
       if (Object.values(entry.capabilities).includes("supported")) issue(["capabilities"], "A planned language supports no capability yet.");
     }
     if (new Set(entry.suppressions).size !== entry.suppressions.length) issue(["suppressions"], "Suppressions repeat.");
-    for (const embed of entry.embeds ?? []) if (embed.language === entry.id) issue(["embeds"], "A language does not embed itself.");
+    for (const embed of entry.embeds ?? []) if (embed.language === entry.id && embed.dialects === undefined) issue(["embeds"], "A language embeds itself only through dialects it names.");
   });
 
 export type LanguageEntry = z.infer<typeof languageEntrySchema>;
@@ -90,6 +91,9 @@ function embedProblems({ file, entry }: RegistryEntry, entries: readonly Registr
   if (entry.status !== "supported") return problems;
   for (const embed of embeds) {
     const embedded = entries.find(({ entry: candidate }) => candidate.id === embed.language)?.entry;
+    for (const label of embed.dialects ?? []) {
+      if (embedded && !embedded.dialects.some((dialect) => dialect.label === label)) problems.push(`${file}: embeds ${embed.language}'s dialect ${label}, which it has not`);
+    }
     if (embedded && embedded.status !== "supported") {
       problems.push(
         `${file}: embeds planned language ${embed.language}; a supported language embeds only supported ones`,

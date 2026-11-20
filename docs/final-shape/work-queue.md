@@ -5550,3 +5550,21 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Decided** (2026-11-19, the user: "pick a for the decision"): the guest relations name a program by its file and
   place (`parsed(at, grammar, root)`), so `node`'s `d` is the file (0431 §4).
 - **Done when**: `docof` of a program's node is its file in a T program too, with a test.
+
+### Q268. 0431's leftovers after step 3
+
+- **Seen** (2026-11-19, 0431 step 3 done):
+  - `@parse(g, x)` and `@splice` values are still made by the slice's rounds (`embed_slice`, `guests::DEPTH`), which
+    grow the batch: 0431 §1 has no rounds outside the engine. A string a rule parses is already asked in the
+    fixpoint (§8, R10); a computed text's value is to be one too.
+  - The rule-file language declares no embeds (`rr/embeds.rr`): its patterns need the pattern grammars, its `match`
+    regexes the regex grammar, and no embedder reads a JSON object. Before, the library's rules made nothing either
+    (no grammar registered), and no program included them.
+  - A fresh host parse builds its programs (`TapeImage::encode` → `FileImage::embedding`) and `build_with_tape`
+    drops them; `Guests::programs` runs the embedders again from the tape (a stored host's has no programs). The
+    programs are to be kept with the file's tape (0431 §7) and read there.
+  - `.guests off` hides the run language's code guests: under 0431 a tape value is never code and a program is code
+    only in a run of its own grammar's label, so the setting has nearly nothing left to hide
+    (`combined_programs_see_guests_by_their_own_policy`).
+- **Done when**: no round outside the fixpoint; a file's programs read from its stored tape; the setting's meaning
+  decided.

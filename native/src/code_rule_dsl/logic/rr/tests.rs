@@ -2466,20 +2466,18 @@ kept(l) :- kind(s, "string"), sub_tape(s, "annotation", _), line(s, l).
     assert_eq!(roots, [["1"], ["2"]], "the broken guest keeps its partial tree");
 }
 
-/// A library's `embed` and `embed_value` declare guests of a role. `sub_tape` gives a guest's tape: equal texts share
-/// one. Guests in the run's language are shown to rules that do not name them (`top`) unless `.guests off`; a rule
-/// that reaches them through a guest relation (`doc_role`) sees them either way (decision 0058 §1).
+/// A string a rule parses is reached through `parsed` (decision 0431 §2; the libraries' `embed` went with §4).
+/// `sub_tape` gives its tape: equal texts share one. A tape value is never code to a rule that does not name it
+/// (`top`), `.guests off` or not; the rule that parses it reaches it either way (decision 0058 §1).
 #[test]
-fn embeds_declare_guests_and_guests_off_leaves_them_out() {
+fn parsed_strings_are_reached_through_parsed_and_guests_off_leaves_them_reached() {
     let py = "a = \"import os\"\nb = \"import os\"\nc = 1\n";
     let rule = |guests: &str| {
         format!(
             r#"
 {guests}
-embed(d, s, "python", "code") :- kind(s, "string"), docof(s, d).
-embed_value(d, n, "python", "made", "import sys") :- kind(n, "integer"), docof(n, d).
-.decl imp(r: symbol, x: symbol, l: number)
-imp(r, x, l) :- doc_role(g, r), node(g, i, "import_statement", _, _), text(i, x), line(i, l).
+.decl imp(x: symbol, l: number)
+imp(x, l) :- kind(s, "string"), parsed(s, "python", r), within(i, r), kind(i, "import_statement"), text(i, x), line(s, l).
 .decl tapes(t: tape)
 tapes(t) :- kind(s, "string"), sub_tape(s, "python", t).
 .decl top(x: symbol, l: number)
@@ -2488,30 +2486,31 @@ top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
 "#
         )
     };
-    let guests = [["code", "import os", "1"], ["code", "import os", "2"], ["made", "import sys", "3"]];
+    let parsed = [["import os", "1"], ["import os", "2"]];
     let [imp, tapes, top] = <[Vec<Vec<String>>; 3]>::try_from(guests_run("embed", &[("a.py", py)], &rule(""), &["imp", "tapes", "top"])).unwrap();
-    assert_eq!(imp, guests);
+    assert_eq!(imp, parsed);
     assert_eq!(tapes.len(), 1, "{tapes:?}");
-    assert_eq!(top, [["import os", "1"], ["import os", "2"], ["import sys", "3"]], "Python guests are shown in a Python run");
+    assert!(top.is_empty(), "a tape value is no rule's code that does not name it: {top:?}");
     let [imp, top] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("embedoff", &[("a.py", py)], &rule(".guests off"), &["imp", "top"])).unwrap();
-    assert_eq!(imp, guests, "`.guests off` hides guests; it does not stop a library's embeds");
+    assert_eq!(imp, parsed, "`.guests off` hides guests; `parsed` still reaches them");
     assert!(top.is_empty(), "{top:?}");
 }
 
-/// SQL in a Python string (decision 0058 §1–2): a library's `embed` makes an SQL guest on an SQL tape (tag 10). A
-/// rule that reaches it through `guest` names SQL kinds, and they print as SQL's; a rule that does not name a guest
-/// sees only the Python file, even for the qualified `"sql:…"` kind.
+/// SQL in a Python string (decision 0058 §1–2): a rule's `parsed` makes an SQL tape value (tag 10). A rule that
+/// reaches it through `parsed` names SQL kinds, and they print as SQL's, placed at the file's lines through the string
+/// (`guest_place`); a rule that does not name a guest sees only the Python file, even for the qualified `"sql:…"` kind.
 #[test]
 fn sql_in_python_is_an_sql_tape_hidden_from_unscoped_rules() {
     let py = "def f(db):\n    db.execute(\"SELECT name FROM users WHERE id = 1\")\n    db.execute(\"SELECT \\\"id\\\" FROM orders\")\n";
     let rule = r#"
-embed(d, s, "sql", "query") :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), docof(s, d).
+.decl sqlstr(s: node)
+sqlstr(s) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string").
 .decl sqlkinds(k: symbol)
-sqlkinds(k) :- guest(g, _, _, "sql"), node(g, _, k, _, _).
+sqlkinds(k) :- sqlstr(s), parsed(s, "sql", r), (n = r ; within(n, r)), node(_, n, k, _, _).
 .decl docs(g: number)
-docs(g) :- guest(g, _, _, "sql").
+docs(g) :- sqlstr(s), parsed(s, "sql", r), node(g, r, _, _, _).
 .decl objects(x: symbol, l: number, c: number)
-objects(x, l, c) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _), text(n, x), line(n, l), col(n, c).
+objects(x, l, c) :- sqlstr(s), parsed(s, "sql", r), within(n, r), kind(n, "object_reference"), text(n, x), guest_place(n, s, l, c).
 .decl unscoped(k: symbol)
 unscoped(k) :- node(_, _, k, _, _).
 .decl qualified(x: symbol)
@@ -2528,7 +2527,7 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     let [sqlkinds, objects, unscoped, qualified, counted] = <[Vec<Vec<String>>; 5]>::try_from(shown).unwrap();
     assert!(sqlkinds.contains(&shown_row(&["object_reference"])), "{sqlkinds:?}");
     assert!(!sqlkinds.contains(&shown_row(&["call"])), "SQL nodes are SQL's kinds: {sqlkinds:?}");
-    assert!(docs.len() == 2 && docs.iter().all(|&g| g >= i64::from(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS)), "an SQL guest in a Python run is a hidden document: {docs:?}");
+    assert!(docs.len() == 2 && docs.iter().all(|&g| g >= i64::from(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS)), "an SQL tape value in a Python run is hidden: {docs:?}");
     assert!(objects.contains(&shown_row(&["users", "2", "33"])), "{objects:?}");
     // `"SELECT \"id\" FROM orders"` parses as its normalized text, and `orders` keeps its column past the escapes.
     assert!(objects.contains(&shown_row(&["orders", "3", "35"])), "{objects:?}");
@@ -2550,25 +2549,34 @@ fn html_scripts_and_styles_are_javascript_json_and_css_guests() {
 .language html
 #include "html/embeds.rr"
 .decl calls(x: symbol, l: number)
-calls(x, l) :- guest(g, _, _, "javascript"), node(g, c, "call_expression", _, _), text(c, x), line(c, l).
+calls(x, l) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), line(c, l).
 .decl decls(x: symbol, l: number)
-decls(x, l) :- guest(g, _, _, "css"), node(g, n, "declaration", _, _), text(n, x), line(n, l).
+decls(x, l) :- kind(t, "raw_text"), parsed(t, "css", p), within(n, p), kind(n, "declaration"), text(n, x), line(n, l).
 .decl pairs(x: symbol, l: number)
-pairs(x, l) :- guest(g, _, _, "json"), node(g, n, "pair", _, _), text(n, x), line(n, l).
-.decl guests(g: symbol, r: symbol)
-guests(g, r) :- guest(d, _, _, g), doc_role(d, r).
-.output calls, decls, pairs, guests
+pairs(x, l) :- kind(t, "raw_text"), parsed(t, "json", p), within(n, p), kind(n, "pair"), text(n, x), line(n, l).
+.decl guests(g: symbol)
+guests(g) :- kind(t, "raw_text"), parsed(t, g, _).
+.decl own(x: symbol)
+own(x) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), node(d, c, _, _, _), docof(t, d).
+.decl bydoc(x: symbol)
+bydoc(x) :- kind(t, "raw_text"), parsed(t, "javascript", p), node(d, p, _, _, _), node(d, c, "javascript:call_expression", _, _), text(c, x).
+.output calls, decls, pairs, guests, own, bydoc
 "#;
-    let [calls, decls, pairs, guests] = <[Vec<String>; 4]>::try_from(joined(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests"]))).unwrap();
+    let [calls, decls, pairs, guests, own, bydoc] = <[Vec<String>; 6]>::try_from(joined(guests_run("htmlguests", &[("a.html", html)], rule, &["calls", "decls", "pairs", "guests", "own", "bydoc"]))).unwrap();
     assert_eq!(calls, ["f(1)\t3", "g(2)\t6"]);
     assert_eq!(decls, ["color: red;\t9"]);
     assert_eq!(pairs, ["\"a\": 1\t7"]);
-    assert_eq!(guests, ["css\tprogram", "javascript\tprogram", "json\tprogram"], "the template script has no guest");
+    assert_eq!(guests, ["css", "javascript", "json"], "the template script has no program");
+    // A program is named by its file and place (decision 0431 §4): its nodes' document is the file's, and a lookup by
+    // the file finds every program's. A file's document is no one grammar's, so a kind read through it is qualified.
+    assert_eq!(own, ["f(1)", "g(2)"], "a program's node is in its file's document");
+    assert_eq!(bydoc, ["f(1)", "g(2)"], "the file's document holds both scripts' calls");
 }
 
-/// A Markdown file's inline content is guests of tree-sitter-md's inline grammar (`markdown/embeds.rr`, decision
-/// 0238): each `inline` and `pipe_table_cell` node, its text less the block continuations inside it (a quote's
-/// `> `), so its nodes stand at the file's lines and columns, past the continuations too.
+/// A Markdown file's inline content is its programs in tree-sitter-md's inline grammar (decision 0238; 0431 §4:
+/// `embed::inline_content`, which `markdown/embeds.rr` describes): each `inline` and `pipe_table_cell` node, its text
+/// less the block continuations inside it (a quote's `> `), so its nodes stand at the file's lines and columns, past
+/// the continuations too.
 #[test]
 fn markdown_inline_content_is_a_guest_at_its_host_places() {
     let md = "# A *b*\n\n> Some *text* and a [link](u)\n> on `two` lines.\n\n| a | **b** |\n|---|---|\n| `c` | d |\n";
@@ -2576,15 +2584,17 @@ fn markdown_inline_content_is_a_guest_at_its_host_places() {
 .language markdown
 #include "markdown/embeds.rr"
 .decl at(k: symbol, x: symbol, l: number, c: number)
-at("emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "emphasis", _, _), text(n, x), line(n, l), col(n, c).
-at("strong_emphasis", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "strong_emphasis", _, _), text(n, x), line(n, l), col(n, c).
-at("code_span", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "code_span", _, _), text(n, x), line(n, l), col(n, c).
-at("link_destination", x, l, c) :- guest(g, _, _, "markdown-inline"), node(g, n, "link_destination", _, _), text(n, x), line(n, l), col(n, c).
-.decl roles(r: symbol)
-roles(r) :- guest(d, _, _, "markdown-inline"), doc_role(d, r).
-.output at, roles
+at("emphasis", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "emphasis"), text(n, x), line(n, l), col(n, c).
+at("strong_emphasis", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "strong_emphasis"), text(n, x), line(n, l), col(n, c).
+at("code_span", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "code_span"), text(n, x), line(n, l), col(n, c).
+at("link_destination", x, l, c) :- parsed(_, "markdown-inline", p), within(n, p), kind(n, "link_destination"), text(n, x), line(n, l), col(n, c).
+// A grammar named by a variable asks for nothing (`parsed(h, "markdown-inline", _)` beside `kind(h, k)` would ask
+// for every node's text): this reads the programs the file holds.
+.decl hosts(g: symbol, k: symbol)
+hosts(g, k) :- parsed(h, g, _), kind(h, k).
+.output at, hosts
 "#;
-    let [at, roles] = <[Vec<String>; 2]>::try_from(joined(guests_run("mdinline", &[("a.md", md)], rule, &["at", "roles"]))).unwrap();
+    let [at, hosts] = <[Vec<String>; 2]>::try_from(joined(guests_run("mdinline", &[("a.md", md)], rule, &["at", "hosts"]))).unwrap();
     assert_eq!(
         at,
         [
@@ -2596,7 +2606,7 @@ roles(r) :- guest(d, _, _, "markdown-inline"), doc_role(d, r).
             "strong_emphasis\t**b**\t6\t6",
         ]
     );
-    assert_eq!(roles, ["fragment"]);
+    assert_eq!(hosts, ["markdown-inline\tinline", "markdown-inline\tpipe_table_cell"], "each program stands at its inline or cell");
 }
 
 /// Tape operations (decision 0058 §4): `@parse(g, x)` makes a value document from a text (here a string's
@@ -2616,16 +2626,13 @@ back(x) :- q(_, x0), t = @parse("sql", x0), x = @unparse(t).
 fixed(x) :- q(_, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "object_reference", _, _), text(n, "users"), t2 = @parse("sql", "accounts"), t3 = @splice(t, n, t2), x = @unparse(t3).
 .decl seen(x: symbol)
 seen(x) :- kind(n, "object_reference"), text(n, x).
-.decl roles(r: symbol)
-roles(r) :- doc_role(_, r).
-.output tables, back, fixed, seen, roles
+.output tables, back, fixed, seen
 "#;
-    let [tables, back, fixed, seen, roles] = <[Vec<Vec<String>>; 5]>::try_from(guests_run("tapeops", &[("a.py", py)], rule, &["tables", "back", "fixed", "seen", "roles"])).unwrap();
+    let [tables, back, fixed, seen] = <[Vec<Vec<String>>; 4]>::try_from(guests_run("tapeops", &[("a.py", py)], rule, &["tables", "back", "fixed", "seen"])).unwrap();
     // `"SELECT name \<newline> FROM users"`: the escaped newline is gone from the text that is parsed.
     assert_eq!(back, [["SELECT name  FROM users"]]);
     assert_eq!(tables, [["users", "1"]], "a value's places are its own text's");
     assert_eq!(fixed, [["SELECT name  FROM accounts"]]);
-    assert_eq!(roles, [["primary"], ["value"]]);
     assert!(seen.is_empty(), "{seen:?}");
 }
 
@@ -2789,7 +2796,8 @@ objects(n, x) :- q(s, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "obj
 }
 
 /// A combined run's programs each see the guests their own `.guests` shows (decision 0058 §1, O97): one batch, one
-/// set of embeds, and each program's rules bounded by its own setting.
+/// set of tape values, and each program's rules bounded by its own setting. A tape value is no unscoped rule's code
+/// under either (decision 0431 §3); the rule that parses it reaches it under both.
 #[test]
 fn combined_programs_see_guests_by_their_own_policy() {
     let py = "a = \"import os\"\nb = \"import sys\"\n";
@@ -2797,11 +2805,10 @@ fn combined_programs_see_guests_by_their_own_policy() {
         format!(
             r#"
 {guests}
-embed(d, s, "python", "code") :- kind(s, "string"), docof(s, d).
 .decl top(x: symbol, l: number)
 top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
 .decl through(x: symbol)
-through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i, x).
+through(x) :- kind(s, "string"), parsed(s, "python", r), within(i, r), kind(i, "import_statement"), text(i, x).
 .output top, through
 "#
         )
@@ -2824,7 +2831,7 @@ through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i,
     let (off, on, off_through, on_through) = (read("p0_top"), read("p1_top"), read("p0_through"), read("p1_through"));
     let _ = std::fs::remove_dir_all(&dir);
     assert!(off.is_empty(), "`.guests off` hides the guests from its own rules: {off:?}");
-    assert_eq!(on, [["import os", "1"], ["import sys", "2"]], "the other program shows them");
+    assert!(on.is_empty(), "a tape value is no unscoped rule's code: {on:?}");
     assert_eq!(off_through, [["import os"], ["import sys"]], "a guest relation reaches them under `.guests off`");
     assert_eq!(on_through, off_through);
 }
@@ -2835,11 +2842,10 @@ through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i,
 fn kind_sets_over_a_guest_are_its_grammars() {
     let py = "def f(db):\n    db.execute(\"SELECT name FROM users\")\n";
     let rule = r#"
-embed(d, s, "sql", "query") :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string"), docof(s, d).
 .decl clauses(kind: symbol)
 clauses("relation"). clauses("function_definition").
 .decl enclosing(x: symbol, k: symbol)
-enclosing(x, k) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _), text(n, x), nearest(n, a, clauses), node(_, a, k, _, _).
+enclosing(x, k) :- kind(c, "call"), field(c, "arguments", l), child(l, s, _), kind(s, "string"), parsed(s, "sql", r), within(n, r), kind(n, "object_reference"), text(n, x), nearest(n, a, clauses), node(_, a, k, _, _).
 .decl outer(k: symbol)
 outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
 .output enclosing, outer
@@ -3893,11 +3899,11 @@ fn has_over_a_guest_holds_with_two_programs() {
     let text = |clause: &str, body: &str| {
         let path = dir.join(format!("{clause}.rr"));
         std::fs::write(&path, format!(
-            "embed(d, s, \"sql\", \"query\") :- kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), docof(s, d).\n.violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
+            ".violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
         )).unwrap();
         crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap()
     };
-    let has = text("has_ref", "guest(g, _, _, \"sql\"), doc_root(g, n), has(n, _, \"object_reference\")");
+    let has = text("has_ref", "kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), parsed(s, \"sql\", r), has(r, _, \"object_reference\"), n = s");
     let other = text("calls", "kind(n, \"call\")");
     let out = dir.join("out");
     let options = serde_json::json!({ "memo": "off" });
