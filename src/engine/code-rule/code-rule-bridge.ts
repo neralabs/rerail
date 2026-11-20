@@ -44,7 +44,7 @@ import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
-import { ToolCallWindows } from "./tool-call-windows.js";
+import { type EndedCalls, ToolCallWindows } from "./tool-call-windows.js";
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
@@ -479,6 +479,39 @@ function recordReadError(scan: SourceScan, source: Source): void {
   if (unreadOversize(source)) scan.unread.set(source.path, { stamp: source.stamp, readError: source.readError });
   else scan.errors.push({ path: source.path, readError: source.readError });
 }
+/**
+ * Notes each file the session folder's walk could not read, with the calls that may have written it unseen
+ * (`SourceDiscovery.missedFiles`). Whether the walk lets the other calls go: it listed every folder, so it read every
+ * file but those, and the calls it keeps for them claim only their writes (`ToolCallWindows.ranDuring`).
+ */
+function holdMissedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): boolean {
+  discovery.missedFiles = missedFiles(discovery, walk, scan);
+  if (scan.failedRoots.size > 0) return false;
+  discovery.listedEnds = walk.callsEnded;
+  return true;
+}
+/**
+ * Each file the walk could not read, with the calls it keeps: from those that ended after the last walk that listed
+ * every folder before its first miss began, up to this walk's start. A file under a folder the walk could not list is
+ * one: the walk tried no read of it. `failFolder` finds a source there only for a file the session observes, and a file
+ * the last walk missed may have none (a tool call pending on it, or a read of it that failed, leaves it unobserved), so
+ * each such file the last walk missed stays missed here with its calls.
+ */
+function missedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Map<string, EndedCalls> {
+  const missed = new Map<string, EndedCalls>();
+  for (const [path, source] of scan.sources) if (missedRead(source)) missed.set(path, missedThrough(discovery, path, walk.callsEnded));
+  for (const path of discovery.missedFiles.keys())
+    if (!missed.has(path) && underBaselineRoot(scan.failedRoots, path)) missed.set(path, missedThrough(discovery, path, walk.callsEnded));
+  return missed;
+}
+/** A file whose read failed: an error with no stamp. */
+function missedRead(source: Source): boolean {
+  return source.readError !== undefined && source.stamp === undefined;
+}
+/** The calls the file at `path` keeps as a walk that began once `through` calls had ended misses it. */
+function missedThrough(discovery: SourceDiscovery, path: string, through: number): EndedCalls {
+  return { after: discovery.missedFiles.get(path)?.after ?? discovery.listedEnds, through };
+}
 /** What a walk could not check, as a boundary reports it; undefined when it checked everything. */
 function scanErrors(errors: readonly ScanError[]): string | undefined {
   return errors.length === 0 ? undefined : errors.map(({ path, readError }) => `${path || "."}: ${readError}`).join("; ");
@@ -831,6 +864,15 @@ interface SourceDiscovery {
   readonly readUnmerged: ReturnType<typeof gitUnmergedReader>;
   /** When the session's tool calls ran: a change the session folder's walk finds is its own only when one ran then. */
   readonly toolCalls: ToolCallWindows;
+  /**
+   * Each file the session folder's last walk could not read, by path, with the calls that may have written it unseen
+   * (`holdMissedFiles`): any call from the last walk that listed every folder before the walks began to miss it, up to
+   * the last walk's start. Another program may let the file go between two walks that miss it, so each call in that
+   * time may have written it.
+   */
+  missedFiles: ReadonlyMap<string, EndedCalls>;
+  /** `ToolCallWindows.ends` as the last session folder walk that listed every folder began. */
+  listedEnds: number;
 }
 
 /**
@@ -1459,7 +1501,7 @@ export class CodeRuleBridge {
         startedAt: from.since, walkedFrom: from.since, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(from.gitSeen.heads), git, unmerged: new Map(from.gitSeen.unmerged), passedCheckouts: new Set(from.gitSeen.passedCheckouts),
-        readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
+        readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched, missedFiles: new Map(), listedEnds: 0,
         late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), listingSlots: { free: LISTINGS_AGAIN_AT_ONCE, waiting: [] },
       };
       this.#unwatched = new ToolCallWindows();
@@ -2726,8 +2768,10 @@ export class CodeRuleBridge {
     discovery.error = scanErrors(scan.errors);
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
-    // A subtree it could not read may still hold writes made since the session opened, which its next walk judges.
-    if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.callsEnded);
+    // A subtree or a file it could not read may still hold writes of the calls that ended before it: the next walk that
+    // reads them judges each by its stamp. A folder it could not list keeps every call; a file keeps those that may have
+    // written it unseen (`holdMissedFiles`), for its own writes only.
+    if (holdMissedFiles(discovery, walk, scan)) discovery.toolCalls.answered(walk.callsEnded, [...discovery.missedFiles.values()]);
     this.#listLateAgain(discovery, scan.lateListings);
   }
 
@@ -2971,12 +3015,13 @@ export class CodeRuleBridge {
   /**
    * Whether one of the session's tool calls ran as `edit`'s file was stamped or, for a file now gone, as its folder was
    * (removing an entry stamps the folder; a later change there moves the stamp on). With no stamp to go by, at some point
-   * since the walk that last saw the file began.
+   * since the walk that last saw the file began. A file the last walk could not read counts the calls kept for it too.
    */
   async #writtenByCall(discovery: SourceDiscovery, walk: WalkStart, edit: CodeRuleEdit): Promise<boolean> {
     const stamp = this.#observedSource(edit.path)?.modifiedAt ?? (edit.deleted === true ? await folderStamp(discovery.root, edit.path) : undefined);
-    if (stamp !== undefined) return discovery.toolCalls.ranDuring(stamp, stamp);
-    return discovery.toolCalls.ranDuring(walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt, walk.observedAt);
+    const held = discovery.missedFiles.get(edit.path);
+    if (stamp !== undefined) return discovery.toolCalls.ranDuring(stamp, stamp, held);
+    return discovery.toolCalls.ranDuring(walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt, walk.observedAt, held);
   }
 
   /**
@@ -3381,6 +3426,9 @@ export class CodeRuleBridge {
     const sessionId = this.#requireSession();
     const edits = await this.#recoverPreimages(discovery, captured, uncaptured);
     for (const edit of edits) {
+      // The evaluator keeps the text it held of a file it could not read, so the session keeps it too: another
+      // program's later write there is then audited for it (`#sortUnownedWrite`).
+      if (edit.readError !== undefined) continue;
       this.#forgetText(edit.path);
       if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, "edit");
     }
