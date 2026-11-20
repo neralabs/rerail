@@ -665,19 +665,32 @@ fn hash_tables_build_and_probe() {
     assert_eq!(keys.len(), 64, "{}: each slot holds a distinct key", crate::device::backend());
 }
 
+/// The grids a grid test runs at: 1, 8 and 32 groups, and the device's resident count for `f` at `lsz` threads a
+/// group (`Device::resident_groups`, R5 of decision 0468), when the device gives its cores.
+fn grid_sizes(f: &crate::device::ComputeFunction, lsz: u32) -> Vec<u32> {
+    let mut g = vec![1u32, 8, 32];
+    if let Some(r) = crate::shared::get().and_then(|s| s.device.resident_groups(lsz, f.threadgroup_bytes())) {
+        eprintln!("{}: the device holds {r} groups of {lsz} at {} bytes of threadgroup memory", crate::device::backend(), f.threadgroup_bytes());
+        if !g.contains(&(r as u32)) {
+            g.push(r as u32);
+        }
+    }
+    g
+}
+
 /// A grid's control words, zero (`ukl/grid.h`).
 fn grid_ctl() -> crate::device::Buffer {
     buffer_of(&[0u32; 3]).unwrap()
 }
 
-/// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups, each round's reads seeing every
+/// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups and the device's resident count, each round's reads seeing every
 /// group's writes before it, and no barrier failed.
 #[test]
 #[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn grid_barriers_see_every_groups_writes() {
     let Some((p, mut q)) = setup() else { return };
     let lsz = 256u32.min(crate::device::max_threadgroup());
-    for groups in [1u32, 8, 32] {
+    for groups in grid_sizes(p.function("t_grid_barrier").unwrap(), lsz) {
         let rounds = 5_000u32;
         let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
         launch(&q, p.function("t_grid_barrier").unwrap())
@@ -719,14 +732,14 @@ fn a_grid_past_residency_fails_its_barrier() {
 }
 
 /// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
-/// boundaries, at 1, 8 and 32 groups, its count read on the device.
+/// boundaries, at 1, 8 and 32 groups and the device's resident count, its count read on the device.
 #[test]
 #[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn the_grid_scan_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(41);
     let lsz = 256u32.min(crate::device::max_threadgroup());
-    for groups in [1u32, 8, 32] {
+    for groups in grid_sizes(p.function("t_grid_scan").unwrap(), lsz) {
         for n in [0u32, 1, 255, 256, 257, 8 * 256 + 3, 65_537, 1_000_000] {
             let vals: Vec<u32> = (0..n).map(|_| if n % 2 == 1 { rng.next() as u32 } else { rng.below(5) as u32 }).collect();
             // The buffers have room past the count: the scan reads `count`, not their length.
@@ -765,7 +778,7 @@ fn the_grid_segmented_scans_equal_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(43);
     let lsz = 256u32.min(crate::device::max_threadgroup());
-    for groups in [1u32, 8, 32] {
+    for groups in grid_sizes(p.function("t_grid_seg").unwrap(), lsz) {
         for n in [0u32, 1, 255, 257, 8 * 256 + 3, 65_537, 1_000_000] {
             for op in [0u32, 1] {
                 let vals: Vec<u32> = (0..n).map(|_| rng.below(1000) as u32).collect();
@@ -795,7 +808,8 @@ fn the_grid_segmented_scans_equal_the_host() {
     }
 }
 
-/// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups.
+/// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups and the device's resident count;
+/// the few rows' path (ranks over the grid) at 1 to 32 groups; and a sort told its rows' low bits are in order.
 #[test]
 #[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn the_grid_sort_is_stable_and_equals_the_host() {
@@ -804,14 +818,24 @@ fn the_grid_sort_is_stable_and_equals_the_host() {
         return;
     }
     let mut rng = Rng(47);
-    for groups in [1u32, 8, 32] {
-        for (n, bits) in [(0u32, 8u32), (1, 8), (1023, 16), (1025, 24), (70_001, 40), (1_000_000, 64)] {
-            let keys: Vec<u64> = (0..n).map(|_| rng.next() & if bits == 64 { !0 } else { (1u64 << bits) - 1 } & if rng.below(2) == 0 { 0xff } else { !0 }).collect();
+    for groups in grid_sizes(p.function("t_grid_sort").unwrap(), 256) {
+        // 4,099 keys of 64 bits that differ only in their low byte and in bit 40: two of the eight digits vary, so
+        // the sort runs two passes and moves nothing; 4,101 differ in the low byte alone: one pass, then a move to
+        // where an even count of digits leaves the rows.
+        // `low`: keys whose low bits are their index (in order already), a random part above.
+        for (n, low, bits) in [(0u32, 0u32, 8u32), (1, 0, 8), (200, 0, 64), (1023, 0, 16), (1025, 0, 24), (4099, 0, 64), (4101, 0, 64), (70_001, 0, 40), (1_000_000, 0, 64), (900, 32, 64), (70_001, 24, 40)] {
+            let narrow = |k: u64| match n {
+                4099 => 0x5a5a_0000_0000_0000 | (k & 0xff) | (k & 1 << 40),
+                4101 => 0x5a5a_0000_0000_0000 | (k & 0xff),
+                _ if low > 0 => (k << low) & if bits == 64 { !0 } else { (1u64 << bits) - 1 },
+                _ => k,
+            };
+            let keys: Vec<u64> = (0..n as u64).map(|i| if low > 0 { narrow(rng.next() & 0xffff) | i } else { narrow(rng.next() & if bits == 64 { !0 } else { (1u64 << bits) - 1 } & if rng.below(2) == 0 { 0xff } else { !0 }) }).collect();
             let tiles = n.div_ceil(1024).max(1);
             let (ctl, count, kb, vb, k2, v2) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&keys).unwrap(), alloc::<u32>(n as usize).unwrap(), alloc::<u64>(n as usize).unwrap(), alloc::<u32>(n as usize).unwrap());
-            let (hist, sums) = (alloc::<u32>(256 * tiles as usize + 1).unwrap(), alloc::<u32>(groups as usize + 1).unwrap());
+            let (hist, sums) = (alloc::<u32>(256 * tiles as usize + 1).unwrap(), alloc::<u32>(4 * groups as usize + 4).unwrap());
             launch(&q, p.function("t_grid_sort").unwrap())
-                .value("args", &TestArgs { n: n.max(1), w: groups | bits << 16 })
+                .value("args", &TestArgs { n: n.max(1), w: groups | bits << 16 | low << 24 })
                 .buffer("ctl", &ctl)
                 .buffer("count", &count)
                 .buffer("keys", &kb)

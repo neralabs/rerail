@@ -116,6 +116,7 @@ UKL_INLINE bool ukl_wq_idle(UklWorkQueue q, UKL_PRIVATE uint32_t* polls, uint32_
 {
     if (ukl_atomic_load(&q.control[2]) == 0u)
         return true;
+    ukl_poll_yield();
     return ++*polls >= limit;
 }
 
@@ -127,5 +128,8 @@ UKL_INLINE bool ukl_wq_idle_sg(UklWorkQueue q, bool got, UKL_PRIVATE uint32_t* p
         *polls = 0u;
         return false;
     }
-    return ukl_sg_broadcast(ukl_atomic_load(&q.control[2]), 0u __UKL_ARGS) == 0u || ++*polls >= limit;
+    if (ukl_sg_broadcast(ukl_atomic_load(&q.control[2]), 0u __UKL_ARGS) == 0u)
+        return true;
+    ukl_poll_yield();
+    return ++*polls >= limit;
 }
