@@ -935,7 +935,7 @@ fn only_the_compiler_reads_tier2s_states() {
     // hands the table to them), and this file, which names them.
     const ALLOWED: [&str; 4] = ["grammar.rs", "bitlex_masks.rs", "bitlex_tier2.rs", "compile_tests.rs"];
     // The engine's transducer and every crate beside it.
-    let native = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let native = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
     // The table's types and its arms (`.states` is a common name; a state row is read through
     // its type).
     let needles = [".arms", "ArmRow", "StateRow", "grammar::Act", "Act::Open", "Act::Close", "Act::Leaf"];

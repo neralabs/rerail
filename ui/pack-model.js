@@ -3,11 +3,11 @@
  * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, and the catalog's kinds
  * and order. Nothing here touches the DOM.
  */
-import { categoryLabel, isRunning } from "./derive.js";
+import { categoryLabel, isLog, isRunning } from "./derive.js";
 import { activityOf, fires, matches, ruleSections, titleOf, ui } from "./state.js";
 
 /** The Filter select of a pack page: `ui.filter` values `matches()` reads. */
-export const PAGE_FILTERS = [["all", "All rules"], ["on", "On"], ["off", "Off"], ["fired", "Has violations"]];
+export const PAGE_FILTERS = [["all", "All rules"], ["on", "On"], ["steer", "Steer"], ["log", "Log only"], ["off", "Off"], ["fired", "Has violations"]];
 /** The Sort select of a pack page: `ui.sort` values `sortPageRules` reads. */
 export const PAGE_SORTS = [["violations", "Most violations logged"], ["recent", "Most recent violations logged"], ["newest", "Newest first"], ["az", "A to Z"]];
 
@@ -43,15 +43,21 @@ export const shownRules = rules => sortPageRules(rules.filter(matches), ui.sort)
 export const runningOf = rules => rules.filter(isRunning).length;
 
 /**
- * The whole-pack switch over `rules`: how many are switched on, of how many, and its `aria-checked`. Binary: "true"
- * only when every one is on (and there is one), else "false"; the on-count chip says how many are on.
+ * The whole-pack switch over `rules`: how many are switched on, of how many, and its `aria-checked`: "true" when every
+ * one is on, "mixed" when some are, "false" when none is (or there are none).
  */
 export function packSwitch(rules) {
   const on = rules.filter(r => r.enabled).length, total = rules.length;
-  return { on, total, state: total > 0 && on === total ? "true" : "false" };
+  return { on, total, state: total > 0 && on === total ? "true" : on > 0 ? "mixed" : "false" };
 }
 
-/** What a click on the whole-pack switch sets: off turns the rest on; on turns them all off. */
+/** The counts line under a page's name: how many of `rules` steer, log only and are off ("6 steer · 15 log only"). */
+export function enforcementCounts(rules) {
+  const running = rules.filter(isRunning), log = running.filter(isLog).length, steer = running.length - log, off = rules.length - running.length;
+  return [[steer, "steer"], [log, "log only"], [off, "off"]].filter(([n]) => n > 0).map(([n, word]) => `${n.toLocaleString("en-US")} ${word}`).join(" · ");
+}
+
+/** What a click on the whole-pack switch sets: off or mixed turns the rest on; on turns them all off. */
 export const switchTurnsOn = state => state !== "true";
 
 /* ---------- the catalog ---------- */

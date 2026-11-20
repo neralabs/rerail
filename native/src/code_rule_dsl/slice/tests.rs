@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 const WS: &str = "/slice";
 
 fn pack() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python")
 }
 
 fn temp(what: &str) -> PathBuf {
@@ -414,11 +414,11 @@ const KNOWN: [(&str, &str, &str); 0] = [];
 fn pack_census() {
     use crate::code_rule_dsl::matcher::match_tree;
     use crate::code_rule_dsl::transducer::packed::{LoweredMatcher, Micro};
-    let packs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
+    let packs = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs");
     let mut names = std::fs::read_dir(&packs).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| e.path()).collect::<Vec<_>>();
     names.sort();
     // The data-layer pack, the architecture's hardest test, lives in its own worktree (read only).
-    let data_layer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Data-layer-rule-expressivity/packs/data-layer");
+    let data_layer = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../Data-layer-rule-expressivity/packs/data-layer");
     if data_layer.is_dir() {
         names.push(data_layer);
     }
@@ -1079,7 +1079,7 @@ fn files_of_one_tape_shape_keep_their_own_sources() {
 #[test]
 #[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
 fn rer131_pack_keys() {
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
+    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
     let mut documents = Vec::new();
     files(&pack.join("rules"), "json", &mut documents);
     files(&pack.join("candidates/rules"), "json", &mut documents);
@@ -1153,7 +1153,7 @@ fn rer131_pack_keys() {
 #[test]
 #[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
 fn rer131_runtime_keys() {
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
+    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
     let mut documents = Vec::new();
     files(&pack.join("rules"), "json", &mut documents);
     files(&pack.join("candidates/rules"), "json", &mut documents);
