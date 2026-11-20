@@ -42,7 +42,12 @@ describe("githubRelease", () => {
     expect(githubRelease({ name: CORE, version: "0.1.0", distTag: "latest" }, "").notes).toBe(NO_CHANGELOG_ENTRIES);
   });
 
-  it("never makes a pack's release the latest, and makes it a pre-release only when held under next, its notes the entries alone", () => {
+  it("makes core's plain version a pre-release while it is on next, and the latest release once promoted", () => {
+    expect(githubRelease({ name: CORE, version: "0.1.0", distTag: "next" }, coreChangelog)).toMatchObject({ prerelease: true, latest: false });
+    expect(githubRelease({ name: CORE, version: "0.1.0", distTag: "latest" }, coreChangelog)).toMatchObject({ prerelease: false, latest: true });
+  });
+
+  it("never makes a pack's release the latest, and makes it a pre-release while it is on next, its notes the entries alone", () => {
     expect(githubRelease({ name: PYTHON, version: "0.1.4", distTag: "latest" }, packChangelog)).toEqual({
       tag: `${PYTHON}@0.1.4`,
       title: `${PYTHON}@0.1.4`,

@@ -357,6 +357,8 @@ export interface AdapterDelivery {
 /** One rule a delivery steered (or logged) about, for the person's line and the dashboard; the coding agent never reads it. */
 export interface SteerRule {
   readonly id: string;
+  /** The rule's title, the words the person's line names it by (`steerTitle`); absent when it has none, and the id stands. */
+  readonly title?: string | undefined;
   readonly state: "steered" | "logged";
   /** Where the rule comes from (`steerOrigin`'s sentence); absent when unknown. */
   readonly origin?: string | undefined;
@@ -372,14 +374,16 @@ export interface ConflictNotice {
   readonly url?: string | undefined;
 }
 
+/** The fields of a `SteerRule` that are optional text. */
+const STEER_RULE_TEXT_FIELDS = ["title", "origin", "url"] as const;
+
 /** Whether `value`, read back from a file or a host's transcript, is a `SteerRule`. */
 export function isSteerRule(value: unknown): value is SteerRule {
   if (value === null || typeof value !== "object") return false;
   const rule = value as Partial<SteerRule>;
   return typeof rule.id === "string"
     && (rule.state === "steered" || rule.state === "logged")
-    && (rule.origin === undefined || typeof rule.origin === "string")
-    && (rule.url === undefined || typeof rule.url === "string");
+    && STEER_RULE_TEXT_FIELDS.every(field => rule[field] === undefined || typeof rule[field] === "string");
 }
 
 /** Whether `value`, read back from a file, is a `ConflictNotice`. */

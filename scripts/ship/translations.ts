@@ -1,0 +1,860 @@
+// The translation suite: for each pack with `.rerail` translations, whether each rule's translation reports the same
+// findings as its original JSON rule, rule by rule, and whether that matches what the pack declares
+// (docs/rule-syntax/packs/<pack>/equivalence.json). The decisions are translations-model.ts's; this runs the engines.
+//
+//   node --import tsx scripts/ship/translations.ts [check] (--pack <pack> | --packs a,b | --all) [--rules a,b]
+//       [--corpora <dir>] [--engine <rerail-engine>] [--out <dir>] [--jobs 8] [--timeout 3600] [--write-differences]
+//       (npm run translations:check -- …)
+//   node --import tsx scripts/ship/translations.ts pin <corpus> [--corpora <dir>]
+//
+// The original of a rule is packs/<pack>/rules/<id>.json, through the product's path (product-run.ts: the pack's rules
+// compiled together over a corpus in one production workspace). Its translation is every `.rerail` file of
+// docs/rule-syntax/packs/<pack>/ whose `.policy` line names the rule's id (a rule whose clauses span languages is one
+// policy per language; a file without a `.policy` line is a table others include), checked by `rerail-engine
+// check-rr` and run by `rerail-engine run-policies <corpus> <out> <rule.rerail>...`: every translation of the pack in
+// one run, and when that run fails, each rule's files alone (--jobs at once), a rule failing alone reported with the
+// engine's message. Findings are compared per rule as sets of (rule, path, line, code), and column where both sides
+// give one; messages are not compared. The engine reads the library translations include from this checkout's
+// docs/rule-syntax/lib (RERAIL_RR_LIB). A rule is `failed` when check-rr refuses it, a side's run fails, or its
+// original does not compile; the original's failures on single files (syntax errors, a spent work budget) are
+// recorded beside the comparison, as the product reports them and carries on.
+//
+// A tool-call rule (`sample.boundary: "tool-call"`) matches a coding agent's tool call, not files: it is compared on
+// the tool-calls corpus only: the rule's pack.json examples and every call its translation's tests make (`.tool_call`),
+// so a translation's tests are checked against the original too. Its original is matched against each call as the
+// runtime matches one (ConversationRuleRegistry, repeats not held back, as pack validation checks examples); its
+// translation runs through `run-policies --tool-calls <calls.json>`. A finding is (rule, call): the original names no
+// code, so none is compared.
+//
+// The corpora, each compared on its own:
+//   examples   pack.json's `rules[].examples` that are files, laid out as few directories as hold them;
+//   tool-calls the pack's tool-call rules' pack.json examples, each a call (translations-model.ts exampleToolCalls),
+//              and their translations' test calls (testToolCalls);
+//   fixtures   the pack's recorded upstream fixtures, <corpora>/recorded/<pack>/files, as the shippability bar's
+//              `prepare` makes them (checked against <corpora>/corpora.lock.json when it is there);
+//   <name>     each real-code corpus of scripts/ship/corpora.json for the pack: its `translations[<pack>]`, else the
+//              benchmark's `packs[<pack>]`, at <corpora>/real/<name>. A git corpus missing there is exported from this
+//              repository (its commit fetched from origin when the clone lacks it); each is checked against its pin.
+// --corpora defaults to .rerail/translations/corpora; --engine to the checkout's release `rerail-engine`.
+//
+// Writes <out>/<pack>.json (translations-model.ts PackReport; --out defaults to .rerail/translations/out) and a summary
+// on stdout. Exits 1 when a pack declaring `equivalent: true` disagrees with its run (gateProblems: a corpus not
+// compared, a run that compared none, and the original's failures other than a file's syntax errors on a same rule or
+// of no rule count too), 2 when it cannot run (a malformed equivalence.json too); a pack declaring `equivalent: false`
+// is reported only.
+// --write-differences rewrites each pack's equivalence.json `different` and `untranslated` from the run
+// (writeDifferences), creating the file (`equivalent: false`) where there is none.
+//
+// `pin <corpus>` exports a git corpus of corpora.json and writes its file count and hash there.
+
+import { spawn, spawnSync } from "node:child_process";
+import { availableParallelism } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs, type ParseArgsConfig } from "node:util";
+import { bundledModelPath, ConversationRuleRegistry, stableJsonText } from "../../src/engine/index.js";
+import { hashTree } from "./corpus-tree.js";
+import { engineJson } from "./engine-json.js";
+import { engineBinary } from "./metric.js";
+import {
+  byRule,
+  type Declaration,
+  DeclarationError,
+  emptyDeclaration,
+  EXAMPLES_CORPUS,
+  type ExampleToolCall,
+  exampleFiles,
+  exampleToolCalls,
+  testToolCalls,
+  type Finding,
+  FIXTURES_CORPUS,
+  gateProblems,
+  layOutExamples,
+  type PackReport,
+  parseDeclaration,
+  renderDeclaration,
+  renderPack,
+  type RuleInput,
+  type RuleResult,
+  ruleResult,
+  summarize,
+  TOOL_CALLS_CORPUS,
+  writeDifferences,
+} from "./translations-model.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SELF = resolve(HERE, "..", "..");
+const MANIFEST = join(HERE, "corpora.json");
+const TRANSLATIONS = join(SELF, "docs", "rule-syntax", "packs");
+/**
+ * The engine's environment: the `.rerail` library its translations include is this checkout's (RERAIL_RR_LIB), not
+ * the one the engine binary was built from.
+ */
+const ENGINE_ENV = { ...process.env, RERAIL_RR_LIB: join(SELF, "docs", "rule-syntax", "lib") };
+
+interface Manifest {
+  format: 1;
+  corpora: Record<string, ({ kind: "git"; commit: string; paths: string[] } | { kind: "samples"; pack: string; exclude: string[] }) & { files: number | null; sha256: string | null }>;
+  packs: Record<string, string>;
+  /** The translation suite's real-code corpora of a pack, where they are not the benchmark's (`packs`). */
+  translations?: Record<string, string[]>;
+}
+
+class Refusal extends Error {}
+
+function refuse(message: string): never {
+  throw new Refusal(message);
+}
+
+function readJson<T>(path: string): T {
+  return JSON.parse(readFileSync(path, "utf8")) as T;
+}
+
+function git(args: readonly string[]): { status: number; stderr: string } {
+  const result = spawnSync("git", ["-C", SELF, ...args], { encoding: "utf8", maxBuffer: 1 << 26 });
+  return { status: result.status ?? 1, stderr: (result.stderr ?? String(result.error ?? "")).trim() };
+}
+
+/**
+ * A git corpus of the manifest, exported from this repository at its commit into `destination`: the commit fetched
+ * alone from origin when the clone lacks it (a shallow CI checkout), Git LFS pointers kept as pointers so the tree is
+ * the same wherever it is made.
+ */
+function exportGitCorpus(name: string, spec: { commit: string; paths: string[] }, destination: string): void {
+  if (git(["cat-file", "-e", `${spec.commit}^{commit}`]).status !== 0) {
+    const fetched = git(["fetch", "--no-tags", "--depth=1", "origin", spec.commit]);
+    if (fetched.status !== 0) refuse(`corpus ${name}: commit ${spec.commit} is not in this clone and could not be fetched: ${fetched.stderr.split("\n").at(-1)}`);
+  }
+  rmSync(destination, { recursive: true, force: true });
+  mkdirSync(destination, { recursive: true });
+  const tar = `${destination}.tar`;
+  const archived = git(["-c", "filter.lfs.smudge=cat", "-c", "filter.lfs.process=", "-c", "filter.lfs.required=false", "-c", "core.autocrlf=false", "archive", "-o", tar, spec.commit, "--", ...spec.paths]);
+  if (archived.status !== 0) refuse(`corpus ${name}: git archive ${spec.commit}: ${archived.stderr.split("\n").at(-1)}`);
+  if (spawnSync("tar", ["-xf", tar, "-C", destination]).status !== 0) refuse(`corpus ${name}: could not extract ${tar}`);
+  rmSync(tar);
+}
+
+// ---------------------------------------------------------------- running a side
+
+interface Spawned {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
+function spawnAsync(command: string, args: readonly string[], options: { cwd: string; env?: NodeJS.ProcessEnv; timeoutS: number }): Promise<Spawned> {
+  const { promise, resolve: done } = Promise.withResolvers<Spawned>();
+  const child = spawn(command, args, { cwd: options.cwd, env: options.env ?? process.env, stdio: ["ignore", "pipe", "pipe"] });
+  const out: Buffer[] = [];
+  const err: Buffer[] = [];
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, options.timeoutS * 1000);
+  child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
+  child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
+  child.on("error", (error) => err.push(Buffer.from(String(error))));
+  child.on("close", (status) => {
+    clearTimeout(timer);
+    done({ status, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), timedOut });
+  });
+  return promise;
+}
+
+/** What a failed process said: its stderr less the engine's timing lines, or its exit. */
+function failureText(run: Spawned, timeoutS: number): string {
+  if (run.timedOut) return `timed out after ${timeoutS} s`;
+  const lines = run.stderr.split("\n").map((line) => line.trim()).filter((line) => line !== "" && !/^(after the run|before the command)\b/.test(line) && !/^shipbar: phase /.test(line));
+  // Paths in this checkout as the repository names them, so a message reads the same on every machine.
+  return `${lines.slice(-4).join(" | ").replaceAll(`${SELF}/`, "").slice(0, 600) || "no message"} (exit ${run.status ?? "signal"})`;
+}
+
+/** One side's findings on one corpus directory, and the rules it failed, each with why. */
+interface SideRun {
+  findings: Finding[];
+  /** Rules the run leaves without findings to compare (its process failed, the rule does not compile). */
+  failures: Map<string, string>;
+  /** The original's failures on some files of a rule it ran (the product reports them and carries on). */
+  incidents: Map<string, string[]>;
+  /** What the run says that is no rule's (the original's failures without a rule; findings of no known policy). */
+  notes: string[];
+  /** The original's failures attributed to no rule (`code: message`). */
+  unattributed: string[];
+}
+
+/** The translation side's run: no failures on single files, none of no rule. */
+type TranslationSide = Omit<SideRun, "incidents" | "unattributed">;
+
+/** product-run.ts's output: each finding as [rule, path, line, code, column], rules that did not compile, failures on files. */
+interface ProductRun {
+  findings: [string, string, number, string, number?][];
+  compileErrors: { rule: string; error: string }[];
+  failures: { rule: string; code: string; message: string }[];
+}
+
+/** The original's failures on files, by the rule they are of, and those of no rule; each as `code: message`. */
+function originalFailures(failures: ProductRun["failures"]): { incidents: Map<string, string[]>; unattributed: string[] } {
+  const incidents = new Map<string, string[]>();
+  const unattributed: string[] = [];
+  for (const f of failures) {
+    const text = `${f.code}: ${f.message}`;
+    if (f.rule === "") {
+      unattributed.push(text);
+      continue;
+    }
+    const list = incidents.get(f.rule) ?? [];
+    list.push(text);
+    incidents.set(f.rule, list);
+  }
+  return { incidents, unattributed };
+}
+
+/** The original side of a product-run.ts output: its findings, the rules that do not compile, its failures on files. */
+function originalSide(output: ProductRun): SideRun {
+  const failures = new Map(output.compileErrors.map((e) => [e.rule, `the original does not compile: ${e.error}`]));
+  const { incidents, unattributed } = originalFailures(output.failures);
+  const notes = unattributed.length === 0 ? [] : [`the original's run had ${unattributed.length} failure(s) of no rule; the first: ${unattributed[0]}`];
+  const findings = output.findings.map(([rule, path, line, code, column]): Finding => ({ rule, path, line, code, ...(column === undefined || column === 0 ? {} : { column }) }));
+  return { findings, failures, incidents, notes, unattributed };
+}
+
+/** The original side: the rules' JSON documents in `rulesDir`, through product-run.ts. */
+async function runOriginal(dir: string, rulesDir: string, work: string, ruleIds: readonly string[], timeoutS: number): Promise<SideRun> {
+  const result = join(work, "original.json");
+  const tmp = join(work, "original.tmp");
+  mkdirSync(tmp, { recursive: true });
+  const run = await spawnAsync("node", ["--import", "tsx", join(HERE, "product-run.ts"), SELF, dir, result, rulesDir], { cwd: SELF, env: { ...process.env, SHIPBAR_ENGINE_TMPDIR: tmp }, timeoutS });
+  rmSync(tmp, { recursive: true, force: true });
+  if (run.status !== 0 || !existsSync(result)) {
+    const why = `the original's run failed: ${failureText(run, timeoutS)}`;
+    return { findings: [], failures: new Map(ruleIds.map((rule) => [rule, why])), incidents: new Map(), notes: [], unattributed: [] };
+  }
+  const output = readJson<ProductRun>(result);
+  rmSync(result);
+  return originalSide(output);
+}
+
+const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/**
+ * The runtime's matcher holding the tool-call rules' JSON documents, each that does not load a failure; undefined
+ * when the matcher itself does not load (every rule a failure).
+ */
+function loadCallRules(pack: string, rules: readonly string[], failures: Map<string, string>): ConversationRuleRegistry | undefined {
+  let registry: ConversationRuleRegistry;
+  try {
+    registry = new ConversationRuleRegistry({ modelPath: bundledModelPath() });
+  } catch (error) {
+    for (const rule of rules) failures.set(rule, `the conversation engine does not load: ${message(error)}`);
+    return undefined;
+  }
+  for (const rule of rules) {
+    try {
+      registry.upsert(readJson(join(SELF, "packs", pack, "rules", `${rule}.json`)));
+    } catch (error) {
+      failures.set(rule, `the original does not compile: ${message(error)}`);
+    }
+  }
+  return registry;
+}
+
+/** The rules a call fires, as the runtime samples a call (its input as stable JSON), repeats not held back: each a finding at the call. */
+function callMatches(registry: ConversationRuleRegistry, call: ExampleToolCall): Finding[] {
+  const input = stableJsonText(call.input)!;
+  const matches = registry.match({ source: `tool:${call.tool}`, boundary: "tool-call", text: input, input }, { respectRepeat: false });
+  return matches.map((m): Finding => ({ rule: m.ruleId, path: call.id, line: 0, code: "" }));
+}
+
+/** The original side on tool calls: the tool-call rules' JSON documents matched against each call by the product's matcher. */
+function runOriginalCalls(pack: string, calls: readonly ExampleToolCall[], rules: readonly string[]): SideRun {
+  const failures = new Map<string, string>();
+  const registry = loadCallRules(pack, rules, failures);
+  const findings = registry === undefined ? [] : calls.flatMap((call) => callMatches(registry, call));
+  return { findings, failures, incidents: new Map(), notes: [], unattributed: [] };
+}
+
+/** A run-policies diagnostic as a finding; on tool calls, at its call (`at`), with no line or code, as the original's. */
+function diagnosticFinding(d: { policy: string; path: string; line: number; code: string; column?: unknown; at?: unknown }, onCalls: boolean): Finding {
+  if (onCalls) return { rule: d.policy, path: String(d.at), line: 0, code: "" };
+  return { rule: d.policy, path: d.path, line: d.line, code: d.code, ...(typeof d.column === "number" && d.column > 0 ? { column: d.column } : {}) };
+}
+
+/** A run-policies document's findings, each mapped to its rule by its policy's name; on tool calls, each at its call. */
+function translationFindings(stdout: string, policies: ReadonlySet<string>, notes: string[], onCalls: boolean): Finding[] {
+  const report = engineJson<{ diagnostics: { policy: string; path: string; line: number; code: string; column?: unknown; at?: unknown }[] }>(stdout);
+  const findings: Finding[] = [];
+  let unknown = 0;
+  for (const d of report.diagnostics) {
+    if (!policies.has(d.policy)) unknown += 1;
+    else findings.push(diagnosticFinding(d, onCalls));
+  }
+  if (unknown > 0) notes.push(`the translations' run reported ${unknown} finding(s) of a policy that names no rule of the pack`);
+  return findings;
+}
+
+/**
+ * The translation side: every rule's `.rerail` files in one run, else each rule's alone, `jobs` at once; with `calls`
+ * (a tool calls file), over those calls (`dir` an empty root).
+ */
+async function runTranslations(engine: string, dir: string, rules: ReadonlyMap<string, readonly string[]>, work: string, jobs: number, timeoutS: number, calls?: string): Promise<TranslationSide> {
+  const notes: string[] = [];
+  const failures = new Map<string, string>();
+  if (rules.size === 0) return { findings: [], failures, notes };
+  const policies = new Set(rules.keys());
+  const attempt = async (paths: readonly string[], out: string): Promise<{ findings: Finding[] } | { failure: string }> => {
+    // Each run its own store, removed with its output: the default store, one per working directory, would hold every
+    // pack's tapes and memo entries across runs until its hard limit refused new ones.
+    const store = `${out}.store`;
+    mkdirSync(store, { recursive: true });
+    const input = calls === undefined ? [dir] : ["--tool-calls", calls, dir];
+    const run = await spawnAsync(engine, ["run-policies", ...input, out, ...paths], { cwd: SELF, env: { ...ENGINE_ENV, RERAIL_TAPE_CACHE: join(store, "store.sqlite") }, timeoutS });
+    rmSync(out, { recursive: true, force: true });
+    rmSync(store, { recursive: true, force: true });
+    if (run.status !== 0) return { failure: failureText(run, timeoutS) };
+    try {
+      return { findings: translationFindings(run.stdout, policies, notes, calls !== undefined) };
+    } catch (error) {
+      return { failure: `run-policies wrote no report: ${message(error)}` };
+    }
+  };
+  const together = await attempt([...rules.values()].flat(), join(work, "together"));
+  if ("findings" in together) return { findings: together.findings, failures, notes };
+  notes.push(`the translations' run of all ${rules.size} rules failed (${together.failure}); each rule ran alone`);
+  const queue = [...rules.keys()];
+  const findings: Finding[] = [];
+  const worker = async (): Promise<void> => {
+    for (let rule = queue.shift(); rule !== undefined; rule = queue.shift()) {
+      const alone = await attempt(rules.get(rule)!, join(work, `alone-${rule}`));
+      if ("findings" in alone) findings.push(...alone.findings.filter((f) => f.rule === rule));
+      else failures.set(rule, `the translation failed: ${alone.failure}`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, jobs) }, worker));
+  return { findings, failures, notes };
+}
+
+// ---------------------------------------------------------------- a pack
+
+interface Options {
+  corpora: string;
+  engine: string;
+  out: string;
+  jobs: number;
+  timeoutS: number;
+  rules: string[] | undefined;
+  writeDifferences: boolean;
+}
+
+/** A corpus to compare on: its directories (several for examples that cannot share one), each finding's path prefix. */
+interface Corpus {
+  name: string;
+  dirs: { dir: string; prefix: string }[];
+  files: number;
+}
+
+/** The packs with translations: each packs/<id>/ with a pack.json whose docs/rule-syntax/packs/<id>/ has `.rerail` files or an equivalence.json. */
+function translatedPacks(): { packs: string[]; notPacks: string[] } {
+  const packs: string[] = [];
+  const notPacks: string[] = [];
+  for (const entry of readdirSync(TRANSLATIONS, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !readdirSync(join(TRANSLATIONS, entry.name)).some((name) => name.endsWith(".rerail") || name === "equivalence.json")) continue;
+    (existsSync(join(SELF, "packs", entry.name, "pack.json")) ? packs : notPacks).push(entry.name);
+  }
+  return { packs: packs.sort(), notPacks: notPacks.sort() };
+}
+
+/** Each policy's `.rerail` files of a pack's translations directory, by the name its `.policy` line gives. */
+function policyFiles(pack: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const dir = join(TRANSLATIONS, pack);
+  if (!existsSync(dir)) return out;
+  for (const name of readdirSync(dir).filter((n) => n.endsWith(".rerail")).sort()) {
+    const policy = /^\.policy\s+"([^"]+)"/m.exec(readFileSync(join(dir, name), "utf8"))?.[1];
+    if (policy === undefined) continue;
+    const list = out.get(policy) ?? [];
+    list.push(join(dir, name));
+    out.set(policy, list);
+  }
+  return out;
+}
+
+/** check-rr's refusal of each rule some file of which it does not pass. */
+function checkRr(engine: string, rules: ReadonlyMap<string, readonly string[]>, work: string): Map<string, string> {
+  const refused = new Map<string, string>();
+  const paths = [...rules.values()].flat();
+  if (paths.length === 0) return refused;
+  const store = join(work, "check-rr.store");
+  mkdirSync(store, { recursive: true });
+  const checked = spawnSync(engine, ["check-rr", ...paths], { cwd: SELF, env: { ...ENGINE_ENV, RERAIL_TAPE_CACHE: join(store, "store.sqlite") }, encoding: "utf8", maxBuffer: 1 << 28 });
+  rmSync(store, { recursive: true, force: true });
+  let rows: { path: string; status: string; error?: string }[];
+  try {
+    rows = engineJson(checked.stdout ?? "");
+  } catch {
+    const why = `check-rr gave no report: ${(checked.stderr ?? String(checked.error ?? "")).trim().split("\n").at(-1)}`;
+    for (const rule of rules.keys()) refused.set(rule, why);
+    return refused;
+  }
+  const byPath = new Map(rows.map((row) => [resolve(SELF, row.path), row]));
+  for (const [rule, files] of rules) {
+    const problems = files.flatMap((file) => {
+      const row = byPath.get(resolve(file));
+      const name = file.slice(file.lastIndexOf("/") + 1);
+      if (row === undefined) return [`check-rr did not report ${name}`];
+      return row.status === "reader-passed" ? [] : [`check-rr ${row.status} ${name}: ${(row.error ?? "").replaceAll(`${SELF}/`, "")}`];
+    });
+    if (problems.length > 0) refused.set(rule, problems.join("; "));
+  }
+  return refused;
+}
+
+/** A corpus of the manifest, refused when it names none or the corpus is not pinned (file count and hash). */
+function pinnedCorpus(manifest: Manifest, name: string): Manifest["corpora"][string] {
+  const spec = manifest.corpora[name];
+  if (spec === undefined) refuse(`scripts/ship/corpora.json names no corpus ${name}`);
+  if (spec.sha256 === null || spec.files === null) refuse(`corpus ${name} is not pinned in scripts/ship/corpora.json: run \`translations.ts pin ${name}\``);
+  return spec;
+}
+
+/** A real-code corpus at <corpora>/real/<name>, exported first when it is a git corpus not there yet, checked against its pin. */
+function realCorpus(manifest: Manifest, name: string, corpora: string): { dir: string; files: number } | { missing: string } {
+  const spec = pinnedCorpus(manifest, name);
+  const dir = join(corpora, "real", name);
+  if (!existsSync(dir)) {
+    if (spec.kind !== "git") return { missing: `${dir} is not prepared: run \`npm run bench:ship -- prepare\` with --corpora ${corpora}` };
+    console.log(`translations: exporting corpus ${name} (${spec.commit.slice(0, 10)}) into ${dir}`);
+    exportGitCorpus(name, spec, dir);
+  }
+  const now = hashTree(dir);
+  if (now.sha256 !== spec.sha256 || now.files !== spec.files) refuse(`corpus ${dir} is ${now.files} files, ${now.sha256}; corpora.json pins ${spec.files} files, ${spec.sha256}`);
+  return { dir, files: now.files };
+}
+
+/** The corpora a pack is compared on, and why any it should have is not compared. */
+interface PackCorpora {
+  corpora: Corpus[];
+  incomplete: Record<string, string>;
+}
+
+/** The pack's examples that are files, written out as few directories as hold them: the examples corpus; `callRules`' examples are calls, not files. */
+function addExamplesCorpus(found: PackCorpora, pack: string, work: string, notes: string[], callRules: ReadonlyMap<string, string>): void {
+  const packJson = readJson<Parameters<typeof exampleFiles>[0]>(join(SELF, "packs", pack, "pack.json"));
+  const examples = exampleFiles({ rules: (packJson.rules ?? []).filter((rule) => !callRules.has(rule.id)) });
+  for (const skipped of examples.skipped) notes.push(`example not compared: ${skipped}`);
+  const bins = layOutExamples(examples.files);
+  if (bins.length === 0) {
+    notes.push("the pack's examples hold no file");
+    return;
+  }
+  const dirs = bins.map((bin, i) => {
+    const dir = join(work, "examples", String(i + 1));
+    for (const [path, text] of bin) {
+      mkdirSync(dirname(join(dir, path)), { recursive: true });
+      writeFileSync(join(dir, path), text);
+    }
+    return { dir, prefix: bins.length === 1 ? "" : `${i + 1}/` };
+  });
+  found.corpora.push({ name: EXAMPLES_CORPUS, dirs, files: bins.reduce((n, bin) => n + bin.size, 0) });
+}
+
+/** The fixtures corpus checked against corpora.lock.json's hash of it, a note when the lock records none. */
+function checkFixturesLock(pack: string, corpora: string, dir: string, sha256: string, notes: string[]): void {
+  const lockPath = join(corpora, "corpora.lock.json");
+  const locked = existsSync(lockPath) ? readJson<{ fixtures?: Record<string, { sha256?: string }> }>(lockPath).fixtures?.[pack] : undefined;
+  if (locked?.sha256 === undefined) notes.push(`fixtures corpus not checked: ${lockPath} records none of ${pack}`);
+  else if (locked.sha256 !== sha256) refuse(`${dir} changed since the benchmark prepared it (corpora.lock.json)`);
+}
+
+/** The pack's recorded upstream fixtures, when it has a recording: the fixtures corpus, or why it is not compared. */
+function addFixturesCorpus(found: PackCorpora, pack: string, corpora: string, notes: string[]): void {
+  if (!existsSync(join(SELF, "packs", pack, "conformance.json"))) {
+    notes.push("no fixtures corpus: the pack has no upstream recording (no conformance.json)");
+    return;
+  }
+  const dir = join(corpora, "recorded", pack, "files");
+  if (!existsSync(dir)) {
+    found.incomplete[FIXTURES_CORPUS] = `${dir} is not prepared: run \`npm run bench:ship -- prepare\` with --corpora ${corpora}`;
+    return;
+  }
+  const tree = hashTree(dir);
+  checkFixturesLock(pack, corpora, dir, tree.sha256, notes);
+  found.corpora.push({ name: FIXTURES_CORPUS, dirs: [{ dir, prefix: "" }], files: tree.files });
+}
+
+/** The pack's real-code corpora of scripts/ship/corpora.json, or why each is not compared. */
+function addRealCorpora(found: PackCorpora, pack: string, corpora: string, notes: string[]): void {
+  const manifest = readJson<Manifest>(MANIFEST);
+  const names = manifest.translations?.[pack] ?? (manifest.packs[pack] === undefined ? [] : [manifest.packs[pack]!]);
+  if (names.length === 0) notes.push("no real-code corpus: scripts/ship/corpora.json names none for the pack");
+  for (const name of names) {
+    const real = realCorpus(manifest, name, corpora);
+    if ("missing" in real) found.incomplete[name] = real.missing;
+    else found.corpora.push({ name, dirs: [{ dir: real.dir, prefix: "" }], files: real.files });
+  }
+}
+
+/** The pack's corpora of files (its examples, its fixtures, its real code), and why any it should have is not compared. */
+function packCorpora(pack: string, o: Options, work: string, notes: string[], callRules: ReadonlyMap<string, string>): PackCorpora {
+  const found: PackCorpora = { corpora: [], incomplete: {} };
+  addExamplesCorpus(found, pack, work, notes, callRules);
+  addFixturesCorpus(found, pack, o.corpora, notes);
+  addRealCorpora(found, pack, o.corpora, notes);
+  return found;
+}
+
+/** The rules --rules names, each refused unless the pack ships it; every rule of the pack without --rules. */
+function chosenRules(pack: string, shipped: readonly string[], rules: readonly string[] | undefined): string[] {
+  const unknown = (rules ?? []).filter((rule) => !shipped.includes(rule));
+  if (unknown.length > 0) refuse(`pack ${pack} has no rule ${unknown.join(", ")}`);
+  return shipped.filter((rule) => rules === undefined || rules.includes(rule));
+}
+
+/** The pack's declaration, or an empty one (`equivalent: false`) where it has none; one that is not a declaration refuses the run. */
+function readDeclaration(pack: string, path: string): Declaration {
+  if (!existsSync(path)) return emptyDeclaration(pack);
+  try {
+    return parseDeclaration(readFileSync(path, "utf8"), pack);
+  } catch (error) {
+    if (error instanceof DeclarationError) refuse(error.message);
+    throw error;
+  }
+}
+
+/** Each chosen rule's translation files; a translation naming no rule of the pack is a note. */
+function translatedRules(pack: string, shipped: readonly string[], ruleIds: readonly string[], notes: string[]): Map<string, string[]> {
+  const files = policyFiles(pack);
+  for (const [policy, paths] of files) if (!shipped.includes(policy)) notes.push(`translation of no rule of the pack: .policy "${policy}" (${paths.map((f) => f.slice(f.lastIndexOf("/") + 1)).join(", ")})`);
+  return new Map(ruleIds.flatMap((rule) => (files.has(rule) ? [[rule, files.get(rule)!] as const] : [])));
+}
+
+/** The chosen rules' JSON documents copied into `<work>/rules`, the directory product-run.ts compiles; that directory. */
+function writeOriginals(pack: string, ruleIds: readonly string[], work: string): string {
+  const rulesDir = join(work, "rules");
+  mkdirSync(rulesDir);
+  for (const rule of ruleIds) writeFileSync(join(rulesDir, `${rule}.json`), readFileSync(join(SELF, "packs", pack, "rules", `${rule}.json`)));
+  return rulesDir;
+}
+
+/** A pack's run under way: where it works, the rules its originals run, the translations that run, and its notes. */
+interface PackRun {
+  pack: string;
+  o: Options;
+  work: string;
+  rulesDir: string;
+  ruleIds: readonly string[];
+  runnable: ReadonlyMap<string, readonly string[]>;
+  notes: string[];
+}
+
+/**
+ * Both sides' runs of one corpus, its directories together: findings with their directory's prefix, the first failure
+ * leaving each rule without findings, the original's failures on files by rule, and those of no rule.
+ */
+interface CorpusRun {
+  original: Finding[];
+  translation: Finding[];
+  failures: Map<string, string>;
+  incidents: Map<string, string[]>;
+  unattributed: string[];
+}
+
+/** Both sides run on one directory of a corpus (the `i`th). */
+function runDirectory(run: PackRun, corpus: Corpus, i: number, dir: string): Promise<[SideRun, TranslationSide]> {
+  const runWork = join(run.work, "runs", `${corpus.name}-${i + 1}`);
+  mkdirSync(runWork, { recursive: true });
+  const part = corpus.dirs.length > 1 ? ` (${i + 1}/${corpus.dirs.length})` : "";
+  console.log(`translations: ${run.pack} on ${corpus.name}${part}: ${run.ruleIds.length} originals, ${run.runnable.size} translations`);
+  return Promise.all([runOriginal(dir, run.rulesDir, runWork, run.ruleIds, run.o.timeoutS), runTranslations(run.o.engine, dir, run.runnable, runWork, run.o.jobs, run.o.timeoutS)]);
+}
+
+/** One directory's runs added to its corpus's, the findings under the directory's prefix; a rule's first failure stands. */
+function addDirectoryRun(out: CorpusRun, original: SideRun, translation: TranslationSide, prefix: string): void {
+  for (const [rule, why] of [...original.failures, ...translation.failures]) if (!out.failures.has(rule)) out.failures.set(rule, why);
+  for (const [rule, list] of original.incidents) out.incidents.set(rule, [...(out.incidents.get(rule) ?? []), ...list]);
+  out.unattributed.push(...original.unattributed);
+  out.original.push(...original.findings.map((f) => ({ ...f, path: prefix + f.path })));
+  out.translation.push(...translation.findings.map((f) => ({ ...f, path: prefix + f.path })));
+}
+
+/** Both sides run on each directory of a corpus; their notes go to the pack's, under the corpus's name. */
+async function runCorpus(run: PackRun, corpus: Corpus): Promise<CorpusRun> {
+  const out: CorpusRun = { original: [], translation: [], failures: new Map(), incidents: new Map(), unattributed: [] };
+  for (const [i, { dir, prefix }] of corpus.dirs.entries()) {
+    const [original, translation] = await runDirectory(run, corpus, i, dir);
+    addDirectoryRun(out, original, translation, prefix);
+    for (const note of [...original.notes, ...translation.notes]) run.notes.push(`${corpus.name}: ${note}`);
+  }
+  return out;
+}
+
+/** Each runnable rule's findings on a corpus (with the original's failures on its files), or the failure that leaves it without, into its input. */
+function addCorpusInputs(inputs: ReadonlyMap<string, RuleInput>, runnable: ReadonlyMap<string, readonly string[]>, corpus: string, run: CorpusRun): void {
+  const originalBy = byRule(run.original);
+  const translationBy = byRule(run.translation);
+  for (const rule of runnable.keys()) {
+    const why = run.failures.get(rule);
+    const incidents = run.incidents.get(rule);
+    const compared = { original: originalBy.get(rule) ?? [], translation: translationBy.get(rule) ?? [], ...(incidents === undefined ? {} : { originalFailures: incidents }) };
+    inputs.get(rule)!.corpora[corpus] = why === undefined ? compared : { failure: why };
+  }
+}
+
+/** The pack's tool-call rules (`sample.boundary: "tool-call"`), each with its `sample.source`: they match a coding agent's calls, not files. */
+function toolCallRules(pack: string, ruleIds: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const rule of ruleIds) {
+    const sample = readJson<{ sample?: { source?: string; boundary?: string } }>(join(SELF, "packs", pack, "rules", `${rule}.json`)).sample;
+    if (sample?.boundary === "tool-call" && sample.source !== undefined) out.set(rule, sample.source);
+  }
+  return out;
+}
+
+/** Every call the tool-call rules' translations test with (their `.tool_call` lines), so both sides run on each. */
+function translationTestCalls(sources: ReadonlyMap<string, string>, runnable: ReadonlyMap<string, readonly string[]>): { calls: ExampleToolCall[]; skipped: string[] } {
+  const out: { calls: ExampleToolCall[]; skipped: string[] } = { calls: [], skipped: [] };
+  for (const rule of sources.keys()) {
+    for (const path of runnable.get(rule) ?? []) {
+      const found = testToolCalls(rule, basename(path), readFileSync(path, "utf8"));
+      out.calls.push(...found.calls);
+      out.skipped.push(...found.skipped);
+    }
+  }
+  return out;
+}
+
+/**
+ * The tool-call rules compared on their examples and their translations' test calls, into their inputs: the originals through the runtime's
+ * matcher, the translations through `run-policies --tool-calls`; the corpus compared.
+ */
+async function runToolCalls(run: PackRun, sources: ReadonlyMap<string, string>, runnable: ReadonlyMap<string, readonly string[]>, inputs: ReadonlyMap<string, RuleInput>): Promise<Corpus> {
+  const examples = exampleToolCalls(readJson(join(SELF, "packs", run.pack, "pack.json")), sources);
+  const tests = translationTestCalls(sources, runnable);
+  for (const s of examples.skipped) run.notes.push(`example not compared: ${s}`);
+  for (const s of tests.skipped) run.notes.push(`test call not compared: ${s}`);
+  const calls = [...examples.calls, ...tests.calls];
+  const runWork = join(run.work, "runs", TOOL_CALLS_CORPUS);
+  const root = join(runWork, "root");
+  mkdirSync(root, { recursive: true });
+  const callsPath = join(runWork, "calls.json");
+  writeFileSync(callsPath, `${JSON.stringify(calls, null, 1)}\n`);
+  console.log(`translations: ${run.pack} on ${TOOL_CALLS_CORPUS}: ${calls.length} calls, ${sources.size} originals, ${runnable.size} translations`);
+  const original = runOriginalCalls(run.pack, calls, [...sources.keys()]);
+  const translation = await runTranslations(run.o.engine, root, runnable, runWork, run.o.jobs, run.o.timeoutS, callsPath);
+  const out: CorpusRun = { original: [], translation: [], failures: new Map(), incidents: new Map(), unattributed: [] };
+  addDirectoryRun(out, original, translation, "");
+  for (const note of [...original.notes, ...translation.notes]) run.notes.push(`${TOOL_CALLS_CORPUS}: ${note}`);
+  addCorpusInputs(inputs, runnable, TOOL_CALLS_CORPUS, out);
+  return { name: TOOL_CALLS_CORPUS, dirs: [{ dir: callsPath, prefix: "" }], files: calls.length };
+}
+
+/** What a pack's run gives: its corpora, the names of those compared, each rule's result, the original's failures of no rule per corpus. */
+interface PackOutcome extends PackCorpora {
+  ran: string[];
+  results: RuleResult[];
+  unattributed: Record<string, string[]>;
+}
+
+/** The pack's translations checked by check-rr, its corpora gathered, and each chosen rule run on each and compared. */
+async function runPack(pack: string, o: Options, work: string, shipped: readonly string[], ruleIds: readonly string[], notes: string[]): Promise<PackOutcome> {
+  const translated = translatedRules(pack, shipped, ruleIds, notes);
+  const refused = checkRr(o.engine, translated, work);
+  const runnable = new Map([...translated].filter(([rule]) => !refused.has(rule)));
+  // A tool-call rule matches a coding agent's calls, not files: it runs on the tool-calls corpus alone.
+  const sources = toolCallRules(pack, ruleIds);
+  const codeIds = ruleIds.filter((rule) => !sources.has(rule));
+  const runnableCode = new Map([...runnable].filter(([rule]) => !sources.has(rule)));
+  const runnableCalls = new Map([...runnable].filter(([rule]) => sources.has(rule)));
+  const run: PackRun = { pack, o, work, rulesDir: writeOriginals(pack, codeIds, work), ruleIds: codeIds, runnable: runnableCode, notes };
+  const { corpora, incomplete } = packCorpora(pack, o, work, notes, sources);
+  const inputs = new Map<string, RuleInput>(ruleIds.map((rule) => {
+    const refusal = refused.get(rule);
+    return [rule, { rule, translation: translated.get(rule)?.join(", "), ...(refusal === undefined ? {} : { refused: refusal }), corpora: {} }];
+  }));
+  const unattributed: Record<string, string[]> = {};
+  for (const corpus of corpora) {
+    const corpusRun = await runCorpus(run, corpus);
+    addCorpusInputs(inputs, runnableCode, corpus.name, corpusRun);
+    unattributed[corpus.name] = corpusRun.unattributed;
+  }
+  if (runnableCalls.size > 0) corpora.push(await runToolCalls(run, sources, runnableCalls, inputs));
+  return { corpora, incomplete, ran: corpora.map((c) => c.name), results: ruleIds.map((rule) => ruleResult(inputs.get(rule)!)), unattributed };
+}
+
+/** The gate's problems of a pack's run; in a pack that gates, each corpus not compared too. */
+function packProblems(declaration: Declaration, outcome: PackOutcome, shipped: readonly string[]): string[] {
+  const problems = gateProblems(declaration, outcome.results, outcome.ran, shipped, outcome.unattributed);
+  if (declaration.equivalent) for (const [corpus, why] of Object.entries(outcome.incomplete)) problems.push(`not compared on ${corpus}: ${why}`);
+  return problems;
+}
+
+/** One pack: its chosen rules run on its corpora both ways, compared, and checked against its declaration; its report written to --out. */
+async function checkPack(pack: string, o: Options): Promise<PackReport> {
+  const started = performance.now();
+  const shipped = readdirSync(join(SELF, "packs", pack, "rules")).filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -".json".length)).sort();
+  const ruleIds = chosenRules(pack, shipped, o.rules);
+  const declarationPath = join(TRANSLATIONS, pack, "equivalence.json");
+  const declaration = readDeclaration(pack, declarationPath);
+  const notes: string[] = [];
+  if (!existsSync(declarationPath)) notes.push(`${declarationPath} is missing: read as equivalent: false`);
+
+  const work = join(o.out, "work", pack);
+  rmSync(work, { recursive: true, force: true });
+  mkdirSync(work, { recursive: true });
+  const outcome = await runPack(pack, o, work, shipped, ruleIds, notes);
+  const problems = packProblems(declaration, outcome, shipped);
+  if (o.writeDifferences) {
+    writeFileSync(declarationPath, renderDeclaration(writeDifferences(declaration, outcome.results, outcome.ran, outcome.incomplete)));
+    console.log(`translations: wrote ${declarationPath}`);
+  }
+  const report: PackReport = {
+    pack,
+    equivalent: declaration.equivalent,
+    corpora: outcome.corpora.map((c) => ({ name: c.name, dir: c.dirs.map((d) => d.dir).join(", "), files: c.files })),
+    incomplete: outcome.incomplete,
+    notes,
+    summary: summarize(outcome.results),
+    rules: outcome.results,
+    problems,
+    failed: declaration.equivalent && problems.length > 0,
+  };
+  writeFileSync(join(o.out, `${pack}.json`), `${JSON.stringify({ ...report, seconds: Math.round((performance.now() - started) / 1000) }, null, 1)}\n`);
+  rmSync(work, { recursive: true, force: true });
+  return report;
+}
+
+// ---------------------------------------------------------------- commands
+
+function pin(name: string, corpora: string): void {
+  const manifest = readJson<Manifest>(MANIFEST);
+  const spec = manifest.corpora[name];
+  if (spec === undefined) refuse(`scripts/ship/corpora.json names no corpus ${name}`);
+  if (spec.kind !== "git") refuse(`corpus ${name} is not a git corpus; the benchmark's prepare --record pins it`);
+  const dir = join(corpora, "real", name);
+  exportGitCorpus(name, spec, dir);
+  const tree = hashTree(dir);
+  spec.files = tree.files;
+  spec.sha256 = tree.sha256;
+  writeFileSync(MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);
+  console.log(`translations: pinned ${name}: ${tree.files} files, ${tree.sha256}`);
+}
+
+/** The command line parseArgs reads: options as Values holds them, then the command and its arguments. */
+const ARGUMENTS = {
+  allowPositionals: true,
+  options: {
+    pack: { type: "string" },
+    packs: { type: "string" },
+    all: { type: "boolean", default: false },
+    rules: { type: "string" },
+    corpora: { type: "string" },
+    engine: { type: "string" },
+    out: { type: "string" },
+    jobs: { type: "string" },
+    timeout: { type: "string" },
+    "write-differences": { type: "boolean", default: false },
+  },
+} satisfies ParseArgsConfig;
+
+/** The command line's options (ARGUMENTS). */
+interface Values {
+  pack?: string;
+  packs?: string;
+  all: boolean;
+  rules?: string;
+  corpora?: string;
+  engine?: string;
+  out?: string;
+  jobs?: string;
+  timeout?: string;
+  "write-differences": boolean;
+}
+
+/** `pin <corpus>`. */
+function pinCommand(rest: readonly string[], corpora: string): number {
+  if (rest.length !== 1) refuse("usage: translations.ts pin <corpus> [--corpora <dir>]");
+  pin(rest[0]!, corpora);
+  return 0;
+}
+
+/** The packs --pack, --packs or --all names, refused unless exactly one of them is given. */
+function namedPacks(values: Values, available: string[]): string[] {
+  const chosen = [values.pack !== undefined, values.packs !== undefined, values.all].filter(Boolean).length;
+  if (chosen !== 1) refuse("name the packs: --pack <pack>, --packs a,b or --all");
+  if (values.all) return available;
+  return values.pack !== undefined ? [values.pack] : values.packs!.split(",").map((p) => p.trim()).filter((p) => p !== "");
+}
+
+/** The packs the command line names, each refused unless it is a pack with translations. */
+function chosenPacks(values: Values): string[] {
+  const { packs: available, notPacks } = translatedPacks();
+  const packs = namedPacks(values, available);
+  const unknown = packs.find((pack) => !available.includes(pack));
+  if (unknown !== undefined) refuse(`${unknown} is not a pack with translations (those: ${available.join(", ")})`);
+  if (values.all && notPacks.length > 0) console.log(`translations: not packs (no packs/<id>/pack.json), not checked: ${notPacks.join(", ")}`);
+  return packs;
+}
+
+/** The rules --rules names, refused unless one pack is checked and its lists are not rewritten. */
+function chosenRuleIds(values: Values, packs: readonly string[]): string[] | undefined {
+  if (values.rules === undefined) return undefined;
+  if (packs.length !== 1) refuse("--rules takes one --pack");
+  if (values["write-differences"]) refuse("--write-differences rewrites a whole pack's lists: run it without --rules");
+  return values.rules.split(",").map((r) => r.trim()).filter((r) => r !== "");
+}
+
+/** The rerail-engine --engine names, else the checkout's release build; refused when it is not there. */
+function engineOption(engineArg: string | undefined): string {
+  const engine = engineArg === undefined ? engineBinary(SELF) : resolve(engineArg);
+  if (engine === undefined || !existsSync(engine)) refuse(`no rerail-engine${engineArg === undefined ? " in target/release" : ` at ${engine}`}: build it (cargo build --release --manifest-path native/Cargo.toml --bin rerail-engine) or pass --engine`);
+  return engine;
+}
+
+/** --jobs (half the processors, from 1 to 8, by default) and --timeout (3600 s by default), refused unless they are a whole number from 1 and seconds above 0. */
+function runLimits(values: Values): { jobs: number; timeoutS: number } {
+  const jobs = values.jobs === undefined ? Math.max(1, Math.min(8, Math.floor(availableParallelism() / 2))) : Number(values.jobs);
+  const timeoutS = values.timeout === undefined ? 3600 : Number(values.timeout);
+  if (!Number.isInteger(jobs) || jobs < 1 || !(timeoutS > 0)) refuse("--jobs takes a whole number from 1, --timeout seconds above 0");
+  return { jobs, timeoutS };
+}
+
+/** A check's options; --out is made when it is not there. */
+function checkOptions(values: Values, corpora: string, packs: readonly string[]): Options {
+  const rules = chosenRuleIds(values, packs);
+  const engine = engineOption(values.engine);
+  const out = resolve(values.out ?? join(SELF, ".rerail", "translations", "out"));
+  mkdirSync(out, { recursive: true });
+  return { corpora, engine, out, ...runLimits(values), rules, writeDifferences: values["write-differences"] };
+}
+
+/** Each pack checked and its summary printed: 1 when one fails its declaration, else 0. */
+async function check(packs: readonly string[], o: Options): Promise<number> {
+  let failed = false;
+  for (const pack of packs) {
+    const report = await checkPack(pack, o);
+    console.log(renderPack(report));
+    failed ||= report.failed;
+  }
+  console.log(`translations: results in ${o.out}`);
+  return failed ? 1 : 0;
+}
+
+async function main(): Promise<number> {
+  const { values, positionals } = parseArgs(ARGUMENTS);
+  const corpora = resolve(values.corpora ?? join(SELF, ".rerail", "translations", "corpora"));
+  const [command = "check", ...rest] = positionals;
+  if (command === "pin") return pinCommand(rest, corpora);
+  if (command !== "check" || rest.length > 0) refuse(`unknown command ${[command, ...rest].join(" ")}: check or pin`);
+  const packs = chosenPacks(values);
+  return check(packs, checkOptions(values, corpora, packs));
+}
+
+try {
+  process.exitCode = await main();
+} catch (error) {
+  if (!(error instanceof Refusal)) throw error;
+  console.error(`translations: ${error.message}`);
+  process.exitCode = 2;
+}

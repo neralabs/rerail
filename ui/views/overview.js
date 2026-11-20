@@ -146,9 +146,9 @@ function waitingTitle(list) {
 
 const approvalsBanner = (list, copies) => h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
   h("b", null, waitingTitle(list)),
-  h("p", null, `Rerail did not write ${list.length === 1 ? "it" : "them"}. Read what each tells the coding agent, then approve it on its page, or ask your coding agent: `,
+  h("p", null, `Rerail did not write ${list.length === 1 ? "it" : "them"}. Read what each tells the coding agent, then approve it on its page. Your coding agent can audit ${list.length === 1 ? "it" : "them"} first: `,
     h("span.mono", null, "/rerail-create approve the rules"), "."),
-  copies ? h("p", null, `Approving an edited copy of a rule Rerail ships turns the original off in ${repoName() || "this repo"}.`) : null,
+  copies ? h("p", null, `Approving an edited copy turns off the rule it was copied from in ${repoName() || "this repo"}.`) : null,
   h("p.acts", null, list.map(item => h("button.btn.sm", { "data-act": item.act, "data-i": item.target }, item.label)))));
 
 /**

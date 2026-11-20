@@ -37,6 +37,26 @@
       "files": 385,
       "sha256": "df111cafcea8f8c38eb8d1bd430749daddf45d4d0655ae436ac8c26b49aeea3b"
     },
+    "rerail-translations": {
+      "kind": "git",
+      "commit": "7efcac9c67799494d1c8f5c283eba97525d81e7d",
+      "paths": [
+        ".github",
+        "conformance",
+        "integration",
+        "native/crates",
+        "native/src",
+        "packs",
+        "scripts",
+        "src",
+        "test",
+        "ui",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "files": 5669,
+      "sha256": "9089db2c339a63c05da2d273f82691aad618f3ac47cdfb7d2a0465d7f2804c21"
+    },
     "samples-blade": {
       "kind": "samples",
       "pack": "blade",
@@ -103,5 +123,10 @@
     "sql": "samples-sql",
     "typescript": "rerail-typescript",
     "vue": "samples-vue"
+  },
+  "translations": {
+    "rerail": [
+      "rerail-translations"
+    ]
   }
 }

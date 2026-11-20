@@ -76,6 +76,10 @@ The `ast` query is an [ast-grep](https://ast-grep.github.io) rule with `language
 
 - **`pattern`** is code with metavariables. `$X` matches one node and `$$$ARGS` matches any number of them:
   `console.log($$$A)`, `requests.get($URL, $$$REST)`.
+- **A call in C or C++:** a pattern parses as a whole file, where a bare `gets($A)` or `std::atoi($A)` reads as a
+  declaration, so `rules test` refuses it. Write the call inside a function body and select it:
+  `{ "context": "void f() { gets($A); }", "selector": "call_expression" }`. A macro's type is written the same way:
+  `{ "context": "STACK_OF($T) *x;", "selector": "macro_type_specifier" }`.
 - **`kind`** is a tree-sitter node kind: `function_definition`, `call_expression`, `import_statement`.
 - **`regex`** inside a rule tests the node's source text: `{ "kind": "function_definition", "regex": "^async\\s" }`.
 - **`inside`, `has`, `not`, `all`, `any`** combine rules. `inside` and `has` look only at the parent or direct children unless
