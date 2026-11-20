@@ -600,8 +600,9 @@ describe("Rerail daemon", () => {
   it.each<SessionStartCase>([
     { state: "set up", prepare: setUpOneRule, note: { setUp: true, ruleCount: expect.any(Number) } },
     { state: "not set up", prepare: root => startTestRepository(root, join(root, "rerail.sqlite")), note: { setUp: false } },
-    // The footer reads no count until the session's next tool call loads the rules again, and neither does the note.
-    { state: "whose rule was turned off after its runtime loaded it", prepare: setUpOneRule, change: turnRuleOffAfterLoad, note: { setUp: true, ruleCount: null } },
+    // A session's start reads its checkout's rules again, so the note counts them as the configuration has them now,
+    // as the footer does: none of the one rule turned off, not the count the earlier session loaded.
+    { state: "whose rule was turned off after its runtime loaded it", prepare: setUpOneRule, change: turnRuleOffAfterLoad, note: { setUp: true, ruleCount: 0 } },
   ])("answers a hook's session start in a repository $state with the dashboard and rules its HTTP API gives, and an older hook without them", async ({ prepare, change, note }) => {
     root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
     const repositoryKey = prepare(root);
