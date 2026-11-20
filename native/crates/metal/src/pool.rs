@@ -104,29 +104,21 @@ pub fn zeroed<T>(count: usize) -> Result<Block, Error> {
     clear(lease(bytes.max(1))?, bytes)
 }
 
-/// A block whose first `count` values of `T` are zero, zeroed by the device (a blit's fill),
-/// not by the host: for the large ones, such as a run's slots.
+/// A block whose first `count` values of `T` are zero, zeroed by the device (a fill on the
+/// process's device, decision 0440 step C), not by the host: for the large ones, such as a run's
+/// slots.
 pub fn zeroed_on_device<T>(count: usize) -> Result<Block, Error> {
     let bytes = count.checked_mul(size_of::<T>()).ok_or(Error::BackendCapacity)?;
     let block = lease(bytes.max(1))?;
     if bytes == 0 {
         return Ok(block);
     }
-    let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let queue = queue(device)?;
+    debug_assert!(bytes.div_ceil(4) * 4 <= block.byte_length(), "a lease of whole words");
+    // A launch scope of its own (the evaluation's, when one is running): a submission outside one is refused.
     let _scope = crate::launch::LaunchScope::enter();
-    metal::objc::rc::autoreleasepool(|| {
-        let command = queue.new_command_buffer();
-        command.set_label("Rerail zeroed block");
-        let blit = command.new_blit_command_encoder();
-        blit.fill_buffer(block.buffer(), metal::NSRange::new(0, bytes as u64), 0);
-        blit.end_encoding();
-        if let Err(refused) = crate::launch::commit_checked(command) {
-            crate::launch::release_refused(command);
-            return Err(refused);
-        }
-        crate::launch::wait_checked(command)
-    })?;
+    let mut command = crate::lane::Command::new("Rerail zeroed block");
+    command.fill(block.device_buffer(), 0, bytes.div_ceil(4) as u64, 0);
+    command.run()?;
     Ok(block)
 }
 

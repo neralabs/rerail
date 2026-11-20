@@ -370,6 +370,19 @@ pub fn ready_behind(source: &str, name: &str, constant: Option<u32>) -> Option<C
     ready_in(mode, source, name, constant).map(|f| state(&f))
 }
 
+/// [`ready_behind`] as the device layer launches it ([`function`]). Elsewhere than Metal, compiled on the caller's
+/// thread: the device layer's store is its tier.
+pub fn ready_behind_function(source: &str, name: &str, constant: Option<u32>) -> Option<Arc<Function>> {
+    if super::shared::get().is_none() {
+        return Some(function(source, name, constant));
+    }
+    let mode = match mode() {
+        Mode::Wait => Mode::Background,
+        m => m,
+    };
+    ready_in(mode, source, name, constant)
+}
+
 fn ready_in(mode: Mode, source: &str, name: &str, constant: Option<u32>) -> Option<Arc<Function>> {
     if mode == Mode::Wait {
         return Some(function(source, name, constant));

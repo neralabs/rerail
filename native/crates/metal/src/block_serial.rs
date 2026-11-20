@@ -21,7 +21,7 @@
 //!    and each segment writes its positions.
 //!
 //! A segment's words of the outputs depend only on its start and its bytes, so a run again
-//! rewrites them all with plain stores. The body of a block is the same MSL the lanes kernel
+//! rewrites them all with plain stores. The body of a block is the same UKL the lanes kernel
 //! uses (`emit`), at 64 bits; a carried instruction reads the thread's state.
 use super::*;
 
@@ -83,18 +83,18 @@ impl State {
         State { words: word + usize::from(used > 0 || parts.is_empty()), parts }
     }
 
-    /// The MSL that writes the state's words to `to[0..]`.
+    /// The UKL that writes the state's words to `to[0..]`.
     fn pack(&self, native: &BlockNative, to: &str) -> String {
         let mut words = vec![Vec::new(); self.words];
         let _ = native;
         for &(at, bits, w, first, scan) in &self.parts {
-            let value = if scan { format!("ulong(cy{at})") } else { format!("(s{at} >> {}u)", 64 - bits) };
+            let value = if scan { format!("U64(cy{at})") } else { format!("(s{at} >> {}u)", 64 - bits) };
             words[w].push(format!("({value} << {first}u)"));
         }
         words.iter().enumerate().map(|(w, parts)| format!("{to}[{w}] = {};", if parts.is_empty() { "0ul".to_owned() } else { parts.join(" | ") })).collect::<Vec<_>>().join(" ")
     }
 
-    /// The MSL that sets the state from the words at `from[0..]`.
+    /// The UKL that sets the state from the words at `from[0..]`.
     fn unpack(&self, native: &BlockNative, from: &str) -> String {
         self.parts
             .iter()
@@ -102,7 +102,7 @@ impl State {
                 let _ = native;
                 let field = format!("(({from}[{w}] >> {first}u) & {:#x}ul)", if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 });
                 if scan {
-                    format!("cy{at} = uint({field});")
+                    format!("cy{at} = U32({field});")
                 } else {
                     format!("s{at} = {field} << {}u;", 64 - bits)
                 }
@@ -117,40 +117,40 @@ impl State {
 /// and the ASCII one inside where the block and the 16 bytes before it are ASCII.
 fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option<&Levels>, stores: &[u16]) -> String {
     let mut out = format!(
-        "static inline void serial_{p}(device const uint4* bytes, FileRow f, uint first, uint last, bool again, uint warm,\n\
-         \x20                          device ulong* out, device ulong* rec, thread const ulong* given, ulong cin, ulong cw) {{\n"
+        "UKL_INLINE void serial_{p}(Bytes bytes, FileRow f, uint32_t first, uint32_t last, bool again, uint32_t warm,\n\
+         \x20                          UKL_GLOBAL uint64_t* out, UKL_GLOBAL uint64_t* rec, UKL_PRIVATE const uint64_t* given, uint64_t cin, uint64_t cw) {{\n"
     );
     for &(at, .., scan) in &state.parts {
         if scan {
-            out.push_str(&format!("  uint cy{at} = 0u;\n"));
+            out.push_str(&format!("  uint32_t cy{at} = 0u;\n"));
         } else {
-            out.push_str(&format!("  ulong s{at} = 0ul;\n"));
+            out.push_str(&format!("  uint64_t s{at} = 0ul;\n"));
         }
     }
     let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
     for &k in &delayed {
         assert!(native.output_delays[k] < 64, "an output's delay is below a block");
-        out.push_str(&format!("  ulong q{k} = 0ul;\n"));
+        out.push_str(&format!("  uint64_t q{k} = 0ul;\n"));
     }
     let start = state.unpack(native, "given");
     // The scans' carries are exact (`Levels`): from `cw` at the warm-up's first block, set to
     // `cin` at its second part's first, `a`.
     let carries = |x: &str| match levels {
-        Some(levels) => levels.scans.iter().enumerate().filter(|&(i, _)| levels.level[i] > 0).map(|(i, at)| format!(" cy{at} = uint(({x} >> {i}u) & 1ul);")).collect::<String>(),
+        Some(levels) => levels.scans.iter().enumerate().filter(|&(i, _)| levels.level[i] > 0).map(|(i, at)| format!(" cy{at} = U32(({x} >> {i}u) & 1ul);")).collect::<String>(),
         None => String::new(),
     };
     out.push_str(&format!(
-        "  const uint a = first - min(first, warm);\n\
-         \x20 uint b0 = a - min(a, warm);\n\
+        "  const uint32_t a = first - ukl_min(first, warm);\n\
+         \x20 uint32_t b0 = a - ukl_min(a, warm);\n\
          \x20 if (again) {{ b0 = first; {start} }} else {{{} }}\n",
         carries("(b0 < a ? cw : cin)")
     ));
     out.push_str(&format!(
-        "  const uint len = f.len;\n\
+        "  const uint32_t len = f.len;\n\
          \x20 // A block's bytes are loaded a block ahead: the loads of the next overlap this one's work.\n\
          {load_ahead}\
          \x20 // The block after the segment only finishes its delayed words.\n\
-         \x20 for (uint b = b0; b <= last; b++) {{\n\
+         \x20 for (uint32_t b = b0; b <= last; b++) {{\n\
          {next_block}\
          \x20   if (!again && b == a) {{{} }}\n\
          \x20   if (b == first) {{ {} }}\n\
@@ -170,7 +170,7 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
         match native.output_delays[k] {
             0 => tail.push_str(&format!("      if (b >= first && b < last) out[f.out_base + {k}u * f.groups + b] = stream_cut(v{v}, b, len, 0u);\n")),
             d => tail.push_str(&format!(
-                "      {{ const ulong w = stream_cut(v{v}, b, len, {d}u); if (b > first) out[f.out_base + {k}u * f.groups + b - 1u] = (q{k} >> {d}u) | (w << {}u); q{k} = w; }}\n",
+                "      {{ const uint64_t w = stream_cut(v{v}, b, len, {d}u); if (b > first) out[f.out_base + {k}u * f.groups + b - 1u] = (q{k} >> {d}u) | (w << {}u); q{k} = w; }}\n",
                 64 - u32::from(d)
             )),
         }
@@ -181,7 +181,7 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
     }
     for &(at, .., scan) in &state.parts {
         match native.insts[at] {
-            BlockInst::Toggle(_) if scan => tail.push_str(&format!("      cy{at} = uint(v{at} >> 63u);\n")),
+            BlockInst::Toggle(_) if scan => tail.push_str(&format!("      cy{at} = U32(v{at} >> 63u);\n")),
             BlockInst::Escaped(_) | BlockInst::Fill(..) if scan => tail.push_str(&format!("      cy{at} = o{at};\n")),
             _ => tail.push_str(&format!("      s{at} = v{at};\n")),
         }
@@ -195,10 +195,10 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
     let (full, ascii) = (full_form(native), ascii_form(native));
     out.push_str(&format!(
         "    if (b > 0u && (b + 1u) * 64u <= len) {{\n\
-         \x20     const uint4 high = pl | c0 | c1 | c2 | c3;\n\
-         \x20     // One body for the SIMD group's threads at once: a thread with a byte above 127 takes the\n\
-         \x20     // others to the full body.\n\
-         \x20     if (simd_all(((high.x | high.y | high.z | high.w) & 0x80808080u) == 0u)) {{\n{}      }} else {{\n{}      }}\n\
+         \x20     const B4 high = b4_or(b4_or(b4_or(pl, c0), b4_or(c1, c2)), c3);\n\
+         \x20     // The thread's own body: its threads run segments of their own, each its own count of\n\
+         \x20     // blocks, so no SIMD-group operation is reached by all of them (0440 step C).\n\
+         \x20     if ((b4_any(high) & 0x80808080u) == 0u) {{\n{}      }} else {{\n{}      }}\n\
          \x20   }} else {{\n{}    }}\n    pl = c3;\n  }}\n}}\n\n",
         body(&ascii),
         body(&full),
@@ -216,18 +216,18 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
 /// lane's bits: the block after the segment is run too.
 fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<&Levels>, stores: &[u16]) -> String {
     let mut out = format!(
-        "static inline void lanes_{p}(device const uint4* bytes, FileRow f, uint first, uint last, bool again, uint warm, uint l,\n\
-         \x20                          device ulong* out, device ulong* rec, thread const ulong* given, ulong cin, ulong cw, device uint* counts) {{\n\
+        "UKL_INLINE void lanes_{p}(Bytes bytes, FileRow f, uint32_t first, uint32_t last, bool again, uint32_t warm, uint32_t l,\n\
+         \x20                          UKL_GLOBAL uint64_t* out, UKL_GLOBAL uint64_t* rec, UKL_PRIVATE const uint64_t* given, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* counts __UKL_PARAMS) {{\n\
          \x20 // `aw` the levels' segment start, where `cin` holds; `a` a warm-up before it, where `cw` holds.\n\
-         \x20 const uint aw = first - min(first, warm);\n\
-         \x20 const uint a = again ? first : aw - min(aw, warm);\n\
-         \x20 const uint b = a + l;\n\
-         \x20 const uint len = f.len;\n"
+         \x20 const uint32_t aw = first - ukl_min(first, warm);\n\
+         \x20 const uint32_t a = again ? first : aw - ukl_min(aw, warm);\n\
+         \x20 const uint32_t b = a + l;\n\
+         \x20 const uint32_t len = f.len;\n"
     );
     // A run again starts at the segment's first block from `given`: lane 0's halos and the scans'
     // carries; its start is written as given.
     for &(at, .., scan) in &state.parts {
-        out.push_str(&if scan { format!("  uint cy{at} = 0u;\n") } else { format!("  ulong s{at} = 0ul;\n") });
+        out.push_str(&if scan { format!("  uint32_t cy{at} = 0u;\n") } else { format!("  uint64_t s{at} = 0ul;\n") });
     }
     // A first run's `prev`s before lane 0 read what its exact carries there give (`halos`).
     if let Some(lv) = levels {
@@ -249,12 +249,12 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     let exact = |at: usize| match levels {
         Some(lv) if lv.level[lv.bit(at)] > 0 => {
             let i = lv.bit(at);
-            (format!("(again ? cy{at} : uint((cw >> {i}u) & 1ul))"), Some(("!again && b >= aw".to_owned(), format!("uint((cin >> {i}u) & 1ul)"))))
+            (format!("(again ? cy{at} : U32((cw >> {i}u) & 1ul))"), Some(("!again && b >= aw".to_owned(), format!("U32((cin >> {i}u) & 1ul)"))))
         }
         _ => (format!("(again ? cy{at} : 0u)"), None),
     };
     let carried = |at: usize, inst: &BlockInst, out: &mut String| match *inst {
-        BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, s{a}));\n")),
+        BlockInst::Prev(a, k) => out.push_str(&format!("  const uint64_t v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, s{a} __UKL_ARGS));\n")),
         _ => {
             let (from, reset) = exact(at);
             lane_scan(at, inst, &from, reset.as_ref().map(|(c, v)| (c.as_str(), v.as_str())), out)
@@ -264,9 +264,9 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     for (k, &v) in native.outputs.iter().enumerate() {
         match native.output_delays[k] {
             // Output words are `ow`: `o` is a scan's carry out.
-            0 => tail.push_str(&format!("  const ulong ow{k} = select(0ul, stream_cut(v{v}, b, len, 0u), mine);\n")),
+            0 => tail.push_str(&format!("  const uint64_t ow{k} = SEL(0ul, stream_cut(v{v}, b, len, 0u), mine);\n")),
             d => tail.push_str(&format!(
-                "  const ulong ww{k} = stream_cut(v{v}, b, len, {d}u), wn{k} = ulong(simd_shuffle_down(uint(ww{k}), 1u)) | (ulong(simd_shuffle_down(uint(ww{k} >> 32u), 1u)) << 32u);\n  const ulong ow{k} = select(0ul, (ww{k} >> {d}u) | (wn{k} << {}u), mine);\n",
+                "  const uint64_t ww{k} = stream_cut(v{v}, b, len, {d}u), wn{k} = sg_down64(ww{k}, 1u __UKL_ARGS);\n  const uint64_t ow{k} = SEL(0ul, (ww{k} >> {d}u) | (wn{k} << {}u), mine);\n",
                 64 - u32::from(d)
             )),
         }
@@ -281,15 +281,15 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     // The totals' one count is every total's words OR-ed (`native_cpu_block::counted`).
     for (c, k) in counted_outputs(native).into_iter().enumerate() {
         let w = if c < native.extracts.len() { format!("ow{k}") } else { native.totals.iter().map(|t| format!("ow{t}")).collect::<Vec<_>>().join(" | ") };
-        tail.push_str(&format!("  {{ const uint n = simd_sum(uint(popcount({w}))); if (l == 0u) counts[{c}u] = n; }}\n"));
+        tail.push_str(&format!("  {{ const uint32_t n = ukl_sg_sum(ukl_popcount64({w}) __UKL_ARGS); if (l == 0u) counts[{c}u] = n; }}\n"));
     }
     // The state after the lane, under the serial names (`State::pack`).
     let mut names = String::new();
     for &(at, .., scan) in &state.parts {
         if scan {
-            names.push_str(&format!(" const uint cy{at} = co{at};"));
+            names.push_str(&format!(" const uint32_t cy{at} = co{at};"));
         } else {
-            names.push_str(&format!(" const ulong s{at} = v{at};"));
+            names.push_str(&format!(" const uint64_t s{at} = v{at};"));
         }
     }
     tail.push_str(&format!(
@@ -315,9 +315,9 @@ fn lane_bodies(p: usize, native: &BlockNative, chosen: &[usize], carried: &dyn F
     let (full, ascii) = (full_form(native), ascii_form(native));
     format!(
         "  const bool inside = b > 0u && (b + 1u) * 64u <= len;\n\
-         \x20 if (simd_all(inside)) {{\n\
-         \x20   const uint4 h = load16(bytes, f, b * 4u - 1u) | load16(bytes, f, b * 4u) | load16(bytes, f, b * 4u + 1u) | load16(bytes, f, b * 4u + 2u) | load16(bytes, f, b * 4u + 3u);\n\
-         \x20   if (simd_all(((h.x | h.y | h.z | h.w) & 0x80808080u) == 0u)) {{\n{}    }} else {{\n{}    }}\n\
+         \x20 if (sg_all(inside __UKL_ARGS)) {{\n\
+         \x20   const B4 h = b4_or(b4_or(b4_or(load16(bytes, f, b * 4u - 1u), load16(bytes, f, b * 4u)), b4_or(load16(bytes, f, b * 4u + 1u), load16(bytes, f, b * 4u + 2u))), load16(bytes, f, b * 4u + 3u));\n\
+         \x20   if (sg_all((b4_any(h) & 0x80808080u) == 0u __UKL_ARGS)) {{\n{}    }} else {{\n{}    }}\n\
          \x20 }} else {{\n{}  }}\n",
         body(&ascii),
         body(&full),
@@ -330,28 +330,30 @@ fn lane_bodies(p: usize, native: &BlockNative, chosen: &[usize], carried: &dyn F
 fn lane_scan(at: usize, inst: &BlockInst, from: &str, reset: Option<(&str, &str)>, out: &mut String) {
     // With `reset` (a lane condition, a carry): the lanes where it holds take their own prefix,
     // from the carry, instead.
+    // The carry's statements (`ci{at}`).
     let carry = |at: usize| match reset {
-        None => format!("tapply1(texclusive1(tt{at}, l, agg{at}), {from})"),
-        // Both prefixes in every lane: a SIMD-group function under a branch is not.
+        None => format!("  const uint32_t ci{at} = tapply1(texclusive1(tt{at}, l, &agg{at} __UKL_ARGS), {from});\n"),
+        // Both prefixes in every lane, each a statement: a SIMD-group function under a branch is not
+        // reached by every lane, nor is one in an operand of `SEL` (a C conditional).
         Some((cond, cin)) => format!(
-            "select(tapply1(texclusive1(tt{at}, l, agg{at}), {from}), tapply1(texclusive1(select(2u, tt{at}, {cond}), l, agr{at}), {cin}), {cond})"
+            "  const uint32_t ca{at} = tapply1(texclusive1(tt{at}, l, &agg{at} __UKL_ARGS), {from});\n  const uint32_t cb{at} = tapply1(texclusive1(SEL(2u, tt{at}, {cond}), l, &agr{at} __UKL_ARGS), {cin});\n  const uint32_t ci{at} = SEL(ca{at}, cb{at}, {cond});\n"
         ),
     };
-    let agr = if reset.is_some() { format!("  uint agr{at} = 0u;\n") } else { String::new() };
+    let agr = if reset.is_some() { format!("  uint32_t agr{at} = 0u;\n") } else { String::new() };
     out.push_str(&agr);
     match *inst {
         BlockInst::Toggle(a) => out.push_str(&format!(
-            "  const uint sm{at} = summary_toggle(v{a});\n  const uint tt{at} = sm{at} | ((1u ^ sm{at}) << 1u);\n  uint agg{at} = 0u;\n  const uint ci{at} = {};\n  const ulong v{at} = apply_toggle(v{a}, ci{at});\n  const uint co{at} = uint(v{at} >> 63u);\n",
+            "  const uint32_t sm{at} = summary_toggle(v{a});\n  const uint32_t tt{at} = sm{at} | ((1u ^ sm{at}) << 1u);\n  uint32_t agg{at} = 0u;\n{}  const uint64_t v{at} = apply_toggle(v{a}, ci{at});\n  const uint32_t co{at} = U32(v{at} >> 63u);\n",
             carry(at)
         )),
         BlockInst::Escaped(_) | BlockInst::Fill(..) => {
             let call = |c: &str, o: &str| match *inst {
-                BlockInst::Escaped(a) => format!("escaped(v{a}, {c}, {o})"),
-                BlockInst::Fill(a, e) => format!("fill_word(v{a}, v{e}, {c}, {o})"),
+                BlockInst::Escaped(a) => format!("escaped(v{a}, {c}, &{o})"),
+                BlockInst::Fill(a, e) => format!("fill_word(v{a}, v{e}, {c}, &{o})"),
                 _ => unreachable!(),
             };
             out.push_str(&format!(
-                "  uint o{at}_0 = 0u, o{at}_1 = 0u;\n  const ulong f{at}_0 = {}, f{at}_1 = {};\n  const uint tt{at} = (o{at}_0 & 1u) | ((o{at}_1 & 1u) << 1u);\n  uint agg{at} = 0u;\n  const uint ci{at} = {};\n  const ulong v{at} = select(f{at}_0, f{at}_1, ci{at} != 0u);\n  const uint co{at} = ci{at} != 0u ? o{at}_1 : o{at}_0;\n",
+                "  uint32_t o{at}_0 = 0u, o{at}_1 = 0u;\n  const uint64_t f{at}_0 = {}, f{at}_1 = {};\n  const uint32_t tt{at} = (o{at}_0 & 1u) | ((o{at}_1 & 1u) << 1u);\n  uint32_t agg{at} = 0u;\n{}  const uint64_t v{at} = SEL(f{at}_0, f{at}_1, ci{at} != 0u);\n  const uint32_t co{at} = ci{at} != 0u ? o{at}_1 : o{at}_0;\n",
                 call("0ul", &format!("o{at}_0")),
                 call("1ul", &format!("o{at}_1")),
                 carry(at),
@@ -375,20 +377,20 @@ fn lanes_cone_function(p: usize, native: &BlockNative, levels: &Levels, lv: usiz
     }
     let cone = cone_of(native, inside);
     let out = format!(
-        "static inline void lcone_{p}_{lv}(device const uint4* bytes, device const ulong* out, FileRow f, uint a, uint a_next, uint warm, uint l, ulong cin, ulong cw, device uint* tab) {{\n\
-         \x20 const uint start = a - min(a, warm);\n\
-         \x20 const ulong from = start < a ? cw : cin;\n\
-         \x20 const uint b = start + l;\n\
-         \x20 const uint len = f.len;\n"
+        "UKL_INLINE void lcone_{p}_{lv}(Bytes bytes, UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t a, uint32_t a_next, uint32_t warm, uint32_t l, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* tab __UKL_PARAMS) {{\n\
+         \x20 const uint32_t start = a - ukl_min(a, warm);\n\
+         \x20 const uint64_t from = start < a ? cw : cin;\n\
+         \x20 const uint32_t b = start + l;\n\
+         \x20 const uint32_t len = f.len;\n"
     );
     let mut out = out;
     let h = halos(native, levels, "from", lv, &[]);
     out.push_str(&h.decls);
     let carried = |at: usize, inst: &BlockInst, out: &mut String| match *inst {
-        BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, {}));\n", h.word(usize::from(a)))),
+        BlockInst::Prev(a, k) => out.push_str(&format!("  const uint64_t v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, {} __UKL_ARGS));\n", h.word(usize::from(a)))),
         _ => {
             let i = levels.bit(at);
-            let from = if levels.level[i] > 0 { format!("uint((from >> {i}u) & 1ul)") } else { "0u".to_owned() };
+            let from = if levels.level[i] > 0 { format!("U32((from >> {i}u) & 1ul)") } else { "0u".to_owned() };
             lane_scan(at, inst, &from, None, out);
         }
     };
@@ -398,7 +400,7 @@ fn lanes_cone_function(p: usize, native: &BlockNative, levels: &Levels, lv: usiz
         lane_scan(at, &native.insts[at], "0u", None, &mut scan);
         tail.push_str(&scan);
         tail.push_str(&format!(
-            "  {{ uint g0 = 0u, g1 = 0u; texclusive1(select(2u, tt{at}, span), l, g0); texclusive1(select(2u, tt{at}, span_w), l, g1);\n    if (l == 0u) {{ tab[{}u] = g0; tab[{}u] = g1; }} }}\n",
+            "  {{ uint32_t g0 = 0u, g1 = 0u; texclusive1(SEL(2u, tt{at}, span), l, &g0 __UKL_ARGS); texclusive1(SEL(2u, tt{at}, span_w), l, &g1 __UKL_ARGS);\n    if (l == 0u) {{ tab[{}u] = g0; tab[{}u] = g1; }} }}\n",
             2 * k,
             2 * k + 1
         ));
@@ -413,7 +415,7 @@ fn lanes_cone_function(p: usize, native: &BlockNative, levels: &Levels, lv: usiz
 /// state, a carry in its next, a `prev` in its operand's end (the block before is taken as the
 /// same to its end: a multi-byte `prev` reads that bit `k` times); what reads the bytes is
 /// unknown, and an unknown word reads as zero, as a warm-up's `prev`s do. Each value's end is
-/// a pair of MSL booleans, known and value (`hk`, `hv`), folded where constant. Without it a
+/// a pair of UKL booleans, known and value (`hk`, `hv`), folded where constant. Without it a
 /// segment inside a string reads its first byte as code. `from`: the carries at the first lane;
 /// the scans known there are those of a level below `limit`, and a group's of `own` from its
 /// state `c`.
@@ -528,7 +530,7 @@ fn halos(native: &BlockNative, levels: &Levels, from: &str, limit: usize, own: &
             let word = match h_and(&k, &v) {
                 HBit::F => "0ul".to_owned(),
                 HBit::T => "~0ul".to_owned(),
-                HBit::E(x) => format!("(0ul - ulong({x}))"),
+                HBit::E(x) => format!("(0ul - U64({x}))"),
             };
             words.insert(a, word);
         }
@@ -582,23 +584,23 @@ fn lanes_group_function(p: usize, native: &BlockNative, levels: &Levels, lv: usi
     }
     let cone = cone_of(native, inside);
     let mut out = format!(
-        "static inline void lgroup_{p}_{lv}(device const uint4* bytes, device const ulong* out, FileRow f, uint a, uint a_next, uint warm, uint l, uint c, ulong cin, ulong cw, device uint* tab) {{\n\
-         \x20 const uint start = a - min(a, warm);\n\
-         \x20 const ulong from = start < a ? cw : cin;\n\
-         \x20 const uint b = start + l;\n\
-         \x20 const uint len = f.len;\n"
+        "UKL_INLINE void lgroup_{p}_{lv}(Bytes bytes, UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t a, uint32_t a_next, uint32_t warm, uint32_t l, uint32_t c, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* tab __UKL_PARAMS) {{\n\
+         \x20 const uint32_t start = a - ukl_min(a, warm);\n\
+         \x20 const uint64_t from = start < a ? cw : cin;\n\
+         \x20 const uint32_t b = start + l;\n\
+         \x20 const uint32_t len = f.len;\n"
     );
     let own_ids: Vec<usize> = own.iter().map(|(gi, _)| *gi).collect();
     let h = halos(native, levels, "from", lv, &own_ids);
     out.push_str(&h.decls);
     let carried = |at: usize, inst: &BlockInst, out: &mut String| match *inst {
-        BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, {}));\n", h.word(usize::from(a)))),
+        BlockInst::Prev(a, k) => out.push_str(&format!("  const uint64_t v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, {} __UKL_ARGS));\n", h.word(usize::from(a)))),
         _ => {
             let from = match own.iter().find_map(|(_, g)| g.scans.iter().position(|&x| x == at)) {
-                Some(k) => format!("uint(c == {}u)", k + 1),
+                Some(k) => format!("U32(c == {}u)", k + 1),
                 None => {
                     let i = levels.bit(at);
-                    if levels.level[i] > 0 { format!("uint((from >> {i}u) & 1ul)") } else { "0u".to_owned() }
+                    if levels.level[i] > 0 { format!("U32((from >> {i}u) & 1ul)") } else { "0u".to_owned() }
                 }
             };
             lane_scan(at, inst, &from, None, out);
@@ -611,7 +613,7 @@ fn lanes_group_function(p: usize, native: &BlockNative, levels: &Levels, lv: usi
         let count: Vec<String> = g.scans.iter().map(|&x| format!("co{x}")).collect();
         let which: Vec<String> = g.scans.iter().enumerate().map(|(k, &x)| format!("co{x} * {}u", k + 1)).collect();
         tail.push_str(&format!(
-            "  {{ const uint n = {count}, st = c > {n}u ? {NONE}u : n == 0u ? 0u : n == 1u ? {which} : {NONE}u;\n\
+            "  {{ const uint32_t n = {count}, st = c > {n}u ? {NONE}u : n == 0u ? 0u : n == 1u ? {which} : {NONE}u;\n\
              \x20   if (l == 0u && start == a) tab[{t0}u + c] = c > {n}u ? {NONE}u : c;\n\
              \x20   if (b + 1u == a && b >= start) tab[{t0}u + c] = st;\n\
              \x20   if (b + 1u + warm == a_next && b >= start) tab[{t1}u + c] = st; }}\n",
@@ -632,27 +634,27 @@ fn lanes_group_function(p: usize, native: &BlockNative, levels: &Levels, lv: usi
 fn group_prefix(p: usize, gi: usize, g: &Leveled, levels: &Levels, stride: usize) -> String {
     let bits: Vec<String> = g.scans.iter().enumerate().map(|(k, &x)| format!("c == {}u ? {:#x}ul", k + 1, 1u64 << levels.bit(x))).collect();
     format!(
-        "static inline ulong gbits_{p}_{gi}(uint c) {{ return {} : 0ul; }}\n\
-         static inline uint gtable_{p}_{gi}(device const uint* gtabs, uint j, uint which) {{\n\
-         \x20 device const uint* t = gtabs + j * {stride}u + {base}u + which * {GROUP_STATES}u;\n\
-         \x20 uint x = 0u;\n\
-         \x20 for (uint c = 0u; c < {GROUP_STATES}u; c++) x |= (c == {NONE}u ? {NONE}u : (t[c] & 7u)) << (3u * c);\n\
+        "UKL_INLINE uint64_t gbits_{p}_{gi}(uint32_t c) {{ return {} : 0ul; }}\n\
+         UKL_INLINE uint32_t gtable_{p}_{gi}(UKL_GLOBAL const uint32_t* gtabs, uint32_t j, uint32_t which) {{\n\
+         \x20 UKL_GLOBAL const uint32_t* t = gtabs + j * {stride}u + {base}u + which * {GROUP_STATES}u;\n\
+         \x20 uint32_t x = 0u;\n\
+         \x20 for (uint32_t c = 0u; c < {GROUP_STATES}u; c++) x |= (c == {NONE}u ? {NONE}u : (t[c] & 7u)) << (3u * c);\n\
          \x20 return x;\n}}\n\
-         static inline void gprefix_{p}_{gi}(FileRow f, uint l, uint sg, uint id, threadgroup uint* tg, device const uint* gtabs, device ulong* cin, device ulong* cw) {{\n\
-         \x20 const uint n = f.halo_base, run = (n + {pt}u - 1u) / {pt}u;\n\
-         \x20 const uint lo = min(id * run, n), hi = min(lo + run, n);\n\
-         \x20 uint mine = TID3;\n\
-         \x20 for (uint s = lo; s < hi; s++) mine = tcompose3(mine, gtable_{p}_{gi}(gtabs, f.group0 + s, 1u));\n\
-         \x20 uint total = 0u;\n\
-         \x20 const uint e = texclusive3(mine, l, total);\n\
-         \x20 threadgroup_barrier(mem_flags::mem_threadgroup);\n\
+         UKL_INLINE void gprefix_{p}_{gi}(FileRow f, uint32_t l, uint32_t sg, uint32_t id, UKL_LOCAL uint32_t* tg, UKL_GLOBAL const uint32_t* gtabs, UKL_GLOBAL uint64_t* cin, UKL_GLOBAL uint64_t* cw __UKL_PARAMS) {{\n\
+         \x20 const uint32_t n = f.halo_base, run = (n + {pt}u - 1u) / {pt}u;\n\
+         \x20 const uint32_t lo = ukl_min(id * run, n), hi = ukl_min(lo + run, n);\n\
+         \x20 uint32_t mine = TID3;\n\
+         \x20 for (uint32_t s = lo; s < hi; s++) mine = tcompose3(mine, gtable_{p}_{gi}(gtabs, f.group0 + s, 1u));\n\
+         \x20 uint32_t total = 0u;\n\
+         \x20 const uint32_t e = texclusive3(mine, l, &total __UKL_ARGS);\n\
+         \x20 ukl_tg_barrier();\n\
          \x20 if (l == 0u) tg[sg] = total;\n\
-         \x20 threadgroup_barrier(mem_flags::mem_threadgroup);\n\
-         \x20 uint before = TID3;\n\
-         \x20 for (uint k = 0u; k < sg; k++) before = tcompose3(before, tg[k]);\n\
-         \x20 uint c = tapply3(tcompose3(before, e), 0u);\n\
-         \x20 for (uint s = lo; s < hi; s++) {{\n\
-         \x20   const uint j = f.group0 + s;\n\
+         \x20 ukl_tg_barrier();\n\
+         \x20 uint32_t before = TID3;\n\
+         \x20 for (uint32_t k = 0u; k < sg; k++) before = tcompose3(before, tg[k]);\n\
+         \x20 uint32_t c = tapply3(tcompose3(before, e), 0u);\n\
+         \x20 for (uint32_t s = lo; s < hi; s++) {{\n\
+         \x20   const uint32_t j = f.group0 + s;\n\
          \x20   cw[j] |= gbits_{p}_{gi}(c);\n\
          \x20   cin[j] |= gbits_{p}_{gi}(tapply3(gtable_{p}_{gi}(gtabs, j, 0u), c));\n\
          \x20   c = tapply3(gtable_{p}_{gi}(gtabs, j, 1u), c);\n\
@@ -835,9 +837,9 @@ fn cone_function(p: usize, native: &BlockNative, levels: &Levels, l: usize) -> S
     }
     let cone = cone_of(native, inside);
     let mut out = format!(
-        "static inline void cone_{p}_{l}(device const uint4* bytes, device const ulong* out, FileRow f, uint a, uint a_next, uint warm, ulong cin, ulong cw, device uint* tab) {{\n\
-         \x20 const uint start = a - min(a, warm);\n\
-         \x20 const ulong from = start < a ? cw : cin;\n"
+        "UKL_INLINE void cone_{p}_{l}(Bytes bytes, UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t a, uint32_t a_next, uint32_t warm, uint64_t cin, uint64_t cw, UKL_GLOBAL uint32_t* tab) {{\n\
+         \x20 const uint32_t start = a - ukl_min(a, warm);\n\
+         \x20 const uint64_t from = start < a ? cw : cin;\n"
     );
     let (mut set, mut tail) = (String::new(), String::new());
     let mut prevs: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
@@ -849,13 +851,13 @@ fn cone_function(p: usize, native: &BlockNative, levels: &Levels, l: usize) -> S
             BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => {
                 let i = levels.bit(at);
                 if levels.level[i] > 0 {
-                    out.push_str(&format!("  uint cy{at} = uint((from >> {i}u) & 1ul);\n"));
-                    set.push_str(&format!(" cy{at} = uint((cin >> {i}u) & 1ul);"));
+                    out.push_str(&format!("  uint32_t cy{at} = U32((from >> {i}u) & 1ul);\n"));
+                    set.push_str(&format!(" cy{at} = U32((cin >> {i}u) & 1ul);"));
                 } else {
-                    out.push_str(&format!("  uint cy{at} = 0u;\n"));
+                    out.push_str(&format!("  uint32_t cy{at} = 0u;\n"));
                 }
                 tail.push_str(&match native.insts[at] {
-                    BlockInst::Toggle(_) => format!("      cy{at} = uint(v{at} >> 63u);\n"),
+                    BlockInst::Toggle(_) => format!("      cy{at} = U32(v{at} >> 63u);\n"),
                     _ => format!("      cy{at} = o{at};\n"),
                 });
             }
@@ -863,7 +865,7 @@ fn cone_function(p: usize, native: &BlockNative, levels: &Levels, l: usize) -> S
         }
     }
     for a in &prevs {
-        out.push_str(&format!("  ulong s{a} = 0ul;\n"));
+        out.push_str(&format!("  uint64_t s{a} = 0ul;\n"));
         tail.push_str(&format!("      s{a} = v{a};\n"));
     }
     // The level's scans, each from both carries: `x` from 0, `y` from 1.
@@ -871,12 +873,12 @@ fn cone_function(p: usize, native: &BlockNative, levels: &Levels, l: usize) -> S
     let mut record = String::new();
     let mut finish = String::new();
     for &(k, at) in &own {
-        out.push_str(&format!("  uint x{at} = 0u, y{at} = 1u, tw{at} = 2u;\n"));
+        out.push_str(&format!("  uint32_t x{at} = 0u, y{at} = 1u, tw{at} = 2u;\n"));
         set.push_str(&format!(" x{at} = 0u; y{at} = 1u;"));
         twice.push_str(&match native.insts[at] {
-            BlockInst::Toggle(a) => format!("      {{ const uint n = uint(popcount(v{a})) & 1u; x{at} ^= n; y{at} ^= n; }}\n"),
-            BlockInst::Escaped(a) => format!("      {{ uint o = 0u, r = 0u; escaped(v{a}, ulong(x{at}), o); escaped(v{a}, ulong(y{at}), r); x{at} = o; y{at} = r; }}\n"),
-            BlockInst::Fill(a, e) => format!("      {{ uint o = 0u, r = 0u; fill_word(v{a}, v{e}, ulong(x{at}), o); fill_word(v{a}, v{e}, ulong(y{at}), r); x{at} = o; y{at} = r; }}\n"),
+            BlockInst::Toggle(a) => format!("      {{ const uint32_t n = U32(ukl_popcount64(v{a})) & 1u; x{at} ^= n; y{at} ^= n; }}\n"),
+            BlockInst::Escaped(a) => format!("      {{ uint32_t o = 0u, r = 0u; escaped(v{a}, U64(x{at}), &o); escaped(v{a}, U64(y{at}), &r); x{at} = o; y{at} = r; }}\n"),
+            BlockInst::Fill(a, e) => format!("      {{ uint32_t o = 0u, r = 0u; fill_word(v{a}, v{e}, U64(x{at}), &o); fill_word(v{a}, v{e}, U64(y{at}), &r); x{at} = o; y{at} = r; }}\n"),
             _ => unreachable!("a scan"),
         });
         record.push_str(&format!(" tw{at} = x{at} | (y{at} << 1u);"));
@@ -887,8 +889,8 @@ fn cone_function(p: usize, native: &BlockNative, levels: &Levels, l: usize) -> S
     body.push_str(&twice);
     let body: String = body.lines().map(|line| format!("    {line}\n")).collect();
     out.push_str(&format!(
-        "  const uint len = f.len;\n{}\
-         \x20 for (uint b = start; b < a_next; b++) {{\n{NEXT_BLOCK}\
+        "  const uint32_t len = f.len;\n{}\
+         \x20 for (uint32_t b = start; b < a_next; b++) {{\n{NEXT_BLOCK}\
          \x20   if (b == a) {{{set} }}\n\
          \x20   if (b + warm == a_next && b >= a) {{{record} }}\n\
          \x20   {{\n{body}    }}\n\
@@ -903,25 +905,25 @@ fn cone_function(p: usize, native: &BlockNative, levels: &Levels, l: usize) -> S
 /// before them (zero before the file).
 fn load_ahead(b0: &str) -> String {
     format!(
-        "  uint4 n0 = load16(bytes, f, {b0} * 4u), n1 = load16(bytes, f, {b0} * 4u + 1u), n2 = load16(bytes, f, {b0} * 4u + 2u), n3 = load16(bytes, f, {b0} * 4u + 3u);\n\
-         \x20 uint4 pl = {b0} > 0u ? load16(bytes, f, {b0} * 4u - 1u) : uint4(0u);\n"
+        "  B4 n0 = load16(bytes, f, {b0} * 4u), n1 = load16(bytes, f, {b0} * 4u + 1u), n2 = load16(bytes, f, {b0} * 4u + 2u), n3 = load16(bytes, f, {b0} * 4u + 3u);\n\
+         \x20 B4 pl = {b0} > 0u ? load16(bytes, f, {b0} * 4u - 1u) : b4(0u, 0u, 0u, 0u);\n"
     )
 }
 
 /// A serial loop's first statements: the block's chunks, the byte before them, and the next
 /// block's loads.
-const NEXT_BLOCK: &str = "    const uint4 c0 = n0, c1 = n1, c2 = n2, c3 = n3;\n\
-    const uint before = pl.w >> 24u;\n\
+const NEXT_BLOCK: &str = "    const B4 c0 = n0, c1 = n1, c2 = n2, c3 = n3;\n\
+    const uint32_t before = pl.w >> 24u;\n\
     n0 = load16(bytes, f, b * 4u + 4u); n1 = load16(bytes, f, b * 4u + 5u); n2 = load16(bytes, f, b * 4u + 6u); n3 = load16(bytes, f, b * 4u + 7u);\n";
 
 /// A carried instruction in serial form: the thread's state, `s` a `prev` operand's last word and
 /// `c` a scan's carry.
 fn carried_serial(at: usize, inst: &BlockInst, out: &mut String) {
     match *inst {
-        BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = (v{a} << {k}u) | (s{a} >> {}u);\n", 64 - u32::from(k))),
-        BlockInst::Toggle(a) => out.push_str(&format!("  const ulong v{at} = prefix_xor(v{a}) ^ (0ul - ulong(cy{at}));\n")),
-        BlockInst::Escaped(a) => out.push_str(&format!("  uint o{at} = 0u;\n  const ulong v{at} = escaped(v{a}, ulong(cy{at}), o{at});\n")),
-        BlockInst::Fill(a, e) => out.push_str(&format!("  uint o{at} = 0u;\n  const ulong v{at} = fill_word(v{a}, v{e}, ulong(cy{at}), o{at});\n")),
+        BlockInst::Prev(a, k) => out.push_str(&format!("  const uint64_t v{at} = (v{a} << {k}u) | (s{a} >> {}u);\n", 64 - u32::from(k))),
+        BlockInst::Toggle(a) => out.push_str(&format!("  const uint64_t v{at} = prefix_xor(v{a}) ^ (0ul - U64(cy{at}));\n")),
+        BlockInst::Escaped(a) => out.push_str(&format!("  uint32_t o{at} = 0u;\n  const uint64_t v{at} = escaped(v{a}, U64(cy{at}), &o{at});\n")),
+        BlockInst::Fill(a, e) => out.push_str(&format!("  uint32_t o{at} = 0u;\n  const uint64_t v{at} = fill_word(v{a}, v{e}, U64(cy{at}), &o{at});\n")),
         _ => unreachable!("a carried instruction"),
     }
 }
@@ -935,7 +937,7 @@ static SOURCES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u
 
 /// A source's kernels by its key (`serial_source`) and name: found without hashing the source
 /// again, as `pipeline_named` does (twelve kernels a pass, its source near a megabyte).
-pub(crate) static KERNELS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(u64, &'static str), metal::ComputePipelineState>>> = std::sync::LazyLock::new(Default::default);
+pub(crate) static KERNELS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(u64, &'static str), lane::Kernel>>> = std::sync::LazyLock::new(Default::default);
 
 /// Sources generated and kernels compiled by this process's serial runs: a benchmark reads it
 /// around its timed runs, which must make none (`prewarm` makes them first).
@@ -946,12 +948,12 @@ pub fn compiles() -> usize {
     COMPILES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-fn kernel(key: u64, source: &str, name: &'static str) -> Result<metal::ComputePipelineState, Error> {
+fn kernel(key: u64, source: &str, name: &'static str) -> Result<lane::Kernel, Error> {
     if let Some(hit) = KERNELS.lock().ok().and_then(|m| m.get(&(key, name)).cloned()) {
         return Ok(hit);
     }
     COMPILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let made = pipeline_named(source, name)?;
+    let made = lane::kernel(source, name, None);
     if let Ok(mut m) = KERNELS.lock() {
         m.insert((key, name), made.clone());
     }
@@ -1002,11 +1004,11 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
 }
 
 fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (String, usize, usize) {
-    let mut out = format!("{CARRY}\n{}\n{}{EQ16}\n{TRANSPOSE8}\n", batch_helpers(), table_helpers(3));
+    let mut out = format!("{}{}", head(LaneWidth::W64), table_helpers(3));
     // A program in passes (`native_ir::Passes`): its slots a block, and the pass's stores.
     let (stores, slots) = io.unwrap_or((&[], 0));
     for p in 0..programs.len() {
-        out.push_str(&format!("constant uint SLOTS{p} = {slots}u;\n"));
+        out.push_str(&format!("#define SLOTS{p} {slots}u\n"));
     }
     let states: Vec<State> = programs.iter().map(|n| State::of(n)).collect();
     let sw = states.iter().map(|s| s.words).max().unwrap_or(1);
@@ -1027,14 +1029,14 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
         for l in 1..=lv.depth {
             if !lv.groups_at(l).is_empty() {
                 out.push_str(&lanes_group_function(p, native, lv, l));
-                group.push_str(&format!("        case {l}u: lgroup_{p}_{l}(bytes, out, f, a, a_next, q.z, l, c, cin[s], cw[s], gtabs + s * {gstride}u); break;\n"));
+                group.push_str(&format!("        case {l}u: lgroup_{p}_{l}(bytes, out, f, a, a_next, q.z, l, c, cin[s], cw[s], gtabs + s * {gstride}u __UKL_ARGS); break;\n"));
             }
             out.push_str(&cone_function(p, native, lv, l));
             out.push_str(&lanes_cone_function(p, native, lv, l));
-            lcone.push_str(&format!("        case {l}u: lcone_{p}_{l}(bytes, out, f, a, a_next, q.z, l, cin[s], cw[s], tables + s * {}u); break;\n", 2 * most));
+            lcone.push_str(&format!("        case {l}u: lcone_{p}_{l}(bytes, out, f, a, a_next, q.z, l, cin[s], cw[s], tables + s * {}u __UKL_ARGS); break;\n", 2 * most));
             cone.push_str(&format!("        case {l}u: cone_{p}_{l}(bytes, out, f, a, a_next, q.z, cin[t], cw[t], tables + t * {}u); break;\n", 2 * most));
-            let mut scans: String = lv.at(l).iter().map(|&(i, _)| format!(" scan_prefix(f, {i}u, l, sg, id, tg, tables, cin, cw);")).collect();
-            scans.extend(lv.groups_at(l).into_iter().map(|(gi, _)| format!(" gprefix_{p}_{gi}(f, l, sg, id, tg, gtabs, cin, cw);")));
+            let mut scans: String = lv.at(l).iter().map(|&(i, _)| format!(" scan_prefix(f, {i}u, l, sg, id, tg, tables, cin, cw __UKL_ARGS);")).collect();
+            scans.extend(lv.groups_at(l).into_iter().map(|(gi, _)| format!(" gprefix_{p}_{gi}(f, l, sg, id, tg, gtabs, cin, cw __UKL_ARGS);")));
             prefix.push_str(&format!("        case {l}u:{scans} break;\n"));
         }
         cone_cases.push_str(&format!("    case {p}u: switch (q.y) {{\n{cone}        default: break;\n      }} break;\n"));
@@ -1048,32 +1050,32 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
          // that one's carry in). Each thread of the file's threadgroup composes a run of its segments,\n\
          // the runs' tables are scanned across the threadgroup (each SIMD group's total through `tg`),\n\
          // and each thread walks its run again with its carry.\n\
-         static inline void scan_prefix(FileRow f, uint i, uint l, uint sg, uint id, threadgroup uint* tg, device const uint* tables, device ulong* cin, device ulong* cw) {{\n\
-         \x20 const uint n = f.halo_base, run = (n + {pt}u - 1u) / {pt}u;\n\
-         \x20 const uint lo = min(id * run, n), hi = min(lo + run, n);\n\
-         \x20 uint mine = TID1;\n\
-         \x20 for (uint s = lo; s < hi; s++) mine = tcompose1(mine, tables[(f.group0 + s) * {r}u + 2u * i]);\n\
-         \x20 uint total = 0u;\n\
-         \x20 const uint e = texclusive1(mine, l, total);\n\
-         \x20 threadgroup_barrier(mem_flags::mem_threadgroup);\n\
+         UKL_INLINE void scan_prefix(FileRow f, uint32_t i, uint32_t l, uint32_t sg, uint32_t id, UKL_LOCAL uint32_t* tg, UKL_GLOBAL const uint32_t* tables, UKL_GLOBAL uint64_t* cin, UKL_GLOBAL uint64_t* cw __UKL_PARAMS) {{\n\
+         \x20 const uint32_t n = f.halo_base, run = (n + {pt}u - 1u) / {pt}u;\n\
+         \x20 const uint32_t lo = ukl_min(id * run, n), hi = ukl_min(lo + run, n);\n\
+         \x20 uint32_t mine = TID1;\n\
+         \x20 for (uint32_t s = lo; s < hi; s++) mine = tcompose1(mine, tables[(f.group0 + s) * {r}u + 2u * i]);\n\
+         \x20 uint32_t total = 0u;\n\
+         \x20 const uint32_t e = texclusive1(mine, l, &total __UKL_ARGS);\n\
+         \x20 ukl_tg_barrier();\n\
          \x20 if (l == 0u) tg[sg] = total;\n\
-         \x20 threadgroup_barrier(mem_flags::mem_threadgroup);\n\
-         \x20 uint before = TID1;\n\
-         \x20 for (uint k = 0u; k < sg; k++) before = tcompose1(before, tg[k]);\n\
-         \x20 uint c = tapply1(tcompose1(before, e), 0u);\n\
+         \x20 ukl_tg_barrier();\n\
+         \x20 uint32_t before = TID1;\n\
+         \x20 for (uint32_t k = 0u; k < sg; k++) before = tcompose1(before, tg[k]);\n\
+         \x20 uint32_t c = tapply1(tcompose1(before, e), 0u);\n\
          \x20 // Each segment gives the next its carry at the next's warm-up start.\n\
-         \x20 for (uint s = lo; s < hi; s++) {{\n\
-         \x20   const uint j = f.group0 + s;\n\
-         \x20   cin[j] |= ulong(c) << i;\n\
-         \x20   if (s + 1u < n) cw[j + 1u] |= ulong(tapply1(tables[j * {r}u + 2u * i + 1u], c)) << i;\n\
+         \x20 for (uint32_t s = lo; s < hi; s++) {{\n\
+         \x20   const uint32_t j = f.group0 + s;\n\
+         \x20   cin[j] |= U64(c) << i;\n\
+         \x20   if (s + 1u < n) cw[j + 1u] |= U64(tapply1(tables[j * {r}u + 2u * i + 1u], c)) << i;\n\
          \x20   c = tapply1(tables[j * {r}u + 2u * i], c);\n\
          \x20 }}\n\
          }}\n\n",
         r = 2 * most,
         pt = PREFIX_THREADS,
     ));
-    let lane_cases: String = (0..programs.len()).map(|p| format!("      case {p}u: lanes_{p}(bytes, f, seg.y, seg.z, false, q.z, l, out, records + s * {}u, st, cin[s], cw[s], counts + s * {counted}u); break;\n", 2 * sw)).collect();
-    let again_cases: String = (0..programs.len()).map(|p| format!("      case {p}u: lanes_{p}(bytes, f, seg.y, seg.z, true, q.z, l, out, records + s * {}u, st, cin[s], cw[s], counts + s * {counted}u); break;\n", 2 * sw)).collect();
+    let lane_cases: String = (0..programs.len()).map(|p| format!("      case {p}u: lanes_{p}(bytes, f, seg.y, seg.z, false, q.z, l, out, records + s * {}u, st, cin[s], cw[s], counts + s * {counted}u __UKL_ARGS); break;\n", 2 * sw)).collect();
+    let again_cases: String = (0..programs.len()).map(|p| format!("      case {p}u: lanes_{p}(bytes, f, seg.y, seg.z, true, q.z, l, out, records + s * {}u, st, cin[s], cw[s], counts + s * {counted}u __UKL_ARGS); break;\n", 2 * sw)).collect();
     let cases: String = (0..programs.len()).map(|p| format!("      case {p}u: serial_{p}(bytes, f, seg.y, seg.z, again, q.z, out, records + s * {}u, st, cin[s], cw[s]); break;\n", 2 * sw)).collect();
     // The positions and totals of each program, from its output words.
     let mut count_cases = String::new();
@@ -1083,18 +1085,18 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
         let mut write = String::new();
         for (e, &k) in native.extracts.iter().enumerate() {
             count.push_str(&format!(
-                "      {{ uint n = 0u; for (uint j = seg.y; j < seg.z; j++) n += uint(popcount(out[f.out_base + {k}u * f.groups + j])); counts[t * {counted}u + {e}u] = n; }}\n"
+                "      {{ uint32_t n = 0u; for (uint32_t j = seg.y; j < seg.z; j++) n += U32(ukl_popcount64(out[f.out_base + {k}u * f.groups + j])); counts[t * {counted}u + {e}u] = n; }}\n"
             ));
             write.push_str(&format!(
-                "      {{ uint at = bases[t * {counted}u + {e}u]; for (uint j = seg.y; j < seg.z; j++) {{ ulong w = out[f.out_base + {k}u * f.groups + j];\n\
-                 \x20       for (uint i = 0u; i < 64u && w != 0ul; i++) {{ positions[f.pos_base + {e}u * max(len, 1u) + at] = j * 64u + uint(ctz(w)); at++; w &= w - 1ul; }} }} }}\n"
+                "      {{ uint32_t at = bases[t * {counted}u + {e}u]; for (uint32_t j = seg.y; j < seg.z; j++) {{ uint64_t w = out[f.out_base + {k}u * f.groups + j];\n\
+                 \x20       for (uint32_t i = 0u; i < 64u && w != 0ul; i++) {{ positions[f.pos_base + {e}u * ukl_max(len, 1u) + at] = j * 64u + U32(ukl_ctz64(w)); at++; w &= w - 1ul; }} }} }}\n"
             ));
         }
         // All the totals into one flag, the count after the extracts' (`counted_outputs`).
         if !native.totals.is_empty() {
             let words: String = native.totals.iter().map(|&k| format!(" | out[f.out_base + {k}u * f.groups + j]")).collect();
             count.push_str(&format!(
-                "      {{ ulong any = 0ul; for (uint j = seg.y; j < seg.z; j++) any = any{words}; counts[t * {counted}u + {}u] = uint(any != 0ul); }}\n",
+                "      {{ uint64_t any = 0ul; for (uint32_t j = seg.y; j < seg.z; j++) any = any{words}; counts[t * {counted}u + {}u] = U32(any != 0ul); }}\n",
                 native.extracts.len()
             ));
         }
@@ -1109,9 +1111,9 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
             .enumerate()
             .map(|(e, &k)| {
                 format!(
-                    "      {{ ulong w = j < seg.z ? out[f.out_base + {k}u * f.groups + j] : 0ul; const uint n = uint(popcount(w));\n\
-                     \x20       uint at = bases[s * {counted}u + {e}u] + simd_prefix_exclusive_sum(n);\n\
-                     \x20       for (uint i = 0u; i < 64u && w != 0ul; i++) {{ positions[f.pos_base + {e}u * max(len, 1u) + at] = j * 64u + uint(ctz(w)); at++; w &= w - 1ul; }} }}\n"
+                    "      {{ uint64_t w = j < seg.z ? out[f.out_base + {k}u * f.groups + j] : 0ul; const uint32_t n = U32(ukl_popcount64(w));\n\
+                     \x20       uint32_t at = bases[s * {counted}u + {e}u] + ukl_sg_exclusive_sum(n, l __UKL_ARGS);\n\
+                     \x20       for (uint32_t i = 0u; i < 64u && w != 0ul; i++) {{ positions[f.pos_base + {e}u * ukl_max(len, 1u) + at] = j * 64u + U32(ukl_ctz64(w)); at++; w &= w - 1ul; }} }}\n"
                 )
             })
             .collect();
@@ -1125,219 +1127,374 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
         .collect();
     let extracts: String = (0..programs.len()).map(|p| format!("    case {p}u: e_count = {}u; x_count = {}u; break;\n", counted_outputs(programs[p]).len(), programs[p].extracts.len())).collect();
     out.push_str(&format!(
-        "#define SLAB device const uint4* bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3\n\
-         // A segment's run: `q.x` segments, `q.y` 1 for runs again (segment `list[t]`, its start\n\
-         // `given`), `q.z` the warm-up blocks, `q.w` the check that listed them. A segment: (file,\n\
-         // first block, last block, index in the file). A run again goes on into the next segment\n\
-         // while its end differs from the end it had, unless the next is listed too: a stale state\n\
-         // (a fill no byte reads until it resets) can carry through many segments.\n\
-         kernel void serial_run(device const uint4* s0 [[buffer(0)]], device ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
-         \x20   device const uint4* segs [[buffer(3)]], device ulong* records [[buffer(4)]], device const uint* list [[buffer(5)]],\n\
-         \x20   device const ulong* given [[buffer(6)]], constant uint4& q [[buffer(7)]], device const ulong* cin [[buffer(10)]],\n\
-         \x20   device const ulong* cw [[buffer(14)]],\n\
-         \x20   device const uint* marks [[buffer(12)]], device atomic_uint* hopped [[buffer(13)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
-         \x20   device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]]) {{\n\
-         \x20 if (t >= q.x) return;\n\
-         \x20 const bool again = q.y != 0u;\n\
-         \x20 uint s = again ? list[t] : t;\n\
-         \x20 ulong st[{sw}];\n\
-         \x20 for (uint i = 0u; i < {sw}u; i++) st[i] = again ? given[t * {sw}u + i] : 0ul;\n\
-         \x20 const uint hops = again ? files[segs[s].x].halo_base : 1u;\n\
-         \x20 uint hop = 0u;\n\
-         \x20 for (; hop < hops; hop++) {{\n\
-         \x20   const uint4 seg = segs[s];\n\
-         \x20   const FileRow f = files[seg.x];\n\
-         \x20   SLAB;\n\
-         \x20   ulong old[{sw}];\n\
-         \x20   for (uint i = 0u; i < {sw}u; i++) old[i] = records[s * {r}u + {sw}u + i];\n\
-         \x20   switch (f.program) {{\n{cases}      default: break;\n    }}\n\
-         \x20   bool same = true;\n\
-         \x20   for (uint i = 0u; i < {sw}u; i++) same = same && records[s * {r}u + {sw}u + i] == old[i];\n\
-         \x20   if (!again || same || seg.w + 1u >= f.halo_base || marks[s + 1u] == q.w) break;\n\
-         \x20   for (uint i = 0u; i < {sw}u; i++) st[i] = records[s * {r}u + {sw}u + i];\n\
-         \x20   s++;\n\
-         \x20 }}\n\
-         \x20 if (again) {{ atomic_fetch_add_explicit(&hopped[0], hop + 1u, memory_order_relaxed); atomic_fetch_max_explicit(&hopped[1], hop + 1u, memory_order_relaxed); }}\n\
-         }}\n\n\
-         // The first run in lanes form: one SIMD group a segment (`lanes_function`).\n\
-         kernel void lanes_run(device const uint4* s0 [[buffer(0)]], device ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
-         \x20   device const uint4* segs [[buffer(3)]], device ulong* records [[buffer(4)]], constant uint4& q [[buffer(7)]],\n\
-         \x20   device const ulong* cin [[buffer(10)]], device const ulong* cw [[buffer(14)]], device uint* counts [[buffer(15)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
-         \x20   device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
-         \x20 const uint s = t / {GROUP}u;\n\
-         \x20 if (s >= q.x) return;\n\
-         \x20 const uint4 seg = segs[s];\n\
-         \x20 const FileRow f = files[seg.x];\n\
-         \x20 SLAB;\n\
-         \x20 const ulong st[{sw}] = {{}};\n\
-         \x20 switch (f.program) {{\n{lane_cases}    default: break;\n  }}\n\
-         }}\n\n\
-         // The runs again in lanes form: `serial_run`'s, one SIMD group a listed segment.\n\
-         kernel void lanes_again(device const uint4* s0 [[buffer(0)]], device ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
-         \x20   device const uint4* segs [[buffer(3)]], device ulong* records [[buffer(4)]], device const uint* list [[buffer(5)]],\n\
-         \x20   device const ulong* given [[buffer(6)]], constant uint4& q [[buffer(7)]], device const ulong* cin [[buffer(10)]],\n\
-         \x20   device const ulong* cw [[buffer(14)]], device const uint* marks [[buffer(12)]], device atomic_uint* hopped [[buffer(13)]], device uint* counts [[buffer(15)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
-         \x20   device const uint4* s3 [[buffer(18)]], device atomic_uint* refusal [[buffer(20)]], uint t [[thread_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
-         \x20 const uint i = t / {GROUP}u;\n\
-         \x20 if (i >= q.x) return;\n\
-         \x20 uint s = list[i];\n\
-         \x20 // A file with a total in a segment before its first listed (the check's, `serial_check`)\n\
-         \x20 // is refused: its segments are not run again, its later checks list none.\n\
-         \x20 {{\n\
-         \x20   device atomic_uint* fate = refusal + segs[s].x * 6u;\n\
-         \x20   const uint par = 1u + 2u * (q.w & 1u);\n\
-         \x20   if (atomic_load_explicit(fate + par + 1u, memory_order_relaxed) > atomic_load_explicit(fate + par, memory_order_relaxed)) {{\n\
-         \x20     if (l == 0u) {{ atomic_store_explicit(fate, 1u, memory_order_relaxed); atomic_fetch_add_explicit(&hopped[2], 1u, memory_order_relaxed); }}\n\
-         \x20     return;\n\
-         \x20   }}\n\
-         \x20 }}\n\
-         \x20 ulong st[{sw}];\n\
-         \x20 for (uint k = 0u; k < {sw}u; k++) st[k] = given[i * {sw}u + k];\n\
-         \x20 const uint hops = files[segs[s].x].halo_base;\n\
-         \x20 uint hop = 0u;\n\
-         \x20 for (; hop < hops; hop++) {{\n\
-         \x20   const uint4 seg = segs[s];\n\
-         \x20   const FileRow f = files[seg.x];\n\
-         \x20   SLAB;\n\
-         \x20   ulong old[{sw}];\n\
-         \x20   for (uint k = 0u; k < {sw}u; k++) old[k] = records[s * {r}u + {sw}u + k];\n\
-         \x20   simdgroup_barrier(mem_flags::mem_device);\n\
-         \x20   switch (f.program) {{\n{again_cases}      default: break;\n    }}\n\
-         \x20   simdgroup_barrier(mem_flags::mem_device);\n\
-         \x20   bool same = true;\n\
-         \x20   for (uint k = 0u; k < {sw}u; k++) same = same && records[s * {r}u + {sw}u + k] == old[k];\n\
-         \x20   if (same || seg.w + 1u >= f.halo_base || marks[s + 1u] == q.w) break;\n\
-         \x20   for (uint k = 0u; k < {sw}u; k++) st[k] = records[s * {r}u + {sw}u + k];\n\
-         \x20   s++;\n\
-         \x20 }}\n\
-         \x20 if (l == 0u) {{ atomic_fetch_add_explicit(&hopped[0], hop + 1u, memory_order_relaxed); atomic_fetch_max_explicit(&hopped[1], hop + 1u, memory_order_relaxed); }}\n\
-         }}\n\n\
-         // Level `q.y`'s pass: each segment's tables of the level's scans (`cone_function`).\n\
-         kernel void serial_cone(device const uint4* s0 [[buffer(0)]], device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
-         \x20   constant uint4& q [[buffer(7)]], device const ulong* cin [[buffer(10)]], device uint* tables [[buffer(11)]],\n\
-         \x20   device const ulong* cw [[buffer(14)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
-         \x20   device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]]) {{\n\
-         \x20 if (t >= q.x) return;\n\
-         \x20 const uint4 seg = segs[t];\n\
-         \x20 const FileRow f = files[seg.x];\n\
-         \x20 SLAB;\n\
-         \x20 const uint a = seg.y - min(seg.y, q.z), a_next = seg.z - min(seg.z, q.z);\n\
-         \x20 switch (f.program) {{\n{cone_cases}    default: break;\n  }}\n\
-         }}\n\n\
-         // Level `q.y`'s pass in lanes form (`lanes_cone_function`): one SIMD group a segment.\n\
-         kernel void lanes_cone(device const uint4* s0 [[buffer(0)]], device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
-         \x20   constant uint4& q [[buffer(7)]], device const ulong* cin [[buffer(10)]], device uint* tables [[buffer(11)]],\n\
-         \x20   device const ulong* cw [[buffer(14)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
-         \x20   device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
-         \x20 const uint s = t / {GROUP}u;\n\
-         \x20 if (s >= q.x) return;\n\
-         \x20 const uint4 seg = segs[s];\n\
-         \x20 const FileRow f = files[seg.x];\n\
-         \x20 SLAB;\n\
-         \x20 const uint a = seg.y - min(seg.y, q.z), a_next = seg.z - min(seg.z, q.z);\n\
-         \x20 switch (f.program) {{\n{lcone_cases}    default: break;\n  }}\n\
-         }}\n\n\
-         // Level `q.y`'s fixed points (`lanes_group_function`): one SIMD group a segment and a state.\n\
-         kernel void lanes_group(device const uint4* s0 [[buffer(0)]], device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
-         \x20   constant uint4& q [[buffer(7)]], device const ulong* cin [[buffer(10)]], device const ulong* cw [[buffer(14)]], device const uint4* s1 [[buffer(16)]],\n\
-         \x20   device const uint4* s2 [[buffer(17)]], device const uint4* s3 [[buffer(18)]], device uint* gtabs [[buffer(19)]],\n\
-         \x20   uint t [[thread_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
-         \x20 const uint s = t / {GROUP}u / {GROUP_STATES}u, c = t / {GROUP}u % {GROUP_STATES}u;\n\
-         \x20 if (s >= q.x) return;\n\
-         \x20 const uint4 seg = segs[s];\n\
-         \x20 const FileRow f = files[seg.x];\n\
-         \x20 SLAB;\n\
-         \x20 const uint a = seg.y - min(seg.y, q.z), a_next = seg.z - min(seg.z, q.z);\n\
-         \x20 switch (f.program) {{\n{group_cases}    default: break;\n  }}\n\
-         }}\n\n\
-         // Level `q.y`'s prefix: one SIMD group a file.\n\
-         kernel void serial_cone_prefix(device const FileRow* files [[buffer(2)]], constant uint4& q [[buffer(7)]], device ulong* cin [[buffer(10)]],\n\
-         \x20   device const uint* tables [[buffer(11)]], device ulong* cw [[buffer(14)]], device const uint* gtabs [[buffer(19)]], uint l [[thread_index_in_simdgroup]],\n\
-         \x20   uint sg [[simdgroup_index_in_threadgroup]], uint id [[thread_index_in_threadgroup]], uint g [[threadgroup_position_in_grid]]) {{\n\
-         \x20 threadgroup uint tg[{tgs}];\n\
-         \x20 const FileRow f = files[g];\n\
-         \x20 switch (f.program) {{\n{prefix_cases}    default: break;\n  }}\n\
-         }}\n\n\
-         // The check: a segment whose start is not its predecessor's end is listed, with that end.\n\
-         // A file refused (`refusal`, its first word) lists none: it goes to the fallback. Each\n\
-         // file's first segment listed and first segment agreeing with a total set, this check's\n\
-         // (`q.w`'s parity: words 1 and 2, or 3 and 4), as `~t` (zeroed: none); its first segment\n\
-         // clears the other parity's for the next check. A total in a segment before the first\n\
-         // listed is final: the runs again find the file refused (`lanes_again`).\n\
-         kernel void serial_check(device const uint4* segs [[buffer(3)]], device const ulong* records [[buffer(4)]], device uint* list [[buffer(5)]],\n\
-         \x20   device ulong* given [[buffer(6)]], constant uint4& q [[buffer(7)]], device atomic_uint* listed [[buffer(9)]],\n\
-         \x20   device uint* marks [[buffer(12)]], device const uint* counts [[buffer(15)]], device atomic_uint* refusal [[buffer(20)]],\n\
-         \x20   device const FileRow* files [[buffer(2)]], uint t [[thread_position_in_grid]]) {{\n\
-         \x20 if (t >= q.x) return;\n\
-         \x20 const uint4 seg = segs[t];\n\
-         \x20 device atomic_uint* fate = refusal + seg.x * 6u;\n\
-         \x20 if (atomic_load_explicit(fate, memory_order_relaxed) != 0u) return;\n\
-         \x20 const uint par = 1u + 2u * (q.w & 1u);\n\
-         \x20 if (seg.w == 0u) {{ atomic_store_explicit(fate + 4u - par, 0u, memory_order_relaxed); atomic_store_explicit(fate + 5u - par, 0u, memory_order_relaxed); }}\n\
-         \x20 bool same = seg.w == 0u;\n\
-         \x20 device const ulong* end = records + (t - min(t, 1u)) * {r}u + {sw}u;\n\
-         \x20 if (!same) {{\n\
-         \x20   device const ulong* mine = records + t * {r}u;\n\
-         \x20   same = true;\n\
-         \x20   for (uint i = 0u; i < {sw}u; i++) same = same && mine[i] == end[i];\n\
-         \x20 }}\n\
-         \x20 if (same) {{\n\
-         \x20   bool total = false;\n\
-         \x20   switch (files[seg.x].program) {{\n{total_cases}      default: break;\n    }}\n\
-         \x20   if (total) atomic_fetch_max_explicit(fate + par + 1u, ~t, memory_order_relaxed);\n\
-         \x20   return;\n\
-         \x20 }}\n\
-         \x20 atomic_fetch_max_explicit(fate + par, ~t, memory_order_relaxed);\n\
-         \x20 const uint at = atomic_fetch_add_explicit(listed, 1u, memory_order_relaxed);\n\
-         \x20 list[at] = t;\n\
-         \x20 marks[t] = q.w;\n\
-         \x20 for (uint i = 0u; i < {sw}u; i++) given[at * {sw}u + i] = end[i];\n\
-         }}\n\n\
-         // Each segment's count of each extract's bits, and the totals' flags.\n\
-         kernel void serial_count(device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
-         \x20   device uint* counts [[buffer(4)]], device uint* tot [[buffer(8)]], constant uint4& q [[buffer(7)]], uint t [[thread_position_in_grid]]) {{\n\
-         \x20 if (t >= q.x) return;\n\
-         \x20 const uint4 seg = segs[t];\n\
-         \x20 const FileRow f = files[seg.x];\n\
-         \x20 switch (f.program) {{\n{count_cases}    default: break;\n  }}\n}}\n\n\
-         // A file's segments' bases: one SIMD group a file, 32 segments at a time.\n\
-         kernel void serial_prefix(device const FileRow* files [[buffer(2)]], device const uint* counts [[buffer(4)]], device uint* bases [[buffer(5)]],\n\
-         \x20   device uint* tot [[buffer(8)]], uint l [[thread_index_in_simdgroup]], uint g [[threadgroup_position_in_grid]]) {{\n\
-         \x20 const FileRow f = files[g];\n\
-         \x20 uint e_count = 0u, x_count = 0u;\n\
-         \x20 switch (f.program) {{\n{extracts}    default: break;\n  }}\n\
-         \x20 for (uint e = 0u; e < e_count; e++) {{\n\
-         \x20   uint run = 0u;\n\
-         \x20   for (uint s = 0u; s < f.halo_base; s += 32u) {{\n\
-         \x20     const uint j = f.group0 + s + l;\n\
-         \x20     const uint c = s + l < f.halo_base ? counts[j * {counted}u + e] : 0u;\n\
-         \x20     if (s + l < f.halo_base) bases[j * {counted}u + e] = run + simd_prefix_exclusive_sum(c);\n\
-         \x20     run += simd_sum(c);\n\
-         \x20   }}\n\
-         \x20   // An extract's count; a total's flag.\n\
-         \x20   if (l == 0u) tot[f.tot_base + e] = e < x_count ? run : uint(run != 0u);\n\
-         \x20 }}\n\
-         }}\n\n\
-         // Each segment's positions in lanes form: one SIMD group a segment, a word a lane.\n\
-         kernel void lanes_write(device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
-         \x20   device const uint* bases [[buffer(5)]], device uint* positions [[buffer(6)]], constant uint4& q [[buffer(7)]], uint t [[thread_position_in_grid]],\n\
-         \x20   uint l [[thread_index_in_simdgroup]]) {{\n\
-         \x20 const uint s = t / {GROUP}u;\n\
-         \x20 if (s >= q.x) return;\n\
-         \x20 const uint4 seg = segs[s];\n\
-         \x20 const FileRow f = files[seg.x];\n\
-         \x20 const uint len = f.len, j = seg.y + l;\n\
-         \x20 switch (f.program) {{\n{lwrite_cases}    default: break;\n  }}\n}}\n\n\
-         // Each segment's positions, from its base.\n\
-         kernel void serial_write(device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
-         \x20   device const uint* bases [[buffer(5)]], device uint* positions [[buffer(6)]], constant uint4& q [[buffer(7)]], uint t [[thread_position_in_grid]]) {{\n\
-         \x20 if (t >= q.x) return;\n\
-         \x20 const uint4 seg = segs[t];\n\
-         \x20 const FileRow f = files[seg.x];\n\
-         \x20 const uint len = f.len;\n\
-         \x20 switch (f.program) {{\n{write_cases}    default: break;\n  }}\n}}\n",
+        r#"// A launch's parameters: `x` a count (segments, files), `y` a level or a run again, `z` the warm-up blocks, `w` the
+// check's round.
+typedef struct SerialQ {{ uint32_t x, y, z, w; }} SerialQ;
+UKL_REFLECT_STRUCT(SerialQ, x, y, z, w)
+#define SLAB Bytes bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3
+// A segment's run: `q.x` segments, `q.y` 1 for runs again (segment `list[t]`, its start `given`), `q.z` the warm-up
+// blocks, `q.w` the check that listed them. A segment: (file, first block, last block, index in the file). A run
+// again goes on into the next segment while its end differs from the end it had, unless the next is listed too: a
+// stale state (a fill no byte reads until it resets) can carry through many segments. A thread a segment.
+DEFINE_KERNEL2(serial, serial_run,
+               ROBUFFER, uint32_t, s0,      "[slab]",
+               RWBUFFER, uint64_t, out,     "[outputs]",
+               ROBUFFER, FileRow,  files,   "[files]",
+               ROBUFFER, B4,       segs,    "[segments]",
+               RWBUFFER, uint64_t, records, "[2 * sw * segments]",
+               ROBUFFER, uint32_t, list,    "[segments]",
+               ROBUFFER, uint64_t, given,   "[sw * segments]",
+               ARGS,     SerialQ,  q,       ,
+               ROBUFFER, uint64_t, cin,     "[segments]",
+               ROBUFFER, uint64_t, cw,      "[segments]",
+               ROBUFFER, uint32_t, marks,   "[segments]",
+               RWBUFFER, uint32_t, hopped,  "[3]",
+               ROBUFFER, uint32_t, s1,      "[slab]",
+               ROBUFFER, uint32_t, s2,      "[slab]",
+               ROBUFFER, uint32_t, s3,      "[slab]",
+               GID0,     uint32_t, t,       )
+{{
+  if (t >= q.x) return;
+  const bool again = q.y != 0u;
+  uint32_t s = again ? list[t] : t;
+  uint64_t st[{sw}];
+  for (uint32_t i = 0u; i < {sw}u; i++) st[i] = again ? given[t * {sw}u + i] : 0ul;
+  const uint32_t hops = again ? files[segs[s].x].halo_base : 1u;
+  uint32_t hop = 0u;
+  for (; hop < hops; hop++) {{
+    const B4 seg = segs[s];
+    const FileRow f = files[seg.x];
+    SLAB;
+    uint64_t old[{sw}];
+    for (uint32_t i = 0u; i < {sw}u; i++) old[i] = records[s * {r}u + {sw}u + i];
+    switch (f.program) {{
+{cases}      default: break;
+    }}
+    bool same = true;
+    for (uint32_t i = 0u; i < {sw}u; i++) same = same && records[s * {r}u + {sw}u + i] == old[i];
+    if (!again || same || seg.w + 1u >= f.halo_base || marks[s + 1u] == q.w) break;
+    for (uint32_t i = 0u; i < {sw}u; i++) st[i] = records[s * {r}u + {sw}u + i];
+    s++;
+  }}
+  if (again) {{ ukl_atomic_add(&hopped[0], hop + 1u); ukl_atomic_max(&hopped[1], hop + 1u); }}
+}}
+
+// The first run in lanes form: one SIMD group a segment (`lanes_function`), a threadgroup each.
+DEFINE_KERNEL2(serial, lanes_run,
+               ROBUFFER, uint32_t, s0,      "[slab]",
+               RWBUFFER, uint64_t, out,     "[outputs]",
+               ROBUFFER, FileRow,  files,   "[files]",
+               ROBUFFER, B4,       segs,    "[segments]",
+               RWBUFFER, uint64_t, records, "[2 * sw * segments]",
+               ARGS,     SerialQ,  q,       ,
+               ROBUFFER, uint64_t, cin,     "[segments]",
+               ROBUFFER, uint64_t, cw,      "[segments]",
+               RWBUFFER, uint32_t, counts,  "[counted * segments]",
+               ROBUFFER, uint32_t, s1,      "[slab]",
+               ROBUFFER, uint32_t, s2,      "[slab]",
+               ROBUFFER, uint32_t, s3,      "[slab]",
+               TGID0,    uint32_t, s,       ,
+               LANE,     uint32_t, l,       )
+{{
+  if (s >= q.x) return;
+  const B4 seg = segs[s];
+  const FileRow f = files[seg.x];
+  SLAB;
+  const uint64_t st[{sw}] = {{0ul}};
+  switch (f.program) {{
+{lane_cases}    default: break;
+  }}
+}}
+
+// The runs again in lanes form: `serial_run`'s, one SIMD group a listed segment.
+DEFINE_KERNEL2(serial, lanes_again,
+               ROBUFFER, uint32_t, s0,      "[slab]",
+               RWBUFFER, uint64_t, out,     "[outputs]",
+               ROBUFFER, FileRow,  files,   "[files]",
+               ROBUFFER, B4,       segs,    "[segments]",
+               RWBUFFER, uint64_t, records, "[2 * sw * segments]",
+               ROBUFFER, uint32_t, list,    "[segments]",
+               ROBUFFER, uint64_t, given,   "[sw * segments]",
+               ARGS,     SerialQ,  q,       ,
+               ROBUFFER, uint64_t, cin,     "[segments]",
+               ROBUFFER, uint64_t, cw,      "[segments]",
+               ROBUFFER, uint32_t, marks,   "[segments]",
+               RWBUFFER, uint32_t, hopped,  "[3]",
+               RWBUFFER, uint32_t, counts,  "[counted * segments]",
+               ROBUFFER, uint32_t, s1,      "[slab]",
+               ROBUFFER, uint32_t, s2,      "[slab]",
+               ROBUFFER, uint32_t, s3,      "[slab]",
+               RWBUFFER, uint32_t, refusal, "[6 * files]",
+               TGID0,    uint32_t, i,       ,
+               LANE,     uint32_t, l,       )
+{{
+  if (i >= q.x) return;
+  uint32_t s = list[i];
+  // A file with a total in a segment before its first listed (the check's, `serial_check`) is refused: its
+  // segments are not run again, its later checks list none.
+  {{
+    UKL_GLOBAL uint32_t* fate = refusal + segs[s].x * 6u;
+    const uint32_t par = 1u + 2u * (q.w & 1u);
+    if (ukl_atomic_load(fate + par + 1u) > ukl_atomic_load(fate + par)) {{
+      if (l == 0u) {{ ukl_atomic_store(fate, 1u); ukl_atomic_add(&hopped[2], 1u); }}
+      return;
+    }}
+  }}
+  uint64_t st[{sw}];
+  for (uint32_t k = 0u; k < {sw}u; k++) st[k] = given[i * {sw}u + k];
+  const uint32_t hops = files[segs[s].x].halo_base;
+  uint32_t hop = 0u;
+  for (; hop < hops; hop++) {{
+    const B4 seg = segs[s];
+    const FileRow f = files[seg.x];
+    SLAB;
+    uint64_t old[{sw}];
+    for (uint32_t k = 0u; k < {sw}u; k++) old[k] = records[s * {r}u + {sw}u + k];
+    ukl_sg_barrier();
+    switch (f.program) {{
+{again_cases}      default: break;
+    }}
+    ukl_sg_barrier();
+    bool same = true;
+    for (uint32_t k = 0u; k < {sw}u; k++) same = same && records[s * {r}u + {sw}u + k] == old[k];
+    if (same || seg.w + 1u >= f.halo_base || marks[s + 1u] == q.w) break;
+    for (uint32_t k = 0u; k < {sw}u; k++) st[k] = records[s * {r}u + {sw}u + k];
+    s++;
+  }}
+  if (l == 0u) {{ ukl_atomic_add(&hopped[0], hop + 1u); ukl_atomic_max(&hopped[1], hop + 1u); }}
+}}
+
+// Level `q.y`'s pass: each segment's tables of the level's scans (`cone_function`). A thread a segment.
+DEFINE_KERNEL2(serial, serial_cone,
+               ROBUFFER, uint32_t, s0,     "[slab]",
+               ROBUFFER, uint64_t, out,    "[outputs]",
+               ROBUFFER, FileRow,  files,  "[files]",
+               ROBUFFER, B4,       segs,   "[segments]",
+               ARGS,     SerialQ,  q,      ,
+               ROBUFFER, uint64_t, cin,    "[segments]",
+               RWBUFFER, uint32_t, tables, "[2 * most * segments]",
+               ROBUFFER, uint64_t, cw,     "[segments]",
+               ROBUFFER, uint32_t, s1,     "[slab]",
+               ROBUFFER, uint32_t, s2,     "[slab]",
+               ROBUFFER, uint32_t, s3,     "[slab]",
+               GID0,     uint32_t, t,      )
+{{
+  if (t >= q.x) return;
+  const B4 seg = segs[t];
+  const FileRow f = files[seg.x];
+  SLAB;
+  const uint32_t a = seg.y - ukl_min(seg.y, q.z), a_next = seg.z - ukl_min(seg.z, q.z);
+  switch (f.program) {{
+{cone_cases}    default: break;
+  }}
+}}
+
+// Level `q.y`'s pass in lanes form (`lanes_cone_function`): one SIMD group a segment.
+DEFINE_KERNEL2(serial, lanes_cone,
+               ROBUFFER, uint32_t, s0,     "[slab]",
+               ROBUFFER, uint64_t, out,    "[outputs]",
+               ROBUFFER, FileRow,  files,  "[files]",
+               ROBUFFER, B4,       segs,   "[segments]",
+               ARGS,     SerialQ,  q,      ,
+               ROBUFFER, uint64_t, cin,    "[segments]",
+               RWBUFFER, uint32_t, tables, "[2 * most * segments]",
+               ROBUFFER, uint64_t, cw,     "[segments]",
+               ROBUFFER, uint32_t, s1,     "[slab]",
+               ROBUFFER, uint32_t, s2,     "[slab]",
+               ROBUFFER, uint32_t, s3,     "[slab]",
+               TGID0,    uint32_t, s,      ,
+               LANE,     uint32_t, l,      )
+{{
+  if (s >= q.x) return;
+  const B4 seg = segs[s];
+  const FileRow f = files[seg.x];
+  SLAB;
+  const uint32_t a = seg.y - ukl_min(seg.y, q.z), a_next = seg.z - ukl_min(seg.z, q.z);
+  switch (f.program) {{
+{lcone_cases}    default: break;
+  }}
+}}
+
+// Level `q.y`'s fixed points (`lanes_group_function`): one SIMD group a segment and a state.
+DEFINE_KERNEL2(serial, lanes_group,
+               ROBUFFER, uint32_t, s0,    "[slab]",
+               ROBUFFER, uint64_t, out,   "[outputs]",
+               ROBUFFER, FileRow,  files, "[files]",
+               ROBUFFER, B4,       segs,  "[segments]",
+               ARGS,     SerialQ,  q,     ,
+               ROBUFFER, uint64_t, cin,   "[segments]",
+               ROBUFFER, uint64_t, cw,    "[segments]",
+               ROBUFFER, uint32_t, s1,    "[slab]",
+               ROBUFFER, uint32_t, s2,    "[slab]",
+               ROBUFFER, uint32_t, s3,    "[slab]",
+               RWBUFFER, uint32_t, gtabs, "[stride * segments]",
+               TGID0,    uint32_t, w,     ,
+               LANE,     uint32_t, l,     )
+{{
+  const uint32_t s = w / {states}u, c = w % {states}u;
+  if (s >= q.x) return;
+  const B4 seg = segs[s];
+  const FileRow f = files[seg.x];
+  SLAB;
+  const uint32_t a = seg.y - ukl_min(seg.y, q.z), a_next = seg.z - ukl_min(seg.z, q.z);
+  switch (f.program) {{
+{group_cases}    default: break;
+  }}
+}}
+
+// Level `q.y`'s prefix: one threadgroup a file.
+DEFINE_KERNEL2(serial, serial_cone_prefix,
+               ROBUFFER, FileRow,  files,  "[files]",
+               ARGS,     SerialQ,  q,      ,
+               RWBUFFER, uint64_t, cin,    "[segments]",
+               ROBUFFER, uint32_t, tables, "[2 * most * segments]",
+               RWBUFFER, uint64_t, cw,     "[segments]",
+               ROBUFFER, uint32_t, gtabs,  "[stride * segments]",
+               SHARED,   uint32_t, tg,     {tgs},
+               TGID0,    uint32_t, g,      ,
+               LID0,     uint32_t, id,     ,
+               LANE,     uint32_t, l,      )
+{{
+  const uint32_t sg = id / GROUP_LANES;
+  const FileRow f = files[g];
+  switch (f.program) {{
+{prefix_cases}    default: break;
+  }}
+}}
+
+// The check: a segment whose start is not its predecessor's end is listed, with that end. A file refused
+// (`refusal`, its first word) lists none: it goes to the fallback. Each file's first segment listed and first
+// segment agreeing with a total set, this check's (`q.w`'s parity: words 1 and 2, or 3 and 4), as `~t` (zeroed:
+// none); its first segment clears the other parity's for the next check. A total in a segment before the first
+// listed is final: the runs again find the file refused (`lanes_again`).
+DEFINE_KERNEL2(serial, serial_check,
+               ROBUFFER, B4,       segs,    "[segments]",
+               ROBUFFER, uint64_t, records, "[2 * sw * segments]",
+               RWBUFFER, uint32_t, list,    "[segments]",
+               RWBUFFER, uint64_t, given,   "[sw * segments]",
+               ARGS,     SerialQ,  q,       ,
+               RWBUFFER, uint32_t, listed,  "[1]",
+               RWBUFFER, uint32_t, marks,   "[segments]",
+               ROBUFFER, uint32_t, counts,  "[counted * segments]",
+               RWBUFFER, uint32_t, refusal, "[6 * files]",
+               ROBUFFER, FileRow,  files,   "[files]",
+               GID0,     uint32_t, t,       )
+{{
+  if (t >= q.x) return;
+  const B4 seg = segs[t];
+  UKL_GLOBAL uint32_t* fate = refusal + seg.x * 6u;
+  if (ukl_atomic_load(fate) != 0u) return;
+  const uint32_t par = 1u + 2u * (q.w & 1u);
+  if (seg.w == 0u) {{ ukl_atomic_store(fate + 4u - par, 0u); ukl_atomic_store(fate + 5u - par, 0u); }}
+  bool same = seg.w == 0u;
+  UKL_GLOBAL const uint64_t* end = records + (t - ukl_min(t, 1u)) * {r}u + {sw}u;
+  if (!same) {{
+    UKL_GLOBAL const uint64_t* mine = records + t * {r}u;
+    same = true;
+    for (uint32_t i = 0u; i < {sw}u; i++) same = same && mine[i] == end[i];
+  }}
+  if (same) {{
+    bool total = false;
+    switch (files[seg.x].program) {{
+{total_cases}      default: break;
+    }}
+    if (total) ukl_atomic_max(fate + par + 1u, ~t);
+    return;
+  }}
+  ukl_atomic_max(fate + par, ~t);
+  const uint32_t at = ukl_atomic_add(listed, 1u);
+  list[at] = t;
+  marks[t] = q.w;
+  for (uint32_t i = 0u; i < {sw}u; i++) given[at * {sw}u + i] = end[i];
+}}
+
+// Each segment's count of each extract's bits, and the totals' flags.
+DEFINE_KERNEL2(serial, serial_count,
+               ROBUFFER, uint64_t, out,    "[outputs]",
+               ROBUFFER, FileRow,  files,  "[files]",
+               ROBUFFER, B4,       segs,   "[segments]",
+               RWBUFFER, uint32_t, counts, "[counted * segments]",
+               ARGS,     SerialQ,  q,      ,
+               GID0,     uint32_t, t,      )
+{{
+  if (t >= q.x) return;
+  const B4 seg = segs[t];
+  const FileRow f = files[seg.x];
+  switch (f.program) {{
+{count_cases}    default: break;
+  }}
+}}
+
+// A file's segments' bases: one SIMD group a file, 32 segments at a time.
+DEFINE_KERNEL2(serial, serial_prefix,
+               ROBUFFER, FileRow,  files,  "[files]",
+               ROBUFFER, uint32_t, counts, "[counted * segments]",
+               RWBUFFER, uint32_t, bases,  "[counted * segments]",
+               RWBUFFER, uint32_t, tot,    "[totals]",
+               TGID0,    uint32_t, g,      ,
+               LANE,     uint32_t, l,      )
+{{
+  const FileRow f = files[g];
+  uint32_t e_count = 0u, x_count = 0u;
+  switch (f.program) {{
+{extracts}    default: break;
+  }}
+  for (uint32_t e = 0u; e < e_count; e++) {{
+    uint32_t run = 0u;
+    for (uint32_t s = 0u; s < f.halo_base; s += 32u) {{
+      const uint32_t j = f.group0 + s + l;
+      const uint32_t c = s + l < f.halo_base ? counts[j * {counted}u + e] : 0u;
+      const uint32_t before = ukl_sg_exclusive_sum(c, l __UKL_ARGS);
+      if (s + l < f.halo_base) bases[j * {counted}u + e] = run + before;
+      run += ukl_sg_sum(c __UKL_ARGS);
+    }}
+    // An extract's count; a total's flag.
+    if (l == 0u) tot[f.tot_base + e] = e < x_count ? run : U32(run != 0u);
+  }}
+}}
+
+// Each segment's positions in lanes form: one SIMD group a segment, a word a lane.
+DEFINE_KERNEL2(serial, lanes_write,
+               ROBUFFER, uint64_t, out,       "[outputs]",
+               ROBUFFER, FileRow,  files,     "[files]",
+               ROBUFFER, B4,       segs,      "[segments]",
+               ROBUFFER, uint32_t, bases,     "[counted * segments]",
+               RWBUFFER, uint32_t, positions, "[positions]",
+               ARGS,     SerialQ,  q,         ,
+               TGID0,    uint32_t, s,         ,
+               LANE,     uint32_t, l,         )
+{{
+  if (s >= q.x) return;
+  const B4 seg = segs[s];
+  const FileRow f = files[seg.x];
+  const uint32_t len = f.len, j = seg.y + l;
+  switch (f.program) {{
+{lwrite_cases}    default: break;
+  }}
+}}
+
+// Each segment's positions, from its base.
+DEFINE_KERNEL2(serial, serial_write,
+               ROBUFFER, uint64_t, out,       "[outputs]",
+               ROBUFFER, FileRow,  files,     "[files]",
+               ROBUFFER, B4,       segs,      "[segments]",
+               ROBUFFER, uint32_t, bases,     "[counted * segments]",
+               RWBUFFER, uint32_t, positions, "[positions]",
+               ARGS,     SerialQ,  q,         ,
+               GID0,     uint32_t, t,         )
+{{
+  if (t >= q.x) return;
+  const B4 seg = segs[t];
+  const FileRow f = files[seg.x];
+  const uint32_t len = f.len;
+  switch (f.program) {{
+{write_cases}    default: break;
+  }}
+}}
+"#,
         r = 2 * sw,
         tgs = PREFIX_THREADS / GROUP,
+        states = GROUP_STATES,
     ));
     out.push_str(&records_source(programs));
     (out, sw, counted)
@@ -1346,7 +1503,7 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
 /// Threads a file of the record pass: each takes every `RECORD_LANES`th token.
 const RECORD_LANES: usize = 64;
 
-/// The record pass (`rerail_compiler::records`) in MSL: per program with records, its tables
+/// The record pass (`rerail_compiler::records`) in UKL: per program with records, its tables
 /// as constants and its function; the kernel `serial_records`, a file's tokens over
 /// `RECORD_LANES` threads. A token's work is straight-line word operations: its first byte's
 /// kind, its first eight bytes (two 16-byte loads, shifted), a slot, a compare, and for a word
@@ -1356,26 +1513,26 @@ fn records_source(programs: &[&BlockNative]) -> String {
     let list = |v: &mut dyn Iterator<Item = String>| v.collect::<Vec<_>>().join(", ");
     let mut out = String::from(
         "// Bytes `p..p + 8` of a file, zeros past its end.\n\
-         static inline ulong record_load8(device const uint4* bytes, FileRow f, uint p) {\n\
-         \x20 const uint4 a = load16(bytes, f, p / 16u), b = load16(bytes, f, p / 16u + 1u);\n\
-         \x20 const ulong w0 = ulong(a.x) | ulong(a.y) << 32, w1 = ulong(a.z) | ulong(a.w) << 32, w2 = ulong(b.x) | ulong(b.y) << 32;\n\
-         \x20 const uint o = p % 16u, r = (o % 8u) * 8u;\n\
-         \x20 const ulong lo = o < 8u ? w0 : w1, hi = o < 8u ? w1 : w2;\n\
+         UKL_INLINE uint64_t record_load8(Bytes bytes, FileRow f, uint32_t p) {\n\
+         \x20 const B4 a = load16(bytes, f, p / 16u), b = load16(bytes, f, p / 16u + 1u);\n\
+         \x20 const uint64_t w0 = U64(a.x) | U64(a.y) << 32, w1 = U64(a.z) | U64(a.w) << 32, w2 = U64(b.x) | U64(b.y) << 32;\n\
+         \x20 const uint32_t o = p % 16u, r = (o % 8u) * 8u;\n\
+         \x20 const uint64_t lo = o < 8u ? w0 : w1, hi = o < 8u ? w1 : w2;\n\
          \x20 return r == 0u ? lo : (lo >> r) | (hi << (64u - r));\n\
          }\n\
-         static inline ulong record_cut(ulong w, uint n) { return n >= 8u ? w : w & ((1ul << (8u * n)) - 1ul); }\n\
+         UKL_INLINE uint64_t record_cut(uint64_t w, uint32_t n) { return n >= 8u ? w : w & ((1ul << (8u * n)) - 1ul); }\n\
          // Whether output `o` holds in bytes `a..=b` (`records::any_in`).\n\
-         static inline bool record_any(device const ulong* out, FileRow f, uint o, uint a, uint b) {\n\
+         UKL_INLINE bool record_any(UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t o, uint32_t a, uint32_t b) {\n\
          \x20 if (a > b) return false;\n\
-         \x20 for (uint q = a / 64u; q <= b / 64u; q++) {\n\
-         \x20   ulong x = out[f.out_base + o * f.groups + q];\n\
+         \x20 for (uint32_t q = a / 64u; q <= b / 64u; q++) {\n\
+         \x20   uint64_t x = out[f.out_base + o * f.groups + q];\n\
          \x20   if (q == a / 64u) x &= ~0ul << (a % 64u);\n\
          \x20   if (q == b / 64u && b % 64u != 63u) x &= (1ul << (b % 64u + 1u)) - 1ul;\n\
          \x20   if (x != 0ul) return true;\n\
          \x20 }\n\
          \x20 return false;\n\
          }\n\
-         static inline bool record_bit(device const ulong* out, FileRow f, uint o, uint p) { return ((out[f.out_base + o * f.groups + p / 64u] >> (p % 64u)) & 1ul) != 0ul; }\n",
+         UKL_INLINE bool record_bit(UKL_GLOBAL const uint64_t* out, FileRow f, uint32_t o, uint32_t p) { return ((out[f.out_base + o * f.groups + p / 64u] >> (p % 64u)) & 1ul) != 0ul; }\n",
     );
     let mut cases = String::new();
     // A token test's code (`Records::checks`) over the token `s..=l` (`len` bytes): `bad` set
@@ -1395,12 +1552,12 @@ fn records_source(programs: &[&BlockNative]) -> String {
             }
         } else if c.all {
             // The mask at every byte of a token `least` long at least (`records::check_holds`).
-            format!("if (len >= {n}u) {{ bool every = true; for (uint q = s / 64u; q <= l / 64u; q++) {{ ulong want = ~0ul; if (q == s / 64u) want &= ~0ul << (s % 64u); if (q == l / 64u) want &= ~0ul >> (63u - l % 64u); every = every && (out[f.out_base + {o}u * f.groups + q] & want) == want; }} bad = bad || every; }}", n = c.least)
+            format!("if (len >= {n}u) {{ bool every = true; for (uint32_t q = s / 64u; q <= l / 64u; q++) {{ uint64_t want = ~0ul; if (q == s / 64u) want &= ~0ul << (s % 64u); if (q == l / 64u) want &= ~0ul >> (63u - l % 64u); every = every && (out[f.out_base + {o}u * f.groups + q] & want) == want; }} bad = bad || every; }}", n = c.least)
         } else if c.count {
-            format!("uint got = 0u; for (uint q = s / 64u; q <= l / 64u; q++) {{ ulong x = out[f.out_base + {o}u * f.groups + q]; if (q == s / 64u) x &= ~0ul << (s % 64u); if (q == l / 64u) x &= ~0ul >> (63u - l % 64u); got += popcount(x); }} bad = bad || got >= {n}u;", n = c.least)
+            format!("uint32_t got = 0u; for (uint32_t q = s / 64u; q <= l / 64u; q++) {{ uint64_t x = out[f.out_base + {o}u * f.groups + q]; if (q == s / 64u) x &= ~0ul << (s % 64u); if (q == l / 64u) x &= ~0ul >> (63u - l % 64u); got += ukl_popcount64(x); }} bad = bad || got >= {n}u;", n = c.least)
         } else {
             let need = format!("{:#x}ul", !0u64 >> (64 - c.least));
-            format!("if (len >= {n}u) {{ const uint sh = s % 64u; ulong win = out[f.out_base + {o}u * f.groups + s / 64u] >> sh; if (sh + {n}u > 64u) win |= out[f.out_base + {o}u * f.groups + s / 64u + 1u] << (64u - sh); bad = bad || (win & {need}) == {need}; }}", n = c.least)
+            format!("if (len >= {n}u) {{ const uint32_t sh = s % 64u; uint64_t win = out[f.out_base + {o}u * f.groups + s / 64u] >> sh; if (sh + {n}u > 64u) win |= out[f.out_base + {o}u * f.groups + s / 64u + 1u] << (64u - sh); bad = bad || (win & {need}) == {need}; }}", n = c.least)
         }
     };
     for (p, n) in programs.iter().enumerate() {
@@ -1420,58 +1577,58 @@ fn records_source(programs: &[&BlockNative]) -> String {
         }
         let bit_of = |c: &rerail_compiler::records::TokenCheck| distinct.iter().position(|d| *d == rerail_compiler::records::TokenCheck { rule: if c.always() { c.rule } else { 0 }, ..*c }).expect("listed");
         out.push_str(&format!(
-            "constant uchar record_kinds_{p}[256] = {{{kinds}}};\n\
-             constant ulong record_keys_{p}[{slots}] = {{{keys}}};\n\
-             constant uint record_meta_{p}[{slots}] = {{{meta}}};\n\
-             constant ulong record_tails_{p}[{nt}] = {{{tails}}};\n\
-             constant uchar record_tests_{p}[256] = {{{tests}}};\n\
+            "UKL_TABLE uint8_t record_kinds_{p}[256] = {{{kinds}}};\n\
+             UKL_TABLE uint64_t record_keys_{p}[{slots}] = {{{keys}}};\n\
+             UKL_TABLE uint32_t record_meta_{p}[{slots}] = {{{meta}}};\n\
+             UKL_TABLE uint64_t record_tails_{p}[{nt}] = {{{tails}}};\n\
+             UKL_TABLE uint8_t record_tests_{p}[256] = {{{tests}}};\n\
              // The word of the token at `s` of `len` bytes: its first eight bytes and its length\n\
              // to a slot, compared, and a word past eight bytes its other words.\n\
-             static inline uint record_word_{p}(device const uint4* bytes, FileRow f, uint s, uint len) {{\n\
-             \x20 const ulong key = record_cut(record_load8(bytes, f, s), len);\n\
-             \x20 const uint slot = uint(((key ^ ulong(len)) * {mult}ul) >> {shift}u);\n\
-             \x20 const uint meta = record_meta_{p}[slot];\n\
-             \x20 uint word = (record_keys_{p}[slot] == key && (meta & 0xffu) == len) ? meta >> 8u : 0u;\n\
+             UKL_INLINE uint32_t record_word_{p}(Bytes bytes, FileRow f, uint32_t s, uint32_t len) {{\n\
+             \x20 const uint64_t key = record_cut(record_load8(bytes, f, s), len);\n\
+             \x20 const uint32_t slot = U32(((key ^ U64(len)) * {mult}ul) >> {shift}u);\n\
+             \x20 const uint32_t meta = record_meta_{p}[slot];\n\
+             \x20 uint32_t word = (record_keys_{p}[slot] == key && (meta & 0xffu) == len) ? meta >> 8u : 0u;\n\
              \x20 if (word != 0u && len > 8u) {{\n\
              \x20   bool all = true;\n\
-             \x20   for (uint j = 1u; j < 8u; j++) all = all && (len <= 8u * j || record_cut(record_load8(bytes, f, s + 8u * j), len - 8u * j) == record_tails_{p}[(word - 1u) * 7u + j - 1u]);\n\
+             \x20   for (uint32_t j = 1u; j < 8u; j++) all = all && (len <= 8u * j || record_cut(record_load8(bytes, f, s + 8u * j), len - 8u * j) == record_tails_{p}[(word - 1u) * 7u + j - 1u]);\n\
              \x20   word = all ? word : 0u;\n\
              \x20 }}\n\
              \x20 return word;\n\
              }}\n\
              // The marks' tests' hits at the token `s..=l` (`records::check_hits`).\n\
-             static inline uint record_hits_{p}(device const uint4* bytes, FileRow f, device const ulong* out, uint s, uint l) {{\n\
-             \x20 const uint len = l + 1u - s;\n\
-             \x20 const uint on = record_tests_{p}[uint(record_load8(bytes, f, s) & 0xfful)];\n\
-             \x20 uint hits = 0u;{hits}\n\
+             UKL_INLINE uint32_t record_hits_{p}(Bytes bytes, FileRow f, UKL_GLOBAL const uint64_t* out, uint32_t s, uint32_t l) {{\n\
+             \x20 const uint32_t len = l + 1u - s;\n\
+             \x20 const uint32_t on = record_tests_{p}[U32(record_load8(bytes, f, s) & 0xfful)];\n\
+             \x20 uint32_t hits = 0u;{hits}\n\
              \x20 (void)len; (void)on;\n\
              \x20 return hits;\n\
              }}\n\
-             static inline void records_{p}(device const uint4* bytes, FileRow f, uint lane, device const ulong* out, device uint* positions, device const uint* tot, device atomic_uint* flag, device atomic_uint* stop) {{\n\
-             \x20 const uint cap = max(f.len, 1u);{refused}\n\
-             \x20 device const uint* starts = positions + f.pos_base + {se}u * cap;\n\
-             \x20 device const uint* lasts = positions + f.pos_base + {le}u * cap;\n\
-             \x20 device uint* codes = positions + f.pos_base + {e}u * cap;\n\
-             \x20 const uint ns = tot[f.tot_base + {se}u], nl = tot[f.tot_base + {le}u], n = min(ns, nl);\n\
+             UKL_INLINE void records_{p}(Bytes bytes, FileRow f, uint32_t lane, UKL_GLOBAL const uint64_t* out, UKL_GLOBAL uint32_t* positions, UKL_GLOBAL const uint32_t* tot, UKL_GLOBAL uint32_t* flag, UKL_GLOBAL uint32_t* stop) {{\n\
+             \x20 const uint32_t cap = ukl_max(f.len, 1u);{refused}\n\
+             \x20 UKL_GLOBAL const uint32_t* starts = positions + f.pos_base + {se}u * cap;\n\
+             \x20 UKL_GLOBAL const uint32_t* lasts = positions + f.pos_base + {le}u * cap;\n\
+             \x20 UKL_GLOBAL uint32_t* codes = positions + f.pos_base + {e}u * cap;\n\
+             \x20 const uint32_t ns = tot[f.tot_base + {se}u], nl = tot[f.tot_base + {le}u], n = ukl_min(ns, nl);\n\
              \x20 bool bad = lane == 0u && ns != nl, told = bad;\n\
-             \x20 for (uint k = lane; k < n; k += {lanes}u) {{\n\
+             \x20 for (uint32_t k = lane; k < n; k += {lanes}u) {{\n\
              \x20   // Past the first token refused (`stop`: `~n`, the tokens coded): the file goes to the fallback.\n\
-             \x20   if (atomic_load_explicit(stop, memory_order_relaxed) >= ~k) break;\n\
-             \x20   const uint s = starts[k], l = lasts[k], after = k > 0u ? lasts[k - 1u] + 1u : 0u;\n\
+             \x20   if (ukl_atomic_load(stop) >= ~k) break;\n\
+             \x20   const uint32_t s = starts[k], l = lasts[k], after = k > 0u ? lasts[k - 1u] + 1u : 0u;\n\
              \x20   bad = bad || l < s || s < after;\n\
-             \x20   const uint len = l + 1u - s;\n\
-             \x20   uint kind = record_kinds_{p}[uint(record_load8(bytes, f, s) & 0xfful)];\n\
-             \x20   uint word = record_word_{p}(bytes, f, s, len);{unword}\n\
-             \x20   uint marks = 0u;{marks}{retags}{gaps}{checks}\n\
+             \x20   const uint32_t len = l + 1u - s;\n\
+             \x20   uint32_t kind = record_kinds_{p}[U32(record_load8(bytes, f, s) & 0xfful)];\n\
+             \x20   uint32_t word = record_word_{p}(bytes, f, s, len);{unword}\n\
+             \x20   uint32_t marks = 0u;{marks}{retags}{gaps}{checks}\n\
              \x20   codes[k] = kind | (word << {kb}u) | (marks << {ms}u);\n\
-             \x20   if (bad && !told) {{ told = true; atomic_fetch_max_explicit(stop, ~(k + 1u), memory_order_relaxed); }}\n\
+             \x20   if (bad && !told) {{ told = true; ukl_atomic_max(stop, ~(k + 1u)); }}\n\
              \x20 }}\n\
              {unplaced}\
-             \x20 if (bad) atomic_fetch_or_explicit(flag + f.tot_base + {x}u, 1u, memory_order_relaxed);\n\
+             \x20 if (bad) ukl_atomic_or(flag + f.tot_base + {x}u, 1u);\n\
              }}\n",
             // A file its totals refused (`serial_prefix`'s flag) goes to the fallback: no token
             // of it is coded (`stop` at all of them).
-            refused = if n.totals.is_empty() { String::new() } else { format!("\n  if (tot[f.tot_base + {x}u] != 0u) {{ if (lane == 0u) atomic_store_explicit(stop, ~0u, memory_order_relaxed); return; }}") },
+            refused = if n.totals.is_empty() { String::new() } else { format!("\n  if (tot[f.tot_base + {x}u] != 0u) {{ if (lane == 0u) ukl_atomic_store(stop, ~0u); return; }}") },
             kinds = list(&mut r.kinds.iter().map(|k| k.to_string())),
             // The token tests (`Records::checks`): by its first byte, the tests of a token's
             // rule, each a bit; a count over its words, a run from a window of one word or two.
@@ -1491,7 +1648,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 .iter()
                 .enumerate()
                 .filter(|(_, c)| c.then == rerail_compiler::records::CheckThen::Escape)
-                .map(|(i, c)| format!(" if ((record_tests_{p}[uint(record_load8(bytes, f, s) & 0xfful)] >> {i}u) & 1u) {{ {} }}", test_code(r, i, c)))
+                .map(|(i, c)| format!(" if ((record_tests_{p}[U32(record_load8(bytes, f, s) & 0xfful)] >> {i}u) & 1u) {{ {} }}", test_code(r, i, c)))
                 .collect::<String>(),
             // The marks' tests (`CheckThen::At`, `After`): a token's hits, `records::check_hits`.
             hits = distinct
@@ -1551,11 +1708,11 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 // The marks' tests' bits after the last grammar token: its `After` hits, and the
                 // extras' after it, both.
                 let pend = if tested {
-                    format!(" uint pend = 0u; for (int u = max(j, 0); u < int(n); u++) {{ const uint h = record_hits_{p}(bytes, f, out, starts[u], lasts[u]); pend |= (h >> {a}u) | (u > j ? h & {low}u : 0u); }}", low = (1u32 << rerail_compiler::records::AFTER_SHIFT) - 1, a = rerail_compiler::records::AFTER_SHIFT)
+                    format!(" uint32_t pend = 0u; for (int32_t u = ukl_max(j, 0); u < I32(n); u++) {{ const uint32_t h = record_hits_{p}(bytes, f, out, starts[u], lasts[u]); pend |= (h >> {a}u) | (u > j ? h & {low}u : 0u); }}", low = (1u32 << rerail_compiler::records::AFTER_SHIFT) - 1, a = rerail_compiler::records::AFTER_SHIFT)
                 } else {
-                    " const uint pend = 0u;".to_string()
+                    " const uint32_t pend = 0u;".to_string()
                 };
-                format!("\x20 if (lane == 0u && f.len > 0u) {{ int j = int(n) - 1; while (j >= 0 && {before}) j--; const uint from = j >= 0 ? starts[j] + 1u : 0u;{pend}{tests} }}\n")
+                format!("\x20 if (lane == 0u && f.len > 0u) {{ int32_t j = I32(n) - 1; while (j >= 0 && {before}) j--; const uint32_t from = j >= 0 ? starts[j] + 1u : 0u;{pend}{tests} }}\n")
             },
             // The gap marks (`records::gap_marks`): a grammar token's from the bytes after the
             // grammar token before it, the extras' tokens before it passed over by their mark.
@@ -1566,9 +1723,9 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 // grammar token before's `After` hits; the extras' between, both.
                 let pend = || {
                     if !tested {
-                        return " const uint pend = 0u;".to_string();
+                        return " const uint32_t pend = 0u;".to_string();
                     }
-                    format!(" uint pend = record_hits_{p}(bytes, f, out, s, l) & {low}u; for (int u = max(j, 0); u < int(k); u++) {{ const uint h = record_hits_{p}(bytes, f, out, starts[u], lasts[u]); pend |= (h >> {a}u) | (u > j ? h & {low}u : 0u); }}", low = (1u32 << rerail_compiler::records::AFTER_SHIFT) - 1, a = rerail_compiler::records::AFTER_SHIFT)
+                    format!(" uint32_t pend = record_hits_{p}(bytes, f, out, s, l) & {low}u; for (int32_t u = ukl_max(j, 0); u < I32(k); u++) {{ const uint32_t h = record_hits_{p}(bytes, f, out, starts[u], lasts[u]); pend |= (h >> {a}u) | (u > j ? h & {low}u : 0u); }}", low = (1u32 << rerail_compiler::records::AFTER_SHIFT) - 1, a = rerail_compiler::records::AFTER_SHIFT)
                 };
                 let extra = r.extra.map(|e| (e, r.marks[usize::from(e)].0));
                 let is_extra = |at: &str| match extra {
@@ -1587,9 +1744,9 @@ fn records_source(programs: &[&BlockNative]) -> String {
                         format!(" if (((pend >> {m}u) & 1u || {any}){none}) marks |= {}u;", 1u32 << m)
                     })
                     .collect();
-                let wb = if r.unless.is_empty() { String::new() } else { format!(" const uint wb = j >= 0 ? record_word_{p}(bytes, f, starts[j], lasts[j] + 1u - starts[j]) : 0u;") };
+                let wb = if r.unless.is_empty() { String::new() } else { format!(" const uint32_t wb = j >= 0 ? record_word_{p}(bytes, f, starts[j], lasts[j] + 1u - starts[j]) : 0u;") };
                 format!(
-                    " marks &= ~{gaps}u; if (!{here}) {{ int j = int(k) - 1; while (j >= 0 && {before}) j--; const uint from = j >= 0 ? starts[j] + 1u : 0u;{pend}{wb}{tests} }}",
+                    " marks &= ~{gaps}u; if (!{here}) {{ int32_t j = I32(k) - 1; while (j >= 0 && {before}) j--; const uint32_t from = j >= 0 ? starts[j] + 1u : 0u;{pend}{wb}{tests} }}",
                     pend = pend(),
                     gaps = r.gaps,
                     here = is_extra("s"),
@@ -1601,11 +1758,11 @@ fn records_source(programs: &[&BlockNative]) -> String {
     }
     out.push_str(&format!(
         "// The record pass: thread `t` is file `t / {lanes}`'s lane `t % {lanes}`.\n\
-         kernel void serial_records(device const uint4* s0 [[buffer(0)]], device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device uint* positions [[buffer(6)]],\n\
-         \x20   constant uint4& q [[buffer(7)]], device const uint* tot [[buffer(8)]], device atomic_uint* flag [[buffer(9)]],\n\
-         \x20   device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]], device const uint4* s3 [[buffer(18)]], device atomic_uint* refusal [[buffer(20)]],\n\
-         \x20   uint t [[thread_position_in_grid]]) {{\n\
-         \x20 const uint fi = t / {lanes}u, lane = t % {lanes}u;\n\
+         DEFINE_KERNEL2(serial, serial_records, ROBUFFER, uint32_t, s0, \"[slab]\", ROBUFFER, uint64_t, out, \"[outputs]\", ROBUFFER, FileRow, files, \"[files]\",\n\
+         \x20   RWBUFFER, uint32_t, positions, \"[positions]\", ARGS, SerialQ, q, , ROBUFFER, uint32_t, tot, \"[totals]\", RWBUFFER, uint32_t, flag, \"[totals]\",\n\
+         \x20   ROBUFFER, uint32_t, s1, \"[slab]\", ROBUFFER, uint32_t, s2, \"[slab]\", ROBUFFER, uint32_t, s3, \"[slab]\", RWBUFFER, uint32_t, refusal, \"[6 * files]\",\n\
+         \x20   GID0, uint32_t, t, ) {{\n\
+         \x20 const uint32_t fi = t / {lanes}u, lane = t % {lanes}u;\n\
          \x20 if (fi >= q.x) return;\n\
          \x20 const FileRow f = files[fi];\n\
          \x20 SLAB;\n\
@@ -1921,7 +2078,7 @@ fn passes_of(program: &BlockNative) -> std::sync::Arc<rerail_compiler::block_nat
 
 fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std::sync::Arc<crate::slabs::ResidentSource>], segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
     let [program] = programs else { return Err(Error::UnsupportedBackend) };
-    METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    ready()?;
     let passes = passes_of(program);
     let passes: &rerail_compiler::block_native::Passes = &passes;
     let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
@@ -1992,15 +2149,14 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
                 let seg_table = crate::pool::upload(&segs)?;
                 let tables = crate::pool::zeroed::<u32>((segs.len() * fills.len()).max(1))?;
                 let cins = crate::pool::zeroed::<u32>((segs.len() * fills.len()).max(1))?;
-                fn bufs<'b>(list: &[(u64, &'b crate::pool::Block)]) -> Vec<(u64, &'b metal::BufferRef, u64)> {
-                    list.iter().map(|&(at, b)| (at, b.buffer(), 0)).collect()
-                }
-                let n = |x: usize| vec![(7u64, bytes_of(&[fit(x).unwrap_or(0), 0u32, 0, 0]))];
+                let buffers: Vec<(&'static str, Buffer)> =
+                    [("out", &out), ("files", &table), ("segs", &seg_table), ("tables", &tables), ("cins", &cins)].map(|(name, b)| (name, b.device_buffer().clone())).to_vec();
+                let n = |x: usize| vec![("q", [fit(x).unwrap_or(0), 0u32, 0, 0])];
                 let groups = |x: usize| x.div_ceil(THREADS).max(1);
                 let kernels = [
-                    Pass { pipeline: &tables_k, buffers: bufs(&[(1, &out), (2, &table), (3, &seg_table), (11, &tables)]), args: n(segs.len()), groups: groups(segs.len()), threads: THREADS },
-                    Pass { pipeline: &prefix_k, buffers: bufs(&[(2, &table), (11, &tables), (12, &cins)]), args: n(files.len()), groups: groups(files.len()), threads: THREADS },
-                    Pass { pipeline: &apply_k, buffers: bufs(&[(1, &out), (2, &table), (3, &seg_table), (12, &cins)]), args: n(segs.len()), groups: groups(segs.len()), threads: THREADS },
+                    Pass { name: "back_tables", kernel: tables_k, buffers: buffers.clone(), args: n(segs.len()), groups: groups(segs.len()), threads: THREADS },
+                    Pass { name: "back_prefix", kernel: prefix_k, buffers: buffers.clone(), args: n(files.len()), groups: groups(files.len()), threads: THREADS },
+                    Pass { name: "back_apply", kernel: apply_k, buffers, args: n(segs.len()), groups: groups(segs.len()), threads: THREADS },
                 ];
                 seconds += encode_passes(&kernels)?;
                 launches += 1;
@@ -2022,45 +2178,48 @@ fn back_kernels(fills: &[(u16, u16, u16)], slots: u16) -> String {
     let mut apply = String::new();
     let mut prefix = String::new();
     for (j, &(s, e, own)) in fills.iter().enumerate() {
-        let words = format!("const ulong s{j} = out[f.slot_base + b * {slots}u + {s}u], e{j} = out[f.slot_base + b * {slots}u + {e}u];");
-        tables.push_str(&format!("    {{ {words} uint o = 0u; back_fill_word(s{j}, e{j}, c{j}_0, o); c{j}_0 = o; back_fill_word(s{j}, e{j}, c{j}_1, o); c{j}_1 = o; }}\n"));
-        apply.push_str(&format!("    {{ {words} uint o = 0u; out[f.slot_base + b * {slots}u + {own}u] = back_fill_word(s{j}, e{j}, c{j}, o); c{j} = o; }}\n"));
+        let words = format!("const uint64_t s{j} = out[f.slot_base + b * {slots}u + {s}u], e{j} = out[f.slot_base + b * {slots}u + {e}u];");
+        tables.push_str(&format!("    {{ {words} uint32_t o = 0u; back_fill_word(s{j}, e{j}, c{j}_0, &o); c{j}_0 = o; back_fill_word(s{j}, e{j}, c{j}_1, &o); c{j}_1 = o; }}\n"));
+        apply.push_str(&format!("    {{ {words} uint32_t o = 0u; out[f.slot_base + b * {slots}u + {own}u] = back_fill_word(s{j}, e{j}, c{j}, &o); c{j} = o; }}\n"));
         prefix.push_str(&format!("    {{ cins[g * {n}u + {j}u] = c{j}; c{j} = (tables[g * {n}u + {j}u] >> c{j}) & 1u; }}\n"));
     }
     let init = |f: &dyn Fn(usize) -> String| (0..n).map(f).collect::<String>();
     format!(
-        "{CARRY}\n{FILE_ROW}\n\
+        "{}\n\
+         typedef struct SerialQ {{ uint32_t x, y, z, w; }} SerialQ;\n\
+         UKL_REFLECT_STRUCT(SerialQ, x, y, z, w)\n\
          // `back_fill` on a word: `fill` on the bits reversed; the carry out is bit 0.\n\
-         static inline ulong back_fill_word(ulong s, ulong e, uint cin, thread uint& cout) {{\n\
-         \x20 uint o = 0u;\n\
-         \x20 const ulong b = reverse_bits(fill_word(reverse_bits(s), reverse_bits(e), ulong(cin), o));\n\
-         \x20 cout = uint(b & 1ul);\n\
+         UKL_INLINE uint64_t back_fill_word(uint64_t s, uint64_t e, uint32_t cin, UKL_PRIVATE uint32_t* cout) {{\n\
+         \x20 uint32_t o = 0u;\n\
+         \x20 const uint64_t b = reverse64(fill_word(reverse64(s), reverse64(e), U64(cin), &o));\n\
+         \x20 *cout = U32(b & 1ul);\n\
          \x20 return b;\n}}\n\
-         kernel void back_tables(device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
-         \x20                       constant uint4& q [[buffer(7)]], device uint* tables [[buffer(11)]], uint t [[thread_position_in_grid]]) {{\n\
+         DEFINE_KERNEL2(serial, back_tables, ROBUFFER, uint64_t, out, \"[slots]\", ROBUFFER, FileRow, files, \"[files]\", ROBUFFER, B4, segs, \"[segments]\",\n\
+         \x20              ARGS, SerialQ, q, , RWBUFFER, uint32_t, tables, \"[fills * segments]\", GID0, uint32_t, t, ) {{\n\
          \x20 if (t >= q.x) return;\n\
-         \x20 const uint4 seg = segs[t];\n\
+         \x20 const B4 seg = segs[t];\n\
          \x20 const FileRow f = files[seg.x];\n\
          {}\
-         \x20 for (uint b = seg.z; b > seg.y;) {{\n    b--;\n{tables}  }}\n\
+         \x20 for (uint32_t b = seg.z; b > seg.y;) {{\n    b--;\n{tables}  }}\n\
          {}}}\n\
-         kernel void back_prefix(device const FileRow* files [[buffer(2)]], constant uint4& q [[buffer(7)]], device const uint* tables [[buffer(11)]],\n\
-         \x20                       device uint* cins [[buffer(12)]], uint t [[thread_position_in_grid]]) {{\n\
+         DEFINE_KERNEL2(serial, back_prefix, ROBUFFER, FileRow, files, \"[files]\", ARGS, SerialQ, q, , ROBUFFER, uint32_t, tables, \"[fills * segments]\",\n\
+         \x20              RWBUFFER, uint32_t, cins, \"[fills * segments]\", GID0, uint32_t, t, ) {{\n\
          \x20 if (t >= q.x) return;\n\
          \x20 const FileRow f = files[t];\n\
          {}\
-         \x20 for (uint s = f.halo_base; s > 0u;) {{\n    s--;\n    const uint g = f.group0 + s;\n{prefix}  }}\n}}\n\
-         kernel void back_apply(device ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
-         \x20                      constant uint4& q [[buffer(7)]], device const uint* cins [[buffer(12)]], uint t [[thread_position_in_grid]]) {{\n\
+         \x20 for (uint32_t s = f.halo_base; s > 0u;) {{\n    s--;\n    const uint32_t g = f.group0 + s;\n{prefix}  }}\n}}\n\
+         DEFINE_KERNEL2(serial, back_apply, RWBUFFER, uint64_t, out, \"[slots]\", ROBUFFER, FileRow, files, \"[files]\", ROBUFFER, B4, segs, \"[segments]\",\n\
+         \x20              ARGS, SerialQ, q, , ROBUFFER, uint32_t, cins, \"[fills * segments]\", GID0, uint32_t, t, ) {{\n\
          \x20 if (t >= q.x) return;\n\
-         \x20 const uint4 seg = segs[t];\n\
+         \x20 const B4 seg = segs[t];\n\
          \x20 const FileRow f = files[seg.x];\n\
          {}\
-         \x20 for (uint b = seg.z; b > seg.y;) {{\n    b--;\n{apply}  }}\n}}\n",
-        init(&|j| format!("  uint c{j}_0 = 0u, c{j}_1 = 1u;\n")),
+         \x20 for (uint32_t b = seg.z; b > seg.y;) {{\n    b--;\n{apply}  }}\n}}\n",
+        head(LaneWidth::W64),
+        init(&|j| format!("  uint32_t c{j}_0 = 0u, c{j}_1 = 1u;\n")),
         init(&|j| format!("  tables[t * {n}u + {j}u] = c{j}_0 | (c{j}_1 << 1u);\n")),
-        init(&|j| format!("  uint c{j} = 0u;\n")),
-        init(&|j| format!("  uint c{j} = cins[t * {n}u + {j}u];\n")),
+        init(&|j| format!("  uint32_t c{j} = 0u;\n")),
+        init(&|j| format!("  uint32_t c{j} = cins[t * {n}u + {j}u];\n")),
     )
 }
 
@@ -2069,7 +2228,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     if programs.iter().any(|p| crate::block_program::starts_late(p)) {
         return Err(Error::UnsupportedBackend);
     }
-    METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    ready()?;
     let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
     let refs: Vec<&BlockNative> = forms.iter().collect();
     let (source_key, source, sw, counted) = serial_source(&refs, io.map(|io| (io.stores, io.slots)));
@@ -2164,54 +2323,56 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let write = kernel(source_key, source, "serial_write")?;
     let lanes_write = kernel(source_key, source, "lanes_write")?;
     let records_pass = kernel(source_key, source, "serial_records")?;
-    let mut common: Vec<(u64, &metal::BufferRef, u64)> = vec![(1, out.buffer(), 0), (2, table.buffer(), 0), (3, seg_table.buffer(), 0)];
-    for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
-        common.push((at, slabs.get(k).unwrap_or(&slabs[0]).buffer(), 0));
+    // Every buffer of the run by its row name: each pass's kernel binds those of its rows (`Launch::buffer_if`).
+    let mut all: Vec<(&'static str, Buffer)> = vec![("out", out.device_buffer().clone()), ("files", table.device_buffer().clone()), ("segs", seg_table.device_buffer().clone())];
+    for (k, name) in SLAB_BUFFERS.iter().enumerate() {
+        all.push((name, slabs.get(k).unwrap_or(&slabs[0]).device_buffer().clone()));
     }
-    let with = |extra: &[(u64, &'static str)]| -> Vec<(u64, &metal::BufferRef, u64)> {
-        let mut b = common.clone();
-        for &(at, name) in extra {
-            let buffer = match name {
-                "records" => records.buffer(),
-                "list" => list.buffer(),
-                "given" => given.buffer(),
-                "listed" => listed.buffer(),
-                "counts" => counts.buffer(),
-                "bases" => bases.buffer(),
-                "tot" => tot.buffer(),
-                "tables" => tables.buffer(),
-                "cins" => cins.buffer(),
-                "cws" => cws.buffer(),
-                "marks" => marks.buffer(),
-                "gtabs" => gtabs.buffer(),
-                "hopped" => hopped.buffer(),
-                "refusal" => refusal.buffer(),
-                _ => positions.buffer(),
-            };
-            b.push((at, buffer, 0));
-        }
-        b
-    };
+    for (name, block) in [
+        ("records", &records),
+        ("list", &list),
+        ("given", &given),
+        ("listed", &listed),
+        ("counts", &counts),
+        ("bases", &bases),
+        ("tot", &tot),
+        ("flag", &tot),
+        ("tables", &tables),
+        ("cin", &cins),
+        ("cw", &cws),
+        ("marks", &marks),
+        ("gtabs", &gtabs),
+        ("hopped", &hopped),
+        ("refusal", &refusal),
+        ("positions", &positions),
+    ] {
+        all.push((name, block.device_buffer().clone()));
+    }
     let groups = |n: usize| n.div_ceil(THREADS).max(1);
-    let args = |a: u32, b: u32| vec![(7u64, bytes_of(&[a, b, fit(segments.warm).unwrap_or(0), 0u32]))];
-    let at_round = |a: u32, b: u32, round: usize| vec![(7u64, bytes_of(&[a, b, fit(segments.warm).unwrap_or(0), round as u32]))];
-    let run_buffers = with(&[(4, "records"), (5, "list"), (6, "given"), (10, "cins"), (12, "marks"), (13, "hopped"), (14, "cws")]);
-    let check_buffers = with(&[(4, "records"), (5, "list"), (6, "given"), (9, "listed"), (12, "marks"), (15, "counts"), (20, "refusal")]);
+    let warm = fit(segments.warm).unwrap_or(0);
+    let args = |a: u32, b: u32| vec![("q", [a, b, warm, 0u32])];
+    let at_round = |a: u32, b: u32, round: usize| vec![("q", [a, b, warm, round as u32])];
+    // A pass: `name`'s kernel over every buffer. A lanes kernel runs a SIMD group a threadgroup: its groups loop by
+    // their data, and where SIMD groups are emulated a group waits for every thread of its threadgroup (0440 step C).
+    let pass = |name: &'static str, kernel: &lane::Kernel, args: Vec<(&'static str, [u32; 4])>, groups: usize, threads: usize| Pass { name, kernel: kernel.clone(), buffers: all.clone(), args, groups, threads };
     let mut first = Vec::new();
     for l in 1..=depth {
-        let cone_groups = if lanes_on() { groups(total * GROUP) } else { groups(total) };
-        first.push(Pass { pipeline: &cone, buffers: with(&[(10, "cins"), (11, "tables"), (14, "cws")]), args: args(fit(total)?, fit(l)?), groups: cone_groups, threads: THREADS });
-        if with_groups.contains(&l) {
-            first.push(Pass { pipeline: &group_pass, buffers: with(&[(10, "cins"), (14, "cws"), (19, "gtabs")]), args: args(fit(total)?, fit(l)?), groups: groups(total * GROUP_STATES * GROUP), threads: THREADS });
+        if lanes_on() {
+            first.push(pass("lanes_cone", &cone, args(fit(total)?, fit(l)?), total, GROUP));
+        } else {
+            first.push(pass("serial_cone", &cone, args(fit(total)?, fit(l)?), groups(total), THREADS));
         }
-        first.push(Pass { pipeline: &cone_prefix, buffers: with(&[(10, "cins"), (11, "tables"), (14, "cws"), (19, "gtabs")]), args: args(0, fit(l)?), groups: files.len(), threads: PREFIX_THREADS });
+        if with_groups.contains(&l) {
+            first.push(pass("lanes_group", &group_pass, args(fit(total)?, fit(l)?), total * GROUP_STATES, GROUP));
+        }
+        first.push(pass("serial_cone_prefix", &cone_prefix, args(0, fit(l)?), files.len(), PREFIX_THREADS));
     }
     if lanes {
-        first.push(Pass { pipeline: &lanes_run, buffers: with(&[(4, "records"), (10, "cins"), (14, "cws"), (15, "counts")]), args: args(fit(total)?, 0), groups: groups(total * GROUP), threads: THREADS });
+        first.push(pass("lanes_run", &lanes_run, args(fit(total)?, 0), total, GROUP));
     } else {
-        first.push(Pass { pipeline: &run, buffers: run_buffers.clone(), args: args(fit(total)?, 0), groups: groups(total), threads: THREADS });
+        first.push(pass("serial_run", &run, args(fit(total)?, 0), groups(total), THREADS));
     }
-    first.push(Pass { pipeline: &check, buffers: check_buffers.clone(), args: at_round(fit(total)?, 0, 1), groups: groups(total), threads: THREADS });
+    first.push(pass("serial_check", &check, at_round(fit(total)?, 0, 1), groups(total), THREADS));
     if std::env::var("RERAIL_SERIAL_TIMES").is_ok() {
         // Each pass alone, for its time; then the run proper.
         // Each kernel's GPU time, and the threads a threadgroup its registers allow (1,024 at
@@ -2220,7 +2381,8 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
             .iter()
             .map(|p| {
                 let ms = encode_passes(std::slice::from_ref(p)).map(|s| s * 1e3).unwrap_or(f64::NAN);
-                format!("{} {ms:.3} ms ({} threads)", p.pipeline.label(), p.pipeline.max_total_threads_per_threadgroup())
+                let most = p.kernel.metal().map_or(0, |m| m.compute_pipeline_state.max_total_threads_per_threadgroup());
+                format!("{} {ms:.3} ms ({most} threads)", p.name)
             })
             .collect();
         eprintln!("serial: {} segments; {}", total, times.join(", "));
@@ -2304,12 +2466,8 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         unsafe { std::ptr::write_bytes(listed.host().cast::<u32>(), 0, 1) };
         // The list and the starts it gives are read by the run before the check writes them.
         let again = [
-            if lanes {
-                Pass { pipeline: &lanes_again, buffers: [run_buffers.clone(), with(&[(15, "counts"), (20, "refusal")])].concat(), args: at_round(fit(n)?, 1, rounds - 1), groups: groups(n * GROUP), threads: THREADS }
-            } else {
-                Pass { pipeline: &run, buffers: run_buffers.clone(), args: at_round(fit(n)?, 1, rounds - 1), groups: groups(n), threads: THREADS }
-            },
-            Pass { pipeline: &check, buffers: check_buffers.clone(), args: at_round(fit(total)?, 0, rounds), groups: groups(total), threads: THREADS },
+            if lanes { pass("lanes_again", &lanes_again, at_round(fit(n)?, 1, rounds - 1), n, GROUP) } else { pass("serial_run", &run, at_round(fit(n)?, 1, rounds - 1), groups(n), THREADS) },
+            pass("serial_check", &check, at_round(fit(total)?, 0, rounds), groups(total), THREADS),
         ];
         rerun_seconds += encode_passes(&again)?;
         launches += 1;
@@ -2317,16 +2475,16 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     // In lanes form the runs counted their segments: the positions are a prefix and a write.
     let mut sinks = Vec::new();
     if !lanes {
-        sinks.push(Pass { pipeline: &count, buffers: with(&[(4, "counts"), (8, "tot")]), args: args(fit(total)?, 0), groups: groups(total), threads: THREADS });
+        sinks.push(pass("serial_count", &count, args(fit(total)?, 0), groups(total), THREADS));
     }
-    sinks.push(Pass { pipeline: &prefix, buffers: with(&[(4, "counts"), (5, "bases"), (8, "tot")]), args: args(0, 0), groups: files.len(), threads: GROUP });
+    sinks.push(pass("serial_prefix", &prefix, args(0, 0), files.len(), GROUP));
     if lanes {
-        sinks.push(Pass { pipeline: &lanes_write, buffers: with(&[(5, "bases"), (6, "positions")]), args: args(fit(total)?, 0), groups: groups(total * GROUP), threads: THREADS });
+        sinks.push(pass("lanes_write", &lanes_write, args(fit(total)?, 0), total, GROUP));
     } else {
-        sinks.push(Pass { pipeline: &write, buffers: with(&[(5, "bases"), (6, "positions")]), args: args(fit(total)?, 0), groups: groups(total), threads: THREADS });
+        sinks.push(pass("serial_write", &write, args(fit(total)?, 0), groups(total), THREADS));
     }
     if forms.iter().any(|n| n.records.is_some()) {
-        sinks.push(Pass { pipeline: &records_pass, buffers: with(&[(6, "positions"), (8, "tot"), (9, "tot"), (20, "refusal")]), args: args(fit(files.len())?, 0), groups: groups(files.len() * RECORD_LANES), threads: THREADS });
+        sinks.push(pass("serial_records", &records_pass, args(fit(files.len())?, 0), groups(files.len() * RECORD_LANES), THREADS));
     }
     let sink_seconds = encode_passes(&sinks)?;
     launches += 1;

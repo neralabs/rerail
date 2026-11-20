@@ -1,10 +1,15 @@
-//! Block programs on Metal (`block`), both ways the transducer runs on the device, each over a
-//! batch of files in one launch (decision 0066):
+//! Block programs on the device (`block`), both ways the transducer runs there, each over a
+//! batch of files in one launch (decision 0066), in UKL on the process's device (decision 0440
+//! step C):
 //!
-//! - **the interpreter** (`metal_block_program.metal`): one kernel for any programs, reading each
+//! - **the interpreter** (`block_program.uglykl`): one kernel for any programs, reading each
 //!   program's steps from a table;
-//! - **generated MSL** from the native IR (`BlockNative`): a function per program, the operations
+//! - **generated code** from the native IR (`BlockNative`): a function per program, the operations
 //!   written out straight-line, and one kernel that calls the file's.
+//!
+//! Both are compiled after `block_common.uglykl`, for one lane width each. A group is a SIMD group
+//! of 32 lanes, its ballots 32-bit words: where the device's SIMD width is not 32 a batch is
+//! refused (`ready`), and the CPU's executors run it.
 //!
 //! Each lane owns `W` consecutive bytes of a file and builds its own `W`-bit word of every value
 //! (`LaneWidth`: 16, 32 or 64), so a SIMD group's 32 lanes work on 32 words at once. A group of
@@ -18,28 +23,54 @@
 //! of its file. A poll that runs out leaves the group unfinished, and the host launches again.
 #[allow(unused_imports)]
 use crate::Error;
-use crate::METAL_DEVICE;
-use crate::launch::{CheckedComputeEncoder, commit_checked, wait_checked};
-use crate::runtime::pipeline_named;
+use crate::lane;
 pub use rerail_compiler::block::BatchFile;
 use rerail_compiler::block::BlockRun;
 use rerail_compiler::block_native::{BlockInst, BlockNative};
-use metal::MTLSize;
+use rerail_device::device::Buffer;
 
 /// The same programs in the CPU's shape: a thread a segment of blocks, the carry forward by
 /// speculation (`block_serial.rs`).
 #[path = "block_serial.rs"]
 pub mod serial;
 
-/// The carries' helpers (`block_carry.metal`), shared by the interpreter and generated MSL.
-const CARRY: &str = include_str!("block_carry.metal");
-/// The sinks: outputs at their delays, extracts and totals (`block_sinks.metal`), shared
-/// likewise.
-const SINKS: &str = include_str!("block_sinks.metal");
-/// The interpreter's source: the shared helpers, then its kernels.
-static INTERPRETER: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-    format!("{CARRY}\n{}\n{}", batch_helpers(), include_str!("block_program.metal"))
-});
+/// The shared code (`block_common.uglykl`): the file table, the carries, the sinks and the
+/// look-backs, for the lane word the source defines in front of it (`head`).
+const COMMON: &str = include_str!("block_common.uglykl");
+/// The interpreter's source at each lane width (`LaneWidth::ALL`): the shared code, then its
+/// kernel.
+static INTERPRETER: std::sync::LazyLock<[String; 3]> =
+    std::sync::LazyLock::new(|| LaneWidth::ALL.map(|w| format!("{}{}", head(w), include_str!("block_program.uglykl"))));
+
+/// A source's head at lane width `width`: its word (`BW`, `BM`), how a poll reads
+/// (`poll_rmw`), and the shared code.
+fn head(width: LaneWidth) -> String {
+    format!("#define BW {}\n#define BM {}\n#define BLOCK_POLL_RMW {}\n{COMMON}\n", width.bytes(), width.word(), u32::from(poll_rmw()))
+}
+
+/// Whether a poll is a read-modify-write (`poll` in `block_common.uglykl`): on a Metal GPU before
+/// Apple's family 9. On the M1 Max (family 7, Q123) a relaxed load in a poll loop kept reading the
+/// polling core's copy and never saw the store of a group running beside it: every launch of a
+/// batch ran out of polls, whatever their number (5–9 launches at 65,536 polls, as at none, at
+/// 768 workers as at 32), though a `volatile` or `coherent(device)` load did no better. A relaxed
+/// read-modify-write reads the coherent copy: one launch. Family 9 on (the M3, the M5) the load
+/// sees it, and stays a load there. OpenCL's load is a read-modify-write already.
+fn poll_rmw() -> bool {
+    static RMW: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        lane::device().is_ok_and(|d| d.metal().is_some()) && crate::device().is_ok_and(|d| !d.supports_family(metal::MTLGPUFamily::Apple9))
+    });
+    *RMW
+}
+
+/// The device the batches run on, where they can: a group is a SIMD group of 32 lanes, so a
+/// device of another SIMD width refuses them (`UnsupportedBackend`), and the CPU runs them.
+pub fn ready() -> Result<&'static rerail_device::device::Device, Error> {
+    let device = lane::device()?;
+    if device.simd_width() != GROUP as u32 {
+        return Err(Error::UnsupportedBackend);
+    }
+    Ok(device)
+}
 /// Lanes per threadgroup: one SIMD group.
 const GROUP: usize = 32;
 
@@ -62,12 +93,21 @@ impl LaneWidth {
         }
     }
 
-    /// The MSL type of a lane word.
+    /// The C type of a lane word (`BM` in the kernels).
     fn word(self) -> &'static str {
         match self {
-            LaneWidth::W16 => "ushort",
-            LaneWidth::W32 => "uint",
-            LaneWidth::W64 => "ulong",
+            LaneWidth::W16 => "uint16_t",
+            LaneWidth::W32 => "uint32_t",
+            LaneWidth::W64 => "uint64_t",
+        }
+    }
+
+    /// Its place in `ALL`.
+    fn index(self) -> usize {
+        match self {
+            LaneWidth::W16 => 0,
+            LaneWidth::W32 => 1,
+            LaneWidth::W64 => 2,
         }
     }
 }
@@ -192,15 +232,15 @@ pub fn run_split(
     }
 }
 
-/// Whether generated MSL's pipeline for `programs` at `width` (classes by lookups) is compiled; when it is not, its
+/// Whether generated UKL's pipeline for `programs` at `width` (classes by lookups) is compiled; when it is not, its
 /// compile starts on a thread of its own and this is false at once: the caller runs the batch on the interpreter's
 /// pipeline (compiled once for every program) meanwhile, never waiting on the compiler (`runtime::pipeline_ready`).
 pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
-    crate::runtime::pipeline_ready(&generate_forms(programs, width), "tempo_batch").is_some()
+    ready().is_ok() && rerail_accel::gpu::kernels::ready_behind_function(&generate_forms(programs, width), "tempo_batch", None).is_some()
 }
 
-/// The bindings of a batch's slabs (`MAX_SLABS`): 0, then past the interpreter's 12–15.
-const SLAB_BUFFERS: [u64; crate::slabs::MAX_SLABS] = [0, 16, 17, 18];
+/// The rows of a batch's slabs (`MAX_SLABS`), in every kernel that reads a file's bytes.
+const SLAB_BUFFERS: [&str; crate::slabs::MAX_SLABS] = ["s0", "s1", "s2", "s3"];
 
 /// Launches repeated because a look-back ran out of polls.
 pub static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -212,7 +252,7 @@ pub(crate) fn starts_late(p: &BlockNative) -> bool {
     p.insts.iter().any(|i| matches!(i, BlockInst::Early(..) | BlockInst::Prefix(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
 }
 
-/// What `program` needs that generated MSL lacks (decision 0202's `metal-form` list), if any: a
+/// What `program` needs that generated UKL lacks (decision 0202's `metal-form` list), if any: a
 /// `run_batch` of it is refused. A fixed point (`rounds`) is the CPU's for now: each lane would run
 /// its rounds in its own frame, within `block::MAX_ROUNDS`, to the same values. A `back_fill`
 /// likewise: a backward pass over the groups' summaries, not generated yet. An `early` too
@@ -242,10 +282,10 @@ pub fn run_batch(
         rerail_accel::forms::missing("metal-form", "block program", "block program", reason, files.len() as u64);
         return Err(Error::UnsupportedBackend);
     }
-    METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    ready()?;
     let word = width.bytes() / 8;
     let span = width.bytes() * GROUP;
-    // The form each executor runs: `class` by lookups only in generated MSL's `Lookup`.
+    // The form each executor runs: `class` by lookups only in generated UKL's `Lookup`.
     let forms: Vec<BlockNative> = programs
         .iter()
         .map(|p| if executor == Executor::Generated(ClassStrategy::Lookup) { (*p).clone() } else { p.planes_form() })
@@ -272,7 +312,7 @@ pub fn run_batch(
     for (i, file) in files.iter().enumerate() {
         let n = forms.get(file.program).ok_or(Error::BackendFailure)?;
         let len = file.bytes.len();
-        // Generated MSL's groups each start with `warm_lanes` lanes whose sinks write nothing.
+        // Generated UKL's groups each start with `warm_lanes` lanes whose sinks write nothing.
         let span = match executor {
             Executor::Interpreter => span,
             Executor::Generated(_) => width.bytes() * (GROUP - warm_lanes(n, width)),
@@ -296,7 +336,7 @@ pub fn run_batch(
         group_file.extend(std::iter::repeat_n(fit(i)?, groups));
         group0 += groups;
         out_base += n.outputs.len() * groups * GROUP;
-        // The interpreter's look-back states, a word per carried instruction; generated MSL's
+        // The interpreter's look-back states, a word per carried instruction; generated UKL's
         // exchange records (`record_words`).
         state_base += records[file.program] * groups;
         halo_base += carried[file.program] * groups * 3;
@@ -306,7 +346,7 @@ pub fn run_batch(
     }
     let total = group0;
     let table = crate::pool::upload(&rows)?;
-    // Generated MSL takes the groups round robin over the files (`ticket_order`): a (file, group)
+    // Generated UKL takes the groups round robin over the files (`ticket_order`): a (file, group)
     // per ticket. The interpreter takes them file by file.
     let group_file = match executor {
         Executor::Interpreter => crate::pool::upload(&group_file)?,
@@ -323,24 +363,24 @@ pub fn run_batch(
     let workers = workers(total);
     let most = forms.iter().map(|n| n.insts.len()).max().unwrap_or(0);
     let params = [fit(total)?, spins, fit(most)?, 0];
-    let mut buffers: Vec<(u64, &metal::BufferRef, u64)> = vec![
-        (1, out.buffer(), 0),
-        (2, table.buffer(), 0),
-        (3, group_file.buffer(), 0),
-        (4, states.buffer(), 0),
-        (5, halos.buffer(), 0),
-        (6, ext_states.buffer(), 0),
-        (7, positions.buffer(), 0),
-        (8, counts.buffer(), 0),
-        (9, tickets.buffer(), 0),
-        (10, done.buffer(), 0),
+    let mut buffers: Vec<(&'static str, Buffer)> = vec![
+        ("out", out.device_buffer().clone()),
+        ("files", table.device_buffer().clone()),
+        ("group_file", group_file.device_buffer().clone()),
+        ("states", states.device_buffer().clone()),
+        ("halos", halos.device_buffer().clone()),
+        ("ext_states", ext_states.device_buffer().clone()),
+        ("positions", positions.device_buffer().clone()),
+        ("counts", counts.device_buffer().clone()),
+        ("tickets", tickets.device_buffer().clone()),
+        ("done", done.device_buffer().clone()),
     ];
     // The slabs, each bound as it is (no copy); unused bindings repeat the first.
-    for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
-        buffers.push((at, slabs.get(k).unwrap_or(&slabs[0]).buffer(), 0));
+    for (k, name) in SLAB_BUFFERS.iter().enumerate() {
+        buffers.push((name, slabs.get(k).unwrap_or(&slabs[0]).device_buffer().clone()));
     }
     let interpreter;
-    let pipeline = match executor {
+    let (name, kernel) = match executor {
         Executor::Interpreter => {
             let (mut steps, mut table, mut outs) = (Vec::new(), Vec::new(), Vec::new());
             for (pi, n) in forms.iter().enumerate() {
@@ -378,18 +418,17 @@ pub fn run_batch(
                 // Each worker's values: a slot of 32 lane words per step (decision 0034).
                 crate::pool::zeroed::<u8>((workers * most * GROUP * word).max(1))?,
             ];
-            for (k, block) in interpreter.iter().enumerate() {
-                buffers.push((12 + k as u64, block.buffer(), 0));
+            for (name, block) in ["programs", "steps", "outs", "scratch"].into_iter().zip(&interpreter) {
+                buffers.push((name, block.device_buffer().clone()));
             }
-            crate::runtime::pipeline_named_fixed(&INTERPRETER, &format!("block_batch_{}", width.bytes()), None)?
+            ("block_batch", lane::kernel_fixed(&INTERPRETER[width.index()], "block_batch", None))
         }
         Executor::Generated(_) => {
             let refs: Vec<&BlockNative> = forms.iter().collect();
-            let source = generate_forms(&refs, width);
-            pipeline_named(&source, "tempo_batch").inspect_err(|e| eprintln!("block program: pipeline tempo_batch: {e:?}"))?
+            ("tempo_batch", lane::kernel(&generate_forms(&refs, width), "tempo_batch", None))
         }
     };
-    let pass = Pass { pipeline: &pipeline, buffers, args: vec![(11, bytes_of(&params))], groups: workers, threads: GROUP };
+    let pass = Pass { name, kernel, buffers, args: vec![("p", params)], groups: workers, threads: GROUP };
     // Each launch finishes at least the first unfinished group, whose predecessors are all done.
     let (mut seconds, mut launches) = (0.0, 0);
     loop {
@@ -459,16 +498,7 @@ pub fn interpret_extract(
     Ok(run.files.remove(0))
 }
 
-/// SWAR byte compare, emitted once into every generated kernel (the interpreter's `eq16`).
-const EQ16: &str = "static inline uint eq16(uint4 v, uint c4) {
-  const uint4 x = v ^ c4;
-  const uint4 z = ~(((x & 0x7f7f7f7fu) + 0x7f7f7f7fu) | x) & 0x80808080u;
-  const uint4 g = (((z >> 7u) * 0x00204081u) >> 21u) & 0xfu;
-  return g.x | (g.y << 4u) | (g.z << 8u) | (g.w << 12u);
-}
-";
-
-/// How generated MSL computes `class`. `Planes` is the default: on simdjson's five classes over
+/// How generated UKL computes `class`. `Planes` is the default: on simdjson's five classes over
 /// 64 MiB it ran at the speed of five plain byte compares (memory-bound), and `Lookup` about 30%
 /// slower at every lane width (`block_tests::class_strategies_gpu_time`).
 ///
@@ -488,26 +518,7 @@ impl ClassStrategy {
     pub const ALL: [ClassStrategy; 2] = [ClassStrategy::Lookup, ClassStrategy::Planes];
 }
 
-/// SWAR nonzero bytes: 16 bytes that are not zero as 16 bits.
-const NZ16: &str = "static inline uint nz16(uint4 x) {
-  const uint4 z = (((x & 0x7f7f7f7fu) + 0x7f7f7f7fu) | x) & 0x80808080u;
-  const uint4 g = (((z >> 7u) * 0x00204081u) >> 21u) & 0xfu;
-  return g.x | (g.y << 4u) | (g.z << 8u) | (g.w << 12u);
-}
-";
-
-/// Hacker's Delight's 8x8 bit transpose: byte `i` bit `j` to byte `j` bit `i`.
-const TRANSPOSE8: &str = "static inline ulong transpose8(ulong x) {
-  ulong t = (x ^ (x >> 7u)) & 0x00AA00AA00AA00AAul;
-  x = x ^ t ^ (t << 7u);
-  t = (x ^ (x >> 14u)) & 0x0000CCCC0000CCCCul;
-  x = x ^ t ^ (t << 14u);
-  t = (x ^ (x >> 28u)) & 0x00000000F0F0F0F0ul;
-  return x ^ t ^ (t << 28u);
-}
-";
-
-/// The native IR as generated MSL for lanes of `width`, `class` by bit-planes.
+/// The native IR as generated UKL for lanes of `width`, `class` by bit-planes.
 pub fn generate(native: &BlockNative, width: LaneWidth) -> String {
     generate_with(native, width, ClassStrategy::Planes)
 }
@@ -516,13 +527,12 @@ pub fn generate(native: &BlockNative, width: LaneWidth) -> String {
 /// then byte `k` of every group gathered into plane `k` (for 64-byte lanes, an 8x8 byte
 /// transpose).
 fn planes(width: LaneWidth) -> String {
-    let m = width.word();
     let groups = width.bytes() / 8;
     let mut out = String::new();
     for g in 0..groups {
         let (c, half) = (g / 2, if g % 2 == 0 { ("x", "y") } else { ("z", "w") });
         out.push_str(&format!(
-            "  ulong t{g} = transpose8(ulong(c{c}.{}) | (ulong(c{c}.{}) << 32u));\n",
+            "  uint64_t t{g} = transpose8(U64(c{c}.{}) | (U64(c{c}.{}) << 32u));\n",
             half.0, half.1
         ));
     }
@@ -531,13 +541,13 @@ fn planes(width: LaneWidth) -> String {
             for g in (0..8).filter(|g| g & step == 0) {
                 let h = g + step;
                 out.push_str(&format!(
-                    "  {{ const ulong a = t{g}, b = t{h}; t{g} = (a & {mask:#018x}ul) | ((b & {mask:#018x}ul) << {sh}u); \
+                    "  {{ const uint64_t a = t{g}, b = t{h}; t{g} = (a & {mask:#018x}ul) | ((b & {mask:#018x}ul) << {sh}u); \
                      t{h} = ((a >> {sh}u) & {mask:#018x}ul) | (b & ~{mask:#018x}ul); }}\n"
                 ));
             }
         }
         for k in 0..8 {
-            out.push_str(&format!("  const ulong p{k} = t{k};\n"));
+            out.push_str(&format!("  const uint64_t p{k} = t{k};\n"));
         }
     } else {
         for k in 0..8 {
@@ -547,24 +557,24 @@ fn planes(width: LaneWidth) -> String {
                     if g == 0 { byte } else { format!("({byte} << {}u)", g * 8) }
                 })
                 .collect();
-            out.push_str(&format!("  const {m} p{k} = {m}({});\n", parts.join(" | ")));
+            out.push_str(&format!("  const BM p{k} = BMC({});\n", parts.join(" | ")));
         }
     }
     out
 }
 
-/// One table's class bytes of a `uint4` by lookups: byte `j`'s `lo[b & 15] & hi[b >> 4]`.
+/// One table's class bytes of a `B4` by lookups: byte `j`'s `lo[b & 15] & hi[b >> 4]`.
 fn lookup_helper(p: usize, t: usize, table: &rerail_compiler::block::ClassTable) -> String {
     let hex = |xs: &[u8]| xs.iter().map(|x| format!("{x:#04x}")).collect::<Vec<_>>().join(", ");
     let mut out = format!(
-        "constant uchar T{p}_{t}[32] = {{{}, {}}};\nstatic inline uint4 classes_p{p}_t{t}(uint4 v) {{\n  uint4 k;\n",
+        "UKL_TABLE uint8_t T{p}_{t}[32] = {{{}, {}}};\nUKL_INLINE B4 classes_p{p}_t{t}(B4 v) {{\n  B4 k;\n",
         hex(&table.lo),
         hex(&table.hi)
     );
     for lane in ["x", "y", "z", "w"] {
         let bytes: Vec<String> = (0..4)
             .map(|j| {
-                let b = format!("uint(T{p}_{t}[(v.{lane} >> {}u) & 15u] & T{p}_{t}[16u + ((v.{lane} >> {}u) & 15u)])", 8 * j, 8 * j + 4);
+                let b = format!("U32(T{p}_{t}[(v.{lane} >> {}u) & 15u] & T{p}_{t}[16u + ((v.{lane} >> {}u) & 15u)])", 8 * j, 8 * j + 4);
                 if j == 0 { b } else { format!("({b} << {}u)", 8 * j) }
             })
             .collect();
@@ -574,7 +584,7 @@ fn lookup_helper(p: usize, t: usize, table: &rerail_compiler::block::ClassTable)
     out
 }
 
-/// The native IR as MSL for lanes of `width`, `class` by `strategy`: a batch's kernel for one
+/// The native IR as UKL for lanes of `width`, `class` by `strategy`: a batch's kernel for one
 /// program.
 pub fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStrategy) -> String {
     let form = match strategy {
@@ -589,15 +599,7 @@ pub fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStra
 /// each carried one, and writes the file's outputs and extracts; and persistent workers that take
 /// the batch's groups in order and call their file's program (decision 0066).
 fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
-    let m = width.word();
-    let mut helpers = String::new();
-    if programs.iter().any(|n| n.insts.iter().any(|i| matches!(i, BlockInst::Class { .. } | BlockInst::Pair { .. }))) {
-        helpers.push_str(NZ16);
-    }
-    if programs.iter().any(|n| n.insts.iter().any(|i| matches!(i, BlockInst::Plane(_) | BlockInst::PlaneBefore(_)))) {
-        helpers.push_str(TRANSPOSE8);
-    }
-    let mut out = format!("{CARRY}\n{}\n{EQ16}\n{helpers}\n", batch_helpers());
+    let mut out = head(width);
     for (p, native) in programs.iter().enumerate() {
         if native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. } | BlockInst::Pair { .. })) {
             for (t, table) in native.tables.iter().enumerate() {
@@ -610,44 +612,55 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
     let cases: String = (0..programs.len())
         .map(|p| {
             format!(
-                "      case {p}u: ok = program_{p}(bytes, f, fg.y, l, p.y, out, states, halos, ext_states, positions, counts); break;\n"
+                "      case {p}u: ok = program_{p}(bytes, f, fg1, l, p.spins, out, states, halos, ext_states, positions, counts __UKL_ARGS); break;\n"
             )
         })
         .collect();
     out.push_str(&format!(
-        "// Persistent workers (decision 0027): each takes group numbers in launch order and runs its\n\
-         // file's program over the group. `p`: the batch's groups, the polls after the first.\n\
-         kernel void tempo_batch(\n\
-         \x20   device const uint4* s0 [[buffer(0)]], device {m}* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
-         \x20   device const uint2* group_of [[buffer(3)]], device atomic_uint* states [[buffer(4)]],\n\
-         \x20   device atomic_uint* halos [[buffer(5)]], device atomic_uint* ext_states [[buffer(6)]],\n\
-         \x20   device uint* positions [[buffer(7)]], device uint* counts [[buffer(8)]], device atomic_uint* tickets [[buffer(9)]],\n\
-         \x20   device uint* done [[buffer(10)]], constant uint4& p [[buffer(11)]], device const uint4* s1 [[buffer(16)]],\n\
-         \x20   device const uint4* s2 [[buffer(17)]], device const uint4* s3 [[buffer(18)]], uint l [[thread_index_in_simdgroup]]) {{\n\
-         \x20 for (uint round = 0u; round < p.x; round++) {{\n\
-         \x20   uint ticket = 0u;\n\
-         \x20   if (l == 0u) ticket = atomic_fetch_add_explicit(&tickets[0], 1u, memory_order_relaxed);\n\
-         \x20   const uint t = simd_broadcast(ticket, ushort(0));\n\
-         \x20   if (t >= p.x) return;\n\
-         \x20   if (done[t] != 0u) continue;\n\
-         \x20   const uint2 fg = group_of[t];\n\
-         \x20   const FileRow f = files[fg.x];\n\
+        "// A launch's parameters: the batch's groups, the polls after the first.\n\
+         typedef struct BatchP {{ uint32_t groups, spins, most, pad; }} BatchP;\n\
+         UKL_REFLECT_STRUCT(BatchP, groups, spins, most, pad)\n\
+         // Persistent workers (decision 0027): each takes group numbers in launch order and runs its\n\
+         // file's program over the group. A threadgroup is a worker: one group of 32 lanes.\n\
+         DEFINE_KERNEL2(block, tempo_batch,\n\
+         \x20   ROBUFFER, uint32_t, s0, \"[slab]\", RWBUFFER, BM, out, \"[outputs]\", ROBUFFER, FileRow, files, \"[files]\",\n\
+         \x20   ROBUFFER, uint32_t, group_file, \"[2 * groups]\", RWBUFFER, uint32_t, states, \"[states]\",\n\
+         \x20   RWBUFFER, uint32_t, halos, \"[halos]\", RWBUFFER, uint32_t, ext_states, \"[ext_states]\",\n\
+         \x20   RWBUFFER, uint32_t, positions, \"[positions]\", RWBUFFER, uint32_t, counts, \"[counts]\", RWBUFFER, uint32_t, tickets, \"[2]\",\n\
+         \x20   RWBUFFER, uint32_t, done, \"[groups]\", ROBUFFER, uint32_t, s1, \"[slab]\",\n\
+         \x20   ROBUFFER, uint32_t, s2, \"[slab]\", ROBUFFER, uint32_t, s3, \"[slab]\", ARGS, BatchP, p, , LANE, uint32_t, l, )\n\
+         {{\n\
+         \x20 for (uint32_t round = 0u; round < p.groups; round++) {{\n\
+         \x20   // Lane 0 takes the ticket and reads whether its group is done (`block_batch`: lanes need not run\n\
+         \x20   // in lockstep).\n\
+         \x20   uint32_t ticket = 0u;\n\
+         \x20   if (l == 0u) {{\n\
+         \x20     ticket = ukl_atomic_add(&tickets[0], 1u);\n\
+         \x20     if (ticket < p.groups && done[ticket] != 0u) ticket |= 0x80000000u;\n\
+         \x20   }}\n\
+         \x20   const uint32_t taken = ukl_sg_shuffle(ticket, 0u __UKL_ARGS);\n\
+         \x20   const uint32_t t = taken & 0x7fffffffu;\n\
+         \x20   if (t >= p.groups) return;\n\
+         \x20   if ((taken >> 31) != 0u) continue;\n\
+         \x20   // Its (file, group) pair (`ticket_order`).\n\
+         \x20   const uint32_t fg0 = group_file[2u * t], fg1 = group_file[2u * t + 1u];\n\
+         \x20   const FileRow f = files[fg0];\n\
          \x20   // The slab the file's bytes are in (decision 0067): the same in every lane.\n\
-         \x20   device const uint4* bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3;\n\
+         \x20   Bytes bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3;\n\
          \x20   bool ok = false;\n\
          \x20   // The same program in every lane: the group holds one file.\n\
          \x20   switch (f.program) {{\n{cases}\
          \x20     default: break;\n\
          \x20   }}\n\
          \x20   if (l == 0u && ok) done[t] = 1u;\n\
-         \x20   if (l == 0u && !ok) atomic_fetch_add_explicit(&tickets[1], 1u, memory_order_relaxed);\n\
+         \x20   if (l == 0u && !ok) ukl_atomic_add(&tickets[1], 1u);\n\
          \x20 }}\n\
          }}\n"
     ));
     out
 }
 
-/// Generated MSL's order of the groups of files of `groups` groups each: round robin, the first
+/// Generated UKL's order of the groups of files of `groups` groups each: round robin, the first
 /// group of every file, then the second of each that has one, and so on, as (file, group) words.
 /// A group waits on the one before it in its file, which took its ticket a round earlier. Given
 /// in file order, the groups in flight would be mostly a file's next ones, each waiting on the
@@ -665,47 +678,6 @@ fn ticket_order(groups: &[usize]) -> Vec<[u32; 2]> {
     order
 }
 
-/// The helpers both executors share: the file table's row, reading a file's bytes, and the
-/// look-backs.
-fn batch_helpers() -> String {
-    format!("{}{FILE_ROW}\n{}{LOOK_BACK}{HALO_EXCHANGE}{EXCHANGE_WORD}{SINKS}\n", poll_helper(), table_helpers(1))
-}
-
-/// `poll`: a read of a word another group of the launch publishes (a look-back's state, a halo, an exchange's
-/// record). On the M1 Max (Apple GPU family 7, Q123) a relaxed load in a poll loop kept reading the polling core's
-/// copy and never saw the store of a group running beside it: every launch of a batch ran out of polls, whatever
-/// their number (5–9 launches at 65,536 polls, as at none, at 768 workers as at 32), though a `volatile` or
-/// `coherent(device)` load did no better. A relaxed read-modify-write reads the coherent copy: one launch. Family 9
-/// on (the M3, the M5) the load sees it, and stays a load there.
-fn poll_helper() -> &'static str {
-    const LOAD: &str = "static inline uint poll(device atomic_uint* x) { return atomic_load_explicit(x, memory_order_relaxed); }\n";
-    const RMW: &str = "static inline uint poll(device atomic_uint* x) { return atomic_fetch_or_explicit(x, 0u, memory_order_relaxed); }\n";
-    static COHERENT_LOADS: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| crate::device().map_or(true, |d| d.supports_family(metal::MTLGPUFamily::Apple9)));
-    if *COHERENT_LOADS { LOAD } else { RMW }
-}
-
-/// A file of a batch, and its bytes read in place in its slab: 16-byte chunks from `src16`, zero
-/// at and past its length (a neighbour's bytes never read as its own).
-const FILE_ROW: &str = "// A file of the batch (decision 0066). Lane words are indexed in the file: output k of lane gl at
-// out_base + k * groups * 32 + gl; carry j of group g at state_base + j * groups + g (a halo's
-// three words from halo_base + (j * groups + g) * 3); counted output c's state of group g at
-// ext_base + c * groups + g, and its total at tot_base + c; extract e's positions from
-// pos_base + e * max(len, 1); in passes, block b's slot k at slot_base + b * SLOTS + k.
-struct FileRow { uint src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, slab, tot_base, slot_base; };
-static inline uint4 load16(device const uint4* bytes, FileRow f, uint c) {
-  const uint chunks = max((f.len + 15u) / 16u, 1u);
-  const uint4 v = bytes[f.src16 + min(c, chunks - 1u)];
-  const int have = clamp(int(f.len) - int(c * 16u), 0, 16);
-  const uint4 keep = uint4(clamp(int4(have) - int4(0, 4, 8, 12), 0, 4));
-  const uint4 low = (uint4(1u) << ((keep * 8u) & 31u)) - 1u;
-  return v & select(low, uint4(0xffffffffu), keep == uint4(4u));
-}
-// The byte before chunk c of a file (0x00 before its first byte).
-static inline uint file_byte_before(device const uint4* bytes, FileRow f, uint c) {
-  return select(0u, load16(bytes, f, max(c, 1u) - 1u).w >> 24u, c > 0u);
-}
-";
-
 /// Polls of a predecessor's state after the first: bounded, so a launch whose predecessors never
 /// publish ends and is repeated. 64 polls ran out on full batches: the launch was repeated while
 /// the predecessor was only slow.
@@ -715,106 +687,7 @@ pub const SPINS: u32 = 65536;
 const EXTRACT_POLLS: u32 = 64;
 
 
-/// One scanned carry's look-back (`06-block-parallel.md` §5): the lanes' tables (bit `c` is the
-/// lane's carry-out for carry-in `c`) scanned in the SIMD group, the group's aggregate published,
-/// then the predecessors' states read back to an inclusive one. Each predecessor is polled once
-/// and `spins` more times; false when one has published nothing yet.
-const LOOK_BACK: &str = "static inline bool look_back(device atomic_uint* state, uint g, uint l, uint t, uint spins, thread uint& cin) {
-  uint agg = 0u;
-  const uint e = texclusive1(t, l, agg);
-  if (l == 0u) atomic_store_explicit(&state[g], CARRY_AGGREGATE | agg, memory_order_relaxed);
-  uint prefix = TID1;
-  for (uint back = 1u; back <= g; back++) {
-    uint st = 0u;
-    for (uint spin = 0u; spin <= spins && (st >> 30u) == 0u; spin++) {
-      st = simd_broadcast(poll(&state[g - back]), ushort(0));
-    }
-    if ((st >> 30u) == 0u) return false;
-    prefix = tcompose1(st & CARRY_VALUE, prefix);
-    if ((st >> 30u) == 2u) break;
-  }
-  if (l == 0u) atomic_store_explicit(&state[g], CARRY_INCLUSIVE | tcompose1(prefix, agg), memory_order_relaxed);
-  cin = tapply1(e, tapply1(prefix, 0u));
-  return true;
-}
-
-";
-
-/// A carried `prev`'s halo: the group's last 64 bits of the operand, published as three words of
-/// 30, 30 and 4 bits, each with a flag (no fence: every word says whether it is written), and the
-/// group before's read back. False when the group before has not published it yet.
-const HALO_EXCHANGE: &str = "constant uint HALO_FLAG = 1u << 31;
-static inline bool halo_exchange(device atomic_uint* halos, uint g, uint l, ulong last, uint spins, thread ulong& before) {
-  if (l == 0u) {
-    atomic_store_explicit(&halos[g * 3u], HALO_FLAG | uint(last & 0x3ffffffful), memory_order_relaxed);
-    atomic_store_explicit(&halos[g * 3u + 1u], HALO_FLAG | uint((last >> 30u) & 0x3ffffffful), memory_order_relaxed);
-    atomic_store_explicit(&halos[g * 3u + 2u], HALO_FLAG | uint(last >> 60u), memory_order_relaxed);
-  }
-  before = 0ul;
-  if (g == 0u) return true;
-  for (uint w = 0u; w < 3u; w++) {
-    uint x = 0u;
-    for (uint spin = 0u; spin <= spins && (x & HALO_FLAG) == 0u; spin++) {
-      x = simd_broadcast(poll(&halos[(g - 1u) * 3u + w]), ushort(0));
-    }
-    if ((x & HALO_FLAG) == 0u) return false;
-    before |= ulong(x & 0x3ffffffful) << (30u * w);
-  }
-  return true;
-}
-
-";
-
-/// One word of an exchange (`Plan::exchanges`), by the lane that owns it; a group's record has
-/// `stride` words, and `rec` is this word's place in group 0's. Kind 0: a halo word, published
-/// with a flag and the group before's read once it is; kind 3 the same, published only (its value
-/// is known). Kind 1: a scan's table, and kind 2: a
-/// count, each published as an aggregate and read back to an inclusive prefix by `look_back`'s
-/// protocol. `got`: the halo word, or the prefix before the group. False when a predecessor has
-/// published nothing after `spins` polls; a lane past the exchange's words (`owns` false) has
-/// nothing to do. Every lane of a group polls its own word at once, so an
-/// exchange of many values waits about as long as one.
-///
-/// A table that gives the same carry for either carry in has one state: a group whose own table
-/// is constant publishes it as its inclusive prefix at once, and a look-back stops at the first
-/// constant prefix, since nothing before it changes the carry.
-const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint* rec, uint g, uint stride, uint kind, uint mine, uint spins, bool owns, thread uint& got) {
-  got = 0u;
-  if (!owns) return true;
-  if (kind == 3u) {
-    atomic_store_explicit(&rec[g * stride], HALO_FLAG | mine, memory_order_relaxed);
-    return true;
-  }
-  if (kind == 0u) {
-    atomic_store_explicit(&rec[g * stride], HALO_FLAG | mine, memory_order_relaxed);
-    if (g == 0u) return true;
-    uint x = 0u;
-    for (uint spin = 0u; spin <= spins && (x & HALO_FLAG) == 0u; spin++) {
-      x = poll(&rec[(g - 1u) * stride]);
-    }
-    got = x & 0x3ffffffful;
-    return (x & HALO_FLAG) != 0u;
-  }
-  const bool single = kind == 1u && tapply1(mine, 0u) == tapply1(mine, 1u);
-  atomic_store_explicit(&rec[g * stride], select(CARRY_AGGREGATE, CARRY_INCLUSIVE, single) | mine, memory_order_relaxed);
-  uint prefix = select(0u, TID1, kind == 1u);
-  for (uint back = 1u; back <= g; back++) {
-    uint st = 0u;
-    for (uint spin = 0u; spin <= spins && (st >> 30u) == 0u; spin++) {
-      st = poll(&rec[(g - back) * stride]);
-    }
-    if ((st >> 30u) == 0u) return false;
-    prefix = select(prefix + (st & CARRY_VALUE), tcompose1(st & CARRY_VALUE, prefix), kind == 1u);
-    if ((st >> 30u) == 2u || (kind == 1u && tapply1(prefix, 0u) == tapply1(prefix, 1u))) break;
-  }
-  atomic_store_explicit(&rec[g * stride], CARRY_INCLUSIVE | select(prefix + mine, tcompose1(prefix, mine), kind == 1u), memory_order_relaxed);
-  got = prefix;
-  return true;
-}
-
-";
-
-/// How generated MSL treats each carried instruction.
+/// How generated UKL treats each carried instruction.
 struct Plan {
     /// The local `prev`s: of a value of the bytes alone (local `prev`s of such values included);
     /// their halo comes from the lanes before, by shuffles, the group's warm-up lanes included
@@ -897,8 +770,8 @@ impl Plan {
     }
 }
 
-/// Generated MSL's kernel for `native` at `width`, as the device compiled it: its exchanges (each
-/// one's halos and scans), its record, the lines of MSL, and the pipeline's limits. Metal reports
+/// Generated UKL's kernel for `native` at `width`, as the device compiled it: its exchanges (each
+/// one's halos and scans), its record, the lines of UKL, and the pipeline's limits. Metal reports
 /// no register count; a pipeline whose threads use many registers allows fewer than 1,024
 /// threads a threadgroup.
 pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, Error> {
@@ -906,9 +779,18 @@ pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, E
     let plan = Plan::new(&form).at(&form, width);
     let exchanges: Vec<String> = plan.exchanges().iter().map(|(h, s)| format!("{}h+{}s", h.len(), s.len())).collect();
     let source = generate_forms(&[&form], width);
-    let pipeline = pipeline_named(&source, "tempo_batch")?;
+    let device = ready()?;
+    let kernel = lane::kernel(&source, "tempo_batch", None);
+    // Metal's pipeline reports its limits; elsewhere the device's.
+    let (threads, simd, memory) = match kernel.metal() {
+        Some(m) => {
+            let p = &m.compute_pipeline_state;
+            (p.max_total_threads_per_threadgroup(), p.thread_execution_width(), p.static_threadgroup_memory_length())
+        }
+        None => (u64::from(device.max_threadgroup()), u64::from(device.simd_width()), 0),
+    };
     Ok(format!(
-        "{} instructions; {} local prevs ({} warm-up lanes a group), {} halos, {} scans; exchanges [{}] + counts {}, totals {}; record {} words a group; MSL {} lines; pipeline: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
+        "{} instructions; {} local prevs ({} warm-up lanes a group), {} halos, {} scans; exchanges [{}] + counts {}, totals {}; record {} words a group; UKL {} lines; kernel: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
         form.insts.len(),
         plan.windowed.len(),
         plan.warm,
@@ -919,14 +801,14 @@ pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, E
         form.totals.len(),
         plan.record_words(&form),
         source.lines().count(),
-        pipeline.max_total_threads_per_threadgroup(),
-        pipeline.thread_execution_width(),
-        pipeline.static_threadgroup_memory_length(),
+        threads,
+        simd,
+        memory,
         workers(usize::MAX),
     ))
 }
 
-/// The lanes each group of generated MSL spends warming up: enough lanes of `width` bytes to
+/// The lanes each group of generated UKL spends warming up: enough lanes of `width` bytes to
 /// hold the farthest local `prev`'s look-back, whose bytes the shuffles of the group's first
 /// useful lane read. A group's useful lanes start after them, so that groups overlap by these
 /// lanes and no lane recomputes the bytes before it.
@@ -939,7 +821,7 @@ fn workers(groups: usize) -> usize {
     groups.min(std::env::var("RERAIL_WORKERS").ok().and_then(|v| v.parse().ok()).unwrap_or(WORKERS))
 }
 
-/// The words per group generated MSL keeps of a program's exchanges (`Plan::exchanges`).
+/// The words per group generated UKL keeps of a program's exchanges (`Plan::exchanges`).
 pub fn record_words(native: &BlockNative) -> usize {
     Plan::new(native).record_words(native)
 }
@@ -982,25 +864,25 @@ fn operands(inst: &BlockInst) -> Vec<usize> {
     inst.operands()
 }
 
-/// Tables of `m`-bit carry vectors: apply, compose (`a` then `b`), the identity, and the SIMD
-/// group's exclusive scan (Hillis-Steele over shuffles, five steps) with the group's total.
+/// Tables of `m`-bit carry vectors: apply, compose (`a` then `b`), the identity, and the group's
+/// exclusive scan (Hillis-Steele over shuffles, five steps) with the group's total. The 1-bit
+/// tables are `block_common.uglykl`'s (`tapply1`, ...); this writes the others.
 fn table_helpers(m: usize) -> String {
+    assert!(m > 1, "the 1-bit tables are the common code's");
     let mask = (1u32 << m) - 1;
     let n = 1usize << m;
     let compose: Vec<String> = (0..n).map(|c| format!("(tapply{m}(b, tapply{m}(a, {c}u)) << {}u)", c * m)).collect();
     let identity: u32 = (0..n as u32).map(|c| c << (c as usize * m)).sum();
-    let steps: String = [1, 2, 4, 8, 16]
-        .iter()
-        .map(|d| format!("  x = select(x, tcompose{m}(simd_shuffle_up(x, ushort({d})), x), l >= {d}u);\n"))
-        .collect();
+    let steps: String = [1, 2, 4, 8, 16].iter().map(|d| format!("\x20 u = ukl_sg_shuffle_up(x, {d}u __UKL_ARGS); x = SEL(x, tcompose{m}(u, x), l >= {d}u);\n")).collect();
     format!(
-        "static inline uint tapply{m}(uint t, uint c) {{ return (t >> (c * {m}u)) & {mask}u; }}\n\
-         static inline uint tcompose{m}(uint a, uint b) {{ return {}; }}\n\
-         constant uint TID{m} = {identity}u;\n\
-         static inline uint texclusive{m}(uint t, uint l, thread uint& total) {{\n\
-         \x20 uint x = t;\n{steps}\
-         \x20 total = simd_broadcast(x, ushort(31));\n\
-         \x20 return select(simd_shuffle_up(x, ushort(1)), TID{m}, l == 0u);\n}}\n\n",
+        "UKL_INLINE uint32_t tapply{m}(uint32_t t, uint32_t c) {{ return (t >> (c * {m}u)) & {mask}u; }}\n\
+         UKL_INLINE uint32_t tcompose{m}(uint32_t a, uint32_t b) {{ return {}; }}\n\
+         #define TID{m} {identity}u\n\
+         UKL_INLINE uint32_t texclusive{m}(uint32_t t, uint32_t l, UKL_PRIVATE uint32_t* total __UKL_PARAMS) {{\n\
+         \x20 uint32_t x = t, u;\n{steps}\
+         \x20 *total = ukl_sg_shuffle(x, GROUP_LANES - 1u __UKL_ARGS);\n\
+         \x20 u = ukl_sg_shuffle_up(x, 1u __UKL_ARGS);\n\
+         \x20 return SEL(u, TID{m}, l == 0u);\n}}\n\n",
         compose.join(" | ")
     )
 }
@@ -1009,20 +891,19 @@ fn table_helpers(m: usize) -> String {
 /// each once, then the outputs and the extracts. A look-back or a halo that is not published yet
 /// returns false: the group is unfinished.
 fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidth) -> String {
-    let m = width.word();
     let w = width.bytes();
     let mut out = format!(
-        "static inline bool program_{p}(device const uint4* bytes, FileRow f, uint g, uint l, uint spins, device {m}* out,\n\
-         \x20                              device atomic_uint* states, device atomic_uint* halos, device atomic_uint* ext_states,\n\
-         \x20                              device uint* positions, device uint* counts) {{\n\
+        "UKL_INLINE bool program_{p}(Bytes bytes, FileRow f, uint32_t g, uint32_t l, uint32_t spins, UKL_GLOBAL BM* out,\n\
+         \x20                              UKL_GLOBAL uint32_t* states, UKL_GLOBAL uint32_t* halos, UKL_GLOBAL uint32_t* ext_states,\n\
+         \x20                              UKL_GLOBAL uint32_t* positions, UKL_GLOBAL uint32_t* counts __UKL_PARAMS) {{\n\
          \x20 // The group's first {h} lanes warm up (`warm_lanes`): they make the bytes before its\n\
          \x20 // first useful lane, for the shuffles of local `prev`s, and their sinks write nothing.\n\
-         \x20 const int glw = int(g * {useful}u + l) - {h};\n\
-         \x20 const uint gl = uint(max(glw, 0));\n\
+         \x20 const int glw = I32(g * {useful}u + l) - {h};\n\
+         \x20 const uint32_t gl = U32(ukl_max(glw, 0));\n\
          \x20 const bool keep = l >= {h}u;\n\
          \x20 const bool before_file = glw < 0;\n\
-         \x20 const uint lanes = f.groups * {GROUP}u;\n\
-         \x20 const uint len = f.len;\n",
+         \x20 const uint32_t lanes = f.groups * {GROUP}u;\n\
+         \x20 const uint32_t len = f.len;\n",
         h = plan.warm,
         useful = GROUP - plan.warm,
     );
@@ -1034,10 +915,10 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
     // value reads.
     let ascii = ascii_form(native);
     let chunks = w / 16;
-    let loads: Vec<String> = (0..=chunks).map(|c| format!("load16(bytes, f, gl * {chunks}u + {c}u - 1u)")).collect();
+    let loads = (1..=chunks).fold(format!("load16(bytes, f, gl * {chunks}u - 1u)"), |a, c| format!("b4_or({a}, load16(bytes, f, gl * {chunks}u + {c}u - 1u))"));
     out.push_str(&format!(
-        "  if (g > 0u && (g + 1u) * {span}u <= len) {{\n    const uint4 high = {};\n    const bool ascii = ((high.x | high.y | high.z | high.w) & 0x80808080u) == 0u;\n    if (simd_all(ascii)) {{\n{}    return true;\n    }}\n{}  return true;\n  }}\n",
-        loads.join(" | "),
+        "  if (g > 0u && (g + 1u) * {span}u <= len) {{\n    const B4 high = {};\n    const bool ascii = (b4_any(high) & 0x80808080u) == 0u;\n    if (sg_all(ascii __UKL_ARGS)) {{\n{}    return true;\n    }}\n{}  return true;\n  }}\n",
+        loads,
         levels(p, native, &ascii, plan, width),
         levels(p, native, &full, plan, width)
     ));
@@ -1046,7 +927,7 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
     out
 }
 
-/// An exchange of `words` (MSL expressions, the same in every lane) at word `offset` of the
+/// An exchange of `words` (UKL expressions, the same in every lane) at word `offset` of the
 /// group's record of `record` words: the first `halo_words` are halo words, the rest scan
 /// tables. Gives each word's result as an expression read by every lane.
 #[allow(dead_code)]
@@ -1063,16 +944,16 @@ fn exchange_kinds(out: &mut String, name: &str, words: &[String], kind: impl Fn(
         let mut mine = "0u".to_owned();
         let mut kinds = "0u".to_owned();
         for (j, w) in chunk.iter().enumerate() {
-            mine = format!("select({mine}, {w}, l == {j}u)");
-            kinds = format!("select({kinds}, {}, l == {j}u)", kind(base + j));
+            mine = format!("SEL({mine}, {w}, l == {j}u)");
+            kinds = format!("SEL({kinds}, {}, l == {j}u)", kind(base + j));
         }
         out.push_str(&format!(
-            "  uint {name}_{pass} = 0u;\n  const bool {name}_{pass}_waits = !exchange_word(states + f.state_base + {}u + l, g, {record}u, {kinds}, {mine}, spins, l < {}u, {name}_{pass});\n  if (simd_any({name}_{pass}_waits)) return false;\n",
+            "  uint32_t {name}_{pass} = 0u;\n  const bool {name}_{pass}_waits = !exchange_word(states + f.state_base + {}u + l, g, {record}u, {kinds}, {mine}, spins, l < {}u, &{name}_{pass});\n  if (sg_any({name}_{pass}_waits __UKL_ARGS)) return false;\n",
             offset + base,
             chunk.len(),
         ));
         for j in 0..chunk.len() {
-            got.push(format!("simd_broadcast({name}_{pass}, ushort({j}))"));
+            got.push(format!("sg_bcast({name}_{pass}, {j}u __UKL_ARGS)"));
         }
     }
     got
@@ -1081,7 +962,6 @@ fn exchange_kinds(out: &mut String, name: &str, words: &[String], kind: impl Fn(
 /// A program's levels and sinks (`program_function`), its values from `values`: the program
 /// itself, or its full groups' form (`full_form`), whose exchanges are the same words.
 fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, width: LaneWidth) -> String {
-    let m = width.word();
     let chunks = width.bytes() / 16;
     let w = width.bytes();
     let mut out = String::new();
@@ -1096,7 +976,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         // the group's warm-up lanes make those before its first useful lane, and a lane before
         // the file gives zeros.
         out.push_str(&emit(p, values, width, &chosen, &format!("gl * {chunks}u"), &format!("gl * {w}u"), |at, inst, out| match *inst {
-            BlockInst::Prev(a, k) => out.push_str(&format!("  const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(select(v{a}, {m}(0), before_file), l, 0ul));\n")),
+            BlockInst::Prev(a, k) => out.push_str(&format!("  const BM v{at} = apply_prev(v{a}, {k}u, halo_before(SEL(v{a}, BMC(0), before_file), l, 0ul __UKL_ARGS));\n")),
             _ => unreachable!("only windowed prevs are emitted in a level"),
         }));
         let Some((halos, scans)) = exchanges.get(level) else { break };
@@ -1106,27 +986,27 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         let mut words: Vec<String> = Vec::new();
         for &at in halos {
             let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
-            out.push_str(&format!("  const ulong last{at} = halo_last(v{a}) >> {}u;\n", 64 - u32::from(k)));
+            out.push_str(&format!("  const uint64_t last{at} = halo_last(v{a} __UKL_ARGS) >> {}u;\n", 64 - u32::from(k)));
         }
         for word in &packed {
-            let parts: Vec<String> = word.iter().map(|p| format!("(uint((last{} >> {}u) & {}ul) << {}u)", p.at, p.lo, (1u64 << p.len) - 1, p.first)).collect();
+            let parts: Vec<String> = word.iter().map(|p| format!("(U32((last{} >> {}u) & {}ul) << {}u)", p.at, p.lo, (1u64 << p.len) - 1, p.first)).collect();
             words.push(parts.join(" | "));
         }
         let halo_count = packed.len();
         for &at in scans {
             // The lane's table: bit c its carry out for carry in c.
             match native.insts[at] {
-                BlockInst::Toggle(a) => out.push_str(&format!("  const uint s{at} = summary_toggle(v{a});\n  const uint tt{at} = s{at} | ((1u ^ s{at}) << 1u);\n")),
+                BlockInst::Toggle(a) => out.push_str(&format!("  const uint32_t s{at} = summary_toggle(v{a});\n  const uint32_t tt{at} = s{at} | ((1u ^ s{at}) << 1u);\n")),
                 BlockInst::Escaped(a) => out.push_str(&format!(
-                    "  uint o{at}_0 = 0u, o{at}_1 = 0u;\n  const {m} f{at}_0 = escaped(v{a}, {m}(0), o{at}_0), f{at}_1 = escaped(v{a}, {m}(1), o{at}_1);\n  const uint tt{at} = (o{at}_0 & 1u) | ((o{at}_1 & 1u) << 1u);\n"
+                    "  uint32_t o{at}_0 = 0u, o{at}_1 = 0u;\n  const BM f{at}_0 = escaped(v{a}, BMC(0), &o{at}_0), f{at}_1 = escaped(v{a}, BMC(1), &o{at}_1);\n  const uint32_t tt{at} = (o{at}_0 & 1u) | ((o{at}_1 & 1u) << 1u);\n"
                 )),
                 BlockInst::Fill(a, e) => out.push_str(&format!(
-                    "  uint o{at}_0 = 0u, o{at}_1 = 0u;\n  const {m} f{at}_0 = fill_word(v{a}, v{e}, {m}(0), o{at}_0), f{at}_1 = fill_word(v{a}, v{e}, {m}(1), o{at}_1);\n  const uint tt{at} = (o{at}_0 & 1u) | ((o{at}_1 & 1u) << 1u);\n"
+                    "  uint32_t o{at}_0 = 0u, o{at}_1 = 0u;\n  const BM f{at}_0 = fill_word(v{a}, v{e}, BMC(0), &o{at}_0), f{at}_1 = fill_word(v{a}, v{e}, BMC(1), &o{at}_1);\n  const uint32_t tt{at} = (o{at}_0 & 1u) | ((o{at}_1 & 1u) << 1u);\n"
                 )),
                 _ => unreachable!("a scanned instruction"),
             }
             // A warm-up lane's bytes are the group before's: its table is the identity.
-            out.push_str(&format!("  uint agg{at} = 0u;\n  const uint e{at} = texclusive1(select(2u, tt{at}, keep), l, agg{at});\n"));
+            out.push_str(&format!("  uint32_t agg{at} = 0u;\n  const uint32_t e{at} = texclusive1(SEL(2u, tt{at}, keep), l, &agg{at} __UKL_ARGS);\n"));
             words.push(format!("agg{at}"));
         }
         // A halo word whose halos are all known in this body is published, for a general group
@@ -1144,10 +1024,10 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
                 .iter()
                 .enumerate()
                 .flat_map(|(j, word)| word.iter().filter(|p| p.at == at).map(move |p| (j, *p)))
-                .map(|(j, p)| format!("(ulong(({} >> {}u) & {}u) << {}u)", got[j], p.first, (1u64 << p.len) - 1, p.lo))
+                .map(|(j, p)| format!("(U64(({} >> {}u) & {}u) << {}u)", got[j], p.first, (1u64 << p.len) - 1, p.lo))
                 .collect();
             out.push_str(&format!(
-                "  const ulong h{at} = ({}) << {}u;\n  const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l - {}u, h{at}));\n",
+                "  const uint64_t h{at} = ({}) << {}u;\n  const BM v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l - {}u, h{at} __UKL_ARGS));\n",
                 pieces.join(" | "),
                 64 - u32::from(k),
                 plan.warm
@@ -1156,19 +1036,19 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         for (s_, &at) in scans.iter().enumerate() {
             let cin = format!("tapply1(e{at}, tapply1({}, 0u))", got[halo_count + s_]);
             match native.insts[at] {
-                BlockInst::Toggle(a) => out.push_str(&format!("  const {m} v{at} = apply_toggle(v{a}, {cin});\n")),
-                _ => out.push_str(&format!("  const {m} v{at} = select(f{at}_0, f{at}_1, {cin} != 0u);\n")),
+                BlockInst::Toggle(a) => out.push_str(&format!("  const BM v{at} = apply_toggle(v{a}, {cin});\n")),
+                _ => out.push_str(&format!("  const BM v{at} = SEL(f{at}_0, f{at}_1, {cin} != 0u);\n")),
             }
         }
         offset += words.len();
     }
-    // The sinks (`block_sinks.metal`): each output at its delay, cut to the stream; then
+    // The sinks (`block_common.uglykl`): each output at its delay, cut to the stream; then
     // the counted outputs' counts, exchanged together, their positions and their totals.
     for (k, v) in native.outputs.iter().enumerate() {
         match native.output_delays[k] {
             // A warm-up lane's word goes to the output's last word, which no stream reaches.
-            0 => out.push_str(&format!("  out[f.out_base + {k}u * lanes + select(lanes - 1u, gl, keep)] = stream_cut(v{v}, gl, len, 0u);\n")),
-            d => out.push_str(&format!("  write_output(out, f.out_base + {k}u * lanes, gl, len, {d}u, select({m}(0), v{v}, keep));\n")),
+            0 => out.push_str(&format!("  out[f.out_base + {k}u * lanes + SEL(lanes - 1u, gl, keep)] = stream_cut(v{v}, gl, len, 0u);\n")),
+            d => out.push_str(&format!("  write_output(out, f.out_base + {k}u * lanes, gl, len, {d}u, SEL(BMC(0), v{v}, keep));\n")),
         }
     }
     // A total is a flag (`BlockProgram::totals`): a group with a bit sets it, in any order and
@@ -1176,13 +1056,13 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
     let extracts = native.extracts.len();
     // All of them into one flag, the count after the extracts' (`native_cpu_block::counted`).
     for &k in &native.totals {
-        out.push_str(&format!("  totals_or(select({m}(0), stream_cut(v{}, gl, len, {}u), keep), l, counts + f.tot_base + {extracts}u);\n", native.outputs[k], native.output_delays[k]));
+        out.push_str(&format!("  totals_or(SEL(BMC(0), stream_cut(v{}, gl, len, {}u), keep), l, counts + f.tot_base + {extracts}u __UKL_ARGS);\n", native.outputs[k], native.output_delays[k]));
     }
     if extracts > 0 {
         let mut words = Vec::new();
         for (c, &k) in native.extracts.iter().enumerate() {
             out.push_str(&format!(
-                "  const {m} cw{c} = select({m}(0), stream_cut(v{}, gl, len, {}u), keep);\n  const uint cn{c} = uint(popcount(lane_bits(cw{c})));\n  const uint ca{c} = simd_sum(cn{c});\n",
+                "  const BM cw{c} = SEL(BMC(0), stream_cut(v{}, gl, len, {}u), keep);\n  const uint32_t cn{c} = POPCOUNT_BM(lane_bits(cw{c}));\n  const uint32_t ca{c} = ukl_sg_sum(cn{c} __UKL_ARGS);\n",
                 native.outputs[k], native.output_delays[k]
             ));
             words.push(format!("ca{c}"));
@@ -1190,7 +1070,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         let got = exchange_kinds(&mut out, "xc", &words, |_| "2u".to_owned(), offset, record);
         for (c, &k) in native.extracts.iter().enumerate() {
             out.push_str(&format!(
-                "  count_finish(cw{c}, cn{c}, ca{c}, {}, gl, g, l, f.groups, {}u, positions + f.pos_base + {c}u * max(len, 1u), max(len, 1u), true, counts + f.tot_base + {c}u);\n",
+                "  count_finish(cw{c}, cn{c}, ca{c}, {}, gl, g, l, f.groups, {}u, positions + f.pos_base + {c}u * ukl_max(len, 1u), ukl_max(len, 1u), true, counts + f.tot_base + {c}u __UKL_ARGS);\n",
                 got[c],
                 native.output_delays[k],
             ));
@@ -1267,7 +1147,6 @@ fn emit(
     offset: &str,
     mut carried: impl FnMut(usize, &BlockInst, &mut String),
 ) -> String {
-    let m = width.word();
     let chunks = width.bytes() / 16;
     let bits = width.bytes();
     let insts: Vec<&BlockInst> = chosen.iter().map(|&at| &native.insts[at]).collect();
@@ -1276,13 +1155,13 @@ fn emit(
     let loaded = base.is_empty();
     if !loaded && (back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_)))) {
         for c in 0..chunks {
-            out.push_str(&format!("  const uint4 c{c} = load16(bytes, f, {base} + {c}u);\n"));
+            out.push_str(&format!("  const B4 c{c} = load16(bytes, f, {base} + {c}u);\n"));
         }
     }
     // The byte before the word, read from the source (no carry); and, for `pair` by lookups,
     // the word's bytes one back.
     if back && !loaded {
-        out.push_str(&format!("  const uint before = file_byte_before(bytes, f, {base});\n"));
+        out.push_str(&format!("  const uint32_t before = file_byte_before(bytes, f, {base});\n"));
     }
     let used: std::collections::BTreeSet<u16> = insts
         .iter()
@@ -1293,7 +1172,7 @@ fn emit(
         .collect();
     for t in used {
         for c in 0..chunks {
-            out.push_str(&format!("  const uint4 k{t}_{c} = classes_p{p}_t{t}(c{c});\n"));
+            out.push_str(&format!("  const B4 k{t}_{c} = classes_p{p}_t{t}(c{c});\n"));
         }
     }
     let used_before: std::collections::BTreeSet<u16> =
@@ -1301,12 +1180,12 @@ fn emit(
     if !used_before.is_empty() {
         for c in 0..chunks {
             let prior = if c == 0 { "before".to_owned() } else { format!("(c{}.w >> 24u)", c - 1) };
-            out.push_str(&format!("  const uint4 b{c} = bytes_before(c{c}, {prior});\n"));
+            out.push_str(&format!("  const B4 b{c} = bytes_before(c{c}, {prior});\n"));
         }
     }
     for t in used_before {
         for c in 0..chunks {
-            out.push_str(&format!("  const uint4 kb{t}_{c} = classes_p{p}_t{t}(b{c});\n"));
+            out.push_str(&format!("  const B4 kb{t}_{c} = classes_p{p}_t{t}(b{c});\n"));
         }
     }
     if insts.iter().any(|i| matches!(i, BlockInst::Plane(_) | BlockInst::PlaneBefore(_))) {
@@ -1325,19 +1204,19 @@ fn emit(
                 let s4 = u32::from(sel) * 0x0101_0101;
                 (0..chunks)
                     .map(|c| {
-                        let part = format!("{m}(nz16(k{table}_{c} & {s4:#010x}u))");
+                        let part = format!("BMC(nz16(b4_ands(k{table}_{c}, {s4:#010x}u)))");
                         if c == 0 { part } else { format!("({part} << {}u)", c * 16) }
                     })
                     .collect::<Vec<_>>()
                     .join(" | ")
             }
             BlockInst::Plane(k) => format!("p{k}"),
-            BlockInst::PlaneBefore(k) => format!("{m}(({m}(p{k}) << 1u) | {m}((before >> {k}u) & 1u))"),
+            BlockInst::PlaneBefore(k) => format!("BMC((BMC(p{k}) << 1u) | BMC((before >> {k}u) & 1u))"),
             BlockInst::Pair { before, table, bits: sel } => {
                 let s4 = u32::from(sel) * 0x0101_0101;
                 (0..chunks)
                     .map(|c| {
-                        let part = format!("{m}(nz16(kb{before}_{c} & k{table}_{c} & {s4:#010x}u))");
+                        let part = format!("BMC(nz16(b4_ands(b4_and(kb{before}_{c}, k{table}_{c}), {s4:#010x}u)))");
                         if c == 0 { part } else { format!("({part} << {}u)", c * 16) }
                     })
                     .collect::<Vec<_>>()
@@ -1347,26 +1226,26 @@ fn emit(
                 let c4 = u32::from(byte) * 0x0101_0101;
                 (0..chunks)
                     .map(|c| {
-                        let part = format!("{m}(eq16(c{c}, {c4:#010x}u))");
+                        let part = format!("BMC(eq16(c{c}, {c4:#010x}u))");
                         if c == 0 { part } else { format!("({part} << {}u)", c * 16) }
                     })
                     .collect::<Vec<_>>()
                     .join(" | ")
             }
             // The pattern's bits from the word's first byte on: a right rotation by its phase.
-            BlockInst::Const(c) => format!("{m}(rotate({c:#018x}ul, ulong((64u - (({offset}) & 63u)) & 63u)))"),
-            BlockInst::Not(a) => format!("{m}(~v{a})"),
+            BlockInst::Const(c) => format!("BMC(rotr64({c:#018x}ul, U64(({offset}) & 63u)))"),
+            BlockInst::Not(a) => format!("BMC(~v{a})"),
             BlockInst::And(a, b) => format!("v{a} & v{b}"),
             BlockInst::Or(a, b) => format!("v{a} | v{b}"),
             BlockInst::Xor(a, b) => format!("v{a} ^ v{b}"),
-            BlockInst::AndNot(a, b) => format!("{m}(v{a} & ~v{b})"),
+            BlockInst::AndNot(a, b) => format!("BMC(v{a} & ~v{b})"),
             // The bits of the word's bytes below the stream's end.
-            BlockInst::Within(0) => format!("within_lane<{m}>(len, {offset})"),
-            BlockInst::Within(d) => format!("{m}(within_lane<{m}>(len + {d}u, {offset}) & ~within_lane<{m}>({d}u, {offset}))"),
+            BlockInst::Within(0) => format!("within_lane(len, {offset})"),
+            BlockInst::Within(d) => format!("BMC(within_lane(len + {d}u, {offset}) & ~within_lane({d}u, {offset}))"),
             // The period's bits shifted up to the word's first byte of the residue.
             BlockInst::Phase(k, r) => {
                 let bits = rerail_compiler::block::period_bits(k);
-                format!("{m}({bits:#018x}ul << (({r}u + {k}u - (({offset}) % {k}u)) % {k}u))")
+                format!("BMC({bits:#018x}ul << (({r}u + {k}u - (({offset}) % {k}u)) % {k}u))")
             }
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => unreachable!(),
             // Bit j of each byte's place in its file: below 6 a pattern of period 2^(j+1), from
@@ -1374,9 +1253,9 @@ fn emit(
             // the same in all of a word's bytes, at most 64 of them.
             BlockInst::Position(j) if j < 6 => {
                 let pattern = (0..64u32).filter(|i| i >> j & 1 == 1).fold(0u64, |a, i| a | 1 << i);
-                format!("{m}({pattern:#018x}ul >> ulong(({offset}) & 63u))")
+                format!("BMC({pattern:#018x}ul >> U64(({offset}) & 63u))")
             }
-            BlockInst::Position(j) => format!("{m}(0) - {m}((uint({offset}) >> {j}u) & 1u)"),
+            BlockInst::Position(j) => format!("BMC(0) - BMC((U32({offset}) >> {j}u) & 1u)"),
             BlockInst::Carry(_) => unreachable!("a carry is its group's loop's (`emit`)"),
             BlockInst::Early(..) | BlockInst::Prefix(..) => unreachable!("refused at `run_batch`: Metal runs no `early` or prefix yet"),
             BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
@@ -1385,14 +1264,14 @@ fn emit(
             BlockInst::Load(k) => format!("out[f.slot_base + ({offset}) / 64u * SLOTS{p} + {k}u]"),
             BlockInst::BackFill(..) => unreachable!("a backward pass's (`metal_block_serial::back_kernels`)"),
         };
-        out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
+        out.push_str(&format!("  const BM v{at} = {rhs};\n"));
     };
     // The order: `chosen`'s, each fixed point (`rounds until settled`) one step where its members
     // can all run (`schedule`).
     for step in schedule(native, chosen) {
         match step {
             Step::One(at) => one(at, &mut out),
-            Step::Group(g) => group_loop(native, g, m, &mut |at, out| one(at, out), &mut out),
+            Step::Group(g) => group_loop(native, g, &mut |at, out| one(at, out), &mut out),
         }
     }
     let _ = bits;
@@ -1456,7 +1335,7 @@ fn schedule(native: &BlockNative, chosen: &[usize]) -> Vec<Step> {
             .filter(|&(g, _)| !ran[g])
             .flat_map(|(g, group)| group.members.iter().flat_map(move |&m| native.insts[m].operands().into_iter().map(move |o| (g, m, o))).collect::<Vec<_>>())
             .filter(|&(g, _, o)| !done[o] && group_of[o] != Some(g))
-            .map(|(g, m, o)| format!("group {g}: %{m} {:?} reads %{o} {:?} (group {:?}, chosen {})", native.insts[m], native.insts[o], group_of[o], wanted.contains(&o)))
+            .map(|(g, m, o)| format!("group {g}: %BM {:?} reads %{o} {:?} (group {:?}, chosen {})", native.insts[m], native.insts[o], group_of[o], wanted.contains(&o)))
             .collect();
         panic!("%{at} {:?} (group {:?}) is never made: waits on {why:?}; {blocked:?}", native.insts[at], group_of[at]);
     }
@@ -1468,20 +1347,20 @@ fn schedule(native: &BlockNative, chosen: &[usize]) -> Vec<Step> {
 /// group. Every member is a variable before the loop, so the words after it read the last
 /// round's; the carried members' outs too (`o`, `co`), read by the block's tail. A thread that
 /// has settled makes the same values again: a fixed point.
-fn group_loop(native: &BlockNative, g: usize, m: &str, one: &mut dyn FnMut(usize, &mut String), out: &mut String) {
+fn group_loop(native: &BlockNative, g: usize, one: &mut dyn FnMut(usize, &mut String), out: &mut String) {
     let group = &native.groups[g];
     for &x in &group.members {
-        out.push_str(&format!("  {m} v{x} = {m}(0);\n"));
+        out.push_str(&format!("  BM v{x} = BMC(0);\n"));
         if matches!(native.insts[x], BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..)) {
-            out.push_str(&format!("  uint o{x} = 0u, co{x} = 0u;\n"));
+            out.push_str(&format!("  uint32_t o{x} = 0u, co{x} = 0u;\n"));
         }
     }
     for (k, &(c, _)) in group.carries.iter().enumerate() {
         let BlockInst::Carry(init) = native.insts[c] else { unreachable!("a carry") };
-        out.push_str(&format!("  {m} gc{g}_{k} = v{init};\n"));
+        out.push_str(&format!("  BM gc{g}_{k} = v{init};\n"));
     }
     let bound = rerail_compiler::block::MAX_ROUNDS * GROUP;
-    out.push_str(&format!("  for (uint r{g} = 0u; r{g} < {bound}u; r{g}++) {{\n"));
+    out.push_str(&format!("  for (uint32_t r{g} = 0u; r{g} < {bound}u; r{g}++) {{\n"));
     for (k, &(c, _)) in group.carries.iter().enumerate() {
         out.push_str(&format!("    v{c} = gc{g}_{k};\n"));
     }
@@ -1493,10 +1372,10 @@ fn group_loop(native: &BlockNative, g: usize, m: &str, one: &mut dyn FnMut(usize
         one(x, &mut text);
         // The member's own declarations become assignments to the variables above.
         let text = text
-            .replace(&format!("const {m} v{x} = "), &format!("v{x} = "))
-            .replace(&format!("const ulong v{x} = "), &format!("v{x} = "))
-            .replace(&format!("uint o{x} = 0u;"), &format!("o{x} = 0u;"))
-            .replace(&format!("const uint co{x} = "), &format!("co{x} = "));
+            .replace(&format!("const BM v{x} = "), &format!("v{x} = "))
+            .replace(&format!("const uint64_t v{x} = "), &format!("v{x} = "))
+            .replace(&format!("uint32_t o{x} = 0u;"), &format!("o{x} = 0u;"))
+            .replace(&format!("const uint32_t co{x} = "), &format!("co{x} = "));
         for line in text.lines() {
             out.push_str(&format!("  {line}\n"));
         }
@@ -1506,10 +1385,10 @@ fn group_loop(native: &BlockNative, g: usize, m: &str, one: &mut dyn FnMut(usize
     for (k, &(_, x)) in group.carries.iter().enumerate() {
         out.push_str(&format!("    gc{g}_{k} = v{x};\n"));
     }
-    out.push_str(&format!("    if (!simd_any(more{g})) break;\n  }}\n"));
+    out.push_str(&format!("    if (!sg_any(more{g} __UKL_ARGS)) break;\n  }}\n"));
 }
 
-/// Generated MSL run: every output's words over `bytes`, as 64-bit words of the stream.
+/// Generated UKL run: every output's words over `bytes`, as 64-bit words of the stream.
 pub fn run_generated(
     native: &BlockNative,
     bytes: &[u8],
@@ -1518,7 +1397,7 @@ pub fn run_generated(
     run_generated_with(native, bytes, width, ClassStrategy::Planes).map(|(words, _)| words)
 }
 
-/// Generated MSL run with `class` by `strategy`: the outputs, and the GPU seconds of its
+/// Generated UKL run with `class` by `strategy`: the outputs, and the GPU seconds of its
 /// launches.
 pub fn run_generated_with(
     native: &BlockNative,
@@ -1529,7 +1408,7 @@ pub fn run_generated_with(
     run_generated_extract(native, bytes, width, strategy).map(|(run, seconds)| (run.outputs, seconds))
 }
 
-/// Generated MSL with the extract pass, a batch of one file: the outputs and each extract's
+/// Generated UKL with the extract pass, a batch of one file: the outputs and each extract's
 /// positions, and the GPU seconds of its launches.
 pub fn run_generated_extract(
     native: &BlockNative,
@@ -1541,75 +1420,32 @@ pub fn run_generated_extract(
     Ok((run.files.remove(0), run.seconds))
 }
 
-/// One compute dispatch: buffers `(index, buffer, offset)`, small arguments by value, and the
-/// grid as threadgroups of `threads`.
-struct Pass<'a> {
-    pipeline: &'a metal::ComputePipelineState,
-    buffers: Vec<(u64, &'a metal::BufferRef, u64)>,
-    args: Vec<(u64, Vec<u8>)>,
+/// One launch: its kernel, its buffers and parameters (four words) by row name (a kernel binds
+/// those of its rows it declares, as Metal's kernels took the buffer indices they declared), and
+/// the grid as threadgroups of `threads`.
+struct Pass {
+    name: &'static str,
+    kernel: lane::Kernel,
+    buffers: Vec<(&'static str, Buffer)>,
+    args: Vec<(&'static str, [u32; 4])>,
     groups: usize,
     threads: usize,
 }
 
-/// A failed command buffer's error, described (`error.localizedDescription`).
-fn command_error(command: &metal::CommandBufferRef) -> String {
-    unsafe extern "C" {
-        fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
-        fn objc_msgSend();
-    }
-    type Send = unsafe extern "C" fn(*const std::ffi::c_void, *mut std::ffi::c_void) -> *const std::ffi::c_void;
-    // SAFETY: `error`, `localizedDescription` and `UTF8String` take no arguments and return
-    // objects (or a C string); each result is checked for null before use.
-    unsafe {
-        let send: Send = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
-        let error = send(metal::foreign_types::ForeignTypeRef::as_ptr(command).cast(), sel_registerName(c"error".as_ptr()));
-        if error.is_null() {
-            return "no error".into();
-        }
-        let text = send(error, sel_registerName(c"localizedDescription".as_ptr()));
-        let utf8 = send(text, sel_registerName(c"UTF8String".as_ptr())).cast::<std::ffi::c_char>();
-        if utf8.is_null() { "?".into() } else { std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned() }
-    }
-}
-
-fn bytes_of<T: Copy>(value: &T) -> Vec<u8> {
-    // SAFETY: `T` is a plain `repr(C)` value or an integer array; its bytes are read only.
-    unsafe { std::slice::from_raw_parts(std::ptr::from_ref(value).cast::<u8>(), std::mem::size_of::<T>()) }.to_vec()
-}
-
-/// The passes in order, one encoder each, in one command buffer; returns its GPU seconds.
-fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
-    let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+/// The passes in order, in one command; returns its device seconds.
+fn encode_passes(passes: &[Pass]) -> Result<f64, Error> {
     let _scope = crate::launch::LaunchScope::enter();
-    // The one kept queue of device solves (decision 0039).
-    let queue = crate::pool::queue(device)?;
-    let command = queue.new_command_buffer();
-    command.set_label("Rerail block program");
+    let mut command = lane::Command::new("Rerail block program");
     for pass in passes {
-        let encoder = command.new_compute_command_encoder();
-        // The kernel's name, for a trace's encoders (Instruments' Metal System Trace).
-        encoder.set_label(pass.pipeline.label());
-        encoder.set_compute_pipeline_state(pass.pipeline);
-        for &(index, buffer, offset) in &pass.buffers {
-            encoder.set_buffer(index, Some(buffer), offset);
+        let mut launch = command.launch(&pass.kernel, pass.name);
+        for (name, buffer) in &pass.buffers {
+            launch = launch.buffer_if(name, buffer);
         }
-        for (index, data) in &pass.args {
-            encoder.set_bytes(*index, data.len() as u64, data.as_ptr().cast());
+        for (name, value) in &pass.args {
+            launch = launch.value_if(name, value);
         }
-        encoder.checked_dispatch_thread_groups(
-            command,
-            MTLSize::new(pass.groups as u64, 1, 1),
-            MTLSize::new(pass.threads as u64, 1, 1),
-        );
-        encoder.end_encoding();
+        launch.groups([pass.groups as u64, 1, 1], [pass.threads as u64, 1, 1]);
     }
-    if let Err(refused) = commit_checked(command) {
-        // The budget refused a dispatch: the command buffer still holds a place in the shared
-        // queue until it completes, and a queue holds 64 (`release_refused` frees it).
-        crate::launch::release_refused(command);
-        return Err(refused);
-    }
-    wait_checked(command).inspect_err(|_| eprintln!("block program: command buffer {:?}: {}", command.status(), command_error(command)))?;
-    Ok(crate::launch::gpu_seconds(command))
+    let times = command.run().inspect_err(|e| eprintln!("block program: {e:?}"))?;
+    Ok(times.device)
 }
-

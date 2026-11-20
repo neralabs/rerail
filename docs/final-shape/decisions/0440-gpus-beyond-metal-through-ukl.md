@@ -1188,6 +1188,40 @@ stands on:
 - Left in C: the block programs (`block_program.rs` and its three `.metal` files, `block_serial.rs`), `launch.rs`'s
   kernels and the tests with Metal kernels of their own. accel's `can` still keeps programs on Metal.
 
+**C: the block programs in UKL (2026-11-19).**
+- **The interpreter and its helpers are UKL** (`block_common.uglykl`, `block_program.uglykl`; were
+  `block_carry.metal`, `block_sinks.metal`, `block_program.metal`): one compile per lane width (`BW` 16, 32, 64,
+  `BM` its word), the carries' look-back and halo exchange, the sinks. The generated forms (`generate_forms`, one
+  function a program and one kernel a batch) and the passes' kernels (`block_serial.rs`: the serial and lanes
+  runs, the cones, the checks, counts, prefixes, writes, the records and the back fill) write UKL too. Every
+  launch goes through the lane (`lane::Command`), binding its buffers and parameters by row name; a kernel takes the
+  rows it declares (`buffer_if`, `value_if`), as Metal's took the indices they declared. The device zeroes a run's
+  large blocks by the queue's fill (`pool::zeroed_on_device`), in a launch scope of its own.
+- **A block program needs SIMD groups of 32** (`block_program::ready`): a lane's word and the group's 32 words are
+  the format. A device with other widths is refused (`UnsupportedBackend`), and the executors skip it.
+- **One SIMD group a threadgroup for the lanes kernels**, whose groups are segments: OpenCL 1.2's rule, as the
+  joins' SIMD-group kernels (above). The serial kernels choose their ASCII body per thread, where a group's vote
+  (`simd_all`) had chosen it for all: a vote is reached by every thread or none.
+- **No SIMD-group operation in an operand of `SEL`**, a C conditional (Metal's `select` evaluated both): a lane that
+  skips a shuffle leaves the lanes reading it with an inactive lane's value. The 64-byte lanes' `prev` read 0 at
+  each group's first lane on Metal (`halo_before`'s `SEL(sg_up64(..), P, l == 0)`). Each shuffle is a statement of
+  its own now, in the helpers and in what the generators write; the scans' two prefixes under a reset too.
+- **A worker's lanes need not run in lockstep** (the CPU's lanes are threads; CUDA schedules each thread on its
+  own): lane 0 takes a group's ticket and reads whether the group is done, and the group takes both from it in
+  one shuffle. Each lane had read `done` itself, so on the CPU lane 0 finished a group, marked it done, and the
+  other lanes, reading it after, skipped it: only lane 0's words were written. Metal's lockstep had hidden it.
+- **No thread-local in a CPU kernel library** (`ukl_cpu_shim.h`): the running scheduler and thread are in one
+  thread-local of the host's, which each launch names, and the scheduler's storage is the queue thread's. macOS
+  gives each loaded image's thread-locals a pthread key of their own; the block suites load a library per generated
+  program, and after a few hundred the process ran out of keys and aborted at a thread-local's first use
+  (`_tlv_bootstrap_error`).
+- **Lane code is straight-line**, as before: the helpers that loop are named in the test's list (`LOOPING`) where
+  the MSL had marked them by leaving out `inline`, and the helpers the port had given a loop or a `?` (`rotr64`,
+  `clamp_i32`, `keep_word`, the prefix XOR, `texclusive1`) are unrolled or selects.
+- The block suites' 45 tests pass on Metal and on the CPU under OpenCL's rule (`RERAIL_CPU_OPENCL_RULE=1`), and
+  `rr_parser`'s 48 on Metal. Found on the way: `rr_parser`'s refusal test still took a setting's `1.2.3` as refused,
+  which 0400 had made a reading; its case is an integer of 19 digits now, which the record pass refuses.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

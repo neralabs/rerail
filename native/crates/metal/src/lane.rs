@@ -187,6 +187,13 @@ impl Launch<'_> {
         self
     }
 
+    /// A buffer row, where the kernel has a row of that name: for callers that bind one set of buffers to several
+    /// kernels, each declaring the rows it reads (the block programs' passes, as Metal's kernels declared the
+    /// buffer indices they took).
+    pub fn buffer_if(self, name: &str, buffer: &Buffer) -> Self {
+        if self.kernel.get_argument_info().iter().any(|a| a.name == name) { self.buffer(name, buffer) } else { self }
+    }
+
     /// A buffer row bound from byte `offset` of `buffer`.
     pub fn buffer_at(mut self, name: &str, buffer: &Buffer, offset: u64) -> Self {
         self.args.push(Arg::Buffer(name.to_owned(), buffer.clone(), offset));
@@ -205,6 +212,11 @@ impl Launch<'_> {
         let bytes = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(v).cast::<u8>(), size_of::<T>()) };
         self.args.push(Arg::SlotValue(at, bytes.to_vec()));
         self
+    }
+
+    /// A value row, where the kernel has a row of that name (as [`Launch::buffer_if`]).
+    pub fn value_if<T: rerail_device::Pod>(self, name: &str, v: &T) -> Self {
+        if self.kernel.get_argument_info().iter().any(|a| a.name == name) { self.value(name, v) } else { self }
     }
 
     /// A value row (`ARGS`, `LITERAL`): a `#[repr(C)]` value laid out as the kernel's.
