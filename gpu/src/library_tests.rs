@@ -686,7 +686,6 @@ fn grid_ctl() -> crate::device::Buffer {
 /// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups and the device's resident count, each round's reads seeing every
 /// group's writes before it, and no barrier failed.
 #[test]
-#[ignore = "Q330: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn grid_barriers_see_every_groups_writes() {
     let Some((p, mut q)) = setup() else { return };
     let lsz = 256u32.min(crate::device::max_threadgroup());
@@ -734,7 +733,6 @@ fn a_grid_past_residency_fails_its_barrier() {
 /// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
 /// boundaries, at 1, 8 and 32 groups and the device's resident count, its count read on the device.
 #[test]
-#[ignore = "Q330: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn the_grid_scan_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(41);
@@ -773,7 +771,6 @@ fn the_grid_scan_equals_the_host() {
 /// R5: the grid's segmented scans (add and max) equal the host's from 0 to 10^6 values, heads dense and sparse, at
 /// 1, 8 and 32 groups.
 #[test]
-#[ignore = "Q330: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn the_grid_segmented_scans_equal_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(43);
@@ -811,7 +808,6 @@ fn the_grid_segmented_scans_equal_the_host() {
 /// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups and the device's resident count;
 /// the few rows' path (ranks over the grid) at 1 to 32 groups; and a sort told its rows' low bits are in order.
 #[test]
-#[ignore = "Q330: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn the_grid_sort_is_stable_and_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     if crate::device::max_threadgroup() < 256 {

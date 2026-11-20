@@ -456,7 +456,6 @@ fn the_device_words_are_the_interpreters() {
 /// The compiled words translate to Rust (`clif_rust`, the `generated` feature's source), each
 /// function's nesting shallow enough for rustc. `RERAIL_PP_AOT_DIR` set: written there.
 #[test]
-#[ignore = "Q330: overflows its 2 MB test stack in `rust_source`, as at Go-C-and-C-support's own ce2c4019c83"]
 fn the_words_translate_to_rust() {
     {
         let src = rerail_compiler::native_cpu_pp::rust_source(program().unwrap()).unwrap();
@@ -509,7 +508,6 @@ fn the_compiled_words_code_counted() {
 /// words translate to now (its fingerprint), so it is the JIT's code compiled by rustc.
 #[cfg(all(feature = "generated", target_arch = "aarch64"))]
 #[test]
-#[ignore = "Q330: overflows its 2 MB test stack in `rust_source`, as at Go-C-and-C-support's own ce2c4019c83"]
 fn the_aot_words_are_the_interpreters() {
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();

@@ -7235,7 +7235,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 
 ### Q330. Go-C-and-C-support's device passes are red on the M1 Max at its own commits
 
-Seen 2026-11-20, roll-up 12, on the m1max (Apple G13). Each test also fails at Go-C-and-C-support's own commits there,
+Seen 2026-11-20, roll-up 12, on an M1 Max (Apple G13). Each test also fails at Go-C-and-C-support's own commits there,
 with the encoder's label set (Q329's fix). They are ignored with this item as the reason, to be run with `--ignored`
 on an M3 or M5:
 - **The device's expansion (0448)** differs from the serial passes, at 0cc2adf6d2 (before that branch's merges) and
@@ -7259,6 +7259,35 @@ on an M3 or M5:
   backend (`RERAIL_GPU=cpu`) the five grid tests pass, so the primitives hold where every group is resident.
 - **Done when**: each passes on the M1 Max, or a test states what the M1 Max cannot do (a grid's residency), and
   none is ignored.
+- **Resolved** (2026-11-20, roll-up 21's follow-up). There were four causes, none of them residency, and every ignore
+  is gone:
+  - **A relaxed poll on Apple7 never sees a new value.** A relaxed `atomic_load` polled in a loop returned a stale
+    word indefinitely, while a read-modify-write saw the new one. So the grid's barrier failed at 2 groups. Every
+    poll (the grid's control words, the work queue's, the batch runtime's cursors) is now `ukl_atomic_poll`. On
+    Metal that is a `fetch_or 0`; on every other backend it is a load. The grid tests pass, and 5,000 barriers at 32
+    groups take 25 ms.
+  - **A plain load of another group's write after the barrier is stale past 8 groups.** This happens across a
+    cluster's edge on the M1 Max, and loads through `coherent(device)` never were. grid.h's rule already said
+    cross-group reads are `UKL_COHERENT`; the pp passes broke it. Their stores are now `PP_GLOBAL` (`pp_arena.rs`):
+    `UKL_COHERENT` on Metal and OpenCL, plain on the CPU and CUDA. The atomics gained coherent overloads on Metal.
+    What the host writes and the device only reads (the slab's bytes, the files' views) stays plain.
+  - **A thread's bytes stored at a second counter read back wrong** on the M1 Max (macOS 26.2; the M3, on 15.7, was
+    right). `if_bytes` copied a token as `b[n++] = p[i++]` and `if_number` copied it again as `s[m++] = t[k]`. The
+    bytes read back wrong, so every decimal number and character constant in an `#if` was refused or misread.
+    Written at the loop's own count (`b[n] = …; n++` as the loop variable), the same bytes read right. `if_number`
+    now reads its token in place. The readers return their value (`IfVal`). The probes `pb_if_eval` and
+    `pb_if_text` lock it in (`the_if_evaluator_is_the_serial_passes`, `the_if_evaluator_reads_the_texts_values`).
+    This one cause gave the five failures shared with theirs' 3997fd0a25: `#if` values, counters, pragma rows,
+    `#line`, and the unit past its room.
+  - **The AOT words' translation recursed past 2 MB.** Writing structured control (`Shape::tree`) recurses as deep
+    as the code is nested: the pp words' run is nested 87 deep, which overflowed 2 MB unoptimized and fit in 8 MB.
+    `rerail_clif::rust::translate`, `translate_reads` and `clif_ukl::translate` now run on a thread with a 64 MB
+    stack (`on_translation_stack`; address space, not memory). Both AOT tests pass at the test's 2 MB, and 62 runs
+    equal the interpreter's.
+  - **Checked** on the M1 Max: every c_directives test (47; the 16 ignored are corpus, data, measurement or report
+    tests), rerail-metal (22, with the OpenCL C 1.2 gate compiled by clang), rerail-gpu on Metal and on the CPU
+    backend (24 each), rerail-clif (18), and the compiler's translator tests (23). The corpus and Boost slices are
+    not run: their data is not on that host.
 
 ### Q331. Roll-up 13 (Parser-generators-final-shape onto rr-align): what the merge chose, and what stays open
 
@@ -7619,7 +7648,7 @@ on an M3 or M5:
     - gpu's five grid tests on the CPU backend, with `--ignored`. The sort took 171 s in a debug build.
 - **Open**:
   - Q330: on the M1 Max, the grid evaluation hangs or fails, both here and at theirs. It now has 11 more ignored
-    tests.
+    tests. (Resolved since, at the root, with every ignore removed: see Q330.)
   - not run on an M3 or M5 (the M3 was at a load average of 174).
 
 ### Q349. Roll-up 20 (CUDA-support onto rr-align): what the merge chose, and what stays open
@@ -7664,7 +7693,7 @@ on an M3 or M5:
     c_directives' device words, eval and tokens (8); rr_parser's numbers (1); device_metal's fork, chunk views,
     in-place stats and in-block rows (4); rerail-engine's view reads, placed tape, supertype backends and slab
     batch (4); parser_tests' executors, totals and extract (4).
-- **Open**: Q330's device expansion on the M1 Max (still ignored).
+- **Open**: Q330's device expansion on the M1 Max (still ignored then; resolved since, see Q330).
 
 ### Q348. Roll-up 19 (cost-classifier-metal-rf onto rr-align): what the merge chose, and what stays open
 
