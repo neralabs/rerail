@@ -1,8 +1,8 @@
 //! Cranelift IR as Rust source (decision 0310: moved here from `rerail_compiler::clif_rust`): the
 //! parser's, for an ahead-of-time build of the same code, each function of the JIT's, tier 1's
 //! (`CompiledBlock::ir`) and tier 2's (`CompiledStream::ir`), as Cranelift is given it, a Rust
-//! function, compiled by rustc and LLVM, so the two builds differ only in the compiler; and the
-//! tape's reads (`reads`), for the tape crate.
+//! function, compiled by rustc and LLVM, so the two builds differ only in the compiler; and a
+//! relation's reads (`reads`), for the blocks crate and the numbering's.
 //!
 //! A function's graph is structured control (`Shape`); each value a local, a block's
 //! parameters set where a branch goes to it. A vector is NEON's (`uint8x16_t`), each vector
@@ -62,70 +62,34 @@ fn read_style(id: u32) -> Option<&'static str> {
     READS.with(|r| r.borrow().as_ref().map(|hot| if hot.iter().any(|&(f, h)| f == id && h) { "#[inline(always)]" } else { "#[inline(never)]" }))
 }
 
-/// The tape's reads as Rust (decision 0310), for the tape crate: `funcs` by their user name's index, each
-/// with whether it is hot, the JIT's mark (a hot one `#[inline(always)]`, as the JIT's pass inlines it, a
-/// cold one `#[inline(never)]`); each of `entries` a safe public function of its name, over the tape's bytes
-/// and its view. A load of the tape (one not marked aligned: the view's fields are) is checked against the
-/// tape's bytes, as the slices a hand-written reader indexes: a corrupt tape panics where it is read. Each
-/// function takes the bytes' length first, where the parser's take the pinned register. No addresses, no
-/// vectors: plain Rust for every target.
-pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)], family: crate::reads::Family) -> Result<String, String> {
+/// A relation's reads as Rust (decisions 0310, 0325): `funcs` by their user name's index, each with whether it
+/// is hot, the JIT's mark (a hot one `#[inline(always)]`, as the JIT's pass inlines it, a cold one
+/// `#[inline(never)]`); each of `entries` a public function of its name over the descriptor's address. Every load
+/// is an aligned word of the descriptor's block. No addresses, no vectors: plain Rust for every target. (The
+/// tape's reads are written directly, decision 0510.)
+pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)]) -> Result<String, String> {
     READS.with(|r| *r.borrow_mut() = Some(funcs.iter().map(|(id, _, hot)| (*id, *hot)).collect()));
     ADDRESSES.with(|a| a.borrow_mut().clear());
     let result = (|| {
-        let mut out = String::from(
-            "/// A load of `T` at address `at` of the tape that starts at `base`, `len` bytes long.\n\
-             #[inline(always)]\n\
-             fn ld<T: Copy>(base: u64, len: u64, at: usize) -> T {\n    \
-                 let off = (at as u64).wrapping_sub(base);\n    \
-                 if off > len || len - off < core::mem::size_of::<T>() as u64 {\n        \
-                     past();\n    \
-                 }\n    \
-                 // SAFETY: the load lies in the tape's bytes, as just checked.\n    \
-                 unsafe { core::ptr::read_unaligned(at as *const T) }\n\
-             }\n\n\
-             #[cold]\n\
-             #[inline(never)]\n\
-             fn past() -> ! {\n    \
-                 panic!(\"a read past the tape's bytes: a corrupt tape\")\n\
-             }\n\n",
-        );
+        let mut out = String::new();
         for (id, f, _) in funcs {
             function(&mut out, *id, f).map_err(|e| format!("u0:{id}: {e}"))?;
         }
         for &(entry, n) in entries {
             let f = &funcs.iter().find(|(id, ..)| *id == entry).ok_or("no entry")?.1;
             let types: Vec<&str> = f.signature.params.iter().map(|p| ty(p.value_type).map(|t| t.0)).collect::<Result<_, _>>()?;
-            if family == crate::reads::Family::Relation {
-                // A relation's read: its descriptor's address, every load an aligned word of its block (`ld`'s
-                // check is the tape's alone).
-                if types.first() != Some(&"u64") {
-                    return Err(format!("{n}: a relation's read takes its descriptor first"));
-                }
-                let params: Vec<String> = types.iter().enumerate().skip(1).map(|(i, t)| format!("a{i}: {t}")).collect();
-                let args: Vec<String> = (1..types.len()).map(|i| format!(", a{i}")).collect();
-                let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
-                let ret = ty(ret.value_type)?.0;
-                writeln!(
-                    out,
-                    "/// The read `{n}` of the relation (or rows) whose descriptor is at `desc`.\n///\n/// # Safety\n/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.\n#[inline(always)]\npub unsafe fn {n}(desc: *const u8{}{}) -> {ret} {{\n    // SAFETY: the caller's.\n    unsafe {{ f{entry}(u64::MAX, desc as u64{}) }}\n}}\n",
-                    if params.is_empty() { "" } else { ", " },
-                    params.join(", "),
-                    args.concat()
-                )
-                .unwrap();
-                continue;
+            // A relation's read: its descriptor's address, every load an aligned word of its block.
+            if types.first() != Some(&"u64") {
+                return Err(format!("{n}: a relation's read takes its descriptor first"));
             }
-            if types.get(..2) != Some(&["u64", "u64"][..]) {
-                return Err(format!("{n}: a read takes the tape and its view first"));
-            }
-            let params: Vec<String> = types.iter().enumerate().skip(2).map(|(i, t)| format!("a{i}: {t}")).collect();
-            let args: Vec<String> = (2..types.len()).map(|i| format!(", a{i}")).collect();
+            let params: Vec<String> = types.iter().enumerate().skip(1).map(|(i, t)| format!("a{i}: {t}")).collect();
+            let args: Vec<String> = (1..types.len()).map(|i| format!(", a{i}")).collect();
             let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
             let ret = ty(ret.value_type)?.0;
             writeln!(
                 out,
-                "/// The read `{n}` of the tape in `tape`, whose `view`'s offsets count from its first byte.\n#[inline(always)]\npub fn {n}(tape: &[u8], view: &rerail_clif::view::TapeView, {}) -> {ret} {{\n    // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).\n    unsafe {{ f{entry}(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64{}) }}\n}}\n",
+                "/// The read `{n}` of the relation (or rows) whose descriptor is at `desc`.\n///\n/// # Safety\n/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.\n#[inline(always)]\npub unsafe fn {n}(desc: *const u8{}{}) -> {ret} {{\n    // SAFETY: the caller's.\n    unsafe {{ f{entry}(u64::MAX, desc as u64{}) }}\n}}\n",
+                if params.is_empty() { "" } else { ", " },
                 params.join(", "),
                 args.concat()
             )
@@ -793,19 +757,6 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Sextend => {
             let from = ty(dfg.value_type(dfg.inst_args(inst)[0]))?;
             set(format!("({} as {} as {s}) as {u}", args[0], from.1))
-        }
-        // A read's load of the tape: checked against its bytes (`translate_reads`).
-        Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32
-            if read_style(u32::MAX).is_some() && !data.memflags().is_some_and(|m| m.aligned()) =>
-        {
-            let base = name(dfg.block_params(f.layout.entry_block().ok_or("no entry block")?)[0]);
-            let t = match op {
-                Opcode::Uload8 => "u8",
-                Opcode::Uload16 => "u16",
-                Opcode::Uload32 => "u32",
-                _ => u,
-            };
-            set(format!("ld::<{t}>({base}, len, {}) as {u}", addr(&args[0])))
         }
         Opcode::Load => set(format!("unsafe {{ core::ptr::read_unaligned({} as *const {u}) }}", addr(&args[0]))),
         Opcode::Uload8 => set(format!("unsafe {{ core::ptr::read_unaligned({} as *const u8) }} as {u}", addr(&args[0]))),

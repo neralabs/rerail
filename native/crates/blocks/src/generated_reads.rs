@@ -2,23 +2,6 @@
 // edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these` writes it again.
 #![allow(dead_code, unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, clippy::all)]
 
-/// A load of `T` at address `at` of the tape that starts at `base`, `len` bytes long.
-#[inline(always)]
-fn ld<T: Copy>(base: u64, len: u64, at: usize) -> T {
-    let off = (at as u64).wrapping_sub(base);
-    if off > len || len - off < core::mem::size_of::<T>() as u64 {
-        past();
-    }
-    // SAFETY: the load lies in the tape's bytes, as just checked.
-    unsafe { core::ptr::read_unaligned(at as *const T) }
-}
-
-#[cold]
-#[inline(never)]
-fn past() -> ! {
-    panic!("a read past the tape's bytes: a corrupt tape")
-}
-
 #[inline(always)]
 unsafe fn f21(len: u64, a0: u64, a1: u32) -> u64 {
     let mut v0: u64 = 0;
@@ -489,4 +472,4 @@ pub unsafe fn rel_key_mix(desc: *const u8, a1: u64, a2: u64) -> u64 {
 
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0x4a829cea6f255174;
+pub const SOURCE: u64 = 0x81637a45a9a73cdf;

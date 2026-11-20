@@ -3,23 +3,6 @@
          // again.
          #![allow(dead_code, unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, clippy::all)]
 
-/// A load of `T` at address `at` of the tape that starts at `base`, `len` bytes long.
-#[inline(always)]
-fn ld<T: Copy>(base: u64, len: u64, at: usize) -> T {
-    let off = (at as u64).wrapping_sub(base);
-    if off > len || len - off < core::mem::size_of::<T>() as u64 {
-        past();
-    }
-    // SAFETY: the load lies in the tape's bytes, as just checked.
-    unsafe { core::ptr::read_unaligned(at as *const T) }
-}
-
-#[cold]
-#[inline(never)]
-fn past() -> ! {
-    panic!("a read past the tape's bytes: a corrupt tape")
-}
-
 #[inline(always)]
 unsafe fn f33(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
     let mut v0: u64 = 0;
@@ -1756,4 +1739,4 @@ pub unsafe fn num_number_of_order(desc: *const u8, a1: u32) -> u32 {
 
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0x9f8996dd44120e3a;
+pub const SOURCE: u64 = 0x871c82ee0181267d;

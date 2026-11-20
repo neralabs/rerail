@@ -14,7 +14,7 @@
 //! A value too wide for its array is the all-ones value, and its value is in the side list of its 256-node block.
 //! Each array's side list is kept in parts of `PART` nodes (one a block), after the blocks, with each part's start.
 
-use crate::generated_reads::f16 as reads;
+use crate::reads::f16 as reads;
 use crate::tape::{CodeSet, CodeTable, Entry, Tape};
 use rerail_clif::view::TapeView;
 use std::collections::HashMap;
@@ -627,7 +627,7 @@ impl<'a> StoredPresence<'a> {
     }
     /// `Tape::has_kind`: block `block` (`u32::MAX`: the document) may have a node of kind `kind`.
     pub fn has_kind(&self, block: u32, kind: u16) -> bool {
-        reads::tape_has_kind(self.buf, &self.view, block, u32::from(kind)) != 0
+        reads::has_kind(self.buf, &self.view, block, u32::from(kind)) != 0
     }
 }
 
@@ -1008,8 +1008,8 @@ rerail_simd8::dispatch! {
     fn code_groups(codes: &[u8], set: &ByteSet, out: &mut [u64; PART / 64]) -> () = groups_of, on code_groups_on;
 }
 
-/// A format 16 tape read in place with its language's choices, through the tape's reads (decision 0310's Rust
-/// backend, `generated_reads`) over its view.
+/// A format 16 tape read in place with its language's choices, through the tape's reads (`crate::reads`, written directly,
+/// decision 0510) over its view.
 #[derive(Clone, Copy)]
 pub struct F16<'a> {
     bytes: &'a [u8],
@@ -1020,11 +1020,11 @@ pub struct F16<'a> {
 impl F16<'_> {
     /// The line (from 0) byte `x` of the source lies in: the newlines before it, by the tape's newline index.
     pub fn line(&self, x: u32) -> u32 {
-        reads::tape_line(self.bytes, &self.view, x)
+        reads::line(self.bytes, &self.view, x)
     }
     /// Line `k`'s first byte (`k` up to the source's newlines).
     pub fn line_start(&self, k: u32) -> u32 {
-        reads::tape_line_start(self.bytes, &self.view, k)
+        reads::line_start(self.bytes, &self.view, k)
     }
     /// The source's lines: one more than its newlines.
     pub fn line_count(&self) -> u32 {
@@ -1044,7 +1044,7 @@ impl Tape for F16<'_> {
     }
     /// By the tape's presence in its home (`tape_has_kind`, the kernels' read).
     fn has_kind(&self, block: u32, kind: u16) -> bool {
-        reads::tape_has_kind(self.bytes, &self.view, block, u32::from(kind)) != 0
+        reads::has_kind(self.bytes, &self.view, block, u32::from(kind)) != 0
     }
     #[inline(always)]
     fn table(&self) -> &CodeTable {
@@ -1052,33 +1052,33 @@ impl Tape for F16<'_> {
     }
     #[inline(always)]
     fn code(&self, i: usize) -> u32 {
-        reads::tape_number(self.bytes, &self.view, i as u32)
+        reads::number(self.bytes, &self.view, i as u32)
     }
     #[inline(always)]
     fn subtree_end(&self, i: usize) -> usize {
-        i + reads::tape_size(self.bytes, &self.view, i as u32) as usize
+        i + reads::size(self.bytes, &self.view, i as u32) as usize
     }
     /// The node before is the parent (an inner node), or a leaf naming the previous sibling or, on every `K`-th
     /// sibling, the parent: at most `K - 1` sibling steps.
     fn parent(&self, i: usize) -> Option<usize> {
-        let p = reads::tape_parent(self.bytes, &self.view, i as u32);
+        let p = reads::parent(self.bytes, &self.view, i as u32);
         (p != NONE).then_some(p as usize)
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
-        u64::from(reads::tape_start(self.bytes, &self.view, i as u32))
+        u64::from(reads::start(self.bytes, &self.view, i as u32))
     }
     #[inline(always)]
     fn end(&self, i: usize) -> u64 {
-        u64::from(reads::tape_end(self.bytes, &self.view, i as u32))
+        u64::from(reads::end(self.bytes, &self.view, i as u32))
     }
     #[inline(always)]
     fn start_next(&self, i: usize, prev_start: u64) -> u64 {
-        u64::from(reads::tape_start_next(self.bytes, &self.view, i as u32, prev_start as u32))
+        u64::from(reads::start_next(self.bytes, &self.view, i as u32, prev_start as u32))
     }
     #[inline(always)]
     fn end_with_start(&self, i: usize, start: u64) -> u64 {
-        start + u64::from(reads::tape_length(self.bytes, &self.view, i as u32))
+        start + u64::from(reads::length(self.bytes, &self.view, i as u32))
     }
     /// The code bytes 64 at a time through a 256-entry table; a byte past the cutoff is decoded only when the set
     /// holds a number past it.
@@ -1525,7 +1525,7 @@ impl Tape for F16Z<'_> {
     /// The presence lies in the 16z tape's home, read where it lies through the tape's own view (`tape_has_kind`).
     fn has_kind(&self, block: u32, kind: u16) -> bool {
         let view = self.t.view(self.lang).expect("a 16z tape's view: its reader's language is its own");
-        reads::tape_has_kind(&self.t.buf, &view, block, u32::from(kind)) != 0
+        reads::has_kind(&self.t.buf, &view, block, u32::from(kind)) != 0
     }
     #[inline(always)]
     fn table(&self) -> &CodeTable {
@@ -1533,17 +1533,17 @@ impl Tape for F16Z<'_> {
     }
     #[inline(always)]
     fn code(&self, i: usize) -> u32 {
-        self.with(i / Z, |r, v| reads::tape_number(r, v, (i % Z) as u32))
+        self.with(i / Z, |r, v| reads::number(r, v, (i % Z) as u32))
     }
     #[inline(always)]
     fn subtree_end(&self, i: usize) -> usize {
-        i + self.with(i / Z, |r, v| reads::tape_size(r, v, (i % Z) as u32)) as usize
+        i + self.with(i / Z, |r, v| reads::size(r, v, (i % Z) as u32)) as usize
     }
     /// As format 16's, each step in the block it falls in (a parent's sibling steps cross blocks' starts).
     fn parent(&self, i: usize) -> Option<usize> {
         let mut j = i;
         while j > 0 {
-            let v = self.with((j - 1) / Z, |r, v| reads::tape_slot(r, v, ((j - 1) % Z) as u32));
+            let v = self.with((j - 1) / Z, |r, v| reads::slot(r, v, ((j - 1) % Z) as u32));
             if v & 1 == 0 {
                 return Some(j - 1);
             }
@@ -1556,19 +1556,19 @@ impl Tape for F16Z<'_> {
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
-        u64::from(self.with(i / Z, |r, v| reads::tape_start(r, v, (i % Z) as u32)))
+        u64::from(self.with(i / Z, |r, v| reads::start(r, v, (i % Z) as u32)))
     }
     #[inline(always)]
     fn end(&self, i: usize) -> u64 {
-        u64::from(self.with(i / Z, |r, v| reads::tape_end(r, v, (i % Z) as u32)))
+        u64::from(self.with(i / Z, |r, v| reads::end(r, v, (i % Z) as u32)))
     }
     #[inline(always)]
     fn start_next(&self, i: usize, prev_start: u64) -> u64 {
-        u64::from(self.with(i / Z, |r, v| reads::tape_start_next(r, v, (i % Z) as u32, prev_start as u32)))
+        u64::from(self.with(i / Z, |r, v| reads::start_next(r, v, (i % Z) as u32, prev_start as u32)))
     }
     #[inline(always)]
     fn end_with_start(&self, i: usize, start: u64) -> u64 {
-        start + u64::from(self.with(i / Z, |r, v| reads::tape_length(r, v, (i % Z) as u32)))
+        start + u64::from(self.with(i / Z, |r, v| reads::length(r, v, (i % Z) as u32)))
     }
     /// A block at a time: each decoded once, its code bytes read as format 16's are. The block's groups are taken
     /// before `f` is called, so `f` may read the tape.
@@ -1975,6 +1975,60 @@ mod tests {
         let f15 = crate::tape::F15::new(&image, columns, &table).unwrap();
         let v = crate::tape::f15_view(&image, 0).unwrap();
         same_reads(&reads, &f15, &image, &v);
+    }
+
+    /// The Rust reads (`crate::reads`, written directly, decision 0510) read every node, byte and line as the CLIF
+    /// reads do through the JIT: format 16 with every side list in use, and format 15.
+    #[test]
+    fn the_rust_reads_are_the_jits() {
+        use crate::reads::{f15, f16};
+        let jit = rerail_clif::jit::Reads::new();
+        // SAFETY: the read's signature: the tape's base, its view, a node; a u64.
+        let slot: extern "C" fn(*const u8, *const TapeView, u32) -> u64 = unsafe { std::mem::transmute(jit.function("tape_slot")) };
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let t = sixteen(&lang, &Plain(&nodes, &table), &(0..600).collect::<Vec<_>>(), pos + 2);
+        let (b, v) = (t.as_bytes(), placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap());
+        let mut prev = 0;
+        for i in 0..v.nodes {
+            let n = i as usize;
+            assert_eq!(f16::size(b, &v, i), jit.one("tape_size", b, &v, n), "size of {i}");
+            assert_eq!(f16::number(b, &v, i), jit.one("tape_number", b, &v, n), "number of {i}");
+            assert_eq!(f16::start_stated(b, &v, i), jit.one("tape_start_stated", b, &v, n), "stated start of {i}");
+            assert_eq!(f16::start(b, &v, i), jit.one("tape_start", b, &v, n), "start of {i}");
+            assert_eq!(f16::end(b, &v, i), jit.one("tape_end", b, &v, n), "end of {i}");
+            assert_eq!(f16::length(b, &v, i), jit.one("tape_length", b, &v, n), "length of {i}");
+            assert_eq!(f16::parent(b, &v, i), jit.one("tape_parent", b, &v, n), "parent of {i}");
+            assert_eq!(f16::slot(b, &v, i), slot(b.as_ptr(), &v, i), "slot of {i}");
+            assert_eq!(f16::start_next(b, &v, i, prev), jit.two("tape_start_next", b, &v, n, prev), "next start of {i}");
+            prev = f16::start(b, &v, i);
+        }
+        for x in 0..=v.source_len {
+            assert_eq!(f16::line(b, &v, x), jit.one("tape_line", b, &v, x as usize), "line of byte {x}");
+        }
+        for k in 0..v.line_count {
+            assert_eq!(f16::line_start(b, &v, k), jit.one("tape_line_start", b, &v, k as usize), "line {k}'s start");
+        }
+        for block in (0..v.nodes.div_ceil(Z as u32)).chain([u32::MAX]) {
+            for kind in 0..640 {
+                assert_eq!(f16::has_kind(b, &v, block, kind), jit.two("tape_has_kind", b, &v, block as usize, kind), "kind {kind} in block {block}");
+            }
+        }
+        // Format 15.
+        let (image, _) = crate::tape::tests::sample();
+        let v = crate::tape::f15_view(&image, 0).unwrap();
+        for i in 0..v.nodes {
+            let n = i as usize;
+            assert_eq!(f15::size(&image, &v, i), jit.one("tape_size", &image, &v, n), "size of {i}");
+            assert_eq!(f15::number(&image, &v, i), jit.one("tape_number", &image, &v, n), "number of {i}");
+            assert_eq!(f15::start_stated(&image, &v, i), jit.one("tape_start_stated", &image, &v, n), "stated start of {i}");
+            assert_eq!(f15::end_stated(&image, &v, i), jit.one("tape_end_stated", &image, &v, n), "stated end of {i}");
+            assert_eq!(f15::start(&image, &v, i), jit.one("tape_start", &image, &v, n), "start of {i}");
+            assert_eq!(f15::end(&image, &v, i), jit.one("tape_end", &image, &v, n), "end of {i}");
+            assert_eq!(f15::parent(&image, &v, i), jit.one("tape_parent", &image, &v, n), "parent of {i}");
+        }
     }
 
     /// Decision 0403: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past

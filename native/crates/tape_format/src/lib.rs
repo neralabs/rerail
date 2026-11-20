@@ -21,8 +21,8 @@ pub mod tape;
 pub mod f16;
 pub mod home;
 pub mod newlines;
-/// The tape's reads as Rust, written from their CLIF (decision 0310; `rerail_clif::reads::rust_source`).
-mod generated_reads;
+/// The tape's reads in Rust, written directly (decision 0510): this crate's readers'.
+pub mod reads;
 /// The tape's writer in Rust, written directly (decision 0505): the host's, and a generated tier 2's `w` module.
 pub mod writer16;
 

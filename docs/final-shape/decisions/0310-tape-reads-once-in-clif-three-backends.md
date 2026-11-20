@@ -61,7 +61,7 @@ read. Emitting the reads into the JIT by hand would make a third copy of every r
   reads with the document's on every format (`the_clif_reads_read_every_format_as_the_document_does`). The JIT
   finds the same keys as the interpreter and both Metal backends on real files.
 - **Step 3** (90e0f7d1d): the translator is `rerail_clif::rust`. The tape crate's `F16`, `F16Z` and `F15` read
-  through the reads' Rust (`tape_format/src/generated_reads.rs`): `View`, `Sv` and the hand-written primitive
+  through the reads' Rust (`tape_format/src/generated_reads.rs`; since 0510 written directly, `reads.rs`): `View`, `Sv` and the hand-written primitive
   reads are gone. Three reads were added for the crate's API: `tape_length`, `tape_start_next` and `tape_slot`
   (16z's parent steps cross its blocks). Choices made here:
   - The generated file is checked in and kept current by a test (`the_tape_crates_reads_are_these`), not written
