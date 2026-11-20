@@ -529,7 +529,8 @@ jobs:
 
   # The GitHub Release of each version the promote job moved to `latest`, rewritten as a full release: published under
   # `next`, it was a pre-release. A pack's Release is never the repository's latest release (core's is). Its notes are
-  # the version's section of the pack's CHANGELOG.md on main, which keeps every released version's section.
+  # from the pack's CHANGELOG.md on main, which keeps every released version's section: everything since the pack's
+  # last version on `latest`, a version that never reached `latest` included (previousStable in github-release.mjs).
   promoted-releases:
     name: Promoted GitHub Releases
     needs: promote

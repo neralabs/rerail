@@ -101,6 +101,13 @@ If testing finds a problem, fix it on `main` as any pull request. The next Relea
 next version on `next`, and that version is the one to test and promote. The version that failed stays on `next` and
 never reaches `latest`.
 
+- **Release notes for the promoted version.** Its GitHub Release, once promoted, holds everything since the last
+  version on `latest`: its own entries and those of each candidate it passed over, grouped by type, with a line naming
+  them. Each version keeps its own section in `CHANGELOG.md`. Before approving the promotion, rewrite the promoted
+  version's lead on `main` to describe the whole change from the last stable version: the promotion reads `main`'s
+  changelog, so a lead or note corrected there is what stable users read. The `CHANGELOG.md` inside each published
+  package stays as it was published.
+
 ### Promoting
 
 Each release run ends with its promotion, waiting for a person to approve the `release` environment once the release is
@@ -325,7 +332,9 @@ release.
 ### GitHub Releases
 
 Every released version, core's and each pack's, gets a GitHub Release on its tag, with its `CHANGELOG.md` section as
-notes.
+notes. Once promoted to `latest`, a version's Release is rewritten from `main`'s changelog with everything since the last
+version on `latest`, so a release candidate that never reached `latest` is not lost on the people who update past it
+([Before promoting](#before-promoting)).
 
 **Backfill** creates Releases for tags without one, such as older releases or runs that failed before their Release:
 

@@ -65,6 +65,11 @@ describe("release.yml", () => {
     expect(concurrency["cancel-in-progress"]).toBe(false);
   });
 
+  it("writes the promoted Release from main's changelog, so a note or lead corrected on main while the release was tested is what stable users read", () => {
+    const checkout = jobs["promoted-release"].steps.find((step) => String(step.uses ?? "").startsWith("actions/checkout@"));
+    expect(checkout.with.ref).toBe("main");
+  });
+
   it("moves latest only to a released plain version", () => {
     const steps = jobs.promote.steps;
     const guard = steps.findIndex((step) => String(step.run ?? "").includes("^[0-9]+\\.[0-9]+\\.[0-9]+$") && String(step.run ?? "").includes("git/ref/tags/v${VERSION}"));
