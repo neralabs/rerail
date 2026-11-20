@@ -19,6 +19,7 @@ use crate::code_rule_dsl::model::Limits;
 use crate::code_rule_dsl::regexes::Regex;
 use ast_grep_core::Language;
 use ast_grep_core::matcher::{KindMatcher, Pattern, PatternNode};
+use ast_grep_core::tree_sitter::StrDoc;
 use napi::Result;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -336,6 +337,59 @@ fn supertype_names(language: GrammarDialect) -> &'static BTreeSet<&'static str> 
     })
 }
 
+/// A C or C++ pattern that tree-sitter reads at file scope, where only declarations stand, as
+/// something other than the expression it is in a function body (`gets($A)`: a C
+/// `macro_type_specifier`; `std::atoi($A)`: a C++ declaration of `$A`). Documents hold such calls
+/// in function bodies, so the pattern never matches one. The kind the pattern is read as, and the
+/// expression's kind. Only a file-scope parse that needed recovery (an error or a missing token)
+/// is asked: a pattern that parses as written is the node its author wrote.
+fn file_scope_misreading(source: &str, language: GrammarDialect) -> Option<(String, String)> {
+    if !matches!(language, GrammarDialect::C | GrammarDialect::Cpp) {
+        return None;
+    }
+    let processed = language.pre_process_pattern(source);
+    let read_as = recovered_file_scope_kind(&processed, language)?;
+    let expression = body_expression_kind(&processed, language)?;
+    (read_as != expression).then_some((read_as, expression))
+}
+
+/// The kind of the node a pattern matches by, when its file-scope parse needed recovery: past
+/// every node of one child, or of one child and a MISSING token (ast-grep's `is_single_node`).
+fn recovered_file_scope_kind(processed: &str, language: GrammarDialect) -> Option<String> {
+    let parsed = StrDoc::try_new(processed, language).ok()?;
+    let mut node = parsed.tree.root_node();
+    if !node.has_error() {
+        return None;
+    }
+    let single = |node: &tree_sitter::Node<'_>| match node.child_count() {
+        1 => true,
+        2 => node.child(1).is_some_and(|second| second.is_missing()),
+        _ => false,
+    };
+    while single(&node) {
+        node = node.child(0)?;
+    }
+    Some(node.kind().to_owned())
+}
+
+/// The kind of the expression `processed` is as the one statement of a function body, if it
+/// parses there cleanly as a whole expression statement.
+fn body_expression_kind(processed: &str, language: GrammarDialect) -> Option<String> {
+    const PREFIX: &str = "void f() { ";
+    let source = format!("{PREFIX}{processed}; }}");
+    let parsed = StrDoc::try_new(&source, language).ok()?;
+    let root = parsed.tree.root_node();
+    let statements = root.child(0)?.child_by_field_name("body")?;
+    let statement = statements.named_child(0)?;
+    let expression = statement.named_child(0)?;
+    let whole = PREFIX.len()..PREFIX.len() + processed.len();
+    (!root.has_error()
+        && statements.named_child_count() == 1
+        && statement.kind() == "expression_statement"
+        && expression.byte_range() == whole)
+        .then(|| expression.kind().to_owned())
+}
+
 /// In Python and PHP patterns, a leaf that ast-grep's preprocessing turned into the expando
 /// character but that is not a metavariable (`$At` becomes the identifier `µAt`), spelled back
 /// with `$`. `source` is the pattern as written: a leaf spelled with the expando there (`µfoo`, a
@@ -421,6 +475,65 @@ pub fn relation_rule<'a>(
     Ok((stop, field, Value::Object(nested)))
 }
 
+/// A rule's `pattern` compiled for one grammar, or `Never` with the reason it cannot match there.
+fn pattern_term(
+    pattern: &Value,
+    language: GrammarDialect,
+    path: &str,
+    gaps: &mut Vec<String>,
+) -> Result<AstMatcher> {
+    let (written, source) = written_pattern(pattern, path)?;
+    if let Some(reason) = misreading(&source, language, path) {
+        return Ok(grammar_gap(gaps, reason));
+    }
+    Ok(match rule_pattern(source, language) {
+        Ok(compiled) if !compiled.has_error() => {
+            match literal_dollar_name(&compiled, written, language) {
+                Some(name) => grammar_gap(
+                    gaps,
+                    format!(
+                        "{path}/pattern: `{name}` is not a metavariable (names use A-Z, 0-9 and _) \
+                         and Python source has no `$`, so the pattern never matches"
+                    ),
+                ),
+                None => AstMatcher::Pattern(compiled),
+            }
+        }
+        Ok(_) => grammar_gap(
+            gaps,
+            format!("{path}/pattern parse error: pattern contains an error node"),
+        ),
+        Err(error) => grammar_gap(gaps, format!("{path}/pattern parse error: {error}")),
+    })
+}
+
+/// Why a plain C or C++ pattern never matches, where its file-scope parse is not the expression
+/// it is in a function body ([`file_scope_misreading`]), with the contextual pattern to write.
+fn misreading(source: &PatternSource<'_>, language: GrammarDialect, path: &str) -> Option<String> {
+    let PatternSource::Plain(text) = source else {
+        return None;
+    };
+    let (read_as, expression) = file_scope_misreading(text, language)?;
+    let contextual = serde_json::json!({
+        "context": format!("void f() {{ {text}; }}"),
+        "selector": expression,
+    });
+    Some(format!(
+        "{path}/pattern: `{text}` parses as a `{read_as}` at file scope, not the `{expression}` a \
+         function body holds, so it never matches; write {contextual}"
+    ))
+}
+
+/// A `pattern` as written (its source, or its context) and as the source it compiles from.
+fn written_pattern<'v>(pattern: &'v Value, path: &str) -> Result<(&'v str, PatternSource<'v>)> {
+    if let Some(source) = pattern.as_str() {
+        return Ok((source, PatternSource::Plain(source)));
+    }
+    let context = required_str(pattern, "context", &format!("{path}/pattern"))?;
+    let selector = required_str(pattern, "selector", &format!("{path}/pattern"))?;
+    Ok((context, PatternSource::Contextual { context, selector }))
+}
+
 /// Compiles a `validate_ast_rule`-checked rule for one grammar. A pattern or kind the grammar
 /// cannot express becomes `Never` and its reason is pushed to `gaps`; `Never` then propagates
 /// the way its logic dictates (drops an `any` branch, empties an `all`, satisfies a `not`).
@@ -436,37 +549,7 @@ pub fn compile_ast_rule(
     // through the terms in this order, so it decides which node a relation binds first.
     let mut terms = Vec::new();
     if let Some(pattern) = rule.get("pattern") {
-        let (written, source) = if let Some(source) = pattern.as_str() {
-            (source, PatternSource::Plain(source))
-        } else {
-            let context = required_str(pattern, "context", &format!("{path}/pattern"))?;
-            (
-                context,
-                PatternSource::Contextual {
-                    context,
-                    selector: required_str(pattern, "selector", &format!("{path}/pattern"))?,
-                },
-            )
-        };
-        terms.push(match rule_pattern(source, language) {
-            Ok(compiled) if !compiled.has_error() => {
-                match literal_dollar_name(&compiled, written, language) {
-                    Some(name) => grammar_gap(
-                        gaps,
-                        format!(
-                            "{path}/pattern: `{name}` is not a metavariable (names use A-Z, 0-9 and _) \
-                             and Python source has no `$`, so the pattern never matches"
-                        ),
-                    ),
-                    None => AstMatcher::Pattern(compiled),
-                }
-            }
-            Ok(_) => grammar_gap(
-                gaps,
-                format!("{path}/pattern parse error: pattern contains an error node"),
-            ),
-            Err(error) => grammar_gap(gaps, format!("{path}/pattern parse error: {error}")),
-        });
+        terms.push(pattern_term(pattern, language, path, gaps)?);
     }
     if let Some(kind) = rule.get("kind").and_then(Value::as_str) {
         terms.push(match KindMatcher::try_new(kind, language) {

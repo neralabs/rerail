@@ -273,3 +273,74 @@
             "{reason}"
         );
     }
+
+    #[test]
+    fn c_and_cpp_calls_that_parse_as_declarations_are_refused_with_their_contextual_form() {
+        // At file scope C and C++ allow only declarations, so tree-sitter reads `gets($A)` as a
+        // C `macro_type_specifier` and `std::atoi($A)` as a C++ declaration of `$A`: neither can
+        // match the call a function body holds (#835).
+        let compile = |language: &str, pattern: Value| {
+            compile_document_with(
+                clause_document(json!({
+                    "id": "c",
+                    "forbid": { "ast": { "language": language, "rule": { "pattern": pattern } } },
+                    "violation": violation(),
+                })),
+                &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+            )
+        };
+        for (language, pattern, read_as) in [
+            ("c", "gets($A)", "macro_type_specifier"),
+            ("c", "$F($A)", "macro_type_specifier"),
+            ("c", "gets($$$A)", "macro_type_specifier"),
+            ("c", "gets(b)", "macro_type_specifier"),
+            ("cpp", "std::atoi($A)", "declaration"),
+            ("cpp", "$X::atoi($A)", "declaration"),
+        ] {
+            assert_eq!(
+                rejection(compile(language, json!(pattern))),
+                format!(
+                    "/clauses/0/forbid/ast/rule/pattern: `{pattern}` parses as a `{read_as}` at file scope, \
+                     not the `call_expression` a function body holds, so it never matches; write \
+                     {{\"context\":\"void f() {{ {pattern}; }}\",\"selector\":\"call_expression\"}} \
+                     ({language} grammar)"
+                ),
+                "{language} {pattern}"
+            );
+        }
+        let source = "void f(char *b) { gets(b); int x = atoi(b); foo.bar(b); x = gets(b); }\n";
+        for (language, pattern, path, matched) in [
+            ("c", json!("gets($A);"), "a.c", "gets(b);"),
+            ("c", json!("foo.bar($A)"), "a.c", "foo.bar(b)"),
+            ("c", json!("x = gets($A)"), "a.c", "x = gets(b)"),
+            ("cpp", json!("atoi($A)"), "a.cpp", "atoi(b)"),
+            ("cpp", json!("foo.bar($A)"), "a.cpp", "foo.bar(b)"),
+            (
+                "c",
+                json!({ "context": "void f() { gets($A); }", "selector": "call_expression" }),
+                "a.c",
+                "gets(b)",
+            ),
+        ] {
+            let compiled = compile(language, pattern.clone())
+                .unwrap_or_else(|error| panic!("{language} {pattern}: {}", error.reason));
+            let result = evaluate_file(&compiled, language, path, source);
+            assert!(
+                matched_texts(&result, source)
+                    .iter()
+                    .any(|text| text.starts_with(matched)),
+                "{language} {pattern}: {:?}",
+                matched_texts(&result, source)
+            );
+        }
+        let source = "void f(char *b) { std::atoi(b); int x = std::atoi(b); }\n";
+        let compiled = compile(
+            "cpp",
+            json!({ "context": "void f() { std::atoi($A); }", "selector": "call_expression" }),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&compiled, "cpp", "a.cpp", source);
+        assert_eq!(matched_texts(&result, source).len(), 2);
+        // A statement that is no expression keeps its own reading.
+        compile("c", json!("if ($A) $B")).unwrap_or_else(|error| panic!("{}", error.reason));
+    }
