@@ -33,7 +33,8 @@ open nodes beside the writer's frames (page 40's D2).
    more depth (`write16`).
 6. **The kinds' numbers are not made constants (D7), not yet.** A node's number is the language's code table's
    (`CompiledStream::numbers(&lang)`), and the language is given at run time; the tests make it per file from
-   format 15's first-use table. Constants need one table per language, known when the Rust is generated.
+   format 15's first-use table. Constants need one table per language, known when the Rust is generated. Done in
+   0516: the generator takes the language, and the numbers are literals.
 
 ## Checks
 

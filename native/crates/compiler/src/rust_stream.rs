@@ -38,6 +38,10 @@ use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, WORD_KI
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write;
 
+/// A direct format 16 run's word whose node the source's language has no number for (decision 0516): the file is
+/// refused there, as the JIT's run refuses it at `fail::NUMBER`.
+pub const UNNUMBERED: &str = "// No number in the language for this node: the file refused (`fail::NUMBER`).\nreturn Err(false);";
+
 /// The program's facts the words read.
 struct Facts<'a> {
     native: &'a Structure,
@@ -81,6 +85,18 @@ struct Facts<'a> {
     /// The stream's end as a start: past the last token, `TOKEN` gives the file's length as its
     /// start, with no branch (`sentinel`), as simdjson's index ends with one past the last.
     sentinel: bool,
+    /// A format 16 source's language's numbers by key (`native_cpu_stream::numbers_by_key`): a direct run writes
+    /// each node's as a literal at its word. Empty elsewhere.
+    numbers: Vec<u32>,
+}
+
+impl Facts<'_> {
+    /// The number of the node of key `kf` (kind, field at bit 16) and supertype class bits `classes` in the source's
+    /// language, `None` where its table has none (the run refuses there, as the JIT's at `fail::NUMBER`).
+    fn number(&self, kf: u32, classes: u32) -> Option<u32> {
+        let k = (kf & 0x3ff) | ((kf >> 16) & 0x3f) << rerail_tape_format::KIND_BITS | classes;
+        self.numbers.get(k as usize).copied().filter(|&n| n != u32::MAX)
+    }
 }
 
 impl Facts<'_> {
@@ -346,7 +362,7 @@ pub fn rust_source(native: &Structure) -> Result<String, String> {
 
 /// As `rust_source`, the tape written at `widths` with the language's `tag`.
 pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) -> Result<String, String> {
-    source(native, widths, tag, false)
+    source(native, widths, tag, None)
 }
 
 /// As `rust_source_at`, writing format 16 by the writer's ops as it parses (decision 0434 §6, R17), for
@@ -354,8 +370,12 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
 /// known at its word (`Facts::coded`), each node goes to the ops at its word, as it is made, with no row; elsewhere
 /// the rows are the run's window, and the nodes go to the ops at its commit points, one behind (`pass16`), as the
 /// JIT's run passes them.
-pub fn rust_source_16(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) -> Result<String, String> {
-    source(native, widths, tag, true)
+///
+/// The source is `lang`'s (decision 0516): a direct run's node numbers are literals at their words, as the lean parser
+/// writes a kind's constant, and its runs take `lang` (its fingerprint is the source's `LANG`). A window run reads
+/// them by key at run time, as the JIT's (`Ctx::numbers`).
+pub fn rust_source_16(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, lang: &rerail_tape_format::f16::Lang) -> Result<String, String> {
+    source(native, widths, tag, Some(lang))
 }
 
 /// Where every node's key is known at its word (`Facts::coded`) and no leaf is deferred or an extra: each node word's
@@ -412,12 +432,12 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         }
     }
     let phase = crate::native_cpu_stream::phases(native, &crate::native_cpu_stream::push_targets(native));
-    let flagged = phase.iter().any(|&p| p == crate::stream::TAKEN | crate::stream::UNTAKEN);
-    if fetch.is_some() && (flagged || native.extras.len() > 0) {
+    let flagged = phase.contains(&(crate::stream::TAKEN | crate::stream::UNTAKEN));
+    if fetch.is_some() && (flagged || !native.extras.is_empty()) {
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
-    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen };
+    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, numbers: Vec::new() };
     facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {
@@ -434,8 +454,8 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         return Err("format 16 ahead of time: provisional fields, which `ACCEPT` reads from the rows".into());
     }
     if let Some(fx) = &facts.fetch {
-        for pc in 0..words.len() {
-            if matches!(words[pc].operation, Op::Token { .. }) && fx.seen[pc] == [true, true] {
+        for (pc, w) in words.iter().enumerate() {
+            if matches!(w.operation, Op::Token { .. }) && fx.seen[pc] == [true, true] {
                 return Err(format!("word {pc}: a `TOKEN` where a part may be pending or not"));
             }
             if fx.part_at(&facts, pc) {
@@ -446,8 +466,11 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
     Ok(facts)
 }
 
-fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixteen: bool) -> Result<String, String> {
-    let facts = facts(native, widths, tag, sixteen)?;
+fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, lang: Option<&rerail_tape_format::f16::Lang>) -> Result<String, String> {
+    let mut facts = facts(native, widths, tag, lang.is_some())?;
+    if let Some(lang) = lang {
+        facts.numbers = crate::native_cpu_stream::numbers_by_key(lang, &facts.classes, &native.readings.extras);
+    }
     let mut out = String::new();
     out.push_str("// Generated by rerail_compiler::rust_stream from tier 2's native IR. Do not edit.\n");
     out.push_str("#![allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, non_snake_case, dead_code, clippy::all)]\n\n");
@@ -461,6 +484,10 @@ fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixte
         out.push_str("\n/// The tape's writer's ops (decision 0434 §6), as `rerail_tape_format` compiles them.\nmod w {\n");
         out.push_str(rerail_tape_format::WRITER_RUST);
         out.push_str("}\n");
+    }
+    if let Some(lang) = lang {
+        let l = crate::clif_rust::fingerprint(&lang.to_text(""));
+        writeln!(out, "\n/// The language whose numbers a direct run writes (`f16::Lang::to_text`'s fingerprint): its runs take it.\npub const LANG: u64 = {l:#x};").unwrap();
     }
     let h = crate::clif_rust::fingerprint(&out);
     writeln!(out, "\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};").unwrap();
@@ -1800,26 +1827,12 @@ $COMMIT_CLOSE        Ok(())
             ("w::w_open(self.writer, number, u64::from(self.start));\n            w::w_commit(self.writer);", "w::w_leaf(self.writer, number, u64::from(self.start), u64::from(end));\n            w::w_commit(self.writer);")
         };
         out.push_str(&
-            "    /// A node's number in the language's table: its key's (its kind, its field, its supertypes'
-    /// classes), as `CompiledStream::numbers` keys it; `Err` where the table has none, the file
-    /// the engine's (`fail::NUMBER` in the JIT's run).
+            "    /// `OPEN` in a format 16 run (`Facts::sixteen`): the node passed to the writer's ops, opened by its
+    /// number (the language's, a literal at the word: decision 0516) at the token's start, then committed,
+    /// as `native_cpu_tape::pass` passes a node. Tier 2 keeps no row of it: its slot on the stack of open
+    /// nodes holds the call number `keep_ret` puts there, as simdjson's stack holds a container's kind alone.
     #[inline(always)]
-    fn number16(&self, kf: u32, classes: u32) -> Result<u32, bool> {
-        let k = (kf & 0x3ff) | ((kf >> 16) & 0x3f) << KIND_BITS | classes;
-        let number = unsafe { *self.numbers.add(k as usize) };
-        if number == u32::MAX {
-            return Err(false);
-        }
-        Ok(number)
-    }
-
-    /// `OPEN` in a format 16 run (`Facts::sixteen`): the node passed to the writer's ops, opened by its
-    /// number at the token's start, then committed, as `native_cpu_tape::pass` passes a node. Tier 2
-    /// keeps no row of it: its slot on the stack of open nodes holds the call number `keep_ret` puts
-    /// there, as simdjson's stack holds a container's kind alone.
-    #[inline(always)]
-    fn open16(&mut self, kf: u32, classes: u32) -> R {
-        let number = self.number16(kf, classes)?;
+    fn open16(&mut self, number: u32) -> R {
         self.pending = 0;
         // SAFETY: the writer's state, its room reserved for the run (`f16::Writer::reserve_run`); the
         // stack's room is the bound's.
@@ -1832,8 +1845,7 @@ $COMMIT_CLOSE        Ok(())
     /// `LEAF` in a format 16 run: the node passed to the writer's ops, its number and its bytes, then
     /// committed. No row.
     #[inline(always)]
-    fn leaf16(&mut self, kf: u32, classes: u32, end: u32) -> R {
-        let number = self.number16(kf, classes)?;
+    fn leaf16(&mut self, number: u32, end: u32) -> R {
         self.pending = 0;
         // SAFETY: as `open16`'s.
         unsafe {
@@ -2324,9 +2336,9 @@ pub(crate) fn word_form(ops: &[LocalOp]) -> Result<WordForm, String> {
             }
             let (lo, hi) = &mut tables[at / 8];
             let bit = 1u8 << (at % 8);
-            for l in 0..16 {
+            for (l, cell) in lo.iter_mut().enumerate() {
                 if pat >> l & 1 == 1 {
-                    lo[l] |= bit;
+                    *cell |= bit;
                 }
             }
             for h in 0..16 {
@@ -2712,8 +2724,10 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
                 let (field, classes) = key_after(x, pc);
                 let kf = if field != 0 { kf & 0xffff | field } else { kf };
                 if x.sixteen && x.coded {
-                    // The node is the ops' alone: no row, its container's slot on the stack.
-                    return Ok(format!("s.open16({kf}, {classes:#x})?;\n{}", jump(0)?));
+                    // The node is the ops' alone: no row, its container's slot on the stack. Its number the
+                    // language's, a literal; a key the table lacks refuses the file (the JIT's `fail::NUMBER`).
+                    let Some(number) = x.number(kf, classes) else { return Ok(UNNUMBERED.into()) };
+                    return Ok(format!("s.open16({number})?;\n{}", jump(0)?));
                 }
                 format!("s.code_now({kf}, {classes:#x});\n")
             } else {
@@ -2745,7 +2759,22 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
                     if deferred || extra {
                         return Err(format!("word {pc}: a deferred or extra leaf in a format 16 run"));
                     }
-                    return Ok(format!("let kf = {k};\ns.leaf16({kf}, {classes:#x}, {end})?;\n{}", jump(0)?));
+                    // The leaf's number the language's, a literal: its kind's, or a keyword's by its token's word, as
+                    // the lean lexer's keyword `match` gives its kind.
+                    let key = |kind: u32| if field != 0 { (kind | f) & 0xffff | field } else { kind | f };
+                    if kind == WORD_KIND && constant.is_none() {
+                        let mut m = String::from("let number = match s.word() {\n");
+                        for &(w, k) in &n.word_kinds {
+                            if let Some(number) = x.number(key(u32::from(k)), classes) {
+                                writeln!(m, "{} => {number},", u32::from(w) + 1).unwrap();
+                            }
+                        }
+                        m.push_str("_ => return Err(false),\n};\n");
+                        return Ok(format!("{m}s.leaf16(number, {end})?;\n{}", jump(0)?));
+                    }
+                    let kind = if kind == WORD_KIND { constant.flatten().unwrap_or(0) } else { u32::from(kind) };
+                    let Some(number) = x.number(key(kind), classes) else { return Ok(UNNUMBERED.into()) };
+                    return Ok(format!("s.leaf16({number}, {end})?;\n{}", jump(0)?));
                 }
                 let now = format!("s.code_now({kf}, {classes:#x});");
                 return Ok(format!("let kf = {k};\ns.leaf::<{deferred}, {extra}>(kf, {end});\n{now}\n{}", jump(0)?));
@@ -3604,7 +3633,7 @@ fn may_bytes(b: &crate::block_native::BlockNative, x: usize, back: u32) -> [u64;
     use crate::block_native::BlockInst as I;
     const ALL: [u64; 4] = [!0; 4];
     if let Some(set) = crate::native_cpu_lanes::byte_set(b, x) {
-        return if back == 0 { set } else if set == [0; 4] { set } else { ALL };
+        return if back == 0 || set == [0; 4] { set } else { ALL };
     }
     match b.insts[x] {
         I::And(p, q) => {

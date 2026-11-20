@@ -31,6 +31,23 @@ fn simdjson_form() -> Compiled {
     compile_step("json-simdjson", &source)
 }
 
+/// The language a format 16 source is generated for and its runs take (decision 0516): every key the files' format
+/// 15 tapes hold, by first use over them, as the engine's language holds its grammar's. One for every file, known
+/// before the Rust is written: its numbers are literals there.
+fn language_of(c: &Compiled, files: &[&[u8]]) -> rerail_tape_format::f16::Lang {
+    let mut keys: Vec<rerail_tape_format::tape::Entry> = Vec::new();
+    for f in files {
+        let Ok(image) = c.parser.image(f) else { continue };
+        let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
+        for e in table.entries() {
+            if !keys.contains(e) {
+                keys.push(e.clone());
+            }
+        }
+    }
+    rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(keys), [1, 1, 1], 1).expect("a language")
+}
+
 /// Page 40, stage 1: the simdjson form's tier 1 records a token where simdjson's stage 1 writes a
 /// structural index, and nowhere else: its starts are simdjson's indexes, by count and by hash
 /// (`fixtures/simdjson-stage1/expected.txt`, from `stage1_indexes.cpp`), on each file there.
@@ -358,16 +375,23 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let s16 = jit.parser.sixteen().expect("a format 16 tier 2");
     assert!(s16.direct && s16.row_calls == 0, "the JIT's format 16 run: direct {}, {} calls of a step on the rows", s16.direct, s16.row_calls);
     assert_eq!(s16.tape(1000).held(), [0, 0], "the direct run's tape: no format 15 buffer, no working row");
-    let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16).expect("tier 2 writing format 16, as Rust");
+    let lang = language_of(&jit, &inputs.iter().map(Vec::as_slice).collect::<Vec<_>>());
+    let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16, &lang).expect("tier 2 writing format 16, as Rust");
+    if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
+        std::fs::write(std::path::Path::new(&dir).join("simdjson16.rs"), &src16).expect("writes the source");
+    }
     let made16 = src16.matches("s.open16(").count() + src16.matches("s.leaf16(").count();
     // No working row: the rule touches neither rows nor supertype records, only the stack of open
     // nodes (a call's number in each) and the ops.
     let rule16 = src16.split("\nfn r0(").nth(1).expect("the rule");
+    // Each node's number a literal at its word, as the lean parser's kind constants (decision 0516): no table read.
+    assert!(!src16.contains("fn number16(") && src16.contains("pub const LANG: u64"), "a direct run's numbers are the language's literals");
+    let reads: Vec<&str> = rule16.split("\n}\n").next().unwrap_or_default().lines().filter(|l| l.contains("numbers")).collect();
+    assert!(reads.is_empty(), "a direct run's rule reads the numbers: {reads:?}");
     assert!(!rule16.contains("s.row(") && !rule16.contains("s.open(") && !rule16.contains("s.leaf::<") && !rule16.contains("s.node_super("), "no row in a format 16 run");
-    assert!(made16 == made && src16.contains("mod w {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
-    if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
-        std::fs::write(std::path::Path::new(&dir).join("simdjson16.rs"), &src16).expect("writes the source");
-    }
+    // A word whose node the language has no number for refuses there (`rust_stream::UNNUMBERED`).
+    let unnumbered = src16.matches(rerail_compiler::rust_stream::UNNUMBERED).count();
+    assert!(made16 + unnumbered == made && src16.contains("mod w {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
     // Written once: no format 15 cell (an offset, a block's base, a size, a tail) beside the ops' cells.
     // (The edits' methods, which no word of this program calls, keep theirs.)
     let body = |name: &str| src16.split(name).nth(1).and_then(|rest| rest.split("\n    }\n").next()).unwrap_or_else(|| panic!("{name}")).to_string();
@@ -388,7 +412,6 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     for (k, f) in inputs.iter().enumerate() {
         let Ok(image) = jit.parser.image(f) else { continue };
         let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
-        let lang = rerail_tape_format::f16::Lang::new(table.clone(), [1, 1, 1], 1).expect("a language");
         let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
         // The reference: format 15's tape written in format 16 by the writer (`f16::write_from_with_presence`), apart
         // from either run's passes; both runs pass each node at its word (`rust_stream::direct_keys`).
@@ -431,7 +454,8 @@ fn simdjson_form_against_simdjson() {
     let (jit, mut aot) = (simdjson_form(), simdjson_form());
     let native = rerail_compiler::native_ir::lower(&aot.program, 0, 0).expect("lowers");
     let (widths16, tag16) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
-    let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16).expect("tier 2 writing format 16, as Rust");
+    let lang = language_of(&jit, &files.iter().map(|(_, f)| f.as_slice()).collect::<Vec<_>>());
+    let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16, &lang).expect("tier 2 writing format 16, as Rust");
     // SAFETY: the Rust of this program's tier 2 in format 16, on the format 16 run's harness.
     unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(aot_entry(&src16), 4) };
     let retired = || {
@@ -455,9 +479,7 @@ fn simdjson_form_against_simdjson() {
     println!("simdjson's implementation: {}", rerail_simdjson_native::implementation());
     println!("file\tbytes\tours_ins_per_byte\tsimdjson_ins_per_byte\tours_GB_s\tsimdjson_GB_s\tins_ratio\ttime_ratio");
     for (name, f) in &files {
-        let image = jit.parser.image(f).unwrap_or_else(|e| panic!("{name}: the simdjson form refuses it: {e:?}"));
-        let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
-        let lang = rerail_tape_format::f16::Lang::new(table, [1, 1, 1], 1).expect("a language");
+        jit.parser.image(f).unwrap_or_else(|e| panic!("{name}: the simdjson form refuses it: {e:?}"));
         let numbers = aot.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
         let want = jit.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).expect("the JIT's format 16 run");
         assert_eq!(aot.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).ok(), Some(want), "{name}: the Rust's tape is the JIT's");

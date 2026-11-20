@@ -593,6 +593,27 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 41, done: the kinds' numbers constants (D7, decision 0516); the tape's reads written directly (0510)
+
+**D7.** A direct run's node numbers are literals at their words, as the lean parser writes a kind's constant and
+simdjson a container's character. The generator takes the language whose numbers it writes
+(`rust_source_16(…, lang)`). Each `OPEN` is then `s.open16(12)?`, each `LEAF` `s.leaf16(4, s.rec_end)?`, and a
+keyword leaf a `match` of its word to its number, as the lean lexer's keyword `match`. A word whose node the language
+has no number for refuses the file there (`UNNUMBERED`), as the JIT's run does at `fail::NUMBER`. The source states
+its language (`LANG`, the table's fingerprint), and its runs take that language:
+
+- rr's AOT build is generated for rr's shipped table (`f16::lang(13)`), the language production writes rr with;
+- the tests generate for one language a grammar, every key its documents' format 15 tapes hold, made before the
+  Rust is written, in place of one table a file.
+
+| | simdjson / the lean parser | before | now |
+|---|---|---|---|
+| D7. A kind's code | a constant (`'['`, `'t'`) | `number16`: `numbers[k]` loaded every node, from the language given at run time | a literal at the word; a keyword's by a `match` of its word |
+
+**The tape's reads** (`tape_format/src/reads.rs`, 0510) are a hand-written reader of format 16 and 15. They are no
+longer the reads' CLIF translated, and a test holds them equal to the JIT's. The relations' and the numbering's Rust
+reads are still translated, and are next.
+
 ## Step 40, done: one writer in Rust written directly, one stack (decision 0508)
 
 Order items 2, 3 and 5 of step 38, and D2. The writer is one Rust source written directly,
@@ -617,7 +638,7 @@ references:
 
 Left: D7, the kinds' numbers as constants. A number is the language's code table's, given at run time (the tests
 make one per file from format 15's first-use table), so constants need one table per language, known when the
-Rust is generated.
+Rust is generated. Done in step 41 (decision 0516).
 
 ## Step 39, done: the writer's per-node work written directly (decision 0505)
 

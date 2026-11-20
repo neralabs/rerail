@@ -7836,25 +7836,34 @@ impl Drop for Tape {
     }
 }
 
+/// `lang`'s numbers by a program's keys, `u32::MAX` where the table has none: each entry of its table that a key names
+/// (no alias, a kind and field within a key's bits, its flags the extra's where its kind is one of `extras`, its
+/// classes among `classes`, the program's supertype classes), at the key (`kind | field << KIND_BITS | class bits <<
+/// 16`). The JIT's run reads them at run time (`Ctx::numbers`); a generated direct run holds each as a literal at its
+/// word (`rust_stream::rust_source_16`, decision 0516).
+pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], extras: &[u16]) -> Vec<u32> {
+    use rerail_tape_format::{CODE_EXTRA, KIND_BITS};
+    let mut by = vec![u32::MAX; crate::native_cpu_tape::id_slots(classes.len())];
+    for e in lang.table().entries() {
+        let Some(n) = lang.number(e) else { continue };
+        let extra = if extras.contains(&e.kind) { CODE_EXTRA } else { 0 };
+        if e.alias.is_some() || e.kind >= 1 << KIND_BITS || e.field >= 1 << 6 || e.flags != extra {
+            continue;
+        }
+        let bits: Option<u32> = e.classes.iter().map(|c| classes.iter().position(|x| x == c).map(|j| 1u32 << j)).sum();
+        let Some(bits) = bits else { continue };
+        let slot = u32::from(e.kind) | u32::from(e.field) << KIND_BITS | bits << 16;
+        by[slot as usize] = n;
+    }
+    by
+}
+
 impl CompiledStream {
     /// `lang`'s numbers by this program's keys (`Numbers`): each entry of its table that a key names (no alias, a
     /// kind and field within a key's bits, its flags the extra's where its kind is one, its classes among the
     /// program's), at the key.
     pub fn numbers(&self, lang: &rerail_tape_format::f16::Lang) -> Numbers {
-        use rerail_tape_format::{CODE_EXTRA, KIND_BITS};
-        let mut by = vec![u32::MAX; crate::native_cpu_tape::id_slots(self.classes.len())];
-        for e in lang.table().entries() {
-            let Some(n) = lang.number(e) else { continue };
-            let extra = if self.extras.contains(&e.kind) { CODE_EXTRA } else { 0 };
-            if e.alias.is_some() || e.kind >= 1 << KIND_BITS || e.field >= 1 << 6 || e.flags != extra {
-                continue;
-            }
-            let bits: Option<u32> = e.classes.iter().map(|c| self.classes.iter().position(|x| x == c).map(|j| 1u32 << j)).sum();
-            let Some(bits) = bits else { continue };
-            let slot = u32::from(e.kind) | u32::from(e.field) << KIND_BITS | bits << 16;
-            by[slot as usize] = n;
-        }
-        Numbers(by)
+        Numbers(numbers_by_key(lang, &self.classes, &self.extras))
     }
 
     /// The widths the tape is written at, and the language's tag.

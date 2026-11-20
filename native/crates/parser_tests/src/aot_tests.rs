@@ -161,6 +161,11 @@ fn build(sources: &[String]) -> Vec<Entry> {
     entries
 }
 
+/// A grammar's documents, and which are long (`documents`).
+type Docs = (Vec<Vec<u8>>, Vec<bool>);
+/// A document's tapes: format 15's image, format 16's and 16z's homes, and why either was refused.
+type Tapes = (Option<Vec<u8>>, Vec<Option<Vec<u8>>>, Vec<Option<String>>);
+
 /// A grammar's documents: drawn from it (`documents_with`), and its accepted ones joined, one after another, past
 /// several of format 16's blocks (1,024 nodes each), where the grammar takes them so. With which hold 3,000 nodes or
 /// more.
@@ -219,13 +224,28 @@ fn grammars_rust_tapes_are_the_jits() {
     let pick = std::env::var("RERAIL_AOT_GRAMMARS").ok();
     let mut total = 0;
     for set in SETS.iter().filter(|l| only.as_deref().is_none_or(|o| o == l.name)) {
-        let mut built: Vec<(String, Compiled, String, String)> = Vec::new();
+        let mut built: Vec<(String, Compiled, String, String, Docs, F16Lang)> = Vec::new();
         for (name, source) in (set.grammars)().into_iter().filter(|(n, _)| pick.as_deref().is_none_or(|p| p.split(',').filter(|w| !w.is_empty()).any(|w| n.contains(w)))) {
             total += 1;
             let c = compile_step(&name, &source);
             let (widths, tag) = c.parser.tier2.widths_tag();
             let (w16, t16) = c.parser.sixteen().expect("a format 16 tier 2").widths_tag();
-            match (rust_stream::rust_source_at(&c.native, widths, tag), rust_stream::rust_source_16(&c.native, w16, t16)) {
+            // The grammar's documents and its language, before its Rust: the language is every key the documents' tapes
+            // hold (format 15's tables, joined), as the engine's language holds every key of its grammar, and the
+            // source's numbers are its literals (decision 0516).
+            let docs = documents(&c, &name, set);
+            let mut keys: Vec<rerail_tape_format::tape::Entry> = Vec::new();
+            for doc in &docs.0 {
+                let Ok(f15) = c.parser.image(doc) else { continue };
+                let (_, table) = rerail_tape_format::tape::f15_columns(&f15).expect("a format 15 tape");
+                for e in table.entries() {
+                    if !keys.contains(e) {
+                        keys.push(e.clone());
+                    }
+                }
+            }
+            let lang = F16Lang::new(rerail_tape_format::tape::CodeTable::new(keys), [1, 2, 2], 1).expect("a language");
+            match (rust_stream::rust_source_at(&c.native, widths, tag), rust_stream::rust_source_16(&c.native, w16, t16, &lang)) {
                 (Ok(s15), Ok(s16)) => {
                     // `RERAIL_DUMP_TIER2`: each grammar's sources, in that directory.
                     if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
@@ -242,32 +262,19 @@ fn grammars_rust_tapes_are_the_jits() {
                     let [f15, rows] = s.tape(1000).held();
                     assert!(f15 == 0 && (rows == 0) == s.direct, "{name}: a format 16 run's tape holds {f15} bytes of format 15's, {rows} of rows (direct {})", s.direct);
                     direct += usize::from(s.direct);
-                    built.push((name, c, s15, s16))
+                    built.push((name, c, s15, s16, docs, lang))
                 }
                 (a, b) => refused.push(format!("{} {name}: {:?}", set.name, a.err().or(b.err()))),
             }
         }
-        let sources: Vec<String> = built.iter().flat_map(|(_, _, a, b)| [a.clone(), b.clone()]).collect();
+        let sources: Vec<String> = built.iter().flat_map(|(_, _, a, b, ..)| [a.clone(), b.clone()]).collect();
         let entries = build(&sources);
-        for (k, (name, mut c, _, _)) in built.into_iter().enumerate() {
+        for (k, (name, mut c, _, _, (docs, longs), lang)) in built.into_iter().enumerate() {
             // Each document's tapes by the JIT, then by the Rust, in the same parser: format 15's image, and format
-            // 16's home and 16z's where the JIT writes format 15 (its table names the language).
-            let (docs, longs) = documents(&c, &name, set);
-            // The grammar's language: every key its documents' tapes hold (format 15's tables, joined), as the engine's
-            // language holds every key of its grammar; the numbers once, for every document.
-            let mut keys: Vec<rerail_tape_format::tape::Entry> = Vec::new();
-            for doc in &docs {
-                let Ok(f15) = c.parser.image(doc) else { continue };
-                let (_, table) = rerail_tape_format::tape::f15_columns(&f15).expect("a format 15 tape");
-                for e in table.entries() {
-                    if !keys.contains(e) {
-                        keys.push(e.clone());
-                    }
-                }
-            }
-            let lang = F16Lang::new(rerail_tape_format::tape::CodeTable::new(keys), [1, 2, 2], 1).expect("a language");
+            // 16's home and 16z's where the JIT writes format 15 (its table names the language); the numbers once, for
+            // every document.
             let numbers = c.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
-            let tapes = |c: &Compiled| -> Vec<(Option<Vec<u8>>, Vec<Option<Vec<u8>>>, Vec<Option<String>>)> {
+            let tapes = |c: &Compiled| -> Vec<Tapes> {
                 docs.iter()
                     .map(|doc| {
                         let image = c.parser.image(doc).ok();
