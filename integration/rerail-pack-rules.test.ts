@@ -24,6 +24,7 @@ import {
   SqliteAuditReader,
 } from "../src/engine/index.js";
 import { DAEMON_STATE_FILE } from "../src/runtime/index.js";
+import { fixturesPath } from "../test/support/oracles.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 
@@ -169,7 +170,7 @@ beforeAll(async () => {
   await git(["init", "-q", "-b", "main"]);
   await git(["add", "."]);
   await git(["commit", "-q", "-m", "base"]);
-  await rerail(["packs", "add", join(PACKAGE_ROOT, "fixtures", "packs", "rr-sample")]);
+  await rerail(["packs", "add", fixturesPath("packs", "rr-sample")]);
   await rerail(["rules", "approve", "@neralabs/rerail-pack-rr-sample"]);
   await rerail(["packs", "add", join(PACKAGE_ROOT, "packs", "complexity")]);
   await rerail(["rules", "approve", "@neralabs/rerail-pack-complexity"]);
