@@ -351,13 +351,14 @@ pub const L_TIMESTAMP: u32 = 0xffff_fff8;
 pub const L_FILE_NAME: u32 = 0xffff_fff7;
 pub const L_BASE_FILE: u32 = 0xffff_fff6;
 pub const L_INCLUDE_LEVEL: u32 = 0xffff_fff5;
+pub const L_COUNTER: u32 = 0xffff_fff4;
 /// A test the configuration answers, function-like in text.
-pub const L_FEATURE: u32 = 0xffff_fff4;
-pub const L_IDENT: u32 = 0xffff_fff3;
+pub const L_FEATURE: u32 = 0xffff_fff3;
+pub const L_IDENT: u32 = 0xffff_fff2;
 
 /// A built-in's lookup value, by its name.
 fn builtin_value(key: u64) -> u32 {
-    let named: [(&[u8], u32); 11] = [
+    let named: [(&[u8], u32); 12] = [
         (b"__LINE__", L_LINE),
         (b"__FILE__", L_FILE),
         (b"__DATE__", L_DATE),
@@ -366,6 +367,7 @@ fn builtin_value(key: u64) -> u32 {
         (b"__FILE_NAME__", L_FILE_NAME),
         (b"__BASE_FILE__", L_BASE_FILE),
         (b"__INCLUDE_LEVEL__", L_INCLUDE_LEVEL),
+        (b"__COUNTER__", L_COUNTER),
         (b"__has_include", L_IDENT),
         (b"__has_include_next", L_IDENT),
         (b"__has_embed", L_IDENT),
@@ -769,6 +771,8 @@ pub const X_RELEX: u32 = 1024;
 pub const X_SPLICE: u32 = 2048;
 /// A grid barrier's bound reached: the grid's groups were not resident together (decision 0460 §4).
 pub const X_BARRIER: u32 = 4096;
+/// `__COUNTER__` in a directive's line (its value would count text not expanded yet).
+pub const X_COUNTER: u32 = 8192;
 
 /// The expansion's rungs: rung `k`'s arena holds `2^(k+1)` tokens a top token.
 pub const EXP_RUNGS: u32 = 5;
@@ -826,6 +830,9 @@ pub struct Exp {
     slots: Buf,
     qctl: Buf,
     pub ctl: Buf,
+    // `__COUNTER__`'s uses and their room.
+    cnt: Buf,
+    cnt_cap: u32,
     pub out: Buf,
 }
 
@@ -866,6 +873,7 @@ impl Exp {
             at += lit.len();
         }
         // The control words: the scratch's tops past the literals.
+        let cnt_cap = 1024usize << rung;
         let mut ctl = [0u32; 8];
         ctl[4] = lit_bytes as u32;
         ctl[5] = nf as u32;
@@ -907,6 +915,8 @@ impl Exp {
             slots: zeroed(q)?,
             qctl: zeroed(4)?,
             ctl: arena.from_slice(&ctl)?,
+            cnt: zeroed(2 + 2 * cnt_cap)?,
+            cnt_cap: cnt_cap as u32,
             // The refs, then each one's space flag.
             out: zeroed(2 * out)?,
         })
@@ -926,6 +936,7 @@ impl Exp {
         l.at("XPOS", &self.xpos).at("XCOVER", &self.xcover).at("V", &self.v).at("OBASE", &self.obase).at("VTOTAL", &self.vscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("ARGS", &self.args).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.word("LIST_CAP", self.list_cap).word("OUT_CAP", self.out_cap).word("Q_CAP", self.q_cap);
+        l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap);
     }
 
     /// The scratch tokens' bytes and (start, end, kind) (after the command buffer).

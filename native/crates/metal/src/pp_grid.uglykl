@@ -56,7 +56,8 @@
               AT(const uint32_t, VALUES), T##_TOP, T##_INST, AT(const PpNode, P1_NODES), AT(const uint32_t, P1_UFILE), AT(const uint32_t, DEPTH), AT(PxList, LISTS),                                      \
               AT(uint32_t, TOKENS), AT(PxArg, ARGS), AT(uint32_t, OUT), AT(uint32_t, SLOTS), AT(uint32_t, QCTL),                  \
               AT(uint32_t, CTL), AT(const uint32_t, WORDS), AT(PxScratch, SCRATCH), CLOSES, AT(const uint32_t, CLOSE_TOTAL), AT(const uint32_t, FLOORS), W(N_UNITS), \
-              AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), lane __UKL_ARGS)
+              AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), \
+              AT(uint32_t, CNT), W(CNT_CAP), lane __UKL_ARGS)
 
 // The top level's rollback, its sizes and places, over a top of `nt_` tokens (`px_expand`'s
 // stage 0, after the queue's first phase).
@@ -443,7 +444,8 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     BARRIER();
     SCAN(nt, OFLAG, OID, OTOTAL);
     EACH(s, nt) px_top_lists(AT(const uint32_t, LOOKUPS), AT(const uint32_t, CEND), AT(const uint32_t, STATE), AT(const uint32_t, OID), AT(const uint32_t, GTOTAL), AT(const uint32_t, SSLOT), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(PxList, LISTS), AT(uint32_t, SLOTS), AT(uint32_t, CTL), AT(const PpDef, DEFS), W(LIST_CAP), s);
-    ONE(i) px_seed(AT(const uint32_t, OTOTAL), AT(uint32_t, QCTL), AT(uint32_t, CTL), W(LIST_CAP), i);
+    // The text's `__COUNTER__`s are counted (a directive's line refuses them).
+    ONE(i) { px_seed(AT(const uint32_t, OTOTAL), AT(uint32_t, QCTL), AT(uint32_t, CTL), W(LIST_CAP), i); AT(uint32_t, CNT)[0] = 1u; }
 }
 
 #define PX_WORK() PX_WORK_ON(TEXT, closes)
@@ -472,7 +474,16 @@ DEFINE_KERNEL2(pp, px_expand, PP_GRID_ROWS)
     // --- The queue's second phase: the places, to the output -----------------------------------
     PX_WORK();
     BARRIER();
-    if (g.group == 0u && g.lid == 0u && ukl_atomic_load(&qctl[2]) == 0u) ukl_atomic_store(stage, 2u);
+    if (ukl_atomic_load(&qctl[2]) != 0u) return;
+    // --- `__COUNTER__`'s uses ranked, once every list is placed -------------------------------
+    if (ukl_min(AT(const uint32_t, CNT)[1], W(CNT_CAP)) != 0u) {
+        Ux u;
+        u.nodes = AT(const PpNode, P1_NODES); u.tinst = AT(const uint32_t, SINST); u.gat = AT(const uint32_t, GAT); u.n_gaps = N(N_GAPS);
+        EACH(i, ukl_min(AT(const uint32_t, CNT)[1], W(CNT_CAP))) px_counter_rank(u, AT(const PxList, LISTS), AT(const uint32_t, CNT), W(CNT_CAP), AT(PxScratch, SCRATCH),
+                                                                                (UKL_GLOBAL uint8_t*)(AT(PxScratch, SCRATCH) + AT(const uint32_t, WORDS)[9]), AT(uint32_t, CTL), i);
+        BARRIER();
+    }
+    if (g.group == 0u && g.lid == 0u) ukl_atomic_store(stage, 2u);
 }
 
 // The refusals, one thread: the queue's (work left, or it overflowed), the output's room, and a

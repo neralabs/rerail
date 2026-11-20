@@ -388,12 +388,13 @@ typedef struct PpNode { uint32_t file, parent, pdir, depth, unit; } PpNode;
 #define L_FILE_NAME (0xfffffff7u)
 #define L_BASE_FILE (0xfffffff6u)
 #define L_INCLUDE_LEVEL (0xfffffff5u)
+#define L_COUNTER (0xfffffff4u)
 // A test the configuration answers (`__has_feature`, `__is_identifier`…): function-like.
-#define L_FEATURE (0xfffffff4u)
-#define L_IDENT (0xfffffff3u)
-#define L_DEFS (0xfffffff3u)
+#define L_FEATURE (0xfffffff3u)
+#define L_IDENT (0xfffffff2u)
+#define L_DEFS (0xfffffff2u)
 // A built-in that expands to one token, a use of it an object-like call.
-UKL_INLINE bool px_one_token(uint32_t m) { return m >= L_INCLUDE_LEVEL && m <= L_FILE; }
+UKL_INLINE bool px_one_token(uint32_t m) { return m >= L_COUNTER && m <= L_FILE; }
 // A name a call is made of: a definition's, or a configuration's test.
 UKL_INLINE bool px_callable(uint32_t m) { return m < L_DEFS || m == L_FEATURE; }
 // A callable name whose call takes arguments.
@@ -643,6 +644,8 @@ UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint
 #define X_RELEX (1024u)
 #define X_SPLICE (2048u)
 #define X_BARRIER (4096u)
+// `__COUNTER__` in a directive's line: its value would count text not expanded yet.
+#define X_COUNTER (8192u)
 // A token's flags: painted (never a candidate again); space before it (or a line's start).
 #define T_NOEXP (1u)
 #define T_SPACE (2u)
@@ -690,8 +693,12 @@ typedef struct PxList {
     uint32_t at, end, exit, xname, xcall;
     uint32_t size, base, kind, call, dest, args, nargs;
     uint32_t apending, fpending;
-    uint32_t pad;
+    // An argument's list: its parameter's first plain use in the body (the serial pass expands
+    // it there, `pre`), the order of its expansion among the call's. Any other list:
+    // `ORDER_PLACED` once it is placed (it is live: no claim rolled it back).
+    uint32_t order;
 } PxList;
+#define ORDER_PLACED (0u)
 // A call's argument: its raw range in the call's parent (`lo..hi`) and its list (0 none, 1 being
 // made, else the list + 2).
 typedef struct PxArg { uint32_t lo, hi; uint32_t list; } PxArg;
@@ -709,6 +716,7 @@ UKL_INLINE void px_init(UKL_GLOBAL PxList* l, uint32_t parent, uint32_t def, uin
     l->size = 0u; l->base = 0u; l->kind = kind; l->call = 0u; l->dest = 0u; l->args = 0u; l->nargs = 0u;
     ukl_atomic_store(&l->apending, 1u);
     ukl_atomic_store(&l->fpending, 0u);
+    l->order = 0xffffffffu;
 }
 
 // Reading a node of the unit: its file's tape and the node in it.
@@ -944,6 +952,9 @@ typedef struct Ar {
     UKL_GLOBAL PxArg* args; UKL_GLOBAL uint32_t* out; UKL_GLOBAL uint32_t* ctl; UklWorkQueue q;
     uint32_t tok_cap, list_cap, arg_cap, out_cap;
     UKL_GLOBAL uint8_t* sbytes; UKL_GLOBAL PxScratch* stoks; uint32_t sb_cap, st_cap;
+    // `__COUNTER__`'s uses (`CNT`: whether they are counted, their count, each one's list and
+    // scratch token), and their room.
+    UKL_GLOBAL uint32_t* cnt; uint32_t cnt_cap;
 } Ar;
 
 UKL_INLINE void px_push(Ar a, uint32_t item) { if (!ukl_wq_push(a.q, item)) px_refuse(a.ctl, X_QUEUE); }
@@ -1551,6 +1562,11 @@ UKL_INLINE void px_call(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
             ukl_sg_barrier();
             if (lane == 0u) px_push(a, id | IT_SCAN);
         }
+        // Each argument's first plain use: the order the serial pass expands them in.
+        if (q != NO_PARAM && q < np) {
+            uint32_t id = ukl_atomic_load(&a.args[ab + q].list);
+            if (id >= 2u) ukl_atomic_min(&a.lists[id - 2u].order, i);
+        }
     }
     if (lane == 0u) {
         px_fence();
@@ -1750,6 +1766,95 @@ UKL_INLINE uint32_t px_line(Ux u, uint32_t g) {
 }
 
 
+// `__COUNTER__`'s use, list `l`: a number token with room for its value's digits (written when
+// the uses are ranked, `px_counter_rank`), and its row in the uses' table; refused in a
+// directive's line.
+#define CNT_DIGITS (10u)
+UKL_INLINE uint32_t px_counter_use(Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
+    uint32_t id = 0u;
+    if (lane == 0u) {
+        if (ukl_atomic_load(&a.cnt[0]) == 0u) {
+            px_refuse(a.ctl, X_COUNTER);
+        } else {
+            uint32_t base = ukl_atomic_add(&a.ctl[4], CNT_DIGITS);
+            id = ukl_atomic_add(&a.ctl[5], 1u);
+            uint32_t k = ukl_atomic_add(&a.cnt[1], 1u);
+            if (base + CNT_DIGITS > a.sb_cap || id >= a.st_cap || k >= a.cnt_cap) {
+                px_refuse(a.ctl, X_ROOM);
+            } else {
+                a.sbytes[base] = ((uint8_t)('0'));
+                a.stoks[id].start = base; a.stoks[id].end = base + 1u; a.stoks[id].kind = K_NUMBER;
+                a.cnt[2u + 2u * k] = l;
+                a.cnt[3u + 2u * k] = id;
+            }
+        }
+    }
+    return SCRATCH | ukl_sg_broadcast(id, 0 __UKL_ARGS);
+}
+
+// A list's place in the serial reading, from its top call down (`MAX_CHAIN` levels at most):
+// each level's list and its order in the one above: an argument's by its expansion's order,
+// before every list the call's rescan makes (their order their place in it); a top call's its
+// top token. Root first; 0 where a list on it was rolled back (the serial pass reads it raw:
+// it is never placed), `CHAIN_PAST` where it is past the bound.
+#define CHAIN_PAST (0xffffffffu)
+UKL_INLINE uint32_t px_chain(UKL_GLOBAL const PxList* lists, uint32_t l, UKL_PRIVATE uint32_t* at, UKL_PRIVATE uint32_t* ord) {
+    uint32_t n = 0u, k = l;
+    bool root = false;
+    for (; n < MAX_CHAIN && !root; n++) {
+        UKL_GLOBAL const PxList* K = &lists[k];
+        at[n] = k;
+        if (K->kind == LK_ARG) {
+            ord[n] = K->order;
+            k = K->call;
+            continue;
+        }
+        if (K->order != ORDER_PLACED) return 0u;
+        if ((K->parent & TOP) != 0u) {
+            ord[n] = K->lo;
+            root = true;
+        } else {
+            ord[n] = 0x80000000u | K->lo;
+            k = K->parent;
+        }
+    }
+    if (!root) return CHAIN_PAST;
+    for (uint32_t i = 0u; i < n / 2u; i++) {
+        uint32_t t = at[i]; at[i] = at[n - 1u - i]; at[n - 1u - i] = t;
+        t = ord[i]; ord[i] = ord[n - 1u - i]; ord[n - 1u - i] = t;
+    }
+    return n;
+}
+
+// `__COUNTER__`'s use `i`: its value, the uses of its unit before it in the serial reading
+// (each pair's order where their chains part), its digits written.
+UKL_INLINE void px_counter_rank(Ux u, UKL_GLOBAL const PxList* lists, UKL_GLOBAL const uint32_t* cnt, uint32_t cnt_cap, UKL_GLOBAL PxScratch* stoks, UKL_GLOBAL uint8_t* sbytes,
+                                UKL_GLOBAL uint32_t* ctl, uint32_t i) {
+    uint32_t n = ukl_min(cnt[1], cnt_cap);
+    if (i >= n) return;
+    uint32_t ai[MAX_CHAIN], oi[MAX_CHAIN], aj[MAX_CHAIN], oj[MAX_CHAIN];
+    uint32_t ni = px_chain(lists, cnt[2u + 2u * i], ai, oi);
+    if (ni == CHAIN_PAST) { px_refuse(ctl, X_DEPTH); return; }
+    if (ni == 0u) return;
+    uint32_t unit = u.nodes[u.tinst[pb_item_of(u.gat, u.n_gaps, lists[ai[0]].lo)]].unit;
+    uint32_t rank = 0u;
+    for (uint32_t j = 0u; j < n; j++) {
+        if (j == i) continue;
+        uint32_t nj = px_chain(lists, cnt[2u + 2u * j], aj, oj);
+        if (nj == 0u || nj == CHAIN_PAST) continue;
+        if (u.nodes[u.tinst[pb_item_of(u.gat, u.n_gaps, lists[aj[0]].lo)]].unit != unit) continue;
+        uint32_t k = 0u;
+        while (k + 1u < ni && k + 1u < nj && ai[k] == aj[k]) k++;
+        if (ai[k] != aj[k] && oj[k] < oi[k]) rank++;
+    }
+    PxScratch t = stoks[cnt[3u + 2u * i]];
+    uint32_t nd = 1u;
+    for (uint32_t v = rank; v >= 10u; v /= 10u) nd++;
+    uint32_t v = rank;
+    for (uint32_t q = 0u; q < nd; q++) { sbytes[t.start + nd - 1u - q] = ((uint8_t)('0' + v % 10u)); v /= 10u; }
+    stoks[cnt[3u + 2u * i]].end = t.start + nd;
+}
+
 // A built-in's use, list `l` (an object-like call), by the 32 lanes: `__LINE__` the line of the
 // outermost call's end (the serial pass's: the token's origin climbed, each expansion's end
 // token, to one read from a file), as a number; `__FILE__` and `__FILE_NAME__` its stretch's
@@ -1769,7 +1874,8 @@ UKL_INLINE void px_builtin(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
         uint32_t s = a.lists[k].lo;
         uint32_t f = file_of(u.bases, u.n_files, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, s));
         PpNode nd = u.nodes[u.tinst[pb_item_of(u.gat, u.n_gaps, s)]];
-        if (L->def == L_FILE) ref = SCRATCH | f;
+        if (L->def == L_COUNTER) ref = px_counter_use(a, l, lane __UKL_ARGS);
+        else if (L->def == L_FILE) ref = SCRATCH | f;
         else if (L->def == L_FILE_NAME) ref = SCRATCH | (u.n_files + 3u + f);
         // A unit's files: its predefines (`<built-in>`), then its main file.
         else if (L->def == L_BASE_FILE) ref = SCRATCH | (u.unit_file[nd.unit] + 1u);
@@ -1995,6 +2101,7 @@ UKL_INLINE void px_subst(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
 // the arena; a flatten's items counted down, the last done telling the call.
 UKL_INLINE void px_place(Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
     uint32_t dest = a.lists[l].dest;
+    if (lane == 0u && a.lists[l].kind != LK_ARG) a.lists[l].order = ORDER_PLACED;
     px_walk(a, l, lane, true __UKL_ARGS);
     if (dest != 0u && lane == 0u) {
         px_fence();
@@ -2009,7 +2116,8 @@ UKL_INLINE void px_place(Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
 
 // The queue's workers: a SIMD group each, lane 0 taking an item and the 32 lanes doing it.
 UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* tinst, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* unit_file, UKL_GLOBAL const uint32_t* top_depth, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* cols, UKL_GLOBAL PxArg* args, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* words, UKL_GLOBAL PxScratch* scratch, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL const uint32_t* floors, uint32_t n_units,
-                          UKL_GLOBAL const uint64_t* op_keys, UKL_GLOBAL const uint32_t* op_kinds, uint32_t n_ops, UKL_GLOBAL const uint64_t* feat_keys, UKL_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, uint32_t lane __UKL_PARAMS) {
+                          UKL_GLOBAL const uint64_t* op_keys, UKL_GLOBAL const uint32_t* op_kinds, uint32_t n_ops, UKL_GLOBAL const uint64_t* feat_keys, UKL_GLOBAL const uint64_t* feat_vals, uint32_t n_feat,
+                          UKL_GLOBAL uint32_t* cnt, uint32_t cnt_cap, uint32_t lane __UKL_PARAMS) {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
     // bytes' and tokens' capacities.
     Ux u;
@@ -2033,6 +2141,7 @@ UKL_INLINE void px_worker(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8
     a.q.slots = slots; a.q.control = qctl; a.q.capacity = words[5];
     a.tok_cap = words[1]; a.list_cap = words[2]; a.arg_cap = words[3]; a.out_cap = words[4];
     a.sbytes = sbytes; a.stoks = stoks; a.sb_cap = words[8]; a.st_cap = words[9];
+    a.cnt = cnt; a.cnt_cap = cnt_cap;
     uint32_t polls = 0u;
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
         uint32_t item = 0u, got = 0u, stop = 0u;
