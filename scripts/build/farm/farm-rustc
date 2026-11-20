@@ -1,0 +1,6 @@
+#!/usr/bin/python3
+"""The compiler the farm's sccache runs on a miss: rustc, here or on another Mac (README.md)."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm
+farm.farm_rustc(sys.argv[0], sys.argv[1:])

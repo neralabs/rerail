@@ -27,6 +27,7 @@ import {
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { claudeCodeReportedPreimage } from "../engine/code-rule/tool-result/reported-preimage.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { GitIgnoreMatchers } from "../engine/native/git-ignore-matchers.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
@@ -165,6 +166,37 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
   }
 }
 
+/**
+ * The edit checks a boundary stopped waiting for, until they drain, by what it waited for: `all`, every edit (a turn
+ * end, a yield), or `steering`, the edits that may steer (a tool result).
+ */
+type OverdueEditChecks = { all?: Promise<void>; steering?: Promise<void> };
+
+/**
+ * Whether a wait for the edit checks `only` names would sit behind checks an earlier boundary stopped waiting for. A
+ * wait for every edit waits for those too. A `steering` wait does only behind an overdue `steering` wait: the evaluator
+ * checks an edit that may steer before a walk's `log` edits queued ahead of it, or with them in one engine call, so a
+ * `log` backlog an overdue wait for every edit stopped on holds it back no more than it held the earlier one. Where a
+ * `steering` wait waits for those edits too, an overdue wait for every edit holds it back as well (`overdueKinds`).
+ */
+function waitsBehind(overdue: OverdueEditChecks, only: "steering" | undefined): boolean {
+  return overdue.steering !== undefined || (only === undefined && overdue.all !== undefined);
+}
+
+/**
+ * The kinds of wait an overdue wait for `only` holds back: its own, and a `steering` one behind a wait for every edit
+ * where a `steering` wait waits for a walk's `log` edits too (`CodeRuleBridge.steeringWaitsForLog`).
+ */
+function overdueKinds(only: "steering" | undefined, steeringWaitsForLog: boolean): ReadonlyArray<keyof OverdueEditChecks> {
+  if (only !== undefined) return [only];
+  return steeringWaitsForLog ? ["all", "steering"] : ["all"];
+}
+
+/** Whether a boundary stopped waiting for edit checks that still drain. */
+function anyOverdue(overdue: OverdueEditChecks): boolean {
+  return overdue.all !== undefined || overdue.steering !== undefined;
+}
+
 /** The strategy a session steers with: the saved one only while the experimental switch is on, else `message`. */
 function effectiveSteerStrategy(settings: Pick<CheckoutAuditSettings, "steerStrategy">): SteerStrategy {
   return steerStrategiesEnabled() ? settings.steerStrategy : "message";
@@ -296,7 +328,9 @@ function restoredOwed(ledger: readonly LedgerEntry[]): OwedState {
   const owed = ledger.findLast((entry): entry is OwedEntry => entry.type === "owed");
   if (owed === undefined) return { steers: [], findings: [], recorded: 0 };
   return {
-    steers: owed.steers.map(steer => ({ delivery: steer.delivery, revision: 0, scope: [...steer.scope], digests: { ...steer.digests } })),
+    steers: owed.steers.map(steer => ({
+      delivery: steer.delivery, revision: 0, scope: [...steer.scope], digests: { ...steer.digests }, ...(steer.recorded === true ? { recorded: true as const } : {}),
+    })),
     findings: owed.findings.map(finding => ({ ...restoredFinding(finding), revision: 0 })),
     recorded: owed.steers.length + owed.findings.length,
   };
@@ -564,6 +598,8 @@ interface PendingSteer {
   settled?: (delivered: boolean) => void;
   /** A Merge Assist note: the conflict store keeps it until a delivery takes it, so closing the session loses nothing. */
   mergeAssistNote?: true;
+  /** Its delivery is in the ledger already: an answer no client heard took it (`returnUndelivered`). */
+  recorded?: true;
 }
 
 /**
@@ -593,6 +629,14 @@ interface MissedFinding {
  * saw it (`#withDigests`).
  */
 type Kept<T extends PendingSteer | MissedFinding> = T & { digests: FileDigests };
+
+/**
+ * The steer an answer's delivery came from, and its session: one of the session's pending steers, or one the session
+ * owed as it opened (`owed`), which goes back there if no client heard the answer (`returnUndelivered`).
+ */
+type HandedOut =
+  | { state: RuntimeSessionState; pending: PendingSteer; owed?: undefined }
+  | { state: RuntimeSessionState; pending: Kept<PendingSteer>; owed: true };
 
 /** What a closing session owes its agent: what it took back from its ledger (`kept`), and what this opening found. */
 interface Owing {
@@ -665,6 +709,12 @@ interface RuntimeSessionState {
    */
   waitsForRules: boolean;
   ownerClaim: PolicyOwnerClaim | undefined;
+  /**
+   * Set while this runtime's claim on the session, written again when a write put the session's row back, has not
+   * landed (`#claimAgain`): the session's next event writes it. Kept here, so an event of a session whose claim is in
+   * place reads nothing to find out.
+   */
+  claimOwed?: true;
   /** The database's `data_version` this session's settings and audit queue were last read at; undefined to read on the next tick. */
   controlsVersion: number | undefined;
   auditRequestWork: Promise<void> | undefined;
@@ -681,8 +731,8 @@ interface RuntimeSessionState {
    * (a permission prompt, a long command). The turn's end settles them all: a call the user refused gets no result.
    */
   callsAwaitingResult: Set<string>;
-  /** The edit checks a boundary stopped waiting for, until they drain; no later boundary waits for them again. */
-  overdueEditChecks: Promise<void> | undefined;
+  /** The edit checks a boundary stopped waiting for, until they drain, by what it waited for (`OverdueEditChecks`). */
+  overdueEditChecks: OverdueEditChecks;
   /**
    * The boundaries of this session waiting for its edit checks right now: a generated-edit steer that arrives while
    * one waits rides that boundary's answer, and one that arrives while none does is held for the yield digest.
@@ -1038,6 +1088,11 @@ export interface RerailRuntimeOptions {
    * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
    */
   worktreeWalks?: RepositoryWorktreeWalks;
+  /**
+   * Git's ignore rules of each checkout, one matcher for every session (`GitIgnoreMatchers`): the engine service passes
+   * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
+   */
+  gitIgnoreMatchers?: GitIgnoreMatchers;
   /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
   timingLog?: (line: string) => void;
   /** The sessions an engine service suspended (`closeIdleSession`), which this runtime takes back as it opens one. */
@@ -1072,6 +1127,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #sessionStore: SqliteSessionStore;
   readonly #audits: SqliteAuditStore;
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
+  /** The steer each answer's delivery came from, and its session, until the answer reaches its asker or comes back (`returnUndelivered`). */
+  readonly #handedOut = new WeakMap<AdapterDelivery, HandedOut>();
   /** Evaluator opens still running, each with its own release: disposal waits for them before the stores close under them. */
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
@@ -1098,6 +1155,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
   readonly #worktreeWalks: RepositoryWorktreeWalks;
+  readonly #gitIgnoreMatchers: GitIgnoreMatchers;
   readonly #discoveryWaitMs: number | undefined;
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
@@ -1125,6 +1183,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#discoveryWaitMs = options.discoveryWaitMs;
     this.#worktreeWalks = options.worktreeWalks ?? new RepositoryWorktreeWalks();
+    this.#gitIgnoreMatchers = options.gitIgnoreMatchers ?? new GitIgnoreMatchers();
     this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
@@ -1134,6 +1193,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       startingCheckout: startingCheckout(this.#owners, auditorOptions.workspaceRoot).checkoutRoot,
       owners: this.#owners,
       catalogs: this.#catalogs,
+      gitIgnoreMatchers: this.#gitIgnoreMatchers,
     }));
     if (options.embedder !== undefined) this.#embedder = options.embedder;
     else if (options.modelPath !== undefined) this.#embedder = new NativeSemanticEmbedder(options.modelPath);
@@ -1148,7 +1208,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     try {
       catalogs = new CheckoutCatalogs(databasePath);
       startWatch = options.startGate === true ? new RepositoryStartWatch(databasePath, workspaceRoot) : undefined;
-      sessionStore = new SqliteSessionStore(databasePath);
+      sessionStore = new SqliteSessionStore(databasePath, { onRowPutBack: sessionId => this.#claimAgain(sessionId) });
       audits = new SqliteAuditStore(databasePath);
       controls = new SqliteAuditControlStore(databasePath);
       this.#catalogs = catalogs;
@@ -1255,6 +1315,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const { active, descriptor } = this.#resolveEventSession(event);
     if (active === undefined) await this.#router(descriptor.host).start(descriptor);
     const state = this.#session(event.sessionId);
+    this.#writeOwedClaim(state);
     this.#scheduleAuditRequests(state.descriptor.sessionId);
     state.ruleSync?.refresh();
     // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
@@ -1336,7 +1397,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         await this.#waitingForEditChecks(state, false, async () => {
           await this.#finishCall(state, bridge, event);
           await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
+          // The call's own edit may steer; a walk's `log` edits queued around it steer no one, so the result waits for none.
+          await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS, "steering");
         });
       } finally {
         if (window !== undefined) {
@@ -1383,18 +1445,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * A boundary's wait for the session's edit checks, capped at `capMs`. Checks run in order, so while a backlog an
-   * earlier boundary stopped waiting for is still draining, a later edit's check is behind it too: the boundary answers
-   * at once rather than spend the cap again, and those steers wait for the yield digest.
+   * A boundary's wait for the session's edit checks, capped at `capMs`; with `steering`, for those that may steer only.
+   * While checks an earlier boundary stopped waiting for still drain, a wait that would sit behind them answers at once
+   * rather than spend the cap again (`waitsBehind`), and those steers wait for the yield digest.
    */
-  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number): Promise<void> {
-    if (bridge === undefined || state.overdueEditChecks !== undefined) return;
-    const settled = bridge.settleGeneratedEdits();
+  async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number, only?: "steering"): Promise<void> {
+    if (bridge === undefined || waitsBehind(state.overdueEditChecks, only)) return;
+    const settled = bridge.settleGeneratedEdits(only);
     if (await settledWithin(settled, capMs)) return;
+    const kinds = overdueKinds(only, bridge.steeringWaitsForLog());
     const overdue: Promise<void> = settled.catch(() => undefined).finally(() => {
-      if (state.overdueEditChecks === overdue) state.overdueEditChecks = undefined;
+      for (const kind of kinds) if (state.overdueEditChecks[kind] === overdue) delete state.overdueEditChecks[kind];
     });
-    state.overdueEditChecks = overdue;
+    for (const kind of kinds) state.overdueEditChecks[kind] = overdue;
   }
 
   /** A turn end that waits long holds the session's request lane: the daemon log says how long and on what; fast ones say nothing. */
@@ -1406,7 +1469,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
-   * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`).
+   * is the session's own, so it opens only its window, which names the files its tool names (`CodeRuleBridge.unwatchedCall`).
    */
   async #beginCall(
     state: RuntimeSessionState,
@@ -1414,7 +1477,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     event: Extract<AdapterEvent, { kind: "call" }>,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
     if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
-    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName, event.input);
     return undefined;
   }
 
@@ -1573,9 +1636,59 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // Delivery removes entries from the list, so iterate a snapshot.
     for (const pending of state.pendingSteers.slice()) {
       const delivery = await this.#deliverSteer(state, pending, false);
-      if (delivery !== undefined) deliveries.push(delivery);
+      if (delivery === undefined) continue;
+      deliveries.push(delivery);
+      this.#handedOut.set(delivery, { state, pending });
     }
     return deliveries;
+  }
+
+  /**
+   * Gives the session back the steers `deliveries` took when their answer never reached its asker: a hook past its own
+   * time limit closes its connection while the daemon still runs its event, and the answer goes nowhere. Each goes back
+   * where the answer took it from (`#giveBack`), so the session's next answer carries it; that answer drops one a newer
+   * revision has overtaken, as it drops any (`#performSteer`, `#stillOwed`). The ledger already holds its delivery, so
+   * it is not recorded again, nor after a restart: a close that keeps it owed says so (`recorded`); and a Merge Assist
+   * note was marked given as the answer took it, so it is not marked again. A session closed or opened again since keeps
+   * none: its close counted them as delivered.
+   * Never fails: a failure is reported, and the steers stay as the answer left them.
+   */
+  returnUndelivered(sessionId: string, deliveries: readonly AdapterDelivery[]): Promise<void> {
+    return this.#ingestLanes.run(sessionId, async () => {
+      try {
+        const state = this.#sessions.get(sessionId);
+        const returned = deliveries.flatMap(delivery => this.#takeHandedOut(delivery, state));
+        if (state === undefined || returned.length === 0) return;
+        for (const { pending } of returned) {
+          pending.recorded = true;
+          // It settled as the answer took it.
+          delete pending.settled;
+        }
+        this.#giveBack(state, returned);
+      } catch (error) {
+        process.stderr.write(`rerail: could not keep the steers of an answer session ${sessionId} never got: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    });
+  }
+
+  /** The steer `delivery` came from when an answer of `state`'s took it, no longer counted as handed out; else none. */
+  #takeHandedOut(delivery: AdapterDelivery, state: RuntimeSessionState | undefined): HandedOut[] {
+    const handed = this.#handedOut.get(delivery);
+    this.#handedOut.delete(delivery);
+    return handed === undefined || handed.state !== state ? [] : [handed];
+  }
+
+  /**
+   * Puts each steer of `returned` back in front of the list it came from, in its order: one the session owed as it
+   * opened with what it still owes (`#takeOwed`), which the session's next answer takes whether or not its evaluator has
+   * opened, so an evaluator still opening does not hold it and one that fails to open does not drop it; any other with
+   * the session's pending steers.
+   */
+  #giveBack(state: RuntimeSessionState, returned: readonly HandedOut[]): void {
+    const owed = returned.flatMap(handed => (handed.owed === true ? [handed.pending] : []));
+    const pending = returned.flatMap(handed => (handed.owed === true ? [] : [handed.pending]));
+    state.owed.steers.unshift(...owed);
+    state.pendingSteers.unshift(...pending);
   }
 
   /**
@@ -1595,7 +1708,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     state.missedFindings.unshift(...heldFindings);
     await this.#recordOwed(state, this.#owedEntry(state, [], state.owed.findings));
     const deliveries: AdapterDelivery[] = [];
-    for (const steer of heldSteers) deliveries.push(await this.#recordedDelivery(steer.delivery));
+    for (const steer of heldSteers) {
+      // One an answer no client heard took before the session closed is in the ledger already.
+      const delivery = steer.recorded === true ? steer.delivery : await this.#recordedDelivery(steer.delivery);
+      deliveries.push(delivery);
+      this.#handedOut.set(delivery, { state, pending: steer, owed: true });
+    }
     return deliveries;
   }
 
@@ -1651,7 +1769,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const sensitive = findings.length === 0 ? () => false : checkoutPathBoundary(state.checkout.cwd).sensitive;
     return {
       type: "owed",
-      steers: steers.map((steer): OwedSteer => ({ delivery: steer.delivery, scope: [...steer.scope], digests: { ...steer.digests } })),
+      steers: steers.map((steer): OwedSteer => ({
+        delivery: steer.delivery, scope: [...steer.scope], digests: { ...steer.digests }, ...(steer.recorded === true ? { recorded: true } : {}),
+      })),
       findings: findings.map(finding => owedFinding(finding.violation, finding.sourceOf(finding.violation.ruleId), finding, sensitive)),
     };
   }
@@ -2109,9 +2229,45 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const kept = this.#suspendedSessions?.get(sessionId)?.ownerClaim;
     const claim = kept !== undefined && this.#controls.holdsOwner(sessionId, kept)
       ? kept
-      : this.#controls.registerOwner(sessionId, this.#deliverBackground === undefined ? "next-event" : "background", this.#ownerLockId);
+      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId);
     this.#suspendedSessions?.take(sessionId);
     return claim;
+  }
+
+  /** How this runtime delivers the steers of the sessions it claims: in the background when it can, else at the next event. */
+  #ownerDelivery(): "background" | "next-event" {
+    return this.#deliverBackground === undefined ? "next-event" : "background";
+  }
+
+  /**
+   * Writes this runtime's claim on a session it holds again once a write found the session's row gone and put it back
+   * (`SqliteSessionStore`'s `onRowPutBack`): another program that removes a running session's rows removes its claim
+   * with them, and a scan asked for in the session needs a live owner. A daemon started again would claim the session
+   * as it opened it; this one keeps the claim it made then. A claim that fails to land is owed (`claimOwed`), and the
+   * session's next event writes it (`#writeOwedClaim`): once the row is back, no write puts it back again.
+   */
+  #claimAgain(sessionId: string): void {
+    const state = this.#sessions.get(sessionId);
+    if (state === undefined || state.closed || state.ownerClaim === undefined) return;
+    try {
+      this.#controls.claimAgain(sessionId, this.#ownerDelivery(), state.ownerClaim);
+      delete state.claimOwed;
+    } catch (error) {
+      // The write that put the row back saved its event first: the claim's failure is said here, as the control scan's
+      // are, and never reaches that write's caller, which would report a failed write for an event Rerail holds.
+      state.claimOwed = true;
+      process.stderr.write(`rerail: could not write the claim on session ${sessionId} again: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+
+  /**
+   * Writes the claim a failed `#claimAgain` left owed, at the session's next event and before that event is recorded:
+   * a claim write that failed while an event put the row back is tried again at the following event, not at once
+   * after its failure, which can have waited out the database's busy timeout already. A session whose claim is in
+   * place reads and writes nothing here.
+   */
+  #writeOwedClaim(state: RuntimeSessionState): void {
+    if (state.claimOwed === true) this.#claimAgain(state.descriptor.sessionId);
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
@@ -2176,7 +2332,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         id: call.toolCallId, toolName: call.toolName, ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
       })),
       callsAwaitingResult: new Set(),
-      overdueEditChecks: undefined,
+      overdueEditChecks: {},
       editCheckWaits: 0,
       yieldWaits: 0,
       missedFindings: [],
@@ -2384,7 +2540,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * end in a host that does not wait: a session left in memory checks it at once.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
-    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined
+    return state.callsAwaitingResult.size > 0 || anyOverdue(state.overdueEditChecks)
       || ownSteers(state.pendingSteers).length > 0 || state.missedFindings.length > 0 || owedNow(state) > 0 || this.#owesScan(state);
   }
 
@@ -2590,7 +2746,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #scheduleAuditRequests(sessionId: string, version?: number): void {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
-    const settings = this.#controls.hasUserSettings(sessionId) ? this.#controls.getSettings(sessionId).settings : this.#auditSettings;
+    // Read by the folder as the session spelt it and the repository it was recorded in, the facts its row holds, never
+    // through the row: another program can remove a running session's row (a database put back from a copy), and
+    // neither the control timer nor the session's events need it. The session's next recorded event puts the row back,
+    // and this runtime's claim on the session with it (`#claimAgain`).
+    const settings = this.#controls.getWorkspaceSettings(state.descriptor.cwd, this.#repositoryKey(state.checkout)) ?? this.#auditSettings;
     state.steerStrategy = effectiveSteerStrategy(settings);
     state.codeRuleBridge?.updateSettings(settings);
     if (state.auditRequestWork !== undefined) return;
@@ -2891,9 +3051,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  /** Whether the boundary that waited for this edit has already answered, so a steer now would reach the agent at some later step. */
+  /**
+   * Whether the boundary that waited for this edit has already answered, so a steer now would reach the agent at some
+   * later step: none waits, or the one that does skipped its wait behind an overdue `steering` wait (`waitsBehind`).
+   */
   #boundaryPassed(state: RuntimeSessionState): boolean {
-    return state.editCheckWaits === 0 || (state.overdueEditChecks !== undefined && state.yieldWaits === 0);
+    return state.editCheckWaits === 0 || (state.overdueEditChecks.steering !== undefined && state.yieldWaits === 0);
   }
 
   /**
@@ -2932,6 +3095,29 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if ((state.codeRuleSourceVersions.get(path) ?? 0) > pending.revision) state.undeliveredSources.add(path);
   }
 
+  /**
+   * Whether `pending` goes to the agent no more: a newer revision has overtaken it (its sources are marked, as
+   * `#recordUndelivered` says), or the runtime stops.
+   */
+  #withheld(state: RuntimeSessionState, pending: PendingSteer): boolean {
+    if (!this.#isCurrentSteer(state, pending)) {
+      this.#recordUndelivered(state, pending);
+      return true;
+    }
+    return this.#stopped();
+  }
+
+  /** Hands `delivery` to a native host at once (`deliverBackground`); false when that failed, which is reported. */
+  async #deliveredInBackground(delivery: AdapterDelivery): Promise<boolean> {
+    try {
+      await this.#deliverBackground!(delivery);
+      return true;
+    } catch (error) {
+      process.stderr.write(`rerail: policy delivery failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      return false;
+    }
+  }
+
   #deliverSteer(
     state: RuntimeSessionState,
     pending: PendingSteer,
@@ -2954,33 +3140,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     state.pendingSteers.splice(index, 1);
     let delivered = false;
     try {
-      if (!this.#isCurrentSteer(state, pending)) {
-        this.#recordUndelivered(state, pending);
-        return undefined;
-      }
-      if (this.#stopped()) return undefined;
+      if (this.#withheld(state, pending)) return undefined;
       pending.delivery = this.#currentConflictNotice(state, pending.delivery);
-      try {
-        await this.persistDelivery(pending.delivery);
-      } catch (error) {
-        process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
-      }
+      // One an answer no client heard took is in the ledger already (`returnUndelivered`).
+      if (pending.recorded !== true) await this.#recordedDelivery(pending.delivery);
       // A stop committed elsewhere while the ledger was written withholds the result.
-      if (!this.#isCurrentSteer(state, pending)) {
-        this.#recordUndelivered(state, pending);
-        return undefined;
-      }
-      if (this.#stopped()) return undefined;
+      if (this.#withheld(state, pending)) return undefined;
       if (!native) {
         delivered = true;
         return pending.delivery;
       }
-      try {
-        await this.#deliverBackground!(pending.delivery);
-        delivered = true;
-      } catch (error) {
-        process.stderr.write(`rerail: policy delivery failed: ${error instanceof Error ? error.message : String(error)}\n`);
-      }
+      delivered = await this.#deliveredInBackground(pending.delivery);
       return undefined;
     } finally {
       pending.settled?.(delivered);
@@ -3019,7 +3189,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const known = recordCheckout(this.#catalogs.database, cwd);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
-    this.#catalogs.refresh(start.checkoutRoot);
+    // The session's rule coverage reads the checkout's catalog before its evaluator opens. Other sessions' lanes in the
+    // checkout share that catalog and read it again only at their own use, so its rules are read here.
+    if (this.#catalogs.refresh(start.checkoutRoot) !== "unrecorded") this.#catalogs.catalog(start.checkoutRoot).refresh();
     return { root: start.checkoutRoot, folder: start.path, cwd };
   }
 

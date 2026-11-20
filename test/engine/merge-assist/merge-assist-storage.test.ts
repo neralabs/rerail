@@ -60,7 +60,7 @@ describe("Merge Assist storage", () => {
     git(main, "worktree", "add", "-q", "-b", "feature", checkout);
     recordCheckout(db, main);
     recordCheckout(db, checkout);
-    db.insert(mergeAssistState).values([`conflicts:${checkout}`, `scan:${checkout}`, `scanning:${checkout}`, `settings:${REPOSITORY}`]
+    db.insert(mergeAssistState).values([`conflicts:${checkout}`, `scan:${checkout}`, `scanning:${checkout}`, `unheard:${checkout}`, `settings:${REPOSITORY}`]
       .map(key => ({ key, valueJson: "[]", updatedAt: 1 }))).run();
     git(main, "worktree", "remove", checkout);
 

@@ -1,0 +1,6 @@
+workload w5, load average 143, data load 0.07 s CPU, 13088 documents
+top 2048 names by document frequency: postings length max 12558 p50 104 min 46; total entries 622717
+(a) sorted-list merge count, 2096128 pairs: 3.409 s CPU, Σ overlaps 29397646
+(b) bitmap AND+popcount (205 words per name): 0.125 s CPU (219.4 Gbit-op/s), same result
+exported names_bits.u64 (2048 rows × 205 words, documents as bits); expected Σ upper-triangle overlaps 29397646
+total CPU 3.63 s

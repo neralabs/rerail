@@ -4,7 +4,7 @@
 
 /// Where a Python file sits among modules, as Ruff names it (`checkers::ast::check_ast`).
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ModulePath {
+pub struct ModulePath {
     /// The names from the package root's parent as on disk: each directory's, then the file's
     /// stem (`json.d`, `__init__`). Ruff's `to_module_path` reads a directory by its stem.
     segments: Vec<Box<str>>,
@@ -26,14 +26,14 @@ fn file_stem(name: &str) -> &str {
 
 impl ModulePath {
     /// A dotted module path such as `pkg.sub.mod` (`pkg.__init__` for a package's `__init__.py`).
-    pub(crate) fn dotted(module: &str) -> Option<Self> {
+    pub fn dotted(module: &str) -> Option<Self> {
         Self::names(&module.split('.').collect::<Vec<_>>())
     }
 
     /// A module path as its names: each directory's from the package root down, as on disk
     /// (`json.d`), then the file's stem (`my.mod`, `__init__`). Names are non-empty path
     /// components, neither `.` nor `..`.
-    pub(crate) fn names(names: &[&str]) -> Option<Self> {
+    pub fn names(names: &[&str]) -> Option<Self> {
         let valid = |name: &&str| {
             !name.is_empty() && !name.contains(['/', '\\']) && !matches!(*name, "." | "..")
         };
@@ -46,7 +46,7 @@ impl ModulePath {
     }
 
     /// A file outside any package: Ruff names its module by the file's stem, dots and all.
-    pub(crate) fn stem(path: &str) -> Option<Self> {
+    pub fn stem(path: &str) -> Option<Self> {
         let stem = file_stem(path.rsplit(['/', '\\']).next()?);
         (!stem.is_empty()).then(|| Self {
             segments: vec![stem.into()],
@@ -55,17 +55,17 @@ impl ModulePath {
     }
 
     /// The names joined by `.` (`json.d.__init__`, `good.my.mod`, `pkg.sub.mod`).
-    pub(crate) fn text(&self) -> String {
+    pub fn text(&self) -> String {
         self.segments.join(".")
     }
 
     /// The containing package's names, without this module's final segment.
-    pub(crate) fn package_text(&self) -> String {
+    pub fn package_text(&self) -> String {
         self.segments[..self.segments.len().saturating_sub(1)].join(".")
     }
 
     /// The last name, the file's stem (`__init__` for a package's `__init__.py`).
-    pub(crate) fn last(&self) -> &str {
+    pub fn last(&self) -> &str {
         self.segments.last().map_or("", |segment| segment.as_ref())
     }
 
@@ -99,7 +99,7 @@ impl ModulePath {
     }
 
     /// The qualified name of a definition bound as `head`, followed by `tail`.
-    pub(crate) fn definition(&self, head: &str, tail: &[String]) -> Option<String> {
+    pub fn definition(&self, head: &str, tail: &[String]) -> Option<String> {
         let mut name = self.qualified(self.segments.len())?.join(".");
         for part in std::iter::once(head).chain(tail.iter().map(String::as_str)) {
             name.push('.');
@@ -110,7 +110,7 @@ impl ModulePath {
 
     /// The dotted name other modules import this one by: a package's `__init__` is the package
     /// itself (`pkg`, not `pkg.__init__`). `None` where a segment keeps a dot (see `qualified`).
-    pub(crate) fn import_name(&self) -> Option<String> {
+    pub fn import_name(&self) -> Option<String> {
         let mut names = self.qualified(self.segments.len())?;
         if names.len() > 1 && names.last() == Some(&"__init__") {
             names.pop();
@@ -119,7 +119,7 @@ impl ModulePath {
     }
 
     /// The qualified name `from <level dots><rest> import ...` denotes, followed by `tail`.
-    pub(crate) fn relative(&self, level: usize, rest: &str, tail: &[String]) -> Option<String> {
+    pub fn relative(&self, level: usize, rest: &str, tail: &[String]) -> Option<String> {
         if !self.package || level > self.segments.len() {
             return None;
         }

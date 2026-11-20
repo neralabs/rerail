@@ -1,0 +1,43 @@
+.policy "ruff-ret506-superfluous-else-raise" revision 1
+.guests off
+.description "Remove the else or elif after an if branch that raises, and dedent its code; the branch already leaves the function."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+// RET506(n): a finding at node n, from clause `superfluous-else-raise`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RET506(at: node, branch: symbol) "Unnecessary `{branch}` after `raise` statement"
+    suppress noqa "RET506"
+RET506(n, BRANCH) :- (kind(n, "elif_clause") ; kind(n, "else_clause")),
+    count : { precedes(s4, n), (kind(s4, "elif_clause") ; kind(s4, "else_clause")) } = 0,
+    child(p5, n, _), kind(p5, "if_statement"), child(p5, c6, _), kind(c6, "block"),
+    child(c6, c7, _), kind(c7, "raise_statement"),
+    count : { precedes(s8, c7), (kind(s8, "return_statement") ; kind(s8, "continue_statement") ; kind(s8, "break_statement")) } = 0,
+    within_stop(p5, p9, ret506_stop_1), kind(p9, "function_definition"),
+    ret506_analysed_function(p9), ret506_tok_lead_1(n, BRANCH).
+
+// analysed_function(n): the JSON util `analysed-function`, used where the JSON says `matches: "analysed-function"`
+.decl ret506_analysed_function(n: node)
+ret506_analysed_function(n) :- kind(n, "function_definition"),
+    count : { ret506_stop_1_within(c1, n), kind(c1, "yield") } = 0,
+    count : { child(n, c2, _), kind(c2, "block"), child(c2, c3, _), kind(c3, "return_statement"), count : { child(c2, c4, _), !kind(c4, "return_statement"), !kind(c4, "comment") } = 0 } = 0.
+
+// tok_lead_1(n): n starts with the token "^(?<BRANCH>elif|else)$": a token the tape stores, or one it leaves out, read from the source before n's first stored child
+.decl ret506_tok_lead_1(n: node, branch: symbol)
+.stored ret506_tok_lead_1 "its token read is of the parent's first token where the tape stores it; one the tape leaves out is read from the source before the parent's first stored child, in its own rule"
+ret506_tok_lead_1(n, BRANCH) :- token(n, 0, t3, _, _), match("^(?<BRANCH>elif|else)$", t3).
+ret506_tok_lead_1(n, BRANCH) :- child(n, c1, 0), structural_before(c1, g2),
+    match("(?s)^\\s*(?<BRANCH>elif|else)(?:\\W.*)?$", g2).
+ret506_tok_lead_1(n, BRANCH) :- !child(n, _, _), node_text(n, g2),
+    match("(?s)^\\s*(?<BRANCH>elif|else)(?:\\W.*)?$", g2).
+
+// stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ret506_stop_1(kind: symbol)
+ret506_stop_1("function_definition"). ret506_stop_1("class_definition").
+
+// stop_1_within: within_stop over the stop set stop_1, read inside an aggregate
+.decl ret506_stop_1_within(n: node, a: node)
+ret506_stop_1_within(x, y) :- within_stop(x, y, ret506_stop_1).

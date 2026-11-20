@@ -1,0 +1,651 @@
+{
+  "version": 1,
+  "exportedAt": "2026-11-19T18:39:41.115Z",
+  "library": [
+    {
+      "kind": "code",
+      "rule": {
+        "format": "rerail.policy/v1",
+        "id": "local:color-tokens-only",
+        "revision": 1,
+        "mode": "steer",
+        "description": "Use the color tokens from the theme instead of hex, rgb or hsl values or Tailwind palette colors in app code; the token file itself is exempt.",
+        "scope": {
+          "include": [
+            "src/**/*.ts",
+            "src/**/*.tsx"
+          ],
+          "exclude": [
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "src/types/database.ts",
+            "src/theme/**"
+          ]
+        },
+        "clauses": [
+          {
+            "id": "hex",
+            "violation": {
+              "code": "HEX_COLOR",
+              "anchor": "witness.span",
+              "message": "Replace this hex color with a token class (bg-card, text-muted-foreground, ...) or `color(scheme, name)` from src/theme/tokens.ts."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:['\"`\\[]|:\\s*)#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\\b"
+              }
+            }
+          },
+          {
+            "id": "color-fn",
+            "violation": {
+              "code": "COLOR_FUNCTION",
+              "anchor": "witness.span",
+              "message": "Replace this color value with a token class or `color(scheme, name)` from src/theme/tokens.ts; new colors go in tokens.ts only after DESIGN.md approves them."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "\\b(?:rgba?|hsla?)\\(\\s*[0-9.]"
+              }
+            }
+          },
+          {
+            "id": "palette-class",
+            "violation": {
+              "code": "PALETTE_COLOR",
+              "anchor": "witness.span",
+              "message": "Use a token color class (foreground, primary-foreground, muted, border, attention...) instead of a Tailwind palette color."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:^|[\\s'\"`:])(?:bg|text|border(?:-[xytrblse])?|ring|ring-offset|fill|stroke|divide|outline|placeholder|decoration|from|via|to|caret|accent)-(?:(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-(?:50|[1-9]00|950)|white|black)\\b"
+              }
+            }
+          },
+          {
+            "id": "named-color",
+            "violation": {
+              "code": "NAMED_COLOR",
+              "anchor": "witness.span",
+              "message": "Replace this named color with `color(scheme, name)` from src/theme/tokens.ts or a token class."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "\\b(?:color|backgroundColor|borderColor|tintColor|placeholderTextColor|fill|stroke)\\s*[:=]\\s*\\{?\\s*['\"](?:white|black|red|green|blue|gray|grey|orange|yellow)['\"]"
+              }
+            }
+          }
+        ]
+      },
+      "revision": 1,
+      "copiedFromRuleId": null,
+      "createdAt": 1795113566935,
+      "updatedAt": 1795113566935
+    },
+    {
+      "kind": "code",
+      "rule": {
+        "format": "rerail.policy/v1",
+        "id": "local:errors-use-attention",
+        "revision": 1,
+        "mode": "steer",
+        "description": "Show errors and needs-action states with the attention color, not the destructive red; DESIGN.md allows only neutral and attention.",
+        "scope": {
+          "include": [
+            "src/**/*.ts",
+            "src/**/*.tsx"
+          ],
+          "exclude": [
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "src/types/database.ts",
+            "src/theme/**",
+            "src/components/ui/**"
+          ]
+        },
+        "clauses": [
+          {
+            "id": "destructive-class",
+            "violation": {
+              "code": "DESTRUCTIVE_COLOR",
+              "anchor": "witness.span",
+              "message": "v1 has no red. For an error or needs-action state use text-attention-foreground / bg-attention-muted; for a delete or other destructive action use neutral text-foreground."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:^|[\\s'\"`:])(?:bg|text|border|ring|fill|stroke|outline|divide)-destructive(?:-foreground)?\\b"
+              }
+            }
+          },
+          {
+            "id": "destructive-variant",
+            "violation": {
+              "code": "DESTRUCTIVE_VARIANT",
+              "anchor": "witness.span",
+              "message": "Use the default or outline Button here; v1 has no red destructive style."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "\\bvariant=\\{?\\s*['\"]destructive['\"]"
+              }
+            }
+          }
+        ]
+      },
+      "revision": 1,
+      "copiedFromRuleId": null,
+      "createdAt": 1795113567940,
+      "updatedAt": 1795113567940
+    },
+    {
+      "kind": "code",
+      "rule": {
+        "format": "rerail.policy/v1",
+        "id": "local:icon-buttons-have-labels",
+        "revision": 1,
+        "mode": "steer",
+        "description": "Give every icon-only button a screen reader label, both icon-size Buttons and Pressables that hold only an icon.",
+        "scope": {
+          "include": [
+            "src/**/*.tsx"
+          ],
+          "exclude": [
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "src/types/database.ts",
+            "src/components/ui/**"
+          ]
+        },
+        "clauses": [
+          {
+            "id": "icon-button",
+            "violation": {
+              "code": "ICON_BUTTON_NO_LABEL",
+              "anchor": "witness.span",
+              "message": "Add accessibilityLabel={t('...')} to this icon-only Button, with the string in locales/en.json and fr.json."
+            },
+            "forbid": {
+              "ast": {
+                "language": "typescript",
+                "rule": {
+                  "regex": "^<Button\\b",
+                  "any": [
+                    {
+                      "kind": "jsx_opening_element"
+                    },
+                    {
+                      "kind": "jsx_self_closing_element"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "jsx_attribute",
+                          "regex": "^(?:accessibilityLabel|aria-label)\\b"
+                        },
+                        {
+                          "kind": "jsx_expression",
+                          "regex": "^\\{\\s*\\.\\.\\."
+                        }
+                      ]
+                    }
+                  },
+                  "has": {
+                    "kind": "jsx_attribute",
+                    "regex": "^size=\\{?[\"']icon"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "icon-pressable",
+            "violation": {
+              "code": "ICON_PRESSABLE_NO_LABEL",
+              "anchor": "witness.span",
+              "message": "Add accessibilityLabel={t('...')} to this Pressable; it holds only an icon, so a screen reader has nothing to read."
+            },
+            "forbid": {
+              "ast": {
+                "language": "typescript",
+                "rule": {
+                  "kind": "jsx_element",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "jsx_self_closing_element",
+                        "regex": "^<Icon\\b"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "jsx_element"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "jsx_expression"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "jsx_text",
+                          "regex": "\\S"
+                        }
+                      }
+                    }
+                  ],
+                  "has": {
+                    "kind": "jsx_opening_element",
+                    "regex": "^<Pressable\\b",
+                    "not": {
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "jsx_attribute",
+                            "regex": "^(?:accessibilityLabel|aria-label)\\b"
+                          },
+                          {
+                            "kind": "jsx_expression",
+                            "regex": "^\\{\\s*\\.\\.\\."
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "revision": 1,
+      "copiedFromRuleId": null,
+      "createdAt": 1795113574156,
+      "updatedAt": 1795113574156
+    },
+    {
+      "kind": "code",
+      "rule": {
+        "format": "rerail.policy/v1",
+        "id": "local:lucide-icons-only",
+        "revision": 1,
+        "mode": "steer",
+        "description": "Use icons from lucide-react-native only; no other icon sets in the app or its dependencies.",
+        "scope": {
+          "include": [
+            "src/**/*.ts",
+            "src/**/*.tsx",
+            "package.json"
+          ],
+          "exclude": [
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "src/types/database.ts"
+          ]
+        },
+        "clauses": [
+          {
+            "id": "icon-import",
+            "violation": {
+              "code": "OTHER_ICON_SET",
+              "anchor": "witness.span",
+              "message": "Import this icon from lucide-react-native and render it with `<Icon as={...} />` from '@/components/ui/icon'."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:from\\s+|require\\(\\s*|import\\s+)['\"](?:@expo/vector-icons|react-native-vector-icons|phosphor-react-native|react-native-heroicons|@heroicons/[\\w-]+|@tabler/icons[\\w-]*|react-native-feather|@fortawesome/[\\w-]+|react-icons|@radix-ui/react-icons|iconsax-react-native|expo-symbols|@mdi/[\\w-]+|lucide-react)(?:/[^'\"]*)?['\"]"
+              }
+            }
+          },
+          {
+            "id": "icon-dependency",
+            "violation": {
+              "code": "OTHER_ICON_DEPENDENCY",
+              "anchor": "witness.span",
+              "message": "Drop this icon package and use lucide-react-native, the only icon set DESIGN.md allows."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "\"(?:@expo/vector-icons|react-native-vector-icons|phosphor-react-native|react-native-heroicons|@heroicons/[\\w-]+|@tabler/icons[\\w-]*|react-native-feather|@fortawesome/[\\w-]+|react-icons|@radix-ui/react-icons|iconsax-react-native|expo-symbols|@mdi/[\\w-]+|lucide-react)\"\\s*:"
+              }
+            }
+          }
+        ]
+      },
+      "revision": 1,
+      "copiedFromRuleId": null,
+      "createdAt": 1795113573112,
+      "updatedAt": 1795113573112
+    },
+    {
+      "kind": "code",
+      "rule": {
+        "format": "rerail.policy/v1",
+        "id": "local:no-shadows",
+        "revision": 1,
+        "mode": "steer",
+        "description": "Leave shadows off everything but the bottom sheet; cards use a 1 px border instead, as DESIGN.md says.",
+        "scope": {
+          "include": [
+            "src/**/*.ts",
+            "src/**/*.tsx"
+          ],
+          "exclude": [
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "src/types/database.ts",
+            "src/theme/**"
+          ]
+        },
+        "clauses": [
+          {
+            "id": "shadow-class",
+            "violation": {
+              "code": "SHADOW_CLASS",
+              "anchor": "witness.span",
+              "message": "Take this shadow (and its shadow color) off; use a 1 px `border border-border` if it needs an edge. DESIGN.md allows one shadow, on the bottom sheet."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:^|[\\s'\"`:])(?:drop-)?shadow(?:-(?:sm|md|lg|xl|2xl|inner|\\[[^\\]\\s]+\\]))?(?:$|[\\s'\"`])"
+              }
+            }
+          },
+          {
+            "id": "shadow-style",
+            "violation": {
+              "code": "SHADOW_STYLE",
+              "anchor": "witness.span",
+              "message": "Take this shadow style off; use a 1 px `border border-border` for an edge. DESIGN.md allows one shadow, on the bottom sheet; if this is it, keep it."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "\\b(?:shadowColor|shadowOpacity|shadowRadius|shadowOffset|elevation|boxShadow)\\s*:"
+              }
+            }
+          }
+        ]
+      },
+      "revision": 1,
+      "copiedFromRuleId": null,
+      "createdAt": 1795113572141,
+      "updatedAt": 1795113572141
+    },
+    {
+      "kind": "code",
+      "rule": {
+        "format": "rerail.policy/v1",
+        "id": "local:radius-from-tokens",
+        "revision": 1,
+        "mode": "steer",
+        "description": "Round corners only with the card, sheet, button and chip radii; no Tailwind radius sizes, arbitrary radii or numeric border radius in styles.",
+        "scope": {
+          "include": [
+            "src/**/*.ts",
+            "src/**/*.tsx"
+          ],
+          "exclude": [
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "src/types/database.ts",
+            "src/theme/**"
+          ]
+        },
+        "clauses": [
+          {
+            "id": "radius-class",
+            "violation": {
+              "code": "OFF_TOKEN_RADIUS",
+              "anchor": "witness.span",
+              "message": "Use rounded-card (14), rounded-sheet (22), rounded-button (12) or rounded-chip (999), with a side prefix if needed (rounded-t-sheet)."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:^|[\\s'\"`:])rounded(?:-(?:t|b|l|r|s|e|tl|tr|bl|br))?(?:-(?:sm|md|lg|xl|2xl|3xl|full|\\[[^\\]\\s]+\\]))?(?:$|[\\s'\"`])"
+              }
+            }
+          },
+          {
+            "id": "radius-style",
+            "violation": {
+              "code": "NUMERIC_RADIUS_STYLE",
+              "anchor": "witness.span",
+              "message": "Use a rounded-card / rounded-sheet / rounded-button / rounded-chip class, or read the value from src/theme/radius.json, instead of a number."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "\\bborder(?:Top|Bottom)?(?:Left|Right|Start|End)?Radius\\s*:\\s*[1-9]"
+              }
+            }
+          }
+        ]
+      },
+      "revision": 1,
+      "copiedFromRuleId": null,
+      "createdAt": 1795113571147,
+      "updatedAt": 1795113571147
+    },
+    {
+      "kind": "code",
+      "rule": {
+        "format": "rerail.policy/v1",
+        "id": "local:spacing-on-4pt-scale",
+        "revision": 1,
+        "mode": "steer",
+        "description": "Keep padding, margin and gaps on the 4-point scale (4, 8, 12, 16, 20, 24, 32, 40, 48); no half steps or arbitrary values.",
+        "scope": {
+          "include": [
+            "src/**/*.ts",
+            "src/**/*.tsx"
+          ],
+          "exclude": [
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "src/types/database.ts",
+            "src/theme/**"
+          ]
+        },
+        "clauses": [
+          {
+            "id": "half-step",
+            "violation": {
+              "code": "HALF_STEP_SPACING",
+              "anchor": "witness.span",
+              "message": "Use a whole step instead of this half step: 0.5 becomes 1, 1.5 becomes 1 or 2, 2.5 becomes 2 or 3, 3.5 becomes 3 or 4 (1 step = 4 pt)."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:^|[\\s'\"`:])-?(?:p[xytrblse]?|m[xytrblse]?|gap(?:-[xy])?|space-[xy])-[0-9]+\\.5\\b"
+              }
+            }
+          },
+          {
+            "id": "arbitrary",
+            "violation": {
+              "code": "ARBITRARY_SPACING",
+              "anchor": "witness.span",
+              "message": "Replace this arbitrary value with the nearest step on the 4-point scale (1=4, 2=8, 3=12, 4=16, 5=20, 6=24, 8=32, 10=40, 12=48)."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:^|[\\s'\"`:])-?(?:p[xytrblse]?|m[xytrblse]?|gap(?:-[xy])?|space-[xy])-\\[[^\\]\\s-][^\\]\\s]*\\]"
+              }
+            }
+          },
+          {
+            "id": "off-scale",
+            "violation": {
+              "code": "OFF_SCALE_SPACING",
+              "anchor": "witness.span",
+              "message": "Use a step on the 4-point scale (1, 2, 3, 4, 5, 6, 8, 10, 12 = 4 to 48 pt). If this clears a tab bar or button, pad by its measured height instead."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:^|[\\s'\"`:])-?(?:p[xytrblse]?|m[xytrblse]?|gap(?:-[xy])?|space-[xy])-(?:7|9|11|1[3-9]|[2-9][0-9]|[1-9][0-9]{2})\\b"
+              }
+            }
+          }
+        ]
+      },
+      "revision": 1,
+      "copiedFromRuleId": null,
+      "createdAt": 1795113570029,
+      "updatedAt": 1795113570029
+    },
+    {
+      "kind": "code",
+      "rule": {
+        "format": "rerail.policy/v1",
+        "id": "local:type-through-text-variants",
+        "revision": 1,
+        "mode": "log",
+        "description": "Set text size and weight through a Text variant from the DESIGN.md type scale, not with size or weight classes in screens, features or shared components.",
+        "scope": {
+          "include": [
+            "src/**/*.ts",
+            "src/**/*.tsx"
+          ],
+          "exclude": [
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "src/types/database.ts",
+            "src/components/ui/**",
+            "src/theme/**"
+          ]
+        },
+        "clauses": [
+          {
+            "id": "size-class",
+            "violation": {
+              "code": "TEXT_SIZE_CLASS",
+              "anchor": "witness.span",
+              "message": "Use `<Text variant=...>` for the DESIGN.md style this is (card title, status line, ...); if that style has no variant yet, add it in src/components/ui/text.tsx."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:^|[\\s'\"`:])text-(?:(?:xs|sm|base|lg|[2-9]?xl)\\b|\\[[0-9.]+(?:px|rem|em)?\\])"
+              }
+            }
+          },
+          {
+            "id": "weight-class",
+            "violation": {
+              "code": "FONT_WEIGHT_CLASS",
+              "anchor": "witness.span",
+              "message": "Take the weight from a `<Text variant=...>` on the DESIGN.md type scale; if no variant has it yet, add one in src/components/ui/text.tsx."
+            },
+            "forbid": {
+              "regex": {
+                "source": "file.content",
+                "pattern": "(?:^|[\\s'\"`:])font-(?:thin|extralight|light|normal|medium|semibold|bold|extrabold|black)\\b"
+              }
+            }
+          }
+        ]
+      },
+      "revision": 1,
+      "copiedFromRuleId": null,
+      "createdAt": 1795113568951,
+      "updatedAt": 1795113568951
+    }
+  ],
+  "repositories": [
+    {
+      "repositoryKey": "remote:github.com/ananaq/interlace",
+      "displayName": "interlace",
+      "aliases": [],
+      "configuredAt": 1795109702953,
+      "attachments": [
+        {
+          "folder": "",
+          "sourceKind": "library_rule",
+          "sourceId": "local:color-tokens-only"
+        },
+        {
+          "folder": "",
+          "sourceKind": "library_rule",
+          "sourceId": "local:errors-use-attention"
+        },
+        {
+          "folder": "",
+          "sourceKind": "library_rule",
+          "sourceId": "local:icon-buttons-have-labels"
+        },
+        {
+          "folder": "",
+          "sourceKind": "library_rule",
+          "sourceId": "local:lucide-icons-only"
+        },
+        {
+          "folder": "",
+          "sourceKind": "library_rule",
+          "sourceId": "local:no-shadows"
+        },
+        {
+          "folder": "",
+          "sourceKind": "library_rule",
+          "sourceId": "local:radius-from-tokens"
+        },
+        {
+          "folder": "",
+          "sourceKind": "library_rule",
+          "sourceId": "local:spacing-on-4pt-scale"
+        },
+        {
+          "folder": "",
+          "sourceKind": "library_rule",
+          "sourceId": "local:type-through-text-variants"
+        },
+        {
+          "folder": "",
+          "sourceKind": "pack",
+          "sourceId": "complexity"
+        },
+        {
+          "folder": "",
+          "sourceKind": "pack",
+          "sourceId": "javascript"
+        },
+        {
+          "folder": "",
+          "sourceKind": "pack",
+          "sourceId": "react"
+        },
+        {
+          "folder": "",
+          "sourceKind": "pack",
+          "sourceId": "typescript"
+        },
+        {
+          "folder": "supabase",
+          "sourceKind": "pack",
+          "sourceId": "sql"
+        }
+      ],
+      "settings": []
+    }
+  ]
+}

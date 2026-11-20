@@ -6,7 +6,8 @@ import { alias } from "drizzle-orm/sqlite-core";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { followsGitignore, listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
-import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../engine/native/native.js";
+import { nativeGitAccess } from "../engine/native/git-access.js";
+import type { NativeGitIgnoreMatcher } from "../engine/native/native.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { events, sessions } from "../engine/storage/schema.js";
 import { callNamesDeniedPath } from "../engine/transcript-boundary.js";
@@ -278,14 +279,16 @@ async function exists(path: string): Promise<boolean> {
 /**
  * Whether Git ignores a path under `root`, for a repository that follows `.gitignore`: a standards file Git ignores is
  * the person's own, not the project's, so the evidence does not send the agent to it. In a Git checkout whose rules
- * cannot be read, every path counts as ignored rather than guessed at.
+ * cannot be read (one Git refuses, such as another user's outside `safe.directory`), every path counts as ignored
+ * rather than guessed at, and stderr says why.
  */
 function gitIgnoredUnder(root: string, follows: boolean): (path: string) => boolean {
   if (!follows) return () => false;
   let matcher: NativeGitIgnoreMatcher | null;
   try {
-    matcher = loadNativeBinding().openGitIgnoreMatcher(root);
-  } catch {
+    matcher = nativeGitAccess().openGitIgnoreMatcher(root);
+  } catch (error) {
+    process.stderr.write(`rerail: cannot read Git ignore rules for ${root}, so no standards file is named: ${error instanceof Error ? error.message : String(error)}\n`);
     return () => true;
   }
   if (matcher === null) return () => existsSync(join(root, ".git"));

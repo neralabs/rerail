@@ -1,0 +1,5 @@
+{
+  "title": "list(x)[0] for the first item",
+  "rule": "ruff-ruf015-unnecessary-iterable-allocation-for-first-element",
+  "note": "RUF015 flags list(x)[0] and [y for y in x][0]: they build the whole list for one item. next(iter(x)) stops at the first."
+}

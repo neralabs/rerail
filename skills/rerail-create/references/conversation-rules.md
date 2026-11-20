@@ -17,6 +17,7 @@ scratch folders. Rerail's test suite runs every example on this page through the
   "rule": {
     "id": "local:<short-kebab-name>",
     "mode": "steer",
+    "title": "<The rule in the person's own words>",
     "match": { "field": "input.command", "regex": "…" },
     "sample": { "source": "tool:*", "boundary": "tool-call" },
     "action": { "content": "What not to do, and what to do instead." },
@@ -31,6 +32,7 @@ scratch folders. Rerail's test suite runs every example on this page through the
 
 | Part | What to put there |
 |---|---|
+| `title` | The rule in the person's own words, which the dashboard shows; `rules add` refuses a rule without one. As in [Writing the title](code-rules.md#writing-the-title). |
 | `match` | One condition: a `field` and exactly one of `regex`, `eq` or `contains`. Combine conditions with `all`, `any` and `not`. |
 | `field` | `input.command` for a shell command. `tool.name` for the tool. `input.<key>` for another argument, such as `input.file_path`. |
 | `sample.source` | `tool:*` reads every agent's shell: `Bash` in Claude Code, `bash` in OMP and Pi, and the shell tools of Codex and Cursor. Use `tool:<name>` to read one tool. |
@@ -63,6 +65,7 @@ that, and accept the rare miss.
   "rule": {
     "id": "local:no-skipping-git-hooks",
     "mode": "steer",
+    "title": "Don't skip the git hooks",
     "match": {
       "any": [
         { "field": "input.command", "regex": "\\bgit\\s+commit\\b[^\\n;&|]*\\s-[A-Za-z]*n[A-Za-z]*\\b" },

@@ -1,0 +1,217 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi029-str-or-repr-defined-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove redundant __str__ and __repr__ definitions from stub files; their signatures match the defaults every class inherits, so they add nothing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "str-or-repr-defined-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "str-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "str"
+                    ],
+                    "import": [
+                      "builtins.str"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "str-ref"
+                  }
+                }
+              ]
+            },
+            "abstract-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "abc.abstractmethod",
+                      "abc.abstractclassmethod",
+                      "abc.abstractstaticmethod",
+                      "abc.abstractproperty"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "abstract-ref"
+                  }
+                }
+              ]
+            },
+            "arg-param": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "default_parameter"
+                },
+                {
+                  "kind": "typed_default_parameter"
+                },
+                {
+                  "kind": "typed_parameter",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier"
+                  }
+                }
+              ]
+            },
+            "star-marker": {
+              "any": [
+                {
+                  "kind": "keyword_separator"
+                },
+                {
+                  "kind": "list_splat_pattern"
+                },
+                {
+                  "kind": "typed_parameter",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "list_splat_pattern"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "function_definition",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "regex": "^__(str|repr)__$",
+              "pattern": "$NAME"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "return_type",
+                  "kind": "type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "str-ref"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "parameters",
+                  "kind": "parameters",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "arg-param",
+                      "any": [
+                        {
+                          "follows": {
+                            "stopBy": "end",
+                            "matches": "arg-param"
+                          }
+                        },
+                        {
+                          "follows": {
+                            "stopBy": "end",
+                            "matches": "star-marker"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "decorated_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "decorator",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "abstract-ref"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "class_definition"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "code": "PYI029",
+        "message": "Remove this `$NAME` definition from the stub; a `$NAME` returning `str` is inherited from `object`, so declaring it is almost always redundant.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI029"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

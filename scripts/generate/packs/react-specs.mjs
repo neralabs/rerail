@@ -227,17 +227,29 @@ const JSX_KEY_UTILS = {
 /** jsx-no-target-blank's attribute readings. */
 const attr = name => ({ kind: "jsx_attribute", has: { kind: "property_identifier", regex: `^${name}$` } });
 const lastAttr = name => ({ ...attr(name), not: { precedes: { stopBy: "end", ...attr(name) } } });
-const relTernary = (test, branch) => ({
+/** A conditional's test: an identifier captured as `$<capture>`, or, when capture is null, a test that is not a name. */
+const ternaryTest = capture => ({ has: { field: "condition", ...(capture ? { kind: "identifier", pattern: `$${capture}` } : { not: { matches: "named-test" } }) } });
+const relTernary = (capture, branch) => ({
   has: {
     matches: "last-rel",
-    has: { kind: "jsx_expression", has: { kind: "ternary_expression", all: [{ has: { field: "condition", kind: "identifier", pattern: test } }, ...(branch ? [{ has: { field: branch, matches: "ok-literal" } }] : [])] } },
+    has: { kind: "jsx_expression", has: { kind: "ternary_expression", all: [ternaryTest(capture), ...(branch ? [{ has: { field: branch, matches: "ok-literal" } }] : [])] } },
   },
 });
-const targetTernary = (test, branches) => ({
+const targetTernary = (capture, branches) => ({
   has: {
     matches: "last-target",
-    has: { kind: "jsx_expression", has: { kind: "ternary_expression", all: [{ has: { field: "condition", kind: "identifier", pattern: test } }, ...branches] } },
+    has: { kind: "jsx_expression", has: { kind: "ternary_expression", all: [ternaryTest(capture), ...branches] } },
   },
+});
+/**
+ * target's and rel's conditionals test the same thing as upstream reads it: their tests' `name`s are equal, so both
+ * are the same identifier, or neither is an identifier (both read `undefined`, even when the two tests differ).
+ */
+const sameTest = (suffix, relBranch, targetBranches) => ({
+  any: [
+    { all: [relTernary(`R${suffix}`, relBranch), targetTernary(`T${suffix}`, targetBranches), { compare: { left: `R${suffix}`, op: "eq", right: `T${suffix}` } }] },
+    { all: [relTernary(null, relBranch), targetTernary(null, targetBranches)] },
+  ],
 });
 const TARGET_BLANK_UTILS = {
   "last-target": lastAttr("target"),
@@ -265,7 +277,8 @@ const TARGET_BLANK_UTILS = {
   },
   "ok-literal": { any: [{ kind: "string", value: { regex: "(?i)(?:^| )noreferrer(?: |$)" } }, { kind: "parenthesized_expression", has: { matches: "ok-literal" } }] },
   "ok-template": { kind: "template_string", regex: "\\A`(?:(?:[^$`]|\\$[^{`])*? )?(?i:noreferrer)(?: |`|\\$\\{)" },
-  "same-test": { all: [relTernary("$RT"), targetTernary("$TT", []), { compare: { left: "RT", op: "eq", right: "TT" } }] },
+  "named-test": { any: [{ kind: "identifier" }, { kind: "undefined" }, { kind: "parenthesized_expression", has: { matches: "named-test" } }] },
+  "same-test": sameTest("T", undefined, []),
   "secure-rel": {
     any: [
       { has: { matches: "last-rel", has: { any: [{ kind: "string", value: { regex: "(?i)(?:^| )noreferrer(?: |$)" } }, { kind: "jsx_expression", has: { any: [{ matches: "ok-literal" }, { matches: "ok-template" }] } }] } } },
@@ -275,14 +288,8 @@ const TARGET_BLANK_UTILS = {
           { not: { matches: "same-test" } },
         ],
       },
-      { all: [relTernary("$RC", "consequence"), targetTernary("$TC", [{ has: { field: "consequence", matches: "exact-blank" } }]), { compare: { left: "RC", op: "eq", right: "TC" } }] },
-      {
-        all: [
-          relTernary("$RA", "alternative"),
-          targetTernary("$TA", [{ not: { has: { field: "consequence", matches: "exact-blank" } } }, { has: { field: "alternative", matches: "exact-blank" } }]),
-          { compare: { left: "RA", op: "eq", right: "TA" } },
-        ],
-      },
+      sameTest("C", "consequence", [{ has: { field: "consequence", matches: "exact-blank" } }]),
+      sameTest("A", "alternative", [{ not: { has: { field: "consequence", matches: "exact-blank" } } }, { has: { field: "alternative", matches: "exact-blank" } }]),
     ],
   },
 };

@@ -1,0 +1,227 @@
+.policy "ruff-up043-unnecessary-default-type-args" revision 1
+.guests off
+.description "Omit the trailing None type arguments from Generator and AsyncGenerator annotations; they are the defaults since Python 3.13."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+#include "python/names.rerail"
+
+// none(n): the JSON util `none`, used where the JSON says `matches: "none"`
+.decl up043_none(n: node)
+up043_none(n) :- kind(n, "none").
+up043_none(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up043_none(c1).
+up043_none(n) :- kind(n, "type"), child(n, c2, _), up043_none(c2).
+
+// generator(n): the JSON util `generator`, used where the JSON says `matches: "generator"`
+.decl up043_generator(n: node)
+up043_generator(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "collections.abc.Generator")
+    ; sym_of(n, "typing.Generator")
+    ; sym_of(n, "_typeshed.Generator")
+    ; sym_of(n, "typing_extensions.Generator")
+    ).
+
+up043_generator(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up043_generator(c1).
+
+// async_generator(n): the JSON util `async-generator`, used where the JSON says `matches: "async-generator"`
+.decl up043_async_generator(n: node)
+up043_async_generator(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "collections.abc.AsyncGenerator")
+    ; sym_of(n, "typing.AsyncGenerator")
+    ; sym_of(n, "_typeshed.AsyncGenerator")
+    ; sym_of(n, "typing_extensions.AsyncGenerator")
+    ).
+
+up043_async_generator(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up043_async_generator(c1).
+
+// element(n): the JSON util `element`, used where the JSON says `matches: "element"`
+.decl up043_element(n: node)
+up043_element(n) :- node(_, n, _, _, _), !up043_alt_2(n).
+
+// tail_generator(n): the JSON util `tail-generator`, used where the JSON says `matches: "tail-generator"`
+.decl up043_tail_generator(n: node)
+up043_tail_generator(n) :- up043_none(n), k2 = count : { precedes(n, s1), up043_element(s1) }, k2 <= 0,
+    k4 = count : { precedes(s3, n), up043_element(s3) }, k4 >= 1, k4 <= 2.
+
+// tuple_generator(n): the JSON util `tuple-generator`, used where the JSON says `matches: "tuple-generator"`
+.decl up043_tuple_generator(n: node)
+up043_tuple_generator(n) :- kind(n, "tuple"), child(n, c1, _), up043_tail_generator(c1).
+up043_tuple_generator(n) :- kind(n, "parenthesized_expression"), within_stop(c2, n, up043_stop_13),
+    kind(c2, "tuple"), child(c2, c3, _), up043_tail_generator(c3).
+
+// defaulted_generator(n): the JSON util `defaulted-generator`, used where the JSON says `matches: "defaulted-generator"`
+.decl up043_defaulted_generator(n: node)
+up043_defaulted_generator(n) :- kind(n, "subscript"), child(n, c1, _), up043_generator(c1),
+    up043_tok_precedes_3(c1),
+    ( child(n, c2, _), up043_tail_generator(c2)
+    ; child(n, c3, _), up043_tuple_generator(c3), !up043_tok_precedes_5(c3), k1 = count : { precedes(s1, c3), up043_element(s1) }, k1 <= 0
+    ).
+
+up043_defaulted_generator(n) :- kind(n, "generic_type"), child(n, c20, _), up043_generator(c20),
+    child(n, c21, _), kind(c21, "type_parameter"),
+    ( child(c21, c1, _), up043_tail_generator(c1)
+    ; child(c21, c2, _), kind(c2, "type"), child(c2, c3, _), up043_tuple_generator(c3), !up043_tok_precedes_7(c2), k1 = count : { precedes(s1, c2), up043_element(s1) }, k1 <= 0
+    ).
+
+
+// tail_async_generator(n): the JSON util `tail-async-generator`, used where the JSON says `matches: "tail-async-generator"`
+.decl up043_tail_async_generator(n: node)
+up043_tail_async_generator(n) :- up043_none(n), k2 = count : { precedes(n, s1), up043_element(s1) },
+    k2 <= 0, k4 = count : { precedes(s3, n), up043_element(s3) }, k4 >= 1, k4 <= 1.
+
+// tuple_async_generator(n): the JSON util `tuple-async-generator`, used where the JSON says `matches: "tuple-async-generator"`
+.decl up043_tuple_async_generator(n: node)
+up043_tuple_async_generator(n) :- kind(n, "tuple"), child(n, c1, _),
+    up043_tail_async_generator(c1).
+up043_tuple_async_generator(n) :- kind(n, "parenthesized_expression"),
+    within_stop(c2, n, up043_stop_13), kind(c2, "tuple"), child(c2, c3, _),
+    up043_tail_async_generator(c3).
+
+// defaulted_async_generator(n): the JSON util `defaulted-async-generator`, used where the JSON says `matches: "defaulted-async-generator"`
+.decl up043_defaulted_async_generator(n: node)
+up043_defaulted_async_generator(n) :- kind(n, "subscript"), child(n, c1, _),
+    up043_async_generator(c1), up043_tok_precedes_3(c1),
+    ( child(n, c2, _), up043_tail_async_generator(c2)
+    ; child(n, c3, _), up043_tuple_async_generator(c3), !up043_tok_precedes_5(c3), k1 = count : { precedes(s1, c3), up043_element(s1) }, k1 <= 0
+    ).
+
+up043_defaulted_async_generator(n) :- kind(n, "generic_type"), child(n, c20, _),
+    up043_async_generator(c20), child(n, c21, _), kind(c21, "type_parameter"),
+    ( child(c21, c1, _), up043_tail_async_generator(c1)
+    ; child(c21, c2, _), kind(c2, "type"), child(c2, c3, _), up043_tuple_async_generator(c3), !up043_tok_precedes_7(c2), k1 = count : { precedes(s1, c2), up043_element(s1) }, k1 <= 0
+    ).
+
+
+// default_args(n): the JSON util `default-args`, used where the JSON says `matches: "default-args"`
+.decl up043_default_args(n: node)
+up043_default_args(n) :- up043_defaulted_generator(n).
+up043_default_args(n) :- up043_defaulted_async_generator(n).
+
+// forward_ref_excluded(n): the JSON util `forward-ref-excluded`, used where the JSON says `matches: "forward-ref-excluded"`
+.decl up043_forward_ref_excluded(n: node)
+up043_forward_ref_excluded(n) :- within(n, p1),
+    (kind(p1, "generic_type") ; kind(p1, "subscript")), child(p1, c2, _),
+    (kind(c2, "identifier") ; kind(c2, "attribute")),
+    (sym_of(c2, "typing.Literal") ; sym_of(c2, "typing_extensions.Literal")).
+
+// string_content(n): the JSON util `string-content`, used where the JSON says `matches: "string-content"`
+.decl up043_string_content(n: node)
+up043_string_content(n) :- kind(n, "string"), !up043_alt_21(n).
+
+// direct_ref(n): the JSON util `direct-ref`, used where the JSON says `matches: "direct-ref"`
+//   T: metavariable this relation binds for the calling rule
+.decl up043_direct_ref(n: node, t: loc)
+up043_direct_ref(n, T) :- up043_string_content(n), parsed(n, "annotation", r1), within(c2, r1),
+    up043_alt_22(c2, T).
+
+// UP043(n): a finding at node n, from clause `default-type-args-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rerail form yet.
+.violation UP043(at: loc, t: node) "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); they are the defaults."
+    suppress noqa "UP043"
+UP043_raw(T, n) :- up043_default_args(n), node(_, n, _, _, _), T = n.
+UP043_raw(T, n) :- up043_direct_ref(n, T).
+
+// UP043_default_type_args(n): a finding at node n, from clause `default-type-args`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rerail form yet.
+.violation UP043_default_type_args(at: loc, t: node) code "UP043" "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); Python 3.13 made them the defaults."
+    suppress noqa "UP043"
+UP043_default_type_args_raw(T, n) :- up043_default_args(n), node(_, n, _, _, _), T = n.
+UP043_default_type_args_raw(T, n) :- up043_direct_ref(n, T).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_1(n: node)
+.stored up043_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_1(n) :- next_sibling(n, s1), glob("\\[", s1).
+up043_tok_precedes_1(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match("\\[", t2).
+up043_tok_precedes_1(n) :- structural_after(n, g3), match("(?s)^(?:\\s*(?:\\[).*)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_2(n: node)
+.stored up043_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_2(n) :- next_sibling(n, s1), glob("\\,", s1).
+up043_tok_precedes_2(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match(",", t2).
+up043_tok_precedes_2(n) :- structural_after(n, g3), match("(?s)^(?:\\s*(?:,).*)$", g3).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_3(n: node)
+.stored up043_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_3(n) :- next_sibling(n, s2), glob("\\[", s2).
+up043_tok_precedes_3(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("\\[", t3).
+up043_tok_precedes_3(n) :- structural_after(n, g4), match("(?s)^(?:\\s*(?:\\[).*)$", g4).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_4(n: node)
+.stored up043_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_4(n) :- next_sibling(n, s11), glob("\\,", s11).
+up043_tok_precedes_4(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match(",", t12).
+up043_tok_precedes_4(n) :- structural_after(n, g13), match("(?s)^(?:\\s*(?:,).*)$", g13).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_5(n: node)
+.stored up043_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_5(n) :- next_sibling(n, s3), glob("\\,", s3).
+up043_tok_precedes_5(n) :- structural_after(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, _, en9), o7 = en9 + strlen(g5), token(p6, _, t4, o7, _),
+    match(",", t4).
+up043_tok_precedes_5(n) :- structural_after(n, g5), match("(?s)^(?:\\s*(?:,).*)$", g5).
+
+// tok_precedes_6(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_6(n: node)
+.stored up043_tok_precedes_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_6(n) :- next_sibling(n, s25), glob("\\,", s25).
+up043_tok_precedes_6(n) :- structural_after(n, g27), match("\\s*", g27), child(p28, n, _),
+    node(_, n, _, _, en31), o29 = en31 + strlen(g27), token(p28, _, t26, o29, _),
+    match(",", t26).
+up043_tok_precedes_6(n) :- structural_after(n, g27), match("(?s)^(?:\\s*(?:,).*)$", g27).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up043_tok_precedes_7(n: node)
+.stored up043_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up043_tok_precedes_7(n) :- next_sibling(n, s4), glob("\\,", s4).
+up043_tok_precedes_7(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match(",", t5).
+up043_tok_precedes_7(n) :- structural_after(n, g6), match("(?s)^(?:\\s*(?:,).*)$", g6).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl up043_alt_2(n: node)
+up043_alt_2(n) :- kind(n, "comment").
+up043_alt_2(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+up043_alt_2(n) :- up043_tok_precedes_1(n).
+
+// stop_13(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up043_stop_13(n: node)
+up043_stop_13(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_21(n): the JSON `any`: n matches if any one of these rules does
+.decl up043_alt_21(n: node)
+up043_alt_21(n) :- node(_, n, _, _, _), contains("\\", n).
+up043_alt_21(n) :- up043_forward_ref_excluded(n).
+
+// alt_22(n): the JSON `any`: n matches if any one of these rules does
+//   T: metavariable this relation binds for the calling rule
+.decl up043_alt_22(n: node, t: loc)
+up043_alt_22(n, T) :- up043_default_args(n), T = n.
+up043_alt_22(n, T) :- up043_direct_ref(n, T).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl UP043_raw(at: loc, t: node)
+UP043(v0, v1) :- UP043_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
+
+// pythonVersion {"min": "3.13"} excludes Python 3.10, main's default: no findings.
+.decl UP043_default_type_args_raw(at: loc, t: node)
