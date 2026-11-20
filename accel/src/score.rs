@@ -817,15 +817,24 @@ mod tests {
         let begun = Instant::now();
         b.start(&mut first);
         pause();
+        let before_second = Instant::now();
         b.start(&mut second);
+        let after_second = Instant::now();
         pause();
+        let before_first = Instant::now();
         let (ran_first, _) = b.finish(first, true);
+        let after_first = Instant::now();
         pause();
         let (ran_second, _) = b.finish(second, true);
         let span = begun.elapsed().as_secs_f64();
         let busy = b.score().units[Lane::Gpu.index()].busy;
-        // Each ran about 60 ms; together the lane was busy about 90.
-        assert!(ran_first + ran_second > 1.2 * span, "the walls overlap: {ran_first} + {ran_second} against {span}");
+        // Each ran about 60 ms; together the lane was busy about 90. The walls overlap by the time both ran: from the
+        // second's start to the first's finish, bounded by the clock read on either side of each (a stall of the
+        // machine anywhere stretches the span and the walls alike, never the overlap's bounds).
+        let overlap = ran_first + ran_second - span;
+        let (least, most) = ((before_first - after_second).as_secs_f64(), (after_first - before_second).as_secs_f64());
+        assert!(least > 0.025, "the jobs ran side by side for {least} s");
+        assert!(overlap > least - 0.002 && overlap < most + 0.002, "the walls overlap by {overlap}, not within {least}..{most}");
         assert!((busy - span).abs() < 0.005, "shares {busy} against the lane's span {span}");
         // The cores run jobs on threads of their own: each is charged its wall.
         let (mut a, mut c) = (b.queue(Lane::Cpu, item()), b.queue(Lane::Cpu, item()));

@@ -1,0 +1,1 @@
+History by session marks a steer the coding agent declined with `rerail feedback`: its card reads Declined beside Steered and shows the agent's reason, the session's row and header count declined steers, and a Declined steers chip lists only those sessions. A steer with no reason recorded is not marked either way.

@@ -32,7 +32,8 @@ const GUESTS: std::ops::Range<i64> = (1 << 30)..(1 << 31);
 pub(in crate::code_rule_dsl) type Docs = HashMap<String, (Content, i64)>;
 
 /// The documents that differ between two runs: each one's entry before and after (`None`: not read in that run).
-/// `None` when an entry is not in the memo (it was emptied, or a chunk's rows were not attributable).
+/// `None` when an entry is not in the memo (it was emptied, or a chunk's rows were not attributable). `held`: the
+/// session's memo, its entries under the memo plan `program` (`memo::Program::id`).
 pub(super) fn changed(old: &Docs, new: &Docs, held: &memo::Held, program: &[u8; 32]) -> Option<Vec<(Option<Arc<Entry>>, Option<Arc<Entry>>)>> {
     let held = held.lock().expect("the session memo");
     let live = std::env::var_os("RERAIL_STRATA_LIVE").is_some();
@@ -43,7 +44,8 @@ pub(super) fn changed(old: &Docs, new: &Docs, held: &memo::Held, program: &[u8; 
             }
             return None;
         };
-        let found = held.get(&(digest, path.to_owned(), *program));
+        // Held under its store path (`world::store_path`), as the memo publishes it (`remember_all_but`).
+        let found = held.get(&(digest, super::world::store_path(path).to_owned(), *program));
         if live && found.is_none_or(|e| e.key != key) {
             eprintln!("RERAIL_STRATA_LIVE changed documents: {path} has no memo entry (held {}, key {key} vs {:?})", held.len(), found.map(|e| e.key));
         }
@@ -73,7 +75,8 @@ pub(super) fn changed(old: &Docs, new: &Docs, held: &memo::Held, program: &[u8; 
 pub(super) fn delta(changes: &[(Option<Arc<Entry>>, Option<Arc<Entry>>)], key: &str, cols: &[Option<usize>]) -> Option<Delta> {
     // The entries, each once: an old one at `2 i`, a new one at `2 i + 1`.
     let entries: Vec<Option<Arc<Entry>>> = changes.iter().flat_map(|(w, n)| [w.clone(), n.clone()]).collect();
-    let mut out = Delta { entries, key: key.to_owned(), cols: cols.to_vec(), gone: Vec::new(), new: Vec::new() };
+    let flats = entries.iter().map(|e| e.as_ref().and_then(|e| e.rows.get(key)).map(|(w, f)| Flat { w: *w, at: f.as_ptr(), len: f.len() })).collect();
+    let mut out = Delta { entries, flats, cols: cols.to_vec(), gone: Vec::new(), new: Vec::new() };
     for (i, (was, now)) in changes.iter().enumerate() {
         // The same rows under the same key: nothing gone or new (an edit leaves most relations of a file as they were).
         if let (Some(w), Some(n)) = (was, now)
@@ -107,16 +110,32 @@ pub(super) fn delta(changes: &[(Option<Arc<Entry>>, Option<Arc<Entry>>)], key: &
 /// into `entries`) and its place among that entry's rows of `key`.
 pub(super) struct Delta {
     entries: Vec<Option<Arc<Entry>>>,
-    key: String,
+    /// Each entry's rows of `key`, found once: a cell is read where it lies, with no search of the entry's
+    /// relations by name at each read (2.7 s of O125 step 05's edit was those searches).
+    flats: Vec<Option<Flat>>,
     cols: Vec<Option<usize>>,
     pub(super) gone: Vec<(u32, u32)>,
     pub(super) new: Vec<(u32, u32)>,
 }
 
+/// An entry's rows of one relation: its width and its flat values, where the entry holds them.
+#[derive(Clone, Copy)]
+struct Flat {
+    w: usize,
+    at: *const i64,
+    len: usize,
+}
+
+// SAFETY: `Flat` points into a `Vec<i64>` of an `Entry` its `Delta` holds by an `Arc` (`entries`), and an entry is
+// never changed once made: the values stay where they are, readable from any thread, while the delta lives.
+unsafe impl Send for Flat {}
+unsafe impl Sync for Flat {}
+
 impl Delta {
     fn flat(&self, e: u32) -> Option<(usize, &[i64])> {
-        let (w, flat) = self.entries[e as usize].as_ref()?.rows.get(&self.key)?;
-        Some((*w, flat.as_slice()))
+        let f = self.flats[e as usize]?;
+        // SAFETY: as `Flat`'s: the entry is held by `self.entries[e]`, unchanged.
+        Some((f.w, unsafe { std::slice::from_raw_parts(f.at, f.len) }))
     }
     fn rows(&self, e: u32) -> u32 {
         self.flat(e).map_or(0, |(w, f)| if w == 0 { 0 } else { (f.len() / w) as u32 })

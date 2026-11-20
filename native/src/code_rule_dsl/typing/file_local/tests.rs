@@ -195,6 +195,8 @@ fn nearest_costs(cap: usize) {
     let t = std::time::Instant::now();
     let cpu = solve_cpu(&sys);
     let cpu_worklist = t.elapsed();
+    // Read by Metal's comparisons below (macOS); kept elsewhere so the worklist's time is the solve's.
+    std::hint::black_box(&cpu);
     // One pass in preorder.
     let t = std::time::Instant::now();
     let mut one = vec![NONE; n];
@@ -205,7 +207,8 @@ fn nearest_costs(cap: usize) {
         }
     }
     let one_pass = t.elapsed();
-    std::hint::black_box(&one);
+    // Both timed results held (the device's runs, macOS only, are compared with `cpu`).
+    std::hint::black_box((&cpu, &one));
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
     #[cfg(target_os = "macos")]
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
@@ -411,7 +414,7 @@ fn a_climb_over_the_tapes_parent_column_is_file_local() {
     assert!(split.locations["up"].contains(&0), "{:?}", split.locations);
 }
 
-/// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
+/// `boot-python.rerail`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
 /// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
 /// and left their join to the cross-file part (decision 0093 §4, O140).
 #[test]
@@ -597,12 +600,12 @@ fn a_located_rule_keeps_its_branded_atoms() {
     use crate::code_rule_dsl::logic::program_image::T;
     let kind = Branded { class: Class::Kind, atom: 7 };
     let mut b = Builder::base();
-    b.declare("node", &[("d", "number"), ("n", "node"), ("kind", "symbol"), ("start", "number"), ("end", "number")]);
-    b.declare("text", &[("n", "node"), ("s", "symbol")]);
-    b.declare("named", &[("s", "symbol")]);
-    b.declare("all", &[("s", "symbol")]);
-    b.set_inputs(&["node", "text"]);
-    b.set_outputs(&["all"]);
+    b.fields().declare("node", &[("d", "number"), ("n", "node"), ("kind", "symbol"), ("start", "number"), ("end", "number")]);
+    b.fields().declare("text", &[("n", "node"), ("s", "symbol")]);
+    b.fields().declare("named", &[("s", "symbol")]);
+    b.fields().declare("all", &[("s", "symbol")]);
+    b.fields().set_inputs(&["node", "text"]);
+    b.fields().set_outputs(&["all"]);
     b.rule().head("named", &[T::Var("s")]).atom("node", &[T::Wild, T::Var("n"), T::Branded(kind), T::Wild, T::Wild]).atom("text", &[T::Var("n"), T::Var("s")]).finish().unwrap();
     b.rule().head("all", &[T::Var("s")]).atom("named", &[T::Var("s")]).finish().unwrap();
     let (v, _) = b.finish().unwrap();
@@ -790,7 +793,7 @@ fn the_split_of_a_version_reads_an_undeclared_axis() {
     assert!(!axes.is_empty(), "the program reads an axis:\n{}", v.show());
     let mut b = Builder::on(&v);
     for a in &axes {
-        b.undeclare(a);
+        b.fields().undeclare(a);
     }
     let (v, _) = b.finish().unwrap();
     let split = split_of(&v);

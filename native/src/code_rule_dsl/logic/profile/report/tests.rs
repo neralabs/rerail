@@ -18,14 +18,20 @@
         };
         assert_eq!(under.as_deref(), Some("xrun/evaluate"));
         // As `Ambient::enter` opens a job: its span at the issuing run's path, the members' spans under it.
+        // The thread is in its starter's run, profiling as it is (`carry`: the run and the switch).
+        let carry = super::super::carry();
         std::thread::spawn(move || {
+            let _carry = carry.enter("job");
             let _issued = super::super::span_at(under.as_deref(), || "issued components (stream job)".into());
             let _job = span(|| "stratum s (in a job)".into());
             assert_eq!(super::super::here().as_deref(), Some("xrun/evaluate/issued components (stream job)/stratum s (in a job)"));
         })
         .join()
         .unwrap();
-        std::thread::spawn(|| {
+        // The thread is in its starter's run, profiling as it is (`carry`: the run and the switch).
+        let carry = super::super::carry();
+        std::thread::spawn(move || {
+            let _carry = carry.enter("job");
             let _job = span(|| "xloose".into());
             assert_eq!(super::super::here().as_deref(), Some("xloose"));
         })
@@ -121,9 +127,9 @@
         let _lock = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         super::super::reset();
         super::super::set(true);
-        let p = crate::code_rule_dsl::logic::rr::parse(
+        let p = crate::code_rule_dsl::logic::rr::parse_version(
             r#"
-#include "core.rr"
+#include "core.rerail"
 .decl selected(n:node)
 selected(n) :- text(n,"request").
 .decl result(n:node)
@@ -132,7 +138,8 @@ result(n) :- selected(n).
 "#,
         )
         .unwrap();
-        super::super::analysis_report::projection(&p, &std::collections::BTreeSet::from(["text".into()]));
+        // The program's projection records it, as a run's does (`text_demand::projection_of`).
+        let _ = crate::code_rule_dsl::logic::plan::text_demand::projection_of(&p, std::collections::BTreeSet::from(["text".into()]));
         let decisions = super::super::decisions();
         super::super::set(false);
         assert!(

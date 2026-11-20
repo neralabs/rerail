@@ -1,5 +1,8 @@
 //! A test's JIT of every read, of every family (decisions 0310, 0325).
 
+// Cranelift's `ModuleError`, as `Module` returns it: large, and unwrapped where it is made.
+#![allow(clippy::result_large_err)]
+
 use crate::view::TapeView;
 use cranelift_module::Module;
 

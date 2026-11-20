@@ -1,4 +1,4 @@
-# Group 6: what .rr lacks for ten data-layer checks
+# Group 6: what .rerail lacks for ten data-layer checks
 
 Oracle: scripts at revision 2b1504ad. Cites are `script.py:LINE` (a bare `:LINE` means the section's own script).
 
@@ -87,7 +87,7 @@ Oracle: scripts at revision 2b1504ad. Cites are `script.py:LINE` (a bare `:LINE`
     constant `True` (`:142-154`); an annotated `model_config: ConfigDict = …` does not count.
   - MA009's "unsafe" is Name-only for the bare set (an Attribute's dotted name never matches), recursive through
     `|`, with a `None` side unsafe (`:122-132`). Subscripts (`list[int]`) and string annotations are safe.
-  - MA004 matches handlers syntactically (`ann_name`, no tuples, no resolution), so `names.rr`'s `catches` is the
+  - MA004 matches handlers syntactically (`ann_name`, no tuples, no resolution), so `names.rerail`'s `catches` is the
     wrong relation (`:652-668`).
   - MA027's first argument is any `ast.Constant` (numbers, None, bytes) or f-string (`:661-664`).
   - The text-marker gate is raw text: a marker in a comment makes a file scanned.
@@ -185,7 +185,7 @@ Oracle: scripts at revision 2b1504ad. Cites are `script.py:LINE` (a bare `:LINE`
     note the scope: only classes of the same document count (`finish_file` uses `self.class_bases`).
   - `NATIVE op_tok(n: node, s: symbol, start: number)`: anonymous operator tokens with their byte offsets.
     `op(n, s)` has no position, so in `a == b < c` it cannot pair each operator with its operands, and
-    `cmp` covers single-operator comparisons only (names.rr:199-203). `check_compare` walks
+    `cmp` covers single-operator comparisons only (names.rerail:199-203). `check_compare` walks
     `zip(ops, comparators)` (`:285-350`). With offsets, a `LIB cmp_pair(c, i, op, l, r)` takes operands
     `child(c,l,i)`, `child(c,r,i+1)` and the token between them.
   - `LIB type_name(e: node, t: symbol)`: `_type_name` (`:359-368`). Name gives its id. Attribute gives its attr.
@@ -325,7 +325,7 @@ Oracle: scripts at revision 2b1504ad. Cites are `script.py:LINE` (a bare `:LINE`
   - `POLICY signature failure is a finding`: SPD000 is a hard-fail finding at the allowlist path, line 1, when the
     list is non-empty or `verify_allowlist` fails (`:829-836`), including an "unsigned" signature
     (`signing.py:127-134`). Core says `signed_list` is "refused if the signature fails", which reads as a run
-    error, not a reportable finding. The expected signature lives in the linter source (`:60`), so in .rr it must be
+    error, not a reportable finding. The expected signature lives in the linter source (`:60`), so in .rerail it must be
     the policy's own data (a signed empty list).
   - `LANG finding at a path` (same as matching_architecture MA033): SPD000 is anchored on a `.txt` file that is
     not a parsed document.
@@ -457,7 +457,7 @@ per-code counts, and it does not compute SPQ-029.
     - `local_fn` takes the last def of each name anywhere in the file (`max` over node id).
     - `ncall` links a call whose `_call_name` is x to `local_fn` x. The oracle's `seen` set makes this plain
       reachability.
-    - `call_target` from calls.rr resolves scope-correctly, which the oracle does not.
+    - `call_target` from calls.rerail resolves scope-correctly, which the oracle does not.
   - `LIB` annotation resolution for SPQ-050 (:3467-3588), four relations:
     - `ann_import(s, x, origin)`: raw imports owned by scope s (not inside a nested def/class/lambda). Relative imports
       keep their dots: `"." * level + module + "." + name`. `import a.b` gives (a, a); `import a.b as c` gives (c, a.b).

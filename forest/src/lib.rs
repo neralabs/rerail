@@ -98,7 +98,7 @@ fn distinct_keys(keys: &[i64]) -> Result<Vec<i64>, String> {
     }
     use rayon::prelude::*;
     let mut sorted = keys.to_vec();
-    sorted.par_sort_unstable();
+    rerail_context::on_cores(|| sorted.par_sort_unstable());
     sorted.dedup();
     Ok(sorted)
 }

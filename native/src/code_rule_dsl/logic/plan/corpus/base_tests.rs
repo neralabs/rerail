@@ -1,4 +1,4 @@
-//! core.rr's base relations the corpus runner binds beyond T's (`facts::vtab::syntax::Extra`), each against W's
+//! core.rerail's base relations the corpus runner binds beyond T's (`facts::vtab::syntax::Extra`), each against W's
 //! notion of it (`CodeRuleDslRuntime`, the matcher, the regex query) on fixture files.
 
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -486,7 +486,7 @@ lone(s) :- name(_, s), x = cat(s, "_[a-z]+"), !match(x, "load_async").
     let twin = sorted(names.iter().flat_map(|s| names.iter().filter(move |t| whole(&format!("{s}_[a-z]+"), t)).map(move |t| r![s, t])));
     assert_eq!(twin, [["load", "load_async"], ["load", "load_lazy"]]);
     let lone = sorted(names.iter().filter(|s| !whole(&format!("{s}_[a-z]+"), "load_async")).map(|s| r![s]));
-    let printed = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).unwrap()).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(program).unwrap()).unwrap();
     for program in [program, printed.as_str()] {
         assert_eq!(run(&dir, program, &["twin", "lone"]), [twin.clone(), lone.clone()], "{program}");
     }
@@ -846,11 +846,11 @@ const TREE: (&str, &str) = (
     "def f(a):\n    x = g(a)\n    y = h(x)\n    print(y)\n    return y\n\n\nclass C:\n    def m(self):\n        z = k(1)\n        z.w()\n        return z\n",
 );
 
-/// core.rr's tree arithmetic, which lowering rewrites to the base relations (`rr::lower::core`), as W's matcher
+/// core.rerail's tree arithmetic, which lowering rewrites to the base relations (`rr::lower::core`), as W's matcher
 /// sees it: `kind` is a node's kind; `within` W's `inside` to the end, its ancestor's kind tested (a kind set of
 /// one) or read from a relation (the set of every kind); `next_sibling` W's `follows` at a neighbour (statements of a
 /// block, which no token separates), negated W's `nthChild: 1`; `precedes` W's `precedes` to the end. No program
-/// declares them: core.rr's declarations are the prelude.
+/// declares them: core.rerail's declarations are the prelude.
 #[test]
 fn tree_arithmetic_is_ws_relations() {
     let files = [TREE];
@@ -874,10 +874,10 @@ first_stmt(p, l, c) :- kind(b, "expression_statement"), !next_sibling(_, b), at(
 before_return(p, l, c) :- kind(a, "expression_statement"), precedes(a, b), kind(b, "return_statement"), at(a, p, l, c).
 .output kinds, within_def, within_any, follows_stmt, first_stmt, before_return
 "#;
-    let parsed = crate::code_rule_dsl::logic::rr::parse(program).unwrap();
+    let parsed = crate::code_rule_dsl::logic::rr::parse_version(program).unwrap();
     // `within(n, a)` is the engine's tree relation (decision 0050), read as it is, not a kind set's axis.
     let within = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-    assert!(parsed.rules.iter().flat_map(|r| &r.body).any(|l| l.atom().is_some_and(|a| a.rel == within)), "{:?}", parsed.rules);
+    assert!(parsed.rules().flat_map(|r| r.body()).any(|l| l.atom().is_some_and(|a| parsed.rel_name(a.rel()) == within)), "{}", parsed.show());
     let got = run(&dir, program, &["kinds", "within_def", "within_any", "follows_stmt", "first_stmt", "before_return"]);
     let inside = json!({ "kind": "identifier", "inside": { "kind": "function_definition", "stopBy": "end" } });
     let want = [
@@ -1149,16 +1149,21 @@ fn a_copy_of_an_inputs_columns_is_a_view_of_it() {
                    .decl kinds(k: symbol)\nkinds(k) :- node(_, _, k, _, _).\n\
                    .decl calls(s: number, k: symbol)\ncalls(s, k) :- kind(n, \"call\"), node(_, n, _, s, _), kinds(k), k = \"call\".\n\
                    .output calls\n";
-    let before = crate::code_rule_dsl::logic::plan::input_views();
-    let viewed = run(&dir, program, &["calls"]);
-    let held = crate::code_rule_dsl::logic::plan::input_views() - before;
-    assert!(held >= 1, "kind is a view of node: {held}");
+    // Each run's own scope, held here: the views it held are the run's count (decision 0442), read before it ends.
+    let scope = || crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let viewed = {
+        let _run = scope();
+        let viewed = run(&dir, program, &["calls"]);
+        let held = crate::code_rule_dsl::logic::plan::input_views();
+        assert!(held >= 1, "kind is a view of node: {held}");
+        viewed
+    };
     let copied = {
         let _copy = super::switches::set(&[("RERAIL_COPY_VIEWS", "1")]);
-        let before = crate::code_rule_dsl::logic::plan::input_views();
+        let _run = scope();
         std::fs::remove_dir_all(dir.join(".out")).ok();
         let got = run(&dir, program, &["calls"]);
-        assert_eq!(crate::code_rule_dsl::logic::plan::input_views(), before, "RERAIL_COPY_VIEWS derives it");
+        assert_eq!(crate::code_rule_dsl::logic::plan::input_views(), 0, "RERAIL_COPY_VIEWS derives it");
         got
     };
     assert_eq!(viewed, copied);
@@ -1175,7 +1180,7 @@ fn an_unbound_relation_is_named() {
     let fails = |out: &str, program: &str| {
         super::run(program, &dir, None, &dir.join(out), "program", Binding::Cpu, 1 << 18).err().map(|e| e.to_string()).unwrap_or_default()
     };
-    // `git_tracked` is a functor now (`@git_tracked`); `signed_list` is still a core.rr input no producer binds (O80).
+    // `git_tracked` is a functor now (`@git_tracked`); `signed_list` is still a core.rerail input no producer binds (O80).
     let e = fails(".out-signed", ".decl v(p: symbol, e: symbol)\nv(p, e) :- signed_list(p, e).\n.output v\n");
     assert!(e.contains("signed_list is read, and nothing derives it or binds it"), "{e}");
     let e = fails(".out-str", ".decl v(n: node)\nv(n) :- str_part(n, 0, _, _, _).\n.output v\n");
@@ -1200,7 +1205,7 @@ fn a_failed_runs_store_reopened_report() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `as` names a variable (python/calls.rr's `field(c, "arguments", as)`), as the engine always read it. Soufflé
+/// `as` names a variable (python/calls.rerail's `field(c, "arguments", as)`), as the engine always read it. Soufflé
 /// reserves it (its `as(x, T)` cast), so a program for Soufflé renames it.
 #[test]
 fn as_is_a_variable() {
@@ -1478,7 +1483,7 @@ late(fq) :- source(_, sp), match_all("RE", sp, m), match_group("RE", sp, m, "mod
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// core.rr's `syntax_error(d, l, msg)` is CPython's verdict (`cpython::syntax`), bound as `cpython_syntax_error`: a file
+/// core.rerail's `syntax_error(d, l, msg)` is CPython's verdict (`cpython::syntax`), bound as `cpython_syntax_error`: a file
 /// tree-sitter reads without an error node (an empty block) is rejected, as is an invalid target, with CPython's line and
 /// message; one only `compile` rejects (`return` outside a function) is not. A program that declares
 /// `syntax_error(d: number)` reads the tape's verdict, and both may be read side by side.
@@ -1524,10 +1529,10 @@ only_tree(p) :- doc(d, p, _), syntax_error(d), !cpython_syntax_error(d, _, _).
 }
 
 /// `string_annotation(s)` is each string Ruff's semantic model reads as a type definition (the scope table's), nested
-/// ones included, and `parsed(s, "annotation", root)` its tree, decision 0055's guest asked for by `string_annotation`:
-/// the value parsed as `( … )`, in T's shape (this program declares its base relations) the guest's whole tree, its
-/// identifiers `text` rows as a file's are; a nested string's guest is made in the next round. T's shape keeps every
-/// document, so a guest that does not parse keeps its partial tree. A `Literal` argument is no type definition.
+/// ones included, and `parsed(s, "annotation", root)` its tree, a tape value asked for by `string_annotation`: the
+/// value parsed as the `annotation` fragment, from a `type` (decision 0466), its identifiers `text` rows as a file's
+/// are; a nested string's value is made in the next round. A value the parser refuses (`"not valid (("`, which Ruff
+/// refuses too) is one `ERROR` over the text, with no names. A `Literal` argument is no type definition.
 #[test]
 fn string_annotations_are_ruffs_with_their_trees() {
     let source = "from typing import List, Literal, Optional\nimport typing\n\nx: \"List[int]\" = []\n\ndef f(a: \"Optional[Foo]\", b: 'typing.Dict[str, \"Bar\"]') -> \"Baz\":\n    pass\n\ny: \"not valid ((\" = 1\nz: Literal[\"notatype\"] = 1\n";
@@ -1565,19 +1570,18 @@ files(p) :- doc(_, p, _).
             &["'typing.Dict[str, \"Bar\"]'", "str"],
             &["\"Bar\"", "Bar"],
             &["\"Baz\"", "Baz"],
-            &["\"not valid ((\"", "valid"],
         ])
     );
-    // Each root is its guest's module, over the string's value in `( … )`.
+    // Each root is its value's `type`, over the string's value (decision 0466); a refused one's an `ERROR`.
     assert_eq!(
         set(&got[2]),
         want(&[
-            &["\"List[int]\"", "module", "0", "11"],
-            &["\"Optional[Foo]\"", "module", "0", "15"],
-            &["'typing.Dict[str, \"Bar\"]'", "module", "0", "25"],
-            &["\"Bar\"", "module", "0", "5"],
-            &["\"Baz\"", "module", "0", "5"],
-            &["\"not valid ((\"", "module", "0", "14"],
+            &["\"List[int]\"", "type", "0", "9"],
+            &["\"Optional[Foo]\"", "type", "0", "13"],
+            &["'typing.Dict[str, \"Bar\"]'", "type", "0", "23"],
+            &["\"Bar\"", "type", "0", "3"],
+            &["\"Baz\"", "type", "0", "3"],
+            &["\"not valid ((\"", "ERROR", "0", "12"],
         ])
     );
     // The trees are no files.
@@ -1711,8 +1715,9 @@ fn str_answered_on_request_holds_the_eager_rows() {
     let dir = corpus("str-on-request", &[("a.py", "x = 'a'\ny = b\"by\"\nz = r'\\\\d'\nw = f'k{x}'\nv = f'plain'\nu = 'p' 'q'\nt = \"\"\"doc\"\"\"\n")]);
     let decls = ".decl node(d: node, n: node, k: symbol, s: number, e: number)\n.decl str(n: node, s: symbol)\n.input node, str\n.decl out(s: symbol)\n.output out\n";
     let asked = format!("{decls}out(s) :- node(_, n, \"string\", _, _), str(n, s).\n");
-    let lowered = crate::code_rule_dsl::logic::rr::parse(&asked).unwrap();
-    assert!(!lowered.inputs.iter().any(|i| i == "str") && lowered.rules.iter().any(|r| r.head.rel == "rr_str_req"), "str is answered on request");
+    let lowered = crate::code_rule_dsl::logic::rr::parse_version(&asked).unwrap();
+    let inputs = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::input_names(&*lowered);
+    assert!(!inputs.iter().any(|i| i == "str") && lowered.rules().any(|r| lowered.rel_name(r.head().rel()) == "rr_str_req"), "str is answered on request");
     let asked = run(&dir, &asked, &["out"]);
     let eager = run(&dir, &format!("{decls}.decl all(n: node, s: symbol)\nall(n, s) :- str(n, s).\nout(s) :- all(n, s), node(_, n, \"string\", _, _).\n"), &["out"]);
     assert_eq!(asked[0].len(), 7, "string rows: {:?}", asked[0]);

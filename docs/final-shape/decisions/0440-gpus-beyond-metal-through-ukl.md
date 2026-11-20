@@ -1156,6 +1156,177 @@ stands on:
 - Its 23 tests pass on Metal; on the CPU and OpenCL all but accel's two column-statistics tests, which run
   `join.rs`'s kernels.
 
+**C: the joins and the row programs on every backend (2026-11-19).**
+- **The joins' stages are UKL** (`packed/join_stages.uglykl`): the nested loops' count and scatter, the witnesses,
+  the texts made per row and their tests, the replacements, the text functions, the copies, the head's distinct
+  rows, the device index and the lattices. The views' expansion and the kind-set axes are `chunk_views.uglykl`, a
+  batch's root layout written as C by `blocks`' `structure!` (`typedef struct`, checked by static asserts of its
+  size and offsets), as its MSL was. The row programs' kernels (`metal_rows.rs`) and accel's join kernels
+  (`join.uglykl`, `join_sort.uglykl`) are UKL too; the MSL is gone.
+- **A stage's constants are a buffer**, not arguments: a `Stage` is 2,320 bytes, with arrays and an address, and
+  OpenCL takes arguments by value up to 1 KB, of scalars alone. So every stage, copy, dedup and index kernel reads
+  its parameter block as its last buffer (`Batch::block`); the small scalar ones (`LatP`, the text kernels') stay
+  arguments.
+- **One pass on the device layer** (`join::Pass`): the batch's launches go on one queue of the process's device and
+  are committed once, as Metal's command buffer was. A SIMD-group kernel (a row's text, a term's verdict) runs
+  threadgroups of one SIMD group (`Pass::run_bytes_simd`), OpenCL 1.2's rule for kernels whose lanes loop by the
+  data, and its scratch is sized by the device's width.
+- **The views read in place are Metal's alone**: their directory holds GPU addresses, which OpenCL 1.2's kernels
+  cannot follow. Elsewhere a view is made by `view_expand` (the listed copy, 0353 step 4), as a refused batch's is;
+  `views_made_on_the_device_are_the_hosts_rows` checks both ways.
+- **Widths below 32 found two overruns**, both from before the port: a threadgroup's prefix kept a word per SIMD
+  group in 32 words (`join_tg_prefix`, and `relational.uglykl`'s maximum), 256 at a width of 1; and the radix sort
+  kept its counts per SIMD group, 8 × 256 words, which needs 32 × 256 at a width of 8 and 256 × 256 at 1. The
+  prefix's words are now `JOIN_SGS`. The sort ranks a row among a group of at least 32 threads: a SIMD group of 32
+  lanes or more, through shuffles, as before; else 32 threads, through their digits in threadgroup memory. So its
+  counts stay 8 × 256 words at every width. At a width of 1 the head's distinct rows had kept one text of each name
+  (`parity_row_texts_past_the_arena`), and the set fixpoint's run died of a bus error.
+- `ukl_mulhi64` (UKL's `backend.h`): a 64-bit product's high half on each backend, for the stages' arithmetic.
+- On Metal, the CPU and OpenCL: the joins', row programs' and set fixpoint's device tests (37: the parity suites,
+  text functions and tests, witnesses, waves, lattices, views) and accel's 23 lane tests pass, its two column
+  statistics tests among them. At SIMD widths of 1 (OpenCL) and 8 (the CPU) the text tests and accel's pass too.
+- Left in C: the block programs (`block_program.rs` and its three `.metal` files, `block_serial.rs`), `launch.rs`'s
+  kernels and the tests with Metal kernels of their own. accel's `can` still keeps programs on Metal.
+
+**C: the block programs in UKL (2026-11-19).**
+- **The interpreter and its helpers are UKL** (`block_common.uglykl`, `block_program.uglykl`; were
+  `block_carry.metal`, `block_sinks.metal`, `block_program.metal`): one compile per lane width (`BW` 16, 32, 64,
+  `BM` its word), the carries' look-back and halo exchange, the sinks. The generated forms (`generate_forms`, one
+  function a program and one kernel a batch) and the passes' kernels (`block_serial.rs`: the serial and lanes
+  runs, the cones, the checks, counts, prefixes, writes, the records and the back fill) write UKL too. Every
+  launch goes through the lane (`lane::Command`), binding its buffers and parameters by row name; a kernel takes the
+  rows it declares (`buffer_if`, `value_if`), as Metal's took the indices they declared. The device zeroes a run's
+  large blocks by the queue's fill (`pool::zeroed_on_device`), in a launch scope of its own.
+- **A block program needs SIMD groups of 32** (`block_program::ready`): a lane's word and the group's 32 words are
+  the format. A device with other widths is refused (`UnsupportedBackend`), and the executors skip it.
+- **One SIMD group a threadgroup for the lanes kernels**, whose groups are segments: OpenCL 1.2's rule, as the
+  joins' SIMD-group kernels (above). The serial kernels choose their ASCII body per thread, where a group's vote
+  (`simd_all`) had chosen it for all: a vote is reached by every thread or none.
+- **No SIMD-group operation in an operand of `SEL`**, a C conditional (Metal's `select` evaluated both): a lane that
+  skips a shuffle leaves the lanes reading it with an inactive lane's value. The 64-byte lanes' `prev` read 0 at
+  each group's first lane on Metal (`halo_before`'s `SEL(sg_up64(..), P, l == 0)`). Each shuffle is a statement of
+  its own now, in the helpers and in what the generators write; the scans' two prefixes under a reset too.
+- **A worker's lanes need not run in lockstep** (the CPU's lanes are threads; CUDA schedules each thread on its
+  own): lane 0 takes a group's ticket and reads whether the group is done, and the group takes both from it in
+  one shuffle. Each lane had read `done` itself, so on the CPU lane 0 finished a group, marked it done, and the
+  other lanes, reading it after, skipped it: only lane 0's words were written. Metal's lockstep had hidden it.
+- **No thread-local in a CPU kernel library** (`ukl_cpu_shim.h`): the running scheduler and thread are in one
+  thread-local of the host's, which each launch names, and the scheduler's storage is the queue thread's. macOS
+  gives each loaded image's thread-locals a pthread key of their own; the block suites load a library per generated
+  program, and after a few hundred the process ran out of keys and aborted at a thread-local's first use
+  (`_tlv_bootstrap_error`).
+- **Lane code is straight-line**, as before: the helpers that loop are named in the test's list (`LOOPING`) where
+  the MSL had marked them by leaving out `inline`, and the helpers the port had given a loop or a `?` (`rotr64`,
+  `clamp_i32`, `keep_word`, the prefix XOR, `texclusive1`) are unrolled or selects.
+- **A fixed point's vote is the lanes form's** (`emit`'s `Word::lanes`): in the serial form each thread runs its own
+  segment, so its rounds end when its own carries settle; a vote there (`simd_any`, kept from the MSL) was a
+  SIMD-group operation in a function without the group's parameters, which OpenCL's emulation refused.
+- The block suites' 45 tests pass on Metal, on the CPU under OpenCL's rule (`RERAIL_CPU_OPENCL_RULE=1`) and on
+  OpenCL, and `rr_parser`'s 48 on Metal. Found on the way: `rr_parser`'s refusal test still took a setting's `1.2.3` as refused,
+  which 0400 had made a reading; its case is an integer of 19 digits now, which the record pass refuses.
+
+**C: the tape tests' kernels in UKL (2026-11-19).** The tape tests' diagnostics (O39: the footprint of a submission,
+of a kernel's private stack, of one label kernel's dispatch) launch UKL kernels through the lane on the process's
+device; only the measure of new command queues is Metal's, since a device layer's queue is its device's. A label
+kernel's rows are bound from its reflection, each buffer the zero buffer and each value zero bytes of its type's
+width (`lane::Launch::bytes`). The tests gate on the process's device, not Metal's. The probe of the label
+kernels' compile (Q181) stays a probe of Metal's compiler: its function constants and pipelines are what it times.
+
+**C: the numbering's and the views' probes in UKL (2026-11-19).** The two tests that check the reads written once
+in CLIF against the host's (`the_kernels_id_reads_are_the_hosts`, `the_view_reads_are_the_hosts_rows`,
+`facts/vtab/syntax/tests.rs`) launch UKL kernels on the process's device, each reading its projection's block where
+it lies (`Block::device_buffer`). The views' probe reaches the tape and the lines by their device addresses, words
+of its parameters, as the engine's views do; it runs where buffers have them (not OpenCL 1.2). Both pass on Metal,
+the CPU and OpenCL. Seen on the way: a 16z tape's in-place view reports format 16 there, so the probe's 16z cache
+branch is not reached; it was not before either.
+
+**C: the views' directory on the process's device (2026-11-19).** A tape's slab room, the views' directory and its
+16z cache are the device layer's (`tape::placed`, `device_chunk::build_views`): the slabs are the process's device's,
+whatever its backend, and a tape is read in place where that device's buffers have addresses. So the CPU reads the
+`node`, `child`, `field`, `core_node` and `line` views in place as Metal does (`views_made_on_the_device_are_the_hosts_rows`:
+10 of 10 on both), and OpenCL 1.2 makes them. The vtab's gate on Metal is gone.
+
+**C: the blocks crate's kernels in UKL (2026-11-19).** The join's kernels (`rerail_blocks::gpu`) are UKL, their
+structures declared by `ukl_of` (the field trait is `KernelField` now, its MSL half gone: nothing read it). The crate
+is below the device layer, so it holds the source and its callers launch it: the `paces` lab (its join and overflow
+rerun, 126 checks on Metal, the CPU and OpenCL) and the tests (`the_device_reads_a_relation_as_the_host_does`,
+`a_kernels_writes_are_written_back`), through `rerail-gpu` as a dev-dependency.
+
+- **The pool's hooks are installed by the device layer's entry too** (`POOL_HOOKS`): the ledger's reservations and
+  the residency's evictor were installed only by `METAL_DEVICE`'s first touch, which a process on the device layer
+  alone need never make.
+- Gone with their last users: `Slab::buffer` (Metal's), `MappedBuffer::slab`. The pool's, the slabs' and accel's
+  block tests read the device layer's buffers and addresses, and gate on its device: accel's two block tests had
+  gated on Metal's `Shared`, and failed under `RERAIL_GPU=cpu`, whose pool leases slabs.
+- **A race fixed:** `a_wrap_of_host_memory_leaves_the_metal_budget_unchanged` compared the pool's whole idle count
+  across a trim while other tests lease and return small buffers from the same pool; it checks its own 64 MB.
+
+**C: programs on the GPU lane of every device (2026-11-19).** accel's GPU lane takes a program wherever the program
+offers that lane (`can`): the gate on Metal's `Shared` is gone, since the programs that offer it (the span prefilter,
+the matcher wave) run their kernels through the lane on the process's device. The span prefilter's and the wave's
+tests pass on Metal, the CPU and OpenCL, and accel's 85 on all three (the CPU's in 399 s cold: its compiles).
+
+**C: the blocks crate's labs in UKL (2026-11-19).** `pinning`, `deferrable` and `encodings` launch UKL kernels on the
+process's device. `encodings`' two function constants are defines (`BITS`, `PB`: a program each), its kernels'
+`simd_is_first` lane 0, its 1,024-thread scan a threadgroup of 256; every check against the CPU's encoder holds word
+for word on Metal and OpenCL at full size and on the CPU at 1/64 (`ENCODINGS_GPU_SHIFT`, for a slow device).
+`deferrable`'s `DEALLOC` and `POOL` switches stay Metal's: they ask about Metal's own wraps (a deallocator, an
+autorelease pool), so the crate's `metal` is a macOS dev-dependency now, not a dependency. `Block::gpu_buffer` went
+with its last caller; `release_gpu_buffer` is `release_device_buffer`.
+
+**C: a machine's samples keyed by the process's device (2026-11-19).** The cost store's machine key named Metal's
+device, so a run on OpenCL or the CPU's backend keyed its GPU-lane samples as a machine with no GPU. It names the
+device layer's (`Device::name`: the GPU's model, `OpenCL <device>`, or `CPU`; CUDA's the backend's until step E
+reads the driver's). The engine's unused re-export of `METAL_DEVICE` is gone.
+
+**C: done (2026-11-19).** Every hand-written Metal kernel on the product path is UKL, launched through the device
+layer on the process's device: the tape reads, the label passes, the views and ids, the batch runtime with its work
+queue, the block programs, the joins and row programs, accel's GPU lane, and the blocks crate's kernels and labs.
+Each family's tests pass on Metal, on the CPU (OpenCL's SIMD-group rule checked) and on OpenCL. What names Metal
+still:
+
+- **Metal's backend itself:** its compile of a UKL source (`rerail_ukl::metal_source`), its pipelines' archive store
+  and that store's test, the probe of the label kernels' compile (Q181), the driver's allocated size, the Apple9
+  family check of the block programs, and the measure of new command queues in the tape tests' diagnostics.
+- **Step D's:** the generators that write MSL (`clif_msl.rs`, and `c_directives`' test of its words), `pp_on.rs`
+  and `launch.rs`' guards of Metal's dispatch calls.
+- **Left as they are, off the product path:** the tape format 16 spike (`native/lab/tape16`, its own workspace:
+  decision 0156's measures), the Swift GPU probe (`tools/matrix-offload`) and the enqueue experiment's kernels in
+  `docs/rule-engine-direction`: records of measures already taken, not code the engine runs.
+
+**Names: `.uglykl` everywhere (2026-11-19).** A UKL source is `.uglykl` on disk and in the names programs are compiled
+and cached under (`format!("{name}.uglykl")` in accel's other-device path, the tests' programs, the `/<tests>/`
+paths), so a search for UKL finds every one and none is taken for another language's. The last file that kept the
+old suffix, `gpu/src/library_tests.ukl`, is renamed.
+
+**D: the preprocessor's words in UKL, and the last Metal launch path gone (2026-11-19).**
+
+- **`clif_ukl`** (was `clif_msl`) prints the C preprocessor's compiled words (`native_cpu_pp::ukl_source`) as UKL's C:
+  C types and casts, the library's bit counts, `ukl_min`/`ukl_max`, and one kernel, `pp_batch`, by `DEFINE_KERNEL2`.
+  Its functions are `UKL_CALLED` (the compiler inlines as it chooses; `UKL_FUNCTION` is MLDB's shims' own, a
+  versioned macro). The words read and write their arena at several widths, so every access is a byte or an
+  aligned 64-bit word: the library's new `ukl_ldw_*` and `ukl_stw_*` (`ukl/memory.h`), where MSL had its aliasing
+  typedefs and direct accesses. The library has `ukl_umulhi64` and `ukl_reverse32`/`64` too, each tested
+  (`word_stores_at_unaligned_addresses`, `bits_within_words`) on Metal, OpenCL, the CPU and CUDA on a GB10.
+  `Shape`'s labelless form is `Shape::c`.
+- **`pp_on`** launches it through the lane on the process's device. A device whose buffers have no address
+  (OpenCL 1.2) gets a base of its own: the words read every pointer as an offset from the arena's base.
+  `the_device_words_are_the_interpreters` and `the_device_rungs_run_a_tu_again_past_its_room` pass on Metal, OpenCL
+  and the CPU's backend.
+- **Metal's checked encoder is gone** (`CheckedComputeEncoder`, `commit_checked`, `wait_checked`, the runtime's
+  `pipeline_named*`, accel's `pipeline`, `pipeline_fixed`, `ready`, `ready_behind`): every launch is a lane
+  command's. The launch guards (`gpu_launch_guard_counts_all_dispatch_apis_and_refuses_submission`,
+  `an_over_budget_command_does_not_run_its_allowed_prefix`) launch UKL kernels through it on all three. The
+  kernel store counts a kernel made on any backend in `made_here`, which `pipelines_compiled_here` reads; it had
+  counted only the Metal pipelines nothing asked for any more. The pattern passes ask `ready_function`, not
+  Metal's `ready`.
+- **Found on the way:** two `parser_tests` were red. `json_msl_is_one_kernel` (now `json_ukl_is_one_kernel`)
+  counted `kernel void` in UKL; it counts `DEFINE_KERNEL2(`, and its line budget is over what is generated after
+  the head every source shares (`block_program::head`, since step C the whole of `block_common.uglykl`).
+  `every_step_on_metal_equals_the_interpreter` compared a token's last on files tier 1 refuses, where 0411's
+  gap rule and Metal's extract need not agree (its R5): it excuses the gap lasts there, as `ladder::tier1_agrees`
+  does on the CPU. The crate's 86 pass on Metal.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

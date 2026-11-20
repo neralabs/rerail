@@ -230,7 +230,7 @@ fn vue_view_scope_oracle() {
                 errors.push(format!("{at}: not a reference"));
                 continue;
             };
-            let binding = table.resolve(read, name).map(&declared);
+            let binding = table.resolve(read, name).map(declared);
             let inside = |within: &Range<usize>| match &binding {
                 Some(Some(span)) => within.start <= span.start && span.end <= within.end,
                 _ => false,

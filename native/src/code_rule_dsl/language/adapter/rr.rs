@@ -1,6 +1,6 @@
-//! `.rr` rule files' family (decision 0061): the rule engine's own tree (`logic::rr::tape`), read by `.rr` rules
+//! `.rerail` rule files' family (decision 0061): the rule engine's own tree (`logic::rr::tape`), read by `.rerail` rules
 //! through the tape and its text facts. No linter's semantics apply: scope, values, arguments, calls and format
-//! arguments are refused (the registry's `refused`), so the compile refuses a rule that asks for them on a `.rr` file
+//! arguments are refused (the registry's `refused`), so the compile refuses a rule that asks for them on a `.rerail` file
 //! and nothing here is reached. Each refused hook answers "nothing known".
 
 use super::QueryWhen;
@@ -30,7 +30,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
-/// `.rr` rule files.
+/// `.rerail` rule files.
 pub struct Rr;
 
 fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
@@ -46,7 +46,7 @@ impl Adapter for Rr {
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
     const STRIPS_BOM: bool = false;
-    /// `.rr` files have no suppression comments, so no `rerail-ignore` directives either.
+    /// `.rerail` files have no suppression comments, so no `rerail-ignore` directives either.
     const COMMENT_KINDS: &'static [&'static str] = &[];
     const PREAMBLE_KINDS: &'static [&'static str] = &[];
     const BODY_KINDS: &'static [&'static str] = &[];
@@ -68,7 +68,7 @@ impl Adapter for Rr {
         None
     }
 
-    /// `.rr` files have no suppression comments.
+    /// `.rerail` files have no suppression comments.
     fn suppresses<D: Doc>(
         _: &ViolationSpec,
         _: &Suppress,
@@ -89,7 +89,7 @@ impl ScopeRules for Rr {
     const REDEFINES_SHADOWED: bool = false;
     const REFERENCE_KINDS: &'static [&'static str] = &[];
     const ANNOTATION_STRING_KINDS: &'static [&'static str] = &[];
-    // Main's scope kinds (#462): every dialect's parentheses are `parenthesized_expression`, which `.rr` has too (the
+    // Main's scope kinds (#462): every dialect's parentheses are `parenthesized_expression`, which `.rerail` has too (the
     // kit's `shared_walks_read_the_kinds_they_named`); it has no dotted names, attributes or `this`.
     const PAREN_KINDS: &'static [&'static str] = &["parenthesized_expression"];
     const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
@@ -152,7 +152,7 @@ impl ScopeRules for Rr {
         None
     }
 
-    /// Never reached: scope is refused, so no rule asks for a `.rr` file's usage.
+    /// Never reached: scope is refused, so no rule asks for a `.rerail` file's usage.
     fn usage<D: Doc>(_: &ScopeTable, _: &Node<'_, D>, _: &mut Steps<'_>) -> Result<Usage, BuildError> {
         Err(BuildError::Budget)
     }
@@ -250,7 +250,7 @@ impl ValueRules for Rr {
     }
 }
 
-/// A `.rr` file hosts no literal grammar a policy parses, and has no `languageOptions`.
+/// A `.rerail` file hosts no literal grammar a policy parses, and has no `languageOptions`.
 impl SyntaxRules for Rr {
     const DOLLAR_NAMES: bool = false;
 

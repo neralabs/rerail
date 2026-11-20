@@ -133,7 +133,10 @@ impl crate::code_rule_dsl::matcher::LanguageTerm for ImportTargetTest {
     }
     fn holds_str(
         &self,
-        node: &Node<'_, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>,
+        node: &Node<
+            '_,
+            ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>,
+        >,
     ) -> bool {
         self.holds(node)
     }

@@ -10,6 +10,10 @@ import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.j
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { RerailRuntime, SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
+
+/** The store of suspended sessions an engine service gives its runtimes, and what it keeps for one session. */
+type SuspendedSessions = NonNullable<ConstructorParameters<typeof RerailRuntime>[0]["suspendedSessions"]>;
+type SessionSuspension = Parameters<SuspendedSessions["keep"]>[0];
 import { temporaryDirectories, testEmbedder } from "../../support/hook-events.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
@@ -287,6 +291,8 @@ describe("source-scoped steers", () => {
     await writeFile(join(root, "existing.py"), "safe\n");
     await writeFile(join(root, "removed.py"), "NEEDLE\n");
     git("init", "--quiet", "--initial-branch=main");
+    // Git writes the files as committed, LF, though Git for Windows sets core.autocrlf=true for every repository.
+    git("config", "core.autocrlf", "false");
     git("add", ".");
     git("commit", "--quiet", "-m", "seed");
     git("switch", "--quiet", "-c", "other");
@@ -562,6 +568,14 @@ describe("source-scoped steers", () => {
   it("starts a session before its evaluator opens, and answers a tool call at once without code rules", async () => {
     const root = await realpath(await temporaryDirectory());
     const databasePath = join(root, "rerail.sqlite");
+    // The evaluator's first walk lists the folder only once the result has answered. Run before it, the walk could find
+    // the write inside the call's window, take it as the session's own and check it, and the result would carry that steer.
+    const walk = Promise.withResolvers<void>();
+    const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+    vi.mocked(opendir).mockImplementation(async (...args) => {
+      if (args[0] === root) await walk.promise;
+      return actual.opendir(...args);
+    });
     const attachments = gateStorageAttachments();
     const runtime = new RerailRuntime({
       storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
@@ -586,9 +600,11 @@ describe("source-scoped steers", () => {
         toolCallId: "write", toolName: "write", output: "written",
       })).toEqual([]);
     } finally {
+      walk.resolve();
       for (const workspace of attachments.workspaces) workspace.release();
       attachments.restore();
       await runtime.dispose();
+      vi.mocked(opendir).mockRestore();
     }
   });
 
@@ -797,16 +813,93 @@ describe("source-scoped steers", () => {
       } finally { await test.close(); }
     });
 
+    // The evaluator's window of such a call names the files its tool names: a later call's capture of one of them is
+    // then no earlier state the walk could take the call's edit as (`CodeRuleBridge.unwatchedCall`).
+    it("opens the window of a call it answered while indexing with the tool's input", async () => {
+      const test = await openingFixture();
+      const windows = vi.spyOn(CodeRuleBridge.prototype, "unwatchedCall");
+      try {
+        await test.call("write");
+        expect(windows).toHaveBeenCalledWith("write", "write", { path: "edited.py" });
+      } finally {
+        windows.mockRestore();
+        await test.close();
+      }
+    });
+
     it("does not check at its result the edit of a call it answered while indexing, even once the evaluator has opened", async () => {
       const test = await openingFixture();
+      // The evaluator's first walk lists the folder only once the result has answered: run before it, the walk could
+      // find the write inside the call's window and check it as the session's own, and the result would carry that steer.
+      const walk = Promise.withResolvers<void>();
+      const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+      vi.mocked(opendir).mockImplementation(async (...args) => {
+        if (args[0] === test.root) await walk.promise;
+        return actual.opendir(...args);
+      });
       try {
         expect(await test.call("write")).toEqual([]);
         test.attachments.workspaces[0]!.release();
         await test.runtime.codeRulesOpened(test.session.sessionId);
         await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
         expect(await test.result("write")).toEqual([]);
-      } finally { await test.close(); }
+      } finally {
+        walk.resolve();
+        await test.close();
+        vi.mocked(opendir).mockRestore();
+      }
     });
+  });
+
+  describe("a Claude Code session reopened while its rules open again", () => {
+    it("waits at its first tool call for its rules, so the edit's steer rides its own result", async () => {
+      const root = await realpath(await temporaryDirectory());
+      const databasePath = join(root, "rerail.sqlite");
+      const attachments = gateStorageAttachments();
+      attachments.gated = false;
+      // The engine service's store of suspended sessions: the idle close keeps the session's owner claim there, and its
+      // reopen takes it back.
+      const suspended = new Map<string, SessionSuspension>();
+      const runtime = new RerailRuntime({
+        storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+        createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
+        suspendedSessions: {
+          keep: suspension => void suspended.set(suspension.descriptor.sessionId, suspension),
+          get: sessionId => suspended.get(sessionId),
+          take: sessionId => {
+            const suspension = suspended.get(sessionId);
+            suspended.delete(sessionId);
+            return suspension;
+          },
+        },
+      });
+      const session = { host: "claude-code" as const, sessionId: "reopened", cwd: root };
+      try {
+        await runtime.ingest({ kind: "session-start", eventId: "start", session });
+        await runtime.codeRulesOpened(session.sessionId);
+        await runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId: session.sessionId, text: "" });
+        expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
+        // The daemon's idle close: the next event, the person's prompt, opens the session again, and its rules with it.
+        attachments.gated = true;
+        await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: session.sessionId, session, text: "go on" });
+        await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
+        const call = runtime.ingest({
+          kind: "call", eventId: "call", sessionId: session.sessionId, session, toolCallId: "write", toolName: "Write",
+          input: { file_path: join(root, "edited.py"), content: "NEEDLE\n" },
+        });
+        // The call waits for the rules; their storage attaches once the test lets it.
+        attachments.workspaces[1]!.release();
+        expect(await call).toEqual([]);
+        await writeFile(join(root, "edited.py"), "NEEDLE\n");
+        expect(await runtime.ingest({
+          kind: "result", eventId: "result", sessionId: session.sessionId, session, toolCallId: "write", toolName: "Write", output: "written",
+        })).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
+      } finally {
+        for (const workspace of attachments.workspaces) workspace.release();
+        attachments.restore();
+        await runtime.dispose();
+      }
+    }, 30_000);
   });
 
 

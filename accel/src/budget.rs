@@ -17,13 +17,40 @@ pub const MEMORY_DEFAULT: usize = 1 << 30;
 /// The budgets set (`set_memory_mb`, `set_metal_mb`; 0: from the environment, or the defaults): the machine's
 /// (decision 0442), which every caller on it shares.
 #[derive(Default)]
-struct Budgets {
+pub(crate) struct Budgets {
     memory: AtomicUsize,
     metal: AtomicUsize,
 }
 
-fn budgets() -> std::sync::Arc<Budgets> {
+/// The budgets of the caller's machine: what a lease keeps to go back to its own (`gpu::shared::Pooled`).
+pub(crate) fn budgets() -> std::sync::Arc<Budgets> {
     rerail_context::machine::<Budgets>()
+}
+
+impl Budgets {
+    /// This machine's Metal budget, in bytes (`metal`).
+    pub(crate) fn metal(&self) -> usize {
+        #[cfg(test)]
+        if let bytes @ 1.. = METAL_TEST.with(std::cell::Cell::get) {
+            return bytes;
+        }
+        match self.metal.load(Ordering::Relaxed) {
+            0 => env_mb("RERAIL_METAL_MB").unwrap_or_else(|| self.memory() / 2),
+            bytes => bytes,
+        }
+    }
+
+    /// This machine's overall budget, in bytes (`memory`).
+    pub(crate) fn memory(&self) -> usize {
+        match self.memory.load(Ordering::Relaxed) {
+            0 => {
+                let bytes = env_mb("RERAIL_MEMORY_MB").unwrap_or(MEMORY_DEFAULT);
+                self.memory.store(bytes, Ordering::Relaxed);
+                bytes
+            }
+            bytes => bytes,
+        }
+    }
 }
 
 fn env_mb(name: &str) -> Option<usize> {
@@ -32,15 +59,7 @@ fn env_mb(name: &str) -> Option<usize> {
 
 /// The overall budget, in bytes.
 pub fn memory() -> usize {
-    let budgets = budgets();
-    match budgets.memory.load(Ordering::Relaxed) {
-        0 => {
-            let bytes = env_mb("RERAIL_MEMORY_MB").unwrap_or(MEMORY_DEFAULT);
-            budgets.memory.store(bytes, Ordering::Relaxed);
-            bytes
-        }
-        bytes => bytes,
-    }
+    budgets().memory()
 }
 
 #[cfg(test)]
@@ -51,14 +70,7 @@ thread_local! {
 
 /// The Metal budget, in bytes: half the overall budget unless set.
 pub fn metal() -> usize {
-    #[cfg(test)]
-    if let bytes @ 1.. = METAL_TEST.with(std::cell::Cell::get) {
-        return bytes;
-    }
-    match budgets().metal.load(Ordering::Relaxed) {
-        0 => env_mb("RERAIL_METAL_MB").unwrap_or_else(|| memory() / 2),
-        bytes => bytes,
-    }
+    budgets().metal()
 }
 
 /// Sets the overall budget (a command line's `--memory-mb`); 0 is refused.
@@ -96,8 +108,6 @@ struct Count {
     heap: std::sync::OnceLock<fn() -> usize>,
     /// The most the count has been when read (`written`), for the profile.
     most: AtomicUsize,
-    /// The most since the last `take_most`, beside the run's most (`most`).
-    latest: AtomicUsize,
 }
 
 fn count() -> std::sync::Arc<Count> {
@@ -105,13 +115,15 @@ fn count() -> std::sync::Arc<Count> {
 }
 
 /// Sets the machine's reader of the heap's live bytes (once; a second call is ignored), and starts the sampler that
-/// keeps the count's most (`take_most`): every `SAMPLE` while the process lives.
+/// keeps the count's most (`written_most`): every `SAMPLE` while the process lives.
 pub fn set_heap_reader(f: fn() -> usize) {
     let c = count();
     if c.heap.set(f).is_ok() {
-        // The machine's own thread: it reads its caller's shared and machine values (the pool, the host blocks).
+        // A service of the machine's (decision 0100 §12: a sampler on its clock is no job). It reads its caller's
+        // shared and machine values (the pool, the host blocks): the run's, else those outside a run (`shared_here`),
+        // as it may be started before any run.
         let shared = rerail_context::shared_here();
-        let _ = std::thread::Builder::new().name("rerail-budget-sampler".into()).spawn(move || {
+        let _ = crate::exec::service("rerail-budget-sampler", None, move || {
             let _within = rerail_context::within(shared);
             loop {
                 let _ = c.written();
@@ -129,7 +141,9 @@ const SAMPLE: std::time::Duration = std::time::Duration::from_millis(10);
 pub struct Written {
     /// The heap's live bytes.
     pub heap: usize,
-    /// Host blocks' used bytes (`crate::blocks::host_held`): resident only where written.
+    /// Host blocks' used bytes less their free lists' (`crate::blocks::host_held`): resident only where written, and
+    /// a dead relation's pages given back. A block reserves address space enough to grow in place and lives while any
+    /// relation in it does (decision 0445), so its used extent alone would count its dead relations for its life.
     pub host_blocks: usize,
     /// The GPU pool's leases, and its idle buffers.
     pub leased: usize,
@@ -153,14 +167,16 @@ pub fn written() -> Written {
 impl Count {
     fn written(&self) -> Written {
         let heap = self.heap.get().map_or(0, |f| f());
-        let host_blocks = crate::blocks::host_held().0;
+        let host_blocks = {
+            let (used, free) = crate::blocks::host_held();
+            used.saturating_sub(free)
+        };
         #[cfg(all(feature = "gpu", target_os = "macos"))]
         let ((leased, idle), ledger) = (crate::gpu::shared::held_bytes(), crate::gpu::shared::ledger_bytes());
         #[cfg(not(all(feature = "gpu", target_os = "macos")))]
         let ((leased, idle), ledger) = ((0, 0), 0);
         let w = Written { heap, host_blocks, leased, idle, ledger };
         self.most.fetch_max(w.total(), Ordering::Relaxed);
-        self.latest.fetch_max(w.total(), Ordering::Relaxed);
         w
     }
 }
@@ -168,14 +184,6 @@ impl Count {
 /// The most the count has been when read.
 pub fn written_most() -> usize {
     count().most.load(Ordering::Relaxed)
-}
-
-/// The most the count has been since the last call (read now too), and starts the next span from the count now: a
-/// chunk's peak, when it takes this at its start and at its end (decision 0435 §4).
-pub fn take_most() -> usize {
-    let c = count();
-    let now = c.written().total();
-    c.latest.swap(now, Ordering::Relaxed).max(now)
 }
 
 /// What the count is weighed against: the overall budget and Metal's together (decision 0435 §3; 0126's two numbers,
@@ -190,8 +198,8 @@ mod tests {
 
     /// The count rises by what a host block has written, not by its reservation (decision 0435 R3). The count is
     /// the process's, which the tests running beside this one move both ways (a block of theirs freed made a
-    /// difference of two counts negative), so the block's own term is checked: its used bytes (`host_held` sums
-    /// them), within the count.
+    /// difference of two counts negative), so the block's own term is checked: its used bytes less its free list's
+    /// (`host_held` sums them), within the count.
     #[test]
     fn the_count_is_what_a_block_wrote_not_what_it_reserved() {
         use rerail_blocks::alloc::{Device, Need, Writes};
@@ -203,6 +211,12 @@ mod tests {
         let after = b.used();
         assert!(after >= 8 << 20 && after < 9 << 20, "8 MB written counts {after} bytes");
         assert!(written().host_blocks >= after, "the block is in the count");
+        // A chunk given back (a dead relation's) is not counted (decision 0445).
+        let at = b.try_alloc_chunk(4 << 20, 1 << 14).unwrap();
+        b.free_chunk(at, 4 << 20);
+        let counted = b.used() - b.free_bytes();
+        assert!(counted >= 8 << 20 && counted < 9 << 20, "a chunk given back counts: {counted} bytes");
+        assert!(written().host_blocks >= counted, "the block is in the count, less its free list");
         assert!(limit() == memory() + metal());
         drop(b);
     }

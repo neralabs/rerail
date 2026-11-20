@@ -1,4 +1,4 @@
-//! With the `generated` feature, writes the `.rr` parser's code as Rust into `OUT_DIR`: tier 1's
+//! With the `generated` feature, writes the `.rerail` parser's code as Rust into `OUT_DIR`: tier 1's
 //! through `clif_rust` (the JIT's functions' IR) as `tier1_aot.rs`, tier 2's through `rust_stream`
 //! (the native IR, the structured backend) as `tier2_aot.rs`, and in format 16, writing the tape by the writer's ops
 //! as it parses (decision 0434), as `tier2_16_aot.rs`. Each carries its fingerprint, which

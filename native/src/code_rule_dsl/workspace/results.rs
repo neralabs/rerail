@@ -480,7 +480,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
     };
     // Each witness's violation is rendered and serialized on the worker pool, one at a time, so the
     // index never holds the violations as JSON values.
-    let mut entries = (|| {
+    let mut entries = crate::code_rule_dsl::logic::profile::on_cores(|| {
         witnesses
             .par_iter()
             .filter(|&&(rule, _, _)| allowed(rule))
@@ -488,7 +488,7 @@ fn build_result_page_index(state: &WorkspaceState) -> Result<ResultPageIndex> {
                 page_entry(&violation_from_witness(code_rule, clause, witness.clone()))
             })
             .collect::<Result<Vec<_>>>()
-    })()?;
+    })?;
     for (&index, global) in &state.global_results {
         for violation in &global.violations {
             if allowed(&state.code_rules[index]) {

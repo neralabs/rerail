@@ -310,9 +310,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.10.0"
+version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0"
+checksum = "4ff2a8126fff0f8c839080d619675a585e61720bb12d2baceae45769fd66f155"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1077,9 +1077,9 @@ checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "flate2"
-version = "1.1.10"
+version = "1.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
+checksum = "626d4928326b646e70f65ed36fc7cf9f206bdb68a0019ee7c6b4709da4e084c4"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -2630,9 +2630,9 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "napi"
-version = "3.16.1"
+version = "3.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "907ff7366fb7182e28edd0f08ef8ac5d6b13b8d65a3c0b3a10bf3ac092437d6b"
+checksum = "567c62b9c2d0fae123713f766686ad66a2c75b45ba3ee01ed8b06a7e99bc435b"
 dependencies = [
  "bitflags 2.13.2",
  "ctor",
@@ -2652,9 +2652,9 @@ checksum = "b899b545d3aa6dca985939059f258c5488d34e4ecf39c274e20009748f4b846d"
 
 [[package]]
 name = "napi-derive"
-version = "3.7.0"
+version = "3.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d32eb00f92f84cf462fc328f49082b29c2a7d2eebeb1d447d19c1f9fdd9f89ee"
+checksum = "94c8098ed9d61a1bbd019519c637817531b0e24023ef4b5678f2f0cbe24bed9c"
 dependencies = [
  "convert_case",
  "ctor",
@@ -2666,9 +2666,9 @@ dependencies = [
 
 [[package]]
 name = "napi-derive-backend"
-version = "7.0.0"
+version = "7.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1fe28c64d8fc12e69f9b817d0febdbe7914555760f1e353106281b8ff99cc90"
+checksum = "314cd6ca42bd978fd8bae84b4137e1322bbf3e83552fca8dbd7d18034188ff3a"
 dependencies = [
  "convert_case",
  "proc-macro2",
@@ -3178,7 +3178,8 @@ dependencies = [
  "rerail-blocks",
  "rerail-context",
  "rerail-device",
- "rerail-ukl",
+ "rerail-gpu",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3194,6 +3195,7 @@ dependencies = [
  "rerail-pp-aot",
  "rerail-simd8",
  "rerail-tape-format",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3213,6 +3215,7 @@ dependencies = [
  "rerail-c-lean",
  "rerail-c-pp",
  "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3251,7 +3254,9 @@ dependencies = [
 name = "rerail-context"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "parking_lot",
+ "rayon",
  "rerail-context",
  "rustc-hash",
 ]
@@ -3327,6 +3332,7 @@ dependencies = [
  "rerail-accel",
  "rerail-blocks",
  "rerail-compiler",
+ "rerail-device",
  "rerail-device-metal",
  "rerail-facts",
  "rerail-lang",
@@ -3387,6 +3393,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -3496,6 +3503,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -3523,6 +3531,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-device",
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",
@@ -3557,10 +3566,12 @@ name = "rerail-forest"
 version = "0.1.0"
 dependencies = [
  "block",
+ "cc",
  "libc",
  "metal",
  "objc",
  "rayon",
+ "rerail-context",
  "rerail-gpu",
  "rerail-ukl",
  "sha2 0.10.9",
@@ -3628,6 +3639,7 @@ dependencies = [
  "rerail-kotlin-aot",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
+ "rerail-simd8",
 ]
 
 [[package]]
@@ -3755,6 +3767,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -4178,6 +4191,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -4270,6 +4284,8 @@ dependencies = [
  "rerail-device",
  "rerail-metal",
  "rerail-prof",
+ "rerail-tape-format",
+ "rerail-ukl",
  "serde",
  "sha2 0.10.9",
 ]
@@ -4481,10 +4497,10 @@ version = "0.1.0"
 dependencies = [
  "bitlex",
  "cranelift-codegen",
- "libc",
  "rerail-compiler",
  "rerail-context",
  "rerail-metal",
+ "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-simdjson-native",
@@ -4589,6 +4605,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -4679,6 +4696,7 @@ dependencies = [
 name = "rerail-store"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "foldhash",
  "gix",
  "hashbrown 0.16.1",
@@ -4689,6 +4707,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-prof",
  "rerail-store",
  "rusqlite",
@@ -4719,7 +4738,7 @@ dependencies = [
  "rerail-gpu",
  "rerail-simd8",
  "rerail-tape-format",
- "sha2 0.10.9",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -4737,6 +4756,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -4761,6 +4781,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
  "rerail-facts",
@@ -4827,6 +4848,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -4851,6 +4873,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -5148,7 +5171,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
- "sha2-asm",
 ]
 
 [[package]]
@@ -5160,15 +5182,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "digest 0.11.3",
-]
-
-[[package]]
-name = "sha2-asm"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -5563,9 +5576,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-generate"
-version = "0.27.1"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60418c249e4317a2fc9a3959dab47e50ca60910460b8a82a7f73d6e28a73470d"
+checksum = "2bda1e3c7d894b84a0ffef541cfc6deb08e58beed98e39bd5a5b2067ed2dbdfb"
 dependencies = [
  "bitflags 2.13.2",
  "dunce",

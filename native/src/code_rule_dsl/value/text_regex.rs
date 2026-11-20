@@ -3,7 +3,7 @@
 //! character repeats) runs on fancy-regex, a backtracking engine, with a backtrack limit and a cap
 //! on the text it reads; past either the verdict is unknown.
 
-use regex::Regex;
+use crate::code_rule_dsl::regexes::Regex;
 use regex_syntax::ast::ErrorKind;
 
 /// Bytes a decoded string or bytes value may hold: UTF-8 for Python `str`, two per UTF-16 code
@@ -16,6 +16,7 @@ pub const BACKTRACK_LIMIT: usize = 1_000_000;
 
 #[derive(Clone, Debug)]
 pub enum TextRegex {
+    /// Shared with every other term of the same pattern (`regexes`).
     Plain(Regex),
     /// A pattern with backreferences.
     Backreferences(fancy_regex::Regex),

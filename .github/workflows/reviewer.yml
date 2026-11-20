@@ -89,13 +89,15 @@ jobs:
   reviewer:
     needs: same-repo
     if: needs.same-repo.outputs.same_repo == 'true'
-    # Pinned to a release commit. `reviewer_ref` is where the called workflow loads the reviewer's own code
-    # from, so it is the same commit: Dependabot moves `uses:` alone, and `npm run check:pins` fails until
-    # `npm run deps:sync` brings `reviewer_ref` along (scripts/deps/sync-pins.mjs).
-    uses: neralabs/reviewer/.github/workflows/review.yml@fefb172ecf6f3a44f43aec97d34fb35b5295dd09 # v0.1.2
+    # Pinned to a commit: main past v0.1.2, the first whose Rerail module sets RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1,
+    # which Rerail 0.1.5 needs to scan with no session. Back to a release commit once reviewer tags one.
+    # `reviewer_ref` is where the called workflow loads the reviewer's own code from, so it is the same commit:
+    # Dependabot moves `uses:` alone, and `npm run check:pins` fails until `npm run deps:sync` brings `reviewer_ref`
+    # along (scripts/deps/sync-pins.mjs).
+    uses: neralabs/reviewer/.github/workflows/review.yml@87c893db87f8be56162baff39c0be92789adc734 # v0.1.2-5-g87c893d
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
-      reviewer_ref: fefb172ecf6f3a44f43aec97d34fb35b5295dd09
+      reviewer_ref: 87c893db87f8be56162baff39c0be92789adc734
       allow_approve: true
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
@@ -113,7 +115,7 @@ jobs:
       # to the Rerail remote (send_results), in a job that holds only the remote's URL and token. To turn it off,
       # remove these five inputs and the two RESULTS_SINK secrets.
       modules: rerail
-      rerail_package: "@neralabs/rerail@0.1.1"
+      rerail_package: "@neralabs/rerail@0.1.5"
       rerail_packs: complexity
       rerail_repo_packs: packs/rerail
       send_results: true

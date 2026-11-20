@@ -33,7 +33,7 @@ pub(in crate::code_rule_dsl) fn metrics() -> (usize, usize) {
 #[path = "metal_label_passes.rs"]
 pub mod label_passes;
 // Its tests run in the engine's test binary (its facade of this module mounts `metal_tape_tests.rs` as `tape_tests`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).
 #[path = "metal_set_steps.rs"]
 pub mod set_steps;
 // Block programs on Metal: the Metal crate's.
@@ -76,7 +76,6 @@ fn evict_workspace() -> bool {
     crate::code_rule_dsl::prof::count("residency.workspace_evicted", 1);
     true
 }
-pub use rerail_metal::METAL_DEVICE;
 
 struct MetalWorkspace {
     totals: WorkspaceTotals,
@@ -283,7 +282,7 @@ static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|
 fn prefix(defines: &str) -> String {
     format!(
         "{defines}{}{}{}",
-        crate::code_rule_dsl::residency::slabs::msl(),
+        crate::code_rule_dsl::residency::slabs::ukl(),
         "#include <ukl/reads/tape_z.h>\n",
         include_str!("device_tape.h")
     )
@@ -304,7 +303,7 @@ pub(super) static VIEW_PIECES: std::sync::LazyLock<[String; 2]> = std::sync::Laz
     ["#include <ukl/reads/tape.h>\n", "#include <ukl/reads/tape_z.h>\n"].map(|reads| {
         format!(
             "{}UKL_CONSTANT_U32(tape_format)\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
-            crate::code_rule_dsl::residency::slabs::msl(),
+            crate::code_rule_dsl::residency::slabs::ukl(),
             std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
             reads,
             include_str!("device_tape.h")
@@ -865,7 +864,7 @@ fn execute_packed_once(
     // where the files were, and the block where the node records were. The kernel reads nothing from the
     // children, source and line start slots; the block stands in for them.
     let table = crate::code_rule_dsl::residency::slabs::admit_docs(files)?;
-    let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or(Error::BackendCapacity)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or(Error::BackendCapacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
@@ -947,6 +946,14 @@ fn execute_packed_once(
         ("outputStorage", output_storage_buffer.buffer()),
     ] {
         launch = launch.buffer(name, buffer);
+    }
+    // The batch's other slabs, which its reads reach from the block by the views' offsets (decision 0353 step 4,
+    // 0471), and the 16z documents' cache.
+    for slab in &table.slabs {
+        launch = launch.uses(slab.device_buffer());
+    }
+    if let Some(cache) = &table.cache {
+        launch = launch.uses(cache);
     }
     // A thread a lane, and no more: `run_batch` reads its lane by its thread.
     launch.threads_exact(lanes, 32);

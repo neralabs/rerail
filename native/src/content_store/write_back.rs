@@ -100,7 +100,7 @@ pub struct Work(pub(super) Kind);
 
 pub(super) enum Kind {
     /// A record (decision 0306): its string and byte area, applied by its items' registered kinds.
-    Record { text: String, bytes: Vec<u8> },
+    Record { text: String, bytes: Vec<super::record::Bytes> },
     /// A space's memo entries in their segments (`queue_memo_segments`).
     Memo(Box<super::held::memo_pack::MemoWrite>),
     /// A space's next kept file (`queue_kept`, decisions 0401 F6, 0456 K4).
@@ -116,7 +116,7 @@ pub(super) enum Kind {
 
 impl Work {
     /// A record's string and byte area (`record`).
-    pub(super) fn record(text: String, bytes: Vec<u8>) -> Work {
+    pub(super) fn record(text: String, bytes: Vec<super::record::Bytes>) -> Work {
         Work(Kind::Record { text, bytes })
     }
 
@@ -248,38 +248,41 @@ pub fn seals(boundary: Boundary) -> bool {
     !matches!(boundary, Boundary::ConeRound)
 }
 
-thread_local! {
-    /// The run whose waves this thread's writes join (`run_waves`); 0 outside a run, where each write is a wave of
-    /// its own. Carried to the run's jobs on other threads (`run_state`).
-    pub static WAVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+/// The run whose waves its writes join (`run_waves`), in the run's context (its jobs' writes join them too); 0 outside
+/// a run, where each write is a wave of its own.
+#[derive(Clone, Copy, Default)]
+struct RunWaves(u64);
+
+/// The run whose waves this caller's writes join (`RunWaves`).
+fn waves() -> u64 {
+    rerail_prof::code_rule_dsl::logic::profile::bound::<RunWaves>().0
 }
 
-/// While it lives, this thread's writes (and its run's jobs') join a run's waves of their own (`WAVES`); dropped, the
-/// run's wave still being written is sealed, in every store's writer, and the thread's run before is back. Its end
+/// While it lives, this caller's writes (and its run's jobs') join a run's waves of their own (`RunWaves`); dropped,
+/// the run's wave still being written is sealed, in every store's writer, and the run before is back. Its end
 /// does not wait for the writer: `written` does.
 pub struct Waves {
     run: u64,
-    before: u64,
+    _bound: rerail_prof::code_rule_dsl::logic::profile::Bound,
 }
 
 /// A run's waves of its own, from here (`Waves`).
 pub fn run_waves() -> Waves {
     static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves { run, before: WAVES.with(|w| w.replace(run)) }
+    Waves { run, _bound: rerail_prof::code_rule_dsl::logic::profile::bind(RunWaves(run)) }
 }
 
 impl Drop for Waves {
     fn drop(&mut self) {
         seal_everywhere(self.run, Seal::Finished);
-        WAVES.with(|w| w.set(self.before));
     }
 }
 
 /// Ends this thread's run's wave at `boundary`, in the writer of every store it wrote to, where `seals` says the
 /// boundary seals one (decision 0259).
 pub fn end_wave(boundary: Boundary) {
-    let run = WAVES.with(std::cell::Cell::get);
+    let run = waves();
     if run != 0 && seals(boundary) {
         seal_everywhere(run, if boundary == Boundary::End { Seal::End } else { Seal::Wave });
     }
@@ -574,6 +577,8 @@ fn unregister(path: &Path, w: &Arc<Writer>) {
         let (jobs, bytes) = w.shared.state.lock().map(|s| (s.jobs, s.bytes)).unwrap_or_default();
         let t = std::time::Instant::now();
         drop(tx);
+        // The writer joins the checkpointer as it ends (`checkpoints`): joined, every connection to the file is
+        // closed, as a run that deletes it and creates it again (`corpus::closed`) needs.
         let _ = thread.join();
         // What the end of the run waited for: the queue the waves left behind them.
         let waited = t.elapsed().as_secs_f64();
@@ -596,15 +601,21 @@ impl Drop for Hold {
     }
 }
 
-/// `Hold` of the store at `path`.
+/// `Hold` of the store at `path`: the writer of the store a handle opens there next, or has open.
 pub fn hold(path: &Path) -> Hold {
     Hold(path.to_path_buf(), register(path))
 }
 
+/// A kind of job's count, bytes held until written, CPU on the writer's thread and the bytes of the frames it encoded.
+type KindWrites = (usize, usize, f64, usize);
+
+/// A kind of job and its `KindWrites`, as the profile lists them.
+pub type KindRow = (&'static str, usize, usize, f64, usize);
+
 /// Each kind of job's count, bytes held until written, CPU on the writer's thread and the bytes of the frames it
 /// encoded, by the shared object's writers (the profile's write-back; decision 0442).
 #[derive(Default)]
-struct ByKind(Mutex<std::collections::BTreeMap<&'static str, (usize, usize, f64, usize)>>);
+struct ByKind(Mutex<std::collections::BTreeMap<&'static str, KindWrites>>);
 
 /// Each kind of job written so far in this process: count, bytes held, the writer's CPU and the bytes of the frames
 /// it encoded, costliest first.
@@ -634,7 +645,7 @@ impl ContentStore {
     /// read of it gets meanwhile (`None`: a read waits for the job). The writer's own handle (in a
     /// job) writes at once.
     ///
-    /// The job joins the wave the run is writing (`WAVES`), and the store takes the wave whole, in one transaction
+    /// The job joins the wave the run is writing (`RunWaves`), and the store takes the wave whole, in one transaction
     /// (`ContentStore::in_one_transaction`), each job a savepoint in it, once a boundary seals it (`end_wave`).
     pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Work) {
         self.queue(what, bytes, keys, guarded(Syms::Unmapped, job.into_job()), Run::InWave, false);
@@ -674,7 +685,7 @@ impl ContentStore {
     /// in the run's wave once it holds [`gather_cap`] bytes, or when the wave is sealed. False, nothing added, outside
     /// a run's waves, with no writer, or with no threads (the browser build): the caller queues the write itself.
     pub fn gather<G: Gather>(&self, what: &'static str, make: impl FnOnce() -> G, add: impl FnOnce(&mut G)) -> bool {
-        let run = WAVES.with(std::cell::Cell::get);
+        let run = waves();
         let Some(w) = self.writer().filter(|_| run != 0 && !cfg!(target_family = "wasm")) else { return false };
         if !super::hazards::warm_write_allowed(what) {
             super::hazards::warm_fault("a write gathered for the store", || what.to_owned());
@@ -711,7 +722,7 @@ impl ContentStore {
             return true;
         };
         let mut job = accounted(what, bytes, job);
-        let wave = WAVES.with(std::cell::Cell::get);
+        let wave = waves();
         {
             let mut s = w.shared.state.lock().expect("the writer's state");
             // Back-pressure: past the cap, wait for the writer while it has sealed waves to take (never for waves
@@ -732,7 +743,7 @@ impl ContentStore {
             static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if t.is_some() && !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
                 let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c, _))| (*w, *j, *b, *c)).collect();
-                rows.sort_by(|a, b| b.2.cmp(&a.2));
+                rows.sort_by_key(|r| std::cmp::Reverse(r.2));
                 let rows: Vec<String> = rows.iter().map(|(w, j, b, c)| format!("{w}: {j} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect();
                 eprintln!("rerail: the writer's queue is full ({:.1} MB in {} jobs; {what} brings {:.1} MB): queued so far, by what: {}", s.bytes as f64 / 1048576.0, s.jobs, bytes as f64 / 1048576.0, rows.join("; "));
             }
@@ -898,7 +909,7 @@ impl ContentStore {
                         let mut outcomes = Vec::with_capacity(batch.len());
                         for (job, _, _, _, what) in batch.iter_mut() {
                             let (c0, e0) = (thread_cpu(), super::compression::encoded_here());
-                            let _span = super::hazards::span(*what);
+                            let _span = super::hazards::span(what);
                             outcomes.push(
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                                     .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
@@ -992,7 +1003,7 @@ impl ContentStore {
     /// the manifest, which names what the lease protected, is in the store by then. Outside a run, or with no writer,
     /// let go now (what was queued is written already).
     pub fn keep_until_written(&self, thing: impl Any + Send) {
-        let run = WAVES.with(std::cell::Cell::get);
+        let run = waves();
         let Some(w) = self.writer().filter(|_| run != 0 && !cfg!(target_family = "wasm")) else { return };
         w.shared.state.lock().expect("the writer's state").kept.entry(run).or_default().push(Box::new(thing));
     }
@@ -1044,7 +1055,7 @@ impl ContentStore {
     /// run queued, and every wave sealed before. The first error a job met since the last call.
     pub fn written(&self) -> StoreResult<()> {
         let Some(w) = self.writer() else { return Ok(()) };
-        let run = WAVES.with(std::cell::Cell::get);
+        let run = waves();
         if run != 0 {
             w.seal(run, Seal::End);
         }
@@ -1072,7 +1083,7 @@ impl ContentStore {
 
     /// The writer's work by what each job writes, `(what, jobs, bytes held, writer CPU, bytes of frames encoded)`,
     /// costliest first; the most bytes queued at once; and the back-pressure's holds of a producer, `(count, seconds)`.
-    pub fn written_by_what(&self) -> (Vec<(&'static str, usize, usize, f64, usize)>, usize, (usize, f64)) {
+    pub fn written_by_what(&self) -> (Vec<KindRow>, usize, (usize, f64)) {
         let Some(w) = self.writer() else { return (Vec::new(), 0, (0, 0.0)) };
         let s = w.shared.state.lock().expect("the writer's state");
         let mut rows: Vec<_> = s.by_what.iter().map(|(w, (j, b, c, e))| (*w, *j, *b, *c, *e)).collect();
@@ -1435,4 +1446,5 @@ mod tests {
         drop(again);
         let _ = std::fs::remove_dir_all(dir);
     }
+
 }

@@ -169,7 +169,8 @@ def main(argv):
     port = int(argv[argv.index("--port") + 1]) if "--port" in argv else 8740
     MACHINES.append(Machine(LOCAL))
     for host in farm.hosts():
-        if host.get("enabled", True):
+        # One card a machine: a Windows host's machine is its Linux entry's (`shares`).
+        if host.get("enabled", True) and not host.get("shares"):
             MACHINES.append(Machine(host["name"], host))
     for m in MACHINES:
         threading.Thread(target=m.run, daemon=True).start()
@@ -284,6 +285,12 @@ function card(m) {
     bar([[c.farm, "var(--farm)", "farm " + pct(c.farm)], [c.fleet, "var(--fleet)", "fleet " + pct(c.fleet)], [c.other, "var(--other)", "own " + pct(c.other)]], 1) +
     `<div class="val"><b>${pct(c.busy)}</b> of ${cores} cores · farm ${pct(c.farm)} · fleet ${pct(c.fleet)} · own ${pct(c.other)} · idle ${pct(idle)} · load ${d.load}</div>` +
     cpuSpark(m.history) + `</div></div>`;
+  // A Windows machine whose Linux is WSL: Windows' view of the whole machine (WSL's VM is one of its processes).
+  const w = d.windows;
+  if (w) html += `<div class="row"><span class="lab">Windows</span><div>` +
+    bar([[w.busy, "var(--other)", "whole machine " + pct(w.busy)]], 1) +
+    `<div class="val"><b>${pct(w.busy)}</b> of the machine busy (WSL included) · <b>${GB(w.mem_avail)}</b> available of ${GB(w.mem_total)}` +
+    ` · ${(d.jobs || []).filter(j => j.kind === "windows").length} Windows jobs</div></div></div>`;
   const g = d.gpu;
   if (g) html += `<div class="row"><span class="lab">GPU</span><div>` + bar([[(g.util || 0) / 100, "var(--farm)", "busy " + g.util + "%"]], 1) +
     `<div class="val"><b>${g.util ?? "?"}%</b> busy${g.mem_used != null ? " · " + GB(g.mem_used) + " in use" : ""}` +

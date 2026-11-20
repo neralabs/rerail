@@ -64,10 +64,25 @@ pub fn set_slab_idle_limit(bytes: usize) {
     dev().slab_idle.store(bytes.max(1), std::sync::atomic::Ordering::Relaxed);
 }
 
-fn slab_idle_limit() -> usize {
-    match dev().slab_idle.load(std::sync::atomic::Ordering::Relaxed) {
-        0 => usize::MAX,
-        b => b,
+impl Memory {
+    fn slab_idle_limit(&self) -> usize {
+        match self.slab_idle.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => usize::MAX,
+            b => b,
+        }
+    }
+
+    /// The bytes idle buffers may hold, with `need` more about to be leased: what the budget leaves past the ledger
+    /// and the live leases. Never the driver's count, which counts every no-copy wrap of host memory again (decision
+    /// 0435 §2).
+    fn idle_room(&self, budgets: &crate::budget::Budgets, need: usize) -> usize {
+        budgets.metal().saturating_sub(other() + self.live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need)
+    }
+
+    /// Releases idle buffers until they fit what `budgets` leave with `need` more leased (`Pool::trim`).
+    fn trim(&self, budgets: &crate::budget::Budgets, need: usize) {
+        let room = self.idle_room(budgets, need);
+        self.pool.lock().expect("the pool").trim(room, self.slab_idle_limit());
     }
 }
 
@@ -76,11 +91,6 @@ fn other() -> usize {
     OTHER_RESERVED.get().map_or(0, |f| f())
 }
 
-/// The bytes idle buffers may hold, with `need` more about to be leased: what the budget leaves past the ledger and
-/// the live leases. Never the driver's count, which counts every no-copy wrap of host memory again (decision 0435 §2).
-fn idle_room(need: usize) -> usize {
-    crate::budget::metal().saturating_sub(other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need)
-}
 
 /// A profiler's hook (`set_lease_hook`): told each lease's buffer address and length when it is leased, and its address
 /// with length 0 when it is dropped.
@@ -89,6 +99,15 @@ static LEASE_HOOK: OnceLock<fn(usize, usize)> = OnceLock::new();
 /// Sets the hook told of every lease and its drop (the engine's heap sampler, which names the span that leased it).
 pub fn set_lease_hook(hook: fn(usize, usize)) {
     let _ = LEASE_HOOK.set(hook);
+}
+
+/// A profiler's hook (`set_refusal_hook`): told of each lease `lease_within` refuses, with its message, so it can say
+/// what holds the budget then (the engine's heap sampler: the live leases by the span that leased them).
+static REFUSAL_HOOK: OnceLock<fn(&str)> = OnceLock::new();
+
+/// Sets the hook told of every refused lease.
+pub fn set_refusal_hook(hook: fn(&str)) {
+    let _ = REFUSAL_HOOK.set(hook);
 }
 
 fn leased(b: &DeviceBuffer) {
@@ -227,11 +246,9 @@ fn class(bytes: usize) -> usize {
 }
 
 impl Pool {
-    /// Releases the least recently returned idle buffers until they fit what the budget leaves with `need` more
-    /// leased (and the slab cap, when set).
-    fn trim(&mut self, need: usize) {
-        let slab_limit = slab_idle_limit();
-        let room = idle_room(need);
+    /// Releases the least recently returned idle buffers until they fit `room` (what the budget leaves: `Memory::
+    /// idle_room`), and the slabs `slab_limit` (the slab cap, when set).
+    fn trim(&mut self, room: usize, slab_limit: usize) {
         while self.held > room || self.held_slabs > slab_limit {
             if !self.release_oldest(self.held <= room) {
                 break;
@@ -268,9 +285,11 @@ impl Pool {
 
 /// A shared buffer of the pool, returned to it when dropped.
 pub struct Pooled {
-    /// The machine's device it was leased from, and goes back to.
+    /// The machine's device it was leased from, and goes back to, and that machine's budgets, which its return trims
+    /// the pool to: on whichever thread drops it, in a run or none.
     on: std::sync::Arc<Memory>,
     buffer: Option<DeviceBuffer>,
+    budgets: std::sync::Arc<crate::budget::Budgets>,
     /// Whether it goes back to the pool (a buffer past the largest class is made to size and released).
     keep: bool,
     /// Made for this lease (zero, never written), else recycled (another lease's bytes).
@@ -493,7 +512,8 @@ impl Drop for Pooled {
             p.held_slabs += class;
         }
         p.idle.entry(class).or_default().push((at, b));
-        p.trim(0);
+        let room = self.on.idle_room(&self.budgets, 0);
+        p.trim(room, self.on.slab_idle_limit());
     }
 }
 
@@ -515,23 +535,23 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
         traced_new(bytes);
         let b = rerail_device::device::alloc_uninitialized_array_sync::<u8>(shared.device, bytes);
         leased(&b);
-        return Ok(Pooled { on: dev(), buffer: Some(b), keep: false, fresh: true, owner: 0 });
+        return Ok(Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(b), keep: false, fresh: true, owner: 0 });
     }
     let st_ = dev();
     let mut p = st_.pool.lock().expect("the pool");
     if let Some(b) = p.take(class) {
         p.reused += 1;
         leased(&b);
-        return Ok(Pooled { on: dev(), buffer: Some(b), keep: true, fresh: false, owner: 0 });
+        return Ok(Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(b), keep: true, fresh: false, owner: 0 });
     }
     p.made += 1;
     // A new buffer: idle ones give way to it first, so the budget holds both.
-    p.trim(class);
+    p.trim(st_.idle_room(&crate::budget::budgets(), class), st_.slab_idle_limit());
     drop(p);
     traced_new(class);
     let b = crate::score::phase("new buffer", || rerail_device::device::alloc_uninitialized_array_sync::<u8>(shared.device, class));
     leased(&b);
-    Ok(Pooled { on: dev(), buffer: Some(b), keep: true, fresh: true, owner: 0 })
+    Ok(Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(b), keep: true, fresh: true, owner: 0 })
 }
 
 /// What else holds the device's budget beside relational work (the buffer pool's reservations, `rerail-metal`'s
@@ -569,7 +589,7 @@ fn evict_one() -> bool {
 pub fn make_room(need: usize) -> bool {
     let fits = || other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need <= crate::budget::metal();
     loop {
-        dev().pool.lock().expect("the pool").trim(need);
+        dev().trim(&crate::budget::budgets(), need);
         if fits() {
             return true;
         }
@@ -593,10 +613,16 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
     }
     if !make_room(need) {
         let (live, idle) = held_bytes();
-        return Err(format!(
-            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool)",
-            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20
-        ));
+        // What this thread's admission left it (none: no admission, or one spent), and what others reserve.
+        let left = RESERVE_LEFT.with(|r| r.get());
+        let why = format!(
+            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool; this thread's reservation {} MB left, {} MB reserved in all)",
+            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20, left >> 20, reserved() >> 20
+        );
+        if let Some(hook) = REFUSAL_HOOK.get() {
+            hook(&why);
+        }
+        return Err(why);
     }
     lease(bytes).map(held_here)
 }
@@ -742,7 +768,7 @@ fn released(owner: u64, bytes: usize) {
 /// Releases idle buffers until they fit what the budget leaves: for a reservation made outside the pool (the
 /// ledger's), after it is made.
 pub fn trim_idle() {
-    dev().pool.lock().expect("the pool").trim(0);
+    dev().trim(&crate::budget::budgets(), 0);
 }
 
 thread_local! {
@@ -947,10 +973,12 @@ mod tests {
         crate::budget::METAL_TEST.with(|m| m.set(other() + live + idle_before + (40 << 20)));
         let host = rerail_blocks::block::Block::anon(rerail_blocks::block::kind::FACTS, 512 << 20);
         host.try_alloc_chunk(256 << 20, 1 << 14).unwrap();
-        let wrap = host.gpu_buffer(&s.device);
+        let wrap = host.device_buffer(&s.layer).unwrap();
         assert!(wrap.length() >= 256 << 20, "a wrap of the host block's used extent");
         trim_idle();
-        assert_eq!(idle(), idle_before, "the idle buffers keep their room");
+        // This test's idle 64 MB stays: other tests lease and return small buffers from the same pool meanwhile, so
+        // the pool's whole idle count is not this test's to compare.
+        assert!(idle() >= 64 << 20, "the idle buffers keep their room: {} of {idle_before} bytes idle", idle());
         assert!(lease_within(32 << 20).is_ok(), "a lease that fitted still fits");
         crate::budget::METAL_TEST.with(|m| m.set(0));
         drop((wrap, host));
@@ -1005,14 +1033,14 @@ mod tests {
         let lock = Mutex::new(());
         // 23 MiB: a class (24 MiB) no other test leases.
         let b = lease_block(kind::FACTS, 23 << 20).unwrap();
-        let first = b.gpu_buffer(&get().unwrap().device).gpu_address();
+        let first = b.device_buffer(&get().unwrap().layer).unwrap().device_address();
         let r = Relation::create(&b, &spec, None);
         RelW { block: &b, rel: r, lock: &lock }.extend(&(0..20_000).flat_map(|i| [i % 300, i % 7]).collect::<Vec<_>>());
         relation::freeze(&b, r, &spec, None);
         assert_eq!(View::full(r).live_len(), 2_100);
         drop(b);
         let b = lease_block(kind::FACTS, 23 << 20).unwrap();
-        assert_eq!(b.gpu_buffer(&get().unwrap().device).gpu_address(), first, "the slab came back, with its buffer");
+        assert_eq!(b.device_buffer(&get().unwrap().layer).unwrap().device_address(), first, "the slab came back, with its buffer");
         let r = Relation::create(&b, &spec, None);
         assert_eq!(r.rows.len(), 0);
         assert!(!r.is_frozen(), "a new relation in a recycled slab reads fresh");
@@ -1130,7 +1158,7 @@ mod tests {
         let sealed = d.seal();
         assert_eq!(live(), before, "the seal takes it out of the budget");
         assert_eq!(journal::entries(&sealed.reader())[0].digest, 0xfeed, "read in place once sealed");
-        let back = sealed.write_back().unwrap();
+        let back = sealed.write_back(rerail_blocks::block::Flush::Synced).unwrap();
         let e = &journal::entries(&back)[0];
         assert_eq!((e.key, e.digest), (7, 0xfeed));
         assert_eq!(back.bytes(e.start as usize, e.end as usize), &[0x5a; 4096][..]);

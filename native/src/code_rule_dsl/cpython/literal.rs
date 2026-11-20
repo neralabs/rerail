@@ -34,6 +34,16 @@ pub(crate) enum Class {
 }
 
 impl Class {
+    /// The class's name in CPython's `ast`.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Class::Constant => "Constant",
+            Class::Tuple => "Tuple",
+            Class::List => "List",
+            Class::Dict => "Dict",
+            Class::UnaryOp => "UnaryOp",
+        }
+    }
     /// Whether W's worker reads a node of tree-sitter kind `kind` as this class (its `KINDS`; `type` is any expression).
     pub(crate) fn of_kind(self, kind: &str) -> bool {
         match self {

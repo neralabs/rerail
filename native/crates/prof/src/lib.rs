@@ -53,7 +53,7 @@ pub fn single_thread_cpu() -> Duration {
 
 /// The process's CPU time so far (user + sys).
 #[cfg(target_family = "wasm")]
-fn process_cpu() -> Duration {
+pub fn process_cpu() -> Duration {
     single_thread_cpu()
 }
 
@@ -80,7 +80,7 @@ pub fn thread_cpu() -> Duration {
 
 /// The process's CPU time so far (user + sys).
 #[cfg(unix)]
-fn process_cpu() -> Duration {
+pub fn process_cpu() -> Duration {
     let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
     let time = |t: libc::timeval| Duration::from_secs(t.tv_sec as u64) + Duration::from_micros(t.tv_usec as u64);
@@ -89,7 +89,7 @@ fn process_cpu() -> Duration {
 
 /// The process's CPU time so far (user + kernel).
 #[cfg(windows)]
-fn process_cpu() -> Duration {
+pub fn process_cpu() -> Duration {
     let (user, kernel) = windows_cpu(false);
     user + kernel
 }
@@ -134,7 +134,6 @@ pub fn windows_peak_working_set() -> u64 {
 }
 
 /// Prints the stages' times under `title` and clears them.
-
 pub fn report(title: &str) {
     if !stages_on() {
         return;
@@ -485,7 +484,7 @@ pub mod heap {
             *by.entry(SPANS[at].load(Relaxed)).or_default() += weight;
         }
         let mut v: Vec<(u32, u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|b| std::cmp::Reverse(b.1));
         v
     }
 
@@ -584,13 +583,13 @@ pub mod heap {
         pub(super) fn record(at: usize) {
             let Some(t) = table() else { return };
             let row = &t[at * DEPTH..(at + 1) * DEPTH];
-            // Filled by the frame walk on Apple arm64; empty elsewhere.
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            let mut got = [0usize; DEPTH + SKIP];
+            // The return addresses of the frames calling it, outermost last, by the frame pointers' chain, read in
+            // its own frame. Off macOS on Apple silicon no frame is walked: the row stays empty.
             #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
             let got = [0usize; DEPTH + SKIP];
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
+            let got = {
+                let mut got = [0usize; DEPTH + SKIP];
                 let mut fp: usize;
                 unsafe { std::arch::asm!("mov {}, x29", out(reg) fp) };
                 let start = fp;
@@ -607,7 +606,8 @@ pub mod heap {
                     }
                     fp = next;
                 }
-            }
+                got
+            };
             for (cell, v) in row.iter().zip(got[SKIP..].iter()) {
                 cell.store(*v, Relaxed);
             }
@@ -680,7 +680,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
             #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
         }
         pub mod profile;
     }

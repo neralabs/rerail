@@ -3,6 +3,7 @@
  * first-open state (which banner, which empty block), the tiles' figures and the Most violations logged ranking.
  * Nothing here reads `data` or `ui`; `views/overview.js` passes in what it needs.
  */
+import { violationOutcomes } from "./derive.js";
 
 /**
  * @typedef {"no-repo" | "missing" | "not-set-up" | "stopped" | "no-packs" | "packs-no-session" | "mature"} FirstOpenState
@@ -60,9 +61,10 @@ export function overviewBody({ ruleCount, sessionsEver, topCount }) {
 /**
  * Violations steered X of Y (Jeff's decision 1): Y every distinct violation in range, X those recorded by an audit in
  * Steer mode while their rule was on Steer or Block (distinct less the ones recorded in Log mode, the audit's or the
- * rule's). `rerails` counts steer deliveries, which can
+ * rule's), less those whose steer the coding agent declined: the tile opens History by rule's Steered chip, which
+ * counts a declined violation under Declined only. `rerails` counts steer deliveries, which can
  * exceed Y, so it is not used. Unmeasured rules (conversation rules, inactive code rules) record none.
- * @param {Record<string, { measured?: boolean, distinctViolations: number, loggedViolations?: number }>} activity
+ * @param {Record<string, { measured?: boolean, distinctViolations: number, loggedViolations?: number, declinedViolations?: number, declinedLoggedViolations?: number }>} activity
  * @returns {{ steered: number, total: number }}
  */
 export function steeredTally(activity) {
@@ -70,7 +72,7 @@ export function steeredTally(activity) {
   for (const a of Object.values(activity)) {
     if (a.measured === false) continue;
     total += a.distinctViolations;
-    steered += a.distinctViolations - (a.loggedViolations ?? 0);
+    steered += violationOutcomes(a).steered;
   }
   return { steered, total };
 }

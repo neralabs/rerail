@@ -2,7 +2,7 @@
  * The language-pack conformance runner (docs/design/rerail-language-conformance.md): the sample pack pins its scoring
  * end to end, through the production workspace path. Every pack's own ports are scored by test/engine/catalog/packs.test.ts (check 4).
  */
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import { reportFailures, runPack } from "../../../conformance/languages/runner.j
 import { precisionRecall, scoreSamples, scoreSource } from "../../../conformance/languages/score.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { writeSamplesTree, type HandMadeSample } from "../../support/samples.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const SAMPLE = fixturesPath("packs", "sample-php");
 const DATE = "2026-01-01";
@@ -24,7 +25,7 @@ async function withSamples(samples: readonly HandMadeSample[], fixtures: boolean
     writeSamplesTree(tree, samples);
     return await runPack(loadPack(SAMPLE), { fixtures, samples: true, samplesDirectory: tool => (tool === "phpcs" ? tree : undefined), date: DATE });
   } finally {
-    rmSync(tree, { recursive: true, force: true });
+    removeFolderSync(tree);
   }
 }
 

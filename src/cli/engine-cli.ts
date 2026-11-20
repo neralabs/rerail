@@ -1,19 +1,23 @@
 import { readFileSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
 import { bundledCodeRuleDslDirectory } from "../engine/code-rule/code-rule-compile.js";
+import { requireExperiment } from "../engine/experimental-features.js";
 import { loadNativeBinding, type CodeRuleDslSourceFormat, type NativeSlicePolicy } from "../engine/native/native.js";
 
 export const ENGINE_USAGE = [
-  "  rerail engine dump --rule <file>... [--clause <id>] [--fused] [--setplan]",
+  "  rerail engine dump --rule <file>... [--clause <id>] [--fused] [--setplan]   experimental: rerail engine needs RERAIL_EXPERIMENTAL_ENGINE_TOOLS=1",
   "  rerail engine asm <file.rir>",
   "  rerail engine sql <store.sqlite> <request.json>",
 ];
 
 /**
  * The engine's text tools (list step 18, P spec-tooling §2.2.1–2.2.2): `dump` lowers rule files without a store
- * and prints their `rir`; `asm` assembles a `rir` file through the verifier and prints it again, or the refusal.
+ * and prints their `rir`; `asm` assembles a `rir` file through the verifier and prints it again, or the refusal; `sql`
+ * runs a request against a store. Internal testing: the whole command. Experimental: refused unless
+ * RERAIL_EXPERIMENTAL_ENGINE_TOOLS=1.
  */
 export function runEngineCommand(args: readonly string[], usage: () => string): number {
+  requireExperiment("ENGINE_TOOLS");
   const [subcommand, ...rest] = args;
   if (subcommand === "dump") return dump(rest, usage);
   if (subcommand === "asm") return assemble(rest, usage);

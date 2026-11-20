@@ -467,6 +467,8 @@ pub type OpRef = (cranelift_module::FuncId, cranelift_codegen::ir::Signature);
 pub struct Ops {
     pub open: OpRef,
     pub close: OpRef,
+    /// `w_leaf`: a node and its close in one, where its key is known at its word (`rust_stream::direct_keys`).
+    pub leaf: OpRef,
     pub commit: OpRef,
     pub retag: OpRef,
     pub fail: OpRef,
@@ -475,12 +477,12 @@ pub struct Ops {
 impl Ops {
     pub fn of(ids: &std::collections::HashMap<&'static str, OpRef>) -> Self {
         let op = |n: &str| ids[n].clone();
-        Ops { open: op("w_open"), close: op("w_close"), commit: op("w_commit"), retag: op("w_retag"), fail: op("w_fail") }
+        Ops { open: op("w_open"), close: op("w_close"), leaf: op("w_leaf"), commit: op("w_commit"), retag: op("w_retag"), fail: op("w_fail") }
     }
 
     /// The ops' names, for the shape check of the code that calls them.
     pub fn names(&self) -> Vec<cranelift_codegen::ir::UserExternalName> {
-        [&self.open, &self.close, &self.commit, &self.retag, &self.fail].iter().map(|o| cranelift_codegen::ir::UserExternalName::new(0, o.0.as_u32())).collect()
+        [&self.open, &self.close, &self.leaf, &self.commit, &self.retag, &self.fail].iter().map(|o| cranelift_codegen::ir::UserExternalName::new(0, o.0.as_u32())).collect()
     }
 }
 
@@ -500,7 +502,7 @@ pub fn fail_op(f: &mut FunctionBuilder<'_>, ops: &Ops, desc: Value, code: u32, i
 
 /// Node `i`'s number in the language's table (`numbers`, by its slot key): `u32::MAX` where the
 /// table has none.
-fn number_of(f: &mut FunctionBuilder<'_>, numbers: Value, key: Value) -> Value {
+pub fn number_of(f: &mut FunctionBuilder<'_>, numbers: Value, key: Value) -> Value {
     let a = f.ins().ishl_imm(key, 2);
     let a = f.ins().iadd(numbers, a);
     f.ins().load(types::I32, MemFlags::trusted(), a, 0)

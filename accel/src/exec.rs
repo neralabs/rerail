@@ -3,8 +3,8 @@
 //! **Jobs.** A [`Batch`] is a level's launches: launches that do not read each other's outputs (decision 0095 §5).
 //! The executor runs them as jobs on the lanes' workers:
 //!
-//! - **The cores** are the process's one pool ([`configure`]: [`threads`] threads, `RERAIL_THREADS`, else the
-//!   machine's cores), shared by every executor and by every other job of the process. Each launch placed on the
+//! - **The cores** are the machine's one pool (decision 0442: `rerail_context::Cores`, [`threads`] threads,
+//!   `RERAIL_THREADS`, else the machine's cores), shared by every executor and by every other job of the machine. Each launch placed on the
 //!   cores is a job of its own, so a batch's launches on the cores run on all the pool's threads at once, beside
 //!   every other batch's and every other job. A kernel that splits its work (the reference's parallel loops) splits
 //!   it over the same threads.
@@ -39,40 +39,17 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-/// The process's threads: `RERAIL_THREADS`, a whole number of at least 1; else the cores the machine offers.
-///
-/// It sizes the one pool ([`configure`]): every job of the process's work runs on it, so the process never uses more
-/// threads for its work than this.
-pub fn threads() -> usize {
-    static N: OnceLock<usize> = OnceLock::new();
-    *N.get_or_init(|| {
-        std::env::var("RERAIL_THREADS")
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .filter(|&n| n >= 1)
-            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
-    })
-}
+/// The most threads of the machine's pool (`rerail_context::threads`): `RERAIL_THREADS`, else the machine's cores. Every
+/// job of the machine's work runs on its pool, so it never uses more threads for its work than this.
+pub use rerail_context::threads;
 
-/// Makes the one pool: rayon's global pool, [`threads`] threads named `rerail-cpu <i>`. Every job runs on it: the
-/// cores' launches, host jobs ([`Executor::spawn`]), and every parallel loop and job of the caller's (rayon's
-/// functions reach the global pool).
-///
-/// With `this_thread`, the calling thread is the pool's thread 0, so the work it does itself, and its waits that run
-/// other jobs ([`help_until`]), are the pool's too: a program's main thread, called before any other thread uses the
-/// pool. Without it (a library, a test), the pool's threads are its own. A pool already made stays as it is.
-pub fn configure(this_thread: bool) {
+/// Registers what every block is made by (decision 0342: the one policy), before the first block. The pool is the
+/// machine's (`rerail_context::Cores`), made at its first job: a program's main thread is one of its threads when the
+/// program made its machine there (`Machine::here`).
+pub fn configure() {
     static MADE: OnceLock<()> = OnceLock::new();
-    MADE.get_or_init(|| {
-        // Every block is made by the one policy from here on (decision 0342).
-        crate::blocks::install();
-        let b = rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}")).stack_size(POOL_STACK);
-        let _ = if this_thread { b.use_current_thread() } else { b }.build_global();
-    });
+    MADE.get_or_init(crate::blocks::install);
 }
-
-/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory.
-const POOL_STACK: usize = 16 << 20;
 
 /// The stack a wait keeps free before it runs another's job on its frames ([`help_once`]).
 const HELP_STACK_MARGIN: usize = 4 << 20;
@@ -82,26 +59,26 @@ const HELP_STACK_MARGIN: usize = 4 << 20;
 #[inline(never)]
 fn stack_left() -> Option<usize> {
     thread_local! {
-        /// The lowest address of this thread's stack.
-        static LOW: Option<usize> = stack_low();
+        /// This thread's stack: its lowest address and its top.
+        static BOUNDS: Option<(usize, usize)> = stack_bounds();
     }
     let here = 0u8;
     let here = std::ptr::addr_of!(here) as usize;
-    LOW.with(|low| low.map(|low| here.saturating_sub(low)))
+    BOUNDS.with(|b| b.map(|(low, _)| here.saturating_sub(low)))
 }
 
 #[cfg(target_os = "macos")]
-fn stack_low() -> Option<usize> {
+fn stack_bounds() -> Option<(usize, usize)> {
     // SAFETY: this thread's own stack's top and size.
     let (top, size) = unsafe {
         let me = libc::pthread_self();
         (libc::pthread_get_stackaddr_np(me) as usize, libc::pthread_get_stacksize_np(me))
     };
-    (top > size && size > 0).then(|| top - size)
+    (top > size && size > 0).then(|| (top - size, top))
 }
 
 #[cfg(not(target_os = "macos"))]
-fn stack_low() -> Option<usize> {
+fn stack_bounds() -> Option<(usize, usize)> {
     None
 }
 
@@ -298,12 +275,18 @@ pub struct LateBy {
     pub late_max: f64,
 }
 
+/// Every site's wait stats, and by job the waits it made late.
+type WaitTables = (BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>);
+
 /// The run's waits, by site, and the jobs that made them late (decision 0442: the profile's, so the run's).
 #[derive(Default)]
-struct Waits(std::sync::Mutex<(BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>)>);
+struct Waits(std::sync::Mutex<WaitTables>);
+
+/// [`waits`]: every site's waits, and the jobs that made them late.
+pub type SiteWaits = (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>);
 
 /// Every site's waits so far in the run under way, and the jobs that made them late: for the profile.
-pub fn waits() -> (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>) {
+pub fn waits() -> SiteWaits {
     let waits = rerail_context::local::<Waits>();
     let w = waits.0.lock().unwrap_or_else(|p| p.into_inner());
     (w.0.iter().map(|(k, v)| (*k, v.clone())).collect(), w.1.iter().map(|(k, v)| (*k, v.clone())).collect())
@@ -493,10 +476,10 @@ impl Bell {
 pub fn cores_slowdown() -> f64 {
     let pools = pools();
     let mut last = pools.load.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some((at, v)) = *last {
-        if at.elapsed().as_secs_f64() < 0.1 {
-            return v;
-        }
+    if let Some((at, v)) = *last
+        && at.elapsed().as_secs_f64() < 0.1
+    {
+        return v;
     }
     let ncpu = std::thread::available_parallelism().map_or(1, |n| n.get()) as f64;
     #[cfg(unix)]
@@ -759,7 +742,7 @@ impl Flight<'_> {
 /// A thread of the process's own that is no job: a service that waits (a writer on its queue, a sampler on its
 /// clock, a watcher on a signal, a device lane's worker on its batches), so it may not hold one of the pool's threads
 /// (decision 0100 §12: nothing that waits for another long job may itself be a job). Every thread the process makes
-/// outside the one pool is made here, named, and listed while it lives ([`services`]); the engine's source guard
+/// outside the machine's pool is made here, named, and listed while it lives ([`services`]); the engine's source guard
 /// (`executors_are_shared`) refuses a thread made anywhere else. `stack`: its stack's bytes, else the default.
 pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOnce() -> T + Send + 'static) -> std::io::Result<std::thread::JoinHandle<T>> {
     let mut b = std::thread::Builder::new().name(name.to_owned());
@@ -769,10 +752,12 @@ pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOn
     let named = name.to_owned();
     // The service reads its starter's shared and machine values (decision 0442), and keeps no run of its alive: it
     // may outlive it. One started outside any run (the process's signal watcher, from `main`) has none to carry.
-    let shared = rerail_context::shared_object();
+    let shared = rerail_context::starter_object();
     b.spawn(move || {
+        rerail_context::engine_thread();
+        // Listed in its machine's services (one with no object has no machine, and is listed in none).
+        let pools = shared.as_ref().map(|s| s.machine().get::<Pools>());
         let _within = shared.map(rerail_context::within);
-        let pools = pools();
         struct Listed(String, Arc<Pools>);
         impl Drop for Listed {
             fn drop(&mut self) {
@@ -782,8 +767,10 @@ pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOn
                 }
             }
         }
-        pools.services.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
-        let _listed = Listed(named, pools);
+        let _listed = pools.map(|pools| {
+            pools.services.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
+            Listed(named, pools)
+        });
         f()
     })
 }
@@ -821,8 +808,8 @@ pub fn services() -> Vec<String> {
 /// Drops `x` beside the caller, as a job on the pool: freeing what it holds is no step's work, and a drop waits for
 /// nothing.
 pub fn drop_beside<T: Send + 'static>(x: T) {
-    let run = rerail_context::run_own();
-    rayon::spawn(move || {
+    let run = rerail_context::job_run();
+    rerail_context::cores_spawn(move || {
         let _run = rerail_context::enter(run);
         drop(x)
     });
@@ -913,7 +900,7 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
 }
 
 /// Runs a device lane's host work (`f`: its submission, its results read) on the lanes' own pool, where its parallel
-/// loops stay; the cores' lane runs it in place. On the one pool, a device lane's loop shared its threads with jobs
+/// loops stay; the cores' lane runs it in place. On the machine's pool, a device lane's loop shared its threads with jobs
 /// that wait on that lane: a pool thread waiting inside the loop's join took such a job, which blocked on the lane,
 /// which waited on the join below it, and neither moved. The lanes' pool runs no job that waits on a lane.
 fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
@@ -926,10 +913,10 @@ fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
     // SAFETY: see `Handed`: the caller is blocked for as long as the other thread holds it.
     unsafe impl<T> Send for Handed<T> {}
     let pools = pools();
-    match pools.lanes.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).build().ok()) {
+    match pools.lanes.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).start_handler(|_| rerail_context::engine_thread()).build().ok()) {
         Some(pool) => {
             let f = Handed(f);
-            let run = rerail_context::run_own();
+            let run = rerail_context::job_run();
             pool.install(move || {
                 let f = f;
                 let _run = rerail_context::enter(run);
@@ -954,7 +941,7 @@ pub fn lane_spawn<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> 
     use std::sync::atomic::Ordering;
     let (send, take) = std::sync::mpsc::channel();
     let pools = pools();
-    let run = rerail_context::run_own();
+    let run = rerail_context::job_run();
     let held = Arc::clone(&pools);
     let job = move |slot: Option<usize>| {
         let _run = rerail_context::enter(run);
@@ -1215,6 +1202,10 @@ impl<R> Job<R> {
     }
 }
 
+/// A batch's placement ([`Executor::place`]): per launch, its lane, its cost there and the fastest lane's; and the
+/// load it was weighed against.
+pub type Placement = (Vec<(Lane, Cost, Cost)>, Load);
+
 impl Executor {
     /// The executor's scoreboard, shared: a host stream ([`crate::stream`]) scores its jobs on it.
     pub fn board(&self) -> Arc<Scoreboard> {
@@ -1223,7 +1214,7 @@ impl Executor {
 
     /// Every lane this machine has, with the default prices.
     pub fn new() -> Self {
-        configure(false);
+        configure();
         let present = lanes::present();
         // The device lanes are macOS's: elsewhere the two are all.
         #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
@@ -1269,7 +1260,7 @@ impl Executor {
 
     /// Only the given lanes' backends (tests; a binding that allows only some lanes).
     pub fn with(backends: Vec<Arc<dyn Backend>>) -> Self {
-        configure(false);
+        configure();
         let mut slots = [0; Lane::COUNT];
         for b in &backends {
             slots[b.lane().index()] = if b.lane().is_pool() { threads() } else { 1 };
@@ -1360,7 +1351,7 @@ impl Executor {
 
     /// Places each launch of a batch of kind `tag`, largest first, by host CPU (`Prices::choose_host`): per launch,
     /// in the batch's order, its lane, its cost there and the fastest lane's; and the load it was weighed against.
-    pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+    pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<Placement, String> {
         let predicted = self.predict(batch, &self.load(tag));
         self.place_predicted(tag, batch, &predicted)
     }
@@ -1373,7 +1364,7 @@ impl Executor {
     }
 
     /// [`Executor::place`] with the model's costs (`predicted`, per launch by lane).
-    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<Placement, String> {
         let mut order: Vec<usize> = (0..batch.0.len()).collect();
         order.sort_by(|&a, &b| batch.0[b].kernel.units().total_cmp(&batch.0[a].kernel.units()));
         let prices = self.measured_prices();
@@ -1504,7 +1495,12 @@ impl Executor {
                     hosts.push(Arc::clone(b));
                     for _ in 0..per_lane[lane.index()].min(threads()) {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
-                        rayon::spawn_fifo(move || as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend)));
+                        // The launches run in their submitter's run, on whichever pool thread takes them.
+                        let run = rerail_context::job_run();
+                        rerail_context::cores_spawn_fifo(move || {
+                            let _run = rerail_context::enter(run);
+                            as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
+                        });
                     }
                 }
                 // A device lane: its worker claims its share when it reaches the batch, and a device with nothing
@@ -1527,23 +1523,31 @@ impl Executor {
         let (reply, take) = std::sync::mpsc::sync_channel(1);
         let board = Arc::clone(&self.board);
         // Declined in a wait with a deadline ([`declines`]): queued again, for a thread that is not waiting.
-        fn queue(job: Box<dyn FnOnce() -> bool + Send>, name: &'static str, estimate: f64) {
-            rayon::spawn_fifo(move || {
-                if declines(name, estimate) {
-                    return queue(job, name, estimate);
+        // The check reads the job's expected wall, which is its run's: it is made in the run (decision 0442).
+        fn queue(job: Box<dyn FnOnce() -> bool + Send>, name: &'static str, estimate: f64, run: Option<Arc<dyn rerail_context::RunOwn>>) {
+            rerail_context::cores_spawn_fifo(move || {
+                let declined = {
+                    let _run = rerail_context::enter(run.clone());
+                    declines(name, estimate)
+                };
+                if declined {
+                    return queue(job, name, estimate, run);
                 }
                 job();
             });
         }
         // The job is its caller's run's (decision 0442), on whichever pool thread takes it.
-        let run = rerail_context::run_own();
-        queue(Box::new(move || {
-            let _run = rerail_context::enter(run);
-            board.start(&mut ticket);
-            let r = as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
-            board.finish(ticket, r.is_ok());
-            reply.send((r, Instant::now())).is_ok()
-        }), name, estimate);
+        let run = rerail_context::job_run();
+        queue(Box::new({
+            let run = run.clone();
+            move || {
+                let _run = rerail_context::enter(run);
+                board.start(&mut ticket);
+                let r = as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
+                board.finish(ticket, r.is_ok());
+                reply.send((r, Instant::now())).is_ok()
+            }
+        }), name, estimate, run);
         Job { name, take }
     }
 }
@@ -1662,10 +1666,10 @@ impl Running {
             moved += u64::from(lane != claims.plan[i]);
             report.launches[lane.index()] += 1;
             report.lost += (c.wall - fastest.wall).max(0.0);
-            if !lane.is_pool() {
-                if let Some(cc) = claims.costs[i][Lane::Cpu.index()] {
-                    report.cpu_freed += cc.wall;
-                }
+            if !lane.is_pool()
+                && let Some(cc) = claims.costs[i][Lane::Cpu.index()]
+            {
+                report.cpu_freed += cc.wall;
             }
             done.push(Done { out, lane, estimate: c.wall, fastest: fastest.wall, host: c.host });
         }
@@ -1850,22 +1854,23 @@ impl Backend for CpuBackend {
             return Ok((vec![self.join(ks[0])?], Phases::default()));
         }
         let me = std::thread::current().id();
-        let ran: Vec<(Output, f64)> = ks
-            .par_iter()
-            .map(|k| {
-                let c = thread_cpu();
-                let o = self.join(k)?;
-                Ok((o, if std::thread::current().id() == me { 0.0 } else { thread_cpu() - c }))
-            })
-            .collect::<Result<_, String>>()?;
+        let ran: Vec<(Output, f64)> = rerail_context::on_cores(|| {
+            ks.par_iter()
+                .map(|k| {
+                    let c = thread_cpu();
+                    let o = self.join(k)?;
+                    Ok((o, if std::thread::current().id() == me { 0.0 } else { thread_cpu() - c }))
+                })
+                .collect::<Result<_, String>>()
+        })?;
         let worker_cpu = ran.iter().map(|r| r.1).sum();
         Ok((ran.into_iter().map(|r| r.0).collect(), Phases { worker_cpu, ..Phases::default() }))
     }
     fn forget(&self, id: u64) {
-        if let Ok(mut s) = self.space.lock() {
-            if let Some((rows, k)) = s.sorted.remove(&id) {
-                s.bytes -= rows * 12 + k.runs.len() * 16;
-            }
+        if let Ok(mut s) = self.space.lock()
+            && let Some((rows, k)) = s.sorted.remove(&id)
+        {
+            s.bytes -= rows * 12 + k.runs.len() * 16;
         }
     }
     fn clear(&self) {
@@ -1917,10 +1922,14 @@ mod stack_tests {
     /// it is that stack less what the thread has used (2026-11-13: unbounded helps overflowed a pool thread).
     #[test]
     fn the_stack_left_is_measured_on_the_threads_own_stack() {
-        let size = 3 << 20;
-        let left = std::thread::Builder::new().stack_size(size).spawn(super::stack_left).unwrap().join().unwrap().expect("measured");
+        let asked = 3 << 20;
+        // The stack the thread was given: at least what it asked for (std's `Builder::stack_size`: "may be greater";
+        // under Relax far greater, 32 GiB reserved), as the platform reports it.
+        let (left, size) = std::thread::Builder::new().stack_size(asked).spawn(|| (super::stack_left(), super::stack_bounds().map(|(low, top)| top - low))).unwrap().join().unwrap();
+        let (left, size) = (left.expect("measured"), size.expect("the platform's bounds"));
+        assert!(size >= asked - (64 << 10), "{size} given for {asked} asked");
         assert!(left <= size + (64 << 10) && left > size - (256 << 10), "{left} of {size} (the platform counts its guard page)");
-        let deeper = std::thread::Builder::new().stack_size(size).spawn(|| {
+        let deeper = std::thread::Builder::new().stack_size(asked).spawn(|| {
             // Written through a `&mut`, so it is the frame's (optimized, a zero array never written was a constant,
             // and the frame held none of it).
             let mut pad = [0u8; 512 << 10];

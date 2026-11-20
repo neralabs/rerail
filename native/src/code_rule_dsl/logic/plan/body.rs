@@ -2,10 +2,9 @@
 //! position, and each literal's variables as a set of slots. The planner plans a rule, not a (head, body) pair, and
 //! its steps name the rule's literals by position (`Step::at`), as every other reader of a plan does.
 //!
-//! Each reading here is the tree's (`front::Literal::vars`, `plan::ready`, `front::cmp_binds`, `plan::is_join`, the
-//! digests and the text), stated over handles, and checked against it (`tests`): a plan searched over a `Body` is the
-//! plan the tree's search made, and its keys (`Body::digest`, `Body::observed_key`) are the tree's keys.
-use super::super::front::{Program, Rule};
+//! Each reading here was the tree's (`plan::ready`, `plan::is_join`, the digests and the text), stated over handles:
+//! a plan searched over a `Body` is the plan the tree's search made, and its keys (`Body::digest`,
+//! `Body::observed_key`) are the tree's keys (decision 0276).
 use super::super::program_image::{AggRef, AtomRef, Builder, CmpOp, Lit, LitRef, RelId, RuleId, RuleRef, Slot, TermRef, Version};
 use super::{Constant, Error, Result};
 use std::cell::OnceCell;
@@ -72,7 +71,7 @@ impl VarSet {
     }
 }
 
-/// The variables of term `t`, into `out` (`front::Term::vars`).
+/// The variables of term `t`, into `out`.
 pub fn term_vars(t: TermRef<'_>, out: &mut VarSet) {
     match t {
         TermRef::Var(s) => {
@@ -83,14 +82,14 @@ pub fn term_vars(t: TermRef<'_>, out: &mut VarSet) {
     }
 }
 
-/// The variables of atom `a` (`front::Atom::vars`).
+/// The variables of atom `a`.
 pub fn atom_vars(a: AtomRef<'_>) -> VarSet {
     let mut out = VarSet::new();
     a.args().for_each(|t| term_vars(t, &mut out));
     out
 }
 
-/// The variables of literal `l` (`front::Literal::vars`).
+/// The variables of literal `l`.
 pub fn lit_vars(l: LitRef<'_>) -> VarSet {
     match l.view() {
         Lit::Atom(a) => atom_vars(a),
@@ -125,32 +124,49 @@ pub struct Body<'v> {
     /// The version the rule's source (`RuleRef::source`) is a rule of: the run's version 0, for a rule of a
     /// maintained form (`Versions::at`); `None` for every other rule.
     sources: Option<&'v Version>,
-    /// Its head's plain variables bound before its first step (`with_head_bound`): a recheck's, run once per
-    /// candidate row (decision 0364 stage 3, Q208).
-    head_bound: bool,
+    /// What is bound before its first step: its head's plain variables (`with_head_bound`), a recheck's, run once
+    /// per candidate row (decision 0364 stage 3, Q208); or given variables (`with_bound`), a maintain line's led by a
+    /// delta that binds them (a negated changed read's, an aggregate's group key: 0364 R4). `None`: nothing.
+    pre: Option<Pre>,
+}
+
+/// What a body has bound before its first step (`Body::pre`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Pre {
+    Head,
+    Vars(VarSet),
 }
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None, head_bound: false }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None, pre: None }
     }
     /// The rule with its head's plain variables bound before its first step: a recheck of one candidate row
     /// (decision 0364 stage 3). The planner prices and keeps its order apart from the rule's own (`key` names it):
     /// each step starts from those variables bound and one row (Q208).
     pub fn with_head_bound(&self) -> Body<'v> {
-        Body { v: self.v, rule: self.rule, lits: self.lits.clone(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: self.sources, head_bound: true }
+        self.with_pre(Pre::Head)
+    }
+    /// The rule with `vars` bound before its first step, by one row: a maintain line led by a delta whose rows bind
+    /// them, the rest of the body planned from there (0364 R4). Kept apart from the rule's own order, as a recheck's.
+    pub fn with_bound(&self, vars: VarSet) -> Body<'v> {
+        self.with_pre(Pre::Vars(vars))
+    }
+    fn with_pre(&self, pre: Pre) -> Body<'v> {
+        Body { v: self.v, rule: self.rule, lits: self.lits.clone(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: self.sources, pre: Some(pre) }
     }
     /// Whether its head's plain variables are bound before its first step (a recheck, `with_head_bound`).
     pub fn head_bound(&self) -> bool {
-        self.head_bound
+        matches!(self.pre, Some(Pre::Head))
     }
-    /// The variables bound before its first step: its head's plain ones for a recheck (`with_head_bound`), else none.
-    /// A computed term's variables are not bound by the candidate.
+    /// The variables bound before its first step: its head's plain ones for a recheck (`with_head_bound`), the given
+    /// ones (`with_bound`), else none. A computed term's variables are not bound by the candidate.
     pub fn bound_before(&self) -> VarSet {
-        if !self.head_bound {
-            return VarSet::new();
+        match &self.pre {
+            None => VarSet::new(),
+            Some(Pre::Head) => VarSet::of(self.head().args().filter_map(|t| t.var())),
+            Some(Pre::Vars(v)) => v.clone(),
         }
-        VarSet::of(self.head().args().filter_map(|t| t.var()))
     }
     /// The rule this one was written from (decision 0258): for a maintenance rule of a session's form (`h__del`,
     /// `h__ins`, `h__redo`, …), its source rule `h :- …` of the run's version. `None` for a rule not written from one.
@@ -208,7 +224,7 @@ impl<'v> Body<'v> {
             (TermRef::Branded(a), TermRef::Branded(b)) => a == b,
             (TermRef::Str(a), TermRef::Str(b)) => self.v.text(a) == o.v.text(b),
             (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
-                self.v.text(f) == o.v.text(g) && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(x, y)| self.same_term(x, o, y))
+                self.v.text(f) == o.v.text(g) && xs.count() == ys.count() && xs.zip(ys).all(|(x, y)| self.same_term(x, o, y))
             }
             _ => false,
         }
@@ -311,7 +327,7 @@ impl<'v> Body<'v> {
             _ => 1.0,
         }
     }
-    /// Whether literals `i` and `j` read equal atoms (`front::Atom`'s equality: relation, flags and arguments).
+    /// Whether literals `i` and `j` read equal atoms: the same relation, flags and arguments.
     pub fn same_atom(&self, i: usize, j: usize) -> bool {
         match (self.atom(i), self.atom(j)) {
             (Some(a), Some(b)) => a.gated() == b.gated() && self.show_atom(a) == self.show_atom(b),
@@ -336,7 +352,7 @@ impl<'v> Body<'v> {
         }
         (0..self.len()).filter_map(|i| self.atom(i)).map(|a| self.rel(a)).collect()
     }
-    /// The signature of literal `i`'s atom with `bound` bound, under which its fanouts are observed (`plan::atom_sig`).
+    /// The signature of literal `i`'s atom with `bound` bound, under which its fanouts are observed (T's `atom_sig`).
     pub fn sig(&self, i: usize, bound: &VarSet) -> super::Sig {
         let cols = self.args(i).iter().enumerate().filter_map(|(c, &t)| match t {
             TermRef::Var(v) if bound.contains(v) => Some((c, None)),
@@ -359,7 +375,7 @@ impl<'v> Body<'v> {
     pub fn view(&self, i: usize) -> Lit<'v> {
         self.lits[i].view()
     }
-    /// The atom literal `i` reads: its own, or its aggregate's (`front::Literal::atom`).
+    /// The atom literal `i` reads: its own, or its aggregate's.
     pub fn atom(&self, i: usize) -> Option<AtomRef<'v>> {
         self.lits[i].atom()
     }
@@ -386,7 +402,7 @@ impl<'v> Body<'v> {
     pub fn position_of(&self, a: AtomRef<'_>) -> Option<usize> {
         self.lits.iter().position(|l| l.atom().is_some_and(|b| b.node() == a.node()))
     }
-    /// A constant term's value (`plan::constant`).
+    /// A constant term's value.
     pub fn constant(&self, t: TermRef<'_>) -> Option<Constant> {
         match t {
             TermRef::Int(i) => Some(Constant::Int(i)),
@@ -395,7 +411,7 @@ impl<'v> Body<'v> {
             _ => None,
         }
     }
-    /// Whether literal `i` joins: a positive atom, or `nearest` (`plan::is_join`).
+    /// Whether literal `i` joins: a positive atom, or `nearest`.
     pub fn is_join(&self, i: usize) -> bool {
         match self.view(i) {
             Lit::Atom(a) => !a.neg(),
@@ -403,7 +419,10 @@ impl<'v> Body<'v> {
             _ => false,
         }
     }
-    /// Whether filter `i` can run with `bound` bound (`plan::ready`).
+    /// Whether filter `i` can run with `bound` bound: `$x = e` assigns $x if it is unbound when `e`'s variables are
+    /// bound (SQL and the native `cat`/`eq` steps bind an unbound left side); otherwise it is a test. An equality of a
+    /// bound variable or constant with an unbound variable, `$s = $a`, assigns the right side as `$a = $s` would
+    /// (`binds_right`).
     pub fn ready(&self, i: usize, bound: &VarSet) -> bool {
         match self.view(i) {
             Lit::Atom(a) if a.neg() => self.vars(i).is_subset(bound),
@@ -443,16 +462,25 @@ impl<'v> Body<'v> {
         }
         None
     }
-    /// `@cat` over variables only (`front::Term::is_cat`).
+    /// `@cat` over variables only.
     pub fn is_cat(&self, t: TermRef<'_>) -> bool {
         matches!(t, TermRef::Call(f, args) if self.v.text(f) == "cat" && { args.clone().all(|a| matches!(a, TermRef::Var(_))) })
     }
 
-    /// The rule written into a digest, as `plan::digest_atom` and `plan::digest_literal` write the tree's head and body.
+    /// The rule written into a derived value's inputs (`logic::derived`), field by field: its head and body, the same
+    /// pieces in the same order as its text, without making the text.
     pub(in crate::code_rule_dsl) fn digest(&self, d: &mut super::super::derived::Inputs) {
-        // A recheck's order is not the rule's: kept apart (Q208).
-        if self.head_bound {
-            d.str("head bound");
+        // A recheck's order is not the rule's: kept apart (Q208); nor a line's planned from given variables bound.
+        match &self.pre {
+            None => {}
+            Some(Pre::Head) => d.str("head bound"),
+            Some(Pre::Vars(v)) => {
+                d.str("bound");
+                d.u64(v.0.len() as u64);
+                for w in &v.0 {
+                    d.u64(*w);
+                }
+            }
         }
         self.digest_atom(d, self.head());
         d.u64(self.lits.len() as u64);
@@ -465,7 +493,11 @@ impl<'v> Body<'v> {
     pub fn key(&self) -> u128 {
         *self.key.get_or_init(|| super::super::derived::digest(|d| self.digest(d)))
     }
-    /// The key observations of this rule's steps are kept under (`plan::obs_rule`).
+    /// The key observations of this rule's steps are kept under (`Stats::obs`): its head and body, digested (`key`,
+    /// not its text written out: it is asked at every search). A fanout through a bound column depends on which values
+    /// the rule's bindings bring: `docof($x, $d)` with `$d` bound reads a whole document, and one rule's bindings fall
+    /// in 11-node documents while another's fall in documents of thousands of nodes. Pooled over rules, the first set
+    /// the second's estimate (`up_once`: 1,285 rows a binding, priced at 10).
     pub fn observed_key(&self) -> u64 {
         let d = self.key();
         (d as u64) ^ ((d >> 64) as u64)
@@ -556,7 +588,7 @@ impl<'v> Body<'v> {
         }
     }
 
-    /// Literal `i` as text (`front::Literal`'s).
+    /// Literal `i` as text, as `show_rule` writes it.
     pub fn show(&self, i: usize) -> String {
         self.v.show_lit(self.rule, self.lits[i])
     }
@@ -578,7 +610,10 @@ impl std::fmt::Display for HeadText<'_, '_> {
     }
 }
 
-/// An equality of a bound variable or constant with an unbound variable assigns the right side (`plan::binds_right`).
+/// The variable `l = r` assigns from its right side: `r` an unbound variable and `l` a bound variable or a constant
+/// (`$s = $a` with `$s` bound reads as `$a = $s`). Without it, `p($s), q($a), $s = $a` could only be ordered as a
+/// cross product of `p` and `q` narrowed after by the test (decision 0099 item 4: `fl4317_typing_root`, 14 k rows,
+/// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
 pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
     if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {
         return None;
@@ -594,11 +629,49 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
 
 /// The versions of the programs whose rules a run plans, and a rule of one named by its key (`RuleKey`: the version's
 /// place and the rule's place in the program's rules). The run's program is version 0 (`of_placed`), and a maintained
-/// form a version of its own (`push`). A caller that holds a program as a tree (`with`) finds a rule's key by its
-/// address (`key`), once, where its list is made. A program is added once it is final: its rules do not move after.
+/// form a version of its own (`push`). A program is added once it is final: its rules do not move after.
 #[derive(Clone, Default)]
 pub struct Versions(Vec<(usize, usize, Placed)>);
 
+
+/// A writer frozen to what a pass reads (decision 0276 §3): a `Placed`, its `Fields` read afresh at their first
+/// reader. A writer cannot fail to make a version, so an error is an error, never a fall back to another form.
+pub trait Freeze {
+    /// The version the writer makes, its rules in its order.
+    fn freeze(self) -> std::result::Result<Placed, String>;
+    /// The version the writer makes, the program's rule `k` its rule `order[k]` as the writer numbered them, read
+    /// back where the edit folded (`Builder::finish_placing`); `whole` where it holds the program's other fields too.
+    fn freeze_placed(self, order: Vec<RuleId>, whole: bool) -> std::result::Result<Placed, String>;
+}
+
+impl Freeze for Builder<'_> {
+    fn freeze(self) -> std::result::Result<Placed, String> {
+        Ok(Placed::whole(self.finish()?.0))
+    }
+    fn freeze_placed(self, mut order: Vec<RuleId>, whole: bool) -> std::result::Result<Placed, String> {
+        let (v, _, folded) = self.finish_placing()?;
+        if let Some(folded) = folded {
+            order.iter_mut().for_each(|id| *id = folded[id]);
+        }
+        Ok(Placed::new(v, order, whole))
+    }
+}
+
+/// A program pass (decision 0276 §3), from the program `p` to what it makes of it, or `None` where it changes nothing:
+/// `f`. Its profile span (`span`, the name the profile and the decisions cite) and its version trace (`site`,
+/// `version_trace`, §6) are taken here, once for every pass, not by each pass.
+pub fn pass<T, E>(site: &'static str, span: &'static str, p: &Placed, f: impl FnOnce(&Placed) -> std::result::Result<Option<(T, Placed)>, E>) -> std::result::Result<Option<(T, Placed)>, E> {
+    let out = {
+        let _span = super::super::profile::span(|| span.into());
+        f(p)?
+    };
+    if let Some((_, q)) = &out
+        && super::super::version_trace::on()
+    {
+        super::super::version_trace::note(site, &p.v, &q.v);
+    }
+    Ok(out)
+}
 
 /// A program's version, and where its rules are in it: the program's rule `k` is the version's rule `ids[k]` (rule
 /// `k` where `ids` is `None`, a version made of the rules in order). A pass's overlay keeps its rules where its edits
@@ -607,7 +680,7 @@ pub struct Versions(Vec<(usize, usize, Placed)>);
 pub struct Placed {
     pub v: Arc<Version>,
     ids: Option<Arc<[RuleId]>>,
-    /// Whether `v` holds the program's other fields too (`of_program`), not its rules alone.
+    /// Whether `v` holds the program's other fields too (`Placed::whole`), not its rules alone.
     pub whole: bool,
     /// The version's other fields, read once at the first `Fields::of` and shared by every clone after it.
     pub(super) fields: std::sync::OnceLock<Arc<super::fields::FieldsData>>,
@@ -617,19 +690,6 @@ pub struct Placed {
 }
 
 impl Placed {
-    /// `rules` made into a version of their own, in order.
-    pub fn made(rules: &[Rule]) -> Result<Placed> {
-        Ok(Placed { v: made(rules)?, ids: None, whole: false, fields: Default::default(), positions: Default::default() })
-    }
-    /// `prog`'s image (decision 0173): its rules in order, and its declarations, facts, inputs, outputs and other
-    /// fields (`About`), which the passes read beside the rules.
-    pub fn of_program(prog: &Program) -> Result<Placed> {
-        // A program the image has no form for (a comparison it does not know) is made of its rules alone.
-        let Ok(v) = Builder::of_program(prog).and_then(|b| b.finish()).map(|(v, _)| v) else {
-            return Placed::made(&prog.rules);
-        };
-        Ok(Placed { v, ids: None, whole: true, fields: Default::default(), positions: Default::default() })
-    }
     /// The run's version of the program whose image this is (t36 item 7, step 2): normalized for the SQL kernel
     /// (`passes::normalize`, a derivation), with its stated facts apart where `apart` (`passes::stated_apart`, an
     /// overlay), as `plan::run` normalizes the program. Also the relations given a presence column (the sentinels),
@@ -637,22 +697,24 @@ impl Placed {
     pub fn normalized(&self, apart: bool) -> Result<Normalized> {
         use super::super::program_image::passes;
         #[cfg(any(test, feature = "test-hooks"))]
-        NORMALIZED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        super::run_counts().normalized.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if !self.whole || self.ids.is_some() {
             return Err(Error::Plan("the program has no image: its run reads it from its version".into()));
         }
-        let (v, sentinels) = passes::normalize(&self.v).map_err(Error::Plan)?;
-        let sentinels = sentinels.iter().map(|&r| v.rel_name(r).to_owned()).collect();
-        let (v, stated) = if apart { passes::stated_apart(&v).map_err(Error::Plan)? } else { (v, Vec::new()) };
+        // Each held by the version it is of: made once however many runs (a corpus run's chunks) read it.
+        use super::super::program_image::manager::analysis;
+        let normal = analysis::<passes::NormalForm>(&self.v).map_err(Error::Plan)?;
+        let sentinels = normal.sentinels.iter().map(|&r| normal.v.rel_name(r).to_owned()).collect();
+        let (v, stated) = if apart {
+            let a = analysis::<passes::ApartForm>(&normal.v).map_err(Error::Plan)?;
+            (a.v.clone(), a.stated.clone())
+        } else {
+            (normal.v.clone(), Vec::new())
+        };
         let stated = stated.iter().map(|&(r, s)| (v.rel_name(r).to_owned(), v.rel_name(s).to_owned())).collect();
         Ok(Normalized { placed: Placed { v, ids: None, whole: true, fields: Default::default(), positions: Default::default() }, sentinels, stated })
     }
-    /// The program this version is, as the tree: its rules in the program's order. For a reader that still reads a tree: the program digests (decision 0173, step 6), the stored text,
-    /// the measurement aids.
-    pub fn program(&self, lists: &super::super::front::Lists) -> Result<Program> {
-        super::super::program_image::Tree::new(&self.v, lists).program_of(self.order().into_iter().map(|id| self.v.rule(id).expect("a rule of its version"))).map_err(Error::Plan)
-    }
-    /// Its components, dependencies first, in the tree's order (`front::components_of`). Held by the version
+    /// Its components, dependencies first, in the tree's order (`analyses::components_by_name`). Held by the version
     /// (decision 0281 §2): computed once however many readers and `Placed`s ask.
     pub fn components(&self) -> Result<Arc<super::super::program_image::analyses::Components>> {
         super::super::program_image::manager::analysis::<super::super::program_image::analyses::Components>(&self.v).map_err(Error::Plan)
@@ -717,10 +779,6 @@ impl Placed {
 
 /// A program's version as `plan::run` normalizes it (`Placed::normalized`): the version, the relations given a
 /// presence column, and the pairs `(rel, rel__stated)` whose stated facts were moved apart.
-/// Tests: the programs normalized so far in this process (`Placed::normalized`).
-#[cfg(any(test, feature = "test-hooks"))]
-pub static NORMALIZED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 pub struct Normalized {
     pub placed: Placed,
     pub sentinels: std::collections::BTreeSet<String>,
@@ -759,16 +817,6 @@ impl RuleKey {
 }
 
 impl Versions {
-    /// The version of `prog` alone, the run's version 0 (rule numbers are its ids).
-    pub fn of(prog: &Program) -> Result<Versions> {
-        Ok(Versions::with(prog, Placed::made(&prog.rules)?))
-    }
-    /// `prog`'s version as a pass left it (`placed`), the run's version 0, taken as it is: no rule is encoded.
-    pub fn with(prog: &Program, placed: Placed) -> Versions {
-        let rules = &prog.rules;
-        let start = rules.as_ptr() as usize;
-        Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)])
-    }
     /// `placed` alone, the run's version 0, for a caller that holds no tree (the composed path's edited versions): no
     /// rule or program is found by its address.
     pub fn of_placed(placed: Placed) -> Versions {
@@ -795,21 +843,11 @@ impl Versions {
     pub fn keys(v: usize, n: usize) -> impl Iterator<Item = RuleKey> {
         (0..n).map(move |k| RuleKey::new(v, k))
     }
-    /// `r`'s key, a rule of a program the run holds.
-    pub fn key(&self, r: &Rule) -> Option<RuleKey> {
-        let at = r as *const Rule as usize;
-        let v = self.0.iter().position(|e| e.0 <= at && at < e.1)?;
-        Some(RuleKey { v: v as u32, id: ((at - self.0[v].0) / std::mem::size_of::<Rule>()) as u32 })
-    }
-    /// `r`'s key, or an error naming it (a rule of no program the run holds).
-    pub fn key_of(&self, r: &Rule) -> Result<RuleKey> {
-        self.key(r).ok_or_else(|| Error::Plan(format!("{} :- …: a rule of no program the run holds", r.head)))
-    }
     /// The fields of the run's `k`-th version (the program's is 0), read once: `None` where it is rules alone.
     pub fn fields(&self, k: usize) -> Option<super::fields::Fields<'_>> {
         self.0.get(k).and_then(|e| super::fields::Fields::of(&e.2))
     }
-    /// The fields of the run's `k`-th version, a whole program's (the run's, a maintained form: `with`, `add`).
+    /// The fields of the run's `k`-th version, a whole program's (the run's, a maintained form: `of_placed`, `push`).
     pub fn whole(&self, k: usize) -> super::fields::Fields<'_> {
         self.fields(k).unwrap_or_else(|| panic!("the run's version {k} is its rules alone"))
     }
@@ -833,35 +871,39 @@ impl Versions {
         let (v, rule) = self.rule_at(k);
         v.rel_name(rule.head().rel())
     }
-    /// The keys of `rules`, rules of programs the run holds, found by their addresses: for a caller that holds a
-    /// list of trees, once, where its list is made (t36 item 7: until the callers pass versions, step 9).
-    pub fn keys_of(&self, rules: &[&Rule]) -> Result<Vec<RuleKey>> {
-        rules.iter().map(|r| self.key_of(r)).collect()
-    }
-    /// Rule `r`, a tree of a program the run holds, as the planner reads it: found by its address, for a caller
-    /// that holds the tree (the tests).
-    pub fn body(&self, r: &Rule) -> Result<Body<'_>> {
-        Ok(self.at(self.key_of(r)?))
-    }
 }
 
-/// Rules made for planning alone (a rule's body less its recursive atom, a factored part, a view's atom), each a rule
-/// of its own version, read as the planner reads any rule. The made rules are trees until their readers read handles
-/// (t36 items 3 and 4); each is encoded as it is, so its literals keep their places.
-pub fn made(rules: &[Rule]) -> Result<Arc<Version>> {
-    let mut b = Builder::base();
-    for r in rules {
-        b.add(r).map_err(Error::Plan)?;
-    }
-    Ok(b.finish().map_err(Error::Plan)?.0)
-}
-
-/// Rule `k` of a version `made` made, as the planner reads it.
+/// Rule `k` of version `v`, as the planner reads it.
 pub fn nth(v: &Version, k: usize) -> Body<'_> {
     Body::of(v, v.rule(RuleId(k as u32)).expect("a made rule"))
 }
 
-/// `rule` alone, a version of its own (a rule of no program the run holds: a copy a pass prices before it makes it).
-pub fn alone(rule: &Rule) -> Result<Arc<Version>> {
-    made(std::slice::from_ref(rule))
+#[cfg(test)]
+mod tests {
+    use super::super::super::program_image::{Builder, T, Version};
+    use super::super::super::rr::parse_version;
+    use super::{Freeze as _, Placed};
+
+    /// 0276 §3: a writer frozen in an order of its own reads each rule where the pass put it, the edit folded or not.
+    /// A fold numbers the rules afresh (`Builder::finish_placing`), so the order the pass wrote is read back through it.
+    #[test]
+    fn a_frozen_edit_keeps_its_order_through_a_fold() {
+        let rels = ["a", "b", "c", "f", "g", "h", "i", "j"];
+        let text: String = rels.iter().map(|r| format!(".decl {r}(x: number)\n{r}(x) :- e(x).\n")).collect();
+        let v = parse_version(&format!(".decl e(x: number)\n.input e\n.decl d(x: number)\n{text}")).unwrap();
+        let shown = |p: &Placed| (0..p.len()).map(|k| p.v.show_rule(p.rule(k))).collect::<Vec<_>>();
+        let ids: Vec<_> = v.rules().map(|r| r.id()).collect();
+        // One rule removed and two added: an overlay of the eight. Four removed: half the program or more, folded.
+        for (remove, folds) in [(1, false), (4, true)] {
+            let mut b = Builder::on(&v);
+            for &id in &ids[..remove] {
+                b.remove(id);
+            }
+            let x = b.rule().head("d", &[T::Var("x")]).atom("a", &[T::Var("x")]).finish().unwrap();
+            let y = b.rule().head("d", &[T::Var("x")]).atom("b", &[T::Var("x")]).finish().unwrap();
+            let p = b.freeze_placed(vec![y, ids[7], x], true).unwrap();
+            assert_eq!(!matches!(&*p.v, Version::Overlay { .. }), folds, "{remove} removed: folded");
+            assert_eq!(shown(&p), ["d($x) :- b($x)", "j($x) :- e($x)", "d($x) :- a($x)"], "{remove} removed");
+        }
+    }
 }

@@ -373,7 +373,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 2 | Gone (step 2): definition ids by node, `DefIds::low`, `order`, `back`. The granule table answers them. | — | — | Done |
 | 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
-| 5 | Views, flat relations and names uploaded from the host | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident`, `texts` | 7.4 MB, 22.1 ms a run | Steps 4, 6 |
+| 5 | Views and flat relations uploaded from the host. Symbols' names no longer (0478 step 2e, 2026-11-19: every text kernel reads them through the atoms directory; `texts` and `DevText` are deleted) | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident` | 7.4 MB, 22.1 ms a run (with the names) | Steps 4, 6 |
 | 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` is still made per looked-up node and uploaded (row 5) until its probe climbs the tape | — | — | Done |
 | 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.45–0.49 s of CPU a run | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | Every row a CPU stratum derives | Step 6 |
@@ -381,11 +381,11 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 10 | A device fixpoint's total copied into a run's block at its end | `device.rs` (0325 step 4) | Each recursive stratum's rows | Step 6 |
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
-| 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
+| 13 | The transducer's residency: every tape it reads copied into slabs of its own. (Documents copied between slabs, `gather`, are gone, 0471: a batch reads each document in its own slab, by the slabs' GPU addresses.) | `residency::slabs::admit_docs`, `insert`'s `place` | Each tape a Metal batch reads | Step 7 |
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 |
-| 15 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`); a queued tape not in a room read into a vector (`queued_image`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image` | 4.1 MB a run on hogql 16z | Step 4a |
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
-| 16 | A label level's fact rows as `(node, label)` pairs, uploaded for the pattern kernels (`Pass::Fact`). Found unlisted on 2026-11-18 (0460, was 0406 on q178; Q289), not added then | `metal_label_passes.rs`, `Runner::level` | 32 MB (8.1 M words) on 15 fixtures while it went up once per pattern group; once a level since 0460 | Step 4 (Q289: the device reads the fact's relation in its block) |
+| 16 | Gone (0446, 2026-11-19): a label level's fact rows, uploaded as `(node, label)` pairs for the pattern kernels (`Pass::Fact`). The host writes the findings once into the batch's fact block, and the CPU and the kernels read them there | — | — | Done |
+| 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`); a queued tape not in a room read into a vector (`queued_image`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image` | 4.1 MB a run on hogql 16z | Step 4a |
 
 ## The plan
 
@@ -407,7 +407,7 @@ Each step ends with:
      hogql, 16z, the Metal binding, cold (load 38): 792.4 MB and 0.90 s of CPU in all. Row 4, views expanded on the
      device, 472.1 MB (the axis's, with row 6's 143.0 MB of pairs in the chunk: step 5); row 3, the chunk's node
      columns, 71.8 MB and 0.26 s; row 7, the per-node rows, 13.5 MB and 0.46 s; rows 8 to 10 (step 6), 71.8 MB; row 5,
-     uploads, 9.0 MB and 0.15 s; row 13, tapes copied into slabs, 6.8 MB; row 15, 4.1 MB. Row 11 copies nothing in
+     uploads, 9.0 MB and 0.15 s; row 13, tapes copied into slabs, 6.8 MB; row 17, 4.1 MB. Row 11 copies nothing in
      this run (its batches are resident).
    - 0289, 0293 and 0325 point here where this supersedes them.
 2. **Node identity in place.**

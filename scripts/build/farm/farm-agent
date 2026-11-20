@@ -52,7 +52,7 @@ over that plain TCP connection, which costs no encryption and no ssh flow contro
 the lifeline: when it ends, the agent ends. If the connection cannot be made, it replies
 {"op": "tcp-failed", "why"} on ssh and stays there.
 """
-import ctypes, json, os, re, socket, struct, subprocess, sys, threading, time, traceback
+import ctypes, glob, json, os, re, socket, struct, subprocess, sys, threading, time, traceback
 
 
 def leave(kind, value, tb):
@@ -73,6 +73,8 @@ sys.excepthook = leave
 MACOS = sys.platform == "darwin"
 FARM = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm") if MACOS else \
     os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "rerail-farm")
+# A Windows host's builds: its farm directory on the Windows drive, as its WSL mounts it (`windows_dir`).
+WINDIR = os.environ.get("RERAIL_FARM_WINDIR")
 ROOT = os.path.join(FARM, "root.noindex")
 # Linux keeps a program's attributes in the `user.` namespace.
 XATTR = b"org.rerail.farm.sent" if MACOS else b"user.org.rerail.farm.sent"
@@ -296,7 +298,9 @@ def xc_container(home):
 # The Linux builds of the proc-macros a Mac's compile loads, and of what they link: one directory a
 # recorded compile (by its record's hash), shared by every proc-macro that links it.
 XC_PM = os.path.join(FARM, "xc-pm.noindex")
-TRIPLE_LINUX = b"aarch64-unknown-linux-gnu"
+# This host's own target (an x86_64 host as well as an ARM one): its rustc, and its proc-macros' builds.
+HOST_TRIPLE = ("x86_64" if os.uname().machine in ("x86_64", "amd64") else "aarch64") + "-unknown-linux-gnu"
+TRIPLE_LINUX = HOST_TRIPLE.encode()
 TRIPLE_MAC = b"aarch64-apple-darwin"
 
 
@@ -338,7 +342,7 @@ def pm_build(pm, toolchain):
     build machine's SVH into the Linux library (`svh_at`) and writes it beside the dylib's copy, as
     `.so`: the compile in the container loads it from there. None, or why it could not."""
     import fcntl, hashlib, shutil
-    rustc = os.path.expanduser(f"~/.rustup/toolchains/{toolchain}-aarch64-unknown-linux-gnu/bin/rustc")
+    rustc = os.path.expanduser(f"~/.rustup/toolchains/{toolchain}-{HOST_TRIPLE}/bin/rustc")
     built = {}  # the build machine's stem -> this host's output directory
     closure = {}  # the build machine's stem -> the directories of all it links (rustc's -L dependency)
     for rec in pm["calls"]:
@@ -423,7 +427,7 @@ def pm_build(pm, toolchain):
 def xc_argv(job):
     """The `docker exec` that runs the build machine's compile `job` in the container."""
     xc = job["xc"]
-    rustc = f"/opt/rustup/toolchains/{xc['toolchain']}-aarch64-unknown-linux-gnu/bin/rustc"
+    rustc = f"/opt/rustup/toolchains/{xc['toolchain']}-{HOST_TRIPLE}/bin/rustc"
     args = job["argv"][1:]
     # On the Mac the target is the host's: named here, it is the same compile (the outputs' bytes too).
     if not any(a == "--target" or a.startswith("--target=") for a in args):
@@ -884,8 +888,18 @@ def run_command(job):
     except (ValueError, OSError) as e:
         print(f"farm-agent: the open-file limit stays {soft}: {e}", file=sys.stderr, flush=True)
     argv = [m(a) for a in job["argv"]]
+    windows = None
+    if job.get("windows"):
+        try:
+            windows = windows_job(job, argv, m(job["cwd"]), env)
+        except OSError as e:
+            print(f"farm-agent: {e}", file=sys.stderr, flush=True)
+            os._exit(127)
+        argv, env = windows["argv"], windows["env"]
     try:
-        proc = subprocess.Popen(["nice", "-n", str(job.get("nice", 10))] + argv, cwd=m(job["cwd"]), env=env,
+        # (Windows' cmd started in a WSL directory says it cannot use it: started on its drive)
+        proc = subprocess.Popen(argv if windows else ["nice", "-n", str(job.get("nice", 10))] + argv,
+                                cwd=WINDIR if windows else m(job["cwd"]), env=env,
                                 stdin=subprocess.DEVNULL, start_new_session=True)
     except OSError as e:
         print(f"farm-agent: {e}", file=sys.stderr, flush=True)
@@ -894,6 +908,8 @@ def run_command(job):
     def watch():
         while sys.stdin.buffer.read(65536):
             pass
+        if windows:
+            windows_kill(windows)
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except OSError:
@@ -902,6 +918,12 @@ def run_command(job):
     if job.get("target"):
         threading.Thread(target=watchdog, args=(job,), daemon=True).start()
     code = proc.wait()
+    if windows:
+        for p in (windows["script"], windows["launcher"]):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
     for f in (sys.stdout, sys.stderr):
         try:
             f.flush()
@@ -912,6 +934,140 @@ def run_command(job):
     if job.get("target"):
         tidy_root(job.get("min_free_gb", 40))
     os._exit(code if code >= 0 else 128 - code)
+
+
+def win_path(path):
+    """A path on a Windows drive as WSL mounts it (/mnt/c/x/y) as Windows names it (C:\\x\\y)."""
+    m = re.match(r"^/mnt/([a-z])(/.*)?$", path)
+    if not m:
+        raise OSError(f"{path} is not on a Windows drive (the host's farm_dir must be under /mnt/)")
+    return m.group(1).upper() + ":" + (m.group(2) or "/").replace("/", "\\")
+
+
+def bat_quote(arg):
+    """`arg` for a batch file's command line: in quotes (cmd's `&|<>^` stay literal inside them, and
+    the C runtime takes them off), `%` doubled (a batch file expands it even there)."""
+    return '"' + arg.replace('"', '\\"').replace("%", "%%") + '"'
+
+
+WINDOWS_PRIORITY = [(0, "NORMAL"), (10, "BELOWNORMAL"), (19, "LOW")]
+
+
+def windows_job(job, argv, cwd, env):
+    """A test command run as a Windows build (`windows` in the job: a Windows host, "Windows
+    hosts"): the checkout's copy is on the Windows drive, so the command runs natively there, in a
+    batch file Windows' cmd runs through WSL's interop, at a low priority (its children inherit it),
+    with its target directory on that drive. A leading `nice -n N` sets the priority; `env` that
+    the job set goes in the batch file, a path in it as Windows names it."""
+    nice = job.get("nice", 10)
+    if len(argv) >= 3 and argv[0] == "nice" and argv[1] == "-n":
+        nice, argv = int(argv[2]), argv[3:]
+    priority = next(p for n, p in reversed(WINDOWS_PRIORITY) if nice >= n)
+    if not WINDIR:
+        raise OSError("a Windows job on a host with no windows_dir")
+    wenv = interop_env()
+    # The checkout's copy here (the machine's Linux one) to the Windows drive, then the command
+    # runs in that one, with its target directory there too.
+    for p in job.get("map", []):
+        if p.startswith("/") and p != "/":
+            windows_sync(ROOT + os.path.normpath(p), WINDIR + "/r" + os.path.normpath(p), wenv)
+    cwd = WINDIR + "/r" + cwd[len(ROOT):] if cwd.startswith(ROOT + "/") else cwd
+    if job.get("target"):
+        env = dict(env, CARGO_TARGET_DIR=os.path.join(WINDIR, "t", job["target"]))
+        os.makedirs(env["CARGO_TARGET_DIR"], exist_ok=True)
+    tag = f"farm-job-{os.getpid()}"
+    os.makedirs(os.path.join(WINDIR, "tmp"), exist_ok=True)
+    script, launcher = os.path.join(WINDIR, "tmp", tag + ".cmd"), os.path.join(WINDIR, "tmp", tag + "-run.cmd")
+    lines = ["@echo off", f"cd /d {bat_quote(win_path(cwd))}"]
+    for k, v in job.get("env", {}).items():
+        v = env.get(k, v)
+        lines.append(f'set "{k}={win_path(v) if v.startswith("/mnt/") else v}"')
+    if env.get("CARGO_TARGET_DIR"):
+        lines.append(f'set "CARGO_TARGET_DIR={win_path(env["CARGO_TARGET_DIR"])}"')
+    lines += ['set "PATH=%USERPROFILE%\\.cargo\\bin;%PATH%"', " ".join(bat_quote(a) for a in argv), "exit /b %ERRORLEVEL%"]
+    with open(script, "w", newline="\r\n") as f:
+        f.write("\n".join(lines) + "\n")
+    # `start /WAIT` runs it at the priority; the launcher's next line hands its exit status back.
+    with open(launcher, "w", newline="\r\n") as f:
+        f.write(f'@echo off\nstart "" /B /WAIT /{priority} cmd /d /c {bat_quote(win_path(script))}\nexit /b %ERRORLEVEL%\n')
+    return {"argv": ["/mnt/c/Windows/System32/cmd.exe", "/d", "/c", win_path(launcher)], "env": wenv,
+            "script": script, "launcher": launcher, "tag": tag}
+
+
+def interop_env():
+    """This environment with WSL's interop socket: a command from ssh has none, and Windows'
+    programs are then not runnable (the first one WSL made serves every session)."""
+    wenv = dict(os.environ)
+    if not wenv.get("WSL_INTEROP"):
+        socks = sorted(glob.glob("/run/WSL/*_interop"), key=lambda p: int(os.path.basename(p).split("_")[0]))
+        if socks:
+            wenv["WSL_INTEROP"] = socks[0]
+    return wenv
+
+
+def windows_sync(src, dst, wenv):
+    """Brings the Windows drive's copy `dst` up to the copy `src` here: the files changed since
+    the last sync (size or time, from its manifest) in one tar stream to Windows' own tar, which
+    writes them natively (WSL's mount wrote 13 files a second); the files gone, removed. A
+    `target` directory and `.git` stay out: the mirror's compile outputs, and no build reads them."""
+    import hashlib, tarfile
+    started = time.time()
+    manifest = os.path.join(FARM, "winsync", hashlib.sha256(dst.encode()).hexdigest()[:16] + ".json")
+    try:
+        old = json.load(open(manifest))
+    except (OSError, ValueError):
+        old = {}
+    new, changed = {}, []
+    for d, dirs, files in os.walk(src):
+        dirs[:] = [x for x in dirs if x not in ("target", ".git")]
+        for name in files:
+            p = os.path.join(d, name)
+            st = os.lstat(p)
+            if not os.path.isfile(p) or os.path.islink(p):
+                continue
+            rel = os.path.relpath(p, src)
+            new[rel] = [st.st_size, st.st_mtime_ns]
+            if old.get(rel) != new[rel]:
+                changed.append(rel)
+    os.makedirs(dst, exist_ok=True)
+    if changed:
+        tar = subprocess.Popen(["/mnt/c/Windows/System32/tar.exe", "-x", "-f", "-", "-C", win_path(dst)], env=wenv,
+                               stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            with tarfile.open(fileobj=tar.stdin, mode="w|", format=tarfile.PAX_FORMAT) as t:
+                for rel in changed:
+                    t.add(os.path.join(src, rel), arcname=rel.replace(os.sep, "/"), recursive=False)
+            tar.stdin.close()
+        except OSError:
+            pass
+        err = tar.stderr.read().decode(errors="replace")
+        if tar.wait() != 0:
+            raise OSError(f"tar on Windows: {err.strip()[-500:]}")
+    gone = [rel for rel in old if rel not in new]
+    for rel in gone:
+        try:
+            os.remove(os.path.join(dst, rel))
+        except OSError:
+            pass
+    os.makedirs(os.path.dirname(manifest), exist_ok=True)
+    with open(manifest + ".tmp", "w") as f:
+        json.dump(new, f)
+    os.replace(manifest + ".tmp", manifest)
+    if changed or gone:
+        print(f"farm-agent: {len(changed)} files to the Windows drive, {len(gone)} removed, in {time.time() - started:.1f} s",
+              file=sys.stderr, flush=True)
+
+
+def windows_kill(w):
+    """Stops a Windows command's processes: every process tree whose command line names its batch
+    file (Windows' processes are not this agent's children)."""
+    ps = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*" + w["tag"] + "*' } | "
+          "ForEach-Object { taskkill.exe /T /F /PID $_.ProcessId | Out-Null }")
+    try:
+        subprocess.run(["/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-NoProfile", "-Command", ps],
+                       env=w["env"], stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 # What the root holds that no run has used for ROOT_DAYS goes (prune_root); while the disk is short

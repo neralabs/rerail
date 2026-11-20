@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "vitest";
 
@@ -19,7 +19,10 @@ import {
   stripOmpMcp,
   stripPiSettings,
 } from "../../scripts/dev/rerail-nuke.mjs";
-import { loadSqlite, timestamp } from "../../scripts/dev/rerail-restore.mjs";
+import { launcherPath, loadSqlite, timestamp } from "../../scripts/dev/rerail-restore.mjs";
+import { commandLine } from "../../src/engine/index.ts";
+import { linkFolder } from "../support/platform/links.ts";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const NUKE_SCRIPT = fileURLToPath(new URL("../../scripts/dev/rerail-nuke.mjs", import.meta.url));
 const { DatabaseSync } = await loadSqlite();
@@ -29,7 +32,7 @@ async function withHome(run) {
   try {
     return await run(home);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    removeFolderSync(home);
   }
 }
 
@@ -143,7 +146,7 @@ function installFixture(home) {
     mcpServers: { rerail: { command: "node", args: [cli, "mcp-bridge"] }, other: { command: "other" } },
   });
   mkdirSync(join(home, ".omp", "agent", "extensions"), { recursive: true });
-  symlinkSync(join(rerailHome, "current"), join(home, ".omp", "agent", "extensions", "rerail"));
+  linkFolder(join(rerailHome, "current"), join(home, ".omp", "agent", "extensions", "rerail"));
   writeJson(join(home, ".pi", "agent", "settings.json"), { packages: [join(rerailHome, "current"), "npm:other"], theme: "dark" });
   mkdirSync(join(home, ".claude", "commands"), { recursive: true });
   // `rerail-ui.md` is the name `rerail-manage.md` had before it was renamed; nuke backs up both.
@@ -165,8 +168,8 @@ test("argument parsing accepts --dry-run, --yes and --help only", () => {
 
 test("the backup root is dated, and timed when today's already exists", () => {
   const now = new Date(2026, 8, 29, 7, 5, 9);
-  assert.equal(backupRootFor("/h", now, () => false), "/h/.rerail-clean-20260929");
-  assert.equal(backupRootFor("/h", now, path => path === "/h/.rerail-clean-20260929"), "/h/.rerail-clean-20260929-070509");
+  assert.equal(backupRootFor("/h", now, () => false), join("/h", ".rerail-clean-20260929"));
+  assert.equal(backupRootFor("/h", now, path => path === join("/h", ".rerail-clean-20260929")), join("/h", ".rerail-clean-20260929-070509"));
   assert.equal(timestamp(now), "20260929-070509");
 });
 
@@ -177,7 +180,7 @@ test("config backups are named by their path under HOME with separators as under
 });
 
 test("the matcher recognises the Rerail home by path, realpath, and ~ or $HOME spelling only", () => {
-  const matches = rerailHomeMatcher("/h/.rerail", "/h");
+  const matches = rerailHomeMatcher("/h/.rerail", "/h", "linux");
   assert.ok(matches("node /h/.rerail/current/dist/hosts/claude/claude-hook.js"));
   assert.ok(matches("node ~/.rerail/current/dist/x.js"));
   assert.ok(matches('node "$HOME/.rerail/current/dist/x.js"'));
@@ -186,8 +189,39 @@ test("the matcher recognises the Rerail home by path, realpath, and ~ or $HOME s
   assert.ok(!matches("node /h/project/.rerail/x.js"));
 });
 
+test("on Windows the matcher reads the home in either slash, any case, and the doubled backslashes of a POSIX-quoted word", () => {
+  const matches = rerailHomeMatcher(String.raw`C:\Users\me\.rerail`, String.raw`C:\Users\me`, "win32");
+  // Claude Code's exec-form hook and Codex's PowerShell hook name the script with backslashes.
+  assert.ok(matches(String.raw`C:\Users\me\.rerail\current\dist\hosts\claude\claude-hook.js`));
+  assert.ok(matches(String.raw`& 'C:\Users\me\.rerail\current\dist\hosts\codex\codex-hook.js'`));
+  // The status line is a POSIX word for Git Bash, each backslash written twice.
+  assert.ok(matches(String.raw`sh -c '...' /opt/node "C:\\Users\\me\\.rerail\\current\\dist\\hosts\\claude\\claude-status.js"`));
+  assert.ok(matches("node C:/Users/me/.rerail/current/dist/x.js"));
+  // No `\u` or `\x` in a raw string below: Tree-sitter's JavaScript grammar, which Rerail's own rules parse this file
+  // with, reads one as a broken escape and leaves the whole file unchecked.
+  assert.ok(matches(String.raw`node c:\USERS\Me\.rerail/current\dist\cli.js`));
+  assert.ok(matches("node ~/.rerail/current/dist/x.js"));
+  assert.ok(matches(String.raw`C:\Users\me\.rerail`));
+  assert.ok(!matches(String.raw`node C:\Users\me\.rerail-other\cli.js`));
+  assert.ok(!matches(String.raw`node C:\Users\me\project\.rerail\cli.js`));
+});
+
+test("on Windows the matcher reads a home whose path holds a quote in each quoted form registration writes", () => {
+  // Registration's own writer: Codex's and Cursor's PowerShell lines write each quote twice, Claude Code's Git Bash
+  // lines write `'` as `'\''`.
+  for (const user of ["o'neil", "o\u2019neil"]) {
+    const home = win32.join("C:", "Users", user);
+    const rerailHome = win32.join(home, ".rerail");
+    const matches = rerailHomeMatcher(rerailHome, home, "win32");
+    const words = [String.raw`C:\Program Files\nodejs\node.exe`, win32.join(rerailHome, "current", "dist", "cli", "cli.js")];
+    assert.ok(matches(`${commandLine("powershell", words)} start --relay --powershell`), user);
+    assert.ok(matches(`${commandLine("posix", words)} start --relay`), user);
+    assert.ok(!matches(commandLine("powershell", [win32.join(home, ".rerail-other", "cli.js")])), user);
+  }
+});
+
 test("hook stripping handles grouped and flat entries and drops only events it emptied", () => {
-  const matches = rerailHomeMatcher("/h/.rerail", "/h");
+  const matches = rerailHomeMatcher("/h/.rerail", "/h", "linux");
   const rerail = { command: "node /h/.rerail/current/dist/hook.js" };
   const execForm = { command: "node", args: ["/h/.rerail/current/dist/hook.js"] };
   const user = { command: "echo user" };
@@ -203,7 +237,7 @@ test("hook stripping handles grouped and flat entries and drops only events it e
 });
 
 test("Claude settings restore the recorded status line, or drop it when none or inherited", () => {
-  const matches = rerailHomeMatcher("/h/.rerail", "/h");
+  const matches = rerailHomeMatcher("/h/.rerail", "/h", "linux");
   const rerailStatus = { statusLine: { type: "command", command: "node /h/.rerail/current/dist/hosts/claude/claude-status.js" } };
   const previous = { type: "command", command: "printf mine", padding: 2 };
   assert.deepEqual(stripClaudeSettings(rerailStatus, { matches, registration: { previous } }).value, { statusLine: previous });
@@ -217,7 +251,7 @@ test("Claude settings restore the recorded status line, or drop it when none or 
 });
 
 test("Claude settings lose the rerail-dev plugin and marketplace but keep other plugins", () => {
-  const matches = rerailHomeMatcher("/h/.rerail", "/h");
+  const matches = rerailHomeMatcher("/h/.rerail", "/h", "linux");
   const { value, removed } = stripClaudeSettings({
     enabledPlugins: { "rerail@rerail-dev": true, "x@y": false },
     extraKnownMarketplaces: { "rerail-dev": {} },
@@ -227,13 +261,16 @@ test("Claude settings lose the rerail-dev plugin and marketplace but keep other 
 });
 
 test("OMP keeps a rerail MCP server that does not point into the Rerail home; Pi drops only Rerail packages", () => {
-  const matches = rerailHomeMatcher("/h/.rerail", "/h");
+  const matches = rerailHomeMatcher("/h/.rerail", "/h", "linux");
   const foreign = { mcpServers: { rerail: { command: "node", args: ["/elsewhere/cli.js"] } } };
   assert.equal(stripOmpMcp(foreign, { matches }).value, foreign);
   assert.deepEqual(stripOmpMcp({ mcpServers: { rerail: { command: "node", args: ["/h/.rerail/current/dist/cli/cli.js"] } } }, { matches }).value, { mcpServers: {} });
-  const pi = stripPiSettings({ packages: ["../../.rerail/current", "npm:x"] }, { matches, agentDir: "/h/.pi/agent" });
+  // Pi's relative packages resolve against its agent folder by this machine's path rules, so its home is one here.
+  const home = resolve("/h");
+  const here = { matches: rerailHomeMatcher(join(home, ".rerail"), home), agentDir: join(home, ".pi", "agent") };
+  const pi = stripPiSettings({ packages: ["../../.rerail/current", "npm:x"] }, here);
   assert.deepEqual(pi.value, { packages: ["npm:x"] });
-  assert.deepEqual(stripPiSettings({ packages: ["/h/.rerail/current"] }, { matches, agentDir: "/h/.pi/agent" }).value, {});
+  assert.deepEqual(stripPiSettings({ packages: [join(home, ".rerail", "current")] }, here).value, {});
 });
 
 test("nuke --yes without a working launcher removes every Rerail trace itself, backs it up restorably, and keeps the rest", async () => {
@@ -287,22 +324,34 @@ test("with a launcher, configs are backed up and commands moved before rerail in
     const { rerailHome, settings } = installFixture(home);
     const calls = join(home, "launcher-calls");
     const backup = backupRootFor(home, new Date(), () => false);
-    mkdirSync(join(rerailHome, "bin"), { recursive: true });
+    const backedUp = join(backup, "configs", ".claude_settings.json");
+    const command = join(home, ".claude", "commands", "rerail.md");
     // The launcher records what it saw: whether the backup already held the settings and the command, and its arguments.
-    writeFileSync(join(rerailHome, "bin", "rerail"), [
-      "#!/bin/sh",
-      `[ -f '${join(backup, "configs", ".claude_settings.json")}' ] && b=backed-up || b=not-backed-up`,
-      `[ -f '${join(home, ".claude", "commands", "rerail.md")}' ] && c=command-present || c=command-moved`,
-      `printf '%s %s %s %s\\n' "$RERAIL_HOME" "$b" "$c" "$*" >> '${calls}'`,
-      "",
-    ].join("\n"), { mode: 0o755 });
+    // It is the sh script, or on Windows the rerail.cmd batch file, that Rerail installs.
+    const launcher = launcherPath(rerailHome);
+    mkdirSync(dirname(launcher), { recursive: true });
+    writeFileSync(launcher, process.platform === "win32"
+      ? [
+        "@echo off",
+        `if exist "${backedUp}" (set b=backed-up) else (set b=not-backed-up)`,
+        `if exist "${command}" (set c=command-present) else (set c=command-moved)`,
+        `>>"${calls}" echo %RERAIL_HOME% %b% %c% %*`,
+        "",
+      ].join("\r\n")
+      : [
+        "#!/bin/sh",
+        `[ -f '${backedUp}' ] && b=backed-up || b=not-backed-up`,
+        `[ -f '${command}' ] && c=command-present || c=command-moved`,
+        `printf '%s %s %s %s\\n' "$RERAIL_HOME" "$b" "$c" "$*" >> '${calls}'`,
+        "",
+      ].join("\n"), { mode: 0o755 });
     assert.equal(await nuke(["--yes"], { env: envFor(home), log: () => {}, interactive: false, dev: fakeDev() }), 0);
-    assert.deepEqual(readFileSync(calls, "utf8").trim().split("\n"), [
+    assert.deepEqual(readFileSync(calls, "utf8").trim().split(/\r?\n/u), [
       `${rerailHome} not-backed-up command-present daemon stop`,
       `${rerailHome} backed-up command-moved install --remove --agents omp,pi,claude-code,codex,cursor`,
     ]);
     assert.equal(readJson(settings).statusLine.command, "printf user-status", "the sweep finishes what the launcher left");
-    assert.ok(existsSync(join(backup, "rerail-home", "bin", "rerail")));
+    assert.ok(existsSync(launcherPath(join(backup, "rerail-home"))));
   });
 });
 
@@ -314,7 +363,7 @@ test("dry run prints the plan and changes nothing", async () => {
     assert.equal(await nuke(["--dry-run"], { env: envFor(home), log: line => lines.push(line), interactive: false, dev: fakeDev() }), 0);
     assert.deepEqual(snapshot(home), before);
     assert.ok(lines.some(line => line.includes("Dry run")));
-    assert.ok(lines.some(line => line.includes(".claude/settings.json")));
+    assert.ok(lines.some(line => line.includes(join(".claude", "settings.json"))));
   });
 });
 

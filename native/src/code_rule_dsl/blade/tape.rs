@@ -21,6 +21,11 @@ impl TreeParser for Forte {
         Some(encode_template(grammar, source, &budget))
     }
 
+    /// Its compiled view, from the template's tree (`blade::view`).
+    fn embeds_itself(&self) -> bool {
+        true
+    }
+
     fn kinds(&self) -> Option<crate::code_rule_dsl::tape::OwnTable> {
         use crate::code_rule_dsl::blade::forte::tree::{FIELD_NAMES, FIRST_ANONYMOUS, KIND_NAMES};
         Some((KIND_NAMES, FIRST_ANONYMOUS, FIELD_NAMES))

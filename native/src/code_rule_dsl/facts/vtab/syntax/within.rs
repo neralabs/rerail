@@ -1,8 +1,8 @@
 //! Containment read off the tree, made per looked-up node (decision 0050), in two modes:
 //!
-//! - **`within(n, a)`** (`Mode::Tree`, the language's built-in, `core.rr`): `n` is strictly below `a`. The
+//! - **`within(n, a)`** (`Mode::Tree`, the language's built-in, `core.rerail`): `n` is strictly below `a`. The
 //!   containers of `n` are its ancestors; the nodes `a` holds are its subtree, a preorder interval.
-//! - **`span_within(inner, outer)`** (`Mode::Span`, what `simplify::span_containment` makes of two span
+//! - **`span_within(inner, outer)`** (`Mode::Span`, what `simplify::SpanContainment` makes of two span
 //!   comparisons): `outer`'s span holds `inner`'s, in one document. Exactly the pairs of `node(d, inner, _, s, e), node(d, outer, _, s2, e2),
 //! s2 <= s, e <= e2`, read off the tree instead of compared for every pair of a file's nodes:
 //!
@@ -13,7 +13,7 @@
 //! - **The nodes it holds** (`outer` bound): its subtree, its ancestors with the same span, and the
 //!   document's nodes of zero width inside its span.
 //!
-//! - **The kind-set axes** (`Mode::Axis`, `core.rr`'s `nearest`, `inside` and `has`; decisions 0036 and 0057): `rr_nearest_<set>(n, a)`, `a` the nearest strict ancestor of `n` of a kind in
+//! - **The kind-set axes** (`Mode::Axis`, `core.rerail`'s `nearest`, `inside` and `has`; decisions 0036 and 0057): `rr_nearest_<set>(n, a)`, `a` the nearest strict ancestor of `n` of a kind in
 //!   the set; `rr_inside_<set>(n, a)`, every such ancestor; `rr_has_<set>(n, a)`, `n` of a kind in the set and `a`
 //!   each of its strict ancestors. The same climbs and subtree intervals, filtered by the set.
 //!
@@ -766,7 +766,7 @@ impl Within {
 
 impl Source for Within {
     /// A document's rows are its nodes' (an axis never leaves its document), in the row space `value` reads: the
-    /// batch's solve, where each node row's pairs are its run (decision 0474). The span mode's rows are made by lookup
+    /// batch's solve, where each node row's pairs are its run (decision 0504). The span mode's rows are made by lookup
     /// and have no such space: `None`.
     fn rows_of_documents(&self, docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
         if !self.solvable() {
@@ -780,7 +780,6 @@ impl Source for Within {
     }
     /// Read whole by the device: the batch's solve, the relation it was written into, where it lies (decision 0353
     /// step 5).
-    #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         self.solvable().then(|| self.solved_rows().in_block(self.solved_rows().len()))
     }

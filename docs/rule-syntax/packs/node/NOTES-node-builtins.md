@@ -1,13 +1,13 @@
 # n-no-unsupported-features-node-builtins, hand-written
 
-The JSON policy has 932 clauses and 3,053 utilities. The generated `.rr` is about 29,000 code lines. This version has
+The JSON policy has 932 clauses and 3,053 utilities. The generated `.rerail` is about 29,000 code lines. This version has
 four parts:
 
 | file | lines | what |
 |---|---|---|
-| `n-no-unsupported-features-node-builtins.rr` | 69 | the rule |
-| `n-no-unsupported-features-node-builtins.facts.rr` | 3,853 | generated table: 1,876 APIs (312 with experimental versions), 119 module specifiers, 77 globals, 1,752 traced names |
-| `../../lib/tsx/values.rr` | 201 | which built-in an expression denotes (`api_ref`, `api_use`, `node_range`) |
+| `n-no-unsupported-features-node-builtins.rerail` | 69 | the rule |
+| `n-no-unsupported-features-node-builtins.facts.rerail` | 3,853 | generated table: 1,876 APIs (312 with experimental versions), 119 module specifiers, 77 globals, 1,752 traced names |
+| `../../lib/tsx/values.rerail` | 201 | which built-in an expression denotes (`api_ref`, `api_use`, `node_range`) |
 | `gen-node-builtins.py`, `check-node-builtins.py` | | regenerate the table; check it by a round trip and against the plugin |
 
 ## Where the data comes from
@@ -68,7 +68,7 @@ against the pin.
   - `option("ignores", name)` is one row per list entry, in the plugin's spelling: `#` is written `.`, and `node:`
     is dropped.
   - `option("allowExperimental", "true")` turns on the experimental basis above.
-- **Module system** (`moduleSystem: package-type`). `values.rr`'s `package_type(d, t)` implements it:
+- **Module system** (`moduleSystem: package-type`). `values.rerail`'s `package_type(d, t)` implements it:
   - `.mjs` and `.mts` files are ES modules;
   - `.cjs` and `.cts` files are CommonJS;
   - any other file is an ES module only where its package.json says `"type": "module"`.
@@ -77,11 +77,11 @@ against the pin.
   `__filename`) are not globals, unless a `/* global */` comment declares them.
 - **Which globals are traced.** `node_global` holds the globals the trace map has, plus `globalThis`. It ships with
   the table.
-- **Includes.** `#include` resolves from `lib/`, so the facts file is included as `"../packs/node/…facts.rr"`.
-- **Core.** The semver functors and the `package_for` / `package_field` reader now live in `lib/core.rr`.
-  `values.rr` no longer includes `modules.rr`.
+- **Includes.** `#include` resolves from `lib/`, so the facts file is included as `"../packs/node/…facts.rerail"`.
+- **Core.** The semver functors and the `package_for` / `package_field` reader now live in `lib/core.rerail`.
+  `values.rerail` no longer includes `modules.rerail`.
 
-## Changes to names.rr
+## Changes to names.rerail
 
 1. **`star_export`** now requires an `export_statement`. Previously every `import … from "m"` counted as
    `export *`.
@@ -98,12 +98,12 @@ against the pin.
 4. **`catch (e)` and `catch ({ e })`** declare in the catch clause, with form `"catch"`.
 5. **A shorthand assignment pattern** (`({ promises } = …)`) that declares nothing is a reference.
 
-Before these changes I checked the other users of `names.rr`, and none of them reads the declaration relations
+Before these changes I checked the other users of `names.rerail`, and none of them reads the declaration relations
 directly:
 
-- `jsx.rr` uses `sym_of` and `ref_site`, which these changes make more precise.
-- `modules.rr`, `eslint-strict.rr` and `eslint-sort-imports.rr` use `import_binding`, which is unchanged.
-- `nested-routers.b2.rr`
+- `jsx.rerail` uses `sym_of` and `ref_site`, which these changes make more precise.
+- `modules.rerail`, `eslint-strict.rerail` and `eslint-sort-imports.rerail` use `import_binding`, which is unchanged.
+- `nested-routers.b2.rerail`
 
 ## Possible differences from the JSON
 

@@ -98,7 +98,7 @@ impl HostForest {
             let p = self.committee.predict(&|tree| tree.predict_buckets(&|f| rows.columns[self.index[f]].get(r as u32)));
             [p[0], p[1]]
         };
-        Ok(if rows.num_rows < 256 { (0..rows.num_rows).map(one).collect() } else { (0..rows.num_rows).into_par_iter().map(one).collect() })
+        Ok(if rows.num_rows < 256 { (0..rows.num_rows).map(one).collect() } else { rerail_context::on_cores(|| (0..rows.num_rows).into_par_iter().map(one).collect()) })
     }
 }
 

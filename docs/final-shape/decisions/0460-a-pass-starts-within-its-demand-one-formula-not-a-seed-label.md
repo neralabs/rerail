@@ -63,6 +63,8 @@ formula. Its anchor says where it can emit. The two are ANDed, and one evaluator
 The s1000 corpus: 339 files, 877,007 nodes. Engine `dm` is this decision. Engine `ms` is the hub merge plus
 `cd3d2214d`, with 0459's seeds. Metal runs are pinned (`RERAIL_LANE_PIN=gpu`), with t45's probe relations
 (`tmp/bench/pp`). Load was 13–21, alternating runs. The GPU kernels' times are from the command buffers' timestamps.
+The runs were under the default memory line (`RUN_MB`), which cut s1000 into 14–17 chunks; the times are those
+chunks' (0419).
 
 | Program | Engine | `label_formula` (dispatches) | `label_leaves` | `label_micro_8` | formula groups | formula images |
 |---|---|---|---|---|---|---|

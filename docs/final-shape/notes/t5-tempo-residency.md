@@ -1,8 +1,8 @@
 # T5 notes: Tempo tape residency, workspace store, arenas, anchor indexing
 
 Research track T5 for the final Rerail rule-engine shape. Read-only extraction.
-Source root (abbreviated `TD/` below): `/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/tempo/docs/`.
-Native source root (abbreviated `TN/`): `/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/tempo/native/src/`.
+Source root (abbreviated `TD/` below): `/Users/jeremy/orca/workspaces/scale-test-the-re-railer/tempo/docs/`.
+Native source root (abbreviated `TN/`): `/Users/jeremy/orca/workspaces/scale-test-the-re-railer/tempo/native/src/`.
 Citations are `file:line`. Measurement marks: **M** = measured in the source, **D** = derived/computed from measurements in the source, **A** = aspiration/projection/estimate/target (not measured). "Logical estimate" byte counts from Tempo's profile feature are marked M(est) because the source itself says they are accounting estimates, not allocator/RSS bytes.
 
 ---
@@ -130,7 +130,7 @@ Citations are `file:line`. Measurement marks: **M** = measured in the source, **
 ---
 ## 4. TD/workspace-memory-implementation-plan.md (185 lines)
 
-- Goal: steady-state memory < 1 GiB for full data-layer workload, incremental p95 < 500 ms (:5-6) — A target. Covers NER-1621..1625 + indexed SQL file filter from NER-1562 (:8-9).
+- Goal: steady-state memory < 1 GiB for full data-layer workload, incremental p95 < 500 ms (:5-6) — A target. Covers Tempo's five residency items + indexed SQL file filter from the scale-test branch (:8-9).
 - Rules: native ast-grep remains matcher + correctness oracle; **SQL selects candidate files only**; filter may false-positive, never reject a native match; source and tape frames independent (:13-18).
 - Completed investigation includes "Replace resident Tree-sitter trees with validated tapes", "Select a bidirectional `file_check` index" (:24-34).
 - Phase 1.2 tape persistence: versioned binary codec for `TapeImage`; encode all arrays + source-binding metadata; decode without parsing source; reject malformed lengths, noncanonical side tables, wrong grammars, stale source hashes; byte-stability vectors (:51-56).

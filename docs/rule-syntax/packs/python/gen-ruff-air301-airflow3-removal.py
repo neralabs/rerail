@@ -1,4 +1,4 @@
-"""Writes ruff-air301-airflow3-removal.names.rr: the Airflow names that Airflow 3 removed or moved (AIR301), from the
+"""Writes ruff-air301-airflow3-removal.names.rerail: the Airflow names that Airflow 3 removed or moved (AIR301), from the
 JSON's name clauses (those with an `old-name` util): each old name, whether it covers everything under it, the new
 module and name its guard looks for, and its message with `$N` (the old name) and `$L` (its last part) filled in.
     python3 docs/rule-syntax/packs/python/gen-ruff-air301-airflow3-removal.py
@@ -6,7 +6,7 @@ module and name its guard looks for, and its message with `$N` (the old name) an
 import json, os, re
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-air301-airflow3-removal.json")
-OUT = os.path.join(HERE, "ruff-air301-airflow3-removal.names.rr")
+OUT = os.path.join(HERE, "ruff-air301-airflow3-removal.names.rerail")
 NEW = re.compile(r"(?:replace it with `([^`]+)`, imported from|import `([^`]+)` from) `([^`]+)`")
 
 

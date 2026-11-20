@@ -1,5 +1,5 @@
 //! Per-directory result pages (C16; docs/final-shape/03-architecture.md §15), adapted from Tempo's
-//! tree result segments (ner-1562-scale-test-the-re-railer@8fe9ffed4, `tree_result_segments`):
+//! tree result segments (scale-test-the-re-railer@8fe9ffed4, `tree_result_segments`):
 //! a directory's results are stored as up to 64-file pages, each as it is in a segment of the store's objects
 //! (decision 0450 step 2), and restored whole
 //! wherever the same subtree appears (Tempo E33–E34: complete-root reuse in 610 ms, then 34 ms
@@ -92,7 +92,7 @@ impl ContentStore {
         let page_count = pages.len() as i64;
         // The pages' bytes, as they are, in one segment, numbered in the transaction below (`seg` 0 in the rows,
         // resolved there) and named once it commits.
-        let mut placing = Placing::write(&self.database_path, &pages.iter().map(|page| &page.bytes[..]).collect::<Vec<_>>())?;
+        let mut placing = Placing::write(&self.database_path, &pages.iter().map(|page| &page.bytes[..]).collect::<Vec<_>>(), self.connection.flush())?;
         let mut plans = Vec::new();
         let mut index = 0_i64;
         for chunk in pages.chunks(256) {

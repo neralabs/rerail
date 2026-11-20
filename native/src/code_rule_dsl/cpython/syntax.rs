@@ -1,4 +1,4 @@
-//! `ast.parse`'s verdict on a module's text, as CPython 3.13 gives it (core.rr's `syntax_error(d, l, msg)`): whether it
+//! `ast.parse`'s verdict on a module's text, as CPython 3.13 gives it (core.rerail's `syntax_error(d, l, msg)`): whether it
 //! raises `SyntaxError` (or its subclasses `IndentationError`, `TabError`), and the error's `lineno` and `msg`.
 //!
 //! Ruff's parser (`ruff_python_parser`, at `cpython::VERSION`) reads the grammar; its errors and the version-gated

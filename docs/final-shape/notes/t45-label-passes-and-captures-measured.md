@@ -126,4 +126,3 @@ All five items were done (decision 0459), and rows were the same throughout. Cap
 of CPU, and walk steps from 65.8 M to 19.8 M (internal_dead_code) and 19.3 M to 7.4 M (public_api_triples). The
 GPU's label time barely moved: it now follows dispatches and group scans (Q187). The "59 s anomaly" was the
 first run of a new binary compiling the device's shaders.
-

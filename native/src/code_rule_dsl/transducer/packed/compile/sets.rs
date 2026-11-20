@@ -62,7 +62,7 @@ pub enum Set {
     Reached { step: Step, named: bool, from: Box<Set> },
 }
 
-/// A walk's anchor as the device evaluates it (`label_formula`, decision 0365): `Set` in postfix over a stack of node
+/// A walk's anchor as the device evaluates it (`label_phase`, decisions 0365, 0475): `Set` in postfix over a stack of node
 /// sets, a word an operation (`op | arg << 8`), `depth` the stack's slots (an axis step's output a slot past its
 /// input), and the labels it reads (by index, past `DERIVED_CLASS_BASE`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -76,7 +76,7 @@ pub struct DeviceFormula {
     pub texts: Vec<String>,
 }
 
-/// `DeviceFormula`'s operations (`label_formula` in `label_passes.uglykl`). A test pushes a set; `AND` and
+/// `DeviceFormula`'s operations (`label_phase` in `label_passes.uglykl`, compiled by `phase_program`). A test pushes a set; `AND` and
 /// `OR` combine the top `arg` sets; an axis step replaces the top set (a chain the top two: through, then to); `arg`
 /// of a step is whether its nodes are named.
 pub mod device_ops {
@@ -308,7 +308,8 @@ impl Set {
                         let through = if named { Set::and(vec![(**through).clone(), is_named.clone()]) } else { (**through).clone() };
                         let through = through.emit(formula)?;
                         formula.words.push(word(REACH_CHAIN, 0));
-                        slots.max(1 + through).max(3)
+                        // From, through, the reach, and the device's level (0437).
+                        slots.max(1 + through).max(4)
                     }
                 };
                 if named {
@@ -888,7 +889,7 @@ impl Reader<'_> {
         match set {
             Set::All => {
                 let mut bits = vec![u64::MAX; words];
-                if len % 64 != 0
+                if !len.is_multiple_of(64)
                     && let Some(last) = bits.last_mut()
                 {
                     *last = (1 << (len % 64)) - 1;
@@ -1255,7 +1256,7 @@ pub mod tests {
         let image = Set::targets(&inside, Set::All).unwrap().device().unwrap();
         assert_eq!((image.words, image.depth), (vec![class, d::REACH_DESCENDANT], 2));
         let image = Set::targets(&chain, Set::Kind(7)).unwrap().device().unwrap();
-        assert_eq!((image.words, image.depth), (vec![d::KIND | 7 << 8, class, d::REACH_CHAIN], 3));
+        assert_eq!((image.words, image.depth), (vec![d::KIND | 7 << 8, class, d::REACH_CHAIN], 4));
         let named = [w(SUPERTYPE, label), word(CHILD, NAMED, 0), w(CAPTURE, 0), w(EMIT, 1)];
         let image = Set::targets(&named, Set::All).unwrap().device().unwrap();
         assert_eq!((image.words, image.depth), (vec![class, d::PARENT, d::FLAGS | u32::from(NAMED) << 8, d::AND | 2 << 8], 2));

@@ -1,6 +1,6 @@
 //! Main's JSON rules (`rerail.policy/v1`), read by the engine (decision 0175).
 //!
-//! A rule file whose top-level `format` is `rerail.policy/v1` is translated on read into `.rr` text, which then
+//! A rule file whose top-level `format` is `rerail.policy/v1` is translated on read into `.rerail` text, which then
 //! goes through the ordinary reader and lowering. The translator writes the display dialect, and the engine pass
 //! (engine_dialect.rs) rewrites it into the dialect the reader takes. It began as a port of a Python translator in
 //! the docs, retired in decision 0182; this is now the only one. Its parts:
@@ -10,6 +10,7 @@
 //!   they share (text.rs, program.rs);
 //! - main's terms (main_terms.rs), the merge of copies (simplify.rs) and of families of them (fold.rs);
 //! - `check_rule`, `whole` and `segments` (souffle.rs), and a regex's glob reading (textglob.rs);
+//! - a JSON tool-call rule (a conversation rule on tool calls), as a `.scope tool_calls` policy (tool_calls.rs);
 //! - the engine dialect (engine_dialect.rs).
 //!
 //! The Python semantics the port kept are kept where the output depends on them: ordered dicts (`value::Obj`),
@@ -38,6 +39,7 @@ pub mod souffle;
 mod text;
 #[doc(hidden)]
 pub mod textglob;
+mod tool_calls;
 mod translate;
 #[doc(hidden)]
 pub mod value;
@@ -67,9 +69,13 @@ impl Translator {
         Translator { reserved: fold::reserved(&super::rr::library()), px: patterns::Patterns::new() }
     }
 
-    /// One JSON policy's text as engine `.rr` text. `id` names the rule (the file's stem), as the Python takes it.
+    /// One JSON policy's text as engine `.rerail` text. `id` names the rule (the file's stem), as the Python takes it.
+    /// A JSON tool-call rule is a `.scope tool_calls` policy (`tool_calls`).
     pub fn translate_text(&self, json: &str, id: &str) -> Result<String, String> {
         let doc = value::parse(json).map_err(|e| format!("{id}: not JSON: {e}"))?;
+        if tool_calls::is_tool_call_rule(&doc) {
+            return tool_calls::translate(&doc).map_err(|e| format!("{id}: {e}"));
+        }
         let (rr, _) = translate::translate(&self.px, &doc, &self.reserved).map_err(|e| format!("{id}: {e}"))?;
         engine_dialect::engine_text(&self.px, rr, id).map_err(|e| format!("{id}: {e}"))
     }
@@ -78,12 +84,15 @@ impl Translator {
     /// the JSON terms it left as `ast(..)` atoms and its rules no positive atom grounds.
     pub fn display_text(&self, json: &str, id: &str) -> Result<Display, String> {
         let doc = value::parse(json).map_err(|e| format!("{id}: not JSON: {e}"))?;
+        if tool_calls::is_tool_call_rule(&doc) {
+            return tool_calls::translate(&doc).map(|text| Display { text, untranslated: 0, ungrounded: 0 }).map_err(|e| format!("{id}: {e}"));
+        }
         let (text, untranslated) = translate::translate(&self.px, &doc, &self.reserved).map_err(|e| format!("{id}: {e}"))?;
         let ungrounded = text.lines().filter(|l| l.starts_with("// Not grounded:")).count();
         Ok(Display { text, untranslated, ungrounded })
     }
 
-    /// The JSON policy at `path` as engine `.rr` text, named by the file's stem.
+    /// The JSON policy at `path` as engine `.rerail` text, named by the file's stem.
     pub fn translate_file(&self, path: &Path) -> Result<String, String> {
         let json = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();

@@ -11,6 +11,7 @@ import {
   nestedCheckouts,
   parentCheckouts,
   recordCheckout,
+  spelledCheckout,
 } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -121,11 +122,15 @@ export function sessionNoteRules(workspace: string, databasePath = defaultRerail
 
 /**
  * The effective state of many workspaces over one open connection, as the daemon answers per request. Each
- * workspace's git location is read once; the database is read on every call.
+ * workspace's git location is read once; the database is read on every call. With `spelling`, the folder as a Windows
+ * host spelt it, also the start or stop Rerail 0.1.4 saved under it ({@link spelledCheckout}).
  */
-export function startStateReader(database: RerailDatabase): (workspace: string) => RepositoryStartState {
+export function startStateReader(database: RerailDatabase): (workspace: string, spelling?: string) => RepositoryStartState {
   const resolveCheckout = createCheckoutResolver(database);
-  return workspace => stateOf(checkoutStatus(database, resolveCheckout(workspace)));
+  return (workspace, spelling) => {
+    const checkout = resolveCheckout(workspace);
+    return stateOf(checkoutStatus(database, spelling === undefined ? checkout : spelledCheckout(checkout, spelling)));
+  };
 }
 
 /**
@@ -144,8 +149,16 @@ export class RepositoryStartWatch {
     this.#resolveCheckout = createCheckoutResolver(this.#database);
   }
 
+  /**
+   * The checkout whose start state this watch reads, looked up as `started` looks it up: in a Git repository Git runs
+   * once for the folder, then only the database is read. Undefined where Rerail records no checkout there.
+   */
+  checkout(): CheckoutContext | undefined {
+    return this.#resolveCheckout(this.#workspace);
+  }
+
   started(): boolean {
-    return checkoutStatus(this.#database, this.#resolveCheckout(this.#workspace)).started;
+    return checkoutStatus(this.#database, this.checkout()).started;
   }
 
   close(): void {
@@ -174,6 +187,11 @@ export function checkoutName(workspace: string, wholeRepository: boolean): strin
  */
 export interface RepositorySetupIo {
   readonly lane: "terminal" | "agent" | "json";
+  /**
+   * The agent lane under `--relay`: a coding agent runs set-up and relays its questions, so the person reads them in a
+   * coding agent session. The json lane always is. An agent lane without it, such as a run piped to a file, is not.
+   */
+  readonly relayed?: boolean;
   say(text: string): void;
   /** The terminal lane's answer to a question; undefined when input ended. Absent in the other lanes. */
   ask?(prompt: string): Promise<string | undefined>;

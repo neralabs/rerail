@@ -31,11 +31,32 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "noqa",
       "nosec"
     ],
+    "embeds": [
+      {
+        "language": "html",
+        "via": "call-argument",
+        "places": [
+          {
+            "callee": "markupsafe.Markup",
+            "argument": 0
+          },
+          {
+            "callee": "django.utils.safestring.mark_safe",
+            "argument": 0
+          },
+          {
+            "callee": "django.utils.html.format_html",
+            "argument": 0
+          }
+        ]
+      }
+    ],
     "fragments": [
       {
         "name": "annotation",
         "dialect": "python",
-        "start": "expression"
+        "start": "type",
+        "tapeTag": 30
       }
     ]
   },
@@ -117,6 +138,14 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "eslint",
       "oxlint",
       "biome"
+    ],
+    "fragments": [
+      {
+        "name": "jsx",
+        "dialect": "javascript",
+        "start": "jsx_element",
+        "tapeTag": 31
+      }
     ]
   },
   {
@@ -285,7 +314,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "label": "rr",
         "variant": "Rr",
         "suffixes": [
-          ".rr"
+          ".rerail"
         ],
         "parser": "rr",
         "grammar": "native:rr",
@@ -468,7 +497,29 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "calls": "not-supported-yet",
       "formatArgs": "not-supported-yet"
     },
-    "suppressions": []
+    "suppressions": [],
+    "embeds": [
+      {
+        "language": "javascript",
+        "via": "raw-text"
+      },
+      {
+        "language": "json",
+        "via": "raw-text"
+      },
+      {
+        "language": "css",
+        "via": "raw-text"
+      }
+    ],
+    "fragments": [
+      {
+        "name": "html-element",
+        "dialect": "html",
+        "start": "element",
+        "tapeTag": 32
+      }
+    ]
   },
   {
     "format": "rerail.language/v1",
@@ -529,7 +580,16 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "calls": "not-supported-yet",
       "formatArgs": "not-supported-yet"
     },
-    "suppressions": []
+    "suppressions": [],
+    "embeds": [
+      {
+        "language": "markdown",
+        "via": "inline-content",
+        "dialects": [
+          "markdown-inline"
+        ]
+      }
+    ]
   },
   {
     "format": "rerail.language/v1",

@@ -1131,7 +1131,7 @@ DEFINE_KERNEL2(t, t_count,
     /// map: the fill zeroes what the host wrote before, then the kernel's write lands on the zero.
     #[test]
     fn a_fill_then_a_kernel_are_in_the_host_pages() {
-        let Some((device, lib)) = compile("fill.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("fill.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_write").unwrap();
         let root = ClQueueRoot::new(&device).unwrap();
         let out = alloc_uninitialized_array_sync::<u32>(&device, 1);
@@ -1170,7 +1170,7 @@ DEFINE_KERNEL2(t, t_count,
     /// and both run, in order, at the signal.
     #[test]
     fn a_wait_holds_the_roots_later_work_until_the_signal() {
-        let Some((device, lib)) = compile("hold.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("hold.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_write").unwrap();
         assert_eq!(f.get_argument_info().iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["args", "out"]);
         let root = ClQueueRoot::new(&device).unwrap();

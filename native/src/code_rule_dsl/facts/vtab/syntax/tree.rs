@@ -1,4 +1,4 @@
-//! The relations of core.rr about the tree that a batch makes only for a program that reads them (`Tree::new`'s
+//! The relations of core.rerail about the tree that a batch makes only for a program that reads them (`Tree::new`'s
 //! `reads`), beside `Extra`'s text (a document's `path_part` and `file_name` are `Batch::build`'s, made for every one):
 //!
 //! ```text

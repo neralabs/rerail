@@ -10,9 +10,9 @@ The rules share two new libraries and one shared library:
 
 | file | lines | what |
 |---|---|---|
-| `lib/python/comprehensions.rr` | 138 | calls of the collection builtins: by name with the builtin bound (`c4_call`), by name only (`c4_named`), by name or `builtins.x` (`c4_builtin`); whether a name would read the builtin at a point (`c4_builtin_here`); the one argument (`c4_only`, `c4_first`); comprehension shapes (`c4_comp`, `c4_simple`, `c4_elt`, `c4_pair`, `c4_passthrough`); an element compared with a comprehension target (`c4_same`); names bound to a dict (`dict_ref`, Ruff's `typing::is_dict`) |
-| `lib/python/simplify.rr` | 132 | the operands of `and`/`or` in order (`sim_operand`, `sim_nops`); Ruff's Truthiness (`sim_truth`), contains_effect (`sim_effect`) and in_boolean_test (`sim_bool_test`); the if statements SIM102/SIM103 leave alone (`sim_exempt_if`); `return True`/`return False` (`sim_bool_return`); whether os is imported (`sim_os_seen`) |
-| `lib/python/compare.rr` | (py-ruf's) | `cmp_same`: expressions compared as ComparableExpr does. Used by C414, SIM101 and, through `c4_same`, C400, C401, C416 and C420 |
+| `lib/python/comprehensions.rerail` | 138 | calls of the collection builtins: by name with the builtin bound (`c4_call`), by name only (`c4_named`), by name or `builtins.x` (`c4_builtin`); whether a name would read the builtin at a point (`c4_builtin_here`); the one argument (`c4_only`, `c4_first`); comprehension shapes (`c4_comp`, `c4_simple`, `c4_elt`, `c4_pair`, `c4_passthrough`); an element compared with a comprehension target (`c4_same`); names bound to a dict (`dict_ref`, Ruff's `typing::is_dict`) |
+| `lib/python/simplify.rerail` | 132 | the operands of `and`/`or` in order (`sim_operand`, `sim_nops`); Ruff's Truthiness (`sim_truth`), contains_effect (`sim_effect`) and in_boolean_test (`sim_bool_test`); the if statements SIM102/SIM103 leave alone (`sim_exempt_if`); `return True`/`return False` (`sim_bool_return`); whether os is imported (`sim_os_seen`) |
+| `lib/python/compare.rerail` | (py-ruf's) | `cmp_same`: expressions compared as ComparableExpr does. Used by C414, SIM101 and, through `c4_same`, C400, C401, C416 and C420 |
 
 The 38 rules have 1,154 lines, comments and directives included: 17 to 65 lines each.
 
@@ -197,26 +197,26 @@ return False
 3. **check_rr and aggregates.** check_rr reports the variables inside an aggregate as unbound in two cases:
    when the aggregate is in the rule head, or when it is part of arithmetic (`n = 1 + count : {…} + …`).
    Soufflé accepts both. C901 now binds each count to its own variable.
-4. **The `truth` clash.** `truth` was declared in both `lib/python/ruff-classes.rr` and simplify.rr. I renamed
+4. **The `truth` clash.** `truth` was declared in both `lib/python/ruff-classes.rerail` and simplify.rerail. I renamed
    mine to `bare_truth`. Owners of the other library files may want a prefix rule for internal names.
-5. **compare.rr and tuple targets.** `cmp_same` compares node kinds, so the target `a, b` (pattern_list) never
-   equals the element `(a, b)` (tuple). In Ruff's tree both are a Tuple. `c4_same` in comprehensions.rr bridges
-   this one level deep. If compare.rr treated pattern_list and tuple_pattern as tuple, `c4_same` would reduce to
+5. **compare.rerail and tuple targets.** `cmp_same` compares node kinds, so the target `a, b` (pattern_list) never
+   equals the element `(a, b)` (tuple). In Ruff's tree both are a Tuple. `c4_same` in comprehensions.rerail bridges
+   this one level deep. If compare.rerail treated pattern_list and tuple_pattern as tuple, `c4_same` would reduce to
    `cmp_same`.
 6. **A shared relation removed while I worked.** C417 used `star_arg(m)` from a shared library, and it was
    removed during this batch. C417 now defines its own `map_star`. No other pack rule uses `star_arg` now.
 
 ## Duplicates to merge
 
-- **`expr_same` and `cmp_same`. Done.** compare.rr now exists, so comprehensions.rr includes it, and
+- **`expr_same` and `cmp_same`. Done.** compare.rerail now exists, so comprehensions.rerail includes it, and
   `expr_same`, `expr_same_ask` and `same_form` are gone. What remains is `c4_same`, which handles tuple
   targets; see change 5.
-- **`dict_ref` (comprehensions.rr) and `typed_as(e, "dict")` (python/ruff.rr).** Both implement Ruff's
+- **`dict_ref` (comprehensions.rerail) and `typed_as(e, "dict")` (python/ruff.rerail).** Both implement Ruff's
   `typing::is_dict`.
   - `dict_ref` uses the latest binding earlier than the name, as the semantic model does.
   - `typed_as` needs exactly one binding.
 
   One of the two should go.
 - **`c4_nargs`, `c4_nokw` and `c4_display`. Done.** They are gone; the rules use python/ruff's
-  `call_nargs`, `call_nkwargs(c, 0)` and `list_like`. bugbear.rr's `bb_npos` and `bb_nkw` are the same idea.
-- **`c4_builtin` and bugbear.rr's calls of builtins.** Both are Ruff's `resolve_builtin_symbol` on a callee.
+  `call_nargs`, `call_nkwargs(c, 0)` and `list_like`. bugbear.rerail's `bb_npos` and `bb_nkw` are the same idea.
+- **`c4_builtin` and bugbear.rerail's calls of builtins.** Both are Ruff's `resolve_builtin_symbol` on a callee.

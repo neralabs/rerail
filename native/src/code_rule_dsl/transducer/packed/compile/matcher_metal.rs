@@ -139,17 +139,17 @@ fn metal<'a>(
         Ok(match clause.labels.def(id) {
             Label::Fact(fact, labels) => {
                 let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
-                let mut rows = Vec::new();
-                for (file, (tape, base)) in tapes.iter().zip(&bases).enumerate() {
-                    if !active.is_none_or(|active| active[at][file]) {
-                        continue;
-                    }
-                    let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
-                    for (node, targets) in facts.get(&key).into_iter().flat_map(|found| found.rows()) {
-                        rows.push((base + node, targets.iter().zip(labels).map(|(target, label)| (base + target, index(*label))).collect()));
-                    }
-                }
-                Pass::Fact { target, rows }
+                // Where each active file's findings are in the fact block, which the device reads in place (Q289).
+                let found = tapes
+                    .iter()
+                    .enumerate()
+                    .filter(|&(file, _)| active.is_none_or(|active| active[at][file]))
+                    .filter_map(|(file, tape)| {
+                        let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
+                        facts.get(&key).map(|found| (file as u32, *found))
+                    })
+                    .collect();
+                Pass::Fact { target, block: Arc::clone(&facts.block), found, labels: labels.iter().map(|label| index(*label)).collect() }
             }
             Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
                 let constraints = match clause.labels.def(id) {
@@ -247,7 +247,7 @@ fn metal<'a>(
             }
         }
     }
-    // Decision 0365: a walk starts within its anchor, evaluated on the device (`label_formula`). A recursive group's
+    // Decision 0365: a walk starts within its anchor, evaluated on the device (`label_phase`). A recursive group's
     // anchors read its own labels as every node (Q133), so they hold in every round: each is evaluated once, before
     // the group's rounds (`Runner::anchors`).
     if anchors_on() {
@@ -505,37 +505,39 @@ fn apart<'a>(
         use rayon::prelude::*;
         let _sweep = crate::code_rule_dsl::prof::Stage::start("labels.sweep");
         let budget = crate::code_rule_dsl::transducer::packed::WorkBudget::current();
-        let given = tapes.par_iter().zip(sets.par_iter_mut()).enumerate().map(|(at, (tape, sets))| {
-            let levels = levels
-                .iter()
-                .map(|level| {
-                    level
-                        .iter()
-                        .copied()
-                        .filter(|&(clause, _)| {
-                            clauses.iter().position(|c| std::ptr::eq(*c, clause)).is_some_and(|clause| active[clause][at])
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-            if levels.iter().any(|level| !level.is_empty()) {
-                // The text rows the GPU runs evaluated over every file, sliced to this one.
-                let base = bases[at];
-                let texts = |walk: &Micro, program: &Program| {
-                    (0..walk.texts.len())
-                        .map(|slot| metal_program_backend::label_passes::text_slot(Some((&rows, base)), walk, program, slot, tape))
-                        .collect::<Option<Vec<_>>>()
-                };
-                // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
-                // The group's anchors read the tape's column sets (decision 0365, Q133): this sweep's own.
-                let index = compile_sets::Index::default();
-                if !sweep_with(&levels, tape, sets, &index, &texts, budget, w_cost.is_some())? {
-                    return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
+        let given = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            tapes.par_iter().zip(sets.par_iter_mut()).enumerate().map(|(at, (tape, sets))| {
+                let levels = levels
+                    .iter()
+                    .map(|level| {
+                        level
+                            .iter()
+                            .copied()
+                            .filter(|&(clause, _)| {
+                                clauses.iter().position(|c| std::ptr::eq(*c, clause)).is_some_and(|clause| active[clause][at])
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                if levels.iter().any(|level| !level.is_empty()) {
+                    // The text rows the GPU runs evaluated over every file, sliced to this one.
+                    let base = bases[at];
+                    let texts = |walk: &Micro, program: &Program| {
+                        (0..walk.texts.len())
+                            .map(|slot| metal_program_backend::label_passes::text_slot(Some((&rows, base)), walk, program, slot, tape))
+                            .collect::<Option<Vec<_>>>()
+                    };
+                    // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
+                    // The group's anchors read the tape's column sets (decision 0365, Q133): this sweep's own.
+                    let index = compile_sets::Index::default();
+                    if !sweep_with(&levels, tape, sets, &index, &texts, budget, w_cost.is_some())? {
+                        return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
+                    }
                 }
-            }
-            Ok::<_, Error>(Vec::new())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+                Ok::<_, Error>(Vec::new())
+            })
+            .collect::<Result<Vec<_>, _>>()
+        })?;
         outcome.unfinished.extend(given.into_iter().flatten());
         drop(_sweep);
         crate::code_rule_dsl::prof::release();

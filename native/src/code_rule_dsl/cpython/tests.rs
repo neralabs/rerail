@@ -1,6 +1,6 @@
 use super::syntax::syntax_error;
 
-/// `ast.parse`'s verdict, line and message, as CPython 3.13.18 gives them (`python3.13 -I -S`, on nera-port-4).
+/// `ast.parse`'s verdict, line and message, as CPython 3.13.18 gives them (`python3.13 -I -S`, on a Linux build box).
 #[test]
 fn syntax_errors_are_ast_parses() {
     let cases: &[(&str, Option<(usize, &str)>)] = &[
@@ -127,7 +127,7 @@ fn syntax_errors_are_ast_parses() {
 }
 
 /// `ast.parse`'s `UnicodeDecodeError` for an escape a format spec's text cannot decode (no `SyntaxError`: the parser's
-/// action lets the codec's error through), its `str`, as CPython 3.13.18 gives it (on nera-port-4). It is raised in
+/// action lets the codec's error through), its `str`, as CPython 3.13.18 gives it (on a Linux build box). It is raised in
 /// the first pass, before a later tokenizer error, and before the escapes of the f-string's own text, which CPython
 /// decodes at the f-string's end.
 #[test]
@@ -161,7 +161,7 @@ fn format_spec_escapes_raise_unicode_decode_error() {
 }
 
 /// `literal_json`: `json.dumps(ast.literal_eval(e), sort_keys=True, separators=(",", ":"))` as CPython 3.13.18 gives it
-/// (`python3.13 -I -S`, on nera-port-4), `None` where it raises: ints of every base and size, floats as
+/// (`python3.13 -I -S`, on a Linux build box), `None` where it raises: ints of every base and size, floats as
 /// `float.__repr__`, escapes, a lone surrogate, sets, bytes and complex numbers, merged and sorted dict keys.
 #[test]
 fn literal_json_is_cpythons() {

@@ -7,6 +7,7 @@ description = "MLDB's random forests trained and predicted on the GPU (Metal or 
 
 [dependencies]
 rayon = "=1.12.0"
+rerail-context = { path = "../native/crates/context" }
 sha2 = "0.10"
 libc = "0.2.189"
 
@@ -21,6 +22,7 @@ objc = "0.2.7"
 block = "0.1.6"
 
 [build-dependencies]
+cc = "=1.11.1"
 # UKL's shims applied by the in-process preprocessor (decision 0440 §4).
 rerail-ukl = { path = "../native/crates/ukl" }
 

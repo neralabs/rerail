@@ -23,6 +23,7 @@
 //! Both forms are exact: the count of a key is the number of live rows with that key, as the walk counts them.
 
 use super::{InRel, Key, Src, Step, is_dead};
+use super::rows::BlockVec;
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rerail_accel::{Batch, Kernel, Launch, Output};
 use rustc_hash::{FxHashMap as HashMap, FxHasher};
@@ -43,14 +44,56 @@ const ABSENT: u16 = u16::MAX;
 
 /// A relation's counts by the values of some of its columns.
 pub(super) struct Table {
-    /// Each key's place in `counts`.
-    slot: HashMap<Box<[i64]>, u32>,
-    counts: Vec<u32>,
+    /// Its key columns.
+    cols: Vec<usize>,
+    /// Open addressing by the key's hash (`rerail_blocks::key_hash`, `mask`): each slot a row holding its key (its
+    /// first) and the key's rows, `[EMPTY, 0]` for none; in a block near the relation's rows (decision 0478 step 6b).
+    /// A probe checks the key against its row's values, read where they lie.
+    slots: BlockVec<[u32; 2]>,
+    mask: u64,
 }
 
+/// A count table's empty slot.
+const EMPTY: u32 = u32::MAX;
+
 impl Table {
-    pub(super) fn count(&self, key: &[i64]) -> i64 {
-        self.slot.get(key).map_or(0, |&s| i64::from(self.counts[s as usize]))
+    /// The rows of `rel` whose key columns hold `key`.
+    pub(super) fn count(&self, rel: &InRel, key: &[i64]) -> i64 {
+        let mut at = rerail_blocks::key_hash(key) & self.mask;
+        loop {
+            let [rep, n] = self.slots[at as usize];
+            if rep == EMPTY {
+                return 0;
+            }
+            let row = rel.at(rep as usize);
+            if self.cols.iter().zip(key).all(|(&c, &v)| row.at(c) == v) {
+                return i64::from(n);
+            }
+            at = (at + 1) & self.mask;
+        }
+    }
+
+    /// The table of `rel` by `cols`: each key's first row (`reps`) and its rows (`count`), written into a block.
+    fn of(rel: &InRel, cols: &[usize], keys: impl ExactSizeIterator<Item = (u32, u32)>) -> Table {
+        let cap = (keys.len() * 2).next_power_of_two().max(2);
+        let mask = (cap - 1) as u64;
+        let home = rel.rows.home();
+        // SAFETY: every slot is written below before any read.
+        let mut slots = unsafe { BlockVec::<[u32; 2]>::unwritten_in(home.as_ref(), cap) };
+        slots.fill([EMPTY, 0]);
+        let mut key = vec![0i64; cols.len()];
+        for (rep, n) in keys {
+            let row = rel.at(rep as usize);
+            for (k, &c) in key.iter_mut().zip(cols) {
+                *k = row.at(c);
+            }
+            let mut at = rerail_blocks::key_hash(&key) & mask;
+            while slots[at as usize][0] != EMPTY {
+                at = (at + 1) & mask;
+            }
+            slots[at as usize] = [rep, n];
+        }
+        Table { cols: cols.to_vec(), slots, mask }
     }
 }
 
@@ -106,8 +149,8 @@ fn off_on() -> bool {
 /// A relation's keys coded for the kernels: the key of each of its live rows by `cols`, its partition and code.
 struct Coded {
     parts: usize,
-    /// Each distinct key's (partition, code).
-    codes: HashMap<Box<[i64]>, (u32, u16)>,
+    /// Each distinct key's (partition, code), and its first row.
+    codes: HashMap<Box<[i64]>, (u32, u16, u32)>,
     /// Per partition, its distinct keys.
     sizes: Vec<u32>,
     /// The relation's live rows' (partition, code).
@@ -120,7 +163,7 @@ fn code(rel: &InRel, cols: &[usize]) -> Coded {
     let n = rel.len();
     let mut parts = n.div_ceil(PER_PART).max(1);
     'retry: loop {
-        let mut codes: HashMap<Box<[i64]>, (u32, u16)> = HashMap::default();
+        let mut codes: HashMap<Box<[i64]>, (u32, u16, u32)> = HashMap::default();
         let mut sizes = vec![0u32; parts];
         let mut rows = Vec::with_capacity(n);
         let mut key = vec![0i64; cols.len()];
@@ -133,7 +176,7 @@ fn code(rel: &InRel, cols: &[usize]) -> Coded {
                 *k = row.at(c);
             }
             let pc = match codes.get(key.as_slice()) {
-                Some(&pc) => pc,
+                Some(&(p, c, _)) => (p, c),
                 None => {
                     let p = (hash(&key) % parts as u64) as usize;
                     // One code is kept for keys the relation lacks (`ABSENT`).
@@ -143,7 +186,7 @@ fn code(rel: &InRel, cols: &[usize]) -> Coded {
                     }
                     let pc = (p as u32, sizes[p] as u16);
                     sizes[p] += 1;
-                    codes.insert(key.clone().into_boxed_slice(), pc);
+                    codes.insert(key.clone().into_boxed_slice(), (pc.0, pc.1, id as u32));
                     pc
                 }
             };
@@ -179,6 +222,7 @@ fn group(parts: usize, items: impl Iterator<Item = (u32, u16)> + Clone) -> (Vec<
 pub(super) struct Pending {
     coded: Coded,
     width: u32,
+    cols: Vec<usize>,
 }
 
 pub(super) fn histogram_launch(rel: &InRel, cols: &[usize]) -> (Pending, Launch) {
@@ -186,18 +230,20 @@ pub(super) fn histogram_launch(rel: &InRel, cols: &[usize]) -> (Pending, Launch)
     let width = coded.sizes.iter().copied().max().unwrap_or(0).max(1);
     let (off, codes, _) = group(coded.parts, coded.rows.iter().copied());
     let k = Kernel::Histogram { off: off.into(), codes: codes.into(), width };
-    (Pending { coded, width }, Launch::new(k))
+    (Pending { coded, width, cols: cols.to_vec() }, Launch::new(k))
 }
 
-pub(super) fn histogram_table(p: Pending, out: Output) -> Result<Table, String> {
+pub(super) fn histogram_table(rel: &InRel, p: Pending, out: Output) -> Result<Table, String> {
     let Output::Counts { data, .. } = out else { return Err("a histogram's launch returned no counts".into()) };
     let width = p.width;
-    let slot = p.coded.codes.into_iter().map(|(k, (part, code))| (k, part * width + u32::from(code))).collect();
+    // Each key's first row and its count (the kernel's, at its partition and code): the table in a block.
+    let keys: Vec<(u32, u32)> = p.coded.codes.values().map(|&(part, code, rep)| (rep, data[(part * width + u32::from(code)) as usize])).collect();
+    let t = Table::of(rel, &p.cols, keys.into_iter());
     let b = crate::code_rule_dsl::logic::run::local::<BuiltSums>();
     let mut b = b.0.lock().unwrap();
     b.histograms += 1;
     b.rows += p.coded.rows.len() as u64;
-    Ok(Table { slot, counts: data })
+    Ok(t)
 }
 
 /// `rel`'s table by `cols`, built now (one launch) unless it is already.
@@ -211,7 +257,7 @@ fn table(rel: &InRel, cols: &[usize]) -> Result<Arc<Table>, String> {
     };
     let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run("count table (histogram)", Batch(vec![launch]))?;
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("count table (histogram)", "decode: the slot map of key to count");
-    let t = Arc::new(histogram_table(p, done.remove(0).out)?);
+    let t = Arc::new(histogram_table(rel, p, done.remove(0).out)?);
     rel.tables.lock().unwrap().entry(cols.to_vec()).or_insert_with(|| Arc::clone(&t));
     Ok(t)
 }
@@ -233,7 +279,8 @@ pub(super) fn count(form: &StepForm, src: &Src, keys: &[(usize, Key)], tests: &[
         return Some(i64::from(per[at0 as usize]));
     }
     if let Some(t) = form.table.get() {
-        return Some(t.count(key));
+        let Src::In(rel, _) = src else { return None };
+        return Some(t.count(rel, key));
     }
     if form.looked.load(Relaxed) {
         return None;
@@ -241,7 +288,7 @@ pub(super) fn count(form: &StepForm, src: &Src, keys: &[(usize, Key)], tests: &[
     form.looked.store(true, Relaxed);
     let (rel, cols) = cols_of(src, keys, tests)?;
     let t = rel.tables.lock().unwrap().get(&cols).cloned()?;
-    let n = t.count(key);
+    let n = t.count(&rel, key);
     let _ = form.table.set(t);
     Some(n)
 }
@@ -336,8 +383,8 @@ fn per_row(rel: &InRel, cols: &[usize], left: &InRel, of_key: &[Option<usize>], 
                     (None, Key::Slot(_)) => unreachable!("a slot's key has its column"),
                 };
             }
-            match coded.codes.get(key.as_slice()) {
-                Some(&pc) => pc,
+            match coded.codes.get(key.as_slice()).map(|&(p, c, _)| (p, c)) {
+                Some(pc) => pc,
                 None => ((hash(&key) % coded.parts as u64) as u32, ABSENT),
             }
         })
@@ -383,7 +430,7 @@ pub(super) fn prefetch(wants: &BTreeSet<(String, Vec<usize>)>, held: impl Fn(&st
     let (done, _) = crate::code_rule_dsl::logic::lanes::prof::run("count table (level wave)", Batch(launches))?;
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("count table (level wave)", "decode: the slot map of key to count");
     for ((rel, cols, p), d) in pending.into_iter().zip(done) {
-        let t = Arc::new(histogram_table(p, d.out)?);
+        let t = Arc::new(histogram_table(&rel, p, d.out)?);
         rel.tables.lock().unwrap().entry(cols).or_insert(t);
     }
     Ok((n, rels.len()))
@@ -392,4 +439,26 @@ pub(super) fn prefetch(wants: &BTreeSet<(String, Vec<usize>)>, held: impl Fn(&st
 /// What the forms built so far in the run.
 pub(super) fn built() -> Built {
     crate::code_rule_dsl::logic::run::local_if_any::<BuiltSums>().map(|b| *b.0.lock().unwrap()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod block_tests {
+    use super::*;
+
+    /// Decision 0478 step 6b: a count table is slots in a block (a row holding the key, and the key's rows), found by
+    /// the key's hash and checked against that row's values: no map of keys.
+    #[test]
+    fn a_count_table_is_slots_in_a_block() {
+        let n = 1000usize;
+        let flat: Vec<i64> = (0..n as i64).flat_map(|id| [id % 7, id]).collect();
+        let rel = InRel::from_flat(flat, n, vec![b'i'; 2]);
+        // Each value's first row is the value itself (`id % 7`), and its rows are those of `id % 7 == v`.
+        let keys: Vec<(u32, u32)> = (0..7u32).map(|v| (v, (0..n as u32).filter(|id| id % 7 == v).count() as u32)).collect();
+        let t = Table::of(&rel, &[0], keys.clone().into_iter());
+        assert!(t.slots.facts().is_some(), "its slots in a block");
+        for (v, want) in keys {
+            assert_eq!(t.count(&rel, &[i64::from(v)]), i64::from(want));
+        }
+        assert_eq!(t.count(&rel, &[9]), 0, "a key it lacks");
+    }
 }

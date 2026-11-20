@@ -86,7 +86,7 @@ fn over_pieces<T: Send>(n: usize, f: impl Fn(std::ops::Range<usize>) -> T + Sync
         return vec![f(0..n)];
     }
     use rayon::prelude::*;
-    (0..k).into_par_iter().map(|p| f(p * PIECE..((p + 1) * PIECE).min(n))).collect()
+    rerail_context::on_cores(|| (0..k).into_par_iter().map(|p| f(p * PIECE..((p + 1) * PIECE).min(n))).collect())
 }
 
 /// Packs `vals` (each under `2^bits`) into `out`, which is zero and `words(vals.len(), bits)` long.
@@ -122,10 +122,12 @@ fn pack_resid(out: &mut [u64], v: &[i64], line: Line, bits: u32) {
     use rayon::prelude::*;
     let per = PIECE * bits as usize / 64;
     let (head, rest) = out.split_at_mut(full * per);
-    rayon::join(
-        || head.par_chunks_mut(per).enumerate().for_each(|(k, o)| pack_piece(o, &v[k * PIECE..(k + 1) * PIECE], k * PIECE, line, bits)),
-        || pack_piece(rest, &v[full * PIECE..], full * PIECE, line, bits),
-    );
+    rerail_context::on_cores(|| {
+        rayon::join(
+            || head.par_chunks_mut(per).enumerate().for_each(|(k, o)| pack_piece(o, &v[k * PIECE..(k + 1) * PIECE], k * PIECE, line, bits)),
+            || pack_piece(rest, &v[full * PIECE..], full * PIECE, line, bits),
+        )
+    });
 }
 
 /// Packs `v` (positions `from..`, `from` a multiple of 64) into `out` from its first bit: a packer per width, and

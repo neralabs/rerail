@@ -41,18 +41,19 @@ function catalogState(pack) {
   return { status: null, action: packAction(pack, { quiet: true }) };
 }
 
+/** A pack as a card of the catalog's card view: its name and kind, where it stands, what it covers, and its action. */
+const catalogCard = (pack, status, action, question) => h("div.pcard", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
+  h("div.pc-top", null, packIcon(pack), h("div.pc-name", null, h("b", null, pack.name), h("span.kind", null, packKind(pack))),
+    status ? h("span.pstatus", null, status) : null),
+  h("span.sub", { title: pack.covers }, pack.covers),
+  question,
+  h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
+
 function catalogItem(pack) {
   const asking = ui.removeAsk === pack.id;
   const { status, action } = asking ? { status: null, action: null } : catalogState(pack);
   const question = asking ? h("div.rmline", null, removePackControl(pack)) : null;
-  if (ui.catView === "cards") {
-    return h("div.pcard", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
-      h("div.pc-top", null, packIcon(pack), h("div.pc-name", null, h("b", null, pack.name), h("span.kind", null, packKind(pack))),
-        status ? h("span.pstatus", null, status) : null),
-      h("span.sub", null, pack.covers),
-      question,
-      h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
-  }
+  if (ui.catView === "cards") return catalogCard(pack, status, action, question);
   return h("div.prow2", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
     packIcon(pack), h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers),
       h("span.meta", null, isRerailPack(pack) ? packMeta(pack) : `${packMeta(pack)} · ${publisherLabel(pack)}`)),
@@ -60,7 +61,7 @@ function catalogItem(pack) {
     question);
 }
 
-const CATALOG_LINE = "Rule packs for languages, frameworks and code quality. Add one to this repo, or remove it later.";
+const CATALOG_LINE = "Rule packs are ready-made rules, mostly the same ones linters use (ESLint, Ruff, Clippy…), checked while your coding agent writes. Add one to this repo, or remove it later.";
 
 function catalog() {
   const all = listed(), kinds = catalogKinds(all);
@@ -86,7 +87,7 @@ function reviewRow(pack, reason) {
   return h("div.prow2", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
     packIcon(pack),
     h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers),
-      reason === null ? null : h("span.why", null, h("b", null, "Why"), reason),
+      reason === null ? null : h("span.why", null, h("b", null, "Why suggested"), reason),
       h("span.meta", null, packMeta(pack))),
     h("div.pact2", null, reason !== null || kept
       ? h("span.swl", null,
@@ -99,8 +100,8 @@ function reviewBanner(repo, picked) {
   if (stateHere() === "started") return null;
   const n = picked.length;
   return h("div.welcome", { role: "status" }, h("div", null,
-    h("b", null, n === 0 ? `No rule pack picked for ${repo}.` : `${fmt(n)} ${plural(n, "rule pack")} picked for ${repo}.`),
-    h("p", null, `Nothing is on yet. ${n === 0 ? "Add any that fit" : "Switch off any you don’t want"}, then start Rerail from your coding agent session.`)));
+    h("b", null, n === 0 ? `No rule pack matches what ${repo} is built with.` : `${fmt(n)} ${plural(n, "rule pack")} suggested for what ${repo} is built with.`),
+    h("p", null, `Nothing is on yet. ${n === 0 ? "Add any you want" : "Switch off any you don’t want"}, then start Rerail from your coding agent session.`)));
 }
 
 function review() {
@@ -114,8 +115,8 @@ function review() {
     reviewBanner(repo, picked),
     h("div.ghead", null, h("h2", null, "Rule packs"), h("p", null, CATALOG_LINE)),
     h("div.list", null, picked.map(pack => reviewRow(pack, reasons.get(pack.id)))),
-    others.length ? h("div.ghead.top", null, h("h2", null, "Other rule packs", h("span.n2", null, `${fmt(others.length)} not picked`)),
-      h("p", null, "Add any that fit.")) : null,
+    others.length ? h("div.ghead.top", null, h("h2", null, "Other rule packs", h("span.n2", null, `${fmt(others.length)} not suggested`)),
+      h("p", null, "Add any you want.")) : null,
     others.length ? h("div.list", null, others.map(pack => reviewRow(pack, null))) : null);
 }
 

@@ -1,33 +1,9 @@
 //! The corpus planner keeps its statistics and native dispatch; SQL components use the wave kernel.
 use super::*;
 use crate::code_rule_dsl::{
-    logic::sql::{lattices, program},
+    logic::sql::lattices,
     waves::schedule,
 };
-
-pub fn normalize(prog: &Program) -> Result<(Program, BTreeSet<String>)> {
-    let mut out = prog.clone();
-    let mut sentinels: BTreeSet<String> = prog
-        .decls
-        .iter()
-        .filter(|(r, c)| c.is_empty() || prog.lattice.get(r.as_str()).is_some_and(|l| l.keys == 0))
-        .map(|(r, _)| r.clone())
-        .map(String::from).collect();
-    sentinels.extend(prog.nullary.iter().filter(|name|prog.decls.contains_key(name.as_str())).cloned());
-    program::physical(&mut out);
-    if prog.lattice.values().any(|l| l.lattice() != "flat") {
-        let tops = out
-            .lattice
-            .iter()
-            .map(|(r, l)| {
-                super::super::native::lattice(l.lattice())
-                    .map(|lat| (r.clone(), (l.keys, lat.top())))
-            })
-            .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
-        program::tops(&mut out, &tops).map_err(|e| Error::Plan(e.reason))?;
-    }
-    Ok((out, sentinels))
-}
 
 fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::Program> {
     let f = run.fields();

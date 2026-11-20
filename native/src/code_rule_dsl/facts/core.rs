@@ -81,9 +81,13 @@ pub fn label_tag(label: &str) -> Option<i64> {
 
 /// Whether this process has queued the tape of a text whose SHA-256 is `digest` in the grammar `file` names, for the
 /// store (`build_in_wave_with_tape` then reads it, not parses it): decision 0431 R6's count of the texts parsed.
-pub fn tape_queued(cache: &crate::content_store::ContentStore, file: &dyn SourceFile, digest: &[u8; 32]) -> bool {
+pub fn tape_queued(cache: &crate::content_store::ContentStore, file: &dyn SourceFile, digest: &[u8; 32], fragment: Option<Fragment>) -> bool {
     use crate::code_rule_dsl::build_ids::grammar_version;
-    let Some(tag) = file_language(file).and_then(tape_tag).map(i64::from) else { return false };
+    let tag = match fragment {
+        Some(f) => Some(i64::from(f.tag)),
+        None => file_language(file).and_then(tape_tag).map(i64::from),
+    };
+    let Some(tag) = tag else { return false };
     let fv = i64::from(crate::code_rule_dsl::tape::formats::stored_version());
     cache.queued_tape(&queued_tape(digest, tag, grammar_version(), fv)).is_some()
 }
@@ -171,6 +175,7 @@ pub struct Token {
     pub end: u32,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Built {
     Facts(Facts),
     /// The parser stopped at a limit (`file_tape` returned `None`).
@@ -211,13 +216,57 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else { return Ok((Built::Unparsed, None)); };
     let image = image?;
     drop(parse);
+    facts_of_image(file, &grammar, image.primary, Terminators::of(language), keep)
+}
+
+/// A fragment's parse (decision 0466): the node kind it starts at, and the tag its tapes are stored under (never its
+/// dialect's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Fragment {
+    pub start: &'static str,
+    pub tag: u8,
+}
+
+impl Fragment {
+    /// The fragment the registry names `name`.
+    pub fn named(name: &str) -> Option<Self> {
+        let (_, start) = crate::code_rule_dsl::language::fragment(name)?;
+        Some(Fragment { start, tag: crate::code_rule_dsl::language::fragment_tag(name)? })
+    }
+}
+
+/// [`build`] of `file` as a fragment (decision 0466): parsed from its start by its dialect's hand-written parser, its
+/// tape's root one node of that kind. `Unparsed` where the parser refuses the text.
+pub fn build_fragment(file: &dyn SourceFile, fragment: Fragment) -> Result<Built, String> {
+    use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage}};
+    let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
+    let grammar = Grammar::embedded(language)?;
+    let Some(image) = TapeImage::parse_from(&grammar, file.source(), fragment.start, &|| false) else { return Ok(Built::Unparsed) };
+    facts_of_image(file, &grammar, image?.primary, Terminators::of(language), false).map(|(built, _)| built)
+}
+
+/// [`build_with_tape`] of an embedded program (decision 0431 §4), read off the tape or tree its embedder parsed
+/// (`embed::Parse`), not parsed again.
+pub fn build_parsed(file: &dyn SourceFile, parse: crate::code_rule_dsl::embed::Parse, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
+    use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage}};
+    let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
+    let grammar = Grammar::embedded(language)?;
+    let primary = match parse {
+        crate::code_rule_dsl::embed::Parse::Tape(image) => image,
+        crate::code_rule_dsl::embed::Parse::Tree(tree) => TapeImage::encode_tree_image(tree.root_node(), &grammar, file.source(), None, &|| false)?,
+    };
+    facts_of_image(file, &grammar, primary, Terminators::of(language), keep)
+}
+
+/// The facts of `file` read off its parsed tape `primary`, with the tape where `keep`.
+fn facts_of_image(file: &dyn SourceFile, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, primary: crate::code_rule_dsl::tape::TapeImage, terminators: crate::code_rule_dsl::lines::Terminators, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
     // Where the device reads tapes, the parse's in a slab's room too (decision 0353 step 4a): a guest's, a run's
     // without a store.
-    let primary = placed_where_read(image.primary, &grammar)?;
-    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
-    let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
+    let primary = placed_where_read(primary, grammar)?;
+    let lines = Arc::new(LineTable::placed(file.source(), terminators));
+    let doc = kept_tape(keep, file, grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
+    let facts = read_off(doc.as_ref(), file, grammar, primary, lines)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.len() as u64);
     Ok((Built::Facts(facts), doc))
 }
@@ -255,7 +304,7 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
         return TapeImage::from_home((*home).clone(), grammar);
     }
     crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
-    const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(15, "4a", "a queued tape not in a room, read into a vector (queued_image)");
+    const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a queued tape not in a room, read into a vector (queued_image)");
     APART.time(|| (TapeImage::from_bytes(stored, grammar), stored.len()))
 }
 
@@ -304,13 +353,41 @@ pub fn build_in_wave_with_tape(
     named: bool,
     keep: bool,
 ) -> Result<(Built, Option<TapeDoc>), String> {
+    build_in_wave_as(file, None, cache, digest, found, named, keep)
+}
+
+/// [`build_in_wave`] of `file` as a fragment (decision 0466): its tape stored and found under the fragment's tag.
+pub fn build_fragment_in_wave(
+    file: &dyn SourceFile,
+    fragment: Fragment,
+    cache: &crate::content_store::ContentStore,
+    digest: Option<[u8; 32]>,
+    found: Option<&crate::content_store::TapeFrame>,
+    named: bool,
+) -> Result<Built, String> {
+    build_in_wave_as(file, Some(fragment), cache, digest, found, named, false).map(|(built, _)| built)
+}
+
+/// [`build_in_wave_with_tape`], of a whole file or a fragment.
+fn build_in_wave_as(
+    file: &dyn SourceFile,
+    fragment: Option<Fragment>,
+    cache: &crate::content_store::ContentStore,
+    digest: Option<[u8; 32]>,
+    found: Option<&crate::content_store::TapeFrame>,
+    named: bool,
+    keep: bool,
+) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::lines::Terminators;
     use crate::code_rule_dsl::tape::{self, TapeImage};
     use crate::code_rule_dsl::build_ids::grammar_version;
     use crate::content_store::HashKey;
     use sha2::Digest as _;
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
-    let tag = i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?);
+    let tag = match fragment {
+        Some(f) => i64::from(f.tag),
+        None => i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?),
+    };
     let (gv, fv) = (grammar_version(), i64::from(tape::formats::stored_version()));
     let bytes = file.source().as_bytes();
     let digest: [u8; 32] = match digest {
@@ -352,7 +429,11 @@ pub fn build_in_wave_with_tape(
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
-            let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else {
+            let parsed = match fragment {
+                Some(f) => TapeImage::parse_from(&grammar, file.source(), f.start, &|| false),
+                None => TapeImage::parse(&grammar, file.source(), &|| false),
+            };
+            let Some(image) = parsed else {
                 return Ok((Built::Unparsed, None));
             };
             let image = image?;
@@ -502,7 +583,7 @@ fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<
 /// The tape tag of a text-only document's facts (`text`): no dialect has it.
 pub const TEXT: u8 = u8::MAX;
 
-/// The facts of a file read as text only (core.rr's `.scope text`): its source and lines, no tree. Its lines are W's
+/// The facts of a file read as text only (core.rerail's `.scope text`): its source and lines, no tree. Its lines are W's
 /// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<String>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
@@ -530,6 +611,11 @@ macro_rules! on_tape {
 use rerail_tape_format::tape::Tape as _;
 
 impl Facts {
+    /// The dialect's grammar, where the facts have a tape.
+    pub fn grammar(&self) -> Option<&Arc<crate::code_rule_dsl::tape::Grammar>> {
+        self.grammar.as_ref()
+    }
+
     fn doc_tape(&self) -> &crate::code_rule_dsl::tape::formats::DocTape {
         self.tape.as_deref().expect("a node read from facts with no tape (a text-only document has no nodes)")
     }
@@ -846,7 +932,7 @@ pub fn digest(f: &Facts) -> [u8; 32] {
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-/// The relations a program in `core.rr`'s shape declares (the engine's names, decision 0141, less those decision
+/// The relations a program in `core.rerail`'s shape declares (the engine's names, decision 0141, less those decision
 /// 0174's rewrite adds), as the rule language reads them; registered at load (`install_core_names`). Empty without one.
 pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -855,7 +941,7 @@ pub fn core_names() -> &'static std::collections::BTreeSet<String> {
 
 static CORE_NAMES: std::sync::OnceLock<fn() -> &'static std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
 
-/// Registers what reads `core.rr`'s names (once, at load).
+/// Registers what reads `core.rerail`'s names (once, at load).
 pub fn install_core_names(names: fn() -> &'static std::collections::BTreeSet<String>) {
     let _ = CORE_NAMES.set(names);
 }
@@ -885,21 +971,21 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         // W's f-string trees (`facts::vtab::syntax::fstring`).
         "fstring_piece" => &["n", "i", "kind", "v"],
         "fstring_template" => &["n", "marker", "v"],
-        // CPython's verdict (`facts::vtab::syntax::cpython`; core.rr's `syntax_error(d, l, msg)`).
+        // CPython's verdict (`facts::vtab::syntax::cpython`; core.rerail's `syntax_error(d, l, msg)`).
         "cpython_syntax_error" => &["d", "l", "msg"],
         // Ruff's string annotations and their trees (`facts::vtab::syntax::annotation`).
         "string_annotation" => &["s"],
         "parsed" => &["s", "grammar", "root"],
         // W's pythonAst `literal_json` (`facts::vtab::syntax::cpython`).
         "literal_json" => &["n", "v"],
-        // core.rr's @py_unparse(n) and @ast_dump(n), and W's hashes of dumps (`facts::vtab::syntax::cpython`).
+        // core.rerail's @py_unparse(n) and @ast_dump(n), and W's hashes of dumps (`facts::vtab::syntax::cpython`).
         "cpython_unparse" | "cpython_ast_dump" => &["n", "s"],
         "dump_sha256" => &["n", "h"],
         "body_sha256" | "signature_sha256" => &["f", "h"],
         "intval" => &["n", "v"],
         "op_at" => &["n", "i", "s"],
         "op" | "op_t" => &["n", "s"],
-        // `core.rr`'s (`facts::vtab::syntax`, decision 0046).
+        // `core.rerail`'s (`facts::vtab::syntax`, decision 0046).
         "syntax_error" => &["d", "l", "msg"],
         "spread" | "rr_long_text_node" => &["n"],
         "next_sibling" => &["a", "b"],
@@ -920,7 +1006,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "token_before" | "token_after" => &["x", "t"],
         "end_point" => &["n", "p"],
         "tree_digest" | "def_digest" => &["n", "s"],
-        // core.rr's tokens (`facts::vtab::syntax::tree`).
+        // core.rerail's tokens (`facts::vtab::syntax::tree`).
         "prev_token" => &["n", "s"],
         "token" | "rr_token_anon" => &["p", "i", "s", "start", "end_"],
         "rr_token_named" => &["p", "i", "c", "start", "end_"],
@@ -930,9 +1016,9 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "rx_span" => &["p", "c", "j", "g", "m"],
         "ast_match" => &["p", "n", "g", "c"],
         // Decision 0055's (`facts::vtab::syntax::guests`).
-        "guest" => &["g", "host", "at", "grammar"],
-        "doc_role" => &["d", "r"],
-        "doc_root" => &["d", "n"],
+        // The document underneath a file's program and its grammar (decision 0431 §4), for the lowering's findings
+        // alone: a rule names a program by its file and place (`parsed`).
+        "rr_program" => &["d", "file", "grammar"],
         "tape_of" => &["d", "t"],
         "sub_tape" => &["at", "grammar", "t"],
         "host_node" => &["n", "h"],
@@ -950,6 +1036,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "package_field" => &["dir", "key", "v"],
         "package_for" => &["path", "dir"],
         "pkg" => &["d", "p"],
+        "unpackaged" => &["d"],
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],
         "core_node" => &["d", "t", "n"],
@@ -961,7 +1048,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],
         // An `ast` matcher's matched nodes (decision 0106).
         rel if rel.starts_with(ast_matches::PREFIX) => ast_matches::columns(rel),
-        // A `match_all` regex's matches (`logic::strings::as_relations`, `facts::vtab::syntax::Extra`).
+        // A `match_all` regex's matches (`preparation::text::TextRelations`, `facts::vtab::syntax::Extra`).
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::MATCHES) => &["sp", "m"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
         // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
@@ -993,13 +1080,13 @@ pub fn install_executors(executor: fn(bool) -> std::sync::Arc<rerail_accel::Exec
 /// The relations CPython's facts bind (the corpus's names for the verdict, `ast.unparse`, `ast.dump` and their
 /// hashes) and their columns: base relations the planner reads by name.
 pub mod cpython_relations {
-    /// The relation the corpus binds for CPython's verdict (core.rr's `syntax_error(d, l, msg)`).
+    /// The relation the corpus binds for CPython's verdict (core.rerail's `syntax_error(d, l, msg)`).
     pub const SYNTAX_ERROR: &str = "cpython_syntax_error";
     /// W's `literal_json` (`cpython::literal`).
     pub const LITERAL_JSON: &str = "literal_json";
-    /// core.rr's `@py_unparse(n)` (`cpython::unparse`).
+    /// core.rerail's `@py_unparse(n)` (`cpython::unparse`).
     pub const UNPARSE: &str = "cpython_unparse";
-    /// core.rr's `@ast_dump(n)` (`cpython::dump`).
+    /// core.rerail's `@ast_dump(n)` (`cpython::dump`).
     pub const AST_DUMP: &str = "cpython_ast_dump";
     /// W's `dump_sha256`, `body_sha256` and `signature_sha256` (`cpython::dump`).
     pub const DUMP_SHA256: &str = "dump_sha256";

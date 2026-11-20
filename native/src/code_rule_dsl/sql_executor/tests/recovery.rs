@@ -7,12 +7,12 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
     let corpus: Vec<(String, String)> = serde_json::from_slice(&raw).unwrap();
     for (program, output, count) in [
         (
-            include_str!("../../logic/plan/golden/programs/workload.rr"),
+            include_str!("../../logic/plan/golden/programs/workload.rerail"),
             "type_of",
             1841,
         ),
         (
-            include_str!("../../logic/plan/golden/programs/calls.rr"),
+            include_str!("../../logic/plan/golden/programs/calls.rerail"),
             "call_target",
             256,
         ),
@@ -60,6 +60,7 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
                         tape: None,
                         guest: None,
                         module: None,
+                        unpackaged: false,
                     }
                 })
                 .collect();
@@ -443,12 +444,14 @@ fn frontend_boolean_units_preserve_logical_arity_and_round_trip() {
     e.bind_relation(json!({"name":"flag","columns":[],"rows":[[]]}).to_string())
         .unwrap();
     let text = ".decl flag()\n.input flag\n.decl copied()\ncopied() :- flag().\n.decl ordinary(rr_unit:number)\nordinary(7).\n.output copied,ordinary\n";
-    let parsed = rr::parse(text).unwrap();
-    let printed = rr::print(&parsed).unwrap();
-    let again = rr::parse(&printed).unwrap();
-    assert_eq!(parsed.nullary, again.nullary);
-    assert_eq!(parsed.decls, again.decls);
-    assert_eq!(parsed.rules, again.rules);
+    let parsed = rr::parse_version(text).unwrap();
+    let printed = rr::print_version(&parsed).unwrap();
+    let again = rr::parse_version(&printed).unwrap();
+    assert_eq!(parsed.nullary_names().unwrap(), again.nullary_names().unwrap());
+    let decls = |v: &crate::code_rule_dsl::logic::program_image::Version| v.declared_names().into_iter().map(|r| (v.columns_of(&r), r)).collect::<Vec<_>>();
+    assert_eq!(decls(&parsed), decls(&again));
+    let shown = |v: &crate::code_rule_dsl::logic::program_image::Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>();
+    assert_eq!(shown(&parsed), shown(&again));
     let lower: Value =
         serde_json::from_str(&e.lower(text.into(), "python".into()).unwrap()).unwrap();
     assert_eq!(lower["logical_arities"]["flag"], 0);

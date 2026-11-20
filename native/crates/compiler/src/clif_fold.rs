@@ -728,8 +728,7 @@ fn merge_straight(func: &mut ir::Function) -> bool {
         if gone.contains(&p) {
             continue;
         }
-        loop {
-            let Some(last) = func.layout.last_inst(p) else { break };
+        while let Some(last) = func.layout.last_inst(p) {
             let InstructionData::Jump { destination, .. } = func.dfg.insts[last] else { break };
             let pool = &func.dfg.value_lists;
             let b = destination.block(pool);

@@ -1,4 +1,4 @@
-//! The lean `.rr` parser's cost over a list of files, for `/usr/bin/time -l` or a profiler:
+//! The lean `.rerail` parser's cost over a list of files, for `/usr/bin/time -l` or a profiler:
 //! `costs <list> <passes>`. The files are read first; each pass tapes every one.
 fn main() {
     let args: Vec<String> = std::env::args().collect();

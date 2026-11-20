@@ -1,18 +1,18 @@
-"""Writes pure-lazy-runtime-purity.tables.rr, the linter's name sets and signatures.
+"""Writes pure-lazy-runtime-purity.tables.rerail, the linter's name sets and signatures.
     python3 docs/rule-syntax/data-layer/gen-pure-lazy-runtime-purity.py [--check]
 The source is scripts/lint_pure_lazy_runtime_purity.py at the pinned commit of the data-layer repository. Each
 named set at module level, and each str set written inline in a function (INLINE), becomes plp_name("<SET>", x)
 rows (RUNTIME_SINK_KEYWORDS is a union there, and is computed the same way here);
 TRANSPARENT_SCHEMA_CALLBACK_REGISTRY_ACCESSES becomes plp_registry_access rows; the two signatures written in the
-linter become signing.rr allow_sig rows.
+linter become signing.rerail allow_sig rows.
 --check regenerates the text and fails if the committed file differs."""
 import ast, json, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "/Users/jeremy/orca/workspaces/nera-data-layer-ner1131-base-audit"
+REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 LINTER = "scripts/lint_pure_lazy_runtime_purity.py"
-OUT = os.path.join(HERE, "pure-lazy-runtime-purity.tables.rr")
+OUT = os.path.join(HERE, "pure-lazy-runtime-purity.tables.rerail")
 SETS = ["PROTECTED_RUNTIME_ATTRS", "PURE_SURFACE_CARRIER_ATTRS", "RUNTIME_HANDLE_TYPE_NAMES", "IMMUTABLE_GLOBAL_CALLS",
         "TYPE_ONLY_GLOBAL_CALLS", "MANAGED_MEMOIZATION_CACHE_CONSTRUCTORS", "MANAGED_MEMOIZATION_CACHE_ACCESSES",
         "MUTATING_METHOD_NAMES", "RUNTIME_SINK_KEYWORDS", "OPAQUE_LAZY_OPERATION_PAYLOAD_FIELDS",
@@ -76,7 +76,7 @@ def text():
     rows.append(".decl plp_registry_access(path: symbol, g: symbol, access: symbol)")
     for p, g, a in sorted(lit["TRANSPARENT_SCHEMA_CALLBACK_REGISTRY_ACCESSES"]):
         rows.append(f"plp_registry_access({json.dumps(p)}, {json.dumps(g)}, {json.dumps(a)}).")
-    rows.append("// The signatures written in the linter, checked by lib/data-layer/signing.rr.")
+    rows.append("// The signatures written in the linter, checked by lib/data-layer/signing.rerail.")
     rows.append(f"allow_sig(\"plp\", \"lint_pure_lazy_runtime_purity\", {json.dumps(lit['ALLOWLIST_SIGNATURE'])}).")
     rows.append(f"allow_sig(\"plp_ceiling\", \"lint_pure_lazy_runtime_purity:burn_down_ceiling\", "
                 f"{json.dumps(lit['BURN_DOWN_CEILING_SIGNATURE'])}).")

@@ -233,7 +233,7 @@ added.
 ## O8. Tape format
 
 **Two different "v8"s.** P's tape spike (2026-10-25, `research/tape-v8-measurements.md`,
-`experiments/tape-v8/`) measured a "v8" proposal (SoA columns, absolute u16/u32 positions) and
+`experiments/tape-v8/`, removed; at 7efcac9c67) measured a "v8" proposal (SoA columns, absolute u16/u32 positions) and
 rejected it: 11.1–13.5 B/node, 1.24–1.59× v7 (1.47–1.90× after zstd). W's `TMPTAPE8` is something
 else: v7 plus N's supertype table (`c3dd82e4`, `3cf93edb`). No other tape format past v7 exists in
 any worktree, branch or repo under `~/orca` (searched 2026-10-27).
@@ -279,7 +279,7 @@ crates.io grammars, not Rerail's vendored and patched ones, so each must be reru
 kept (resolved 2026-11-02, 0025 amended: no; parents are rebuilt at decode).
 
 **Closure.** Run the five measurements on Rerail's grammars; record an accepted decision (cite
-0003 and the spike indexes); then copy P `experiments/tape-v8/src/{main.rs, sql.rs}` into
+0003 and the spike indexes); then copy P `experiments/tape-v8/src/{main.rs, sql.rs}` (removed; at 7efcac9c67) into
 `cr/tape/v9np.rs` and adapt (05 Phase 2). Until then everything reads tapes only through
 `TapeDoc`'s `transducer_*` accessors, so the switch stays local to `tape.rs`.
 
@@ -1439,7 +1439,7 @@ include `core.rr` and their tests read T's view by name.
 ## O75. The `.rdl` copies and T's tools
 
 T's 10 programs (`typing/programs`, `plan/golden/programs`), the old parser `front::parse`, and T's
-reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/generate.sh`) are the only
+reference scripts (`front/rdl.py`, `scripts/generate/logic/magic_goldens.py`, `plan/golden/generate.sh`) are the only
 `.rdl` left. **Closure:** step 31 (O19) removes them.
 
 ## O76. Base relations and inputs the engine does not make yet
@@ -1628,9 +1628,15 @@ after P's last native commit):
   positive and 2 false negatives; batch 02: 1 and 1; batch 02 probes: 6 and 0; batch 04: 6 and 2).
   It is P's open parity, and is left out the same way.
 - `execution-owner.test.ts` calls `native.CodeRuleDslExecution`, which neither addon has.
+- P's producer-shape and SQL-budget CI steps (`npm run test:producer-shape`,
+  `npm run test:sql-execution-budget`) measure P's SQL anchor engine, test-only here (O20). On this
+  branch's `code-rule-profile` addon the shape gate finds no anchor batches or producer plans (12 of
+  17 fail), and the cold job takes 353 engine SQL submissions against the 100 the budget allows,
+  which P's own workplan records as an expected acceptance failure. `ci.yml` runs them only with
+  `RERAIL_RELATIONAL_TESTS=1`; both scripts still run by hand.
 - Not the merge's: `audit-cli.test.ts` has 1 failure before and after it.
   `checkout-code-rule-router.test.ts` had 17 failures before and has 1 after it (a 5 s timeout
-  under load). The `gate/data-layer/test/conformance` copies fail to load before and after it
+  under load). The `packs/data-layer/upstream/lint/authored/test/conformance` copies fail to load before and after it
   (imports relative to `gate/`).
 
 To close: when O18 is decided, either the relational clause becomes production and these run by
@@ -1838,7 +1844,7 @@ where it is faster (the rows then filled from its answer), or the device path is
 
 ## O93. The data-layer pack's rules do not run on the full corpus
 
-These are the 68 checks in `gate/data-layer/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
+These are the 68 checks in `packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
 with `RERAIL_HAND_DIR=<that dir> RERAIL_MEASURE_HAND=only`. They need the data-layer engine's `core.rr` relations,
 merged at ca930d974. Of the 68 run one at a time on s50:
 
@@ -2694,7 +2700,7 @@ definitions whose digest changed, and base rows changed under `(document, preord
 
 **Closure:** the distributions recorded in 0083, and the symbol key's form decided.
 
-**Measured** (2026-11-08) on `nera-data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
+**Measured** (2026-11-08) on `data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
 commits, with Python's `ast` standing in for the tape (`ast` has fewer nodes than tree-sitter; the ratios are what
 count). The tool is a dev script, not engine code.
 - **The commits are bulk.**
@@ -3311,12 +3317,12 @@ a phase output (t24, "not built").
 
 ## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
 
-Decision 0142 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
+Decision 0142 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/` (removed; at 7efcac9c67).
 
 **Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
 model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
 tree; `test-budget` counting with it, the artifact optional, `collect_disabled` reported as `collection_disabled`.
-**Measured (2026-11-08, pinned corpus, against `notes/t13/truth-full.json`).**
+**Measured (2026-11-08, pinned corpus, against `notes/t13/truth-full.json` (removed; at 7efcac9c67)).**
 
 | Scope | Files exact | Total (pytest 14,449; model 13,610) | CPU |
 |---|---:|---:|---:|
@@ -3921,7 +3927,7 @@ in a process waits for the last run's queued writes before it writes. Then twent
 **Status (2026-11-12):** the target builds (the engine hosts the tests that read above the crate); 20 pass,
 the two text tests fail (O-device-step-counts).
 
-## O-phase0-store-state. Phase 0's include graph depends on what the store already holds
+## O-phase0-store-state (closed 2026-11-12). Phase 0's include graph depends on what the store already holds
 
 Each test now starts from a copy of a store template that already holds the
 library's facts (decision 0118). In such a store, two runs of phase 0 on the
@@ -3952,6 +3958,14 @@ then, four runs of that set in one process have passed. Four threads deriving th
 a derive alone, three rounds of it (a test written for the check, then removed). Shared derive state is not the
 cause, then; the graph side (`graph`, the kept text) is the suspect. On a failure, the assertion now prints both
 graphs (`Graph::describe`: includes, missing, absent), so the next one shows which edge differs.
+
+**Closed (2026-11-12): the cause was the batch, not the store.** The template's fill (`test_store::fill`) runs phase
+0 once over every library module as a file seed, and keeps each seed's graph. `bootstrap.rr` names `core.rr` at
+-1 for every `p0_file`, so that run held `python/env.rr -> core.rr`, and `Graph::of` carried the edge into every
+other seed's graph that reaches `env.rr` (`python/conditions.rr`'s, and the text kept from it). A run of that seed
+alone has no such edge, so the kept graph's digest depended on the run's other seeds; the test failed in any
+process that made the template, which is why it was intermittent. `Graph::of` now keeps an edge at -1 only for the
+seed's own start and the engine's.
 
 ## O-repetition-implied-boundary. A `+` run on the tape does not end at an implied token
 

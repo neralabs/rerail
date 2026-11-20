@@ -316,7 +316,7 @@ derivation_input(id, ord, input_hash, name_id NULL)
 
 ## 15. Git trees and their relationships are facts
 
-Source: Tempo, `nera-landing-2/ner-1562-scale-test-the-re-railer/tempo/docs/workspace-store-runtime-journal.md` entries 31–34, and `content-addressed-workspace-store.md` "Git tree reuse". The same mechanism shipped in main as schemas 9/10 (`notes/t7`).
+Source: Tempo, `scale-test-the-re-railer/tempo/docs/workspace-store-runtime-journal.md` entries 31–34, and `content-addressed-workspace-store.md` "Git tree reuse". The same mechanism shipped in main as schemas 9/10 (`notes/t7`).
 
 **Facts:**
 
@@ -340,7 +340,7 @@ Source: Tempo, `nera-landing-2/ner-1562-scale-test-the-re-railer/tempo/docs/work
 | Measurement | Before | After |
 |---|---|---|
 | Share of 304,937 tracked file occurrences covered by unchanged subtrees at the same prefix | — | 45.36% |
-| `nera-data-layer`, 5,725 files: cold vs reuse of the completed root tree | 11.59 s cold | 610 ms (reads no repository files) |
+| the data-layer repository, 5,725 files: cold vs reuse of the completed root tree | 11.59 s cold | 610 ms (reads no repository files) |
 | Same, result pages (schema 10), median | 668.59 ms, 5,725 file states | **34.11 ms**, p95 36.96 ms, no file states |
 | Estimated workspace memory | 9.29 MB | 0.91 MB (−90%) |
 | 47 active workspaces (341k files): elapsed | 48.72 s | 13.57 s |

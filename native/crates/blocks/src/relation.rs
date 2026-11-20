@@ -40,8 +40,9 @@ pub const REWRITTEN: u32 = 8;
 pub const CONTINUES: u32 = 16;
 /// A key's columns at most: the device's probes' (decision 0325 step 5).
 pub const MAX_KEY: usize = 8;
-/// Indexes a relation can be given after it is made (`try_add_index`): its directory's room.
-pub const ADDED_INDEXES: usize = 8;
+/// Indexes and sorted orders a relation can be given after it is made (`try_add_index`, `try_add_order`): its
+/// directory's room. 16: a frozen relation's orders (up to one a column) beside the hash indexes probes build.
+pub const ADDED_INDEXES: usize = 16;
 
 structure! {
     pub struct Index {
@@ -54,10 +55,37 @@ structure! {
         /// Buckets less one (a power of two less one).
         pub mask: u64,
         /// Bucket `b`'s rows are `rows[offs[b]..offs[b + 1]]`: every key whose hash falls in `b`, in canonical
-        /// order. A reader checks the key (4 bytes a bucket, about one key a bucket; no hash kept).
+        /// order. A reader checks the key (4 bytes a bucket, about one key a bucket; no hash kept). In a sorted order
+        /// (`ORDER`), `rows` is every row in the key's order, and `offs` is empty.
         pub offs: Span<u32>,
         pub rows: Span<u32>,
+        /// A sorted order's (`ORDER`, `ORDER_ROWS`; decision 0478 step 5b): the leading column's value at every
+        /// `FENCE`th row of the order, each row's tag (an order tagged by its lead's hash), each row's key print (an
+        /// order probed by whole keys). Empty when the order keeps none.
+        pub fences: Span<i64>,
+        pub tags: Span<u16>,
+        pub prints: Span<u8>,
+        /// The bytes of the chunks a sorted order's `rows`, `fences`, `tags` and `prints` keep, given back when it is
+        /// forgotten; 0 for a span it does not own.
+        pub held: [u64; 4],
     }
+}
+
+/// `Index::ordered`: a hashed index (buckets of rows).
+pub const HASHED: u32 = 0;
+/// `Index::ordered`: a sorted order whose rows are listed in `rows`, sorted by the key (decision 0478 step 5b).
+pub const ORDER: u32 = 2;
+/// `Index::ordered`: a sorted order of the rows `lo..hi` themselves, already in the key's order (`mask` holds
+/// `lo << 32 | hi`), so no list of them is kept.
+pub const ORDER_ROWS: u32 = 3;
+
+/// A chunk of a relation's block an order is given (`Relation::try_add_order`): its offset, its items, and the bytes
+/// its chunk keeps (0: one it does not own, given back by its owner).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Given {
+    pub at: usize,
+    pub len: usize,
+    pub kept: usize,
 }
 
 structure! {
@@ -87,6 +115,25 @@ structure! {
         pub pend_used: AtomicU64,
         /// A continuation's base (`CONTINUES`): its descriptor's offset from this one's, in the same block; 0 for none.
         pub base_off: AtomicI64,
+        /// Its row ranges known to be in an order already (decision 0180), written once when it is frozen into an
+        /// input (decision 0478 step 5c), in row order; and the bytes of their chunk, given back at its release.
+        pub known: Span<Known>,
+        pub known_kept: AtomicU64,
+        /// A frozen relation's dead rows (bit `id`; decision 0478 step 5d), given to it once and given back at its
+        /// release; the bytes of their chunk. Its kills delta (`try_kills_at`) reads them here.
+        pub own_dead: Span<u64>,
+        pub own_dead_kept: AtomicU64,
+    }
+}
+
+structure! {
+    /// Rows `lo..hi` of a relation are in the order on `cols` (`ncols` of them; decision 0180): a writer wrote them
+    /// sorted, so an order built later takes them in place.
+    pub struct Known {
+        pub lo: u32,
+        pub hi: u32,
+        pub ncols: u32,
+        pub cols: [u16; MAX_KEY],
     }
 }
 
@@ -204,6 +251,17 @@ impl Relation {
     /// A delta of `base` with no rows of its own whose dead bits are `words` (row `id` dead when bit `id` of them is
     /// set): a relation's kills of the rows it shares, read beside them where they lie (decision 0325: the device
     /// skips a dead row by its bit, `rel_dead`). `None` when the block cannot hold it.
+    /// `try_kills`, its dead bits the ones `base` keeps (`own_dead`), read where they lie: nothing copied.
+    pub fn try_kills_own<'b>(block: &'b Block, spec: &Spec, base: &Relation) -> Option<&'b Relation> {
+        let words = base.own_dead();
+        assert!(!words.is_empty(), "a relation's own dead rows");
+        let rel = Relation::try_create(block, spec, Some(base))?;
+        // SAFETY: `words` lie in `block` (`base`'s), which `base` keeps while its delta lives (the delta's holder keeps
+        // `base`).
+        unsafe { Span::set(&rel.dead, words.as_ptr(), words.len()) };
+        Some(rel)
+    }
+
     /// Its dead bits are a chunk of their own, so a delta replaced when they change goes back whole
     /// (`release_kills`).
     pub fn try_kills<'b>(block: &'b Block, spec: &Spec, base: &Relation, words: &[u64]) -> Option<&'b Relation> {
@@ -245,6 +303,14 @@ impl Relation {
     /// It lies in `block`, and no one reads or writes it after (its last holder's).
     pub unsafe fn release(&self, block: &Block) -> usize {
         let given = unsafe { self.rows.release(block) + self.killed.release(block) };
+        let kept = self.known_kept.load(Acquire) as usize;
+        if kept > 0 {
+            block.free_chunk_fit(block.offset_of(self.known.as_ptr()), kept);
+        }
+        let kept = self.own_dead_kept.load(Acquire) as usize;
+        if kept > 0 {
+            block.free_chunk_fit(block.offset_of(self.own_dead.as_ptr()), kept);
+        }
         // Its added indexes, and their directory: chunks of the block's.
         if self.flags.load(Acquire) & ADDED != 0 {
             // SAFETY: the caller's: this is the relation's last use.
@@ -292,6 +358,7 @@ impl Relation {
     }
 
     #[inline]
+    #[allow(clippy::should_implement_trait, reason = "the relation's index `i` of its sorted orders, by number: not `ops::Index`")]
     pub fn index(&self, i: usize) -> &Index {
         &self.indexes.as_slice()[i]
     }
@@ -319,6 +386,173 @@ impl Relation {
         let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].rows.len() == rows as usize);
         std::sync::atomic::fence(Acquire);
         found
+    }
+
+    /// Its dead rows' bits as given (`adopt_dead`): empty when none were.
+    pub fn own_dead(&self) -> &[u64] {
+        if self.own_dead_kept.load(Acquire) == 0 {
+            return &[];
+        }
+        self.own_dead.as_slice()
+    }
+
+    /// Takes its dead rows' bits, `len` words in the chunk at `at` of `block` (`kept` bytes), written: kept from now on,
+    /// given back at its release (decision 0478 step 5d). False when it has some already.
+    ///
+    /// # Safety
+    /// It lies in `block`; the chunk is the caller's to give and nothing writes it after; nothing else writes its
+    /// descriptor meanwhile.
+    pub unsafe fn adopt_dead(&self, block: &Block, at: usize, len: usize, kept: usize) -> bool {
+        if self.own_dead_kept.load(Acquire) != 0 || len == 0 || kept == 0 {
+            return false;
+        }
+        // SAFETY: the caller's.
+        unsafe {
+            let me = std::ptr::from_ref(self).cast_mut();
+            Span::set(&raw mut (*me).own_dead, block.ptr::<u64>(at), len);
+        }
+        self.own_dead_kept.store(kept as u64, Release);
+        true
+    }
+
+    /// Its row ranges known to be in an order (`Known`): none until `try_set_known`.
+    pub fn known(&self) -> &[Known] {
+        if self.known_kept.load(Acquire) == 0 {
+            return &[];
+        }
+        self.known.as_slice()
+    }
+
+    /// Writes its known ranges (decision 0478 step 5c), once: `(lo, hi, cols)` each, in row order. False when they
+    /// were written already, a key is past `MAX_KEY`, or `block` has no room.
+    ///
+    /// # Safety
+    /// It lies in `block`, and nothing else writes its descriptor meanwhile (its writer's, at freeze).
+    pub unsafe fn try_set_known(&self, block: &Block, ranges: &[(u32, u32, &[u16])]) -> bool {
+        if ranges.is_empty() {
+            return true;
+        }
+        if self.known_kept.load(Acquire) != 0 || ranges.iter().any(|(_, _, c)| c.len() > MAX_KEY) {
+            return false;
+        }
+        let Some((at, kept)) = block.try_alloc_chunk_fit(ranges.len() * size_of::<Known>(), 8) else { return false };
+        let p = block.ptr::<Known>(at);
+        // SAFETY: `p` holds `ranges.len()` entries, this relation's alone; the caller's for its descriptor.
+        unsafe {
+            for (i, &(lo, hi, cols)) in ranges.iter().enumerate() {
+                let mut c = [0u16; MAX_KEY];
+                c[..cols.len()].copy_from_slice(cols);
+                p.add(i).write(Known { lo, hi, ncols: cols.len() as u32, cols: c });
+            }
+            let me = std::ptr::from_ref(self).cast_mut();
+            Span::set(&raw mut (*me).known, p, ranges.len());
+        }
+        self.known_kept.store(kept as u64, Release);
+        true
+    }
+
+    /// The sorted order on `cols` over `rows` rows (decision 0478 step 5b), built: its number.
+    pub fn find_order(&self, cols: &[u16], rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| (ix[i].ordered == ORDER || ix[i].ordered == ORDER_ROWS) && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && Self::order_rows(&ix[i]) == rows as usize);
+        std::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// The sorted orders built, by number: every one `find_order` can find.
+    pub fn orders(&self) -> impl Iterator<Item = usize> + '_ {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = move |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } != 0;
+        let found: Vec<usize> = (0..n).filter(|&i| (ix[i].ordered == ORDER || ix[i].ordered == ORDER_ROWS) && built(i)).collect();
+        std::sync::atomic::fence(Acquire);
+        found.into_iter()
+    }
+
+    /// The rows a sorted order holds.
+    pub fn order_rows(ix: &Index) -> usize {
+        if ix.ordered == ORDER_ROWS {
+            ((ix.mask & 0xffff_ffff) - (ix.mask >> 32)) as usize
+        } else {
+            ix.rows.len()
+        }
+    }
+
+    /// Gives this relation a sorted order on `cols` (decision 0478 step 5b): its rows listed (`ids`) or the rows
+    /// `lo..hi` themselves (`range`), and its fences, tags and prints, each a chunk of `block` written already. The
+    /// relation keeps them from now on and gives them back when its indexes are forgotten. Its number; `None` when
+    /// its directory has no room (the chunks are then still the caller's).
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s; each chunk lies in `block` and is the caller's to give, written, and nothing writes
+    /// it after.
+    pub unsafe fn try_add_order(&self, block: &Block, cols: &[u16], ids: Option<Given>, range: Option<(u32, u32)>, fences: Given, tags: Given, prints: Given) -> Option<usize> {
+        assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
+        assert!(ids.is_some() != range.is_some(), "an order's rows listed or a range, one of them");
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let me = std::ptr::from_ref(self).cast_mut();
+            if self.indexes.len() == 0 {
+                let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
+                Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES);
+                self.flags.fetch_or(ADDED, Release);
+            }
+            let i = self.nindex.load(Relaxed) as usize;
+            if i >= self.indexes.len() {
+                return None;
+            }
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[..cols.len()].copy_from_slice(cols);
+            (*ix).key = key;
+            /// An empty span, as a zeroed directory holds it (its target its own place, never address 0).
+            fn clear<T>(dst: *mut Span<T>) {
+                // SAFETY: the caller's: `dst` is the entry's.
+                unsafe {
+                    (*dst).off.store(0, Relaxed);
+                    (*dst).len.store(0, Relaxed);
+                }
+            }
+            clear(&raw mut (*ix).offs);
+            let ids = ids.unwrap_or_default();
+            match range {
+                Some((lo, hi)) => {
+                    (*ix).ordered = ORDER_ROWS;
+                    (*ix).mask = u64::from(lo) << 32 | u64::from(hi);
+                    clear(&raw mut (*ix).rows);
+                }
+                None => {
+                    (*ix).ordered = ORDER;
+                    (*ix).mask = 0;
+                    Span::set(&raw mut (*ix).rows, block.ptr::<u32>(ids.at), ids.len);
+                }
+            }
+            fn set<T>(block: &Block, dst: *mut Span<T>, g: Given) {
+                // SAFETY: the caller's: `dst` is the entry's, `g` a chunk of `block` (or none).
+                if g.len == 0 {
+                    // SAFETY: as below.
+                    unsafe {
+                        (*dst).off.store(0, Relaxed);
+                        (*dst).len.store(0, Relaxed);
+                    }
+                    return;
+                }
+                unsafe { Span::set(dst, block.ptr::<T>(g.at), g.len) }
+            }
+            set(block, &raw mut (*ix).fences, fences);
+            set(block, &raw mut (*ix).tags, tags);
+            set(block, &raw mut (*ix).prints, prints);
+            (*ix).held = [ids.kept as u64, fences.kept as u64, tags.kept as u64, prints.kept as u64];
+            self.nindex.store(i as u32 + 1, Release);
+            std::sync::atomic::fence(Release);
+            std::ptr::write_volatile(&raw mut (*ix).ncols, cols.len() as u32);
+            Some(i)
+        }
     }
 
     /// Room for an index on `cols` of rows `0..n` in `block`, which holds this relation: its directory's entry, its
@@ -393,6 +627,20 @@ impl Relation {
     /// # Safety
     /// `room` is this relation's, reserved and not yet built, and nothing reads it meanwhile.
     pub unsafe fn build_index(&self, room: &IndexRoom) {
+        let key = &room.key[..room.ncols];
+        // A continuation's values are of every row it reads (its base's first); a delta's its own rows'.
+        let value = |i: u32, c: u16| if self.continues() { self.get(i, c as usize) } else { self.rows.get(i, c as usize) };
+        // SAFETY: the caller's.
+        unsafe { self.build_index_hashed(room, &|i| key.iter().fold(crate::SEED, |h, &c| crate::mix(h, value(i, c)))) }
+    }
+
+    /// `build_index`, each row's key hash given (`hash(i)` for its row `i`: `SEED` mixed with its key's values, as
+    /// `key_hash`): for a relation whose key values are read elsewhere (a view's home of no columns, decision 0478
+    /// step 5e).
+    ///
+    /// # Safety
+    /// As `build_index`'s.
+    pub unsafe fn build_index_hashed(&self, room: &IndexRoom, hash: &dyn Fn(u32) -> u64) {
         let ix = &self.indexes.as_slice()[room.index];
         let n = room.rows_n as usize;
         // SAFETY: the caller's: the room's spans are ours to write.
@@ -403,9 +651,7 @@ impl Relation {
         offs.fill(0);
         // A continuation's index is of every row it reads (its base's first, ids from 0); a delta's of its own.
         let base = if self.continues() { 0 } else { self.base_rows };
-        let key = &room.key[..room.ncols];
-        let value = |i: u32, c: u16| if self.continues() { self.get(i, c as usize) } else { self.rows.get(i, c as usize) };
-        let bucket: Vec<u32> = (0..n as u32).map(|i| (key.iter().fold(crate::SEED, |h, &c| crate::mix(h, value(i, c))) & room.mask) as u32).collect();
+        let bucket: Vec<u32> = (0..n as u32).map(|i| (hash(i) & room.mask) as u32).collect();
         for &b in &bucket {
             offs[b as usize + 1] += 1;
         }
@@ -450,6 +696,16 @@ impl Relation {
         for ix in &self.indexes.as_slice()[..n] {
             // SAFETY: the caller's; `find_index` skips an entry whose `ncols` is 0.
             unsafe { std::ptr::write_volatile(&raw mut (*std::ptr::from_ref(ix).cast_mut()).ncols, 0) };
+            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS {
+                // A sorted order's chunks, each as it was given (`try_add_order`).
+                let spans = [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.fences.as_ptr().cast(), ix.held[1]), (ix.tags.as_ptr().cast(), ix.held[2]), (ix.prints.as_ptr().cast(), ix.held[3])];
+                for (p, kept) in spans {
+                    if kept > 0 {
+                        block.free_chunk_fit(block.offset_of(p), kept as usize);
+                    }
+                }
+                continue;
+            }
             let (offs, rows) = (4 * ix.offs.len(), 4 * ix.rows.len().max(1));
             let (o, r) = (block.offset_of(ix.offs.as_ptr()), block.offset_of(ix.rows.as_ptr()));
             // Left resident, as an index's room was before it went back (a few bytes a row; the next index takes it).
@@ -753,8 +1009,8 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     // Decided against the kills alone: a duplicate dropped here is one of its own rows, never a base row.
     let order: &mut [u32] = scratch.take(m);
     let mut live = 0;
-    for p in 0..m {
-        let i = ids[p] as usize;
+    for (p, &id) in ids.iter().enumerate().take(m) {
+        let i = id as usize;
         if (p > 0 && same(p)) || base_live(i) {
             continue;
         }

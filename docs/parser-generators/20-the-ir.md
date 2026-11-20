@@ -346,8 +346,10 @@ checked before code generation, and refused if:
 So a loop over single bytes cannot be generated, and neither can a call out to the
 host.
 
-**Still open.** Tier 2 on Metal. The words lower the same way (one block of code
-per word, a loop over the stream), but nothing generates it yet.
+**Still open.** Tier 2 on Metal. The preprocessing words run there (decision 0408): their
+Cranelift IR is printed as MSL (`clif_msl`), one TU a thread. They equal the interpreter on the
+corpus, but a thread runs about 9 µs a token, 400× a CPU core, so the device does not pay for a
+serial machine per input.
 
 ## 7. Checking generated code: the corpus
 
