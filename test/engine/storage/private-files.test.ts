@@ -10,7 +10,7 @@ import { makeLedgerFolder } from "../../../src/engine/storage/ledger-paths.js";
 import { keepFilesPrivate, keepFolderPrivate, makeRerailHome, openToOthers } from "../../../src/engine/storage/private-files.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
-// Spied, each call still the real one, so a case can make one `chmod` fail as a file system with no modes does.
+// Spied, each call still the real one, so a case can make `chmod` fail as a system that refuses it does.
 vi.mock("node:fs", { spy: true });
 
 const temporaryDirectories: string[] = [];
@@ -61,7 +61,7 @@ describe.skipIf(process.platform === "win32")("what Rerail keeps private", () =>
     }
   });
 
-  it("opens every session in a records folder whose mode change the system refuses, says so, and tries again at the next", async () => {
+  it("opens every session in a records folder whose mode change the system refuses, says so once, and tries again once its mode changed", async () => {
     const sessions = join(await temporaryDirectory(), ".rerail", "sessions");
     await mkdir(sessions, { recursive: true });
     await chmod(sessions, 0o755);
@@ -69,16 +69,24 @@ describe.skipIf(process.platform === "win32")("what Rerail keeps private", () =>
     vi.mocked(chmodSync).mockImplementation(path => {
       throw Object.assign(new Error(`EPERM: operation not permitted, chmod '${String(path)}'`), { code: "EPERM" });
     });
-    for (const id of ["a", "b"]) {
+    const tried = (): number => vi.mocked(chmodSync).mock.calls.filter(([path]) => path === sessions).length;
+    const named = (): number => written.mock.calls.filter(([line]) => String(line).startsWith(`rerail: could not keep ${sessions} `)).length;
+    const open = async (id: string): Promise<void> => {
       // What the daemon runs as it opens a session (`#openLedger`).
       const session = join(sessions, id.repeat(64));
       await makeLedgerFolder(session, { repair: true });
       keepFolderPrivate(session);
       expect(await mode(session)).toBe(0o700);
       await new Promise(resolve => setImmediate(resolve));
-    }
-    expect(vi.mocked(chmodSync).mock.calls.filter(([path]) => path === sessions)).toHaveLength(2);
-    expect(written).toHaveBeenCalledWith(expect.stringContaining(`rerail: could not keep ${sessions} to this user alone`));
+    };
+    await open("a");
+    await open("b");
+    expect([tried(), named()]).toEqual([1, 1]);
+    // Its mode changed, then another account's session made its folder there, which sets the change time again.
+    await chmod(sessions, 0o750);
+    await mkdir(join(sessions, "e".repeat(64)));
+    await open("c");
+    expect([tried(), named()]).toEqual([2, 2]);
   });
 
   it("is a secret with no group or other permission, and one with any is named with its mode", async () => {

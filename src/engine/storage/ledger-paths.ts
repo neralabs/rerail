@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { type BigIntStats, constants } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, rm } from "node:fs/promises";
 import { renameWithRetry } from "../file-replace.js";
 import { openNoFollow } from "../no-follow.js";
-import { type FoundFolderRepair, keepFolderPrivate, keepFoundFolderPrivate, type PrivateMachine, shareLikeParent } from "./private-files.js";
+import { type FoundFolderRepair, keepFolderPrivate, keepFoundFolderPrivate, type PrivateMachine, type RepairEnd, shareLikeParent } from "./private-files.js";
 import { dirname, resolve, sep } from "node:path";
 
 /**
@@ -117,49 +117,70 @@ export interface LedgerFolderOptions extends PrivateMachine {
   readonly repair?: boolean;
 }
 
-/** A session records folder this process keeps private: its file id then, and its repair once its ACL is read. */
+/**
+ * A session records folder this process keeps private: what `lstat` found when its repair started, the repair once the
+ * folder's ACL is read, and whether the system refused it.
+ */
 interface KeptRecordsFolder {
-  readonly ino: bigint;
+  readonly found: BigIntStats;
   readonly repair: Promise<FoundFolderRepair>;
+  refused: boolean;
 }
 
-/** The session records folders this process keeps private, each until its repair fails. */
+/** The session records folders this process keeps private, each until its repair fails in a way that may pass. */
 const keptRecordsFolders = new Map<string, KeptRecordsFolder>();
 
-/**
- * Keeps the session records folder on `directory`, the one just below the innermost `.rerail`, its owner's alone
- * whoever made it ({@link keepFoundFolderPrivate}), once per folder in this process: again when a folder with another
- * file id has taken its place, and at the next session after a read of its ACL or its repair failed. A session that
- * opens there waits for the folder's ACL to be read, not for the repair: while that runs, shared by every session that
- * opens there meanwhile, and once the read or the repair failed, the session's own folder gets the owner-only ACL of
- * its own first. Git makes that folder for a repository that commits a file in it, and a person or a release before
- * 0.1.5 may have made it, each with its parent's ACL on Windows, which every record in it took.
- */
-async function keepRecordsFolderPrivate(directory: string, machine: PrivateMachine): Promise<void> {
+/** The session records folder on `directory`, the one just below the innermost `.rerail`; undefined when there is none. */
+function recordsFolderOf(directory: string): string | undefined {
   const segments = resolve(directory).split(sep);
   const start = segments.lastIndexOf(LEDGER_FOLDER);
-  if (start <= 0 || segments.length < start + 2) return;
-  const folder = segments.slice(0, start + 2).join(sep);
-  const repair = await recordsFolderRepair(folder, machine);
-  // A storage root that is `.rerail` itself makes each session's folder the records folder, whose repair is its own.
-  await (segments.length === start + 2 ? repair.kept : repair.keepInside(directory));
+  return start <= 0 || segments.length < start + 2 ? undefined : segments.slice(0, start + 2).join(sep);
 }
 
 /**
- * The repair of the records folder `folder` this process keeps, or a new one when it keeps none or a folder with another
- * file id has taken its place. One whose read or repair failed is dropped once it has, so a failure that passes, as an
- * `icacls` past its time limit, never leaves the records already there open for the rest of the daemon's life.
+ * Keeps the records folder `folder` on `directory` its owner's alone whoever made it ({@link keepFoundFolderPrivate}),
+ * once per folder in this process ({@link recordsFolderRepair}). A session that opens there waits for the folder's ACL
+ * to be read, not for the repair: while that runs, shared by every session that opens there meanwhile, and once the
+ * read or the repair failed, the session's own folder gets the owner-only ACL of its own first. Git makes that folder
+ * for a repository that commits a file in it, and a person or a release before 0.1.5 may have made it, each with its
+ * parent's ACL on Windows, which every record in it took.
  */
-async function recordsFolderRepair(folder: string, machine: PrivateMachine): Promise<FoundFolderRepair> {
-  const { ino } = await lstat(folder, { bigint: true });
+async function keepRecordsFolderPrivate(directory: string, folder: string, found: BigIntStats | undefined, machine: PrivateMachine): Promise<void> {
+  const repair = await recordsFolderRepair(folder, machine, found);
+  // A storage root that is `.rerail` itself makes each session's folder the records folder, whose repair is its own.
+  await (resolve(directory) === folder ? repair.kept : repair.keepInside(directory));
+}
+
+/**
+ * The repair of the records folder `folder` this process keeps, or a new one when it keeps none, a folder with another
+ * file id has taken its place, or its repair was refused and the folder has changed since ({@link changedSince}). One
+ * that failed in a way that may pass by itself, as an `icacls` past its time limit, is dropped, so the next session
+ * tries again. `found` is the folder as `lstat` found it before this session's own folder was made there.
+ */
+async function recordsFolderRepair(folder: string, machine: PrivateMachine, found: BigIntStats | undefined): Promise<FoundFolderRepair> {
+  const now = found ?? await lstat(folder, { bigint: true });
   const known = keptRecordsFolders.get(folder);
-  if (known?.ino === ino) return await known.repair;
-  const kept: KeptRecordsFolder = { ino, repair: keepFoundFolderPrivate(folder, { ...machine, shared: name => SHARED_FOLDER.test(name) }) };
+  if (known?.found.ino === now.ino && !(known.refused && changedSince(known.found, now))) return await known.repair;
+  const repair = keepFoundFolderPrivate(folder, { ...machine, shared: name => SHARED_FOLDER.test(name) });
+  const kept: KeptRecordsFolder = { found: now, repair, refused: false };
   keptRecordsFolders.set(folder, kept);
-  void kept.repair.then(repair => repair.kept, () => false).then(done => {
-    if (!done && keptRecordsFolders.get(folder) === kept) keptRecordsFolders.delete(folder);
+  void repair.then(started => started.kept, (): RepairEnd => "transient").then(end => {
+    kept.refused = end === "refused";
+    if (end === "transient" && keptRecordsFolders.get(folder) === kept) keptRecordsFolders.delete(folder);
   });
   return await kept.repair;
+}
+
+/**
+ * Whether a records folder found as `before` when the system refused its repair may take it now: its owner or mode
+ * moved, or the last change to it was to what describes it and came after `before`. A new entry sets a folder's change
+ * time and write time to one value, on Windows (NTFS) as on Linux, so the sessions that open there do not count; a
+ * change of its access list or owner on Windows, or of its owner, mode or flags elsewhere, moves its change time alone.
+ * A refused attempt moves neither.
+ */
+function changedSince(before: BigIntStats, now: BigIntStats): boolean {
+  if (now.uid !== before.uid || now.mode !== before.mode) return true;
+  return now.ctimeNs !== now.mtimeNs && now.ctimeNs !== before.ctimeNs;
 }
 
 /**
@@ -171,8 +192,11 @@ async function recordsFolderRepair(folder: string, machine: PrivateMachine): Pro
  */
 export async function makeLedgerFolder(directory: string, options: LedgerFolderOptions = {}): Promise<void> {
   const { repair = false, ...machine } = options;
+  const records = repair ? recordsFolderOf(directory) : undefined;
+  // Read before this session's own folder is made there, which sets the records folder's change time as any new entry does.
+  const found = records === undefined ? undefined : await lstat(records, { bigint: true }).catch(() => undefined);
   await ledgerFolder(directory, true, machine);
-  if (repair) await keepRecordsFolderPrivate(directory, machine);
+  if (records !== undefined) await keepRecordsFolderPrivate(directory, records, found, machine);
 }
 
 /**

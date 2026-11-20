@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
-import { mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, lstat, mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withHomeLock } from "../../../src/engine/native/file-lock.js";
@@ -15,6 +15,30 @@ const USER = "S-1-5-21-1-2-3-1001";
 const ENTRA_USER = "S-1-12-1-1111111111-2222222222-3333333333-4444444444";
 /** A profile no test folder is under, so every folder here counts as outside it. */
 const ELSEWHERE = String.raw`C:\Users\nobody-here`;
+
+// Spied, each call still the real one, so a case can make the read of this user's home fail.
+vi.mock("node:os", { spy: true });
+
+/** What `execFile` rejects with for an `icacls` it cut at its time limit. */
+function timedOut(): Error {
+  return Object.assign(new Error("Command failed: icacls.exe"), { code: null, killed: true, signal: "SIGTERM" });
+}
+
+/**
+ * Changes what describes `folder` as a change of its access list does, which moves its change time and not its write
+ * time: on Windows an entry of its ACL, elsewhere its mode, set to what it is. Again until its change time is no
+ * longer the time an entry was last added there, which a clock that has not ticked since gives.
+ */
+async function changeAccess(folder: string): Promise<void> {
+  for (let tries = 0; tries < 1000; tries += 1) {
+    if (process.platform === "win32") execFileSync("icacls.exe", [folder, "/grant:r", `*S-1-5-11:${tries % 2 === 0 ? "(RX)" : "(R)"}`, "/q"]);
+    else await chmod(folder, (await lstat(folder)).mode & 0o7777);
+    const { ctimeNs, mtimeNs } = await lstat(folder, { bigint: true });
+    if (ctimeNs !== mtimeNs) return;
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  throw new Error(`the change time of ${folder} stayed its write time`);
+}
 
 /**
  * An ACL that records each folder it restricts or shares and each it is asked about; `inherited` is what every read
@@ -259,21 +283,77 @@ describe("an owner-only ACL on Windows", () => {
     }
   });
 
-  it("reads and repairs a records folder again at the next session once the read of its ACL, or its repair, failed", async () => {
+  it("reads and repairs a records folder again at the next session once the read of its ACL, or its repair, failed in a way that may pass", async () => {
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    for (const failing of ["inherits", "keepEachOwnersOwn"] as const) {
+    const notStarted = Object.assign(new Error("spawn icacls.exe EAGAIN"), { code: "EAGAIN", syscall: "spawn icacls.exe" });
+    // The read and `icacls /save` (`writers`) each have a time limit; any `icacls` may not start.
+    for (const [failing, error] of [["inherits", timedOut()], ["writers", timedOut()], ["writers", notStarted]] as const) {
       const sessions = join(await temporaryRoot(), ".rerail", "sessions");
       await mkdir(sessions, { recursive: true });
       const acl = recordingAcl();
-      // Fails once, as an `icacls` past its time limit does, then works.
-      vi.spyOn(acl, failing).mockRejectedValueOnce(new Error("icacls timed out"));
+      vi.spyOn(acl, failing).mockRejectedValueOnce(error);
       const windows = { acl, platform: "win32" as const, profile: ELSEWHERE, repair: true };
       for (const id of ["a", "b"]) {
         await makeLedgerFolder(join(sessions, id.repeat(64)), windows);
         await new Promise(resolve => setImmediate(resolve));
       }
-      expect(acl.calls, failing).toContain(`each owner's own ${sessions} for `);
+      expect(acl.calls, `${failing}: ${error.message}`).toContain(`each owner's own ${sessions} for `);
     }
+  });
+
+  it("keeps a records folder's refused repair, read and named once, until what describes the folder changes", async () => {
+    const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const sessions = join(await temporaryRoot(), ".rerail", "sessions");
+    await mkdir(sessions, { recursive: true });
+    const acl = recordingAcl();
+    // What `execFile` rejects with when Windows refuses `icacls`: it ran, and exited with Access is denied's code.
+    const refused = Object.assign(new Error(`Command failed: icacls.exe\n${sessions}: Access is denied.`), { code: 5, killed: false, signal: null });
+    const repaired = vi.spyOn(acl, "keepEachOwnersOwn").mockRejectedValue(refused);
+    const windows = { acl, platform: "win32" as const, profile: ELSEWHERE, repair: true };
+    const named = (): number => written.mock.calls.filter(([line]) => String(line).startsWith(`rerail: could not keep ${sessions} `)).length;
+    for (const id of ["a", "b", "c"]) {
+      await makeLedgerFolder(join(sessions, id.repeat(64)), windows);
+      while (named() === 0) await new Promise(resolve => setImmediate(resolve));
+    }
+    expect([acl.read, repaired.mock.calls.length, named()]).toEqual([[sessions], 1, 1]);
+    // Each session's own folder still gets the owner-only ACL of its own.
+    expect(acl.restricted).toContainEqual([join(sessions, "c".repeat(64)), true]);
+    await changeAccess(sessions);
+    await makeLedgerFolder(join(sessions, "d".repeat(64)), windows);
+    expect(acl.read).toEqual([sessions, sessions]);
+  });
+
+  it("reads a records folder again at the next session once its repair could not start", async () => {
+    const sessions = join(await temporaryRoot(), ".rerail", "sessions");
+    await mkdir(sessions, { recursive: true });
+    const acl = recordingAcl();
+    // With no profile given, the repair reads this user's home first.
+    vi.mocked(homedir).mockImplementationOnce(() => {
+      throw new Error("no home folder");
+    });
+    await expect(makeLedgerFolder(join(sessions, "a".repeat(64)), { acl, platform: "win32", repair: true })).rejects.toThrow("no home folder");
+    await makeLedgerFolder(join(sessions, "b".repeat(64)), { acl, platform: "win32", profile: ELSEWHERE, repair: true });
+    expect(acl.read).toEqual([sessions]);
+  });
+
+  it("keeps the repair of a records folder that took another's place when the earlier one's repair fails after it", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const sessions = join(await temporaryRoot(), ".rerail", "sessions");
+    await mkdir(sessions, { recursive: true });
+    const acl = recordingAcl();
+    const { promise: firstRepair, reject: failFirst } = Promise.withResolvers<undefined>();
+    const repaired = vi.spyOn(acl, "keepEachOwnersOwn").mockReturnValueOnce(firstRepair);
+    const windows = { acl, platform: "win32" as const, profile: ELSEWHERE, repair: true };
+    await makeLedgerFolder(join(sessions, "a".repeat(64)), windows);
+    while (repaired.mock.calls.length === 0) await new Promise(resolve => setImmediate(resolve));
+    await rename(sessions, `${sessions}.aside`);
+    await mkdir(sessions);
+    await makeLedgerFolder(join(sessions, "a".repeat(64)), windows);
+    while (repaired.mock.calls.length === 1) await new Promise(resolve => setImmediate(resolve));
+    failFirst(timedOut());
+    await new Promise(resolve => setImmediate(resolve));
+    await makeLedgerFolder(join(sessions, "b".repeat(64)), windows);
+    expect(acl.read).toEqual([sessions, sessions]);
   });
 
   it("lets sessions that open while their records folder is repaired go on at once, each one's folder its owner's first", async () => {

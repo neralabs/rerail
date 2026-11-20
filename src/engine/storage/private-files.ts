@@ -60,13 +60,20 @@ export function keepFolderPrivate(folder: string, options: KeepFolderPrivate = {
   }
 }
 
+/**
+ * How a repair ended: `kept`, the folder needs nothing more; `transient`, it failed in a way that may pass by itself (a
+ * program cut at its time limit or one that did not start); `refused`, the system answered no for this folder (Access
+ * is denied, EPERM, EACCES), which holds until something about the folder changes.
+ */
+export type RepairEnd = "kept" | "transient" | "refused";
+
 /** The repair {@link keepFoundFolderPrivate} starts on a folder, once it has read the folder's ACL. */
 export interface FoundFolderRepair {
   /**
-   * Resolves true once the folder needs nothing more, or has its ACL and Windows has passed it to everything in it;
-   * false when its ACL or mode could not be read or set, which a caller may then try again.
+   * Resolves `kept` once the folder needs nothing more, or has its ACL and Windows has passed it to everything in it;
+   * `transient` or `refused` when its ACL or mode could not be read or set ({@link RepairEnd}).
    */
-  readonly kept: Promise<boolean>;
+  readonly kept: Promise<RepairEnd>;
   /**
    * Resolves once `inner`, a folder inside the repaired one, has the ACL that what is written there next takes from its
    * first byte. When the folder has its own ACL, at once: `inner` takes the folder's, an entry set there for another
@@ -76,13 +83,23 @@ export interface FoundFolderRepair {
   keepInside(inner: string): Promise<void>;
 }
 
-const NOTHING_TO_REPAIR: FoundFolderRepair = { kept: Promise.resolve(true), keepInside: () => Promise.resolve() };
+const NOTHING_TO_REPAIR: FoundFolderRepair = { kept: Promise.resolve("kept"), keepInside: () => Promise.resolve() };
+
+/**
+ * Whether a failure says nothing about the folder and may pass by itself: a program cut at its time limit (`killed`)
+ * or one that did not start (an error of the `spawn` or `spawnSync` call, a synchronous time-out included). Any other
+ * failure, a program that ran and refused or a system call refused, is the system's answer for the folder.
+ */
+function mayPassByItself(error: unknown): boolean {
+  const { killed, syscall } = (error ?? {}) as { killed?: unknown; syscall?: unknown };
+  return killed === true || (typeof syscall === "string" && syscall.startsWith("spawn"));
+}
 
 /** Names on stderr, which a daemon writes to its log, a folder Rerail could not keep its owner's alone. */
-function cannotKeep(folder: string, error: unknown): false {
+function cannotKeep(folder: string, error: unknown): Exclude<RepairEnd, "kept"> {
   process.stderr.write(`rerail: could not keep ${folder} to this user alone, so other accounts may read what Rerail writes there: ${
     error instanceof Error ? error.message : String(error)}\n`);
-  return false;
+  return mayPassByItself(error) ? "transient" : "refused";
 }
 
 /** What {@link keepFoundFolderPrivate} is given: the system, and which folders in the found one every account shares. */
@@ -127,9 +144,9 @@ async function keepOwnersAlone(inner: string, acl: WindowsAcl): Promise<void> {
  */
 function repairUnderWay(folder: string, acl: WindowsAcl, shared: (name: string) => boolean): FoundFolderRepair {
   let passingOn = true;
-  const kept = keepEachOwnersOwn(folder, acl, shared).then(() => {
+  const kept = keepEachOwnersOwn(folder, acl, shared).then((): RepairEnd => {
     passingOn = false;
-    return true;
+    return "kept";
   }, (error: unknown) => cannotKeep(folder, error));
   return {
     kept,
@@ -149,9 +166,10 @@ function repairUnderWay(folder: string, acl: WindowsAcl, shared: (name: string) 
  * entry set on the folder itself for another account is someone's choice and stays, and a folder with an ACL of its
  * own is left as it is. It resolves once the ACL is read: Windows passes a new one on in the background, in time in
  * step with what is in the folder, and {@link FoundFolderRepair.keepInside} keeps a folder in it private meanwhile, so
- * nobody waits for that. A folder whose ACL or mode it cannot read or change (another account's, say) is named on
- * stderr, which a daemon writes to its log, and never fails the caller: its `kept` resolves false, and on Windows each
- * folder kept inside it then gets the owner-only ACL of its own.
+ * nobody waits for that. A folder whose ACL it cannot read or change (on Windows, another account's, say) or whose mode
+ * change the system refuses is named on stderr, which a daemon writes to its log, and never fails the caller: its
+ * `kept` resolves `transient` or `refused`, and on Windows each folder kept inside it then gets the owner-only ACL of
+ * its own. Elsewhere than Windows, another account's folder is left as it is and resolves `kept`.
  */
 export async function keepFoundFolderPrivate(folder: string, machine: FoundFolder = {}): Promise<FoundFolderRepair> {
   const { acl = WINDOWS_ACL, platform = process.platform, profile = homedir(), shared = () => false } = machine;
