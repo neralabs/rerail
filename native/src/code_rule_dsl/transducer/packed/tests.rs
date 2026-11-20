@@ -616,9 +616,11 @@
         let language = SupportLang::Python.get_ts_language();
         let program = Program::compile_tree_sitter_query_pattern(middle, &language).unwrap();
         let stress_tape = tape(&stress);
-        let plain_started = Instant::now();
+        // The 2 s bounds below are the process's CPU (nextest runs each test in its own process), not wall time: a
+        // loaded host stretched the JIT's wall to 2.24 s.
+        let plain_started = rerail_prof::process_cpu();
         let plain_output = program.execute(&stress_tape).unwrap();
-        let plain_elapsed = plain_started.elapsed();
+        let plain_elapsed = rerail_prof::process_cpu().saturating_sub(plain_started);
 
         let jit_programs = vec![program.clone()];
         let jit_compile_started = Instant::now();
@@ -628,7 +630,7 @@
         let jit_tapes = vec![stress_tape.clone()];
         let jit_roots = (0..stress_tape.transducer_len() as u32).collect::<Vec<_>>();
         let jit_anchors = vec![vec![jit_roots]];
-        let jit_started = Instant::now();
+        let jit_started = rerail_prof::process_cpu();
         let jit_output = execute_with_backend(
             ExecutionBackend::CpuJit,
             &jit_programs,
@@ -636,7 +638,7 @@
             &jit_anchors,
         )
         .unwrap();
-        let jit_elapsed = jit_started.elapsed();
+        let jit_elapsed = rerail_prof::process_cpu().saturating_sub(jit_started);
         assert_eq!(jit_output[0][0], plain_output);
         #[cfg(target_os = "macos")]
         if let Some(actual) = metal(execute_with_backend(ExecutionBackend::MetalJit, &jit_programs, &jit_tapes, &jit_anchors)) {
@@ -667,8 +669,8 @@
         assert!(stats.max_pending_paths < 512, "{stats:?}");
         assert!(stats.peak_retained_bytes < 2 * 1024 * 1024, "{stats:?}");
         assert!(elapsed < Duration::from_secs(5), "{elapsed:?} {stats:?}");
-        assert!(plain_elapsed < Duration::from_secs(2), "{plain_elapsed:?}");
-        assert!(jit_elapsed < Duration::from_secs(2), "{jit_elapsed:?}");
+        assert!(plain_elapsed < Duration::from_secs(2), "the interpreter's CPU: {plain_elapsed:?}");
+        assert!(jit_elapsed < Duration::from_secs(2), "the JIT's CPU: {jit_elapsed:?}");
         eprintln!(
             "128-comment quantifier stress: interpreter={plain_elapsed:?} jitCompile={jit_compile_elapsed:?} jit={jit_elapsed:?} instrumented={elapsed:?} {stats:?}"
         );
