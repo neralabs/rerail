@@ -1078,6 +1078,10 @@ impl Cands<'_> {
 /// `levels`: per row, the device fixpoint's round that made it (decision 0311), where its relation keeps levels; else
 /// empty.
 pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, breaks: Vec<u32>, lost: bool, levels: Vec<u32>,
+                   /// The relation's first order when its first row came, or as of its last settle: the order its
+                   /// settled rows are in and `breaks` were noted in. An order a relation reorders (`Rel::want` chains
+                   /// a new set into it) leaves them in no order known.
+                   order: Vec<usize>,
                    /// Rows written in place by another writer (the device, decision 0325 step 4), each lot distinct,
                    /// not held by the relation, and in no order: the relation takes them as they lie (`push_fresh`).
                    /// With each lot, its rows' rounds when the device's fixpoint made them (decision 0311's levels).
@@ -1159,6 +1163,9 @@ impl Fresh {
     #[inline]
     fn offer(&mut self, row: &[i64], rel: &Rel) {
         let k = rel.k;
+        if self.n == 0 {
+            self.order.clone_from(&rel.idx[0].cols);
+        }
         if !self.lost && self.n > self.settled && runs::known_beyond_runs() {
             let cols = &rel.idx[0].cols;
             if runs::cmp_vals(cols, runs::tagged(cols, k), &self.data[(self.n - 1) * k..self.n * k], row).is_gt() {
@@ -1179,6 +1186,15 @@ impl Fresh {
     /// Drops the rows `rel` holds and the repeats: the rest, distinct, sorted by `rel`'s first order (so a wave's rows
     /// are checked against it as one sorted batch, each run searched once in order, not row by row).
     fn settle(&mut self, rel: &Rel) {
+        // Settled and noted in an order the relation has since changed: sorted whole.
+        if self.order != rel.idx[0].cols {
+            if self.n > 0 {
+                self.settled = 0;
+                self.lost = true;
+                self.breaks.clear();
+            }
+            self.order.clone_from(&rel.idx[0].cols);
+        }
         let (k, n, settled) = (rel.k, self.n, self.settled);
         if settled == n {
             return;
@@ -1250,6 +1266,14 @@ impl Fresh {
             return;
         }
         debug_assert_eq!(o.settled, o.n, "a morsel's rows are settled");
+        if self.n == 0 {
+            self.order = o.order.clone();
+        } else if o.order != self.order {
+            // Settled in another order than these: none of them is in a known order.
+            self.settled = 0;
+            self.lost = true;
+            self.breaks.clear();
+        }
         if !self.lost && self.n > self.settled {
             self.breaks.push(self.n as u32);
             if self.breaks.len() * IN_ORDER > self.n - self.settled + o.n + IN_ORDER * IN_ORDER {
@@ -8717,5 +8741,40 @@ impl TestLattice {
         }).collect();
         out.sort_unstable();
         out
+    }
+}
+
+#[cfg(test)]
+pub mod fresh_tests {
+    use super::*;
+
+    /// A relation's first order can change while a wave's rows wait in `Fresh` (`Rel::want` chains a new key set
+    /// into it: (0, 1, 2, 3) became [1, 0, 2, 3]). The rows settled and the stretches noted in the old order are in
+    /// no order known in the new one, so they are sorted whole. Taken as known, the relation was handed rows "said
+    /// sorted" that were not (`python/references.rr`'s `rf_hit` on 1,000 files).
+    #[test]
+    fn rows_settled_before_a_reorder_are_sorted_again() {
+        for settle_first in [false, true] {
+            let mut rel = Rel::new("t", b"iiii");
+            let old = rel.idx[0].cols.clone();
+            let mut rows: Vec<[i64; 4]> = (0..500i64).map(|i| [i, (i * 7919) % 211, i % 3, 0]).collect();
+            rows.sort_by(|a, b| runs::cmp_vals(&old, runs::tagged(&old, 4), a, b));
+            let mut f = Fresh::default();
+            for (i, r) in rows.iter().enumerate() {
+                f.offer(r, &rel);
+                if settle_first && i == 300 {
+                    f.settle(&rel);
+                }
+            }
+            rel.want(&[1]);
+            let cols = rel.idx[0].cols.clone();
+            assert_ne!(cols, old, "the first order changed");
+            assert!(rel.push_fresh(f, false));
+            assert_eq!(rel.n, 500);
+            let t = runs::tagged(&cols, 4);
+            for id in 1..rel.n as u32 {
+                assert!(runs::cmp_ids(&rel.data, 4, &cols, t, id - 1, id).is_le(), "settle first {settle_first}: rows {} and {id}", id - 1);
+            }
+        }
     }
 }
