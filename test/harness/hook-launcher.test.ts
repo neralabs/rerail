@@ -53,7 +53,9 @@ async function recordedNode(path: string): Promise<void> {
     await copyFile(process.execPath, path);
     return;
   }
-  await writeFile(path, `#!/bin/sh\nRECORDED=recorded exec "${process.execPath}" "$@"\n`);
+  // Its node is not this file, so a launcher that started itself under it without end would fill the machine: a wrapper
+  // started under another one ends at once.
+  await writeFile(path, `#!/bin/sh\n[ -z "$RECORDED" ] || exit 97\nRECORDED=recorded exec "${process.execPath}" "$@"\n`);
   await chmod(path, 0o755);
 }
 
