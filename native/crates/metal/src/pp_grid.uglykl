@@ -1,12 +1,12 @@
-// The preprocessor's evaluation as a persistent grid (decision 0460 §4): G groups of 256 threads,
+// The preprocessor's evaluation as a persistent grid (decision 0468 §4): G groups of 256 threads,
 // resident together, run the passes as phases, each group a share of each pass's items; a
 // device-wide barrier (`ukl_grid_barrier`) separates a phase from the next, and the scans,
 // segmented scans and sorts are the grid's own (`ukl/grid.h`). Every count a phase needs is read
 // from the arena, so the host sizes nothing but the arena.
 //
 // Launches, the same for every unit:
-// - `pp_setup`: the front passes, the definitions, then P1's iterations (decision 0467) with the
-//   text pass inside them once they hold (decision 0475): the top level, the queue's two phases
+// - `pp_setup`: the front passes, the definitions, then P1's iterations (decision 0487) with the
+//   text pass inside them once they hold (decision 0488): the top level, the queue's two phases
 //   and the places, to the output;
 // - `pp_check`: the refusals.
 //
@@ -37,12 +37,12 @@
 
 // A top level, as the expansion's passes read it: its tokens' nodes, its stretches' first tokens
 // and their count's store, their first nodes' places, and its tokens' count's store. The text's
-// (its active stretches in the unit's order), and the tests' lines' (decision 0467 §4).
+// (its active stretches in the unit's order), and the tests' lines' (decision 0487 §4).
 #define TEXT_TOP AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL)
 // Each top stretch's instance.
 #define TEXT_SCOPE mk_scope(1u, AT(const uint32_t, RSTART), AT(const uint32_t, RUNX), AT(const uint32_t, RUN_END), AT(const uint32_t, SINST), AT(const uint32_t, SSLOT))
 #define IF_SCOPE mk_scope(0u, AT(const uint32_t, RSTART), AT(const uint32_t, RUNX), AT(const uint32_t, RUN_END), AT(const uint32_t, IF_INST), AT(const uint32_t, DSLOT))
-// The text pass's facts (decision 0475).
+// The text pass's facts (decision 0488).
 #define TFACTS mk_tf(AT(uint64_t, TR_SK), AT(uint64_t, TR_NK), AT(uint32_t, TR_TY), AT(uint32_t, TO_F), AT(uint32_t, TO_S), AT(uint32_t, CU_SLOT), AT(uint32_t, CU_SUB), AT(uint32_t, CU_UNIT), \
                      AT(uint32_t, TRN), W(CNT_CAP), AT(const uint32_t, RTYPES), AT(const uint32_t, LREAD))
 #define TEXT_INST AT(const uint32_t, SINST), AT(const PpNode, P1_NODES), AT(const uint32_t, P1_UFILE), AT(const uint32_t, SLINE), AT(const uint32_t, SLINEN), TEXT_SCOPE, TFACTS
@@ -106,7 +106,7 @@
         if (run + 1u == PX_RUNS) ONE(x) px_refuse(AT(uint32_t, CTL), X_QUEUE);                         \
     }
 
-// `__COUNTER__`'s uses of the top just expanded placed, then counted (decision 0475 §3): `part`
+// `__COUNTER__`'s uses of the top just expanded placed, then counted (decision 0488 §3): `part`
 // 0 the text, 1 the lines.
 #define PX_COUNTERS(u, part)                                                                           \
     if (ukl_min(AT(const uint32_t, CNT)[1], W(CNT_CAP)) != 0u) {                                       \
@@ -166,7 +166,7 @@ typedef struct PpTg {
 // The stage word of `GRID` (after the barrier's three): 0 the queue's first phase, 1 its second,
 // 2 done.
 #define PG_STAGE (3u)
-// Set where P1 ends the round before the expansion (requests, or a refusal: decision 0467 §1).
+// Set where P1 ends the round before the expansion (requests, or a refusal: decision 0487 §1).
 #define PG_STOP (4u)
 
 // The rows of every grid kernel: the arena, the slab, the layout, the group's memory, and where
@@ -201,7 +201,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     if (ukl_grid_failed(g)) return;
     uint32_t last = W(LAST);
     // --- The front: the nodes, the names, the directives, the text map, the guards ----------
-    // A node a thread, and a scan or a sort between: no thread walks a file (decision 0460).
+    // A node a thread, and a scan or a sort between: no thread walks a file (decision 0468).
     uint32_t nn = N(TOTAL);
     EACH(n, nn) {
         pp_names(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TOTAL), AT(uint64_t, KEYS), nf, n);
@@ -246,7 +246,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     BARRIER();
     EACH(s, N(ITOTAL)) pd_items(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint32_t, IFIRST), AT(const uint32_t, ITOTAL), AT(const uint64_t, PKEYS), AT(uint32_t, ITEMS), AT(uint32_t, ROOM), nf, W(CAP), s);
     if (last == 2u) return;
-    // --- P1 (decision 0467): the include tree, its layout and its conditionals, iterated -----
+    // --- P1 (decision 0487): the include tree, its layout and its conditionals, iterated -----
     // Each iteration from the last one's state: the tree's words and layout (§2), the groups'
     // activity, the definitions' table (§3), the tests and the groups (§4), the includes (§5).
     // The iterations end at the first that changes nothing.
@@ -335,7 +335,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         BARRIER();
         SCAN(nd, RFLAG, RAT, RTOTAL);
         EACH(j, nd) pe_rows(AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DSLOT), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint64_t, DIR_KEYS), AT(const uint32_t, DIR_ACTS), AT(const uint32_t, RFLAG), AT(const uint32_t, RAT), AT(uint64_t, SORT_KEYS), AT(uint64_t, NAME_KEYS), AT(uint32_t, VALUES), AT(uint32_t, RTYPES), W(N_BUILTIN), j);
-        // The last text pass's rows after the directives' (decision 0475 §2).
+        // The last text pass's rows after the directives' (decision 0488 §2).
         EACH(k, W(CNT_CAP)) tf_row(TFACTS, AT(uint64_t, SORT_KEYS), AT(uint64_t, NAME_KEYS), AT(uint32_t, VALUES), AT(uint32_t, RTYPES), W(N_BUILTIN) + N(RTOTAL), k);
         ONE(x) {
             pe_rows_total(AT(const uint32_t, RTOTAL), AT(uint32_t, N_ROWS), W(N_BUILTIN), x);
@@ -432,7 +432,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         SEG(UKL_SEG_MAX, nd, LVAL, LHEAD, LATEST);
         SEG(UKL_SEG_MAX, nd, LVALN, LHEAD, LATESTN);
         // Each chain's first true arm, again (the lines read the last iteration's: an arm after
-        // the taken one is not read, and its `__COUNTER__`s do not count, decision 0475 §3).
+        // the taken one is not read, and its `__COUNTER__`s do not count, decision 0488 §3).
         EACH(q, nq) p1_taken_reset(AT(const uint32_t, P1_NGRP), AT(uint32_t, P1_TAKEN), q);
         BARRIER();
         // The tests, the chains' taken arms, the groups (§4); the includes' files (§5).
@@ -447,7 +447,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
                                     AT(const uint32_t, DACTIVE), AT(const uint32_t, DSLOT), W(P1_MAXDEPTH), AT(const uint32_t, IF_KIND), AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL),
                                     AT(const uint32_t, OUT), AT(const uint32_t, OBASE), AT(const uint32_t, VTOTAL), W(OUT_CAP), AT(uint32_t, P1_CAND), AT(uint32_t, P1_ONCE), w);
         }
-        // The last text pass's `once` marks (decision 0475 §2).
+        // The last text pass's `once` marks (decision 0488 §2).
         EACH(k, W(CNT_CAP)) tf_once(TFACTS, AT(uint32_t, P1_ONCE), k);
         BARRIER();
         EACH(i, ni) p1_grp_roots(AT(const uint32_t, P1_GRPF), AT(const uint32_t, N_INSTS), AT(uint32_t, P1_OWN), AT(uint32_t, P1_PAR), i);
@@ -482,7 +482,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         if (ichanged[0] != 0u) continue;
         // Requests: the round ends here, before the text (§1).
         if (N(P1_NREQ) != 0u) break;
-        // --- The text pass (decision 0475 §1): the iterations hold ----------------------------------
+        // --- The text pass (decision 0488 §1): the iterations hold ----------------------------------
         // The stretches in the unit's order: their slots', a dead instance's last.
         EACH(j, W(GC)) pe_gap_keys(AT(const uint32_t, GSLOT), AT(const uint32_t, N_GAPS), AT(uint64_t, GKEYS), j);
         BARRIER();
@@ -492,7 +492,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         TICK();
         BARRIER();
         SCAN(N(N_GAPS), GCOUNTS, GAT, GTOTAL);
-        // The stretches' runs: a top call's scope in the text (0467 §6).
+        // The stretches' runs: a top call's scope in the text (0487 §6).
         EACH(p, N(N_GAPS)) pe_run_starts(AT(const uint32_t, SINST), AT(const uint32_t, N_GAPS), AT(uint32_t, RSTART), p);
         BARRIER();
         SCAN(N(N_GAPS), RSTART, RUNX, RUNTOT);

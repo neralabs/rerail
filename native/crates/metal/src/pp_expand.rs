@@ -136,7 +136,7 @@ pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evalu
 }
 
 /// An instance of a file in the unit's layout (`PpInst` in the UKL), as P1 lays it out on the
-/// device (decision 0467 §2): its file, its first directive and its first stretch in the layout's
+/// device (decision 0487 §2): its file, its first directive and its first stretch in the layout's
 /// words.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -146,7 +146,7 @@ pub struct PpInst {
     pub gap_first: u32,
 }
 
-/// An instance of the include tree (`PpNode` in the UKL, decision 0467 §2): its file, its parent
+/// An instance of the include tree (`PpNode` in the UKL, decision 0487 §2): its file, its parent
 /// (`NO_PARENT` for a root) and the parent's directive that entered it (a root's rank: 0 the
 /// predefines, 1 the main file, the next instance), its depth, and its unit in a batch.
 #[repr(C)]
@@ -174,7 +174,7 @@ pub struct P1Out {
     /// P1's refusals and the round's requests: with either, no lookups.
     pub flags: u32,
     pub requests: Vec<Request>,
-    /// The expansion's refusals (`X_*`) in the tests' lines (decision 0467 §4).
+    /// The expansion's refusals (`X_*`) in the tests' lines (decision 0487 §4).
     pub refused: u32,
 }
 
@@ -184,7 +184,7 @@ pub const NO_PARENT: u32 = u32::MAX;
 /// A file table row's file where the search found none.
 pub const NOT_FOUND: u32 = u32::MAX;
 
-/// An include the file table has no row for (decision 0467 §1): its key (unit-free; the table's
+/// An include the file table has no row for (decision 0487 §1): its key (unit-free; the table's
 /// row takes it), the including file, its name, and whether it is `<…>` and an `#include_next`
 /// (the main file's is an `#include`). The host answers it and nothing else.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -197,7 +197,7 @@ pub struct Request {
     pub next: bool,
 }
 
-/// P1's refusals (`pp_p1.uglykl`'s `P1_*`): the cases a later step of decision 0467 builds.
+/// P1's refusals (`pp_p1.uglykl`'s `P1_*`): the cases a later step of decision 0487 builds.
 pub const P1_ROOM: u32 = 1;
 pub const P1_EMBED: u32 = 4;
 pub const P1_ITERATIONS: u32 = 16;
@@ -233,7 +233,7 @@ pub fn feature_key(test: &str, operand: &str) -> u64 {
 }
 
 /// A unit as P1 starts it, and what the host knows from the rounds before: P1's input. The device
-/// grows its include tree (decision 0467 §5), lays it out (§2) and decides its conditionals (§4).
+/// grows its include tree (decision 0487 §5), lays it out (§2) and decides its conditionals (§4).
 pub struct Layout {
     /// The roots: each unit's predefines (`pdir` 0), then its main file (1).
     pub nodes: Vec<PpNode>,
@@ -329,7 +329,7 @@ pub const NEEDS: usize = 8;
 pub const P1_RUNGS: u32 = 8;
 
 /// The text's rows, `once` marks and `__COUNTER__` uses room at the expansion's rung `rung`
-/// (decision 0475).
+/// (decision 0488).
 pub fn text_rows(rung: u32) -> usize {
     1024 << rung
 }
@@ -469,7 +469,7 @@ impl XCaps {
 
 /// The rooms a unit's runs settled at: P1's, the expansion's and the definitions' rung. They
 /// carry to the unit's next run: a round's unit holds the last round's, so its rooms are a floor
-/// (decision 0478 §6), and the expansion's run starts from the last round's.
+/// (decision 0489 §6), and the expansion's run starts from the last round's.
 #[derive(Clone, Copy, Debug)]
 pub struct Sizes {
     pub p1: Caps,
@@ -534,7 +534,7 @@ fn builtin_value(key: u64) -> u32 {
 /// S6–S8 and the lookups (R4): the text map, the visibility rows and their sort, the active
 /// stretches, and each stretch token's meaning where it stands.
 pub struct Vis {
-    // The include tree, grown and laid out on the device (decision 0467 §2, §5): the roots and
+    // The include tree, grown and laid out on the device (decision 0487 §2, §5): the roots and
     // the instances made, the tree's depth, the file table, the files' search entries, the depth's
     // bound, the given `#if` values; each instance's liveness; by directive word, the instance
     // made for it and its file, the one it enters, and its found file; each file's first
@@ -549,14 +549,14 @@ pub struct Vis {
     unit_file: Buf,
     max_depth: u32,
     live: Buf,
-    // The tests' lines (decision 0467 §4): by directive word, its tokens, its first node, its
+    // The tests' lines (decision 0487 §4): by directive word, its tokens, its first node, its
     // first top token, its value; by top token, its node and its mark; the keys of `defined`
     // and `true`, and whether `true` is 1; the operators' table and the configuration's answers.
     if_count: Buf,
     if_first: Buf,
     if_kind: Buf,
     if_inst: Buf,
-    // `#line`'s rows (decision 0467 §6): each word's offset, key, scans' values and heads, the
+    // `#line`'s rows (decision 0487 §6): each word's offset, key, scans' values and heads, the
     // latest rows before each word and each stretch, and the rows' scratch room.
     ldelta: Buf,
     lkey: Buf,
@@ -628,7 +628,7 @@ pub struct Vis {
     p1_usize: Buf,
     p1_utotal: Buf,
     p1_base: Buf,
-    // P1's conditionals (decision 0467 §4): each instance's group count and first group word,
+    // P1's conditionals (decision 0487 §4): each instance's group count and first group word,
     // the groups (the state an iteration reads), each chain's taken arm, the jumping's two pairs
     // of buffers, the rounds' and iterations' flags, and the given `#if` values.
     nq: usize,
@@ -656,7 +656,7 @@ pub struct Vis {
     pub(crate) sort_keys: Buf,
     pub(crate) name_keys: Buf,
     pub(crate) values: Buf,
-    // Push and pop rows (decision 0467 §3): each row's type, the active pushes and pops, each
+    // Push and pop rows (decision 0487 §3): each row's type, the active pushes and pops, each
     // sorted row's matching push and the row its value comes from, and the jumping's rounds.
     rtypes: Buf,
     n_stack: Buf,
@@ -697,7 +697,7 @@ impl Vis {
         let (nd, ng, nb, ni) = (caps.dirs, caps.gaps, lay.builtins.len(), caps.nodes);
         // Group words: a file has a group more than its arms, so at most one more than its directives.
         let nq = nd + ni;
-        // Past the directives' and the built-ins' rows, the text's (decision 0475 §2).
+        // Past the directives' and the built-ins' rows, the text's (decision 0488 §2).
         let rows = nd + nb + text_rows(x_rung);
         // The roots, then the room for the instances the device makes.
         let mut nodes = lay.nodes.clone();
@@ -880,7 +880,7 @@ impl Vis {
         l.at("SSLOT", &self.sslot).at("SINST", &self.sinst).at("GAT", &self.gat).at("GTOTAL", &self.gscan.total).at("LOOKUPS", &self.lookups).at("VBAD", &self.bad);
     }
 
-    /// The layout P1 made on the device (decision 0467 §2), read back for tests: each directive's
+    /// The layout P1 made on the device (decision 0487 §2), read back for tests: each directive's
     /// slot and each stretch's, in the layout's words.
     pub fn p1(&self) -> P1Out {
         // SAFETY: the device finished; each store holds at least its count's words.
@@ -925,7 +925,7 @@ impl Vis {
         self.word(&self.flags)
     }
 
-    /// The round's requests (decision 0467 §1), each once.
+    /// The round's requests (decision 0487 §1), each once.
     pub fn requests(&self) -> Vec<Request> {
         let n = (self.word(&self.nreq) as usize).min(self.nd);
         // SAFETY: the device finished; `reqs` holds `nd` requests, `n` of them written.
@@ -933,7 +933,7 @@ impl Vis {
         let mut out: Vec<Request> = raw
             .iter()
             .map(|q| {
-                // copy: not block data (a request's name, the host's search key: decision 0467 §1)
+                // copy: not block data (a request's name, the host's search key: decision 0487 §1)
                 // SAFETY: the device finished; a request's name lies within the names' room.
                 let (at, n) = ((q[3] as usize).min(self.rn_cap as usize), q[4] as usize);
                 let name = unsafe { std::slice::from_raw_parts(self.rnames.host().add(at), n.min(self.rn_cap as usize - at)).to_vec() };
@@ -974,9 +974,9 @@ pub const X_ACROSS: u32 = 256;
 pub const X_VA_OPT: u32 = 512;
 pub const X_RELEX: u32 = 1024;
 pub const X_SPLICE: u32 = 2048;
-/// A grid barrier's bound reached: the grid's groups were not resident together (decision 0460 §4).
+/// A grid barrier's bound reached: the grid's groups were not resident together (decision 0468 §4).
 pub const X_BARRIER: u32 = 4096;
-/// `#` or `##` of `__COUNTER__`'s value (decision 0475 §3).
+/// `#` or `##` of `__COUNTER__`'s value (decision 0488 §3).
 pub const X_COUNTER_SPELLED: u32 = 8192;
 /// The host's: a unit whose expansion run ended with P1's refusals or requests, which its
 /// rounds had settled.
@@ -1044,7 +1044,7 @@ pub struct Exp {
     pub ctl: Buf,
     // `__COUNTER__`'s uses and their room.
     cnt: Buf,
-    // The text pass's facts (decision 0475): its rows (sort key, name key, type), its `once`
+    // The text pass's facts (decision 0488): its rows (sort key, name key, type), its `once`
     // marks (file, slot), the `__COUNTER__` uses' places (the text's, then the lines'), and their
     // counts and keys.
     tr_sk: Buf,
@@ -1270,7 +1270,7 @@ pub struct Expanded {
     pub refused: u32,
     pub out: Vec<u32>,
     pub rung: u32,
-    /// The command buffer's launches: 2 for every unit, `pp_setup` and `pp_check` (decisions 0460 §4, 0475 §1).
+    /// The command buffer's launches: 2 for every unit, `pp_setup` and `pp_check` (decisions 0468 §4, 0488 §1).
     pub launches: usize,
     /// The groups of the grid it ran on, after any halving.
     pub groups: u64,
@@ -1284,7 +1284,7 @@ pub struct Expanded {
     pub stoks: Vec<[u32; 3]>,
     /// The arena's use and room at the rung it ran at, store by store (`ROOM_STORES`).
     pub room: [(u32, u32); 6],
-    /// P1's refusals (`P1_*`), and the round's requests (decision 0467 §1): with either, the
+    /// P1's refusals (`P1_*`), and the round's requests (decision 0487 §1): with either, the
     /// round ended before the expansion, and `out` is empty.
     pub p1_flags: u32,
     pub requests: Vec<Request>,
@@ -1433,7 +1433,7 @@ pub fn lookups_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(cr
         let front = Front::new(&arena, unit, false, groups)?;
         let defs = Defs::new(&arena, unit, rung)?;
         let vis = Vis::new(&arena, unit, lay, p1, x_rung)?;
-        // The expansion's stores: the tests' lines are expanded in P1 (decision 0467 §4).
+        // The expansion's stores: the tests' lines are expanded in P1 (decision 0487 §4).
         let exp = Exp::new(&arena, unit, lay, x, p1)?;
         let mut l = Lay::new();
         front.lay(&mut l, TO_VIS);
@@ -1554,7 +1554,7 @@ pub struct Part {
 }
 
 /// The units `units` (each a unit and its layout, of one dialect) expanded in as few batches as
-/// hold them (decision 0460, batching): one arena and one run of the grid a batch. A batch is
+/// hold them (decision 0468, batching): one arena and one run of the grid a batch. A batch is
 /// split in halves where its documents are in more than one slab (a batch reads one, and
 /// gathering would copy them), where the budget refuses its arena, or where the device refuses
 /// it: a refusal is then a unit's alone.

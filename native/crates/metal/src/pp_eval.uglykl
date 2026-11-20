@@ -1,5 +1,5 @@
 // The preprocessor's evaluator over tapes (decision 0436): plain MSL passes over a unit's files,
-// each a source's bytes and its preprocessor tape (format 16, decision 0460 §1), both where the
+// each a source's bytes and its preprocessor tape (format 16, decision 0468 §1), both where the
 // slab residency placed them: `data` is the slab the unit's documents were gathered into, and
 // `files` their views (`DocView`, the residency's layout). The tape is read through the reads
 // written once in CLIF (`<ukl/reads/tape.h>`, decision 0310), each node where it lies: nothing is
@@ -173,7 +173,7 @@ UKL_INLINE void pp_nodes(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_
 // A node is a directive row where its kind is a directive's (they are items alone: a directive's
 // own nodes are tokens and kinds past `K_IDENTIFIER`). A group (`K_GROUP`) holds its chain's arms
 // (`#if…`, `#elif…`, `#else`), its `#endif`, and each arm's items after it. Every row's fields come
-// from scans over the batch's nodes and searches, never from a walk of a file (decision 0460):
+// from scans over the batch's nodes and searches, never from a walk of a file (decision 0468):
 // - a node's depth: the groups around it, a scan of +1 after each group's node and -1 at its end;
 // - its place among rows, groups and arms: scans of their flags (a file's from its first node's);
 // - the arm an item is read under: the latest arm at the item's own depth before it, a search in
@@ -332,7 +332,7 @@ UKL_INLINE void pp_guards(UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uin
 // Each directive's name key (0: none): a `#define`'s or `#undef`'s name, an `#ifdef`'s,
 // `#ifndef`'s, or (in a chain) `#elifdef`'s or `#elifndef`'s operand, where the first token after
 // its word is an identifier: the key the names pass gave that leaf. One thread a row.
-// What a `#pragma` does (decision 0467 §3), by its first word as the spike's `pragma` reads it:
+// What a `#pragma` does (decision 0487 §3), by its first word as the spike's `pragma` reads it:
 // `once`, and `push_macro` or `pop_macro` with `( "name"` after it.
 #define A_NONE (0u)
 #define A_ONCE (1u)

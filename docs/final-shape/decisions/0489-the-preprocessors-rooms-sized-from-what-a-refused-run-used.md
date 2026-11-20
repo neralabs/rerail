@@ -1,6 +1,8 @@
-# 0478: the preprocessor's rooms sized from what a refused run used
+# 0489: the preprocessor's rooms sized from what a refused run used
 
-The user, 2026-11-19, after 0475: "test on boost::preprocessor and ensure that we are accurate on
+(Was 0478 on Go-C-and-C-support; renumbered at its roll-up into rr-align, roll-up 21, past 0486.)
+
+The user, 2026-11-19, after 0488: "test on boost::preprocessor and ensure that we are accurate on
 those files. Also profile on them and address any inefficiencies."
 
 ## Intro
@@ -86,7 +88,7 @@ Boost.Preprocessor's 64 test files (C as C, the rest as C++), each its own unit:
   537k; exits' joins 44k. So most of it is copies of the same tokens, all kept to the end. The fix
   is a design of its own: an argument read in place in its call's list instead of copied, and a
   list's tokens reclaimed once its parent holds them.
-- **The last round's run is done twice.** Since 0475 the last round's run does the text pass
+- **The last round's run is done twice.** Since 0488 the last round's run does the text pass
   inside P1's iterations: it is the expansion. The expansion's run (`expand_many`, a batch of
   units) does it all again. A batch's rounds run unit by unit, and the batch's run repeats them.
   The rounds should be the batch's: one run a round over the batch's units still requesting, a

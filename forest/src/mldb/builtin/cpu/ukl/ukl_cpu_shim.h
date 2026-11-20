@@ -34,7 +34,7 @@
       group when its own ends. A thread that polls another group's progress (`ukl_poll_yield`, a grid barrier's poll)
       suspends; once every thread of its group waits so, the group yields to the next. So a persistent grid of up to
       `resident` groups meets its barriers here, and a larger one fails their bound, as on a GPU that holds fewer
-      (decision 0460 §4). At a resident count of 1, groups run one after another. Groups take turns in order: a run
+      (decision 0468 §4). At a resident count of 1, groups run one after another. Groups take turns in order: a run
       is the same every time.
 */
 

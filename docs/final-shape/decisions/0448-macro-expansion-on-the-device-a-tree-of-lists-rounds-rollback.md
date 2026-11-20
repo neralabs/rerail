@@ -57,7 +57,7 @@ parent's raw tokens show again, with no copy and no shadow.
 ## 2. Memory
 
 **One arena a batch of units:** one `rerail_blocks::Block`, leased within the GPU budget, with
-every store at an offset inside it (decision 0460 §3; until 0460 step 3, SoA columns in
+every store at an offset inside it (decision 0468 §3; until 0468 step 3, SoA columns in
 `MappedBuffer`s). It is laid out once before the command buffer. Every allocation in a round is a prefix sum's offset from a device-held top, so there
 are no per-token atomics and the placement is deterministic.
 
@@ -86,11 +86,11 @@ are no per-token atomics and the placement is deterministic.
 
 ## 3. The passes and their mapping
 
-**Since 0460 step 5a, a pass is a phase of a persistent grid, not a dispatch.** G co-resident
+**Since 0468 step 5a, a pass is a phase of a persistent grid, not a dispatch.** G co-resident
 groups of 256 threads (8 SIMD groups of 32) run every pass in a grid-stride loop, **one thread an
 element** (a token, an item or a row), with `ukl_grid_barrier` between phases. Each pass reads
 its count from the arena, so there are no indirect arguments. The kernels are `pp_setup`,
-`px_expand` (encoded twice) and `pp_check`, in `pp_grid.metal` (0460 §4). Until then each pass
+`px_expand` (encoded twice) and `pp_check`, in `pp_grid.metal` (0468 §4). Until then each pass
 was one dispatch, sized by an indirect argument that the scan before it wrote. The table below
 names the passes. Their order is `pp_setup`'s.
 
@@ -124,12 +124,12 @@ per-level form they replaced:
 | S7 sort rows by (key, position) | row | the visibility table |
 | S8 stretches | (instance, directive gap) | each active stretch, compacted by a scan: its first token and its position. These are the round-0 lists, whose tokens are tape leaves (refs, not copies) |
 
-**The launch bound decided the execution's shape** (0460 §4 since makes every evaluation 4
+**The launch bound decided the execution's shape** (0468 §4 since makes every evaluation 4
 launches, whatever its size). An evaluation has at most 200 launches
 (`KERNEL_LAUNCH_LIMIT`, the user's, 2026-11-03). Rounds as launches would need about 40 a
 round, over tens of rounds. So the recursive part runs on **0027's device work queue**:
 - **One persistent dispatch** (at most 64 groups of 256 threads), re-launched by the host only
-  as 0027's safety net. Since 0460, the queue runs on the same grid as the setup (`px_expand`),
+  as 0027's safety net. Since 0468, the queue runs on the same grid as the setup (`px_expand`),
   its two phases separated by a grid barrier, with one re-launch at a fixed count.
 - **A worker is a SIMD group.** Lane 0 takes an item and broadcasts it; the 32 lanes share its
   tokens, 32 at a time, with SIMD scans carrying across chunks (`simd_prefix_*`, a
@@ -142,7 +142,7 @@ round, over tens of rounds. So the recursive part runs on **0027's device work q
   `rerail-metal`, one definition both include.
 
 **Top level: grid passes before the queue.** The stretches' tokens (up to 600 K in a unit) get
-one thread a token, as `pp_setup`'s last phases (in launches until 0460): E1 classify, E2 depth, E3 reach, E4 outermost, E6 calls. Each
+one thread a token, as `pp_setup`'s last phases (in launches until 0468): E1 classify, E2 depth, E3 reach, E4 outermost, E6 calls. Each
 outermost call becomes the queue's first items.
 
 **The queue's items:**
@@ -162,7 +162,7 @@ outermost call becomes the queue's first items.
   of allocation does not matter and nothing needs determinism there.
 - **Dead work:** an item under a dead list does its work and its pushes are dropped (it checks
   its list's state when taken). Rollback is rare.
-- **Launches in all:** 4 for every unit since 0460 step 5a: `pp_setup`, `px_expand` twice and
+- **Launches in all:** 4 for every unit since 0468 step 5a: `pp_setup`, `px_expand` twice and
   `pp_check`. A grid past residency fails its barrier and runs again at half the groups. Before
   that, a unit took 118 to 176: one dispatch for each level of every scan, segmented scan and
   sort digit.

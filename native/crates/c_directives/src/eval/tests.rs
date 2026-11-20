@@ -51,7 +51,7 @@ fn the_evaluator_copies_no_tape() {
     assert!(ukl.contains("clif_tape_start") && ukl.contains("clif_tape_line"), "the evaluator reads through the CLIF reads");
 }
 
-/// §5 of decision 0460: the evaluator is UKL, launched through the lane: its source has no MSL
+/// §5 of decision 0468: the evaluator is UKL, launched through the lane: its source has no MSL
 /// (no Metal kernel, attribute, address space or SIMD function of its own), takes UKL's work queue
 /// and grid, and the preprocessor's MSL work queue is gone.
 #[test]
@@ -285,7 +285,7 @@ fn the_paste_relexer_is_the_lexers() {
     eprintln!("{} spellings, 5 dialects", texts.len());
 }
 
-/// A unit on the device from its main file alone, in P1's rounds (decision 0467 §1): the last
+/// A unit on the device from its main file alone, in P1's rounds (decision 0487 §1): the last
 /// round's unit and layout, its files' format 15 tapes (the host's views of them), sources and paths.
 struct OnDevice {
     unit: Unit,
@@ -311,7 +311,7 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
 fn on_device(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool) -> Result<OnDevice, &'static str> {
     use super::rounds::Refused;
     use rerail_metal::pp_expand::*;
-    // The rooms carry from round to round (decision 0478 §6), and on to the expansion's run.
+    // The rooms carry from round to round (decision 0489 §6), and on to the expansion's run.
     let mut sizes: Option<Sizes> = None;
     let r = super::rounds::run(&cfg, io, path, cpp, |u, l| {
         let mut s = sizes.map_or_else(|| Sizes::first(u, l), |s| s.fit(u, l));
@@ -356,7 +356,7 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
     let (ev, got, out) = lookups(&d.unit, &d.lay).unwrap();
     same(out.flags, 0, format!("{what}: P1's refusals"));
     same(out.requests.len(), 0, format!("{what}: the last round's requests"));
-    // R1, R3 and R5 of decision 0467: the tree the device grew, its layout and its activity are
+    // R1, R3 and R5 of decision 0487: the tree the device grew, its layout and its activity are
     // the spike's: every live instance's directives and stretches, by slot, with their file's
     // path, their index in it, and whether they are active.
     let dirs_of = |f: usize| (if f + 1 < ev.dir_bases.len() { ev.dir_bases[f + 1] } else { ev.rows.len() as u32 }) - ev.dir_bases[f];
@@ -409,7 +409,7 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
     Ok([got.len(), defs, builtins])
 }
 
-/// R4 of decision 0467: every `#if` and `#elif` is decided on the device as the serial pass's
+/// R4 of decision 0487: every `#if` and `#elif` is decided on the device as the serial pass's
 /// `if_value` decides it. Each expression below chooses its own text (`t` or `f` and its index),
 /// and the unit's output is the serial pass's, in C and C++. The expressions cover each operator
 /// and its precedence, the unsigned rules, the short circuits (a division by zero not evaluated
@@ -467,7 +467,7 @@ fn if_values_are_the_serial_passes() {
     }
 }
 
-/// R5 of decision 0467 (literal names): the device grows the include tree from the main file
+/// R5 of decision 0487 (literal names): the device grows the include tree from the main file
 /// alone, in rounds, and it is the spike's (checked inside `lookups_agree`: every live
 /// instance's directives and stretches by slot, with their file, and every name's meaning).
 /// Quoted names found by the includer's directory and by the search, `<…>` names, a quoted name
@@ -499,7 +499,7 @@ fn the_include_tree_is_the_spikes() {
     }
 }
 
-/// R5 of decision 0467 (expanded names, step 6): an include whose name is a macro's expansion,
+/// R5 of decision 0487 (expanded names, step 6): an include whose name is a macro's expansion,
 /// and a header test whose operand is one, resolve on the device as `Pp::header_of` spells the
 /// name: a string, an object-like or function-like macro giving `<…>` (its tokens joined, a
 /// blank where space was), a stringized operand, a name defined in an earlier header, a name
@@ -527,7 +527,7 @@ fn expanded_include_names_are_the_spikes() {
     }
 }
 
-/// R7 of decision 0467: each case §6 lists, refused until step 7, gives the serial pass's
+/// R7 of decision 0487: each case §6 lists, refused until step 7, gives the serial pass's
 /// tokens on the device, in C and C++, a round of 2 launches. A call across a stretch's end (its
 /// arguments over a `#define`, an `#undef`, a conditional, a `#line`, a pragma; nested; an exit
 /// whose `(` follows a directive; in a header), `#line` and line
@@ -626,7 +626,7 @@ fn the_refused_cases_are_the_serial_passes() {
     }
 }
 
-/// R6 of decision 0467: between rounds the host only answers requests. The rounds' runner reads
+/// R6 of decision 0487: between rounds the host only answers requests. The rounds' runner reads
 /// no spike and no serial pass, decides nothing about the unit (no tree, no slots, no activity,
 /// no definition), and its loop's only calls on the files are the search and the read.
 #[test]
@@ -641,7 +641,7 @@ fn the_host_only_loads_files_between_rounds() {
     assert!(!code.contains("io.") || code.matches("io.").count() == 3, "the runner calls the files only to search and read (the main file's read, a header's search and read)");
 }
 
-/// R3 of decision 0467: the device iterates the `#ifdef` family, the chains and the groups to
+/// R3 of decision 0487: the device iterates the `#ifdef` family, the chains and the groups to
 /// their fixpoint, and every directive's and stretch's activity is the spike's (checked inside
 /// `lookups_agree`), with every name's meaning. Nested chains, `#elifdef` and `#elifndef`,
 /// `#else`, a test that depends on a definition made under an earlier test (a chain of them,
@@ -667,7 +667,7 @@ fn the_groups_are_the_spikes() {
     }
 }
 
-/// R2 of decision 0467: `push_macro` and `pop_macro` are rows of the device's table, a pop's
+/// R2 of decision 0487: `push_macro` and `pop_macro` are rows of the device's table, a pop's
 /// value the one its push saw, matched as a stack per name (the spike's `resolve_rows`): every
 /// name then means on the device what it means in the spike. Nested pushes, a push of a name not
 /// defined, a pop with no push, a push and pop across an include, other names between.
@@ -799,7 +799,7 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     (Ok(spelled), serial.0, x.rung, x.launches)
 }
 
-/// Decisions 0460 §4 and 0475 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
+/// Decisions 0468 §4 and 0488 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
 /// text inside its P1 iterations) and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
 /// definitions, and one that runs again at a larger rung. A grid past the groups the device holds
 /// at once fails its barrier, never hangs, and runs again at half the groups to the same output.
@@ -855,7 +855,7 @@ fn part_tokens(part: &rerail_metal::pp_expand::Part, files: &[Vec<u8>], tapes: &
         .collect()
 }
 
-/// R1, R2 and R4 of decision 0475: a text `_Pragma`'s `push_macro`, `pop_macro` and `once` are
+/// R1, R2 and R4 of decision 0488: a text `_Pragma`'s `push_macro`, `pop_macro` and `once` are
 /// rows the iterations read, as the serial pass carries them out. Names after a pop in the text
 /// and in an `#if`; an include after `once` skipped; a pop through a macro, from a macro's operand,
 /// in a header, in an inactive group, nested with `#pragma push_macro`; a diagnostic pragma and a
@@ -912,7 +912,7 @@ fn pragma_rows_are_the_serial_passes() {
     same(on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).err(), Some("a _Pragma that makes a row"), "a _Pragma's row in an #if");
 }
 
-/// R3 of decision 0475: `__COUNTER__` in `#if`, `#elif`, an `#include`'s name and `#line`
+/// R3 of decision 0488: `__COUNTER__` in `#if`, `#elif`, an `#include`'s name and `#line`
 /// counts with the text's uses in the serial reading's order: text before and after, two lines,
 /// an arm not read, the text's uses feeding an `#if`, a call whose arguments run over a
 /// directive that counts, a header's uses. Each in C and C++, 2 launches.
@@ -950,7 +950,7 @@ fn counters_in_directives_are_the_serial_passes() {
     }
 }
 
-/// Decision 0460, batching: units expanded in one batch give each its own serial answer. The same
+/// Decision 0468, batching: units expanded in one batch give each its own serial answer. The same
 /// names are defined differently, undefined, or left undefined from unit to unit, so a unit that
 /// saw an earlier unit's row would differ; `__FILE__` used after another unit redefined it; one
 /// unit the device refuses (a call past its file's end), so the batch splits and that unit alone
@@ -1171,7 +1171,7 @@ fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand
     eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
 }
 
-/// R8 of decision 0467 (and R10 of 0448): the corpus preprocessed on the device, each file its
+/// R8 of decision 0487 (and R10 of 0448): the corpus preprocessed on the device, each file its
 /// own unit from its main file alone (empty stubs for the headers it does not have), against the
 /// serial pass. The spike is not run: the rounds decide every directive and resolve every
 /// include. Every unit gives the serial pass's tokens, none is refused (a refusal is counted by
@@ -1218,8 +1218,8 @@ fn boost_preprocessor_is_the_serial_passes() {
     assert!(r.same_units > 0 && r.launches == LAUNCHES, "{} units, {} launches a round", r.same_units, r.launches);
 }
 
-/// The launches of an evaluation's command buffer: `pp_setup` and `pp_check` (decisions 0460 §4,
-/// 0475 §1).
+/// The launches of an evaluation's command buffer: `pp_setup` and `pp_check` (decisions 0468 §4,
+/// 0488 §1).
 const LAUNCHES: usize = 2;
 
 /// What `against_serial` found.

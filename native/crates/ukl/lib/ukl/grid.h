@@ -88,7 +88,7 @@ UKL_INLINE uint32_t ukl_grid_first(UklGrid g, uint32_t n, uint32_t group)
 }
 
 // At most this many values, a scan or a segmented scan is group 0's alone: its tiles one after another, with no
-// barrier but the last (decision 0460, the fixed latency). Every group reads the same count, so all take the same path.
+// barrier but the last (decision 0468, the fixed latency). Every group reads the same count, so all take the same path.
 #define UKL_GRID_SMALL 4096u
 // The scans `ukl_grid_scans` runs at once at most.
 #define UKL_GRID_SCANS 4u

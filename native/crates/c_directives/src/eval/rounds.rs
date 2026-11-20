@@ -1,4 +1,4 @@
-//! P1's rounds (decision 0467 §1): the device decides, the host loads.
+//! P1's rounds (decision 0487 §1): the device decides, the host loads.
 //!
 //! A unit starts as its predefines and its main file. Each round is one evaluation on the device
 //! (`eval`), which grows the include tree, lays it out and decides its conditionals. An include
@@ -15,7 +15,7 @@ use rerail_metal::slabs;
 
 /// A unit of `files` (each a source and whether it is C++), as the evaluator reads it: each file's
 /// format 16 tape and its source placed in the slab residency, where the device reads them
-/// (decision 0460 §1). A document already resident (by its digest) is not placed again.
+/// (decision 0468 §1). A document already resident (by its digest) is not placed again.
 pub fn place(files: &[(&[u8], bool)]) -> Unit {
     use sha2::{Digest as _, Sha256};
     let tapes: Vec<_> = files.iter().map(|&(s, cpp)| rerail_c_pp::tape::image_16(s, crate::pp::options(cpp))).collect();

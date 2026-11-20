@@ -16,7 +16,7 @@ pub mod buffer_observation;
 pub mod lane;
 pub mod launch;
 pub mod launch_budget;
-/// The preprocessor's evaluation arena and its kernels' one UKL source (decisions 0448, 0460).
+/// The preprocessor's evaluation arena and its kernels' one UKL source (decisions 0448, 0468).
 pub mod pp_arena;
 /// The preprocessor's evaluator over tapes (decision 0436).
 pub mod pp_eval;

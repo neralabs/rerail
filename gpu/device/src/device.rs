@@ -154,7 +154,7 @@ impl Device {
 
     /// The device's GPU cores, when it says: on a Mac, IORegistry's `gpu-core-count` of the device's entry
     /// (the `MTLDevice`'s registry ID). A persistent grid's resident groups are these times the groups a core
-    /// holds (decision 0460 §4).
+    /// holds (decision 0468 §4).
     pub fn gpu_cores(&self) -> Option<u32> {
         match self {
             #[cfg(target_os = "macos")]
@@ -173,7 +173,7 @@ impl Device {
     }
 
     /// The groups of `threads` threads, each using `local` bytes of threadgroup memory, that the device holds at
-    /// once, when it gives its cores (`gpu_cores`): a persistent grid's G (decision 0460 §4). Each core is taken at
+    /// once, when it gives its cores (`gpu_cores`): a persistent grid's G (decision 0468 §4). Each core is taken at
     /// its least: one group of the device's largest (`max_threadgroup`) and the most threadgroup memory a group may
     /// have (`max_threadgroup_memory`).
     pub fn resident_groups(&self, threads: u32, local: u64) -> Option<u64> {

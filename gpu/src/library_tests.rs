@@ -607,7 +607,7 @@ fn hash_tables_build_and_probe() {
 }
 
 /// The grids a grid test runs at: 1, 8 and 32 groups, and the device's resident count for `f` at `lsz` threads a
-/// group (`Device::resident_groups`, R5 of decision 0460), when the device gives its cores.
+/// group (`Device::resident_groups`, R5 of decision 0468), when the device gives its cores.
 fn grid_sizes(f: &crate::device::ComputeFunction, lsz: u32) -> Vec<u32> {
     let mut g = vec![1u32, 8, 32];
     if let Some(r) = crate::shared::get().and_then(|s| s.device.resident_groups(lsz, f.threadgroup_bytes())) {
@@ -624,7 +624,7 @@ fn grid_ctl() -> crate::device::Buffer {
     buffer_of(&[0u32; 3]).unwrap()
 }
 
-/// R6 of decision 0460: 10,000 grid barriers in a row, at 1, 8 and 32 groups and the device's resident count, each round's reads seeing every
+/// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups and the device's resident count, each round's reads seeing every
 /// group's writes before it, and no barrier failed.
 #[test]
 fn grid_barriers_see_every_groups_writes() {

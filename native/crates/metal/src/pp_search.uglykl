@@ -1,6 +1,6 @@
 // The preprocessor's searches over its sorted and scanned stores: a lower bound, and an output
 // element's item. The scans, segmented scans and sorts are the persistent grid's (`ukl/grid.h`,
-// decision 0460 §4).
+// decision 0468 §4).
 
 // --- Search and expand -------------------------------------------------------------------------------
 

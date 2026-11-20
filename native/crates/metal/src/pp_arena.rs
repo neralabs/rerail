@@ -1,4 +1,4 @@
-//! The preprocessor's evaluation arena and its kernels' one source (decisions 0448 §3, 0460):
+//! The preprocessor's evaluation arena and its kernels' one source (decisions 0448 §3, 0468):
 //! every store an evaluation's passes use is at an offset in one block (`Arena`), leased once a
 //! run within the one budget and bound at each store's offset; the layout (`Lay`) names each
 //! store's offset by slot (`SLOTS`); and the passes are UKL (`pp_*.uglykl`), launched on the
@@ -12,7 +12,7 @@ use std::rc::Rc;
 /// A store's alignment in its arena: every binding offset and every type's.
 const ALIGN: usize = 256;
 
-/// An evaluation's arena (decision 0460 §3): one `rerail_blocks::Block`, leased from the GPU pool
+/// An evaluation's arena (decision 0468 §3): one `rerail_blocks::Block`, leased from the GPU pool
 /// within the one budget (`lease_block_within`). Its stores are laid out as the passes' structures
 /// declare them (`zeroed`, `from_slice`), then the block is leased once (`lease`), before any pass
 /// is encoded; a store's initial words are written into it then. A rung is a larger arena.
@@ -143,7 +143,7 @@ impl Bound for Buffer {
     }
 }
 
-/// The evaluator's one source, UKL (decision 0460 §5): the tape's view and its reads written once
+/// The evaluator's one source, UKL (decision 0468 §5): the tape's view and its reads written once
 /// in CLIF (`<ukl/reads/tape.h>`, the view read where the batch holds it), the persistent grid's
 /// barrier and primitives (`<ukl/grid.h>`), the work queue (`<ukl/workqueue.h>`), the arena's
 /// slots (`SLOTS`, the source's `S_*`), the front passes (`pp_eval.uglykl`), the searches
@@ -263,15 +263,15 @@ impl Sort {
     }
 }
 
-/// The persistent grid's groups with no core count (decision 0460 §4).
+/// The persistent grid's groups with no core count (decision 0468 §4).
 pub const GROUPS_UNKNOWN: u64 = 8;
 
 /// The persistent grid's groups at most: a preprocessor unit is small, and a barrier costs more with
-/// every group, so past 32 groups a run is slower (decision 0460: 80 groups took 168 ms of GPU time
+/// every group, so past 32 groups a run is slower (decision 0468: 80 groups took 168 ms of GPU time
 /// over the corpus, 32 took 147 ms).
 pub const GROUPS_MOST: u64 = 32;
 
-/// The groups of the persistent grid (decision 0460 §4): the device's resident count at the grid
+/// The groups of the persistent grid (decision 0468 §4): the device's resident count at the grid
 /// kernels' threadgroup memory (`Device::resident_groups`: its GPU cores, IORegistry's
 /// `gpu-core-count` on a Mac, times the groups a core holds), at most `GROUPS_MOST`; `GROUPS_UNKNOWN`
 /// with no count. A run

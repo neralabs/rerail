@@ -351,7 +351,7 @@ UKL_INLINE void pe_text_nodes(UKL_GLOBAL const uint32_t* flag, UKL_GLOBAL const 
 // An instance of a file in the unit's layout (test input until P1 runs on the device): its file,
 // its first directive and its first stretch in the layout's per-directive and per-stretch arrays.
 typedef struct PpInst { uint32_t file, dir_first, gap_first; } PpInst;
-// An instance in the include tree (decision 0467 §2): its file, its parent and the directive that
+// An instance in the include tree (decision 0487 §2): its file, its parent and the directive that
 // includes it, its depth, its unit.
 typedef struct PpNode { uint32_t file, parent, pdir, depth, unit; } PpNode;
 
@@ -362,7 +362,7 @@ typedef struct PpNode { uint32_t file, parent, pdir, depth, unit; } PpNode;
 // (`__has_include`, `__has_include_next`, `__has_embed`: operators of `#if` alone). A built-in's
 // row holds its answer; a definition's row is below `L_DEFS`.
 #define V_UNDEF (0xffffffffu)
-// A row's type (decision 0467 §3): a value (a definition, an undef, a built-in), a push, a pop.
+// A row's type (decision 0487 §3): a value (a definition, an undef, a built-in), a push, a pop.
 #define RT_SET (0u)
 #define RT_PUSH (1u)
 #define RT_POP (2u)
@@ -414,7 +414,7 @@ UKL_INLINE void pe_row_flag(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uin
     i = lo;
     uint32_t r = dir_bases[insts[i].file] + (j - insts[i].dir_first);
     uint32_t kind = rows[r].kind;
-    // A push or a pop (decision 0467 §3) is a row too; the resolution after the sort gives it its value.
+    // A push or a pop (decision 0487 §3) is a row too; the resolution after the sort gives it its value.
     bool stack = dactive[j] != 0u && kind == PK_PRAGMA && (acts[r] == A_PUSH || acts[r] == A_POP);
     bool row = stack || (dactive[j] != 0u && ((kind == K_DEFINE && (defs[r].flags & D_BAD) == 0u) || (kind == K_UNDEF && dir_keys[r] != 0ul)));
     flag[j] = row ? 1u : 0u;
@@ -445,7 +445,7 @@ UKL_INLINE void pe_rows_total(UKL_GLOBAL const uint32_t* scanned, UKL_GLOBAL uin
 }
 
 // The first slot of the unit slot `slot` is in: a batch's units hold disjoint, rising ranges of
-// slots (`floors`, each unit's first, `n_units` of them; decision 0460, batching).
+// slots (`floors`, each unit's first, `n_units` of them; decision 0468, batching).
 UKL_INLINE uint32_t unit_floor(UKL_GLOBAL const uint32_t* floors, uint32_t n_units, uint32_t slot) {
     uint32_t lo = 0u, hi = n_units;
     for (uint32_t k = 0u; k < 32u && hi - lo > 1u; k++) {
@@ -482,7 +482,7 @@ UKL_INLINE uint32_t visible(UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const 
     return L_NONE;
 }
 
-// --- Push and pop (decision 0467 §3) --------------------------------------------------------------
+// --- Push and pop (decision 0487 §3) --------------------------------------------------------------
 // After the rows' sort by (name, slot), as the spike's `resolve_rows`: a push makes no row; a pop
 // takes the value its name had at its push, the pushes and pops of a name matched as a stack; a
 // pop with no push changes nothing. Three phases over the sorted rows: each pop's push (a walk
@@ -601,7 +601,7 @@ UKL_INLINE void pe_gap_counts(UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const u
     slinen[p] = k > 0u ? latestn[insts[lo].dir_first + k - 1u] : 0u;
 }
 
-// Each stretch's run (decision 0467 §6): whether it starts one (its instance not the one before's).
+// Each stretch's run (decision 0487 §6): whether it starts one (its instance not the one before's).
 UKL_INLINE void pe_run_starts(UKL_GLOBAL const uint32_t* sinst, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL uint32_t* rstart, uint32_t p) {
     if (p >= n_gaps[0]) return;
     rstart[p] = p == 0u || sinst[p] != sinst[p - 1u] ? 1u : 0u;
@@ -663,9 +663,9 @@ UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint
 #define X_SPLICE (2048u)
 #define X_BARRIER (4096u)
 // `#` or `##` of `__COUNTER__`'s value (a macro's argument that expanded to it): its digits are
-// written once the pass's uses are placed, after the pastes read them (decision 0475 §3).
+// written once the pass's uses are placed, after the pastes read them (decision 0488 §3).
 #define X_COUNTER_SPELLED (8192u)
-// A `_Pragma` row the device cannot place (decision 0475 §2): a name its own invocation pops
+// A `_Pragma` row the device cannot place (decision 0488 §2): a name its own invocation pops
 // read in it, two rows of one name from one invocation, a row from a directive's line, a name
 // with an escape.
 #define X_PRAGMA (16384u)
@@ -693,7 +693,7 @@ typedef struct PxScratch { uint32_t start, end, kind; } PxScratch;
 #define MAX_SEGS (16u)
 #define MAX_EXITS (1u << 20)
 // The close table's keys: a depth (biased) above a top token's position. The bias puts the depths
-// near 0 (-128 to 127) in one byte of the 16, so their sort passes one digit (decision 0460).
+// near 0 (-128 to 127) in one byte of the 16, so their sort passes one digit (decision 0468).
 #define DEPTH_SPAN (1u << 16)
 #define DEPTH_BIAS ((1u << 15) + 128u)
 #define POS_BITS (24u)
@@ -763,7 +763,7 @@ UKL_INLINE uint32_t top_end(UKL_GLOBAL const uint32_t* gat, uint32_t n_gaps, uin
     return j + 1u < n_gaps ? gat[j + 1u] : n_toks;
 }
 
-// How far a top call reads (decision 0467 §6): in the text, a run of its file's stretches with
+// How far a top call reads (decision 0487 §6): in the text, a run of its file's stretches with
 // nothing of another file between (a call's arguments go on past a directive, not into an
 // included file nor past their file's end: `lex_raw` while collecting); in a directive's line,
 // the line. `runs` 0 for the lines; else each stretch's run (`rstart`: it starts one; `runx`
@@ -798,7 +798,7 @@ UKL_INLINE uint32_t top_slot(Scope c, UKL_GLOBAL const uint32_t* gat, uint32_t n
     return c.gslot[p] + (c.runs != 0u ? s - gat[p] : 0u);
 }
 
-// The text pass's facts (decision 0475): the rows its `_Pragma`s make (`sk` the sort key, `nk` the
+// The text pass's facts (decision 0488): the rows its `_Pragma`s make (`sk` the sort key, `nk` the
 // name's key, `ty` push or pop), its `once` marks (`of` the file, `os` the slot), and the
 // `__COUNTER__` uses' places (`cslot`, `csub`: the sub-place and the rank in its invocation,
 // `cunit`; the text's from 0, the lines' from `cap`). `n`: [0] rows, [1] marks, [2] the text's
@@ -1052,7 +1052,7 @@ typedef struct Ar {
 UKL_INLINE void px_push(Ar a, uint32_t item) { if (!ukl_wq_push(a.q, item)) px_refuse(a.ctl, X_ROOM); }
 
 // Whether the sorted table has a pop of `key` at exactly `slot`: one a `_Pragma` of the invocation
-// whose lists look names up there made (decision 0475 §2).
+// whose lists look names up there made (decision 0488 §2).
 UKL_INLINE bool px_pops_here(Ux u, Tf tf, uint64_t key, uint32_t slot) {
     uint64_t q = (key & 0xffffffff00000000ul) | ((uint64_t)(slot));
     uint32_t c = pb_lower_bound(u.sorted, u.n_rows, q);
@@ -1569,7 +1569,7 @@ UKL_INLINE uint32_t px_blanks(UKL_GLOBAL const uint8_t* p, uint32_t i, uint32_t 
 // A pragma's text (`pragma_text`), from `_Pragma`'s string literal `r` (destringized, C17
 // §6.10.9), by lane 0: its first word `once`, or `push_macro` or `pop_macro` with `( "name"`
 // after it, is a row at its invocation's `)` (its lists' slot) in the text's facts (decision
-// 0475 §2); one in a directive's line is refused. Any other pragma makes nothing. Its words and
+// 0488 §2); one in a directive's line is refused. Any other pragma makes nothing. Its words and
 // `(` hold no escape, so they are read in the literal's bytes; the name's string is `\"…\"` there.
 UKL_INLINE void px_pragma_text(Ux u, Ar a, uint32_t l, Span r) {
     uint32_t q = 0u;
@@ -2044,7 +2044,7 @@ UKL_INLINE Vo px_va_opts(Ux u, Ar a, PpDef d, UKL_GLOBAL PxList* L, uint32_t lan
 // --- The built-ins ---------------------------------------------------------------------------------
 
 // The physical line of tape node `g` (from 1): by its file's tape's newline index (decision
-// 0460 §2).
+// 0468 §2).
 UKL_INLINE uint32_t px_line(Ux u, uint32_t g) {
     At at = node_at(u.files, u.data, u.bases, u.n_files, g);
     return tape_line_of(at.t, node_start(at.t, at.i)) + 1u;
@@ -2110,7 +2110,7 @@ UKL_INLINE uint32_t px_chain(UKL_GLOBAL const PxList* lists, uint32_t l, UKL_PRI
 }
 
 // `__COUNTER__`'s use `i` of this pass (`part`: 0 the text, 1 the lines) placed in the reading
-// (decision 0475 §3): its outermost invocation's slot (in the text its `)`'s; in a line the
+// (decision 0488 §3): its outermost invocation's slot (in the text its `)`'s; in a line the
 // directive's, then its call's first token in the line), then its rank among the uses of that
 // invocation (where their chains part). A use rolled back is no use (`PP_NONE`).
 UKL_INLINE void px_counter_place(Ux u, UKL_GLOBAL const PxList* lists, UKL_GLOBAL const uint32_t* cnt, uint32_t cnt_cap, Tf tf, uint32_t part, UKL_GLOBAL uint32_t* ctl, uint32_t i) {
@@ -2168,7 +2168,7 @@ UKL_INLINE void px_counter_value(Tf tf, UKL_GLOBAL const uint32_t* cnt, uint32_t
     stoks[cnt[3u + 2u * i]].end = t.start + nd;
 }
 
-// The text pass's facts into the next iteration (decision 0475 §1): row `k` into the table, after
+// The text pass's facts into the next iteration (decision 0488 §1): row `k` into the table, after
 // the directives' (`at` its first place there).
 UKL_INLINE void tf_row(Tf tf, UKL_GLOBAL uint64_t* sort_keys, UKL_GLOBAL uint64_t* name_keys, UKL_GLOBAL uint32_t* values, UKL_GLOBAL uint32_t* types, uint32_t at, uint32_t k) {
     if (k >= ukl_min(tf.n[0], tf.cap)) return;

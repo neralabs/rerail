@@ -1,5 +1,5 @@
 //! The preprocessor's evaluator over tapes (decision 0436), UKL passes (`pp_eval.uglykl`, decision
-//! 0460 §5) launched on the process's device.
+//! 0468 §5) launched on the process's device.
 //!
 //! A unit is its files: each a source's bytes and its preprocessor tape (`rerail_c_pp::tape`,
 //! format 16, decision 0460 §1), documents of the slab residency. The evaluator reads them where
@@ -246,7 +246,7 @@ pub struct Front {
     out: Buf,
     pub rows: Buf,
     pub dir_keys: Buf,
-    /// Each directive's pragma act (`A_*`: `once`, `push_macro`, `pop_macro`; decision 0467 §3).
+    /// Each directive's pragma act (`A_*`: `once`, `push_macro`, `pop_macro`; decision 0487 §3).
     pub dir_acts: Buf,
     scan: Scan,
     dir_scan: Scan,
@@ -266,7 +266,7 @@ impl Front {
         let per_file = || arena.zeroed::<u32>(n);
         let per_node = || arena.zeroed::<u32>(unit.node_bound);
         // Each file's first node and the nodes in all: the views' counts, which the host holds
-        // (decision 0460: no scan on the device for what the layout says).
+        // (decision 0468: no scan on the device for what the layout says).
         let mut bases = Vec::with_capacity(n.max(1));
         let mut total = 0u32;
         for &k in &unit.file_nodes {
@@ -436,7 +436,7 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
 
 /// Runs the persistent grid over the arena at `groups` groups, laid out as `l`, in one command
 /// buffer: `pp_setup` to the stage `l` names (the text pass is inside its P1 iterations,
-/// decision 0475), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
+/// decision 0488), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
 /// `None` where a barrier failed (the grid's groups were not resident together).
 pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<(usize, f64)>, Error> {
     l.write(&front.lay);
