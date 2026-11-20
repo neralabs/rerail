@@ -23,6 +23,7 @@ import { claudeCodeReportedPreimage, type ReportedPreimage } from "../../../src/
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import type * as Git from "../../../src/engine/git.js";
+import type * as CrlfReader from "../../../src/engine/git-crlf-reader.js";
 import type * as HeadReader from "../../../src/engine/git-head-reader.js";
 import { readGitHead } from "../../../src/engine/git-head-reader.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
@@ -39,8 +40,8 @@ const discovery = vi.hoisted(() => ({
   /** The modified and change time `lstat` gives a file, as a copy that keeps its source's times leaves where no change time is kept. */
   stamps: new Map<string, number>(),
   /**
-   * An entry about to be looked at there by `lstat`, before it is; not a checkout's `.git` entry as a read of its
-   * `HEAD` checks the entry's owner (`headReads.reading`), as Git does, which is no look for the entry.
+   * An entry about to be looked at there by `lstat`, before it is; not a checkout's `.git` entry while a reader of
+   * Git's files reads that checkout (`gitFileReads`), which is no look for the entry.
    */
   looks: new Map<string, Array<() => Promise<void>>>(),
 }));
@@ -71,23 +72,44 @@ const listings = vi.hoisted(() => ({
   asked: [] as Array<{ checkout: string; asked: number; answered: number | undefined }>,
 }));
 /**
- * How many reads of a checkout's `HEAD` (`readGitHead`) have ended, whether from Git's files or by asking Git, and the
- * checkout of each read that runs now.
+ * The checkout of each read of Git's files that runs now, `HEAD`'s (`readGitHead`) or the line-ending settings'
+ * (`readGitCrlfPaths`). Each reads the checkout's `.git` entry to find its Git folders, through an `lstat` before the
+ * open on Windows (`openNoFollow`), and a `HEAD` read checks the entry's owner with one, as Git does.
  */
-const headReads = vi.hoisted(() => ({ count: 0, reading: [] as string[] }));
+const gitFileReads = vi.hoisted(() => {
+  const reading: string[] = [];
+  return {
+    reading,
+    async during<T>(checkout: string, read: () => Promise<T>): Promise<T> {
+      reading.push(checkout);
+      try {
+        return await read();
+      } finally {
+        reading.splice(reading.indexOf(checkout), 1);
+      }
+    },
+  };
+});
+/** How many reads of a checkout's `HEAD` (`readGitHead`) have ended, whether from Git's files or by asking Git. */
+const headReads = vi.hoisted(() => ({ count: 0 }));
 vi.mock("../../../src/engine/git-head-reader.js", async importOriginal => {
   const actual = await importOriginal<typeof HeadReader>();
   return {
     ...actual,
     readGitHead: async (...args: Parameters<typeof actual.readGitHead>) => {
-      headReads.reading.push(args[0]);
       try {
-        return await actual.readGitHead(...args);
+        return await gitFileReads.during(args[0], () => actual.readGitHead(...args));
       } finally {
         headReads.count += 1;
-        headReads.reading.splice(headReads.reading.indexOf(args[0]), 1);
       }
     },
+  };
+});
+vi.mock("../../../src/engine/git-crlf-reader.js", async importOriginal => {
+  const actual = await importOriginal<typeof CrlfReader>();
+  return {
+    ...actual,
+    readGitCrlfPaths: (...args: Parameters<typeof actual.readGitCrlfPaths>) => gitFileReads.during(args[0], () => actual.readGitCrlfPaths(...args)),
   };
 });
 /** For each path in it, the next file handles opened there call these, in turn, once closed (`readEnded`). */
@@ -172,7 +194,7 @@ vi.mock("node:fs/promises", async importOriginal => {
     // would leave `mtime` and `ctime` disagreeing with them. No case sets both: each case sets one map, and the
     // clean-up after each case empties both.
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
-      if (!headReads.reading.includes(dirname(String(args[0])))) await discovery.looks.get(String(args[0]))?.shift()?.();
+      if (!gitFileReads.reading.includes(dirname(String(args[0])))) await discovery.looks.get(String(args[0]))?.shift()?.();
       const info = await actual.lstat(...args);
       const at = discovery.stamps.get(String(args[0]));
       const times = heldTimes.get(String(args[0])) ?? (at === undefined ? undefined : { mtimeMs: at, ctimeMs: at });
