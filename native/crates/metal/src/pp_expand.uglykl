@@ -2161,15 +2161,49 @@ UKL_INLINE uint32_t px_stringize(Ux u, Ar a, uint32_t p, uint32_t lo, uint32_t h
     return SCRATCH | id;
 }
 
-// `l ## r` (one lane): a placemarker gives the other (the left's space kept); else the two
-// spellings joined in the scratch bytes, and the relexer's verdict: one token (a scratch token of
-// its kind, with the left's space), or none (`ok` false: both stay).
-UKL_INLINE uint32_t px_paste(Ux u, Ar a, uint32_t l, uint32_t lf, uint32_t r, uint32_t rf, UKL_PRIVATE uint32_t* out_f, UKL_PRIVATE bool* ok) {
+// Whether `c` is a byte of an identifier past its first (the relexer's, without `$`).
+UKL_INLINE bool px_ident_byte(uint8_t c) {
+    return (c >= ((uint8_t)('a')) && c <= ((uint8_t)('z'))) || (c >= ((uint8_t)('A')) && c <= ((uint8_t)('Z'))) || (c >= ((uint8_t)('0')) && c <= ((uint8_t)('9'))) || c == ((uint8_t)('_'));
+}
+
+// The paste of an identifier and identifier bytes (no splice, no `$`): an identifier, the
+// relexer's verdict without it. Where a definition visible at `slot` has that name, its name's
+// ref is the paste's, and no scratch bytes are made: Boost's loops paste the same few hundred
+// names tens of thousands of times a line (`BOOST_PP_WHILE_ ## n`), which the scratch bytes,
+// given back by nothing, held (decision 0478 §10). `NO_POS` where not.
+UKL_INLINE uint32_t px_paste_name(Ux u, Span x, Span y, uint32_t slot, UKL_GLOBAL uint32_t* bad) {
+    if (x.kind != K_IDENTIFIER || x.len == 0u || y.len == 0u) return NO_POS;
+    KeyAcc k = ka_new(x.len + y.len);
+    for (uint32_t b = 0u; b < x.len; b++) {
+        if (!px_ident_byte(x.p[b])) return NO_POS;
+        ka_byte(&k, x.p[b]);
+    }
+    for (uint32_t b = 0u; b < y.len; b++) {
+        if (!px_ident_byte(y.p[b])) return NO_POS;
+        ka_byte(&k, y.p[b]);
+    }
+    uint32_t m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, ka_end(k), slot, bad);
+    if (m >= L_DEFS) return NO_POS;
+    uint32_t g = u.defs[m].name;
+    Span d = ref_span(u, g);
+    if (d.len != x.len + y.len) return NO_POS;
+    for (uint32_t b = 0u; b < x.len; b++) if (d.p[b] != x.p[b]) return NO_POS;
+    for (uint32_t b = 0u; b < y.len; b++) if (d.p[x.len + b] != y.p[b]) return NO_POS;
+    return g;
+}
+
+// `l ## r` (one lane), in a list at `slot`: a placemarker gives the other (the left's space
+// kept); a definition's name where the two spell one (`px_paste_name`); else the two spellings
+// joined in the scratch bytes, and the relexer's verdict: one token (a scratch token of its
+// kind, with the left's space), or none (`ok` false: both stay).
+UKL_INLINE uint32_t px_paste(Ux u, Ar a, uint32_t l, uint32_t lf, uint32_t r, uint32_t rf, uint32_t slot, UKL_PRIVATE uint32_t* out_f, UKL_PRIVATE bool* ok) {
     *ok = true;
     if (r == PLACEMARKER) { *out_f = lf; return l; }
     if (l == PLACEMARKER) { *out_f = (rf & ~T_SPACE) | (lf & T_SPACE); return r; }
     if (px_is_counter(a, l) || px_is_counter(a, r)) { px_refuse(a.ctl, X_COUNTER_SPELLED); *ok = false; return l; }
     Span x = ref_span(u, l), y = ref_span(u, r);
+    uint32_t named = px_paste_name(u, x, y, slot, a.ctl + 2);
+    if (named != NO_POS) { *out_f = lf & T_SPACE; return named; }
     uint32_t n = x.len + y.len;
     uint32_t base = ukl_atomic_add(&a.ctl[4], n);
     if (base + n > a.sb_cap) { px_refuse(a.ctl, X_ROOM); *ok = false; return l; }
@@ -2599,7 +2633,7 @@ UKL_INLINE void px_subst(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
                     a.tflag[base + k] |= T_DROP;
                     uint32_t f = 0u;
                     bool ok = false;
-                    uint32_t m = px_paste(u, a, acc, accf, r, rf, &f, &ok);
+                    uint32_t m = px_paste(u, a, acc, accf, r, rf, L->slot, &f, &ok);
                     if (ok) {
                         // A placemarker gives the other token, its origin kept; a paste is this list's.
                         accx = acc == PLACEMARKER ? rx : r == PLACEMARKER ? accx : px_lref_of(u, a, l) + 1u;

@@ -177,6 +177,15 @@ On Boost.Preprocessor's tests that does not work:
       max scan of the interior nodes' places, seeded 0 elsewhere, over the whole unit; an empty
       file's root (no children) took the file before's, and its text flag read that place in its
       own tape, 4 billion nodes out. A file's root seeds its own place.
+    - **A paste that spells a definition's name is that name** (`px_paste_name`): an identifier
+      joined to identifier bytes (no splice, no `$`) is an identifier, the relexer's verdict
+      without it; its key is taken from the two spellings (`KeyAcc`, `name_key`'s), and where a
+      definition visible at the list's slot has that key and those bytes, the paste's ref is the
+      definition's name (a tape node), and no scratch bytes are made. A pasted token's `__LINE__`
+      is its list's (`texp`), never its ref's line. Boost's loops paste a few hundred names tens of
+      thousands of times a line (`BOOST_PP_WHILE_ ## n`): the first 10 of `arithmetic.cxx`'s
+      checks wrote 206k scratch bytes at rung 2, 81k after (the file literals and the `#line`
+      rows' room, sized by the rung, are 74k of them).
     - **A top's work is bounded** (`PX_FUEL`): past 4 times the queue's capacity in items taken,
       the run is refused for room (`CTL` 13 keeps what it took) and runs again larger, so no
       launch runs on without bound (a Metal command buffer of minutes stalls the window server and
@@ -214,6 +223,7 @@ On Boost.Preprocessor's tests that does not work:
 | R7 | A chain of 150 calls passing a 120-token state settles at rung 0: plain, through a scanned argument, through an exit, with `__LINE__`, stringized; in C and C++. | `reclaimed_tokens_keep_a_chain_at_rung_0` |
 | R8 | The pool's split takes: every thread of 8 groups takes blocks of one class (1, 2 or 8 units) from pieces of every class, over 1 and 3 rounds; no unit is taken twice, each block lies within one given range, and the takes met are the demand or the pieces' room in blocks of the class, whichever is less. | `pp_arena::tests::the_pool_splits_a_larger_block` |
 | R9 | An empty file included: `__FILE__` and `__LINE__` after it as the serial pass's. | `line_and_file_are_the_serial_passes` (its last shape) |
+| R10 | A paste that spells a definition's name, expanded, with `__LINE__` in it, across lines; one no definition has, a chain whose middle none has, one defined after it, a left that is no identifier: as the serial pass's. | `pasting_is_the_serial_passes` (its last shape) |
 
 ## Measured (M1 Max farm host for the checks; this Mac for the runs, 2026-11-19)
 
@@ -253,16 +263,17 @@ what the 8 pauses had not given back yet.
 
 ## Open
 
-- **The scratch bytes are linear**, and now the room that runs out. On UKL's CPU backend
-  (2026-11-20), the first 3 of `arithmetic.cxx`'s checks as one unit settle at rung 0 (they
-  needed rung 2 with the tokens alone given back): lists 975 (were 6.3k), arguments' entries
-  1.9k (were 11k), tokens 9.8k, equal to the serial pass. The first 10 checks: lists 1.5k, 1.6k
-  and 4.5k at rungs 0 to 2 (were 2.6k, 5.2k, 7.3k, then 20k and 30k), but the pastes', the
-  stringizings' and `__LINE__`'s spellings (`CTL` 4) grow with the work: 206k bytes at rung 2,
-  532k where the run giving nothing back settled, so the unit needs rung 4 for them alone. A
-  scratch token is named by every token copied from it (`SCRATCH | id`), so giving one back
-  needs to know no live token names it; or a spelling made again is the one made before (a
-  paste's result is most often a name a definition already has).
+- **Where the rooms stand** (UKL's CPU backend, 2026-11-20). The first 3 of `arithmetic.cxx`'s
+  checks as one unit settle at rung 0 (they needed rung 2 with the tokens alone given back):
+  lists 975 (were 6.3k), arguments' entries 1.9k (were 11k), tokens 9.8k, scratch bytes 26k
+  (were 48k), equal to the serial pass. The first 10 checks: lists 1.5k, 1.6k and 5.2k at rungs
+  0 to 2 (were 2.6k, 5.2k, 7.3k, then 20k and 30k), scratch bytes 26k, 45k, 81k (were 53k, 83k,
+  206k); rung 0 refused by the queue's work bound, rung 1 by tokens and arguments, rung 2 by
+  lists by 3; whether rung 3 settles is past a CPU run's time bound. A refused run's uses are
+  not its needs (past the room that ran out its items read what was never written).
+- **The scratch bytes that remain are linear**: pastes no definition is spelled as (a chain's
+  middle, `test_ ## __LINE__`), stringizings, numbers. A scratch token is named by every token
+  copied from it (`SCRATCH | id`), so giving one back needs to know no live token names it.
 - **A forced small gap spends the givings early.** At `RERAIL_PP_GIVE_GAP=64` the 64 givings a
   launch cover 4k tokens of front; past them every take is a fresh power of two, and the tokens'
   room outgrows a run that gives nothing. The default gap (a 32nd of the room) covers twice it.
