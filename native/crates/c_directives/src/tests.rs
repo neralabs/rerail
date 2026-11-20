@@ -204,9 +204,9 @@ fn the_corpus_reads_the_same_or_is_refused() {
     let c = compiled_or_panic();
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
     let (mut same_n, mut refused, mut differ) = (0, 0, Vec::new());
-    // The other backends', against Cranelift's: files whose rows differ (the device's on macOS alone, as it runs).
+    // The other backends', against Cranelift's: files whose rows differ (the device's where its lane runs: macOS and
+    // Linux).
     let mut interp = Vec::new();
-    // The device's verdicts that differ (a device on macOS and Linux; none elsewhere).
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let mut metal = Vec::new();
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]

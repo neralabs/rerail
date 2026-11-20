@@ -248,7 +248,7 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) r_view: u32,
     /// 1 when the probed view is `child` probed by its parent, off the tape (`DevIndex::by_parent`).
     pub(in crate::code_rule_dsl) v_parent: u32,
-    /// The probed relation's screen (decision 0506): its key `screen - 1`'s column's kept filter, a
+    /// The probed relation's screen (decision 0500): its key `screen - 1`'s column's kept filter, a
     /// `rerail_blocks::bloom::Bloom` at byte `screen_at` of the screen's buffer (the filter's block, bound where it
     /// lies); 0 for none. A binding whose key the filter refuses has no candidates, and reads no index group.
     pub(in crate::code_rule_dsl) screen: u32,
@@ -256,7 +256,7 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) screen_pad: [u32; 2],
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2336 && std::mem::size_of::<Stage>() % 16 == 0);
+const _: () = assert!(std::mem::size_of::<Stage>() == 2336 && std::mem::size_of::<Stage>().is_multiple_of(16));
 
 impl Default for Stage {
     fn default() -> Self {
@@ -762,7 +762,7 @@ fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Res
     Ok(Held::kept(home.block.device_buffer(device)?, Box::new(home.clone())))
 }
 
-/// A stage's screen (decision 0506, `Stage::screen`): the probed relation's key `key`'s column's kept filter, a
+/// A stage's screen (decision 0500, `Stage::screen`): the probed relation's key `key`'s column's kept filter, a
 /// `rerail_blocks::bloom::Bloom` at byte `at` of `held` (the filter's block, bound where it lies: nothing copied).
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Screen {
@@ -1024,7 +1024,7 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) gpu_seconds: f64,
     /// Stages whose grids were sized on the device (`Scan::size`).
     pub(in crate::code_rule_dsl) sized: u32,
-    /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0506).
+    /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0500).
     pub(in crate::code_rule_dsl) screened: u32,
 }
 
@@ -1134,7 +1134,7 @@ impl Batch {
             .collect()
     }
 
-    /// `stage` screened by `screen` (decision 0506), its buffer kept until the batch is done: the buffer to bind as
+    /// `stage` screened by `screen` (decision 0500), its buffer kept until the batch is done: the buffer to bind as
     /// the stage's `F` (the batch's dummy for none).
     fn screen(&mut self, stage: &mut Stage, screen: Option<&Screen>) -> Buffer {
         match screen {
@@ -1327,7 +1327,7 @@ impl Batch {
             let place = pipeline("join", "ix_place", || SOURCE.to_owned())?;
             let bits = (u64::BITS - room.mask.leading_zeros()).max(8).div_ceil(8) * 8;
             assert!(cols.len() <= 8, "an index of {} columns", cols.len());
-            let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32, at: rel.at, mask: room.mask as u64, cols: [0; 8], dir: 0, kind: 0 };
+            let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0 };
             for (k, &c) in cols.iter().enumerate() {
                 ix.cols[k] = c as u32;
             }
@@ -1512,6 +1512,7 @@ impl Batch {
         let mut write = stage;
         write.mode = SEMI;
         write.nbinds = 0;
+        write.screen = 0;
         let (sb, wb) = (self.block(stage.bytes())?, self.block(write.bytes())?);
         let pass = self.pass(3)?;
         rel.resident_in(pass);
@@ -1842,7 +1843,7 @@ pub mod tests {
         assert!(!want4.is_empty() && want4.len() < want3.len() && want3.len() < want2.len());
     }
 
-    /// Decision 0506: a stage screened by its relation's kept filter (a `bloom::Bloom` in a block of the run's
+    /// Decision 0500: a stage screened by its relation's kept filter (a `bloom::Bloom` in a block of the run's
     /// relations, bound where it lies) makes the rows it makes unscreened: a join, an anti-join and a semi-join, each
     /// keyed by a column whose filter holds every key of it. A filter of none of the keys refuses every binding: the
     /// join and the semi-join make no rows, the anti-join keeps them all (the kernels test it).
@@ -2208,7 +2209,7 @@ impl Batch {
     pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, r: &DevRel, had: usize, nkeys: usize, lat: LatCode, map: LatMap<'_>,
                                                  first: MapFirst<'_>, counters: &Words, delta: &Table, arena: Option<&Arena>, level: Option<u32>) -> Result<(), Error> {
         assert!(lat.code != 3 || arena.is_some(), "a shortlex fold reads its values' texts");
-        assert!(nkeys + 1 <= MAX_KEYS && u.cap == n && delta.cap == n);
+        assert!(nkeys < MAX_KEYS && u.cap == n && delta.cap == n);
         assert!(map.places.is_power_of_two() && 2 * n <= map.places, "a key map of {} slots for {n} rows", map.places);
         let pplaces = (2 * n).next_power_of_two().max(16);
         let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32,

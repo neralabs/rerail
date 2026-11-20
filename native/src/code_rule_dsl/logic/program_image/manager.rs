@@ -1627,7 +1627,8 @@ impl<'s> Pipeline<'s> {
                 // What it said when it ran whole stands with its decisions (decision 0385).
                 crate::code_rule_dsl::logic::profile::restate(&k.said);
                 self.record(P::NAME, out, Ran::Delta, form, visited, &k.output, None, carry)?;
-                return Ok(self.planned(pass.plan(), k.said.clone()));
+                self.planned(pass.plan(), k.said.clone());
+                return Ok(());
             }
         }
         let deciding = crate::code_rule_dsl::logic::profile::Deciding::open();
@@ -1656,11 +1657,13 @@ impl<'s> Pipeline<'s> {
             };
             if let Some(carry) = carry {
                 self.record(P::NAME, r, Ran::Whole, Form::Overlay, visited, &k.output, None, carry)?;
-                return Ok(self.planned(pass.plan(), said));
+                self.planned(pass.plan(), said);
+                return Ok(());
             }
         }
         self.record(P::NAME, out, Ran::Whole, form, visited, &v, None, Carry::Step)?;
-        Ok(self.planned(pass.plan(), said))
+        self.planned(pass.plan(), said);
+        Ok(())
     }
 
     /// The plan of the step just recorded, and the profile's decisions it made, kept with it.
@@ -1690,7 +1693,7 @@ impl<'s> Pipeline<'s> {
                     // A made version is built whole, its rules numbered anew, from a program that states its request
                     // record (`Program::asked_by`): the record is carried from it, by its rules' ids, not from the
                     // input's ids, which a later step would no longer find (each rule then read as serving only its
-                    // own relation: the deferred joins' step, decision 0506).
+                    // own relation: the deferred joins' step, decision 0500).
                     if p.asked.is_some() {
                         p.asked = AskedByRule::of(&out);
                     }

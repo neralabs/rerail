@@ -812,7 +812,7 @@ fn lookups_with_a_bound_document_read_that_document_only() {
 fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
     let store = ContentStore::open(&temp("python-verdict")).unwrap();
     let doc = document(0, "a.py", "python", "print \"legacy\"\n");
-    // A document is made on its batch's first read of it (decision 0504): each batch here reads one relation whole.
+    // A document is made on its batch's first read of it (decision 0494): each batch here reads one relation whole.
     let read = |projection: &Projection, rel: &str| {
         let sources = shaped(&store, vec![doc.clone()], projection).unwrap();
         sources.iter().find(|(n, _)| *n == rel).unwrap_or_else(|| panic!("no {rel}")).1.len()
@@ -837,7 +837,7 @@ fn a_raising_ast_parse_fails_the_batch() {
     for read in ["syntax_error", "cpython_syntax_error", "literal_json", "dump_sha256"] {
         let doc = document(0, "a.py", "python", "x = f\"{y:\\x}\"\n");
         let projection = Projection { reads: Some([read.into()].into()), ..Projection::core() };
-        // The document is made on the first read (decision 0504): the source read reports why it failed.
+        // The document is made on the first read (decision 0494): the source read reports why it failed.
         let sources = shaped(&store, vec![doc], &projection).unwrap();
         let source = &sources.iter().find(|(n, _)| *n == read).unwrap_or_else(|| panic!("no {read}")).1;
         let _ = source.len();
@@ -948,7 +948,6 @@ fn projection_axes_and_token_spans_are_read_without_renumbering() {
     expected.extend((1..=lines.count()).map(|l|lines.span(l)));
     assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
     assert_eq!(p.locs(),p.len()+expected.len() as u32);
-    for i in tokens..expected.len() { assert_eq!(p.span(p.len()+i as u32),expected[i]); }
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
     for l in 0..(p.len() as usize) {
         let parent=p.parent(l);
@@ -1069,7 +1068,7 @@ fn leaf_ids(label: &str, path: &str, source: &str) -> (BTreeSet<(String, i64)>, 
     let dialect = Dialect::new(core::facts_tag(&d.facts)).unwrap();
     let p = Projected::new(d.key, Arc::clone(&d.facts), Some(&dialect), Shape::Core, false, None);
     let f = &*d.facts;
-    let leaves = (0..p.len()).map(|l| (f.text(p.node(l as u32)).to_owned(), p.global(l))).collect();
+    let leaves = (0..p.len()).map(|l| (f.text(p.node(l)).to_owned(), p.global(l))).collect();
     (leaves, p)
 }
 
@@ -1167,7 +1166,7 @@ fn node_order_keys_follow_preorder_and_keep_other_granules() {
         let (_, p) = leaf_ids("python", "a.py", source);
         let ascending = (1..p.len()).all(|l| p.order(l - 1) < p.order(l));
         let f = &*p.facts;
-        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.node(l as u32)).is_empty()).map(|l| (f.text(p.node(l as u32)).to_owned(), p.global(l), p.order(l))).collect();
+        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.node(l)).is_empty()).map(|l| (f.text(p.node(l)).to_owned(), p.global(l), p.order(l))).collect();
         assert!((0..p.len()).all(|l| p.local_of_order(p.order(l)) == Some(l)), "a key does not map back");
         (ascending, leaves)
     };
@@ -1245,7 +1244,7 @@ fn definition_ids_census() {
                         let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                         row.parse += cpu_now() - t_parse;
                         let f = &*facts;
-                        let tokens: Vec<u32> = p.nodes().flat_map(|(l, id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)).collect();
+                        let tokens: Vec<u32> = p.nodes().flat_map(|(l, id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l)).collect();
                         let t0 = cpu_now();
                         let _ = granules::number(&p, &dialect, &tokens, None);
                         row.cpu += cpu_now() - t0;
@@ -1866,7 +1865,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
                     .buffer("b", &block.device_buffer(&shared.device).unwrap())
                     .value("p", &IdsP { d, n, pad: 0 })
                     .buffer("out", &out)
-                    .run(&[u64::from(n).div_ceil(64)], &[64])
+                    .run(&[(u64::from(n) * 16).div_ceil(64)], &[64])
                     .unwrap_or_else(|e| panic!("{e}"));
                 q.flush().await_().unwrap();
                 let got: Vec<u32> = read(&out, n as usize * WIDE);
@@ -2090,7 +2089,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
 }
 
-/// Decision 0504, R1 and R3: a batch read whole makes one group, whose relations hold the rows the eager batch's do;
+/// Decision 0494, R1 and R3: a batch read whole makes one group, whose relations hold the rows the eager batch's do;
 /// one whose documents a probe of each made holds the same rows once scanned, over several groups.
 #[test]
 fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
@@ -2128,7 +2127,7 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
 }
 
-/// Decision 0504, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows.
+/// Decision 0494, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows.
 #[test]
 fn a_probe_makes_the_document_it_names_alone() {
     let store = ContentStore::open(&temp("probe-one")).unwrap();
@@ -2147,7 +2146,7 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert!(text.failure().is_none());
 }
 
-/// Decision 0504, R5: a batch given its documents' views' counts and its relations' rows knows every view's and
+/// Decision 0494, R5: a batch given its documents' views' counts and its relations' rows knows every view's and
 /// relation's `len` with no document made; a probe then makes its document alone. A made document whose counts differ
 /// from those given fails, named, and so does a relation whose made rows are not the count given.
 #[test]
@@ -2188,7 +2187,7 @@ fn a_batch_given_counts_knows_its_row_space_making_nothing() {
     let text = Arc::clone(&made_sources(&off).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
     let _ = text.lookup(0, &[off.docs[1].global(1)]);
     let failed = text.failure().expect("a document's counts differ");
-    assert!(failed.contains("m2.py") && failed.contains("0504"), "{failed}");
+    assert!(failed.contains("m2.py") && failed.contains("0494"), "{failed}");
     // A relation whose rows, every document made, are not the count given: named.
     let mut wrong = totals.clone();
     *wrong.get_mut("text").unwrap() += 1;
@@ -2198,5 +2197,5 @@ fn a_batch_given_counts_knows_its_row_space_making_nothing() {
     let mut seen = 0;
     text.for_rows(&[0], &mut |_, _| seen += 1);
     let failed = text.failure().expect("a relation's rows differ from its count");
-    assert!(failed.contains("text") && failed.contains("0504"), "{failed}");
+    assert!(failed.contains("text") && failed.contains("0494"), "{failed}");
 }

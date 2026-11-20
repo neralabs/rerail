@@ -2,8 +2,6 @@
 
 Status: accepted (2026-11-18; the user: "find a way to make it impossible for runaway memory use to happen").
 
-Numbered 0394 where it was written (cost-classifier-metal-rf); renumbered past the highest number in any worktree when it was merged.
-
 ## Intro
 
 A rule whose head is huge fills memory until the machine gives out. Ruff's SLF001 as written ran past 56 GB on

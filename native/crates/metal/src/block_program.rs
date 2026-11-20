@@ -38,9 +38,16 @@ pub mod serial;
 /// look-backs, for the lane word the source defines in front of it (`head`).
 const COMMON: &str = include_str!("block_common.uglykl");
 /// The interpreter's source at each lane width (`LaneWidth::ALL`): the shared code, then its
-/// kernel.
-static INTERPRETER: std::sync::LazyLock<[String; 3]> =
-    std::sync::LazyLock::new(|| LaneWidth::ALL.map(|w| format!("{}{}", head(w), include_str!("block_program.uglykl"))));
+/// kernel. Made once on this machine (decision 0442: its head reads the machine's device, `poll_rmw`).
+#[derive(Default)]
+struct Interpreter([std::sync::OnceLock<String>; 3]);
+
+/// [`Interpreter`]'s source at `width`.
+fn interpreter_source(width: LaneWidth) -> std::sync::Arc<Interpreter> {
+    let made = rerail_context::machine::<Interpreter>();
+    made.0[width.index()].get_or_init(|| format!("{}{}", head(width), include_str!("block_program.uglykl")));
+    made
+}
 
 /// A source's head at lane width `width`: its word (`BW`, `BM`), how a poll reads
 /// (`poll_rmw`), and the shared code. Every source starts with it, the interpreter's and each generated one.
@@ -435,7 +442,8 @@ pub fn run_batch(
             for (name, block) in ["programs", "steps", "outs", "scratch"].into_iter().zip(&interpreter) {
                 buffers.push((name, block.device_buffer().clone()));
             }
-            ("block_batch", lane::kernel_fixed(&INTERPRETER[width.index()], "block_batch", None))
+            let source = interpreter_source(width);
+            ("block_batch", lane::kernel_fixed(source.0[width.index()].get().map_or("", String::as_str), "block_batch", None))
         }
         Executor::Generated(_) => {
             let refs: Vec<&BlockNative> = forms.iter().collect();

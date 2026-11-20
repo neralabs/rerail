@@ -29,7 +29,7 @@ fn a_second_row_of_a_declared_key_breaks_it() {
     assert!(rel.set_key(vec![3]).is_err());
 }
 
-/// A key of no columns (layouts' fact for a rule whose constants fix its one row, Q388's `cpl_policy_doc`) holds
+/// A key of no columns (layouts' fact for a rule whose constants fix its one row, Q409's `cpl_policy_doc`) holds
 /// while the relation has one row, a row repeated being none, and a second row breaks it.
 #[test]
 fn a_key_of_no_columns_is_one_row_at_most() {

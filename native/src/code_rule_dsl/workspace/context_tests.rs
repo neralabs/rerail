@@ -3243,7 +3243,7 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
     }
     for (path, clause, bytes) in &stored {
         // A result is the canonical (key-ordered) serialization of its JSON value.
-        let value = serde_json::from_slice::<Value>(&bytes).unwrap();
+        let value = serde_json::from_slice::<Value>(bytes).unwrap();
         assert_eq!(
             serde_json::to_vec(&value).unwrap(),
             *bytes,

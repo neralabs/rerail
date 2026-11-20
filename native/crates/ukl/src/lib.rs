@@ -63,6 +63,7 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/radix.h", include_str!("../lib/ukl/radix.h")),
     ("ukl/hash.h", include_str!("../lib/ukl/hash.h")),
     ("ukl/workqueue.h", include_str!("../lib/ukl/workqueue.h")),
+    ("ukl/pool.h", include_str!("../lib/ukl/pool.h")),
     ("ukl/grid.h", include_str!("../lib/ukl/grid.h")),
     ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),
     // The reads written once in CLIF (decision 0310), as `rerail_clif::ukl` writes them: generated, held here so

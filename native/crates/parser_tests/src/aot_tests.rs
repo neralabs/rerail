@@ -308,7 +308,10 @@ fn ladder_steps_rust_tapes_are_the_jits() {
             }
             let lang = F16Lang::new(rerail_tape_format::tape::CodeTable::new(keys), [1, 2, 2], 1).expect("a language");
             let numbers = c.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
-            let tapes = |c: &Compiled| -> Vec<(Option<Vec<u8>>, Vec<Option<Vec<u8>>>, Vec<Option<String>>)> {
+            // A document's runs: its format 15 tape, its format 16 tapes (without and with zero-copy), and why each
+            // format 16 run failed.
+            type Tapes = (Option<Vec<u8>>, Vec<Option<Vec<u8>>>, Vec<Option<String>>);
+            let tapes = |c: &Compiled| -> Vec<Tapes> {
                 docs.iter()
                     .map(|doc| {
                         let image = c.parser.image(doc).ok();

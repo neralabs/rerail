@@ -56,6 +56,27 @@ mod native {
     }
 }
 
+/// Windows has no GPU interface of its own here: its GPU is OpenCL's (`OpenCL.dll`, every driver's ICD loader), which
+/// the default device opens as `Device::OpenCl`, the variant each OpenCL check matches (`shared::get`). The native
+/// variants are typed as OpenCL's so the backends' matches stay one shape, and are never made on Windows.
+#[cfg(windows)]
+mod native {
+    pub use crate::compute_kernel_opencl::{
+        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, ClBindContext as BindContext,
+        ClBuffer as Buffer, ClComputeEvent as Event, ClComputeFunction as Function, ClComputeFunctionLibrary as Library, ClComputeQueue as Queue,
+        ClDevice as Device, ClQueueRoot as QueueRoot, ClSharedEvent as SharedEvent,
+    };
+    /// The kernels' address of a buffer's first byte.
+    pub fn device_address(b: &Buffer) -> Option<u64> {
+        b.address()
+    }
+    pub const NAME: &str = "OpenCL";
+    /// The device's own name.
+    pub fn device_name(d: &Device) -> String {
+        d.name().to_owned()
+    }
+}
+
 /// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", or "" for the target's GPU.
 fn chosen() -> &'static str {
     static CHOSEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -503,6 +524,16 @@ impl ComputeFunction {
         }
     }
 
+    /// The most threads a threadgroup of the kernel may have, as its pipeline says (Metal's); `None` where the
+    /// backend does not say.
+    pub fn max_threads_per_group(&self) -> Option<u64> {
+        match self {
+            #[cfg(target_os = "macos")]
+            ComputeFunction::Native(f) => Some(f.compute_pipeline_state.max_total_threads_per_threadgroup()),
+            _ => None,
+        }
+    }
+
     pub fn get_argument_info(&self) -> &[GridComputeFunctionArgument] {
         match self {
             ComputeFunction::Native(f) => f.get_argument_info(),
@@ -527,6 +558,8 @@ pub enum BindContext<'a> {
     Native(crate::compute_kernel_metal::MetalBindContext),
     #[cfg(target_os = "linux")]
     Native(crate::compute_kernel_cuda::CudaBindContext<'a>),
+    #[cfg(windows)]
+    Native(native::BindContext<'a>),
     Cpu(cpu::CpuBindContext<'a>),
     OpenCl(cl::ClBindContext<'a>),
 }
@@ -587,7 +620,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
     }
 
     fn launch_indirect(&mut self, groups: &BufferRef, offset: u64, max_groups: &[u64], block: &[u64]) -> Result<(), String> {
-        if offset % 4 != 0 || offset + 12 > groups.length() {
+        if !offset.is_multiple_of(4) || offset + 12 > groups.length() {
             return Err(format!("an indirect launch's counts at byte {offset} of a {}-byte buffer", groups.length()));
         }
         match (self, groups) {

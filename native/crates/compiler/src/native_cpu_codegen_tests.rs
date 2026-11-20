@@ -60,7 +60,7 @@ fn a_table_as_compares_is_the_table() {
     assert!(!context.func.display().to_string().contains("br_table"));
     let code = context.compiled_code().unwrap().code_buffer().to_vec();
     if cfg!(target_arch = "aarch64") {
-        assert!(!code.chunks_exact(4).any(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]) == 0xd503_229f), "a speculation barrier");
+        assert!(!code.as_chunks::<4>().0.iter().any(|&w| u32::from_le_bytes(w) == 0xd503_229f), "a speculation barrier");
     }
     module.finalize_definitions().unwrap();
     // SAFETY: declared and defined with this signature.

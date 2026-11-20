@@ -185,6 +185,9 @@ pub const ALT: [(&str, T); 11] = [
     ("xor_eq", T::CaretEq),
 ];
 
+/// The definitions a test looked up, in order: each symbol and the definition it had (none: not defined).
+pub(crate) type Lookups = Vec<(u32, Option<u32>)>;
+
 /// The preprocessor: its configuration, files, macros and sources.
 pub struct Pp<'a> {
     pub cfg: Config,
@@ -220,7 +223,7 @@ pub struct Pp<'a> {
     vis: Option<parallel::Vis>,
     vis_pos: u64,
     /// The parallel reading's record of the definitions a test looked up, while one is kept.
-    looked: Option<std::cell::RefCell<Vec<(u32, Option<u32>)>>>,
+    looked: Option<std::cell::RefCell<Lookups>>,
     /// The parallel reading's isolated list: its index in `stack`, and whether the reading asked
     /// past its end (a call's `(` or arguments) or met what the parallel shape does not carry.
     par: Option<parallel::Isolated>,

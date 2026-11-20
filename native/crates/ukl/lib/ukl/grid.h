@@ -40,7 +40,7 @@ typedef struct UklGrid {
 } UklGrid;
 
 // Whether the grid has failed a barrier (in every thread alike after a barrier).
-UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_load(&g.ctl[2]) != 0u; }
+UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_poll(&g.ctl[2]) != 0u; }
 
 // Waits for every group of the grid: true when all arrived, false when the bound was reached (here or in another
 // group) or the grid failed before; the same answer in every group. Every thread of every group calls it, the same
@@ -51,7 +51,7 @@ UKL_INLINE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
     ukl_tg_barrier_device();
     if (g.lid == 0u) {
         // The generation before this group arrives: it cannot step until every group, this one too, has.
-        uint32_t gen = ukl_atomic_load(&g.ctl[1]);
+        uint32_t gen = ukl_atomic_poll(&g.ctl[1]);
         uint32_t failed = gen & 1u;
         if (failed == 0u) {
             ukl_fence_device();
@@ -63,7 +63,7 @@ UKL_INLINE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
                 uint32_t now = gen, spins = 0u;
                 while (now == gen && spins < UKL_GRID_SPINS) {
                     ukl_poll_yield();
-                    now = ukl_atomic_load(&g.ctl[1]);
+                    now = ukl_atomic_poll(&g.ctl[1]);
                     spins++;
                 }
                 if (now == gen) {
@@ -315,6 +315,7 @@ UKL_INLINE bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHE
 // --- The radix sort ------------------------------------------------------------------------------------------------
 
 #include <ukl/radix.h>
+#if UKL_SIMD_WIDTH >= 8
 // The tile bodies over coherent rows: a grid's passes read what other groups scattered.
 #define UKL_RADIX_NAME(f) f##_u64_grid
 #define UKL_RADIX_KEY uint64_t
@@ -328,6 +329,11 @@ UKL_INLINE bool ukl_grid_sort_in_input(uint32_t bits) { return ((bits + 7u) / 8u
 // `digits` is `UKL_RADIX_SPILL` words), and `tile`, `UKL_GRID_SORT_TILE_WORDS` words (a tile's keys and values, for
 // the sort of one tile).
 #define UKL_GRID_SORT_TILE_WORDS (3u * UKL_RADIX_TILE)
+// The words of `counts`, `h`, `before`, `base` and `digits` laid end to end (where one block holds them, and `tile`
+// aliases it: no phase uses both).
+#define UKL_GRID_SORT_RADIX_WORDS (UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS + UKL_RADIX_SPILL)
+// The larger of the two.
+#define UKL_GRID_SORT_WORDS (UKL_GRID_SORT_TILE_WORDS > UKL_GRID_SORT_RADIX_WORDS ? UKL_GRID_SORT_TILE_WORDS : UKL_GRID_SORT_RADIX_WORDS)
 typedef struct UklGridSortLocal {
     UKL_LOCAL uint32_t* h;
     UKL_LOCAL uint32_t* counts;
@@ -480,4 +486,5 @@ UKL_INLINE bool ukl_grid_sort_u64(UklGrid g, uint32_t n, uint32_t bits, bool iot
 {
     return ukl_grid_sort_u64_from(g, n, 0u, bits, iota, keys, values, keys2, values2, hist, sums, l, scratch, flag __UKL_ARGS);
 }
+#endif
 

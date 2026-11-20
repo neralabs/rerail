@@ -15,7 +15,7 @@ Short answer:
   (the run's line, 1 GB, and Metal's, 512 MB "on top") with two measures: the footprint, and the full length of every
   Metal buffer. Neither is what the engine writes, and each sees the other's memory.
 - Big chunks are the cheap ones: on hogql, 262,144-node chunks retire 71-72 B against the default sizing's 86-87 B,
-  the same as before oscar's merge (69-70 B). That is the whole of Q312's rise.
+  the same as before oscar's merge (69-70 B). That is the whole of Q259's rise.
 - Big chunks need more memory than today's small ones (2.2-2.5 GB peak against 0.9 GB), part of it real (about
   390 MB of rows), part of it idle buffers and reservations a single budget of bytes written would not keep.
 

@@ -156,7 +156,7 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
     (out, stats)
 }
 
-/// A unit's configuration input, as the device's P1 reads it (decision 0467): the predefines'
+/// A unit's configuration input, as the device's P1 reads it (decision 0501): the predefines'
 /// text (a file of its own, `<built-in>`, before the main one, as `Pp::run` reads it) and the
 /// built-in macros' names (rows at slot 0).
 pub fn predefined(cfg: &Config) -> (Vec<u8>, Vec<Vec<u8>>) {
@@ -276,7 +276,7 @@ pub fn p1_of(cfg: Config, io: &mut dyn Files, path: &str) -> Result<P1, &'static
         };
         depth_of.push(depth);
         let mut inst = P1Inst { file: tu.insts[i as usize].file, parent, dir, depth, dir_slots: Vec::new(), dir_active: Vec::new(), gap_slots: Vec::new(), gap_active: Vec::new(), gap_tokens: Vec::new() };
-        // A push or a pop is a row of the device's table (decision 0467 §3), as `vis` reads it.
+        // A push or a pop is a row of the device's table (decision 0501 §3), as `vis` reads it.
         for d in 0..n {
             let active = state.active(tab, i, d);
             inst.dir_slots.push(lay.dir_pos(tab, i, d) >> SUB);

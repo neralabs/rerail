@@ -532,7 +532,7 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
             // reader reads before this returns.
             unsafe {
                 for (j, &s) in starts.iter().enumerate() {
-                    *ls.add(j) = u32::try_from(s).expect("a line start within 4 GB");
+                    *ls.add(j) = s;
                 }
                 Span::set(&raw const (*docs.add(i)).flines, ls, starts.len());
             }

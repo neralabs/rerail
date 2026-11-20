@@ -15,7 +15,7 @@
 use super::files::{Act, Tab, tabulate};
 use super::{Ev, Isolated, SUB, Stats, Vis, in_context};
 use std::collections::HashSet;
-use super::super::Pp;
+use super::super::{Lookups, Pp};
 use crate::directives::Kind;
 use rerail_c_lean::pp::P;
 use std::collections::HashMap;
@@ -177,7 +177,7 @@ pub(super) fn settle(pp: &mut Pp, tu: &mut Tu, builtins: &[(u32, u64, u32)], sta
     }
     let pragma = pp.syms.get(b"_Pragma");
     // By (instance, directive): a test's value and the definitions it looked up.
-    let mut memo: HashMap<(u32, u32), (bool, Vec<(u32, Option<u32>)>)> = HashMap::new();
+    let mut memo: HashMap<(u32, u32), (bool, Lookups)> = HashMap::new();
     let mut reach = (0, HashSet::new());
     for round in 1..=MAX_ROUNDS {
         stats.rounds = round;

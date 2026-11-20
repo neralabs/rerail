@@ -573,7 +573,7 @@ impl Cut {
                 }
             }
             let outputs: Vec<String> = v.outputs().map(|a| v.text(a)).filter(|o| dirty(o)).map(str::to_owned).collect();
-            let part = v.part(&dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).map_err(super::Error::Plan)?;
+            let part = v.part(dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).map_err(super::Error::Plan)?;
             crate::code_rule_dsl::logic::version_trace::note("session.cut", v, &part);
             Ok(cross.with_version(part))
         }
@@ -1398,7 +1398,7 @@ impl Layered {
                 if n == 0 || self.appended.contains_key(&o) {
                     continue;
                 }
-                if let Some(at) = self.from_kept(start as usize) {
+                if let Some(at) = self.live_of_kept(start as usize) {
                     out.insert(o, (at as u32, n));
                 }
             }
@@ -1433,7 +1433,7 @@ impl Layered {
     }
 
     /// Kept row `r`'s live place, unless it is dead.
-    fn from_kept(&self, r: usize) -> Option<usize> {
+    fn live_of_kept(&self, r: usize) -> Option<usize> {
         let k = self.dead.partition_point(|&(s, _)| (s as usize) <= r);
         if k > 0 && r < (self.dead[k - 1].0 + self.dead[k - 1].1) as usize {
             return None;
@@ -1478,7 +1478,7 @@ impl Source for Layered {
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let live = self.live_kept();
-        let mut out: Vec<usize> = self.kept.lookup(column, values)?.into_iter().filter_map(|r| self.from_kept(r)).collect();
+        let mut out: Vec<usize> = self.kept.lookup(column, values)?.into_iter().filter_map(|r| self.live_of_kept(r)).collect();
         out.extend(self.added.lookup(column, values)?.into_iter().map(|r| r + live));
         Some(out)
     }
@@ -1731,7 +1731,7 @@ impl FramedDocs {
                 }
                 // copy (0353 step 8): an input's documents read into a table by document, a lookup a run probes.
                 let mut docs = DocDigests::default();
-                entry.each_rows(&mut |rows| docs.extend(rows.chunks_exact(3).map(|r| (r[0], (r[1] as u64, r[2] as u64)))));
+                entry.each_rows(&mut |rows| docs.extend(rows.as_chunks::<3>().0.iter().map(|r| (r[0], (r[1] as u64, r[2] as u64)))));
                 (docs.len() == entry.len() && (self.counted || digest_of_docs(&docs) == self.digest)).then(|| Arc::new(docs))
             })
             .as_ref()
@@ -1799,6 +1799,10 @@ impl InKept {
     /// The digest input `rel` is kept at, when it is kept.
     pub(in crate::code_rule_dsl) fn input_digest(&self, rel: &str) -> Option<u64> {
         self.inputs.get(rel).map(|(d, _)| *d)
+    }
+    /// Whether a statistics entry (`kept_stats::PART`) of the rows of digest `digest` is kept under `name`.
+    fn holds_stats(&self, name: &KeptRel, digest: u64) -> bool {
+        self.bound.as_ref().and_then(|b| b.entry(&name.name, &name.ident, kept_stats::PART)).is_some_and(|e| e.digest() == digest)
     }
     /// The digest of `rel`'s stored frame, when it is stored and current.
     pub(in crate::code_rule_dsl) fn derived_digest(&self, rel: &str) -> Option<u64> {
@@ -2107,15 +2111,15 @@ fn lay_out(rel: &str, frame: &kept_read::Entry, digest: u64, atoms: &crate::cont
     // copy (0353 step 8): an input's documents read into its layout (each owner's range, each granule's owners).
     let mut rows: Vec<i64> = Vec::with_capacity(frame.len() * 3);
     frame.each_rows(&mut |r| rows.extend_from_slice(r));
-    let docs: DocDigests = rows.chunks_exact(3).map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
+    let docs: DocDigests = rows.as_chunks::<3>().0.iter().map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
     if docs.len() != frame.len() || digest_of_docs(&docs) != digest {
         return Err(format!("{rel}: its documents' entry does not match its digest"));
     }
-    let mut keys: Vec<i64> = rows.chunks_exact(3).map(|r| r[0]).collect();
+    let mut keys: Vec<i64> = rows.as_chunks::<3>().0.iter().map(|r| r[0]).collect();
     if frame.types().first() == Some(&b's') {
         atoms.content_keys(&mut keys);
     }
-    let mut owners: Vec<(i64, i64, u64)> = rows.chunks_exact(3).zip(keys).map(|(r, k)| (1 + k.rem_euclid(GRANULES), r[0], r[2] as u64)).collect();
+    let mut owners: Vec<(i64, i64, u64)> = rows.as_chunks::<3>().0.iter().zip(keys).map(|(r, k)| (1 + k.rem_euclid(GRANULES), r[0], r[2] as u64)).collect();
     owners.sort_unstable();
     let mut ranges = Ranges::default();
     ranges.reserve(owners.len());
@@ -2151,7 +2155,7 @@ fn base_documents_ident(binds: &[u8; 32]) -> [u8; 32] {
 pub(in crate::code_rule_dsl) type BaseDocument = (String, i64, super::memo::Content);
 
 /// The documents' table the store's frames in `space` keep for the cross part of `binds`, as written (an `Unstored`
-/// content is the caller's to resolve), each document with its places where the writer found them (decision 0504
+/// content is the caller's to resolve), each document with its places where the writer found them (decision 0494
 /// step 4 part 2), and the digest of the documents it names (the base relations' digests are of it); `None` when
 /// there is none. Read before the first wave, from the snapshot (a run inside another's waves too).
 pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<Option<(Vec<PlacedDocument>, u64)>> {
@@ -2189,7 +2193,7 @@ fn documents_table(store: &ContentStore, entry: &kept_read::Entry, held: bool) -
     Ok(Some((out, entry.digest())))
 }
 
-/// A document of a documents' table, with its places where the writer found them (decision 0504 step 4 part 2).
+/// A document of a documents' table, with its places where the writer found them (decision 0494 step 4 part 2).
 pub(in crate::code_rule_dsl) type PlacedDocument = (BaseDocument, Option<crate::content_store::DocumentPlaces>);
 
 /// Each base relation `rels`' statistics the store's frames in `space` keep for the cross part of `binds`, with the
@@ -2211,7 +2215,7 @@ pub(in crate::code_rule_dsl) fn base_stats(store: &ContentStore, space: [u8; 32]
     Ok(out)
 }
 
-/// The views' counts of each document of the cross part's corpus batch (decision 0504), kept beside the documents'
+/// The views' counts of each document of the cross part's corpus batch (decision 0494), kept beside the documents'
 /// table: by key, its digest (`Document::digest`) and its counts, as the batch made or was given them.
 pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, ([u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)>;
 
@@ -2273,7 +2277,7 @@ pub(in crate::code_rule_dsl) fn put_base_stats(store: &ContentStore, was: &InKep
 
 /// Queues the documents' table `docs` for the cross part of `binds` into the space `was` was read from, in the keep's
 /// wave: the writer finds each document's places as it writes it, its tape in the grammar `tape` (grammar id,
-/// grammar version, tape format version) names (decision 0504 step 4 part 2). `false` (nothing queued) when a file's
+/// grammar version, tape format version) names (decision 0494 step 4 part 2). `false` (nothing queued) when a file's
 /// content is only in memory (`Held`) or its path is no atom.
 pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &InKept, binds: [u8; 32], docs: &[BaseDocument], digest: u64, tape: Option<[i64; 3]>) -> bool {
     if docs.iter().any(|(_, _, c)| matches!(c, super::memo::Content::Held(_))) {
@@ -2288,7 +2292,7 @@ pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &I
             super::memo::Content::Stored(id) => rows.extend([0, id.raw(), 0, 0, 0]),
             super::memo::Content::Unstored(d) => {
                 rows.push(1);
-                rows.extend(d.chunks_exact(8).map(|w| i64::from_le_bytes(w.try_into().expect("eight bytes"))));
+                rows.extend(d.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
             }
             super::memo::Content::Held(_) => unreachable!("refused above"),
         }
@@ -2657,7 +2661,7 @@ impl Retained {
             Some(b) => names.values().filter_map(|n| b.entry(&n.name, &n.ident, DOCS_PART).map(|e| (n.clone(), KeptStored { digest: e.digest(), reads: e.reads() }))).collect(),
             None => HashMap::new(),
         };
-        Self::from_frame_snapshot(space, kept, key, prog, &leaves, &sccs, names, stored, bound)
+        Self::from_frame_snapshot(space, kept, key, prog, &leaves, sccs, names, stored, bound)
     }
 
     fn empty_kept(key: [u8; 32], mut frames: InKept) -> Self {
@@ -2708,7 +2712,7 @@ impl Retained {
             let current: Option<Vec<KeptStored>> = scc.iter().map(|rel| {
                 let n = frames.names.get(rel)?;
                 let at = stored.get(n)?;
-                let now: Vec<(String, u64)> = at.reads.iter().map(|(read, _)| read_digest(read, &known, &derived, prog, &leaves).map(|d| (read.clone(), d))).collect::<Option<_>>()?;
+                let now: Vec<(String, u64)> = at.reads.iter().map(|(read, _)| read_digest(read, &known, &derived, prog, leaves).map(|d| (read.clone(), d))).collect::<Option<_>>()?;
                 (now == at.reads).then(|| at.clone())
             }).collect();
             if let Some(current) = current {
@@ -2718,7 +2722,7 @@ impl Retained {
                 }
             } else {
                 let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r)).collect();
-                if let Some(rd) = reads.iter().map(|r| read_digest(r, &known, &derived, prog, &leaves).map(|d| (r.clone(), d))).collect::<Option<Vec<_>>>() {
+                if let Some(rd) = reads.iter().map(|r| read_digest(r, &known, &derived, prog, leaves).map(|d| (r.clone(), d))).collect::<Option<Vec<_>>>() {
                     for rel in scc {
                         known.insert(rel.clone(), unkept_digest(rel, &rd));
                     }
@@ -3244,12 +3248,12 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         let name = was.names.get(rel)?;
         let width = source.columns().len();
         let types = types_of(prog, domains, rel);
-        let cells = if types.len() == width { Cells::new(&atoms, &types) } else { Cells::plain(width) };
+        let cells = if types.len() == width { Cells::new(atoms, &types) } else { Cells::plain(width) };
         let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
         // Its statistics this run measured (an input no keeper counts, a semi-join's: `kept_inputs`' `stats_of`),
-        // kept beside its frame at these rows (decision 0120 §3's part), unchanged rows or not: measured, they were
-        // not kept at them.
-        if let Some(columns) = input_stats.get(rel).filter(|_| kept_stats::on()) {
+        // kept beside its frame at these rows (decision 0120 §3's part), unchanged rows or not, unless an entry of
+        // these rows is kept already: the statistics of the same rows are the same, and a warm run writes nothing.
+        if let Some(columns) = input_stats.get(rel).filter(|_| kept_stats::on() && !was.holds_stats(name, digest)) {
             let all: kept_stats::ByDigest = [((rel.clone(), digest), (columns.clone(), Vec::new(), BTreeSet::new()))].into_iter().collect();
             let words = kept_stats::to_words(&kept_stats::encode(&all));
             kept.push(kept_flat(name, kept_stats::PART, digest, Vec::new(), vec![b'i'], words.clone(), words.len()));
@@ -3275,7 +3279,7 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         }
         let g = group_col(prog, locations, rel).min(width - 1);
         let atom_owner = types.len() == width && atom_owners(&types, g);
-        let owners = atom_owner.then_some(&*atoms);
+        let owners = atom_owner.then_some(atoms);
         let granule = |d: i64| granule(d, owners);
         let docs = input_docs(rel).filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g, &cells)));
         let old = was.inputs.get(rel).and_then(|(_, d)| d.get()).map(Arc::clone);

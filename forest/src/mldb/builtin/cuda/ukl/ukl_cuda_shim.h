@@ -317,7 +317,10 @@ template<> struct ukl_type_code<long long> { static constexpr unsigned long long
             __ukl_out[__ukl_i] = __ukl_l[__ukl_i]; \
     }
 
-#define DEFINE_KERNEL2(Library, Name, ...) \
+// The rows expanded first: a kernel may give them as a macro (a grid's shared rows), which the body stringizes and
+// counts.
+#define DEFINE_KERNEL2(Library, Name, ...) __UKL_DEFINE_KERNEL2(Library, Name, __VA_ARGS__)
+#define __UKL_DEFINE_KERNEL2(Library, Name, ...) \
     extern "C" __device__ const char Name ## __ukl_params[] = #__VA_ARGS__; \
     extern "C" __device__ const unsigned long long Name ## __ukl_rows[] = \
         { __UKL_FOREACH_QUAD(GEN_ROW_LAYOUT2, __VA_ARGS__) }; \

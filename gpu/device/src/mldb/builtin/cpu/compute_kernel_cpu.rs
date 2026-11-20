@@ -25,7 +25,7 @@
 
 use crate::compute_kernel::*;
 use std::cell::RefCell;
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
 
@@ -40,7 +40,17 @@ pub fn defines() -> Vec<(&'static str, String)> {
     if std::env::var("RERAIL_CPU_OPENCL_RULE").is_ok_and(|v| v == "1") {
         v.push(("UKL_CPU_OPENCL_RULE", "1".to_string()));
     }
+    if strict_simd() {
+        v.push(("UKL_CPU_SIMD_STRICT", "1".to_string()));
+    }
     v
+}
+
+/// `RERAIL_CPU_SIMD_STRICT=1`: a SIMD group's lanes meet only at the same operation reached by the same path
+/// (`ukl_cpu_shim.h`'s `__ukl_cpu_site`), compiled without optimization so that none is duplicated: a kernel with a
+/// SIMD-group operation some lanes skip fails, naming where each waits.
+pub fn strict_simd() -> bool {
+    std::env::var("RERAIL_CPU_SIMD_STRICT").is_ok_and(|v| v == "1")
 }
 
 /// The CPU's SIMD groups' lanes: `RERAIL_CPU_SIMD_WIDTH`, else 32.
@@ -204,7 +214,7 @@ pub fn gpu_seconds_awaited() -> f64 {
 
 /// A compiled library: the shared object the host's compiler made of the source, loaded.
 pub struct CpuComputeFunctionLibrary {
-    handle: *mut c_void,
+    handle: crate::sys::Library,
     name: String,
 }
 
@@ -221,15 +231,9 @@ fn compiler_version(cxx: &str) -> &'static str {
 }
 
 /// The kernel library at `lib`, loaded.
-fn open_library(lib: &std::path::Path) -> Result<*mut c_void, String> {
-    let c = CString::new(lib.to_string_lossy().as_bytes()).unwrap();
-    // SAFETY: a shared object a compiler made from UKL; it runs no initializers of its own.
-    let handle = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    if handle.is_null() {
-        let e = unsafe { CStr::from_ptr(libc::dlerror()) }.to_string_lossy().into_owned();
-        return Err(format!("loading {}: {e}", lib.display()));
-    }
-    Ok(handle)
+fn open_library(lib: &std::path::Path) -> Result<crate::sys::Library, String> {
+    // A shared object a compiler made from UKL; it runs no initializers of its own.
+    crate::sys::Library::open(&lib.to_string_lossy())
 }
 
 impl CpuComputeFunctionLibrary {
@@ -237,7 +241,7 @@ impl CpuComputeFunctionLibrary {
     pub fn compile_from_source(_device: &CpuDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
-        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), preprocessed_source.as_bytes()]);
+        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, preprocessed_source.as_bytes()]);
         let lib = match crate::store::path("cpu", &k, "so") {
             Some(p) => p,
             None => {
@@ -268,8 +272,12 @@ impl CpuComputeFunctionLibrary {
             let src = dir.join(format!("{own}.cpp"));
             std::fs::write(&src, preprocessed_source).map_err(|e| format!("{}: {e}", src.display()))?;
             let tmp = dir.join(format!("{own}.so"));
+            // `-O0` last before `-o`: it overrides the flags' `-O1`.
+            let (flags, out) = CXX_FLAGS.split_at(CXX_FLAGS.len() - 1);
             let o = std::process::Command::new(cxx)
-                .args(CXX_FLAGS)
+                .args(flags)
+                .args(strict_simd().then_some("-O0"))
+                .args(out)
                 .arg(&tmp)
                 .arg(&src)
                 .output()
@@ -291,12 +299,7 @@ impl CpuComputeFunctionLibrary {
     }
 
     fn symbol(&self, name: &str) -> Result<*mut c_void, String> {
-        let c = CString::new(name).unwrap();
-        let p = unsafe { libc::dlsym(self.handle, c.as_ptr()) };
-        if p.is_null() {
-            return Err(format!("{}: no {name}", self.name));
-        }
-        Ok(p)
+        self.handle.symbol(name).ok_or_else(|| format!("{}: no {name}", self.name))
     }
 
     fn string(&self, name: &str) -> Result<String, String> {
@@ -418,16 +421,12 @@ impl Worker {
         let stride = STACK_BYTES + self.page;
         if self.stacks_len < n * stride {
             if !self.stacks.is_null() {
-                unsafe { libc::munmap(self.stacks.cast(), self.stacks_len) };
+                // SAFETY: the mapping made below, its stacks used no more.
+                unsafe { crate::sys::unmap(self.stacks, self.stacks_len) };
             }
             let len = n.max(64) * stride;
-            // SAFETY: anonymous memory; the guards are made inaccessible below.
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
-            assert!(p != libc::MAP_FAILED, "no memory for the CPU backend's thread stacks");
-            for k in 0..len / stride {
-                unsafe { libc::mprotect(p.cast::<u8>().add(k * stride).cast(), self.page, libc::PROT_NONE) };
-            }
-            self.stacks = p.cast();
+            let p = crate::sys::map_guarded(len, stride).expect("no memory for the CPU backend's thread stacks");
+            self.stacks = p;
             self.stacks_len = len;
         }
         (self.stacks, stride)
@@ -445,7 +444,7 @@ impl CpuQueueRoot {
             .name("rerail-cpu-queue".into())
             .stack_size(8 << 20)
             .spawn(move || {
-                let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
+                let page = crate::sys::page_size();
                 let mut w = Worker { stacks: std::ptr::null_mut(), stacks_len: 0, page, sched: vec![0; SCHED_BYTES / 8] };
                 for b in rx {
                     let t = std::time::Instant::now();

@@ -398,13 +398,12 @@ fn node_gap_tests<'a>(
         AstMatcher::Util(util) => utility(util.index, seen, tests),
         AstMatcher::Call(call) => utility(call.util.index, seen, tests),
         AstMatcher::Constrained(core) => node_gap_tests(&core.rule, utils, seen, tests),
-        AstMatcher::Semantic(crate::code_rule_dsl::matcher::Semantic::Gap(test)) => {
+        AstMatcher::Semantic(crate::code_rule_dsl::matcher::Semantic::Gap(test))
             if !test.stored
                 && test.regex.capture_names().flatten().next().is_some()
-                && !tests.iter().any(|known| std::ptr::eq(*known, &**test))
-            {
-                tests.push(test);
-            }
+                && !tests.iter().any(|known| std::ptr::eq(*known, &**test)) =>
+        {
+            tests.push(test);
         }
         _ => {}
     }

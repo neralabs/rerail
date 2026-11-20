@@ -145,7 +145,7 @@ pub(super) fn fold(
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "fold the run's constants".into());
     let key = key(programs, added, root, options, &wanted);
-    let was_kept = kept(&key, root, &**v)?;
+    let was_kept = kept(&key, root, v)?;
     let reused = was_kept.is_some();
     // The plans the constants' run used, for the outer run's record (`Report::plans`): kept with the constants, so a
     // run that reuses them names the plans the run that derived them did, and records the same manifest (0252).

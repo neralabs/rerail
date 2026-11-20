@@ -15,7 +15,7 @@ pub fn arguments(
     mut struct_type: impl FnMut(&str) -> Result<KernelBaseType, String>,
 ) -> Result<(Vec<GridComputeFunctionArgument>, Vec<usize>), String> {
     let fields = split_top(text);
-    if fields.len() % 4 != 0 || rows.len() != fields.len() / 4 * 3 {
+    if !fields.len().is_multiple_of(4) || rows.len() != fields.len() / 4 * 3 {
         return Err(format!("{function_name}: {} row fields and {} layout numbers", fields.len(), rows.len()));
     }
     let mut arguments = Vec::new();

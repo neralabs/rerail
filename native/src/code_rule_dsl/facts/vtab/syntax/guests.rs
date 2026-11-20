@@ -38,7 +38,7 @@ fn hex(digest: &[u8; 32]) -> String {
 }
 
 /// The documents a guest's host is found among (decision 0055): a batch's (`made::Docs`, each made when first read,
-/// decision 0504), which hold the documents of the batches it grew from (decision 0431 §6).
+/// decision 0494), which hold the documents of the batches it grew from (decision 0431 §6).
 pub(super) trait Hosts {
     /// The projection of the document of key `key`.
     fn host(&self, key: u32) -> Option<&Projected>;

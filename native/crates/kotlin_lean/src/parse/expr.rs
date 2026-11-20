@@ -156,11 +156,10 @@ impl<'a> P<'a> {
     fn split_type(&mut self, m: Mark, n: crate::tw::Node) -> R<bool> {
         let Some((split, j)) = self.as_split(0) else { return Ok(false) };
         let at = self.i + j;
-        if let Split::Compare = split {
-            if !self.split_operand_reads(j) {
+        if let Split::Compare = split
+            && !self.split_operand_reads(j) {
                 return Ok(false);
             }
-        }
         let stop = std::mem::replace(&mut self.type_stop, self.i + 1);
         let r = self.ty();
         self.type_stop = stop;

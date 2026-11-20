@@ -1,8 +1,7 @@
-# 0506. Joins deferred to their readers' requests, and keyed probes screened by a Bloom filter
+# 0500. Joins deferred to their readers' requests, and keyed probes screened by a Bloom filter
 
-Numbered 0477 where it was written (cost-classifier-metal-rf, Typing-support-final-shape and rr-align; 0500 on
-Bend-language-investigation, where CUDA-support's 0500 is another). Renumbered past 0505 at the merge of the
-final-shape hub into Typing-support, whose 0477 is the run's serial phases' locks.
+(Was 0477 on cost-classifier-metal-rf, Typing-support-final-shape and rr-align; renumbered past 0499 at its merge into
+the hub, where 0477 is the run's serial phases.)
 
 Status: accepted (2026-11-19). Ported from the Release-debugging worktree's uncommitted work (its session of
 2026-11-17 to 2026-11-19), adapted to decision 0281's version path and decision 0442. The user asked for the port;
@@ -50,12 +49,8 @@ engine did and whether the rule needs a change (`profile::author_joins`).
 What changes from Release-debugging:
 
 1. **The rewrite runs on the version** (0281). It is a keyed step of `preparation::front`, after the node products
-   (0461) and before the reach form, keyed by its settings. The branch it came from (cost-classifier-metal-rf)
-   decoded the tree for it; on the merged branch the tree forms are gone (0276 step 6), and the rewrite reads and
-   writes the version: the requested pairs are the upstream demand's install under another prefix
-   (`upstream::install_named`), a hot endpoint's sharing is a derivation of the version, and the broad readers'
-   factors are the factorized store's own round (`file_local::passes::factorize`, its `Scope::Intermediates`), one
-   definition with the exports' factorization, the pair caches written with it.
+   (0461) and before the reach form. It decodes the tree for its rewrite, as the products step does (Q292), keyed by
+   its settings. A debug build replays it on the tree at the stage `deferred` and checks the two match.
 2. **The placement fallback is a replan.** A pair cache's guard, or a factor read across files, can draw an answer
    that only a document can give (`node_text`, `value`, `str`) into the cross-file part. Release-debugging looped
    inside preparation. Here preparation returns a replan error. `run_observed` prepares the program again with the
@@ -128,23 +123,6 @@ What changes from Release-debugging:
   as the binary loads): `the_gpu_batch_makes_the_cpu_batch_heavy_values` and
   `column_statistics_read_a_resident_relation_in_place`, word for word, both widths.
 
-## Reading a rule's joins in the profile
-
-(Was a section of `docs/code-rule-profiling.md`, which the hub removed in #831.) Run the CLI with a profile directory,
-on a fresh store to measure the first evaluation:
-
-```sh
-RERAIL_PROFILE="$PWD/tmp/slf-profile" RERAIL_TAPE_CACHE="$PWD/tmp/slf-profile.sqlite" \
-  nice -n 19 rerail-engine run-policies /path/to/python/corpus "$PWD/tmp/slf-output" \
-  docs/rule-syntax/packs/python/ruff-slf001-private-member-access.rerail
-```
-
-`tmp/slf-profile/profile.txt`'s **Joins in authored rules** names each relation with its definitions' file and line;
-a reader's entry names the clause that reads it and the columns it has no value for. On 100 PostHog files the readers
-of `slf_class_head` requested 46 distinct pairs, checked directly: the author keeps the clause as written. For a
-shared cache the entry shows the plan's choice, the cache's size where it was seen, and its limit, which bounds the
-optional pairs only (factors and required output take memory beside it). A run that reuses every finding measures no
-join.
 ## Kept with each column: insurance that pays for itself (2026-11-20)
 
 The user: the filters are an insurance policy against over-long joins and pathological cases. They have to be cheap
@@ -334,8 +312,23 @@ by section): `auto` 1,013.8 G against `off` 976.2 G (+3.9%), the same findings.
 On this build, measured again: `off` 952.7 G, `auto` 961.8 G (+1.0%), findings 463 `d067ec2ebf6f` in both, the host at
 load 3.5.
 
-Left: `auto` still runs about 300 strata of its own (`pre_*`, `fz*`, `rr_deferred_pairs_*`), and 107 heavy-value
-counts of `kind` a fork made and no model kept.
+### What `auto` made of its own, by producer (2026-11-20)
+
+Compared by family, not by name: the negated demand's splits (`pre_*`) are numbered by rule position, which the
+rewrite shifts, so a comparison by name counted each as new; `auto` has fewer (170 against 178) and as much work.
+Its own strata, profiled (join work, rows): 15 request relations (1.53 M), 23 more factors and 17 more factor keys
+(0.45 M), against 0.54 M of relations it no longer derives. By producer, off against auto and its request, four
+cost more than the whole difference, each now removed:
+
+| Producer | Off | Auto | Request | What it was | Now |
+|---|---|---|---|---|---|
+| `exc_call` | 42 k | 118 k | 1.23 M | `PT010` asks for every call (`field(c, "function", _)`, in `exc_call`'s rule too): the request, a union over 14 readers, restricted nothing | a request whose key atoms the producer's rule reads, with their constants, and whose other atoms are constant-free, is not made (`void_request`) |
+| `str_lit` | 32 k | factors | (464 k key) | the key of the part `unparen(e, m)`, every node, stored to reduce a part of 16 k | a part of one atom is its own key, probed by the others, not stored: in the version's pass, the keys after it probe it (its chained keys, 0276 step 6) |
+| `lambda_arg` | 1.6 k | 171 k | 83 k | the request was forced to lead its producer (`demand_first`): 14,360 calls' arguments walked where `kind($g, "lambda")` reads 229 | the request bounds its producer as a demand does (Q59, `own_demand`): an atom a constant restricts may lead |
+| `kind`, heavy values | | 107 counts | | the forks of a wave counted each chunk's `kind` view apart; each took its own back only as it retired | the forks of a model share what they made, each with its relation's mark (`Stats::heavy_shared`): 18 counts |
+
+corpus0 x B-now, one thread, profiling build, the M1 Max at load 1.7: `off` 953.3 G, `auto` 955.9 G (+0.27%),
+findings 463 `d067ec2ebf6f` in both.
 
 ## Open
 
@@ -349,5 +342,23 @@ counts of `kind` a fork made and no model kept.
   would rarely tell. Where the variable is reached through another join, the fix would be counters of the bindings
   where they are made (a hash and an add a binding, sampled 1 in 8 by hash), read by the same estimator. Reopen it
   where a run's mispredicted lines show that shape.
-- **The deferred step decodes the tree** for every program it runs on (Q186).
+- ~~**The deferred step decodes the tree** for every program it runs on (Q292).~~ On rr-align (roll-up 19) it
+  decodes none: see "Onto rr-align" below.
 - Whole-pack timing and findings on `scripts/ship/corpora.json` were never compared in Release-debugging.
+
+## Onto rr-align (roll-up 19, 2026-11-20)
+
+rr-align has no front tree on the run's path (decision 0277), so roll-up 19 ported (a), the deferred joins, onto the
+version instead of replaying the tree's rewrite:
+
+- `product_demand::deferred::DeferJoins` is a `ProgramPass`: its rewrites are derivations of the version
+  (`Program::derive`), and what it made is published as one edit (`product_demand::publish`, which the node-product
+  pass shares). It records its plans as the pass's decisions (`deferred joins`, and one `authored join plan` each),
+  which a prepared program keeps.
+- Factoring an intermediate is `passes/factorize.rs`'s, beside the exports' (`factorize_intermediates`): one
+  chooser and one round writer for both, the pair caches and their guards (`rr_admit_pairs`) written by the round.
+- The rounds a deferral makes eager are undone on the version (`rr::lower::undone_with`) before the pass.
+- A maintained stratum's kept rows are not counted as this run's cached pairs (`setfix::hold_maintained`): the
+  report explains the current snapshot (`cache_boundary_edits_explain_the_current_snapshot`).
+- Tests: the five of `product_demand::deferred` (rerail-logic), the session test above (rerail-engine).
+

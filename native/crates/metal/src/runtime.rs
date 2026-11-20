@@ -389,7 +389,7 @@ pub fn evaluation_scope() -> launch::LaunchScope {
     launch::LaunchScope::enter()
 }
 
-/// Releases the compiled pipelines and libraries (the residency's drop): the machine's; the store keeps them
+/// Releases the compiled pipelines and libraries (the residency's drop): the process's; the store keeps them
 /// (`rerail_accel::gpu::kernels`, decision 0395).
 pub fn drop_pipelines() {
     rerail_accel::gpu::kernels::release();

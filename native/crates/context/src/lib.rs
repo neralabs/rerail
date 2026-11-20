@@ -41,10 +41,13 @@ pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
 
 pub type AnyArc = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 
+/// The place a setting is read (its file, line and column) and the type it is read as.
+type SettingPlace = (&'static str, u32, u32, std::any::TypeId);
+
 /// A run's settings, by the place that reads each, and its own values, by type (decision 0442).
 #[derive(Default)]
 pub struct RunValues {
-    settings: parking_lot::Mutex<std::collections::HashMap<(&'static str, u32, u32, std::any::TypeId), AnyArc>>,
+    settings: parking_lot::Mutex<std::collections::HashMap<SettingPlace, AnyArc>>,
     locals: parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>,
 }
 
@@ -314,7 +317,7 @@ fn context_here() -> Context {
 
 /// What a job made on this thread carries to the thread that runs it (rayon-core's patch, `set_job_carrier`): the
 /// run under way and its context (`job_run`). A loop's items split by rayon's `join`, and a half another thread steals
-/// runs in its maker's run, whichever runs share the pool (decision 0442, Q386). Nothing where the thread holds no
+/// runs in its maker's run, whichever runs share the pool (decision 0442, Q300). Nothing where the thread holds no
 /// run: a thread the engine gave none (in a test build, a test's own thread carries the tests' object).
 fn carry() -> Option<rayon_core::Carried> {
     if RUN.try_with(|r| r.borrow().is_none()).unwrap_or(true) {
@@ -1054,7 +1057,7 @@ mod tests {
 mod stolen_halves {
     use super::*;
 
-    /// Q386: two runs' loops in one pool at once (a corpus run's phase 0 beside its main program). Every item, the
+    /// Q300: two runs' loops in one pool at once (a corpus run's phase 0 beside its main program). Every item, the
     /// halves other threads steal included, reads its own run's value and its own caller's binding: each job carries
     /// its maker's run (rayon-core's patch, `carry`).
     #[test]

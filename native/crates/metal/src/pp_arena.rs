@@ -145,7 +145,8 @@ impl Bound for Buffer {
 
 /// The evaluator's one source, UKL (decision 0468 §5): the tape's view and its reads written once
 /// in CLIF (`<ukl/reads/tape.h>`, the view read where the batch holds it), the persistent grid's
-/// barrier and primitives (`<ukl/grid.h>`), the work queue (`<ukl/workqueue.h>`), the arena's
+/// barrier and primitives (`<ukl/grid.h>`), the work queue (`<ukl/workqueue.h>`), the pool of
+/// blocks used again (`<ukl/pool.h>`), the arena's
 /// slots (`SLOTS`, the source's `S_*`), the front passes (`pp_eval.uglykl`), the searches
 /// (`pp_search.uglykl`), the expansion's passes (`pp_expand.uglykl`), the kernels that run them
 /// all (`pp_grid.uglykl`) and the tests' probes (`pp_probes.uglykl`). The kernel store
@@ -153,7 +154,7 @@ impl Bound for Buffer {
 pub fn source() -> &'static str {
     static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "#include <ukl/backend.h>\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "#include <ukl/backend.h>\n{PP_GLOBAL}#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n#include <ukl/pool.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}",
             rerail_clif::view::ukl(),
             SLOTS.iter().enumerate().map(|(k, s)| format!("#define S_{s} {k}u\n")).collect::<String>(),
             include_str!("pp_eval.uglykl"),
@@ -168,16 +169,24 @@ pub fn source() -> &'static str {
     &SOURCE
 }
 
-/// The evaluator's kernels made, by name: the machine's, as its device is (decision 0442).
-#[derive(Default)]
-struct Made(std::sync::Mutex<std::collections::HashMap<String, lane::Kernel>>);
+/// The passes' space for the stores they write (`PP_GLOBAL`): a phase reads what other groups wrote before the grid's
+/// barrier, so on a GPU it is coherent memory (`UKL_COHERENT`, `ukl/grid.h`'s rule). On an M1 Max a plain device read
+/// of another group's write came back stale every time once the grid spanned more than 8 groups, and a coherent one
+/// never did (Q367). The CPU's caches are coherent, so there it is a plain pointer. CUDA's
+/// `UKL_COHERENT` is `volatile`, from which C++ copies no struct, and the passes copy theirs: a plain pointer there
+/// too (not run on CUDA yet).
+const PP_GLOBAL: &str = "#if defined(UKL_METAL) || defined(UKL_OPENCL)\n#define PP_GLOBAL UKL_COHERENT\n#else\n#define PP_GLOBAL UKL_GLOBAL\n#endif\n";
 
-/// The kernel `name` of the evaluator's source, made once on the machine (a failed compile is fatal).
+/// The kernel `name` of the evaluator's source, made once a machine (a failed compile is fatal).
 pub fn kernel(name: &str) -> lane::Kernel {
-    let made = rerail_context::machine::<Made>();
-    let mut made = made.0.lock().unwrap_or_else(|p| p.into_inner());
-    made.entry(name.to_owned()).or_insert_with(|| lane::kernel_fixed(source(), name, None)).clone()
+    let made = rerail_context::machine::<Kernels>();
+    let mut made = made.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    std::sync::Arc::clone(made.entry(name.to_owned()).or_insert_with(|| lane::kernel_fixed(source(), name, None)))
 }
+
+/// The machine's kernels of the evaluator, by name (`kernel`): a machine object (decision 0442), as its device is.
+#[derive(Default)]
+struct Kernels(std::sync::Mutex<std::collections::HashMap<String, lane::Kernel>>);
 
 /// The threads of a group.
 pub const TG: u64 = 256;
@@ -191,7 +200,7 @@ unsafe impl lane::Pod for ProbeArgs {}
 /// The launches of one command, on the process's device (`lane::Command`).
 pub struct Enc<'a> {
     command: RefCell<lane::Command>,
-    /// The slabs each launch makes resident: a unit's documents past the bound one (`pp_eval::Unit::slabs`, 0471).
+    /// The slabs each launch makes resident: a unit's documents past the bound one (`pp_eval::Unit`, 0471).
     resident: &'a [std::sync::Arc<crate::slabs::Slab>],
 }
 
@@ -200,7 +209,7 @@ impl<'a> Enc<'a> {
         Enc::over(label, &[])
     }
 
-    /// `new`, each launch making `resident` resident: a unit's other slabs, which its views reach by their addresses.
+    /// An `Enc` whose launches make `resident` resident.
     pub fn over(label: &str, resident: &'a [std::sync::Arc<crate::slabs::Slab>]) -> Enc<'a> {
         Enc { command: RefCell::new(lane::Command::new(label)), resident }
     }
@@ -214,11 +223,11 @@ impl<'a> Enc<'a> {
             let (buffer, offset) = b.bound();
             launch = launch.buffer_at(row, buffer, offset);
         }
-        if let Some(a) = args {
-            launch = launch.value("args", &a);
-        }
         for slab in self.resident {
             launch = launch.uses(slab.device_buffer());
+        }
+        if let Some(a) = args {
+            launch = launch.value("args", &a);
         }
         launch.groups([groups.max(1), 1, 1], [TG, 1, 1]);
     }
@@ -291,15 +300,16 @@ pub const GROUPS_MOST: u64 = 32;
 /// with no count. A run
 /// whose barrier fails runs again with half as many.
 pub fn groups() -> u64 {
-    /// The count, found once on the machine (decision 0442: its device's).
-    #[derive(Default)]
-    struct Groups(std::sync::OnceLock<u64>);
     *rerail_context::machine::<Groups>().0.get_or_init(|| {
         let Ok(device) = lane::device() else { return GROUPS_UNKNOWN };
         let local = kernel("pp_setup").threadgroup_bytes();
         device.resident_groups(TG as u32, local).map_or(GROUPS_UNKNOWN, |g| g.min(GROUPS_MOST))
     })
 }
+
+/// The machine's grid groups (`groups`), found once: a machine object (decision 0442), as its device is.
+#[derive(Default)]
+struct Groups(std::sync::OnceLock<u64>);
 
 /// The arena's stores the persistent kernels read, by slot: `pp_grid.uglykl`'s `S_*`, made from
 /// this list (`source`), and a run's offsets (`Lay`). A word slot holds a value, not an offset.

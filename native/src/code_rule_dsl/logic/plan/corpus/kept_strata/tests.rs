@@ -138,7 +138,7 @@
         kept.program(&HashMap::from([("r".into(), [1; 32])]));
         assert!(kept.has_rows("r"));
         store.queue_kept([42; 32], vec![one(&rel, 2, vec![], 2)]);
-        let (_, held) = kept.rows("r", &[b'i']).expect("bound from the commit the run read");
+        let (_, held) = kept.rows("r", b"i").expect("bound from the commit the run read");
         assert_eq!((kept.was("r"), held.live_rows().unwrap()), (Some(1), vec![1]));
     }
 

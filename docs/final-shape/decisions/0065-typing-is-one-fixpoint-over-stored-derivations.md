@@ -120,7 +120,7 @@ py_import (a loaded document's) ← load: the engine's answer, as a new wave
    reads only requests that `t` determines, which holds for import resolution. A directory is answered whole,
    and a new document adds new keys, not rows under an old one.
 
-   An aggregate inside the component waits the same way (the user, 2026-11-20: "Gate aggregates per key"; Q388).
+   An aggregate inside the component waits the same way (the user, 2026-11-20: "Gate aggregates per key"; Q409).
    Its key is the columns of its atom that the literals before it bind: the group it aggregates. `n = count : {
    got(x, _) }` after `want(x)` becomes `done_got_bf(x), n = count : { got(x, _) }`, the aggregate's atom gated, so
    the stratifier counts its edge as positive (`front::graph`, as for a gated negation). An `ask` writes the

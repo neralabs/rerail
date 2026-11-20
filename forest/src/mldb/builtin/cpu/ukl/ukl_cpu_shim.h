@@ -259,6 +259,42 @@ static inline void __ukl_cpu_say_u(const __ukl_cpu_launch* L, uint64_t v)
     __ukl_cpu_say(L, s);
 }
 
+// Where a waiting thread waits, for a report: its two innermost return addresses (the operation's site and its
+// caller's), from the frame its switch saved. 0 where the architecture's frame is not read here.
+static inline uint64_t __ukl_cpu_where(const __ukl_cpu_thread* t)
+{
+#if defined(__aarch64__)
+    void** frame = (void**)t->sp;
+    void** fp = (void**)frame[10];
+    return (uint64_t)frame[11] * 31u + (fp ? (uint64_t)fp[1] : 0u);
+#else
+    (void)t;
+    return 0;
+#endif
+}
+
+// What a SIMD group's lanes must share to meet at an operation. Under `UKL_CPU_SIMD_STRICT`
+// (`RERAIL_CPU_SIMD_STRICT=1`, compiled without optimization, so no operation is duplicated): the whole chain of
+// return addresses, the same operation reached by the same path, as a GPU's SIMD group meets one; a group whose
+// lanes wait at two (some skipped an operation, or left an item early) fails the launch. Else nothing: any
+// operations meet.
+static inline uint64_t __ukl_cpu_site(const __ukl_cpu_thread* t)
+{
+#if defined(UKL_CPU_SIMD_STRICT) && defined(__aarch64__)
+    void** frame = (void**)t->sp;
+    uint64_t h = (uint64_t)frame[11];
+    void** fp = (void**)frame[10];
+    for (int k = 0; k < 64 && fp != 0; k++) {
+        h = h * 1000003u + (uint64_t)fp[1];
+        fp = (void**)fp[0];
+    }
+    return h;
+#else
+    (void)t;
+    return 0;
+#endif
+}
+
 // Runs one threadgroup's threads, each `f()`, to their ends; 0, or 1 with the launch's error written.
 template <typename F> static int __ukl_cpu_group(__ukl_cpu_sched* s, F& f)
 {
@@ -311,6 +347,15 @@ template <typename F> static int __ukl_cpu_group(__ukl_cpu_sched* s, F& f)
                 live += s->threads[i].state != __UKL_DONE;
                 at += s->threads[i].state == __UKL_AT_SG;
             }
+            // Under `UKL_CPU_SIMD_STRICT`, every lane at the same operation (`__ukl_cpu_site`).
+            for (uint32_t i = g * UKL_SIMD_WIDTH, first = n; i < n && i < (g + 1) * UKL_SIMD_WIDTH; i++) {
+                if (s->threads[i].state != __UKL_AT_SG)
+                    continue;
+                if (first == n)
+                    first = i;
+                else if (__ukl_cpu_site(&s->threads[i]) != __ukl_cpu_site(&s->threads[first]))
+                    at = 0;
+            }
             if (live && at == live) {
                 for (uint32_t i = g * UKL_SIMD_WIDTH; i < n && i < (g + 1) * UKL_SIMD_WIDTH; i++)
                     s->threads[i].state = __UKL_RUN;
@@ -355,6 +400,38 @@ template <typename F> static int __ukl_cpu_group(__ukl_cpu_sched* s, F& f)
             __ukl_cpu_say(L, d < 2 ? ", " : ")");
         }
         __ukl_cpu_say(L, ": no barrier can be passed:");
+#if defined(__aarch64__)
+        // Where the threads wait: the first thread at each site (four at most), its return addresses, from its saved frame up its frame
+        // pointers, as offsets past `__ukl_cpu_switch` (for `atos` on the library with its symbols).
+        uint64_t seen[4] = {0, 0, 0, 0};
+        for (uint32_t i = 0, sites = 0; i < n && sites < 4; i++) {
+            if (s->threads[i].state == __UKL_DONE)
+                continue;
+            uint64_t site = __ukl_cpu_where(&s->threads[i]);
+            bool known = false;
+            for (uint32_t k = 0; k < sites; k++)
+                known = known || seen[k] == site;
+            if (known)
+                continue;
+            seen[sites++] = site;
+            __ukl_cpu_say(L, " thread ");
+            __ukl_cpu_say_u(L, i);
+            __ukl_cpu_say(L, "'s frames past the switch:");
+            void** frame = (void**)s->threads[i].sp;
+            uint64_t base = (uint64_t)(void*)&__ukl_cpu_switch;
+            uint64_t ret = (uint64_t)frame[11];
+            void** fp = (void**)frame[10];
+            for (int k = 0; k < 16 && ret != 0; k++) {
+                __ukl_cpu_say(L, " ");
+                __ukl_cpu_say_u(L, ret - base);
+                if (fp == 0)
+                    break;
+                ret = (uint64_t)fp[1];
+                fp = (void**)fp[0];
+            }
+            __ukl_cpu_say(L, ";");
+        }
+#endif
         for (uint32_t i = 0; i < n; i++) {
             uint32_t st = s->threads[i].state;
             if (st == __UKL_DONE)
@@ -408,7 +485,8 @@ template <typename G> static int __ukl_cpu_run(const __ukl_cpu_launch* L, G&& gr
     __ukl_cpu_thread* outer_self = __ukl_self;
     int r = 0;
     if (resident <= 1u) {
-        // The host thread's storage (`L->sched`): a kernel library keeps no thread-local of its own.
+        // One group at a time: its scheduler in the host's storage. Groups that run together keep theirs on their
+        // own coroutines' stacks.
         __ukl_cpu_sched& sched = *(__ukl_cpu_sched*)L->sched;
         __ukl_sched = &sched;
         sched.launch = L;
@@ -741,7 +819,10 @@ template<> struct ukl_type_code<long long> { static constexpr unsigned long long
 
 // The kernel: its rows and their layouts, its body (`Name_inner`), and its entry, which reads its arguments and
 // runs every threadgroup: 0, or 1 with the launch's error written.
-#define DEFINE_KERNEL2(Library, Name, ...) \
+// The rows expanded first: a kernel may give them as a macro (a grid's shared rows), which the body stringizes and
+// counts.
+#define DEFINE_KERNEL2(Library, Name, ...) __UKL_DEFINE_KERNEL2(Library, Name, __VA_ARGS__)
+#define __UKL_DEFINE_KERNEL2(Library, Name, ...) \
     extern "C" const char Name ## __ukl_params[] = #__VA_ARGS__; \
     extern "C" const unsigned long long Name ## __ukl_rows[] = \
         { __UKL_FOREACH_QUAD(GEN_ROW_LAYOUT2, __VA_ARGS__) }; \

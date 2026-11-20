@@ -186,10 +186,11 @@ fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Vec<u8>>) -> bool {
     }
     match run_resident(&[&c.native], &batch, SEGMENTS) {
         Ok((_, run)) => {
-            let mut i = 0;
+            // Each file's place in the run: the tapes this call has given so far (`out` holds the earlier halves').
+            let first = out.len();
             for file in files {
+                let i = out.len() - first;
                 out.push(rerail_metal::tier2_on::image_on(&c.parser, &run, i).unwrap_or_else(|_| engine_tape(file)));
-                i += 1;
             }
             true
         }
@@ -2422,7 +2423,7 @@ pub mod tests {
         }
     }
 
-    /// No GPU lane off macOS and Linux.
+    /// No device lane off macOS and Linux.
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     fn metal_refuses_as_the_cpu(_: &crate::Compiled, _: &[&[u8]], _: &[(String, bool)]) {}
 
@@ -2816,7 +2817,9 @@ pub mod tests {
             // `metal_tapes`), each part's buffers given to `each` as they come (held all at once,
             // they pass the device's budget): its GPU seconds, its first file, its buffers (none:
             // a file past the device's room alone).
-            fn parts(c: &super::Compiled, files: &[rerail_compiler::block::BatchFile<'_>], digests: &[[u8; 32]], at: usize, each: &mut dyn FnMut(f64, usize, usize, Option<&Resident>)) {
+            // A part's GPU seconds, its first file, its files, and its buffers.
+            type Part<'a> = dyn FnMut(f64, usize, usize, Option<&Resident>) + 'a;
+            fn parts(c: &super::Compiled, files: &[rerail_compiler::block::BatchFile<'_>], digests: &[[u8; 32]], at: usize, each: &mut Part<'_>) {
                 let (t, w) = (thread_cpu(), std::time::Instant::now());
                 let r = rerail_metal::block_program::serial::run_resident_digested(&[&c.native], files, Some(digests), super::SEGMENTS);
                 if std::env::var_os("RR_PARTS").is_some() {
@@ -3443,13 +3446,13 @@ mod json_probe {
         let mut best = vec![(u64::MAX, u64::MAX); passes + 1];
         let kernel = rerail_simdjson_native::Kernel::best().expect("a simdjson kernel");
         for _ in 0..rounds {
-            for k in 0..passes {
+            for (k, best) in best.iter_mut().take(passes).enumerate() {
                 let (i0, c0) = retired();
                 for b in &mut batches {
                     b.call_pass(&p.tier1, k);
                 }
                 let (i1, c1) = retired();
-                best[k] = (best[k].0.min(i1 - i0), best[k].1.min(c1 - c0));
+                *best = (best.0.min(i1 - i0), best.1.min(c1 - c0));
             }
             let (i0, c0) = retired();
             let mut n = 0i64;

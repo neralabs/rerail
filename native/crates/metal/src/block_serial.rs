@@ -459,13 +459,22 @@ fn halos(native: &BlockNative, levels: &Levels, from: &str, limit: usize, own: &
     let n = native.insts.len();
     let mut memo: Vec<Option<(HBit, HBit)>> = vec![None; n];
     let mut decls = String::new();
-    fn go(native: &BlockNative, levels: &Levels, from: &str, limit: usize, own: &[usize], at: usize, memo: &mut Vec<Option<(HBit, HBit)>>, decls: &mut String) -> (HBit, HBit) {
+    // What the walk reads at each instruction and does not change.
+    struct Walk<'a> {
+        native: &'a BlockNative,
+        levels: &'a Levels,
+        from: &'a str,
+        limit: usize,
+        own: &'a [usize],
+    }
+    fn go(w: &Walk<'_>, at: usize, memo: &mut Vec<Option<(HBit, HBit)>>, decls: &mut String) -> (HBit, HBit) {
+        let Walk { native, levels, from, limit, own } = *w;
         if let Some(x) = &memo[at] {
             return x.clone();
         }
         // A way back to itself (through a carry) is unknown.
         memo[at] = Some((HBit::F, HBit::F));
-        let e = |x: u16, memo: &mut Vec<Option<(HBit, HBit)>>, decls: &mut String| go(native, levels, from, limit, own, usize::from(x), memo, decls);
+        let e = |x: u16, memo: &mut Vec<Option<(HBit, HBit)>>, decls: &mut String| go(w, usize::from(x), memo, decls);
         let unknown = (HBit::F, HBit::F);
         let owner = levels.groups.iter().enumerate().find(|(_, g)| g.scans.contains(&at));
         let (k, v) = match native.insts[at] {
@@ -477,7 +486,7 @@ fn halos(native: &BlockNative, levels: &Levels, from: &str, limit: usize, own: &
                 }
             },
             BlockInst::Carry(_) => match native.groups.iter().flat_map(|g| g.carries.iter()).find(|&&(c, _)| c == at) {
-                Some(&(_, x)) => go(native, levels, from, limit, own, x, memo, decls),
+                Some(&(_, x)) => go(w, x, memo, decls),
                 None => unknown,
             },
             BlockInst::Prev(a, _) => e(a, memo, decls),
@@ -526,7 +535,7 @@ fn halos(native: &BlockNative, levels: &Levels, from: &str, limit: usize, own: &
             if words.contains_key(&a) {
                 continue;
             }
-            let (k, v) = go(native, levels, from, limit, own, a, &mut memo, &mut decls);
+            let (k, v) = go(&Walk { native, levels, from, limit, own }, a, &mut memo, &mut decls);
             let word = match h_and(&k, &v) {
                 HBit::F => "0ul".to_owned(),
                 HBit::T => "~0ul".to_owned(),
@@ -928,24 +937,15 @@ fn carried_serial(at: usize, inst: &BlockInst, out: &mut String) {
     }
 }
 
-/// The serial kernels for `programs` (each in its planes form): the segments' runs, the check, and
-/// the positions and totals from the finished words.
-/// `generate_serial`'s sources by what they are made from: each program, the pass's stores and
-/// slots, what runs have learned of each, and the switches the generator reads. A batch's
-/// source is made once, not at every run: made in a debug build, a pass of `.rerail`'s took 26 s.
-
-/// A source's kernels by its key (`serial_source`) and name: found without hashing the source
-/// again, as `lane::kernel` does (twelve kernels a pass, its source near a megabyte).
-
-/// Sources generated and kernels compiled by this process's serial runs: a benchmark reads it
-/// around its timed runs, which must make none (`prewarm` makes them first).
+/// A serial program's generated source, its states' widest words and its most counted outputs (`serial_source`).
+type Serial = (std::sync::Arc<String>, usize, usize);
 
 /// What the serial programs' runs keep of callers' programs (decision 0442: the caller's, `rerail_context::Shared`):
 /// each program's generated sources, what its runs learned, the sources that learn nothing more, its shapes and passes.
 #[derive(Default)]
 struct Programs {
     learned: std::sync::Mutex<std::collections::HashMap<u64, Vec<usize>>>,
-    sources: std::sync::Mutex<std::collections::HashMap<u64, (std::sync::Arc<String>, usize, usize)>>,
+    sources: std::sync::Mutex<std::collections::HashMap<u64, Serial>>,
     settled: std::sync::Mutex<std::collections::HashSet<u64>>,
     shapes: std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<Shape>>>,
     passes: std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<rerail_compiler::block_native::Passes>>>,
@@ -982,13 +982,15 @@ fn kernel(key: u64, source: &str, name: &'static str) -> Result<lane::Kernel, Er
     }
     rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let made = lane::kernel(source, name, None);
-    let st_ = kernels();
     if let Ok(mut m) = st_.0.lock() {
         m.insert((key, name), made.clone());
     }
     Ok(made)
 }
 
+/// `generate_serial`'s sources by what they are made from: each program, the pass's stores and
+/// slots, what runs have learned of each, and the switches the generator reads. A batch's
+/// source is made once, not at every run: made in a debug build, a pass of `.rerail`'s took 26 s.
 fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, std::sync::Arc<String>, usize, usize) {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1008,8 +1010,8 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
     // `RERAIL_SERIAL_CACHE=dir`: sources kept on disk by key, for runs by hand (a profile, a
     // trace) that would otherwise make them again in each process.
     let disk = std::env::var_os("RERAIL_SERIAL_CACHE").map(|d| std::path::PathBuf::from(d).join(format!("{key:016x}.msl")));
-    if let Some(Ok(text)) = disk.as_ref().map(std::fs::read_to_string) {
-        if let Some((head, source)) = text.split_once('\n') {
+    if let Some(Ok(text)) = disk.as_ref().map(std::fs::read_to_string)
+        && let Some((head, source)) = text.split_once('\n') {
             let mut n = head.split(' ').filter_map(|x| x.parse::<usize>().ok());
             if let (Some(sw), Some(counted)) = (n.next(), n.next()) {
                 let made = (std::sync::Arc::new(source.to_owned()), sw, counted);
@@ -1020,7 +1022,6 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
                 return (key, made.0, made.1, made.2);
             }
         }
-    }
     rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let (source, sw, counted) = generate_serial(programs, io);
     if let Some(path) = &disk {
@@ -1035,6 +1036,8 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
     (key, made.0, made.1, made.2)
 }
 
+/// The serial kernels for `programs` (each in its planes form): the segments' runs, the check, and
+/// the positions and totals from the finished words.
 fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (String, usize, usize) {
     let mut out = format!("{}{}", head(LaneWidth::W64), table_helpers(3));
     // A program in passes (`native_ir::Passes`): its slots a block, and the pass's stores.
@@ -1888,7 +1891,6 @@ fn learn(key: u64, forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], r
 }
 
 /// The sources (`serial_source`'s keys) whose runs learn nothing more (`learn`).
-
 fn settled(key: u64) -> bool {
     kept_programs().settled.lock().is_ok_and(|m| m.contains(&key))
 }
@@ -2469,8 +2471,8 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         }
         let parts: Vec<String> = state.parts.iter().zip(&wrong).filter(|(_, n)| **n > 0).map(|(&(at, bits, _, _, scan), n)| format!("%{at}{}/{bits}={:?}:{n}", if scan { "c" } else { "s" }, forms[0].insts[at])).collect();
         eprintln!("serial: {any} of {total} starts wrong; {}", parts.join(" "));
-        if let Ok(at) = std::env::var("RERAIL_SERIAL_DEBUG").map(|v| v.parse::<usize>().unwrap_or(0)) {
-            if at > 0 {
+        if let Ok(at) = std::env::var("RERAIL_SERIAL_DEBUG").map(|v| v.parse::<usize>().unwrap_or(0))
+            && at > 0 {
                 let mut inside = vec![false; forms[0].insts.len()];
                 inside[at] = true;
                 for x in (0..=at).rev() {
@@ -2484,7 +2486,6 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
                     eprintln!("  %{x} = {i:?}");
                 }
             }
-        }
     }
     let (mut rerun_seconds, mut reruns, mut rounds, mut launches) = (0.0, 0usize, 1usize, 1usize);
     loop {

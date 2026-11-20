@@ -1,4 +1,4 @@
-//! A batch's documents and rows, each made when first read (decision 0504).
+//! A batch's documents and rows, each made when first read (decision 0494).
 //!
 //! A batch holds its documents unmade. A document's projection (its rank index, which the views read) is made on its
 //! first read (`Docs`). Its rows, the relations the batch makes off the tapes (`text`, `op`, the matchers'), are made
@@ -13,7 +13,7 @@ use crate::code_rule_dsl::logic::profile;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// A document's views' counts (decision 0504): its nodes, fielded nodes, siblings after it and places, as its
+/// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it and places, as its
 /// projection has them; the documents' table keeps them.
 pub type ViewCounts = [u32; 4];
 
@@ -22,7 +22,7 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
     [p.len(), p.fielded(), p.after_siblings(), p.locs()]
 }
 
-/// A batch's documents (decision 0504): each one's projection made on its first read; its key and tag known before.
+/// A batch's documents (decision 0494): each one's projection made on its first read; its key and tag known before.
 pub struct Docs {
     /// Shared with the batches it grows into (decision 0431 §6): a document is made once, whichever reads it first.
     slots: Vec<Arc<Slot>>,
@@ -173,7 +173,7 @@ impl Docs {
                 && given != view_counts(&made.p)
             {
                 self.fail(format!(
-                    "{}: its views' counts (nodes, fielded, siblings, places) are {:?}, the documents' table gave {given:?} (decision 0504)",
+                    "{}: its views' counts (nodes, fielded, siblings, places) are {:?}, the documents' table gave {given:?} (decision 0494)",
                     self.slots[i].input.path,
                     view_counts(&made.p)
                 ));
@@ -208,6 +208,8 @@ impl Docs {
         // A guest's nodes have their places in its file: the file's lines, where the batch holds the file.
         let placed = guest.map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &self.context.block)))));
         let new_span = profile::span(|| "projected".into());
+        // A guest's file is made before it (`file_lines`), so its own lines are never built ahead of it (decision 0470 step 2:
+        // the eager batch hands a file the lines a program of it built first).
         let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
         drop(new_span);
         // A program that reads `end_point` has each node's end point among the positions, after the lines.
@@ -324,7 +326,7 @@ pub(super) struct Group {
     pub(super) ranges: Vec<Range<usize>>,
 }
 
-/// The batch's rows (decision 0504): each relation one block relation (`Relation::grown`), which every group goes on
+/// The batch's rows (decision 0494): each relation one block relation (`Relation::grown`), which every group goes on
 /// in, in the order made, so the CPU and the device read one relation in one block; a group's rows a range of it.
 pub(super) struct Rows {
     state: parking_lot::Mutex<State>,
@@ -442,7 +444,7 @@ impl Rows {
 }
 
 impl Batch {
-    /// The rows of `want`'s documents made: those not made yet, as one group (decision 0504), which each relation goes
+    /// The rows of `want`'s documents made: those not made yet, as one group (decision 0494), which each relation goes
     /// on with in its block relation. A group is made unlocked (its prefilter and matchers run on the pool, where a
     /// waiting thread runs other jobs, one of which may read this batch), and goes on in the relations only if no other
     /// read made one of its documents meanwhile; else it is made again of those still unmade.
@@ -481,7 +483,7 @@ impl Batch {
             for &i in &need {
                 s.of[i] = Some(g);
             }
-            profile::decision("a batch's documents made by group (decision 0504)", || format!("{} of {} documents", need.len(), self.docs.len()));
+            profile::decision("a batch's documents made by group (decision 0494)", || format!("{} of {} documents", need.len(), self.docs.len()));
             s.groups.push(Arc::new(Group { docs: need, ranges }));
             return;
         }
@@ -494,14 +496,14 @@ impl Batch {
         let named: Vec<(String, Relation)> = relations.into_iter().map(|(name, r)| (name.to_owned(), r)).chain(matched).chain(waved).collect();
         let names: Vec<&str> = named.iter().map(|(n, _)| n.as_str()).collect();
         if names != self.rows.names.iter().map(String::as_str).collect::<Vec<_>>() {
-            return Err(StoreError::Invalid(format!("a group of a batch made the relations {names:?}, not the batch's {:?} (decision 0504)", self.rows.names)));
+            return Err(StoreError::Invalid(format!("a group of a batch made the relations {names:?}, not the batch's {:?} (decision 0494)", self.rows.names)));
         }
         let keys: BTreeSet<u32> = docs.iter().map(|&i| self.docs.key(i)).collect();
         for ((name, r), &by) in named.iter().zip(&self.rows.by) {
             let Some(c) = by.column() else { continue };
             if let Some(row) = (0..Source::len(r)).find(|&row| !by.document(Source::value(r, row, c)).is_some_and(|k| keys.contains(&k))) {
                 return Err(StoreError::Invalid(format!(
-                    "{name}: a row's column {c} ({}) names a document outside its group {keys:?}, which a probe of it would not make (decision 0504)",
+                    "{name}: a row's column {c} ({}) names a document outside its group {keys:?}, which a probe of it would not make (decision 0494)",
                     Source::value(r, row, c)
                 )));
             }
@@ -522,7 +524,7 @@ impl Batch {
                 if let Some(given) = self.rows.counted(rel)
                     && given != Source::len(r.as_ref())
                 {
-                    self.docs.fail(format!("{}: {} rows made, its kept statistics counted {given} (decision 0504)", self.rows.names[rel], Source::len(r.as_ref())));
+                    self.docs.fail(format!("{}: {} rows made, its kept statistics counted {given} (decision 0494)", self.rows.names[rel], Source::len(r.as_ref())));
                 }
             }
             rels
@@ -554,7 +556,7 @@ impl Batch {
     }
 }
 
-/// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0504): every document made, the
+/// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0494): every document made, the
 /// one group's rows when one group holds them all (a batch read whole); before, what is known without making a
 /// document, and a probe of the first column makes the documents it names.
 pub(super) struct MadeRows {
@@ -750,7 +752,7 @@ impl Source for MadeRows {
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         self.done().and_then(|t| t.lookup_all(_equal))
     }
-    /// The documents' rows by group (decision 0504): a group of theirs alone holds theirs and no other; in a group
+    /// The documents' rows by group (decision 0494): a group of theirs alone holds theirs and no other; in a group
     /// with others, theirs are those its routing column names (none for a relation not routed).
     fn rows_of_documents(&self, docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
         let at: BTreeSet<usize> = docs.iter().filter_map(|&k| self.batch.docs.position(k)).collect();
@@ -930,7 +932,7 @@ impl Source for MadeRows {
     }
 }
 
-/// A text test's relation (decision 0037) over a batch (decision 0504): a test of a string. A probe tests the probed
+/// A text test's relation (decision 0037) over a batch (decision 0494): a test of a string. A probe tests the probed
 /// strings and a scan the batch's strings, every document made; each string is tested once a run, against every test
 /// at once (`Tested`). Nothing of it changes with an edit. In a batch whose documents are made by probes
 /// (`Batch::lazy`) a join probes it.
@@ -1015,7 +1017,7 @@ impl TextTest {
     pub(super) fn tested(&self) -> &Arc<Tested> {
         &self.tested
     }
-    /// The batch's passing strings, made outside the cell (they make documents on the pool, decision 0504's
+    /// The batch's passing strings, made outside the cell (they make documents on the pool, decision 0494's
     /// `ensure`), then kept.
     fn whole(&self) -> &Relation {
         if let Some(w) = self.whole.get() {

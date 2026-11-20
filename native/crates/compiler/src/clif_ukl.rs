@@ -8,6 +8,9 @@
 //!   arena's pointer at the address's offset from the arena's first byte (`hb`). An integer cast to a pointer is never
 //!   accessed: the device compiler took two such pointers to one byte as different objects and read a byte back from
 //!   before its store (`!(1/0)` was true; 0348, stage 5).
+//! - **The context** (each function's first parameter) is a column of the batch's table: a field is its 8-byte
+//!   slot's row (0408, L2), `cs` bytes a row, so a SIMD group's lanes read one line. The context is only ever a
+//!   field's base (`context_uses`).
 //! - **Widths:** the words read and write the same bytes at several widths (a field stored as 32 bits, read in a
 //!   64-bit word), so every access is a byte or an aligned 64-bit word (`ukl_ldw_*`, `ukl_stw_*`): no direct access
 //!   of another width the compiler's type-based alias rules could reorder, and none unaligned. The IR's `aligned` flag

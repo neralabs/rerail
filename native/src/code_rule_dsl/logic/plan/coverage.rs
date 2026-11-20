@@ -296,7 +296,9 @@ fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
 /// probe did not run at all.
 fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = crate::code_rule_dsl::logic::rr::parse_version(src).map_err(|e| format!("unparsed: {e}"))?;
-    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
+    // The relation's rows, whether a native stratum made it, and where each part ran.
+    type Lowered = (Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>);
+    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<Lowered, String> {
         let (_path, store, db) = fresh();
         // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it. The
         // probe's run holds it (decision 0442).
@@ -459,19 +461,35 @@ fn every_operation_runs_on_every_executor() {
     }
     let path = ledger();
     if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {
+        // The ledger's device column is measured, never written as "no Metal device" by a host without one.
+        assert!(metal(), "RERAIL_BLESS_COVERAGE writes the device column too: bless on a host with a Metal device");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &rows).unwrap();
         packs_ledger(&all, &rows);
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
-    // The gaps by pack follow from the matrix: compared once the matrix is as the ledger says.
-    if had == rows {
-        packs_ledger(&all, &rows);
+    // A host with no Metal device measures the native column only: both sides are compared without the device's.
+    let measured = |text: &str| -> String {
+        if metal() {
+            return text.to_owned();
+        }
+        text.lines()
+            .map(|l| match l.splitn(4, '\t').collect::<Vec<_>>().as_slice() {
+                [name, native, _, rule] if !l.starts_with('#') => format!("{name}\t{native}\t{rule}\n"),
+                _ => format!("{l}\n"),
+            })
+            .collect()
+    };
+    let (compared, now) = (measured(&had), measured(&rows));
+    // The gaps by pack follow from the matrix (the ledger's, with its device column): compared once the matrix is as
+    // the ledger says.
+    if compared == now {
+        packs_ledger(&all, &had);
     }
-    if had != rows {
-        let old: BTreeSet<&str> = had.lines().collect();
-        let new: BTreeSet<&str> = rows.lines().collect();
+    if compared != now {
+        let old: BTreeSet<&str> = compared.lines().collect();
+        let new: BTreeSet<&str> = now.lines().collect();
         let gone: Vec<&&str> = old.difference(&new).collect();
         let came: Vec<&&str> = new.difference(&old).collect();
         panic!(

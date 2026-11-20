@@ -73,7 +73,7 @@ fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
 fn invalid_or_unsupported_boolean_regex_fails_at_compilation() {
     for pattern in ["[", "(?<![A-Za-z_é])str"] {
         let rule = format!(".decl sample(s: symbol)\nsample(\"str\").\n.decl found(s: symbol)\nfound(s) :- sample(s), match({}, s).", serde_json::to_string(pattern).unwrap());
-        let error = parse(&rule).err().expect("unsupported regex must fail, never report a clean source").to_string();
+        let error = parse(&rule).expect_err("unsupported regex must fail, never report a clean source").to_string();
         assert!(error.contains("regex"), "{error}");
         assert!(!error.contains("named groups"), "lookbehind is not a capture: {error}");
     }
@@ -639,12 +639,9 @@ fn a_negated_match_reads_its_named_groups_as_groups() {
 /// finding).
 #[test]
 fn unlowered_constructs_are_named() {
-    for (src, what) in [
-        (".decl a(x: number)\na(x) :- a(y), x = mean z : { a(z) }.", "mean"),
-    ] {
-        let e = parse(src).unwrap_err().to_string();
-        assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
-    }
+    let src = ".decl a(x: number)\na(x) :- a(y), x = mean z : { a(z) }.";
+    let e = parse(src).unwrap_err().to_string();
+    assert!(e.contains("not lowered yet") && e.contains("mean"), "{src}: {e}");
     let e = parse(".decl a(x: number)\nmust a(1) :- a(2).").unwrap_err().to_string();
     assert!(e.contains("`must` head a") && e.contains("not declared `must, may`"), "{e}");
     for src in [
@@ -3842,12 +3839,12 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
     crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p));
     let counts: Vec<(usize, usize)> = paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p).filter_map(|path| {
         let path = path.as_path();
-        let Ok((statements, _)) = program(&path) else { return None };
-        let Ok(whole) = lower_files_dropping(&path, statements.clone(), false) else { return None };
+        let Ok((statements, _)) = program(path) else { return None };
+        let Ok(whole) = lower_files_dropping(path, statements.clone(), false) else { return None };
         let own = path.canonicalize().unwrap();
         let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|s| s.what() == Some(from_tape::S::Clause)).count();
         let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
-        let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
+        let less = lower_files_dropping(path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
         // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them, and `simplify` the
         // variables it renames apart (`rr_earlier27_f18`, `_t<k>` and `_f<k>` after the name, simplify.rs); dropped
         // clauses no longer take numbers before them, and a context or cover made once is read again where an equal
@@ -4458,6 +4455,8 @@ lines(p, i) :- f(p), file_line(p, i, _), i < 2.
 /// A program that adds to an extensible library relation (`cmp_same_ask`, decision 0263) asks the library for its
 /// cone (decision 0089 §3): the library rules reading it (`cmp_same`) are copied in. The version the run reads
 /// (`lower_in_version`) is the tree's (`lower_in`).
+// The check is a debug build's.
+#[cfg(debug_assertions)]
 #[test]
 fn a_cone_copied_onto_the_version_is_the_trees() {
     let src = "#include \"python/compare.rerail\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
@@ -4465,7 +4464,6 @@ fn a_cone_copied_onto_the_version_is_the_trees() {
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
     // A debug build copies the tree's cone beside the version's and checks the two images agree (`lowered_in_version`).
-    assert!(cfg!(debug_assertions), "the check is a debug build's");
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let heads: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
     assert!(heads.contains(&"cmp_same"), "the cone's rules are copied: {heads:?}");
@@ -4478,6 +4476,8 @@ fn a_cone_copied_onto_the_version_is_the_trees() {
 /// A modular text's program is made a version before `whole()`'s tail, which runs on it (decision 0281's path, step
 /// 7b): a context in a negation's cycle (`a_context_in_a_negations_cycle_is_widened`) is widened on the version, and
 /// a debug build checks the image against the tree's tail (`link_seeded_version`).
+// The check is a debug build's.
+#[cfg(debug_assertions)]
 #[test]
 fn a_context_in_a_cycle_is_widened_on_the_version() {
     let src = concat!(
@@ -4491,7 +4491,6 @@ fn a_context_in_a_cycle_is_widened_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    assert!(cfg!(debug_assertions), "the check is a debug build's");
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let ctx: Vec<String> = v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with("rr_ctx")).map(|r| v.show_rule(r)).collect();
     assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
@@ -4967,7 +4966,8 @@ fn a_demand_split_stays_linear_in_the_modules() {
         let c: Vec<&str> = l.split('\t').collect();
         (c[0], c[1], c[3].parse().unwrap())
     }).collect();
-    assert!(rows.iter().any(|(part, _, _)| part.contains("typing programs")), "the typing program ran: {heads}");
+    // The typing program runs as the run's phases (decision 0083; the job of its own went in 91f31ae830).
+    assert!(rows.iter().any(|(part, _, _)| part.contains("phase types: run")), "the typing phases ran: {heads}");
     let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
     for (part, head, work) in &rows {
         if head.starts_with("pre_") || head.starts_with("demand_") {

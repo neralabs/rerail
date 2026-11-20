@@ -90,9 +90,8 @@ impl Session {
         let out = self.dir.join("out-kept");
         let _ = std::fs::remove_dir_all(&out);
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join("kept-frames.sqlite")));
-        // The run's own scope, as `run`'s (Q357): the shape is the run's count, read before the run ends (decision
-        // 0442). Without it the test's thread read a fresh count each time, every one 0, and R2's assertions held of
-        // nothing.
+        // The run's own scope, as the session's run holds it: its shape is the run's count (decision 0442). Without
+        // it the test's thread read a fresh count each time, every one 0, and R2's assertions held of nothing.
         let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let (before, levels) = (shape::now(), maintain::strata_by_levels());
         let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();

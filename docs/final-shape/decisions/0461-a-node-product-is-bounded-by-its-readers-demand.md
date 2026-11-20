@@ -2,8 +2,6 @@
 
 Status: accepted (2026-11-18); ported from the Release-debugging branch (11a0326b9 and its uncommitted work).
 
-Numbered 0393 where it was written (cost-classifier-metal-rf); renumbered past the highest number in any worktree when it was merged.
-
 ## Intro
 
 Some rules pair two node ranges that no join connects. Ruff's SLF001, as written, does this: every `self`

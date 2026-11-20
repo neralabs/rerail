@@ -19,7 +19,6 @@ loss (restore it before committing). Exit status 1 when anything is reported.
 import collections
 import os
 import re
-import shutil
 import subprocess
 import sys
 
@@ -80,22 +79,21 @@ def changed(a, b):
 
 
 def anywhere(rev, lines):
-    """The subset of lines found as a substring of some line in the result's tree."""
+    """The subset of lines that are a line of the result's tree (stripped): each tree line read once into a set.
+    (A search with every line as a fixed-string pattern, `git grep -F -f`, took 30 minutes over 226 patterns and an
+    hour over a few thousand; it kept the same lines, a whole stripped line equal to the pattern.)"""
     if not lines:
         return set()
-    pat = os.path.join(git('rev-parse', '--git-dir').strip(), 'merge-audit-patterns')
-    with open(pat, 'w') as f:
-        f.write('\n'.join(lines) + '\n')
-    # The working tree is searched with ripgrep where it is installed: `git grep -F -f` took 30 minutes over 226
-    # patterns where `rg` took 3 seconds (2026-11-15). A revision is read by `git grep`.
-    rg = shutil.which('rg')
-    if rev is None and rg:
-        r = subprocess.run([rg, '--no-filename', '--no-line-number', '-F', '-f', pat, '--'] + [t for t in TREES if os.path.exists(t)], capture_output=True, text=True)
-        out = r.stdout
+    if rev is None:
+        files = [f for f in git('ls-files', '--', *TREES).split('\n') if f]
+        found = set()
+        for f in files:
+            data = raw(None, f)
+            if data is not None and not binary(data):
+                found.update(l.strip() for l in data.decode('utf-8', 'replace').split('\n'))
     else:
-        out = git(*(['grep', '-h', '-F', '-f', pat] + ([rev] if rev else []) + ['--'] + TREES), ok=True)
-    found = {l.strip() for l in out.split('\n')}
-    os.remove(pat)
+        out = git('grep', '-h', '-I', '-e', '', rev, '--', *TREES, ok=True)
+        found = {l.strip() for l in out.split('\n')}
     return {t for t in lines if t in found}
 
 

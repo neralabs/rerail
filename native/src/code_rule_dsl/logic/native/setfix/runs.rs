@@ -304,7 +304,7 @@ impl Sorted {
     /// The ranges written in `part`'s relation's block (decision 0478 step 5c), and read there from now on: true when
     /// they are (they were already, or there are none), false when its block keeps others or has no room (they then
     /// stay as they were).
-    pub(super) fn into_block(&mut self, part: &crate::code_rule_dsl::facts::rows::Part) -> bool {
+    pub(super) fn move_into_block(&mut self, part: &crate::code_rule_dsl::facts::rows::Part) -> bool {
         if self.own.is_empty() && self.base.as_ref().is_some_and(|b| std::ptr::eq(b.rel(), part.rel())) {
             return true;
         }
@@ -516,45 +516,42 @@ fn cmp_rows<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: u32, b: 
 
 /// A run given to its relation's block (`Relation::try_add_order`): its rows listed or a range, its fences, tags and
 /// prints, each a chunk of the block.
-pub(super) struct GivenRun {
-    pub(super) ids: Option<rerail_blocks::relation::Given>,
-    pub(super) range: Option<(u32, u32)>,
-    pub(super) fences: rerail_blocks::relation::Given,
-    pub(super) tags: rerail_blocks::relation::Given,
-    pub(super) prints: rerail_blocks::relation::Given,
-}
+pub(super) struct GivenRun(pub(super) rerail_blocks::relation::GivenOrder);
 
 impl GivenRun {
     /// The run again, its chunks its own (no directory took them).
     pub(super) fn into_run(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, life: crate::code_rule_dsl::facts::rows::Life) -> Run {
-        let ids = match (self.ids, self.range) {
-            (_, Some((lo, hi))) => Ids::Rows(lo, hi),
-            (g, None) => Ids::List(BlockVec::from_chunk(facts, life, g.unwrap_or_default())),
+        use rerail_blocks::relation::{GivenOrder, OrderRows};
+        let GivenOrder { rows, fences, tags, prints } = self.0;
+        let ids = match rows {
+            OrderRows::Range(lo, hi) => Ids::Rows(lo, hi),
+            OrderRows::Listed(g) => Ids::List(BlockVec::from_chunk(facts, life, g)),
         };
-        Run { ids, fences: BlockVec::from_chunk(facts, life, self.fences), tags: BlockVec::from_chunk(facts, life, self.tags), prints: BlockVec::from_chunk(facts, life, self.prints) }
+        Run { ids, fences: BlockVec::from_chunk(facts, life, fences), tags: BlockVec::from_chunk(facts, life, tags), prints: BlockVec::from_chunk(facts, life, prints) }
     }
 }
 
 impl Run {
-    /// Its arrays handed on to `facts`' block, where they lie (decision 0478 step 5b), or itself when any lies
-    /// elsewhere or is not its own.
-    pub(super) fn give(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<GivenRun, Run> {
+    /// Its arrays handed on to `facts`' block, where they lie (decision 0478 step 5b), or itself (boxed: it is the
+    /// larger) when any lies elsewhere or is not its own.
+    pub(super) fn give(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<GivenRun, Box<Run>> {
         let ids_ok = match &self.ids {
             Ids::List(v) => v.can_give(facts),
             Ids::Rows(..) => true,
         };
         if !(ids_ok && self.fences.can_give(facts) && self.tags.can_give(facts) && self.prints.can_give(facts)) {
-            return Err(self);
+            return Err(Box::new(self));
         }
         fn take<T: rerail_blocks::Pod>(v: BlockVec<T>, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> rerail_blocks::relation::Given {
             v.into_chunk(facts).unwrap_or_else(|_| unreachable!("checked"))
         }
+        use rerail_blocks::relation::{GivenOrder, OrderRows};
         let Run { ids, fences, tags, prints } = self;
-        let (ids, range) = match ids {
-            Ids::List(v) => (Some(take(v, facts)), None),
-            Ids::Rows(lo, hi) => (None, Some((lo, hi))),
+        let rows = match ids {
+            Ids::List(v) => OrderRows::Listed(take(v, facts)),
+            Ids::Rows(lo, hi) => OrderRows::Range(lo, hi),
         };
-        Ok(GivenRun { ids, range, fences: take(fences, facts), tags: take(tags, facts), prints: take(prints, facts) })
+        Ok(GivenRun(GivenOrder { rows, fences: take(fences, facts), tags: take(tags, facts), prints: take(prints, facts) }))
     }
 
     /// The run order `i` of `owner`'s relation's directory is, read where it lies (borrowed: `BlockVec::shared`).

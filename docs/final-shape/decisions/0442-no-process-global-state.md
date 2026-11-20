@@ -197,7 +197,7 @@ by any caller in the process, so two callers of different trust could not be kep
     `cores_spawn`, `cores_spawn_fifo`, `cores_scope`, `cores_threads`. 110 loops in 51 files were put inside them,
     forest's included (its prediction ran on the caller's thread). `scripts/check/check_machine_pool.py`
     (pre-commit) refuses a loop or call outside them, `build_global`, and a pool made where its list says no reason.
-  - **Every job carries its maker's run** (2026-11-20, Q386). A loop splits by rayon's `join`, and a half another
+  - **Every job carries its maker's run** (2026-11-20, Q300). A loop splits by rayon's `join`, and a half another
     pool thread steals ran there with no run and no bindings. rayon-core is patched (`native/vendor/rayon-core-1.13.0`,
     PATCHES.md) so a job captures what its maker's thread carries when made (a `join` half, an `install`ed closure, a
     spawned or scoped job) and enters it on the thread that runs it, left before the job says it is done. The engine's

@@ -274,6 +274,11 @@ impl SegmentWriter {
         self.placed.len()
     }
 
+    /// No entries placed yet.
+    pub fn is_empty(&self) -> bool {
+        self.placed.is_empty()
+    }
+
     /// Tests: entry `i`'s bytes as written, before the segments are sealed.
     #[cfg(test)]
     pub fn entry_bytes(&self, i: usize) -> Option<Vec<u8>> {
@@ -384,7 +389,7 @@ mod tests {
         let mut segments = writer.seal();
         let files = segments.files().len();
         assert!(files <= 6, "expected at most 6 segments for 32 small entries, got {files}");
-        segments.write_back(rerail_blocks::block::Flush::Synced).unwrap();
+        segments.write_back(rerail_blocks::block::Flush::None).unwrap();
         for value in 0..32u64 {
             assert_eq!(segments.entry(value as usize).bytes(), value.to_le_bytes());
         }

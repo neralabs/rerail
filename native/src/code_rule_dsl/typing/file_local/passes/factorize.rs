@@ -10,7 +10,8 @@
 //!   holds (`fz_a(f, p) :- …, fzk_b(p)`): every row stored then joins, so a part never holds more rows than the
 //!   product it replaces. The keys are chained, the parts of fewest atoms first: `fzk_a(p) :- …`, then
 //!   `fzk_b(p) :- bound_in(p, x), fzk_a(p)`, so a part that is itself a join is made only for the keys the parts
-//!   before it hold, and the last key is every part's.
+//!   before it hold, and the last key is every part's. A part of one atom stores no key: the key is the atom itself,
+//!   probed after the keys before it (`fzk_b(p) :- bound_in(p, x), parent(_, p)` for the part `parent(e, p)`).
 //! - **When:** decided from the program alone, before the first chunk: the per-file memo's key is a digest of the
 //!   file-local part (`corpus::memo::program_digest`), which names the exports, so the choice must not depend on a
 //!   chunk's rows. A changed choice (another engine, `RERAIL_FACTORIZE=off`) is another key, a memo miss.
@@ -173,49 +174,32 @@ fn relation_keys(v: &Version, f: Fields<'_>) -> Keys {
     keys
 }
 
-/// Which relations a factorization may hand on as parts: the exports of the chunk split (`local`, its file-local
-/// relations), or the intermediates a deferred joins pass found (decision 0506: `names`, single-definition and
-/// nonrecursive, every read of them checked by the caller), whose products may also be kept as a pair cache
-/// (`cache_reused`) while their factors' sizes allow.
+/// Per relation handed on as parts, per rule: its key and its parts (literal places).
+type Plan = BTreeMap<String, Vec<(String, Vec<Vec<usize>>)>>;
+
+/// Per relation factorized as an intermediate (decision 0500): its pair cache, where one was made (its guard, its
+/// pairs, the witness allowance), else none.
+pub type FactorCaches = BTreeMap<String, Option<(String, String, usize)>>;
+
+/// Which relations are handed on as parts: the exports (file-local relations the cross-file part reads, `local`), or
+/// the intermediates named (decision 0500's deferred joins: two factors that meet in each reader, in its own part).
 #[derive(Clone, Copy)]
-pub(crate) enum Scope<'a> {
+enum Scope<'a> {
     Exports(&'a BTreeSet<String>),
-    Intermediates { names: &'a BTreeSet<String>, cache_reused: bool },
+    Intermediates(&'a BTreeSet<String>),
 }
 
-impl Scope<'_> {
-    fn intermediates(self) -> bool {
-        matches!(self, Scope::Intermediates { .. })
-    }
-    /// Whether `rel` is one the factorization may hand on.
-    fn takes(self, rel: &str) -> bool {
-        match self {
-            Scope::Exports(local) => local.contains(rel),
-            Scope::Intermediates { names, .. } => names.contains(rel),
-        }
-    }
-    /// Whether a rule deriving `head` reads in the chunk (an export's reads are the cross-file part's alone).
-    fn in_chunk(self, head: &str) -> bool {
-        match self {
-            Scope::Exports(local) => local.contains(head),
-            Scope::Intermediates { .. } => false,
-        }
-    }
-}
-
-/// The program's reads and rules, and the relations chosen to be handed on as parts: per relation, per rule, its
-/// key and parts (literal places).
-struct Survey<'v> {
-    rules: Vec<RuleRef<'v>>,
-    reads: BTreeMap<&'v str, Vec<(usize, usize)>>,
-    rules_of: BTreeMap<&'v str, Vec<RuleRef<'v>>>,
-    chosen: BTreeMap<String, Vec<(String, Vec<Vec<usize>>)>>,
-}
-
-fn survey<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>) -> Survey<'v> {
+/// `v`'s rules, each relation's reads (rule, literal) a part may stand in for, each relation's rules, and the plan
+/// for each relation the scope hands on as parts.
+#[allow(clippy::type_complexity)]
+fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys) -> (Vec<RuleRef<'v>>, BTreeMap<&'v str, Vec<(usize, usize)>>, BTreeMap<&'v str, Vec<RuleRef<'v>>>, Plan) {
+    let none = BTreeSet::new();
+    let local = match scope {
+        Scope::Exports(local) => local,
+        Scope::Intermediates(_) => &none,
+    };
     let head_of = |r: RuleRef<'v>| v.rel_name(r.head().rel());
-    let natives_read: BTreeSet<&str> = f.natives().iter().filter(|n| !scope.in_chunk(v.rel_name(n.rel))).flat_map(|n| n.reads.iter()).map(|&r| v.rel_name(r)).collect();
-    let keys = relation_keys(v, f);
+    let natives_read: BTreeSet<&str> = f.natives().iter().filter(|n| !local.contains(v.rel_name(n.rel))).flat_map(|n| n.reads.iter()).map(|&r| v.rel_name(r)).collect();
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
     let mut reads: BTreeMap<&str, Vec<(usize, usize)>> = BTreeMap::new();
     let mut unfit: BTreeSet<&str> = BTreeSet::new();
@@ -224,7 +208,7 @@ fn survey<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>) -> Survey<'v> {
             match l.view() {
                 L::Atom(a) => {
                     let rel = v.rel_name(a.rel());
-                    if a.neg() || a.gated() || scope.in_chunk(head_of(*r)) || a.args().any(|t| matches!(t, TermRef::Call(..) | TermRef::Top)) {
+                    if a.neg() || a.gated() || local.contains(head_of(*r)) || a.args().any(|t| matches!(t, TermRef::Call(..) | TermRef::Top)) {
                         unfit.insert(rel);
                     } else {
                         reads.entry(rel).or_default().push((ri, li));
@@ -237,15 +221,19 @@ fn survey<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>) -> Survey<'v> {
             }
         }
     }
-    let mut rules_of: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+    let mut rules_of: BTreeMap<&str, Vec<RuleRef<'v>>> = BTreeMap::new();
     for r in &rules {
         rules_of.entry(head_of(*r)).or_default().push(*r);
     }
-    let mut chosen: BTreeMap<String, Vec<(String, Vec<Vec<usize>>)>> = BTreeMap::new();
+    let mut chosen: Plan = BTreeMap::new();
     for (rel, read) in &reads {
         let rel = *rel;
         let engine = rel.starts_with("magic_") || rel.starts_with("done_") || rel.contains("__");
-        if !scope.takes(rel)
+        let named = match scope {
+            Scope::Exports(local) => local.contains(rel),
+            Scope::Intermediates(names) => names.contains(rel),
+        };
+        if !named
             || unfit.contains(rel)
             || engine
             || f.is_output(rel)
@@ -274,7 +262,7 @@ fn survey<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>) -> Survey<'v> {
             if !parts.iter().all(keyed) {
                 break;
             }
-            let fans = parts.iter().filter(|p| !functional(v, *rule, &part_lits(p), &key, &head, &keys)).count();
+            let fans = parts.iter().filter(|p| !functional(v, *rule, &part_lits(p), &key, &head, keys)).count();
             if fans < 2 {
                 break;
             }
@@ -283,59 +271,57 @@ fn survey<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>) -> Survey<'v> {
         if plan.len() != of.len() {
             continue;
         }
-        // An export's every read binds a column of it, so the reader's join starts from a bound part; an
-        // intermediate's readers were checked by the deferred joins pass.
-        let binds = scope.intermediates()
-            || read.iter().all(|&(ri, li)| {
-                let reader = rules[ri];
-                let lits: Vec<LitRef<'_>> = reader.body().collect();
-                let L::Atom(a) = lits[li].view() else { return false };
-                a.args().any(|t| match t {
-                    TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
-                    TermRef::Var(s) => lits.iter().enumerate().any(|(j, l)| j != li && matches!(l.view(), L::Atom(b) if !b.neg() && body::atom_vars(b).contains(s))),
-                    _ => false,
-                })
-            });
-        if binds {
+        // An export's every reader binds a column of it (its join starts from a bound part); an intermediate's
+        // readers were chosen by the deferred joins pass, which checked each.
+        let binds = read.iter().all(|&(ri, li)| {
+            let reader = rules[ri];
+            let lits: Vec<LitRef<'_>> = reader.body().collect();
+            let L::Atom(a) = lits[li].view() else { return false };
+            a.args().any(|t| match t {
+                TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
+                TermRef::Var(s) => lits.iter().enumerate().any(|(j, l)| j != li && matches!(l.view(), L::Atom(b) if !b.neg() && body::atom_vars(b).contains(s))),
+                _ => false,
+            })
+        });
+        if binds || matches!(scope, Scope::Intermediates(_)) {
             chosen.insert(rel.to_owned(), plan);
         }
     }
-    Survey { rules, reads, rules_of, chosen }
+    (rules, reads, rules_of, chosen)
 }
 
-/// A product kept whole beside its parts while their sizes allow (decision 0506, `rr_admit_pairs`): its guard
-/// `small` (nullary, true while the parts' row counts multiply to at most `limit` over its `readers`), its rows
-/// `pairs`, and the parts it joins (relation, interface) under the head's variables `head`.
-struct Cache {
-    small: String,
-    pairs: String,
-    rel: String,
-    head: Vec<String>,
-    factors: Vec<(String, Vec<String>)>,
-    readers: usize,
-    limit: usize,
+/// The witness allowance across a program's pair caches (decision 0500): `RERAIL_JOIN_CACHE_ROWS`, 4096 by default.
+fn pair_allowance() -> usize {
+    std::env::var_os("RERAIL_JOIN_CACHE_ROWS").map_or(4096, |s| s.to_str().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0)).min(i64::MAX as usize)
 }
 
-/// One round of a factorization: its program, a line per relation handed on, each relation's parts, and its caches.
-struct Planned<'v> {
+/// What one round of the factorized store makes: its program, a line per relation, the parts made per relation, and
+/// the pair caches.
+struct Made2<'v> {
     round: Round<'v>,
     lines: Vec<String>,
     made: BTreeMap<String, Vec<String>>,
-    caches: BTreeMap<String, Cache>,
+    caches: FactorCaches,
 }
 
-/// The cross-file pair cache's allowance of joined witnesses over every cached product (`RERAIL_JOIN_CACHE_ROWS`,
-/// 4096 by default; 0 turns the caches off).
-fn cache_allowance() -> usize {
-    crate::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_JOIN_CACHE_ROWS").map_or(4096, |s| s.to_str().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0)).min(i64::MAX as usize))
-}
-
-/// The round that hands `s.chosen` on as parts: each part named from its content (`helper_name`), reduced by the
-/// others' keys, and each read of a relation made a read of each of its rules' parts.
-fn round_of<'v>(v: &'v Version, f: Fields<'v>, s: &Survey<'v>, scope: Scope<'_>) -> Planned<'v> {
+/// The round handing `chosen`'s relations on as parts (the module comment). As intermediates (`cache_reused`), a
+/// relation of one two-part rule read by more than one rule, each reading no other chosen relation, has a pair cache
+/// besides: its pairs stored while the factors' counts multiply to at most its share of the allowance
+/// (`rr_admit_pairs`), each reader reading the pairs there and the parts where the guard does not hold.
+#[allow(clippy::too_many_arguments)]
+fn round<'v>(
+    v: &'v Version,
+    f: Fields<'v>,
+    rules: &[RuleRef<'v>],
+    reads: &BTreeMap<&'v str, Vec<(usize, usize)>>,
+    rules_of: &BTreeMap<&'v str, Vec<RuleRef<'v>>>,
+    chosen: &Plan,
+    intermediates: bool,
+    cache_reused: bool,
+) -> Made2<'v> {
     let head_of = |r: RuleRef<'v>| v.rel_name(r.head().rel());
-    let (rules, reads, rules_of, chosen) = (&s.rules, &s.reads, &s.rules_of, &s.chosen);
     let decl_names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
+    // Each part named from its content (`helper_name`).
     let mut used = HashMap::new();
     let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
     let mut declare = |rel: String, cols: Vec<(String, String)>| {
@@ -343,16 +329,17 @@ fn round_of<'v>(v: &'v Version, f: Fields<'v>, s: &Survey<'v>, scope: Scope<'_>)
         decls.push((rel, cols));
     };
     let mut no_inline: Vec<String> = Vec::new();
+    let mut nullary: Vec<String> = Vec::new();
     let mut lines = Vec::new();
     let mut made: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut program: Vec<Made<'_>> = rules.iter().map(|&r| Made { src: r, head: None, body: r.body().map(BodyItem::Orig).collect(), kept: true }).collect();
-    // A reused product of two parts, each of whose readers reads no other relation handed on, may keep its pairs
-    // too (an intermediate's, `cache_reused`): split a reader at most once.
+    let mut program: Vec<Made<'v>> = rules.iter().map(|&r| Made { src: r, head: None, body: r.body().map(BodyItem::Orig).collect(), kept: true }).collect();
+    // Per relation, per rule: the head's variables and the parts' atoms (relation, interface).
+    let mut stands: BTreeMap<String, Vec<(Vec<String>, Vec<(String, Vec<String>)>)>> = BTreeMap::new();
     // A cached relation's readers read its guard, which is the cross-file part's: they, and every rule over them, are
     // made there. Where one of those reads an answer only its node's document gives (`ON_REQUEST`'s functions:
-    // `value`, `str`, `node_text`), that answer is drawn into the cross-file part, which has no documents to answer it
-    // from. Such a relation is not cached, decided from the program, so a run never prepares again to find it
-    // (`Deferral::after_placement`, decision 0506: on corpus0 that replan ran the sources' phase 1 twice, 23 G
+    // `value`, `str`, `node_text`), that answer is drawn into the cross-file part, which has no documents to answer
+    // it from. Such a relation is not cached, decided from the program, so a run never prepares again to find it
+    // (`Deferral::after_placement`, decision 0500: on corpus0 that replan ran the sources' phase 1 twice, 23 G
     // instructions, and turned every cache off for one).
     let documents_answer: BTreeSet<&str> = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST
         .iter()
@@ -361,10 +348,10 @@ fn round_of<'v>(v: &'v Version, f: Fields<'v>, s: &Survey<'v>, scope: Scope<'_>)
         .map(|a| a.rel)
         .collect();
     let mut readers_of: BTreeMap<&str, Vec<RuleRef<'v>>> = BTreeMap::new();
-    for r in rules {
+    for &r in rules {
         for l in r.body() {
             if let L::Atom(a) = l.view() {
-                readers_of.entry(v.rel_name(a.rel())).or_default().push(*r);
+                readers_of.entry(v.rel_name(a.rel())).or_default().push(r);
             }
         }
     }
@@ -375,35 +362,33 @@ fn round_of<'v>(v: &'v Version, f: Fields<'v>, s: &Survey<'v>, scope: Scope<'_>)
             if !seen.insert(r) {
                 continue;
             }
-            for reader in readers_of.get(r).into_iter().flatten() {
+            for &reader in readers_of.get(r).into_iter().flatten() {
                 if reader.body().any(|l| matches!(l.view(), L::Atom(a) if documents_answer.contains(v.rel_name(a.rel())))) {
                     return true;
                 }
-                todo.push(head_of(*reader));
+                todo.push(head_of(reader));
             }
         }
         false
     };
-    let cacheable: BTreeSet<&String> = match scope {
-        Scope::Intermediates { cache_reused: true, .. } => chosen
-            .iter()
-            .filter(|(rel, plan)| {
-                !drawn_across(rel)
-                    && plan.len() == 1
-                    && plan[0].1.len() == 2
-                    && reads[rel.as_str()].len() > 1
-                    && reads[rel.as_str()].iter().all(|&(ri, _)| rules[ri].body().filter(|l| matches!(l.view(), L::Atom(a) if chosen.contains_key(v.rel_name(a.rel())))).count() == 1)
-            })
-            .map(|(rel, _)| rel)
-            .collect(),
-        _ => BTreeSet::new(),
-    };
-    // Across the caches the joined witnesses are at most the allowance: both parts are sets, so even one shared key
-    // holds at most |left| x |right|.
-    let pair_limit = if cacheable.is_empty() { 0 } else { cache_allowance() / cacheable.len() };
-    let mut caches: BTreeMap<String, Cache> = BTreeMap::new();
-    // Per relation, per rule: the head's variables and the parts' atoms (relation, interface).
-    let mut stands: BTreeMap<String, Vec<(Vec<String>, Vec<(String, Vec<String>)>)>> = BTreeMap::new();
+    // A reader is split at most once, so a cached relation's readers read no other chosen relation.
+    let cacheable: BTreeSet<&String> = chosen
+        .iter()
+        .filter(|(rel, plan)| {
+            cache_reused
+                && !drawn_across(rel)
+                && plan.len() == 1
+                && plan[0].1.len() == 2
+                && reads[rel.as_str()].len() > 1
+                && reads[rel.as_str()].iter().all(|&(ri, _)| rules[ri].body().filter(|l| matches!(l.view(), L::Atom(a) if chosen.contains_key(v.rel_name(a.rel())))).count() == 1)
+        })
+        .map(|(rel, _)| rel)
+        .collect();
+    // Across the caches the joined witnesses are at most the allowance: both factors are sets, so even one shared
+    // hot key contributes at most |left| * |right|.
+    let pair_limit = if cacheable.is_empty() { 0 } else { pair_allowance() / cacheable.len() };
+    // Per cached relation: its pairs' relation and its guard's.
+    let mut caches: BTreeMap<String, (String, String)> = BTreeMap::new();
     for (rel, plan) in chosen {
         let of = &rules_of[rel.as_str()];
         let mut shown = Vec::new();
@@ -423,11 +408,13 @@ fn round_of<'v>(v: &'v Version, f: Fields<'v>, s: &Survey<'v>, scope: Scope<'_>)
                 })
             };
             let mut atoms: Vec<(String, Vec<String>)> = Vec::new();
-            let mut knames: Vec<String> = Vec::new();
+            // Each part's key, as its readers read it: a stored relation (`fzk…`, true), or the first part's atom
+            // itself (false, below).
+            let mut knames: Vec<(String, Vec<NOwned<'v>>, bool)> = Vec::new();
             let mut bodies: Vec<Vec<LitRef<'_>>> = Vec::new();
-            // The parts in the order their keys are chained (below): the fewest positive atoms first, so a
-            // part that is itself a join (`mf_def($c, $f), mf_def($a, $f)`) has its keys found within the
-            // keys of the parts before it, never on its own.
+            // The parts in the order their keys are chained (below): the fewest positive atoms first, so a part that is
+            // itself a join (`mf_def($c, $f), mf_def($a, $f)`) has its keys found within the keys of the parts before
+            // it, never on its own.
             let positive = |part: &Vec<usize>| part.iter().filter(|&&i| matches!(lits[i].view(), L::Atom(a) if !a.neg())).count();
             let mut parts: Vec<&Vec<usize>> = parts.iter().collect();
             parts.sort_by_key(|p| positive(p));
@@ -442,42 +429,83 @@ fn round_of<'v>(v: &'v Version, f: Fields<'v>, s: &Survey<'v>, scope: Scope<'_>)
                     break;
                 };
                 let content = format!("{rel}({}) :- {}", iface.join(", "), part.iter().map(|l| v.show_lit(rule, *l)).collect::<Vec<_>>().join(", "));
-                // An intermediate's part is named apart from every key relation too (the program may hold another
-                // pass's `fzk`).
-                let taken = |n: &str| decl_names.contains(n) || (scope.intermediates() && decl_names.contains(&format!("fzk{}", &n["fz".len()..])));
-                let pname = super::super::helper_name("fz", rel, &content, taken, &mut used);
+                // An intermediate's part is named apart from a key of the same digest too.
+                let pname = super::super::helper_name("fz", rel, &content, |n| decl_names.contains(n) || (intermediates && decl_names.contains(&format!("fzk{}", &n[2..]))), &mut used);
                 declare(pname.clone(), cols.clone());
-                let kname = format!("fzk{}", &pname["fz".len()..]);
-                declare(kname.clone(), vec![cols.last().cloned().expect("the key")]);
-                for n in [&kname, &pname] {
-                    if (n == &kname || scope.intermediates()) && !no_inline.contains(n) {
-                        no_inline.push(n.clone());
+                if intermediates && !no_inline.contains(&pname) {
+                    no_inline.push(pname.clone());
+                }
+                // The first part, where it is one atom, is its own key: the next part's key and every part read that
+                // atom by the key, a probe of its index, and nothing is stored for it (decision 0500:
+                // `str_lit(e, v) :- unparen(e, m), plain_str(m, v)` stored `unparen`'s key, every node, 464 k rows on
+                // corpus0, to reduce a part of 16 k). A later part's key is the keys it holds among the chain's, so it
+                // is stored whatever its atoms.
+                let one = match part.as_slice() {
+                    [l] if knames.is_empty() => match l.view() {
+                        L::Atom(a) if !a.neg() && !a.gated() => Some((
+                            v.rel_name(a.rel()).to_owned(),
+                            a.args()
+                                .map(|t| match t {
+                                    TermRef::Var(s) if name(v, rule, s) == *key => NOwned::V(key.clone()),
+                                    TermRef::Var(_) => NOwned::T(TermRef::Wild),
+                                    t => NOwned::T(t),
+                                })
+                                .collect::<Vec<_>>(),
+                        )),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                match one {
+                    Some((krel, kargs)) => knames.push((krel, kargs, false)),
+                    None => {
+                        let kname = format!("fzk{}", &pname["fz".len()..]);
+                        declare(kname.clone(), vec![cols.last().cloned().expect("the key")]);
+                        if !no_inline.contains(&kname) {
+                            no_inline.push(kname.clone());
+                        }
+                        knames.push((kname, vec![NOwned::V(key.clone())], true));
                     }
                 }
                 atoms.push((pname, iface));
-                knames.push(kname);
                 bodies.push(part);
             }
             if !ok {
                 break;
             }
+            if pair_limit > 0 && cacheable.contains(&rel) {
+                let (pairs, small) = cache(v, f, rule, &atoms, reads[rel.as_str()].len(), pair_limit, &decl_names, &mut program, &mut declare);
+                nullary.push(small.clone());
+                no_inline.extend([pairs.clone(), small.clone()]);
+                caches.insert(rel.clone(), (pairs, small));
+                shown.push(format!("cache if factor row counts multiply to at most {pair_limit}"));
+            }
             let var = |x: &String| NOwned::V(x.clone());
             for (i, ((pname, iface), body)) in atoms.iter().zip(&bodies).enumerate() {
                 let orig: Vec<BodyItem<'_>> = body.iter().map(|l| BodyItem::Orig(*l)).collect();
-                // The keys chained: a part's keys are those it holds among the keys of the parts before it,
-                // so the last is the keys every part holds. Each made apart from its own part alone, a part
-                // that is a join was made whole for its keys: every pair of nodes in a def, 4 s of one
-                // stratum over 91 files, where the product it replaced held a few rows.
-                let mut keyed = orig.clone();
-                if i > 0 {
-                    keyed.push(BodyItem::New(knames[i - 1].clone(), vec![var(key)]));
+                // The keys chained: a part's keys are those it holds among the keys of the parts before it, so the
+                // last is the keys every part holds. Each made apart from its own part alone, a part that is a join
+                // was made whole for its keys: every pair of nodes in a def, 4 s of one stratum over 91 files, where
+                // the product it replaced held a few rows.
+                let (kname, _, stored) = &knames[i];
+                if *stored {
+                    let mut keyed = orig.clone();
+                    if i > 0 {
+                        let (before, bargs, _) = &knames[i - 1];
+                        keyed.push(BodyItem::New(before.clone(), bargs.clone()));
+                    }
+                    program.push(Made { src: rule, head: Some((kname.clone(), vec![var(key)])), body: keyed, kept: false });
                 }
-                program.push(Made { src: rule, head: Some((knames[i].clone(), vec![var(key)])), body: keyed, kept: false });
                 // Reduced by the keys every part holds: the others' keys, as before, and its own.
                 let mut reduced = orig;
-                reduced.push(BodyItem::New(knames.last().expect("a part").clone(), vec![var(key)]));
+                let (last, largs, _) = knames.last().expect("a part");
+                reduced.push(BodyItem::New(last.clone(), largs.clone()));
                 program.push(Made { src: rule, head: Some((pname.clone(), iface.iter().map(var).collect())), body: reduced, kept: false });
-                made.entry(rel.clone()).or_default().extend([pname.clone(), knames[i].clone()]);
+                let made = made.entry(rel.clone()).or_default();
+                made.push(pname.clone());
+                if *stored {
+                    made.push(kname.clone());
+                }
             }
             shown.push(format!(
                 "by ${key}: {}",
@@ -492,31 +520,19 @@ fn round_of<'v>(v: &'v Version, f: Fields<'v>, s: &Survey<'v>, scope: Scope<'_>)
                     .collect::<Vec<_>>()
                     .join(" | ")
             ));
-            if pair_limit > 0 && cacheable.contains(rel) {
-                let taken = |n: &str| ["small", "pairs"].iter().any(|x| decl_names.contains(&format!("{n}_{x}")));
-                let base = super::super::helper_name("rr_pair_cache_", rel, &v.show_rule(rule), taken, &mut Default::default());
-                let (small, pairs) = (format!("{base}_small"), format!("{base}_pairs"));
-                declare(small.clone(), vec![("rr_unit".to_owned(), "int".to_owned())]);
-                declare(pairs.clone(), f.columns(rel).unwrap_or_default().iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
-                for n in [&small, &pairs] {
-                    no_inline.push(n.clone());
-                }
-                caches.insert(rel.clone(), Cache { small, pairs, rel: rel.clone(), head: head.clone(), factors: atoms.clone(), readers: reads[rel.as_str()].len(), limit: pair_limit });
-                shown.push(format!("cache if factor row counts multiply to at most {pair_limit}"));
-            }
             per_rule.push((head, atoms));
         }
         if !ok {
             caches.remove(rel);
             continue;
         }
-        let where_read = if scope.intermediates() { "reader" } else { "cross-file" };
-        lines.push(format!("{rel}: handed on as parts, each reduced by the others' keys, read in {} {where_read} rules; {}", reads[rel.as_str()].len(), shown.join("; ")));
+        let scope = if intermediates { "reader" } else { "cross-file" };
+        lines.push(format!("{rel}: handed on as parts, each reduced by the others' keys, read in {} {scope} rules; {}", reads[rel.as_str()].len(), shown.join("; ")));
         stands.insert(rel.clone(), per_rule);
     }
     // The relation's rules go; each read becomes the parts of each of its rules, the key and the variables the read
-    // leaves open named apart (the open ones by the copy's depth). A cached product's reader reads its pairs too,
-    // and its parts' copies only while the pairs are not kept (`!small(1)`).
+    // leaves open named apart (the open ones by the copy's depth). A cached relation's read is read as its pairs where
+    // the guard holds, and as the parts where it does not.
     let mut out: Vec<Made<'_>> = Vec::with_capacity(program.len());
     for m in program {
         let head = match &m.head {
@@ -531,7 +547,7 @@ fn round_of<'v>(v: &'v Version, f: Fields<'v>, s: &Survey<'v>, scope: Scope<'_>)
             let read_at = m.body.iter().position(|it| match it {
                 BodyItem::Orig(l) => matches!(l.view(), L::Atom(a) if !a.neg() && stands.contains_key(v.rel_name(a.rel()))),
                 BodyItem::New(rel, _) => stands.contains_key(rel),
-                BodyItem::Not(..) => false,
+                _ => false,
             });
             let Some(at) = read_at else {
                 out.push(m);
@@ -543,114 +559,131 @@ fn round_of<'v>(v: &'v Version, f: Fields<'v>, s: &Survey<'v>, scope: Scope<'_>)
                     (v.rel_name(a.rel()).to_owned(), a.args().map(NOwned::T).collect())
                 }
                 BodyItem::New(rel, args) => (rel.clone(), args.clone()),
-                BodyItem::Not(..) => unreachable!("a read"),
+                _ => unreachable!("a read"),
             };
-            let cold = caches.get(&rel).map(|c| {
-                let mut eager = m.clone();
-                eager.kept = false;
-                eager.body[at] = BodyItem::New(c.pairs.clone(), args.clone());
-                out.push(eager);
-                BodyItem::Not(c.small.clone(), vec![NOwned::C(1)])
-            });
-            // A variable of the reader may already have a made witness's spelling.
-            let mut witness = depth + 1;
-            if scope.intermediates() {
-                let occupied = m.names(v);
-                while stands[rel.as_str()].iter().any(|(head, atoms)| {
-                    atoms.iter().flat_map(|(_, iface)| iface).filter(|x| !head.contains(x)).any(|x| occupied.contains(&format!("fz{witness}_{x}")))
-                }) {
-                    witness += 1;
-                }
+            let mut cold = None;
+            if let Some((pairs, small)) = caches.get(&rel) {
+                let mut copy = m.clone();
+                copy.kept = false;
+                copy.body[at] = BodyItem::New(pairs.clone(), args.clone());
+                out.push(copy);
+                cold = Some(BodyItem::Not(small.clone(), vec![NOwned::Int(1)]));
             }
+            // A variable of the reader may have a witness's spelling: the witnesses are named past it.
+            let occupied: BTreeSet<String> = if intermediates { made_vars(v, &m) } else { BTreeSet::new() };
             for (head, atoms) in &stands[rel.as_str()] {
+                let mut witness_depth = depth + 1;
+                while atoms.iter().flat_map(|(_, iface)| iface).filter(|x| !head.contains(x)).any(|x| occupied.contains(&format!("fz{witness_depth}_{x}"))) {
+                    witness_depth += 1;
+                }
                 let to = |x: &str| -> NOwned<'_> {
                     match head.iter().position(|h| h == x) {
                         Some(i) => args[i].clone(),
-                        None => NOwned::V(format!("fz{witness}_{x}")),
+                        None => NOwned::V(format!("fz{witness_depth}_{x}")),
                     }
                 };
                 let parts = atoms.iter().map(|(p, iface)| BodyItem::New(p.clone(), iface.iter().map(|x| to(x)).collect()));
                 let mut copy = m.clone();
                 copy.kept = false;
                 copy.body.splice(at..=at, parts);
-                if let Some(cold) = &cold {
-                    copy.body.push(cold.clone());
+                if let Some(gate) = &cold {
+                    copy.body.push(gate.clone());
                 }
                 work.push((copy, depth + 1));
             }
         }
     }
-    let round = Round { decls, undeclared: stands.keys().cloned().collect(), rules: out, no_inline };
-    Planned { round, lines, made, caches }
+    let choices: FactorCaches = stands.keys().map(|rel| (rel.clone(), caches.get(rel).map(|(pairs, small)| (small.clone(), pairs.clone(), pair_limit)))).collect();
+    Made2 { round: Round { decls, undeclared: stands.keys().cloned().collect(), rules: out, no_inline, nullary }, lines, made, caches: choices }
 }
 
-/// Each cache's rules (`Cache`): its guard, true while its parts' row counts admit their pairs, and the pairs.
-fn write_caches(b: &mut Builder<'_>, caches: &BTreeMap<String, Cache>) -> Result<(), String> {
-    use crate::code_rule_dsl::logic::front::ast::AggOp;
-    use crate::code_rule_dsl::logic::program_image::T;
-    for c in caches.values() {
-        let mut rb = b.rule().head(c.small.as_str(), &[T::Int(1)]);
-        let counts: Vec<String> = (0..c.factors.len()).map(|i| format!("rr_count_{i}")).collect();
-        for ((rel, iface), count) in c.factors.iter().zip(&counts) {
-            rb = rb.agg(T::Var(count), &AggOp::Count, None, rel.as_str(), &vec![T::Wild; iface.len()]);
+/// The variables a rule being made names: its source rule's, and those its made terms name.
+fn made_vars(v: &Version, m: &Made<'_>) -> BTreeSet<String> {
+    fn named(n: &NOwned<'_>, out: &mut BTreeSet<String>) {
+        match n {
+            NOwned::V(x) => {
+                out.insert(x.clone());
+            }
+            NOwned::Call(_, args) => args.iter().for_each(|a| named(a, out)),
+            _ => {}
         }
-        let admit = T::Call("rr_admit_pairs", vec![T::Var(&counts[0]), T::Var(&counts[1]), T::Int(c.readers as i64), T::Int(c.limit as i64)]);
-        rb.cmp(admit, CmpOp::Eq, T::Int(1)).finish()?;
-        let head: Vec<T<'_>> = c.head.iter().map(|x| T::Var(x)).collect();
-        let mut rb = b.rule().head(c.pairs.as_str(), &head).atom(c.small.as_str(), &[T::Int(1)]);
-        for (rel, iface) in &c.factors {
-            let args: Vec<T<'_>> = iface.iter().map(|x| T::Var(x)).collect();
-            rb = rb.atom(rel.as_str(), &args);
-        }
-        rb.finish()?;
     }
-    Ok(())
+    let mut out = BTreeSet::new();
+    m.src.head().args().for_each(|t| out.extend(term_vars(v, m.src, t)));
+    for it in &m.body {
+        match it {
+            BodyItem::Orig(l) => out.extend(lit_vars(v, m.src, *l)),
+            BodyItem::New(_, args) | BodyItem::Not(_, args) => args.iter().for_each(|a| named(a, &mut out)),
+            BodyItem::Count { var, .. } => {
+                out.insert(var.clone());
+            }
+            BodyItem::Cmp(l, _, r) => {
+                named(l, &mut out);
+                named(r, &mut out);
+            }
+        }
+    }
+    if let Some((_, args)) = &m.head {
+        args.iter().for_each(|a| named(a, &mut out));
+    }
+    out
 }
 
-/// The intermediates `names` (decision 0506) handed on as reduced parts, also within a document or the cross-file
-/// part, where every read of them is an atom a deferred joins pass checked: `None` when none is, else the version
-/// made, a line per relation, and per relation its cache (guard, pairs, allowance), if it has one.
-pub(crate) fn factorize_intermediates(
-    v: &std::sync::Arc<Version>,
-    names: &BTreeSet<String>,
-    cache_reused: bool,
-) -> Result<Option<(std::sync::Arc<Version>, Vec<String>, BTreeMap<String, Option<(String, String, usize)>>)>, String> {
-    use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut as _, ProgramFields as PF};
+/// A pair cache of `rule`'s two parts (`atoms`, its factors), read by `readers` rules (decision 0500): its guard
+/// `small()` holds while the exact sizes of both factors fit `limit` (`rr_admit_pairs`, which an edit may cross
+/// either way), and its pairs are the factors' join under the guard. The two rules join `program`; their relations
+/// are declared. The guard is written in the physical unit encoding (a nullary relation's `rr_unit` column), as the
+/// pass runs after the lowering made it. Its pairs' relation and its guard's.
+#[allow(clippy::too_many_arguments)]
+fn cache<'v>(
+    v: &'v Version,
+    f: Fields<'v>,
+    rule: RuleRef<'v>,
+    atoms: &[(String, Vec<String>)],
+    readers: usize,
+    limit: usize,
+    decl_names: &HashSet<String>,
+    program: &mut Vec<Made<'v>>,
+    declare: &mut impl FnMut(String, Vec<(String, String)>),
+) -> (String, String) {
+    let base = super::super::helper_name("rr_pair_cache_", v.rel_name(rule.head().rel()), &v.show_rule(rule), |n| ["small", "pairs"].iter().any(|s| decl_names.contains(&format!("{n}_{s}"))), &mut HashMap::new());
+    let (small, pairs) = (format!("{base}_small"), format!("{base}_pairs"));
+    declare(small.clone(), vec![("rr_unit".to_owned(), "int".to_owned())]);
+    declare(pairs.clone(), f.columns(v.rel_name(rule.head().rel())).unwrap_or_default().iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+    let mut guard: Vec<BodyItem<'v>> = atoms.iter().enumerate().map(|(i, (p, iface))| BodyItem::Count { var: format!("rr_count_{i}"), rel: p.clone(), width: iface.len() }).collect();
+    let admit = NOwned::Call(
+        "rr_admit_pairs".to_owned(),
+        vec![NOwned::V("rr_count_0".to_owned()), NOwned::V("rr_count_1".to_owned()), NOwned::Int(readers as i64), NOwned::Int(limit as i64)],
+    );
+    guard.push(BodyItem::Cmp(admit, crate::code_rule_dsl::logic::program_image::CmpOp::Eq, NOwned::Int(1)));
+    program.push(Made { src: rule, head: Some((small.clone(), vec![NOwned::Int(1)])), body: guard, kept: false });
+    let mut body = vec![BodyItem::New(small.clone(), vec![NOwned::Int(1)])];
+    body.extend(atoms.iter().map(|(p, iface)| BodyItem::New(p.clone(), iface.iter().map(|x| NOwned::V(x.clone())).collect())));
+    program.push(Made { src: rule, head: Some((pairs.clone(), rule.head().args().map(NOwned::T).collect())), body, kept: false });
+    (pairs, small)
+}
+
+/// The intermediates `names` of the version `v` (a derivation when not `first`) handed on as parts, each read in its
+/// readers' own part (decision 0500, the deferred joins' factors), with pair caches where `cache_reused`: the version
+/// made, a line per relation, and the caches; none where no relation splits so.
+pub fn factorize_intermediates(v: &std::sync::Arc<Version>, first: bool, names: &BTreeSet<String>, cache_reused: bool) -> Result<Option<(std::sync::Arc<Version>, Vec<String>, FactorCaches)>, String> {
     if names.is_empty() {
         return Ok(None);
     }
     let d = manager::analysis::<FieldsData>(v)?;
     let f = Fields::over(v, &d);
-    let scope = Scope::Intermediates { names, cache_reused };
-    let s = survey(v, f, scope);
-    if s.chosen.is_empty() {
+    let keys = relation_keys(v, f);
+    let (rules, reads, rules_of, chosen) = choose(v, f, Scope::Intermediates(names), &keys);
+    if chosen.is_empty() {
         return Ok(None);
     }
-    let planned = round_of(v, f, &s, scope);
-    if planned.made.is_empty() {
+    let made = round(v, f, &rules, &reads, &rules_of, &chosen, true, cache_reused);
+    if made.lines.is_empty() {
         return Ok(None);
     }
     let mut b = Builder::derive(v);
-    write(&mut b, v, &planned.round)?;
-    write_caches(&mut b, &planned.caches)?;
-    // The relations handed on lose their qualifiers with their declarations; each cache's guard is nullary.
-    let mut qualifiers = PF::qualifiers(&**v);
-    for rel in &planned.round.undeclared {
-        qualifiers.remove(rel);
-    }
-    for n in &planned.round.no_inline {
-        qualifiers.entry(n.clone()).or_default().insert("no_inline".to_owned());
-    }
-    b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Qualifiers(&qualifiers));
-    if !planned.caches.is_empty() {
-        let mut nullary = PF::nullary(&**v);
-        nullary.extend(planned.caches.values().map(|c| c.small.clone()));
-        b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Nullary(&nullary));
-    }
-    let made = b.finish()?.0;
-    let mut caches = planned.caches;
-    let choices = planned.made.keys().map(|rel| (rel.clone(), caches.remove(rel).map(|c| (c.small, c.pairs, c.limit)))).collect();
-    Ok(Some((made, planned.lines, choices)))
+    super::write_derived(&mut b, v, &made.round, first)?;
+    Ok(Some((b.finish()?.0, made.lines, made.caches)))
 }
 
 impl ProgramPass for FactorizeExports {
@@ -666,23 +699,23 @@ impl ProgramPass for FactorizeExports {
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;
-        let scope = Scope::Exports(&split.local);
-        let mut s = survey(v, f, scope);
+        let keys = relation_keys(v, f);
+        let (rules, reads, rules_of, mut chosen) = choose(v, f, Scope::Exports(&split.local), &keys);
+        // Made, checked by the split, and made again without the relations whose parts it does not find file-local.
         loop {
-            if s.chosen.is_empty() {
+            if chosen.is_empty() {
                 return Ok(());
             }
-            let planned = round_of(v, f, &s, scope);
-            // Each round's program is split again: a part the split does not find file-local leaves its relation whole.
-            let (_, now) = super::candidate(v, &planned.round)?;
-            let failed: Vec<String> = planned.made.iter().filter(|(_, parts)| parts.iter().any(|p| !now.local.contains(p))).map(|(r, _)| r.clone()).collect();
+            let Made2 { round, lines, made, .. } = round(v, f, &rules, &reads, &rules_of, &chosen, false, false);
+            let (_, now) = super::candidate(v, &round)?;
+            let failed: Vec<String> = made.iter().filter(|(_, parts)| parts.iter().any(|p| !now.local.contains(p))).map(|(r, _)| r.clone()).collect();
             if failed.is_empty() {
-                self.lines = planned.lines;
-                write(w.derive()?, v, &planned.round)?;
+                self.lines = lines;
+                write(w.derive()?, v, &round)?;
                 return Ok(());
             }
             for r in failed {
-                s.chosen.remove(&r);
+                chosen.remove(&r);
             }
         }
     }

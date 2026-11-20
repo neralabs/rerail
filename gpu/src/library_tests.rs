@@ -487,7 +487,7 @@ fn device_wide_scans_and_compaction() {
             }
         }
 
-        let flags: Vec<u32> = (0..n).map(|i| (vals[i as usize] % 2 == 0) as u32).collect();
+        let flags: Vec<u32> = (0..n).map(|i| vals[i as usize].is_multiple_of(2) as u32).collect();
         let fb = buffer_of(&flags).unwrap();
         let (kept, offsets) = (alloc::<u32>(n as usize).unwrap(), alloc::<u32>(n as usize + 1).unwrap());
         compact_u32(&q, &inb, &fb, &kept, &offsets, n).unwrap();
@@ -548,7 +548,7 @@ fn sort_and_check<K: RadixKey + Ord + std::fmt::Debug + Into<u64> + From<u32>>(q
     let (tk, tv) = (alloc::<K>(keys.len()).unwrap(), alloc::<u32>(keys.len()).unwrap());
     let sorted = radix_sort_pairs::<K>(q, &kb, &vb, &tk, &tv, n, bits).unwrap();
     q.flush().await_().unwrap();
-    assert_eq!(sorted, if bits.div_ceil(8) % 2 == 0 { Sorted::InPlace } else { Sorted::InTemp });
+    assert_eq!(sorted, if bits.div_ceil(8).is_multiple_of(2) { Sorted::InPlace } else { Sorted::InTemp });
     let (rk, rv) = if sorted == Sorted::InPlace { (&kb, &vb) } else { (&tk, &tv) };
     let (got_k, got_v): (Vec<K>, Vec<u32>) = (read(rk, keys.len()), read(rv, keys.len()));
     let mut want: Vec<u32> = values.clone();
@@ -686,7 +686,6 @@ fn grid_ctl() -> crate::device::Buffer {
 /// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups and the device's resident count, each round's reads seeing every
 /// group's writes before it, and no barrier failed.
 #[test]
-#[ignore = "Q367: on the M1 Max a group stops at 8 groups (not a lost arrival, a weak CAS or the bound: 100x the spins still hangs); passes on the M5, a V100 and the CPU backend: run with --ignored"]
 fn grid_barriers_see_every_groups_writes() {
     let Some((p, mut q)) = setup() else { return };
     let lsz = 256u32.min(crate::device::max_threadgroup());
@@ -736,7 +735,6 @@ fn a_grid_past_residency_fails_its_barrier() {
 /// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
 /// boundaries, at 1, 8 and 32 groups and the device's resident count, its count read on the device.
 #[test]
-#[ignore = "Q367: on the M1 Max a group stops at 8 groups (not a lost arrival, a weak CAS or the bound: 100x the spins still hangs); passes on the M5, a V100 and the CPU backend: run with --ignored"]
 fn the_grid_scan_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(41);
@@ -775,7 +773,6 @@ fn the_grid_scan_equals_the_host() {
 /// R5: the grid's segmented scans (add and max) equal the host's from 0 to 10^6 values, heads dense and sparse, at
 /// 1, 8 and 32 groups.
 #[test]
-#[ignore = "Q367: on the M1 Max a group stops at 8 groups (not a lost arrival, a weak CAS or the bound: 100x the spins still hangs); passes on the M5, a V100 and the CPU backend: run with --ignored"]
 fn the_grid_segmented_scans_equal_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(43);
@@ -813,7 +810,6 @@ fn the_grid_segmented_scans_equal_the_host() {
 /// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups and the device's resident count;
 /// the few rows' path (ranks over the grid) at 1 to 32 groups; and a sort told its rows' low bits are in order.
 #[test]
-#[ignore = "Q367: on the M1 Max a group stops at 8 groups (not a lost arrival, a weak CAS or the bound: 100x the spins still hangs); passes on the M5, a V100 and the CPU backend: run with --ignored"]
 fn the_grid_sort_is_stable_and_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     if crate::device::max_threadgroup() < 256 {

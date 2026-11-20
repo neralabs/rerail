@@ -13,13 +13,13 @@ const SPLITS: [&str; 7] = ["split('\\t')", "split_once('\\t')", "rsplit_once('\\
 
 /// The files that may split on a tab, how many times, and why.
 const ALLOWED: [(&str, usize, &str); 8] = [
-    ("native/src/code_rule_dsl/logic/plan/prepared.rs", 1, "Q184's sizes log (`RERAIL_SIZES_LOG`), a measurement aid's record of the sizes a plan assumed against those held, read by `RERAIL_SIZES_FROM`"),
     ("native/src/code_rule_dsl/logic/strings/git.rs", 1, "a consulted read's key (repository root, revision), made in memory and stored length-prefixed"),
     ("native/src/code_rule_dsl/logic/plan/corpus/inputs.rs", 2, "a `.input` file's text (a repository file the rule declares as input), and a consulted read's key (revision, path)"),
-    ("native/src/code_rule_dsl/logic/plan/coverage.rs", 1, "the coverage ledger, a hand-kept document"),
+    ("native/src/code_rule_dsl/logic/plan/coverage.rs", 2, "the coverage ledger, a hand-kept document: its pack gaps, and its cells compared without a device"),
     ("native/src/code_rule_dsl/typing/rounds.rs", 8, "the typing spike's fact dumps (T's research inputs), not a run's outputs"),
     ("native/src/code_rule_dsl/facts/ygraph/mod.rs", 2, "the y-graph's member lists and its recorded edges (fixtures of the replay)"),
     ("native/crates/tape_format/src/f16.rs", 1, "a language's format 16 code table, as the lab ships it (`Table::from_text`)"),
+    ("native/src/code_rule_dsl/logic/plan/prepared.rs", 1, "the sizes log a measurement aid writes (`RERAIL_SIZES_LOG`), read back by Q290's oracle (`RERAIL_SIZES_FROM`)"),
     ("accel/src/upkeep.rs", 2, "the upkeep jobs' last finish times, a record of the job's own (`.upkeep`)"),
 ];
 

@@ -322,7 +322,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
             return Ok(None);
         }
         program.extend(helpers);
-        let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new() };
+        let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new(), nullary: Vec::new() };
         let (candidate, split) = super::candidate(v, &round)?;
         let now = split.local.clone();
         let failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();

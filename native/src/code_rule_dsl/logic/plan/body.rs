@@ -273,17 +273,21 @@ impl<'v> Body<'v> {
                             .and_then(|s| s.strip_suffix("_pairs")) == Some(base))
                     // A demanded relation's own demand (`demand_x`) is not one: its rule may be led by an atom a
                     // constant restricts (Q59, `demand_bounds_lead`, which `plan_inner` keeps).
-                    || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head)
-                    // A deferred join's producer is driven by its readers' requested pairs (decision 0506).
-                    || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS)
-                        .is_some_and(|producer| producer == head))
+                    || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
             })
         })
     }
-    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
+    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads; or a
+    /// deferred join's request (`rr_deferred_pairs_x`, decision 0500), of its producer or of the support heads
+    /// maintenance gives its rules (`wide__sup0`). Not forced to lead (Q59, `demand_bounds_lead`): forced, corpus0's
+    /// `lambda_arg` walked the arguments of 14,360 requested calls (171 k rows) where `kind($g, "lambda")` reads 229.
     pub fn own_demand(&self) -> Option<usize> {
         let head = self.rel(self.head());
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).strip_prefix("demand_").is_some_and(|r| r == head)))
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
+            let rel = self.rel(a);
+            !a.neg() && (rel.strip_prefix("demand_").is_some_and(|r| r == head)
+                || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS).is_some_and(|p| p == head))
+        }))
     }
     /// Whether an order led by literal `lead` keeps a demanded relation's rule to what its demand bounds (Q59): led
     /// by the demand, or by an atom a constant restricts (a column a constant names, or a variable an equality binds
@@ -742,14 +746,14 @@ impl Placed {
     /// program leaves out of it (where it is some of its version's rules). A sum, so it
     /// does not see the rules' order.
     pub fn digest(&self) -> u64 {
-        let d = match &self.ids {
+        
+        match &self.ids {
             None => self.v.digest(),
             Some(ids) => {
                 let all = self.v.rules().fold(0u64, |a, r| a.wrapping_add(r.hash()));
                 ids.iter().fold(self.v.digest().wrapping_sub(all), |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())))
             }
-        };
-        d
+        }
     }
     /// How many rules the program has.
     pub fn len(&self) -> usize {

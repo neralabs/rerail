@@ -292,7 +292,7 @@ pub fn radix_sort_pairs_in<K: RadixKey>(queue: &ComputeQueue, pair: [&BufferRef;
             .run(&[tiles as u64], &[256])?;
         std::mem::swap(&mut from, &mut to);
     }
-    Ok((if passes % 2 == 0 { Sorted::InPlace } else { Sorted::InTemp }, made))
+    Ok((if passes.is_multiple_of(2) { Sorted::InPlace } else { Sorted::InTemp }, made))
 }
 
 #[repr(C)]

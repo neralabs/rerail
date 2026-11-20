@@ -64,7 +64,10 @@ pub(super) fn same_guests(a: &Entry, b: &Entry) -> bool {
 /// or of a value it asked for (decision 0431 §8: `rr_embed_req`'s rows, the string node and its grammar), in the order
 /// answered. A chunk that reads the entry makes its values in the corpus batch from them, as the fixpoint admitted
 /// them (`Guests::admit`): each tape found by its text among the root's last runs' and its source named in the
-/// manifest (0431 R6), as the run that parsed it named it. Not an output.
+/// manifest (0431 R6), as the run that parsed it named it. A chunk of partial hits whose cone sees guests admits them
+/// before its run, as far as the cone sees them (a cone reading a relation hiding widened to annotations, `FoldOwn`,
+/// asks none itself): no entry keeps a base relation's rows (decision 0458 step 4), so they are made again. Not an
+/// output.
 pub(super) const VALUES: &str = "values:";
 
 /// The words `identity` is held by in `COVERED`.

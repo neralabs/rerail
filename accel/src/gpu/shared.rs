@@ -119,13 +119,6 @@ fn leased(b: &DeviceBuffer) {
     }
 }
 
-/// What the device holds: the pool's leases and idle buffers and the ledger's reservations, all inside the Metal
-/// budget (decision 0126), which is on top of the overall one.
-pub fn device_held() -> usize {
-    let (live, idle) = held_bytes();
-    live + idle + other()
-}
-
 /// The bytes no other lease can have until they come back: the pool's leases and the reservations not yet leased
 /// (`admit`). Its idle buffers are not counted: room is made of them on demand (`make_room`).
 pub fn bound_bytes() -> usize {
@@ -505,7 +498,7 @@ impl Drop for Pooled {
         let Some(b) = self.buffer.take() else { return };
         self.on.live.fetch_sub(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
         if self.owner != 0 {
-            released(self.owner, b.length() as usize);
+            released(&self.on, self.owner, b.length() as usize);
         }
         if let Some(hook) = LEASE_HOOK.get() {
             hook(b.contents() as usize, 0);
@@ -764,13 +757,13 @@ fn holder() -> u64 {
 /// `p`, counted as this thread's.
 fn held_here(mut p: Pooled) -> Pooled {
     let me = holder();
-    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.device_buffer().length() as usize;
+    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.length() as usize;
     p.owner = me;
     p
 }
 
-fn released(owner: u64, bytes: usize) {
-    if let Some(e) = dev().holders.lock().expect("the holders").get_mut(&owner) {
+fn released(on: &Memory, owner: u64, bytes: usize) {
+    if let Some(e) = on.holders.lock().expect("the holders").get_mut(&owner) {
         e.0 = e.0.saturating_sub(bytes);
     }
 }
@@ -1180,7 +1173,7 @@ mod tests {
         let sealed = d.seal();
         assert_eq!(live(), before, "the seal takes it out of the budget");
         assert_eq!(journal::entries(&sealed.reader())[0].digest, 0xfeed, "read in place once sealed");
-        let back = sealed.write_back(rerail_blocks::block::Flush::Synced).unwrap();
+        let back = sealed.write_back(rerail_blocks::block::Flush::None).unwrap();
         let e = &journal::entries(&back)[0];
         assert_eq!((e.key, e.digest), (7, 0xfeed));
         assert_eq!(back.bytes(e.start as usize, e.end as usize), &[0x5a; 4096][..]);

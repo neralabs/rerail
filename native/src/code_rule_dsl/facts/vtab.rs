@@ -210,7 +210,7 @@ pub trait Source: Send + Sync {
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         None
     }
-    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0504: a
+    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0494: a
     /// batch's, by group or by offset); `None` where it does not, and they are found by a read of its rows.
     fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
         None
@@ -863,8 +863,6 @@ static FORGET: std::sync::OnceLock<Forget> = std::sync::OnceLock::new();
 pub fn install_forget(forget: Forget) {
     let _ = FORGET.set(forget);
 }
-
-/// The tables registered on each connection that no statement has resolved yet (`register`).
 
 /// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
 /// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).

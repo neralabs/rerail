@@ -19,7 +19,7 @@ def compare(engine, sources, out):
         library = scratch / "lib"
         # Include resolution requires canonical paths inside the selected library.
         shutil.copytree(original, library)
-        names = library / "python/names.rerail"
+        names = library / "python/names.rr"
         source = names.read_text()
         decl = ".decl nameref(n: node, x: symbol)"
         if source.splitlines().count(decl) != 1:

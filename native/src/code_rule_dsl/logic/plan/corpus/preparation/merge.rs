@@ -985,6 +985,14 @@ fn refine<'v>(v: &'v Version, f: Fields<'v>, abstract_constants: bool) -> Refine
     Refined { cands, number, class, initial, shapes }
 }
 
+
+/// Relations equal up to their constants: how many, in how many groups, and a few
+/// groups. A congruence of its own over the whole program, so asked for only when the run is profiled.
+pub fn similar_relations(v: &Version, f: Fields<'_>) -> (usize, usize, Vec<String>) {
+    let similar = congruence(v, f, true);
+    (similar.iter().map(Vec::len).sum(), similar.len(), similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
@@ -1140,11 +1148,4 @@ mod tests {
         let heads = heads(&out);
         assert!(heads.iter().any(|h| h == "b") && !(heads.iter().any(|h| h == "a1") && heads.iter().any(|h| h == "a2")), "{}", out.show());
     }
-}
-
-/// Relations equal up to their constants: how many, in how many groups, and a few
-/// groups. A congruence of its own over the whole program, so asked for only when the run is profiled.
-pub fn similar_relations(v: &Version, f: Fields<'_>) -> (usize, usize, Vec<String>) {
-    let similar = congruence(v, f, true);
-    (similar.iter().map(Vec::len).sum(), similar.len(), similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect())
 }

@@ -468,7 +468,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     if let Some((r, rd, table)) = &late {
                         let opens = rd.arms.first().is_some_and(|a| tier1.outputs.get(usize::from(a.opener)).and_then(|w| w.get(start as usize / 64)).is_some_and(|w| w >> (start % 64) & 1 == 1));
                         if opens && rec_end > start + 1 {
-                            let Ok(tokens) = crate::records::read_parts(rd, start as usize, &tier1.outputs) else {
+                            let Some(tokens) = crate::records::read_parts(rd, start as usize, &tier1.outputs) else {
                                 return refuse!(pc - 1, "a region with no closer");
                             };
                             let (s, l): (Vec<u32>, Vec<u32>) = tokens.iter().map(|&(a, b)| (a as u32, b as u32)).unzip();

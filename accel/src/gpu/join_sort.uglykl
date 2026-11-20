@@ -128,16 +128,3 @@ DEFINE_KERNEL2(join, col_top,
   out[3u + t] = key;
   out[3u + k + t] = len;
 }
-
-// A sort's screen (decision 0506, `join::Keyed::screen`): a thread a run, its key (the sort word plus `a.b0`) added
-// to the screen at byte 0 of `f`. p0: the rows (a bound on the runs).
-DEFINE_KERNEL2(join, screen_bloom,
-               ROBUFFER, KEY_T,    rkeys, "[a.p0]",
-               ROBUFFER, uint32_t, nruns, "[1]",
-               RWBUFFER, uint8_t,  f,     "[the screen]",
-               ARGS,     JoinP,    a,     ,
-               GID0,     uint32_t, r,     )
-{
-  if (r >= a.p0 || r >= nruns[0]) return;
-  screen_add(f, 0u, (uint64_t)rkeys[r] + (uint64_t)a.b0);
-}

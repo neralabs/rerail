@@ -306,7 +306,7 @@ impl Launch<'_> {
     /// for a kernel that does not bound its own threads.
     pub fn threads_exact(self, threads: u64, width: u64) {
         let mut w = width.clamp(1, threads.max(1));
-        while threads % w != 0 {
+        while !threads.is_multiple_of(w) {
             w -= 1;
         }
         self.groups([threads / w, 1, 1], [w, 1, 1]);

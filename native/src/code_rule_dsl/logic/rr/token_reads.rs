@@ -312,7 +312,7 @@ impl Columns {
 /// Refuses a program whose clauses read a token the tape may leave out (above), for the program's `.language`.
 pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<Stmt>)]) -> Result<(), Error> {
     let language = files.iter().flat_map(|(_, statements)| statements).find_map(|s| match s.what()? {
-        S::Setting { key, text } if key == "language" => Some(text.trim().trim_matches('"').to_owned()),
+        S::Setting { key: "language", text } => Some(text.trim().trim_matches('"').to_owned()),
         _ => None,
     });
     let Some(dialect) = language.as_deref().and_then(crate::code_rule_dsl::language::dialect_by_label) else { return Ok(()) };

@@ -851,7 +851,9 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
     let _profiling = Profiling(profile::on());
     profile::set(true);
     let _sources = rr::profile_join_sources(&[&rule]);
-    // The deferred joins are off by default (decision 0506): this test is of them.
+    // The runs' profiles are the run's (decision 0441): one run under way here holds them for the report.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    // The deferred joins are off by default (decision 0500): this test is of them.
     let _deferred = profile::bind(corpus::preparation::DeferredJoins(Some("auto")));
     let run = |out: &std::path::Path| {
         corpus::run_read(&program, &root, out, "program", Binding::Cpu, 4096,
@@ -868,9 +870,6 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
             2 => fs::remove_file(root.join("extra.py")).unwrap(),
             _ => {}
         }
-        // The runs' profiles are the run's (decision 0441): each snapshot's run holds its own for its report, so the
-        // report explains this snapshot's evaluation, not the earlier ones'.
-        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let actual = run(&work.path().join("out"));
         let mut report = String::new();
         profile::author_joins::render(&mut report, &profile::merged());

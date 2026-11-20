@@ -259,6 +259,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HeldPhaseOne"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "Phases"),
     ("code_rule_dsl/logic/profile.rs", "Dir"),
+    // The invocation's rule sources (decision 0500's report of authored joins), bound while a run profiles them.
+    ("code_rule_dsl/logic/profile/author_joins.rs", "Held"),
     // Ended threads' CPU accounts and their CPU outside spans, summed for the report; no reusable results.
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
     ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
@@ -301,11 +303,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "WAIT_SPENT"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus.rs", "UseStore"),
-    // A switch: the run's mode of deferred joins (decision 0506), bound by its caller.
-    ("code_rule_dsl/logic/plan/corpus/preparation.rs", "DeferredJoins"),
-    // The invocation's source locations, bound for the run while its caller holds them (decision 0461): an open
-    // thing's, gone with the binding.
-    ("code_rule_dsl/logic/profile/author_joins.rs", "Held"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "BatchUnderWay"),
     // A registry of an open thing: the holders of the rule files' shared tape-cache handle, and the handle.
@@ -321,12 +318,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "InSession"),
-    // A caller's choice of the deferred joins' mode for its runs (decision 0506, a test's), a setting bound in its
-    // context: no result kept.
-    ("code_rule_dsl/logic/plan/corpus/preparation.rs", "DeferredJoins"),
-    // The invocation's rule source locations for the authors' report, bound in the run's context while `Sources` is
-    // held (decision 0442): the run's state, read by its profile.
-    ("code_rule_dsl/logic/profile/author_joins.rs", "Held"),
     // The record kinds' applies, registered at load.
     ("content_store/record.rs", "KINDS"),
 ];
@@ -421,7 +412,7 @@ fn maps() -> BTreeSet<(String, String)> {
     let tuple = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Z][A-Za-z0-9]*)\((.*)\);").unwrap();
     // A record (named fields) holds more than a number or a flag.
     let record = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Z][A-Za-z0-9]*)\s*\{").unwrap();
-    let flat = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(bool|u8|u16|u32|u64|usize|i32|i64|f64|&'static str|Option<\s*(usize|u64|i64|bool|f64)\s*>)\s*$").unwrap();
+    let flat = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(bool|u8|u16|u32|u64|usize|i32|i64|f64|&'static str|Option<\s*(usize|u64|i64|bool|f64|&'static str)\s*>)\s*$").unwrap();
     let texts: Vec<(std::path::PathBuf, String)> = fs.iter().map(|f| (f.clone(), std::fs::read_to_string(f).unwrap_or_default())).collect();
     for (f, text) in &texts {
         let bound: BTreeSet<&str> = binds.captures_iter(text).filter_map(|c| c.iter().skip(1).flatten().next().map(|m| m.as_str())).collect();

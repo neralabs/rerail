@@ -12,7 +12,7 @@
 //! is sound when `N(t)` reads only answers that `t` determines: an answered request is whole, and later answers add
 //! new keys rather than rows under an old one. Import resolution is of that kind.
 //!
-//! An aggregate inside the component waits the same way (the user, 2026-11-20: "Gate aggregates per key", Q388): its
+//! An aggregate inside the component waits the same way (the user, 2026-11-20: "Gate aggregates per key", Q409): its
 //! key is the columns of its atom that the literals before it bind, the group it aggregates. `join x : { child(e, s,
 //! i), value(s, x) }` over a document's nodes is whole once the document is: a parsed string's (decision 0431 §8) is
 //! answered whole, as a loaded file is.
@@ -468,7 +468,7 @@ pub mod tests {
         assert!(f.is_input("fresh") && f.gates().is_empty() && f.answers().is_empty());
     }
 
-    /// An aggregate inside a component that loads waits for its group's gate, as a negation does (Q388: `plain_str`'s
+    /// An aggregate inside a component that loads waits for its group's gate, as a negation does (Q409: `plain_str`'s
     /// `join` over a parsed string's nodes): its key is the columns the literals before it bind, and an earlier
     /// aggregate of the component in the same rule is written gated into the later one's `ask`.
     #[test]

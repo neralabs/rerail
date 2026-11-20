@@ -416,8 +416,8 @@ mod tests {
     #[test]
     fn a_lexers_classes_are_one_lookup() {
         let space = set([b' ', b'\t', b'\n', 0x0c, b'\r']);
-        let word = set((b'0'..=b'9').chain(b'a'..=b'z').chain(b'A'..=b'Z').chain([b'_']));
-        let rare = set([b'"', b'#', b'/', b'`'].into_iter().chain(b'0'..=b'9').chain(0xc0..=0xff));
+        let word = set((b'0'..=b'9').chain(b'a'..=b'z').chain(b'A'..=b'Z').chain(*b"_"));
+        let rare = set(b"\"#/`".iter().copied().chain(b'0'..=b'9').chain(0xc0..=0xff));
         let needs = [Need::exact(space), Need::exact(word), Need::exact(rare)];
         let p = pack(&needs);
         exact(&needs, &p);
@@ -432,7 +432,7 @@ mod tests {
         let digits = set(b'0'..=b'9');
         let hex = set((b'0'..=b'9').chain(b'a'..=b'f'));
         let ident = set((b'0'..=b'9').chain(b'a'..=b'z'));
-        let needs = [Need::exact(hex), Need::exact(ident), Need::exact(set([b'x', b'X'])), Need::exact(or(&digits, &set([b'.'])))];
+        let needs = [Need::exact(hex), Need::exact(ident), Need::exact(set(*b"xX")), Need::exact(or(&digits, &set(*b".")))];
         let p = pack(&needs);
         exact(&needs, &p);
         // Digits; a-f; g-o and p-z rows; x and X; `.`: each set's own products and the digits once.
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn a_lexers_sets_are_one_table() {
         let space = set([b'\t', b'\n', 0x0c, b'\r', b' ']);
-        let word = set((b'0'..=b'9').chain(b'A'..=b'Z').chain(b'a'..=b'z').chain([b'_']));
+        let word = set((b'0'..=b'9').chain(b'A'..=b'Z').chain(b'a'..=b'z').chain(*b"_"));
         let rare = set((0x00..=0x20).chain(0x7f..=0xff).chain(b'0'..=b'9').chain(*b"\"#$'/?\\`"));
         let needs = [Need::exact(space), Need::exact(word), Need { set: rare, care: not(&space) }];
         let p = pack(&needs);
@@ -476,8 +476,8 @@ mod tests {
     /// one product, rows 4 and 6 by low nibbles 1 and 2.
     #[test]
     fn dont_cares_merge_rows() {
-        let n = Need { set: set([b'A', b'B', b'a']), care: not(&set([b'b'])) };
-        let exact_too = Need::exact(set([b'A', b'B', b'a']));
+        let n = Need { set: set(*b"ABa"), care: not(&set(*b"b")) };
+        let exact_too = Need::exact(set(*b"ABa"));
         let loose = pack(&[n]);
         exact(&[n], &loose);
         let tight = pack(&[exact_too]);

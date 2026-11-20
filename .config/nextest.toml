@@ -29,6 +29,8 @@ default-filter = """not (
   | test(=class_pack::tests::random_needs_are_answered)
   | package(rerail-c-directives)
   | (package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits))
+  | (package(rerail-accel) & test(=gpu::join::tests::a_screened_probe_finds_the_hosts_pairs))
+  | (package(rerail-kotlin-parser) & test(=tests::a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes))
 )"""
 # A test past this is reported as slow; past four periods it is stopped.
 slow-timeout = { period = "60s", terminate-after = 4 }
@@ -55,6 +57,18 @@ test-group = "fsevents"
 # rustc builds each ladder's Rust (2–3 min in a debug build on an M3 Max).
 [[profile.default.overrides]]
 filter = "package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits)"
+slow-timeout = { period = "60s", terminate-after = 8 }
+
+# A device sort's screen against the host join: sorts and probes of 2,000,000 left and up to 4,000,000 right keys.
+# On the CPU backend the kernels run on the host: 155 s on a Linux host (GB10, debug), one probe of each kind a case.
+[[profile.default.overrides]]
+filter = "package(rerail-accel) & test(=gpu::join::tests::a_screened_probe_finds_the_hosts_pairs)"
+slow-timeout = { period = "60s", terminate-after = 8 }
+
+# Kotlin's last ladder step compiled three times (one program each time, and the walk lemmas'): 131 s on a Linux
+# Spark, ~255 s on an M1 Max, in a debug build (Q371).
+[[profile.default.overrides]]
+filter = "package(rerail-kotlin-parser) & test(=tests::a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
 [profile.default.junit]

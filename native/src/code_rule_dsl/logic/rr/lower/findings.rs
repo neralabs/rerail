@@ -53,8 +53,7 @@ pub fn message_parts(template: &str) -> Result<(Vec<String>, Vec<String>), Strin
     let (mut texts, mut keys) = (Vec::new(), Vec::new());
     let mut rest = template;
     let mut text = String::new();
-    loop {
-        let Some(start) = rest.find(['{', '}']) else { break };
+    while let Some(start) = rest.find(['{', '}']) {
         text.push_str(&rest[..start]);
         let brace = &rest[start..start + 1];
         if rest[start + 1..].starts_with(brace) {

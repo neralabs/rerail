@@ -987,7 +987,7 @@ impl std::ops::Deref for Part {
 unsafe impl Send for Held {}
 unsafe impl Sync for Held {}
 
-/// A column's blocked Bloom filter (decision 0506, `rerail_blocks::bloom`) in a block of the run's relations: the
+/// A column's blocked Bloom filter (decision 0500, `rerail_blocks::bloom`) in a block of the run's relations: the
 /// block the relations whose keys it holds are made in, so the device binds it as it binds them and reads it where
 /// it lies, as the host does. Its chunks go back to the block's free list when it is dropped.
 pub struct FactsBloom {
@@ -1125,15 +1125,23 @@ impl Part {
     /// with it, built once; a second key's copies the relation into a block of its own). About 8 to 12 bytes a row,
     /// next to the relation's 8 a column.
     pub fn for_device(k: usize, rows: usize) -> Result<Part, String> {
-        Part::reserved(Life::Device, k, rows)
+        Part::claimed(Life::Device, k, rows)
     }
 
-    /// `for_device`'s part, its blocks of `life`: `Life::Run` for a host's reads where the process has no device.
-    pub fn reserved(life: Life, k: usize, rows: usize) -> Result<Part, String> {
+    /// The same shape in a run's own memory, for the CPU's work (a view's index home, `setfix`): a block of anonymous
+    /// memory alone, as `lease_exact` gives a run, so a host with no device makes it too. `Err` when the join's
+    /// budget refuses it.
+    pub fn for_host(k: usize, rows: usize) -> Result<Part, String> {
+        Part::claimed(Life::Run, k, rows)
+    }
+
+    /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for one
+    /// index of its rows.
+    fn claimed(life: Life, k: usize, rows: usize) -> Result<Part, String> {
         let cap = rows.next_power_of_two().max(1);
         let index = 4 * (cap + 1) + 4 * rows.max(1) + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 3 * 64;
         let part = Part::try_new_with(life, k, rows, index, false)?;
-        // SAFETY: rows `0..rows` are reserved; the caller's device work writes every one before a read.
+        // SAFETY: rows `0..rows` are reserved; the caller writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };
         Ok(part)
     }
@@ -1861,8 +1869,9 @@ impl Rows {
         Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: k.at, kills: Some(k), part: Some(one.clone()) })
     }
 
-    /// `in_block`, never merging parts: `None` where the rows are in several parts not merged yet. A reader that can
-    /// do without the block (the CPU's probes) asks for this, so it makes no copy.
+    /// `in_block`, never merging parts: `None` where the rows are in several parts that read as no one relation and
+    /// are not merged yet. A reader that can do without the block (the CPU's probes) asks for this, so it makes no
+    /// copy.
     pub fn in_one_block(&self) -> Option<InBlock> {
         let (one, rows) = self.one_unmerged().or_else(|| self.merged.get().map(|m| (m, self.rows() as u32)))?;
         Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: 0, kills: None, part: Some(one.clone()) })
@@ -1915,7 +1924,7 @@ impl Rows {
                     let m = merged_counts();
                     m.0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     m.0[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
-                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
+                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, (rows * self.k * 8) >> 10));
                     let mut one = Part::new(self.life, self.k, rows);
                     for p in parts {
                         one.copy_from(p, 0, p.len());

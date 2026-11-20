@@ -1,4 +1,4 @@
-//! A documents' table's places (decision 0504 step 4 part 2): beside each document's content, its sha256, its
+//! A documents' table's places (decision 0494 step 4 part 2): beside each document's content, its sha256, its
 //! source's place in its segment and its tape's hash and place. The writer finds them as it writes the table (its
 //! transaction reads the objects' rows), once the run's sources and tapes are placed. A run inside another's waves
 //! then reads a changed document's old source and tape where they lie, with no SQL (decision 0104), each checked by

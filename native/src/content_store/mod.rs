@@ -120,7 +120,6 @@ const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
 const STRING_CLAUSE_KEY: i64 = 5;
-/// Fact names (`derivation.rs`): bound names and derivation outputs.
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
@@ -218,8 +217,8 @@ impl HashKey {
     pub fn sha256_bytes(self) -> Option<[u8; 32]> {
         (self.algorithm == HASH_SHA256).then(|| {
             let mut digest = [0_u8; 32];
-            for (chunk, lane) in digest.chunks_exact_mut(8).zip(self.lanes) {
-                chunk.copy_from_slice(&lane.to_be_bytes());
+            for (chunk, lane) in digest.as_chunks_mut::<8>().0.iter_mut().zip(self.lanes) {
+                *chunk = lane.to_be_bytes();
             }
             digest
         })
@@ -266,8 +265,8 @@ impl HashKey {
     pub fn git_sha1_bytes(self) -> Option<[u8; 20]> {
         (self.algorithm == HASH_GIT_SHA1).then(|| {
             let mut bytes = [0_u8; 32];
-            for (chunk, lane) in bytes.chunks_exact_mut(8).zip(self.lanes) {
-                chunk.copy_from_slice(&lane.to_be_bytes());
+            for (chunk, lane) in bytes.as_chunks_mut::<8>().0.iter_mut().zip(self.lanes) {
+                *chunk = lane.to_be_bytes();
             }
             bytes[..20].try_into().expect("twenty bytes")
         })
@@ -277,8 +276,8 @@ impl HashKey {
     pub fn key_bytes(self) -> [u8; 40] {
         let mut out = [0_u8; 40];
         out[..8].copy_from_slice(&self.algorithm.to_be_bytes());
-        for (chunk, lane) in out[8..].chunks_exact_mut(8).zip(self.lanes) {
-            chunk.copy_from_slice(&lane.to_be_bytes());
+        for (chunk, lane) in out[8..].as_chunks_mut::<8>().0.iter_mut().zip(self.lanes) {
+            *chunk = lane.to_be_bytes();
         }
         out
     }
@@ -289,8 +288,8 @@ impl HashKey {
 
     fn from_padded(algorithm: i64, bytes: [u8; 32]) -> Self {
         let mut lanes = [0_i64; 4];
-        for (index, chunk) in bytes.chunks_exact(8).enumerate() {
-            lanes[index] = i64::from_be_bytes(chunk.try_into().expect("eight-byte hash lane"));
+        for (index, chunk) in bytes.as_chunks::<8>().0.iter().enumerate() {
+            lanes[index] = i64::from_be_bytes(*chunk);
         }
         Self { algorithm, lanes }
     }
@@ -658,13 +657,16 @@ pub struct StoreCapacity {
     pub state: CapacityState,
 }
 
+/// Facts plan sets, each its plans' digests, by the set's digest.
+type PlanSets = HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>;
+
 pub struct ContentStore {
     database_path: PathBuf,
     connection: ThreadConnection,
     compression_level: i32,
     local_result_cache: Mutex<LocalResultCache>,
     /// Facts plan sets by digest (immutable once written: `facts_memo`).
-    facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
+    facts_plan_sets: parking_lot::Mutex<PlanSets>,
     /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).

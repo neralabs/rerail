@@ -1362,6 +1362,7 @@
                 let host: std::collections::HashSet<i64> = (0..host.len()).filter(|&r| host.value(r, 1) == 7).map(|r| host.value(r, 0)).collect();
                 let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 7 && !host.contains(&docof.value(r, 0))).collect();
                 assert!(!guest.is_empty(), "the guest's places are rows");
+                assert!(guest.iter().all(|&r| docof.value(r, 1) == 7), "the guest's places are its host's file's");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
@@ -1481,7 +1482,7 @@
         assert_eq!(table_rows(1, 100, true, None, Some(2_848.0)), 100, "never more than the relation holds");
         // Never past every pairing, never empty.
         assert_eq!(table_rows(10, 3, false, None, Some(1e9)), 30);
-        assert_eq!(table_rows(10, 3, false, None, Some(0.0)), 16.min(30));
+        assert_eq!(table_rows(10, 3, false, None, Some(0.0)), 16);
     }
 
     /// A spec's estimates are not the rule: two specs that differ in them alone are one rule (the same digest, under

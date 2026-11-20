@@ -357,7 +357,7 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
 fn name(p: &Projected, dialect: &Dialect, of: &[u32], up: &[u32], starts: &[u32], g: usize) -> String {
     let f = &*p.facts;
     let l = starts[g];
-    let id = p.node(l as u32);
+    let id = p.node(l);
     let kind = dialect.name(f, id);
     // A wrapper is named by its definition, or by the declaration it exports.
     let inner = |want: fn(&str) -> bool| f.children(id).iter().copied().find(|&c| f.named(c) && want(dialect.name(f, c)));
@@ -706,9 +706,8 @@ impl Table {
     }
 
     /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
-    /// written once find them: by the projection that keeps this table, once. A table numbered again (a reference to
-    /// check against, a measurement) is not described: the descriptor would point at its columns once it is dropped,
-    /// which on the heap (`cells`, on WASM) are freed, and in a block are a dropped table's.
+    /// written once find them: the table the projection keeps (`DefIds`), as it is built. A table numbered again (a
+    /// reference, a census) is not described: dropped, it would leave the runs at columns that are gone.
     pub(super) fn describe(&self, r: &Ranks) {
         use rerail_clif::ids::Run;
         let d = r.desc_mut();
@@ -771,7 +770,7 @@ impl Table {
     pub fn number_of(&self, r: &Ranks, low: u32) -> Option<(Item, u32)> {
         // SAFETY: as `low_of`.
         let v = unsafe { id_reads::num_number_of(r.desc(), low) };
-        (v != u64::MAX).then(|| (if v >> 32 == 0 { Item::Node } else { Item::Token }, v as u32))
+        (v != u64::MAX).then_some((if v >> 32 == 0 { Item::Node } else { Item::Token }, v as u32))
     }
 
     /// Node number `l`'s order key (`order`), from its number alone (`num_order_of`).

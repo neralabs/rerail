@@ -3,7 +3,7 @@
 //! counters, about 9% off), and, while it holds at most `SMALL` values or a bounded integer page, each value's exact count (then the distinct
 //! values and the sum are exact too). Compact labels use a 16 KiB page; sparse label sets retain at most 1,024 counters.
 //! Identity columns keep the fixed-size fallback. Exact counts are updated as rows arrive, never by a planning-time scan.
-//! Past `SMALL` values it keeps its column's keys in a blocked Bloom filter too (`bloom::Kept`, decision 0506), set
+//! Past `SMALL` values it keeps its column's keys in a blocked Bloom filter too (`bloom::Kept`, decision 0500), set
 //! from the same hash as each row is counted, and made again larger from the column where its keys outgrow it.
 //! The screens test probes against it, and the planner counts the keys two columns share by it.
 
@@ -61,7 +61,7 @@ impl Sparse {
         grown.slots.resize(self.slots.len()*2,[NO_VALUE,0]);
         for e in self.slots.iter().filter(|e| e[0]!=NO_VALUE) {
             let at=grown.slot(e[0]);
-            grown.slots[at]=*e;
+            grown.slots[at] = *e;
             grown.len+=1;
         }
         *self=grown;
@@ -280,7 +280,9 @@ impl Sketch {
 
     /// Its counts for the planner's join sizes (`logic::join_size`): its counters, and its few values' counts.
     pub(super) fn counts(&self) -> crate::code_rule_dsl::logic::join_size::JoinCounts {
-        crate::code_rule_dsl::logic::join_size::JoinCounts::new(&self.counters, self.small.as_deref(), self.rows, self.sq())
+        let counters: &[i32; REGISTERS] = (&self.counters[..]).try_into().expect("a sketch's counters, `REGISTERS` of them");
+        let few: Option<Vec<(i64, u32)>> = self.small.as_ref().map(|s| s.iter().map(|e| (e[0], e[1] as u32)).collect());
+        crate::code_rule_dsl::logic::join_size::JoinCounts::new(counters, few.as_deref(), self.rows, self.sq())
     }
 
     /// Its keys' filter, where it keeps one (past its few values); else its few values are its keys.

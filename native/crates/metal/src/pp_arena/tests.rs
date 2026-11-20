@@ -43,6 +43,110 @@ fn run<'a>(f: impl FnOnce(&Enc<'a>)) {
     .unwrap();
 }
 
+/// The `#if` evaluator by itself (`pp_if.uglykl`'s `sy_feed`, `sy_end`), a thread an expression:
+/// each one's truth and value as the serial pass gives them.
+#[test]
+fn the_if_evaluator_is_the_serial_passes() {
+    // Operators as the evaluator numbers them (`EO_*`); 0 a value.
+    const PLUS: u32 = 14;
+    const MINUS: u32 = 15;
+    const STAR: u32 = 16;
+    const EQ: u32 = 6;
+    const LPAREN: u32 = 22;
+    const RPAREN: u32 = 23;
+    const QUESTION: u32 = 24;
+    const COLON: u32 = 25;
+    let v = |x: u64| (0u32, x);
+    let o = |op: u32| (op, 0u64);
+    // Each expression, its truth and its value's low word.
+    let cases: Vec<(&str, Vec<(u32, u64)>, u32, u32)> = vec![
+        ("1", vec![v(1)], 1, 1),
+        ("1 == 1", vec![v(1), o(EQ), v(1)], 1, 1),
+        ("1 + 1", vec![v(1), o(PLUS), v(1)], 1, 2),
+        ("1 + 2 * 3", vec![v(1), o(PLUS), v(2), o(STAR), v(3)], 1, 7),
+        ("1 + 2 * 3 == 7", vec![v(1), o(PLUS), v(2), o(STAR), v(3), o(EQ), v(7)], 1, 1),
+        ("(1 + 2) * 3 == 9", vec![o(LPAREN), v(1), o(PLUS), v(2), o(RPAREN), o(STAR), v(3), o(EQ), v(9)], 1, 1),
+        ("10 - 2 - 3 == 5", vec![v(10), o(MINUS), v(2), o(MINUS), v(3), o(EQ), v(5)], 1, 1),
+        ("1 ? 2 : 3", vec![v(1), o(QUESTION), v(2), o(COLON), v(3)], 1, 2),
+        ("0 ? 2 : 0", vec![v(0), o(QUESTION), v(2), o(COLON), v(0)], 0, 0),
+    ];
+    let (mut offsets, mut ops, mut vals) = (vec![0u32], Vec::new(), Vec::new());
+    for (_, items, _, _) in &cases {
+        for &(op, x) in items {
+            ops.push(op);
+            vals.push(x);
+        }
+        offsets.push(ops.len() as u32);
+    }
+    let flags = vec![0u32; ops.len()];
+    let (ob, pb, vb, fb, out) = (buf(&offsets), buf(&ops), buf(&vals), buf(&flags), zeroed::<u32>(4 * cases.len()));
+    run(|e| e.run("pb_if_eval", &[("offsets", &ob), ("ops", &pb), ("vals", &vb), ("flags", &fb), ("out", &out)], Some(ProbeArgs([cases.len() as u32, 0, 0, 0])), 1));
+    let got: Vec<u32> = read(&out, 4 * cases.len());
+    for (k, (what, _, truth, value)) in cases.iter().enumerate() {
+        let g = &got[4 * k..4 * k + 4];
+        assert_eq!((g[0], g[1]), (*truth, *value), "{what}: truth and value (depths {:#x}, state {:#x})", g[2], g[3]);
+    }
+}
+
+/// The `#if` evaluator from its tokens' text, read as `p1_if_eval` reads numbers and character
+/// constants (`if_number`, `if_char`): each expression's truth and 64-bit value as the serial
+/// pass gives them. Q367: on an M1 Max (macOS 26.2), a thread's bytes stored at a counter other
+/// than the loop's (`b[n++] = p[i++]`, as `if_bytes` and `if_number` copied a token) read back
+/// wrong, so every decimal number and character constant was refused or misread.
+#[test]
+fn the_if_evaluator_reads_the_texts_values() {
+    let texts: [(&str, u32, u64); 24] = [
+        ("1", 1, 1),
+        ("0", 0, 0),
+        ("2", 1, 2),
+        ("1 + 1", 1, 2),
+        ("1 == 1", 1, 1),
+        ("1 + 2 * 3 == 7", 1, 1),
+        ("0x10 + 010 + 0b11 == 27", 1, 1),
+        ("1'000 == 1000", 1, 1),
+        ("10uLL > 9", 1, 1),
+        ("0xFFFFFFFFFFFFFFFFull", 1, u64::MAX),
+        ("18446744073709551615", 1, u64::MAX),
+        ("99999999999999999999", 0, 0),
+        ("1.0", 0, 0),
+        ("'a' == 97", 1, 1),
+        ("'a'", 1, 97),
+        (r"'\n' + '\x41' + '\101' == 140", 1, 1),
+        (r"'\377'", 1, u64::MAX),
+        ("'ab'", 1, 0x6162),
+        (r"L'\xffffffff'", 1, u64::MAX),
+        (r"U'\xffffffff'", 1, 0xffff_ffff),
+        (r"u8'a'", 1, 97),
+        ("'\\u00e9'", 1, 0xffff_ffff_ffff_ffe9),
+        // Two bytes of UTF-8 in a plain constant: two characters.
+        ("'\u{e9}'", 1, 0xc3a9),
+        ("u'\u{e9}'", 1, 0xe9),
+    ];
+    let (mut bytes, mut starts, mut offsets) = (Vec::new(), vec![0u32], vec![0u32]);
+    for (t, _, _) in &texts {
+        for tok in t.split(' ') {
+            bytes.extend_from_slice(tok.as_bytes());
+            starts.push(bytes.len() as u32);
+        }
+        offsets.push(starts.len() as u32 - 1);
+    }
+    let (bb, sb, ob, out) = (buf(&bytes), buf(&starts), buf(&offsets), zeroed::<u32>(4 * texts.len()));
+    run(|e| e.run("pb_if_text", &[("bytes", &bb), ("starts", &sb), ("offsets", &ob), ("out", &out)], Some(ProbeArgs([texts.len() as u32, 0, 0, 0])), 1));
+    let got: Vec<u32> = read(&out, 4 * texts.len());
+    let wrong: Vec<String> = texts
+        .iter()
+        .enumerate()
+        .filter_map(|(k, (what, truth, value))| {
+            let g = &got[4 * k..4 * k + 4];
+            let v = u64::from(g[2]) << 32 | u64::from(g[1]);
+            // A refused expression's value is no value.
+            let v = if g[3] & 1 != 0 { 0 } else { v };
+            ((g[0], v) != (*truth, *value)).then(|| format!("{what}: truth {} value {v:#x} state {:#x}", g[0], g[3]))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
+}
+
 #[test]
 fn search_and_expand_equal_the_host() {
     let mut r = Rng(17);
@@ -125,6 +229,69 @@ fn the_grid_sort_alone_is_fast() {
     }
 }
 
+/// `<ukl/pool.h>` over a grid (decision 0503 §10): the pieces of ranges given, taken by every
+/// thread of 8 groups at once, then given back and taken again. No block is taken twice in a
+/// round, each lies inside one given range and fits its class, and where the takers ask for
+/// more than a class holds, every block of it is taken.
+#[test]
+fn the_pool_gives_each_block_once() {
+    use std::collections::BTreeMap;
+    let size = |c: u32| 1u32 << c;
+    let floor = |n: u32| 31 - n.leading_zeros();
+    let mut r = Rng(29);
+    // Ranges of 1 to 300 units, apart.
+    let (mut ranges, mut at) = (Vec::new(), 5u32);
+    for _ in 0..3000 {
+        let n = 1 + (r.next() % 300) as u32;
+        ranges.extend([at, n]);
+        at += n + 1 + (r.next() % 3) as u32;
+    }
+    // The pieces, as the pool gives them.
+    let mut supply: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut owner = vec![u32::MAX; at as usize];
+    for (i, w) in ranges.chunks(2).enumerate() {
+        let (mut s, mut n) = (w[0], w[1]);
+        while n > 0 {
+            let c = floor(n);
+            *supply.entry(c).or_default() += 1;
+            s += size(c);
+            n -= size(c);
+        }
+        for u in w[0]..w[0] + w[1] { owner[u as usize] = i as u32; }
+    }
+    let groups = 8u64;
+    let threads = groups as usize * TG as usize;
+    let per = 4usize;
+    // Classes the pieces have, so the takers ask for more than some hold and less than others.
+    let have: Vec<u32> = supply.keys().copied().collect();
+    let classes: Vec<u32> = (0..threads * per).map(|_| have[(r.next() % have.len() as u64) as usize]).collect();
+    let mut demand: BTreeMap<u32, usize> = BTreeMap::new();
+    for &c in &classes { *demand.entry(c).or_default() += 1; }
+    for rounds in [1u32, 3] {
+        let (ctl, rb, cb) = (zeroed::<u32>(3), buf(&ranges), buf(&classes));
+        let (heads, next, out) = (zeroed::<u32>(128), zeroed::<u32>(at as usize), zeroed::<u32>(threads * per));
+        run(|e| e.run("pb_pool", &[("ctl", &ctl), ("ranges", &rb), ("classes", &cb), ("heads", &heads), ("next", &next), ("out", &out)], Some(ProbeArgs([(ranges.len() / 2) as u32, per as u32, rounds, 0])), groups));
+        assert_eq!(read::<u32>(&ctl, 3)[2], 0, "a grid barrier failed");
+        let got = read::<u32>(&out, threads * per);
+        let mut used = vec![false; at as usize];
+        let mut taken: BTreeMap<u32, usize> = BTreeMap::new();
+        for (k, &s) in got.iter().enumerate() {
+            if s == u32::MAX { continue; }
+            let c = classes[k];
+            *taken.entry(c).or_default() += 1;
+            let o = owner[s as usize];
+            for u in s..s + size(c) {
+                assert!(o != u32::MAX && owner[u as usize] == o, "rounds {rounds}: a block of class {c} at {s} is not inside one given range");
+                assert!(!std::mem::replace(&mut used[u as usize], true), "rounds {rounds}: unit {u} taken twice");
+            }
+        }
+        for (&c, &d) in &demand {
+            let s = supply.get(&c).copied().unwrap_or(0);
+            assert_eq!(taken.get(&c).copied().unwrap_or(0), d.min(s), "rounds {rounds}: class {c}'s blocks taken ({d} asked, {s} held)");
+        }
+    }
+}
+
 /// A measurement, not a check: what a grid barrier, a device fence, a threadgroup barrier and a
 /// dependent coherent load each cost.
 #[test]
@@ -162,7 +329,7 @@ fn the_source_compiles() {
     if let Some(path) = std::env::var_os("RERAIL_PP_DUMP") {
         std::fs::write(path, rerail_ukl::metal_source("pp_setup", source()).unwrap_or_else(|e| e.to_string())).unwrap();
     }
-    for name in ["pp_setup", "pp_check", "pb_search", "pb_expand", "pd_relex_test", "pb_sort_alone", "pb_barriers_alone"] {
+    for name in ["pp_setup", "pp_check", "pb_search", "pb_expand", "pd_relex_test", "pb_sort_alone", "pb_barriers_alone", "pb_pool"] {
         kernel(name);
     }
 }

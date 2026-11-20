@@ -586,12 +586,12 @@ pub fn solve(knowns: &mut Knowns, constraints: &[&KernelConstraint]) {
                     knowns.insert(c.lhs.clone(), v);
                     learnt = true;
                 }
-            } else if let Expr::Name(n) = &c.rhs {
-                if !knowns.contains_key(n) {
-                    let v = knowns[&c.lhs].clone();
-                    knowns.insert(n.clone(), v);
-                    learnt = true;
-                }
+            } else if let Expr::Name(n) = &c.rhs
+                && !knowns.contains_key(n)
+            {
+                let v = knowns[&c.lhs].clone();
+                knowns.insert(n.clone(), v);
+                learnt = true;
             }
         }
         if !learnt {

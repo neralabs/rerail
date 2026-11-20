@@ -76,7 +76,7 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
     let policy = statements
         .iter()
         .find_map(|s| match s.what()? {
-            S::Setting { key, text } if key == "policy" => text.split('"').nth(1).map(str::to_owned),
+            S::Setting { key: "policy", text } => text.split('"').nth(1).map(str::to_owned),
             _ => None,
         })
         .unwrap_or_default();
@@ -1234,14 +1234,12 @@ fn resolve_shared(statements: Vec<Stmt>) -> Result<(SharedFiles, Vec<Stmt>), Err
     Ok((files, own))
 }
 
-/// Each module's statements, without its includes (the graph placed them), read off its stored tape.
-
 /// The phase programs a text's own declarations name (`<phase>__<export>`, as `phases::phase_files` reads them): not
 /// its own phase (`.phase`), a typing program's or the engine's (`typing_`, `rr_`). Phase 0 resolves them with its
 /// includes (`p0_text_phase`), so the run's rule files are listed without reading a module again (decision 0246).
 pub fn phases_named(statements: &[Stmt]) -> Vec<String> {
     let own = statements.iter().find_map(|s| match s.what()? {
-        S::Setting { key, text } if key == "phase" => Some(text.trim().to_owned()),
+        S::Setting { key: "phase", text } => Some(text.trim().to_owned()),
         _ => None,
     });
     let mut out: Vec<String> = statements
@@ -1669,7 +1667,7 @@ pub struct GuestAsks {
     /// Its `.guests` settings: `guest_policy`'s facts, which a pack's programs share.
     pub settings: Vec<String>,
     /// `None` when no rule it reaches reads a guest: alone it makes none (`corpus`'s guest requests are no outputs).
-    /// Else the library files whose clauses ask (`asks`, or an `embed`): an included file's asking clauses are kept
+    /// Else the library files whose clauses ask (`asks`): an included file's asking clauses are kept
     /// whatever reads them (`reached_statements`), so these files' clauses are what it asks for.
     pub files: Option<Vec<PathBuf>>,
     /// Its own clauses ask too: what it asks for is its own.
@@ -1688,8 +1686,8 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
         Some(S::Setting { key: "guests", text }) => Some(text.to_owned()),
         _ => None,
     }).collect();
-    // What a clause reads, off its tape, and whether it makes a guest request (a read `lower` makes a demand of, or an
-    // `embed`): its heads' arguments', its body's and its edits' names.
+    // What a clause reads, off its tape, and whether it makes a guest request (a read `lower` makes a demand of): its
+    // heads' arguments', its body's and its edits' names.
     let read = |st: &Stmt| -> BTreeSet<String> {
         let (t, n) = st.tape();
         let mut out = BTreeSet::new();
@@ -1966,16 +1964,19 @@ pub fn profile_join_sources(paths: &[&Path]) -> Option<super::profile::author_jo
         let files = program_order(&own).map(|(order, _)| order).unwrap_or_else(|_| vec![own.clone()]);
         for file in files {
             if file != own && !indexed.insert(file.clone()) { continue; }
-            let Ok((parsed, _)) = read_shared(&file) else { continue };
-            for s in parsed.statements() {
-                if s.what() != Some(S::Clause) || !check::has_body(&s) { continue; }
-                let (reads, line) = (check::clause_reads(&s), s.line());
+            let Ok((rr_file, _)) = read_shared(&file) else { continue };
+            for s in rr_file.statements() {
+                if s.what() != Some(S::Clause) || !s.has_body() { continue; }
+                let line = s.line();
+                let mut reads = Vec::new();
+                check::clause_reads(&rr_file, &check::clause_body(&rr_file, s.node()), &mut reads);
                 for name in s.heads() {
-                    let key = if file == own && paths.len() > 1 { format!("p{i}_{name}") } else { name.to_owned() };
+                    let name = &name.to_owned();
+                    let key = if file == own && paths.len() > 1 { format!("p{i}_{name}") } else { name.clone() };
                     for read in &reads {
                         locations.reads.entry((key.clone(), read.clone())).or_default().insert((file.clone(), line));
                     }
-                    locations.definitions.entry(key).or_insert_with(|| (name.to_owned(), BTreeSet::new())).1.insert((file.clone(), line));
+                    locations.definitions.entry(key).or_insert_with(|| (name.clone(), BTreeSet::new())).1.insert((file.clone(), line));
                 }
             }
         }

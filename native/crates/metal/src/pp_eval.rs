@@ -28,7 +28,7 @@ pub use crate::slabs::DocView;
 pub struct Unit {
     /// The documents, held for the unit's life. The first one's slab is the one the kernels bind.
     pub documents: Vec<Arc<Resident>>,
-    /// The unit's other slabs, which its launches make resident (`pp_arena::Enc`).
+    /// The unit's other slabs, which its passes make resident (`Enc::over`).
     pub slabs: Vec<Arc<crate::slabs::Slab>>,
     /// Their views, in the unit's file order (`PpFile` in the UKL): placed in each run's arena
     /// (`Front::files`).
@@ -148,12 +148,26 @@ impl Unit {
         Ok(Unit { views, documents, slabs, node_bound, dir_bound, file_nodes })
     }
 
-    /// The batch of `units`: their files in order, read where they lie (`Unit::of`, 0471): its views count from the
-    /// first document's slab, and the others are made resident. `None` on a device with no buffer addresses whose
-    /// units lie in more than one slab.
+    /// The batch of `units`: their files in order, read in the slab they are in. `None` where
+    /// they are in more than one slab: a batch reads one, and gathering them would copy them.
     pub fn batch(units: &[&Unit]) -> Option<Unit> {
         let documents: Vec<Arc<Resident>> = units.iter().flat_map(|u| u.documents.iter().cloned()).collect();
-        Unit::of(documents).ok()
+        if let Some(first) = documents.first()
+            && documents.iter().any(|d| d.slab.id != first.slab.id)
+        {
+            return None;
+        }
+        let views: Vec<DocView> = units.iter().flat_map(|u| u.views.iter().copied()).collect();
+        let file_nodes: Vec<u32> = views.iter().map(|v| v.nodes).collect();
+        Some(Unit {
+            // One slab (above): none other to make resident.
+            slabs: Vec::new(),
+            node_bound: units.iter().map(|u| u.node_bound).sum::<usize>().max(1),
+            dir_bound: units.iter().map(|u| u.dir_bound).sum::<usize>().max(1),
+            views,
+            documents,
+            file_nodes,
+        })
     }
 
     /// The unit's files.
@@ -252,7 +266,7 @@ pub struct Front {
     out: Buf,
     pub rows: Buf,
     pub dir_keys: Buf,
-    /// Each directive's pragma act (`A_*`: `once`, `push_macro`, `pop_macro`; decision 0467 §3).
+    /// Each directive's pragma act (`A_*`: `once`, `push_macro`, `pop_macro`; decision 0501 §3).
     pub dir_acts: Buf,
     scan: Scan,
     dir_scan: Scan,
@@ -409,15 +423,11 @@ pub fn run<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<usize, E
 
 /// `run`, and the command's time on the device, in seconds.
 pub fn run_timed<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
-    run_timed_reading(&[], f)
+    run_timed_over(&[], f)
 }
 
-/// `run_timed` over `unit`: each launch makes the unit's other slabs resident (0471).
-pub fn run_timed_over<'a>(unit: &'a Unit, f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
-    run_timed_reading(&unit.slabs, f)
-}
-
-fn run_timed_reading<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
+/// `run_timed`, each launch making `resident` resident: a unit's slabs past its first (0471).
+pub fn run_timed_over<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
     let scope = crate::launch::LaunchScope::enter();
     let enc = Enc::over("Rerail pp evaluator", resident);
     f(&enc)?;
@@ -451,12 +461,12 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
 
 /// Runs the persistent grid over the arena at `groups` groups, laid out as `l`, in one command
 /// buffer: `pp_setup` to the stage `l` names (the text pass is inside its P1 iterations,
-/// decision 0500), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
+/// decision 0502), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
 /// `None` where a barrier failed (the grid's groups were not resident together).
 pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<(usize, f64)>, Error> {
     l.write(&front.lay);
     let all = l.get("LAST") == TO_ALL;
-    let ran = run_timed_over(unit, |enc| {
+    let ran = run_timed_over(&unit.slabs, |enc| {
         front.setup(enc, arena, unit, groups);
         if all {
             enc.run("pp_check", &[("arena", arena), ("lay", &front.lay)], None, 1);

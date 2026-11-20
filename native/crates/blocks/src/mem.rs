@@ -28,7 +28,7 @@ pub fn reserve(len: usize) -> *mut u8 {
         let p = unsafe {
             libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | crate::RESERVE_ONLY, -1, 0)
         };
-        assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed ({}; {} bytes reserved with it)", std::io::Error::last_os_error(), RESERVED.load(Relaxed));
+        assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed ({}), {} reserved", std::io::Error::last_os_error(), reserved());
         p.cast()
     }
     #[cfg(windows)]
@@ -154,6 +154,7 @@ pub(crate) unsafe fn free_pages(p: *mut u8, len: usize) {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[cfg(target_vendor = "apple")]
     use super::PAGE;
 
     /// Whether the page holding `p` holds bytes the process wrote (`mincore`'s modified bit): one given back as
