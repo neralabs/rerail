@@ -372,7 +372,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
 | 5 | Views, flat relations and names uploaded from the host | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident`, `texts` | 7.4 MB, 22.1 ms a run | Steps 4, 6 |
-| 6 | An axis's pairs copied into the chunk, then expanded to ids | `within.rs`; `device_chunk.rs`, `put_pairs`; `VIEW_AXIS` | 8 bytes a pair, then the expansion | Step 5 |
+| 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` is still made per looked-up node and uploaded (row 5) until its probe climbs the tape | — | — | Done |
 | 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.45–0.49 s of CPU a run | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | Every row a CPU stratum derives | Step 6 |
 | 9 | A second key's index copies the relation (`DevIndex::moved`); a relation of many parts merged for the device (`in_block`). Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS` | `metal_join.rs`; `facts/rows.rs` | Q85 counts them; 0 merges on cold 300-file runs | Step 6 |
@@ -461,9 +461,12 @@ Each step ends with:
        by an LZ4 block decode written once in CLIF (so the kernels have the same code), into the reader's slot. On
        the CPU a thread's slot (two blocks, as `F16Z`'s cache). On the device, a threadgroup decodes its rows'
        block into threadgroup memory, spilling to device memory past about 16 KB.
-       - Open for the kernels: a stage's probes read a view at any row, so a threadgroup's reads are not within
-         one or two blocks as a scan's are. A probe whose block is not the group's needs a slot of its own; how
-         many, and where, is decided when the kernels' part is built, against a probe-heavy stratum's misses.
+       - Probes, answered (2026-11-18): a stage's probes read a view at any row, so a threadgroup's reads are not
+         within one or two blocks as a scan's are. They need no slot of their own: every read, a scan's or a
+         probe's, goes through the batch's shared cache (below), which is sized to hold the batch's blocks. hogql
+         cold, 16z on Metal, statistics on (`RERAIL_ZCACHE_STATS=1`): 65 batches, 2,992 decodes for 3,342 blocks
+         (each at most once), 24.3 M hits, 1.8 M lookups that waited for a block being decoded, no duplicate, no
+         turn, no failure; findings 1,629.
        - The CPU's part (2026-11-18): a 16z tape's view (`F16Z_FORMAT`, `Tape16Z::view`) names its block index,
          its blocks' side lengths and its compressed bytes where they lie as stored, its id, and the cache it reads
          through (by its address less the tape's, and its entry size). A format 16 read of a 16z tape
@@ -486,10 +489,14 @@ Each step ends with:
          against 119.7–128.3 B (noise); the Metal binding, 1 pair at load 45, 102.7 B against 112.9 B, peak
          1,207 MB against 1,289 MB. Checks: the JIT's reads of a 16z tape of 6 blocks equal `F16Z`'s, node by
          node, and the JIT executor's outputs over one equal format 15's.
-       - The tape crate's `F16Z` still decodes with `lz4_sys` into its thread's two blocks, then reads them with the
-         generated format 16 reads: the same block, decoded by a second decoder. The Rust backend checks each load
-         against the tape's bytes, and a slot is not the tape's: the generated module reads 16z when its loads of a
-         slot are checked against the slot.
+       - One decoder (2026-11-18): the tape crate's `F16Z` decodes a block with `tape_lz4`, the reads' LZ4 decoder
+         (`z_lz4`, which `tape_z_block` inlines for the JIT and the kernels) translated by the Rust backend, into its
+         thread's two blocks, then reads them with the generated format 16 reads. `lz4_sys` only compresses (the
+         writer). The Rust backend checks a load against the tape's bytes when it is read-only and not aligned (the
+         tape's own); the decoder's loads of its slot (a match's copies) are bounded by the decoder itself
+         (decision 0403), and a read that takes an address (`tape_lz4`'s destination) is `unsafe`. The kernels'
+         MSL leaves `tape_lz4` out (`HOST_ONLY`). Check: `the_reads_decoder_decodes_what_lz4_compressed` (400
+         blocks of literals and matches at every offset, a block cut short); hogql 16z, findings 1,629.
        - The device's views read a 16z batch in place (2026-11-18; `views.refused.z_on_device` gone): the join
          kernels include the reads with the 16z case (`metal_tape_reads_z.metal`); a batch whose tapes are 16z
          gets one cache (`device_chunk::zcache_spec`), which every stage that reads its views shares, resident
@@ -675,6 +682,24 @@ Each step ends with:
    - The solve, on the CPU or the GPU, writes its answers as ids into a relation in the chunk block, which both read.
    - `put_pairs` and `VIEW_AXIS` go.
    - `has`, made per looked-up node, is a probe that climbs the tape, not an upload.
+   - Built 2026-11-18, for the batch's solve (`nearest`, `inside`, `within`):
+     - The relation lies alone in a run's block (`Part::for_writes_indexed`), not the chunk block: a derived fact
+       like a rule's head, with room for an index by each column (strata probe an axis by `n` and by `a`). In the
+       chunk block, or in a block of its own sized before the count and leased from the device's budget (a first
+       cut: containment's room 8 rows a node), it filled the budget: refusals rose from 5–38 to 23–52 a run.
+     - On the device: `axis_count` and the scan (one submission), the total read, then `axis_write` writes each row's
+       two ids (`global_of`) through `view_put`, the writer written once, bounded by the relation's chunks
+       (decision 0403). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
+       relation.
+     - On the CPU: the climb counts, then writes `batch.id` of each side into the same kind of relation.
+     - Every reader reads it in place: `value` and `documents_of` through `Part::get`, the device through
+       `Source::in_block` (`DevRel::in_block`). `Within::device_view`, its `pairs` and `on_device`, `view_expand`'s
+       axis branch, `DeviceView.pairs` and `expand_view`'s argument for it are deleted; view number 4 stays unused.
+     - `has` is left: its probe that climbs the tape on the device is a probe read, done with 4b's parent probes.
+   - Measured (hogql, 16z, the Metal binding, cold; interleaved with the commit before, 3 pairs at load 23–33):
+     copies 125.9 MB a run against 792.4 MB (rows 4, 6 and the axis's row 9 at 0: 472.1, 143.0 and up to 124.5 MB);
+     strata refused at run time 2, 2 and 2 against 22, 10 and 5; peak 817–928 MB against 831–1,023 MB; instructions
+     106.1–113.0 B against 103.1–108.2 B; findings 1,629, and 1,629 in format 15.
 6. **The executors write and index in place.**
    - The CPU's head rows are claimed and written in the relation's block, as the device's are (0325 step 4). A
      round's new rows are the relation's delta range; `Fresh`'s staging and merge go.

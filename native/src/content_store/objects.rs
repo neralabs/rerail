@@ -193,6 +193,48 @@ impl ContentStore {
         Ok(out)
     }
 
+    /// [`Self::tape_frames_with_hashes`] in every grammar, each tape with its grammar's id: the tapes of the values a
+    /// run's rules parsed (decision 0431 R6), where the program's requests do not name their grammars.
+    pub fn tape_frames_any_grammar(&self, sources: &[SourceId], grammar_version: i64, tape_format_version: i64) -> StoreResult<Vec<(SourceId, HashKey, i64, TapeFrame)>> {
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+        let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT t.source_id, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, t.grammar_id, t.raw_length, t.seg, t.seg_at, t.seg_len, t.tape_id \
+             FROM json_each(?1) j JOIN tape_objects t ON t.source_id=j.value AND t.grammar_version=?2 AND t.tape_format_version=?3 \
+             JOIN source_objects s ON s.source_id=t.source_id JOIN hashes h ON h.hash_id=s.canonical_hash_id",
+        )?;
+        type Row = (SourceId, HashKey, i64, i64, [i64; 3], i64);
+        let rows: Vec<Row> = statement
+            .query_map(params![list, grammar_version, tape_format_version], |row| {
+                Ok((
+                    SourceId(row.get(0)?),
+                    HashKey { algorithm: row.get(1)?, lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?] },
+                    row.get(6)?,
+                    row.get(7)?,
+                    [row.get(8)?, row.get(9)?, row.get(10)?],
+                    row.get(11)?,
+                ))
+            })?
+            .collect::<Result<_, _>>()?;
+        drop(statement);
+        drop(connection);
+        if self.placed_again(rows.iter().map(|&(_, _, _, _, [seg, ..], tape)| (OBJECT_TAPE, tape, seg)))? {
+            return self.tape_frames_any_grammar(sources, grammar_version, tape_format_version);
+        }
+        let mut maps = SegmentMaps::new(object_dir(&self.database_path));
+        let mut out = Vec::new();
+        for (source, hash, grammar, raw_length, [seg, seg_at, seg_len], _) in rows {
+            // A tape whose segment is gone is a miss: parsed again.
+            if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
+                out.push((source, hash, grammar, TapeFrame { raw_length, frame }));
+            }
+        }
+        Ok(out)
+    }
+
     pub fn tape_by_source(
         &self,
         source_id: SourceId,

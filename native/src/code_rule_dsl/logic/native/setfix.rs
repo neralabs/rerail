@@ -7456,7 +7456,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     s.columns.resize_with(f.columns.len(), Vec::new);
                     s.params.clear();
                     s.params.extend(f.params.iter().map(|p| { let v = val(slots, p.key); if p.doc { v >> 32 } else { v } }));
-                    fn flush(cx: &mut Ctx<'_, '_>, i: usize, f: &rowcode::Fused, s: &mut rowcode::Scratch, slots: &mut [i64]) {
+                    // Past the tail (`cut_from`), the first row made ends the step's loop, as the row-by-row path
+                    // ends it: a chunk's rows after it, and the candidates not yet gathered, would make the same head
+                    // row again. Without it a fused step read every candidate past the head's last binding, and a
+                    // planner pricing that step as one witness took a cross product there (work queue Q240).
+                    let made = cx.n;
+                    let cut = i >= cx.cut_from;
+                    fn flush(cx: &mut Ctx<'_, '_>, i: usize, f: &rowcode::Fused, s: &mut rowcode::Scratch, slots: &mut [i64], cut: Option<u64>) {
                         let counts = &cx.counts;
                         // Each fused step's entries and its passes, as `go` counts them step by step.
                         let bump = |m: usize, n: u64| {
@@ -7481,6 +7487,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                                 }
                                 if i == 0 { cx.at0 = s.ids[r]; cx.seen0 = true; }
                                 go(cx, i + 1 + f.steps, slots);
+                                if cut.is_some_and(|made| cx.n > made) { break 'rows; }
                             }
                         }
                         cx.work += added.get();
@@ -7489,17 +7496,19 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         s.ids.clear();
                         s.columns.iter_mut().for_each(Vec::clear);
                     }
+                    let cut = cut.then_some(made);
+                    let witnessed = |cx: &Ctx<'_, '_>| cut.is_some_and(|made| cx.n > made);
                     rows.each(cands, need, |id, row| {
-                        if cx.stop { return true; }
+                        if cx.stop || witnessed(cx) { return true; }
                         if rows.dead(id) || only.as_ref().is_some_and(|o| !o.has(id)) { return false; }
                         if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
                         for &(k, c) in &f.gather { s.columns[k].push(row.at(c)); }
                         if i == 0 { s.ids.push(id); }
                         s.rows += 1;
-                        if s.rows == rowcode::CHUNK { flush(cx, i, f, &mut s, slots); }
+                        if s.rows == rowcode::CHUNK { flush(cx, i, f, &mut s, slots, cut); }
                         false
                     });
-                    if s.rows > 0 && !cx.stop { flush(cx, i, f, &mut s, slots); }
+                    if s.rows > 0 && !cx.stop && !witnessed(cx) { flush(cx, i, f, &mut s, slots, cut); }
                     s.rows = 0;
                     s.ids.clear();
                     s.columns.iter_mut().for_each(Vec::clear);

@@ -185,6 +185,10 @@ pub mod matcher {
             matcher_metal::wave_pattern_sources(wave, format)
         }
 
+        fn pattern_variant(&self, format: u32) -> usize {
+            crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::pattern_variant(format)
+        }
+
         fn patterns_ready(&self, sources: &[String], format: u32) -> bool {
             crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::patterns_ready(sources, format)
         }

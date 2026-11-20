@@ -1332,7 +1332,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
         want.dedup();
         let found = res.entries.iter().position(|e| e.owner.same(&owner));
         let at = match found {
-            Some(at) if want.iter().all(|c| res.entries[at].cols.contains(c)) => {
+            // A source's rows can grow under it (a chunk's tape values, admitted inside its fixpoint, decision 0431 §8):
+            // its entry is of the rows it had then.
+            Some(at) if want.iter().all(|c| res.entries[at].cols.contains(c)) && (matches!(owner, Owner::Rel(_)) || res.entries[at].dev.rows == rel.len() || rel.view.as_ref().is_some_and(|v| v.src.made_on_lookup())) => {
                 rep.resident_hits += 1;
                 at
             }
@@ -1352,7 +1354,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 // view's source's (the vtab's `Relation`). Nothing uploaded, and the entry holds every column (the
                 // owner's), each at its own place.
                 let placed = match (&owner, &rel.view) {
-                    (Owner::Src(_), Some(view)) => view.src.in_block().filter(|b| ids.is_none() && b.rows as usize == n).map(|b| (b, view.src.columns().len())),
+                    // A source made on lookup numbers only the rows looked up so far; the relation it is bound by holds every
+                    // pair (a layered axis's, its tape values' too, decision 0431 §8).
+                    (Owner::Src(_), Some(view)) => view.src.in_block().filter(|b| ids.is_none() && (b.rows as usize == n || view.src.made_on_lookup())).map(|b| (b, view.src.columns().len())),
                     (Owner::Src(_), None) => None,
                     // Dead rows stay, marked by the relation's dead rows' delta (`InBlock::dead`), which the
                     // kernels skip.
@@ -1402,7 +1406,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     let device = rerail_accel::gpu::join::device()?;
                     let block = d.block.gpu_buffer(device);
                     let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
-                    batch.expand_view(&block, d.root, d.view, d.pairs, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
+                    batch.expand_view(&block, d.root, d.view, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
                     rep.uploads += 1;
                     rep.upload_cpu += thread_cpu() - c0;
                     let by = &mut rep.upload_by[profile::UPLOAD_MADE];

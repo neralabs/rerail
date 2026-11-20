@@ -185,7 +185,7 @@ fn matched(
     let Some(wave) = &matchers.wave else { return Ok(Vec::new()) };
     let metal = matches!(binding, crate::code_rule_dsl::typing::file_local::Binding::Metal);
     // Each tape's document in the batch; the tapes outside it take no part.
-    let at: Vec<Option<&Projected>> = tapes.iter().map(|(facts, _, _)| batch.docs.iter().find(|p| Arc::ptr_eq(&p.facts, facts))).collect();
+    let at: Vec<Option<&Projected>> = tapes.iter().map(|(facts, _, _)| batch.docs.iter().find(|p| Arc::ptr_eq(&p.facts, facts)).map(|p| &**p)).collect();
     let held: Vec<usize> = (0..tapes.len()).filter(|&i| at[i].is_some()).collect();
     // A matcher runs where its gates hold and W admits the file: its `syntax` (valid or invalid) and text literals.
     let errors: Vec<crate::code_rule_dsl::soundness::SyntaxErrors> = held.iter().map(|&i| crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&tapes[i].1)).collect();

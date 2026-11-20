@@ -2,7 +2,8 @@
 
 Status: accepted (2026-11-18)
 
-Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token").
+Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token"). Numbered 0426 on
+django-bugs (until roll-up 7).
 
 ## Intro
 

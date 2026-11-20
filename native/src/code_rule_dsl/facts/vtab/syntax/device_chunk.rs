@@ -83,9 +83,8 @@ pub const VIEW_NODE: u32 = 0;
 pub const VIEW_CHILD: u32 = 1;
 pub const VIEW_FIELD: u32 = 2;
 pub const VIEW_CORE: u32 = 3;
-/// A kind-set axis or containment read whole (`Within`): its batch's solve, as pairs of node rows (inner << 32 |
-/// outer) copied into the chunk, each made the two nodes' ids.
-pub const VIEW_AXIS: u32 = 4;
+// 4 was a kind-set axis read whole, its pairs copied into the chunk and made ids here. Its solve writes a relation of
+// ids of its own now (decision 0353 step 5), read where it lies; the number stays unused, so the others keep theirs.
 /// `core.rr`'s places of nodes and spans (`View::Loc`): their first line, last line, start column and document.
 pub const VIEW_LOC_LINE: u32 = 5;
 pub const VIEW_LOC_END: u32 = 6;
@@ -125,18 +124,6 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Line => VIEW_LINE,
         _ => return None,
     })
-}
-
-/// `pairs` copied into the chunk: their offset in the block, or `None` when its reservation cannot hold them.
-// copy (0353 step 5): an axis's pairs copied into the chunk. It goes: the solve writes its answer once,
-// as ids, into a relation in the chunk block (decision 0353).
-pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
-    const PAIRS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(6, "5", "an axis's pairs put into the chunk (put_pairs)");
-    let p: *mut u64 = chunk.block.try_alloc_t(pairs.len().max(1))?;
-    PAIRS.copied(8 * pairs.len());
-    // SAFETY: `p` holds `pairs.len()` items, just allocated in the block.
-    unsafe { std::ptr::copy_nonoverlapping(pairs.as_ptr(), p, pairs.len()) };
-    Some(chunk.block.offset_of(p))
 }
 
 /// A batch's chunk block, and its root's offset in it.
@@ -199,21 +186,73 @@ pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsIn
 
 #[cfg(target_os = "macos")]
 fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
+    build_dir(&chunk.block, &docs_of(batch, [0; 9]))
+}
+
+/// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
+#[cfg(target_os = "macos")]
+struct DirDoc<'a> {
+    p: &'a Arc<super::Projected>,
+    dialect: &'a super::Dialect,
+    rows: [u32; 9],
+}
+
+/// `batch`'s documents in a directory, each view's rows past `past` of that view.
+#[cfg(target_os = "macos")]
+fn docs_of(batch: &Batch, past: [u32; 9]) -> Vec<DirDoc<'_>> {
+    let (nodes, children, fields, locs) = (batch.offsets(View::Node), batch.offsets(View::Child), batch.offsets(View::Field), batch.offsets(View::Loc(Place::Line)));
+    batch
+        .docs
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let (n, loc) = (nodes[i] as u32, locs.get(i).map_or(0, |&r| r as u32));
+            let own = [n, children[i] as u32, fields[i] as u32, n, n, loc, loc, loc, loc];
+            DirDoc { p, dialect: &batch.dialects[p.tag], rows: std::array::from_fn(|v| past[v] + own[v]) }
+        })
+        .collect()
+}
+
+/// Each view's rows of `batch` (`VIEWS`' order).
+#[cfg(target_os = "macos")]
+fn rows_of(batch: &Batch) -> [u32; 9] {
+    let last = |v: View| batch.offsets(v).last().map_or(0, |&r| r as u32);
+    let (n, loc) = (last(View::Node), last(View::Loc(Place::Line)));
+    [n, last(View::Child), last(View::Field), n, n, loc, loc, loc, loc]
+}
+
+/// The views' directory of a chunk's batch and the tape values admitted inside its fixpoint (decision 0431 §8,
+/// `values::Layered`): the batch's documents, then each value's batch's, each view's rows of a value past those
+/// before it, as a layered source numbers them. Every document is in the batch's block: `None` where one is not, or
+/// a tape is not where the device reads it.
+#[cfg(target_os = "macos")]
+pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> {
+    let mut docs = docs_of(batch, [0; 9]);
+    let mut past = rows_of(batch);
+    for v in values {
+        docs.extend(docs_of(v, past));
+        let more = rows_of(v);
+        past = std::array::from_fn(|k| past[k] + more[k]);
+    }
+    build_dir(&batch.block, &docs)
+}
+
+/// The directory of `docs`, made in `b` (`ViewsInPlace`): each one's entry, tape and lines where the device reads them.
+#[cfg(target_os = "macos")]
+fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     use rerail_clif::view_reads::{ViewDir, ViewRow};
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
     let device = crate::code_rule_dsl::tape::placed::device()?;
-    let b = &chunk.block;
-    let n = batch.docs.len();
+    let n = docs.len();
     let rows: *mut ViewRow = b.alloc_t(n.max(1));
     let dir: *mut ViewDir = b.alloc_t(1);
     let mut slabs: Vec<metal::Buffer> = Vec::new();
     let mut entries = Vec::with_capacity(n);
     let mut lines = true;
-    let loc_rows = batch.offsets(View::Loc(Place::Line));
     // The 16z documents' rows, their blocks and their largest block's entry: their cache made after the rows.
     let (mut zrows, mut zblocks, mut zentry) = (Vec::new(), 0usize, 0usize);
-    let mut locs = batch.docs.iter().all(|p| p.extra.is_some());
-    for (i, p) in batch.docs.iter().enumerate() {
+    let mut locs = docs.iter().all(|d| d.p.extra.is_some());
+    for (i, &DirDoc { p, dialect, rows: first_rows }) in docs.iter().enumerate() {
         // Each refusal counted by why: what step 4b (16z laid out apart) and the loads not yet placed leave.
         let refused = |why: &'static str| {
             crate::code_rule_dsl::prof::count(why, 1);
@@ -222,9 +261,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
         if !Arc::ptr_eq(p.block(), b) {
             return refused("views.refused.block");
         }
-        let first = batch.nodes[i] as u32;
-        let loc = loc_rows.get(i).map_or(0, |&r| r as u32);
-        let mut row = ViewRow { rows: [first, batch.children[i] as u32, batch.fields[i] as u32, first, first, loc, loc, loc, loc], ..Default::default() };
+        let mut row = ViewRow { rows: first_rows, ..Default::default() };
         if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(b, p).is_none() {
             // Why, by the guest's placement where it has one.
             let why = match p.extra.as_ref().and_then(|x| x.host.as_ref()).map(|(_, place)| place) {
@@ -280,7 +317,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
                 }
                 None => {}
             }
-            let entry = super::view_docs::ViewEntry::new(b, p, &batch.dialects[p.tag]);
+            let entry = super::view_docs::ViewEntry::new(b, p, dialect);
             row.entry = b.offset_of(entry.desc()) as u64;
             row.tape = address;
             row.view = view;

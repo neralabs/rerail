@@ -911,6 +911,10 @@ static TAPE_VIEWS: std::sync::LazyLock<[String; 2]> = std::sync::LazyLock::new(|
 fn reads_z(format: u32) -> bool {
     format != 15 && format != 16
 }
+/// Which tape view a batch of `format` reads (`TAPE_VIEWS`' index): the kernels' sources differ by it alone.
+pub(in crate::code_rule_dsl) fn pattern_variant(format: u32) -> usize {
+    usize::from(reads_z(format))
+}
 /// The tape view for a batch of tapes in `format` (0: mixed).
 fn tape_view(format: u32) -> &'static str {
     &TAPE_VIEWS[usize::from(reads_z(format))]

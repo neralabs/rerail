@@ -705,9 +705,7 @@ impl FileImage {
                 if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
                     continue;
                 }
-                if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, budget) {
-                    programs.push((via, program));
-                }
+                programs.extend(crate::code_rule_dsl::embed::embedder(via).build_all(root, source, budget).into_iter().map(|p| (via, p)));
             }
         }
         for (via, program) in programs {

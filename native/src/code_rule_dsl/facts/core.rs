@@ -74,6 +74,20 @@ fn file_language(file: &dyn SourceFile) -> Option<crate::code_rule_dsl::language
     crate::code_rule_dsl::language::dialect_by_label(file.language())
 }
 
+/// The tape tag of the grammar labelled `label` (`build_in_wave_with_tape`'s key's), if it has one.
+pub fn label_tag(label: &str) -> Option<i64> {
+    crate::code_rule_dsl::language::dialect_by_label(label).and_then(tape_tag).map(i64::from)
+}
+
+/// Whether this process has queued the tape of a text whose SHA-256 is `digest` in the grammar `file` names, for the
+/// store (`build_in_wave_with_tape` then reads it, not parses it): decision 0431 R6's count of the texts parsed.
+pub fn tape_queued(cache: &crate::content_store::ContentStore, file: &dyn SourceFile, digest: &[u8; 32]) -> bool {
+    use crate::code_rule_dsl::build_ids::grammar_version;
+    let Some(tag) = file_language(file).and_then(tape_tag).map(i64::from) else { return false };
+    let fv = i64::from(crate::code_rule_dsl::tape::formats::stored_version());
+    cache.queued_tape(&queued_tape(digest, tag, grammar_version(), fv)).is_some()
+}
+
 pub const NONE: u32 = u32::MAX;
 /// Kind codes per dialect (the tape's `KIND_LIMIT`).
 pub const KIND_STRIDE: u32 = 1024;
@@ -922,6 +936,8 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "tape_of" => &["d", "t"],
         "sub_tape" => &["at", "grammar", "t"],
         "host_node" => &["n", "h"],
+        "guest_of" => &["n", "s"],
+        "guest_place" => &["n", "s", "l", "c"],
         // Decision 0058's tape operations.
         "parse_of" => &["x", "g", "t"],
         "unparse_of" => &["t", "x"],

@@ -95,8 +95,50 @@ pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     (end - start).max(0.0)
 }
 
+/// Why a failed command buffer failed: its error's description and code, once a run for each description (a wave's
+/// strata are refused to the CPU with no more than `BackendFailure` otherwise).
+#[allow(unexpected_cfgs)]
+pub fn say_failure(command: &CommandBufferRef) {
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+    /// The descriptions said: the run's own (decision 0442).
+    #[derive(Default)]
+    struct Said(std::sync::Mutex<Vec<String>>);
+    // SAFETY: `error` is an NSError or nil; its description an NSString, read as UTF-8 while the error lives.
+    let why = unsafe {
+        let error: *mut Object = msg_send![command, error];
+        if error.is_null() {
+            "no error given".to_owned()
+        } else {
+            let code: isize = msg_send![error, code];
+            let text: *mut Object = msg_send![error, localizedDescription];
+            let utf8: *const std::ffi::c_char = msg_send![text, UTF8String];
+            let text = if utf8.is_null() { String::new() } else { std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned() };
+            format!("{text} (code {code})")
+        }
+    };
+    rerail_context::with_local::<Said, _>(|said| {
+        let mut said = said.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !said.contains(&why) {
+            eprintln!("rerail: a command buffer the GPU failed: {why}");
+            said.push(why);
+        }
+    });
+}
+
 /// The threads of a join kernel's group: every dispatch's (`Pass::dispatch*`).
 pub const GROUP: u64 = 256;
+
+/// A join pipeline that cannot run a group of `GROUP` threads (its registers allow fewer) is not made: as one that
+/// does not compile, the run stops (decision 0382), and no caller runs another path on it. A dispatch past its most
+/// is undefined.
+fn held_to_group(name: &str, pipe: ComputePipelineState) -> ComputePipelineState {
+    let most = pipe.max_total_threads_per_threadgroup();
+    if most < GROUP {
+        panic!("Metal: the pipeline of `{name}` does not compile (decision 0382: fatal): at most {most} threads a group, its dispatches' {GROUP}");
+    }
+    pipe
+}
 
 /// `name` of `source` on the shared device: through the store of compiled kernels (decision 0395).
 pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String> {
@@ -123,15 +165,7 @@ pub fn scratch_set(set: usize) -> usize {
 pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, String> {
     shared::pipeline(&format!("join {variant} {name}"), || {
         device()?;
-        let pipe = super::kernels::pipeline_fixed(&source(), name, None);
-        // Every dispatch of a join kernel is of groups of 256 threads: a kernel whose registers allow fewer cannot run
-        // them (a dispatch past its most is undefined). As a kernel that does not compile, the run stops (decision
-        // 0382): no caller runs another path on it.
-        let most = pipe.max_total_threads_per_threadgroup();
-        if most < GROUP {
-            panic!("Metal: the pipeline of `{name}` does not compile (decision 0382: fatal): at most {most} threads a group, its dispatches' {GROUP}");
-        }
-        Ok(pipe)
+        Ok(held_to_group(name, super::kernels::pipeline_fixed(&source(), name, None)))
     })
 }
 
@@ -259,7 +293,11 @@ impl Submitted {
     pub fn wait_ok(self) -> (f64, bool) {
         let command = self.command.clone();
         let seconds = self.wait();
-        (seconds, command.status() != metal::MTLCommandBufferStatus::Error)
+        let ok = command.status() != metal::MTLCommandBufferStatus::Error;
+        if !ok {
+            say_failure(&command);
+        }
+        (seconds, ok)
     }
 }
 

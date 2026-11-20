@@ -32,7 +32,7 @@ struct ViewDoc {
     uint source_len;
     Run lines;
     uint placement;
-    uint pad;
+    uint file;
     long delta;
     uint within_lo;
     uint within_hi;
@@ -52,7 +52,7 @@ static_assert(__builtin_offsetof(ViewDoc, ends) == 88, "ViewDoc.ends");
 static_assert(__builtin_offsetof(ViewDoc, source_len) == 92, "ViewDoc.source_len");
 static_assert(__builtin_offsetof(ViewDoc, lines) == 96, "ViewDoc.lines");
 static_assert(__builtin_offsetof(ViewDoc, placement) == 112, "ViewDoc.placement");
-static_assert(__builtin_offsetof(ViewDoc, pad) == 116, "ViewDoc.pad");
+static_assert(__builtin_offsetof(ViewDoc, file) == 116, "ViewDoc.file");
 static_assert(__builtin_offsetof(ViewDoc, delta) == 120, "ViewDoc.delta");
 static_assert(__builtin_offsetof(ViewDoc, within_lo) == 128, "ViewDoc.within_lo");
 static_assert(__builtin_offsetof(ViewDoc, within_hi) == 132, "ViewDoc.within_hi");
@@ -1419,7 +1419,7 @@ inline ulong clif_view_loc_docof(device const uchar* t,ulong a0,device const uch
   ulong v41=v10|v40;
   {ulong t0=v41;v7=t0;}
  }else{
-  uint v42=uint(*(device const uint*)(t+v0));
+  uint v42=uint(*(device const uint*)(t+(v0+ulong(long(116)))));
   ulong v43=ulong(v42);
   {ulong t0=v43;v7=t0;}
  }

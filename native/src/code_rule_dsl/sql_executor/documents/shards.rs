@@ -115,6 +115,8 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         "doc_root" => (&[1], &[0]),
         "sub_tape" => (&[0], &[]),
         "host_node" => (&[1], &[]),
+        // Decision 0431: a string's parsed nodes are its file's rows.
+        "guest_of" | "guest_place" => (&[1], &[]),
         "str_part" | "str_part_word" => (&[0, 3], &[]),
         "doc" | "pkg" | "path_part" | "file_name" | "source" | "src_line" | "split_line"
         | "lf_line" | "line_count" | "syntax_error" | "doc_role" | "tape_of" => (&[], &[0]),

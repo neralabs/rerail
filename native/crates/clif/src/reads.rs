@@ -125,11 +125,17 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_loc_docof", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_docof },
     // A 16z tape's block in the reader's slot (decision 0353 step 4b): last, so no other read's number moves.
     Read { family: Family::Tape, name: "tape_z_block", params: &[I32], ret: I64, hot: false, body: z_block },
+    // LZ4's block decoder alone (`z_lz4`, which `tape_z_block` decodes with): the tape crate's `Tape16Z` decodes with
+    // it, so every reader of a 16z tape has the one decoder (decision 0353 step 4b).
+    Read { family: Family::Tape, name: "tape_lz4", params: &[I32, I32, I64, I64], ret: I64, hot: false, body: lz4_block },
 ];
+
+/// The reads the kernels do not include: they decode a 16z block through `tape_z_block`, which inlines the decoder.
+const HOST_ONLY: &[&str] = &["tape_lz4"];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
 /// block).
-pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot", "tape_line_select"];
+pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot", "tape_line_select", "tape_lz4"];
 
 /// The reads a reader of the tape crate calls (the rest are the reads' own: a side list's value takes a list's
 /// number, which is the reads' to give).
@@ -262,7 +268,7 @@ fn tape_msl(z: bool) -> Result<String, String> {
     let built: Vec<(u32, Function, bool)> = READS
         .iter()
         .enumerate()
-        .filter(|(_, read)| read.family == Family::Tape && (z || read.name != "tape_z_block"))
+        .filter(|(_, read)| read.family == Family::Tape && !HOST_ONLY.contains(&read.name) && (z || read.name != "tape_z_block"))
         .map(|(k, read)| {
             let (f, apart) = build_split(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None, z, z);
             (k as u32, f, apart)
@@ -1875,7 +1881,7 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
     let ckpt_at64 = b.f.ins().uextend(I64, ckpt_at);
     let to = b.f.ins().iadd(dst, ckpt_at64);
     let len = b.f.ins().uextend(I64, ckpt_len);
-    z_copy_exact(b, src, to, len);
+    z_copy_exact(b, src, to, len, memory());
     // Its pieces, one a turn: the piece index's start, length and kind (a repeat's, the piece it names).
     let pieces = b.f.ins().imul_imm(blocks, i64::from(F16Z_PIECES));
     let starts = b.column(0);
@@ -1934,7 +1940,7 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
     b.f.switch_to_block(raw);
     let want = b.f.ins().isub(to_end, to);
     let n = b.f.ins().umin(len, want);
-    z_copy_exact(b, src, to, n);
+    z_copy_exact(b, src, to, n, memory());
     b.f.ins().jump(next, &[]);
     b.f.switch_to_block(next);
     let q = b.f.ins().iadd_imm(q, 1);
@@ -1951,17 +1957,19 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
 /// LZ4's reference decoder widens it (its copies may run 8 bytes past `dst_end`, into the slot's room). A length's
 /// extension bytes are read one a step, each 255 bytes of the length. A sequence that would write past `dst_end`
 /// or read before `dst` (a corrupt block) ends the decode.
-fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Value) {
+fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Value) -> Value {
     let rw = MemFlags::new().with_notrap();
     let tape = memory();
     let (head, token, literals, after, matched, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I64);
     b.f.append_block_param(head, I64);
+    // Where the decode ended in the destination.
+    b.f.append_block_param(done, I64);
     b.f.ins().jump(head, &[src.into(), dst.into()]);
     b.f.switch_to_block(head);
     let (s, d) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
     let more = b.f.ins().icmp(IntCC::UnsignedLessThan, s, src_end);
-    b.f.ins().brif(more, token, &[], done, &[]);
+    b.f.ins().brif(more, token, &[], done, &[d.into()]);
     b.f.switch_to_block(token);
     let t = b.f.ins().uload8(I32, tape, s, 0);
     let s = b.f.ins().iadd_imm(s, 1);
@@ -1975,14 +1983,14 @@ fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Val
     let s_lit = b.f.ins().iadd(s, lit);
     let held = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, s_lit, src_end);
     let fits = b.f.ins().band(fits, held);
-    b.f.ins().brif(fits, literals, &[], done, &[]);
+    b.f.ins().brif(fits, literals, &[], done, &[d.into()]);
     b.f.switch_to_block(literals);
-    z_copy_exact(b, s, d, lit);
+    z_copy_exact(b, s, d, lit, memory());
     let s = b.f.ins().iadd(s, lit);
     // A match's two offset bytes within the source, else the block's last literals ended it.
     let s2 = b.f.ins().iadd_imm(s, 2);
     let more = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, s2, src_end);
-    b.f.ins().brif(more, after, &[], done, &[]);
+    b.f.ins().brif(more, after, &[], done, &[d_lit.into()]);
     // The match: its offset back, its length (4 more than its own).
     b.f.switch_to_block(after);
     let off = b.f.ins().uload16(I32, tape, s, 0);
@@ -1999,7 +2007,7 @@ fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Val
     let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d_end, dst_end);
     let ok = b.f.ins().band(some, within);
     let ok = b.f.ins().band(ok, fits);
-    b.f.ins().brif(ok, matched, &[], done, &[]);
+    b.f.ins().brif(ok, matched, &[], done, &[d_lit.into()]);
     b.f.switch_to_block(matched);
     let from = b.f.ins().isub(d_lit, off);
     // An offset under 8: its first 8 bytes a byte at a time and a word, and the source moved on to a multiple of
@@ -2050,6 +2058,22 @@ fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Val
     let from = b.f.ins().iadd_imm(from, 8);
     b.f.ins().jump(wild, &[to.into(), from.into()]);
     b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// `tape_lz4(from, to, dst, len)`: the tape's bytes `from..to`, an LZ4 block, decoded into `dst` (`len` bytes, and
+/// at least 8 of room after them, which a match's copies may write) by `z_lz4`; the bytes it decoded (`len` for a
+/// whole block). The tape crate's `Tape16Z` decodes a piece with it (decision 0353 step 4b: one decoder).
+fn lz4_block(b: &mut B<'_, '_>) -> Value {
+    let (from, to) = (b.arg(0), b.arg(1));
+    let (dst, len) = (b.args[2], b.args[3]);
+    let from = b.f.ins().uextend(I64, from);
+    let to = b.f.ins().uextend(I64, to);
+    let src = b.f.ins().iadd(b.tape, from);
+    let src_end = b.f.ins().iadd(b.tape, to);
+    let dst_end = b.f.ins().iadd(dst, len);
+    let end = z_lz4(b, src, src_end, dst, dst_end);
+    b.f.ins().isub(end, dst)
 }
 
 /// An LZ4 length of `nibble` (a u32): 15 is followed by bytes added to it, the last under 255. Returns the length and
@@ -2078,7 +2102,7 @@ fn z_length(b: &mut B<'_, '_>, nibble: Value, s: Value, src_end: Value) -> (Valu
 
 /// `n` bytes from `s` to `d`: 8 a copy, then 4, 2 and 1, so no load passes `s + n` (the last block's literals end
 /// the tape).
-fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value) {
+fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value, load: MemFlags) {
     let rw = MemFlags::new().with_notrap();
     let (head, step, tail) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I64);
@@ -2091,7 +2115,7 @@ fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value) {
     b.f.ins().brif(more, step, &[], tail, &[]);
     b.f.switch_to_block(step);
     let from = b.f.ins().iadd(s, k);
-    let word = b.f.ins().load(I64, memory(), from, 0);
+    let word = b.f.ins().load(I64, load, from, 0);
     let to = b.f.ins().iadd(d, k);
     b.f.ins().store(rw, word, to, 0);
     let k = b.f.ins().iadd_imm(k, 8);
@@ -2105,7 +2129,7 @@ fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value) {
         b.f.switch_to_block(copy);
         let from = b.f.ins().iadd(s, k);
         let to = b.f.ins().iadd(d, k);
-        let value = b.f.ins().load(ty, memory(), from, 0);
+        let value = b.f.ins().load(ty, load, from, 0);
         b.f.ins().store(rw, value, to, 0);
         b.f.ins().jump(next, &[]);
         b.f.switch_to_block(next);

@@ -41,14 +41,9 @@ const NOT_CACHES: &[&str] = &[
     "guest_keys", "observed_changes",
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
-    // Each guest's key, one per identity (decision 0391): the store's numbering of its guests, as `atom_key` is.
-    "guest_keys",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "store_sessions", "tree_pages_pending", "object_archive", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
-    // Each guest's key by its identity (decision 0391): a name, as `strings`. The observer's journal of what it saw
-    // change (decision 0400): bookkeeping of observations.
-    "guest_keys", "observed_changes",
     "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 

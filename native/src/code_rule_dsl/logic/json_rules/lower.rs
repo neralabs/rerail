@@ -558,10 +558,11 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
         } else if k == "embedded" && vo.is_some() {
             lits.extend(super::embedded::term(px, prog, val, v)?);
         } else if k == "host" && vo.is_some() {
-            // inside a `parse`: the host node the parse holds, matched by the host language's rule; a guest capture
-            // it reads is the guest node, compared by its text
-            let (d, h) = (vs.fresh("d"), vs.fresh("h"));
-            lits.push(format!("docof({v}, {d}), guest({d}, _, {h}, _)"));
+            // inside a `parse`: the string the parse read, matched by the host language's rule (`guest_of`, decision
+            // 0431: a parsed string's nodes are its tape's); a guest capture it reads is the guest node, compared by
+            // its text
+            let h = vs.fresh("h");
+            lits.push(format!("guest_of({v}, {h})"));
             lits.extend(lower(px, prog, val, &h, vs, &[])?);
             prog.host_reads.extend(host_reads(px, val));
         } else if k == "formatArgs" && is_format_args(prog, val) {

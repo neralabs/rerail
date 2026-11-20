@@ -57,8 +57,6 @@ pub struct DeviceView<'a> {
     pub root: usize,
     pub view: u32,
     pub rows: usize,
-    /// An axis's pairs in the block (`device_chunk::VIEW_AXIS`), else 0.
-    pub pairs: usize,
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
     #[cfg(target_os = "macos")]
     pub in_place: Option<ViewInPlace>,
@@ -1466,6 +1464,9 @@ pub struct Relation {
     /// Every row's id in order, made when a column pushed in order is first probed for a slice of its rows
     /// (`sorted_rows`): such a column's rows of one value are consecutive, and need no index of their own.
     identity: OnceLock<Vec<u32>>,
+    /// Rows a later relation goes on from (`grown`, decision 0431 §6): frozen when they are written into their block,
+    /// so that one takes their writer and its rows follow these in the same block relation.
+    grows: bool,
 }
 struct ColumnIndex {
     rows: Vec<u32>,
@@ -1487,7 +1488,59 @@ impl Relation {
             indexes: columns.iter().map(|_| OnceLock::new()).collect(),
             ordered: columns.iter().map(|_| Some(0)).collect(),
             identity: OnceLock::new(),
+            grows: false,
         }
+    }
+
+    /// This relation as one a later relation goes on from (`grown`): its rows frozen in their block (`Rows::freeze`),
+    /// now if they are written there, else when they are.
+    pub fn growable(mut self) -> Self {
+        self.grows = true;
+        if let Some(cells) = self.cells.take() {
+            let _ = self.cells.set(cells.freeze(self.rows));
+        }
+        self
+    }
+
+    /// These rows and then `more`'s, as a batch grows by a round's documents (decision 0431 §6): this relation's rows
+    /// shared, not rewritten (`Rows::shared`: their writer taken, so the rows that follow go on in the same block
+    /// relation, which the device binds whole), and `more`'s written after them. This relation still reads its own
+    /// rows (a prefix), as the round before read them. Its indexes are made again, over all the rows, when probed.
+    pub fn grown(&self, more: Relation) -> Relation {
+        assert_eq!(self.columns, more.columns, "a relation grown by rows of other columns");
+        let k = self.columns.len();
+        let base = self.cells();
+        let mut r = Relation {
+            columns: self.columns.clone(),
+            staged: Default::default(),
+            rows: self.rows,
+            cells: OnceLock::from(base.shared(self.rows)),
+            indexes: self.columns.iter().map(|_| OnceLock::new()).collect(),
+            ordered: self.ordered.clone(),
+            identity: OnceLock::new(),
+            grows: true,
+        };
+        let Relation { staged, cells, rows, .. } = more;
+        match cells.into_inner() {
+            Some(cells) => {
+                let mut row = vec![0; k];
+                for i in 0..rows as u32 {
+                    row.iter_mut().enumerate().for_each(|(c, v)| *v = cells.get(i, c));
+                    r.push(&row);
+                }
+            }
+            None => staged.into_inner().unwrap_or_else(|e| e.into_inner()).chunks_exact(k).for_each(|row| r.push(row)),
+        }
+        let cells = r.cells.take().expect("the grown rows");
+        let _ = r.cells.set(cells.freeze(r.rows));
+        r
+    }
+    /// A relation of `rows`, staged (`push`), not yet written into a block: rows a relation that goes on from another
+    /// writes once, past that one's (`grown`: a tape value's rows admitted inside a chunk's fixpoint, decision 0431 §8).
+    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>) -> Self {
+        let mut r = Relation::new(columns);
+        rows.for_each(|row| r.push(&row));
+        r
     }
     /// A relation of `rows`: written straight into its block, at their number, when the iterator knows it exactly
     /// (no staging, no growth or move); else staged, as `push` stages them.
@@ -1537,7 +1590,7 @@ impl Relation {
             let mut cells = super::rows::Rows::living(self.columns.len(), super::rows::Life::Source);
             cells.reserve(staged.len());
             cells.extend_from_slice(&staged);
-            cells
+            if self.grows { cells.freeze(self.rows) } else { cells }
         })
     }
     fn index(&self, column: usize) -> &ColumnIndex {

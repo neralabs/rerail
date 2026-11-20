@@ -1,7 +1,7 @@
 # 0463: A tape's reads are proven within its bytes, whatever the bytes hold
 
 Numbered 0403 on sync-integration-hub-tape (this branch's 0403 is "a `prev` reads the chunk before, chunk 0
-included").
+included"). Numbered 0427 on django-bugs (until roll-up 7).
 
 Status: decided (2026-11-18), by the user, on Q265: "That's not just a correctness issue but a security issue too.
 That means both identifying and fixing the root-cause for corruption, and ensuring that (at least behind a flag)

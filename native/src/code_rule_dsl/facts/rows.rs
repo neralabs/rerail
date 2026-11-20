@@ -957,6 +957,16 @@ impl Part {
         InBlock { facts: self.facts.clone(), at: self.rel_at(), rows, dead: 0, kills: None, part: Some(self.clone()) }
     }
 
+    /// `for_writes`' relation alone in a run's block, with room for `indexes` indexes of its rows, one for each key its
+    /// readers probe it by (an axis's, by `n` and by `a`: decision 0353 step 5): a key past them copies the relation
+    /// (`DevIndex::moved`). A derived fact like a rule's head, not leased from the device's budget.
+    pub fn for_writes_indexed(k: usize, rows: usize, indexes: usize) -> Part {
+        let cap = rows.next_power_of_two().max(1);
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
+        let room = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>();
+        Part::try_new_with(Life::Run, k, rows, room, false).unwrap_or_else(|e| panic!("a run's relation of {rows} rows: {e}"))
+    }
+
     /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
     pub fn rows_at(&self) -> usize {
         self.facts.block.offset_of(&raw const self.rel().rows)

@@ -4196,6 +4196,18 @@ impl Model {
         // factorized part's key, `fzk($d) :- demand($d), node($d, $v, …), col($v, $c)`, was planned from `col` (31,191
         // rows est., 4 M read) where `demand` first reads one node a document.
         let head_vars = body::atom_vars(b.head());
+        // The work of an order whose tail (from the first join made with every head variable bound: `tail`, the work
+        // and rows then) ends with `rows`: the tail's reads stop at a binding's first witness (`setfix::tail`, a fused
+        // step too), so a binding with `rows / h` witnesses reads about that share of them. Every candidate a witness:
+        // one read a step a binding (`fzk($d)`, then a document's nodes, 19 M rows read as 14,631, work queue Q240).
+        // One in 15,000 a witness (`loaded` by a key every row holds, then `doc_module(p, m)`): read in full, as the
+        // walk reads them (443 M rows).
+        fn witnessed(raw: f64, tail: Option<(f64, f64)>, rows: f64) -> f64 {
+            match tail {
+                Some((base, h)) if rows > h && h > 0.0 => base + (raw - base) * h / rows,
+                _ => raw,
+            }
+        }
         // What is bound before the first step: a recheck's head (`Body::with_head_bound`, Q208), one candidate row.
         let pre = b.bound_before();
         let step_all = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
@@ -4234,7 +4246,9 @@ impl Model {
         };
         let step = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
             let (w, out, mode) = step_all(l, rows, bound)?;
-            if out > rows && head_vars.is_subset(bound) {
+            // A step joined by a bound variable: a cross product reads its rows until one passes the rest (Q240).
+            let joined = b.args(l).iter().any(|t| matches!(t, TermRef::Var(v) if bound.contains(*v)));
+            if out > rows && head_vars.is_subset(bound) && joined {
                 let atom = matches!(b.view(l), Lit::Atom(_));
                 return Some((if atom { w - out + rows } else { w }, rows, mode));
             }
@@ -4298,6 +4312,8 @@ impl Model {
         // (`fixed`), or a start the search tries first (`SearchCx::start`, decision 0258).
         let price = |fixed: &[Step], candidates: &mut u64| -> Result<(f64, f64, Vec<Step>)> {
             let (mut work, mut rows, mut bound, mut order) = (0.0, 1.0, pre.clone(), Vec::new());
+            // The work and rows where the head's variables are all bound before a join (`witnessed`).
+            let mut tail: Option<(f64, f64)> = None;
             if fixed.len() != b.len() {
                 return Err(Error::Plan("a kept plan of another body".into()));
             }
@@ -4314,7 +4330,10 @@ impl Model {
                     placed |= 1 << i;
                 }
                 if b.is_join(l) {
-                    let (w, out, mode) = step(l, rows, &bound).ok_or_else(|| Error::Plan("a kept step cannot run".into()))?;
+                    if tail.is_none() && head_vars.is_subset(&bound) {
+                        tail = Some((work, rows));
+                    }
+                    let (w, out, mode) = step_all(l, rows, &bound).ok_or_else(|| Error::Plan("a kept step cannot run".into()))?;
                     *candidates += 1;
                     work += w;
                     rows = out;
@@ -4329,7 +4348,7 @@ impl Model {
                 }
                 bound.extend(b.vars(l));
             }
-            Ok((work, rows, order))
+            Ok((witnessed(work, tail, rows), rows, order))
         };
         let (work, rows, order, subsets) = if joins.is_empty() {
             // A body of filters and aggregates alone (`n = count : { … }`) runs over the relational unit, one empty
@@ -4389,6 +4408,8 @@ impl Model {
         // a step sharing no variable with what is joined is not taken where it or a connected step has no size of its
         // own (`card`'s 1,000 rows): `pv__ins` crossed `pv` with `retparam` before an unsized 15-row `posarg__plus`.
         let jmask: Vec<u128> = joins.iter().map(|&j| b.vars(j).iter().filter(|&v| !pinned.contains(v)).filter_map(|v| var_ids[v.index()]).fold(0u128, |m, k| if k < 128 { m | 1u128 << k } else { m })).collect();
+        // The head's variables as bits, where each is a body variable numbered under 128 (`step`'s head-bound rule).
+        let head_mask: Option<u128> = head_vars.iter().try_fold(0u128, |m, v| var_ids[v.index()].filter(|&k| k < 128).map(|k| m | 1u128 << k));
         // The joins with no size of their own, read from the statistics once per search.
         let no_size: u64 = (0..joins.len()).filter(|&i| matches!(b.view(joins[i]), Lit::Atom(a) if !a.neg() && { let r = b.rel(a); r != "node" && !self.stats.card.contains_key(r) && !self.stats.lazy.0.contains_key(r) && !self.stats.solving.contains(r) })).fold(0, |m, i| m | 1 << i);
         // The joins of a relation with no rows of its own when priced: unsized, or empty (its rows come later, as a
@@ -4481,6 +4502,10 @@ impl Model {
             /// Its last join's rows out a row in, and the rule that priced them (decision 0354's features).
             fan: f64,
             basis: &'static str,
+            /// Its work as each step reads (`work` is that past the head's binding scaled by `witnessed`), and,
+            /// once the head is bound, the work and rows at that point: the tail (`witnessed`).
+            raw: f64,
+            tail: Option<(f64, f64)>,
         }
         let filters: Vec<usize> = (0..b.len()).filter(|&i| !b.is_join(i)).collect();
         // Each filter's share of rows passed on (decision 0297); a body's first 128 filters are priced.
@@ -4615,7 +4640,7 @@ impl Model {
             }
             (rows, work)
         };
-        cells[0] = Some(Cell { work: work0, rows: rows0, prev: 0, last: usize::MAX, mode: None, unfounded: false, fan: 1.0, basis: "" });
+        cells[0] = Some(Cell { work: work0, rows: rows0, prev: 0, last: usize::MAX, mode: None, unfounded: false, fan: 1.0, basis: "", raw: work0, tail: None });
         // Only the subsets one join more than a subset reached (with the delta first, half of them or fewer): a
         // subset no order reaches has no cell, and its closure is not worked out. Each is solved as before, its last
         // joins tried in the same order, so the plan is the same.
@@ -4678,7 +4703,11 @@ impl Model {
                         out *= pass[k];
                         filtered += out;
                     }
-                    let cand = Cell { work: from.work + w + filtered, rows: out, prev, last: i, mode, unfounded, fan, basis: by };
+                    // Past the head's binding, priced as the walk runs it (`witnessed`); the tail starts at the first
+                    // join made with every head variable bound before it.
+                    let raw = from.raw + w + filtered;
+                    let tail = from.tail.or_else(|| head_mask.is_some_and(|h| *bound & h == h).then_some((from.raw, left)));
+                    let cand = Cell { work: witnessed(raw, tail, out), rows: out, prev, last: i, mode, unfounded, fan, basis: by, raw, tail };
                     if mask == full_mask {
                         finals.push((cand.work, prev, i, mode, fan, by));
                     }
@@ -11875,7 +11904,11 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // the dependency order's. Only strata run natively make waves (SQL launches nothing), so a run all in SQL keeps
     // the dependency order, and T's plans in it.
     // `by_level` reorders them: its own copy, the version's kept as it is.
-    let (sccs, level_of) = by_level(sccs.to_vec(), &deps, model.inputs.native.contains("program"));
+    // The ordering edges hold for the whole run: a stratum that asks suspends (decision 0114 §3), and a stratum is
+    // run meanwhile only where it does not depend on one asking (`issue::Board`, the waiting checks).
+    let (sccs, ordered) = requests_first(sccs.to_vec(), &deps, &f0);
+    let deps = ordered.unwrap_or(deps);
+    let (sccs, level_of) = by_level(sccs, &deps, model.inputs.native.contains("program"));
     // Each relation's rules, as keys of the program's version (its rule `k` is the program's rule `k`), in the
     // program's order.
     let mut rules_by: IndexMap<&str, Vec<RuleKey>> = IndexMap::new();
@@ -13257,6 +13290,36 @@ fn off_thread(e: &Error) -> bool {
 /// The strata in order of their levels (stable; with `sort`), and each one's level: one more than the deepest level of a stratum
 /// it depends on (`deps`: reads, requests answered, a native operator's inputs). A level's strata do not depend on
 /// each other, so it is a device wave (decision 0095 §5).
+/// The strata with each request that produces an input first (decision 0431 §8): its answers grow the run's bound
+/// sources (a tape value's rows are a part of each, `syntax::values::Layered`), so a stratum that scans a source
+/// sees them only after the request has answered. A shown guest's nodes (one in the run's own language, its copies
+/// folded, decision 0058) are a plain view's rows, reached by no guest relation. The request's cone (what it reads,
+/// transitively) is closed under its dependencies, so the cone first and then the rest, each in its order, is a
+/// dependency order still; each stratum outside the cone is given an edge to the request, which the run's scheduling
+/// keeps (the edges returned, `None` where no request produces an input).
+fn requests_first(sccs: Vec<BTreeSet<String>>, deps: &super::front::Edges, f: &Fields<'_>) -> (Vec<BTreeSet<String>>, Option<super::front::Edges>) {
+    let requests: BTreeSet<String> = f.answers().iter().filter(|&&(_, by)| f.is_input(f.v.rel_name(by))).map(|&(q, _)| f.v.rel_name(q).to_owned()).collect();
+    if requests.is_empty() {
+        return (sccs, None);
+    }
+    let mut cone: BTreeSet<String> = requests.clone();
+    let mut todo: Vec<String> = requests.iter().cloned().collect();
+    while let Some(r) = todo.pop() {
+        for (d, _) in deps.get(&r).into_iter().flatten() {
+            if cone.insert(d.clone()) {
+                todo.push(d.clone());
+            }
+        }
+    }
+    let (inside, outside): (Vec<_>, Vec<_>) = sccs.into_iter().partition(|scc| scc.iter().any(|r| cone.contains(r)));
+    let mut edges = deps.clone();
+    for r in outside.iter().flatten() {
+        let e = edges.entry(r.clone()).or_default();
+        e.extend(requests.iter().map(|q| (q.clone(), false)));
+    }
+    (inside.into_iter().chain(outside).collect(), Some(edges))
+}
+
 fn by_level(sccs: Vec<BTreeSet<String>>, deps: &super::front::Edges, sort: bool) -> (Vec<BTreeSet<String>>, Vec<usize>) {
     let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
     let mut level = vec![0usize; sccs.len()];
