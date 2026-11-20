@@ -87,7 +87,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    I added <N> rules to <repo>. Until you approve them, they run in Log: Rerail records what each would catch and tells
    no one. Once approved, each runs in its own mode.
 
-     1. <what it checks, in plain words>
+     1. <the title, as the dashboard will list it>
         From             <the evidence, e.g. "you corrected this 3 times">
         Where it runs    When I edit a file under <folder>
         Tells the agent  "<its message, quoted exactly>"
@@ -105,8 +105,10 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      4. Show me a rule
    ```
 
-   - The rows follow Write step 6's card: name the excludes that matter in Where it runs, and the folders in Tested where
-     `repository.folders` is not `[""]`. A row you are unsure of reads `Not sure`, and that rule's Once approved is Log.
+   - Each block opens with the rule's `title` word for word, so the person approves the name they will find in Created by
+     you. The rows follow Write step 6's card: name the excludes that matter in Where it runs, and the folders in Tested
+     where `repository.folders` is not `[""]`. A row you are unsure of reads `Not sure`, and that rule's Once approved is
+     Log.
    - **Tells the agent** is every message the rule can steer with, quoted exactly: the person approves what it says. Put
      `Reviewed: by me only` above the list when no fresh subagent reviewed the drafts.
    - Leave out the Left out line when nothing was left out. Add the dashboard link if `rules add` printed one, and pass on its
@@ -114,7 +116,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    - **"Show me a rule"**: print that rule's JSON, then ask again.
 7. **Approve what the person says.** On 1, `rerail rules approve <id>` for each rule in the list. On 2, for each rule they
    named, and only those. The person's yes after reading the list is their approval of what each rule says, as the
-   read-back is in Write. Reply in one line per rule approved, `● <what it checks> is approved, set to <Steer|Log>.`, then one
+   read-back is in Write. Reply in one line per rule approved, `● <its title> is approved, set to <Steer|Log>.`, then one
    line for the rest: `The others stay in Log; the dashboard's Overview sends you to them in Created by you.` On 3, reply with that line
    alone. Any rule can be removed from its page on the dashboard (`rerail manage --print` gives the link).
 8. **Offer to show one working**, as Write step 8, for a rule that was approved and set to Steer.
