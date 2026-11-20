@@ -38,11 +38,14 @@ function defaultMemoryBytes(): number {
   return Math.min(8 * 1024 ** 3, Math.floor(totalmem() / 2));
 }
 
-/** The budgets of a run: the defaults, each overridden by its `RERAIL_RR_*` variable. Throws for an override that is no positive integer. */
-export function rrBudgets(environment: NodeJS.ProcessEnv = process.env): RrBudgets {
+/**
+ * The budgets of a run: each `RERAIL_RR_*` variable that is set, else the caller's deadline (`deadlineMs`), else the
+ * default. Throws for a variable that holds no positive integer.
+ */
+export function rrBudgets(deadlineMs?: number, environment: NodeJS.ProcessEnv = process.env): RrBudgets {
   const memoryMb = positive(environment, "RERAIL_RR_MEMORY_MB");
   return {
-    deadlineMs: positive(environment, "RERAIL_RR_DEADLINE_MS") ?? DEADLINE_MS,
+    deadlineMs: positive(environment, "RERAIL_RR_DEADLINE_MS") ?? deadlineMs ?? DEADLINE_MS,
     threads: positive(environment, "RERAIL_RR_THREADS") ?? defaultThreads(),
     memoryBytes: memoryMb === undefined ? defaultMemoryBytes() : memoryMb * 1024 ** 2,
   };

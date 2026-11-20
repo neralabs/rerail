@@ -19,7 +19,7 @@ export interface RrRun {
   policies: string[];
   /** Root-relative files the run reads alone; omitted: the whole checkout. */
   inputFiles?: string[];
-  /** Replaces the deadline of `rrBudgets` for this run. */
+  /** This run's deadline, in place of the default; `RERAIL_RR_DEADLINE_MS`, when set, still wins (`rrBudgets`). */
   deadlineMs?: number;
   signal?: AbortSignal;
 }
@@ -29,10 +29,10 @@ export type RrRunOutcome =
   | { status: "killed"; reason: RrKillReason; wallMs: number; peakRssBytes: number }
   | { status: "failed"; message: string };
 
-/** The budgets of a call, or the error an override gives. */
-function budgets(): RrBudgets | Error {
+/** The budgets of a call (`deadlineMs`: the caller's deadline), or the error an override gives. */
+function budgets(deadlineMs?: number): RrBudgets | Error {
   try {
-    return rrBudgets();
+    return rrBudgets(deadlineMs);
   } catch (error) {
     return error instanceof Error ? error : new Error(String(error));
   }
@@ -90,10 +90,9 @@ function runRequest(run: RrRun): (out: string) => { kind: "run"; run: RrRunReque
  * each with its span, and the policies that failed; or `killed` with the budget it passed, or `failed`.
  */
 export async function runRerailPolicies(run: RrRun): Promise<RrRunOutcome> {
-  const budget = budgets();
+  const budget = budgets(run.deadlineMs);
   if (budget instanceof Error) return { status: "failed", message: budget.message };
-  const options = { cwd: resolve(run.root), budgets: { ...budget, deadlineMs: run.deadlineMs ?? budget.deadlineMs }, signal: run.signal };
-  const outcome = await runChild(runRequest(run), options);
+  const outcome = await runChild(runRequest(run), { cwd: resolve(run.root), budgets: budget, signal: run.signal });
   if (outcome.status !== "completed") return outcome;
   const { findings, failures, files } = outcome.value as RrRunResult;
   return { status: "completed", findings, failures, files, wallMs: outcome.wallMs, peakRssBytes: outcome.peakRssBytes };

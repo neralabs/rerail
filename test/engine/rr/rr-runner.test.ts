@@ -45,6 +45,7 @@ beforeAll(() => {
 
 afterEach(async () => {
   delete process.env.RERAIL_RR_MEMORY_MB;
+  delete process.env.RERAIL_RR_DEADLINE_MS;
   vi.clearAllMocks();
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
@@ -155,9 +156,10 @@ describe("runRerailPolicies", () => {
     expect(two.status === "completed" && two.findings.map(finding => [finding.path, finding.line])).toEqual([["two.py", 2]]);
   });
 
-  it("kills a run past its deadline", async () => {
+  it("kills a run past its deadline, RERAIL_RR_DEADLINE_MS winning over the caller's", async () => {
+    process.env.RERAIL_RR_DEADLINE_MS = "1";
     const { root, rule } = checkout({ "a.py": "shout(1)\n" });
-    const outcome = await runRerailPolicies({ root, policies: [rule], deadlineMs: 1 });
+    const outcome = await runRerailPolicies({ root, policies: [rule], deadlineMs: 600_000 });
     expect(outcome).toMatchObject({ status: "killed", reason: "deadline" });
     expect(childrenGone()).toBe(true);
     expect(leftDirectories()).toEqual([]);
