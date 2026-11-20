@@ -1077,8 +1077,8 @@ describe("the core range the release writes", () => {
     return floor === undefined ? [] : [{ id, heldOff, languages, rerail, floor }];
   });
 
-  it("is due for the packs holding a rule off or shipping a rule in a language added since", () => {
-    expect(floors.map(({ id }) => id)).toEqual(["complexity", "python"]);
+  it("is due for the packs holding a rule off, shipping a rule in a language added since, or shipping a .rerail rule", () => {
+    expect(floors.map(({ id }) => id)).toEqual(["complexity", "django", "python"]);
   });
 
   it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, rerail, floor }) => {
