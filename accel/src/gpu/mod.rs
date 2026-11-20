@@ -29,6 +29,18 @@ use rerail_device::device::{Buffer, ComputeFunction, ComputeQueue};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+/// `f` in a pool of its own for the objects its work autoreleases: Metal's, on macOS; elsewhere `f` as it is.
+pub fn released<T>(f: impl FnOnce() -> T) -> T {
+    #[cfg(target_os = "macos")]
+    {
+        objc::rc::autoreleasepool(f)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        f()
+    }
+}
+
 pub mod join;
 pub mod kernels;
 pub mod shared;
@@ -184,7 +196,7 @@ impl Backend for GpuBackend {
             let t = std::time::Instant::now();
             for &i in &programs {
                 let Kernel::Program(p) = ks[i] else { unreachable!("a program") };
-                let r = objc::rc::autoreleasepool(|| p.0.run(crate::lanes::Lane::Gpu)).map_err(|e| format!("program {}: {e}", p.0.name()))?;
+                let r = released(|| p.0.run(crate::lanes::Lane::Gpu)).map_err(|e| format!("program {}: {e}", p.0.name()))?;
                 outs[i] = Some(Output::Program(crate::kernel::ProgramResult(r)));
             }
             phases.device = Some(t.elapsed().as_secs_f64());
@@ -198,7 +210,7 @@ impl Backend for GpuBackend {
         }
         if !joins.is_empty() {
             let t = std::time::Instant::now();
-            let o = objc::rc::autoreleasepool(|| space::run(&self.space, &joins.iter().map(|&i| ks[i]).collect::<Vec<_>>()))?;
+            let o = released(|| space::run(&self.space, &joins.iter().map(|&i| ks[i]).collect::<Vec<_>>()))?;
             phases.device = Some(phases.device.unwrap_or(0.0) + t.elapsed().as_secs_f64());
             for (&i, o) in joins.iter().zip(o) {
                 outs[i] = Some(o);
@@ -211,7 +223,7 @@ impl Backend for GpuBackend {
     /// submission meanwhile). Any other batch runs as it begins.
     fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn crate::exec::Pending + 'a>, String> {
         if !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Join { .. })) {
-            let started = objc::rc::autoreleasepool(|| space::start(&self.space, ks))?;
+            let started = released(|| space::start(&self.space, ks))?;
             return Ok(Box::new(started));
         }
         // A batch of programs: each submits its own command buffers and waits for them, so it runs on the lanes'
@@ -232,7 +244,7 @@ impl Backend for GpuBackend {
                 programs
                     .iter()
                     .map(|p| {
-                        objc::rc::autoreleasepool(|| p.run(crate::lanes::Lane::Gpu))
+                        released(|| p.run(crate::lanes::Lane::Gpu))
                             .map(|r| Output::Program(crate::kernel::ProgramResult(r)))
                             .map_err(|e| format!("program {}: {e}", p.name()))
                     })
@@ -263,7 +275,7 @@ impl Backend for GpuBackend {
 
 impl crate::exec::Pending for space::Started {
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
-        objc::rc::autoreleasepool(|| space::Started::finish(*self))
+        released(|| space::Started::finish(*self))
     }
 }
 

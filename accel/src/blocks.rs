@@ -24,14 +24,14 @@ pub fn install() {
 pub fn policy(need: &Need) -> Result<Block, String> {
     let shaped = |b| rerail_blocks::alloc::shaped(b, need);
     match need.device {
-        #[cfg(target_os = "macos")]
+        #[cfg(feature = "gpu")]
         Device::Must => match (need.size, need.budget) {
             (Size::Slab, Budget::Metal) => crate::gpu::shared::lease_block_within(need.kind, need.bytes),
             (Size::Exact, Budget::Join) => crate::gpu::shared::lease_block_for_join(need.kind, need.bytes),
             (size, budget) => Err(format!("a device block of {} bytes, {size:?} in the {budget:?} budget: no such lease", need.bytes)),
         }
         .map(shaped),
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(feature = "gpu"))]
         Device::Must => Err(format!("a device block of {} bytes with no device", need.bytes)),
         // Host memory the device reads through a wrap of its used extent (decision 0435 §1).
         Device::May | Device::No => Ok(host(need)),

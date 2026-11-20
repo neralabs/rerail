@@ -209,6 +209,7 @@ pub struct Submitted {
 }
 
 /// The host clock Metal's command buffer times are on (`mach_absolute_time`, in seconds).
+#[cfg(target_os = "macos")]
 pub fn host_clock() -> f64 {
     #[repr(C)]
     struct Timebase {
@@ -230,9 +231,19 @@ pub fn host_clock() -> f64 {
     (unsafe { mach_absolute_time() }) as f64 * ratio
 }
 
+/// The host's monotonic clock in seconds (elsewhere than macOS no device timestamp shares it).
+#[cfg(not(target_os = "macos"))]
+pub fn host_clock() -> f64 {
+    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: fills the struct.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut t) };
+    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+}
+
 /// A completed Metal command buffer's timeline, as wall-only phases of the job (`crate::score`): commit to the
 /// system's scheduling (`kernelStartTime`), to the device's start, the device's run, and its end to the host's wait
 /// returning.
+#[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)] // `msg_send!` expands to a `cargo-clippy` cfg check.
 pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned: f64) {
     use objc::{msg_send, sel, sel_impl};
@@ -273,10 +284,19 @@ impl Submitted {
         if let Err(why) = &done {
             say_failure(why);
         }
-        if !self.committed.is_nan()
-            && let Some(command) = self.event.metal()
-        {
-            add_timeline(command, self.committed, host_clock());
+        if !self.committed.is_nan() {
+            let returned = host_clock();
+            // Metal's command buffers give each part of the timeline.
+            #[cfg(target_os = "macos")]
+            let parts = self.event.metal().map(|command| add_timeline(command, self.committed, returned)).is_some();
+            #[cfg(not(target_os = "macos"))]
+            let parts = false;
+            // Another backend's event gives only the device's seconds: the run, and the rest of the span as the wake.
+            if !parts && done.is_ok() {
+                let run = self.event.gpu_seconds();
+                crate::score::add("gpu run", 0.0, run);
+                crate::score::add("gpu wake", 0.0, (returned - self.committed - run).max(0.0));
+            }
         }
         (self.event.gpu_seconds(), done.is_ok())
     }
@@ -1203,7 +1223,7 @@ impl Column {
 pub fn prewarm() {
     crate::exec::configure(false);
     rayon::spawn(|| crate::exec::as_job("the GPU's prewarm", || {
-        let _ = std::panic::catch_unwind(|| objc::rc::autoreleasepool(|| {
+        let _ = std::panic::catch_unwind(|| super::released(|| {
             if Fused::can() {
                 let _ = fixed("sort_all");
                 let _ = fixed("probe_all");

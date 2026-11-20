@@ -760,6 +760,9 @@ pub struct CudaComputeEvent {
 }
 
 unsafe impl Send for CudaComputeEvent {}
+// SAFETY: its methods take `&self` and call the driver API, which is thread-safe, in the device's context made
+// current on the calling thread (`current`); nothing in it is written after it is made.
+unsafe impl Sync for CudaComputeEvent {}
 
 impl CudaComputeEvent {
     /// Waits for the work to complete; an error if it did not.

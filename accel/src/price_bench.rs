@@ -169,7 +169,7 @@ fn sme() {
     println!("load after: {}", load());
 }
 
-#[cfg(all(feature = "gpu", target_os = "macos"))]
+#[cfg(feature = "gpu")]
 #[test]
 #[ignore = "prices: release build, run alone with --ignored --nocapture"]
 fn gpu() {

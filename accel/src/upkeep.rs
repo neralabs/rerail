@@ -500,7 +500,7 @@ pub fn heat() -> (bool, u8) {
     (false, 0)
 }
 
-/// The process's physical footprint, bytes.
+/// The process's physical footprint, bytes: on Linux its resident set.
 pub fn footprint() -> usize {
     #[cfg(target_os = "macos")]
     unsafe {
@@ -510,7 +510,13 @@ pub fn footprint() -> usize {
         }
         0
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        // `/proc/self/statm`: the size, then the resident pages.
+        let pages = std::fs::read_to_string("/proc/self/statm").ok().and_then(|s| s.split_whitespace().nth(1)?.parse::<usize>().ok());
+        pages.map_or(0, |p| p * unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     0
 }
 

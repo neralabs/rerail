@@ -1404,6 +1404,32 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
 - **Xe2 is SIMD16 in hardware.** A 32-lane sub-group runs as two halves. Code written for any width (the library's,
   the radix sort's rank groups since step D) also runs at 16, which may be faster there: to be measured after 1.
 
+**E: `rerail-accel` builds on Linux, its GPU lane on any device (2026-11-19).**
+
+- **The manifest:** the device layer's crates (`rerail-blocks`, `rerail-device`, `rerail-gpu`, `rerail-ukl`) are
+  plain dependencies. Only Metal's own (`metal`, `objc`, `block`, `core-foundation-sys`) are macOS's.
+- **The `gpu` lane compiles everywhere `gpu` is on.** Metal's own tier stays macOS's: its pipelines with their
+  binary archives and wanted lists, `ship`, the `Shared` Metal handles, `Pooled::after`, the command buffers'
+  timeline. Elsewhere a kernel is the device layer's compile (`kernels::function`), counted as Metal's are.
+  `released` is an autorelease pool on macOS and the closure elsewhere. `host_clock` is the monotonic clock
+  elsewhere. A submission's timeline elsewhere is the event's device seconds and the rest of its host span.
+- **The lane is present when the process has a GPU on any backend** (`lanes::gpu`: the device layer's device, not
+  the CPU's backend), not only a Metal one. A column's store and the block policy's device blocks lease from the pool
+  on any device.
+- **Found on the way:**
+  - The blocks' reservations are address space (`mem::reserve`), and Linux's overcommit check refused a block's 64
+    GiB on a 20 GiB machine. On Linux they take `MAP_NORESERVE`.
+  - `upkeep::footprint` was 0 off macOS, so idle work never saw its memory budget. On Linux it is the resident set.
+  - A sharding test asked for more used shards than an 8-thread machine has.
+  - CUDA's event was `Send` and not `Sync`. Its methods take `&self` and call the thread-safe driver API.
+- **Results:** accel's 60 on Linux (the Mac's 25 more are SME's, the Neural Engine's and Metal's tier) pass on CUDA on
+  a GB10, and on the Arc 140V under OpenCL. The Mac's 85 pass on Metal and OpenCL. The blocks' 33 pass on Linux.
+- **One limit, on the Arc under WSL2:** Intel's OpenCL wraps anonymous memory, private or shared, and private file
+  mappings, but refuses a shared file mapping (`clCreateBuffer` -6), probed directly. CUDA wraps it. A deferrable
+  lease for the device (0295) is such a mapping. No product path takes one yet (the store's segments are the
+  host's, `lease_deferrable_host`), so the test stops there on that refusal alone. Open: whether native Linux's
+  Intel driver has the same limit, and what a device lease of the deferrable tier is on a device that has it.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

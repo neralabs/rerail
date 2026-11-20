@@ -135,9 +135,13 @@ mod tests {
         for &s in &scopes {
             assert_eq!(m.lock(s).get(&(s, 1)), Some(&7));
         }
-        let mut used = 0;
-        m.each(|shard| used += usize::from(!shard.is_empty()));
-        assert!(used > scopes.len() / 2, "64 scopes in {used} shards");
+        let (mut used, mut shards) = (0, 0);
+        m.each(|shard| {
+            used += usize::from(!shard.is_empty());
+            shards += 1;
+        });
+        // The shards are the machine's threads' (four a thread): fewer than the scopes on a small machine.
+        assert!(used > shards.min(scopes.len()) / 2, "64 scopes in {used} of {shards} shards");
     }
     use std::sync::Arc;
 

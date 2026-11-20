@@ -22,7 +22,8 @@
 //! **Phases.** A lane's code names the parts of a job's host work ([`phase`]): its thread CPU and its wall seconds,
 //! summed per lane and phase. The GPU lane also adds each command buffer's timeline as wall-only phases (`gpu
 //! submit`: commit to the system's scheduling; `gpu schedule`: to the device's start; `gpu run`; `gpu wake`: the
-//! device's end to the host's wait returning). And every job's own thread CPU is kept: on a device lane, that is the
+//! device's end to the host's wait returning; on a backend whose events give only the device's seconds, `gpu run` and
+//! the rest of the span from the commit). And every job's own thread CPU is kept: on a device lane, that is the
 //! host CPU the device cost, which on a loaded machine is the price that matters, not the device's latency. Metal's
 //! own threads (its completion handlers, the driver's) are not on the job's thread, so they are not in it.
 //!
