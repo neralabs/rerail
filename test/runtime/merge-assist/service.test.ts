@@ -17,6 +17,17 @@ import { withExperiments } from "../../support/environment/experiments.js";
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
 withExperiments("MERGE_ASSIST");
 
+/** Each checkout path located through Git (`repositoryIdentityLocationAsync`), in order; every test still locates it. */
+const located = vi.hoisted(() => ({ paths: [] as string[] }));
+vi.mock("../../../src/engine/catalog/repository-identity.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/engine/catalog/repository-identity.js")>("../../../src/engine/catalog/repository-identity.js");
+  const repositoryIdentityLocationAsync: typeof actual.repositoryIdentityLocationAsync = async (...args) => {
+    located.paths.push(args[0]);
+    return await actual.repositoryIdentityLocationAsync(...args);
+  };
+  return { ...actual, repositoryIdentityLocationAsync };
+});
+
 const workspace = mergeAssistWorkspaces();
 
 /** `gh` whose pull request listings wait until released, counting each. */
@@ -299,6 +310,18 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const localService = local.service({ github });
     await localService.setEnabled(local.repo, true);
     expect(await localService.signInStamp(local.repo)).toBe("");
+  });
+
+  it("answers the sign-in stamp of the checkout path Rerail recorded with no Git, as the change stream asks it at each beat", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const service = ws.service({ github: new FakeGithub() });
+    await service.setEnabled(ws.repo, true);
+    located.paths.length = 0;
+    for (let beat = 0; beat < 3; beat += 1) expect(await service.signInStamp(ws.repo)).toContain("hosts.yml as first written");
+    expect(located.paths).toEqual([]);
+    // A spelling Rerail did not record is still located, through Git, off the thread.
+    expect(await service.signInStamp(ws.folder)).toBe("");
+    expect(located.paths).toEqual([ws.folder]);
   });
 
   it("reads gh's sign-in afresh at a scan, and for a listing whose stat of gh's hosts file has not answered when its listing did", async () => {
