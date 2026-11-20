@@ -76,6 +76,18 @@ pub fn aot(tiers: Tiers, known: rerail_kotlin_parser::Proofs) -> Result<rerail_k
         // `Ctx` as the JIT's does. It counts its calls open itself (the frame shift unused).
         unsafe { c.parser.tier2.set_entry(entry, 4) };
     }
+    if tiers.one && tiers.two {
+        // Tier 1 feeds tier 2 (decision 0493): stage 1 at once, the token loop a batch at a time as tier 2 reaches
+        // the records made, as the lean parser's `fill` asks its lexer's `lex_run`. Only the generated tier 2 asks.
+        type New = unsafe extern "C" fn(*const u8, *const tier1_aot::Row, u64, *mut u64, *mut u32, *mut u64) -> *mut u8;
+        let new: New = tier1_aot::tier1_feed;
+        // SAFETY: as the entry's: its `Row` is `native_cpu_block::Row`.
+        let new = unsafe { std::mem::transmute::<New, unsafe extern "C" fn(*const u8, *const native_cpu_block::Row, u64, *mut u64, *mut u32, *mut u64) -> *mut u8>(new) };
+        let feed = native_cpu_block::Feed { new, more: tier1_aot::tier1_more, free: tier1_aot::tier1_feed_free };
+        assert_eq!((tier1_aot::FEED_DONE, tier1_aot::FEED_REFUSED), (native_cpu_block::FEED_DONE, native_cpu_block::FEED_REFUSED));
+        // SAFETY: the program's code (the fingerprint), on the entry's buffers.
+        unsafe { c.parser.tier1.set_feed(feed) };
+    }
     Ok(c)
 }
 

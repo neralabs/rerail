@@ -107,6 +107,10 @@ pub struct Ctx {
     /// argument; each slot key's number in the language's table (`Numbers`). Null in a format 15 run.
     writer: *mut u8,
     numbers: *const u32,
+    /// Tier 1's feed (decision 0493, `native_cpu_block::Feed`): its `more` and the file's feed, which tier 2 asks
+    /// for the next records where it reaches `nstarts`. Zero where tier 1 made them all.
+    more: u64,
+    feed: u64,
 }
 
 const WRITER: i32 = std::mem::offset_of!(Ctx, writer) as i32;
@@ -278,6 +282,9 @@ pub struct CompiledStream {
     entry: Entry,
     /// The log of the smallest rule function's frame (`Ctx::frame_shift`).
     frame_shift: u64,
+    /// Whether the code asks tier 1's feed for its records (`Ctx::more`, decision 0493): another backend's
+    /// (`set_entry`, the generated Rust). The JIT's reads the records made.
+    asks_feed: bool,
     bounds: Bounds,
     /// The extract `TOKEN` reads, and the output of the mask `SPAN m=1` reads.
     pub starts: Option<usize>,
@@ -7602,7 +7609,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, asks_feed: false, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -8192,6 +8199,14 @@ pub struct Tier1View {
     pub totals_mask: u64,
     /// The bytes from a token's record field to the next token's (`records::RecordLayout`).
     pub record_stride: usize,
+    /// Tier 1's feed (`Ctx::more`): zero where tier 1 made every record.
+    pub more: u64,
+    pub feed: u64,
+}
+
+/// The records a call reads at most: tier 1's count, or with a feed (decision 0493) a token a byte and the end.
+fn fed_bound(tier1: &Tier1View, len: usize) -> usize {
+    if tier1.feed != 0 { len + 1 } else { tier1.nstarts }
 }
 
 /// The buffers one call writes, sized from the stream and the program's `Bounds`.
@@ -8387,6 +8402,7 @@ impl CompiledStream {
     pub unsafe fn set_entry(&mut self, entry: Entry, frame_shift: u64) {
         self.entry = entry;
         self.frame_shift = frame_shift;
+        self.asks_feed = true;
     }
 
     /// One call over a file. `bytes` is the file (`len` its length), with 64 readable bytes
@@ -8399,7 +8415,7 @@ impl CompiledStream {
         assert!(self._fetch.is_none() || tier1.record_stride == crate::records::RecordLayout::Columns.stride() as usize, "the starts as a column where tier 2 makes the records");
         // With no room check (`Bounds::unchecked`), a tape short of the bound's is replaced first.
         if self.bounds.unchecked(self.marks) {
-            let n = self.tokens(tier1.nstarts, len);
+            let n = self.tokens(fed_bound(&tier1, len), len);
             let paths = n as u64 + 2;
             let fits = tape.room[0] as u64 > self.bounds.nodes * paths && tape.room[1] as u64 > self.bounds.supers * paths && tape.room[2] as u64 > self.bounds.pushes * paths;
             if !fits {
@@ -8415,7 +8431,7 @@ impl CompiledStream {
             return r;
         }
         ROOM_RETRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        *tape = self.full_tape(self.tokens(tier1.nstarts, len));
+        *tape = self.full_tape(self.tokens(fed_bound(&tier1, len), len));
         // SAFETY: as above, on the bound's tape.
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };
         unsafe { tape.written(r == 0) };
@@ -8477,6 +8493,8 @@ impl CompiledStream {
             record_stride: tier1.record_stride as u64,
             writer: tape.writer,
             numbers: tape.numbers,
+            more: tier1.more,
+            feed: tier1.feed,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers and the
         // state in `ctx`.
@@ -8585,6 +8603,8 @@ impl CompiledStream {
             totals: totals.as_ptr().cast(),
             totals_stride: 8,
             totals_mask: u64::MAX,
+            more: 0,
+            feed: 0,
         };
         unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), view, tape) }
     }
@@ -8800,7 +8820,7 @@ impl Parser {
         match self.words(&batch, &mut tape) {
             Ok(()) => Ok(tape.image()),
             Err(narrow) => self.again(narrow, |t2| {
-                let mut tape = t2.tape(self.stream(&batch, t2.starts).1);
+                let mut tape = t2.tape(self.records_bound(&batch, t2.starts));
                 self.words_with(t2, &batch, &mut tape)?;
                 Ok(tape.image())
             }),
@@ -8818,11 +8838,17 @@ impl Parser {
             Ok(()) => Ok(tape.nodes()),
             Err(narrow) => {
                 let Some(wide) = self.wide() else { return Err(narrow) };
-                let mut tape = wide.tape(self.stream(&batch, wide.starts).1);
+                let mut tape = wide.tape(self.records_bound(&batch, wide.starts));
                 self.words_with(wide, &batch, &mut tape)?;
                 Ok(tape.nodes())
             }
         }
+    }
+
+    /// The records tier 2 reads in `batch` (its first file): tier 1's count; with a feed (decision 0493), which
+    /// makes them as tier 2 asks, the most a file of its bytes has (a token a byte, and the end).
+    fn records_bound(&self, batch: &crate::native_cpu_block::Batch, e: Option<usize>) -> usize {
+        if batch.feeds.is_empty() { self.stream(batch, e).1 } else { batch.rows[0].len as usize + 1 }
     }
 
     /// Tier 1's stream `e` in `batch` (its first file), as tier 1 wrote it: its positions (room
@@ -8840,7 +8866,7 @@ impl Parser {
 
     /// A tape for the stream tier 1 wrote in `batch`.
     pub fn tape(&self, batch: &crate::native_cpu_block::Batch) -> Tape {
-        self.tier2.tape(self.tier2.tokens(self.stream(batch, self.tier2.starts).1, batch.rows[0].len as usize))
+        self.tier2.tape(self.tier2.tokens(self.records_bound(batch, self.tier2.starts), batch.rows[0].len as usize))
     }
 
     /// Tier 2's function over tier 1's buffers in `batch` (one file), into `tape`; or the word
@@ -8861,6 +8887,12 @@ impl Parser {
     /// `words_with`'s call: 0, one more than the word that refused, or `OVERFLOW` (a format 16 run's).
     fn words_raw(&self, t2: &CompiledStream, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> u64 {
         let row = batch.rows[0];
+        // Tier 1's feed, where it made the file's (decision 0493): tier 2 asks it for the records.
+        // A tier 2 that reads the records made (the JIT's) has them all made first.
+        if !t2.asks_feed {
+            batch.fed_all();
+        }
+        let fed = self.tier1.feed.zip(batch.feeds.first()).filter(|_| t2.asks_feed).map(|(f, &state)| (f.more as usize as u64, state as u64));
         let extracts = self.tier1.extracts.len();
         let starts = self.stream(batch, t2.starts);
         let outputs = batch.out[row.out as usize..].as_ptr();
@@ -8895,6 +8927,8 @@ impl Parser {
             totals_stride: 8,
             totals_mask: u64::MAX,
             record_stride: layout.stride() as usize,
+            more: fed.map_or(0, |(more, _)| more),
+            feed: fed.map_or(0, |(_, feed)| feed),
         };
         unsafe { t2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) }
     }
@@ -8923,7 +8957,7 @@ impl Parser {
         let t2 = self.sixteen().ok_or("no format 16 tier 2 for this parser")?;
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
-        let tokens = t2.tokens(self.stream(&batch, t2.starts).1, bytes.len());
+        let tokens = t2.tokens(self.records_bound(&batch, t2.starts), bytes.len());
         t2.write16(tokens, bytes, lang, numbers, z, |tape| self.words_raw(t2, &batch, tape))
     }
 }

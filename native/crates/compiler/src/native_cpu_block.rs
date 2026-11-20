@@ -55,8 +55,26 @@ pub struct Row {
 }
 
 /// A compiled block program.
+/// A tier 1 that feeds tier 2 its records a batch at a time, as the lean lexer's `lex_run` (decision 0493):
+/// another build's (`CompiledBlock::set_feed`), its stage 1 at once.
+#[derive(Clone, Copy)]
+pub struct Feed {
+    /// A file's feed (the batch's buffers, its row's index): its masks and extracts written, no record yet.
+    pub new: unsafe extern "C" fn(*const u8, *const Row, u64, *mut u64, *mut u32, *mut u64) -> *mut u8,
+    /// The next records: the count made, with `FEED_DONE` where the file's are all made (its counts written)
+    /// and `FEED_REFUSED` where it goes to the fallback.
+    pub more: unsafe extern "C" fn(*mut u8) -> u64,
+    pub free: unsafe extern "C" fn(*mut u8),
+}
+
+/// `Feed::more`'s flags.
+pub const FEED_DONE: u64 = 1 << 63;
+pub const FEED_REFUSED: u64 = 1 << 62;
+
 pub struct CompiledBlock {
     _module: JITModule,
+    /// A feed of the same program (`set_feed`): tier 2 then asks it for the records as it reaches them.
+    pub feed: Option<Feed>,
     /// One function per pass (`native_ir::Passes`), called in order over the batch: a program
     /// without `back_fill` is one.
     entries: Vec<Entry>,
@@ -167,6 +185,14 @@ impl CompiledBlock {
         self.entries = entries;
     }
 
+    /// Feeds tier 2 from now on (`Feed`, decision 0493): `Batch::call` makes each file's feed, not its records.
+    ///
+    /// # Safety
+    /// `feed` must be this program's code, its records and buffers as the entries'.
+    pub unsafe fn set_feed(&mut self, feed: Feed) {
+        self.feed = Some(feed);
+    }
+
     /// The passes' count, the record pass's included (`Batch::call_pass`).
     pub fn pass_count(&self) -> usize {
         self.entries.len()
@@ -241,6 +267,20 @@ pub struct Batch {
     pub positions: Vec<u32>,
     pub counts: Vec<u64>,
     pub scratch: Vec<u64>,
+    /// Each file's feed, where the program has one (`CompiledBlock::feed`) and `call` made them.
+    pub feeds: Vec<*mut u8>,
+    feed: Option<Feed>,
+}
+
+impl Drop for Batch {
+    fn drop(&mut self) {
+        if let Some(f) = self.feed {
+            for &state in &self.feeds {
+                // SAFETY: each made by the feed's `new` in `call`, freed once.
+                unsafe { (f.free)(state) };
+            }
+        }
+    }
 }
 
 impl Batch {
@@ -282,15 +322,46 @@ impl Batch {
             positions: vec![0u32; positions as usize],
             counts: vec![0u64; counts as usize],
             scratch: vec![0u64; scratch as usize],
+            feeds: Vec::new(),
+            feed: None,
         }
     }
 
     pub fn call(&mut self, program: &CompiledBlock) {
+        // A feed's files (no prefix stripped, whose positions move after the passes): stage 1 now, the records as
+        // tier 2 asks (decision 0493).
+        if let Some(f) = program.feed.filter(|_| self.stripped.iter().all(|&k| k == 0)) {
+            // A call again (a benchmark's round): the last call's feeds end first.
+            if let Some(old) = self.feed {
+                for state in self.feeds.drain(..) {
+                    // SAFETY: made by `old.new`, freed once.
+                    unsafe { (old.free)(state) };
+                }
+            }
+            self.feed = Some(f);
+            for i in 0..self.rows.len() {
+                // SAFETY: the batch's buffers, laid out for the program (`Batch::new`).
+                let state = unsafe { (f.new)(self.bytes.as_ptr(), self.rows.as_ptr(), i as u64, self.out.as_mut_ptr(), self.positions.as_mut_ptr(), self.counts.as_mut_ptr()) };
+                self.feeds.push(state);
+            }
+            return;
+        }
         let rows = self.strip(program);
         for entry in &program.entries {
             self.run(*entry);
         }
         self.unstrip(program, rows);
+    }
+
+    /// Every fed file's records made (`call` with a feed): tier 1's whole output, as without one, for a comparison
+    /// or a measure of tier 1 alone.
+    pub fn fed_all(&self) {
+        if let Some(f) = self.feed {
+            for &state in &self.feeds {
+                // SAFETY: a feed `call` made, its buffers this batch's.
+                while unsafe { (f.more)(state) } & FEED_DONE == 0 {}
+            }
+        }
     }
 
     /// The program's pass `k` alone (the record pass last): for the profile, the passes before
@@ -2754,6 +2825,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let last = shapes.last().expect("a forward pass at least").clone();
     Ok(CompiledBlock {
         _module: module,
+        feed: None,
         entries,
         slots: usize::from(passes.slots),
         outputs: native.outputs.len(),

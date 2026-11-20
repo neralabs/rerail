@@ -51,6 +51,8 @@ fn aot_tapes_are_the_jits() {
         let mut a = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()]);
         let mut j = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
         a.call(&aot.parser.tier1);
+        // Tier 1 feeds tier 2 (decision 0493): its whole output, to compare.
+        a.fed_all();
         j.call(&jit.parser.tier1);
         let masks = (0..a.out.len()).all(|k| !read.contains(&(k % n)) || a.out[k] == j.out[k]);
         // A file tier 1 refuses (its flag, the count after the extracts'): its records up to the
@@ -69,11 +71,20 @@ fn aot_tapes_are_the_jits() {
             (Ok(a), Ok(j)) => {
                 taken += 1;
                 if a != j {
+                    if differ.is_empty() {
+                        let at = a.iter().zip(&j).position(|(x, y)| x != y).unwrap_or(a.len().min(j.len()));
+                        eprintln!("file {i}: the tapes differ from byte {at} ({} and {} bytes)", a.len(), j.len());
+                    }
                     differ.push(i);
                 }
             }
             (Err(_), Err(_)) => {}
-            _ => differ.push(i),
+            (a, j) => {
+                if differ.is_empty() {
+                    eprintln!("file {i}: the generated code's {:?}, the JIT's {:?}", a.err().map(|r| (r.pc, r.why)), j.err().map(|r| (r.pc, r.why)));
+                }
+                differ.push(i)
+            }
         }
     }
     eprintln!("{} files, {taken} taken", files.len());
@@ -98,6 +109,7 @@ fn jit_against_aot() {
             .map(|f| {
                 let mut b = rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()]);
                 b.call(&p.tier1);
+                b.fed_all();
                 b
             })
             .collect()
@@ -119,8 +131,10 @@ fn jit_against_aot() {
             b.call(&jit.parser.tier1);
         }
         lap(0, &mut best);
+        // The generated tier 1 alone: stage 1 and every batch of its feed (decision 0493).
         for b in &mut ba {
             b.call(&aot.parser.tier1);
+            b.fed_all();
         }
         lap(1, &mut best);
         for (b, t) in bj.iter().zip(&mut tapes) {

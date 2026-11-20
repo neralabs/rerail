@@ -595,22 +595,22 @@ impl<'a> Gen<'a> {
         out.push_str(
             "/// A file's tier 1: the masks, the tokens' first and last bytes and codes, and whether the\n\
              /// file goes to the fallback.\npub struct Lexed {\n    pub masks: Masks,\n    pub starts: Vec<u32>,\n    pub lasts: Vec<u32>,\n    pub codes: Vec<u32>,\n    pub refused: bool,\n}\n\n\
-             /// Tier 1 over `src`: stage 1, then the token loop.\npub fn lex(src: &[u8]) -> Lexed {\n    let m = masks_best(src);\n    let mut t = Tokens::new(src.len());\n    t.run(src, &m);\n",
+             /// Tier 1 over `src`: stage 1, then the token loop.\npub fn lex(src: &[u8]) -> Lexed {\n    let m = masks_best(src);\n    let mut t = Tokens::new(src.len());\n    t.run(src, &m, usize::MAX);\n",
         );
         // A total another reader has is a mask; the others are stage 1's one word (`refused`).
         let totals: Vec<usize> = self.p.total_outputs().into_iter().filter(|o| !self.refusals.iter().any(|x| x.0 == *o)).collect();
         let any_total = totals.iter().map(|&o| format!("m.{}.iter().any(|&w| w != 0) || ", self.name_of(o))).chain(std::iter::once("m.refused".to_owned())).collect::<String>();
         let untaken = if r.untaken.is_empty() { "false" } else { "t.untaken" };
-        let _ = writeln!(out, "    let refused = {any_total} || {untaken} || t.read || t.checked || t.bad || t.unplaced(&m, src.len());");
-        out.push_str("    Lexed { masks: m, starts: t.starts, lasts: t.lasts, codes: t.codes, refused }\n}\n\n");
+        out.push_str("    let refused = refused(&m, &t, src.len());\n    Lexed { masks: m, starts: t.starts, lasts: t.lasts, codes: t.codes, refused }\n}\n\n");
+        let _ = writeln!(out, "/// Whether the file goes to the fallback: a total, or a token the loop refused.\nfn refused(m: &Masks, t: &Tokens, n: usize) -> bool {{\n    {any_total} || {untaken} || t.read || t.checked || t.bad || t.unplaced(m, n)\n}}\n");
         // The loop's state.
         out.push_str(
             "/// The token loop's state: the records so far, the refusals, and what the gap marks carry\n\
-             /// from token to token (`records::gap_marks`).\nstruct Tokens {\n    starts: Vec<u32>,\n    lasts: Vec<u32>,\n    codes: Vec<u32>,\n    /// The byte after the last token's.\n    after: usize,\n    untaken: bool,\n    read: bool,\n    checked: bool,\n    bad: bool,\n    /// The byte after the last grammar token's first, its word, and the marks' tests' hits\n    /// carried to the next grammar token.\n    from: usize,\n    word_before: u32,\n    pending: u32,\n    /// The byte after the last record's first: an extra's own gap starts there.\n    from_record: usize,\n    /// A region's tokens, read before they are written.\n    parts: Vec<(usize, usize)>,\n}\n\n\
-             impl Tokens {\n    fn new(n: usize) -> Self {\n        let room = n / 4 + 16;\n        Tokens { starts: Vec::with_capacity(room), lasts: Vec::with_capacity(room), codes: Vec::with_capacity(room), after: 0, untaken: false, read: false, checked: false, bad: false, from: 0, word_before: 0, pending: 0, from_record: 0, parts: Vec::new() }\n    }\n\n",
+             /// from token to token (`records::gap_marks`).\nstruct Tokens {\n    starts: Vec<u32>,\n    lasts: Vec<u32>,\n    codes: Vec<u32>,\n    /// The byte after the last token's.\n    after: usize,\n    untaken: bool,\n    read: bool,\n    checked: bool,\n    bad: bool,\n    /// The byte after the last grammar token's first, its word, and the marks' tests' hits\n    /// carried to the next grammar token.\n    from: usize,\n    word_before: u32,\n    pending: u32,\n    /// The byte after the last record's first: an extra's own gap starts there.\n    from_record: usize,\n    /// A region's tokens, read before they are written.\n    parts: Vec<(usize, usize)>,\n    /// Where the loop goes on (`run` a batch at a time, decision 0493), and whether it has ended.\n    at: usize,\n    done: bool,\n}\n\n\
+             impl Tokens {\n    fn new(n: usize) -> Self {\n        let room = n / 4 + 16;\n        Tokens { starts: Vec::with_capacity(room), lasts: Vec::with_capacity(room), codes: Vec::with_capacity(room), after: 0, untaken: false, read: false, checked: false, bad: false, from: 0, word_before: 0, pending: 0, from_record: 0, parts: Vec::new(), at: 0, done: false }\n    }\n\n",
         );
         // The loop.
-        let _ = writeln!(out, "    /// The tokens, as the lean lexer's loop: each at the first byte past the blanks, to its last\n    /// by its first byte's end rule (`records::walk`). A token the file is refused at ends the\n    /// loop before its record, as a lexer's error does (the CPU's tier 1 stops there too).\n    fn run(&mut self, src: &[u8], m: &Masks) {{\n        let n = src.len();\n        let mut at = 0usize;\n        while at < n && !self.stops() {{\n            let Some(s) = next_clear(&{}, at, n) else {{ break }};\n            let rule = END[usize::from(src[s])];\n            let l = match rule {{", self.mask(r.skip.expect("checked")));
+        let _ = writeln!(out, "    /// The tokens, as the lean lexer's loop: each at the first byte past the blanks, to its last\n    /// by its first byte's end rule (`records::walk`). A token the file is refused at ends the\n    /// loop before its record, as a lexer's error does (the CPU's tier 1 stops there too).\n    /// From where the last run stopped, to `batch` records more at least (the lean lexer's\n    /// `lex_run`, decision 0493), or to the end (`done`).\n    fn run(&mut self, src: &[u8], m: &Masks, batch: usize) {{\n        let n = src.len();\n        let mut at = self.at;\n        let goal = self.starts.len().saturating_add(batch);\n        while at < n && !self.stops() {{\n            if self.starts.len() >= goal {{\n                self.at = at;\n                return;\n            }}\n            let Some(s) = next_clear(&{}, at, n) else {{ break }};\n            let rule = END[usize::from(src[s])];\n            let l = match rule {{", self.mask(r.skip.expect("checked")));
         for (k, rule) in r.rules.iter().enumerate() {
             let name = self.rule_token(k);
             let checks = r.checks.iter().any(|c| c.rule as usize == k && c.then == CheckThen::Escape);
@@ -644,7 +644,7 @@ impl<'a> Gen<'a> {
                 }
             }
         }
-        out.push_str("\n                _ => {\n                    self.untaken = true;\n                    s\n                }\n            };\n            if self.stops() {\n                break;\n            }\n            self.token(src, m, s, l);\n            at = l + 1;\n        }\n    }\n\n");
+        out.push_str("\n                _ => {\n                    self.untaken = true;\n                    s\n                }\n            };\n            if self.stops() {\n                break;\n            }\n            self.token(src, m, s, l);\n            at = l + 1;\n        }\n        self.at = at;\n        self.done = true;\n    }\n\n");
         let untaken = if r.untaken.is_empty() { "" } else { "self.untaken || " };
         let _ = writeln!(out, "    /// Whether a token read so far refuses the file: a byte no token begins with (where the\n    /// grammar's errors say so), a region with no closer, a token test's escape.\n    fn stops(&self) -> bool {{\n        {untaken}self.read || self.checked\n    }}\n");
         // A token's record.
@@ -849,27 +849,45 @@ impl<'a> Gen<'a> {
         };
         out.push_str("/// A file of the harness's batch (`native_cpu_block::Row`).\n#[repr(C)]\npub struct Row {\n    pub bytes: u64,\n    pub blocks: u64,\n    pub len: u64,\n    pub out: u64,\n    pub positions: u64,\n    pub capacity: u64,\n    pub counts: u64,\n    pub scratch: u64,\n}\n\n");
         let _ = writeln!(out, "/// The harness's entry (`native_cpu_block::Entry`): each row's file lexed, and what tier 2 reads\n/// written into the batch's buffers.\n///\n/// # Safety\n/// The pointers are a `Batch`'s, laid out for this program: {outputs} outputs a block.\npub unsafe extern \"C\" fn tier1_entry(bytes: *const u8, rows: *const Row, n: u64, out: *mut u64, positions: *mut u32, counts: *mut u64, _scratch: *mut u64) {{");
-        out.push_str("    for f in 0..n as usize {\n        // SAFETY: the batch's rows, files, and buffers (the harness's contract).\n        unsafe {\n            let row = &*rows.add(f);\n            let src = std::slice::from_raw_parts(bytes.add(row.bytes as usize), row.len as usize);\n            let lexed = lex(src);\n            let cap = row.capacity as usize;\n            let at = positions.add(row.positions as usize);\n            for (k, ((&s, &l), &c)) in lexed.starts.iter().zip(&lexed.lasts).zip(&lexed.codes).enumerate() {\n");
-        let _ = writeln!(out, "                *at.add({}) = s;\n                *at.add({}) = l;\n                *at.add({}) = c;\n            }}", index(0, "k"), index(1, "k"), index(2, "k"));
-        for (e, &o) in extracts.iter().enumerate() {
+        out.push_str("    for f in 0..n as usize {\n        // SAFETY: the batch's rows, files, and buffers (the harness's contract).\n        unsafe {\n            let row = &*rows.add(f);\n            let src = std::slice::from_raw_parts(bytes.add(row.bytes as usize), row.len as usize);\n            let lexed = lex(src);\n            put_records(row, positions, &lexed.starts, &lexed.lasts, &lexed.codes, 0);\n            put_counts(row, counts, lexed.starts.len(), lexed.refused);\n            put_masks(row, &lexed.masks, out, positions, counts);\n        }\n    }\n}\n\n");
+        // The feed (decision 0493): stage 1 at once, the token loop a batch at a time, as tier 2 asks.
+        out.push_str("/// A file's tier 1 fed to tier 2 (decision 0493): stage 1 over the file at once, as the lean lexer's\n/// `Blocks::of`; the token loop a batch at a time, as its `lex_run`, where tier 2 reaches the records made.\npub struct Feed {\n    bytes: *const u8,\n    row: *const Row,\n    positions: *mut u32,\n    counts: *mut u64,\n    m: Masks,\n    t: Tokens,\n}\n\n");
+        out.push_str("/// The feed of the batch's file `f`: its stage 1, and its masks and extracts written; no record yet.\n///\n/// # Safety\n/// As `tier1_entry`'s; the feed is freed by `tier1_feed_free`.\npub unsafe extern \"C\" fn tier1_feed(bytes: *const u8, rows: *const Row, f: u64, out: *mut u64, positions: *mut u32, counts: *mut u64) -> *mut u8 {\n    // SAFETY: the caller's contract.\n    unsafe {\n        let row = rows.add(f as usize);\n        let src = std::slice::from_raw_parts(bytes.add((*row).bytes as usize), (*row).len as usize);\n        let m = masks_best(src);\n        put_masks(&*row, &m, out, positions, counts);\n        put_counts(&*row, counts, 0, false);\n        Box::into_raw(Box::new(Feed { bytes, row, positions, counts, m, t: Tokens::new(src.len()) })) as *mut u8\n    }\n}\n\n");
+        let _ = writeln!(out, "/// The feed's next batch of records ({BATCH} at least, as the lean parser's `lex_batch`) into the file's positions:\n/// the records made, with `FEED_DONE` set where the file's are all made, and `FEED_REFUSED` where it goes to the\n/// fallback.\n///\n/// # Safety\n/// A feed from `tier1_feed`, its buffers alive.\npub unsafe extern \"C\" fn tier1_more(feed: *mut u8) -> u64 {{\n    // SAFETY: the caller's contract.\n    unsafe {{\n        let f = &mut *(feed as *mut Feed);\n        let row = &*f.row;\n        let src = std::slice::from_raw_parts(f.bytes.add(row.bytes as usize), row.len as usize);\n        let from = f.t.starts.len();\n        f.t.run(src, &f.m, {BATCH});\n        put_records(row, f.positions, &f.t.starts, &f.t.lasts, &f.t.codes, from);\n        let made = f.t.starts.len();\n        if !f.t.done {{\n            return made as u64;\n        }}\n        let refused = refused(&f.m, &f.t, src.len());\n        put_counts(row, f.counts, made, refused);\n        made as u64 | FEED_DONE | if refused {{ FEED_REFUSED }} else {{ 0 }}\n    }}\n}}\n\n/// `tier1_more`'s flags.\npub const FEED_DONE: u64 = 1 << 63;\npub const FEED_REFUSED: u64 = 1 << 62;\n\n/// A feed's end.\n///\n/// # Safety\n/// A feed from `tier1_feed`, not freed before.\npub unsafe extern \"C\" fn tier1_feed_free(feed: *mut u8) {{\n    // SAFETY: the caller's contract.\n    drop(unsafe {{ Box::from_raw(feed as *mut Feed) }});\n}}\n", BATCH = FEED_BATCH);
+        // The puts, shared by the entry and the feed.
+        out.push_str("/// Records `from..` of the loop's into file `row`'s positions (the harness's layout).\n///\n/// # Safety\n/// The batch's buffers.\nunsafe fn put_records(row: &Row, positions: *mut u32, starts: &[u32], lasts: &[u32], codes: &[u32], from: usize) {\n    let cap = row.capacity as usize;\n    // SAFETY: the caller's contract.\n    unsafe {\n        let at = positions.add(row.positions as usize);\n        for k in from..starts.len() {\n            let (s, l, c) = (starts[k], lasts[k], codes[k]);\n");
+        let _ = writeln!(out, "            *at.add({}) = s;\n            *at.add({}) = l;\n            *at.add({}) = c;\n        }}\n    }}\n    let _ = cap;\n}}\n", index(0, "k"), index(1, "k"), index(2, "k"));
+        out.push_str("/// File `row`'s counts: its records, and whether it goes to the fallback.\n///\n/// # Safety\n/// The batch's buffers.\nunsafe fn put_counts(row: &Row, counts: *mut u64, records: usize, refused: bool) {\n    let _ = (row, counts, records, refused);\n    // SAFETY: the caller's contract.\n    unsafe {\n");
+        for e in 0..extracts.len() {
             if e == usize::from(r.starts) || e == usize::from(r.lasts) {
-                let _ = writeln!(out, "            *counts.add(row.counts as usize + {e}) = lexed.starts.len() as u64;");
-            } else {
-                let n = self.name_of(o);
-                let _ = writeln!(out, "            let mut j = 0usize;\n            for (w, &x) in lexed.masks.{n}.iter().enumerate() {{\n                let mut x = x;\n                while x != 0 {{\n                    *at.add({e} * cap + j) = (64 * w + x.trailing_zeros() as usize) as u32;\n                    j += 1;\n                    x &= x - 1;\n                }}\n            }}\n            *counts.add(row.counts as usize + {e}) = j as u64;");
+                let _ = writeln!(out, "        *counts.add(row.counts as usize + {e}) = records as u64;");
             }
         }
         if !p.totals.is_empty() {
-            let _ = writeln!(out, "            *counts.add(row.counts as usize + {}) = u64::from(lexed.refused);", extracts.len());
+            let _ = writeln!(out, "        *counts.add(row.counts as usize + {}) = u64::from(refused);", extracts.len());
         }
-        let _ = writeln!(out, "            let words = out.add(row.out as usize);");
+        out.push_str("    }\n}\n\n");
+        out.push_str("/// File `row`'s masks tier 2 reads, and its extracts but the records, into the batch's buffers.\n///\n/// # Safety\n/// The batch's buffers.\nunsafe fn put_masks(row: &Row, m: &Masks, out: *mut u64, positions: *mut u32, counts: *mut u64) {\n    let _ = (m, out, positions, counts);\n    let cap = row.capacity as usize;\n    // SAFETY: the caller's contract.\n    unsafe {\n        let at = positions.add(row.positions as usize);\n        let _ = (cap, at);\n");
+        for (e, &o) in extracts.iter().enumerate() {
+            if e == usize::from(r.starts) || e == usize::from(r.lasts) {
+                continue;
+            } else {
+                let n = self.name_of(o);
+                let _ = writeln!(out, "        let mut j = 0usize;\n        for (w, &x) in m.{n}.iter().enumerate() {{\n            let mut x = x;\n            while x != 0 {{\n                *at.add({e} * cap + j) = (64 * w + x.trailing_zeros() as usize) as u32;\n                j += 1;\n                x &= x - 1;\n            }}\n        }}\n        *counts.add(row.counts as usize + {e}) = j as u64;");
+            }
+        }
+        let _ = writeln!(out, "        let words = out.add(row.out as usize);\n        let _ = words;");
         for o in self.tier2_masks() {
             let n = self.name_of(o);
-            let _ = writeln!(out, "            for (w, &x) in lexed.masks.{n}.iter().enumerate() {{\n                *words.add(w * {outputs} + {o}) = x;\n            }}");
+            let _ = writeln!(out, "        for (w, &x) in m.{n}.iter().enumerate() {{\n            *words.add(w * {outputs} + {o}) = x;\n        }}");
         }
-        out.push_str("        }\n    }\n}\n\n");
+        out.push_str("    }\n}\n\n");
     }
 }
+
+/// The records a feed makes at least each time tier 2 asks (`tier1_more`), as the lean parser's
+/// `lex_batch` (decision 0493).
+pub const FEED_BATCH: usize = 16;
 
 fn indent(s: &str, n: usize) -> String {
     let pad = "    ".repeat(n);

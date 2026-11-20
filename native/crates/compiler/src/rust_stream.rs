@@ -635,7 +635,7 @@ fn prelude(out: &mut String, x: &Facts<'_>) -> Result<(), String> {
 pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     let c = unsafe { &*(ctx as *const Ctx) };
     let mut s = S {
-        bytes: c.bytes, len: c.len as u32, starts: c.starts, lasts: c.lasts, codes: c.codes, n: c.nstarts as usize,
+        bytes: c.bytes, len: c.len as u32, starts: c.starts, lasts: c.lasts, codes: c.codes, n: core::cell::Cell::new(c.nstarts as usize), more: c.more, feed: c.feed, fed: core::cell::Cell::new(u8::from(c.more == 0)),
         rs: c.record_stride as usize / 4,
         outputs: c.outputs as *const u8, ostride: c.output_stride as usize, lstride: c.lasts_stride as usize,
         totals: c.totals as *const u8, tstride: c.totals_stride as usize, tmask: c.totals_mask,
@@ -865,7 +865,7 @@ pub struct Ctx {
     room_supers: u64, room_pushes: u64, stack_base: u64, stack_limit: u64, frame_shift: u64,
     state: [u64; $STATE], size_c: *mut u8, off_c: *mut u8, tail_c: *mut u8, base_c: *mut u32,
     image: *mut u8, id_of: *mut u16, code_kf: *mut u32, code_first: *mut u32,
-    record_stride: u64, writer: *mut u8, numbers: *const u32,
+    record_stride: u64, writer: *mut u8, numbers: *const u32, more: u64, feed: u64,
 }
 
 /// A node's working row (`native_cpu_tape::ROW`): its key (kind and field), its bytes. Not
@@ -888,7 +888,10 @@ type R = Result<(), bool>;
 const STATE: &str = "/// The run's buffers and state, as the lean parser's `Parser`: each rule takes it as `&mut`,
 /// as the lean parser's methods take `&mut self`.
 struct S {
-    bytes: *const u8, len: u32, starts: *const u32, lasts: *const u32, codes: *const u32, n: usize,
+    bytes: *const u8, len: u32, starts: *const u32, lasts: *const u32, codes: *const u32, n: core::cell::Cell<usize>,
+    /// Tier 1's feed (decision 0493): its `more` and the file's feed, zero where tier 1 made every record; whether
+    /// it is feeding (0), has made them all (1), or refused the file (2).
+    more: u64, feed: u64, fed: core::cell::Cell<u8>,
     /// The words from a token's record field to the next token's (`Ctx::record_stride`).
     rs: usize,
     outputs: *const u8, ostride: usize, lstride: usize, totals: *const u8, tstride: usize, tmask: u64,
@@ -947,6 +950,26 @@ impl S {
     #[inline(always)]
     fn bit(&self, o: usize, at: u32) -> bool { self.mask_word(o, at >> 6) >> (at & 63) & 1 != 0 }
     #[inline(always)]
+    /// Whether record `i` is made: where it is not yet, tier 1's feed asked for the next records until it is or the
+    /// file's are all made (decision 0493), as the lean parser's `fill(k)` asks `lex_batch`.
+    #[inline(always)]
+    fn has(&self, i: usize) -> bool { i < self.n.get() || self.fill(i) }
+    #[cold]
+    #[inline(never)]
+    fn fill(&self, i: usize) -> bool {
+        while self.fed.get() == 0 {
+            // SAFETY: `more` is tier 1's `native_cpu_block::Feed::more`, `feed` its file's (the harness's contract).
+            let r = unsafe { core::mem::transmute::<usize, unsafe extern \"C\" fn(*mut u8) -> u64>(self.more as usize)(self.feed as *mut u8) };
+            self.n.set((r & !(3u64 << 62)) as usize);
+            if r >> 63 != 0 {
+                self.fed.set(if r >> 62 & 1 != 0 { 2 } else { 1 });
+            }
+            if i < self.n.get() {
+                return true;
+            }
+        }
+        false
+    }
     fn total(&self, t: usize) -> u64 { unsafe { (self.totals.add(t * self.tstride) as *const u64).read_unaligned() & self.tmask } }
     /// The 64 bytes of word `q` of the file (none past it: zeros).
     #[inline(always)]
@@ -1035,7 +1058,10 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
         }}
         loop {{
 {before}{lost}            let i = self.next as usize;
-            if i == self.n {{
+            if !self.has(i) {{
+                if self.fed.get() == 2 {{
+                    return Err(false);
+                }}
                 self.at_end = true;
                 self.live = {:#x};{end_code}
                 return Ok(());
@@ -2084,7 +2110,7 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
     let mut body = String::new();
     let test = element_test;
     // The next record that is no extra, after `at`: past the last, `past`.
-    let advance = |past: &str| format!("        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n");
+    let advance = |past: &str| format!("        let c = loop {{\n            at += 1;\n            if !self.has(at) {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n");
     pattern_body(out, i, m, &mut body, &free, &test, &advance);
 }
 
@@ -2205,7 +2231,7 @@ fn gap_pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>)
             "g.checked_sub(1)".to_owned()
         } else if el.since {
             format!("Some(g + {}).filter(|&j| j < here)", o - 1).replace("g + 0", "g")
-        } else if o < 0 { format!("here.checked_sub({})", -i32::from(o)) } else if o == 0 { "Some(here).filter(|&j| j < self.n)".into() } else { format!("Some(here + {o}).filter(|&j| j < self.n)") };
+        } else if o < 0 { format!("here.checked_sub({})", -i32::from(o)) } else if o == 0 { "Some(here).filter(|&j| self.has(j))".into() } else { format!("Some(here + {o}).filter(|&j| self.has(j))") };
         // Past either end, an element with `end` holds, and the next is tested.
         body.push_str(&if el.end { format!("        if let Some(j) = {at} {{\n") } else { format!("        let Some(j) = {at} else {{ return false }};\n") });
         // Its tests: inside the `if let` of an `end` element, one deeper.
@@ -3032,9 +3058,9 @@ fn fetched_token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>) -> Resul
     #[inline(always)]
     fn {name}(&mut self) -> R {{
 {room}        self.last_end = self.rec_end;
-        let i = self.next.min(self.n as u32);
+        let i = if self.has(self.next as usize) {{ self.next }} else {{ self.n.get() as u32 }};
         let st = unsafe {{ *self.starts.add(i as usize * self.rs) }};
-        self.start = if i as usize == self.n {{ self.len }} else {{ st }};
+        self.start = if i as usize == self.n.get() {{ self.len }} else {{ st }};
 {unmade}        self.next = i + 1;
         Ok(())
     }}
@@ -3053,7 +3079,7 @@ fn fetched_token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>) -> Resul
         }}
         self.last_end = self.rec_end;
         let i = self.next as usize;
-        if i == self.n {{
+        if !self.has(i) {{
             self.at_end = true;
             self.live = {:#x};{end_code}
             return Ok(());
