@@ -1,1 +1,0 @@
-Code rules can read C, C++ and Go. A rule with `language: "c"`, `"cpp"` or `"go"` matches `.c`, C++ (`.cpp`, `.cc`, `.h` and the like) or `.go` files by syntax, as Java's rules do; name resolution, values, arguments, calls and format arguments are not read for them yet.
