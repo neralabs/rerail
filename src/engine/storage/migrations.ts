@@ -182,6 +182,14 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       markRecordedScans(database);
     },
   },
+  {
+    // A rule's `title`, of either kind, which the dashboard shows. No floor: an older build never reads the column; its
+    // inserts leave it null, and its updates of a row keep the title the row had.
+    id: "rules-title",
+    up(database) {
+      addColumn(database, "rules", "title", "text");
+    },
+  },
 ];
 
 /**

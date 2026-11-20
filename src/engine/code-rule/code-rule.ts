@@ -15,6 +15,8 @@ export interface CodeRuleDslDocument {
   id: string;
   revision: number;
   mode: RuleMode;
+  /** The rule in a person's own words, which the dashboard shows; the agent never reads it. */
+  title?: string;
   description?: string;
   scope?: CodeRuleDslScope;
   clauses: CodeRuleDslClause[];

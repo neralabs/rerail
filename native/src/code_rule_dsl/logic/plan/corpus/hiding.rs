@@ -510,111 +510,199 @@ fn asking(prog: &Program) -> BTreeSet<String> {
 /// guest whose grammar's label is the run's: `guests::key`) and its kinds are the run's (`python:x` resolves as `x`),
 /// so a copy specialized to it holds its original's rows: its rules differ only by the seeded column's bound, which
 /// those documents are under, and by the qualified kinds. Its readers read the original, its rules go, and a
-/// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
-/// `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
-/// `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
+/// qualified kind of `label` is written plainly; a copied kind set goes with its readers, `nearest`'s and the tree
+/// axes' (`rr_inside_rr_in_<g>_<set>` reads `rr_inside_<set>`); a clone (O110) is then its rule again, dropped as a
+/// repeat by `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the
+/// copies folded. `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
 pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
-    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+    use crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
     if bound != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {
         return 0;
     }
-    let own = |g: &str| dialect_label(g) == label;
     // `rr_in_<g>_<c>_…<orig>`, every `<g>` the run's own (as `hide` names them: `g` with non-alphanumerics as `_`).
-    let grammars: Vec<&str> = ["annotation", label].into_iter().filter(|g| own(g)).collect();
-    let own_mid = |mut mid: &str| -> bool {
-        if mid.is_empty() {
-            return false;
-        }
-        while !mid.is_empty() {
-            let Some(rest) = grammars.iter().find_map(|g| mid.strip_prefix(*g).and_then(|r| r.strip_prefix('_'))) else { return false };
-            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-            let Some(rest) = rest[digits..].strip_prefix('_').filter(|_| digits > 0) else { return false };
-            mid = rest;
-        }
-        true
-    };
-    let mut folded: HashMap<String, String> = HashMap::default();
-    for rel in prog.decls.keys().filter(|r| r.starts_with("rr_in_")) {
-        let tail = &rel["rr_in_".len()..];
-        // The longest original that leaves an own prefix.
-        let orig = (0..tail.len()).filter(|&i| tail.is_char_boundary(i)).map(|i| (&tail[..i], &tail[i..])).find(|(mid, orig)| !orig.starts_with("rr_in_") && prog.decls.contains_key(*orig) && own_mid(mid));
-        if let Some((_, orig)) = orig {
-            folded.insert(rel.to_string(), orig.to_owned());
-        }
-    }
-    let sets: HashMap<String, String> = prog
-        .kindsets
-        .keys()
-        .filter_map(|k| {
-            let tail = k.strip_prefix("rr_in_")?;
-            grammars.iter().find_map(|g| tail.strip_prefix(*g).and_then(|r| r.strip_prefix('_'))).filter(|set| prog.kindsets.contains_key(*set)).map(|set| (k.clone(), set.to_owned()))
-        })
-        .collect();
-    if folded.is_empty() && sets.is_empty() {
+    let grammars: Vec<&str> = ["annotation", label].into_iter().filter(|g| dialect_label(g) == label).collect();
+    let fold = Fold::of(prog, &grammars);
+    if fold.is_empty() {
         return 0;
     }
-    prog.rules.retain(|r| !folded.contains_key(r.head.rel.as_str()));
-    // An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
-    // `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
-    let originals: BTreeSet<&str> = folded.values().map(String::as_str).collect();
-    let (narrow, wide) = (i64::from(ANNOTATION_KEYS), i64::from(HIDDEN_KEYS));
-    for rule in prog.rules.iter_mut().filter(|r| originals.contains(r.head.rel.as_str())) {
-        for l in &mut rule.body {
-            if let Literal::Cmp { op: "<", r: Term::Int(b), .. } = l {
-                if *b == narrow << 32 {
-                    *b = wide << 32;
-                } else if *b == narrow {
-                    *b = wide;
-                }
+    fold.apply(prog, label);
+    fold.folded.len() + fold.sets.len()
+}
+
+/// What `fold_own` folds: each copied relation's original (`folded`), and each copied kind set's (`sets`).
+struct Fold {
+    folded: HashMap<String, String>,
+    sets: HashMap<String, String>,
+}
+
+impl Fold {
+    fn of(prog: &Program, grammars: &[&str]) -> Fold {
+        let folded = prog.decls.keys().filter_map(|rel| copied_relation(prog, grammars, rel).map(|orig| (rel.to_string(), orig.to_owned()))).collect();
+        let sets = prog.kindsets.keys().filter_map(|k| copied_set(prog, grammars, k).map(|set| (k.clone(), set.to_owned()))).collect();
+        Fold { folded, sets }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.folded.is_empty() && self.sets.is_empty()
+    }
+
+    /// A tree axis over a copied set (`hide`'s `rr_inside_rr_in_<g>_<set>`, `rr_has_…`) reads the original set's axis:
+    /// the copied set goes, and an axis left on it names no set, so the transducer made it with no rows and its
+    /// negation held for every node (`!inside(t, _, S)` and `within_stop` in a clone over an annotation's node).
+    fn axis(&self, rel: &str) -> Option<String> {
+        use crate::code_rule_dsl::logic::front::{axis, AXIS, DESCENDANTS};
+        let (set, has) = axis(rel)?;
+        self.sets.get(set).map(|orig| format!("{}{orig}", if has { DESCENDANTS } else { AXIS }))
+    }
+
+    fn apply(&self, prog: &mut Program, label: &str) {
+        prog.rules.retain(|r| !self.folded.contains_key(r.head.rel.as_str()));
+        self.widen_originals(prog);
+        let plain = format!("{label}:");
+        for rule in &mut prog.rules {
+            for l in &mut rule.body {
+                self.literal(l, &plain);
+            }
+        }
+        for rel in self.folded.keys() {
+            prog.decls.remove(rel.as_str());
+            prog.qualifiers.remove(rel);
+        }
+        for k in self.sets.keys() {
+            prog.kindsets.remove(k);
+        }
+        self.fold_axes(prog);
+    }
+
+    /// An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
+    /// `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
+    fn widen_originals(&self, prog: &mut Program) {
+        let originals: BTreeSet<&str> = self.folded.values().map(String::as_str).collect();
+        for rule in prog.rules.iter_mut().filter(|r| originals.contains(r.head.rel.as_str())) {
+            for l in &mut rule.body {
+                widen(l);
             }
         }
     }
-    let plain = format!("{label}:");
-    let unqualify = |a: &mut Atom| {
-        let col = match a.rel.as_str() {
-            "kind" | "field" => Some(1),
-            "node" => Some(2),
-            _ => None,
-        };
-        if let Some(Term::Str(s)) = col.and_then(|c| a.args.make_mut().get_mut(c))
-            && let Some(name) = s.strip_prefix(plain.as_str())
-        {
-            *s = name.to_owned().into();
+
+    /// A literal reads the originals, and a kind of the run's language (`plain`, `python:`) is written plainly.
+    fn literal(&self, l: &mut Literal, plain: &str) {
+        match l {
+            Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
+                self.rename(a);
+                unqualify(a, plain);
+            }
+            Literal::Nearest { kindset, .. } => {
+                if let Some(set) = self.sets.get(kindset.as_str()) {
+                    *kindset = set.clone();
+                }
+            }
+            _ => {}
         }
-    };
-    for rule in &mut prog.rules {
-        for l in &mut rule.body {
-            match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                    if let Some(orig) = folded.get(a.rel.as_str()) {
-                        a.rel = orig.clone().into();
-                    }
-                    unqualify(a);
-                }
-                Literal::Nearest { kindset, .. } => {
-                    if let Some(set) = sets.get(kindset.as_str()) {
-                        *kindset = set.clone();
-                    }
-                }
-                _ => {}
+    }
+
+    fn rename(&self, a: &mut Atom) {
+        if let Some(orig) = self.folded.get(a.rel.as_str()) {
+            a.rel = orig.clone().into();
+        } else if let Some(orig) = self.axis(&a.rel) {
+            a.rel = orig.into();
+        }
+    }
+
+    /// The axes the copied sets name: `hide` lists each as an input, and declares it where its original was declared.
+    /// Each is declared and listed as its original.
+    fn fold_axes(&self, prog: &mut Program) {
+        let copied: BTreeMap<String, String> = prog.decls.keys().map(|r| r.as_str()).chain(prog.inputs.iter().map(String::as_str)).filter_map(|rel| self.axis(rel).map(|orig| (rel.to_owned(), orig))).collect();
+        for (copy, orig) in &copied {
+            if let Some(d) = prog.decls.remove(copy.as_str()) {
+                prog.decls.entry(orig.as_str().into()).or_insert(d);
             }
         }
+        for list in [&mut prog.inputs, &mut prog.outputs, &mut prog.demand] {
+            self.relist(list, &copied);
+        }
     }
-    for rel in folded.keys() {
-        prog.decls.remove(rel.as_str());
-        prog.qualifiers.remove(rel);
-    }
-    for k in sets.keys() {
-        prog.kindsets.remove(k);
-    }
-    for list in [&mut prog.inputs, &mut prog.outputs, &mut prog.demand] {
+
+    /// A list of relations names the originals; an axis copy's place is its original's, unless the original is listed
+    /// already.
+    fn relist(&self, list: &mut Vec<String>, copied: &BTreeMap<String, String>) {
         for rel in list.iter_mut() {
-            if let Some(orig) = folded.get(rel.as_str()) {
+            if let Some(orig) = self.folded.get(rel.as_str()) {
                 *rel = orig.clone();
             }
         }
+        for (copy, orig) in copied {
+            let Some(i) = list.iter().position(|r| r == copy) else { continue };
+            if list.contains(orig) {
+                list.remove(i);
+            } else {
+                list[i] = orig.clone();
+            }
+        }
     }
-    folded.len() + sets.len()
+}
+
+/// The original of `rel`, a copy `hide` made for guests of the run's own grammars (`rr_in_<g>_<c>_…<orig>`): the longest
+/// original that leaves an own prefix.
+fn copied_relation<'p>(prog: &Program, grammars: &[&str], rel: &'p str) -> Option<&'p str> {
+    let tail = rel.strip_prefix("rr_in_")?;
+    (0..tail.len())
+        .filter(|&i| tail.is_char_boundary(i))
+        .map(|i| tail.split_at(i))
+        .find(|(mid, orig)| !orig.starts_with("rr_in_") && prog.decls.contains_key(*orig) && own_mid(grammars, mid))
+        .map(|(_, orig)| orig)
+}
+
+/// The original of kind set `k`, a copy `hide` made for a guest of the run's own grammars (`rr_in_<g>_<set>`).
+fn copied_set<'p>(prog: &Program, grammars: &[&str], k: &'p str) -> Option<&'p str> {
+    let tail = k.strip_prefix("rr_in_")?;
+    own_grammar(grammars, tail).filter(|set| prog.kindsets.contains_key(*set))
+}
+
+/// `s` less a leading `<g>_`, `g` one of `grammars`.
+fn own_grammar<'s>(grammars: &[&str], s: &'s str) -> Option<&'s str> {
+    grammars.iter().find_map(|g| s.strip_prefix(*g).and_then(|r| r.strip_prefix('_')))
+}
+
+/// Whether `mid` is a copy's prefix of own grammars and seeded columns, `<g>_<c>_` once or more.
+fn own_mid(grammars: &[&str], mut mid: &str) -> bool {
+    if mid.is_empty() {
+        return false;
+    }
+    while !mid.is_empty() {
+        let Some(rest) = own_grammar(grammars, mid) else { return false };
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        let Some(rest) = rest[digits..].strip_prefix('_').filter(|_| digits > 0) else { return false };
+        mid = rest;
+    }
+    true
+}
+
+/// A bound of the shown annotations (`ANNOTATION_KEYS`, a document's or a node's) widened to every annotation's
+/// (`HIDDEN_KEYS`).
+fn widen(l: &mut Literal) {
+    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+    let Literal::Cmp { op: "<", r: Term::Int(b), .. } = l else { return };
+    let (narrow, wide) = (i64::from(ANNOTATION_KEYS), i64::from(HIDDEN_KEYS));
+    if *b == narrow << 32 {
+        *b = wide << 32;
+    } else if *b == narrow {
+        *b = wide;
+    }
+}
+
+/// A kind or field constant of `plain`'s language (`python:identifier`) written plainly.
+fn unqualify(a: &mut Atom, plain: &str) {
+    let col = match a.rel.as_str() {
+        "kind" | "field" => Some(1),
+        "node" => Some(2),
+        _ => None,
+    };
+    if let Some(Term::Str(s)) = col.and_then(|c| a.args.make_mut().get_mut(c))
+        && let Some(name) = s.strip_prefix(plain)
+    {
+        *s = name.to_owned().into();
+    }
 }
 
 /// Which rules' analysis can find anything (O-combine-hiding-single): one with a seed, or a positive atom of a guest
@@ -1091,5 +1179,35 @@ pub mod tests {
         let rules: Vec<String> = p.rules.iter().map(|r| r.to_string()).collect();
         assert!(rules.iter().any(|r| r.starts_with("asg(") && r.contains(&wide)), "{rules:#?}");
         assert!(rules.iter().any(|r| r.starts_with("out(") && r.contains(&narrow)) || rules.iter().filter(|r| r.starts_with("out(")).all(|r| !r.contains(&wide)), "{rules:#?}");
+    }
+
+    /// A tree axis read over a node that may be an annotation's is the clone's copy of the axis, over a copy of its kind
+    /// set (`rr_inside_rr_in_annotation_<set>`). Folding the copied set folds the axis too: before, the set went and
+    /// the axis stayed, naming no set, so the transducer made it with no rows, and the clone's `!inside(t, _, S)` held
+    /// for every node, below S too (the Django rules' `within_stop` over a block found through `sym_of`).
+    #[test]
+    fn an_axis_over_a_folded_kind_set_reads_the_original_set() {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+            ".decl body(b: node)\nbody(b) :- e(b).\nbody(r) :- parsed(_, \"annotation\", r).\n",
+            ".decl attempt(t: node)\nattempt(t) :- e(t).\n",
+            ".decl out(t: node)\n.output out\n",
+            "out(t) :- attempt(t), body(b), within(t, b), !inside(t, _, \"function_definition\").\n",
+        ))
+        .unwrap();
+        let shown = crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
+        hide(&mut p, shown);
+        let axes = |p: &Program| -> Vec<String> {
+            p.rules.iter().flat_map(|r| r.body.iter()).filter_map(Literal::atom).map(|a| a.rel.to_string()).filter(|r| crate::code_rule_dsl::logic::front::is_axis(r)).collect()
+        };
+        assert!(axes(&p).iter().any(|r| r.contains("rr_in_annotation_")), "the clone reads the annotation's axis: {:?}", axes(&p));
+        assert!(fold_own(&mut p, "python", shown) > 0);
+        super::super::merge_and_drop_repeats(&mut p);
+        for rel in axes(&p).iter().chain(p.inputs.iter().filter(|r| crate::code_rule_dsl::logic::front::is_axis(r))) {
+            let (set, _) = crate::code_rule_dsl::logic::front::axis(rel).unwrap();
+            assert!(p.kindsets.contains_key(set), "{rel} names no kind set of the program: {:?}", p.kindsets);
+        }
+        let outs: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "out").map(|r| r.to_string()).collect();
+        assert!(!outs.is_empty() && outs.iter().all(|r| r.contains("!rr_inside_rr_kind_function_definition(") && !r.contains("rr_in_")), "{outs:#?}");
     }
 }

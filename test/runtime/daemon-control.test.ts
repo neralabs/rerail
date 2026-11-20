@@ -2,7 +2,7 @@ import * as childProcess from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -60,7 +60,7 @@ import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.j
 import { type ProbeLaunch, type StartedProbe, runConsoleProbe } from "../support/platform/console-probe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
-import { removeFolder, runningIn } from "../support/platform/remove-folder.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 // Spies that call through, so a test can stand a program in for Windows PowerShell.
 vi.mock("node:child_process", { spy: true });
@@ -460,7 +460,6 @@ describe("Rerail daemon control", () => {
     const hook = connect(state.kernelSocketPath);
     hook.on("error", () => undefined);
     const kill = vi.spyOn(process, "kill");
-    let passed = false;
     try {
       await once(hook, "connect");
       hook.write(`POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n${DAEMON_ACCESS_HEADER}: ${state.accessToken ?? ""}\r\n\r\n{`);
@@ -468,18 +467,10 @@ describe("Rerail daemon control", () => {
       // The daemon ended itself; before, it waited on the hook and stop killed it once its 10 s were up.
       expect(kill.mock.calls.filter(([, signal]) => signal === "SIGKILL")).toEqual([]);
       expect(processAlive(state.pid)).toBe(false);
-      passed = true;
     } finally {
       kill.mockRestore();
       hook.destroy();
       if (processAlive(state.pid)) process.kill(state.pid, "SIGKILL");
-      // The stop answers once the daemon's main thread has exited, while Node counts the daemon as running until its
-      // last thread has: the clean-up removes the home only once nothing this test started runs there. The wait runs
-      // here and not in onTestFinished, which Vitest runs after the afterEach that removes the home.
-      const gone = vi.waitFor(() => expect(runningIn(home)).toEqual([]), { timeout: 5_000, interval: 10 });
-      // A wait that fails after a body that failed would replace the body's error, which says what went wrong; the
-      // home's removal still fails then, naming what runs there.
-      await (passed ? gone : gone.catch(() => undefined));
     }
   }, 30_000);
 
@@ -2106,6 +2097,197 @@ describe("launching the daemon", () => {
     if (start === "relaunchDaemon") relaunchDaemon(["daemon.js"], join(home, DAEMON_LOG_FILE), machine);
     else await expect((start === "startDaemon" ? startDaemon : startDaemonForPackage)(control, { dev: true, port: 0 }, machine)).rejects.toThrow(/exited/u);
     expect(launches).toHaveLength(1);
+  });
+
+  /**
+   * A machine whose launched daemon never answers, on each platform's launch: it writes one line to the log, makes what
+   * `records` makes, the clock passes the start's 15 s wait during the start's first look, after it asked whether the
+   * process runs, and with `exits` the process exits with code 3 then too, so only the start's last question, at the
+   * end of its wait, sees it.
+   */
+  function launchPastTheWait(platform: "linux" | "win32", exits: boolean, records = (): void => undefined): DaemonMachine {
+    const pastTheWait = (): void => {
+      if (!exits) appendFileSync(join(home, DAEMON_LOG_FILE), "rerail daemon: reading its TLS files\n");
+      records();
+      setImmediate(() => vi.setSystemTime(Date.now() + 16_000));
+    };
+    const exitCodes = [null, exits ? 3 : null];
+    return fakeMachine(platform, {
+      spawn: () => {
+        pastTheWait();
+        const child = Object.assign(new EventEmitter(), { pid: 4242, unref() {} });
+        if (exits) setImmediate(() => child.emit("exit", 3, null));
+        return child;
+      },
+      spawnDetached: () => {
+        pastTheWait();
+        return { pid: 4242, exitCode: () => exitCodes.shift() ?? null };
+      },
+    });
+  }
+
+  /** What a start says of the daemon 4242 it launched and leaves running, which has not answered within its wait. */
+  const mayStillStart = /^Rerail daemon \(pid 4242\) has not answered within 15s and may still be starting; this start leaves it running\. Once it answers, rerail status shows it running\. See .*daemon\.log:\n/u;
+
+  it.each(["linux", "win32"] as const)("says the daemon it launched still runs, with its pid, when it has not answered by the end of the start's wait (%s)", async platform => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      const control = { home, packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+      const unanswered = await startDaemon(control, { dev: true, port: 0 }, launchPastTheWait(platform, false)).then(() => undefined, (error: unknown) => error as Error);
+      expect(unanswered?.message).toMatch(mayStillStart);
+      expect(unanswered?.message).toMatch(/:\nrerail daemon: reading its TLS files$/u);
+      expect(unanswered?.message).not.toMatch(/did not become ready/u);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Two states where the next start does not wait for the daemon a start launched and left running: one that has
+  // written daemon.json and does not answer, which the next start names to stop at once, and on Windows one that holds
+  // the home before its engine pipe is listed, beside which the next start launches another daemon. The start's line
+  // promises no second wait in either: it says the daemon may still be starting, and that `rerail status` shows it
+  // once it answers.
+  it.each(["linux", "win32"] as const)("promises no second wait for a daemon it launched that has written daemon.json and does not answer, which the next start names to stop (%s)", async platform => {
+    const state = stateFor({ pid: 4242, accessToken: "capability", ...(platform === "win32" ? { kernelSocketPath: enginePipeName(join(home, "rerail.sqlite")) } : {}) });
+    const records = (): void => writeFileSync(join(home, DAEMON_STATE_FILE), JSON.stringify(state));
+    // The daemon's pid is alive, and on Windows its engine pipe is listed and its engine silent, as a paused one's is.
+    const machine: DaemonMachine = {
+      ...launchPastTheWait(platform, false, records),
+      kill: () => true,
+      pipes: () => platform === "win32" ? [pipeNameOf(state.kernelSocketPath)] : [],
+      capabilityProof: async () => "silent",
+    };
+    const control = { home, packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      const first = await startDaemon(control, { dev: true, port: 0 }, machine).then(() => "", (error: unknown) => (error as Error).message);
+      expect(first).toMatch(mayStillStart);
+      expect(first).not.toMatch(/start again|wait for it/u);
+      await expect(startDaemon(control, { dev: true, port: 0 }, machine)).rejects.toThrow(
+        `Rerail daemon pid 4242 is alive but not answering at ${state.url}; run rerail daemon stop, then rerail daemon start.`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 20_000);
+
+  it("promises no second wait for a daemon it launched that holds the home before its engine pipe is listed on Windows, beside which the next start launches another", async () => {
+    const records = (): void => {
+      mkdirSync(join(home, LOCKS_DIR), { recursive: true });
+      writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: 4242 }));
+    };
+    // The daemon's pid is alive, and no engine pipe is listed.
+    const machine: DaemonMachine = { ...launchPastTheWait("win32", false, records), kill: () => true };
+    const control = { home, packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      const first = await startDaemon(control, { dev: true, port: 0 }, machine).then(() => "", (error: unknown) => (error as Error).message);
+      expect(first).toMatch(mayStillStart);
+      expect(first).not.toMatch(/start again|wait for it/u);
+      // The next start launches another daemon at once, which exits since the home is held.
+      let launchedAgain = false;
+      const next: DaemonMachine = { ...machine, spawnDetached: () => {
+        launchedAgain = true;
+        return { pid: 4343, exitCode: () => 1 };
+      } };
+      await expect(startDaemon(control, { dev: true, port: 0 }, next)).rejects.toThrow(/^Rerail daemon exited with code 1 before it was ready\.$/u);
+      expect(launchedAgain).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 20_000);
+
+  // A daemon a start launched, which took the home's lock and recorded itself beside it as it did, and has not written
+  // daemon.json. A start after that one finds it recorded at each look of its own wait, so by the end of that wait the
+  // daemon has held the home at least that long, after the wait of the start that launched it. The start says what a
+  // stop says of it, the pid its record names and how to see that process's command line before ending it, and that
+  // it leaves it running; a holder whose record is gone by the end of the wait, as one that exited then, is named by no
+  // pid.
+  it.each(["linux", "win32"] as const)("names the daemon a start launched that holds the home and has not recorded itself by the end of the next start's wait, to check before ending, and leaves it running (%s)", async platform => {
+    const record = join(home, LOCKS_DIR, "daemon.json");
+    const takesTheLock = (): void => {
+      mkdirSync(join(home, LOCKS_DIR), { recursive: true });
+      writeFileSync(record, JSON.stringify({ pid: 4242 }));
+    };
+    // The next start asks the home's lock at each look, as its polls make them, and its clock passes the 15 s wait at
+    // the third. With `leaves`, the holder lets the home go and removes its record as that start's wait ends.
+    let asks = 0;
+    let leaves = false;
+    const lockHeld = (): boolean => {
+      asks += 1;
+      vi.setSystemTime(Date.now() + 5_000);
+      if (leaves && asks % 3 === 0) rmSync(record, { force: true });
+      return true;
+    };
+    // The daemon's pid is alive, and on Windows its engine pipe is listed, as a paused one's is.
+    const machine: DaemonMachine = {
+      ...launchPastTheWait(platform, false, takesTheLock),
+      kill: () => true,
+      pipes: () => [pipeNameOf(enginePipeName(join(home, "rerail.sqlite")))],
+      homeDaemonLockHeld: lockHeld,
+    };
+    const control = { home, packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    const commandLine = platform === "win32"
+      ? `powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter 'ProcessId=4242').CommandLine"`
+      : "ps -p 4242 -o command=";
+    const unrecorded = `A Rerail daemon holds ${home} but has not written daemon.json within 15s`;
+    const named = `${unrecorded}. ${record} names pid 4242, which Rerail could not show is that daemon: see its command line `
+      + `with ${commandLine}, and end it only if it runs Rerail's daemon-entry.js for this home. Then run rerail daemon start.`;
+    const leftRunning = " This start leaves that process running.";
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      const first = await startDaemon(control, { dev: true, port: 0 }, machine).then(() => "", (error: unknown) => (error as Error).message);
+      expect(first).toMatch(mayStillStart);
+      expect(asks).toBe(0);
+      // Set-up's and a person's start, and a hook's start before it sends its settings.
+      for (const next of [startDaemon, startDaemonForPackage]) {
+        asks = 0;
+        await expect(next(control, { dev: true, port: 0 }, machine)).rejects.toThrow(`${named}${leftRunning}`);
+        expect(asks).toBe(3);
+      }
+      leaves = true;
+      await expect(startDaemon(control, { dev: true, port: 0 }, machine)).rejects.toThrow(`${unrecorded}; end that process, then run rerail daemon start.${leftRunning}`);
+      leaves = false;
+      takesTheLock();
+      expect(await stopDaemon(home, machine).then(String, (error: unknown) => (error as Error).message)).toBe(named);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 20_000);
+
+  // daemon.log grows across runs, and a launch can write much before it exits: a start reads only the end of what this
+  // launch wrote.
+  it.each(["linux", "win32"] as const)("shows the last whole lines of what a launch that exits wrote, read from the end of the log (%s)", async platform => {
+    const log = join(home, DAEMON_LOG_FILE);
+    await writeFile(log, "an earlier run\n".repeat(1_000));
+    // Thirty lines of 9,000 bytes: the last 64 KiB hold the last seven whole and the end of the one before.
+    const lines = Array.from({ length: 30 }, (_, at) => `line ${String(at).padStart(2, "0")} ${"x".repeat(8_991)}`);
+    const writes = (): void => appendFileSync(log, `${lines.join("\n")}\n`);
+    const machine = fakeMachine(platform, {
+      spawn: () => {
+        writes();
+        const child = Object.assign(new EventEmitter(), { pid: 4242, unref() {} });
+        setImmediate(() => child.emit("exit", 3, null));
+        return child;
+      },
+      spawnDetached: () => {
+        writes();
+        return { pid: 4242, exitCode: () => 3 };
+      },
+    });
+    const control = { home, packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    const failure = await startDaemon(control, { dev: true, port: 0 }, machine).then(() => "", (error: unknown) => (error as Error).message);
+    expect(failure).toBe(`Rerail daemon exited with code 3 before it was ready:\n${lines.slice(-7).join("\n")}`);
+  });
+
+  it.each(["linux", "win32"] as const)("says why the daemon it launched ended when it exits during the start's last poll (%s)", async platform => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      const control = { home, packageRoot: resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+      await expect(startDaemon(control, { dev: true, port: 0 }, launchPastTheWait(platform, true))).rejects.toThrow(/^Rerail daemon exited with code 3 before it was ready\.$/u);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

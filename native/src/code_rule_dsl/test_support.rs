@@ -26,6 +26,29 @@ pub(super) fn pack_test_data(relative: &str) -> PathBuf {
     path
 }
 
+/// Runs `test` (its whole path, an ignored test of this binary) alone in a child process of this binary. Every test
+/// of a run shares the process: its one pool, which a long parallel loop of another test's holds (minutes, on a loaded
+/// 4-core runner), and its process-wide counts, which other tests' runs move. In the child, both are the test's own,
+/// so what it times, overlaps or counts is its own run's.
+pub(super) fn alone(test: &str) {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command.args(["--exact", test, "--ignored"]);
+    let mut process = super::logic::plan::corpus::switches::started(|| command.spawn()).unwrap();
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = process.try_wait().unwrap() {
+            break status;
+        }
+        if started.elapsed() > std::time::Duration::from_secs(120) {
+            let _ = process.kill();
+            let _ = process.wait();
+            panic!("{test} stalled");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert!(status.success(), "{test} failed: {status}");
+}
+
 pub(super) const JSX_SOURCE: &str =
     "export const View = () => <button type=\"button\">Go</button>;\n";
 

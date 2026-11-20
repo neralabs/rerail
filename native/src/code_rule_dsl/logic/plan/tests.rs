@@ -251,8 +251,17 @@ fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
 /// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. In `{r, s, t}`, `s` never
 /// has a row (`g` is empty, though not to the program's prune: no edge is a loop), so `r`'s probe by `s` is never
 /// planned; the probes by `r` are planned when the first wave returns, and the run derives what the SQL run does.
+/// The probes' counts are the process's (`lazy_probes_counted`), read by difference around the run: in a process of
+/// the test's own (`test_support::alone`), since another test's run plans probes it left before the run began, and in
+/// the shared process `planned` grew past `left` within the run's window.
 #[test]
 fn a_probe_is_planned_when_its_delta_first_has_rows() {
+    crate::code_rule_dsl::test_support::alone("code_rule_dsl::logic::plan::tests::a_probe_is_planned_when_its_delta_first_has_rows_child");
+}
+
+#[test]
+#[ignore = "child process of a_probe_is_planned_when_its_delta_first_has_rows"]
+fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
     let src = ".decl e(a: number, b: number)\ne(1, 2).\ne(2, 3).\ne(3, 4).\ne(4, 1).\n\
                .decl g(a: number)\ng(a) :- e(a, a).\n.decl h(a: number)\nh(3).\n\
                .decl r(a: number, b: number)\n.decl s(a: number, b: number)\n.decl t(a: number, b: number)\n\
@@ -276,7 +285,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
         if !modes.is_empty() {
             assert!(got.native.iter().any(|c| c.split('/').any(|r| r == "r")), "r's component runs natively: {:?}", got.native);
             // The probes searched: r by r, r by s, s by r, t by r (`r(a, b) :- t(b, a)` is a copy, with no order to
-            // find). Other tests' runs only add to both counts, and never plan more probes than they left.
+            // find). The process is the test's own, so the counts moved by this run's alone.
             let (left, planned) = (after.0 - before.0, after.1 - before.1);
             assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
             assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");

@@ -23,6 +23,7 @@ import type {
   CodeRuleDslValue,
 } from "./code-rule.js";
 import { RULE_MODES } from "../catalog/rule-mode.js";
+import { ruleTitleSchema } from "../catalog/rule-schema.js";
 import type {
   CodeRuleDslArguments,
   CodeRuleDslAstWhen,
@@ -1775,6 +1776,7 @@ export const codeRuleResolvedRuleSchema = z
     id: nonEmptyString,
     revision: z.number().int().positive(),
     mode: z.enum(RULE_MODES),
+    title: ruleTitleSchema.optional(),
     description: z.string().optional(),
     scope: codeRuleScopeSchema.optional(),
     clauses: z.array(codeRuleClauseSchema).min(1),
