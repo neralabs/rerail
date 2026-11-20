@@ -115,9 +115,23 @@ of 2026-11-20 (fa09c9c761). Item 7 above is that model for one region and two sp
    relation's arrays (done: `BlockVec` owns its chunk as a `Mutable<T>`, placed near its relation by itself and
    taken with `Mutable::adopt`, handed to a directory with `into_chunk`; its pushes write through its pointer, each
    checked by the ledger, 0487 R4, with no lock: a region's GPU pin is a chunk use of its ledger too), then the rows
-   themselves (`rows`, the directory's chunks), then the device's handles (`DevRel`,
-   `Held::kept`), whose `Batch` lists then go. A kernel binds a region only through `buffer_read` / `buffer_write`,
-   and `Batch` marks each command buffer's fence committed as it commits it.
+   themselves (`rows`: nothing to move. A `Part` is already the handle, an `Arc<Held>` whose last drop releases the
+   relation's chunks, and the ledger keeps a freed chunk until the GPU's fence completes. The chunks are owned by the
+   relation's directory in its block, by self-relative offsets that a block mapped from disk keeps, where no host
+   handle can lie), then the device's handles (`DevRel`,
+   `Held::kept`), whose `Batch` lists then go. A kernel binds a region only through `buffer_read` / `buffer_write`.
+   (`Pass::commit` marks its fence committed: done.)
+
+   **What holds the lists (found 2026-11-20).** A launch binds `&Buffer`, so the pass cannot keep the buffer's
+   owner. For a block's buffer that does no harm: the pass's fence holds the block in its ledger (`uses_address`),
+   and a chunk freed meanwhile retires until the fence completes. A pooled buffer (`shared::Pooled`) is not a block.
+   The ledger does not know it, and its lease goes back to the pool the moment it is dropped, so the next lease's
+   host writes would overwrite what a queued kernel still reads. `Batch`'s `keep`, `read` and `held` lists hold such
+   buffers until `finish`. They cannot be attached to the open pass either: a parameter block is kept
+   (`Batch::block`) before `Batch::pass(n)` may commit that pass and open the next one, which then binds it.
+   So the lists go after **the pool's buffers are blocks** (step 3's pool slabs): a lease is a region of a pool
+   block, a launch pins it on the pass's fence, and its return to the pool retires through the ledger as any chunk
+   does. Then a launch takes the handles it binds, and nothing else keeps them.
 3. **The block itself as the root region:** `Facts` (done: an `Arc<Block>`, which a region in it keeps) and the
    pool's slabs hold their block by handle, so a block's
    frozenness, placement and lifetime are read in the same place as its regions'.

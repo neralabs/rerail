@@ -7431,8 +7431,9 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Then:** Q337's format-16 runs again, 20 at 1,629.
 - **Then (decision 0491, the user, 2026-11-20):** region handles over blocks, MLDB's shape (`rerail_blocks::region`:
   `Mutable` / `Shared` / `Frozen`, pins, versions, implicit freeing), built. The owners move to them one at a time:
-  `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (`rows`, the directory's chunks), the device's handles (`DevRel`, `Held::kept`); then
-  the block itself as the root region.
+  `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (nothing to move: a `Part` is the handle), the device's handles (`DevRel`, `Held::kept`), after the
+  pool's buffers are blocks (0491 step 2, "What holds the lists": a pooled lease is reused the moment it is dropped,
+  so `Batch`'s lists hold it until the GPU is done); then the block itself as the root region.
 
 ### Q338. (Q263 on Native-GPU-strata) A relation's statistics kept by delta are on the heap (0478 R5) — done (0478 step 6f)
 
