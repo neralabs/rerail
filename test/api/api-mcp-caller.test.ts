@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync } from "node:fs";
+import { type EncodingOption, mkdirSync, type PathLike, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
 import { createRerailMcpHandler } from "../../src/api/mcp.js";
 import { operations } from "../../src/api/operations.js";
@@ -21,10 +21,12 @@ import {
   upsertLibraryRule,
   writeLibraryRule,
   ruleSettings,
+  listLibraryRules,
 } from "../../src/engine/index.js";
-import { MOCK_CODE_RULES } from "../../src/cli/index.js";
+import { MOCK_CODE_RULES, MOCK_CONVERSATION_RULES } from "../../src/cli/index.js";
 import { installPack } from "../support/installed-packs.js";
 import { shortSpelling } from "../engine/support/short-path.js";
+import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { withExperiments } from "../support/environment/experiments.js";
 
@@ -79,6 +81,7 @@ describe("MCP callers and the agent guard", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     stores.close();
     await removeFolder(root);
   });
@@ -231,7 +234,7 @@ describe("MCP callers and the agent guard", () => {
     const [ruleId, packId] = [...ruleCatalog.packOf].find(([id]) => ruleCatalog.documents.get(id)?.kind === "code")!;
     addAttachment(stores.database(), { repositoryKey: parentKey, folder: "web", sourceKind: "pack", sourceId: packId });
     const original = ruleCatalog.documents.get(ruleId)!.rule as CodeRule;
-    const copied = await call("library_rules_upsert", { id: ruleId, kind: "code", rule: { ...original, revision: original.revision + 1 } }, caller);
+    const copied = await call("library_rules_upsert", { id: ruleId, kind: "code", rule: { ...original, title: "Our copy", revision: original.revision + 1 } }, caller);
     expect(copied.result).toMatchObject({ copiedFromRuleId: ruleId, attached: { repositoryKey: parentKey, folders: ["web"] } });
     expect(stores.database().select().from(ruleSettings).where(eq(ruleSettings.targetId, ruleId)).all()).toEqual([]);
     // Editing its own copy later is allowed, as making it was.
@@ -280,10 +283,34 @@ describe("MCP callers and the agent guard", () => {
     const response = await app.request(`/api/library-rules/${bundledId}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "code", rule: { ...(document.rule as CodeRule), mode: "steer" } }),
+      body: JSON.stringify({ kind: "code", rule: { ...(document.rule as CodeRule), title: "Ours, from before the release", mode: "steer" } }),
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ copiedFromRuleId: null, rule: { rule: { id: bundledId, mode: "steer" } } });
+  });
+
+  it("refuses a rule written without a title, over /api and MCP and for a copy of a By Rerail rule, and stores nothing", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", "1");
+    const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+    const put = (id: string, body: unknown) => app.request(`/api/library-rules/${id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const { title: _code, ...code } = MOCK_CODE_RULES[0]!;
+    const { title: _conversation, ...conversation } = MOCK_CONVERSATION_RULES[0]!;
+    const [bundledId, bundled] = [...loadRuleCatalog().documents].find(([, candidate]) => candidate.kind === "code")!;
+    for (const [id, body] of [
+      [code.id, { kind: "code", rule: code }],
+      [conversation.id, { kind: "conversation", rule: conversation }],
+      [bundledId, { kind: "code", rule: bundled.rule }],
+    ] as const) {
+      const response = await put(id, body);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "rule-title-required", message: expect.stringMatching(/^rule\.title is required/u) });
+    }
+    expect((await call("library_rules_upsert", { id: code.id, kind: "code", rule: code })).result).toMatch(/^rule-title-required: rule\.title is required/u);
+    expect(listLibraryRules(stores.database())).toEqual([]);
   });
 
   it("lets a person through /api make the same changes an agent is refused", async () => {
@@ -459,6 +486,233 @@ describe("MCP callers and the agent guard", () => {
       events: [{ payload: { text: `cat ${nested}/.env` } }, { payload: { input: { command: `cat ${nested}/.env` } } }, { payload: { output: "API_KEY=hunter2" } }, {}],
     });
     expect((await app.request(`/api/repository-audits/${repositoryAuditIds.get("in-lib")}/entries`)).status).toBe(200);
+  });
+
+  it("shows an agent a stored call that names a web URL without looking its host and path up on another machine", async () => {
+    const command = "curl -s https://net/192.0.2.1/api/v1 | jq .";
+    const sessions = stores.sessionStore();
+    sessions.openSession({ host: "codex", sessionId: "in-app", cwd: parent }, 1_000, parentKey);
+    sessions.append({ sessionId: "in-app", eventId: "url-call", kind: "call", observedAt: 2_000, payload: { kind: "call", toolName: "Bash", input: { command } } });
+    // `//net/192.0.2.1/api/v1`, cut from the URL at its `:`, names the share `\\net\192.0.2.1\api\v1` on Windows and a
+    // path under the automount root `/net` on Linux and macOS (192.0.2.1 is a documentation address, RFC 5737). Each
+    // such lookup is recorded and refused here, not made, so the test reaches no host.
+    const lookUp = realpathSync.native;
+    const remote: string[] = [];
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    vi.spyOn(realpathSync, "native").mockImplementation((path: PathLike, options?: EncodingOption) => {
+      if (!/^(?:\\\\[^.?\\]|\/net\/)/u.test(String(path))) return lookUp(path, options);
+      remote.push(String(path));
+      throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${String(path)}'`), { code: "ENOENT" });
+    });
+
+    const view = (await call("session_events", { sessionId: "in-app" }, from(parent))).result as { events: Array<{ payload: Record<string, unknown> }> };
+    expect(view.events.map(event => event.payload.input)).toEqual([{ command }]);
+    expect(remote).toEqual([]);
+  });
+
+  /**
+   * Records a finished repository audit of `checkout` with one finding (text, variables and fix) per path, by a session
+   * in `folder`. As the runtime keeps them, the paths are relative to the folder the audit ran in, its `workspaceRoot`.
+   */
+  function auditFinding(paths: readonly string[], options: { sessionId?: string; folder?: string; workspaceRoot?: string; checkout?: string } = {}): string {
+    const { sessionId = "linked", folder = parent, workspaceRoot = folder, checkout = parent } = options;
+    stores.sessionStore().openSession({ host: "codex", sessionId, cwd: folder }, 1_000, parentKey);
+    const auditStore = new SqliteAuditStore(databasePath);
+    try {
+      stores.auditControls().claimRepositoryAudit(sessionId, checkout);
+      const auditId = auditStore.start({
+        sessionId, workspaceRoot, scope: "repository", mode: "log", revision: 1, catalogRevision: null, ruleRevisions: [], paths: [],
+      });
+      auditStore.finish(auditId, {
+        status: "completed",
+        violations: paths.map(path => ({
+          id: path, ruleId: "no-plaintext", clauseId: "clause", code: "SECRET", mode: "log" as const, message: "`KEY = 'hunter2'` is plaintext",
+          path, captures: {}, variables: { VALUE: "hunter2" },
+          fix: { span: { startLine: 0, startColumn: 0, endLine: 0, endColumn: 3, startByte: 0, endByte: 3 }, text: "KEY = environ['KEY']" },
+        })),
+      });
+      stores.auditControls().finishRepositoryAudit(sessionId, checkout, auditId, "completed");
+      return auditId;
+    } finally {
+      auditStore.close();
+    }
+  }
+
+  /**
+   * How a finding {@link auditFinding} recorded reads: `whole`, or `withheld` (rule and place only). `violations_list`
+   * gives no variables, and a missing fix as null.
+   */
+  function findingView({ message, fix = null, variables = {} }: Record<string, unknown>): string {
+    if (typeof message === "string" && message.includes("withheld from this conversation") && fix === null && JSON.stringify(variables) === "{}") return "withheld";
+    return message === "`KEY = 'hunter2'` is plaintext" && fix !== null ? "whole" : JSON.stringify({ message, fix, variables });
+  }
+
+  /**
+   * How each finding of the audits `auditIds` reads, by path ({@link findingView}), in each list that serves findings.
+   */
+  async function findingViews(auditIds: readonly string[], caller: string | undefined): Promise<Array<Record<string, string>>> {
+    const read = async (name: string, args: Record<string, unknown>, path: string): Promise<Record<string, unknown>> => {
+      if (caller !== undefined) return (await call(name, args, caller)).result as Record<string, unknown>;
+      return await (await createRerailApi(stores, operations, { version: "0.0.0-test" }).request(path)).json() as Record<string, unknown>;
+    };
+    const byPath = (rows: Array<Record<string, unknown>>): Record<string, string> => Object.fromEntries(rows.map(row => [String(row.path), findingView(row)]));
+    const listed = await read("violations_list", { since: 0 }, "/api/violations?since=0") as { violations: Array<Record<string, unknown>> };
+    const audits = await read("audits_list", {}, "/api/audits") as { audits: Array<{ violations: Array<Record<string, unknown>> }> };
+    const entries: Array<Record<string, unknown>> = [];
+    for (const auditId of auditIds) {
+      const page = await read("repository_audit_entries_list", { auditId }, `/api/repository-audits/${auditId}/entries`) as { entries: Array<{ violation: Record<string, unknown> }> };
+      entries.push(...page.entries.map(entry => entry.violation));
+    }
+    return [byPath(listed.violations), byPath(audits.audits.flatMap(audit => audit.violations)), byPath(entries)];
+  }
+
+  // A finding is kept under the path its file was read by, which can reach a folder holding secrets through a link:
+  // `conf/config.py`, with `conf` a link (a junction on Windows) to `.aws`, is `.aws/config.py`. A coding agent reads it
+  // by rule and place only, as it reads one in `.aws/` itself and as its steer said it; a link to an ordinary folder
+  // changes nothing, and a person reads every finding whole.
+  it("serves an agent a finding in a file a folder link leads into a folder holding secrets by rule and place only", async () => {
+    mkdirSync(join(parent, ".aws"));
+    writeFileSync(join(parent, ".aws", "config.py"), "KEY = 'hunter2'\n");
+    linkFolder(".aws", join(parent, "conf"));
+    writeFileSync(join(parent, "web", "src", "app.py"), "KEY = 'hunter2'\n");
+    linkFolder(join("web", "src"), join(parent, "docs"));
+    const auditIds = [auditFinding(["conf/config.py", ".aws/config.py", "docs/app.py", "web/src/app.py"])];
+    const agent = { "conf/config.py": "withheld", ".aws/config.py": "withheld", "docs/app.py": "whole", "web/src/app.py": "whole" };
+    expect(await findingViews(auditIds, from(join(parent, "web")))).toEqual([agent, agent, agent]);
+    const person = { "conf/config.py": "whole", ".aws/config.py": "whole", "docs/app.py": "whole", "web/src/app.py": "whole" };
+    expect(await findingViews(auditIds, undefined)).toEqual([person, person, person]);
+  });
+
+  // The runtime keeps a finding's path relative to the folder its session ran in, and its steer judged it there: from a
+  // session in `web`, `conf/config.py` with `web/conf` a link to `../.aws` is `.aws/config.py`. The lists judge it in
+  // that folder too, not from the top of the agent's checkout, where `conf` does not exist.
+  it("serves an agent a finding kept relative to its session's folder by rule and place only where a link there leads into a folder holding secrets", async () => {
+    mkdirSync(join(parent, ".aws"));
+    writeFileSync(join(parent, ".aws", "config.py"), "KEY = 'hunter2'\n");
+    const web = join(parent, "web");
+    linkFolder("../.aws", join(web, "conf"));
+    writeFileSync(join(web, "src", "app.py"), "KEY = 'hunter2'\n");
+    const auditIds = [auditFinding(["conf/config.py", "src/app.py"], { folder: web })];
+    const agent = { "conf/config.py": "withheld", "src/app.py": "whole" };
+    expect(await findingViews(auditIds, from(web))).toEqual([agent, agent, agent]);
+    expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+    const person = { "conf/config.py": "whole", "src/app.py": "whole" };
+    expect(await findingViews(auditIds, undefined)).toEqual([person, person, person]);
+  });
+
+  /** Makes `.aws/config.py`, a file holding secrets, in `folder`, and `<folder>/<link>` a link to that `.aws`. */
+  function secretsBehind(folder: string, link: string): void {
+    mkdirSync(join(folder, ".aws"), { recursive: true });
+    writeFileSync(join(folder, ".aws", "config.py"), "KEY = 'hunter2'\n");
+    linkFolder(".aws", join(folder, link));
+  }
+
+  /** Adds a worktree of the agent's checkout at `path`, detached at a first commit, and returns `path`. */
+  function worktree(path: string): string {
+    git(parent, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first");
+    git(parent, "worktree", "add", "-q", "--detach", path);
+    return path;
+  }
+
+  // A repository's history holds its other worktrees' findings, each relative to its own folder. One in a worktree inside
+  // the agent's checkout is judged in that worktree, where `keys` leads into `.aws`.
+  it("judges a finding from another worktree inside the agent's checkout in that worktree", async () => {
+    const inner = worktree(join(parent, "worktrees", "inner"));
+    secretsBehind(inner, "keys");
+    const auditIds = [auditFinding(["keys/config.py"], { sessionId: "inner", folder: inner, checkout: inner })];
+    const agent = { "keys/config.py": "withheld" };
+    expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+    const person = { "keys/config.py": "whole" };
+    expect(await findingViews(auditIds, undefined)).toEqual([person, person, person]);
+  });
+
+  // A worktree beside the agent's checkout is outside it, where the lists read nothing on disk: its findings are judged
+  // by name, though `conf` leads into `.aws` both in that worktree and in the agent's checkout.
+  it("judges by name a finding from a worktree beside the agent's checkout", async () => {
+    const beside = worktree(join(root, "beside"));
+    secretsBehind(beside, "conf");
+    secretsBehind(parent, "conf");
+    const auditIds = [auditFinding(["conf/config.py", ".aws/config.py"], { sessionId: "beside", folder: beside, checkout: beside })];
+    const agent = { "conf/config.py": "whole", ".aws/config.py": "withheld" };
+    expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+    const person = { "conf/config.py": "whole", ".aws/config.py": "whole" };
+    expect(await findingViews(auditIds, undefined)).toEqual([person, person, person]);
+  });
+
+  // The folder an audit ran in may be gone since: the lists read nothing there, judge its findings by name and still
+  // answer.
+  it("judges by name a finding whose folder is gone since its audit ran", async () => {
+    const gone = join(parent, "gone");
+    const auditIds = [auditFinding([".aws/config.py", "config.py"], { sessionId: "gone", folder: gone, checkout: gone })];
+    const agent = { ".aws/config.py": "withheld", "config.py": "whole" };
+    expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+  });
+
+  // A folder of the agent's checkout may be a link that leads out of it: the lists read nothing where it leads, so a
+  // finding there is judged by name, though in `elsewhere`, where the session ran, `keys` leads into `.aws`.
+  it("judges by name a finding whose folder a link leads out of the agent's checkout", async () => {
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(elsewhere);
+    secretsBehind(elsewhere, "keys");
+    const out = join(parent, "web", "out");
+    linkFolder(elsewhere, out);
+    const auditIds = [auditFinding(["keys/config.py", ".aws/config.py"], { sessionId: "out", folder: out, checkout: out })];
+    const agent = { "keys/config.py": "whole", ".aws/config.py": "withheld" };
+    expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+  });
+
+  // An audit with no folder recorded has its findings judged by name, never against the daemon's own working folder,
+  // which a relative path resolves against: here the agent's checkout, where `keys` leads into `.aws`.
+  it("judges by name a finding whose folder was not recorded, where the daemon works in the agent's checkout", async () => {
+    secretsBehind(parent, "keys");
+    const auditIds = [auditFinding(["keys/config.py", ".aws/config.py"], { sessionId: "none", workspaceRoot: "", checkout: join(parent, "web") })];
+    const agent = { "keys/config.py": "whole", ".aws/config.py": "withheld" };
+    const started = process.cwd();
+    process.chdir(parent);
+    try {
+      expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+    } finally {
+      process.chdir(started);
+    }
+  });
+
+  // One answer resolves at most 256 distinct paths on disk (CHECKOUT_PATH_RESOLUTIONS in src/engine/path-boundary.ts)
+  // across every folder its findings were recorded in, and judges the rest by name. Sessions in `web` and `api` recorded
+  // 256 findings each, the first in `conf/config.py` with `conf` a link to `.aws`; `audits_list`, which judges every
+  // finding of both audits in one answer, withholds that finding in the audit it judges first and serves it whole in the
+  // other, the 257th path.
+  it("resolves at most 256 paths per answer across the folders of its findings, past which it judges by name", async () => {
+    const resolutions = 256;
+    const paths = ["conf/config.py", ...Array.from({ length: resolutions - 1 }, (_, n) => `src/f${n}.py`)];
+    for (const name of ["web", "api"]) {
+      const folder = join(parent, name);
+      mkdirSync(folder, { recursive: true });
+      secretsBehind(folder, "conf");
+      auditFinding(paths, { sessionId: name, folder, checkout: folder });
+    }
+    const { audits } = (await call("audits_list", {}, from(parent))).result as { audits: Array<{ violations: Array<Record<string, unknown>> }> };
+    expect(audits.map(audit => audit.violations.length)).toEqual([resolutions, resolutions]);
+    const first = audits.map(audit => [audit.violations[0]!.path, findingView(audit.violations[0]!)]);
+    expect(first).toEqual([["conf/config.py", "withheld"], ["conf/config.py", "whole"]]);
+  });
+
+  // Windows opens a folder or a file by its 8.3 short name too (`AWS~1` for `.aws`, `WP-CON~1.PHP` for `wp-config.php`),
+  // which no name check knows: a finding kept under one reaches an agent as the file it is.
+  it("serves an agent a finding in a file holding secrets, named by a Windows short name, by rule and place only", async ({ skip }) => {
+    skip(process.platform !== "win32", "only Windows gives a file or folder a short name");
+    mkdirSync(join(parent, ".aws"));
+    writeFileSync(join(parent, ".aws", "config.py"), "KEY = 'hunter2'\n");
+    writeFileSync(join(parent, "web", "wp-config.php"), "<?php $key = 'hunter2';\n");
+    const folder = basename(shortSpelling(join(parent, ".aws")) ?? ".aws");
+    const file = basename(shortSpelling(join(parent, "web", "wp-config.php")) ?? "wp-config.php");
+    if (folder === ".aws" || file === "wp-config.php") return skip("this volume makes no short names");
+    const auditIds = [auditFinding([`${folder}/config.py`, `web/${file}`])];
+    const agent = { [`${folder}/config.py`]: "withheld", [`web/${file}`]: "withheld" };
+    expect(await findingViews(auditIds, from(parent))).toEqual([agent, agent, agent]);
+    const person = { [`${folder}/config.py`]: "whole", [`web/${file}`]: "whole" };
+    expect(await findingViews(auditIds, undefined)).toEqual([person, person, person]);
   });
 
   it("reports where each rule's on and mode come from, for this worktree and for the repository (the worked example)", async () => {

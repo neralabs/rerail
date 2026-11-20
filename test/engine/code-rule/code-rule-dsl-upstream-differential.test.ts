@@ -19,7 +19,7 @@ const upstreamCaseSchema = z.strictObject({
   /** Local utility rules `rule` and `constraints` may reference with `matches`. */
   utils: z.record(z.string(), ruleObject).optional(),
   constraints: z.record(z.string(), ruleObject).optional(),
-  /** Rerail's ast `languageOptions`; upstream ignores the field beside `rule` in a rule config. */
+  /** Rerail's ast `languageOptions`, which only Rerail reads: upstream rejects the field (M8). */
   languageOptions: ruleObject.optional(),
 });
 type UpstreamCase = z.infer<typeof upstreamCaseSchema>;
@@ -40,7 +40,7 @@ const UPSTREAM_STOP_BY_CASES = upstreamCases("stop-by");
 const UPSTREAM_UTILS_CASES = upstreamCases("utils");
 
 // The pinned devDependency is the oracle; ast-grep-core in native/Cargo.toml is pinned to the same version.
-const UPSTREAM_VERSION = "0.51.0";
+const UPSTREAM_VERSION = "0.51.2";
 const cli = join(dirname(createRequire(import.meta.url).resolve("@ast-grep/cli/package.json")), "ast-grep");
 const binding = loadNativeBinding();
 const scratch = mkdtempSync(join(tmpdir(), "rerail-upstream-"));
@@ -85,7 +85,6 @@ function upstream(testCase: UpstreamCase): Match[] {
     rule: testCase.rule,
     ...(testCase.utils === undefined ? {} : { utils: testCase.utils }),
     ...(testCase.constraints === undefined ? {} : { constraints: testCase.constraints }),
-    ...(testCase.languageOptions === undefined ? {} : { languageOptions: testCase.languageOptions }),
   });
   const output = execFileSync(cli, ["scan", "--inline-rules", rule, "--json=compact", path], { encoding: "utf8" });
   const matches = JSON.parse(output) as Array<{
@@ -476,7 +475,8 @@ async function expectUpstreamAgreement(testCase: UpstreamCase): Promise<void> {
 /**
  * M6 compile-time decisions, each against what the pinned CLI does with the same rule text: where upstream rejects
  * a rule Rerail rejects it too, and where upstream accepts a rule that can never match Rerail rejects it (a Rerail
- * extension of "no silent ignores"). Kindless rules are the one deliberate acceptance.
+ * extension of "no silent ignores"). Kindless rules are the one deliberate acceptance. An abstract kind (a grammar
+ * supertype), which upstream accepts and never matches, matches in Rerail the nodes the parser reported as its members.
  */
 interface CompileCase {
   id: string;
@@ -485,14 +485,16 @@ interface CompileCase {
   /** The ast query body as raw JSON text, so repeated keys survive. */
   query: string;
   upstream: "rejects" | "matches-nothing" | "matches";
-  rerail: "rejects" | "agrees";
+  rerail: "rejects" | "agrees" | "matches-members";
   rerailError?: RegExp;
+  /** For `matches-members`: the source text of each node Rerail reports, in report order. */
+  rerailMembers?: string[];
 }
 
 const COMPILE_CASES: CompileCase[] = [
   { id: "repeated-key", language: "python", source: "a\nb\nc\n", query: `{"kind": "identifier", "not": {"regex": "^a$"}, "not": {"regex": "^b$"}}`, upstream: "rejects", rerail: "rejects", rerailError: /^duplicate key `not` at \/clauses\/0\/forbid\/ast\/rule/ },
-  { id: "abstract-kind", language: "typescript", source: "f(a + 1);\n", query: `{"kind": "expression"}`, upstream: "matches-nothing", rerail: "rejects", rerailError: /`expression` is an abstract kind/ },
-  { id: "abstract-kind-python", language: "python", source: "f(a + 1)\n", query: `{"kind": "call", "has": {"kind": "primary_expression"}}`, upstream: "matches-nothing", rerail: "rejects", rerailError: /`primary_expression` is an abstract kind/ },
+  { id: "abstract-kind", language: "typescript", source: "f(a + 1);\n", query: `{"kind": "expression"}`, upstream: "matches-nothing", rerail: "matches-members", rerailMembers: ["f(a + 1)", "f", "a", "a + 1", "1"] },
+  { id: "abstract-kind-python", language: "python", source: "f(a + 1)\n", query: `{"kind": "call", "has": {"kind": "primary_expression"}}`, upstream: "matches-nothing", rerail: "matches-members", rerailMembers: ["f(a + 1)"] },
   { id: "python-dollar-name", language: "python", source: "import time\ntime.sleep(1)\ntime.At\n", query: `{"pattern": "time.$At"}`, upstream: "matches-nothing", rerail: "rejects", rerailError: /`\$At` is not a metavariable/ },
   { id: "typescript-dollar-identifier", language: "typescript", source: "time.At;\ntime.$At;\n", query: `{"pattern": "time.$At"}`, upstream: "matches", rerail: "agrees" },
 ];
@@ -524,7 +526,11 @@ describe(`M6 compile-time decisions against ast-grep ${UPSTREAM_VERSION}`, () =>
     const compiled = binding.CodeRuleDslRuntime.compile(source, "json", capabilities);
     const files = [{ path: `compile-${testCase.id}.${testCase.language === "python" ? "py" : "ts"}`, language: testCase.language, source: testCase.source }];
     const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files });
-    const found = (JSON.parse(compiled.evaluate(snapshot, "report")) as { violations: unknown[] }).violations;
+    const found = (JSON.parse(compiled.evaluate(snapshot, "report")) as { violations: Array<{ span?: { startByte: number; endByte: number } }> }).violations;
+    if (testCase.rerail === "matches-members") {
+      expect(found.map(item => testCase.source.slice(item.span!.startByte, item.span!.endByte))).toEqual(testCase.rerailMembers);
+      return;
+    }
     expect(found).toHaveLength(upstreamResult.matches);
   });
 
@@ -544,9 +550,9 @@ describe(`M6 compile-time decisions against ast-grep ${UPSTREAM_VERSION}`, () =>
  * that denote a listed qualified name). Name resolution itself is pinned against Ruff and typescript-eslint by the
  * engine's offline oracle fixtures (`fixtures/python/scope`, `fixtures/ecma/scope`).
  *
- * M8 `languageOptions`: upstream has no language options; its rule config ignores an unknown `languageOptions` field
- * beside `rule` (and rejects one inside `rule`). Rerail's options change nothing without `resolves`, so the base cases
- * pass them to both engines and still agree.
+ * M8 `languageOptions`: upstream has no language options, and its rule config rejects the field, beside `rule` as
+ * inside it. Rerail's options change nothing without `resolves`, so the base cases give them to Rerail alone and the
+ * two engines still agree.
  */
 interface ResolveCase {
   base: UpstreamCase;
@@ -589,7 +595,7 @@ const RESOLVE_CASES: ResolveCase[] = [
     resolved: { rule: { pattern: "$F($$$)" }, constraints: { F: { resolves: { import: ["subprocess.run", "os.path.join"] } } } },
     kept: ["sp.run(a)", "path.join(b)"],
   },
-  // M8: upstream ignores `languageOptions` beside `rule`, and Rerail's options change nothing without `resolves`.
+  // M8: Rerail alone reads `languageOptions`, and its options change nothing without `resolves`.
   {
     base: {
       id: "resolves-typescript-language-options",
@@ -639,16 +645,16 @@ describe(`resolves (M7, M8) against ast-grep ${UPSTREAM_VERSION}`, () => {
     expect(run).toThrow(/unknown field `resolves`/);
   });
 
-  it("ignores languageOptions beside a rule and rejects it inside one (M8)", () => {
+  it("is a field upstream rejects, beside a rule as inside one: it has no language options (M8)", () => {
     const path = join(scratch, "language-options.ts");
     writeFileSync(path, "Reflect();\n");
-    const scan = (rule: Record<string, unknown>) =>
+    const scan = (rule: Record<string, unknown>) => () =>
       execFileSync(cli, ["scan", "--inline-rules", JSON.stringify({ id: "options", language: "TypeScript", severity: "hint", ...rule }), "--json=compact", path], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
       });
-    expect(JSON.parse(scan({ languageOptions: { ecmaVersion: 5 }, rule: { kind: "identifier" } }))).toHaveLength(1);
-    expect(() => scan({ rule: { kind: "identifier", languageOptions: {} } })).toThrow(/unknown field `languageOptions`/);
+    expect(scan({ languageOptions: { ecmaVersion: 5 }, rule: { kind: "identifier" } })).toThrow(/unknown field `languageOptions`/);
+    expect(scan({ rule: { kind: "identifier", languageOptions: {} } })).toThrow(/unknown field `languageOptions`/);
   });
 
   it.each(RESOLVE_CASES.map(testCase => [testCase.base.id, testCase] as const))("%s: the rule without resolves agrees, and resolves keeps a subset", async (_id, testCase) => {

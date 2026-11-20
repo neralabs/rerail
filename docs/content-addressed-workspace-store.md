@@ -7,7 +7,7 @@ Losing it costs reuse, never results.
 <details>
 <summary>What it holds and where the code lives</summary>
 
-It holds compressed sources and syntax tapes, per-file rule results, Git tree and snapshot metadata,
+It holds sources and syntax tapes, per-file rule results, Git tree and snapshot metadata,
 workspace overlays of changed files, and a kind search index.
 
 Code: `native/src/content_store/`, plus `native/src/code_rule_dsl/workspace/` (`storage.rs`,
@@ -50,10 +50,10 @@ the file, so the new store starts empty.
 store missing any object (new, or lacking an index this build added) takes the exclusive lock and
 applies the DDL; a new store also gets `auto_vacuum=INCREMENTAL`.
 
-`PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (1). A build refuses a store
+`PRAGMA user_version` is the compatibility floor, `SCHEMA_VERSION` (5). A build refuses a store
 whose floor is newer than its own. Additive changes such as indexes never raise it.
 
-The renamed file is `STORE_FILE_NAME`, now `content-v1.sqlite`. The old file is neither migrated nor
+The renamed file is `STORE_FILE_NAME`, now `content-v5.sqlite`. The old file is neither migrated nor
 deleted.
 
 Tests: `newer_compatibility_floor_is_refused`,
@@ -83,13 +83,14 @@ reopens them.
 PRAGMA foreign_keys=ON;
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
-PRAGMA cache_size=-1024;          -- 1 MiB page cache per connection
-PRAGMA mmap_size=0;
+PRAGMA cache_size=-1024;          -- 1 MiB page cache per connection; the writer's is 32 MiB
+PRAGMA mmap_size=4294967296;      -- RERAIL_STORE_MMAP_MB: 4096 by default, 0 (off) on Windows
 PRAGMA journal_size_limit=16777216;
+PRAGMA temp_store=MEMORY;
 ```
 
-It also sets a 128-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
-`BUSY_TIMEOUT` (250 ms) per attempt for the write lock.
+It also sets a 256-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
+`BUSY_TIMEOUT` (250 ms) per attempt for the write lock. `RERAIL_STORE_MMAP_MB=0` turns the map off.
 
 </details>
 
@@ -135,7 +136,9 @@ signed 64-bit lanes, each eight digest bytes read with `i64::from_be_bytes`. SHA
 
 ## Objects
 
-Each source and tape is stored once, as an independent compressed frame checked on every read.
+Each source and tape is stored once. A scan's sources and tapes are kept uncompressed in segment files beside the
+store (`content-v5.sqlite.objects/`), read in place; the row points at its range and holds no bytes. Other writes keep
+an independent compressed frame in the row, checked on every read.
 
 - **`source_objects`:** each source under its SHA-256.
 - **`tape_objects`:** one syntax tape per source and grammar.

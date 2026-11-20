@@ -224,17 +224,21 @@ const PROFILE_LOCK_WAIT_MS = 5_000;
 export interface ProfileStoreOptions {
   /** Waits between tries while another activation holds the profile's lock. */
   readonly sleep?: (ms: number) => Promise<void>;
+  /** How long an activation waits for another to let go of the profile's lock; `PROFILE_LOCK_WAIT_MS` unless given. */
+  readonly lockWaitMs?: number;
 }
 
 export class CustomerProfileStore {
   private readonly profilesRoot: string;
   private readonly activeProfilePath: string;
   private readonly sleep: ((ms: number) => Promise<void>) | undefined;
+  private readonly lockWaitMs: number;
 
   constructor(private readonly home: string, options: ProfileStoreOptions = {}) {
     this.profilesRoot = join(home, PROFILES_DIR);
     this.activeProfilePath = join(home, ACTIVE_PROFILE_FILE);
     this.sleep = options.sleep;
+    this.lockWaitMs = options.lockWaitMs ?? PROFILE_LOCK_WAIT_MS;
   }
 
   private profileDirectory(profileName: string): string {
@@ -250,7 +254,7 @@ export class CustomerProfileStore {
     assertProfileName(profileName);
     return await withHomeLock(this.home, {
       name: `profile-${profileName}`,
-      waitMs: PROFILE_LOCK_WAIT_MS,
+      waitMs: this.lockWaitMs,
       sleep: this.sleep,
       busy: () => new Error(`Timed out waiting for Rerail profile lock: ${profileName}`),
     }, operation);

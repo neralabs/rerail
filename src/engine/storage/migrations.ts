@@ -183,6 +183,14 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     },
   },
   {
+    // A rule's `title`, of either kind, which the dashboard shows. No floor: an older build never reads the column; its
+    // inserts leave it null, and its updates of a row keep the title the row had.
+    id: "rules-title",
+    up(database) {
+      addColumn(database, "rules", "title", "text");
+    },
+  },
+  {
     // An audit may belong to the repository instead of a session: a change the walk of the other worktrees found that
     // no session made is recorded once, under the repository, with no `session_id` (`audits.repository_id`,
     // `audits.recorded_by`). `session_id` loses its NOT NULL in `audits` and the derived tables, and the derived tables

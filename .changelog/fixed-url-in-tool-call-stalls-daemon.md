@@ -1,0 +1,1 @@
+On Windows, a URL with `//` and any scheme but `file:` or `smb:` in a tool call (`curl https://example.com/api`) no longer holds the daemon about 21 seconds when its host does not answer. On Linux and macOS, a web URL under `/net` is no longer looked up through the automounter. Doubled backslashes (`"C:\\Users\\me"` in JSON) are checked as single ones.

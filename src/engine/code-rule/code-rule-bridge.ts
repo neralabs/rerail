@@ -16,11 +16,10 @@ import type {
   WalkView,
 } from "./code-rule.js";
 import type { AuditMode, AuditOwner } from "../audit/audit.js";
-import { fileStamp } from "../file-stamp.js";
+import { fileStamp, stampTime } from "../file-stamp.js";
 import {
   gitBranchTips,
   gitCommitsBetween,
-  gitCrlfPaths,
   gitHead,
   gitModifiedOrUntrackedListing,
   gitModifiedOrUntrackedPaths,
@@ -32,6 +31,8 @@ import {
   type ChangedPathsListing,
   type CrlfRule,
 } from "../git.js";
+import { readGitCrlfPaths } from "../git-crlf-reader.js";
+import { readGitHead } from "../git-head-reader.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch, renameWithRetry } from "../file-replace.js";
@@ -43,7 +44,7 @@ import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
-import { type CallPlace, type CallsCounted, type CallWalkPlace, ToolCallWindows } from "./tool-call-windows.js";
+import { type CallPlace, type CallPlacesOf, type CallsAsked, type CallsCounted, type EndedCalls, ToolCallWindows } from "./tool-call-windows.js";
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
@@ -84,21 +85,28 @@ const LISTING_AGAIN_WAIT_MS = 1_000;
  * A source as a tool call found it: its text, why it could not be read, or neither when it did not exist. A file named
  * like one holding secrets (`sensitiveByName`) keeps only its SHA-256 and size (`withheld`): preimages go into the
  * session ledger in the checkout, so its text is never captured, and `rewind` refuses to put it back. A preimage whose
- * text holds a secret is written to the ledger the same way ({@link ledgerPreimage}), though the session keeps its text.
+ * text holds a secret is written to the ledger the same way ({@link ledgerPreimage}), though the session keeps its text,
+ * and so is one of a file named so only where it really is (`secretTarget`).
  */
 export interface Preimage {
   readonly text?: string;
   readonly readError?: string;
   readonly withheld?: { readonly sha256: string; readonly bytes: number };
+  /**
+   * The text is of a file named like one holding secrets where it really is (`Source.secretTarget`), not as the call
+   * spells it: the session keeps it, so `rewind` can put the file back, and the ledger keeps only its digest and size.
+   */
+  readonly secretTarget?: true;
 }
 
 /**
- * `preimage` as the session ledger records it: text holding a secret (`containsSecret`) is withheld, its SHA-256 and
- * size kept, so a session resumed from the ledger still finds the file unchanged by its digest but cannot put it back;
- * a read error is scrubbed. The live session keeps the text it captured.
+ * `preimage` as the session ledger records it: text holding a secret (`containsSecret`), or of a file named like one
+ * holding secrets where it really is (`secretTarget`), is withheld, its SHA-256 and size kept, so a session resumed from
+ * the ledger still finds the file unchanged by its digest but cannot put it back; a read error is scrubbed. The live
+ * session keeps the text it captured.
  */
 export function ledgerPreimage(preimage: Preimage): Preimage {
-  if (preimage.text !== undefined && containsSecret(preimage.text)) {
+  if (preimage.text !== undefined && (preimage.secretTarget === true || containsSecret(preimage.text))) {
     return { withheld: { sha256: createHash("sha256").update(preimage.text).digest("hex"), bytes: Buffer.byteLength(preimage.text) } };
   }
   return preimage.readError === undefined ? preimage : { ...preimage, readError: scrubSecrets(preimage.readError) };
@@ -115,6 +123,12 @@ export interface Source {
   readonly modifiedAt?: number;
   /** Filesystem-clock reading taken before the walk that produced this observation. */
   readonly observedAt?: number;
+  /**
+   * The file is named like one holding secrets where it really is, from the checkout that owns it, however `path`
+   * spells it: a link to a folder on the way (`conf/config.py`, `conf` a link to `.aws`) or a Windows short name
+   * (`AWS~1/config.py`) may lead there.
+   */
+  readonly secretTarget?: true;
 }
 export type ObservedSource = Omit<Source, "text" | "deleted">;
 /** Baseline observations keyed by workspace directory, shared so later sessions reuse digests of unchanged sources. */
@@ -200,16 +214,39 @@ interface FinishOptions {
   readonly rewindable?: boolean;
   readonly reported?: ReportedPreimage | undefined;
 }
-/** A source as a preimage: a file named like one holding secrets keeps only its digest and size. Undefined when it is none. */
+/** A source as a preimage (`textPreimage` for its text). Undefined when it is none. */
 function preimageOf(source: Source): Preimage | undefined {
-  if (source.text !== undefined)
-    return sensitiveByName(source.path) ? { withheld: { sha256: source.digest!, bytes: Buffer.byteLength(source.text) } } : { text: source.text };
+  if (source.text !== undefined) return textPreimage(source, source.text);
   if (source.readError !== undefined) return { readError: source.readError };
   return source.deleted === true ? {} : undefined;
 }
-/** `preimage` of the file at `path` as a capture keeps it: a file named like one holding secrets keeps only its digest and size. */
-function keptPreimage(path: string, preimage: Preimage): Preimage {
-  if (preimage.text === undefined || !sensitiveByName(path)) return preimage;
+/**
+ * `source`'s `text` as a preimage: a file named like one holding secrets as spelled keeps only its digest and size; one
+ * named so only where it really is (`secretTarget`) keeps its text for the session, marked so the ledger keeps only its
+ * digest and size too (`ledgerPreimage`).
+ */
+function textPreimage(source: Source, text: string): Preimage {
+  if (sensitiveByName(source.path)) return { withheld: { sha256: source.digest!, bytes: Buffer.byteLength(text) } };
+  return source.secretTarget === true ? { text, secretTarget: true } : { text };
+}
+function holdsSecrets(source: Source): boolean {
+  return source.secretTarget === true || sensitiveByName(source.path);
+}
+/**
+ * `source`, read at its spelled path, marked `secretTarget` when `real`, where it really is from the checkout that owns
+ * it, is named like a file holding secrets.
+ */
+function judgedWhereItLeads(source: Source | undefined, real: string): Source | undefined {
+  return source === undefined || !sensitiveByName(real) ? source : { ...source, secretTarget: true };
+}
+/**
+ * What a tool's result says `source` held, as its edit is read against it: a file named like one holding secrets, as
+ * spelled or where it really is (`holdsSecrets`), keeps only its digest and size, so its edit is read over the whole
+ * file, as a direct edit of it is. An edit read against what a result says is never rolled back (`RewindableEdit`), so
+ * the session needs no copy of that text.
+ */
+function keptPreimage(source: Source, preimage: Preimage): Preimage {
+  if (preimage.text === undefined || !holdsSecrets(source)) return preimage;
   return { withheld: { sha256: sha256(preimage.text), bytes: Buffer.byteLength(preimage.text) } };
 }
 /**
@@ -228,7 +265,7 @@ interface GitVerdict {
   readonly previousText?: string;
   readonly keptAs?: "git";
 }
-/** What Git holds for a walk's changes in one checkout, read once (`#gitVerdicts`). */
+/** What Git holds for a walk's changes in one checkout, as one reading of its verdicts finds it (`#gitVerdicts`). */
 interface GitBlobs {
   /** Each change's index blob, its conflict stages, its `HEAD` blob and, when `HEAD` moved, its blob at `before`. */
   readonly blobs: ReadonlyMap<string, Buffer>;
@@ -253,10 +290,9 @@ interface GitView extends GitBlobs {
 }
 async function readGitView(discovery: SourceDiscovery, checkout: string, paths: readonly string[]): Promise<GitBlobs | undefined> {
   const { git } = discovery;
-  const head = await git.run(signal => gitHead(checkout, { signal }));
+  const head = await git.run(signal => readGitHead(checkout, { signal }));
   if (head === undefined) return undefined;
   const from = discovery.heads.get(checkout);
-  if (from === undefined) discovery.heads.set(checkout, head);
   const unmerged = await readUnmergedView(discovery, checkout);
   const moved = from !== head;
   const committed = moved && await git.run(signal => headMovedOnlyByCommits(checkout, from, { signal }));
@@ -264,7 +300,7 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
   const [blobs, crlf] = await Promise.all([
     // A blob larger than a source could never match its digest: it is skipped, never read into memory.
     git.run(signal => readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
-    git.run(signal => gitCrlfPaths(checkout, paths, { signal })),
+    git.run(signal => readGitCrlfPaths(checkout, paths, { signal })),
   ]);
   return { blobs, head, moved, committed, before, crlf, ...unmerged };
 }
@@ -275,12 +311,35 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
 function unmergedNow(discovery: SourceDiscovery, checkout: string): Promise<ReadonlyMap<string, string> | undefined> {
   return discovery.git.run(signal => discovery.readUnmerged(checkout, { signal }));
 }
-/** A checkout's unmerged entries now and as the last walk saw them; the first entries read become its snapshot. */
+/** Puts `root`'s unmerged entries now in `unmerged`; a checkout whose entries Git could not list is left out. */
+async function readEntriesInto(discovery: SourceDiscovery, root: string, unmerged: Map<string, ReadonlyMap<string, string>>): Promise<void> {
+  const entries = await unmergedNow(discovery, root);
+  if (entries !== undefined) unmerged.set(root, entries);
+}
+/** `HEAD` of each of `roots` that names a commit, with its unmerged entries put in `unmerged`. */
+async function readHeads(discovery: SourceDiscovery, roots: Iterable<string>, unmerged: Map<string, ReadonlyMap<string, string>>): Promise<Map<string, string>> {
+  const heads = new Map<string, string>();
+  for (const root of roots) {
+    const head = await discovery.git.run(signal => readGitHead(root, { signal }));
+    if (head === undefined) continue;
+    heads.set(root, head);
+    await readEntriesInto(discovery, root, unmerged);
+  }
+  return heads;
+}
+/** A checkout's unmerged entries now and as the last walk saw them (`keepFirstSnapshot` takes the first ones). */
 async function readUnmergedView(discovery: SourceDiscovery, checkout: string): Promise<Pick<GitBlobs, "unmerged" | "unmergedBefore">> {
   const unmerged = await unmergedNow(discovery, checkout);
-  const unmergedBefore = discovery.unmerged.get(checkout);
-  if (unmergedBefore === undefined && unmerged !== undefined) discovery.unmerged.set(checkout, unmerged);
-  return { unmerged, unmergedBefore };
+  return { unmerged, unmergedBefore: discovery.unmerged.get(checkout) };
+}
+/**
+ * Where no walk has taken a checkout's snapshot yet, makes it the `HEAD` and unmerged entries the standing reading of
+ * its Git verdicts read. Only that reading leaves one, so each reading of a walk is judged from what the last walk saw,
+ * never from an earlier reading's.
+ */
+function keepFirstSnapshot(discovery: SourceDiscovery, checkout: string, view: GitBlobs): void {
+  if (!discovery.heads.has(checkout)) discovery.heads.set(checkout, view.head);
+  if (!discovery.unmerged.has(checkout) && view.unmerged !== undefined) discovery.unmerged.set(checkout, view.unmerged);
 }
 /**
  * Whether a merge, rebase or cherry-pick stopped on a conflict since the last walk: the unmerged entries changed. A
@@ -299,6 +358,34 @@ async function commitsMade(git: GitReads, checkout: string, view: GitBlobs): Pro
   const { before, head } = view;
   const commits = before === undefined ? [head] : await git.run(signal => gitCommitsBetween(checkout, before, head, { signal }));
   return commits.length === 0 ? undefined : commits;
+}
+/** A walk's change in one checkout: its path there and, when its text was not captured, the digest it had before. */
+interface CheckoutEdit {
+  readonly edit: CodeRuleEdit;
+  readonly path: string;
+  readonly prior: string | undefined;
+}
+/** One reading of a checkout's Git verdicts (`#gitVerdicts`), and the view of Git it was made from. */
+interface VerdictReading {
+  readonly verdicts: Map<string, GitVerdict>;
+  readonly view: GitBlobs;
+}
+/**
+ * How many readings of a checkout's Git verdicts a walk makes at most, while each finds a change Git's and `HEAD` moved
+ * as it was read: a command that commits as the first reading is made is read through by the second. A `HEAD` that
+ * moves through all of them belongs to a command still committing, or a rebase at work, which no reading holds for.
+ */
+const GIT_VERDICT_READS = 3;
+/** Whether a reading takes a change for Git's: one with no text Git's move proves it was changed from. */
+function findsGitWrite(verdicts: ReadonlyMap<string, GitVerdict>): boolean {
+  return [...verdicts.values()].some(verdict => verdict.previousText === undefined);
+}
+/**
+ * Whether `checkout`'s `HEAD` still names `head`, asked of Git itself through the session's Git reads, not of its files
+ * (`readGitHead`): only a reading that takes a change for Git's asks, so a commit made meanwhile is Git's to name.
+ */
+async function headStill(discovery: SourceDiscovery, checkout: string, head: string): Promise<boolean> {
+  return await discovery.git.run(signal => gitHead(checkout, { signal })) === head;
 }
 function gitRevisions(path: string, before: string | undefined): string[] {
   const revisions = [`:./${path}`, `:2:./${path}`, `:3:./${path}`, `HEAD:./${path}`];
@@ -363,10 +450,45 @@ function nonText(location: SourceLocation, source: Buffer): Pick<Source, "readEr
   if (location.unlisted && source.includes(0)) return {};
   return source.length > MAX_SOURCE_BYTES || source.includes(0) ? { readError: NOT_TEXT_ERROR } : undefined;
 }
-/** The latest stamp of a file a baseline walk read, which a shell may have written while it read. */
+/** The latest stamp of a file a walk read, which a shell may have written while it read. */
 async function modifiedSince(absolute: string, modifiedAt: number): Promise<number> {
   const after = await lstat(absolute);
   return Math.max(modifiedAt, after.mtimeMs, after.ctimeMs);
+}
+/**
+ * The stamp a walk gives what it read: what the file was stamped when the walk looked at it, or, where a shell may have
+ * written it while the read was pending, its stamp after the read. A baseline walk takes the later one, so it does not
+ * take bytes written meanwhile as the baseline. So does a walk that finds a command of the session it holds sources back
+ * for as its read ends (`#toolChanges`): the command may have begun after the walk looked, and be part way through what
+ * the walk read. With none, none the walk holds sources back for began before the bytes were read. The original `stamp`
+ * is kept either way, so the next walk reads the file again. A file such a walk cannot stamp after its read (gone, as
+ * when the command emptied and then removed it) is stamped now, so the command holds it back too. So is one whose times
+ * after the read do not date the bytes it read (`undated`, `undatedRead`). A baseline walk gives such a read no stamp
+ * and keeps what was seen of the file before (`baselineStamp`).
+ */
+async function stampOfRead(walk: SourceWalk, absolute: string, modifiedAt: number, undated: (at: number) => boolean): Promise<number | undefined> {
+  if (!walk.captureChanges) return baselineStamp(walk, await modifiedSince(absolute, modifiedAt), undated);
+  if (walk.commandRuns?.() !== true) return modifiedAt;
+  const after = await modifiedSince(absolute, modifiedAt).catch(() => undefined);
+  return after === undefined || undated(after) ? Math.max(modifiedAt, await filesystemClock()) : after;
+}
+/**
+ * A baseline walk's stamp of what it read: the file's times after the read, `after`; none where a command of the session
+ * runs and those times do not date the bytes (`undated`). The walk then keeps what was seen of the file before
+ * (`#readObservedFile`): what the session saw before a quiet spell, or what the folder's shared observations hold. It
+ * cannot hold the file back as a later walk does (`#toolChanges`) where the session has seen nothing of its own.
+ */
+function baselineStamp(walk: SourceWalk, after: number, undated: (at: number) => boolean): number | undefined {
+  return walk.commandRuns?.() === true && undated(after) ? undefined : after;
+}
+/**
+ * Whether a walk read other bytes than `previous`, the observation of the file it compares with (the session's last, or
+ * in a baseline walk the folder's shared one), though the file's times, `at`, have not moved past that observation's.
+ * Those times do not say when the bytes were written: a file system can show a change before it stamps it, as Linux
+ * empties a file it truncates before it gives the file its new times.
+ */
+function undatedRead(previous: ObservedSource | undefined, bytes: Buffer, at: number): boolean {
+  return previous?.stamp !== undefined && at <= stampTime(previous.stamp) && previous.digest !== sha256(bytes);
 }
 /**
  * A text file as a walk observes it, with its text only when it may be an edit (`#discoveredEdit`): its digest is not
@@ -392,6 +514,39 @@ function recordReadError(scan: SourceScan, source: Source): void {
   if (source.readError === undefined) return;
   if (unreadOversize(source)) scan.unread.set(source.path, { stamp: source.stamp, readError: source.readError });
   else scan.errors.push({ path: source.path, readError: source.readError });
+}
+/**
+ * Notes each file the session folder's walk could not read, with the calls that may have written it unseen
+ * (`SourceDiscovery.missedFiles`). Whether the walk lets the other calls go: it listed every folder, so it read every
+ * file but those, and the calls it keeps for them claim only their writes (`ToolCallWindows.ranDuring`).
+ */
+function holdMissedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): boolean {
+  discovery.missedFiles = missedFiles(discovery, walk, scan);
+  if (scan.failedRoots.size > 0) return false;
+  discovery.listedEnds = walk.callsEnded;
+  return true;
+}
+/**
+ * Each file the walk could not read, with the calls it keeps: from those that ended after the last walk that listed
+ * every folder before its first miss began, up to this walk's start. A file under a folder the walk could not list is
+ * one: the walk tried no read of it. `failFolder` finds a source there only for a file the session observes, and a file
+ * the last walk missed may have none (a tool call pending on it, or a read of it that failed, leaves it unobserved), so
+ * each such file the last walk missed stays missed here with its calls.
+ */
+function missedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Map<string, EndedCalls> {
+  const missed = new Map<string, EndedCalls>();
+  for (const [path, source] of scan.sources) if (missedRead(source)) missed.set(path, missedThrough(discovery, path, walk.callsEnded));
+  for (const path of discovery.missedFiles.keys())
+    if (!missed.has(path) && underBaselineRoot(scan.failedRoots, path)) missed.set(path, missedThrough(discovery, path, walk.callsEnded));
+  return missed;
+}
+/** A file whose read failed: an error with no stamp. */
+function missedRead(source: Source): boolean {
+  return source.readError !== undefined && source.stamp === undefined;
+}
+/** The calls the file at `path` keeps as a walk that began once `through` calls had ended misses it. */
+function missedThrough(discovery: SourceDiscovery, path: string, through: number): EndedCalls {
+  return { after: discovery.missedFiles.get(path)?.after ?? discovery.listedEnds, through };
 }
 /** What a walk could not check, as a boundary reports it; undefined when it checked everything. */
 function scanErrors(errors: readonly ScanError[]): string | undefined {
@@ -433,7 +588,7 @@ function editPreimage(source: Source, captured: Preimage | undefined, reported: 
  */
 function unchangedSinceWrite(source: Source, captured: Preimage, reported: ReportedPreimage): Preimage {
   const preimage = reportedText(reported, source.text);
-  if (preimage !== undefined) return keptPreimage(source.path, preimage);
+  if (preimage !== undefined) return keptPreimage(source, preimage);
   return captured.text !== undefined && placesBeforeWrite(reported, captured.text) ? captured : { readError: UNREBUILT_PREIMAGE };
 }
 /**
@@ -452,10 +607,10 @@ function changedSinceWrite(source: Source, captured: Preimage, reported: Reporte
   const text = captured.text;
   if (text === undefined) return captured;
   const before = textBeforeWrite(reported, text, source.text);
-  if (before !== undefined) return keptPreimage(source.path, before);
+  if (before !== undefined) return keptPreimage(source, before);
   if (placesBeforeWrite(reported, text) || capturedOtherThanMade(reported, text)) return captured;
   const said = unprovenCaptureBefore(reported, text, source.text);
-  return said === undefined ? captured : keptPreimage(source.path, said);
+  return said === undefined ? captured : keptPreimage(source, said);
 }
 /**
  * Whether an edit read against `preimage` was read against what its call captured: that capture, or its very text, as
@@ -594,6 +749,8 @@ interface WorktreeStart {
   /** `WorktreeDiscovery.roots` as the walk began. */
   readonly worktrees: ReadonlySet<string>;
   readonly versions: ReadonlyMap<string, number>;
+  /** `ToolCallWindows.ends` as the walk began. */
+  readonly callsEnded: number;
 }
 
 /** A walk of the other worktrees as this session takes it: what changed since its snapshots, read off the lane. */
@@ -637,6 +794,22 @@ function takeGaps(worktree: string, findings: WorktreeFindings, scan: SourceScan
   for (const failed of findings.failedRoots) if (takes(failed)) scan.failedRoots.add(inWorktree(worktree, failed));
   for (const { path, readError } of findings.errors) if (takes(path)) scan.errors.push({ path: inWorktree(worktree, path), readError });
   for (const [path, unread] of findings.unread) if (takes(path)) scan.unread.set(inWorktree(worktree, path), unread);
+}
+
+/**
+ * Puts into `taken` the heads and unmerged entries a walk read of the worktree at `root` and of the checkouts inside it,
+ * and the unmerged entries of the checkouts it passed (`SourceScan.unmerged`), by physical root.
+ */
+function takeCheckouts(
+  root: string,
+  findings: WorktreeFindings,
+  taken: { readonly heads: Map<string, string>; readonly unmerged: Map<string, ReadonlyMap<string, string>>; readonly passed: SourceScan["unmerged"] },
+): void {
+  if (findings.head !== undefined) taken.heads.set(root, findings.head);
+  if (findings.unmerged !== undefined) taken.unmerged.set(root, findings.unmerged);
+  for (const [checkout, head] of findings.inner.heads) taken.heads.set(checkout, head);
+  for (const [checkout, entries] of findings.inner.unmerged) taken.unmerged.set(checkout, entries);
+  for (const [checkout, entries] of findings.inner.passed) taken.passed.set(checkout, entries);
 }
 
 /**
@@ -739,6 +912,15 @@ interface SourceDiscovery {
   readonly readUnmerged: ReturnType<typeof gitUnmergedReader>;
   /** When the session's tool calls ran: a change the session folder's walk finds is its own only when one ran then. */
   readonly toolCalls: ToolCallWindows;
+  /**
+   * Each file the session folder's last walk could not read, by path, with the calls that may have written it unseen
+   * (`holdMissedFiles`): any call from the last walk that listed every folder before the walks began to miss it, up to
+   * the last walk's start. Another program may let the file go between two walks that miss it, so each call in that
+   * time may have written it.
+   */
+  missedFiles: ReadonlyMap<string, EndedCalls>;
+  /** `ToolCallWindows.ends` as the last session folder walk that listed every folder began. */
+  listedEnds: number;
 }
 
 /**
@@ -823,6 +1005,11 @@ interface SourceWalk {
   readonly previousSources: ReadonlyMap<string, ObservedSource>;
   readonly captureChanges: boolean;
   /**
+   * Whether a shell command of the session runs, or ended since the walk began (`ToolCallWindows.commandSince`); the
+   * other worktrees' walks ask nothing.
+   */
+  readonly commandRuns?: () => boolean;
+  /**
    * Where a source the walk has no observation of is a baseline, as the walk began: the subtrees the last walk could not
    * read (`firstSightIsBaseline`). What a walk keeps no text of under them is what `#discoveredEdit` then takes as one.
    */
@@ -849,6 +1036,11 @@ interface WalkStart {
   readonly versions: ReadonlyMap<string, number>;
   readonly heads: ReadonlyMap<string, string>;
   readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  /**
+   * `ToolCallWindows.ends` as the walk started: a command that ended since may have been writing what the walk read, and
+   * only the calls that ended before are those the walk answers for (`ToolCallWindows.answered`).
+   */
+  readonly callsEnded: number;
   /** Filesystem-clock reading taken as the walk started. */
   readonly observedAt: number;
   /**
@@ -869,6 +1061,15 @@ interface TakenWorktree {
   readonly worktree: string;
   readonly findings: WorktreeFindings;
   readonly scan: SourceScan;
+}
+/**
+ * A walk's changes as Git's verdicts sort them (`#separateOwnWrites`): those Git did not write, for the session to
+ * claim; those another writer or Git made that are still audited; and the digest each uncaptured change had before.
+ */
+interface SortedWrites {
+  readonly unwritten: CodeRuleEdit[];
+  readonly notOwn: CodeRuleEdit[];
+  readonly uncaptured: Map<string, string>;
 }
 /**
  * What the Git of `checkout` lists as modified or untracked: as the walk listed it, else listed now; undefined when it
@@ -1024,6 +1225,15 @@ function discoveryGap(discovery: SourceDiscovery): string | undefined {
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
+/** Whether `checkout` is still a Git checkout: its `.git` entry is there. A look that fails otherwise says nothing of it. */
+async function stillACheckout(checkout: string): Promise<boolean> {
+  try {
+    await lstat(join(checkout, ".git"));
+    return true;
+  } catch (error) {
+    return !hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR");
+  }
+}
 function sha256(data: string | Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
@@ -1056,6 +1266,11 @@ async function writtenThisSession(discovery: SourceDiscovery, walk: WalkStart, p
   } catch {
     return false;
   }
+}
+/** When the file at `absolute` was last written, on the filesystem's clock, as a walk reads its stamp; undefined when it cannot be read. */
+async function writtenAt(absolute: string): Promise<number | undefined> {
+  const info = await lstat(absolute).catch(() => undefined);
+  return info === undefined ? undefined : Math.max(info.mtimeMs, info.ctimeMs);
 }
 /** The stamp of the nearest folder under `root` that holds, or held, `path`, on the filesystem's clock; undefined only when `root` itself cannot be read. */
 async function folderStamp(root: string, path: string): Promise<number | undefined> {
@@ -1108,8 +1323,10 @@ function sessionRelativePath(root: string, configuredPath: string): string | und
   const path = sessionPath(root, isAbsolute(configuredPath) ? configuredPath : resolve(root, configuredPath));
   return path === "" || isAbsolute(path) ? undefined : path;
 }
+/** Why an edit of a source changed while the session's first walk was still to take it is read over its whole file. */
+const CHANGED_IN_INITIAL_DISCOVERY = "Source changed during initial discovery without a captured preimage";
 function uncapturedPreimage(baselinePath: boolean, before: ObservedSource | undefined): Pick<CodeRuleEdit, "previousReadError"> {
-  if (baselinePath) return { previousReadError: "Source changed during initial discovery without a captured preimage" };
+  if (baselinePath) return { previousReadError: CHANGED_IN_INITIAL_DISCOVERY };
   if (before === undefined) return {};
   return { previousReadError: "Source changed outside a tool with a captured preimage" };
 }
@@ -1135,6 +1352,19 @@ function takeFirstSeen(scan: FirstSightTake, sources: ReadonlyArray<Source | und
 }
 
 /**
+ * The digests `uncaptured` holds for `edits`. A walk's map also holds those of the changes it took for Git's, or dropped
+ * with a worktree being removed (`#separateOwnWrites`): no edit needs their preimages, so no Git is read for them.
+ */
+function batchDigests(edits: readonly CodeRuleEdit[], uncaptured: ReadonlyMap<string, string>): Map<string, string> {
+  const digests = new Map<string, string>();
+  for (const { path } of edits) {
+    const digest = uncaptured.get(path);
+    if (digest !== undefined) digests.set(path, digest);
+  }
+  return digests;
+}
+
+/**
  * Puts in `recovered` each of `paths` (owned by `checkout`) whose Git index or `HEAD` blob has the digest `uncaptured`
  * names for it.
  */
@@ -1150,7 +1380,7 @@ async function recoverFromGit(
   const [blobs, crlf] = await Promise.all([
     // A blob larger than a source could never match its digest: it is skipped, never read into memory.
     discovery.git.run(signal => readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
-    discovery.git.run(signal => gitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout), { signal })),
+    discovery.git.run(signal => readGitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout), { signal })),
   ]);
   for (const { path, inCheckout } of named) {
     const digest = uncaptured.get(path);
@@ -1215,8 +1445,6 @@ export class CodeRuleBridge {
   readonly #rewindable = new Map<string, RewindableEdit>();
   /** Command tool calls whose results must reconcile shell writes. */
   readonly #commands = new Set<string>();
-  /** Command tool calls the runtime answered while the evaluator opened (`unwatchedCall`), until their results. */
-  readonly #unwatchedCommands = new Set<string>();
   /**
    * What the session last observed of each source of its folder, and of each source elsewhere that a tool call of it
    * read; of the other worktrees, only where that differs from the snapshot `#worktreeView` holds (`#observe`).
@@ -1363,7 +1591,7 @@ export class CodeRuleBridge {
         startedAt: from.since, walkedFrom: from.since, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(from.gitSeen.heads), git, unmerged: new Map(from.gitSeen.unmerged), passedCheckouts: new Set(from.gitSeen.passedCheckouts),
-        readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
+        readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched, missedFiles: new Map(), listedEnds: 0,
         late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), listingSlots: { free: LISTINGS_AGAIN_AT_ONCE, waiting: [] },
       };
       this.#unwatched = new ToolCallWindows();
@@ -1499,7 +1727,8 @@ export class CodeRuleBridge {
     const discovery = this.#requireDiscovery();
     const paths = generatedEditPaths(toolName, input);
     const named = paths.flatMap(path => sessionRelativePath(discovery.root, path) ?? []);
-    discovery.toolCalls.begin(toolCallId, await filesystemClock(), { folder: await this.#callFolder(cwd), paths: named });
+    const place = { folder: await this.#callFolder(cwd), paths: named };
+    discovery.toolCalls.begin(toolCallId, await filesystemClock(), { command: isCommandTool(toolName), place });
     this.refreshCodeRules();
     this.#auditor.refreshOwners?.(paths);
     // What the ignore files a tool is about to write hold now is the baseline its edit is compared with.
@@ -1511,7 +1740,7 @@ export class CodeRuleBridge {
     return await this.#enqueue(async () => {
       this.#assertDiscovery(discovery);
       const preimages = restoredPreimages === undefined
-        ? await this.#capturePreimages(paths)
+        ? await this.#capturePreimages(discovery, paths)
         : new Map(Object.entries(restoredPreimages));
       for (const path of preimages.keys()) this.#touchSource(discovery, path);
       this.#pending.set(toolCallId, { paths, preimages });
@@ -1524,12 +1753,28 @@ export class CodeRuleBridge {
    * is captured, but what it writes is the session's own. Its window is taken by the workspace as it opens, so the walk
    * credits what was stamped while it ran; its result reconciles nothing, and what it wrote is the next walk's. A host
    * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call. `toolName`
-   * names the call's tool, none for a turn's window, and `cwd` the folder it runs in, as its host's hook named it.
+   * names the call's tool, none for a turn's window; `input` is its tool input, whose files the window names, so a later
+   * call's capture of one of them knows it holds an edit no walk has checked yet (`#unobservedOpeningEdit`). `cwd` is
+   * the folder it runs in, as its host's hook named it.
    */
-  async unwatchedCall(toolCallId: string, call: { readonly toolName?: string | undefined; readonly cwd?: string | undefined } = {}): Promise<void> {
-    if (call.toolName !== undefined && isCommandTool(call.toolName)) this.#unwatchedCommands.add(toolCallId);
+  async unwatchedCall(
+    toolCallId: string,
+    call: { readonly toolName?: string | undefined; readonly input?: unknown; readonly cwd?: string | undefined } = {},
+  ): Promise<void> {
     const at = await filesystemClock();
-    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, at, { folder: await this.#callFolder(call.cwd), paths: [] });
+    const { toolName } = call;
+    const named = toolName === undefined ? [] : await this.#sessionPaths(generatedEditPaths(toolName, call.input));
+    const place = { folder: await this.#callFolder(call.cwd), paths: named };
+    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, at, { command: toolName !== undefined && isCommandTool(toolName), unwatched: true, place });
+  }
+
+  /**
+   * `configuredPaths` as the session names its sources, whatever the auditor reads, which it cannot say before it opens;
+   * none where the session's folder cannot be resolved.
+   */
+  async #sessionPaths(configuredPaths: readonly string[]): Promise<string[]> {
+    const root = await realpath(this.#cwd).catch(() => undefined);
+    return root === undefined ? [] : configuredPaths.flatMap(path => sessionRelativePath(root, path) ?? []);
   }
 
   /**
@@ -1544,7 +1789,6 @@ export class CodeRuleBridge {
 
   /** Ends the window `unwatchedCall` opened for the call, at its result. */
   async unwatchedResult(toolCallId: string): Promise<void> {
-    this.#unwatchedCommands.delete(toolCallId);
     (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, await filesystemClock());
   }
 
@@ -1822,14 +2066,20 @@ export class CodeRuleBridge {
     this.#assertDiscovery(discovery);
     return this.#revision === revision ? [] : [this.#lastResponse];
   }
-  async settleGeneratedEdits(): Promise<void> {
+  /** The auditor's `settleGeneratedEdits` once the bridge's queued work is done; with `steering`, the edits that may steer. */
+  async settleGeneratedEdits(only?: "steering"): Promise<void> {
     this.#requireSession();
     await this.#queue;
     if (this.#auditor.settleGeneratedEdits !== undefined) {
-      await this.#auditor.settleGeneratedEdits();
+      await this.#auditor.settleGeneratedEdits(only);
     } else {
       await this.#auditor.settle?.();
     }
+  }
+
+  /** Whether its wait for the edits that may steer waits for a walk's `log` edits too (the auditor's `steeringWaitsForLog`). */
+  steeringWaitsForLog(): boolean {
+    return this.#auditor.steeringWaitsForLog?.() === true;
   }
 
   async settle(): Promise<void> {
@@ -1911,17 +2161,36 @@ export class CodeRuleBridge {
     this.#observations?.set(this.#cwd, own);
   }
 
-  async #capturePreimages(paths: readonly string[]): Promise<ReadonlyMap<string, Preimage>> {
+  /**
+   * Each source's text as the call begins, its preimage, which the session takes as what it observed of the source. A
+   * source holding an edit made while the evaluator opened that no walk has checked yet (`#unobservedOpeningEdit`) gives
+   * no text to read the call's edit against: the edit is read over its whole file, as the evaluator's first walk reads a
+   * change it finds, so the earlier edit's lines are checked once, here, rather than taken as the source's earlier
+   * state and never checked.
+   */
+  async #capturePreimages(discovery: SourceDiscovery, paths: readonly string[]): Promise<ReadonlyMap<string, Preimage>> {
     const root = await realpath(this.#cwd);
     const preimages = new Map<string, Preimage>();
     for (const configuredPath of [...paths].sort(compareDeterministicStrings)) {
       const source = await this.#readSource(root, configuredPath);
       if (source === undefined) continue;
+      const preimage = await this.#unobservedOpeningEdit(discovery, source) ? { readError: CHANGED_IN_INITIAL_DISCOVERY } : preimageOf(source);
       this.#updateObservedSource(source);
-      const preimage = preimageOf(source);
       if (preimage !== undefined) preimages.set(source.path, preimage);
     }
     return preimages;
+  }
+
+  /**
+   * Whether `source` holds an edit of a call answered while the evaluator opened, never begun, that no walk or call of
+   * the session has observed: the call named the file and ran when it was last written (`ToolCallWindows.namedAt`), and
+   * the session holds no observation of it. The evaluator's first walk would find the file changed during initial
+   * discovery and check it whole; a capture taken as the file's earlier state would leave that walk nothing to find.
+   */
+  async #unobservedOpeningEdit(discovery: SourceDiscovery, source: Source): Promise<boolean> {
+    if (this.#observedSource(source.path) !== undefined) return false;
+    const stamp = await writtenAt(resolve(discovery.root, source.path));
+    return stamp !== undefined && discovery.toolCalls.namedAt(source.path, stamp);
   }
 
   /**
@@ -2181,7 +2450,7 @@ export class CodeRuleBridge {
       discovery.worktrees.error = errorMessage(error);
       return undefined;
     }
-    const start: WorktreeStart = { worktrees: new Set(discovery.worktrees.roots), versions: new Map(discovery.versions) };
+    const start: WorktreeStart = { worktrees: new Set(discovery.worktrees.roots), versions: new Map(discovery.versions), callsEnded: discovery.toolCalls.ends };
     const rules = { current: false };
     return {
       worktrees: new Set(worktrees),
@@ -2216,6 +2485,7 @@ export class CodeRuleBridge {
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
       // Read before the walk, so a move or conflict the walk only partly saw is still one to the next.
       ...await this.#readCheckouts(discovery),
+      callsEnded: discovery.toolCalls.ends,
       observedAt: await filesystemClock(),
       readFrom: new Map(),
       records: new Set(),
@@ -2238,6 +2508,7 @@ export class CodeRuleBridge {
       discovery, checkoutOf: path => this.#owningCheckout(discovery.root, path), observedAt: walk.observedAt,
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
       captureChanges: !walk.baseline,
+      commandRuns: () => discovery.toolCalls.commandSince(walk.callsEnded) !== undefined,
       baselineRoots: discovery.baselineRoots,
       buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
       scan: emptyScan(),
@@ -2293,16 +2564,16 @@ export class CodeRuleBridge {
     const watched = discovery.worktrees.roots.has(worktree);
     const claimant = this.#claimant(discovery, root, worktree, watched);
     for (const change of findings.changes) {
-      const { path, counted } = claimant(change.path);
+      const { path, asked } = claimant(change.path);
       const since = change.before?.observedAt ?? discovery.startedAt;
       const written = { stamp: change.after?.modifiedAt, deleted: change.after === undefined, since, until: findings.readFrom };
-      if (await this.#callRanAsWritten(discovery, counted, path, written)) claimed.add(change.path);
+      if (await this.#callRanAsWritten(discovery, asked, path, written)) claimed.add(change.path);
     }
     // This read of the session's checkout answers for its calls outside the session folder. It comes only while another
     // session watches the checkout and a read of it finds a change: else such a call waits for the oldest calls to go
     // (`MAX_FINISHED_CALLS`), which costs only its memory, and comes only of a session opened below its checkout's top.
     if (!watched && findings.failedRoots.size === 0) {
-      discovery.toolCalls.answered(findings.readFrom, { place: REST_OF_CHECKOUT, placesOf: this.#callPlaces(discovery) });
+      discovery.toolCalls.answeredIn(REST_OF_CHECKOUT, { at: findings.readFrom }, this.#callPlaces(discovery));
     }
     return claimed;
   }
@@ -2313,16 +2584,16 @@ export class CodeRuleBridge {
    * ran there (`#ranIn`). Else the session's own checkout, which holds its folder: the session takes nothing of it
    * outside the folder, so only an edit tool, whose result checked the file, made a change there it records.
    */
-  #claimant(discovery: SourceDiscovery, root: string, worktree: string, watched: boolean): (path: string) => { path: string; counted: CallsCounted } {
+  #claimant(discovery: SourceDiscovery, root: string, worktree: string, watched: boolean): (path: string) => { path: string; asked: CallsAsked } {
     if (watched) {
       return changed => {
         const path = inWorktree(worktree, changed);
-        return { path, counted: this.#ranIn(discovery, worktree, path) };
+        return { path, asked: { place: worktree, counted: this.#ranIn(discovery, worktree, path) } };
       };
     }
     return changed => {
       const path = sessionPath(discovery.root, join(root, changed));
-      return { path, counted: (call: CallPlace) => call.paths.includes(path) };
+      return { path, asked: { place: REST_OF_CHECKOUT, counted: (call: CallPlace) => call.paths.includes(path) } };
     };
   }
 
@@ -2374,16 +2645,12 @@ export class CodeRuleBridge {
       if (!start.worktrees.has(worktree)) continue;
       snapshots.set(worktree, findings.snapshot);
       readFrom.set(worktree, findings.readFrom);
-      if (findings.head !== undefined) heads.set(root, findings.head);
-      if (findings.unmerged !== undefined) unmerged.set(root, findings.unmerged);
-      for (const [checkout, head] of findings.inner.heads) heads.set(checkout, head);
-      for (const [checkout, entries] of findings.inner.unmerged) unmerged.set(checkout, entries);
-      for (const [checkout, entries] of findings.inner.passed) scan.unmerged.set(checkout, entries);
+      takeCheckouts(root, findings, { heads, unmerged, passed: scan.unmerged });
       this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
     }
     const walk: WalkStart = {
       inSession: false, baseline: false, checkpoint: "edit", worktrees: new Set(snapshots.keys()), previous, versions: start.versions,
-      heads, unmerged, observedAt, readFrom,
+      heads, unmerged, callsEnded: start.callsEnded, observedAt, readFrom,
       records: new Set([
         ...[...records].flatMap(([root, paths]) => [...paths].map(path => inWorktree(sessionPath(discovery.root, root), path))),
         ...discovery.worktrees.unrecorded,
@@ -2604,9 +2871,9 @@ export class CodeRuleBridge {
    */
   #takeSnapshots(discovery: SourceDiscovery, take: WorktreeTake): void {
     for (const [worktree, snapshot] of take.snapshots) if (discovery.worktrees.roots.has(worktree)) this.#worktreeView.take(worktree, snapshot);
-    const pendingPaths = this.#pendingPaths();
+    const toolChanged = this.#toolChanges(discovery, take.walk);
     for (const path of new Set([...take.walk.previous.keys(), ...take.scan.sources.keys()])) {
-      if (this.#toolChanged(discovery, take.walk, path, pendingPaths, take.scan.sources.get(path))) this.#leaveToNextWalk(discovery, take.walk, path);
+      if (toolChanged(path, take.scan.sources.get(path))) this.#leaveToNextWalk(discovery, take.walk, path);
     }
     for (const [path, before] of take.views) this.#keepToolView(path, before);
   }
@@ -2688,9 +2955,11 @@ export class CodeRuleBridge {
     discovery.error = scanErrors(scan.errors);
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
-    // A subtree it could not read may still hold writes made since the session opened, which its next walk judges. A call
-    // that ran in another worktree, or named a file there, is that worktree's walk to answer for too (`#finishWorktreeWalk`).
-    if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.observedAt, { place: undefined, placesOf: this.#callPlaces(discovery) });
+    // A subtree or a file it could not read may still hold writes of the calls that ended before it: the next walk that
+    // reads them judges each by its stamp. A folder it could not list keeps every call; a file keeps those that may have
+    // written it unseen (`holdMissedFiles`), for its own writes only. A call that ran in another worktree, or named a file
+    // there, is that worktree's walk to answer for too (`#finishWorktreeWalk`).
+    if (holdMissedFiles(discovery, walk, scan)) discovery.toolCalls.answered(walk.callsEnded, [...discovery.missedFiles.values()], this.#callPlaces(discovery));
     this.#listLateAgain(discovery, scan.lateListings);
   }
 
@@ -2703,7 +2972,7 @@ export class CodeRuleBridge {
    * is read for the walk asking, as the walks read it (a `git init` or `git worktree add` can change it), once, and only
    * when a file named is outside the folder.
    */
-  #callPlaces(discovery: SourceDiscovery): (call: CallPlace) => CallWalkPlace[] {
+  #callPlaces(discovery: SourceDiscovery): CallPlacesOf {
     let checkout: { readonly root: string | undefined } | undefined;
     const restOfCheckout = (path: string): boolean => {
       if (path !== ".." && !path.startsWith("../")) return false;
@@ -2735,7 +3004,7 @@ export class CodeRuleBridge {
     // left a subtree unread, which may still hold their writes.
     for (const [worktree, readFrom] of walk.readFrom) {
       const unread = [...scan.failedRoots].some(failed => failed === worktree || failed.startsWith(`${worktree}/`)) || underBaselineRoot(scan.failedRoots, worktree);
-      if (!unread) discovery.toolCalls.answered(readFrom, { place: worktree, placesOf: this.#callPlaces(discovery) });
+      if (!unread) discovery.toolCalls.answeredIn(worktree, { at: readFrom, ends: walk.callsEnded }, this.#callPlaces(discovery));
     }
     this.#listLateAgain(discovery, scan.lateListings);
   }
@@ -2828,10 +3097,10 @@ export class CodeRuleBridge {
 
   /** The changes the walk found; `uncaptured` receives the digest each changed source was observed with before. */
   #discoverEdits(discovery: SourceDiscovery, walk: WalkStart, current: ReadonlyMap<string, Source>, uncaptured: Map<string, string>): CodeRuleEdit[] {
-    const pendingPaths = this.#pendingPaths();
+    const toolChanged = this.#toolChanges(discovery, walk);
     const edits: CodeRuleEdit[] = [];
     for (const path of [...new Set([...walk.previous.keys(), ...current.keys()])].sort(compareDeterministicStrings)) {
-      if (!walkAnswersFor(discovery, walk, path) || this.#toolChanged(discovery, walk, path, pendingPaths, current.get(path))) continue;
+      if (!walkAnswersFor(discovery, walk, path) || toolChanged(path, current.get(path))) continue;
       const previous = walk.previous.get(path);
       const edit = this.#discoveredEdit(discovery, path, previous, current.get(path), walk.baseline);
       if (edit === undefined) continue;
@@ -2844,23 +3113,22 @@ export class CodeRuleBridge {
   }
 
   /**
-   * A begin/finish after scan launch wins even when its bytes happen to match the old snapshot. So does a shell command
-   * still running that may be writing a source the session has observed (`#commandWriting`): its result reports it.
+   * Whether `walk` leaves the change it found to a source, `current` as it found it, to a tool call's result. A
+   * begin/finish after scan launch wins even when its bytes happen to match the old snapshot. So does a shell command
+   * still running as the walk began, even one that ended since, if it had begun by the time the source last changed (at
+   * any time, for a source with no stamp: one gone, or one the walk failed to stat or read): it may have been part way
+   * through writing the source as the walk read it. A walk that took it would audit a half-written file as the
+   * session's edit, and the command's result would measure the rest of its change from that. That holds only of a
+   * source the session has observed; the walk at the command's result, or the next one, takes the change whole, from
+   * what the session saw before.
    */
-  #toolChanged(discovery: SourceDiscovery, walk: WalkStart, path: string, pendingPaths: ReadonlySet<string>, current: Source | undefined): boolean {
-    return discovery.versions.get(path) !== walk.versions.get(path) || pendingPaths.has(path)
-      || (walk.previous.has(path) && this.#commandWriting(discovery, current));
-  }
-
-  /**
-   * Whether a shell command of the session that still runs had begun when `current`, a source as a walk found it, last
-   * changed; for one gone, whether such a command runs at all. The command may be part way through writing it: a walk
-   * that took it now would audit a half-written file as the session's edit, and the command's result would measure the
-   * rest of its change from that. The result's walk takes the change whole, from what the session saw before.
-   */
-  #commandWriting(discovery: SourceDiscovery, current: Source | undefined): boolean {
-    const commands = [...this.#commands, ...this.#unwatchedCommands];
-    return commands.some(toolCallId => discovery.toolCalls.runsSince(toolCallId, current?.modifiedAt));
+  #toolChanges(discovery: SourceDiscovery, walk: WalkStart): (path: string, current: Source | undefined) => boolean {
+    const pendingPaths = this.#pendingPaths();
+    const commandSince = discovery.toolCalls.commandSince(walk.callsEnded);
+    const commandWriting = (current: Source | undefined) =>
+      commandSince !== undefined && (current?.modifiedAt === undefined || commandSince <= current.modifiedAt);
+    return (path, current) => discovery.versions.get(path) !== walk.versions.get(path) || pendingPaths.has(path)
+      || (walk.previous.has(path) && commandWriting(current));
   }
 
   /** The paths a tool call in progress has captured: its finish, not a walk, reports them. */
@@ -2885,23 +3153,13 @@ export class CodeRuleBridge {
    * list is left out of `unmerged`, so the last entries read stay its snapshot.
    */
   async #readCheckouts(discovery: SourceDiscovery): Promise<Pick<WalkStart, "heads" | "unmerged">> {
-    const heads = new Map<string, string>();
     const unmerged = new Map<string, ReadonlyMap<string, string>>();
-    const readEntries = async (root: string): Promise<void> => {
-      const entries = await unmergedNow(discovery, root);
-      if (entries !== undefined) unmerged.set(root, entries);
-    };
     const others = [...discovery.heads.keys()].filter(known => !inWorktrees(discovery, known));
     // When no checkout owns the session folder, no change in it is asked about.
     const session = this.#owningCheckout(discovery.root, "");
     const withHead = new Set(session === undefined ? others : [session, ...others]);
-    for (const root of withHead) {
-      const head = await discovery.git.run(signal => gitHead(root, { signal }));
-      if (head === undefined) continue;
-      heads.set(root, head);
-      await readEntries(root);
-    }
-    for (const root of discovery.passedCheckouts) if (!withHead.has(root) && !inWorktrees(discovery, root)) await readEntries(root);
+    const heads = await readHeads(discovery, withHead, unmerged);
+    for (const root of discovery.passedCheckouts) if (!withHead.has(root) && !inWorktrees(discovery, root)) await readEntriesInto(discovery, root, unmerged);
     return { heads, unmerged };
   }
 
@@ -2925,7 +3183,9 @@ export class CodeRuleBridge {
    * Git command, and, in the session folder, any other writer's (`#claimOwnWrites`). Neither kind is reported as this
    * session's edit. Of those, only a source this session had changed is still audited, as the source it now is with no
    * generated lines and in `log` mode: the evaluator holds its older text, and steers queued for that text are out of
-   * date. Any other is the same to the evaluator as the files it never saw.
+   * date. Any other is the same to the evaluator as the files it never saw. The walk of the other worktrees drops every
+   * change of a checkout in a worktree it may show the session first (`#mayFirstSee`), or in one it knew where it finds
+   * a file gone, whose `.git` entry is gone once its Git has been read (`#checkoutStands`).
    */
   async #separateOwnWrites(
     discovery: SourceDiscovery,
@@ -2933,25 +3193,56 @@ export class CodeRuleBridge {
     edits: readonly CodeRuleEdit[],
     uncaptured: Map<string, string>,
   ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[]; repository: CodeRuleEdit[] }> {
-    const unwritten: CodeRuleEdit[] = [];
-    const notOwn: CodeRuleEdit[] = [];
-    const repository: CodeRuleEdit[] = [];
+    const sorted: SortedWrites = { unwritten: [], notOwn: [], uncaptured };
     const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
-    unwritten.push(...unowned);
+    sorted.unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
       const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
-      for (const edit of group) {
-        const verdict = verdicts.get(edit.path);
-        if (verdict === undefined) unwritten.push(edit);
-        else if (verdict.previousText === undefined) this.#sortUnownedWrite(edit, verdict.keptAs, notOwn);
-        else {
-          uncaptured.delete(edit.path);
-          unwritten.push({ ...withoutUncaptured(edit), previousText: verdict.previousText });
-        }
-      }
+      if (await this.#checkoutStands(discovery, walk, checkout, group)) this.#sortByVerdicts(group, verdicts, sorted);
     }
+    const { unwritten, notOwn } = sorted;
+    const repository: CodeRuleEdit[] = [];
     const own = await this.#claimOwnWrites(discovery, walk, unwritten, uncaptured, { notOwn, repository });
     return { own, notOwn, repository };
+  }
+
+  /**
+   * Whether `checkout` is still the checkout whose Git gave the walk its verdicts, given its changes `group`. In another
+   * worktree only Git's verdicts tell Git's own files from writes: at the walk's first sight of it, every file stamped
+   * since the session opened (`#firstSightPaths`); in one it knew, each file it saw there that is gone. `git worktree
+   * remove` deletes the worktree's files, its `.git` entry among them, before Git stops listing the worktree, and a Git
+   * started there once the entry is gone reads no checkout, or the one around the worktree, so each of those files
+   * would be taken for a write. There the entry is looked for once Git has answered: still there, Git read this
+   * checkout; gone, the worktree is being removed or was, its files went with it, as a worktree gone before the walk is
+   * applied took its own (`#syncWorktrees`), and none of them is an edit. The removal deletes a folder's entries in the
+   * order the file system lists them, so the entry may still be there at the look while the removal goes on: the files
+   * it deleted before then are deletions Git's verdicts judge, as a person's are. A walk that finds only writes in a
+   * worktree it knew, as it does on most walks, looks for nothing.
+   */
+  async #checkoutStands(discovery: SourceDiscovery, walk: WalkStart, checkout: string, group: readonly CodeRuleEdit[]): Promise<boolean> {
+    if (walk.inSession) return true;
+    const named = sessionPath(discovery.root, checkout);
+    const worktree = walk.worktrees.has(named) ? named : rootHolding(walk.worktrees, named);
+    if (worktree === undefined) return true;
+    const mayBeRemoved = this.#mayFirstSee(discovery, worktree) || group.some(edit => edit.deleted === true);
+    return !mayBeRemoved || await stillACheckout(checkout);
+  }
+
+  /**
+   * Sorts one checkout's changes by Git's verdicts: one Git did not write stays to be claimed (`unwritten`), with the
+   * text Git's move proves it was changed from when there is one; one Git wrote is audited only as `#sortUnownedWrite`
+   * says.
+   */
+  #sortByVerdicts(group: readonly CodeRuleEdit[], verdicts: ReadonlyMap<string, GitVerdict>, sorted: SortedWrites): void {
+    for (const edit of group) {
+      const verdict = verdicts.get(edit.path);
+      if (verdict === undefined) sorted.unwritten.push(edit);
+      else if (verdict.previousText === undefined) this.#sortUnownedWrite(edit, verdict.keptAs, sorted.notOwn);
+      else {
+        sorted.uncaptured.delete(edit.path);
+        sorted.unwritten.push({ ...withoutUncaptured(edit), previousText: verdict.previousText });
+      }
+    }
   }
 
   /**
@@ -2988,16 +3279,18 @@ export class CodeRuleBridge {
   /**
    * Whether one of the session's tool calls ran as `edit`'s file was stamped or, for a file now gone, as its folder was
    * (removing an entry stamps the folder; a later change there moves the stamp on). With no stamp to go by, at some point
-   * since the walk that last saw the file began. In the session folder a call counts wherever it ran; in another worktree
-   * only one that ran in that worktree does, so a session whose long command runs elsewhere takes no other session's
-   * write there.
+   * since the walk that last saw the file began. In the session folder a call counts wherever it ran, and a file the
+   * last walk could not read counts the calls kept for it too; in another worktree only one that ran in that worktree
+   * does, so a session whose long command runs elsewhere takes no other session's write there.
    */
   async #writtenByCall(discovery: SourceDiscovery, walk: WalkStart, edit: CodeRuleEdit): Promise<boolean> {
     const worktree = walk.inSession ? undefined : this.#worktreeHolding(discovery, edit.path);
-    const counted = worktree === undefined ? undefined : this.#ranIn(discovery, worktree, edit.path);
+    const asked: CallsAsked = worktree === undefined
+      ? { held: discovery.missedFiles.get(edit.path) }
+      : { place: worktree, counted: this.#ranIn(discovery, worktree, edit.path) };
     const since = walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt;
     const written = { stamp: this.#observedSource(edit.path)?.modifiedAt, deleted: edit.deleted === true, since, until: walk.observedAt };
-    return await this.#callRanAsWritten(discovery, counted, edit.path, written);
+    return await this.#callRanAsWritten(discovery, asked, edit.path, written);
   }
 
   /**
@@ -3009,17 +3302,17 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Whether a call of the session `counted` holds (any call, without it) ran as `path` was written: as it was stamped,
-   * or a removed file as its folder was; with no stamp to go by, at some point from `since` to `until`.
+   * Whether a call of the session that `asked` counts ran as `path` was written: as it was stamped, or a removed file as
+   * its folder was; with no stamp to go by, at some point from `since` to `until`.
    */
   async #callRanAsWritten(
     discovery: SourceDiscovery,
-    counted: CallsCounted | undefined,
+    asked: CallsAsked,
     path: string,
     { stamp, deleted, since, until }: { stamp: number | undefined; deleted: boolean; since: number; until: number },
   ): Promise<boolean> {
     const at = stamp ?? (deleted ? await folderStamp(discovery.root, path) : undefined);
-    return at === undefined ? discovery.toolCalls.ranDuring(since, until, counted) : discovery.toolCalls.ranDuring(at, at, counted);
+    return at === undefined ? discovery.toolCalls.ranDuring(since, until, asked) : discovery.toolCalls.ranDuring(at, at, asked);
   }
 
   /**
@@ -3048,6 +3341,12 @@ export class CodeRuleBridge {
    * before it. A file holds a blob in the CRLF line breaks as well where the repository's settings have a checkout write
    * them (`gitCrlfPaths`, `line-endings.ts`); other filters' bytes never match, and stay the session's.
    * Of the rest, a file restored from a branch is Git's too (`#restoredFromBranches`).
+   *
+   * The verdicts hold for one `HEAD`, and Git is read in several processes, `HEAD` first. A command that writes files
+   * and commits them can commit in between: `HEAD` then reads as unmoved while the files hold the blob of its new
+   * commit, which `HEAD` and the branch have by the next read, so they would read as Git's and none would be checked. So
+   * a reading that finds a change Git's stands only once `HEAD` still names what it read, and Git is read again while it
+   * does not (`#settledReading`). When `HEAD` moves through every reading, the first one stands, as one reading would.
    */
   async #gitVerdicts(
     discovery: SourceDiscovery,
@@ -3055,17 +3354,47 @@ export class CodeRuleBridge {
     edits: readonly CodeRuleEdit[],
     uncaptured: ReadonlyMap<string, string>,
   ): Promise<Map<string, GitVerdict>> {
-    const verdicts = new Map<string, GitVerdict>();
     const named = edits.map(edit => ({ edit, path: sessionPath(checkout, resolve(discovery.root, edit.path)), prior: uncaptured.get(edit.path) }));
+    const first = await this.#readGitVerdicts(discovery, checkout, named);
+    if (first === undefined) return new Map();
+    const standing = await this.#settledReading(discovery, checkout, named, first) ?? first;
+    keepFirstSnapshot(discovery, checkout, standing.view);
+    return standing.verdicts;
+  }
+
+  /**
+   * The first reading of the verdicts, from `first` on, that holds for one `HEAD`: one that finds no change Git's, or
+   * whose `HEAD` has not moved since it was read. Undefined when none does in `GIT_VERDICT_READS`, or Git cannot say, and
+   * once the session closes: the walk's step holds the queue that the close waits on, so a reading made then would hold
+   * up the close, and the first reading stands, as one reading would.
+   */
+  async #settledReading(
+    discovery: SourceDiscovery,
+    checkout: string,
+    named: readonly CheckoutEdit[],
+    first: VerdictReading,
+  ): Promise<VerdictReading | undefined> {
+    let reading: VerdictReading | undefined = first;
+    for (let reads = 1; reading !== undefined; reads += 1) {
+      if (!findsGitWrite(reading.verdicts) || await headStill(discovery, checkout, reading.view.head)) return reading;
+      if (reads === GIT_VERDICT_READS || discovery.cancelled) return undefined;
+      reading = await this.#readGitVerdicts(discovery, checkout, named);
+    }
+    return undefined;
+  }
+
+  /** One reading of `#gitVerdicts`, from Git as it is now; undefined where Git cannot say. */
+  async #readGitVerdicts(discovery: SourceDiscovery, checkout: string, named: readonly CheckoutEdit[]): Promise<VerdictReading | undefined> {
     const read = await readGitView(discovery, checkout, named.map(({ path }) => path));
-    if (read === undefined) return verdicts;
+    if (read === undefined) return undefined;
+    const verdicts = new Map<string, GitVerdict>();
     const view: GitView = { ...read, stopped: stoppedSince(read, named) };
     for (const { edit, path, prior } of named) {
       const verdict = edit.readError === undefined ? this.#gitVerdict(view, edit, path, prior) : undefined;
       if (verdict !== undefined) verdicts.set(edit.path, verdict);
     }
     await this.#addRestoredVerdicts(discovery.git, checkout, view, named, verdicts);
-    return verdicts;
+    return { verdicts, view: read };
   }
 
   /** Of the changes Git has not explained, those restored from a branch are Git's, their text kept for the next edit. */
@@ -3275,10 +3604,10 @@ export class CodeRuleBridge {
     read: LentBytes,
   ): Promise<Source | undefined> {
     if (walk.discovery.cancelled) return undefined;
-    // A shell may mutate the file while the read is pending. Keep the original stamp
-    // so the next reconciliation re-reads it, but do not silently baseline those bytes.
-    const modifiedAt = walk.captureChanges ? stamped.modifiedAt : await modifiedSince(location.absolute, stamped.modifiedAt);
+    const modifiedAt = await stampOfRead(walk, location.absolute, stamped.modifiedAt, at => undatedRead(previous, read.bytes, at));
     if (walk.discovery.cancelled) return undefined;
+    // A baseline walk keeps what was seen of a file a command may be writing, and leaves the file to the walk after.
+    if (modifiedAt === undefined) return previous;
     const content = nonText(location, read.bytes);
     return content === undefined ? observedText(walk, { ...stamped, modifiedAt }, previous, read) : { ...stamped, modifiedAt, ...content };
   }
@@ -3349,7 +3678,8 @@ export class CodeRuleBridge {
    * Reads the file through one descriptor opened without following a final symlink. Its real path must stay inside
    * the checkout that owns it (the session folder for an auditor that judges one folder), and still name the file
    * that was opened, so a folder swapped for a symlink mid-read cannot bring outside bytes in. A file the auditor
-   * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source.
+   * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source. The
+   * file is judged by where it really is as well as by its spelled path (`judgedWhereItLeads`), as the auditor judges it.
    */
   async #readLocatedSource(root: string, location: SourceLocation): Promise<Source | undefined> {
     const handle = await openSource(location.absolute);
@@ -3357,20 +3687,24 @@ export class CodeRuleBridge {
     try {
       const info = await handle.stat();
       if (!info.isFile()) return location.unlisted ? undefined : { path: location.path, language: location.language, readError: "Source is not a regular file" };
-      return await this.#readsInPlace(root, location, info) ? await readOpenedSource(handle, location, info) : undefined;
+      const real = await this.#realPathInPlace(root, location, info);
+      return real === undefined ? undefined : judgedWhereItLeads(await readOpenedSource(handle, location, info), real);
     } finally {
       await handle.close();
     }
   }
 
-  /** Whether the file's real path stays inside the checkout that owns it and still names the file that was opened. */
-  async #readsInPlace(root: string, location: SourceLocation, info: Stats): Promise<boolean> {
+  /**
+   * The file's real path, `/`-separated from the checkout that owns it, when it stays inside that checkout and still
+   * names the file that was opened; undefined otherwise.
+   */
+  async #realPathInPlace(root: string, location: SourceLocation, info: Stats): Promise<string | undefined> {
     const owner = this.#owningCheckout(root, location.path);
-    if (owner === undefined) return false;
+    if (owner === undefined) return undefined;
     const canonical = await realpath(location.absolute);
-    if (!withinFolder(owner, canonical)) return false;
+    if (!withinFolder(owner, canonical)) return undefined;
     const named = await lstat(canonical);
-    return named.dev === info.dev && named.ino === info.ino;
+    return named.dev === info.dev && named.ino === info.ino ? relative(owner, canonical).split(sep).join("/") : undefined;
   }
 
   #failedSourceRead(location: SourceLocation, error: unknown): Source {
@@ -3389,6 +3723,9 @@ export class CodeRuleBridge {
     const sessionId = this.#requireSession();
     const edits = await this.#recoverPreimages(discovery, captured, uncaptured);
     for (const edit of edits) {
+      // The evaluator keeps the text it held of a file it could not read, so the session keeps it too: another
+      // program's later write there is then audited for it (`#sortUnownedWrite`).
+      if (edit.readError !== undefined) continue;
       this.#forgetText(edit.path);
       // The repository's record is no edit of the session's: its text is kept to measure the next change from.
       if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, owner === "repository" ? "other-writer" : "edit");
@@ -3415,7 +3752,7 @@ export class CodeRuleBridge {
   ): Promise<CodeRuleEditBatch["edits"]> {
     if (uncaptured.size === 0) return edits;
     const recovered = new Map<string, string>();
-    const unresolved = this.#recoverFromTexts(uncaptured, recovered);
+    const unresolved = this.#recoverFromTexts(batchDigests(edits, uncaptured), recovered);
     for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, unresolved, path => path).owned)
       await recoverFromGit(discovery, checkout, paths, uncaptured, recovered);
     return edits.map(edit => {

@@ -78,7 +78,7 @@ packages:
   "@neralabs/*":
     access: `$all
     publish: `$authenticated
-max_body_size: 200mb
+max_body_size: 1gb
 log: { type: stdout, level: warn }
 "@
   # No output redirection: a redirected Start-Process inherits this shell's handles and would hold the caller's pipe.

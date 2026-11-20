@@ -1,0 +1,90 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-n818-error-suffix-on-exception-name",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name custom exception classes with an Error suffix, as PEP 8 recommends, unless the exception does not signal an error.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "error-suffix-on-exception-name",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "error-suffix": {
+              "regex": "[E\\x{1D31}\\x{2130}\\x{FF25}\\x{1D404}\\x{1D438}\\x{1D46C}\\x{1D4D4}\\x{1D508}\\x{1D53C}\\x{1D570}\\x{1D5A4}\\x{1D5D8}\\x{1D60C}\\x{1D640}\\x{1D674}][r\\x{2B3}\\x{1D63}\\x{FF52}\\x{1D42B}\\x{1D45F}\\x{1D493}\\x{1D4C7}\\x{1D4FB}\\x{1D52F}\\x{1D563}\\x{1D597}\\x{1D5CB}\\x{1D5FF}\\x{1D633}\\x{1D667}\\x{1D69B}][r\\x{2B3}\\x{1D63}\\x{FF52}\\x{1D42B}\\x{1D45F}\\x{1D493}\\x{1D4C7}\\x{1D4FB}\\x{1D52F}\\x{1D563}\\x{1D597}\\x{1D5CB}\\x{1D5FF}\\x{1D633}\\x{1D667}\\x{1D69B}][o\\x{BA}\\x{1D52}\\x{2092}\\x{2134}\\x{FF4F}\\x{1D428}\\x{1D45C}\\x{1D490}\\x{1D4F8}\\x{1D52C}\\x{1D560}\\x{1D594}\\x{1D5C8}\\x{1D5FC}\\x{1D630}\\x{1D664}\\x{1D698}][r\\x{2B3}\\x{1D63}\\x{FF52}\\x{1D42B}\\x{1D45F}\\x{1D493}\\x{1D4C7}\\x{1D4FB}\\x{1D52F}\\x{1D563}\\x{1D597}\\x{1D5CB}\\x{1D5FF}\\x{1D633}\\x{1D667}\\x{1D69B}]$"
+            },
+            "exception-base": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "any": [
+                    {
+                      "regex": "^[E\\x{1D31}\\x{2130}\\x{FF25}\\x{1D404}\\x{1D438}\\x{1D46C}\\x{1D4D4}\\x{1D508}\\x{1D53C}\\x{1D570}\\x{1D5A4}\\x{1D5D8}\\x{1D60C}\\x{1D640}\\x{1D674}][x\\x{2E3}\\x{2093}\\x{2179}\\x{FF58}\\x{1D431}\\x{1D465}\\x{1D499}\\x{1D4CD}\\x{1D501}\\x{1D535}\\x{1D569}\\x{1D59D}\\x{1D5D1}\\x{1D605}\\x{1D639}\\x{1D66D}\\x{1D6A1}][c\\x{1D9C}\\x{217D}\\x{FF43}\\x{1D41C}\\x{1D450}\\x{1D484}\\x{1D4B8}\\x{1D4EC}\\x{1D520}\\x{1D554}\\x{1D588}\\x{1D5BC}\\x{1D5F0}\\x{1D624}\\x{1D658}\\x{1D68C}][e\\x{1D49}\\x{2091}\\x{212F}\\x{2147}\\x{FF45}\\x{1D41E}\\x{1D452}\\x{1D486}\\x{1D4EE}\\x{1D522}\\x{1D556}\\x{1D58A}\\x{1D5BE}\\x{1D5F2}\\x{1D626}\\x{1D65A}\\x{1D68E}][p\\x{1D56}\\x{209A}\\x{FF50}\\x{1D429}\\x{1D45D}\\x{1D491}\\x{1D4C5}\\x{1D4F9}\\x{1D52D}\\x{1D561}\\x{1D595}\\x{1D5C9}\\x{1D5FD}\\x{1D631}\\x{1D665}\\x{1D699}][t\\x{1D57}\\x{209C}\\x{FF54}\\x{1D42D}\\x{1D461}\\x{1D495}\\x{1D4C9}\\x{1D4FD}\\x{1D531}\\x{1D565}\\x{1D599}\\x{1D5CD}\\x{1D601}\\x{1D635}\\x{1D669}\\x{1D69D}][i\\x{1D62}\\x{2071}\\x{2139}\\x{2148}\\x{2170}\\x{FF49}\\x{1D422}\\x{1D456}\\x{1D48A}\\x{1D4BE}\\x{1D4F2}\\x{1D526}\\x{1D55A}\\x{1D58E}\\x{1D5C2}\\x{1D5F6}\\x{1D62A}\\x{1D65E}\\x{1D692}][o\\x{BA}\\x{1D52}\\x{2092}\\x{2134}\\x{FF4F}\\x{1D428}\\x{1D45C}\\x{1D490}\\x{1D4F8}\\x{1D52C}\\x{1D560}\\x{1D594}\\x{1D5C8}\\x{1D5FC}\\x{1D630}\\x{1D664}\\x{1D698}][n\\x{207F}\\x{2099}\\x{FF4E}\\x{1D427}\\x{1D45B}\\x{1D48F}\\x{1D4C3}\\x{1D4F7}\\x{1D52B}\\x{1D55F}\\x{1D593}\\x{1D5C7}\\x{1D5FB}\\x{1D62F}\\x{1D663}\\x{1D697}]$"
+                    },
+                    {
+                      "matches": "error-suffix"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exception-base"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "kind": "class_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "superclasses",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "exception-base"
+                }
+              }
+            },
+            "not": {
+              "any": [
+                {
+                  "matches": "error-suffix"
+                },
+                {
+                  "regex": "^(?:setUp|tearDown|setUpClass|tearDownClass|setUpModule|tearDownModule|asyncSetUp|asyncTearDown|setUpTestData|failureException|longMessage|maxDiff)$"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "N818",
+        "message": "Rename the exception class `$NAME` to end in `Error`, e.g. `${NAME}Error` or swapping an `Exception` suffix for `Error`, and update references; keep it if it signals control flow, not an error.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "N818"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

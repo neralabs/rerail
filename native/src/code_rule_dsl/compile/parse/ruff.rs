@@ -2,7 +2,7 @@
 //! where Ruff 0.16.9 reports them on its own fixtures (`fixtures/python/literal/ruff`,
 //! `fixtures/python/literal/generate_ruff.py`). Where the port differs, the test names each range and why.
 
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 
@@ -220,11 +220,7 @@ macro_rules! fixture {
     ($name:literal) => {
         (
             $name,
-            include_str!(concat!(
-                crate::code_rule_dsl::fixtures_dir!(),
-                "/python/literal/ruff/",
-                $name
-            )),
+            crate::code_rule_dsl::fixtures::oracle!("python/literal/ruff/", $name),
         )
     };
 }

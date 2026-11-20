@@ -85,6 +85,8 @@ export const rules = sqliteTable(
      * matches this digest, so edits survive package updates.
      */
     sourceDigest: text("source_digest"),
+    /** The rule's `title`, of either kind. */
+    title: text("title"),
 
     // kind = 'code': one column per top-level field of the executable
     // `rerail.policy/v1` document the engine compiles. Nested structures are
