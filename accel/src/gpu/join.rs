@@ -395,6 +395,10 @@ pub struct Pass<'a> {
     /// Whether `end` ended the encoder; dropped without it (an error between its dispatches: a refused lease), the
     /// drop ends it, as Metal requires of an encoder it releases.
     ended: bool,
+    /// Its command buffer's uses of blocks (decision 0487): every buffer it binds or makes resident that lies in a
+    /// block holds that block's chunks and memory until the command buffer completes (its completion handler), or
+    /// is dropped uncommitted.
+    fence: std::sync::Arc<rerail_blocks::ledger::Fence>,
 }
 
 impl<'a> Pass<'a> {
@@ -402,7 +406,29 @@ impl<'a> Pass<'a> {
         let encoder = command.new_compute_command_encoder();
         // Named: the launch budget's record reads the encoder's label, and an unnamed one's is nil.
         encoder.set_label("rows");
-        Pass { encoder, dispatches: Cell::new(0), ended: false }
+        let fence = rerail_blocks::ledger::Fence::new();
+        let done = std::sync::Mutex::new(Some(fence.clone()));
+        let handler = block::ConcreteBlock::new(move |_: &CommandBufferRef| {
+            if let Some(f) = done.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                f.complete();
+            }
+        });
+        command.add_completed_handler(&handler.copy());
+        Pass { encoder, dispatches: Cell::new(0), ended: false, fence }
+    }
+
+    /// Binds `b` at `index`, its block (if it lies in one) held until the command buffer completes.
+    fn bind(&self, index: u64, b: &BufferRef, offset: u64) {
+        self.holds(b);
+        self.encoder.set_buffer(index, Some(b), offset);
+    }
+
+    /// The block `b` lies in (by its contents' address), held by this command buffer's fence.
+    fn holds(&self, b: &BufferRef) {
+        let at = b.contents() as usize;
+        if at != 0 {
+            self.fence.uses_address(at);
+        }
     }
 
     /// The dispatches encoded so far.
@@ -415,7 +441,7 @@ impl<'a> Pass<'a> {
     pub fn run_bytes(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], bytes: &[u8], groups: usize) {
         self.encoder.set_compute_pipeline_state(pipeline);
         for (i, b) in buffers.iter().enumerate() {
-            self.encoder.set_buffer(i as u64, Some(b), 0);
+            self.bind(i as u64, b, 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
         self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(GROUP, 1, 1));
@@ -426,7 +452,7 @@ impl<'a> Pass<'a> {
     pub fn run_bytes_at(&self, pipeline: &ComputePipelineState, buffers: &[(&BufferRef, u64)], bytes: &[u8], groups: usize) {
         self.encoder.set_compute_pipeline_state(pipeline);
         for (i, (b, off)) in buffers.iter().enumerate() {
-            self.encoder.set_buffer(i as u64, Some(b), *off);
+            self.bind(i as u64, b, *off);
         }
         self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
         self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(GROUP, 1, 1));
@@ -437,7 +463,7 @@ impl<'a> Pass<'a> {
     pub fn run_bytes_indirect(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], bytes: &[u8], grid: &BufferRef, offset: u64) {
         self.encoder.set_compute_pipeline_state(pipeline);
         for (i, b) in buffers.iter().enumerate() {
-            self.encoder.set_buffer(i as u64, Some(b), 0);
+            self.bind(i as u64, b, 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
         self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(GROUP, 1, 1));
@@ -448,7 +474,7 @@ impl<'a> Pass<'a> {
     pub fn run_bytes_indirect_at(&self, pipeline: &ComputePipelineState, buffers: &[(&BufferRef, u64)], bytes: &[u8], grid: &BufferRef, offset: u64) {
         self.encoder.set_compute_pipeline_state(pipeline);
         for (i, (b, off)) in buffers.iter().enumerate() {
-            self.encoder.set_buffer(i as u64, Some(b), *off);
+            self.bind(i as u64, b, *off);
         }
         self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
         self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(GROUP, 1, 1));
@@ -459,7 +485,7 @@ impl<'a> Pass<'a> {
     pub fn run_indirect(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], params: &[u32], grid: &BufferRef, offset: u64) {
         self.encoder.set_compute_pipeline_state(pipeline);
         for (i, b) in buffers.iter().enumerate() {
-            self.encoder.set_buffer(i as u64, Some(b), 0);
+            self.bind(i as u64, b, 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, std::mem::size_of_val(params).max(4) as u64, if params.is_empty() { [0u32].as_ptr().cast() } else { params.as_ptr().cast() });
         self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(GROUP, 1, 1));
@@ -471,7 +497,7 @@ impl<'a> Pass<'a> {
     pub fn run(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], params: &[u32], longs: &[i64], groups: usize) {
         self.encoder.set_compute_pipeline_state(pipeline);
         for (i, b) in buffers.iter().enumerate() {
-            self.encoder.set_buffer(i as u64, Some(b), 0);
+            self.bind(i as u64, b, 0);
         }
         let at = buffers.len() as u64;
         self.encoder.set_bytes(at, std::mem::size_of_val(params).max(4) as u64, if params.is_empty() { [0u32].as_ptr().cast() } else { params.as_ptr().cast() });
@@ -486,6 +512,7 @@ impl<'a> Pass<'a> {
     /// view's directory and tapes, decision 0353 step 4d), bound by none.
     pub fn use_read(&self, buffers: &[&BufferRef]) {
         for b in buffers {
+            self.holds(b);
             self.encoder.use_resource(b, metal::MTLResourceUsage::Read);
         }
     }
@@ -493,6 +520,7 @@ impl<'a> Pass<'a> {
     /// Makes `buffer` resident for the dispatches after it, to be read and written: a cache a kernel's reads keep
     /// (a 16z batch's blocks, decision 0353 step 4b), reached by address.
     pub fn use_read_write(&self, buffer: &BufferRef) {
+        self.holds(buffer);
         self.encoder.use_resource(buffer, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
     }
 
@@ -2004,6 +2032,9 @@ impl Fused {
         };
         // SAFETY: plain `repr(C)` values, read as their bytes.
         let raw = |p: *const u8, n: usize| unsafe { std::slice::from_raw_parts(p, n) };
+        for b in &self.used {
+            pass.holds(b);
+        }
         let mut used: Vec<&metal::ResourceRef> = self.used.iter().map(|b| &***b).collect();
         used.extend([&**arena.pairs.buffer, &**arena.head.buffer, &**arena.blocks.buffer, &**arena.flags.buffer]);
         pass.encoder.use_resources(&used, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);

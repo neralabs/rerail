@@ -41,7 +41,7 @@ pub fn reserve(len: usize) -> *mut u8 {
 }
 
 /// Counts `len` bytes about to be `release`d that `reserve` did not take (a file's mapping).
-pub fn uncounted(len: usize) {
+pub(crate) fn uncounted(len: usize) {
     RESERVED.fetch_add(len, Relaxed);
 }
 
@@ -49,7 +49,7 @@ pub fn uncounted(len: usize) {
 ///
 /// # Safety
 /// `p` and `len` are a reservation's (a mapping's), and nothing reads it after.
-pub unsafe fn release(p: *mut u8, len: usize) {
+pub(crate) unsafe fn release(p: *mut u8, len: usize) {
     RESERVED.fetch_sub(len, Relaxed);
     #[cfg(unix)]
     unsafe {
@@ -65,7 +65,7 @@ pub unsafe fn release(p: *mut u8, len: usize) {
 ///
 /// # Safety
 /// `p` and `len` are a reservation's.
-pub unsafe fn protect_read(p: *mut u8, len: usize) {
+pub(crate) unsafe fn protect_read(p: *mut u8, len: usize) {
     #[cfg(unix)]
     {
         let r = unsafe { libc::mprotect(p.cast(), len, libc::PROT_READ) };
@@ -82,7 +82,7 @@ pub unsafe fn protect_read(p: *mut u8, len: usize) {
 /// # Safety
 /// The range lies in a reservation of `reserve`'s, and nothing reads or writes it until `reuse_pages` marks it in
 /// use again. Returns the bytes given back.
-pub unsafe fn give_back(p: *mut u8, len: usize) -> usize {
+pub(crate) unsafe fn give_back(p: *mut u8, len: usize) -> usize {
     let (start, end) = ((p as usize).next_multiple_of(PAGE), (p as usize + len) / PAGE * PAGE);
     if end <= start {
         return 0;
@@ -103,7 +103,7 @@ pub unsafe fn give_back(p: *mut u8, len: usize) -> usize {
 ///
 /// # Safety
 /// `p` and `len` lie in a reservation.
-pub unsafe fn reuse_pages(p: *mut u8, len: usize) {
+pub(crate) unsafe fn reuse_pages(p: *mut u8, len: usize) {
     #[cfg(target_vendor = "apple")]
     unsafe {
         libc::madvise(p.cast(), len, libc::MADV_FREE_REUSE);
@@ -119,7 +119,7 @@ pub unsafe fn reuse_pages(p: *mut u8, len: usize) {
 ///
 /// # Safety
 /// `p` and `len` lie in a reservation, and nothing reads those bytes before writing them again.
-pub unsafe fn free_pages(p: *mut u8, len: usize) {
+pub(crate) unsafe fn free_pages(p: *mut u8, len: usize) {
     let (start, end) = ((p as usize).next_multiple_of(PAGE), (p as usize + len) / PAGE * PAGE);
     if end <= start {
         return;

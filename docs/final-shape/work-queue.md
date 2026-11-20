@@ -5462,6 +5462,21 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Also seen:** `bound_in` gives 60,278-60,281 rows between good runs (the findings the same): a smaller
   nondeterminism, not looked into.
 
+### Q264. One ledger owns a block's memory, for the CPU and the GPU (decision 0487) — steps 1-2 built
+
+- **Asked** (the user, 2026-11-20, on Q262): live and queued readers and writers of every block, on the CPU and the
+  GPU, kept in one place by the system, with invariants under which what cannot work fails.
+- **Built:** step 1 (`rerail_blocks::ledger`: every chunk of a free-listed block tracked, frees and pages through it,
+  `Fence`, R1-R8) and step 2's first part: accel's `Pass`, where the device joins bind every buffer, registers the
+  block each bound buffer lies in on a fence its command buffer's completion handler ends.
+- **Next, step 2's rest:** the other encoders (the syntax side's `metal_*` passes, `crates/metal`, `blocks::gpu`) made
+  through one constructor that registers its bindings, so none binds unregistered; then `Batch::keep`, `read`, `held`
+  and `Held::kept` go where what they hold is a block's.
+- **Next, step 3:** the pool's buffers (`Pooled`, `Pooled::after`), `Scratch` resets, the residency slabs' `retire`
+  and the deferrable slabs under a ledger of their own.
+- **Next, step 4:** a chunk's CPU writers (BlockVec, a relation's rows) check the ledger at each write's start (R4).
+- **Then:** Q262's format-16 runs again, 20 at 1,629.
+
 ### Q263. A relation's statistics kept by delta are on the heap (0450 R5) — done (0450 step 6f)
 
 - **Seen** (2026-11-19, closing 0450 step 6): `InRel::stats` and `Rel::stats` (`KeptStats`, decision 0096,

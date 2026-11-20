@@ -36,6 +36,7 @@ pub mod generated_reads;
 pub const RELATION_READS: &str = include_str!("relation_reads.metal");
 pub mod journal;
 pub mod kept;
+pub mod ledger;
 pub mod mem;
 pub mod packed;
 pub mod ranged;
