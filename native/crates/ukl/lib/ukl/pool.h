@@ -13,6 +13,12 @@
 // swap fails. A take that finds its class empty (or its swaps spent, `UKL_POOL_TURNS`) returns `UKL_POOL_NONE`, and
 // the caller takes from the store's front.
 //
+// A split take (`ukl_pool_take_split`) takes from the smallest class at least its own that holds a block, and
+// pushes the rest of a larger block back while others take (`ukl_pool_push`: the link written before the swap that
+// publishes it). That is still no ABA: each piece begins inside the block the taker popped, past its first unit,
+// and no other block holding that unit is in the pool, so no block is pushed to a class twice between two givings,
+// and no head comes back to a block a taker read.
+//
 // The classes: powers of two (class `c` is 2^c units). A block handed out from the front is its class's size (at
 // most twice what was asked), so it fits its class's next taker exactly. A range given back that is no class's size
 // is given as pieces, each the largest power of two it still holds (its bits, high to low).
@@ -75,6 +81,22 @@ UKL_INLINE uint32_t ukl_pool_give_range(UklPool p, uint32_t start, uint32_t n)
     return pieces;
 }
 
+// Pushing while others take: the block at `start`, of class `c`'s size, its link written and made visible before
+// the swap that makes it the head. Past `UKL_POOL_TURNS` swaps the block is not pushed (it is lost to the pool,
+// never handed out twice).
+UKL_INLINE void ukl_pool_push(UklPool p, uint32_t start, uint32_t c)
+{
+    uint32_t head = ukl_atomic_poll(&p.heads[c]);
+    for (uint32_t turn = 0u; turn < UKL_POOL_TURNS; turn++) {
+        ukl_atomic_store(&p.next[start], head);
+        ukl_fence_device();
+        uint32_t seen = ukl_atomic_cas(&p.heads[c], head, start);
+        if (seen == head)
+            return;
+        head = seen;
+    }
+}
+
 // Taking: a block of class `c` (its first unit), or `UKL_POOL_NONE`.
 UKL_INLINE uint32_t ukl_pool_take(UklPool p, uint32_t c)
 {
@@ -85,6 +107,24 @@ UKL_INLINE uint32_t ukl_pool_take(UklPool p, uint32_t c)
         if (seen == head)
             return head;
         head = seen;
+    }
+    return UKL_POOL_NONE;
+}
+
+// Taking a block of class `c` from the smallest class at least `c` that holds one: of a larger block, its first
+// 2^c units, the rest pushed back as pieces of 2^c, 2^(c+1), ... (`ukl_pool_push`). `UKL_POOL_NONE` when none
+// was found (each class tried once).
+UKL_INLINE uint32_t ukl_pool_take_split(UklPool p, uint32_t c)
+{
+    for (uint32_t k = c; k < UKL_POOL_CLASSES; k++) {
+        if (ukl_atomic_poll(&p.heads[k]) == UKL_POOL_NONE)
+            continue;
+        uint32_t s = ukl_pool_take(p, k);
+        if (s == UKL_POOL_NONE)
+            continue;
+        for (uint32_t j = c; j < k; j++)
+            ukl_pool_push(p, s + ukl_pool_size(j), j);
+        return s;
     }
     return UKL_POOL_NONE;
 }

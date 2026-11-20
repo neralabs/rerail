@@ -1147,6 +1147,10 @@ fn pasting_is_the_serial_passes() {
         &[("main.c", "#define G(...) g(0, ## __VA_ARGS__)\nG() G(a) G(a, b)\n")],
         &[("main.c", "#define P(x) x ## _t\n#define Q(x) P(x)\n#define N 9\nP(N) Q(N) P(int)\n")],
         &[("main.c", "#define L(x) x ## L\n#define U(x) u ## x\nL(1) L(0x1) U(8) U(\"s\")\n")],
+        // A paste that spells a definition's name takes that name's ref (decision 0503 §10): it
+        // expands, `__LINE__` in it is the call's; one no definition has, a chain whose middle no
+        // definition has, one defined after it, a left that is no identifier.
+        &[("main.c", "#define C(a, b) a ## b\n#define C3(a, b, c) a ## b ## c\n#define W_1 one __LINE__\n#define W_ two\nC(W_, 1) C(W_, 2) C3(W, _, 1)\nC(\nW_,\n1) C(W, _) C(V_, 1) C(1, W_)\n#define V_1 three\nC(V_, 1)\n")],
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
@@ -1554,6 +1558,8 @@ fn line_and_file_are_the_serial_passes() {
         &[("main.c", "#include \"i.h\"\n__FILE__ __LINE__ H\n"), ("i.h", "\n#define H __FILE__ __LINE__\n__FILE__ __LINE__ H\n")],
         &[("main.c", "// a line\n/* two\nlines */ __LINE__ \\\n __LINE__\n#define C(a, b) a ## b\nC(__LI, NE__) C(__FILE, __)\n")],
         &[("main.c", "__DATE__ __TIME__ __TIMESTAMP__\n#define D __DATE__ x\nD __has_include __has_include(<a.h>) __has_embed(\"e\") __has_include_next\n")],
+        // An empty file included: its root has no children (its text map's owner is itself).
+        &[("main.c", "#include \"e.h\"\n__FILE__ __LINE__\n#include \"e.h\"\nx __LINE__\n"), ("e.h", "")],
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
