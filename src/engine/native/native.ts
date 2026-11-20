@@ -252,6 +252,13 @@ export interface NativeGitIgnoreMatcher {
    * ignored folder names the folder's pattern. Null when Git does not ignore it; throws as `ignored` does.
    */
   ignoredBy(relativePath: string, isDirectory: boolean): NativeGitIgnoreMatch | null;
+  /**
+   * Whether a matcher opened now at this root would read the rules this one read: the configuration, read again as Git
+   * reads it (the system, global and repository files, their includes and conditions), chooses the same excludes file
+   * and pattern case, and the root `.gitignore`, `info/exclude` and the excludes file are as this matcher read them.
+   * When it would, each folder's `.gitignore` is read again as the next path enters the folder.
+   */
+  sourcesUnchanged(): boolean;
 }
 
 /** A pattern of Git's exclude stack that ignores a path (`NativeGitIgnoreMatcher.ignoredBy`). */
