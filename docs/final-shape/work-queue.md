@@ -7798,7 +7798,7 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
   forgets them in `ContentStore::forget` (by the store's path), as the snapshots and identities do. The test is
   ignored with this item.
 
-### Q383. `kept-answers`' letter-case test fails on the M1 Max at the hub's tip (open)
+### Q386. `kept-answers`' letter-case test fails on the M1 Max at the hub's tip (open)
 
 - **Seen** (2026-11-20, at the hub's merge into the sync branch, vitest on the M1 Max): `checkouts/kept-answers.test.ts`,
   "in another letter case, where the file system ignores letter case": after four worktrees are removed with Git
@@ -7807,7 +7807,7 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
   pass. Main's #895.
 - **Done when**: it passes on macOS, or the case is shown to assert what the catalog no longer keeps on purpose.
 
-### Q384. The TypeScript catalog reads Git through the engine's gix reads, not Git commands (open)
+### Q387. The TypeScript catalog reads Git through the engine's gix reads, not Git commands (open)
 
 - **Asked** (the user, 2026-11-20, decision 0497): "we need to abstract away from a filesystem. We should not be
   running git commands at all in the code that we're bringing, we should use gix to get whatever we need from the repo
