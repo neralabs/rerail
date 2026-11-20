@@ -1276,9 +1276,7 @@ pub mod tests {
             .expect("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR must name the original Python SCM directory");
         let mut paths = std::fs::read_dir(&root)
             .unwrap_or_else(|error| {
-                panic!(
-                    "cannot read pinned Python SCM input at {root}: {error}; run tempo/scripts/fetch-pinned-python-scm.sh"
-                )
+                panic!("cannot read pinned Python SCM input at {root}: {error}")
             })
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.extension().is_some_and(|extension| extension == "scm"))
@@ -1307,9 +1305,7 @@ pub mod tests {
             .expect("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR must name the original Python SCM directory");
         let mut paths = std::fs::read_dir(&root)
             .unwrap_or_else(|error| {
-                panic!(
-                    "cannot read pinned Python SCM input at {root}: {error}; run tempo/scripts/fetch-pinned-python-scm.sh"
-                )
+                panic!("cannot read pinned Python SCM input at {root}: {error}")
             })
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.extension().is_some_and(|extension| extension == "scm"))
