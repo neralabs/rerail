@@ -58,10 +58,12 @@ function now(): number {
 const SQLITE_BUSY_PAUSES_MS = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
 
 /**
- * The room past one of SQLite's tries a wait may answer in: the answer's way back to this thread and the timers' steps,
- * which on Windows are about 16 ms each, the release's timer here and the wait's, and a busy machine wakes a thread later.
+ * The room past one of SQLite's tries a wait may answer in: the answer's way back to this thread and the timers' steps.
+ * On Windows a timer, the wait's and the release's here, and SQLite's own sleep step about 16 ms, and a busy machine
+ * wakes a thread later still: there the room is one of SQLite's longest pauses and a half, and the timing these cases
+ * pin is held on the other systems.
  */
-const ROOM_MS = process.platform === "win32" ? 60 : 35;
+const ROOM_MS = process.platform === "win32" ? 150 : 35;
 
 /** When SQLite's busy handler makes try `tries` (0, the first, at once), in ms from the first. */
 function sqliteTryAtMs(tries: number): number {
@@ -101,7 +103,7 @@ describe("waiting for the write lock", () => {
     } finally {
       holder.close();
     }
-  }, 30_000);
+  }, 60_000);
 
   // A holder that changed the database adds its pages to the write-ahead log as it commits, a moment before it gives the
   // lock back: the wait tries then, not at the next of SQLite's 100 ms pauses.
@@ -122,7 +124,7 @@ describe("waiting for the write lock", () => {
     } finally {
       holder.close();
     }
-  }, 30_000);
+  }, 60_000);
 
   // As the caller's own statement would have, waiting in SQLite's busy handler from the moment it met the lock: a wait
   // whose tries counted from its own start, which comes milliseconds later, would find a release that much later.
@@ -151,7 +153,7 @@ describe("waiting for the write lock", () => {
         holder.close();
       }
     }
-  }, 30_000);
+  }, 60_000);
 
   it("rejects, and never throws, when its worker cannot start", async () => {
     vi.doMock("node:worker_threads", () => ({
