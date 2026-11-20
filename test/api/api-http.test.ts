@@ -17,6 +17,7 @@ import {
   upsertLibraryRule,
   audits,
   checkouts,
+  events,
   libraryRules,
   repositories,
   steerFeedback,
@@ -256,11 +257,13 @@ describe("Rerail API over HTTP", () => {
     const more = { boundary: "turn" as const, reason: "The walks could not check more than 1000 places; the rest are not recorded", more: true as const };
     sessionStore.recordDiscoveryGap(SESSION, { ...more, key: JSON.stringify(["", more.reason]) });
     sessionStore.recordDiscoveryGap(SESSION, { ...more, key: JSON.stringify(["", more.reason]) });
-    // More than a transcript page of later events: the dashboard opens on those and never loads the gaps. One write
-    // for all of them, since a write each waits for the disk 600 times.
-    const later = database.$client.prepare("INSERT INTO events (session_id, event_id, kind, observed_at, payload_json) VALUES (?, ?, 'turn-end', ?, '{}')");
+    // More than a transcript page of later events: the dashboard opens on those and never loads the gaps. One
+    // transaction writes them all: a commit of its own for each, as the session store makes, waits on the disk 600
+    // times, seconds on a busy machine.
     database.$client.transaction(() => {
-      for (let index = 0; index < 600; index += 1) later.run(SESSION.sessionId, `later-${index}`, 10_000 + index);
+      for (let index = 0; index < 600; index += 1) {
+        database.insert(events).values({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payloadJson: "{}" }).run();
+      }
     })();
 
     const { gaps } = await getJson<{ gaps: Record<string, unknown> }>(`/api/sessions/${SESSION.sessionId}`);
