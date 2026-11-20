@@ -862,8 +862,10 @@ impl Rel {
     }
     /// Checks columns `cols` as a key of its rows from now on (a `key` line, decision 0361 step 6), the rows it holds
     /// already first. A lattice relation's key is its own (it folds by it), and a key it broke is not checked again.
+    /// A key of no columns is a relation of one row at most (`doc(d, "a/b.py", _)`'s, a path fixing its document):
+    /// every row is of the one key, so a second live row breaks it.
     fn set_key(&mut self, cols: Vec<usize>) -> Result<()> {
-        if cols.is_empty() || cols.len() > MAX_KEY || cols.iter().any(|&c| c >= self.k) {
+        if cols.len() > MAX_KEY || cols.iter().any(|&c| c >= self.k) {
             return Err(err(format!("{}: key {cols:?} of {} columns", self.table, self.k)));
         }
         if self.lat.is_some() || self.keyed.iter().any(|x| x.cols == cols) || self.broke.contains(&cols) {
