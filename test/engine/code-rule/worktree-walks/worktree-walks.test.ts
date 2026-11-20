@@ -928,6 +928,7 @@ function watcherOf(roots: readonly string[], scans: string[], gaveUp = false): W
           unmerged: new Map(), lateListings: new Map(), seen: { folders: new Set([""]), leftOut: new Set() }, ...(gaveUp ? { gaveUp: true as const } : {}),
         };
       },
+      holdsRefusal: () => false,
       take: async () => undefined,
     }),
   };

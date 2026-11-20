@@ -28,6 +28,7 @@ import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rul
 import type * as Git from "../../../src/engine/git.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
+import { WorktreeWalks } from "../../../src/engine/code-rule/worktree-walks.js";
 import { holdDeletePending } from "../../support/platform/delete-pending.js";
 import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
@@ -2177,7 +2178,7 @@ describe("CodeRuleBridge", () => {
 
     // The walk of the other worktrees is shared by every session watching them; what it had no room to look at again
     // reaches each session marked so, and is said, not recorded, until a later walk looks at it, as in the session folder.
-    it(`tells the refusals past the first ${MAX_TOLD_AT_ONCE} in path order in another worktree once a later walk looked at them`, async () => {
+    it(`tells the refusals past the first ${MAX_TOLD_AT_ONCE} in path order in another worktree once a later walk looked at them, none whose delete is pending`, async () => {
       const root = await twoBranches();
       const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
       const folders = Array.from({ length: MAX_TOLD_AT_ONCE + 5 }, (_, index) => join(worktree, "src", `a${String(index).padStart(3, "0")}`));
@@ -2185,9 +2186,10 @@ describe("CodeRuleBridge", () => {
         await mkdir(folder);
         denyFolder(folder, "EPERM");
       }
-      // Being removed: the first ten in path order, whose delete is pending at every look, so never told. The first walk
-      // has no room to look at the five past the hundredth; the next one spares the ninety it found denied and looks at them.
-      for (const folder of folders.slice(0, 10)) discovery.accesses.set(folder, Array.from({ length: 50 }, () => deletePending(folder)));
+      // Being removed: the first ten in path order and the last three, whose delete is pending at every look, so never told.
+      // The first walk has no room to look at the five past the hundredth; the next one spares the ninety the session's
+      // record holds and looks at them: two denied, told, and three being removed.
+      for (const folder of [...folders.slice(0, 10), ...folders.slice(-3)]) discovery.accesses.set(folder, Array.from({ length: 50 }, () => deletePending(folder)));
       const onDiscoveryGaps = vi.fn();
       const audit = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
       const bridge = gapBridge(root, { ...auditor(audit), ...extra }, { worktreeWalkGapMs: 0, onDiscoveryGaps });
@@ -2198,7 +2200,33 @@ describe("CodeRuleBridge", () => {
       }
       await bridge.checkpoint("turn");
       const named = relative(root, worktree).split(sep).join("/");
-      expect(toldPaths(onDiscoveryGaps)).toEqual(folders.slice(10).map(folder => `${named}/src/${basename(folder)}`));
+      expect(toldPaths(onDiscoveryGaps)).toEqual(folders.slice(10, -3).map(folder => `${named}/src/${basename(folder)}`));
+    });
+
+    it("looks again, for a session that opens later, at a refusal in another worktree that an earlier session recorded: one being removed is not told to it", async () => {
+      const root = await twoBranches();
+      const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+      const folder = join(worktree, "src", "locked");
+      await mkdir(folder);
+      denyFolder(folder, "EPERM");
+      const walks = new WorktreeWalks({ gapMs: 0 });
+      /** A session's told places after two turn ends, each followed by the read of the worktree its walk asks for. */
+      const told = async (sessionId: string): Promise<Array<string | undefined>> => {
+        const onDiscoveryGaps = vi.fn();
+        const audit = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+        const bridge = gapBridge(root, { ...auditor(audit), ...extra }, { worktreeWalks: walks, onDiscoveryGaps });
+        await bridge.openWorkspace(sessionId);
+        for (let turn = 0; turn < 2; turn += 1) {
+          await bridge.checkpoint("turn");
+          await bridge.settleWorktreeWalk();
+        }
+        return toldPaths(onDiscoveryGaps);
+      };
+      expect(await told("session-1")).toEqual([`${relative(root, worktree).split(sep).join("/")}/src/locked`]);
+      // Then deleted while another program holds it open: its delete is pending at every look. The first session's record
+      // holds it; the second's does not, so the read it takes part in looks again.
+      discovery.accesses.set(folder, Array.from({ length: 50 }, () => deletePending(folder)));
+      expect(await told("session-2")).toEqual([]);
     });
 
     it("reads the files it held in a folder as deleted when the folder refused it with EPERM and was gone by the look, as when its lstat finds it gone", async () => {

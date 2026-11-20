@@ -114,10 +114,10 @@ export interface WorktreeScan {
   /** Subtrees the last read could not read: a source first seen under one keeps no text unless stamped since `startedAt`. */
   readonly baselineRoots: ReadonlySet<string>;
   /**
-   * What the last read could not read: an EPERM it looked at again and found a denial is a gap again without another look,
-   * so each read looks at the refusals the last one had no room for.
+   * Whether the record of every session the read serves holds the EPERM gap of `path` (`WatcherWalk.holdsRefusal`): a
+   * refusal there is a gap, and is not looked at again, so each read looks at those some session has not recorded yet.
    */
-  readonly previousErrors: readonly ScanError[];
+  readonly held: (path: string) => boolean;
   /** Filesystem-clock reading taken as the walk began. */
   readonly observedAt: number;
   /**
@@ -155,6 +155,11 @@ export interface WatcherWalk {
    * session closed meanwhile, and another watching session reads it instead.
    */
   scan(request: WorktreeScan): Promise<WorktreeScanned | undefined>;
+  /**
+   * Whether the session's record holds the EPERM gap of `path` in the worktree at `root` (physical; `path` relative to it,
+   * `.` for it): a look spared there adds no place to the session's record.
+   */
+  holdsRefusal(root: string, path: string): boolean;
   /** Takes what the walk found. Never rejects: the session records its own failures. */
   take(walk: WorktreeWalk): Promise<void>;
 }
@@ -839,6 +844,7 @@ export class WorktreeWalks {
     const request: WorktreeScan = {
       root,
       ...this.#lastRead(root),
+      held: path => watchers.every(walk => walk.holdsRefusal(root, path)),
       startedAt: Math.min(...watchers.map(walk => walk.startedAt)),
       observedAt: read.observedAt,
       skip: begun.skip,
@@ -859,10 +865,10 @@ export class WorktreeWalks {
   }
 
   /** What a read of `root` asks with of what the last read kept (`WorktreeScan`): nothing for a first read. */
-  #lastRead(root: string): Pick<WorktreeScan, "previous" | "captureChanges" | "baselineRoots" | "previousErrors"> {
+  #lastRead(root: string): Pick<WorktreeScan, "previous" | "captureChanges" | "baselineRoots"> {
     const kept = this.#kept.get(root)?.findings;
-    if (kept === undefined) return { previous: new Map(), captureChanges: false, baselineRoots: new Set(), previousErrors: [] };
-    return { previous: kept.snapshot.sources, captureChanges: true, baselineRoots: kept.failedRoots, previousErrors: kept.errors };
+    if (kept === undefined) return { previous: new Map(), captureChanges: false, baselineRoots: new Set() };
+    return { previous: kept.snapshot.sources, captureChanges: true, baselineRoots: kept.failedRoots };
   }
 
   #deliver(watching: Watching, delivery: NonNullable<Watching["waiting"]>): void {

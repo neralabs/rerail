@@ -1048,8 +1048,8 @@ interface SourceWalk {
   /** What the walk asks of each file and folder it finds: the auditor's `walkView` for this walk, or the auditor. */
   readonly view: WalkView;
   /**
-   * Whether the record holds the EPERM gap of a path (`#holdsRefusal`), or for another worktree's walk whether its last read
-   * found one there (`deniedBefore`): a refusal there is a gap, and is not looked at again.
+   * Whether the record holds the EPERM gap of a path (`#holdsRefusal`), or for another worktree's walk the record of every
+   * session it serves (`WorktreeScan.held`): a refusal there is a gap, and is not looked at again.
    */
   readonly held: (path: string) => boolean;
   /** The refusals the walk met (`noteRefusal`): the first `MAX_LOOKED_AGAIN` in path order are looked at once its other paths are done. */
@@ -1342,15 +1342,6 @@ function noteRefusal(walk: SourceWalk, absolute: string, error: unknown, before:
 /** A path the walk starts at refused it itself, not a child its listing asked about. */
 function startRefused(walk: SourceWalk, absolute: string, refused: string): boolean {
   return refused === absolute && walk.roots.has(absolute);
-}
-/**
- * Whether the last read of another worktree (`errors`) found a refusal of a path a denial: an EPERM it kept a gap, not one
- * it had no room to look at (`ScanError.unrecorded`). A refusal there is a gap again and is not looked at again, so each
- * read of the worktree looks at the next `MAX_LOOKED_AGAIN`, as the session folder's walk does past those its record holds.
- */
-function deniedBefore(errors: readonly ScanError[]): (path: string) => boolean {
-  const denied = new Set(errors.filter(error => error.unrecorded !== true && reasonKind(error.readError) === "EPERM").map(error => error.path || "."));
-  return path => denied.has(path);
 }
 /** What the walk's lstat found (`before`) names `absolute`: it tells whether `refused` is still that entry only when it is `absolute`. */
 function refusalOf(path: string, absolute: string, refused: string, before: Stats | undefined): Refusal {
@@ -2761,6 +2752,7 @@ export class CodeRuleBridge {
       heads: new Set([...discovery.heads.keys()].filter(root => inWorktrees(discovery, root))),
       unmerged: new Set([...discovery.unmerged.keys()].filter(root => inWorktrees(discovery, root))),
       scan: request => this.#scanWorktree(discovery, request, rules),
+      holdsRefusal: (root, path) => this.#holdsRefusal(inWorktree(sessionPath(discovery.root, root), path === "." ? "" : path)),
       take: walk => this.#takeWorktreeWalk(discovery, start, walk),
     };
   }
@@ -2855,9 +2847,8 @@ export class CodeRuleBridge {
       observedAt: request.observedAt, previousSources: request.previous, captureChanges: request.captureChanges,
       baselineRoots: request.baselineRoots, buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
       scan: { ...emptyScan(), seen }, stack: [request.root], roots: request.skip,
-      // Its findings serve every session watching the worktree, so no one session's record spares a refusal its look:
-      // the walk's own last finding does.
-      held: deniedBefore(request.previousErrors),
+      // Its findings serve every session watching the worktree, so only the records of them all spare a refusal its look.
+      held: request.held,
     });
     return abandoned() ? undefined : { ...scan, seen };
   }
