@@ -58,6 +58,26 @@ The parse window (sampled 3–11 s, native all, two runs each, alternating), the
 The parse workers' CPU is the same (8.3–8.5 s): a thread parked on a lock takes no CPU, so this is parallelism. The
 host's load was 13–33, so the walls say nothing. The residency's and the tapes' placement tests (36) pass.
 
+## Whether the pool oversubscribes the cores
+
+It does not. 0465's "13–48 s ready with no core" had two causes:
+
+- **The machine's load**, and the threads parked on the locks above.
+- **The measurement's binary name.** The library's load-time constructor (`install_tree_sitter_allocator`, for the
+  Node addon and the test runner) makes the pool without the main thread unless the executable's name starts with
+  `rerail-engine`. Every run 0465–0472 measured was a copy named `engine`: the pool had ten workers apart from the
+  main thread, whose waits ran no jobs ("help s" 0.000). The CLI's own name is not affected. The A/B pairs above ran
+  under one name each, so they compare.
+
+Under its own name (9 workers and the main thread), all on an M1 Max at load about 5:
+
+| | 0465 | Now |
+|---|---|---|
+| native wall, CPU | 23.2 s, 77.5 s | 16.2–16.8 s, 51.3–52.0 s |
+| Metal pinned to the GPU (after a first run that compiles its kernels, 40.6 s) | 19.2–22.6 s, 61–73 s | 16.3 s, 43.1 s |
+| the threads' time ready with no core, native | 13–48 s | 5.4–5.9 s |
+| `combine`, `wait`, `stats`, `cross` (native) | 2.2, 10.7, 2.5, 5.1 s | 2.5, 5.9–6.4, 1.0, 3.0–3.3 s |
+
 ## What is next
 
 - **The store writer's one lock in the parse.** Every tape a worker queues (`queue_source_and_tape` into the
@@ -66,3 +86,5 @@ host's load was 13–33, so the walls say nothing. The residency's and the tapes
 - **The parse workers' CPU** is W's reference graph (0466): 6.5 s of the 8.4 s.
 - `cross`' largest strata now run on a core: `reach_edges` 0.69 s and `flow0` 0.63 s, CPU nearly all.
 - `stats` is 1.0 s (it was 1.6–2.5 s), its waits now small.
+- **A renamed CLI loses the main thread from its pool** (the constructor's name test). Every harness that copies the
+  binary must keep its name. A test the constructor can make without the name would end it.
