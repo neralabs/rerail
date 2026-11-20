@@ -345,6 +345,8 @@ struct Launch {
     sched: *mut u8,
     sched_bytes: u64,
     tls: extern "C" fn() -> *mut c_void,
+    resident: u32,
+    pad: u32,
 }
 
 /// The scheduler's storage a root's thread gives each launch: more than the shim's (`__ukl_cpu_sched`, which checks).
@@ -359,6 +361,15 @@ std::thread_local! {
 
 extern "C" fn tls() -> *mut c_void {
     TLS.with(|t| t.get().cast())
+}
+
+/// The threads the CPU runs at once across a launch's groups: its resident groups are these over a group's threads
+/// (at most 64), so a persistent grid of up to that many groups meets its barriers (`ukl_cpu_shim.h`).
+const RESIDENT_THREADS: usize = 8192;
+
+/// The groups of `threads` threads the CPU runs at once.
+pub fn resident_groups(threads: usize) -> usize {
+    (RESIDENT_THREADS / threads.max(1)).clamp(1, 64)
 }
 
 /// A kernel's entry: a pointer to each argument's bytes, and the launch; 0, or 1 with the launch's error written.
@@ -639,15 +650,19 @@ impl CpuBindContext<'_> {
             if grid.contains(&0) {
                 return Ok(());
             }
-            let mut local = vec![0u128; (shared as usize).div_ceil(16).max(1)];
-            let (stacks, stride) = w.stacks(threads);
+            let groups = grid.iter().map(|&g| g as usize).product::<usize>();
+            let resident = resident_groups(threads).min(groups);
+            let slot = (shared as usize).div_ceil(16) * 16;
+            let mut local = vec![0u128; (slot * resident).div_ceil(16).max(1)];
+            // A stack for each thread of each resident group, and, past one group, one for each group's own coroutine.
+            let (stacks, stride) = w.stacks(threads * resident + if resident > 1 { resident } else { 0 });
             let mut error = vec![0 as c_char; 1024];
             let ptrs: Vec<*const c_void> = params.iter().map(|p| p.as_ptr().cast::<c_void>()).collect();
             let launch = Launch {
                 grid,
                 block,
                 shared: local.as_mut_ptr().cast(),
-                shared_bytes: shared,
+                shared_bytes: slot as u64,
                 stacks,
                 stack_bytes: stride as u64,
                 error: error.as_mut_ptr(),
@@ -655,6 +670,8 @@ impl CpuBindContext<'_> {
                 sched: w.sched.as_mut_ptr().cast(),
                 sched_bytes: SCHED_BYTES as u64,
                 tls,
+                resident: resident as u32,
+                pad: 0,
             };
             if entry(ptrs.as_ptr(), &launch) != 0 {
                 let e = unsafe { CStr::from_ptr(error.as_ptr()) }.to_string_lossy().into_owned();

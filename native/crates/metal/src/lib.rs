@@ -18,22 +18,13 @@ pub mod buffer_observation;
 pub mod lane;
 pub mod launch;
 pub mod launch_budget;
-/// The building blocks of the preprocessor's grid passes (decision 0448): MSL, so on Metal alone
-/// until the passes are UKL (decision 0468 §5).
-#[cfg(target_os = "macos")]
-pub mod pp_blocks;
-/// The preprocessor's evaluator over tapes (decision 0436): plain MSL passes.
-#[cfg(target_os = "macos")]
+/// The preprocessor's evaluation arena and its kernels' one UKL source (decisions 0448, 0468).
+pub mod pp_arena;
+/// The preprocessor's evaluator over tapes (decision 0436).
 pub mod pp_eval;
 /// Macro expansion on the device (decision 0448).
 #[cfg(target_os = "macos")]
 pub mod pp_expand;
-/// The device work queue (decision 0027) in MSL, for the preprocessor's expansion (0448) until it
-/// is written in UKL; the engine's kernels include `<ukl/workqueue.h>` (0440 step C).
-#[cfg(target_os = "macos")]
-pub mod work_queue {
-    pub const SOURCE: &str = include_str!("work_queue.metal");
-}
 /// The preprocessing words on the device (decision 0348, stage 5).
 pub mod pp_on;
 /// Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.

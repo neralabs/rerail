@@ -7249,6 +7249,14 @@ on an M3 or M5:
   and sort fail at 8 groups: "a barrier failed" (bounded, never hangs). They fail at 1 test thread too.
 - **The AOT words**: `the_aot_words_are_the_interpreters` and `the_words_translate_to_rust` overflow the test
   thread's 2 MB stack in `rust_source`.
+- **The evaluation on one persistent grid (0468 step 5a, roll-up 21)**: at Go-C-and-C-support's own 3997fd0a25,
+  each test run alone, every test that runs the whole grid evaluation hangs (past 25 s) or fails with Metal's
+  `BackendFailure`. Which test does which varies between runs. Here 11 more are ignored with it: `if_values_`,
+  `pragma_rows_`, `counters_in_directives_are_the_serial_passes`, `the_include_tree_`, `expanded_include_names_`,
+  `the_groups_`, `push_and_pop_are_the_spikes`, `every_name_sees_the_spikes_definition`,
+  `the_refused_cases_are_the_serial_passes`, `an_evaluation_is_a_fixed_handful_of_launches` and
+  `a_batch_is_its_units`. The 8 tests that stop short of the grid's evaluation pass there and here. On the CPU
+  backend (`RERAIL_GPU=cpu`) the five grid tests pass, so the primitives hold where every group is resident.
 - **Done when**: each passes on the M1 Max, or a test states what the M1 Max cannot do (a grid's residency), and
   none is ignored.
 
@@ -7568,6 +7576,51 @@ on an M3 or M5:
   Then `Inside` goes.
 - **Done when**: a test with two runs' loops in one pool at once reads each run's own value in every item, and a
   profiled corpus0 x B-now run completes.
+
+### Q350. Roll-up 21 (Go-C-and-C-support onto rr-align): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): Go-C-and-C-support at 2b778cd5218 (base ce2c4019c83), renumbered on a commit of its own
+  first (3997fd0a25):
+  - its decisions 0467, 0475 and 0478 are 0487, 0488 and 0489 here. Each file and README row notes its old number.
+  - its citations of 0421, 0427, 0459 and 0460 are 0466, 0463, 0464 and 0468 here. Its 0460 is ours' 0468 file.
+  - it brings no Q number.
+- **Taken from theirs**:
+  - 0468 step 5: the evaluator is UKL on one persistent grid, a fixed handful of launches a unit (`pp_arena`,
+    `pp_eval::on_grid`, `fewer`; `pp_eval`, `pp_expand`, `pp_grid`, `pp_if`, `pp_p1`, `pp_search` and
+    `pp_probes.uglykl`). These are gone: `pp_blocks.rs` with its tests, `pp_eval.metal`, `pp_expand.metal` and the
+    metal crate's `work_queue`. This supersedes roll-up 20's interim port of `pp_blocks` onto the lane.
+  - 0468 §4: G is the device's resident count (`Device::resident_groups`). The CPU shim runs that many groups at
+    once, each a coroutine (`Launch::resident`, `resident_groups`).
+  - the grid primitives' `ukl_grid_scans`, the small-n paths, `ukl_grid_sort_u64_from` and its tile sort (`tile`).
+  - 0487–0489: P1 as rounds on the device (`eval::rounds`), the text in P1's iterations, and rooms sized from a
+    refused run.
+- **Kept from ours, ported onto theirs**:
+  - 0471: a unit's documents may lie in several slabs. `Unit::slabs` holds the slabs past the bound one, and every
+    launch of `on_grid` makes them resident (`Enc::over`, `run_timed_over`). In the UKL passes a file's place is
+    64 bits (`pf_at`: `at` and `at_high`), and the tape reader and the name keys read through it. Theirs'
+    `Unit::batch` refuses a batch over several slabs.
+  - 0442: theirs' new statics are machine objects: the kernels by name (`pp_arena::Kernels`) and the grid's groups
+    (`pp_arena::Groups`). `pp_arena::SOURCE` is listed in global-state.txt, as `pp_blocks`' was.
+  - the CPU shim's host-given scheduler storage and TLS slot (macOS's pthread keys). The one-group path uses the
+    host's storage. Groups that run together keep their schedulers on their coroutines' stacks, as in theirs, and
+    no thread-local remains in the shim.
+  - `UklGridSortLocal` keeps ours' `digits` beside theirs' `tile`. Every caller now sets it: the library test and
+    `pp_grid`/`pp_probes`, in one block sized `UKL_GRID_SORT_WORDS`. Before this, ours' library test never set
+    it.
+  - c_directives' device lane on macOS and Linux. `sha2` is now a normal dependency there (`eval::rounds::place`).
+- **Checked** on an M1 Max:
+  - The engine, metal, accel, c_directives, parser_tests, rr_parser, device_metal, facts, compiler, gpu and device
+    libs and tests compile with no warning.
+  - Tests that pass:
+    - metal's pp_arena and pp_eval (6);
+    - c_directives' tests that stop short of the grid's evaluation (8, the same set as at theirs' 3997fd0a25);
+    - device's CPU kernels (2);
+    - gpu's threadgroup and device-wide scans, radix sorts and the work queue (5), on Metal and on the CPU backend;
+    - gpu's five grid tests on the CPU backend, with `--ignored`. The sort took 171 s in a debug build.
+- **Open**:
+  - Q330: on the M1 Max, the grid evaluation hangs or fails, both here and at theirs. It now has 11 more ignored
+    tests.
+  - not run on an M3 or M5 (the M3 was at a load average of 174).
 
 ### Q349. Roll-up 20 (CUDA-support onto rr-align): what the merge chose, and what stays open
 

@@ -157,7 +157,7 @@ with the unit, because each primitive's number of levels was chosen by its capac
 | R5 | Each persistent-grid primitive equals a host reference from 1 to 10^6 elements, at G = 1, 8 and the device's G | the library's tests, on Metal and UKL's CPU backend |
 | R6 | The grid barrier: 10,000 in a row, each seeing every group's writes before it; past residency, `barrier` and no hang | the library's tests |
 | R7 | An evaluation is the same fixed handful of launches for the smallest and the largest unit | `an_evaluation_is_a_fixed_handful_of_launches` |
-| R8 | The corpus's units still give the serial pass's tokens: 3,132, the same 3 refused | `the_corpus_expands_on_the_device` (ignored) |
+| R8 | The corpus's units still give the serial pass's tokens: 3,132, the same 3 refused | `the_corpus_preprocesses_on_the_device` (ignored) |
 
 ## Steps
 
@@ -238,3 +238,237 @@ with the unit, because each primitive's number of levels was chosen by its capac
       count comes with the setup kernel in step 5.
     - CUDA uses the same counter form: the device layer has no cooperative launch.
     - The tests ran on Metal only, not on UKL's CPU backend.
+- **Step 5a** (this commit): the evaluation on one persistent grid, four launches for every unit.
+  - `pp_grid.metal`:
+    - `pp_setup`: the front, the definitions, the visibility and the top level, to the queue's
+      seed, as phases with a grid barrier between them;
+    - `px_expand`, encoded twice: the queue's first phase, then the top level's rollback,
+      sizes and places, then the queue's second phase. A stage word lets the second launch
+      take up a queue whose workers all gave up waiting;
+    - `pp_check`: the refusals.
+
+    Every pass of `pp_eval.metal` and `pp_expand.metal` is now an inline body over a grid-stride
+    loop, and `px_work` is `px_worker`, run by every SIMD group of the grid.
+  - The scans, segmented scans and sorts are `ukl/grid.h`'s. `pp_blocks.metal` keeps only the
+    searches. `Scan` keeps only its total, and `Sort` keeps only its other buffers and
+    histograms. `SegScan`, the plan kernels, the indirect arguments and `Grid::Indirect` are gone.
+  - The kernels bind the arena once, with the slab and the layout. `SLOTS` names every store,
+    and `source()` turns it into the MSL's `S_*`. `Lay` holds a run's offsets and words, and
+    each structure writes its own slots (`Front/Defs/Vis/Exp::lay`). The 31-binding limit no
+    longer applies.
+  - `LAST` stops `pp_setup` after the front, the definitions or the visibility, for the tests
+    of those stages.
+  - The groups' sums are sized by the run's groups. A failed barrier sets `X_BARRIER`. The
+    host sees it in the grid's failure word and runs again at half the groups (`fewer`), down
+    to 1.
+  - Tests:
+    - `an_evaluation_is_a_fixed_handful_of_launches` (R7): an empty unit, a unit of 800
+      definitions and uses, and a unit that runs again at a larger rung, all at 4 launches. A
+      grid of 4,096 groups fails its barrier, runs again, and gives the same output at 256
+      groups.
+    - All 16 evaluator tests pass, and the 2 block tests pass.
+    - The corpus in three slices (R8): 999 + 1,199 + 934 = 3,132 units equal the serial pass,
+      the same 3 refused (`#line` twice, a call across a stretch's end once), every unit at 4
+      launches. Before this step a unit took 118 to 176 launches.
+  - Not yet as decided:
+    - G starts at 32 (`GROUPS`), not the Machine's resident count. 256 groups of 256 held here
+      (an M5), so 32 is conservative. The count from IORegistry's `gpu-core-count` is still to
+      come.
+    - `pp_expand` is still MSL, not UKL (step 5b).
+    - The GPU time, first slice (999 units, 2.34 M tokens), from the command buffers' GPU
+      intervals (`Expanded::gpu_seconds`), on an M5 at load average 32 to 40: 2.24 s in all,
+      a median of 1.67 ms a unit, and 16.8 ms for the slowest. A small unit's time is mostly
+      its barriers: about 100 a run, at 32 groups. Step 4's code was not timed, so there is
+      no comparison against it; that would take a second build of step 4.
+- **Step 5a's GPU time, taken apart** (2026-11-19, M5, the machine at load average 32 to 72 but
+  its GPU idle). The first slice's 2.24 s is about 2,000 times what 2.34 M tokens should cost.
+  The measurements are ignored tests: `where_an_evaluations_gpu_time_goes`,
+  `the_grid_sort_alone_is_fast` and `what_a_barrier_costs`. A stop word (`STOP`) ends
+  `pp_setup` before phase k, so the difference between two stops is that phase's cost.
+  - **What a step of the grid costs:**
+
+    | Step | Cost |
+    |---|---|
+    | Empty command buffer | 11 µs |
+    | `ukl_grid_barrier` | 2.8 µs at 1 group, 3.8 µs at 32 |
+    | Device fence | 0.8 µs |
+    | Threadgroup barrier with device scope | 0.4 µs |
+    | Dependent load | 0.2 µs, coherent or not |
+
+  - **`ukl_grid_sort_u64` costs about 35 µs a digit whatever its count:** 154 µs for 3 keys or
+    1,000 at 32 bits, and 275 µs for 3 keys at 64 bits. Each digit runs a whole tile's rounds
+    and about 8 grid barriers. The setup sorts 17 digits, about 600 µs of the fixed cost.
+  - **A two-line unit costs 1.3 ms, the same at 1 group as at 32.** It is a fixed latency: about
+    130 grid barriers, the sorts' digits, and chains of dependent loads. None of it is work.
+  - **A unit of 15 K nodes in one file costs 4.3 ms at 32 groups.** About 0.6 ms of that is
+    `pp_counts`/`pp_dir_counts` and another 0.6 ms is `pp_dirs`: each is one thread a file,
+    walking the whole tape serially (40 ns a node). The queue's two phases take 2.5 ms.
+  - **The corpus runs one evaluation a unit:** 999 command buffers one after another, each
+    paying the fixed latency. 0448 §2's "one arena a batch of units" is not built: `expand`
+    takes one unit.
+  - So the causes, largest first:
+    1. no batching: the fixed latency is paid 999 times, not once;
+    2. a per-evaluation latency of about 1.2 ms, from barrier count and per-digit sort cost
+       rather than from work;
+    3. serial per-file walks, which scale with a file's nodes on one thread;
+    4. the queue's phases on large units.
+- **Step 5c: batches, and the grid's latency cut** (user, 2026-11-19: "please do all of these").
+  - **Batches** (`expand_many`): one arena and one run of the grid for many units.
+    - `Layout::join` lays the units out one after another: their files, directives and stretches,
+      with each unit's slots past the last unit's highest.
+    - `visible()` sees only rows from its unit's first slot on (`FLOORS`, a search by slot),
+      plus the built-ins' rows at slot 0. A row of an earlier unit sends the walk straight to
+      the built-ins, so another unit's rows never spend the walk's bound.
+    - `Unit::batch` reads the units' documents in the one slab they are in. It refuses documents
+      in more than one slab, because gathering them would copy them (0353).
+    - A batch splits in halves when its documents span slabs, when the budget refuses its arena
+      (at 500 units the arena is about 505 MB, against the 512 MB Metal budget), or when the
+      device refuses it. A refusal is therefore a lone unit's.
+    - Each unit's output starts at its first stretch's first top token's place, read from the
+      two scans already stored (`Expanded::unit_out`).
+    - Test: `a_batch_is_its_units`. Eight units define, undefine and use the same names
+      differently, one redefines `__FILE__` before another uses it, and one is refused. Each
+      unit gives its own serial answer, and the refused unit is refused alone.
+    - The first slice: 999 units equal, in 4 runs of about 250 units. GPU time is 74 to 84 ms,
+      down from 2,242 ms.
+  - **The grid's primitives** (`ukl/grid.h`, `ukl/group.h`):
+    - `ukl_grid_scans` runs up to 4 scans over shared barriers, and `ukl_grid_scan_n` is the case
+      of one.
+    - Up to `UKL_GRID_SMALL` (4,096) values, a scan or segmented scan is group 0's alone: one
+      barrier, not three.
+    - The sort of one tile (up to 1,024 keys) is group 0's rank sort in threadgroup memory: one
+      barrier, against 5 a digit.
+    - A larger sort first finds the bits that vary (an OR and an AND of the keys, one phase), then
+      passes over only the digits that hold them. A last pass moves the rows where the caller
+      reads them (`ukl_grid_sort_in_input`).
+    - `ukl_tg_or` and `ukl_tg_and` are new in `group.h`.
+    - Tests: the library's grid tests, with 64-bit sorts of keys that vary in two digits and in
+      one; 17 tests on Metal, and `rerail-ukl`'s 8 under cargo.
+  - A two-line unit's evaluation drops from 1,368 µs to 637 µs.
+- **Step 5d: no thread walks a file.** The front's `walk_dirs` (one thread a file, its items in
+  order) is gone, with `pp_dir_counts` and `pp_dirs`. Each row's fields come from passes of a node
+  a thread, and scans and sorts between them:
+  - a row is a node of a directive's kind;
+  - its depth comes from the groups' +1/−1 events, scanned;
+  - its rank among rows, groups and arms, from their flags scanned in one `ukl_grid_scans`;
+  - the arm it is read under is the latest arm at its depth before it: a search in the arms'
+    keys (depth, place), sorted. A row's group node is likewise the latest group one depth less;
+  - `text_before` is the text tokens' rank (the text map moved from the visibility into the
+    front);
+  - the guard's shape comes from per-row marks (atomics by file) and a per-file pass.
+
+  `the_directives_pass_gives_the_spikes_tables` and every evaluator test pass. The corpus:
+  3,132 units equal, the same 3 refused. GPU time for the three slices: 52, 42 and 45 ms.
+- **Step 5e: fewer barriers.** The files' first nodes and the node total are the views' counts,
+  which the host holds, so the front's count pass, its barrier and its scan go: the bases are
+  written into the block with the layout. Independent scans share their barriers through
+  `ukl_grid_scans`: the front's row, group and depth scans (one), its text and arm scans (one), and
+  the top level's `pscan` with `bscan` (one). Measured warm on the M5, load average 14 to 38:
+  - a small unit takes 182 µs of GPU time (it was 188 µs after step 5d, 1,368 µs before 5c);
+  - a large unit at 32 groups takes 2.20 ms (it was 2.21 ms after 5d, about 4.0 ms before);
+  - the corpus slices take 36, 41 and 44 ms (52, 42 and 45 ms after 5d; 2,242 ms for the first
+    slice before batching).
+
+  The large unit's time is now mostly two phases of the top level (phase 32 at 265 µs, phase 21
+  at 72 µs), not barriers.
+- **Step 5f: the two slow phases were sorts.** After 5e, a large unit's setup took 539 µs, and
+  two phases held 337 µs of it: the paren closes' sort (264 µs) and the definitions' rows sort
+  (73 µs). Measured alone (`the_grid_sort_alone_is_fast`), the old sort was slow in both of its
+  paths:
+  - the one-tile path ranked every row on group 0 alone, n² compares on 256 threads: 1.5 ms for
+    1,000 keys;
+  - a grid digit gave each group whole tiles of 1,024 rows, so 1,600 rows kept 2 of the 32 groups
+    busy: about 46 µs a digit.
+
+  The changes:
+  - **Few rows rank over the whole grid.** For `n <= UKL_RADIX_TILE` and at most a row a thread,
+    each group holds the rows in threadgroup memory. Each SIMD group ranks a row at a time, its
+    lanes taking a share of the compares each and `ukl_sg_sum` adding them. A row's lane keeps
+    its rank. Where the rows are sorted in place, one grid barrier comes before they are written.
+    1,000 hashed keys: 73 µs at 32 groups, from 1,494 µs.
+  - **`ukl_grid_sort_u64_from(…, low, bits, …)`**: the rows are already in the order of their low
+    `low` bits, so only the digits above them are passed. The closes are placed in position order
+    (their scan), so their sort passes the depth's digits alone (`low` 24).
+  - **The depth's bias is 2^15 + 128,** not 2^15, so the depths near 0 (−128 to 127) differ in
+    one byte, and a closes sort passes one digit, not two.
+
+  The library's sort test adds the few rows' path at 1, 8 and 32 groups (200 keys) and two sorts
+  given `low` (900 keys, low 32; 70,001 keys, low 24).
+
+  On the M3, a large unit at 32 groups now takes 401 µs of setup: the closes sort takes 58 µs, the
+  rows sort 28 µs. On the M5 under load, the setup went from 539 to 230 µs. The corpus is
+  unchanged: 3,132 units equal, the same 3 refused.
+
+  **What is left is the expansion.** It is 3.4 of the large unit's 3.8 ms on the M3, and 9.6 of a
+  250-unit batch's 12.7 ms (`RERAIL_PP_STAGES=250`, sent to the host with its corpus slice:
+  `RERAIL_PP_CORPUS`).
+- **The encoders are labelled.** `Enc::run` set no label, and the launch budget's record reads
+  each dispatch's label, so `nsstring_as_str` was given nil: undefined behaviour that a cargo test
+  catches (Relax's does not). Each encoder now takes its kernel's name.
+- **Step 5b: the evaluator is UKL, launched through the lane (§5).** `pp_eval.metal`,
+  `pp_expand.metal`, `pp_grid.metal`, `pp_blocks.metal` and the MSL work queue
+  (`work_queue.metal`, `rerail_metal::work_queue`) are gone:
+  - The passes are `pp_eval.uglykl`, `pp_search.uglykl` (the searches), `pp_expand.uglykl` and
+    `pp_grid.uglykl` (the kernels), and the tests' probes are `pp_probes.uglykl`.
+  - The kernels are `DEFINE_KERNEL2(pp, …)`. The grid's take the arena, the slab and the
+    layout as rows, and their threadgroup memory as a `SHARED` row (`PpTg`). The probes take
+    their scalars as `ARGS` (`PpProbeArgs`).
+  - The passes are written in UKL's dialect: C types, `ukl_atomic_*` over plain words,
+    `ukl_sg_*`, `ukl_min` and `ukl_max`, `ukl_ctz32`, and pointers where MSL had references. Every
+    function that reaches a SIMD-group operation takes `__UKL_PARAMS` (15 of the expansion's).
+  - The expansion's queue is `<ukl/workqueue.h>`, the same protocol. An argument's list is made
+    by `ukl_atomic_cas`, a strong exchange, where MSL had a weak one in a loop.
+  - `pp_blocks.rs` is `pp_arena.rs`: the arena, the layout and the one source, which the kernel
+    store now preprocesses for the device's backend. `Enc` holds a `lane::Command`, and binds rows
+    by name at their offsets in the arena, the arena's buffer now the device layer's
+    (`Block::device_buffer`). The slab is bound as its `device_buffer`. R9's one command is the
+    lane's.
+  - Tests: `the_evaluator_is_ukl` (no MSL left in the source; UKL's queue and grid; launched
+    through the lane), and `the_source_compiles` (every kernel; `RERAIL_PP_DUMP` writes the
+    preprocessed source). All 18 evaluator tests and the 3 arena tests pass. The corpus: 3,132
+    units equal, the same 3 refused, 4 launches each.
+- **The evaluator is OpenCL C 1.2 too (§5).** `the_source_is_opencl_c_1_2` preprocesses the
+  source for OpenCL, its SIMD group emulated at width 32, and runs clang's OpenCL C 1.2 front end
+  over it (0440 §3.5's gate). It found what Metal's C++ front end accepted:
+  - MSL's references into device memory (`device PxList& L`): 15 functions. They are pointers now.
+  - One `__UKL_ARGS` placed inside the wrong call: Metal's `__UKL_ARGS` is empty, so only
+    OpenCL's front end could catch it.
+- **G is the device's resident count (§4, R5).**
+  - `Device::gpu_cores` reads IORegistry's `gpu-core-count` from the entry whose ID is the
+    `MTLDevice`'s registry ID. Other devices give no count.
+  - `Device::resident_groups(threads, local)` is the cores times the groups a core holds, each
+    core taken at its least: one group of the device's largest (`max_threadgroup`, 1,024 threads,
+    so 4 groups of 256), and `maxThreadgroupMemoryLength` of threadgroup memory over the kernel's
+    own (`ComputeFunction::threadgroup_bytes`, from its pipeline).
+  - `pp_arena::groups()` is that count at the grid kernels' threadgroup memory (the larger of
+    `pp_setup`'s and `px_expand`'s), and `GROUPS_UNKNOWN` (8) with no count. `GROUPS = 32` is gone.
+  - On the M5 Max: 40 cores at 12,432 bytes a group, so 2 groups a core and G = 80
+    (`the_grid_is_the_devices_resident_count`).
+  - The library's grid tests run at 1, 8 and 32 groups and at the device's count for each kernel
+    (`grid_sizes`): 40 to 160 groups on the M5 Max, all passing.
+  - All 18 evaluator tests pass at G = 80. The corpus: 3,132 units equal, the same 3 refused, 4
+    launches each.
+  - Measured, not a check: the three slices' GPU time is 168 ms at G = 80, against 147 ms at
+    G = 32 (M5 Max, load average 28 to 37 both times). Most units are small, and a barrier costs
+    more with more groups.
+- **The grid primitives run on UKL's CPU backend too (R5, R6).**
+  - Before this, the CPU ran a launch's groups one after another, so a grid barrier at more than
+    one group could not pass there.
+  - The shim (`ukl_cpu_shim.h`) now runs up to the launch's resident count of groups at once. Each
+    is a coroutine with its own scheduler, threads' stacks and threadgroup memory, and takes the
+    launch's next group when its own ends.
+  - `ukl_poll_yield()` (`backend.h`) suspends a thread that polls another group's progress: the
+    grid barrier's poll, and the work queue's idle polls. Once its whole group polls, the group
+    yields to the next. On a GPU it is nothing.
+  - On the CPU a poll is a round of every other group, so `UKL_GRID_SPINS` there is 1,000.
+  - The host gives the resident count (8,192 threads at once over a group's threads, at most 64
+    groups), and stacks and threadgroup memory for each.
+  - `RERAIL_GPU=cpu`: the five grid tests pass at 1, 8 and 32 groups, and the 4,096-group grid
+    fails its bound in 1.4 s without hanging. The library's other 18 tests pass on the CPU, all
+    23 on Metal, and `rerail-ukl`'s 8 under cargo.
+  - The CPU run of the grid tests takes 123 s (10^6-key sorts on coroutines).
+- **G is capped at 32 (the user, 2026-11-19: "just cap it").** `pp_arena::groups()` is the
+  device's resident count at most `GROUPS_MOST` (32). A preprocessor unit is small, and each
+  barrier costs more with every group. On the M5 Max G is 32: the corpus at 3,132 units equal, 4
+  launches each, 149.6 ms of GPU time over the three slices (load 15 to 20). The library's grid
+  tests still run at the uncapped count.
