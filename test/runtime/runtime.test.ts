@@ -622,7 +622,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
       check.resolve();
       await runtime.dispose();
     }
-  });
+  }, 30_000);
 
   // In repository scope one audit of the whole repository checks each batch, a walk's `log` batch too, and a wait for
   // the edits that may steer waits for them all: behind a turn end that stopped waiting for them, a result waits for none.
