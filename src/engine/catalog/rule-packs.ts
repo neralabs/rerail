@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, extname, join, posix, win32 } from "node:path";
 import { z } from "zod";
 import { loadRuleCatalog } from "./rule-catalog.js";
 import { parseRuleDocument, readJsonDocument } from "./rule-documents.js";
@@ -20,7 +20,10 @@ import {
   type RulePackMatch,
   type RulePackSignal,
 } from "./rule-pack-matcher.js";
-import type { RuleDocument } from "./rule-store.js";
+import { describeRerailRules, RERAIL_DOCUMENT_EXTENSION, rerailRuleOf, unsupportedRerailRule, type RerailDescriber } from "./rerail-rules/rerail-rule.js";
+import { ruleKindOf, type RuleDocument } from "./rule-store.js";
+import type { RuleKind } from "../storage/schema.js";
+import type { RrDescription } from "../rr/rr-runner.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 
 export type { RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
@@ -39,14 +42,40 @@ export type RulePackCategory = (typeof RULE_PACK_CATEGORIES)[number];
 
 const nonEmpty = z.string().refine(value => value.trim().length > 0, "must be a non-empty string");
 
+/**
+ * Why `path`, a file an example's repository holds beside the example's own file `own`, cannot be one: it must be a
+ * relative path that stays inside that repository and is not the example's own. Undefined when it can.
+ */
+function exampleFileProblem(path: string, own: string | undefined): string | undefined {
+  const normalized = posix.normalize(path.replaceAll("\\", "/"));
+  if (posix.isAbsolute(normalized) || win32.isAbsolute(path)) return "must be relative to the example's repository";
+  if (normalized === ".." || normalized.startsWith("../")) return "must stay inside the example's repository";
+  return own !== undefined && normalized === posix.normalize(own) ? "is the example's own path" : undefined;
+}
+
 const exampleSchema = z
   .object({
     /** The file a code rule's example is read as; conversation rule examples have none. */
     path: nonEmpty.optional(),
     /** File content for a code rule; the command a coding agent runs for a conversation rule. */
     text: nonEmpty,
+    /**
+     * For a rule written in `.rerail` that reads across files: the other files of the one repository the example is
+     * read in. Only findings on the example's own `path` count.
+     */
+    with: z.array(z.object({ path: nonEmpty, text: nonEmpty }).strict()).min(1).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((example, context) => {
+    for (const [at, file] of (example.with ?? []).entries()) {
+      const problem = exampleFileProblem(file.path, example.path);
+      if (problem !== undefined) context.addIssue({ code: "custom", path: ["with", at, "path"], message: problem });
+    }
+  });
+
+/** Whether a listed rule's examples carry other files, which only a rule written in `.rerail` reads. */
+const examplesWithFiles = (rule: { readonly examples?: { readonly caught: { readonly with?: unknown }; readonly passes: { readonly with?: unknown } } | undefined }): boolean =>
+  rule.examples?.caught.with !== undefined || rule.examples?.passes.with !== undefined;
 
 /**
  * A pack's id, its `pack.json` `id`: lowercase letters, digits and dashes, starting with a letter. It is also the end
@@ -56,16 +85,18 @@ export const RULE_PACK_ID = /^[a-z][a-z0-9-]*$/u;
 
 /**
  * A pack rule's id: lowercase letters, digits and dashes, one style in every pack (`eslint-no-empty`,
- * `ruff-b011-assert-false`). It is also the name of the rule's document, `rules/<id>.json`, and its port's id in
- * `conformance.json`. Users turn rules on and off by it, so it must not change once the pack is published.
+ * `ruff-b011-assert-false`). It is also the name of the rule's document, `rules/<id>.json` or `rules/<id>.rerail`, and
+ * its port's id in `conformance.json`. Users turn rules on and off by it, so it must not change once the pack is
+ * published.
  */
 export const RULE_PACK_RULE_ID = /^[a-z0-9][a-z0-9-]*$/u;
 
 /**
- * A rule's code-rule document, relative to the pack directory: `rules/<id>.json`. Only a plain name: a `\` or `..`
- * would reach outside the pack on Windows, where `\` separates folders.
+ * A rule's document, relative to the pack directory: `rules/<id>.json`, a code or conversation rule in JSON, or
+ * `rules/<id>.rerail`, a code rule written in `.rerail`. Only a plain name: a `\` or `..` would reach outside the pack
+ * on Windows, where `\` separates folders.
  */
-const documentPathSchema = z.string().regex(/^rules\/[a-z0-9][a-z0-9-]*\.json$/u, "must be rules/<id>.json");
+const documentPathSchema = z.string().regex(/^rules\/[a-z0-9][a-z0-9-]*\.(?:json|rerail)$/u, "must be rules/<id>.json or rules/<id>.rerail");
 
 const packRuleFields = {
   id: z.string().regex(RULE_PACK_RULE_ID, "must be lowercase letters, digits and dashes"),
@@ -109,7 +140,11 @@ export const rulePackFileSchema = z
     honourSuppressionComments: z.boolean().optional(),
     rules: z.array(
       z.object({ ...packRuleFields, document: documentPathSchema }).strict()
-        .refine(rule => rule.heldOff === undefined || rule.on === false, { message: "needs \"on\": false", path: ["heldOff"] }),
+        .refine(rule => rule.heldOff === undefined || rule.on === false, { message: "needs \"on\": false", path: ["heldOff"] })
+        .refine(rule => extname(rule.document) === RERAIL_DOCUMENT_EXTENSION || !examplesWithFiles(rule), {
+          message: "with is for a rule written in .rerail, which reads its example with other files",
+          path: ["examples"],
+        }),
     ),
   })
   .strict();
@@ -184,12 +219,14 @@ export type RulePackPackage = z.infer<typeof rulePackPackageSchema>;
 export interface RuleExample {
   readonly path?: string | undefined;
   readonly text: string;
+  /** The other files of the example's repository, for a rule written in `.rerail` that reads across files. */
+  readonly with?: { path: string; text: string }[] | undefined;
 }
 
 export interface RulePackRule {
   readonly id: string;
-  /** A code rule or a conversation rule. */
-  readonly kind: RuleDocument["kind"];
+  /** A code rule or a conversation rule, whatever language its document is written in. */
+  readonly kind: RuleKind;
   /** Plain-language name, e.g. "Use === and !== in TypeScript". */
   readonly title: string;
   /** The smaller group the rule is filed under inside its pack, e.g. "Complexity" or "api". */
@@ -297,7 +334,7 @@ function checkedMatch(id: string, match: RulePackMatch): RulePackMatch {
 }
 
 /** Rule `ruleId`'s examples in pack `id`, checked for its kind: a code rule's both have a path, a conversation rule's none. */
-function checkExamples(id: string, ruleId: string, kind: RuleDocument["kind"], examples: RulePackRule["examples"]): void {
+function checkExamples(id: string, ruleId: string, kind: RuleKind, examples: RulePackRule["examples"]): void {
   if (examples === undefined) return;
   const withPath = [examples.caught, examples.passes].filter(example => example.path !== undefined).length;
   if (kind === "code" && withPath < 2) throw new Error(`Code rule ${ruleId} in rule pack ${id} needs a path on both examples`);
@@ -307,7 +344,7 @@ function checkExamples(id: string, ruleId: string, kind: RuleDocument["kind"], e
 /** Listed rule `rule` with its document, as the catalog holds it. The mode and on state take effect only once packs are attached. */
 function packRuleOf(rule: RulePackFile["rules"][number], document: RuleDocument): RulePackRule {
   return {
-    id: rule.id, kind: document.kind, title: rule.title, group: rule.group, mode: rule.mode ?? document.rule.mode, on: rule.on ?? true,
+    id: rule.id, kind: ruleKindOf(document), title: rule.title, group: rule.group, mode: rule.mode ?? document.rule.mode, on: rule.on ?? true,
     ...(rule.heldOff === undefined ? {} : { heldOff: rule.heldOff }),
     ...(rule.examples === undefined ? {} : { examples: rule.examples }),
   };
@@ -327,24 +364,69 @@ function parsePackDocument(id: string, document: string, source: unknown, docume
   }
 }
 
-/** One listed rule read and checked: its document is named for its id, exists and carries that id, and its examples fit its kind. */
-function readPackRule(directory: string, id: string, rule: RulePackFile["rules"][number]): { rule: RulePackRule; document: RuleDocument; source: unknown } {
-  const documentPath = join(directory, rule.document);
-  if (basename(rule.document, ".json") !== rule.id) throw new Error(`Rule pack ${id} lists ${rule.id}, whose document must be rules/${rule.id}.json, not ${rule.document}`);
-  if (!existsSync(documentPath)) throw new Error(`Rule pack ${id} lists ${rule.id}, whose document ${rule.document} does not exist`);
+/** A listed rule's document as read: the rule, and for a JSON code rule its document as written (`$option` references unresolved). */
+interface ReadDocument {
+  readonly document: RuleDocument;
+  readonly source: unknown;
+}
+
+/** The JSON rule document at `documentPath`, listed as `document` in pack `id`. */
+function readJsonPackDocument(id: string, document: string, documentPath: string): ReadDocument {
   const source = readJsonDocument(documentPath);
-  const document = parsePackDocument(id, rule.document, source, documentPath);
+  return { document: parsePackDocument(id, document, source, documentPath), source };
+}
+
+/**
+ * The `.rerail` rule `rule` lists, from `described`, the engine's reading of its file at `documentPath`: one the engine
+ * refuses, or that does what a pack's `.rerail` rule cannot do yet (`unsupportedRerailRule`), fails the pack.
+ */
+function readRerailPackDocument(id: string, rule: RulePackFile["rules"][number], documentPath: string, described: RrDescription | undefined): ReadDocument {
+  if (described === undefined || !described.ok) {
+    throw new Error(`Rule pack ${id} lists ${rule.id}, whose document ${rule.document} the engine refuses: ${described?.error ?? "it was not read"}`);
+  }
+  const unsupported = unsupportedRerailRule(described, rule.mode);
+  if (unsupported !== undefined) throw new Error(`Rule pack ${id} lists ${rule.id}: ${unsupported}`);
+  return { document: { kind: "rerail", rule: rerailRuleOf(described, readFileSync(documentPath, "utf8")) }, source: undefined };
+}
+
+/**
+ * One listed rule read and checked: its document is named for its id, exists and carries that id, and its examples fit
+ * its kind. `described` holds the engine's reading of each listed `.rerail` document, by its path.
+ */
+function readPackRule(directory: string, id: string, rule: RulePackFile["rules"][number], described: ReadonlyMap<string, RrDescription>): { rule: RulePackRule } & ReadDocument {
+  const documentPath = join(directory, rule.document);
+  const extension = extname(rule.document);
+  if (basename(rule.document, extension) !== rule.id) throw new Error(`Rule pack ${id} lists ${rule.id}, whose document must be rules/${rule.id}${extension}, not ${rule.document}`);
+  if (!existsSync(documentPath)) throw new Error(`Rule pack ${id} lists ${rule.id}, whose document ${rule.document} does not exist`);
+  const { document, source } = extension === RERAIL_DOCUMENT_EXTENSION
+    ? readRerailPackDocument(id, rule, documentPath, described.get(documentPath))
+    : readJsonPackDocument(id, rule.document, documentPath);
   if (document.rule.id !== rule.id) throw new Error(`Rule pack ${id} lists ${rule.id}, but ${rule.document} has id ${document.rule.id}`);
-  checkExamples(id, rule.id, document.kind, rule.examples);
+  checkExamples(id, rule.id, ruleKindOf(document), rule.examples);
   return { rule: packRuleOf(rule, document), document, source };
+}
+
+/**
+ * The engine's reading of every `.rerail` document `file` lists that exists in `directory`, by its path: one call for
+ * the pack, and none for a pack of JSON rules.
+ */
+function describeListed(directory: string, file: RulePackFile, describe: RerailDescriber): ReadonlyMap<string, RrDescription> {
+  const paths = file.rules
+    .filter(rule => extname(rule.document) === RERAIL_DOCUMENT_EXTENSION)
+    .map(rule => join(directory, rule.document))
+    .filter(path => existsSync(path));
+  if (paths.length === 0) return new Map();
+  const rows = describe(paths);
+  return new Map(paths.map((path, at) => [path, rows[at]!]));
 }
 
 /**
  * The pack in `directory`, validated: `pack.json` parses, the npm package (when there is a `package.json`) is the
  * pack's, or else the directory is named for it, every rule's document is named for its id, exists and carries that
- * id, and its globs compile. Throws an error naming the pack on the first problem.
+ * id, and its globs compile. The engine reads each `.rerail` document (`describe`), and the pack fails on one it
+ * refuses. Throws an error naming the pack on the first problem.
  */
-export function readRulePack(directory: string): LoadedRulePack {
+export function readRulePack(directory: string, describe: RerailDescriber = describeRerailRules): LoadedRulePack {
   const path = join(directory, "pack.json");
   if (!existsSync(path)) throw new Error(`${directory} has no pack.json`);
   const packJson = readJsonDocument(path);
@@ -356,7 +438,8 @@ export function readRulePack(directory: string): LoadedRulePack {
   const file = parsed.data;
   const packageJson = readPackageJson(directory, file.id);
   const match = checkedMatch(file.id, file.match);
-  const rules = file.rules.map(rule => readPackRule(directory, file.id, rule));
+  const described = describeListed(directory, file, describe);
+  const rules = file.rules.map(rule => readPackRule(directory, file.id, rule, described));
   const pack: RulePack = {
     id: file.id,
     name: file.name,

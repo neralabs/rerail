@@ -69,7 +69,15 @@ export {
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
 export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
-export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
+export { type JsonRuleDocument, type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
+export {
+  describeRerailRules,
+  RERAIL_DOCUMENT_EXTENSION,
+  unsupportedRerailRule,
+  type RerailDescription,
+  type RerailRule,
+} from "./catalog/rerail-rules/rerail-rule.js";
+export { runRerailPolicies, type RrDescription, type RrFinding, type RrRunOutcome } from "./rr/rr-runner.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
 export { RepositoryWorktreeWalks } from "./code-rule/worktree-walks.js";
 export {

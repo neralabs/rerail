@@ -11,7 +11,7 @@ import {
   recordCheckout,
   setUpRepository,
   upsertLibraryRule,
-  type RuleDocument,
+  type JsonRuleDocument,
   ruleDocumentDigest,
   stableJsonText,
   approve,
@@ -21,7 +21,7 @@ import { setRepositoryStarted } from "../../src/runtime/index.js";
 
 export interface TestRepositoryRules {
   /** Stored in the library, approved as a person would (see `approve`), and added to the repository. */
-  readonly library?: readonly RuleDocument[];
+  readonly library?: readonly JsonRuleDocument[];
   /** Leave the library rules waiting for approval, running in Log, as an agent's rule is until a person approves it. */
   readonly approve?: boolean;
   /** By Rerail rule ids added to the repository on their own. */
