@@ -223,10 +223,20 @@ export async function handleCursorEvent(
   const deliveries = transcriptOwnsText && (hook === "afterAgentResponse" || hook === "stop")
     ? []
     : await eventLoop.ingest(event);
-  // Left for a daemon that is not reading: the answer of a hook with nothing to deliver, and the session's held steers
-  // wait in their file for the next hook the daemon answers.
-  if (eventLoop.untaken === true) return cursorHookOutput(hook, []);
+  if (eventLoop.untaken === true) return await leftAnswer(input, descriptor, storageRoot);
   return await answerCursorHook(input, { hook, descriptor, path, answered: answeredFacts(eventLoop) }, deliveries);
+}
+
+/**
+ * The answer of a hook that left its event for a daemon that is not reading: one with nothing to deliver, the session's
+ * held steers waiting in their file for the next hook the daemon answers. A `beforeSubmitPrompt` then records that the
+ * session sends its own text (`transcriptCarriesText`), with its event left already: such a hook holds no session lock,
+ * so it takes the lock for that write alone, and a lock it is not given fails the hook with its event kept.
+ */
+async function leftAnswer(input: CursorHookInput, descriptor: AdapterSession, storageRoot: string): Promise<CursorHookOutput> {
+  const hook = requiredText(input, "hook_event_name");
+  if (hook === "beforeSubmitPrompt") await withSessionLock(storageRoot, "cursor", descriptor.sessionId, async () => await transcriptCarriesText(input, descriptor, storageRoot));
+  return cursorHookOutput(hook, []);
 }
 
 /** The answer of a hook the daemon answered with `deliveries`: the session's held steers routed through its file. */
@@ -252,15 +262,14 @@ async function answerCursorHook(
 /**
  * The hook's read of the transcript: its unread lines through `eventLoop`, or, while the daemon is not reading
  * (`RerailEventLoop.untaken`), only whether the transcript carries the session's text, so its lines stay unread for the
- * next hook the daemon answers, which sends them through the rules. Either records a session's `beforeSubmitPrompt`,
- * which says the session sends its own text from then on: a hook that leaves its event holds no session lock, so it
- * takes the lock for that write, as a hook reading the transcript keeps it for its own.
+ * next hook the daemon answers, which sends them through the rules. A session's `beforeSubmitPrompt` says the session
+ * sends its own text from then on, so the transcript carries none of it: the read records that, and a hook that leaves
+ * its event records it once the event is left (`leftAnswer`).
  */
 function transcriptStep(input: CursorHookInput, descriptor: AdapterSession, eventLoop: RerailEventLoop, storageRoot: string): () => Promise<boolean> {
   if (eventLoop.untaken !== true) return async () => await ingestCursorTranscript(input, descriptor, linkingByAnswer(eventLoop), storageRoot);
-  const carries = async (): Promise<boolean> => await transcriptCarriesText(input, descriptor, storageRoot);
-  if (input.hook_event_name !== "beforeSubmitPrompt") return carries;
-  return async () => await withSessionLock(storageRoot, "cursor", descriptor.sessionId, carries);
+  if (input.hook_event_name === "beforeSubmitPrompt") return async () => false;
+  return async () => await transcriptCarriesText(input, descriptor, storageRoot);
 }
 
 /**

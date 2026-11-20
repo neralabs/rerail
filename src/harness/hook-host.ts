@@ -301,8 +301,8 @@ async function runWithDaemon(hook: HookRun, link: EngineLink): Promise<HookOutpu
  * Runs the hook's handler with an `ingest` that leaves each event in the home's untaken folder for the daemon `daemon`
  * names, which runs but does not read (`untaken-events.ts`), and gives the coding agent the answer of a hook with
  * nothing to deliver: the handler touches none of the session's files then (`RerailEventLoop.untaken`) but one, which
- * it locks for that write alone, so the hook holds no session lock through its run, waits for no other hook of its
- * session and keeps none of them waiting. The daemon checks the
+ * it locks for that write alone once its event is left, so the hook holds no session lock through its run, waits for
+ * another hook of its session only for that write, and loses no event to a lock it is not given. The daemon checks the
  * event as it reads again, before any event sent to it after, and what that check finds reaches the agent with the
  * session's next answer.
  */
