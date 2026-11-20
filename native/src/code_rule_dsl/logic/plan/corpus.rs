@@ -5607,9 +5607,22 @@ fn run_observed_within(
     // holds; what reads a base relation then runs again from its reads.
     struct OldBase {
         key: i64,
+        /// Its old content, as the table names it.
+        id: crate::content_store::SourceId,
         bytes: Arc<crate::content_store::CachedBytes>,
         frame: Option<crate::content_store::TapeFrame>,
         entry: Option<memo::Entry>,
+        /// Its module, where the run knew it before its documents (a load's, as phase 1 is handed it); else the
+        /// corpus's (`given_modules`).
+        module: Option<Arc<str>>,
+    }
+    // What a compare read of the store: the table, its contents resolved; the sources of the contents named by
+    // digest; and the old documents, each with its source, tape and entry. A compare inside the waves reads none,
+    // and is given what one before the first wave read (`base_ahead`).
+    struct BaseRead {
+        table: Vec<retain::BaseDocument>,
+        ids: HashMap<[u8; 32], crate::content_store::SourceId>,
+        olds: HashMap<String, OldBase>,
     }
     let base_binds: Option<[u8; 32]> = if session.is_none() && durable.is_some() && memoised && !stored.is_empty() {
         let maintained = maintained_cross_of(shared_maintained, &cross)?;
@@ -5677,24 +5690,42 @@ fn run_observed_within(
     let mut session_corpus_next: Option<HashMap<String, ((memo::Content, i64), Vec<syntax::Input>)>> = None;
     // The paths whose documents changed since the session's last run, and their documents then.
     let mut session_old: Option<(BTreeSet<String>, Vec<syntax::Input>)> = None;
-    let base_compare = |now_of: HashMap<String, (i64, Option<memo::Content>)>| -> Result<OldBases> {
+    // With `modules`, the modules of files of `now_of` as the run knows them before their documents (`OldBase`), and
+    // with `ahead`, what a compare before the first wave read, from which it reads no store: a file whose old document
+    // was not read then fails it.
+    // `None` where the run keeps no documents' table.
+    type Compared = Option<std::result::Result<(BTreeSet<String>, BaseRead), String>>;
+    let base_compare = |now_of: HashMap<String, (i64, Option<memo::Content>)>, ahead: Option<BaseRead>, modules: &HashMap<String, Arc<str>>| -> Result<Compared> {
         let (Some(_), Some(memo @ memo::Memo::Stored(_)), true) = (base_binds, memo, looking) else { return Ok(None) };
-        let found = (|| -> Result<std::result::Result<(BTreeSet<String>, HashMap<String, OldBase>), String>> {
+        (|| -> Result<Compared> {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "the base relations' documents (decision 0458)".into());
-            let Some(mut table) = base_table.clone() else { return Ok(Err("no documents' table kept".into())) };
+            let (table, mut ids, read) = match ahead {
+                Some(BaseRead { table, ids, olds }) => (Some(table), ids, Some(olds)),
+                None => (base_table.clone(), HashMap::new(), None),
+            };
+            let Some(mut table) = table else { return Ok(Some(Err("no documents' table kept".into()))) };
             let mut now_of = now_of;
             // A content written after the table was is found by its digest, as the keeper's are (`Keeper::resolve`);
             // so is a file read in this run (its stat changed, or is too recent to trust), whose source, where the
-            // store holds it, is what the table names.
+            // store holds it, is what the table names. (Read before the first wave: as found then.)
             let unstored: Vec<(Option<usize>, Option<String>, [u8; 32])> = table.iter().enumerate().filter_map(|(i, (_, _, c))| match c { memo::Content::Unstored(d) => Some((Some(i), None, *d)), _ => None })
                 .chain(now_of.iter().filter_map(|(p, (_, c))| match c { Some(memo::Content::Unstored(d)) => Some((None, Some(p.clone()), *d)), _ => None }))
                 .collect();
-            if !unstored.is_empty() {
-                let ids = store.sources_by_hashes(&unstored.iter().map(|(_, _, d)| crate::content_store::HashKey::from_sha256_digest(*d)).collect::<Vec<_>>()).map_err(|e| Error::Plan(e.to_string()))?;
-                for ((at, path, _), id) in unstored.into_iter().zip(ids) {
+            if read.is_some() {
+                for (_, path, d) in unstored {
+                    if let (Some(p), Some(id)) = (path, ids.get(&d)) && let Some(now) = now_of.get_mut(&p) {
+                        now.1 = Some(memo::Content::Stored(*id));
+                    }
+                }
+            } else if !unstored.is_empty() {
+                let found = store.sources_by_hashes(&unstored.iter().map(|(_, _, d)| crate::content_store::HashKey::from_sha256_digest(*d)).collect::<Vec<_>>()).map_err(|e| Error::Plan(e.to_string()))?;
+                for ((at, path, d), id) in unstored.into_iter().zip(found) {
+                    if let Some(id) = id {
+                        ids.insert(d, id);
+                    }
                     match (at, path, id) {
                         (Some(i), _, Some(id)) => table[i].2 = memo::Content::Stored(id),
-                        (Some(_), _, None) => return Ok(Err("a content of the table is no longer stored".into())),
+                        (Some(_), _, None) => return Ok(Some(Err("a content of the table is no longer stored".into()))),
                         (None, Some(p), Some(id)) => {
                             if let Some(now) = now_of.get_mut(&p) {
                                 now.1 = Some(memo::Content::Stored(id));
@@ -5708,42 +5739,61 @@ fn run_observed_within(
             let olds: Vec<(String, i64, crate::content_store::SourceId)> = table.iter().filter(|(p, k, c)| !same(p, *k, *c)).filter_map(|(p, k, c)| c.stored().map(|id| (p.clone(), *k, id))).collect();
             let in_table: std::collections::HashSet<&str> = table.iter().map(|(p, _, _)| p.as_str()).collect();
             let changed: BTreeSet<String> = olds.iter().map(|(p, _, _)| p.clone()).chain(now_of.keys().filter(|p| !in_table.contains(p.as_str())).cloned()).collect();
-            let ids: Vec<crate::content_store::SourceId> = olds.iter().map(|(_, _, id)| *id).collect();
-            let texts = store.get_sources_bulk(&ids).map_err(|e| Error::Plan(e.to_string()))?;
+            if let Some(mut read) = read {
+                let mut out = HashMap::new();
+                for (path, key, id) in olds {
+                    match read.remove(&path) {
+                        Some(old) if old.key == key && old.id == id => {
+                            out.insert(path, old);
+                        }
+                        _ => return Ok(Some(Err(format!("{path}: its old document was not read before the first wave")))),
+                    }
+                }
+                return Ok(Some(Ok((changed, BaseRead { table, ids, olds: out }))));
+            }
+            let source_ids: Vec<crate::content_store::SourceId> = olds.iter().map(|(_, _, id)| *id).collect();
+            let texts = store.get_sources_bulk(&source_ids).map_err(|e| Error::Plan(e.to_string()))?;
             let frames = match (tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")), crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag)) {
                 (Some(cache), Some(tag)) => cache
-                    .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
+                    .tape_frames_for(&source_ids, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
                     .map_err(|e| Error::Plan(e.to_string()))?,
-                _ => vec![None; ids.len()],
+                _ => vec![None; source_ids.len()],
             };
             // Each old entry, for its guests' requests (a program with guests only).
             let keys: Vec<(memo::Content, &str)> = olds.iter().map(|(p, _, id)| (memo::Content::Stored(*id), world::store_path(p))).collect();
             let found: Vec<Option<memo::Found>> = if slice.is_some() { memo.found_all(&memo_plan, &keys).map_err(|e| Error::Plan(e.to_string()))? } else { keys.iter().map(|_| None).collect() };
             let mut out = HashMap::new();
             for (((path, key, id), frame), found) in olds.into_iter().zip(frames).zip(found) {
-                let Some(bytes) = texts.get(&id) else { return Ok(Err(format!("{path}: its old source is no longer stored"))) };
+                let Some(bytes) = texts.get(&id) else { return Ok(Some(Err(format!("{path}: its old source is no longer stored")))) };
                 let entry = match (slice.is_some(), found) {
                     (false, _) => None,
                     (true, Some(found)) => match found.entry(key).map_err(|e| Error::Plan(e.to_string()))? {
                         Some(entry) => Some(entry),
-                        None => return Ok(Err(format!("{path}: its old entry is another document's"))),
+                        None => return Ok(Some(Err(format!("{path}: its old entry is another document's")))),
                     },
-                    (true, None) => return Ok(Err(format!("{path}: its old entry is not in the memo"))),
+                    (true, None) => return Ok(Some(Err(format!("{path}: its old entry is not in the memo")))),
                 };
-                out.insert(path, OldBase { key, bytes: Arc::clone(bytes), frame, entry });
+                let module = modules.get(&path).cloned();
+                out.insert(path, OldBase { key, id, bytes: Arc::clone(bytes), frame, entry, module });
             }
-            Ok(Ok((changed, out)))
-        })()?;
-        Ok(match found {
-            Ok(old) => Some(old),
+            Ok(Some(Ok((changed, BaseRead { table, ids, olds: out }))))
+        })()
+    };
+    // A compare's old documents, or none (and why).
+    let none_because = |why: String| {
+        crate::code_rule_dsl::logic::profile::decision("the base relations' old documents (decision 0458)", || format!("none ({why}): what reads a base relation runs again"));
+        if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+            eprintln!("rerail: the base relations' old documents: none ({why})");
+        }
+    };
+    let compared = |found: Compared| -> OldBases {
+        match found? {
+            Ok((changed, read)) => Some((changed, read.olds)),
             Err(why) => {
-                crate::code_rule_dsl::logic::profile::decision("the base relations' old documents (decision 0458)", || format!("none ({why}): what reads a base relation runs again"));
-                if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
-                    eprintln!("rerail: the base relations' old documents: none ({why})");
-                }
+                none_because(why);
                 None
             }
-        })
+        }
     };
     // Before the first wave, where the run knows its files then (decision 0104).
     let base_known = !docs.is_empty();
@@ -5751,10 +5801,39 @@ fn run_observed_within(
         let now = before.lock();
         let now_of: HashMap<String, (i64, Option<memo::Content>)> = docs.iter().map(|(d, p)| (p.clone(), (*d, now.get(p).and_then(|b| b.content)))).collect();
         drop(now);
-        base_compare(now_of)?
+        compared(base_compare(now_of, None, &HashMap::new())?)
     } else {
         None
     };
+    // A run that lists its files as it goes but is handed them as facts (phase 1's `observer__source_file`, each path
+    // with its module and content): those whose content is not the table's have their old documents read now, before
+    // the first wave (decision 0104), for the compare once its chunks found the files, inside the waves, which reads
+    // no store. A file of the table it is not handed (a library its imports reach) is taken as it was: if it changed,
+    // that compare finds its old document not read, and has none.
+    let mut base_ahead: Option<BaseRead> = None;
+    if !base_known && let Some(table) = base_table.as_ref() {
+        let handed = phases::handed_files();
+        if !handed.is_empty() {
+            let mut now_of: HashMap<String, (i64, Option<memo::Content>)> = table.iter().map(|(p, k, c)| (p.clone(), (*k, Some(*c)))).collect();
+            let mut modules: HashMap<String, Arc<str>> = HashMap::new();
+            for (paths, module, digest) in handed {
+                let module: Arc<str> = Arc::from(module.as_str());
+                for path in paths {
+                    let key = now_of.get(&path).map_or(0, |(k, _)| *k);
+                    now_of.insert(path.clone(), (key, Some(memo::Content::Unstored(digest))));
+                    modules.insert(path, Arc::clone(&module));
+                }
+            }
+            match base_compare(now_of, None, &modules)? {
+                None => {}
+                Some(Ok((changed, read))) => {
+                    crate::code_rule_dsl::logic::profile::decision("the base relations' old documents (decision 0458)", || format!("{} of the handed files changed, their old documents read before the first wave", changed.len()));
+                    base_ahead = Some(read);
+                }
+                Some(Err(why)) => none_because(why),
+            }
+        }
+    }
     // The entry a file was counted under: as found before the first wave, else (a session's, in memory) looked up.
     let counted_entry = |path: &str, c: memo::Content, key: i64| -> Option<memo::Entry> {
         match counted_before.get(path) {
@@ -8932,11 +9011,14 @@ fn run_observed_within(
     };
     // A run that listed its files as it went compares them with the table now, from the contents its chunks found:
     // unless it runs inside another run's waves (a phase's), where the store is not read (decision 0104).
-    if !base_known && base_binds.is_some() && crate::code_rule_dsl::logic::profile::inside_waves() {
+    if !base_known && base_binds.is_some() && let Some(ahead) = base_ahead.take() {
+        let now_of: HashMap<String, (i64, Option<memo::Content>)> = run_docs_held.lock().expect("the run's documents").iter().map(|(p, (c, k))| (p.clone(), (*k, Some(*c)))).collect();
+        old_base = compared(base_compare(now_of, Some(ahead), &HashMap::new())?);
+    } else if !base_known && base_binds.is_some() && crate::code_rule_dsl::logic::profile::inside_waves() {
         crate::code_rule_dsl::logic::profile::decision("the base relations' old documents (decision 0458)", || "none: the run's files were listed inside the waves, where their old sources are not read (decision 0104); what reads a base relation runs again".into());
     } else if !base_known {
         let now_of: HashMap<String, (i64, Option<memo::Content>)> = run_docs_held.lock().expect("the run's documents").iter().map(|(p, (c, k))| (p.clone(), (*k, Some(*c)))).collect();
-        old_base = base_compare(now_of)?;
+        old_base = compared(base_compare(now_of, None, &HashMap::new())?);
     }
     // The changed files' documents now, guests with them (decision 0458): a base relation's new version.
     let mut changed_docs: Vec<syntax::Input> = Vec::new();
@@ -9130,7 +9212,7 @@ fn run_observed_within(
             let mut old_values: Vec<output::Rows> = Vec::new();
             for (path, old) in olds {
                 let source = String::from_utf8(old.bytes.to_vec()).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
-                old_docs.extend(doc_of(old.key, path, given_modules.get(path).cloned(), source, old.frame.as_ref())?);
+                old_docs.extend(doc_of(old.key, path, old.module.clone().or_else(|| given_modules.get(path).cloned()), source, old.frame.as_ref())?);
                 for (k, (_, rows)) in old.entry.iter().flat_map(|e| &e.outputs) {
                     if let Some((round, rel)) = memo::guest_round(k) {
                         old_rounds.push((round, rel.to_owned(), rows.clone()));
@@ -9628,6 +9710,10 @@ fn run_observed_within(
             let (counted, how) = counted;
             crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
             let by_name: HashMap<String, (String, i64, i64, i64, i64)> = counted.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
+            // The corpus batch's probes of it estimated by them before its rows are made (decision 0494).
+            if let Some(batch) = &corpus_batch {
+                batch.give_distinct(rel, columns.iter().map(|c| by_name.get(c).and_then(|m| usize::try_from(m.2).ok())).collect());
+            }
             columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), rows, rows, rows, rows))).collect()
         };
         for (rel, (columns, values)) in std::mem::take(&mut base_rows) {

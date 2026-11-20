@@ -1856,6 +1856,8 @@ pub struct Batch {
     rows: made::Rows,
     /// Each relation's rows, by name, as its kept statistics count them (`give_totals`, decision 0494).
     given_rows: OnceLock<HashMap<String, usize>>,
+    /// Its documents' keys by their paths' atoms (`keys_of_paths`), once a read by a path asked.
+    by_path: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
     /// What every group of the batch, and of the batches it grows into, makes its rows with (`Shared`).
     shared: Arc<parking_lot::Mutex<Shared>>,
     /// A tape value's batch alone (decision 0431 §8): the chunk's batch it is admitted to, whose documents hold its
@@ -2957,6 +2959,12 @@ impl Batch {
         let _ = self.given_rows.set(totals.clone());
     }
 
+    /// Each column's distinct values of relation `rel` (`None` for one its rules do not read), as its kept statistics
+    /// count them, of the rows `give_totals` gave: a probe's estimate before its rows are made.
+    pub fn give_distinct(&self, rel: &str, distinct: Vec<Option<usize>>) {
+        self.rows.give_distinct(rel, distinct);
+    }
+
     /// Relation `rel`'s rows as `give_totals` gave them.
     fn given_rows(&self, rel: &str) -> Option<usize> {
         self.given_rows.get().and_then(|t| t.get(rel).copied())
@@ -3116,6 +3124,7 @@ impl Batch {
             wave,
             rows: made::Rows::new(n, Vec::new(), Vec::new(), Vec::new(), None),
             given_rows: OnceLock::new(),
+            by_path: OnceLock::new(),
             shared: Arc::clone(&grown.shared),
             outer: if alone { last.clone() } else { None },
         };

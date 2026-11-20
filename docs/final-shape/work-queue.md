@@ -5160,10 +5160,24 @@ after the phases went on the run path (0083).
     runs before the exports are installed and passes a text test. `made_batch_tests` R5 and R6 read base relations
     through a join the push now takes into the chunks: R5 runs over R6's program (it reads `field` and `within`
     whole), R6's `pair` is an output (inlined into `twins`, its file's part would be pushed).
-- **Still open**: after a one-file edit, phase 1's unchanged files' documents are still made (`a_warm_edit_builds_no_*`,
-  `a_warm_edit_makes_*` fail on `sources`):
-  - By `doc`'s and `tape_of`'s statistics: its documents are what `sources.rerail`'s loads make in its
-    waves, where no old source is read, so they have no version and no total (0494 step 4, part 2).
+  - Phase 1 (`sources`) makes the changed document alone in an edit (0494 step 4, part 2). Three reads made every
+    document there:
+    - `doc`'s and `tape_of`'s statistics: its documents are what its loads make in its waves, where no store is read,
+      so it had no old documents, no versions and no totals. It is handed its files before its first wave
+      (`observer__source_file`, `phases::handed_files`: each path, module and content digest), so there it compares
+      them with the documents' table and reads the old sources, tapes and modules of those whose content changed
+      (`base_ahead`). The compare once its chunks found the files reads no store and takes them from that read (one it
+      did not read, a library that changed, leaves it with none, as before). An old document is made with its load's
+      module (`OldBase::module`).
+    - The lead column of `doc(d, f, m)`'s probe by two columns: `MadeRows::estimated_matches` made the batch whole.
+      The kept statistics' distinct values of each column read are given to the batch (`Batch::give_distinct`) and
+      estimate as the made relation would (rows over distinct values).
+    - The probe of `doc` by its path (`loaded(f, m, g), doc(d, f, m)`): only a read by the document's key was routed
+      to its document. A read of `doc`'s path column is routed too: the batch's documents' paths interned once
+      (`Batch::keys_of_paths`), the one document of that path made.
+    `warm_tests` all pass (8 with `made_batch_tests`). PostHog (`len-_py`, cold, CPU, m3-linux): 29,747 findings,
+    digest fa0efeaed6ff.
+- **Still open**: ep2's warm edit measured against 18.8 G / 197 MB (the user's).
 
 ### Q383. (Q354 here until 2026-11-20; Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
 

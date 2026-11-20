@@ -379,6 +379,9 @@ pub(super) struct Rows {
     pub(super) template: Vec<Arc<Relation>>,
     /// How each relation's first column names its row's document.
     pub(super) by: Vec<ByDocument>,
+    /// Each relation's column of its document's own path (`doc(d, path, …)`), if it has one: a read of it by a
+    /// path is routed to that path's document (`Batch::keys_of_paths`), as one by the document's key is.
+    path_column: Vec<Option<usize>>,
     /// How many of `names` are the batch's relations (`Made::relations`), which a program's derived relations replace;
     /// the `match_all` and the matchers' follow.
     pub(super) relations: usize,
@@ -388,6 +391,9 @@ pub(super) struct Rows {
     complete: OnceLock<Vec<Arc<Relation>>>,
     /// Each relation's rows as its kept statistics count them (`Batch::give_totals`), where given.
     counted: OnceLock<Vec<Option<usize>>>,
+    /// Each relation's distinct values in each column its rules read, as its kept statistics count them
+    /// (`Batch::give_distinct`), where given: a probe's estimate before its rows are made.
+    distinct: Vec<OnceLock<Vec<Option<usize>>>>,
 }
 
 #[derive(Default)]
@@ -423,6 +429,13 @@ impl ByDocument {
             _ => Self::No,
         }
     }
+    /// The column of a row's document's own path, in a relation of the document's key and its path (`doc`).
+    fn path_column(columns: &[String]) -> Option<usize> {
+        match Self::of(columns) {
+            Self::Key(_) => columns.iter().position(|c| c == "path"),
+            _ => None,
+        }
+    }
     /// The column that names the document.
     fn column(self) -> Option<usize> {
         match self {
@@ -449,6 +462,17 @@ impl Rows {
     fn counted(&self, rel: usize) -> Option<usize> {
         self.counted.get().and_then(|c| c[rel])
     }
+    /// Relation `name`'s distinct values in each of its columns (`None` for one its rules do not read), as its kept
+    /// statistics count them: of the rows `give_totals` gave.
+    pub(super) fn give_distinct(&self, name: &str, distinct: Vec<Option<usize>>) {
+        if let Some(rel) = self.names.iter().position(|n| n == name) {
+            let _ = self.distinct[rel].set(distinct);
+        }
+    }
+    /// Relation `rel`'s distinct values in `column`, as given, if they were.
+    fn distinct(&self, rel: usize, column: usize) -> Option<usize> {
+        self.distinct[rel].get().and_then(|d| d.get(column).copied().flatten())
+    }
     /// The rows of a batch of `documents`, a group making `names` (`template`'s). `prior`: the relations of the batch
     /// it grows from (decision 0431 §6), complete, by name, whose documents (`prior_docs`, indexes in this batch) are
     /// its first group: each relation goes on from that one's.
@@ -468,7 +492,9 @@ impl Rows {
             state.groups.push(Arc::new(Group { docs, ranges }));
         }
         let by = template.iter().map(|t| ByDocument::of(&Source::columns(t.as_ref()))).collect();
-        Self { state: parking_lot::Mutex::new(state), names, template, by, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new() }
+        let distinct = names.iter().map(|_| OnceLock::new()).collect();
+        let path_column = template.iter().map(|t| ByDocument::path_column(&Source::columns(t.as_ref()))).collect();
+        Self { state: parking_lot::Mutex::new(state), names, template, by, path_column, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new(), distinct }
     }
     /// The groups made.
     pub(super) fn groups(&self) -> usize {
@@ -579,6 +605,24 @@ impl Batch {
     }
 
     /// The groups holding the documents `keys` name, made if they are not.
+    /// The keys of the documents whose paths' atoms are `values` (a read of `doc` by its path): its documents' paths
+    /// interned once, none made. `None` where they could not be.
+    fn keys_of_paths(&self, values: &[i64]) -> Option<Vec<u32>> {
+        let by = self
+            .by_path
+            .get_or_init(|| {
+                let paths: Vec<&str> = (0..self.docs.len()).map(|i| self.docs.path(i)).collect();
+                let atoms = self.atoms.intern_all(&paths).ok()?;
+                let mut by: HashMap<i64, Vec<u32>> = HashMap::new();
+                for (i, a) in atoms.into_iter().enumerate() {
+                    by.entry(i64::from(a)).or_default().push(self.docs.key(i));
+                }
+                Some(by)
+            })
+            .as_ref()?;
+        Some(values.iter().filter_map(|v| by.get(v)).flatten().copied().collect())
+    }
+
     fn groups_of(&self, keys: impl IntoIterator<Item = u32>) -> Vec<Arc<Group>> {
         let docs: BTreeSet<usize> = keys.into_iter().filter_map(|k| self.docs.position(k)).collect();
         let docs: Vec<usize> = docs.into_iter().collect();
@@ -623,13 +667,17 @@ impl MadeRows {
         self.batch.rows.by[self.rel]
     }
     /// The rows a read of `column` by `values` matches (each also passing `keep`), the documents they name made, in
-    /// their groups' ranges: `None` for a column that names no document.
+    /// their groups' ranges: `None` for a column that names no document (by its key, or `doc`'s by its path).
     fn routed(&self, column: usize, values: &[i64], keep: impl Fn(&Relation, usize) -> bool) -> Option<(Arc<Relation>, Vec<usize>)> {
         let by = self.by();
-        if by.column() != Some(column) {
+        let keys: Vec<u32> = if by.column() == Some(column) {
+            values.iter().filter_map(|&v| by.document(v)).collect()
+        } else if self.batch.rows.path_column[self.rel] == Some(column) {
+            self.batch.keys_of_paths(values)?
+        } else {
             return None;
-        }
-        let groups = self.batch.groups_of(values.iter().filter_map(|&v| by.document(v)));
+        };
+        let groups = self.batch.groups_of(keys);
         let r = self.batch.made_so_far(self.rel);
         let mut rows = Vec::new();
         for g in groups {
@@ -774,7 +822,15 @@ impl Source for MadeRows {
         self.done().and_then(|t| t.rows_owned(_g, _owned))
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
-        self.target().estimated_matches(column, batch)
+        // Before its rows are made, by its kept statistics where they were given, as the made relation estimates
+        // (`Relation::estimated_matches`, of its rows and the column's distinct values): no document made for it.
+        match (self.done(), self.batch.rows.counted(self.rel), self.batch.rows.distinct(self.rel, column)) {
+            (None, Some(n), Some(distinct)) => {
+                let one = n.div_ceil(distinct.max(1));
+                if batch { one * 8 } else { one }
+            }
+            _ => self.target().estimated_matches(column, batch),
+        }
     }
     fn lookup_cost(&self, _column: usize) -> f64 {
         match self.done() {
