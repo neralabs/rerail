@@ -201,10 +201,11 @@ fn lit_slots(l: LitRef<'_>) -> BTreeSet<Slot> {
             term_slots(l, &mut out);
             term_slots(r, &mut out);
         }
-        Lit::Agg { var, over, atom, .. } => {
+        Lit::Agg { var, op, over, atom } => {
             atom.args().for_each(|t| term_slots(t, &mut out));
             out.insert(var);
             out.extend(over);
+            out.extend(op.bound());
         }
         Lit::Nearest { n, a, .. } => {
             out.insert(n);
@@ -1397,9 +1398,10 @@ impl RulePass for FoldConstants {
         let mut named = head_slots(r);
         for l in r.body() {
             match l.view() {
-                Lit::Agg { var, over, .. } => {
+                Lit::Agg { var, op, over, .. } => {
                     named.insert(var);
                     named.extend(over);
+                    named.extend(op.bound());
                 }
                 Lit::Nearest { .. } | Lit::Ast { .. } => named.extend(lit_slots(l)),
                 Lit::Cmp { l: a, r: b, .. } => {
@@ -1697,11 +1699,14 @@ fn occurrences(r: RuleRef<'_>) -> HashMap<Slot, usize> {
                 term(l, &mut n);
                 term(rt, &mut n);
             }
-            Lit::Agg { var, over, atom, .. } => {
+            Lit::Agg { var, op, over, atom } => {
                 atom.args().for_each(|t| term(t, &mut n));
                 *n.entry(var).or_default() += 1;
                 if let Some(o) = over {
                     *n.entry(o).or_default() += 1;
+                }
+                if let Some(b) = op.bound() {
+                    *n.entry(b).or_default() += 1;
                 }
             }
             Lit::Nearest { n: x, a, .. } => {

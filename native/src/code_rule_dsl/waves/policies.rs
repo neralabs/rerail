@@ -212,11 +212,14 @@ fn shape(rule: &Rule) -> (Rule, Vec<Value>) {
                 term(l, &mut rename);
                 term(r, &mut rename);
             }
-            Literal::Agg { var, over, atom, .. } => {
+            Literal::Agg { var, op, over, atom } => {
                 atom.args.iter_mut().for_each(|t| term(t, &mut rename));
                 rename(var);
                 if let Some(over) = over {
                     rename(over);
+                }
+                if let front::AggOp::Bounded { bound, .. } = op {
+                    rename(bound);
                 }
             }
             Literal::Nearest { n, a, .. } => {

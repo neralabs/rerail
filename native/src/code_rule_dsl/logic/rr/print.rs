@@ -139,6 +139,7 @@ fn literal(l: &Literal, prog: &Program) -> Result<String, Error> {
         Literal::Cmp { l, op, r } => format!("{} {op} {}", term(l)?, term(r)?),
         Literal::Agg { var: v, op, over, atom: a } => {
             let over = || var(over.as_deref().unwrap_or("_"));
+            let agg = op;
             let op = match op {
                 AggOp::Count => "count".to_owned(),
                 AggOp::Min => format!("min {}", over()),
@@ -150,8 +151,14 @@ fn literal(l: &Literal, prog: &Program) -> Result<String, Error> {
                     let by = if by.is_empty() { String::new() } else { format!(" by ({})", by.join(", ")) };
                     format!("join {}{by} sep {}", over(), quote(sep))
                 }
+                AggOp::Bounded { max, .. } => format!("{} {}", if *max { "max" } else { "min" }, over()),
             };
-            format!("{} = {op} : {{ {} }}", var(v), atom(a, prog)?)
+            // A bounded aggregate's bound is the comparison it was written with, which lowering recognizes again.
+            let bound = match agg {
+                AggOp::Bounded { max, bound, strict } => format!(", {} {} {}", over(), AggOp::bound_cmp(*max, *strict), var(bound)),
+                _ => String::new(),
+            };
+            format!("{} = {op} : {{ {}{bound} }}", var(v), atom(a, prog)?)
         }
         Literal::Nearest { n, a, kindset } => format!("nearest({}, {}, {kindset})", var(n), var(a)),
         Literal::Ast { document, node, matcher, captures } => {

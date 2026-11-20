@@ -201,6 +201,7 @@ impl Enc<'_> {
                     AggOp::Sum => 3,
                     AggOp::Product => 4,
                     AggOp::Join { .. } => 5,
+                    AggOp::Bounded { .. } => 6,
                 };
                 let s = self.slot(var);
                 let at = self.open(AGG | code << 5, s);
@@ -214,6 +215,10 @@ impl Enc<'_> {
                     }
                     let a = self.atoms.id(sep);
                     self.leaf(STR, a);
+                }
+                if let AggOp::Bounded { max, bound, strict } = op {
+                    self.var(bound);
+                    self.leaf(INT, u32::from(*max) | u32::from(*strict) << 1);
                 }
                 self.atom(atom);
                 self.close(at);

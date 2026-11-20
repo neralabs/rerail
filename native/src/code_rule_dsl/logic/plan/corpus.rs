@@ -1120,9 +1120,10 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
                 term_vars(l, &mut out);
                 term_vars(r, &mut out);
             }
-            Lit::Agg { var, over, atom, .. } => {
+            Lit::Agg { var, op, over, atom } => {
                 out.insert(var);
                 out.extend(over);
+                out.extend(op.bound());
                 atom.args().for_each(|t| term_vars(t, &mut out));
             }
             Lit::Nearest { n, a, .. } => out.extend([n, a]),

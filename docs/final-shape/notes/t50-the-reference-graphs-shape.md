@@ -372,6 +372,30 @@ s1000 after step 1, every stage's rows equal (same host, 2026-11-20):
 
 The rules' total went from 31.2 s to 24.1 s. The lookup's ratio is now the worst by far (step 5).
 
+### Step 3, done: an aggregate bounded by its probe (decision 0511)
+
+`u = max t : { B(k, t), t < r }`, with `r` bound outside the body, was a context of the probes and a helper row for
+each probe and each value under it. It is now one helper of the group's values with the bound on the aggregate's op
+(`AggOp::Bounded`), and the native step folds each probe's group with the bound as a filter. The checks are
+`setfix::bounded_tests`, on two sides. W's side is the plain search for the latest value before the read. The rules'
+side is the lowering and the step, on 10⁴ values and 10⁴ probes. The coverage gate's four bounded probes equal
+SQLite's rows. On `all` the as-of strata went from 4.68 s to 3.07 s of CPU, with every stage's rows unchanged (on and
+off, `RERAIL_ASOF=off`). `rf_fn_seen_at` went from 1.57 s to 0.73 s. The groups are small, so the fold is enough for
+now (0511, Measured).
+
+`all`, with the step, same host, 2026-11-20:
+
+| Stage | W s | rules s | rules/W |
+|---|---|---|---|
+| scope | 1.542 | 25.822 | 16.7 |
+| lookup | 0.140 | 9.841 | 70.2 |
+| summary | 5.724 | 45.223 | 7.9 |
+| link | 1.267 | 16.477 | 13.0 |
+
+The rows on `all` differ from W's in five stages, the same with the step on or off: `load`/`look` 19 reads
+(`get_history.py`, and `look` lands on another scope in `test_staged_large_column_application.py`), `ref` 197, and
+`open_name` 1 and `open` 6. They are not this step's. They come next, before step 2.
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.

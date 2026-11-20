@@ -197,6 +197,18 @@ pub enum AggRef<'v> {
     Product,
     /// A join of strings, ordered by `by`'s variables, separated by `sep`.
     Join { by: Slots<'v>, sep: AtomId },
+    /// The extreme on a bound's side (`AggOp::Bounded`, decision 0511).
+    Bounded { max: bool, bound: Slot, strict: bool },
+}
+
+impl AggRef<'_> {
+    /// A bounded aggregate's bound: a variable it reads from outside its body (decision 0511).
+    pub fn bound(&self) -> Option<Slot> {
+        match self {
+            AggRef::Bounded { bound, .. } => Some(*bound),
+            _ => None,
+        }
+    }
 }
 
 /// Variables, in order.
@@ -290,6 +302,13 @@ impl<'v> LitRef<'v> {
                     2 => AggRef::Max,
                     3 => AggRef::Sum,
                     4 => AggRef::Product,
+                    6 => {
+                        // The bound's variable, then its flags: 1 a max, 2 strict.
+                        let bound = Slot(im.node(p).2);
+                        let flags = im.node(p + 1).2;
+                        p += 2;
+                        AggRef::Bounded { max: flags & 1 != 0, bound, strict: flags & 2 != 0 }
+                    }
                     _ => {
                         let start = p;
                         while im.node(p).0 & kind::MASK == kind::VAR {

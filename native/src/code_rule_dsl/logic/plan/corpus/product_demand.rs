@@ -41,9 +41,10 @@ fn may_have_products(version: &Version) -> bool {
                     vars(l, &mut group);
                     vars(r, &mut group);
                 }
-                Lit::Agg { var, over, atom, .. } => {
+                Lit::Agg { var, op, over, atom } => {
                     group.insert(var);
                     group.extend(over);
+                    group.extend(op.bound());
                     atom.args().for_each(|term| vars(term, &mut group));
                 }
                 Lit::Nearest { n, a, .. } => group.extend([n, a]),

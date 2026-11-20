@@ -90,6 +90,7 @@ impl<'v> Tree<'v> {
                     AggRef::Sum => AggOp::Sum,
                     AggRef::Product => AggOp::Product,
                     AggRef::Join { by, sep } => AggOp::Join { by: by.map(|s| self.var_text(r, s)).collect(), sep: self.text(sep) },
+                    AggRef::Bounded { max, bound, strict } => AggOp::Bounded { max, bound: self.var_text(r, bound), strict },
                 };
                 Literal::Agg { var: self.var_text(r, var), op, over: over.map(|s| self.var_text(r, s)), atom: self.atom(r, atom) }
             }

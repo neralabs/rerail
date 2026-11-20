@@ -1266,6 +1266,7 @@ pub fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
                     need.remove(b);
                 });
             }
+            need.extend(op.bound().cloned());
             need.is_subset(bound)
         }
         Literal::Nearest { n, a, .. } => bound.contains(n) || bound.contains(a),
@@ -7057,6 +7058,7 @@ fn decline_class(b: &Body<'_>, i: usize, f: Fields<'_>, native: &BTreeSet<String
                 super::program_image::AggRef::Sum => "sum",
                 super::program_image::AggRef::Product => "product",
                 super::program_image::AggRef::Join { .. } => "join (string concatenation)",
+                super::program_image::AggRef::Bounded { .. } => "bounded min or max (an as-of search)",
             }
         ),
         Lit::Atom(a) if f.is_input(b.rel(a)) => format!("{}read of input {}", neg(a), b.rel(a)),
@@ -7362,6 +7364,11 @@ fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
                 AggOp::Max => d.u64(2),
                 AggOp::Sum => d.u64(3),
                 AggOp::Product => d.u64(5),
+                AggOp::Bounded { max, bound, strict } => {
+                    d.u64(6);
+                    d.u64(u64::from(*max) | u64::from(*strict) << 1);
+                    d.str(bound);
+                }
             }
             d.str(over.as_deref().unwrap_or("\u{0}"));
             digest_atom(d, atom);

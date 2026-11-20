@@ -802,8 +802,8 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
             AggOp::Max => 2,
             AggOp::Sum => 3,
             AggOp::Product => 4,
-            AggOp::Join { .. } => {
-                self.failed = Some(super::bad("a join aggregate written term by term"));
+            AggOp::Join { .. } | AggOp::Bounded { .. } => {
+                self.failed = Some(super::bad("a join or bounded aggregate written term by term"));
                 return self;
             }
         };

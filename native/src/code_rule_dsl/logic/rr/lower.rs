@@ -1292,11 +1292,14 @@ fn rename_rules(rules: &mut [Rule], rename: &std::collections::HashMap<String, S
         for l in rule.body.make_mut() {
             match l {
                 Literal::Atom(a) => atom(a),
-                Literal::Agg { atom: a, var, over, .. } => {
+                Literal::Agg { atom: a, var, over, op } => {
                     atom(a);
                     *var = to(var);
                     if let Some(o) = over {
                         *o = to(o);
+                    }
+                    if let AggOp::Bounded { bound, .. } = op {
+                        *bound = to(bound);
                     }
                 }
                 Literal::Nearest { kindset, n, a } => {
@@ -3991,6 +3994,67 @@ impl Lowerer {
 
     #[allow(clippy::too_many_arguments)]
     fn aggregate(&mut self, var: &str, agg: &str, over: Option<&STerm>, by: &[STerm], sep: &Option<String>, body: &[Lit], outer: &BTreeSet<String>) -> Result<Vec<Literal>, Error> {
+        if let Some(bounded) = self.bounded(var, agg, over, body, outer)? {
+            return Ok(bounded);
+        }
+        self.aggregate_of(var, agg, over, by, sep, body, outer)
+    }
+
+    /// A `min` or `max` bounded by its probe (decision 0511): `u = max t : { B(k, t), t < r }` with `r` bound outside
+    /// the body and read nowhere else in it. Its body less the bound is the group's values, the same for every probe:
+    /// lowered as an aggregate of its own, it is one helper of the group's keys and values, not a row per probe and
+    /// value under the bound. The bound goes on the aggregate's op, and each engine searches or filters the group by it.
+    /// A number's bound only: nodes and symbols order by keys `front::order_nodes` writes, after this.
+    fn bounded(&mut self, var: &str, agg: &str, over: Option<&STerm>, body: &[Lit], outer: &BTreeSet<String>) -> Result<Option<Vec<Literal>>, Error> {
+        let max = match agg {
+            "max" => true,
+            "min" => false,
+            _ => return Ok(None),
+        };
+        let Some(STerm::Var(t)) = over else { return Ok(None) };
+        if std::env::var("RERAIL_ASOF").is_ok_and(|v| v == "off") {
+            return Ok(None);
+        }
+        // `t < r` for a max (`r > t` the same), `t > r` for a min; `<=` and `>=` not strict.
+        let side = |l: &Lit| -> Option<(String, bool)> {
+            let Lit::Cmp { l: STerm::Var(a), op, r: STerm::Var(b) } = l else { return None };
+            let (r, op) = if a == t { (b, *op) } else if b == t { (a, match *op { "<" => ">", "<=" => ">=", ">" => "<", ">=" => "<=", o => o }) } else { return None };
+            let strict = match (max, op) {
+                (true, "<") | (false, ">") => true,
+                (true, "<=") | (false, ">=") => false,
+                _ => return None,
+            };
+            (r != t && outer.contains(r.as_str())).then(|| (r.to_string(), strict))
+        };
+        let found: Vec<(usize, String, bool)> = body.iter().enumerate().filter_map(|(i, l)| side(l).map(|(r, strict)| (i, r, strict))).collect();
+        let [(at, ref bound, strict)] = found[..] else { return Ok(None) };
+        let rest: Vec<Lit> = body.iter().enumerate().filter(|&(i, _)| i != at).map(|(_, l)| l.clone()).collect();
+        let mut read = Vec::new();
+        rest.iter().for_each(|l| l.vars(&mut read));
+        if rest.is_empty() || read.iter().any(|v| v == bound) {
+            return Ok(None);
+        }
+        // The value is a number where a declared relation of the body holds it (an `int` column, as the engine names
+        // it), and nowhere a node or a symbol.
+        let mut types = rest.iter().flat_map(|l| match l {
+            Lit::Atom { rel, args, neg: false } => {
+                let cols = self.prog.columns_of(rel).unwrap_or_default();
+                args.iter().zip(cols).filter(|(a, _)| matches!(a, STerm::Var(v) if v == t)).map(|(_, (_, ty))| ty).collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        });
+        let number = |ty: &str| matches!(ty, "int" | "number");
+        if !types.next().is_some_and(|ty| number(&ty)) || types.any(|ty| !number(&ty)) {
+            return Ok(None);
+        }
+        let mut lowered = self.aggregate_of(var, agg, over, &[], &None, &rest, outer)?;
+        let [Literal::Agg { op, .. }] = lowered.as_mut_slice() else { unreachable!("a min or max lowers to one aggregate") };
+        *op = AggOp::Bounded { max, bound: bound.clone(), strict };
+        Ok(Some(lowered))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn aggregate_of(&mut self, var: &str, agg: &str, over: Option<&STerm>, by: &[STerm], sep: &Option<String>, body: &[Lit], outer: &BTreeSet<String>) -> Result<Vec<Literal>, Error> {
         // A value or key that is a term (`sum strlen(x) - strlen(a)`) is a variable the body binds.
         let mut body = body.to_vec();
         let mut variable = |t: &STerm, me: &mut Self| match t {
@@ -4208,7 +4272,7 @@ impl Lowerer {
                     return match op {
                         AggOp::Count | AggOp::Sum | AggOp::Product => "int".to_owned(),
                         AggOp::Join { .. } => "sym".to_owned(),
-                        AggOp::Min | AggOp::Max => {
+                        AggOp::Min | AggOp::Max | AggOp::Bounded { .. } => {
                             let col = atom.args.iter().position(|t| over.as_ref().is_some_and(|o| *t == Term::Var(o.clone().into())));
                             col.and_then(|c| self.prog.columns_of(atom.rel.as_str())?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".to_owned())
                         }
@@ -4401,7 +4465,7 @@ fn unset(mut head: Vec<Term>, body: Vec<Literal>) -> Result<(Vec<Term>, Vec<Lite
             }
             // An aggregate's body (its helper atom) reads the unset variable from outside: it reads the empty value
             // there too. Its result and `over` are its own, never unset.
-            Literal::Agg { var, over, atom, .. } if !vars.contains(var) && over.as_ref().is_none_or(|o| !vars.contains(o)) => {
+            Literal::Agg { var, op, over, atom } if !vars.contains(var) && over.as_ref().is_none_or(|o| !vars.contains(o)) && op.bound().is_none_or(|b| !vars.contains(b)) => {
                 atom.args.iter_mut().for_each(|t| put(t, &vars));
             }
             other if !other.vars().is_disjoint(&vars) => return not_yet("`unset` in an aggregate, `nearest` or `ast`"),

@@ -348,7 +348,8 @@ impl<'a> Walk<'a> {
         }
         let body = self.conjunction(body.ok_or_else(|| bad("an aggregate with no body"))?)?;
         let mut lits = self.all(body, Field::Literal);
-        let (Some(l), None) = (lits.next(), lits.next()) else { return Err(bad("an aggregate over other than one atom")) };
+        // One atom, and for a bounded min or max its bound, `over < r` (decision 0511).
+        let (Some(l), bound, None) = (lits.next(), lits.next(), lits.next()) else { return Err(bad("an aggregate over other than one atom")) };
         let atom = match self.kind(l) {
             x if x == k(Kind::Atom) => self.atom(l, false)?,
             x if x == k(Kind::Negation) => self.negated(l)?,
@@ -366,6 +367,19 @@ impl<'a> Walk<'a> {
             "product" => AggOp::Product,
             "join" => AggOp::Join { by, sep: sep.ok_or_else(|| bad("a join without its separator"))? },
             other => return Err(bad(format!("aggregate {other:?}"))),
+        };
+        let op = match (op, bound.map(|b| self.literal(b)).transpose()?) {
+            (op, None) => op,
+            (op @ (AggOp::Min | AggOp::Max), Some(Literal::Cmp { l: Term::Var(t), op: cmp, r: Term::Var(bound) })) if over.as_deref() == Some(t.as_str()) => {
+                let max = op == AggOp::Max;
+                let strict = match (max, cmp) {
+                    (true, "<") | (false, ">") => true,
+                    (true, "<=") | (false, ">=") => false,
+                    _ => return Err(bad(format!("a bound {cmp} on the wrong side"))),
+                };
+                AggOp::Bounded { max, bound: bound.to_string(), strict }
+            }
+            _ => return Err(bad("an aggregate over other than one atom")),
         };
         Ok(Literal::Agg { var: unescape(v, &VAR_WORDS), op, over, atom })
     }

@@ -402,6 +402,7 @@ impl<'p> Encoder<'p> {
                     AggOp::Sum => 3,
                     AggOp::Product => 4,
                     AggOp::Join { .. } => 5,
+                    AggOp::Bounded { .. } => 6,
                 };
                 let a = self.atom(var);
                 let s = self.slot_of(a);
@@ -416,6 +417,10 @@ impl<'p> Encoder<'p> {
                     }
                     let a = self.atom(sep);
                     self.leaf(kind::STR, a);
+                }
+                if let AggOp::Bounded { max, bound, strict } = op {
+                    self.var(bound);
+                    self.leaf(kind::INT, u32::from(*max) | u32::from(*strict) << 1);
                 }
                 self.tree_atom(atom);
                 self.close(at);

@@ -143,9 +143,14 @@ fn literal(l: &Literal, out: &mut String) -> Result<(), String> {
                     }
                     write!(out, " sep {}", quote(sep)).expect("a string");
                 }
+                AggOp::Bounded { max, .. } => write!(out, "{} {over}", if *max { "max" } else { "min" }).expect("a string"),
             }
             out.push_str(" : { ");
             atom(a, out)?;
+            // A bounded aggregate's bound, as its comparison (decision 0511).
+            if let AggOp::Bounded { max, bound, strict } = op {
+                write!(out, ", {over} {} {}", AggOp::bound_cmp(*max, *strict), var(bound)?).expect("a string");
+            }
             out.push_str(" }");
         }
         Literal::Nearest { n, a, kindset } => write!(out, "nearest({}, {}, {})", var(n)?, var(a)?, quote(kindset)).expect("a string"),

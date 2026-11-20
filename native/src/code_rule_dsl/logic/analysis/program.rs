@@ -197,14 +197,18 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
         if keys.is_empty() {
             keys.push(E::Integer(1));
         }
+        // A bounded aggregate's value depends on its probe's bound (decision 0511): no summary of the group alone.
+        if let AggOp::Bounded { bound, .. } = op {
+            predicates.push(E::Opaque(format!("bounded by {bound}")));
+        }
         predicates.sort();
         result.push(scalars::Scalar {
             kind: match op {
                 AggOp::Count => Kind::Count,
                 AggOp::Sum => Kind::Sum,
                 AggOp::Product => Kind::Product,
-                AggOp::Min => Kind::Min,
-                AggOp::Max => Kind::Max,
+                AggOp::Min | AggOp::Bounded { max: false, .. } => Kind::Min,
+                AggOp::Max | AggOp::Bounded { max: true, .. } => Kind::Max,
                 AggOp::Join { .. } => Kind::OrderedJoin,
             },
             source: atom.rel.to_string(),

@@ -106,6 +106,12 @@ fn aggregate(op: &AggOp) -> Probe {
         AggOp::Max => probe("aggregate max", &["agg max"], "a: symbol, c: number", "{HEAD}(a, c) :- t(a), c = max v : { p(a, v) }."),
         AggOp::Product => probe("aggregate product", &["agg product"], "a: symbol, c: number", "{HEAD}(a, c) :- s(a), c = product v : { p(a, v) }."),
         AggOp::Join { .. } => probe("aggregate join", &["agg join"], "a: symbol, c: symbol", "{HEAD}(a, c) :- t(a), c = join b by b sep \", \" : { q(a, b) }."),
+        // Bounded by a probe's number (decision 0511): `max v : { p(a, v), v < x }` and its three others, over groups
+        // with values on both sides of a bound, on one side only, and none.
+        AggOp::Bounded { max, strict, .. } => {
+            let (name, op) = (if *max { "max" } else { "min" }, AggOp::bound_cmp(*max, *strict));
+            probe(format!("aggregate {name} bounded by {op}"), &[&format!("agg {name}")], "a: symbol, x: number, c: number", format!("{{HEAD}}(a, x, c) :- s(a), n(x), c = {name} v : {{ p(a, v), v {op} x }}."))
+        }
     }
 }
 
@@ -220,6 +226,9 @@ fn probes() -> Vec<Probe> {
     for op in [AggOp::Count, AggOp::Sum, AggOp::Min, AggOp::Max, AggOp::Product, AggOp::Join { by: Vec::new(), sep: String::new() }] {
         out.push(aggregate(&op));
     }
+    for (max, strict) in [(true, true), (true, false), (false, true), (false, false)] {
+        out.push(aggregate(&AggOp::Bounded { max, bound: "x".into(), strict }));
+    }
     // `@concat` of more than two texts, as the data-layer programs write it: their concatenation, left to right.
     out.push(probe("functor @concat of three texts", &["call concat"], "a: symbol", "{HEAD}(v) :- t(a), t(b), v = @concat(a, \"::\", b)."));
     // `@printf` of a constant format, as the data-layer programs write it: `%d`, `%0Nd` (never truncated) and `%s`.
@@ -325,7 +334,12 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     Ok(Verdict { native, device })
 }
 
+/// `RERAIL_COVERAGE_NO_DEVICE=1`: the probes' native verdicts alone, the device's not run (with
+/// `RERAIL_COVERAGE_ONLY`, a step built while Metal work waits, 2026-11-20).
 fn metal() -> bool {
+    if std::env::var_os("RERAIL_COVERAGE_NO_DEVICE").is_some() {
+        return false;
+    }
     #[cfg(target_os = "macos")]
     return crate::code_rule_dsl::transducer::packed::metal_join::available();
     #[cfg(not(target_os = "macos"))]

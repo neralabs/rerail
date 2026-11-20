@@ -784,9 +784,10 @@ fn fold_constants(rule: &mut Rule) -> usize {
     rule.head.args.iter().for_each(|t| t.vars(&mut named));
     for l in &rule.body {
         match l {
-            Literal::Agg { var, over, .. } => {
+            Literal::Agg { var, op, over, .. } => {
                 named.insert(var.clone());
                 named.extend(over.iter().cloned());
+                named.extend(op.bound().cloned());
             }
             Literal::Nearest { n, a, .. } => {
                 named.insert(n.clone());
@@ -1282,11 +1283,14 @@ fn occurrences(rule: &Rule) -> HashMap<String, usize> {
                 term(l, &mut n);
                 term(r, &mut n);
             }
-            Literal::Agg { var, over, atom, .. } => {
+            Literal::Agg { var, op, over, atom } => {
                 atom.args.iter().for_each(|t| term(t, &mut n));
                 *n.entry(var.clone()).or_default() += 1;
                 if let Some(o) = over {
                     *n.entry(o.clone()).or_default() += 1;
+                }
+                if let Some(b) = op.bound() {
+                    *n.entry(b.clone()).or_default() += 1;
                 }
             }
             Literal::Nearest { n: x, a, .. } => {

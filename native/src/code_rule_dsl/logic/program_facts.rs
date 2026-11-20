@@ -10,7 +10,7 @@
 //!
 //! - **Rules:** `rule(p, r, head)` and `body(p, r, k, lit)`: rule `r`'s head atom and its `k`-th body literal.
 //! - **Literals:** `lit_atom(p, l, a)`, `lit_cmp(p, l, left, op, right)`, `lit_agg(p, l, var, op, a)` (with
-//!   `agg_over`, `agg_join`, `agg_by`), `lit_nearest(p, l, n, a, set)`, `lit_ast(p, l, doc, node, matcher)` (with
+//!   `agg_over`, `agg_join`, `agg_by`, `agg_bound`), `lit_nearest(p, l, n, a, set)`, `lit_ast(p, l, doc, node, matcher)` (with
 //!   `ast_capture`).
 //! - **Atoms and terms:** `atom(p, a, rel, neg, gated)`, `arg(p, a, i, t)`, `term(p, t, kind, n, s)` (kind `var`,
 //!   `wild`, `int`, `str`, `top` or `call`) and `call_arg(p, t, i, u)`.
@@ -81,6 +81,7 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List
         ("lit_agg", &["p:sym", "l:int", "var:sym", "op:sym", "a:int"]),
         ("agg_over", &["p:sym", "l:int", "var:sym"]),
         ("agg_join", &["p:sym", "l:int", "sep:sym"]),
+        ("agg_bound", &["p:sym", "l:int", "bound:sym", "op:sym"]),
         ("agg_by", &["p:sym", "l:int", "i:int", "var:sym"]),
         ("lit_nearest", &["p:sym", "l:int", "n:sym", "a:sym", "set:sym"]),
         ("lit_ast", &["p:sym", "l:int", "doc:sym", "node:sym", "matcher:sym"]),
@@ -250,6 +251,8 @@ impl Writer<'_> {
                     AggOp::Sum => "sum",
                     AggOp::Product => "product",
                     AggOp::Join { .. } => "join",
+                    AggOp::Bounded { max: true, .. } => "max",
+                    AggOp::Bounded { max: false, .. } => "min",
                 };
                 self.row("lit_agg", vec![n(l), s(var), s(name), n(a)]);
                 if let Some(over) = over {
@@ -260,6 +263,9 @@ impl Writer<'_> {
                     for (i, v) in by.iter().enumerate() {
                         self.row("agg_by", vec![n(l), n(i), s(v)]);
                     }
+                }
+                if let AggOp::Bounded { max, bound, strict } = op {
+                    self.row("agg_bound", vec![n(l), s(bound), s(AggOp::bound_cmp(*max, *strict))]);
                 }
             }
             Literal::Nearest { n: node, a, kindset } => self.row("lit_nearest", vec![n(l), s(node), s(a), s(kindset)]),
@@ -809,6 +815,7 @@ impl<'a, C: Cell> Reader<'a, C> {
         let over = self.by_id("agg_over")?;
         let join = self.by_id("agg_join")?;
         let by = self.by_id("agg_by")?;
+        let bounds = self.by_id("agg_bound")?;
         for row in self.get("lit_agg") {
             let l = int(&row[0])?;
             let op = match str_of(&row[2])? {
@@ -823,6 +830,23 @@ impl<'a, C: Cell> Reader<'a, C> {
                     AggOp::Join { by, sep: text(&sep[0])? }
                 }
                 other => return Err(bad(format!("no aggregate {other}"))),
+            };
+            // A bounded min or max (decision 0511): its bound and the comparison its value passes.
+            let op = match (op, bounds.get(&l).and_then(|r| r.first())) {
+                (op @ (AggOp::Min | AggOp::Max), Some(b)) => {
+                    let (max, strict) = match str_of(&b[1])? {
+                        "<" => (true, true),
+                        "<=" => (true, false),
+                        ">" => (false, true),
+                        ">=" => (false, false),
+                        other => return Err(bad(format!("aggregate {l}: no bound {other}"))),
+                    };
+                    if max != (op == AggOp::Max) {
+                        return Err(bad(format!("aggregate {l}: a bound on the wrong side")));
+                    }
+                    AggOp::Bounded { max, bound: text(&b[0])?, strict }
+                }
+                (op, _) => op,
             };
             let over = over.get(&l).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
             out.push((l, Literal::Agg { var: text(&row[1])?, op, over, atom: self.atom(int(&row[3])?)? }));

@@ -89,6 +89,7 @@ fn binds(l: &Literal, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
             if let AggOp::Join { by, .. } = op {
                 by.iter().for_each(|k| _ = need.remove(k));
             }
+            need.extend(op.bound().cloned());
             need.is_subset(bound).then(|| BTreeSet::from([var.clone()]))
         }
         Literal::Nearest { n, a, .. } => (bound.contains(n) || bound.contains(a)).then(|| l.vars()),

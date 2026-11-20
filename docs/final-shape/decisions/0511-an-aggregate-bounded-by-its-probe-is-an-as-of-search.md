@@ -1,6 +1,6 @@
 # 0511. An aggregate bounded by its probe is an as-of search, not a helper per probe
 
-Status: proposed (2026-11-20). t50 step 3; follows 0476.
+Status: accepted (2026-11-20), steps 1, 2, 4 (SQL) and 5 built; the search of step 3 not yet (§ Built). t50 step 3; follows 0476.
 
 ## Intro
 
@@ -59,6 +59,42 @@ for the search.
    - The native step's value equals the fold's on a group of 10⁴ values and 10⁴ probes, ties and empty groups
      included. Its work is proportional to the probes, not their product.
    - The stage harness's rows equal W's on its cases, the projects and s1000, and the findings replay is unchanged.
+
+## Built
+
+- **Lowering** (`rr::lower`, `Lowerer::bounded`): the shape of §1, for a value a declared `int` column holds. Nodes and
+  symbols are left as they were, since they order by keys `front::order_nodes` writes later. `RERAIL_ASOF=off` turns
+  the recognition off, for measuring.
+- **The op** is `AggOp::Bounded { max, bound, strict }` (the image's `AggRef::Bounded`, code 6: the bound's variable,
+  then its flags). The bound is a variable the literal reads outside its atom. Patterns written with `..` do not name
+  it, so the compiler cannot find the places that list a literal's variables. They were found by hand and each now
+  lists the bound: the variable sets (`Literal::vars`, the plan's, the version passes'), readiness (`ready`, magic),
+  the renames, the use counts, and the digests and canonical keys.
+- **Native**: the spec's `maxlt|maxle|mingt|minge` items and `Step::Scalar`'s `bound`. The step folds the group's
+  candidates with the bound as a filter, so nothing is made per probe. It shares no summary bag (`scalars::plan`), and
+  liveness counts the bound as read.
+- **SQL**: the aggregate's subquery gains `value op bound`.
+- **The device**: not run (Metal work waits on the 2026-11-20 crash). The coverage gate's four new probes
+  (`aggregate max bounded by <`, …) are native and equal SQLite's rows. Their device column is not blessed, and the
+  gate's ledger needs it written on a Metal host (`RERAIL_COVERAGE_NO_DEVICE=1` runs the native side alone).
+- **Tests**: `setfix::bounded_tests`. The lowering test covers each side, either way round, and three shapes left
+  alone. The step test checks 10⁴ values and 10⁴ probes against the plain search, on all four sides.
+
+## Measured (same host, 2026-11-20; every stage's rows unchanged, on or off)
+
+| Strata (`RERAIL_STAGE_TOP`) | `all`, off s | `all`, on s | s1000, before s | s1000, after s |
+|---|---|---|---|---|
+| `rf_fn_seen_at` | 1.574 | 0.731 | 0.170 | 0.069 |
+| `rf_seen_at` + its demand | 0.859 | 0.829 | 0.251 | 0.224 |
+| `rf_mlatest`, `rf_mlatest_at` | 1.012 | 1.016 | — | — |
+| the per-probe helpers (`rr_ctx48`, `rr_agg47`, `rr_ctx52`, `rr_agg51`) | 0.927 | — | 0.074 | — |
+| the group helpers (`rr_agg46`/`44`, `rr_agg47` and its demand) | 0.303 | 0.491 | — | — |
+| **the as-of strata** | **4.68** | **3.07** | | |
+
+On `all` the as-of strata go from 4.68 s to 3.07 s of CPU. The groups are small (a name's bindings in one scope), so
+a probe's fold reads a few rows, and the binary search of §3 is not worth building yet. What is left in
+`rf_seen_at` and `rf_mlatest` is their own joins, not the aggregate. `rf_mlatest` keeps its unbounded max, which needs
+no probe.
 
 ## Not decided here
 

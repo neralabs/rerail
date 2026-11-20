@@ -259,6 +259,11 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
             Step::Let { a, b: Key::Slot(b) } if previous.contains(b) => {
                 previous.insert(*a);
             }
+            // A bounded min or max (decision 0511) depends on its probe's bound: it shares no bag.
+            Step::Scalar { bound: Some(_), out, .. } => {
+                previous.insert(*out);
+                continue;
+            }
             _ => {}
         }
         let Step::Scalar {

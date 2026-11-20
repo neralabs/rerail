@@ -51,6 +51,8 @@ fn literal(l: &front::Literal) -> (&'static str, Option<&str>, bool, Option<Stri
                 front::AggOp::Sum => "sum",
                 front::AggOp::Product => "rr_product",
                 front::AggOp::Join { .. } => "join",
+                front::AggOp::Bounded { max: true, .. } => "max",
+                front::AggOp::Bounded { max: false, .. } => "min",
             };
             ("aggregate", Some(atom.rel.as_str()), atom.neg, Some(op.into()))
         }

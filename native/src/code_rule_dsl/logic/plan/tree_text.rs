@@ -34,6 +34,7 @@ enum AggOp<'v> {
     Sum,
     Product,
     Join { by: Vec<&'v str>, sep: &'v str },
+    Bounded { max: bool, bound: &'v str, strict: bool },
 }
 
 #[derive(Debug)]
@@ -82,6 +83,7 @@ pub fn rule(b: &Body<'_>) -> String {
                     AggRef::Sum => AggOp::Sum,
                     AggRef::Product => AggOp::Product,
                     AggRef::Join { by, sep } => AggOp::Join { by: by.map(|s| b.var(s)).collect(), sep: b.v.text(sep) },
+                    AggRef::Bounded { max, bound, strict } => AggOp::Bounded { max, bound: b.var(bound), strict },
                 },
                 over: over.map(|o| b.var(o)),
                 atom: atom(b, a),
