@@ -13,7 +13,7 @@ use rerail_rr_syntax::tape::{self, FIRST_ANONYMOUS, KIND_NAMES};
 use std::collections::BTreeMap;
 
 fn corpus() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };

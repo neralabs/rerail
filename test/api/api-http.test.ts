@@ -17,6 +17,7 @@ import {
   upsertLibraryRule,
   audits,
   checkouts,
+  events,
   libraryRules,
   repositories,
   steerFeedback,
@@ -246,10 +247,14 @@ describe("Rerail API over HTTP", () => {
     sessionStore.recordIgnoredEdit(SESSION, { path: "scratch/a.ts", source: ".git/info/exclude", line: 1, pattern: "scratch/" });
     sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".git/info/exclude", via: "observed", ignoresMore: ["scratch/"] });
     sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".gitignore", via: "tool", ignoresMore: ["out/"] });
-    // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
-    for (let index = 0; index < 600; index += 1) {
-      sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
-    }
+    // More than a transcript page of later events: the dashboard opens on those and never loads the gaps. One
+    // transaction writes them all: a commit of its own for each, as the session store makes, waits on the disk 600
+    // times, seconds on a busy machine.
+    database.$client.transaction(() => {
+      for (let index = 0; index < 600; index += 1) {
+        database.insert(events).values({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payloadJson: "{}" }).run();
+      }
+    })();
 
     expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps)
       .toEqual({ droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2 });
@@ -501,6 +506,7 @@ describe("Rerail API over HTTP", () => {
     const rule = (regex: string) => ({
       id,
       mode: "steer",
+      title: "No force-push",
       match: { all: [{ field: "tool.name", eq: "Bash" }, { field: "input.command", regex }] },
       sample: { source: "tool:Bash", boundary: "tool-call" },
       action: { content: "Do not force-push." },

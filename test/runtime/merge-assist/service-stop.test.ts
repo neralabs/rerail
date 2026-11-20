@@ -5,8 +5,8 @@ import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { mergeAssistState, type MergeAssistStatus, openRerailDatabase, recordCheckout, type RerailDatabase } from "../../../src/engine/index.js";
-import { createMergeAssistService, type GithubClient, type MergeAssistRuntime, type PullRequestSummary } from "../../../src/runtime/index.js";
+import { mergeAssistState, type MergeAssistStatus, openRerailDatabase, recordCheckout, type RerailDatabase, setUpRepository } from "../../../src/engine/index.js";
+import { createMergeAssistService, type GithubClient, type MergeAssistRuntime, type PullRequestSummary, setRepositoryStarted } from "../../../src/runtime/index.js";
 import { readConflicts, writeConflicts } from "../../../src/runtime/merge-assist/conflict-store.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 import { git } from "../../support/merge-assist/git.js";
@@ -221,6 +221,25 @@ const SQLITE_DRIVER = createRequire(import.meta.url).resolve("better-sqlite3");
  */
 const LOCK_HELD_MS = 2_000;
 
+/**
+ * A bound past the five seconds a Rerail connection waits for a lock: a {@link holdWriteLock} process given it outlasts
+ * that wait unless it is released.
+ */
+const LOCK_OUTLASTS_WAIT_MS = 8_000;
+
+/**
+ * A bound past a stop's default wait of two seconds and within the five seconds a Rerail connection waits for a lock:
+ * a stop that waits for the lock held this long waits past its own wait, and gets the lock.
+ */
+const LOCK_PAST_STOP_WAIT_MS = 4_500;
+
+/** How a {@link holdWriteLock} process ends besides its release: its bound, and a process whose exit releases it. */
+interface LockHold {
+  readonly boundMs?: number;
+  /** A process whose exit gives the lock back, as the holder sees for itself, whatever the test's thread is doing. */
+  readonly untilExitOf?: number;
+}
+
 /** A process holding a database's write lock ({@link holdWriteLock}). */
 interface LockHolder {
   readonly child: ChildProcess;
@@ -232,25 +251,29 @@ interface LockHolder {
 
 /**
  * Another process holding the write lock of the database at `path` from its start. It gives the lock back when the
- * test writes a file in a folder of its own under `folder` ({@link LockHolder.release}), when it is ended, or once
- * {@link LOCK_HELD_MS} is over. It writes nothing on its standard output, so it can stand in for a Git read.
+ * test writes a file in a folder of its own under `folder` ({@link LockHolder.release}), when it is ended, once the
+ * process `hold.untilExitOf` names has exited (it asks every 10 ms), or once `hold.boundMs` ({@link LOCK_HELD_MS}
+ * unless given) is over. It writes nothing on its standard output, so it can stand in for a Git read.
  */
-function holdWriteLock(path: string, folder: string): LockHolder {
+function holdWriteLock(path: string, folder: string, hold: LockHold = {}): LockHolder {
   const signals = join(folder, "write-lock");
   mkdirSync(signals, { recursive: true });
   const released = join(signals, "released");
   const script = [
     "const { existsSync, watch } = require(\"node:fs\");",
-    "const [driver, path, folder, released, boundMs] = process.argv.slice(1);",
+    "const [driver, path, folder, released, boundMs, untilExitOf] = process.argv.slice(1);",
     "const database = new (require(driver))(path);",
     "database.exec(\"BEGIN IMMEDIATE\");",
     "const end = () => { database.exec(\"ROLLBACK\"); database.close(); process.exit(0); };",
     "watch(folder, () => { if (existsSync(released)) end(); });",
     "if (existsSync(released)) end();",
     "setTimeout(end, Number(boundMs));",
+    "const gone = pid => { try { process.kill(pid, 0); return false; } catch { return true; } };",
+    "if (Number(untilExitOf) > 0) setInterval(() => { if (gone(Number(untilExitOf))) end(); }, 10);",
     "process.stderr.write(\"held\\n\");",
   ].join(" ");
-  const child = actualSpawn(process.execPath, ["-e", script, SQLITE_DRIVER, path, signals, released, String(LOCK_HELD_MS)], { stdio: ["pipe", "pipe", "pipe"] });
+  const args = [SQLITE_DRIVER, path, signals, released, String(hold.boundMs ?? LOCK_HELD_MS), String(hold.untilExitOf ?? 0)];
+  const child = actualSpawn(process.execPath, ["-e", script, ...args], { stdio: ["pipe", "pipe", "pipe"] });
   const exited = new Promise<void>(done => child.once("exit", () => done()));
   // The workspace's folder goes after the test: Windows refuses to remove a database a process holds.
   onTestFinished(async () => {
@@ -838,6 +861,123 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
     expect({ written, kept: checkouts.map(checkout => keptRows(ws, checkout)) }).toEqual({ written: [], kept: [1, 1] });
   });
 
+  it("ends a running hook command before it waits for another process's write lock when a stop with a wait lands while turning Merge Assist off reads the first checkout's branches, then keeps the events in two checkouts", async () => {
+    const ws = await workspace();
+    const { ids } = await conflictsStored(ws);
+    // A second checkout holding the main checkout's conflicts, as its own scan would store them.
+    const checkouts = [ws.repo, addCheckout(ws, "mine-too", "mine")];
+    writeConflicts(ws.database, checkouts[1] ?? "", readConflicts(ws.database, ws.repo), Date.now());
+    // A hook command that runs until it is ended; its own time limit is past the case's.
+    await ws.service().updateSettings(ws.repo, { hook: { command: [process.execPath, ...HELD_READ, "held-hook-command"], timeoutSeconds: 60 } });
+    // Rerail's own connection, which waits five seconds for a lock.
+    const { service, close } = ownConnection(ws, new FakeGithub());
+    const hookCommand = Promise.withResolvers<ChildProcess>();
+    const reading = Promise.withResolvers<ChildProcess>();
+    let holdNextBranchRead = false;
+    // The hook command is seen as it starts; the turn-off's first branch read is held until the test ends it.
+    vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
+      if (commandLine(args).includes("held-hook-command")) {
+        const child = actualSpawn(...args);
+        hookCommand.resolve(child);
+        return child;
+      }
+      if (!holdNextBranchRead || !commandLine(args).includes("symbolic-ref")) return actualSpawn(...args);
+      holdNextBranchRead = false;
+      const child = actualSpawn(process.execPath, HELD_READ, { stdio: ["pipe", "pipe", "pipe"] });
+      reading.resolve(child);
+      return child;
+    });
+    let written: string[] = [];
+    try {
+      // A dismissal hands its `closed` to the hook, whose command then runs.
+      await service.dismissConflict(ws.repo, ids[0] ?? "");
+      const command = await hookCommand.promise;
+      holdNextBranchRead = true;
+      const turnOff = service.setEnabled(ws.repo, false);
+      const read = await reading.promise;
+      // The other process gives the lock back once the hook command has exited, as it sees for itself, and not by
+      // itself within Rerail's five seconds: a stop that waits for the lock before it ends the command meets the lock
+      // held all that wait.
+      const holder = holdWriteLock(ws.databasePath, ws.folder, { boundMs: LOCK_OUTLASTS_WAIT_MS, untilExitOf: command.pid ?? 0 });
+      await holder.held;
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        await service.stop(UNREACHED_MS);
+      } finally {
+        written = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("could not keep"));
+        stderr.mockRestore();
+      }
+      await holder.release();
+      read.kill("SIGKILL");
+      await turnOff;
+      // Closed before the workspace's folder goes: Windows refuses to remove a database a connection holds open.
+      close();
+
+      expect({ written, kept: checkouts.map(checkout => keptRows(ws, checkout)) }).toEqual({ written: [], kept: [1, 1] });
+    } finally {
+      vi.mocked(spawn).mockImplementation(actualSpawn);
+    }
+  });
+
+  it("lets a scan in another repository that ends within the stop's wait store what it found when a stop with a wait first waits for another process's write lock to keep the events turning Merge Assist off has not handed: the scan's wait leaves out the keep's", async () => {
+    const ws = await workspace();
+    await conflictsStored(ws);
+    // Another repository in the same database with Merge Assist on, its checkout's work conflicting with one peer: a
+    // scan there stores what it found once Merge Assist is off in the first.
+    const other = await workspace();
+    const { repositoryKey } = recordCheckout(ws.database, other.repo);
+    setUpRepository(ws.database, repositoryKey, { packs: [] });
+    setRepositoryStarted(ws.database, repositoryKey, true);
+    commitPeer(other, 0, "Orders, take 0");
+    await ws.service().setEnabled(other.repo, true);
+    // Rerail's own connection, which waits five seconds for a lock.
+    const { service, close } = ownConnection(ws, new FakeGithub());
+    // The other repository's scan is held at its check that the checkout's folder is there; Git reads follow it.
+    const checking = Promise.withResolvers<void>();
+    const folderCheck = holdAccessTo(other.repo, () => checking.resolve());
+    const scan = service.openSession(other.repo, "claude-code", "session-1");
+    await checking.promise;
+    const reading = Promise.withResolvers<ChildProcess>();
+    let held = false;
+    // The turn-off's first branch read is held until the test ends it.
+    vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
+      const line = commandLine(args);
+      if (held || !line.includes("symbolic-ref") || !line.includes(ws.repo)) return actualSpawn(...args);
+      held = true;
+      const child = actualSpawn(process.execPath, HELD_READ, { stdio: ["pipe", "pipe", "pipe"] });
+      reading.resolve(child);
+      return child;
+    });
+    let written: string[] = [];
+    try {
+      const turnOff = service.setEnabled(ws.repo, false);
+      const read = await reading.promise;
+      // The other process gives the lock back at its bound, past the stop's wait and within Rerail's five seconds for a
+      // lock. The scan's folder check answers once that process has exited, which this thread hears only after the keep.
+      const holder = holdWriteLock(ws.databasePath, ws.folder, { boundMs: LOCK_PAST_STOP_WAIT_MS });
+      holder.child.once("exit", () => folderCheck.release());
+      await holder.held;
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        // The default wait, as the daemon stops Merge Assist.
+        await service.stop();
+      } finally {
+        written = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("could not keep"));
+        stderr.mockRestore();
+      }
+      read.kill("SIGKILL");
+      await turnOff;
+      await scan;
+      // Closed before the workspace's folder goes: Windows refuses to remove a database a connection holds open.
+      close();
+
+      const { lastScan, conflicts } = await ws.service().status(other.repo);
+      expect({ written, kept: keptRows(ws), scanned: lastScan !== null, conflicts: conflicts.length }).toEqual({ written: [], kept: 1, scanned: true, conflicts: 1 });
+    } finally {
+      vi.mocked(spawn).mockImplementation(actualSpawn);
+    }
+  });
+
   it("hands the `closed` of conflicts another pass stores in a checkout as Merge Assist is being turned off, as it hands those of the other checkouts", async () => {
     const ws = await workspace();
     const heard = await loggedHook(ws);
@@ -888,6 +1028,43 @@ describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000
 
     const idleReads = reads.off.filter(line => idle.some(checkout => line.includes(checkout)));
     expect({ on: reads.on.filter(line => line.includes(ws.repo)), off: idleReads }).toEqual({ on: [], off: [] });
+  });
+
+  it("reads no other checkout's branches once a stop lands while turning Merge Assist off reads the first one's, keeps the events of all three, and answers the status", async () => {
+    const ws = await workspace();
+    await conflictsStored(ws);
+    // Two more checkouts holding the main checkout's conflicts, as their own scans would store them: one scan in all
+    // keeps the case within its time on a busy machine.
+    const checkouts = [ws.repo, addCheckout(ws, "second", "mine"), addCheckout(ws, "third", "mine")];
+    for (const checkout of checkouts.slice(1)) writeConflicts(ws.database, checkout, readConflicts(ws.database, ws.repo), Date.now());
+    const service = ws.service();
+    const reading = Promise.withResolvers<{ child: ChildProcess; line: string }>();
+    const reads: string[] = [];
+    let held = false;
+    // Every Git the turn-off starts is counted; its first branch read is held until the test ends it.
+    vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
+      const line = commandLine(args);
+      if (isGit(args)) reads.push(line);
+      if (held || !line.includes("symbolic-ref")) return actualSpawn(...args);
+      held = true;
+      const child = actualSpawn(process.execPath, HELD_READ, { stdio: ["pipe", "pipe", "pipe"] });
+      reading.resolve({ child, line });
+      return child;
+    });
+    try {
+      const turnOff = service.setEnabled(ws.repo, false);
+      const read = await reading.promise;
+      await service.stop();
+      read.child.kill("SIGKILL");
+
+      // The database is open: the turn-off answers the checkout's status, as one that ends before the stop does.
+      await expect(turnOff).resolves.toMatchObject({ enabled: false, conflicts: [] });
+      const others = checkouts.slice(1);
+      expect({ held: read.line.includes(ws.repo), others: reads.filter(line => others.some(checkout => line.includes(checkout))), kept: checkouts.map(checkout => keptRows(ws, checkout)) })
+        .toEqual({ held: true, others: [], kept: [1, 1, 1] });
+    } finally {
+      vi.mocked(spawn).mockImplementation(actualSpawn);
+    }
   });
 
   it("resolves a stop with no wait whose release of a scan's mark meets another process's write lock without waiting for the lock, and leaves the mark to go stale, as when its process ends", async () => {

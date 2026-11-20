@@ -43,7 +43,7 @@ import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
-import { ToolCallWindows } from "./tool-call-windows.js";
+import { type EndedCalls, ToolCallWindows } from "./tool-call-windows.js";
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
@@ -84,21 +84,28 @@ const LISTING_AGAIN_WAIT_MS = 1_000;
  * A source as a tool call found it: its text, why it could not be read, or neither when it did not exist. A file named
  * like one holding secrets (`sensitiveByName`) keeps only its SHA-256 and size (`withheld`): preimages go into the
  * session ledger in the checkout, so its text is never captured, and `rewind` refuses to put it back. A preimage whose
- * text holds a secret is written to the ledger the same way ({@link ledgerPreimage}), though the session keeps its text.
+ * text holds a secret is written to the ledger the same way ({@link ledgerPreimage}), though the session keeps its text,
+ * and so is one of a file named so only where it really is (`secretTarget`).
  */
 export interface Preimage {
   readonly text?: string;
   readonly readError?: string;
   readonly withheld?: { readonly sha256: string; readonly bytes: number };
+  /**
+   * The text is of a file named like one holding secrets where it really is (`Source.secretTarget`), not as the call
+   * spells it: the session keeps it, so `rewind` can put the file back, and the ledger keeps only its digest and size.
+   */
+  readonly secretTarget?: true;
 }
 
 /**
- * `preimage` as the session ledger records it: text holding a secret (`containsSecret`) is withheld, its SHA-256 and
- * size kept, so a session resumed from the ledger still finds the file unchanged by its digest but cannot put it back;
- * a read error is scrubbed. The live session keeps the text it captured.
+ * `preimage` as the session ledger records it: text holding a secret (`containsSecret`), or of a file named like one
+ * holding secrets where it really is (`secretTarget`), is withheld, its SHA-256 and size kept, so a session resumed from
+ * the ledger still finds the file unchanged by its digest but cannot put it back; a read error is scrubbed. The live
+ * session keeps the text it captured.
  */
 export function ledgerPreimage(preimage: Preimage): Preimage {
-  if (preimage.text !== undefined && containsSecret(preimage.text)) {
+  if (preimage.text !== undefined && (preimage.secretTarget === true || containsSecret(preimage.text))) {
     return { withheld: { sha256: createHash("sha256").update(preimage.text).digest("hex"), bytes: Buffer.byteLength(preimage.text) } };
   }
   return preimage.readError === undefined ? preimage : { ...preimage, readError: scrubSecrets(preimage.readError) };
@@ -115,6 +122,12 @@ export interface Source {
   readonly modifiedAt?: number;
   /** Filesystem-clock reading taken before the walk that produced this observation. */
   readonly observedAt?: number;
+  /**
+   * The file is named like one holding secrets where it really is, from the checkout that owns it, however `path`
+   * spells it: a link to a folder on the way (`conf/config.py`, `conf` a link to `.aws`) or a Windows short name
+   * (`AWS~1/config.py`) may lead there.
+   */
+  readonly secretTarget?: true;
 }
 export type ObservedSource = Omit<Source, "text" | "deleted">;
 /** Baseline observations keyed by workspace directory, shared so later sessions reuse digests of unchanged sources. */
@@ -200,16 +213,39 @@ interface FinishOptions {
   readonly rewindable?: boolean;
   readonly reported?: ReportedPreimage | undefined;
 }
-/** A source as a preimage: a file named like one holding secrets keeps only its digest and size. Undefined when it is none. */
+/** A source as a preimage (`textPreimage` for its text). Undefined when it is none. */
 function preimageOf(source: Source): Preimage | undefined {
-  if (source.text !== undefined)
-    return sensitiveByName(source.path) ? { withheld: { sha256: source.digest!, bytes: Buffer.byteLength(source.text) } } : { text: source.text };
+  if (source.text !== undefined) return textPreimage(source, source.text);
   if (source.readError !== undefined) return { readError: source.readError };
   return source.deleted === true ? {} : undefined;
 }
-/** `preimage` of the file at `path` as a capture keeps it: a file named like one holding secrets keeps only its digest and size. */
-function keptPreimage(path: string, preimage: Preimage): Preimage {
-  if (preimage.text === undefined || !sensitiveByName(path)) return preimage;
+/**
+ * `source`'s `text` as a preimage: a file named like one holding secrets as spelled keeps only its digest and size; one
+ * named so only where it really is (`secretTarget`) keeps its text for the session, marked so the ledger keeps only its
+ * digest and size too (`ledgerPreimage`).
+ */
+function textPreimage(source: Source, text: string): Preimage {
+  if (sensitiveByName(source.path)) return { withheld: { sha256: source.digest!, bytes: Buffer.byteLength(text) } };
+  return source.secretTarget === true ? { text, secretTarget: true } : { text };
+}
+function holdsSecrets(source: Source): boolean {
+  return source.secretTarget === true || sensitiveByName(source.path);
+}
+/**
+ * `source`, read at its spelled path, marked `secretTarget` when `real`, where it really is from the checkout that owns
+ * it, is named like a file holding secrets.
+ */
+function judgedWhereItLeads(source: Source | undefined, real: string): Source | undefined {
+  return source === undefined || !sensitiveByName(real) ? source : { ...source, secretTarget: true };
+}
+/**
+ * What a tool's result says `source` held, as its edit is read against it: a file named like one holding secrets, as
+ * spelled or where it really is (`holdsSecrets`), keeps only its digest and size, so its edit is read over the whole
+ * file, as a direct edit of it is. An edit read against what a result says is never rolled back (`RewindableEdit`), so
+ * the session needs no copy of that text.
+ */
+function keptPreimage(source: Source, preimage: Preimage): Preimage {
+  if (preimage.text === undefined || !holdsSecrets(source)) return preimage;
   return { withheld: { sha256: sha256(preimage.text), bytes: Buffer.byteLength(preimage.text) } };
 }
 /**
@@ -459,6 +495,39 @@ function recordReadError(scan: SourceScan, source: Source): void {
   if (unreadOversize(source)) scan.unread.set(source.path, { stamp: source.stamp, readError: source.readError });
   else scan.errors.push({ path: source.path, readError: source.readError });
 }
+/**
+ * Notes each file the session folder's walk could not read, with the calls that may have written it unseen
+ * (`SourceDiscovery.missedFiles`). Whether the walk lets the other calls go: it listed every folder, so it read every
+ * file but those, and the calls it keeps for them claim only their writes (`ToolCallWindows.ranDuring`).
+ */
+function holdMissedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): boolean {
+  discovery.missedFiles = missedFiles(discovery, walk, scan);
+  if (scan.failedRoots.size > 0) return false;
+  discovery.listedEnds = walk.callsEnded;
+  return true;
+}
+/**
+ * Each file the walk could not read, with the calls it keeps: from those that ended after the last walk that listed
+ * every folder before its first miss began, up to this walk's start. A file under a folder the walk could not list is
+ * one: the walk tried no read of it. `failFolder` finds a source there only for a file the session observes, and a file
+ * the last walk missed may have none (a tool call pending on it, or a read of it that failed, leaves it unobserved), so
+ * each such file the last walk missed stays missed here with its calls.
+ */
+function missedFiles(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Map<string, EndedCalls> {
+  const missed = new Map<string, EndedCalls>();
+  for (const [path, source] of scan.sources) if (missedRead(source)) missed.set(path, missedThrough(discovery, path, walk.callsEnded));
+  for (const path of discovery.missedFiles.keys())
+    if (!missed.has(path) && underBaselineRoot(scan.failedRoots, path)) missed.set(path, missedThrough(discovery, path, walk.callsEnded));
+  return missed;
+}
+/** A file whose read failed: an error with no stamp. */
+function missedRead(source: Source): boolean {
+  return source.readError !== undefined && source.stamp === undefined;
+}
+/** The calls the file at `path` keeps as a walk that began once `through` calls had ended misses it. */
+function missedThrough(discovery: SourceDiscovery, path: string, through: number): EndedCalls {
+  return { after: discovery.missedFiles.get(path)?.after ?? discovery.listedEnds, through };
+}
 /** What a walk could not check, as a boundary reports it; undefined when it checked everything. */
 function scanErrors(errors: readonly ScanError[]): string | undefined {
   return errors.length === 0 ? undefined : errors.map(({ path, readError }) => `${path || "."}: ${readError}`).join("; ");
@@ -499,7 +568,7 @@ function editPreimage(source: Source, captured: Preimage | undefined, reported: 
  */
 function unchangedSinceWrite(source: Source, captured: Preimage, reported: ReportedPreimage): Preimage {
   const preimage = reportedText(reported, source.text);
-  if (preimage !== undefined) return keptPreimage(source.path, preimage);
+  if (preimage !== undefined) return keptPreimage(source, preimage);
   return captured.text !== undefined && placesBeforeWrite(reported, captured.text) ? captured : { readError: UNREBUILT_PREIMAGE };
 }
 /**
@@ -518,10 +587,10 @@ function changedSinceWrite(source: Source, captured: Preimage, reported: Reporte
   const text = captured.text;
   if (text === undefined) return captured;
   const before = textBeforeWrite(reported, text, source.text);
-  if (before !== undefined) return keptPreimage(source.path, before);
+  if (before !== undefined) return keptPreimage(source, before);
   if (placesBeforeWrite(reported, text) || capturedOtherThanMade(reported, text)) return captured;
   const said = unprovenCaptureBefore(reported, text, source.text);
-  return said === undefined ? captured : keptPreimage(source.path, said);
+  return said === undefined ? captured : keptPreimage(source, said);
 }
 /**
  * Whether an edit read against `preimage` was read against what its call captured: that capture, or its very text, as
@@ -811,6 +880,15 @@ interface SourceDiscovery {
   readonly readUnmerged: ReturnType<typeof gitUnmergedReader>;
   /** When the session's tool calls ran: a change the session folder's walk finds is its own only when one ran then. */
   readonly toolCalls: ToolCallWindows;
+  /**
+   * Each file the session folder's last walk could not read, by path, with the calls that may have written it unseen
+   * (`holdMissedFiles`): any call from the last walk that listed every folder before the walks began to miss it, up to
+   * the last walk's start. Another program may let the file go between two walks that miss it, so each call in that
+   * time may have written it.
+   */
+  missedFiles: ReadonlyMap<string, EndedCalls>;
+  /** `ToolCallWindows.ends` as the last session folder walk that listed every folder began. */
+  listedEnds: number;
 }
 
 /**
@@ -940,6 +1018,15 @@ interface TakenWorktree {
   readonly worktree: string;
   readonly findings: WorktreeFindings;
   readonly scan: SourceScan;
+}
+/**
+ * A walk's changes as Git's verdicts sort them (`#separateOwnWrites`): those Git did not write, for the session to
+ * claim; those another writer or Git made that are still audited; and the digest each uncaptured change had before.
+ */
+interface SortedWrites {
+  readonly unwritten: CodeRuleEdit[];
+  readonly notOwn: CodeRuleEdit[];
+  readonly uncaptured: Map<string, string>;
 }
 /**
  * What the Git of `checkout` lists as modified or untracked: as the walk listed it, else listed now; undefined when it
@@ -1095,6 +1182,15 @@ function discoveryGap(discovery: SourceDiscovery): string | undefined {
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
+/** Whether `checkout` is still a Git checkout: its `.git` entry is there. A look that fails otherwise says nothing of it. */
+async function stillACheckout(checkout: string): Promise<boolean> {
+  try {
+    await lstat(join(checkout, ".git"));
+    return true;
+  } catch (error) {
+    return !hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR");
+  }
+}
 function sha256(data: string | Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
@@ -1210,6 +1306,19 @@ function takeFirstSeen(scan: FirstSightTake, sources: ReadonlyArray<Source | und
     bytes += Buffer.byteLength(source.text);
   }
   return bytes;
+}
+
+/**
+ * The digests `uncaptured` holds for `edits`. A walk's map also holds those of the changes it took for Git's, or dropped
+ * with a worktree being removed (`#separateOwnWrites`): no edit needs their preimages, so no Git is read for them.
+ */
+function batchDigests(edits: readonly CodeRuleEdit[], uncaptured: ReadonlyMap<string, string>): Map<string, string> {
+  const digests = new Map<string, string>();
+  for (const { path } of edits) {
+    const digest = uncaptured.get(path);
+    if (digest !== undefined) digests.set(path, digest);
+  }
+  return digests;
 }
 
 /**
@@ -1439,7 +1548,7 @@ export class CodeRuleBridge {
         startedAt: from.since, walkedFrom: from.since, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(from.gitSeen.heads), git, unmerged: new Map(from.gitSeen.unmerged), passedCheckouts: new Set(from.gitSeen.passedCheckouts),
-        readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
+        readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched, missedFiles: new Map(), listedEnds: 0,
         late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), listingSlots: { free: LISTINGS_AGAIN_AT_ONCE, waiting: [] },
       };
       this.#unwatched = new ToolCallWindows();
@@ -2705,8 +2814,10 @@ export class CodeRuleBridge {
     discovery.error = scanErrors(scan.errors);
     discovery.unread = scan.unread;
     discovery.passedCheckouts = scan.checkouts;
-    // A subtree it could not read may still hold writes made since the session opened, which its next walk judges.
-    if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.callsEnded);
+    // A subtree or a file it could not read may still hold writes of the calls that ended before it: the next walk that
+    // reads them judges each by its stamp. A folder it could not list keeps every call; a file keeps those that may have
+    // written it unseen (`holdMissedFiles`), for its own writes only.
+    if (holdMissedFiles(discovery, walk, scan)) discovery.toolCalls.answered(walk.callsEnded, [...discovery.missedFiles.values()]);
     this.#listLateAgain(discovery, scan.lateListings);
   }
 
@@ -2904,7 +3015,9 @@ export class CodeRuleBridge {
    * Git command, and, in the session folder, any other writer's (`#claimOwnWrites`). Neither kind is reported as this
    * session's edit. Of those, only a source this session had changed is still audited, as the source it now is with no
    * generated lines and in `log` mode: the evaluator holds its older text, and steers queued for that text are out of
-   * date. Any other is the same to the evaluator as the files it never saw.
+   * date. Any other is the same to the evaluator as the files it never saw. The walk of the other worktrees drops every
+   * change of a checkout in a worktree it may show the session first (`#mayFirstSee`), or in one it knew where it finds
+   * a file gone, whose `.git` entry is gone once its Git has been read (`#checkoutStands`).
    */
   async #separateOwnWrites(
     discovery: SourceDiscovery,
@@ -2912,24 +3025,55 @@ export class CodeRuleBridge {
     edits: readonly CodeRuleEdit[],
     uncaptured: Map<string, string>,
   ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[] }> {
-    const unwritten: CodeRuleEdit[] = [];
-    const notOwn: CodeRuleEdit[] = [];
+    const sorted: SortedWrites = { unwritten: [], notOwn: [], uncaptured };
     const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
-    unwritten.push(...unowned);
+    sorted.unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
       const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
-      for (const edit of group) {
-        const verdict = verdicts.get(edit.path);
-        if (verdict === undefined) unwritten.push(edit);
-        else if (verdict.previousText === undefined) this.#sortUnownedWrite(edit, verdict.keptAs, notOwn);
-        else {
-          uncaptured.delete(edit.path);
-          unwritten.push({ ...withoutUncaptured(edit), previousText: verdict.previousText });
-        }
-      }
+      if (await this.#checkoutStands(discovery, walk, checkout, group)) this.#sortByVerdicts(group, verdicts, sorted);
     }
+    const { unwritten, notOwn } = sorted;
     const own = walk.inSession ? await this.#claimOwnWrites(discovery, walk, unwritten, uncaptured, notOwn) : unwritten;
     return { own, notOwn };
+  }
+
+  /**
+   * Whether `checkout` is still the checkout whose Git gave the walk its verdicts, given its changes `group`. In another
+   * worktree only Git's verdicts tell Git's own files from writes: at the walk's first sight of it, every file stamped
+   * since the session opened (`#firstSightPaths`); in one it knew, each file it saw there that is gone. `git worktree
+   * remove` deletes the worktree's files, its `.git` entry among them, before Git stops listing the worktree, and a Git
+   * started there once the entry is gone reads no checkout, or the one around the worktree, so each of those files
+   * would be taken for a write. There the entry is looked for once Git has answered: still there, Git read this
+   * checkout; gone, the worktree is being removed or was, its files went with it, as a worktree gone before the walk is
+   * applied took its own (`#syncWorktrees`), and none of them is an edit. The removal deletes a folder's entries in the
+   * order the file system lists them, so the entry may still be there at the look while the removal goes on: the files
+   * it deleted before then are deletions Git's verdicts judge, as a person's are. A walk that finds only writes in a
+   * worktree it knew, as it does on most walks, looks for nothing.
+   */
+  async #checkoutStands(discovery: SourceDiscovery, walk: WalkStart, checkout: string, group: readonly CodeRuleEdit[]): Promise<boolean> {
+    if (walk.inSession) return true;
+    const named = sessionPath(discovery.root, checkout);
+    const worktree = walk.worktrees.has(named) ? named : rootHolding(walk.worktrees, named);
+    if (worktree === undefined) return true;
+    const mayBeRemoved = this.#mayFirstSee(discovery, worktree) || group.some(edit => edit.deleted === true);
+    return !mayBeRemoved || await stillACheckout(checkout);
+  }
+
+  /**
+   * Sorts one checkout's changes by Git's verdicts: one Git did not write stays to be claimed (`unwritten`), with the
+   * text Git's move proves it was changed from when there is one; one Git wrote is audited only as `#sortUnownedWrite`
+   * says.
+   */
+  #sortByVerdicts(group: readonly CodeRuleEdit[], verdicts: ReadonlyMap<string, GitVerdict>, sorted: SortedWrites): void {
+    for (const edit of group) {
+      const verdict = verdicts.get(edit.path);
+      if (verdict === undefined) sorted.unwritten.push(edit);
+      else if (verdict.previousText === undefined) this.#sortUnownedWrite(edit, verdict.keptAs, sorted.notOwn);
+      else {
+        sorted.uncaptured.delete(edit.path);
+        sorted.unwritten.push({ ...withoutUncaptured(edit), previousText: verdict.previousText });
+      }
+    }
   }
 
   /**
@@ -2960,12 +3104,13 @@ export class CodeRuleBridge {
   /**
    * Whether one of the session's tool calls ran as `edit`'s file was stamped or, for a file now gone, as its folder was
    * (removing an entry stamps the folder; a later change there moves the stamp on). With no stamp to go by, at some point
-   * since the walk that last saw the file began.
+   * since the walk that last saw the file began. A file the last walk could not read counts the calls kept for it too.
    */
   async #writtenByCall(discovery: SourceDiscovery, walk: WalkStart, edit: CodeRuleEdit): Promise<boolean> {
     const stamp = this.#observedSource(edit.path)?.modifiedAt ?? (edit.deleted === true ? await folderStamp(discovery.root, edit.path) : undefined);
-    if (stamp !== undefined) return discovery.toolCalls.ranDuring(stamp, stamp);
-    return discovery.toolCalls.ranDuring(walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt, walk.observedAt);
+    const held = discovery.missedFiles.get(edit.path);
+    if (stamp !== undefined) return discovery.toolCalls.ranDuring(stamp, stamp, held);
+    return discovery.toolCalls.ranDuring(walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt, walk.observedAt, held);
   }
 
   /**
@@ -3331,7 +3476,8 @@ export class CodeRuleBridge {
    * Reads the file through one descriptor opened without following a final symlink. Its real path must stay inside
    * the checkout that owns it (the session folder for an auditor that judges one folder), and still name the file
    * that was opened, so a folder swapped for a symlink mid-read cannot bring outside bytes in. A file the auditor
-   * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source.
+   * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source. The
+   * file is judged by where it really is as well as by its spelled path (`judgedWhereItLeads`), as the auditor judges it.
    */
   async #readLocatedSource(root: string, location: SourceLocation): Promise<Source | undefined> {
     const handle = await openSource(location.absolute);
@@ -3339,20 +3485,24 @@ export class CodeRuleBridge {
     try {
       const info = await handle.stat();
       if (!info.isFile()) return location.unlisted ? undefined : { path: location.path, language: location.language, readError: "Source is not a regular file" };
-      return await this.#readsInPlace(root, location, info) ? await readOpenedSource(handle, location, info) : undefined;
+      const real = await this.#realPathInPlace(root, location, info);
+      return real === undefined ? undefined : judgedWhereItLeads(await readOpenedSource(handle, location, info), real);
     } finally {
       await handle.close();
     }
   }
 
-  /** Whether the file's real path stays inside the checkout that owns it and still names the file that was opened. */
-  async #readsInPlace(root: string, location: SourceLocation, info: Stats): Promise<boolean> {
+  /**
+   * The file's real path, `/`-separated from the checkout that owns it, when it stays inside that checkout and still
+   * names the file that was opened; undefined otherwise.
+   */
+  async #realPathInPlace(root: string, location: SourceLocation, info: Stats): Promise<string | undefined> {
     const owner = this.#owningCheckout(root, location.path);
-    if (owner === undefined) return false;
+    if (owner === undefined) return undefined;
     const canonical = await realpath(location.absolute);
-    if (!withinFolder(owner, canonical)) return false;
+    if (!withinFolder(owner, canonical)) return undefined;
     const named = await lstat(canonical);
-    return named.dev === info.dev && named.ino === info.ino;
+    return named.dev === info.dev && named.ino === info.ino ? relative(owner, canonical).split(sep).join("/") : undefined;
   }
 
   #failedSourceRead(location: SourceLocation, error: unknown): Source {
@@ -3370,6 +3520,9 @@ export class CodeRuleBridge {
     const sessionId = this.#requireSession();
     const edits = await this.#recoverPreimages(discovery, captured, uncaptured);
     for (const edit of edits) {
+      // The evaluator keeps the text it held of a file it could not read, so the session keeps it too: another
+      // program's later write there is then audited for it (`#sortUnownedWrite`).
+      if (edit.readError !== undefined) continue;
       this.#forgetText(edit.path);
       if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, "edit");
     }
@@ -3395,7 +3548,7 @@ export class CodeRuleBridge {
   ): Promise<CodeRuleEditBatch["edits"]> {
     if (uncaptured.size === 0) return edits;
     const recovered = new Map<string, string>();
-    const unresolved = this.#recoverFromTexts(uncaptured, recovered);
+    const unresolved = this.#recoverFromTexts(batchDigests(edits, uncaptured), recovered);
     for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, unresolved, path => path).owned)
       await recoverFromGit(discovery, checkout, paths, uncaptured, recovered);
     return edits.map(edit => {

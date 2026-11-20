@@ -1,0 +1,142 @@
+{
+  "kind": "code",
+  "rule": {
+    "format": "rerail.policy/v1",
+    "id": "local:color-tokens-only",
+    "revision": 1,
+    "mode": "steer",
+    "description": "Use the color tokens from the theme instead of hex, rgb or hsl values or Tailwind palette colors in app code; the token file itself is exempt.",
+    "scope": {
+      "include": [
+        "src/**/*.ts",
+        "src/**/*.tsx"
+      ],
+      "exclude": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "src/types/database.ts",
+        "src/theme/**"
+      ]
+    },
+    "clauses": [
+      {
+        "id": "hex",
+        "forbid": {
+          "regex": {
+            "pattern": "(?:['\"`\\[]|:\\s*)#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\\b",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "HEX_COLOR",
+          "anchor": "witness.span",
+          "message": "Replace this hex color with a token class (bg-card, text-muted-foreground, ...) or `color(scheme, name)` from src/theme/tokens.ts."
+        }
+      },
+      {
+        "id": "color-fn",
+        "forbid": {
+          "regex": {
+            "pattern": "\\b(?:rgba?|hsla?)\\(\\s*[0-9.]",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "COLOR_FUNCTION",
+          "anchor": "witness.span",
+          "message": "Replace this color value with a token class or `color(scheme, name)` from src/theme/tokens.ts; new colors go in tokens.ts only after DESIGN.md approves them."
+        }
+      },
+      {
+        "id": "palette-class",
+        "forbid": {
+          "regex": {
+            "pattern": "(?:^|[\\s'\"`:])(?:bg|text|border(?:-[xytrblse])?|ring|ring-offset|fill|stroke|divide|outline|placeholder|decoration|from|via|to|caret|accent)-(?:(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-(?:50|[1-9]00|950)|white|black)\\b",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "PALETTE_COLOR",
+          "anchor": "witness.span",
+          "message": "Use a token color class (foreground, primary-foreground, muted, border, attention...) instead of a Tailwind palette color."
+        }
+      },
+      {
+        "id": "named-color",
+        "forbid": {
+          "regex": {
+            "pattern": "\\b(?:color|backgroundColor|borderColor|tintColor|placeholderTextColor|fill|stroke)\\s*[:=]\\s*\\{?\\s*['\"](?:white|black|red|green|blue|gray|grey|orange|yellow)['\"]",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "NAMED_COLOR",
+          "anchor": "witness.span",
+          "message": "Replace this named color with `color(scheme, name)` from src/theme/tokens.ts or a token class."
+        }
+      }
+    ]
+  },
+  "cases": {
+    "caught": [
+      {
+        "path": "src/components/ui/button.tsx",
+        "content": "const v = { destructive: 'text-white' };\n"
+      },
+      {
+        "path": "src/app/a.tsx",
+        "content": "const v = { destructive: 'text-white' };\n"
+      },
+      {
+        "path": "src/features/b.tsx",
+        "content": "export const s = { color: '#9A5208' };\n"
+      },
+      {
+        "path": "src/app/c.tsx",
+        "content": "const k = <View className=\"bg-[#fff] p-4\" />;\n"
+      },
+      {
+        "path": "src/app/d.tsx",
+        "content": "const k = { backgroundColor: 'rgba(0, 0, 0, 0.5)' };\n"
+      },
+      {
+        "path": "src/app/e.tsx",
+        "content": "const k = <Text className=\"dark:text-red-500\" />;\n"
+      },
+      {
+        "path": "src/app/e2.tsx",
+        "content": "const k = <TextInput placeholderTextColor=\"white\" style={{ color: 'black' }} />;\n"
+      }
+    ],
+    "passed": [
+      {
+        "path": "src/app/f.tsx",
+        "content": "const k = <Text className=\"text-attention-foreground bg-attention-muted\" />;\n"
+      },
+      {
+        "path": "src/app/h.tsx",
+        "content": "export const H = () => <Button size=\"icon\" {...a11y} onPress={go} />;\n"
+      },
+      {
+        "path": "src/app/g.tsx",
+        "content": "// Fixes #123 and #abc from the review\nconst k = 'text-muted-foreground';\n"
+      },
+      {
+        "path": "src/app/h2.tsx",
+        "content": "const v = 'bg-primary shadow-none';\n"
+      },
+      {
+        "path": "src/app/h.tsx",
+        "content": "import { color } from '@/theme/tokens';\nconst tint = color('light', 'foreground');\n"
+      },
+      {
+        "path": "src/theme/tokens.ts",
+        "content": "export function color() { return `hsl(${x})`; }\n"
+      },
+      {
+        "path": "src/features/capture/source.test.ts",
+        "content": "const meta = { 'theme-color': '#000' };\n"
+      }
+    ]
+  }
+}

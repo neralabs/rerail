@@ -52,7 +52,7 @@ pub use rerail_logic::threads;
 #[cfg(target_family = "wasm")]
 pub mod reactor;
 mod rules;
-pub mod tree_watch;
+pub use rerail_tree_watch::tree_watch;
 
 use model::{ModelFingerprint, shared_model, verify_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};

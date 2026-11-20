@@ -23,13 +23,15 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
-const ORACLES: &str = crate::code_rule_dsl::fixtures::fixtures_dir!();
-
 /// The oracle file at `path` (`/`-separated) below the Forte fixtures. On Windows the fixtures
 /// folder is the verbatim path `build.rs` canonicalized (`\\?\C:\...`), where `/` separates no
 /// names, so `Path::join` adds each name with the platform's separator.
 pub(super) fn read_oracle(path: &str) -> Json {
-    read_json(Path::new(ORACLES).join("blade/blade/forte").join(path))
+    read_json(
+        Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!())
+            .join("blade/blade/forte")
+            .join(path),
+    )
 }
 
 pub(super) fn read_json(path: impl AsRef<Path>) -> Json {
