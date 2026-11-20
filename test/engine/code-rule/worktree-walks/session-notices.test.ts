@@ -185,6 +185,19 @@ describe("a shell command's result reads the session folder by its change notice
     expect(checked(audits).at(-1)).toEqual(["src/pkg_1/m.py"]);
   });
 
+  it("reads at a command's own result the file another command's result left to it by name, not the whole folder", async () => {
+    const root = await workspace();
+    const { bridge, audits } = await opened(root, platformWatch());
+    await bridge.begin("shell-long", "Bash", { command: "python3 tools/rewrite.py" });
+    await writeFile(join(root, "src", "pkg_1", "m.py"), "eval(x)\n");
+    await command(bridge, "shell-short", async () => undefined);
+    listed.folders.length = 0;
+    await bridge.finish("shell-long");
+    expect(checked(audits).at(-1)).toEqual(["src/pkg_1/m.py"]);
+    // The short command's result named the file it left to the walk after: no folder is listed to find it again.
+    expect(listed.folders).toEqual([]);
+  });
+
   it("reads the paths a notice named many at once, looking at each no more often than the whole walk does", async () => {
     // Large enough that 40 paths stay under half of what the whole walk looks at.
     const root = await workspace(30);

@@ -873,9 +873,10 @@ interface SourceDiscovery {
   /** The session folder's change notices: which paths a pass for a command's result reads, when not every file. */
   readonly notices: SessionNotices;
   /**
-   * Whether a shell command of the session ran while the last pass of the session folder read it, or ended since it
-   * began: that pass may have left a file the command was writing to the pass after (`#toolChanges`, `stampOfRead`),
-   * whose notice it took, so the pass after reads the whole folder.
+   * Whether a shell command of the session ran while the session folder's first walk read it, or ended since it began:
+   * that walk keeps what was seen before of a file the command may have been part way through writing (`stampOfRead`)
+   * and names none of them, so the pass after reads the whole folder. A later pass names what it left
+   * (`leftToCommands`).
    */
   commandDuringPass: boolean;
 }
@@ -1044,8 +1045,8 @@ function walkedPaths(walk: WalkStart, current: ReadonlyMap<string, Source>): Ite
 /**
  * Whether a pass for `checkpoint` reads the whole session folder whatever its notices say: at a turn's end, which so
  * finds within the turn a write no notice told of; and until a walk finished with nothing it could not read or check,
- * which only a whole walk reads again; and after a pass a shell command of the session ran through
- * (`commandDuringPass`), which may have left a file to the pass after though no notice since names it. A command's
+ * which only a whole walk reads again; and after a first walk a shell command of the session ran through
+ * (`commandDuringPass`), which may have kept a file's earlier view without naming it. A command's
  * result reads whole too once the last whole walk began more than `WORKTREE_FULL_WALK_MS` ago (`SessionNotices`), so in
  * a long turn such a write is found at the first command result past that, read when the result arrives: no timer runs
  * for it.
@@ -1053,6 +1054,20 @@ function walkedPaths(walk: WalkStart, current: ReadonlyMap<string, Source>): Ite
 function readsWholeFolder(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): boolean {
   if (checkpoint !== "edit" || !discovery.baselineComplete || discovery.commandDuringPass) return true;
   return discovery.error !== undefined || discovery.baselineRoots.size > 0;
+}
+/**
+ * The paths a pass left to the pass after because a shell command of the session that began by `commandSince` ran
+ * through it (`#toolChanges`): each the session saw before whose stamp the command may have written, gone ones
+ * included. The pass took their notices, so the pass after reads them again by name (`SessionNotices.readAgain`), and
+ * the writer's own result checks them without a walk of the whole folder.
+ */
+function leftToCommands(walk: WalkStart, scan: SourceScan, commandSince: number | undefined): string[] {
+  if (commandSince === undefined) return [];
+  const writtenSince = (path: string): boolean => {
+    const modifiedAt = scan.sources.get(path)?.modifiedAt;
+    return modifiedAt === undefined || commandSince <= modifiedAt;
+  };
+  return [...walkedPaths(walk, scan.sources)].filter(path => walk.previous.has(path) && writtenSince(path));
 }
 /**
  * `unread` with each of `noticed` as a pass of those paths found it (`found`); the rest as the last walk found them. A
@@ -3052,7 +3067,9 @@ export class CodeRuleBridge {
   #finishSessionWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
     discovery.baselineComplete = true;
     discovery.error = scanErrors(scan.errors);
-    discovery.commandDuringPass = discovery.toolCalls.commandSince(walk.callsEnded) !== undefined;
+    const commandSince = discovery.toolCalls.commandSince(walk.callsEnded);
+    discovery.commandDuringPass = walk.baseline && commandSince !== undefined;
+    discovery.notices.readAgain(leftToCommands(walk, scan, commandSince));
     if (walk.noticed === undefined) this.#finishWholeWalk(discovery, walk, scan);
     else discovery.unread = unreadAfter(discovery.unread, walk.noticed, scan.unread);
     this.#listLateAgain(discovery, scan.lateListings);

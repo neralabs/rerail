@@ -630,6 +630,15 @@ export class SessionNotices {
   }
 
   /**
+   * Paths the pass that began last left to the pass after (a file a shell command of the session may have been part
+   * way through writing as it read it), whose notices that pass took: the next pass reads them as it reads the paths
+   * notices named since.
+   */
+  readAgain(paths: Iterable<string>): void {
+    for (const path of paths) this.#paths.add(path);
+  }
+
+  /**
    * The pass that began last finished: a whole one with what it `seen`, which notices are weighed against from now on
    * (on Linux the watch follows its folders) and the period runs from as it began, one that read only noticed paths with
    * nothing. `found`: the files with another name it found, and how many files it looked at.
