@@ -975,7 +975,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         // A local `prev` takes the bytes before its lane from the lanes before it, by shuffles:
         // the group's warm-up lanes make those before its first useful lane, and a lane before
         // the file gives zeros.
-        out.push_str(&emit(p, values, width, &chosen, &format!("gl * {chunks}u"), &format!("gl * {w}u"), |at, inst, out| match *inst {
+        out.push_str(&emit(p, values, width, &chosen, Word { base: &format!("gl * {chunks}u"), offset: &format!("gl * {w}u"), lanes: true }, |at, inst, out| match *inst {
             BlockInst::Prev(a, k) => out.push_str(&format!("  const BM v{at} = apply_prev(v{a}, {k}u, halo_before(SEL(v{a}, BMC(0), before_file), l, 0ul __UKL_ARGS));\n")),
             _ => unreachable!("only windowed prevs are emitted in a level"),
         }));
@@ -1133,20 +1133,21 @@ fn ascii_form(native: &BlockNative) -> BlockNative {
     form
 }
 
-/// The instructions in `chosen`, as straight-line statements for a word of `width` whose first
-/// byte is chunk `base` (16-byte chunks) and stream byte `offset` (for `const`'s phase).
-/// `carried` writes each carried instruction's statements. An empty `base`: the word's chunks
-/// `c0..` and the byte before them, `before`, are loaded already (the serial loop loads a block
-/// ahead).
-fn emit(
-    p: usize,
-    native: &BlockNative,
-    width: LaneWidth,
-    chosen: &[usize],
-    base: &str,
-    offset: &str,
-    mut carried: impl FnMut(usize, &BlockInst, &mut String),
-) -> String {
+/// Where `emit`'s word is: its first byte's chunk `base` (16-byte chunks) and stream byte `offset`
+/// (for `const`'s phase), and whose it is. An empty `base`: the word's chunks `c0..` and the byte
+/// before them, `before`, are loaded already (the serial loop loads a block ahead). `lanes`: the
+/// SIMD group's lanes hold one stream's words, so a fixed point's rounds go on while any lane's
+/// change (a vote); else each thread runs its own stream, and its own rounds.
+pub(crate) struct Word<'a> {
+    pub base: &'a str,
+    pub offset: &'a str,
+    pub lanes: bool,
+}
+
+/// The instructions in `chosen`, as straight-line statements for a word of `width` at `word`.
+/// `carried` writes each carried instruction's statements.
+fn emit(p: usize, native: &BlockNative, width: LaneWidth, chosen: &[usize], word: Word<'_>, mut carried: impl FnMut(usize, &BlockInst, &mut String)) -> String {
+    let Word { base, offset, lanes } = word;
     let chunks = width.bytes() / 16;
     let bits = width.bytes();
     let insts: Vec<&BlockInst> = chosen.iter().map(|&at| &native.insts[at]).collect();
@@ -1271,7 +1272,7 @@ fn emit(
     for step in schedule(native, chosen) {
         match step {
             Step::One(at) => one(at, &mut out),
-            Step::Group(g) => group_loop(native, g, &mut |at, out| one(at, out), &mut out),
+            Step::Group(g) => group_loop(native, g, lanes, &mut |at, out| one(at, out), &mut out),
         }
     }
     let _ = bits;
@@ -1343,11 +1344,11 @@ fn schedule(native: &BlockNative, chosen: &[usize]) -> Vec<Step> {
 }
 
 /// Group `g`'s loop (`rounds until settled`): its members made again from its carries until no
-/// carry changes in any thread of the SIMD group, at most `MAX_ROUNDS` rounds a block of the
+/// carry changes in any thread of the SIMD group (`lanes`; else in the thread), at most `MAX_ROUNDS` rounds a block of the
 /// group. Every member is a variable before the loop, so the words after it read the last
 /// round's; the carried members' outs too (`o`, `co`), read by the block's tail. A thread that
 /// has settled makes the same values again: a fixed point.
-fn group_loop(native: &BlockNative, g: usize, one: &mut dyn FnMut(usize, &mut String), out: &mut String) {
+fn group_loop(native: &BlockNative, g: usize, lanes: bool, one: &mut dyn FnMut(usize, &mut String), out: &mut String) {
     let group = &native.groups[g];
     for &x in &group.members {
         out.push_str(&format!("  BM v{x} = BMC(0);\n"));
@@ -1385,7 +1386,10 @@ fn group_loop(native: &BlockNative, g: usize, one: &mut dyn FnMut(usize, &mut St
     for (k, &(_, x)) in group.carries.iter().enumerate() {
         out.push_str(&format!("    gc{g}_{k} = v{x};\n"));
     }
-    out.push_str(&format!("    if (!sg_any(more{g} __UKL_ARGS)) break;\n  }}\n"));
+    // A vote is reached by every lane or none: in the serial form, whose threads run segments of
+    // their own, it is the thread's own.
+    let any = if lanes { format!("sg_any(more{g} __UKL_ARGS)") } else { format!("more{g}") };
+    out.push_str(&format!("    if (!{any}) break;\n  }}\n"));
 }
 
 /// Generated UKL run: every output's words over `bytes`, as 64-bit words of the stream.

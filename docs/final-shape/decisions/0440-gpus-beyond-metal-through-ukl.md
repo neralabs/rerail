@@ -1218,9 +1218,19 @@ stands on:
 - **Lane code is straight-line**, as before: the helpers that loop are named in the test's list (`LOOPING`) where
   the MSL had marked them by leaving out `inline`, and the helpers the port had given a loop or a `?` (`rotr64`,
   `clamp_i32`, `keep_word`, the prefix XOR, `texclusive1`) are unrolled or selects.
-- The block suites' 45 tests pass on Metal and on the CPU under OpenCL's rule (`RERAIL_CPU_OPENCL_RULE=1`), and
-  `rr_parser`'s 48 on Metal. Found on the way: `rr_parser`'s refusal test still took a setting's `1.2.3` as refused,
+- **A fixed point's vote is the lanes form's** (`emit`'s `Word::lanes`): in the serial form each thread runs its own
+  segment, so its rounds end when its own carries settle; a vote there (`simd_any`, kept from the MSL) was a
+  SIMD-group operation in a function without the group's parameters, which OpenCL's emulation refused.
+- The block suites' 45 tests pass on Metal, on the CPU under OpenCL's rule (`RERAIL_CPU_OPENCL_RULE=1`) and on
+  OpenCL, and `rr_parser`'s 48 on Metal. Found on the way: `rr_parser`'s refusal test still took a setting's `1.2.3` as refused,
   which 0400 had made a reading; its case is an integer of 19 digits now, which the record pass refuses.
+
+**C: the tape tests' kernels in UKL (2026-11-19).** The tape tests' diagnostics (O39: the footprint of a submission,
+of a kernel's private stack, of one label kernel's dispatch) launch UKL kernels through the lane on the process's
+device; only the measure of new command queues is Metal's, since a device layer's queue is its device's. A label
+kernel's rows are bound from its reflection, each buffer the zero buffer and each value zero bytes of its type's
+width (`lane::Launch::bytes`). The tests gate on the process's device, not Metal's. The probe of the label
+kernels' compile (Q181) stays a probe of Metal's compiler: its function constants and pipelines are what it times.
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's

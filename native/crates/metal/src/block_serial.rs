@@ -188,7 +188,7 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
     }
     let body = |values: &BlockNative| {
         let all: Vec<usize> = (0..values.insts.len()).collect();
-        let mut text = emit(p, values, LaneWidth::W64, &all, "", "b * 64u", carried_serial);
+        let mut text = emit(p, values, LaneWidth::W64, &all, Word { base: "", offset: "b * 64u", lanes: false }, carried_serial);
         text.push_str(&tail);
         text.lines().map(|l| format!("    {l}\n")).collect::<String>()
     };
@@ -308,7 +308,7 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
 /// 16 bytes before each are ASCII. The group takes one body: the choice is `simd_all`.
 fn lane_bodies(p: usize, native: &BlockNative, chosen: &[usize], carried: &dyn Fn(usize, &BlockInst, &mut String), tail: &str) -> String {
     let body = |values: &BlockNative| {
-        let mut text = emit(p, values, LaneWidth::W64, chosen, "b * 4u", "b * 64u", carried);
+        let mut text = emit(p, values, LaneWidth::W64, chosen, Word { base: "b * 4u", offset: "b * 64u", lanes: true }, carried);
         text.push_str(tail);
         text.lines().map(|l| format!("    {l}\n")).collect::<String>()
     };
@@ -884,7 +884,7 @@ fn cone_function(p: usize, native: &BlockNative, levels: &Levels, l: usize) -> S
         record.push_str(&format!(" tw{at} = x{at} | (y{at} << 1u);"));
         finish.push_str(&format!("  tab[{}u] = x{at} | (y{at} << 1u); tab[{}u] = tw{at};\n", 2 * k, 2 * k + 1));
     }
-    let mut body = emit(p, native, LaneWidth::W64, &cone, "", "b * 64u", carried_serial);
+    let mut body = emit(p, native, LaneWidth::W64, &cone, Word { base: "", offset: "b * 64u", lanes: false }, carried_serial);
     body.push_str(&tail);
     body.push_str(&twice);
     let body: String = body.lines().map(|line| format!("    {line}\n")).collect();

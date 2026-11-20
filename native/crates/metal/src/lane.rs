@@ -227,6 +227,13 @@ impl Launch<'_> {
         self
     }
 
+    /// A value row given as its bytes, laid out as the kernel's (a row whose type the caller reads from the
+    /// kernel's reflection).
+    pub fn bytes(mut self, name: &str, bytes: &[u8]) -> Self {
+        self.args.push(Arg::Value(name.to_owned(), bytes.to_vec()));
+        self
+    }
+
     /// Threadgroup memory for a `RWLOCAL` row.
     pub fn local(mut self, name: &str, bytes: u64) -> Self {
         self.args.push(Arg::Local(name.to_owned(), bytes));
