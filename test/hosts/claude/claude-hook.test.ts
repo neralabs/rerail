@@ -703,13 +703,13 @@ describe("Claude Code one-shot hook", () => {
   });
 
   it("gives the agent a conflict note as context and the person its line, beside a rule's, with the card linked as open", () => {
-    const note = conflictNote({ file: "src/model.ts", peer: "PR #398", author: "Tim", summary: "Share compiled matchers", pullRequest: true });
-    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps PR #398 (Tim): model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
+    const note = conflictNote({ file: "src/model.ts", peer: "PR #398", author: "Sam", summary: "Share compiled matchers", pullRequest: true });
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps PR #398 (Sam): model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
     const rule = delivery("steer", editSteer("a", "Fix a."), ["a"], steeredRules(["a"], "http://127.0.0.1:4791/"));
     const output = claudeHookOutput("PostToolUse", [rule, { ...delivery("steer", note), conflict }], { links: "plain", mark: "RERAIL" });
     expect(output).toEqual({
       systemMessage: "\n◆ RERAIL · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a"
-        + "\n◆ RERAIL · your edit overlaps PR #398 (Tim): model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",
+        + "\n◆ RERAIL · your edit overlaps PR #398 (Sam): model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",
       hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: `${editSteer("a", "Fix a.")}\n\n${note}` },
     });
   });

@@ -1,6 +1,6 @@
-# ast-index-spike: design-decision index
+# SQL index prototype: design-decision index
 
-Source: `github.com/neralabs/ast-index-spike` at commit `9449260`. Files read in full:
+Source: an internal prototype repository at commit `9449260`. Files read in full:
 
 * `DESIGN_HISTORY.md` (8,775 lines). This document calls it **DH**.
 * `bench/TAPE_AST_GREP_RECONSTRUCTION.md` (**TAG**, 374 lines)
@@ -320,7 +320,7 @@ Each topic has four parts:
 
 * **Question:** can ast-grep run on source + tape without reparsing?
 * **Answer:** yes, via `ast_grep_core::Doc`/`SgNode` over the tape (`TapeDoc`). Building a private `TSTree` is neither possible nor wanted (TAG L16-41).
-* **Numbers** (100-file stratified sample, 431,936 nodes, 46 Tempo patterns):
+* **Numbers** (100-file stratified sample, 431,936 nodes, 46 of the predecessor's patterns):
 
   | | Native | Tape |
   |---|---|---|

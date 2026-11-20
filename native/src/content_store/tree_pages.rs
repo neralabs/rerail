@@ -1,10 +1,10 @@
-//! Per-directory result pages (C16; docs/final-shape/03-architecture.md §15), adapted from Tempo's
-//! tree result segments (scale-test-the-re-railer@8fe9ffed4, `tree_result_segments`):
+//! Per-directory result pages (C16; docs/final-shape/03-architecture.md §15), adapted from the predecessor's
+//! tree result segments (a branch of the predecessor repository at 8fe9ffed4, `tree_result_segments`):
 //! a directory's results are stored as up to 64-file pages, compressed, and restored whole
-//! wherever the same subtree appears (Tempo E33–E34: complete-root reuse in 610 ms, then 34 ms
+//! wherever the same subtree appears (the predecessor's E33–E34: complete-root reuse in 610 ms, then 34 ms
 //! median; 47 workspaces 48.7 s → 13.6 s).
 //!
-//! Tempo keyed pages by (tree hash, prefix, candidate catalog) and published them with a
+//! The predecessor keyed pages by (tree hash, prefix, candidate catalog) and published them with a
 //! workspace completion. Here they are keyed by what the directory's result depends on, (tree
 //! hash, prefix, context chain, plan), so any scope holding the subtree finds them, and their
 //! digest is the output digest of the scope's page derivation (`facts::pages`): a page set that is
@@ -14,7 +14,7 @@ use super::{CODEC_ZSTD, ContentStore, StoreError, StoreResult, compress};
 use rusqlite::OptionalExtension;
 use sha2::{Digest as _, Sha256};
 
-/// Files per page (Tempo's segment bound).
+/// Files per page (the predecessor's segment bound).
 pub const TREE_PAGE_FILES: usize = 64;
 
 /// What one directory's result depends on.

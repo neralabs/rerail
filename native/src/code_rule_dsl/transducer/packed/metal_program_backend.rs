@@ -108,58 +108,102 @@ impl MetalWorkspace {
         task_capacity: usize,
     ) -> Result<Self, Error> {
         if crate::code_rule_dsl::prof::on() {
-            use crate::code_rule_dsl::prof::count;
-            use std::mem::size_of;
-            count("ws.new", 1);
-            count("ws.pending_mb", totals.pending as usize * size_of::<PendingRecord>() >> 20);
-            count("ws.captures_mb", totals.captures as usize * size_of::<CaptureRecord>() >> 20);
-            count("ws.cursors_mb", totals.cursors as usize * size_of::<CaptureRecord>() >> 20);
-            count("ws.repeats_mb", totals.repeats as usize * size_of::<RepeatRecord>() >> 20);
-            count("ws.scheduler_mb", scheduler_bytes as usize >> 20);
-            count("ws.results_mb", totals.results as usize * size_of::<ResultRecord>() >> 20);
-            count("ws.value_states_mb", totals.value_states as usize * 4 >> 20);
-            count("ws.output_mb", output_storage_bytes as usize >> 20);
-            count("ws.final_captures_mb", totals.output_captures as usize * size_of::<FinalCaptureRecord>() >> 20);
+            Self::count_buffer_sizes(totals, scheduler_bytes, output_storage_bytes);
         }
+        let (pending, captures, cursors, repeats, scheduler) =
+            Self::untouched_path_buffers(device, totals, scheduler_bytes)?;
+        let (results, statuses, value_states, final_captures, output_storage) =
+            Self::untouched_result_buffers(device, totals, output_storage_bytes, task_capacity)?;
         let workspace = Self {
             totals,
             scheduler_bytes,
             output_storage_bytes,
             task_capacity,
             generation: 1,
-            pending: MappedBuffer::untouched::<PendingRecord>(device, totals.pending as usize)?,
-            captures: MappedBuffer::untouched::<CaptureRecord>(device, totals.captures as usize)?,
-            cursors: MappedBuffer::untouched::<CaptureRecord>(device, totals.cursors as usize)?,
-            repeats: MappedBuffer::untouched::<RepeatRecord>(device, totals.repeats as usize)?,
-            scheduler: MappedBuffer::untouched::<u8>(device, scheduler_bytes as usize)?,
-            results: MappedBuffer::untouched::<ResultRecord>(
-                device,
-                totals
-                    .candidates
-                    .checked_add(totals.results)
-                    .ok_or(Error::BackendCapacity)? as usize,
-            )?,
-            statuses: MappedBuffer::untouched::<TaskStatus>(device, task_capacity)?,
-            value_states: MappedBuffer::untouched::<u32>(device, totals.value_states as usize)?,
-            final_captures: MappedBuffer::untouched::<FinalCaptureRecord>(
-                device,
-                totals.output_captures as usize,
-            )?,
-            output_storage: MappedBuffer::untouched::<u8>(device, output_storage_bytes as usize)?,
+            pending,
+            captures,
+            cursors,
+            repeats,
+            scheduler,
+            results,
+            statuses,
+            value_states,
+            final_captures,
+            output_storage,
         };
         for (buffer, label) in [
-            (&workspace.pending, "Tempo pending paths"),
-            (&workspace.results, "Tempo results"),
-            (&workspace.final_captures, "Tempo final captures"),
-            (&workspace.scheduler, "Tempo scheduler"),
-            (&workspace.captures, "Tempo capture links"),
-            (&workspace.cursors, "Tempo cursor links"),
-            (&workspace.repeats, "Tempo repeat links"),
-            (&workspace.output_storage, "Tempo output storage"),
+            (&workspace.pending, "Rerail pending paths"),
+            (&workspace.results, "Rerail results"),
+            (&workspace.final_captures, "Rerail final captures"),
+            (&workspace.scheduler, "Rerail scheduler"),
+            (&workspace.captures, "Rerail capture links"),
+            (&workspace.cursors, "Rerail cursor links"),
+            (&workspace.repeats, "Rerail repeat links"),
+            (&workspace.output_storage, "Rerail output storage"),
         ] {
             buffer.buffer.set_label(label);
         }
         Ok(workspace)
+    }
+
+    fn count_buffer_sizes(totals: WorkspaceTotals, scheduler_bytes: u32, output_storage_bytes: u32) {
+        use crate::code_rule_dsl::prof::count;
+        use std::mem::size_of;
+        count("ws.new", 1);
+        count("ws.pending_mb", totals.pending as usize * size_of::<PendingRecord>() >> 20);
+        count("ws.captures_mb", totals.captures as usize * size_of::<CaptureRecord>() >> 20);
+        count("ws.cursors_mb", totals.cursors as usize * size_of::<CaptureRecord>() >> 20);
+        count("ws.repeats_mb", totals.repeats as usize * size_of::<RepeatRecord>() >> 20);
+        count("ws.scheduler_mb", scheduler_bytes as usize >> 20);
+        count("ws.results_mb", totals.results as usize * size_of::<ResultRecord>() >> 20);
+        count("ws.value_states_mb", totals.value_states as usize * 4 >> 20);
+        count("ws.output_mb", output_storage_bytes as usize >> 20);
+        count("ws.final_captures_mb", totals.output_captures as usize * size_of::<FinalCaptureRecord>() >> 20);
+    }
+
+    /// The pending paths, their capture, cursor and repeat links, and the scheduler, in that order.
+    fn untouched_path_buffers(
+        device: &Device,
+        totals: WorkspaceTotals,
+        scheduler_bytes: u32,
+    ) -> Result<(MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer), Error> {
+        Ok((
+            MappedBuffer::untouched::<PendingRecord>(device, totals.pending as usize)?,
+            MappedBuffer::untouched::<CaptureRecord>(device, totals.captures as usize)?,
+            MappedBuffer::untouched::<CaptureRecord>(device, totals.cursors as usize)?,
+            MappedBuffer::untouched::<RepeatRecord>(device, totals.repeats as usize)?,
+            MappedBuffer::untouched::<u8>(device, scheduler_bytes as usize)?,
+        ))
+    }
+
+    /// The results, the task statuses, the value states, the final captures and the output storage, in that order.
+    fn untouched_result_buffers(
+        device: &Device,
+        totals: WorkspaceTotals,
+        output_storage_bytes: u32,
+        task_capacity: usize,
+    ) -> Result<(MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer), Error> {
+        Ok((
+            Self::untouched_results(device, totals)?,
+            MappedBuffer::untouched::<TaskStatus>(device, task_capacity)?,
+            MappedBuffer::untouched::<u32>(device, totals.value_states as usize)?,
+            MappedBuffer::untouched::<FinalCaptureRecord>(
+                device,
+                totals.output_captures as usize,
+            )?,
+            MappedBuffer::untouched::<u8>(device, output_storage_bytes as usize)?,
+        ))
+    }
+
+    /// The candidates' and results' records, in one buffer.
+    fn untouched_results(device: &Device, totals: WorkspaceTotals) -> Result<MappedBuffer, Error> {
+        MappedBuffer::untouched::<ResultRecord>(
+            device,
+            totals
+                .candidates
+                .checked_add(totals.results)
+                .ok_or(Error::BackendCapacity)? as usize,
+        )
     }
 
     fn fits(
@@ -739,38 +783,125 @@ pub fn execute_packed_with_result_limits(
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
     let _evaluation = super::metal_backend::metal_execution_guard()?;
+    let mut batch = pack_batch(engine, programs, files, anchors)?;
+    if batch.tasks.is_empty() {
+        return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
+    }
+    let totals = assign_batch_workspace(&mut batch, programs, result_limits)?;
+    let allocation_started = std::time::Instant::now();
+    let (device, queue) = device_and_queue()?;
+    execute_on_device(engine, files, device, &queue, batch, totals, allocation_started)
+}
+
+fn pack_batch(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+) -> Result<PackedBatch, Error> {
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
         return Err(Error::InvalidAnchor);
     }
     // The tasks with no node records: the device reads the documents in the slabs (`DocTable`).
-    let mut batch = PackedBatch::new_in_place(programs, files, anchors).map_err(|error| {
-        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-            eprintln!("TEMPO_PACKED_BATCH_ERROR stage=pack error={error:?}");
-        }
-        error
-    })?;
-    if batch.tasks.is_empty() {
-        return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
+    PackedBatch::new_in_place(programs, files, anchors).map_err(|error| print_batch_error("pack", error))
+}
+
+/// `error`, printed with the stage that failed under `RERAIL_PACKED_BATCH_PROFILE`.
+fn print_batch_error(stage: &str, error: Error) -> Error {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!("RERAIL_PACKED_BATCH_ERROR stage={stage} error={error:?}");
     }
+    error
+}
+
+fn assign_batch_workspace(
+    batch: &mut PackedBatch,
+    programs: &[Program],
+    result_limits: Option<&[u32]>,
+) -> Result<WorkspaceTotals, Error> {
     let totals = batch
         .assign_workspace_with_result_limits_and_lanes(programs, result_limits, EXECUTION_LANES)
-        .map_err(|error| {
-            if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-                eprintln!("TEMPO_PACKED_BATCH_ERROR stage=workspace error={error:?}");
-            }
-            error
-        })?;
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+        .map_err(|error| print_batch_error("workspace", error))?;
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} workspaceBytes={} totals={totals:?}",
+            "RERAIL_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} workspaceBytes={} totals={totals:?}",
             programs.len(),
             batch.tasks.len(),
             batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
         );
     }
-    let allocation_started = std::time::Instant::now();
+    Ok(totals)
+}
+
+fn device_and_queue() -> Result<(&'static Device, metal::CommandQueue), Error> {
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let queue = rerail_metal::queue()?;
+    Ok((device, queue))
+}
+
+/// Runs the packed batch on the device: what it binds is held here until its results are read.
+fn execute_on_device(
+    engine: &Engine,
+    files: &[TapeDoc],
+    device: &Device,
+    queue: &metal::CommandQueueRef,
+    mut batch: PackedBatch,
+    totals: WorkspaceTotals,
+    allocation_started: std::time::Instant,
+) -> Result<PackedExecution, Error> {
+    let workspace = lease_workspace(device, &mut batch, totals)?;
+    let (program_buffers, task_buffer, header_buffer) = upload_batch(engine, device, &batch)?;
+    // The documents resident, gathered into one block (decision 0289 §4), in the batch's numbering: their views
+    // where the files were, and the block where the node records were. The kernel reads nothing from the
+    // children, source and line start slots; the block stands in for them.
+    let table = resident_doc_table(files)?;
+    let (file_buffer, block, supertype_buffer) = upload_documents(device, &table, &batch)?;
+    copy_scheduler_state(&workspace.scheduler, &batch);
+    let allocation_elapsed = allocation_started.elapsed();
+    print_workspace_profile(&workspace);
+    let buffers = [
+        &task_buffer.buffer,
+        &header_buffer.buffer,
+        &file_buffer.buffer,
+        block,
+        &program_buffers.programs.buffer,
+        &program_buffers.words.buffer,
+        &program_buffers.longs.buffer,
+        block,
+        &supertype_buffer.buffer,
+        &workspace.pending.buffer,
+        &workspace.captures.buffer,
+        &workspace.cursors.buffer,
+        &workspace.repeats.buffer,
+        &workspace.scheduler.buffer,
+        &workspace.results.buffer,
+        &workspace.statuses.buffer,
+        &program_buffers.values.buffer,
+        &program_buffers.strings.buffer,
+        &program_buffers.nfa_states.buffer,
+        &program_buffers.nfa_data.buffer,
+        &program_buffers.nfa_ranges.buffer,
+        &program_buffers.lua_instructions.buffer,
+        &program_buffers.lua_members.buffer,
+        &program_buffers.assertions.buffer,
+        &program_buffers.assertion_data.buffer,
+        &program_buffers.string_bytes.buffer,
+        block,
+        &workspace.value_states.buffer,
+        block,
+        &workspace.final_captures.buffer,
+        &workspace.output_storage.buffer,
+    ];
+    dispatch_batch(engine, queue, buffers, batch.evaluation_lanes.len() as u64, allocation_elapsed)?;
+    collect_results(batch, totals, &workspace)
+}
+
+/// A workspace for `batch`, with the batch's evaluations and lanes in its generation.
+fn lease_workspace(
+    device: &Device,
+    batch: &mut PackedBatch,
+    totals: WorkspaceTotals,
+) -> Result<MetalWorkspaceLease, Error> {
     let workspace = MetalWorkspaceLease::acquire(
         device,
         totals,
@@ -784,27 +915,46 @@ pub fn execute_packed_with_result_limits(
     for lane in &mut batch.evaluation_lanes {
         lane.generation = workspace.generation;
     }
-    let program_buffers = engine.program_buffers(device, &batch)?;
+    Ok(workspace)
+}
+
+/// The batch's programs, tasks and header on the device.
+fn upload_batch(
+    engine: &Engine,
+    device: &Device,
+    batch: &PackedBatch,
+) -> Result<(Arc<ProgramBuffers>, MappedBuffer, MappedBuffer), Error> {
+    let program_buffers = engine.program_buffers(device, batch)?;
     let task_buffer = MappedBuffer::from_slice(device, &batch.tasks)?;
     let header_buffer = MappedBuffer::from_slice(device, &[batch.header])?;
-    // The documents resident, gathered into one block (decision 0289 §4), in the batch's numbering: their views
-    // where the files were, and the block where the node records were. The kernel reads nothing from the
-    // children, source and line start slots; the block stands in for them.
+    Ok((program_buffers, task_buffer, header_buffer))
+}
+
+fn resident_doc_table(files: &[TapeDoc]) -> Result<crate::code_rule_dsl::residency::slabs::DocTable, Error> {
     let table = crate::code_rule_dsl::residency::slabs::admit_docs(files)?;
     let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or(Error::BackendCapacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
+    Ok(table)
+}
+
+/// The table's views and block, and the batch's supertypes, on the device.
+fn upload_documents<'table>(
+    device: &Device,
+    table: &'table crate::code_rule_dsl::residency::slabs::DocTable,
+    batch: &PackedBatch,
+) -> Result<(MappedBuffer, &'table metal::Buffer, MappedBuffer), Error> {
     let file_buffer = MappedBuffer::from_slice(device, &table.views)?;
     let block = table.block.as_ref().ok_or(Error::BackendFailure)?.buffer();
     // The derived classes alone (`has_supertype`): the classes are the codes', read on the tape.
     let supertypes = batch.metal_supertypes();
     let supertype_buffer = MappedBuffer::from_slice(device, &supertypes)?;
-    let pending_buffer = &workspace.pending;
-    let capture_buffer = &workspace.captures;
-    let cursor_buffer = &workspace.cursors;
-    let repeat_buffer = &workspace.repeats;
-    let scheduler_buffer = &workspace.scheduler;
+    Ok((file_buffer, block, supertype_buffer))
+}
+
+/// Writes the batch's global arenas, then its evaluations, then its evaluation lanes, to the scheduler buffer.
+fn copy_scheduler_state(scheduler_buffer: &MappedBuffer, batch: &PackedBatch) {
     unsafe {
         std::ptr::copy_nonoverlapping(
             std::ptr::from_ref(&batch.global_arenas).cast::<u8>(),
@@ -831,75 +981,47 @@ pub fn execute_packed_with_result_limits(
             std::mem::size_of_val(batch.evaluation_lanes.as_slice()),
         );
     }
-    let result_buffer = &workspace.results;
-    let status_buffer = &workspace.statuses;
-    let value_state_buffer = &workspace.value_states;
-    let final_capture_buffer = &workspace.final_captures;
-    let output_storage_buffer = &workspace.output_storage;
-    let allocation_elapsed = allocation_started.elapsed();
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+}
+
+fn print_workspace_profile(workspace: &MetalWorkspaceLease) {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_METAL_WORKSPACE reused={} generation={}",
+            "RERAIL_METAL_WORKSPACE reused={} generation={}",
             workspace.reused, workspace.generation,
         );
     }
+}
+
+/// Encodes the kernel over `buffers` for `lanes` evaluation lanes, commits it and waits for it.
+fn dispatch_batch(
+    engine: &Engine,
+    queue: &metal::CommandQueueRef,
+    buffers: [&metal::Buffer; 31],
+    lanes: u64,
+    allocation_elapsed: std::time::Duration,
+) -> Result<(), Error> {
     let command = queue.new_command_buffer();
-    command.set_label("Tempo packed transducer batch");
+    command.set_label("Rerail packed transducer batch");
     let encoder = command.new_compute_command_encoder();
-    encoder.set_label("Tempo packed transducer kernel");
+    encoder.set_label("Rerail packed transducer kernel");
     encoder.set_compute_pipeline_state(engine.pipeline());
-    for (index, buffer) in [
-        &task_buffer.buffer,
-        &header_buffer.buffer,
-        &file_buffer.buffer,
-        block,
-        &program_buffers.programs.buffer,
-        &program_buffers.words.buffer,
-        &program_buffers.longs.buffer,
-        block,
-        &supertype_buffer.buffer,
-        &pending_buffer.buffer,
-        &capture_buffer.buffer,
-        &cursor_buffer.buffer,
-        &repeat_buffer.buffer,
-        &scheduler_buffer.buffer,
-        &result_buffer.buffer,
-        &status_buffer.buffer,
-        &program_buffers.values.buffer,
-        &program_buffers.strings.buffer,
-        &program_buffers.nfa_states.buffer,
-        &program_buffers.nfa_data.buffer,
-        &program_buffers.nfa_ranges.buffer,
-        &program_buffers.lua_instructions.buffer,
-        &program_buffers.lua_members.buffer,
-        &program_buffers.assertions.buffer,
-        &program_buffers.assertion_data.buffer,
-        &program_buffers.string_bytes.buffer,
-        block,
-        &value_state_buffer.buffer,
-        block,
-        &final_capture_buffer.buffer,
-        &output_storage_buffer.buffer,
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    for (index, buffer) in buffers.into_iter().enumerate() {
         encoder.set_buffer(index as u64, Some(buffer), 0);
     }
     let width = engine.pipeline().thread_execution_width().max(1);
     encoder.checked_dispatch_threads(
         command,
-        MTLSize::new(batch.evaluation_lanes.len() as u64, 1, 1),
-        MTLSize::new(width.min(batch.evaluation_lanes.len() as u64), 1, 1),
+        MTLSize::new(lanes, 1, 1),
+        MTLSize::new(width.min(lanes), 1, 1),
     );
     encoder.end_encoding();
     let execution_started = std::time::Instant::now();
     commit_checked(command)?;
     wait_checked(command)?;
     let execution_elapsed = execution_started.elapsed();
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
+            "RERAIL_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
             allocation_elapsed.as_nanos(),
             execution_elapsed.as_nanos(),
         );
@@ -907,10 +1029,20 @@ pub fn execute_packed_with_result_limits(
     if command.status() == metal::MTLCommandBufferStatus::Error {
         return Err(Error::BackendFailure);
     }
+    Ok(())
+}
+
+/// The batch's results, read from the workspace the kernel wrote them to.
+fn collect_results(
+    mut batch: PackedBatch,
+    totals: WorkspaceTotals,
+    workspace: &MetalWorkspace,
+) -> Result<PackedExecution, Error> {
     #[cfg(any(test, feature = "test-hooks"))]
     INVOCATIONS.set(INVOCATIONS.get() + 1);
     batch.global_arenas = unsafe {
-        scheduler_buffer
+        workspace
+            .scheduler
             .buffer
             .contents()
             .cast::<MetalGlobalArenas>()
@@ -918,11 +1050,11 @@ pub fn execute_packed_with_result_limits(
     };
     let statuses = unsafe {
         std::slice::from_raw_parts(
-            status_buffer.buffer.contents().cast::<TaskStatus>(),
+            workspace.statuses.buffer.contents().cast::<TaskStatus>(),
             batch.tasks.len(),
         )
     };
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         let mut work = BTreeMap::<u32, (u64, u32)>::new();
         for (task, status) in batch.tasks.iter().zip(statuses) {
             let entry = work.entry(task.program).or_default();
@@ -932,13 +1064,13 @@ pub fn execute_packed_with_result_limits(
         let mut work = work.into_iter().collect::<Vec<_>>();
         work.sort_by_key(|(_, (total, _))| std::cmp::Reverse(*total));
         eprintln!(
-            "TEMPO_PACKED_TASK_WORK {:?}",
+            "RERAIL_PACKED_TASK_WORK {:?}",
             work.into_iter().take(12).collect::<Vec<_>>()
         );
     }
     let results = unsafe {
         std::slice::from_raw_parts(
-            result_buffer.buffer.contents().cast::<ResultRecord>(),
+            workspace.results.buffer.contents().cast::<ResultRecord>(),
             totals
                 .candidates
                 .checked_add(totals.results)
@@ -947,7 +1079,8 @@ pub fn execute_packed_with_result_limits(
     };
     let final_captures = unsafe {
         std::slice::from_raw_parts(
-            final_capture_buffer
+            workspace
+                .final_captures
                 .buffer
                 .contents()
                 .cast::<FinalCaptureRecord>(),
@@ -956,13 +1089,14 @@ pub fn execute_packed_with_result_limits(
     };
     let output_storage = unsafe {
         std::slice::from_raw_parts(
-            output_storage_buffer.buffer.contents().cast::<u8>(),
+            workspace.output_storage.buffer.contents().cast::<u8>(),
             batch.header.workspace_byte_count as usize,
         )
     };
     let properties = unsafe {
         std::slice::from_raw_parts(
-            output_storage_buffer
+            workspace
+                .output_storage
                 .buffer
                 .contents()
                 .cast::<PropertyRecord>(),

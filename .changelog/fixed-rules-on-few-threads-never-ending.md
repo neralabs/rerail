@@ -1,0 +1,1 @@
+Rules that resolve imports or calls across files (`python/calls`, the Django call-graph rules) no longer run forever when the engine has few threads: with 2 threads every such run stalled, and with 4 a large repository's could, while every thread waited for work no thread was left to do.

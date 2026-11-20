@@ -4172,10 +4172,52 @@ fn a_demand_split_stays_linear_in_the_modules() {
 }
 
 #[test]
-#[ignore = "child process of a_demand_split_stays_linear_in_the_modules"]
+#[ignore = "child process of a_demand_split_stays_linear_in_the_modules and a_run_on_two_threads_ends"]
 fn demand_split_child() {
     let var = |k: &str| {
-        std::path::PathBuf::from(std::env::var_os(k).unwrap_or_else(|| panic!("{k} unset: run by a_demand_split_stays_linear_in_the_modules")))
+        std::path::PathBuf::from(std::env::var_os(k).unwrap_or_else(|| panic!("{k} unset: run by a_demand_split_stays_linear_in_the_modules or a_run_on_two_threads_ends")))
     };
     crate::code_rule_dsl::tools::run_rr(&var("DEMAND_SPLIT_RULE"), &var("DEMAND_SPLIT_ROOT"), &var("DEMAND_SPLIT_OUT"), &serde_json::Value::Null).unwrap();
+}
+
+/// python/calls over four modules, with its cone of requests and its typing run, on a pool of 2 threads: the run
+/// ends. The cone (`threads::beside`) was a job that held one of the pool's threads while it waited for its answers,
+/// and the typing run's main thread, itself a job, waited on its bell running none, so no thread was left to build
+/// the chunks the run waited for: it never ended (netbox at 4 threads; any corpus at 2). The pool is the process's,
+/// so the run is a child process of its own (`demand_split_child`), killed if it has not ended in 120 s.
+#[test]
+fn a_run_on_two_threads_ends() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("src");
+    std::fs::create_dir_all(&root).unwrap();
+    for m in 0..4 {
+        std::fs::write(root.join(format!("m{m}.py")), format!("def f{m}(x):\n    return len(x)\n\n\ndef g{m}():\n    print(f{m}([1]))\n")).unwrap();
+    }
+    let rule = directory.path().join("calls.rerail");
+    std::fs::write(&rule, ".policy \"two-threads\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])
+        .env("RERAIL_THREADS", "2")
+        .env("RERAIL_TAPE_CACHE", "off")
+        .env("DEMAND_SPLIT_RULE", &rule)
+        .env("DEMAND_SPLIT_ROOT", &root)
+        .env("DEMAND_SPLIT_OUT", directory.path().join("out"));
+    let running = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.spawn()).unwrap();
+    let status = ended_within(running, std::time::Duration::from_secs(120));
+    assert!(status.is_some_and(|s| s.success()), "the run on 2 threads did not end well within 120 s: {status:?}");
+}
+
+/// `child`'s exit, or `None` (and the child killed) when it has not ended within `limit`.
+fn ended_within(mut child: std::process::Child, limit: std::time::Duration) -> Option<std::process::ExitStatus> {
+    let start = std::time::Instant::now();
+    while start.elapsed() < limit {
+        if let Some(status) = child.try_wait().unwrap() {
+            return Some(status);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    None
 }

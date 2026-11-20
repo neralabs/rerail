@@ -39,23 +39,6 @@ row("It cannot say what the data-layer checks need", [
     "The data layer is a Python codebase of about 9,000 files whose architecture is enforced by custom checks: which layer may import which, sync and async methods in pairs, no import cycles. They follow imports across files and reason over the module graph, so today they are Python scripts, not Rerail rules. The 49 on this page are {{dl_py_lines}} lines of Python. An earlier attempt moved one into YAML rules with embedded SQL, which can only test the text of names.",
     "Example: function-level-imports calls an import \"circular-avoidance\" when the module <em>name</em> looks internal. The .rerail version proves the cycle on the import graph.",
 ], [
- ("src", '''
-- when:
-    expr: "%level > 0 OR %module = ''
-      OR %module IN ('api', 'impl', 'data_layer', '_internal')
-      OR %module LIKE 'api.%' OR %module LIKE 'impl.%' OR …
-      OR (SUBSTR(%module, 1, 1) = 'l' AND SUBSTR(%module, 2, 1) >= '0'
-          AND SUBSTR(%module, 2, 1) <= '9' AND … ))"
-  value: "'circular-avoidance'"
-''', "Earlier attempt: YAML with embedded SQL (abridged)"),
- ("src", '''
-if module.startswith(internal_prefixes) or module in ("api", "impl", "data_layer", "_internal"):
-    return "circular-avoidance"
-if module == "":  # relative import
-    return "circular-avoidance"
-if _LAYERED_MODULE_RE.match(first_segment):     # l1000_schema, l9600_graphs, …
-    return "circular-avoidance"
-''', "Python linter: scripts/lint_function_level_imports.py"),
  ("rr", '''
 // Import i, in module a, loads module b, and b already leads back to a through imports that run
 // at import time. Moving i to the top of a would close the cycle a → b → … → a.

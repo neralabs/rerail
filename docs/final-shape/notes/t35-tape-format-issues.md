@@ -298,7 +298,7 @@ These are stated requirements, not preferences. Each is quoted from where it was
 
 - **Completely regular.** v4–v7 failed on overflow pairs, sorted flag lists and alias tables
   (`00-requirements.md` G2).
-- **Processable in SQL with ast-index-spike techniques**, including the pure-SQL fallback over a
+- **Processable in SQL with the SQL index prototype techniques**, including the pure-SQL fallback over a
   tape table function (G7).
 - **No size increase.** 8–11 B a node was rejected, and a change must show clear benefits (G3,
   0025). The user, 2026-11-13: for format 16 this is a tradeoff to measure
