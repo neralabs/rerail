@@ -829,7 +829,8 @@ the steps built on the frames:
 - **Step 19's `rows_decoded` dropped**: nothing decodes a kept row. The ignored in-place test is live, and asserts
   the kept entries bound and no row copied.
 - **Step 20 superseded**: a session's base relations are the corpus batch's (0458), not patched layers
-  (`Layered::then`, `session_ranges`). 0458's open item stands: a session holds no corpus batch.
+  (`Layered::then`, `session_ranges`). 0458's session item is done (2026-11-20, c4136b6442): a session holds its
+  corpus batch from run to run, an edit making the changed files' documents alone, and keeps its base statistics.
 - The frames' measure-key filter on gathered rows (`held_nodes`) is not taken. No rows are gathered, and measure
   keys stay where 0458 puts them (`stored`, `semijoin`).
 - **Open (Q360)**: R8 and step 13's entries check fail on this line. A phase's run is in memory here (a429546488),
