@@ -1629,8 +1629,16 @@ export interface CodeRuleAuditor {
    */
   ignoreRuleRoots?(): readonly string[];
   auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse>;
-  /** Wait until every accepted generated edit has completed, without waiting for unrelated audits. */
-  settleGeneratedEdits?(): Promise<void>;
+  /**
+   * Wait until every accepted generated edit has completed, without waiting for unrelated audits. With `steering`, only
+   * the edits that may steer the session (a mode other than `log`).
+   */
+  settleGeneratedEdits?(only?: "steering"): Promise<void>;
+  /**
+   * Whether `settleGeneratedEdits("steering")` waits for a walk's `log` edits too: in repository scope every batch, a
+   * walk's included, is checked by one audit of the whole repository. False when absent.
+   */
+  steeringWaitsForLog?(): boolean;
   /** The agent's turn ended (or the session reached its final checkpoint): work waiting for the session to go quiet starts now. */
   turnEnded?(): void;
   /** An audit someone asked for, whose runs are recorded as scans (`AuditOrigin`), not as the session's own. */
