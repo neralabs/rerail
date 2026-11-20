@@ -534,9 +534,11 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
     }
     if !make_room(need) {
         let (live, idle) = held_bytes();
+        // What this thread's admission left it (none: no admission, or one spent), and what others reserve.
+        let left = RESERVE_LEFT.with(|r| r.get());
         return Err(format!(
-            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool)",
-            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20
+            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool; this thread's reservation {} MB left, {} MB reserved in all)",
+            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20, left >> 20, reserved() >> 20
         ));
     }
     lease(bytes).map(held_here)

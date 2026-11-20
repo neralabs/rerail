@@ -2915,7 +2915,15 @@ submitted" now hold device memory at once.
   - (5, regression) e22c75a47's deadline was inherited by jobs run in the wait, and rayon's own waits inside them
     declined and re-stole in a loop; job walls sat under one contended lock. Fixed (a9e38758b).
 - **Open**: (c) the refusals left are leases past a stratum's reservation (an estimate under its rows, or an
-  unestimated stage), which `lease_within` refuses without waiting; (d) a derived relation's frame is still
+  unestimated stage), which `lease_within` refuses without waiting; Measured (2026-11-19, t70 on the M3 at a 512 MB budget, three runs: 91, 19, 20
+  refusals; each refusal now names its thread's reservation left and all reserved): every refusal comes with the
+  budget full (424-522 MB leased, nothing idle) and nearly all are small leases (0-2 MB, a few 7-28 MB) by threads
+  with no reservation left, mostly with none reserved anywhere. A few are leases just past what was left (28 MB with
+  26-27 MB left). So what fills the budget is not admitted work in flight but holdings that outlive it (resident
+  relations across a chunk's strata, kept workspaces), and what is refused is the uploads, sorts' scratch and
+  unestimated stages that `expected()` does not count. To decide: what holds the 511 MB at a refusal (by holder),
+  then whether admission reserves the whole footprint and a lease past it waits as admission does.
+  (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —
 
