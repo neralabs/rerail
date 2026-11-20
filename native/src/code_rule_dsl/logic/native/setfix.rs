@@ -4205,6 +4205,15 @@ pub fn adopted(conn: &Connection) -> std::collections::BTreeSet<String> {
 }
 
 impl InRel {
+    /// Column `c`'s kept filter (decision 0477), where its sketches count every row of its own (no view's): what a
+    /// screen of a probe of it may borrow, the CPU's and the device's.
+    pub fn kept_keys(&self, c: usize) -> Option<&Arc<crate::code_rule_dsl::logic::bloom::Kept>> {
+        if self.view.is_some() || self.sketches.len() != self.k {
+            return None;
+        }
+        self.sketches.get(c).and_then(sketch::Sketch::filter)
+    }
+
     /// A relation of `rows` (flat, `types.len()` values each) an earlier run kept (decision 0077 §4), in no table.
     pub fn kept(types: Vec<u8>, rows: Vec<i64>, n: usize) -> Arc<InRel> {
         let k = types.len();

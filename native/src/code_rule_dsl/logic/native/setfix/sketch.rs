@@ -224,7 +224,7 @@ impl Sketch {
     }
 
     /// Its keys' filter, where it keeps one (past its few values); else its few values are its keys.
-    pub(super) fn filter(&self) -> Option<&Arc<Kept>> {
+    pub(crate) fn filter(&self) -> Option<&Arc<Kept>> {
         self.keys.as_ref()
     }
 
