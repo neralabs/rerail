@@ -282,7 +282,7 @@ describe("Rerail API over HTTP", () => {
     expect(Object.keys(declared ?? {}).sort()).toEqual(Object.keys(gaps).sort());
   });
 
-  it("lists a session's other places, to a person and to the bridge, when one place's row does not parse", async () => {
+  it("lists a session's other places, to a person and to the bridge, and every event in its place, when one place's row does not parse", async () => {
     const place = (path: string) => ({ boundary: "turn" as const, path, reason: `EACCES: permission denied, opendir '/repo/${path}'`, key: JSON.stringify([path, "EACCES"]) });
     sessionStore.recordDiscoveryGap(SESSION, place("src/a"));
     database.insert(events).values({ sessionId: SESSION.sessionId, eventId: "source-discovery-gap:bad", kind: "source-discovery-gap", observedAt: 2, payloadJson: "{not json" }).run();
@@ -292,6 +292,10 @@ describe("Rerail API over HTTP", () => {
     expect((await getJson<{ gaps: { discoveryGapPlaces: unknown } }>(`/api/sessions/${SESSION.sessionId}`)).gaps.discoveryGapPlaces).toMatchObject(listed);
     // The bridge reads the places its session's record holds from the same rows as the workspace opens.
     expect(sessionStore.discoveryGaps(SESSION.sessionId, 1_001)).toMatchObject(listed);
+    // A person's read of the session's events lists that row too, with no payload, so a page holds every row it reads.
+    const { events: listing } = await getJson<{ events: Array<{ eventId: string; payload: unknown }> }>(`/api/sessions/${SESSION.sessionId}/events`);
+    expect(listing.filter(event => event.eventId.startsWith("source-discovery-gap")).map(event => event.payload))
+      .toEqual([expect.objectContaining(listed[0]), null, expect.objectContaining(listed[1])]);
   });
 
   it("lists sessions newest first, a page at a time, with their violation counts", async () => {

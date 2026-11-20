@@ -53,7 +53,10 @@ export interface SessionEventRecord {
   eventId: string;
   kind: string;
   observedAt: number;
-  /** The stable JSON form of the payload; `{ "encoding": "node:v8" }` when it was not JSON-representable. */
+  /**
+   * The stable JSON form of the payload; `{ "encoding": "node:v8" }` when it was not JSON-representable, and null where
+   * the stored text is no JSON.
+   */
   payload: unknown;
 }
 
@@ -866,7 +869,9 @@ export class SqliteSessionReader {
       .limit(limit)
       .all();
     if (backwards) rows.reverse();
-    return rows.map(({ payloadJson, ...row }) => ({ ...row, payload: JSON.parse(payloadJson) as unknown }));
+    // A row whose text is no JSON keeps its place with no payload: the page stays whole, so a reader's next page and
+    // its "earlier events" read as for any other page.
+    return rows.map(({ payloadJson, ...row }) => ({ ...row, payload: parsedRow(payloadJson) ?? null }));
   }
 
   workLinks(sessionId: string): readonly WorkLinkRecord[] {
