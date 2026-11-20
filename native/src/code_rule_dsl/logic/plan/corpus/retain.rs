@@ -1210,6 +1210,9 @@ impl Source for Renamed {
     fn columns(&self) -> Vec<String> {
         self.1.clone()
     }
+    fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
+        self.0.rows_of_documents(docs)
+    }
     fn len(&self) -> usize {
         self.0.len()
     }
@@ -1696,8 +1699,8 @@ pub(in crate::code_rule_dsl) fn read_run_docs(store: &ContentStore, space: [u8; 
     let rel = run_docs_rel(binds);
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
     let Some(entry) = bound.entry(&rel.name, &rel.ident, DOCS_PART).filter(|e| e.digest() == docs_tag(program)) else { return Ok(None) };
-    let Some(table) = documents_table(store, &entry, true)? else { return Ok(None) };
-    let docs: super::input_delta::Docs = table.into_iter().map(|(path, key, content)| (path, (content, key))).collect();
+    let Some((table, _)) = documents_table(store, &entry, true)? else { return Ok(None) };
+    let docs: super::input_delta::Docs = table.into_iter().map(|((path, key, content), _)| (path, (content, key))).collect();
     Ok(Some(docs))
 }
 
@@ -2148,26 +2151,31 @@ fn base_documents_ident(binds: &[u8; 32]) -> [u8; 32] {
 pub(in crate::code_rule_dsl) type BaseDocument = (String, i64, super::memo::Content);
 
 /// The documents' table the store's frames in `space` keep for the cross part of `binds`, as written (an `Unstored`
-/// content is the caller's to resolve); `None` when there is none. Read before the first wave.
-pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<Option<Vec<BaseDocument>>> {
+/// content is the caller's to resolve), each document with its places where the writer found them (decision 0504
+/// step 4 part 2), and the digest of the documents it names (the base relations' digests are of it); `None` when
+/// there is none. Read before the first wave, from the snapshot (a run inside another's waves too).
+pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<Option<(Vec<PlacedDocument>, u64)>> {
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
     let Some(entry) = bound.entry(BASE_DOCUMENTS, &base_documents_ident(&binds), DOCS_PART) else { return Ok(None) };
     documents_table(store, &entry, false)
 }
 
 /// A documents' table's rows (`put_base_documents`, `write_run_docs`): each file's path (an atom), document key, and
-/// content (a tag, then its source or digest in four words), read where they lie. `held`: whether a content only in
-/// memory (tag 2) is one; `None` when a row does not read.
-fn documents_table(store: &ContentStore, entry: &kept_read::Entry, held: bool) -> Result<Option<Vec<BaseDocument>>> {
-    if entry.width() != 7 {
+/// content (a tag, then its source or digest in four words), and in a base relations' table its places
+/// (`DocumentPlaces`), read where they lie. `held`: whether a content only in memory (tag 2) is one; `None` when a
+/// row does not read. With the entry's digest: the documents' (decision 0458).
+fn documents_table(store: &ContentStore, entry: &kept_read::Entry, held: bool) -> Result<Option<(Vec<PlacedDocument>, u64)>> {
+    use crate::content_store::{DOCUMENT_WORDS, DocumentPlaces, PLACED_WORDS};
+    let width = entry.width();
+    if width != DOCUMENT_WORDS && width != PLACED_WORDS {
         return Ok(None);
     }
     let atoms = store.atoms_handle();
     // copy (0353 step 8): a documents' table's words read for their decoder (a row a file).
-    let mut rows: Vec<i64> = Vec::with_capacity(entry.len() * 7);
+    let mut rows: Vec<i64> = Vec::with_capacity(entry.len() * width);
     entry.each_rows(&mut |r| rows.extend_from_slice(r));
     let mut out = Vec::with_capacity(entry.len());
-    for r in rows.chunks_exact(7) {
+    for r in rows.chunks_exact(width) {
         let Ok(atom) = u32::try_from(r[0]) else { return Ok(None) };
         let Some(path) = atoms.value(atom).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
         let content = match r[2] {
@@ -2176,14 +2184,98 @@ fn documents_table(store: &ContentStore, entry: &kept_read::Entry, held: bool) -
             2 if held => super::memo::Content::Held(words_digest(&r[3..7])),
             _ => return Ok(None),
         };
-        out.push((path, r[1], content));
+        out.push(((path, r[1], content), DocumentPlaces::of_row(r)));
     }
-    Ok(Some(out))
+    Ok(Some((out, entry.digest())))
+}
+
+/// A document of a documents' table, with its places where the writer found them (decision 0504 step 4 part 2).
+pub(in crate::code_rule_dsl) type PlacedDocument = (BaseDocument, Option<crate::content_store::DocumentPlaces>);
+
+/// Each base relation `rels`' statistics the store's frames in `space` keep for the cross part of `binds`, with the
+/// digest of the rows they count (decision 0458: kept by file as the keeper's are, 0096 §3, but of the documents).
+pub(in crate::code_rule_dsl) fn base_stats(store: &ContentStore, space: [u8; 32], binds: [u8; 32], rels: &[String]) -> Result<HashMap<String, (u64, crate::code_rule_dsl::logic::plan::statkeep::RelStats)>> {
+    let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(HashMap::new()) };
+    let ident = base_documents_ident(&binds);
+    let mut out = HashMap::new();
+    for rel in rels {
+        let Some(entry) = bound.entry(&base_stats_name(rel), &ident, DOCS_PART) else { continue };
+        let mut words: Vec<i64> = Vec::with_capacity(entry.len());
+        entry.each_rows(&mut |r| words.extend_from_slice(r));
+        let Some((&n, words)) = words.split_first() else { continue };
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).take(usize::try_from(n).unwrap_or(0)).collect();
+        if let Some(stats) = crate::code_rule_dsl::logic::plan::statkeep::RelStats::decode(&bytes, &mut 0) {
+            out.insert(rel.clone(), (entry.digest(), stats));
+        }
+    }
+    Ok(out)
+}
+
+/// The views' counts of each document of the cross part's corpus batch (decision 0504), kept beside the documents'
+/// table: by key, its digest (`Document::digest`) and its counts, as the batch made or was given them.
+pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, ([u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)>;
+
+const BASE_COUNTS: &str = "#base-counts";
+
+/// The views' counts the store's frames in `space` keep for the cross part of `binds`; empty when none are kept.
+pub(in crate::code_rule_dsl) fn base_counts(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<BaseCounts> {
+    let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(HashMap::new()) };
+    let Some(entry) = bound.entry(BASE_COUNTS, &base_documents_ident(&binds), DOCS_PART) else { return Ok(HashMap::new()) };
+    if entry.width() != 9 {
+        return Ok(HashMap::new());
+    }
+    let mut words: Vec<i64> = Vec::with_capacity(entry.len() * 9);
+    entry.each_rows(&mut |r| words.extend_from_slice(r));
+    let mut out = HashMap::with_capacity(entry.len());
+    for r in words.chunks_exact(9) {
+        let (Ok(key), counts) = (u32::try_from(r[0]), [r[5], r[6], r[7], r[8]].map(|c| u32::try_from(c).ok())) else { continue };
+        let [Some(a), Some(b), Some(c), Some(d)] = counts else { continue };
+        let mut digest = [0u8; 32];
+        for (i, w) in r[1..5].iter().enumerate() {
+            digest[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
+        }
+        out.insert(key, (digest, [a, b, c, d]));
+    }
+    Ok(out)
+}
+
+/// Queues the views' counts `counts` (key, digest, counts) of the corpus batch's documents, of digest `digest`,
+/// beside the documents' table.
+pub(in crate::code_rule_dsl) fn put_base_counts(store: &ContentStore, was: &InKept, binds: [u8; 32], counts: &[(u32, [u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)], digest: u64) {
+    let mut rows: Vec<i64> = Vec::with_capacity(counts.len() * 9);
+    for (key, d, c) in counts {
+        rows.push(i64::from(*key));
+        rows.extend(d.chunks_exact(8).map(|w| i64::from_le_bytes(w.try_into().expect("eight bytes"))));
+        rows.extend(c.iter().map(|&c| i64::from(c)));
+    }
+    let name = KeptRel { name: BASE_COUNTS.to_owned(), ident: base_documents_ident(&binds) };
+    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'; 9], rows, counts.len())]);
+}
+
+fn base_stats_name(rel: &str) -> String {
+    format!("#base-stats/{rel}")
+}
+
+/// Queues base relation `rel`'s statistics `stats`, of the rows of digest `digest`, beside the documents' table.
+pub(in crate::code_rule_dsl) fn put_base_stats(store: &ContentStore, was: &InKept, binds: [u8; 32], rel: &str, digest: u64, stats: &crate::code_rule_dsl::logic::plan::statkeep::RelStats) {
+    let mut bytes = Vec::new();
+    stats.encode(&mut bytes);
+    let mut words: Vec<i64> = vec![bytes.len() as i64];
+    words.extend(bytes.chunks(8).map(|c| {
+        let mut w = [0u8; 8];
+        w[..c.len()].copy_from_slice(c);
+        i64::from_le_bytes(w)
+    }));
+    let name = KeptRel { name: base_stats_name(rel), ident: base_documents_ident(&binds) };
+    let n = words.len();
+    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], words, n)]);
 }
 
 /// Queues the documents' table `docs` for the cross part of `binds` into the space `was` was read from, in the keep's
-/// wave. `false` (nothing queued) when a file's content is only in memory (`Held`) or its path is no atom.
-pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &InKept, binds: [u8; 32], docs: &[BaseDocument]) -> bool {
+/// wave: the writer finds each document's places as it writes it, its tape in the grammar `tape` (grammar id,
+/// grammar version, tape format version) names (decision 0504 step 4 part 2). `false` (nothing queued) when a file's
+/// content is only in memory (`Held`) or its path is no atom.
+pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &InKept, binds: [u8; 32], docs: &[BaseDocument], digest: u64, tape: Option<[i64; 3]>) -> bool {
     if docs.iter().any(|(_, _, c)| matches!(c, super::memo::Content::Held(_))) {
         return false;
     }
@@ -2202,9 +2294,10 @@ pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &I
         }
     }
     let name = KeptRel { name: BASE_DOCUMENTS.to_owned(), ident: base_documents_ident(&binds) };
-    let digest = rows.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| (h ^ *v as u64).wrapping_mul(0x0000_0100_0000_01b3));
-    let types = [b's', b'i', b'i', b'i', b'i', b'i', b'i'].to_vec();
-    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), types, rows, docs.len())]);
+    let mut types = vec![b'i'; crate::content_store::PLACED_WORDS];
+    types[0] = b's';
+    let what = crate::content_store::kept_facts::KeptWhat::Documents { rows, n: docs.len(), tape };
+    store.queue_kept(was.space, vec![crate::content_store::kept_facts::KeptPut { rel: name.name, ident: name.ident, part: DOCS_PART, digest, reads: Vec::new(), types, what }]);
     true
 }
 
@@ -2389,6 +2482,9 @@ impl Source for Traced {
         let got = self.inner.lookup_all(equal);
         self.rows_of(&got);
         got
+    }
+    fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
+        self.inner.rows_of_documents(docs)
     }
     fn doc_column(&self) -> Option<usize> {
         self.inner.doc_column()
@@ -2941,7 +3037,7 @@ impl Retained {
     /// changed, with the input's digests by document. The relations kept as they were stay as stored.
     /// `sccs`: `prog`'s strata, computed once by the caller.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn write_kept(&self, store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeSet<String>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_kept(&self, store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeMap<String, Option<usize>>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, put".into());
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -3115,7 +3211,7 @@ pub(in crate::code_rule_dsl) struct InputsWritten {
 /// by document, queued as each input's job makes them. They depend on the inputs alone, so a run that lets its inputs
 /// go after their last reader (Q74) writes them before it runs, and hands what it wrote to `write_kept`.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &(dyn Fn(&str) -> Option<Arc<DocDigests>> + Sync), input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeSet<String>) -> InputsWritten {
+pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &(dyn Fn(&str) -> Option<Arc<DocDigests>> + Sync), input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeMap<String, Option<usize>>) -> InputsWritten {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the inputs' frames".into());
     let mut now: HashMap<String, u64> = HashMap::new();
     let mut written = 0;
@@ -3163,8 +3259,8 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
             return Some((digest, written));
         }
         // An input kept as its documents' digest (decision 0458): its documents' entry alone, one row, no granules.
-        if digest_only.contains(rel) {
-            let rows = vec![0, digest as i64, source.len() as i64];
+        if let Some(bound) = digest_only.get(rel) {
+            let rows = vec![0, digest as i64, bound.unwrap_or_else(|| source.len()) as i64];
             kept.push(kept_flat(name, DOCS_PART, digest, vec![(DIGEST_ONLY_READ.to_owned(), 1)], vec![b'i'; 3], rows, 1));
             queue(kept);
             return Some((digest, written));

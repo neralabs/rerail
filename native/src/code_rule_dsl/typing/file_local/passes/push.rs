@@ -202,22 +202,10 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 if independent_node_groups(v, f, rule, &atoms, &equal) > 1 {
                     continue;
                 }
-                // A negated base read whose variables the component binds goes with it (below) and narrows its rows:
-                // `node(d, n, _, _, _), !doc(d, _, _)` (`rr_unplaced`, decision 0431 R9) keeps only the nodes no file
-                // holds. Such a component is no plain read that filters nothing, nor a lookup of every node's
-                // attributes: left, the cross part reads every node's row and every document.
-                let narrowed = body.iter().any(|l| match l.view() {
-                    L::Atom(a) if a.neg() && !a.gated() && !f.lattice(rel(&a)) && base(rel(&a)) => {
-                        let lv = lit_vars(v, rule, *l);
-                        !lv.is_empty() && lv.is_subset(&vars)
-                    }
-                    _ => false,
-                });
                 let attribute = |a: &AtomRef<'_>| ATTRIBUTES.contains(&rel(a)) && plain(v, rule, *a);
                 let rest: Vec<&AtomRef<'v>> = atoms.iter().filter(|a| !attribute(a)).collect();
                 if let [a] = rest[..]
                     && !must
-                    && !narrowed
                     && plain(v, rule, *a)
                 {
                     let own: BTreeSet<String> = a.args().filter_map(|t| t.var()).map(|s| name(v, rule, s)).collect();
@@ -231,12 +219,11 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 }
                 if let [a] = atoms[..]
                     && !must
-                    && !narrowed
                     && plain(v, rule, a)
                 {
                     continue;
                 }
-                if !must && !narrowed && keep_unrestricted && (unrestricted(v, f, rule, &atoms) || descends(v, rule, &atoms)) {
+                if !must && keep_unrestricted && (unrestricted(v, f, rule, &atoms) || descends(v, rule, &atoms)) {
                     continue;
                 }
                 for (j, l) in body.iter().enumerate() {
@@ -348,18 +335,11 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
     }
 }
 
-/// The rules outside the chunks (`local`) that read a base relation of nodes, each with the relation. A relation
-/// with no node column (`doc`, a row a document) keeps no node's row in the cross part: `rr_unplaced`'s
-/// `!doc(d, _, _)` of the findings' documents (decision 0431 R9) is read there whatever is pushed.
-fn cross_reads_base(v: &Version, f: Fields<'_>, inputs: &BTreeSet<&str>, local: &BTreeSet<String>) -> Vec<(String, String)> {
-    let of_nodes = |rel: &str| inputs.contains(rel) && f.columns(rel).is_none_or(|cols| cols.iter().any(|(_, t)| matches!(*t, "node" | "loc" | "span")));
+/// The rules outside the chunks (`local`) that read a base relation, each with the relation.
+fn cross_reads_base(v: &Version, inputs: &BTreeSet<&str>, local: &BTreeSet<String>) -> Vec<(String, String)> {
     v.rules()
         .filter(|r| !local.contains(v.rel_name(r.head().rel())))
-        .filter_map(|r| {
-            r.body()
-                .find_map(|l| l.atom().filter(|a| of_nodes(v.rel_name(a.rel()))).map(|a| v.rel_name(a.rel())))
-                .map(|rel| (v.show_rule(r), rel.to_owned()))
-        })
+        .filter_map(|r| r.body().find_map(|l| l.atom().map(|a| v.rel_name(a.rel())).filter(|rel| inputs.contains(rel))).map(|rel| (v.show_rule(r), rel.to_owned())))
         .collect()
 }
 
@@ -373,13 +353,13 @@ impl ProgramPass for PushLocalJoins {
         let inputs: BTreeSet<&str> = f.inputs().collect();
         let first = push_with(v, f, &split.local, false)?;
         let reads_base = match &first {
-            Some(p) => cross_reads_base(&p.candidate, f, &inputs, &p.local),
-            None => cross_reads_base(v, f, &inputs, &split.local),
+            Some(p) => cross_reads_base(&p.candidate, &inputs, &p.local),
+            None => cross_reads_base(v, &inputs, &split.local),
         };
         if !reads_base.is_empty() {
             crate::code_rule_dsl::logic::profile::decision("file-local joins pushed into the chunks", || {
                 let first: Vec<String> = reads_base.iter().take(4).map(|(rule, rel)| format!("{rule} reads {rel}")).collect();
-                format!("the cross-file part reads base relations of nodes after the first push, {} rules ({}): a finding's location lookups are read there, not pushed", reads_base.len(), first.join("; "))
+                format!("the cross-file part reads base relations after the first push, {} rules ({}): a finding's location lookups are read there, not pushed", reads_base.len(), first.join("; "))
             });
         }
         let reads_base = !reads_base.is_empty();

@@ -5091,6 +5091,41 @@ after the phases went on the run path (0083).
 - **Done when**: a warm run reads its unchanged files' batch rows where they lie (or never makes them), parses no
   unchanged file, and ep2's warm edit is back near 19 G and 200 MB.
 - **Record**: open; the phased-facts branch's (0458 Open), measured here.
+- **Taken by** 0504 (phased-facts, the user 2026-11-19: "B: lazy Batch everywhere"): a batch makes a document when
+  first read, its row space from kept counts; steps 1-4 there, ep2's numbers by its step 5.
+
+### Q354. (Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
+
+Found 2026-11-19 while running `syntax::tests` for 0504 (on the M3 and the M1 Max, the same each run).
+- **What.** The test's `view_probe` kernel calls 16 view reads. `new_library_with_source` returned;
+  `new_compute_pipeline_state_with_function` (the backend's compile) had not returned at 240 s.
+- **Why.** One read at a time, cold (Metal caches a pipeline by its source): `view_node` 2 ms, `view_core` 13 ms,
+  `view_line` 0.27 s, `view_child` 32 s, `view_field` 26 s. The last two call `clif_tape_parent`, which calls
+  `clif_tape_slot` in a loop and `clif_tape_size` in two more, and each reaches the 16z block decode
+  (`clif_tape_z_block`, about 3,000 lines of MSL): every copy inlined, in loops. The reads were written again from
+  the merged CLIF in 377364723 (2026-11-18), the decode's pieces with them.
+- **Done.** `rerail_clif::msl` emits a read of more than `MOST_INLINED` (1,024) instructions
+  `__attribute__((noinline))`: the decode alone, written again (`RERAIL_WRITE_READS=1`). Cold: `view_child` 2.0 s,
+  `view_field` 2.0 s; the test passes in 5.7 s. The decode runs on a block cache miss (0353 step 4b), so its calls
+  are a miss's, not a read's. Checked: the reads' generated-source tests, the test, and 45 `metal-tests` of
+  `rerail-logic` and `rerail-device-metal` (views made on the device, the tape reads).
+- **Superseded** (2026-11-19, the merge of rr-align 08e2de78c): 9eb867011b writes the reads as UKL, and every read
+  past `Z_APART` (the 16z decode's) is `UKL_COLD` (`noinline` on Metal) by its id, as the JIT treats it. The size
+  bound and `metal_tape_reads_z.metal` are gone with it.
+
+### Q353. (Q287 on phased-facts) An edit keeps the rows of the cross part's `kind`, a view of `node` (open)
+
+Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one-file edit).
+- **What.** The data-layer prelude's `kind(n, k) :- node(_, n, k, _, _)` is a view of an input's columns (Q37). The
+  split derives it in the cross part (`on_version::crossing`'s `projected`), and a cold run holds it as a view
+  (`input_view`: held in place, or read into flat rows, `viewed`), which the writer skips. Yet the chain keeps it as
+  rows: 2 entries, 255,598 rows, 0.55 MB, as before 0458 (255,610 then): a view's rows made into a relation (0353).
+- **Likely why.** The edit's maintain mode derives `kind` from `node`'s versions as a maintained relation, not as a
+  view, and `retain::after` keeps a derived relation that is neither `view` nor `viewed`. `Retained::views` and the
+  `maintain::held_views` its comment names are gone: nothing records the views any more.
+- **Next.** Confirm on the 50 files which run writes the entries (`RERAIL_PROFILE`'s "the kept part" decisions);
+  then hold a view of a base relation as a view in the maintain mode too (its `Old`, `Minus` and `Plus` its input's
+  versions read through its columns), and a guard in `retain::after` that refuses to keep an input view's rows.
 
 ### Q286. A warm run on a Linux host writes the observer's journal cursor (`the_run_after_a_cold_one_writes_nothing`) (open)
 
@@ -5149,6 +5184,21 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   (`input_delta::Before`). R4 passes for the chain; 275 of 277 corpus tests on a Linux host (Q286's two), and on
   the M5 the warm-run, cycle, new-process and 0458 tests. Next: the memo entries' base rows (copy 2), then R4 over the
   memo too.
+- **0458 step 4, the memo entries' base rows gone** (2026-11-19): no entry keeps a base relation's rows (a guard in
+  the memo writer's path fails a run whose entry would); the keeper counts the exports alone. A base relation's
+  statistics are kept beside its documents' table, read before the first wave, and patched by the changed documents'
+  old and new rows, read where they lie (`RelStats::documents_read`). Tests: `cross_views_tests` R1–R5 and the
+  statistics' (counted cold, kept warm, patched by an edit), the warm-run, maintain and keeper tests; all 140 corpus
+  tests on the M3. Next: step 5, R6 measured over the 50 files.
+- **0458 step 5, measured** (2026-11-19, M5 at load 40–70, profiling build; against the 0439 runs, `tmp/r50-q285`):
+  589 outputs equal across the edit, the warm run after it and the edited tree's cold run. Chain values 17.9 MB to
+  10.6 MB (granules 13.9 to 6.3 MB): no base relation's granule is left. Instructions: cold 198.9 G to 212.3 G (the
+  edited tree's cold 197.2 G to 195.2 G), the edit 37.3 G to 35.2 G, warm 0.8 G both; peak memory cold 888 to 724
+  MB, the edit 525 to 472 MB. On the way, two costs found and fixed: the base relations' old version answered no
+  lookup (every stratum hashed all its rows: the edit's cross part 46.1 G, now 8.8 G), and the corpus batch made
+  what the cross part does not read (tree digests). Left: the edit still makes every document of the corpus batch
+  (0.45 s, most of `stats`' 9.6 G against 1.6 G before): 0458's "a document is made when first read" is not built.
+  Next: that; Q353 (`kind`'s rows kept after an edit).
 
 ### Q284. (Q243 here before the hub merge 535cc2c8b) A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 
@@ -7733,8 +7783,15 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   `line` and `col`, but the pushed strata cost 0.25 s in the chunks against 0.12 s saved: no gain. The memo loop now
   walks a semi-join's documents (`Source::for_rows_keyed`, through `Layered` too) where it looked each node up:
   `ast_depth` 0.19 to 0.085 s, the loop 0.55 to 0.34-0.44 s. Measured 84.3-84.5 B (load 13-18).
-- **Left (about 3 B):** the memo's base rows of the semi-join (0.34 s) and the larger memo entries they make
-  (`memo remember` 0.10 s, against 0.02 s), 0458's copy 2. They are what the counts and a hit's statistics read. They go with 0458 step
+- **Done** (2026-11-20, the merge of phased-facts 002bc11ff0): 0458 step 4's copy 2 was built there
+  (54a3670004, no memo entry keeps a base relation's rows). With it the memo loop and its 0.34 s go, and `export
+  to cross` is 0.12 s (from 0.50 s). The semi-join's statistics are counted once, at the measure, of its rows at
+  every value the exports hold (the chunks' and the hits'), read off the corpus batch by `for_rows_keyed`: 0.35 s,
+  some of it the lazy batch (0504) making its documents there. Measured: 79.6 and 81.4 B (82.7 B first, load 18),
+  1,629 findings; this morning's 81.0 and 81.9 B. Closed.
+- The narrowed push (`node(d, n, …), !doc(d, …)` pushed whole) is gone: on a run with tape values it exports
+  every value's node from the chunks, and the warm run after a cold one recomputed
+  (`the_run_after_a_cold_one_with_tape_values_writes_nothing`, red with it on Linux, green without). They are what the counts and a hit's statistics read. They go with 0458 step
   4's rest, once a hit's statistics come from somewhere else (its document's rows at its exports' nodes, or kept
   statistics). The rules' changes (#898) about cancel out: `pre_75`, `pre_65` and `parsed` +0.42 s, `param`,
   `tp_decl`, `pre_76` and others -0.66 s. The corpus batch's projection (0.34 s) is the chunks' guests' projection

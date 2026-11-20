@@ -1,8 +1,9 @@
-//! The base relations' and exports' statistics, kept by document across a memoised program's runs (decision 0096 §3).
+//! The exports' statistics, kept by document across a memoised program's runs (decision 0096 §3). (A base relation's
+//! are kept beside its documents' table and patched from the changed documents, decision 0458: no entry holds its
+//! rows.)
 //!
-//! A memoised run sees every file's rows of the base relations the cross-file part reads, and of the exports the
-//! file-local part hands it: a memo hit's from its entry, an evaluated file's from the entry it is remembered under.
-//! Each is kept under its entry's key (`memo::base_key(r)` for a base relation, `r` for an export). Rather than
+//! A memoised run sees every file's rows of the exports the file-local part hands it: a memo hit's from its entry, an
+//! evaluated file's from the entry it is remembered under. Each is kept under its entry's key (`r`). Rather than
 //! measure their concatenation (`syntax::measured`'s sort per column, over every file), the keeper counts a file in when its content is new
 //! to it, and the content it had counted out, read back from the memo by that content. A file no longer in the
 //! run is counted out the same way. An edit costs its files' rows.
@@ -56,13 +57,6 @@ pub(super) struct Keeper {
     exports: Option<super::exports::Counted>,
     export_rels: Vec<String>,
     building: bool,
-    /// With the exports: each base relation's held columns, counted by file (`Counted`, a row emitted once per file
-    /// holding it), by (relation, memo key, the columns taken from an entry's row); and the files' tree counts.
-    base_rels: Vec<(String, String, Vec<usize>)>,
-    /// Per base relation (by key): the row's column each of its counted columns is (`begin`'s), when it counts some
-    /// of a row's columns: those its rules read. Not kept in the blob: its statistics name their columns.
-    from: HashMap<String, Vec<usize>>,
-    base: super::exports::Counted,
     own: super::Own,
     /// Per export (by key): each value document its rows name in their location column (`doc_at`), and how many
     /// counted files' entries hold its rows (decision 0117 step 2). A value document's rows go to every file that
@@ -78,22 +72,19 @@ pub(super) struct Keeper {
     trace: Trace,
 }
 
-/// What a session's keeper keeps of its files beyond their statistics (0096 step 3): the exports, and each base
-/// relation's held columns as (relation, memo key, the columns an entry's row gives).
+/// What a session's keeper keeps of its files beyond their statistics (0096 step 3): the exports. (A base
+/// relation's rows are no entry's: the cross part reads them off the corpus batch, decision 0458.)
 pub(super) struct Keep {
     pub(super) exports: Vec<String>,
-    pub(super) base: Vec<(String, String, Vec<usize>)>,
 }
 
 impl Keeper {
-    /// For a run reading `rels`, by entry key: the base relations held (`memo::base_key`, each with the columns its
-    /// rules read, and `Some` of the row's columns they are) and the exports (each with its columns `c0…`, `None`),
-    /// and `exports`, each export's column that names its rows' document (`Keeper::doc_at`). A relation counted at
+    /// For a run reading `rels`, by entry key: the exports, each with its columns `c0…`, and `exports`, each export's column that names its rows' document (`Keeper::doc_at`). A relation counted at
     /// other columns before is counted from scratch.
     /// `ids` gives each relation's identity, where it has one: a relation counted under another identity, or new to
     /// the keeper, is counted again from scratch (`fresh`), from every file's entry, and the others stay as counted. A
     /// run that counts its exports by file too (`keep`) counts everything again instead.
-    pub(super) fn begin(&mut self, rels: &[(String, Vec<String>, Option<Vec<usize>>)], ids: &BTreeMap<String, [u8; 32]>, exports: HashMap<String, Option<usize>>, keep: Option<Keep>) {
+    pub(super) fn begin(&mut self, rels: &[(String, Vec<String>)], ids: &BTreeMap<String, [u8; 32]>, exports: HashMap<String, Option<usize>>, keep: Option<Keep>) {
         self.doc_at = exports;
         self.seen.clear();
         self.trace = Trace::from_env();
@@ -101,17 +92,17 @@ impl Keeper {
         self.counted = (0, 0);
         self.fresh.clear();
         let changed = |k: &Keeper, rel: &str, columns: &[String]| k.rels.get(rel).is_none_or(|s| s.columns() != columns) || k.ids.get(rel) != ids.get(rel);
-        if !self.docs.is_empty() && rels.iter().any(|(rel, columns, _)| changed(self, rel, columns)) {
+        if !self.docs.is_empty() && rels.iter().any(|(rel, columns)| changed(self, rel, columns)) {
             // Every relation counted again (or the exports counted by file too): the files are counted from scratch.
-            if keep.is_some() || rels.iter().all(|(rel, columns, _)| changed(self, rel, columns)) {
+            if keep.is_some() || rels.iter().all(|(rel, columns)| changed(self, rel, columns)) {
                 self.docs.clear();
                 self.rels.clear();
                 self.holders.clear();
             } else {
-                let now: HashSet<&str> = rels.iter().map(|(r, ..)| r.as_str()).collect();
+                let now: HashSet<&str> = rels.iter().map(|(r, _)| r.as_str()).collect();
                 self.rels.retain(|r, _| now.contains(r.as_str()));
                 self.holders.retain(|r, _| now.contains(r.as_str()));
-                for (rel, columns, _) in rels {
+                for (rel, columns) in rels {
                     if changed(self, rel, columns) {
                         self.rels.insert(rel.clone(), RelStats::new(columns.clone()));
                         self.holders.remove(rel);
@@ -120,30 +111,24 @@ impl Keeper {
                 }
             }
         }
-        self.ids = rels.iter().filter_map(|(r, ..)| ids.get(r).map(|id| (r.clone(), *id))).collect();
-        self.from.clear();
-        for (rel, columns, from) in rels {
+        self.ids = rels.iter().filter_map(|(r, _)| ids.get(r).map(|id| (r.clone(), *id))).collect();
+        for (rel, columns) in rels {
             if self.rels.get(rel).is_some_and(|s| s.columns() != columns.as_slice()) {
                 self.rels.remove(rel);
             }
             self.rels.entry(rel.clone()).or_insert_with(|| RelStats::new(columns.clone()));
-            if let Some(from) = from {
-                self.from.insert(rel.clone(), from.clone());
-            }
         }
         // The exports counted while the files counted are the same ones; else counted again from every file.
         match keep {
-            Some(Keep { exports: names, base }) => {
-                if self.exports.is_none() || self.export_rels != names || self.base_rels != base || self.docs.is_empty() {
+            Some(Keep { exports: names }) => {
+                if self.exports.is_none() || self.export_rels != names || self.docs.is_empty() {
                     self.exports = Some(super::exports::Counted::default());
-                    self.base = super::exports::Counted::default();
                     self.own = super::Own::default();
                     self.building = true;
                 } else {
                     self.building = false;
                 }
                 self.export_rels = names;
-                self.base_rels = base;
             }
             None => {
                 self.exports = None;
@@ -173,10 +158,6 @@ impl Keeper {
         self.exports.as_ref().filter(|_| self.failed.is_none())
     }
 
-    /// With `counted_exports`: the base relations' columns counted, by (relation, the columns' order in `base_rels`).
-    pub(super) fn counted_base(&self) -> Option<(&super::exports::Counted, &[(String, String, Vec<usize>)])> {
-        self.counted_exports().map(|_| (&self.base, self.base_rels.as_slice()))
-    }
 
     /// With `counted_exports`: the counted files' tree counts, summed.
     pub(super) fn counted_own(&self) -> Option<&super::Own> {
@@ -249,9 +230,8 @@ impl Keeper {
                             let set: std::collections::HashSet<&[i64]> = a.iter().copied().collect();
                             let kept = b.iter().filter(|r| set.contains(*r)).count();
                             eprintln!("statkeep diff {path} {rel}: old {} new {} rows, same at the ends {head}+{tail}, new rows also old {kept}", a.len(), b.len());
-                            // The rows that changed, paired by their node (`node`'s second column, else the first): which
-                            // of the other columns differ.
-                            let key = usize::from(rel == "base:node");
+                            // The rows that changed, paired by their first column: which of the others differ.
+                            let key = 0;
                             let now: std::collections::HashSet<&[i64]> = b.iter().copied().collect();
                             let gone: std::collections::HashMap<i64, &[i64]> = a.iter().filter(|r| !now.contains(*r)).filter_map(|r| r.get(key).map(|k| (*k, *r))).collect();
                             let fresh: Vec<&[i64]> = b.iter().copied().filter(|r| !set.contains(r)).collect();
@@ -264,10 +244,7 @@ impl Keeper {
                                     by_col[c] += usize::from(o[c] != r[c]);
                                 }
                             }
-                            let names: Vec<String> = match rel.strip_prefix("base:").and_then(crate::code_rule_dsl::logic::sql::select::input_columns) {
-                                Some(cols) => cols.iter().map(|c| (*c).to_owned()).collect(),
-                                None => (0..*w).map(|c| format!("c{c}")).collect(),
-                            };
+                            let names: Vec<String> = (0..*w).map(|c| format!("c{c}")).collect();
                             let differ: Vec<String> = (0..*w).filter(|&c| by_col[c] > 0).map(|c| format!("{}={}", names.get(c).map_or("?", |n| n.as_str()), by_col[c])).collect();
                             eprintln!("statkeep churn {rel}: gone {} new {} paired {paired}; columns differing: {}", a.len() - (b.len() - fresh.len()).min(a.len()), fresh.len(), differ.join(" "));
                         }
@@ -311,30 +288,14 @@ impl Keeper {
         // `RERAIL_COUNT_OWN=off` counts every row a row at a time, as before decision 0220.
         let by_file = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_COUNT_OWN").map_or(true, |v| v != "off"));
         let doc_at = &self.doc_at;
-        let mut ok = self.export_rels.iter().all(|rel| match (entry.rows.get(rel), doc_at.get(rel).copied().flatten()) {
+        let ok = self.export_rels.iter().all(|rel| match (entry.rows.get(rel), doc_at.get(rel).copied().flatten()) {
             (Some((width, values)), Some(at)) if by_file && at < *width => {
-                by_document(values, *width, |row| memo::document_of(row[at]), None).iter().all(|(d, rows)| counted.patch_own(rel, *width, *d, Some(at), rows, sign))
+                by_document(values, *width, |row| memo::document_of(row[at])).iter().all(|(d, rows)| counted.patch_own(rel, *width, *d, Some(at), rows, sign))
             }
             (Some((width, values)), _) => counted.patch(rel, *width, values, sign),
             (None, _) => true,
         });
         drop(exports_span);
-        let _base = crate::code_rule_dsl::logic::profile::span(|| "statistics: base columns counted".into());
-        for (rel, key, from) in &self.base_rels {
-            let Some((width, values)) = entry.rows.get(key) else { continue };
-            if from.iter().any(|c| c >= width) {
-                ok = false;
-                break;
-            }
-            // A base relation's row names its document in its first column.
-            if by_file {
-                ok &= by_document(values, *width, |row| memo::document_of(row[0]), Some(from.as_slice())).iter().all(|(d, rows)| self.base.patch_own(rel, from.len(), *d, None, rows, sign));
-            } else {
-                let projected: Vec<i64> = values.chunks_exact(*width).flat_map(|row| from.iter().map(|c| row[*c])).collect();
-                ok &= self.base.patch(rel, from.len(), &projected, sign);
-            }
-        }
-        drop(_base);
         let _own = crate::code_rule_dsl::logic::profile::span(|| "statistics: own counted".into());
         let own = super::Own::taken(&entry.rows);
         if sign > 0 { self.own.add(&own) } else { self.own.sub(&own) }
@@ -379,8 +340,8 @@ impl Keeper {
                 continue;
             }
             if let Some((width, values)) = entry.rows.get(key) {
-                match (self.doc_at.get(key), self.from.get(key)) {
-                    (Some(at), _) => {
+                match self.doc_at.get(key) {
+                    Some(at) => {
                         if self.trace.listed.iter().any(|k| k == key) {
                             let Trace { docs, rows, counting, .. } = &mut self.trace;
                             let by = docs.entry(key.clone()).or_default();
@@ -391,8 +352,7 @@ impl Keeper {
                         }
                         stats.rows_by(values, *width, sign, *at)
                     }
-                    (None, Some(from)) => stats.documents_at(values, *width, from, sign),
-                    (None, None) => stats.documents(values, *width, sign),
+                    None => stats.documents(values, *width, sign),
                 }
             }
         }
@@ -655,9 +615,8 @@ pub(super) fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
 }
 
 /// `flat`'s rows (`width` a row) grouped by the document `doc` says each names, in the order the documents first
-/// come, each row taken at the columns `from` (all, when `None`). A document's rows mostly come together, so its
-/// group is looked up once a run of them.
-fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64, from: Option<&[usize]>) -> Vec<(i64, Vec<i64>)> {
+/// come. A document's rows mostly come together, so its group is looked up once a run of them.
+fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64) -> Vec<(i64, Vec<i64>)> {
     let mut groups: Vec<(i64, Vec<i64>)> = Vec::new();
     let mut at: rustc_hash::FxHashMap<i64, usize> = Default::default();
     let mut last: Option<(i64, usize)> = None;
@@ -674,10 +633,7 @@ fn by_document(flat: &[i64], width: usize, doc: impl Fn(&[i64]) -> i64, from: Op
                 g
             }
         };
-        match from {
-            Some(from) => groups[g].1.extend(from.iter().map(|&c| row[c])),
-            None => groups[g].1.extend_from_slice(row),
-        }
+        groups[g].1.extend_from_slice(row);
     }
     groups
 }
@@ -718,11 +674,11 @@ pub mod tests {
     fn a_kept_blob_reads_back_the_files_and_statistics_it_counted() {
         let entry = |key: i64, salt: i64| {
             let mut e = memo::Entry { key, ..memo::Entry::default() };
-            e.rows.insert(memo::base_key("r"), (2, (0..20).flat_map(|i| [key << 32 | i, (i + salt) % 3]).collect()));
+            e.rows.insert("r".to_owned(), (2, (0..20).flat_map(|i| [key << 32 | i, (i + salt) % 3]).collect()));
             e
         };
         let id = |n| memo::Content::Stored(crate::content_store::SourceId::from_raw(n));
-        let rels = [(memo::base_key("r"), vec!["n".to_owned(), "v".to_owned()], None)];
+        let rels = [("r".to_owned(), vec!["n".to_owned(), "v".to_owned()])];
         let mut k = Keeper::default();
         k.begin(&rels, &Default::default(), Default::default(), None);
         for (n, path) in ["a.py", "b.py"].iter().enumerate() {
@@ -737,43 +693,9 @@ pub mod tests {
         back.file("b.py", Some(id(3)), 2, &entry(2, 1), &|c, key| matches!(c, memo::Content::Stored(s) if s.raw() == 2).then(|| entry(key, 0)));
         let after = back.end(&|_, _, _| None).unwrap();
         assert_eq!(back.counted, (1, 1));
-        let r = memo::base_key("r");
+        let r = "r".to_owned();
         assert_eq!(after[&r].rows(), first[&r].rows());
         assert_ne!(after[&r], first[&r], "b.py's values moved");
-    }
-
-    /// A base relation counted at the columns its rules read (some of a row's) has those columns' statistics as one
-    /// counted at every column; counted at other columns next run, it is counted from scratch.
-    #[test]
-    fn a_base_relation_is_counted_at_the_columns_read() {
-        let entry = |key: i64| {
-            let mut e = memo::Entry { key, ..memo::Entry::default() };
-            e.rows.insert(memo::base_key("r"), (3, (0..30).flat_map(|i| [key << 32 | i, i % 4, (i * i + key) % 7]).collect()));
-            e
-        };
-        let id = |n| memo::Content::Stored(crate::content_store::SourceId::from_raw(n));
-        let names = |c: &[&str]| c.iter().map(|c| (*c).to_owned()).collect::<Vec<_>>();
-        let r = memo::base_key("r");
-        let every = [(r.clone(), names(&["n", "v", "w"]), None)];
-        let read = [(r.clone(), names(&["n", "w"]), Some(vec![0, 2]))];
-        let (mut all, mut some) = (Keeper::default(), Keeper::default());
-        all.begin(&every, &Default::default(), Default::default(), None);
-        some.begin(&read, &Default::default(), Default::default(), None);
-        for (n, path) in ["a.py", "b.py", "c.py"].iter().enumerate() {
-            let k = n as i64 + 1;
-            all.file(path, Some(id(k)), k, &entry(k), &|_, _| None);
-            some.file(path, Some(id(k)), k, &entry(k), &|_, _| None);
-        }
-        let (all, some_stats) = (all.end(&|_, _, _| None).unwrap(), some.end(&|_, _, _| None).unwrap());
-        let held = |c: &str| c != "v";
-        let whole: Vec<_> = all[&r].statistics(&held).into_iter().filter(|m| held(&m.0)).collect();
-        assert_eq!(some_stats[&r].statistics(&|_| true), whole);
-        // Read at every column now: what it counted at two is not taken for three.
-        some.begin(&every, &Default::default(), Default::default(), None);
-        some.file("a.py", Some(id(1)), 1, &entry(1), &|_, _| None);
-        let again = some.end(&|_, _, _| None).unwrap();
-        assert_eq!(again[&r].columns().len(), 3);
-        assert_eq!(again[&r].rows(), 30, "counted from scratch: one file");
     }
 
     /// A rule's edit reaches one relation (its identity changes): the next run counts that relation again from every
@@ -784,13 +706,13 @@ pub mod tests {
         use std::collections::BTreeMap;
         let entry = |key: i64, salt: i64, e_salt: i64| {
             let mut e = memo::Entry { key, ..memo::Entry::default() };
-            e.rows.insert(memo::base_key("r"), (2, (0..20).flat_map(|i| [key << 32 | i, (i + salt) % 3]).collect()));
+            e.rows.insert("r".to_owned(), (2, (0..20).flat_map(|i| [key << 32 | i, (i + salt) % 3]).collect()));
             e.rows.insert("e".to_owned(), (2, (0..10).flat_map(|i| [key << 32 | i, (i * e_salt) % 5]).collect()));
             e
         };
         let id = |n| memo::Content::Stored(crate::content_store::SourceId::from_raw(n));
         let names = |c: &[&str]| c.iter().map(|c| (*c).to_owned()).collect::<Vec<_>>();
-        let rels = [(memo::base_key("r"), names(&["n", "v"]), None), ("e".to_owned(), names(&["c0", "c1"]), None)];
+        let rels = [("r".to_owned(), names(&["n", "v"])), ("e".to_owned(), names(&["c0", "c1"]))];
         let ids = |tag: u8| BTreeMap::from([("e".to_owned(), [tag; 32])]);
         // Run 1: a.py, b.py, c.py, with `e` under identity 1.
         let mut k = Keeper::default();
@@ -813,15 +735,15 @@ pub mod tests {
         scratch.file("2.py", Some(id(4)), 2, &entry(2, 1, 2), &|_, _| None);
         assert_eq!(carried, scratch.end(&|_, _, _| None).unwrap());
         assert_eq!(carried["e"].rows(), 20);
-        assert_eq!(carried[&memo::base_key("r")].rows(), 40);
+        assert_eq!(carried["r"].rows(), 40);
     }
 }
 
-/// A semi-join's base relation's statistics, counted where its rows are read: each chunk's rows at the nodes its
-/// exports hold (the memo's base rows), each hit's entry's. They are the rows the cross part looks up (decision 0458
-/// binds the whole view, but the cross part reads it only at those nodes), so the cross part's statistics of the
-/// relation are theirs, and none of its rows is read again to measure it. A node's row is counted once, though a
-/// guest's document is in every chunk that asks for it. Exact: each value's count, and its count in each document
+/// A semi-join's base relation's statistics, counted of its rows at the nodes the exports hold, the chunks' and the
+/// hits' (read off the corpus batch by a walk of their documents, `Source::for_rows_keyed`). They are the rows the
+/// cross part looks up (decision 0458 binds the whole view, but the cross part reads it only at those nodes), so the
+/// cross part's statistics of the relation are theirs, and the view's other rows are never computed to measure it.
+/// A node's row is counted once, though it is read twice. Exact: each value's count, and its count in each document
 /// (the first column's high half, as `syntax::measured` reads it).
 #[derive(Default)]
 pub(super) struct SemijoinCounts {

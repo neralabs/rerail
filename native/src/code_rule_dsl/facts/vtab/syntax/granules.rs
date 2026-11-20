@@ -685,7 +685,7 @@ impl Table {
         let jumps = [jumped(&rank_starts[0], Item::Node), jumped(&rank_starts[1], Item::Token)];
         let [rs0, rs1] = rank_starts;
         let [re0, re1] = rank_ends;
-        let table = Table {
+        Table {
             starts: placed(b, &starts),
             ends: placed(b, &ends),
             parents: placed(b, &parents),
@@ -702,14 +702,14 @@ impl Table {
             rank_starts: [placed(b, &rs0), placed(b, &rs1)],
             rank_ends: [placed(b, &re0), placed(b, &re1)],
             jumps: [placed(b, &jumps[0]), placed(b, &jumps[1])],
-        };
-        table.describe(r);
-        table
+        }
     }
 
     /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
-    /// written once find them.
-    fn describe(&self, r: &Ranks) {
+    /// written once find them: by the projection that keeps this table, once. A table numbered again (a reference to
+    /// check against, a measurement) is not described: the descriptor would point at its columns once it is dropped,
+    /// which on the heap (`cells`, off macOS) are freed.
+    pub(super) fn describe(&self, r: &Ranks) {
         use rerail_clif::ids::Run;
         let d = r.desc_mut();
         let set = |run: *mut Run, c: &[u32]| unsafe { Run::set(run, c.as_ptr(), c.len()) };

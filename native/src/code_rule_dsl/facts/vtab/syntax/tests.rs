@@ -660,7 +660,7 @@ fn within_holds_exactly_the_contained_pairs() {
         docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false });
     }
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-    let nodes = *batch.nodes.last().unwrap();
+    let nodes = *batch.nodes().last().unwrap();
     let id = |r: usize| batch.id(r);
     // Borrow the demanded columns once, as a bulk consumer does. Keep lazy initialization
     // out of the exhaustive reference loop; that loop checks the relation, not setup cost.
@@ -669,8 +669,8 @@ fn within_holds_exactly_the_contained_pairs() {
     // Read once: the reference loop below visits every pair.
     let rows: Vec<_> = (0..nodes)
         .map(|r| {
-            let doc = batch.nodes.partition_point(|&o| o <= r) - 1;
-            let (p, local) = (&batch.docs[doc], r - batch.nodes[doc]);
+            let doc = batch.nodes().partition_point(|&o| o <= r) - 1;
+            let (p, local) = (&batch.docs[doc], r - batch.nodes()[doc]);
             let (start, end) = p.facts.span(p.node(local as u32));
             (p.key, local, p.size(local) as usize, axes[doc][local] as usize, start, end)
         })
@@ -758,7 +758,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     assert!(broken.errors().iter().any(|&id| broken.flags(id) & 8 != 0), "broken.py has ERROR nodes");
     docs.push(Document { key: 4, core: "/w#core:broken.py".into(), digest: core::digest(&broken), path: "broken.py".into(), facts: broken, tape: None, guest: None, module: None, unpackaged: false });
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-    let nodes = *batch.nodes.last().unwrap();
+    let nodes = *batch.nodes().last().unwrap();
     let id = |r: usize| batch.id(r);
     // (document, local, size) and kind atom of node row r.
     let at = |r: usize| {
@@ -773,7 +773,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     // Nested kinds: the root's, and two from inside the documents; and every kind of broken.py's nodes, ERROR's
     // among them.
     let mut set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
-    set.extend((batch.nodes[4]..nodes).map(kind));
+    set.extend((batch.nodes()[4]..nodes).map(kind));
     set.sort_unstable();
     set.dedup();
     // Each row's place and membership read once: the brute force below is quadratic in the rows.
@@ -881,14 +881,19 @@ fn lookups_with_a_bound_document_read_that_document_only() {
 fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
     let store = ContentStore::open(&temp("python-verdict")).unwrap();
     let doc = document(0, "a.py", "python", "print \"legacy\"\n");
+    // A document is made on its batch's first read of it (decision 0504): each batch here reads one relation whole.
+    let read = |projection: &Projection, rel: &str| {
+        let sources = shaped(&store, vec![doc.clone()], projection).unwrap();
+        sources.iter().find(|(n, _)| *n == rel).unwrap_or_else(|| panic!("no {rel}")).1.len()
+    };
     let source_only = Projection { reads: Some(["source".into(), "text".into()].into()), ..Projection::core() };
-    shaped(&store, vec![doc.clone()], &source_only).unwrap();
+    read(&source_only, "text");
     assert!(doc.facts.python_syntax.get().is_none(), "raw text must not request grammar validation");
     let ast = Projection { reads: Some(["syntax_error".into()].into()), ..Projection::core() };
-    shaped(&store, vec![doc.clone()], &ast).unwrap();
+    read(&ast, "syntax_error");
     let verdict = doc.facts.python_syntax.get().expect("demanded verdict");
     assert!(matches!(verdict, Ok(Some(_))));
-    shaped(&store, vec![doc.clone()], &ast).unwrap();
+    read(&ast, "syntax_error");
     assert!(std::ptr::eq(verdict, doc.facts.python_syntax.get().unwrap()), "the tape owns one shared verdict");
 }
 
@@ -901,12 +906,19 @@ fn a_raising_ast_parse_fails_the_batch() {
     for read in ["syntax_error", "cpython_syntax_error", "literal_json", "dump_sha256"] {
         let doc = document(0, "a.py", "python", "x = f\"{y:\\x}\"\n");
         let projection = Projection { reads: Some([read.into()].into()), ..Projection::core() };
-        let Err(error) = shaped(&store, vec![doc], &projection) else { panic!("{read}: the batch fails") };
-        assert!(error.to_string().contains("a.py: CPython's ast.parse raises UnicodeDecodeError: 'unicodeescape' codec"), "{read}: {error}");
+        // The document is made on the first read (decision 0504): the source read reports why it failed.
+        let sources = shaped(&store, vec![doc], &projection).unwrap();
+        let source = &sources.iter().find(|(n, _)| *n == read).unwrap_or_else(|| panic!("no {read}")).1;
+        let _ = source.len();
+        let error = source.failure().unwrap_or_else(|| panic!("{read}: the batch fails"));
+        assert!(error.contains("a.py: CPython's ast.parse raises UnicodeDecodeError: 'unicodeescape' codec"), "{read}: {error}");
     }
     let doc = document(0, "a.py", "python", "x = f\"{y:\\x}\"\n");
     let text = Projection { reads: Some(["source".into(), "text".into()].into()), ..Projection::core() };
-    assert!(shaped(&store, vec![doc], &text).is_ok(), "a text read needs no verdict");
+    let sources = shaped(&store, vec![doc], &text).unwrap();
+    let source = &sources.iter().find(|(n, _)| *n == "text").unwrap().1;
+    let _ = source.len();
+    assert!(source.failure().is_none(), "a text read needs no verdict");
 }
 
 /// Literal values and positions are one demanded producer; a names-only rule must not build either table.
@@ -1810,7 +1822,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
     let store = ContentStore::open(&temp("axes-len")).unwrap();
     let docs: Vec<Document> = documents().into_iter().take(4).collect();
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-    let nodes = *batch.nodes.last().unwrap();
+    let nodes = *batch.nodes().last().unwrap();
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
         let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
@@ -1823,7 +1835,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
         ("inside", within::Within::axis(Arc::clone(&batch), within::Axis::Inside, &set, Binding::Cpu)),
     ];
     // The last two documents' nodes, as a guest round's new documents (`retain::owners_delta`).
-    let new_from = batch.nodes[2];
+    let new_from = batch.nodes()[2];
     let new_ids: BTreeSet<i64> = (new_from..nodes).map(|r| batch.id(r)).collect();
     for (name, source) in sources {
         let len = source.len();
@@ -2145,4 +2157,115 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
         }
     }
     assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
+}
+
+/// Decision 0504, R1 and R3: a batch read whole makes one group, whose relations hold the rows the eager batch's do;
+/// one whose documents a probe of each made holds the same rows once scanned, over several groups.
+#[test]
+fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
+    let store = ContentStore::open(&temp("by-group")).unwrap();
+    let docs = || -> Vec<Document> {
+        (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x, {k}) + \"s{k}\"\n"))).collect()
+    };
+    let reads = ["node", "text", "comment", "op", "str", "name", "src_line", "line_count", "child", "line", "col", "visit_index", "ast_depth", "doc", "path_part", "file_name"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let rows = |s: &dyn Source| -> Vec<Vec<i64>> {
+        let mut rows: Vec<Vec<i64>> = (0..s.len()).map(|r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
+        rows.sort();
+        rows
+    };
+    let (_, eager, _, _) = Batch::build(&store, docs(), &projection, &[], &[], false).unwrap();
+    let eager: HashMap<&str, Vec<Vec<i64>>> = eager.iter().map(|(n, r)| (*n, rows(r))).collect();
+    // Read whole from the first read: one group.
+    let whole = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    for (name, _, s) in made_sources(&whole) {
+        assert_eq!(rows(&*s), eager[name], "{name}, read whole");
+    }
+    assert_eq!(whole.groups(), 1, "a batch read whole makes one group");
+    // A probe of each document's key, then a scan: three groups.
+    let probed = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&probed);
+    let doc = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "doc").unwrap().2);
+    for k in [3, 1] {
+        let found = doc.lookup(0, &[k]).unwrap();
+        assert_eq!(found.iter().map(|&r| doc.value(r, 0)).collect::<Vec<_>>(), vec![k], "document {k}'s row");
+    }
+    assert_eq!(probed.groups(), 2, "each probe made its document's group");
+    for (name, _, s) in &sources {
+        assert_eq!(rows(&**s), eager[name], "{name}, made by probes then a scan");
+    }
+    assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
+}
+
+/// Decision 0504, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows.
+#[test]
+fn a_probe_makes_the_document_it_names_alone() {
+    let store = ContentStore::open(&temp("probe-one")).unwrap();
+    let docs: Vec<Document> = (1..=5).map(|k| document(k, &format!("m{k}.py"), "python", &format!("x{k} = y({k})\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["text".to_owned(), "op".to_owned()].into()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    assert_eq!(batch.docs.made_count(), 0, "nothing is made before a read");
+    let n = batch.docs[2].global(1);
+    let text = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let found = text.lookup(0, &[n]).unwrap();
+    assert!(!found.is_empty(), "the node's text");
+    assert!(found.iter().all(|&r| text.value(r, 0) == n));
+    assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
+    assert_eq!(batch.groups(), 1);
+    assert!(text.failure().is_none());
+}
+
+/// Decision 0504, R5: a batch given its documents' views' counts and its relations' rows knows every view's and
+/// relation's `len` with no document made; a probe then makes its document alone. A made document whose counts differ
+/// from those given fails, named, and so does a relation whose made rows are not the count given.
+#[test]
+fn a_batch_given_counts_knows_its_row_space_making_nothing() {
+    let store = ContentStore::open(&temp("given-counts")).unwrap();
+    let docs = || -> Vec<Document> {
+        (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y={k}):\n    return g(x)\n\nclass C{k}:\n    pass\n"))).collect()
+    };
+    let reads = ["node", "child", "field", "next_sibling", "text", "op", "line", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let lens = |batch: &Arc<Batch>| -> BTreeMap<String, usize> {
+        let mut out: BTreeMap<String, usize> = made_sources(batch).into_iter().map(|(n, _, s)| (n.to_owned(), s.len())).collect();
+        out.extend(views(batch).into_iter().map(|(n, s)| (n.to_owned(), s.len())));
+        out
+    };
+    // The counts, as a batch made eagerly has them.
+    let eager = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let want = lens(&eager);
+    let counts: HashMap<u32, made::ViewCounts> = eager.view_counts().into_iter().collect();
+    // Every relation's rows, as the run gives them (their kept statistics'), the families' among them.
+    let totals: HashMap<String, usize> = want.iter().map(|(n, &l)| (n.clone(), l)).collect();
+    assert_eq!(counts.len(), 4);
+    // Given them: every `len`, nothing made.
+    let lazy = Batch::new(&store, docs(), &projection, &[], &[], false, None, &counts).unwrap();
+    lazy.give_totals(&totals);
+    assert!(lazy.lazy(), "a batch given every document's counts is made by its reads");
+    assert_eq!(lens(&lazy), want, "the lens, from the counts");
+    assert_eq!(lazy.docs.made_count(), 0, "no document made for the row space or a len");
+    let text = Arc::clone(&made_sources(&lazy).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let n = lazy.docs[2].global(1);
+    assert!(!text.lookup(0, &[n]).unwrap().is_empty());
+    assert_eq!(lazy.docs.made_count(), 1, "the probe made its document alone");
+    assert!(text.failure().is_none(), "{:?}", text.failure());
+    // A document whose counts are not those given: it fails as it is made, named.
+    let mut wrong = counts.clone();
+    wrong.get_mut(&2).unwrap()[0] += 1;
+    let off = Batch::new(&store, docs(), &projection, &[], &[], false, None, &wrong).unwrap();
+    let text = Arc::clone(&made_sources(&off).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let _ = text.lookup(0, &[off.docs[1].global(1)]);
+    let failed = text.failure().expect("a document's counts differ");
+    assert!(failed.contains("m2.py") && failed.contains("0504"), "{failed}");
+    // A relation whose rows, every document made, are not the count given: named.
+    let mut wrong = totals.clone();
+    *wrong.get_mut("text").unwrap() += 1;
+    let off = Batch::new(&store, docs(), &projection, &[], &[], false, None, &counts).unwrap();
+    off.give_totals(&wrong);
+    let text = Arc::clone(&made_sources(&off).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let mut seen = 0;
+    text.for_rows(&[0], &mut |_, _| seen += 1);
+    let failed = text.failure().expect("a relation's rows differ from its count");
+    assert!(failed.contains("text") && failed.contains("0504"), "{failed}");
 }
