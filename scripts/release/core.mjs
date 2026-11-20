@@ -324,8 +324,8 @@ function ruleKeysOf(rule) {
 
 /**
  * Every key of RULE_KEY_SINCE that the ast rules of the rule documents under `<directory>/rules` use, sorted. A
- * utility's name is no rule key (`"utils": { "stored": { … } }` uses no `stored`); a metavariable's, the other name a
- * document chooses, is upper case and never one. A document that is not JSON uses none: check 1 reports it.
+ * utility's name is no rule key (`"utils": { "stored": { … } }` uses no `stored`); a metavariable's name is upper case
+ * (transform.rs `is_name`) and never one. A document that is not JSON uses none: check 1 reports it.
  */
 export function shippedRuleKeys(directory) {
   const used = new Set();

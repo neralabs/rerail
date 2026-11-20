@@ -12,12 +12,12 @@
 //     deletes. A version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is
 //     left alone.
 //   - Core ranges: a pack this run releases that an older core cannot load (core.mjs: a rule held off, a rule in a
-//     language added since, an ast rule key added since) has its core range raised to leave those cores out, in its package.json and in
-//     package-lock.json, once core is at the release that first loads it. The description lists each; a pack that needs
-//     it and is not released here is named in a warning, since nothing publishes its package.json. Only a plain
-//     >=<version> range is rewritten: a released pack with any other stops the run, to be raised by hand. A pack released here
-//     while core stays older than the release that first loads it (core left out of this pull request, say) is named
-//     in a warning not to merge: published so, no Rerail could load it.
+//     language added since, an ast rule key added since) has its core range raised to leave those cores out, in its
+//     package.json and in package-lock.json, once core is at the release that first loads it. The description lists
+//     each; a pack that needs it and is not released here is named in a warning, since nothing publishes its
+//     package.json. Only a plain >=<version> range is rewritten: a released pack with any other stops the run, to be
+//     raised by hand. A pack released here while core stays older than the release that first loads it (core left out
+//     of this pull request, say) is named in a warning not to merge: published so, no Rerail could load it.
 // The description ends with the checklist whoever merges it ticks first (BEFORE_MERGING; docs/release.md, "Before
 // merging"). It is written unticked each time, so a push to main clears it.
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags and the

@@ -14,7 +14,7 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, ruleKeyRangeFailure, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, ruleKeyRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
 import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../../../scripts/release/core.mjs";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";

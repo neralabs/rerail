@@ -88,7 +88,8 @@ export interface ValidatePackOptions {
    */
   fixtures?: boolean;
   /**
-   * The core version check 5 holds the pack's core range to (`heldOff`, and a language core first reads after 0.1.0).
+   * The core version check 5 holds the pack's core range to (`heldOff`, a language core first reads after 0.1.0, and
+   * an ast rule key core first reads after 0.1.5).
    * Default: the repository's package.json version.
    */
   coreVersion?: string;

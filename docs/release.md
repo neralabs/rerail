@@ -39,8 +39,8 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
 - **Bump:** if anything core ships changed since the last `v<version>` tag, it bumps to the next patch (`0.1.0` →
   `0.1.1`) and writes its `CHANGELOG.md` section.
 - **Core ranges:** a pack it releases that an older core cannot load, because it holds a rule off or ships a rule in
-  a language or with an ast rule key added since, has its core range raised to leave those cores out, once core is at the release that first
-  loads it. The description lists each.
+  a language or with an ast rule key added since, has its core range raised to leave those cores out, once core is at
+  the release that first loads it. The description lists each.
 - **Merge:** tags the merge commit `v<version>`, which starts `release.yml`.
 
 <details>
