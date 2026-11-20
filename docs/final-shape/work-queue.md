@@ -6065,6 +6065,17 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     0458's copy 2, its step 4 not yet done); the cross part 6.6 s; the corpus batch 3.8 s, which projects every
     document's node rows and string annotations and runs the matchers again beside the chunks (0458: "made when
     first read"; 0353 copy 7 and step 3); the windows of files resolved 2.3 s.
+  - **The rise to 591 G** (2026-11-19): the program, not the chunk work. rr-align's 0083 steps 1-2 (396f6f9426,
+    91f31ae830) run P3's typing as `lib/python/points-to.rr` in the analysis program, in place of calls_p3 run as a
+    typing program beside it (the spans' `typing programs (job)`, 30.2 s of the 51.4 s before). The new rules read
+    `docof`, `doc`, `line`, `col` and `ast_depth`, which each memo entry then kept as `base:` rows (about 300 k rows a
+    chunk each) beside `node`, `child` and `node_order`.
+  - ~~Copy 2, the memo entries' base rows~~ (done 2026-11-19, with the merge of phased-facts 10d3b38139: its 0458 step
+    4, the keeper counting a base relation's statistics beside the documents' table, patched by an edit's changed
+    documents). Its cold count read every cell through `Source::value` (6.0 s); by the sources' walks
+    (40103ffcb4), 2.55 s. `leg-083-typed` on the 901 files: 591 G to 564 G instructions, user 47.0 to 34.3 s, 18.1 s
+    wall at load 18-31, peak 1,124 to 1,165 MB; outputs equal (7e44639d6fb0). Spans' own CPU 43.2 to 34.9 s: the
+    memo's base rows 4.4 s to 0, the export to the cross part 4.4 to 2.2 s; the chunks 15.3 to 16.5 s (Q355).
 
 ### Q313. (Q243 here before the merge of rr-align 62618b2e0a) At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read
 
@@ -6485,3 +6496,17 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   `accel/src/gpu/join.rs::SAID` (machine). `joins.rs`' `SEED` moved to a run's setting in the merge itself.
 - **Do**: move each where its class says, and cut its line.
 - **Done when**: none of the five is in `global-state.txt`.
+
+### Q355. 0474's lazy batch makes 773 of a chunk run's documents twice (open)
+
+Found 2026-11-19 merging phased-facts (10d3b38139) here: `leg-083-typed` on the 901 files, profiling build, the M1 Max.
+- **What.** Under `a chunk evaluated`, the batch's documents' rows were made for 2,145 documents (901 files and their
+  guests) before 0474; after it, `node rows` 2,918 calls and `tree document rows` 1,674 (901 files), the AST wave
+  14 times for 8 chunk batches (1,021 MB allocated, 558 MB before), 0.6-1.2 s more CPU. `a batch's documents made by
+  group` names one group a batch.
+- **Not why.** Concurrent first reads racing in `Batch::ensure` (each making the same group, all but one discarded):
+  a claim on a group's documents while it is made left every count the same, so it was taken out again.
+- **Next.** Name which reads make the second groups (a guest group's projection of its hosts, or a group made and
+  then discarded because a read inside its making published one of its documents first), with the decision line
+  counting the discarded groups too; then make each document once.
+
