@@ -121,7 +121,7 @@ fn install(
     products: &BTreeSet<String>,
     require_anchor: bool,
 ) -> bool {
-    install_named(program, rel, cols, products, require_anchor, PREFIX)
+    install_named(program, rel, cols, products, require_anchor, PREFIX, &|_, _| true)
 }
 
 pub(super) fn install_named(
@@ -131,6 +131,7 @@ pub(super) fn install_named(
     products: &BTreeSet<String>,
     require_anchor: bool,
     prefix: &str,
+    restricts: &dyn Fn(&Program, &[Rule]) -> bool,
 ) -> bool {
     let name = format!("{prefix}{rel}");
     if program.decls.contains_key(name.as_str()) {
@@ -210,7 +211,7 @@ pub(super) fn install_named(
             });
         }
     }
-    if producers.is_empty() || readers == 0 || (require_anchor && !anchored) {
+    if producers.is_empty() || readers == 0 || (require_anchor && !anchored) || !restricts(program, &proofs) {
         return false;
     }
     let original_len = program.rules.len();

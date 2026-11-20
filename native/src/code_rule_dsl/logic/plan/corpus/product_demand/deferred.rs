@@ -86,6 +86,50 @@ fn reader_binds(rule: &Rule, read: &Atom, cols: &[usize]) -> bool {
         })
 }
 
+/// Whether a reader's request (`proof`, `rr_deferred_pairs_<rel>(k..) :- ..`) asks for every key the producer
+/// makes, so the request, a union over the readers, restricts nothing and costs a join of its own: each atom naming
+/// a key appears in the producer's rule too, at the key's columns and with its constants (the producer may hold more
+/// constants), and every other literal is a positive atom of no constant, reached from those. `PT010(g, x) :-
+/// exc_call(c, "pytest.raises"), .., field(c, "function", g0), unparen(g0, g), text(g, x)` asks for `exc_call`'s
+/// every call through `field(c, "function", _)`, which `exc_call`'s rule reads: corpus0's request made 1.23 M rows of
+/// work to guard a join of 42 k (decision 0477). A cost guess, never a matter of rows: a join left as written is
+/// always right.
+fn void_request(p: &Program, rel: &str, cols: &[usize], proof: &Rule) -> bool {
+    let producers: Vec<&Rule> = p.rules.iter().filter(|r| r.head.rel == rel).collect();
+    let [producer] = producers.as_slice() else { return false };
+    let key: Vec<&str> = proof.head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
+    if key.len() != cols.len() {
+        return false;
+    }
+    // The producer's variable at each of the key's columns.
+    let own: Option<Vec<&str>> = cols.iter().map(|&c| match producer.head.args.get(c) { Some(Term::Var(v)) => Some(v.as_str()), _ => None }).collect();
+    let Some(own) = own else { return false };
+    let constant = |t: &Term| matches!(t, Term::Int(_) | Term::Str(_) | Term::Branded(_));
+    let covered = |a: &Atom| producer.body.iter().filter_map(Literal::atom).any(|b| {
+        !b.neg && b.rel == a.rel && b.args.len() == a.args.len() && a.args.iter().zip(&b.args).all(|(x, y)| match x {
+            Term::Var(v) if let Some(i) = key.iter().position(|k| *k == v.as_str()) => matches!(y, Term::Var(w) if w.as_str() == own[i]),
+            t if constant(t) => t == y,
+            _ => true,
+        })
+    });
+    let mut keyed = false;
+    for l in &proof.body {
+        let Literal::Atom(a) = l else { return false };
+        if a.neg || a.gated {
+            return false;
+        }
+        if a.args.iter().any(|t| matches!(t, Term::Var(v) if key.contains(&v.as_str()))) {
+            if !covered(a) {
+                return false;
+            }
+            keyed = true;
+        } else if a.args.iter().any(|t| constant(t) || matches!(t, Term::Call(..))) {
+            return false;
+        }
+    }
+    keyed
+}
+
 /// Determine which restrictions the readers provide. Fanout sharing and small pair caches
 /// evaluate their size guards on the current relations.
 pub(in crate::code_rule_dsl::logic::plan::corpus) fn rewrite(
@@ -223,7 +267,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn rewrite(
     // Inserting a guard shifts the literal positions. Classify all reads before changing any rule.
     for (name, cols, positive) in pairs {
         let rel = name.as_str();
-        if upstream::install_named(p, rel, cols, &BTreeSet::new(), false, DEFERRED_PAIRS) {
+        if upstream::install_named(p, rel, cols, &BTreeSet::new(), false, DEFERRED_PAIRS, &|p, proofs| !proofs.iter().any(|r| void_request(p, rel, cols, r))) {
             p.qualifiers
                 .entry(rel.to_owned())
                 .or_default()
@@ -586,6 +630,34 @@ noted(c, x) :- comment(c, x).
         };
         assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(_, x), line(c, l), col(c, k)."), (false, vec!["defined".to_owned()]), "across files");
         assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), line(c, l), col(c, k)."), (true, Vec::new()), "within one document");
+    }
+
+    /// A reader that asks for every key the producer makes (through an atom of the producer's own rule) makes the
+    /// request, a union over the readers, restrict nothing: the join is left as written. Readers that each narrow
+    /// the keys still drive it.
+    #[test]
+    fn a_reader_asking_for_every_key_leaves_the_join_as_written() {
+        let requested = |readers: &str| {
+            let mut p = parse(&format!(r#"
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl text(n: node, x: symbol)
+.decl marked(n: node)
+.input kind, field, text, marked
+.decl exc_call(c: node, q: symbol)
+exc_call(c, q) :- kind(c, "call"), field(c, "function", f), text(f, q).
+.decl a(c: node)
+a(c) :- marked(c), exc_call(c, _).
+.decl b(x: symbol)
+{readers}
+.output a, b
+"#)).unwrap();
+            rewrite(&mut p, true, true);
+            p.decls.contains_key(format!("{DEFERRED_PAIRS}exc_call").as_str())
+        };
+        assert!(requested("b(x) :- marked(c), exc_call(c, \"p\"), field(c, \"body\", g), text(g, x)."), "every reader narrows the calls");
+        assert!(!requested("b(x) :- exc_call(c, \"p\"), field(c, \"function\", g), text(g, x)."), "b asks for every call");
+        assert!(requested("b(x) :- exc_call(c, \"p\"), field(c, \"function\", g), text(g, \"f\"), text(g, x)."), "b's constant narrows them");
     }
 
     #[test]

@@ -1460,15 +1460,35 @@ fn factorize(
                     if intermediates.is_some() {
                         next.qualifiers.entry(name.clone()).or_default().insert("no_inline".to_owned());
                     }
-                    let kname = format!("fzk{}", &name["fz".len()..]);
-                    next.decls.insert(kname.clone().into(), [cols.last().cloned().expect("the key")].into());
                     // A part's key reduces the other parts as a semijoin, stored so it holds each key once. Inlined,
                     // its readers join the part's body again, every row per key: the product the parts replace
                     // (`fzk(d) :- node(d, v, …), text(v, _)` into a reader that binds `d` enumerates the document's
                     // nodes for every row). So it is never inlined, whatever the statistics price it at.
-                    next.qualifiers.entry(kname.clone()).or_default().insert("no_inline".to_owned());
-                    atoms.push(Atom { rel: name.into(), args: iface.iter().map(|v| Term::Var(v.clone().into())).collect(), neg: false, gated: false });
-                    keys.push(Atom { rel: kname.into(), args: [Term::Var(key.clone().into())].into(), neg: false, gated: false });
+                    // A part of one atom is its own key: the others test that atom by the key, a probe of its
+                    // index, and nothing is stored (`str_lit(e, v) :- unparen(e, m), plain_str(m, v)`: the key of
+                    // `unparen(e, m)` was every node, 464 k rows on corpus0 to reduce a part of 16 k, decision 0477).
+                    let one = match part.as_slice() {
+                        [Literal::Atom(a)] if !a.neg && !a.gated => Some(Atom {
+                            rel: a.rel.clone(),
+                            args: a.args.iter().map(|t| match t {
+                                Term::Var(v) if v.as_str() != key.as_str() => Term::Wild,
+                                t => t.clone(),
+                            }).collect(),
+                            neg: false,
+                            gated: false,
+                        }),
+                        _ => None,
+                    };
+                    atoms.push(Atom { rel: name.clone().into(), args: iface.iter().map(|v| Term::Var(v.clone().into())).collect(), neg: false, gated: false });
+                    match one {
+                        Some(a) => keys.push((a, false)),
+                        None => {
+                            let kname = format!("fzk{}", &name["fz".len()..]);
+                            next.decls.insert(kname.clone().into(), [cols.last().cloned().expect("the key")].into());
+                            next.qualifiers.entry(kname.clone()).or_default().insert("no_inline".to_owned());
+                            keys.push((Atom { rel: kname.into(), args: [Term::Var(key.clone().into())].into(), neg: false, gated: false }, true));
+                        }
+                    }
                     bodies.push(part.clone());
                 }
                 if !ok {
@@ -1480,11 +1500,18 @@ fn factorize(
                     shown.push(format!("cache if factor row counts multiply to at most {pair_limit}"));
                 }
                 for (i, (atom, body)) in atoms.iter().zip(&bodies).enumerate() {
-                    next.rules.push(Rule { head: keys[i].clone(), body: body.clone().into() });
+                    let (key_atom, stored) = &keys[i];
+                    if *stored {
+                        next.rules.push(Rule { head: key_atom.clone(), body: body.clone().into() });
+                    }
                     let mut reduced = body.clone();
-                    reduced.extend(keys.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, k)| Literal::Atom(k.clone())));
+                    reduced.extend(keys.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, (k, _))| Literal::Atom(k.clone())));
                     next.rules.push(Rule { head: atom.clone(), body: reduced.into() });
-                    made.entry(rel.to_string()).or_default().extend([atom.rel.to_string(), keys[i].rel.to_string()]);
+                    let made = made.entry(rel.to_string()).or_default();
+                    made.push(atom.rel.to_string());
+                    if *stored {
+                        made.push(key_atom.rel.to_string());
+                    }
                 }
                 shown.push(format!(
                     "by ${key}: {}",

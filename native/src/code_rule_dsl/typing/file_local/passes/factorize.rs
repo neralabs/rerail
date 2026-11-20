@@ -282,7 +282,8 @@ impl ProgramPass for FactorizeExports {
                         })
                     };
                     let mut atoms: Vec<(String, Vec<String>)> = Vec::new();
-                    let mut knames: Vec<String> = Vec::new();
+                    // Each part's key: its stored relation (`fzk…`, stored: true), or a part of one atom itself.
+                    let mut knames: Vec<(String, Vec<NOwned<'_>>, bool)> = Vec::new();
                     let mut bodies: Vec<Vec<LitRef<'_>>> = Vec::new();
                     for part in parts {
                         let part: Vec<LitRef<'_>> = part.iter().map(|&i| lits[i]).collect();
@@ -297,13 +298,35 @@ impl ProgramPass for FactorizeExports {
                         let content = format!("{rel}({}) :- {}", iface.join(", "), part.iter().map(|l| v.show_lit(rule, *l)).collect::<Vec<_>>().join(", "));
                         let pname = super::super::helper_name("fz", rel, &content, |n| decl_names.contains(n), &mut used);
                         declare(pname.clone(), cols.clone());
-                        let kname = format!("fzk{}", &pname["fz".len()..]);
-                        declare(kname.clone(), vec![cols.last().cloned().expect("the key")]);
-                        if !no_inline.contains(&kname) {
-                            no_inline.push(kname.clone());
+                        // A part of one atom is its own key, as the tree's `factorize` makes it (decision 0477).
+                        let one = match part.as_slice() {
+                            [l] => match l.view() {
+                                L::Atom(a) if !a.neg() && !a.gated() => Some((
+                                    v.rel_name(a.rel()).to_owned(),
+                                    a.args()
+                                        .map(|t| match t {
+                                            TermRef::Var(s) if name(v, rule, s) == *key => NOwned::V(key.clone()),
+                                            TermRef::Var(_) => NOwned::T(TermRef::Wild),
+                                            t => NOwned::T(t),
+                                        })
+                                        .collect::<Vec<_>>(),
+                                )),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        match one {
+                            Some((rel, args)) => knames.push((rel, args, false)),
+                            None => {
+                                let kname = format!("fzk{}", &pname["fz".len()..]);
+                                declare(kname.clone(), vec![cols.last().cloned().expect("the key")]);
+                                if !no_inline.contains(&kname) {
+                                    no_inline.push(kname.clone());
+                                }
+                                knames.push((kname, vec![NOwned::V(key.clone())], true));
+                            }
                         }
                         atoms.push((pname, iface));
-                        knames.push(kname);
                         bodies.push(part);
                     }
                     if !ok {
@@ -312,11 +335,18 @@ impl ProgramPass for FactorizeExports {
                     let var = |x: &String| NOwned::V(x.clone());
                     for (i, ((pname, iface), body)) in atoms.iter().zip(&bodies).enumerate() {
                         let orig: Vec<BodyItem<'_>> = body.iter().map(|l| BodyItem::Orig(*l)).collect();
-                        program.push(Made { src: rule, head: Some((knames[i].clone(), vec![var(key)])), body: orig.clone(), kept: false });
+                        let (kname, _, stored) = &knames[i];
+                        if *stored {
+                            program.push(Made { src: rule, head: Some((kname.clone(), vec![var(key)])), body: orig.clone(), kept: false });
+                        }
                         let mut reduced = orig;
-                        reduced.extend(knames.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, k)| BodyItem::New(k.clone(), vec![var(key)])));
+                        reduced.extend(knames.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, (k, args, _))| BodyItem::New(k.clone(), args.clone())));
                         program.push(Made { src: rule, head: Some((pname.clone(), iface.iter().map(var).collect())), body: reduced, kept: false });
-                        made.entry(rel.clone()).or_default().extend([pname.clone(), knames[i].clone()]);
+                        let made = made.entry(rel.clone()).or_default();
+                        made.push(pname.clone());
+                        if *stored {
+                            made.push(kname.clone());
+                        }
                     }
                     shown.push(format!(
                         "by ${key}: {}",
