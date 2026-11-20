@@ -596,17 +596,18 @@ Rust trees test asserts that the source has none.
 ## Step 37, in progress: the writer's per-node ops (decision 0494)
 
 The third of step 34's three changes. About two thirds of what was left was the writer's ops, called at every node:
-about 300 instructions a node, where simdjson writes one tape word a value. Three cuts so far: `w_leaf` is one op, not
-`w_open` then `w_close`; `w_close` makes no call to `w_settle` unless the block can be final; `w_commit`'s common case is
-inlined.
+about 300 instructions a node, where simdjson writes one tape word a value. The cuts so far:
+- `w_leaf` is one op, not `w_open` then `w_close`;
+- `w_close` makes no call to `w_settle` unless the block can be final;
+- `w_commit`'s common case is inlined;
+- each op works out its node's block (room, side area) once, not at each cell;
+- a cell's mask is its array's escape, already loaded.
 
 | | `twitter.json`, instr/byte | `numbers.json` |
 |---|---:|---:|
 | Before | 48.7 | 45.0 |
-| Now | 44.2 | 39.5 |
+| Now | 39.0 | 34.9 |
 | simdjson | 5.8 | 14.2 |
-
-Next: each cell's address and mask, worked out again at every write, are constant for a document or a block.
 
 ## Step 36, done: the newline index from tier 1's bits (decision 0493)
 

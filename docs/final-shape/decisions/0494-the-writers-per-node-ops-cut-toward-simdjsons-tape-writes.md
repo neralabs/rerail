@@ -33,6 +33,17 @@ parse spent about 400 instructions a node, 300 of them in the ops.
    common case is a store of the frontier and a test that no block's end was passed. That case is now inlined where
    tier 2 calls it, both in the generated Rust (`#[inline(always)]`) and where the JIT inlines a hot op.
 
+4. **A node's block is worked out once an op** (`Block`, `put_at`, `put_code_at`). `w_open` and `w_leaf` work out the
+   room and side area of the node's block once, after `new_block`, and use them for the code, the gap, the checkpoint,
+   the length, and the slot of the node before (where that node is in the same block). `w_close` does the same for the
+   length and the inner slot, both in the closed node's block, which is never final while the node is open. Before
+   this, each inlined put loaded them again. Neither the JIT nor rustc merges those loads, because they come after
+   stores to cells.
+
+5. **A cell's mask is its array's escape** (`cell_put_masked`). `esc[a]` is the widest value of the width, all its
+   bytes set, which is the mask `cell_put` built from the width at every put with a shift and a select. `put` has
+   already loaded it for its escape test.
+
 ## Measured
 
 `json_tests::simdjson_form_against_simdjson`, `--profile profiling`, arm64, one thread:
@@ -42,14 +53,19 @@ parse spent about 400 instructions a node, 300 of them in the ops.
 | Before (0493) | 48.7 | 45.0 |
 | 1 and 2 | 45.5 | 40.6 |
 | 3 | 44.2 | 39.5 |
+| 4 (open, leaf) and 5 | 40.6 | 35.8 |
+| 4 (close, the slot before) | 39.0 | 34.9 |
 | simdjson | 5.8 | 14.2 |
 
-Time against simdjson: 7.4× on `twitter.json` and 2.4× on `numbers.json` (load about 36, so the times are rough).
+Time against simdjson: 6.7× on `twitter.json` and 2.3× on `numbers.json` (load about 40, so the times are rough).
 
 ## Checks
 
 - The tape crate's reference tests (`writes_the_references_tape` and the rest; 35, the device's among them) run
-  `w_leaf` through `Writer::leaf`. A leaf written with length 0 fails 8 of them.
+  `w_leaf` through `Writer::leaf`. Each of these fails some of them:
+  - a leaf written with length 0: 8;
+  - a cell's mask all ones: 10;
+  - the slot of the node before written at the node's own place: 10.
 - No test can catch a change in when a block is settled: a block made final later (by the next block's first node, a
   commit, or the finish) gives the same bytes. Moving close's never-settle test before the call keeps settle's own
   logic, so it is safe by construction.
@@ -58,7 +74,5 @@ Time against simdjson: 7.4× on `twitter.json` and 2.4× on `numbers.json` (load
 
 ## What is left
 
-Each cell's write works its address out again: the block's table entry and room, the 16z flag and a select between
-two parts, the column's offset, the width, and a mask made from the width, then a read-modify-write. That is about 25
-instructions a cell, and there are 3 to 4 cells a node. Everything but `j · width` is constant for a document or a
-block.
+A cell's write still loads its column's offset and width, and the side list's count, which it tests. The block's
+room is still found through its table entry and a select on the 16z flag.
