@@ -7198,7 +7198,8 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
      two chunks' growth is not taken as one's?
   2. The device has two LZ4 decoders. The library's `ukl/lz4.h` (a whole block decoded by a group) sits beside the
      reads' `z_lz4`, which is 0353 step 4b's one decoder. Should the library's go, or be the reads'?
-  3. `<ukl/writer.h>` is 249 KB, every op `UKL_INLINE`; the MSL source it replaces was 192 KB. Measure its compile.
+  3. ~~`<ukl/writer.h>` is 249 KB, every op `UKL_INLINE`; the MSL source it replaces was 192 KB. Measure its compile.~~
+     Written by hand since 2026-11-20 (decision 0518): 60 KB.
 
 ### Q316. `open_tuple` grows faster than its chunk: 0435's bigger chunks cost ep2's cold run 35%
 

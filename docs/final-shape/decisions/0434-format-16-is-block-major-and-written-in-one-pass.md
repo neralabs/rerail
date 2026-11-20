@@ -308,6 +308,10 @@ them through the UKL translator the reads use, into the library's `<ukl/writer.h
 `the_tape_crates_writer_kernels_are_these`); `writer.metal` and the MSL translator are gone. R15's test runs the
 replay kernel on the process's device (`rerail_gpu`), whatever its backend.
 
+**Since 2026-11-20: the device's ops are written by hand (decision 0518).** `<ukl/writer.h>` is the same ops as
+functions written by hand, not the translator's output; `writer::ukl_source` and its check are gone. R15's test holds
+them to the reference, and `the_writer_headers_constants_are_the_ops` holds their layout constants to `writer.rs`'s.
+
 **Done (2026-11-18): the host's writer is the ops (R16).** `f16::Writer` is the ops in CLIF through their Rust
 (`f16/ops.rs`); the hand-written writer is `f16::reference::Writer`, compiled only for the tests and for the lab,
 which turns on the tape crate's `reference` feature (no build of the engine does), and so is liblz4's compressor:
