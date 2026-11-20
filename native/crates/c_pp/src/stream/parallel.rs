@@ -156,6 +156,24 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
     (out, stats)
 }
 
+/// A unit's configuration input, as the device's P1 reads it (decision 0467): the predefines'
+/// text (a file of its own, `<built-in>`, before the main one, as `Pp::run` reads it) and the
+/// built-in macros' names (rows at slot 0).
+pub fn predefined(cfg: &Config) -> (Vec<u8>, Vec<Vec<u8>>) {
+    let mut none = crate::files::Search::new(Vec::new(), |_: &str| None);
+    let mut null = Null;
+    let pp = Pp::new(cfg.clone(), &mut none, &mut null);
+    let mut pre = String::new();
+    for (n, b) in &pp.cfg.predefines {
+        match b {
+            Some(b) => pre.push_str(&format!("#define {n} {b}\n")),
+            None => pre.push_str(&format!("#undef {n}\n")),
+        }
+    }
+    let names = pp.macros.iter().enumerate().filter(|&(_, &d)| d != 0).map(|(s, _)| pp.syms.text(s as u32).to_vec()).collect();
+    (pre.into_bytes(), names)
+}
+
 /// What a name in the text means where it stands (decision 0448, R4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lookup {

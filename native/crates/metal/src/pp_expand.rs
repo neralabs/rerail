@@ -159,26 +159,66 @@ pub struct PpNode {
     pub unit: u32,
 }
 
-/// P1's answer on the device, read back for tests: each directive's and stretch's slot (§2), and
-/// whether it is active (§4), in the layout's words.
+/// P1's answer on the device, read back for tests: the instances (the roots given, then those
+/// the device made), whether each is live, each one's first directive word, and each directive's
+/// and stretch's slot (§2) and activity (§4), in the layout's words.
 #[derive(Debug)]
 pub struct P1Out {
+    pub nodes: Vec<PpNode>,
+    pub live: Vec<u32>,
+    pub dir_first: Vec<u32>,
     pub dir_slots: Vec<u32>,
     pub gap_slots: Vec<u32>,
     pub dir_active: Vec<u32>,
     pub gap_active: Vec<u32>,
+    /// P1's refusals and the round's requests: with either, no lookups.
+    pub flags: u32,
+    pub requests: Vec<Request>,
 }
 
 /// A root's parent.
 pub const NO_PARENT: u32 = u32::MAX;
 
-/// The unit's include tree: P1's input. The device lays it out (decision 0467 §2) and decides its
-/// conditionals (§4). By instance, in the unit's order; by directive of each instance, an `#if`'s
-/// or `#elif`'s value, the spike's (the test input of 0448) until the device evaluates them
-/// (0467 step 5): read only at those directives.
+/// A file table row's file where the search found none.
+pub const NOT_FOUND: u32 = u32::MAX;
+
+/// An include the file table has no row for (decision 0467 §1): its key (unit-free; the table's
+/// row takes it), the including file, its name's bytes in that file's source, and whether it is
+/// `<…>` and an `#include_next` (the main file's is an `#include`). The host answers it and nothing else.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Request {
+    pub key: u64,
+    pub file: u32,
+    pub start: u32,
+    pub len: u32,
+    pub angle: bool,
+    pub next: bool,
+}
+
+/// P1's refusals (`pp_p1.uglykl`'s `P1_*`): the cases a later step of decision 0467 builds.
+pub const P1_ROOM: u32 = 1;
+pub const P1_EXPANDED_NAME: u32 = 2;
+pub const P1_EMBED: u32 = 4;
+pub const P1_LINE: u32 = 8;
+pub const P1_ITERATIONS: u32 = 16;
+
+/// A unit as P1 starts it, and what the host knows from the rounds before: P1's input. The device
+/// grows its include tree (decision 0467 §5), lays it out (§2) and decides its conditionals (§4).
 pub struct Layout {
+    /// The roots: each unit's predefines (`pdir` 0), then its main file (1).
     pub nodes: Vec<PpNode>,
-    pub if_values: Vec<u32>,
+    /// The file table (§1): by (unit, the include's key as a request gave it), the file the host
+    /// found for it (`NOT_FOUND`: none).
+    pub table: Vec<(u32, u64, u32)>,
+    /// By file: the search entry the host found it by (`NOT_FOUND`: its includer's directory, an
+    /// absolute name, a root).
+    pub found_by: Vec<u32>,
+    /// The configuration's include depth.
+    pub max_depth: u32,
+    /// The `#if`s' and `#elif`s' values by (unit, slot within the unit), the spike's (the test
+    /// input of 0448) until the device evaluates them (0467 step 5).
+    pub if_values: Vec<(u32, u32, u32)>,
     /// The built-in macros' names' keys: rows at slot 0.
     pub builtins: Vec<u64>,
     /// The dialect's options as the paste relexer reads them (`relex_options`).
@@ -186,33 +226,33 @@ pub struct Layout {
     /// Each file's `__FILE__`: the string literal of its presumed path (its `"` and `\` escaped),
     /// by the unit's file index; then `__DATE__`'s, `__TIME__`'s and `__TIMESTAMP__`'s.
     pub file_literals: Vec<Vec<u8>>,
-    /// A batch's units (decision 0460, batching): each one's first stretch in the layout's words.
-    /// One unit's layout: `[0]`.
-    pub unit_gaps: Vec<u32>,
 }
 
 impl Layout {
-    /// The layout of a batch of units, `parts` each a unit's layout and its files: its files,
-    /// instances, directives and stretches after the earlier units'. The units are of one dialect
-    /// (their built-ins and options the first's).
+    /// The layout of a batch of units, `parts` each a unit's layout and its files: its files and
+    /// roots after the earlier units'. The units are of one dialect (their built-ins and options
+    /// the first's) and one configuration.
     pub fn join(parts: &[(&Layout, usize)]) -> Option<Layout> {
         let first = parts.first()?.0;
         let mut lay = Layout {
             nodes: Vec::new(),
+            table: Vec::new(),
+            found_by: Vec::new(),
+            max_depth: first.max_depth,
             if_values: Vec::new(),
             builtins: first.builtins.clone(),
             relex_options: first.relex_options,
             file_literals: Vec::new(),
-            unit_gaps: Vec::new(),
         };
         let mut files = 0u32;
         for (u, &(l, n_files)) in parts.iter().enumerate() {
-            assert!(l.builtins == first.builtins && l.relex_options == first.relex_options, "a batch of one dialect");
-            lay.unit_gaps.push(lay.gaps() as u32);
-            let i0 = lay.nodes.len() as u32;
-            lay.nodes.extend(l.nodes.iter().map(|n| PpNode { file: n.file + files, parent: if n.parent == NO_PARENT { NO_PARENT } else { n.parent + i0 }, pdir: n.pdir, depth: n.depth, unit: u as u32 }));
-            // copy: not block data (the `#if` values, 0448's test input, joined on the host)
-            lay.if_values.extend_from_slice(&l.if_values);
+            assert!(l.builtins == first.builtins && l.relex_options == first.relex_options && l.max_depth == first.max_depth, "a batch of one dialect");
+            let (u, i0) = (u as u32, lay.nodes.len() as u32);
+            lay.nodes.extend(l.nodes.iter().map(|n| PpNode { file: n.file + files, parent: if n.parent == NO_PARENT { NO_PARENT } else { n.parent + i0 }, pdir: n.pdir, depth: n.depth, unit: u }));
+            lay.table.extend(l.table.iter().map(|&(_, k, f)| (u, k, if f == NOT_FOUND { f } else { f + files })));
+            // copy: not block data (the files' search entries, configuration input, joined on the host)
+            lay.found_by.extend_from_slice(&l.found_by[..n_files]);
+            lay.if_values.extend(l.if_values.iter().map(|&(_, s, v)| (u, s, v)));
             lay.file_literals.extend(l.file_literals[..n_files].iter().cloned());
             files += n_files as u32;
         }
@@ -220,23 +260,38 @@ impl Layout {
         Some(lay)
     }
 
-    /// The layout's directive words and stretch words: a directive each of each instance's file,
-    /// and a stretch more than its directives.
-    pub fn dirs(&self) -> usize {
-        self.if_values.len()
-    }
-    pub fn gaps(&self) -> usize {
-        self.if_values.len() + self.nodes.len()
-    }
-
-    /// The tree's depth.
-    pub fn depth(&self) -> u32 {
-        self.nodes.iter().map(|n| n.depth).max().unwrap_or(0)
-    }
-
     /// The batch's units.
     pub fn units(&self) -> u32 {
         self.nodes.iter().map(|n| n.unit + 1).max().unwrap_or(1)
+    }
+}
+
+/// The unit-free key's row for unit `u` (`pp_p1.uglykl`'s `p1_inc_find`: `key_mix(key, u + 1)`).
+fn unit_key(key: u64, u: u32) -> u64 {
+    let h = (key ^ (u64::from(u) + 1)).wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^ (h >> 32)
+}
+
+/// P1's stores' room at its rung (`rung` from 0, doubling): the instances, the directive words,
+/// the stretch and group words, and the active text's tokens. A unit's files entered `2 << rung`
+/// times each fit; past them, P1 refuses the round for room and runs it again a rung up.
+#[derive(Clone, Copy, Debug)]
+pub struct Caps {
+    pub nodes: usize,
+    pub dirs: usize,
+    pub gaps: usize,
+    pub top: usize,
+}
+
+/// P1's rungs.
+pub const P1_RUNGS: u32 = 8;
+
+impl Caps {
+    pub fn of(unit: &Unit, lay: &Layout, rung: u32) -> Caps {
+        let k = 2usize << rung.min(P1_RUNGS - 1);
+        let nodes = lay.nodes.len() + unit.len() * k + 2;
+        let dirs = unit.dir_bound * k + 16;
+        Caps { nodes, dirs, gaps: dirs + nodes, top: unit.node_bound * k + 16 }
     }
 }
 
@@ -271,9 +326,38 @@ fn builtin_value(key: u64) -> u32 {
 /// S6–S8 and the lookups (R4): the text map, the visibility rows and their sort, the active
 /// stretches, and each stretch token's meaning where it stands.
 pub struct Vis {
-    // The include tree, and its layout made on the device (decision 0467 §2).
+    // The include tree, grown and laid out on the device (decision 0467 §2, §5): the roots and
+    // the instances made, the tree's depth, the file table, the files' search entries, the depth's
+    // bound, the given `#if` values; each instance's liveness; by directive word, the instance
+    // made for it and its file, the one it enters, and its found file; each file's first
+    // `#pragma once` or `#import`; the new instances' flags and places; the requests; the
+    // refusals; each unit's first stretch in the unit's order.
     nodes: Buf,
-    depth: u32,
+    depth: Buf,
+    n_ft: u32,
+    ft_keys: Buf,
+    ft_files: Buf,
+    found_by: Buf,
+    unit_file: Buf,
+    max_depth: u32,
+    n_if: u32,
+    if_keys: Buf,
+    if_vals: Buf,
+    live: Buf,
+    made: Buf,
+    made_file: Buf,
+    enter: Buf,
+    cand: Buf,
+    once: Buf,
+    newf: Buf,
+    newat: Buf,
+    nnew: Buf,
+    reqs: Buf,
+    nreq: Buf,
+    flags: Buf,
+    pub(crate) ufirst: Buf,
+    // The active text's tokens' room.
+    tc: u32,
     insts: Buf,
     n_insts: Buf,
     dslot: Buf,
@@ -309,10 +393,10 @@ pub struct Vis {
     p1_par2: Buf,
     p1_jchanged: Buf,
     p1_ichanged: Buf,
-    p1_ifval: Buf,
     gactive: Buf,
     pub(crate) n_gaps: Buf,
     n_builtin: u32,
+    ni: usize,
     nd: usize,
     ng: usize,
     // The rows: a directive of the layout each, after the built-ins'.
@@ -345,9 +429,9 @@ pub struct Vis {
     pub bad: Buf,
 }
 
-/// The top level's tokens at most: each instance's file's nodes.
-pub fn top_bound(unit: &Unit, lay: &Layout) -> usize {
-    lay.nodes.iter().map(|i| unit.file_nodes[i.file as usize] as usize).sum::<usize>().max(1)
+/// The top level's tokens at most, at P1's rung `rung`.
+pub fn top_bound(unit: &Unit, lay: &Layout, rung: u32) -> usize {
+    Caps::of(unit, lay, rung).top
 }
 
 /// The pointer-jumping rounds a pop's value takes at most (2^32 pops' chains).
@@ -359,14 +443,25 @@ const P1_ITERS: usize = 64;
 const NO_NODE: [PpNode; 1] = [PpNode { file: 0, parent: NO_PARENT, pdir: 0, depth: 0, unit: 0 }];
 
 impl Vis {
-    pub fn new(arena: &Arena, unit: &Unit, lay: &Layout) -> Result<Vis, Error> {
+    pub fn new(arena: &Arena, unit: &Unit, lay: &Layout, p1_rung: u32) -> Result<Vis, Error> {
         let words = |v: &[u32]| arena.from_slice(if v.is_empty() { &[0] } else { v });
         let zeroed = |k: usize| arena.zeroed::<u32>(k.max(1));
-        let top = top_bound(unit, lay);
-        let (nd, ng, nb, ni) = (lay.dirs(), lay.gaps(), lay.builtins.len(), lay.nodes.len());
+        let caps = Caps::of(unit, lay, p1_rung);
+        let top = caps.top;
+        let (nd, ng, nb, ni) = (caps.dirs, caps.gaps, lay.builtins.len(), caps.nodes);
         // Group words: a file has a group more than its arms, so at most one more than its directives.
         let nq = nd + ni;
         let rows = nd + nb;
+        // The roots, then the room for the instances the device makes.
+        let mut nodes = lay.nodes.clone();
+        nodes.resize(ni, PpNode::default());
+        // The file table and the `#if` values, sorted by their keys.
+        let mut table: Vec<(u64, u32)> = lay.table.iter().map(|&(u, k, f)| (unit_key(k, u), f)).collect();
+        table.sort_unstable();
+        let mut ifs: Vec<(u64, u32)> = lay.if_values.iter().map(|&(u, s, v)| ((u64::from(u) << 32) | u64::from(s), v)).collect();
+        ifs.sort_unstable();
+        let mut found_by = lay.found_by.clone();
+        found_by.resize(unit.len().max(1), NOT_FOUND);
         // The built-ins' rows, at slot 0: the configuration's, written before the passes.
         let mut sk = vec![0u64; rows.max(1)];
         let mut nk = vec![0u64; rows.max(1)];
@@ -377,10 +472,33 @@ impl Vis {
             vals[k] = builtin_value(key);
         }
         Ok(Vis {
-            nodes: arena.from_slice(if lay.nodes.is_empty() { &NO_NODE } else { &lay.nodes })?,
-            depth: lay.depth(),
+            nodes: arena.from_slice(if nodes.is_empty() { &NO_NODE } else { &nodes })?,
+            depth: zeroed(1)?,
             insts: arena.zeroed::<PpInst>(ni.max(1))?,
-            n_insts: words(&[ni as u32])?,
+            n_insts: words(&[lay.nodes.len() as u32])?,
+            n_ft: table.len() as u32,
+            ft_keys: arena.from_slice(&if table.is_empty() { vec![0u64] } else { table.iter().map(|t| t.0).collect() })?,
+            ft_files: words(&if table.is_empty() { vec![0] } else { table.iter().map(|t| t.1).collect() })?,
+            found_by: words(&found_by)?,
+            // Each unit's first file: its predefines root's.
+            unit_file: words(&(0..lay.units()).map(|u| lay.nodes.iter().find(|n| n.unit == u && n.pdir == 0).map_or(0, |n| n.file)).collect::<Vec<_>>())?,
+            max_depth: lay.max_depth,
+            n_if: ifs.len() as u32,
+            if_keys: arena.from_slice(&if ifs.is_empty() { vec![0u64] } else { ifs.iter().map(|t| t.0).collect() })?,
+            if_vals: words(&if ifs.is_empty() { vec![0] } else { ifs.iter().map(|t| t.1).collect() })?,
+            live: zeroed(ni)?,
+            made: zeroed(nd)?,
+            made_file: zeroed(nd)?,
+            enter: zeroed(nd)?,
+            cand: zeroed(nd)?,
+            once: zeroed(unit.len())?,
+            newf: zeroed(nd)?,
+            newat: zeroed(nd)?,
+            nnew: zeroed(1)?,
+            reqs: arena.zeroed::<[u32; 6]>(nd.max(1))?,
+            nreq: zeroed(1)?,
+            flags: zeroed(1)?,
+            ufirst: zeroed(lay.units() as usize)?,
             dslot: zeroed(nd)?,
             dactive: zeroed(nd)?,
             n_dirs: zeroed(1)?,
@@ -412,9 +530,9 @@ impl Vis {
             p1_par2: zeroed(nq)?,
             p1_jchanged: zeroed(P1_JUMPS)?,
             p1_ichanged: zeroed(P1_ITERS)?,
-            p1_ifval: words(&lay.if_values)?,
             n_gaps: zeroed(1)?,
             n_builtin: nb as u32,
+            ni,
             nd,
             ng,
             rflag: zeroed(nd)?,
@@ -438,6 +556,7 @@ impl Vis {
             gat: zeroed(ng)?,
             gscan: Scan::new(arena)?,
             lookups: zeroed(top)?,
+            tc: top as u32,
             bad: zeroed(1)?,
         })
     }
@@ -449,13 +568,19 @@ impl Vis {
         l.at("INSTS", &self.insts).at("N_INSTS", &self.n_insts).at("DSLOT", &self.dslot).at("DACTIVE", &self.dactive).at("N_DIRS", &self.n_dirs);
         l.at("GSLOT", &self.gslot).at("GACTIVE", &self.gactive).at("N_GAPS", &self.n_gaps).at("FLOORS", &self.floors).word("N_UNITS", self.n_units);
         l.word("N_BUILTIN", self.n_builtin).word("ND", self.nd as u32).word("NG", self.ng as u32);
-        l.at("P1_NODES", &self.nodes).word("P1_DEPTH", self.depth).at("P1_NDIRS", &self.p1_ndirs).at("P1_NGAPS", &self.p1_ngaps);
+        l.at("P1_NODES", &self.nodes).at("P1_DEPTHN", &self.depth).at("P1_NDIRS", &self.p1_ndirs).at("P1_NGAPS", &self.p1_ngaps);
+        l.word("N_FT", self.n_ft).at("P1_FTKEYS", &self.ft_keys).at("P1_FTFILES", &self.ft_files).at("P1_FOUNDBY", &self.found_by).at("P1_UFILE", &self.unit_file).word("P1_MAXDEPTH", self.max_depth);
+        l.word("N_IF", self.n_if).at("P1_IFKEYS", &self.if_keys).at("P1_IFVALS", &self.if_vals).at("P1_LIVE", &self.live);
+        l.at("P1_MADE", &self.made).at("P1_MADEF", &self.made_file).at("P1_ENTER", &self.enter).at("P1_CAND", &self.cand).at("P1_ONCE", &self.once);
+        l.at("P1_NEWF", &self.newf).at("P1_NEWAT", &self.newat).at("P1_NNEW", &self.nnew).at("P1_REQS", &self.reqs).at("P1_NREQ", &self.nreq);
+        l.at("P1_FLAGS", &self.flags).at("P1_UFIRST", &self.ufirst);
+        l.word("NC", self.ni as u32).word("DC", self.nd as u32).word("GC", self.ng as u32).word("TC", self.tc);
         l.at("P1_DFIRST", &self.p1_dfirst).at("P1_GFIRST", &self.p1_gfirst).at("P1_SIZE", &self.p1_size).at("P1_CSIZE", &self.p1_csize);
         l.at("P1_GC", &self.p1_gc).at("P1_GHEADS", &self.p1_gheads).at("P1_GSHIFT", &self.p1_gshift).at("P1_USIZE", &self.p1_usize);
         l.at("P1_UTOTAL", &self.p1_utotal).at("P1_BASE", &self.p1_base);
         l.word("NQ", self.nq as u32).at("P1_GCOUNT", &self.p1_gcount).at("P1_GRPF", &self.p1_grpf).at("P1_NGRP", &self.p1_ngrp).at("P1_GA", &self.p1_ga);
         l.at("P1_TAKEN", &self.p1_taken).at("P1_OWN", &self.p1_own).at("P1_PAR", &self.p1_par).at("P1_OWN2", &self.p1_own2).at("P1_PAR2", &self.p1_par2);
-        l.at("P1_JCHANGED", &self.p1_jchanged).at("P1_ICHANGED", &self.p1_ichanged).at("P1_IFVAL", &self.p1_ifval);
+        l.at("P1_JCHANGED", &self.p1_jchanged).at("P1_ICHANGED", &self.p1_ichanged);
         l.word("P1_JUMPS", P1_JUMPS as u32).word("P1_ITERS", P1_ITERS as u32);
         l.at("RFLAG", &self.rflag).at("RAT", &self.rat).at("RTOTAL", &self.rscan.total);
         l.at("SORT_KEYS", &self.sort_keys).at("NAME_KEYS", &self.name_keys).at("VALUES", &self.values).at("N_ROWS", &self.n_rows);
@@ -469,9 +594,46 @@ impl Vis {
     /// The layout P1 made on the device (decision 0467 §2), read back for tests: each directive's
     /// slot and each stretch's, in the layout's words.
     pub fn p1(&self) -> P1Out {
-        // SAFETY: the device finished; the stores hold `nd` and `ng` words.
+        // SAFETY: the device finished; each store holds at least its count's words.
         let words = |b: &Buf, n: usize| unsafe { std::slice::from_raw_parts(b.host().cast::<u32>(), n).to_vec() };
-        P1Out { dir_slots: words(&self.dslot, self.nd), gap_slots: words(&self.gslot, self.ng), dir_active: words(&self.dactive, self.nd), gap_active: words(&self.gactive, self.ng) }
+        let (ni, nd, ng) = (self.word(&self.n_insts) as usize, self.word(&self.n_dirs) as usize, self.word(&self.n_gaps) as usize);
+        // SAFETY: as above; `nodes` holds `ni` instances.
+        let nodes = unsafe { std::slice::from_raw_parts(self.nodes.host().cast::<PpNode>(), ni).to_vec() };
+        P1Out {
+            nodes,
+            live: words(&self.live, ni),
+            dir_first: words(&self.p1_dfirst, ni),
+            dir_slots: words(&self.dslot, nd),
+            gap_slots: words(&self.gslot, ng),
+            dir_active: words(&self.dactive, nd),
+            gap_active: words(&self.gactive, ng),
+            flags: 0,
+            requests: Vec::new(),
+        }
+    }
+
+    fn word(&self, b: &Buf) -> u32 {
+        // SAFETY: the device finished; the store holds a word at least.
+        unsafe { *b.host().cast::<u32>() }
+    }
+
+    /// P1's refusals (`P1_*`), after the command buffer is done.
+    pub fn p1_flags(&self) -> u32 {
+        self.word(&self.flags)
+    }
+
+    /// The round's requests (decision 0467 §1), each once.
+    pub fn requests(&self) -> Vec<Request> {
+        let n = (self.word(&self.nreq) as usize).min(self.nd);
+        // SAFETY: the device finished; `reqs` holds `nd` requests, `n` of them written.
+        let raw = unsafe { std::slice::from_raw_parts(self.reqs.host().cast::<[u32; 6]>(), n) };
+        let mut out: Vec<Request> = raw
+            .iter()
+            .map(|q| Request { key: u64::from(q[0]) | (u64::from(q[1]) << 32), file: q[2], start: q[3], len: q[4], angle: q[5] & 1 != 0, next: q[5] & 2 != 0 })
+            .collect();
+        out.sort_unstable_by_key(|q| (q.key, q.file));
+        out.dedup_by_key(|q| q.key);
+        out
     }
 
     /// The lookups, read back for tests (after the command buffer is done).
@@ -566,9 +728,9 @@ pub struct Exp {
 }
 
 impl Exp {
-    pub fn new(arena: &Arena, unit: &Unit, lay: &Layout, rung: u32) -> Result<Exp, Error> {
+    pub fn new(arena: &Arena, unit: &Unit, lay: &Layout, rung: u32, p1_rung: u32) -> Result<Exp, Error> {
         let zeroed = |k: usize| arena.zeroed::<u32>(k.max(1));
-        let top = top_bound(unit, lay);
+        let top = top_bound(unit, lay, p1_rung);
         // Each rung doubles the whole arena, so a short text with a large expansion fits too.
         let tok = (top + 4096) << (rung + 1);
         let lists = top / 2 + tok / 4 + 256;
@@ -685,17 +847,21 @@ impl Exp {
 
     /// Each unit's first output token: its first stretch's first top token (the stretches'
     /// scan), that token's piece's place (the pieces' scan); then the output's end.
-    fn unit_out(&self, vis: &Vis, unit_gaps: &[u32], n_out: usize) -> Vec<u32> {
-        // SAFETY: the device finished; the scans hold `n_gaps` and `nt` words, their totals after.
+    /// Where each unit of the batch begins in the output, from its first stretch in the unit's
+    /// order (`P1_UFIRST`, the device's), and the output's end.
+    fn unit_out(&self, vis: &Vis, units: u32, n_out: usize) -> Vec<u32> {
+        // SAFETY: the device finished; the scans hold `n_gaps` and `nt` words, their totals after,
+        // and `ufirst` a word a unit.
         unsafe {
             let n_gaps = *vis.n_gaps.host().cast::<u32>();
             let nt = *vis.gscan.total.host().cast::<u32>();
             let gat = vis.gat.host().cast::<u32>();
             let obase = self.obase.host().cast::<u32>();
-            let mut at: Vec<u32> = if unit_gaps.is_empty() { &[0][..] } else { unit_gaps }
-                .iter()
-                .map(|&g| {
-                    let t = if g < n_gaps { *gat.add(g as usize) } else { nt };
+            let first = vis.ufirst.host().cast::<u32>();
+            let mut at: Vec<u32> = (0..units as usize)
+                .map(|u| {
+                    let p = *first.add(u);
+                    let t = if p < n_gaps { *gat.add(p as usize) } else { nt };
                     if t < nt { *obase.add(t as usize) } else { n_out as u32 }
                 })
                 .collect();
@@ -730,7 +896,7 @@ pub struct Expanded {
     pub groups: u64,
     /// The command buffer's time on the GPU (its last run's), in seconds.
     pub gpu_seconds: f64,
-    /// Where each unit of the batch begins in `out`, and its end (`Layout::unit_gaps`' units).
+    /// Where each unit of the batch begins in `out`, and its end.
     pub unit_out: Vec<u32>,
     /// The scratch tokens (a ref with `SCRATCH` set): their bytes, and each one's (start, end,
     /// kind).
@@ -738,6 +904,10 @@ pub struct Expanded {
     pub stoks: Vec<[u32; 3]>,
     /// The arena's use and room at the rung it ran at, store by store (`ROOM_STORES`).
     pub room: [(u32, u32); 5],
+    /// P1's refusals (`P1_*`), and the round's requests (decision 0467 §1): with either, the
+    /// round ended before the expansion, and `out` is empty.
+    pub p1_flags: u32,
+    pub requests: Vec<Request>,
 }
 
 /// The arena's stores, as `Expanded::room` lists them.
@@ -754,13 +924,13 @@ pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Err
 
 /// `expand_from` on a grid of `groups` groups at first (halved after a failed barrier).
 pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Expanded, Error> {
-    let (mut def_rung, mut rung, mut groups) = (0, rung, groups);
+    let (mut def_rung, mut rung, mut groups, mut p1_rung) = (0, rung, groups, 0);
     loop {
         let arena = Arena::new();
         let front = Front::new(&arena, unit, false, groups)?;
         let defs = Defs::new(&arena, unit, def_rung)?;
-        let vis = Vis::new(&arena, unit, lay)?;
-        let exp = Exp::new(&arena, unit, lay, rung)?;
+        let vis = Vis::new(&arena, unit, lay, p1_rung)?;
+        let exp = Exp::new(&arena, unit, lay, rung, p1_rung)?;
         arena.lease()?;
         let mut l = Lay::new();
         front.lay(&mut l, TO_ALL);
@@ -779,6 +949,16 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
             }
             continue;
         }
+        // P1 ended the round: room (a rung up), requests (the host's to answer), or a refusal.
+        let p1_flags = vis.p1_flags();
+        if p1_flags == P1_ROOM && p1_rung + 1 < P1_RUNGS {
+            p1_rung += 1;
+            continue;
+        }
+        let requests = vis.requests();
+        if p1_flags != 0 || !requests.is_empty() {
+            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room() });
+        }
         vis.read()?;
         let (refused, out) = exp.read();
         if refused & X_ROOM != 0 && refused & !X_ROOM == 0 && rung + 1 < EXP_RUNGS {
@@ -786,8 +966,8 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
             continue;
         }
         let (scratch, stoks) = exp.scratch();
-        let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, &lay.unit_gaps, out.len()) };
-        return Ok(Expanded { ev: front.read()?, refused, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room() });
+        let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
+        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room() });
     }
 }
 
@@ -800,12 +980,12 @@ pub fn expand(unit: &Unit, lay: &Layout) -> Result<Expanded, Error> {
 /// command buffer: each active stretch token's meaning (`L_*`, or the directive row of its
 /// definition), in the layout's order; and P1's answer (`Vis::p1`).
 pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
-    let (mut rung, mut groups) = (0, crate::pp_arena::groups());
+    let (mut rung, mut groups, mut p1_rung) = (0, crate::pp_arena::groups(), 0);
     loop {
         let arena = Arena::new();
         let front = Front::new(&arena, unit, false, groups)?;
         let defs = Defs::new(&arena, unit, rung)?;
-        let vis = Vis::new(&arena, unit, lay)?;
+        let vis = Vis::new(&arena, unit, lay, p1_rung)?;
         arena.lease()?;
         let mut l = Lay::new();
         front.lay(&mut l, TO_VIS);
@@ -823,7 +1003,17 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
             }
             continue;
         }
-        return Ok((front.read()?, vis.read()?, vis.p1()));
+        let mut out = vis.p1();
+        out.flags = vis.p1_flags();
+        if out.flags == P1_ROOM && p1_rung + 1 < P1_RUNGS {
+            p1_rung += 1;
+            continue;
+        }
+        out.requests = vis.requests();
+        if out.flags != 0 || !out.requests.is_empty() {
+            return Ok((front.read()?, Vec::new(), out));
+        }
+        return Ok((front.read()?, vis.read()?, out));
     }
 }
 
@@ -868,8 +1058,8 @@ pub fn stage_seconds(unit: &Unit, lay: &Layout, last: u32, stop: u32, groups: u6
     let arena = Arena::new();
     let front = Front::new(&arena, unit, false, groups)?;
     let defs = Defs::new(&arena, unit, 0)?;
-    let vis = Vis::new(&arena, unit, lay)?;
-    let exp = Exp::new(&arena, unit, lay, 0)?;
+    let vis = Vis::new(&arena, unit, lay, 0)?;
+    let exp = Exp::new(&arena, unit, lay, 0, 0)?;
     arena.lease()?;
     let mut l = Lay::new();
     front.lay(&mut l, last);
@@ -919,7 +1109,7 @@ fn many(units: &[(&Unit, &Layout)], parts: &mut Vec<Part>) -> Result<(), Error> 
             let joined: Vec<(&Layout, usize)> = units.iter().map(|(u, l)| (*l, u.len())).collect();
             let Some(lay) = Layout::join(&joined) else { return split(parts) };
             let x = match expand(&batch, &lay) {
-                Ok(x) if x.refused == 0 => std::rc::Rc::new(x),
+                Ok(x) if x.refused == 0 && x.p1_flags == 0 && x.requests.is_empty() => std::rc::Rc::new(x),
                 Ok(_) | Err(Error::BackendCapacity) => return split(parts),
                 Err(e) => return Err(e),
             };

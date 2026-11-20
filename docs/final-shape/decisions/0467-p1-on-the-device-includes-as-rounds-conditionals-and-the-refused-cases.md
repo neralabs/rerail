@@ -216,3 +216,43 @@ row.
     shape and the first 40 corpus units: equal.
   - All 20 evaluator tests pass. The corpus: 3,132 units equal, the same 3 refused, 4 launches
     each; GPU time 160 ms against 147 ms (M5 Max, under the other sessions' load).
+- **Step 4: the includes with literal names, the file table, requests and rounds (§1, §5; R5,
+  R6).**
+  - The host gives the roots alone (each unit's predefines and main file). The device grows the
+    tree: an active include's file is found by its key in the file table, and entering it
+    appends an instance (its file, parent, directive, depth, unit), made once for its directive
+    word and file, so an instance keeps its index and its words across iterations.
+  - Each iteration lays the tree out again: an instance is live where its parent is and the
+    parent's directive enters it now (a phase a depth); a dead instance has size 0, its words
+    are inactive, its slots `PP_NONE` (sorted last). The stretches' sort moved after the loop.
+  - The key (`p1_inc_find`): the name's key (the header's bytes inside `<…>`, or the string's
+    inside its quotes), whether it is `<…>`, the including file's index in its unit for a quoted
+    name, the search entry its file was found by for an `#include_next` (the main file's is an
+    `#include`), then the unit. A table row gives the file, or none found; a miss is a request.
+  - An include enters nothing past an earlier active `#pragma once` or `#import` of its file
+    (each file's least such slot, an atomic minimum), where its file's guard is defined at its
+    slot, or past the configuration's depth (no request then either, as `Pp::include`).
+  - The iterations end at the first that changes no group and no include. With requests, or a
+    refusal, the round ends before the expansion (`PG_STOP`): `px_expand` and `pp_check` see it
+    and return.
+  - The host's runner (`c_directives::eval::rounds`): each round places the unit's files
+    (resident documents are not placed again), runs it, and answers each request by
+    `Files::find` and `Files::read`, adding the table's row; nothing else. R6's guard
+    (`the_host_only_loads_files_between_rounds`) reads its source.
+  - The stores are sized by P1's rung (`Caps`: a unit's files entered `2 << rung` times each);
+    the device refuses a round past them (`P1_ROOM`) and it runs again a rung up.
+  - Each unit's first output token comes from the device (`P1_UFIRST`, its first stretch in
+    the unit's order): the host no longer knows a unit's words.
+  - The `#if` values, until step 5, are the spike's by (unit, slot within the unit): the
+    device's slots equal the spike's (R1), so the table is searched by the directive's slot.
+  - Refused until a later step: an expanded include name (step 6), `#embed`, `#line` (step 7).
+  - R5: `the_include_tree_is_the_spikes`, seven shapes (quoted names by the includer's
+    directory and by the search, `<…>`, one name resolving differently from two includers,
+    `#include_next`, guards, `#pragma once`, `#import`, a header entered twice, an include a
+    later definition decides, a missing file, a self-include to the depth's bound), C and C++.
+    `lookups_agree` now starts every unit from its main file and compares, by slot, every live
+    instance's directives and stretches (file, index, activity) and every name's meaning.
+  - All 22 evaluator tests pass. The corpus, from main files alone: 3,130 units equal, at most
+    2 rounds of 4 launches; refused: `#line` 2, a call across a stretch's end 1, an expanded
+    include name 2 (step 6; the spike read them on the host before). GPU time 184 ms against
+    160 ms: P1's room makes larger arenas, so batches split at 125 units, not 250.
