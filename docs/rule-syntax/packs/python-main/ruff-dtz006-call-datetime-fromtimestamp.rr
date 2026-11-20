@@ -1,5 +1,4 @@
 .policy "ruff-dtz006-call-datetime-fromtimestamp" revision 1
-.guests off
 .description "Pass a timezone when building a datetime from a timestamp; without one you get a naive local time that can't be safely compared with aware datetimes."
 .language python
 .mode steer

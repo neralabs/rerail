@@ -1,5 +1,4 @@
 .policy "ruff-sim113-enumerate-for-loop" revision 1
-.guests off
 .description "Use enumerate() instead of a counter that starts at 0 and is incremented by hand in each pass of a for loop."
 .language python
 .mode steer

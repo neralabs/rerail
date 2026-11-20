@@ -1,5 +1,4 @@
 .policy "ruff-sim103-needless-bool" revision 1
-.guests off
 .description "Return the condition directly instead of an if/else that returns True in one branch and False in the other."
 .language python
 .mode steer

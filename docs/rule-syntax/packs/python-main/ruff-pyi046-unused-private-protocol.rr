@@ -1,5 +1,4 @@
 .policy "ruff-pyi046-unused-private-protocol" revision 1
-.guests off
 .description "Use, make public or remove a private Protocol class that nothing in its file references; an unused private protocol is likely a mistake."
 .language python
 .mode steer

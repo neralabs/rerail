@@ -1,5 +1,4 @@
 .policy "ruff-air311-airflow3-suggested-update" revision 2
-.guests off
 .description "Replace Airflow APIs that Airflow 3 deprecated but still supports with their newer equivalents, and stop passing the sla arguments; the old ones are expected to be removed."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-up011-lru-cache-without-parameters" revision 1
-.guests off
 .description "Drop the empty parentheses from a functools.lru_cache decorator; it works without them, with a default cache size, since Python 3.8."
 .language python
 .mode steer

@@ -1175,7 +1175,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
     ([(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect(), requested & 4 != 0)
 }
 
-/// The relation a program's guest settings are facts of (`.guests`, `.on guest_error`; decision 0055):
+/// The relation a program's guest settings are facts of (`.on guest_error`; decision 0055; `.guests` is retired, 0494):
 /// `guest_policy("library", "on" | "off")`, `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`.
 pub const GUEST_POLICY: &str = "guest_policy";
 

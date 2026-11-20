@@ -1,5 +1,4 @@
 .policy "bandit-b505-weak-cryptographic-key" revision 1
-.guests off
 .description "Use RSA and DSA keys of at least 2048 bits and elliptic curves of at least 224 bits; smaller keys can be broken."
 .language python
 .mode steer

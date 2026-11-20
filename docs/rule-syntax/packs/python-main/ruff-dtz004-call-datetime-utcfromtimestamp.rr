@@ -1,5 +1,4 @@
 .policy "ruff-dtz004-call-datetime-utcfromtimestamp" revision 1
-.guests off
 .description "Use datetime.fromtimestamp with a timezone instead of utcfromtimestamp; utcfromtimestamp returns a naive datetime with no zone information."
 .language python
 .mode steer

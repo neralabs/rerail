@@ -1,5 +1,4 @@
 .policy "bandit-b610-django-extra-used" revision 2
-.guests off
 .description "Pass only literal strings to the where, tables and select arguments of Django QuerySet.extra(); dynamic values open the query to SQL injection."
 .language python
 .mode steer

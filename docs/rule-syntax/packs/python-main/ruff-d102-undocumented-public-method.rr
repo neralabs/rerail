@@ -1,5 +1,4 @@
 .policy "ruff-d102-undocumented-public-method" revision 1
-.guests off
 .description "Document each public Python method with a docstring describing its behavior, arguments and return value."
 .language python
 .mode steer

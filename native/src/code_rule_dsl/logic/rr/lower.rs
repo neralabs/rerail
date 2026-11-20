@@ -1467,15 +1467,12 @@ impl PendingFindings {
 pub struct RulesSeen {
     /// Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
     pub place_values: bool,
-    /// Whether a rule reads `guest_policy`.
-    pub reads_guest_policy: bool,
 }
 
 impl RulesSeen {
     pub fn of(rules: &[Rule]) -> Self {
         RulesSeen {
             place_values: rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place)),
-            reads_guest_policy: rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == GUEST_POLICY),
         }
     }
 }

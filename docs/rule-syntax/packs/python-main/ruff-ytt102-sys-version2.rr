@@ -1,5 +1,4 @@
 .policy "ruff-ytt102-sys-version2" revision 1
-.guests off
 .description "Use sys.version_info.minor instead of indexing the third character of sys.version; the character is only the first digit of a two-digit minor version."
 .language python
 .mode steer

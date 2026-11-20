@@ -1,5 +1,4 @@
 .policy "ruff-b009-get-attr-with-constant" revision 1
-.guests off
 .description "Use plain attribute access instead of getattr() with a constant attribute name; it is no safer and harder to read."
 .language python
 .mode steer

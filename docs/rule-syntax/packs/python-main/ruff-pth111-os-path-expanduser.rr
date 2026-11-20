@@ -1,5 +1,4 @@
 .policy "ruff-pth111-os-path-expanduser" revision 1
-.guests off
 .description "Use Path.expanduser() instead of os.path.expanduser(); path objects read better than string-based os.path calls."
 .language python
 .mode steer

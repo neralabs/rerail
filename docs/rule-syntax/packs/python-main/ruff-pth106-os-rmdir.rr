@@ -1,5 +1,4 @@
 .policy "ruff-pth106-os-rmdir" revision 1
-.guests off
 .description "Use Path.rmdir() instead of os.rmdir(); path objects read better than string-based os calls."
 .language python
 .mode steer

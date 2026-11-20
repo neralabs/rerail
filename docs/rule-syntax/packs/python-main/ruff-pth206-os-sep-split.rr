@@ -1,5 +1,4 @@
 .policy "ruff-pth206-os-sep-split" revision 1
-.guests off
 .description "Use Path.parts instead of splitting a path string on os.sep; path objects read better than string-based path handling."
 .language python
 .mode steer

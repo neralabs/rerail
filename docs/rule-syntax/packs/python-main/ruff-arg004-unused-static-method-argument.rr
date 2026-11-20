@@ -1,5 +1,4 @@
 .policy "ruff-arg004-unused-static-method-argument" revision 1
-.guests off
 .description "Remove static method parameters the body never reads, or prefix them with an underscore when the signature must stay and no caller passes them by keyword."
 .language python
 .mode steer

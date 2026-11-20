@@ -1,5 +1,4 @@
 .policy "ruff-pt022-pytest-useless-yield-fixture" revision 1
-.guests off
 .description "Use return instead of yield in a pytest fixture that has no teardown code after its only yield; a plain return is simpler."
 .language python
 .mode steer

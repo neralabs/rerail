@@ -1,5 +1,4 @@
 .policy "ruff-pd101-pandas-nunique-constant-series-check" revision 1
-.guests off
 .description "Avoid comparing nunique() with 1 to check whether a pandas Series is constant; compare its values with the first one instead, which stops at the first difference."
 .language python
 .mode steer

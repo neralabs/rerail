@@ -1,5 +1,4 @@
 .policy "ruff-slf001-private-member-access" revision 1
-.guests off
 .description "Avoid accessing underscore-prefixed members of other objects; use the class's public interface, since private members can change without notice."
 .language python
 .mode steer

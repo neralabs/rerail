@@ -1,5 +1,4 @@
 .policy "ruff-pyi014-argument-default-in-stub" revision 1
-.guests off
 .description "Replace complex default values of untyped parameters in stub files with an ellipsis; only simple literal defaults belong in a stub."
 .language python
 .mode steer

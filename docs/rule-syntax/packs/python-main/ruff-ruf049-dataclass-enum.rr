@@ -1,5 +1,4 @@
 .policy "ruff-ruf049-dataclass-enum" revision 1
-.guests off
 .description "Avoid decorating an enum class with the dataclass decorator; the generated methods can make distinct members compare equal."
 .language python
 .mode steer

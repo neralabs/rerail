@@ -1,5 +1,4 @@
 .policy "ruff-b039-mutable-contextvar-default" revision 1
-.guests off
 .description "Don't give a ContextVar a mutable default such as a list, dict or set; the one default object is shared across every context."
 .language python
 .mode steer

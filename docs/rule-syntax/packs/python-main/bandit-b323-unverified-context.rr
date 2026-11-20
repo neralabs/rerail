@@ -1,5 +1,4 @@
 .policy "bandit-b323-unverified-context" revision 1
-.guests off
 .description "Don't create SSL contexts with ssl._create_unverified_context(); it turns off certificate and hostname verification and allows man-in-the-middle attacks."
 .language python
 .mode steer

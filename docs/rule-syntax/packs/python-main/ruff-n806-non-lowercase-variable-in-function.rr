@@ -1,5 +1,4 @@
 .policy "ruff-n806-non-lowercase-variable-in-function" revision 1
-.guests off
 .description "Name local variables inside functions in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants."
 .language python
 .mode steer

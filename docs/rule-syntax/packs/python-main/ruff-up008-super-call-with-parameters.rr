@@ -1,5 +1,4 @@
 .policy "ruff-up008-super-call-with-parameters" revision 1
-.guests off
 .description "Call super() without arguments inside methods; passing the class and instance explicitly is redundant on Python 3."
 .language python
 .mode steer

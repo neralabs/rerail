@@ -1,5 +1,4 @@
 .policy "ruff-ruf020-never-union" revision 1
-.guests off
 .description "Remove Never and NoReturn from union types; they have no values, so the union equals its other members."
 .language python
 .mode steer

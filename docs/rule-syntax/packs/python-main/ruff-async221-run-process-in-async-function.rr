@@ -1,5 +1,4 @@
 .policy "ruff-async221-run-process-in-async-function" revision 1
-.guests off
 .description "Don't run processes with subprocess.run, os.system or other blocking process calls inside async functions; they block the event loop until the process exits."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "bandit-b615-huggingface-unsafe-download" revision 5
-.guests off
 .description "Pin Hugging Face model and dataset downloads to a specific commit revision; an unpinned download can silently pull changed or tampered files."
 .language python
 .mode steer

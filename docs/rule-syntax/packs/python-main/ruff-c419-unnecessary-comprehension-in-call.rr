@@ -1,5 +1,4 @@
 .policy "ruff-c419-unnecessary-comprehension-in-call" revision 1
-.guests off
 .description "Pass a generator expression to any() and all() instead of a list or set comprehension; it saves memory and lets them stop early."
 .language python
 .mode steer

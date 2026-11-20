@@ -1,5 +1,4 @@
 .policy "ruff-pt015-pytest-assert-always-false" revision 1
-.guests off
 .description "Use pytest.fail instead of an assert on a value that is always false; it states the intent to fail the test more clearly."
 .language python
 .mode steer

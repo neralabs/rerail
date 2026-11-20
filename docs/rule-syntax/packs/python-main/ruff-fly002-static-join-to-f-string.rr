@@ -1,5 +1,4 @@
 .policy "ruff-fly002-static-join-to-f-string" revision 1
-.guests off
 .description "Use an f-string or a single string literal instead of joining a fixed list of values with a literal separator; it reads more clearly."
 .language python
 .mode steer

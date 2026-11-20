@@ -1,5 +1,4 @@
 .policy "bandit-b321-ftplib" revision 1
-.guests off
 .description "Avoid opening ftplib.FTP connections; FTP sends credentials and data unencrypted, so use SFTP, SCP, or another encrypted protocol."
 .language python
 .mode steer

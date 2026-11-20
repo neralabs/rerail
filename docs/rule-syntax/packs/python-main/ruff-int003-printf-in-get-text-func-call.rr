@@ -1,5 +1,4 @@
 .policy "ruff-int003-printf-in-get-text-func-call" revision 1
-.guests off
 .description "Pass a constant template to a gettext call and format the translated result; a printf-style formatted string is evaluated before the catalog lookup."
 .language python
 .mode steer

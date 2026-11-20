@@ -1,5 +1,4 @@
 .policy "ruff-pth114-os-path-islink" revision 1
-.guests off
 .description "Use Path.is_symlink() instead of os.path.islink(); path objects read better than string-based os.path calls."
 .language python
 .mode steer

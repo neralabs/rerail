@@ -1,5 +1,4 @@
 .policy "ruff-pyi043-t-suffixed-type-alias" revision 1
-.guests off
 .description "Don't end a private type alias name with a T suffix; that suffix is the convention for type variables, so it misleads readers."
 .language python
 .mode steer

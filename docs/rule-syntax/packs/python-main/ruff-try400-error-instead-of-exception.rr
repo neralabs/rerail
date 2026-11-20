@@ -1,5 +1,4 @@
 .policy "ruff-try400-error-instead-of-exception" revision 1
-.guests off
 .description "Use the exception logging method instead of error when logging inside an exception handler; it records the traceback."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-d105-undocumented-magic-method" revision 1
-.guests off
 .description "Add a docstring to each magic method of a public class, describing what the operation does and returns."
 .language python
 .mode steer

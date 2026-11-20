@@ -1,5 +1,4 @@
 .policy "ruff-fbt002-boolean-default-value-positional-argument" revision 1
-.guests off
 .description "Make Python function parameters that default to True or False keyword-only; a positional boolean flag makes calls hard to read."
 .language python
 .mode steer

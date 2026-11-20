@@ -1,5 +1,4 @@
 .policy "ruff-f633-invalid-print-syntax" revision 1
-.guests off
 .description "Use print()'s file argument instead of Python 2's >> redirection, which raises TypeError with the print function."
 .language python
 .mode steer

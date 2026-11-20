@@ -1,5 +1,4 @@
 .policy "ruff-pyi064-redundant-final-literal" revision 1
-.guests off
 .description "Use a bare Final annotation for constants instead of wrapping a single literal type in Final; type checkers already infer the literal type from the value."
 .language python
 .mode steer

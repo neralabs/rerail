@@ -1,5 +1,4 @@
 .policy "ruff-pyi054-numeric-literal-too-long" revision 1
-.guests off
 .description "Replace long numeric literals in stub files with an ellipsis; a value that long is an implementation detail or varies by system."
 .language python
 .mode steer

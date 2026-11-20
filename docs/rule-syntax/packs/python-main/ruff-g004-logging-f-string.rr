@@ -1,5 +1,4 @@
 .policy "ruff-g004-logging-f-string" revision 1
-.guests off
 .description "Pass values to a logging call as arguments instead of interpolating them into an f-string message; the logger then formats only records it emits."
 .language python
 .mode steer

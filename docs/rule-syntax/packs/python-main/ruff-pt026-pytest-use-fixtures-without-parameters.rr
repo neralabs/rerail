@@ -1,5 +1,4 @@
 .policy "ruff-pt026-pytest-use-fixtures-without-parameters" revision 1
-.guests off
 .description "Remove usefixtures markers that name no fixtures, or pass them the fixtures to apply; a marker without arguments does nothing."
 .language python
 .mode steer

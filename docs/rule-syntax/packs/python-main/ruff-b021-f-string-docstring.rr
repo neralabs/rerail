@@ -1,5 +1,4 @@
 .policy "ruff-b021-f-string-docstring" revision 1
-.guests off
 .description "Use a plain string literal, not an f-string, for docstrings; Python doesn't treat an f-string as a docstring."
 .language python
 .mode steer

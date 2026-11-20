@@ -1,5 +1,4 @@
 .policy "ruff-ytt301-sys-version0" revision 1
-.guests off
 .description "Read the major version from sys.version_info instead of indexing the first character of sys.version; the first digit is wrong for a two-digit major version."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-pth124-py-path" revision 1
-.guests off
 .description "Use pathlib instead of py.path.local; the py library's path API is in maintenance mode."
 .language python
 .mode steer

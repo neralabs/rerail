@@ -1,5 +1,4 @@
 .policy "ruff-ret507-superfluous-else-continue" revision 1
-.guests off
 .description "Remove the else or elif after an if branch that continues the loop, and dedent its code; the branch already skips ahead."
 .language python
 .mode steer

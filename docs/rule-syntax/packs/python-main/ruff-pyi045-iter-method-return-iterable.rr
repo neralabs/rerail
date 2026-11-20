@@ -1,5 +1,4 @@
 .policy "ruff-pyi045-iter-method-return-iterable" revision 1
-.guests off
 .description "Annotate __iter__ as returning an Iterator and __aiter__ as returning an AsyncIterator, never the Iterable forms; callers must be able to advance the result."
 .language python
 .mode steer

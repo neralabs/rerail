@@ -1,5 +1,4 @@
 .policy "ruff-ruf026-default-factory-kwarg" revision 1
-.guests off
 .description "Pass the default factory to defaultdict as the first positional argument; a default_factory keyword is stored as an ordinary dictionary entry."
 .language python
 .mode steer

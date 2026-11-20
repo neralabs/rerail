@@ -1,5 +1,4 @@
 .policy "ruff-pyi051-redundant-literal-union" revision 1
-.guests off
 .description "Don't list a literal value in a union that already includes its builtin type; the broader type already covers every value of the literal."
 .language python
 .mode steer

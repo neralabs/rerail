@@ -1,5 +1,4 @@
 .policy "ruff-g101-logging-extra-attr-clash" revision 1
-.guests off
 .description "Avoid extra keys that clash with built-in LogRecord attributes in logging calls; the logging call raises KeyError when they collide."
 .language python
 .mode steer

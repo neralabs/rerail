@@ -318,7 +318,12 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
      the answer admitted the value, so the demand was empty and so were its readers. A relation that depends on an
      answer whose produced relation is an input (one the chunk's sources hold parts of: `parsed`, `parse_of`) is no
      candidate now (`demand::split_negations`). A load's answer (`loaded`) is no input and keeps its demand.
-   - Measured: below.
+   - Measured: PostHog unchanged, 29,747 findings (fa0efeaed6ff); see "Measured (step 7)".
+
+## Measured (step 7)
+
+PostHog, cold, on the M3 at load 47–70: 29,747 findings, fa0efeaed6ff, unchanged. 2,415 G instructions (step 6: 2,405 G),
+202 s user CPU, 97 s wall (the machine's load; CPU is the comparison), peak 2.4 GB.
 
 ## Measured (step 6)
 

@@ -1,5 +1,4 @@
 .policy "ruff-ruf060-in-empty-collection" revision 1
-.guests off
 .description "Avoid membership tests against an empty list, tuple, set, dict, string or bytes; the result is almost always fixed, so the test hides a mistake or dead code."
 .language python
 .mode steer

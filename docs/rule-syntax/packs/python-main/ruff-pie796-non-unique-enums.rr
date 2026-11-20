@@ -1,5 +1,4 @@
 .policy "ruff-pie796-non-unique-enums" revision 1
-.guests off
 .description "Give each Enum member a unique value; a duplicate becomes an alias of the earlier member instead of a new one."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-dtz001-call-datetime-without-tzinfo" revision 1
-.guests off
 .description "Pass a real timezone when constructing a datetime; a naive datetime carries no zone information and causes subtle bugs."
 .language python
 .mode steer

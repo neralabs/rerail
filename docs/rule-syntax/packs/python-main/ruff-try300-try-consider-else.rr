@@ -1,5 +1,4 @@
 .policy "ruff-try300-try-consider-else" revision 1
-.guests off
 .description "Move the final return of a try body into an else block; code that runs only on success should not sit under the handlers' protection."
 .language python
 .mode steer

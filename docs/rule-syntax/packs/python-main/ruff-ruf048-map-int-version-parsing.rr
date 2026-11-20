@@ -1,5 +1,4 @@
 .policy "ruff-ruf048-map-int-version-parsing" revision 1
-.guests off
 .description "Parse a version string with a real version parser, not by mapping int over its dot-separated parts; versions can contain non-numeric parts."
 .language python
 .mode steer

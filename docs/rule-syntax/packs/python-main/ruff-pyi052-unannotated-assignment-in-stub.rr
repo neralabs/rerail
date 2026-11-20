@@ -1,5 +1,4 @@
 .policy "ruff-pyi052-unannotated-assignment-in-stub" revision 1
-.guests off
 .description "Annotate simple assignments in stub files with their type; a stub declares types, so a bare assignment of a literal or small container should carry an explicit annotation."
 .language python
 .mode steer

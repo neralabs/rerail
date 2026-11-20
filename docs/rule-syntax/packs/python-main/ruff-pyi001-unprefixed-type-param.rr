@@ -1,5 +1,4 @@
 .policy "ruff-pyi001-unprefixed-type-param" revision 1
-.guests off
 .description "Start the names of TypeVar, ParamSpec and TypeVarTuple variables in stub files with an underscore, so the stub does not export them."
 .language python
 .mode steer

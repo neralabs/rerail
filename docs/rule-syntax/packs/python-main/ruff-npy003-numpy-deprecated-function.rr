@@ -1,5 +1,4 @@
 .policy "ruff-npy003-numpy-deprecated-function" revision 1
-.guests off
 .description "Replace deprecated NumPy functions with their current equivalents."
 .language python
 .mode steer

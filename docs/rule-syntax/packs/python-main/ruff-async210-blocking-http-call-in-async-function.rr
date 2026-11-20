@@ -1,5 +1,4 @@
 .policy "ruff-async210-blocking-http-call-in-async-function" revision 2
-.guests off
 .description "Don't make blocking HTTP calls with requests, httpx, urllib or urllib3 inside async functions; they stall the event loop."
 .language python
 .mode steer

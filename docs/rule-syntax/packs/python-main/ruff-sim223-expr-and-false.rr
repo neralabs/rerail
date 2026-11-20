@@ -1,5 +1,4 @@
 .policy "ruff-sim223-expr-and-false" revision 1
-.guests off
 .description "Simplify an and expression holding an always-falsy value such as False, None, zero or an empty literal; the operands after it never run."
 .language python
 .mode steer

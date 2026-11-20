@@ -1,5 +1,4 @@
 .policy "ruff-em102-f-string-in-exception" revision 1
-.guests off
 .description "Assign an f-string exception message to a variable before raising instead of building it inline; the traceback otherwise shows the message twice."
 .language python
 .mode steer

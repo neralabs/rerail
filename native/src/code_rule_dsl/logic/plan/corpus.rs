@@ -1788,11 +1788,10 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     // (decision 0431 §4), made whatever a rule asks.
     let guests_of: Vec<bool> = parsed.iter().map(|p| guests::REQUESTS.iter().any(|r| p.has_head(r)) || reads_guests(p.rules())).collect();
     let makes_guests = guests_of.iter().any(|&g| g);
-    let bounds: Vec<u32> = parsed.iter().map(|p| hiding::bound(p.head())).collect();
-    // The libraries once (decision 0089): two or more programs name theirs as modules, and all are read under one
-    // bound of the documents they show, so the library's relations are the same for each.
+    // The libraries once (decision 0089): two or more programs name theirs as modules. Every program is read under one
+    // bound of the documents it shows (decision 0494), so the library's relations are the same for each.
     // `RERAIL_LIBRARIES=copied` copies them into each program, as before, to compare.
-    let shared = !copied && modular.iter().flatten().count() > 1 && bounds.windows(2).all(|w| w[0] == w[1]);
+    let shared = !copied && modular.iter().flatten().count() > 1;
     // Not held once after all: a program read without its libraries' rules is read whole.
     if !shared {
         for ((prog, text), &own_only) in parsed.iter_mut().zip(programs).zip(&own_only) {
@@ -1806,8 +1805,6 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
             format!("held once: {} of {} programs name their libraries as modules", modular.iter().flatten().count(), programs.len())
         } else if copied {
             "copied into each program (RERAIL_LIBRARIES=copied)".to_owned()
-        } else if modular.iter().flatten().count() > 1 {
-            "copied into each program: the programs show different documents (`.guests`)".to_owned()
         } else {
             "copied into each program: fewer than two programs name their libraries as modules".to_owned()
         }
@@ -1891,8 +1888,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         });
         for (i, p) in parsed.iter_mut().enumerate() {
             let _one = crate::code_rule_dsl::logic::profile::span(|| format!("program #{i} ({} rules)", p.rule_count()));
-            let bound = hiding::bound(p.head());
-            p.hide(bound)?;
+            p.hide(hiding::BOUND)?;
         }
     }
     let _merging = crate::code_rule_dsl::logic::profile::span(|| "merge the programs".into());
@@ -1960,18 +1956,18 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         let names = link::Names { i, own, request, set_of };
         let (header, renamed) = part.into_parts(&names);
         if keeping.is_some() && let Some(u) = unit {
-            interfaces.push(kept_link::interface(&[&u, &bounds[u], &guests_of[u], &asked[u], &policies.last(), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &crate::code_rule_dsl::logic::program_image::fields::Shown(P::header_fields(&header)), &core_rules]));
+            interfaces.push(kept_link::interface(&[&u, &hiding::BOUND, &guests_of[u], &asked[u], &policies.last(), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &crate::code_rule_dsl::logic::program_image::fields::Shown(P::header_fields(&header)), &core_rules]));
         }
         rules.push(renamed);
         all.merge(P::header_fields(&header), &names);
     }
     let (all, counts) = P::link_counted(all.finish(), rules, core)?;
-    let hide = (shared && makes_guests).then_some(bounds[0]);
+    let hide = (shared && makes_guests).then_some(hiding::BOUND);
     // The link kept for the next run's splice (decision 0373), where the libraries are held once.
     let mut kept = None;
     if let (Some((keys, family)), Some(store), Some(counts), Some(v), true) = (&keeping, images.as_deref(), counts, P::linked_version(&all), shared && interfaces.len() == programs.len()) {
         let slots = keys.iter().zip(&interfaces).map(|(k, f)| kept_link::Slot { key: *k, interface: *f }).collect();
-        kept_link::record(store, family, v, &kept_link::Record { counts, slots, requests: first_askers, sets, bound: bounds[0], hide, policies: policies.clone() });
+        kept_link::record(store, family, v, &kept_link::Record { counts, slots, requests: first_askers, sets, bound: hiding::BOUND, hide, policies: policies.clone() });
         kept = Some(TailKept(*family));
     }
     Ok((all, Tail::Many { hide, policies, kept }))
@@ -2010,8 +2006,7 @@ fn combine_spliced<P: link::Part>(
     for &i in &changed {
         let (Some(read), Some(k), Some(modules)) = (texts[i].take(), scope_of[i], modular[i].as_ref()) else { return Ok(None) };
         let mut part = P::lowered_in(read, programs[i], library, &scoped[k], Some(store), None, extra)?;
-        let bound = hiding::bound(part.head());
-        if bound != rec.bound {
+        if hiding::BOUND != rec.bound {
             return Ok(None);
         }
         let guests = guests::REQUESTS.iter().any(|r| part.has_head(r)) || reads_guests(part.rules());
@@ -2048,7 +2043,7 @@ fn combine_spliced<P: link::Part>(
         let core_rules = part.shown(core);
         let names = link::Names { i, own, request, set_of };
         let (header, renamed) = part.into_parts(&names);
-        let interface = kept_link::interface(&[&i, &bound, &guests, &asked, &Some(&policy), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &crate::code_rule_dsl::logic::program_image::fields::Shown(P::header_fields(&header)), &core_rules]);
+        let interface = kept_link::interface(&[&i, &hiding::BOUND, &guests, &asked, &Some(&policy), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &crate::code_rule_dsl::logic::program_image::fields::Shown(P::header_fields(&header)), &core_rules]);
         if interface != rec.slots[i].interface {
             crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || format!("linked again: program #{i}'s interface changed"));
             return Ok(None);

@@ -1,5 +1,4 @@
 .policy "ruff-ruf059-unused-unpacked-variable" revision 1
-.guests off
 .description "Prefix unused variables from tuple or list unpacking with an underscore; unused names suggest a mistake or confuse readers."
 .language python
 .mode steer

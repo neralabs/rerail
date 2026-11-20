@@ -1,5 +1,4 @@
 .policy "ruff-async105-trio-sync-call" revision 1
-.guests off
 .description "Await calls to trio's async functions such as trio.sleep; without await the call only creates a coroutine that never runs."
 .language python
 .mode steer

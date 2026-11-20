@@ -1,5 +1,4 @@
 .policy "ruff-ann201-missing-return-type-undocumented-public-function" revision 1
-.guests off
 .description "Add a return type annotation to public functions and methods so callers and type checkers know what they return."
 .language python
 .mode steer

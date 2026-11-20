@@ -1,5 +1,4 @@
 .policy "ruff-n805-invalid-first-argument-name-for-method" revision 1
-.guests off
 .description "Use self as the name of the first parameter of instance methods, as PEP 8 recommends."
 .language python
 .mode steer

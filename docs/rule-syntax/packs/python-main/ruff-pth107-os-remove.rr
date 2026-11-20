@@ -1,5 +1,4 @@
 .policy "ruff-pth107-os-remove" revision 1
-.guests off
 .description "Use Path.unlink() instead of os.remove(); path objects read better than string-based os calls."
 .language python
 .mode steer

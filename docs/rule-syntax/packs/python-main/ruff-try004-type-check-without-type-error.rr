@@ -1,5 +1,4 @@
 .policy "ruff-try004-type-check-without-type-error" revision 1
-.guests off
 .description "Raise TypeError instead of a general-purpose built-in exception when a type check fails; callers can then tell a wrong type from a bad value."
 .language python
 .mode steer

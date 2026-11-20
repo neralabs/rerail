@@ -1,5 +1,4 @@
 .policy "ruff-pyi007-unrecognized-platform-check" revision 1
-.guests off
 .description "Compare sys.platform only by equality or inequality with a plain string literal in stub files; type checkers cannot evaluate other checks."
 .language python
 .mode steer

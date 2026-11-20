@@ -1,5 +1,4 @@
 .policy "ruff-up018-native-literals" revision 1
-.guests off
 .description "Write the literal directly instead of calling str, bytes, int, float, bool or complex on a literal or with no arguments."
 .language python
 .mode steer

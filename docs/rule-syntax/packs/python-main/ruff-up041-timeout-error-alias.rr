@@ -1,5 +1,4 @@
 .policy "ruff-up041-timeout-error-alias" revision 1
-.guests off
 .description "Use the builtin TimeoutError instead of socket.timeout or asyncio.TimeoutError; since Python 3.10 and 3.11 they are plain aliases of it."
 .language python
 .mode steer

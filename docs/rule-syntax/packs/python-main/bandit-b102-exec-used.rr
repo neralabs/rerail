@@ -1,5 +1,4 @@
 .policy "bandit-b102-exec-used" revision 2
-.guests off
 .description "Avoid exec() calls in Python, including through import aliases; running text as code is dangerous unless that text is fully trusted."
 .language python
 .mode steer

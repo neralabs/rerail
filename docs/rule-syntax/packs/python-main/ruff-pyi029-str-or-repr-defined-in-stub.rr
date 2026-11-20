@@ -1,5 +1,4 @@
 .policy "ruff-pyi029-str-or-repr-defined-in-stub" revision 1
-.guests off
 .description "Remove redundant __str__ and __repr__ definitions from stub files; their signatures match the defaults every class inherits, so they add nothing."
 .language python
 .mode steer

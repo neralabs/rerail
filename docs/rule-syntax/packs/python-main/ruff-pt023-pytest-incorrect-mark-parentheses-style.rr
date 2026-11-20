@@ -1,5 +1,4 @@
 .policy "ruff-pt023-pytest-incorrect-mark-parentheses-style" revision 1
-.guests off
 .description "Write pytest markers that take no arguments without empty parentheses, so every marker decorator follows one consistent style."
 .language python
 .mode steer

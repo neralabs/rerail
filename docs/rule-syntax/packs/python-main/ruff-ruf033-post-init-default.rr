@@ -1,5 +1,4 @@
 .policy "ruff-ruf033-post-init-default" revision 1
-.guests off
 .description "Declare init-only dataclass parameters with their defaults as InitVar fields in the class body, not on the post-init method; the generated constructor ignores those defaults."
 .language python
 .mode steer

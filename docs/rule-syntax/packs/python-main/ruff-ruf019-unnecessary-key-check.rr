@@ -1,5 +1,4 @@
 .policy "ruff-ruf019-unnecessary-key-check" revision 1
-.guests off
 .description "Use dict.get() instead of testing a key with in and then indexing the dictionary in the same condition; get() returns None for a missing key."
 .language python
 .mode steer

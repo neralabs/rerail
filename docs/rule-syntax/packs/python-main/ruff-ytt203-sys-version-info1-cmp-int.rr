@@ -1,5 +1,4 @@
 .policy "ruff-ytt203-sys-version-info1-cmp-int" revision 1
-.guests off
 .description "Compare sys.version_info to a version tuple instead of testing its minor number alone; a minor-only check misjudges a new major version."
 .language python
 .mode steer

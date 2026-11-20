@@ -1,5 +1,4 @@
 .policy "ruff-icn001-unconventional-import-alias" revision 1
-.guests off
 .description "Import well-known libraries under their community aliases, such as pandas as pd, numpy as np and matplotlib.pyplot as plt, so readers recognize them at a glance."
 .language python
 .mode steer

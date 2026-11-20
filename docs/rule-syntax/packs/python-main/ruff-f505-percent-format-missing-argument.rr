@@ -1,5 +1,4 @@
 .policy "ruff-f505-percent-format-missing-argument" revision 1
-.guests off
 .description "Supply a value for every %(key) placeholder in a %-format string; a missing key raises KeyError at run time."
 .language python
 .mode steer

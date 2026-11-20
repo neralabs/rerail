@@ -1,5 +1,4 @@
 .policy "ruff-dtz002-call-datetime-today" revision 1
-.guests off
 .description "Use datetime.now with a timezone instead of datetime.today; today returns a naive local time with no zone information."
 .language python
 .mode steer

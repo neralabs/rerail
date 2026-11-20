@@ -1,5 +1,4 @@
 .policy "ruff-f405-undefined-local-with-import-star-usage" revision 1
-.guests off
 .description "Import names explicitly instead of relying on a star import to define them; names that may only come from a star import can't be checked."
 .language python
 .mode steer

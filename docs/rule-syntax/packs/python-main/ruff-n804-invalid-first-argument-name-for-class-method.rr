@@ -1,5 +1,4 @@
 .policy "ruff-n804-invalid-first-argument-name-for-class-method" revision 1
-.guests off
 .description "Name the first parameter of class methods cls, as PEP 8 recommends, so it reads as the class and not as an instance."
 .language python
 .mode steer

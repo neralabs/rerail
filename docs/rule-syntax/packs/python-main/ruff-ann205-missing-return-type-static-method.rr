@@ -1,5 +1,4 @@
 .policy "ruff-ann205-missing-return-type-static-method" revision 1
-.guests off
 .description "Annotate the return type of static methods; the annotation documents what they return and lets a type checker verify it."
 .language python
 .mode steer

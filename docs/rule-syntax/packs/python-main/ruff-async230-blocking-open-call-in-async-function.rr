@@ -1,5 +1,4 @@
 .policy "ruff-async230-blocking-open-call-in-async-function" revision 1
-.guests off
 .description "Don't open files with open(), io.open or Path.open() inside async functions; use an async file API so file I/O doesn't block the event loop."
 .language python
 .mode steer

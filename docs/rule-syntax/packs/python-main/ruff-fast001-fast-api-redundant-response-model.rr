@@ -1,5 +1,4 @@
 .policy "ruff-fast001-fast-api-redundant-response-model" revision 1
-.guests off
 .description "Remove a FastAPI route's response_model argument when it repeats the return annotation; FastAPI already infers the response model from it."
 .language python
 .mode steer

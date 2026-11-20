@@ -1,5 +1,4 @@
 .policy "ruff-pyi025-unaliased-collections-abc-set-import" revision 1
-.guests off
 .description "Import Set from collections.abc under the alias AbstractSet; the bare name is easily mistaken for the builtin set."
 .language python
 .mode steer

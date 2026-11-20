@@ -1,5 +1,4 @@
 .policy "ruff-pyi055-unnecessary-type-union" revision 1
-.guests off
 .description "Combine several type-of-class members of a union into one type over the union of those classes; the meaning is unchanged and the annotation is shorter."
 .language python
 .mode steer

@@ -2478,7 +2478,7 @@ kept(l) :- kind(s, "string"), sub_tape(s, "annotation", _), line(s, l).
 /// `sub_tape` gives its tape: equal texts share one. A tape value is never code to a rule that does not name it
 /// (`top`), `.guests off` or not; the rule that parses it reaches it either way (decision 0058 §1).
 #[test]
-fn parsed_strings_are_reached_through_parsed_and_guests_off_leaves_them_reached() {
+fn parsed_strings_are_reached_through_parsed() {
     let py = "a = \"import os\"\nb = \"import os\"\nc = 1\n";
     let rule = |guests: &str| {
         format!(
@@ -2499,9 +2499,46 @@ top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
     assert_eq!(imp, parsed);
     assert_eq!(tapes.len(), 1, "{tapes:?}");
     assert!(top.is_empty(), "a tape value is no rule's code that does not name it: {top:?}");
-    let [imp, top] = <[Vec<Vec<String>>; 2]>::try_from(guests_run("embedoff", &[("a.py", py)], &rule(".guests off"), &["imp", "top"])).unwrap();
-    assert_eq!(imp, parsed, "`.guests off` hides guests; `parsed` still reaches them");
-    assert!(top.is_empty(), "{top:?}");
+}
+
+/// Decision 0494 R1: `.guests` is retired, and `.scope embedded …` with it (its other name). A program saying either
+/// is refused, and the message names `.embedded`, the setting that says what a run reads of other languages' files.
+#[test]
+fn the_guests_setting_is_refused() {
+    let body = ".decl top(x: symbol)\ntop(x) :- kind(i, \"import_statement\"), text(i, x).\n.output top\n";
+    for setting in [".guests off", ".guests on", ".scope embedded false", ".scope embedded true"] {
+        let err = crate::code_rule_dsl::logic::rr::parse(&format!("{setting}\n{body}")).map(|_| ()).unwrap_err().to_string();
+        assert!(err.contains(".embedded") && err.contains("0494"), "{setting}: {err}");
+    }
+    // R2: a program states no `guest_policy("library", …)`, and shows files and the run language's code guests.
+    let lowered = crate::code_rule_dsl::logic::rr::parse(body).unwrap();
+    let library = lowered.facts.get(crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY).into_iter().flatten().any(|r| matches!(r.first(), Some(crate::code_rule_dsl::logic::front::Value::Str(k)) if k == "library"));
+    assert!(!library, "no library policy");
+}
+
+/// Decision 0494 R3, R4: no library rule reads `guest_policy("library", …)`, and no pack rule says `.guests`.
+#[test]
+fn no_library_or_pack_rule_reads_the_guests_setting() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let mut found: Vec<String> = Vec::new();
+    let mut todo = vec![root.join("lib"), root.join("packs")];
+    while let Some(dir) = todo.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                todo.push(path);
+            } else if path.extension().is_some_and(|e| e == "rr") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (i, line) in text.lines().enumerate() {
+                    let code = line.split("//").next().unwrap_or("");
+                    if code.contains("guest_policy(\"library\"") || code.trim_start().starts_with(".guests") {
+                        found.push(format!("{}:{}", path.strip_prefix(&root).unwrap().display(), i + 1));
+                    }
+                }
+            }
+        }
+    }
+    assert!(found.is_empty(), "{found:?}");
 }
 
 /// SQL in a Python string (decision 0058 §1–2): a rule's `parsed` makes an SQL tape value (tag 10). A rule that
@@ -2803,45 +2840,37 @@ objects(n, x) :- q(s, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "obj
     assert_eq!(second, first);
 }
 
-/// A combined run's programs each see the guests their own `.guests` shows (decision 0058 §1, O97): one batch, one
-/// set of tape values, and each program's rules bounded by its own setting. A tape value is no unscoped rule's code
-/// under either (decision 0431 §3); the rule that parses it reaches it under both.
+/// A combined run's programs share one batch and one set of tape values, and see the same documents (decision 0494
+/// R2, R5; `.guests` once bounded each program apart, decision 0058 §1, O97). A tape value is no unscoped rule's code
+/// in either (decision 0431 §3); the rule that parses it reaches it in both.
 #[test]
-fn combined_programs_see_guests_by_their_own_policy() {
+fn combined_programs_see_the_same_documents() {
     let py = "a = \"import os\"\nb = \"import sys\"\n";
-    let program = |guests: &str| {
-        format!(
-            r#"
-{guests}
+    let program = r#"
 .decl top(x: symbol, l: number)
 top(x, l) :- kind(i, "import_statement"), text(i, x), line(i, l).
 .decl through(x: symbol)
 through(x) :- kind(s, "string"), parsed(s, "python", r), within(i, r), kind(i, "import_statement"), text(i, x).
 .output top, through
-"#
-        )
-    };
+"#;
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("combined_guests");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), py).unwrap();
-    let printed: Vec<String> = [program(".guests off"), program("")]
-        .iter()
-        .enumerate()
-        .map(|(i, text)| {
+    let printed: Vec<String> = (0..2)
+        .map(|i| {
             let path = dir.join(format!("p{i}.rr"));
-            std::fs::write(&path, text).unwrap();
+            std::fs::write(&path, program).unwrap();
             crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap()
         })
         .collect();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run_all(&printed.iter().map(String::as_str).collect::<Vec<_>>(), &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
-    let (off, on, off_through, on_through) = (read("p0_top"), read("p1_top"), read("p0_through"), read("p1_through"));
+    let (top0, top1, through0, through1) = (read("p0_top"), read("p1_top"), read("p0_through"), read("p1_through"));
     let _ = std::fs::remove_dir_all(&dir);
-    assert!(off.is_empty(), "`.guests off` hides the guests from its own rules: {off:?}");
-    assert!(on.is_empty(), "a tape value is no unscoped rule's code: {on:?}");
-    assert_eq!(off_through, [["import os"], ["import sys"]], "a guest relation reaches them under `.guests off`");
-    assert_eq!(on_through, off_through);
+    assert!(top0.is_empty() && top1.is_empty(), "a tape value is no unscoped rule's code: {top0:?} {top1:?}");
+    assert_eq!(through0, [["import os"], ["import sys"]], "a guest relation reaches them");
+    assert_eq!(through1, through0);
 }
 
 /// A kind set read by `nearest` over a scoped SQL node is resolved in SQL's grammar (decision 0058 §2, O98): the
@@ -2955,10 +2984,8 @@ Todo(@place(p, l)) :- doc(d, p, _), src_line(d, l, sp), contains("TODO", sp).
     // nothing; `app/` only with the option.
     assert_eq!(paths(serde_json::json!({})), ["docs/d.md:2", "impl/a.py:1"]);
     assert_eq!(paths(serde_json::json!({"roots": ["app"]})), ["app/x/c.py:1", "docs/d.md:2", "impl/a.py:1"]);
-    let lowered = crate::code_rule_dsl::logic::rr::parse(&format!("{flat}\n.scope embedded false\n")).unwrap();
+    let lowered = crate::code_rule_dsl::logic::rr::parse(&flat).unwrap();
     assert_eq!(lowered.text_globs, ["**/*.md"]);
-    let off = lowered.facts.get(crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY).into_iter().flatten().any(|r| r == &vec![crate::code_rule_dsl::logic::front::Value::Str("library".into()), crate::code_rule_dsl::logic::front::Value::Str("off".into())]);
-    assert!(off, "embedded false is guests off");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

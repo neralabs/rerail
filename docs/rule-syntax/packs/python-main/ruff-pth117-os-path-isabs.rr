@@ -1,5 +1,4 @@
 .policy "ruff-pth117-os-path-isabs" revision 1
-.guests off
 .description "Use Path.is_absolute() instead of os.path.isabs(); path objects read better than string-based os.path calls."
 .language python
 .mode steer

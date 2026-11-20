@@ -1,5 +1,4 @@
 .policy "ruff-dtz003-call-datetime-utcnow" revision 1
-.guests off
 .description "Use datetime.now with a timezone instead of datetime.utcnow; utcnow returns a naive datetime that carries no zone information."
 .language python
 .mode steer

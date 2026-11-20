@@ -1,5 +1,4 @@
 .policy "ruff-pt021-pytest-fixture-finalizer-callback" revision 1
-.guests off
 .description "Prefer a yield with the cleanup after it over a finalizer callback in a pytest fixture; reserve the callback for fixtures that build resources on demand."
 .language python
 .mode steer

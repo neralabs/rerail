@@ -1,5 +1,4 @@
 .policy "ruff-f842-unused-annotation" revision 1
-.guests off
 .description "Remove local variables that are annotated but never assigned or read; the annotation alone does nothing."
 .language python
 .mode steer

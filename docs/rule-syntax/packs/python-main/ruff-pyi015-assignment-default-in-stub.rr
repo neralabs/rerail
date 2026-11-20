@@ -1,5 +1,4 @@
 .policy "ruff-pyi015-assignment-default-in-stub" revision 1
-.guests off
 .description "Replace complex assigned values in stub files with an ellipsis; only simple literal values belong in a stub."
 .language python
 .mode steer

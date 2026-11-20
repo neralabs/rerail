@@ -1,5 +1,4 @@
 .policy "ruff-t100-debugger" revision 1
-.guests off
 .description "Remove debugger imports and calls such as pdb.set_trace() and breakpoint() before committing."
 .language python
 .mode steer

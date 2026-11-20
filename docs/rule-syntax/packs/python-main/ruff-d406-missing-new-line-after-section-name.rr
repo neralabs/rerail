@@ -1,5 +1,4 @@
 .policy "ruff-d406-missing-new-line-after-section-name" revision 1
-.guests off
 .description "End a NumPy-style section name at the end of its line, with no colon or trailing whitespace after it."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-ruf007-zip-instead-of-pairwise" revision 1
-.guests off
 .description "Use itertools.pairwise to iterate over successive pairs instead of zipping a sequence with a copy of itself shifted by one; it is clearer and avoids slicing."
 .language python
 .mode steer

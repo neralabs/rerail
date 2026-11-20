@@ -1,5 +1,4 @@
 .policy "ruff-ruf032-decimal-from-float-literal" revision 1
-.guests off
 .description "Pass Decimal a string instead of a float literal; a float is already rounded, so the decimal value is not the one written."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "bandit-b507-ssh-no-host-key-verification" revision 4
-.guests off
 .description "Don't let Paramiko auto-accept unknown SSH host keys with AutoAddPolicy or WarningPolicy; it opens the door to man-in-the-middle attacks."
 .language python
 .mode steer

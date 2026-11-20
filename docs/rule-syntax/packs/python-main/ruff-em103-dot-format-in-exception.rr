@@ -1,5 +1,4 @@
 .policy "ruff-em103-dot-format-in-exception" revision 1
-.guests off
 .description "Assign a formatted exception message to a variable before raising instead of calling format on a literal inline; the traceback otherwise shows the message twice."
 .language python
 .mode steer

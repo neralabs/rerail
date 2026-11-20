@@ -1,5 +1,4 @@
 .policy "ruff-fbt003-boolean-positional-value-in-call" revision 1
-.guests off
 .description "Pass True and False to Python calls as keyword arguments rather than positionally; a bare boolean does not say what it switches."
 .language python
 .mode steer

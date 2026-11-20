@@ -1,5 +1,4 @@
 .policy "ruff-pth108-os-unlink" revision 1
-.guests off
 .description "Use Path.unlink() instead of os.unlink(); path objects read better than string-based os calls."
 .language python
 .mode steer

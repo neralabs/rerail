@@ -1,5 +1,4 @@
 .policy "ruff-pyi042-snake-case-type-alias" revision 1
-.guests off
 .description "Name type aliases in CamelCase so they read as types and are not mistaken for ordinary variables."
 .language python
 .mode steer

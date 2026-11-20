@@ -1,5 +1,4 @@
 .policy "ruff-b010-set-attr-with-constant" revision 1
-.guests off
 .description "Use plain attribute assignment instead of setattr() with a constant attribute name; it is no safer and harder to read."
 .language python
 .mode steer

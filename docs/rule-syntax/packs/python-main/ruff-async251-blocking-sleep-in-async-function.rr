@@ -1,5 +1,4 @@
 .policy "ruff-async251-blocking-sleep-in-async-function" revision 1
-.guests off
 .description "Don't call time.sleep() inside async functions; await the async library's sleep so other tasks keep running."
 .language python
 .mode steer

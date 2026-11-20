@@ -1,5 +1,4 @@
 .policy "ruff-n803-invalid-argument-name" revision 1
-.guests off
 .description "Name function parameters in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants."
 .language python
 .mode steer

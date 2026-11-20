@@ -1,5 +1,4 @@
 .policy "ruff-d101-undocumented-public-class" revision 1
-.guests off
 .description "Give each public Python class a docstring that explains what it represents and how to use it."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-ytt303-sys-version-slice1" revision 1
-.guests off
 .description "Read the major version from sys.version_info instead of slicing the first character of sys.version; the first digit is wrong for a two-digit major version."
 .language python
 .mode steer

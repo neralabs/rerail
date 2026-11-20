@@ -1,5 +1,4 @@
 .policy "ruff-d418-overload-with-docstring" revision 1
-.guests off
 .description "Document an overloaded Python function on its implementation instead of its overload signatures, which the implementation replaces at runtime."
 .language python
 .mode steer

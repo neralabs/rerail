@@ -1,5 +1,4 @@
 .policy "ruff-up050-useless-class-metaclass-type" revision 1
-.guests off
 .description "Remove an explicit type metaclass from a class definition; it is already the default metaclass."
 .language python
 .mode steer

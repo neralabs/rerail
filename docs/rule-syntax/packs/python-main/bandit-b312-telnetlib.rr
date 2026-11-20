@@ -1,5 +1,4 @@
 .policy "bandit-b312-telnetlib" revision 1
-.guests off
 .description "Avoid opening telnetlib.Telnet connections; Telnet sends credentials and data unencrypted, so use SSH or another encrypted protocol."
 .language python
 .mode steer

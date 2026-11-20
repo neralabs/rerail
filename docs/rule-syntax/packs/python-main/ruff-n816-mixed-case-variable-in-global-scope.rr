@@ -1,5 +1,4 @@
 .policy "ruff-n816-mixed-case-variable-in-global-scope" revision 1
-.guests off
 .description "Name module-level variables in lowercase snake_case, not mixedCase, as PEP 8 recommends for variable names."
 .language python
 .mode steer

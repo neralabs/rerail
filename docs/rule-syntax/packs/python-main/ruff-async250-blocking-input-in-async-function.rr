@@ -1,5 +1,4 @@
 .policy "ruff-async250-blocking-input-in-async-function" revision 1
-.guests off
 .description "Don't call input() inside async functions; it blocks the event loop while waiting for the user."
 .language python
 .mode steer

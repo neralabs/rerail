@@ -1,5 +1,4 @@
 .policy "ruff-pth115-os-readlink" revision 1
-.guests off
 .description "Use Path.readlink() instead of os.readlink(); path objects read better than string-based os calls."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-pyi011-typed-argument-default-in-stub" revision 1
-.guests off
 .description "Use an ellipsis for annotated parameter defaults in stub files unless the default is a simple literal; type checkers ignore the value."
 .language python
 .mode steer

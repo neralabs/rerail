@@ -1,5 +1,4 @@
 .policy "ruff-f407-future-feature-not-defined" revision 1
-.guests off
 .description "Import only real feature names from __future__; an unknown feature name is a syntax error."
 .language python
 .mode steer

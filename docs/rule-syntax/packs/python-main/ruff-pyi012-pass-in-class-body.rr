@@ -1,5 +1,4 @@
 .policy "ruff-pyi012-pass-in-class-body" revision 1
-.guests off
 .description "Remove pass statements from class bodies in stub files that already contain other statements; they do nothing there."
 .language python
 .mode steer

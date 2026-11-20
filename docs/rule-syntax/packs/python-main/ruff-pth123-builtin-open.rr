@@ -1,5 +1,4 @@
 .policy "ruff-pth123-builtin-open" revision 1
-.guests off
 .description "Use the open method of a Path object instead of the open builtin; pathlib reads better than passing path strings around."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-pt011-pytest-raises-too-broad" revision 1
-.guests off
 .description "Constrain pytest.raises for broad exceptions such as ValueError or OSError with a message match or a more specific exception; otherwise unrelated errors also pass."
 .language python
 .mode steer

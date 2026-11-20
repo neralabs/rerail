@@ -1,5 +1,4 @@
 .policy "ruff-pt030-pytest-warns-too-broad" revision 1
-.guests off
 .description "Pass a match pattern to pytest.warns for Warning, UserWarning or DeprecationWarning, or expect a more specific warning; a generic warning also catches unrelated ones."
 .language python
 .mode steer

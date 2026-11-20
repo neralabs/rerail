@@ -1,5 +1,4 @@
 .policy "ruff-c401-unnecessary-generator-set" revision 1
-.guests off
 .description "Use a set comprehension instead of passing a generator expression to set, or pass the iterable itself when the generator yields its items unchanged."
 .language python
 .mode steer

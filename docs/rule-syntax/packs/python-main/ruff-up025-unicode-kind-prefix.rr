@@ -1,5 +1,4 @@
 .policy "ruff-up025-unicode-kind-prefix" revision 1
-.guests off
 .description "Remove the u prefix from string literals; all Python 3 strings are already Unicode."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-log009-undocumented-warn" revision 1
-.guests off
 .description "Use logging.WARNING instead of logging.WARN; WARN is an undocumented alias that the logging documentation does not mention."
 .language python
 .mode steer

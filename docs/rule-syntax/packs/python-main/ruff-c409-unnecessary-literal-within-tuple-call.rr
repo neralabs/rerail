@@ -1,5 +1,4 @@
 .policy "ruff-c409-unnecessary-literal-within-tuple-call" revision 1
-.guests off
 .description "Write a tuple literal instead of passing a list or tuple literal to the tuple constructor; the extra call only adds work."
 .language python
 .mode steer

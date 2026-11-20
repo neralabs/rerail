@@ -1,5 +1,4 @@
 .policy "ruff-ruf022-unsorted-dunder-all" revision 1
-.guests off
 .description "Keep the names in __all__ sorted: SCREAMING_CASE constants first, then CamelCase classes, then everything else, each group in natural order."
 .language python
 .mode steer

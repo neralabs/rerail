@@ -1,5 +1,4 @@
 .policy "ruff-up007-non-pep604-annotation-union" revision 1
-.guests off
 .description "Write union types as X | Y instead of Union[X, Y]; the union operator is shorter and needs no typing import."
 .language python
 .mode steer

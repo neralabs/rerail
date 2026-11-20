@@ -1,5 +1,4 @@
 .policy "ruff-pyi063-pep484-style-positional-only-parameter" revision 1
-.guests off
 .description "Mark positional-only parameters with a slash in the signature instead of a double-underscore name prefix; the slash is enforced at runtime, the prefix only by type checkers."
 .language python
 .mode steer

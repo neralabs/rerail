@@ -1,5 +1,4 @@
 .policy "ruff-up021-replace-universal-newlines" revision 1
-.guests off
 .description "Pass text instead of universal_newlines to subprocess.run; universal_newlines is the legacy name for the same option."
 .language python
 .mode steer

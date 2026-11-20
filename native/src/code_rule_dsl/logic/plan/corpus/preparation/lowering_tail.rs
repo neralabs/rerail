@@ -1442,7 +1442,6 @@ impl ProgramPass for Findings {
                         _ => false,
                     })
             }),
-            reads_guest_policy: v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY)),
         };
         let input = std::sync::Arc::clone(w.input());
         // The fields' edit, staged and stated on the edit or the derivation at the end.

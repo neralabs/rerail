@@ -1,5 +1,4 @@
 .policy "ruff-g002-logging-percent-format" revision 1
-.guests off
 .description "Pass values to a logging call as arguments instead of formatting its message with the percent operator; the logger then formats only records it emits."
 .language python
 .mode steer

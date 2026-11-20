@@ -1,5 +1,4 @@
 .policy "bandit-b508-snmp-insecure-version" revision 1
-.guests off
 .description "Use SNMPv3 instead of SNMPv1 or v2c in pysnmp CommunityData; the older versions send community strings in clear text."
 .language python
 .mode steer

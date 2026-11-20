@@ -1,5 +1,4 @@
 .policy "ruff-pd012-pandas-use-of-dot-read-table" revision 1
-.guests off
 .description "Use pandas read_csv instead of read_table for comma-separated data; read_csv already defaults to a comma separator."
 .language python
 .mode steer

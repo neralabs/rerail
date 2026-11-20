@@ -1,5 +1,4 @@
 .policy "ruff-pyi057-byte-string-usage" revision 1
-.guests off
 .description "Avoid ByteString from typing and collections.abc; it is deprecated and unclear, so use Buffer or a union of bytes types instead."
 .language python
 .mode steer

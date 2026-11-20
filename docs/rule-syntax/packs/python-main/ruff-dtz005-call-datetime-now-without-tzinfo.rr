@@ -1,5 +1,4 @@
 .policy "ruff-dtz005-call-datetime-now-without-tzinfo" revision 1
-.guests off
 .description "Pass a real timezone to datetime.now; without one, or with None, it returns a naive local time with no zone information."
 .language python
 .mode steer

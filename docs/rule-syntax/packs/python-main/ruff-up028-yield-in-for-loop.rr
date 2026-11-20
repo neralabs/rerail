@@ -1,5 +1,4 @@
 .policy "ruff-up028-yield-in-for-loop" revision 1
-.guests off
 .description "Use yield from to delegate to an iterable instead of looping over it and yielding each item."
 .language python
 .mode steer

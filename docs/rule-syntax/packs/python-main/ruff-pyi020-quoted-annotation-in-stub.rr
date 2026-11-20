@@ -1,5 +1,4 @@
 .policy "ruff-pyi020-quoted-annotation-in-stub" revision 1
-.guests off
 .description "Write type annotations in stub files without quotes; stubs resolve forward references natively, so quotes are never needed."
 .language python
 .mode steer

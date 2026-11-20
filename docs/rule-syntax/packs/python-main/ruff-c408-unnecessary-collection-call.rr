@@ -1,5 +1,4 @@
 .policy "ruff-c408-unnecessary-collection-call" revision 1
-.guests off
 .description "Use a literal instead of calling dict(), list() or tuple() with no arguments, or dict() with only named keyword arguments; the literal is clearer and skips a call."
 .language python
 .mode steer

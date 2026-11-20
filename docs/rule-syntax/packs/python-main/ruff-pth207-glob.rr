@@ -1,5 +1,4 @@
 .policy "ruff-pth207-glob" revision 1
-.guests off
 .description "Use Path.glob() or Path.rglob() instead of glob.glob() and glob.iglob(); path objects read better than string-based glob calls."
 .language python
 .mode steer

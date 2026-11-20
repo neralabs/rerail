@@ -1,5 +1,4 @@
 .policy "ruff-pth100-os-path-abspath" revision 1
-.guests off
 .description "Use Path.resolve() instead of os.path.abspath(); path objects read better than string-based os.path calls."
 .language python
 .mode steer

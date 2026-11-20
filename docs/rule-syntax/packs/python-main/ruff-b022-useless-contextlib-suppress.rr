@@ -1,5 +1,4 @@
 .policy "ruff-b022-useless-contextlib-suppress" revision 1
-.guests off
 .description "Pass at least one exception type to contextlib.b022_suppress(); with none it suppresses nothing."
 .language python
 .mode steer

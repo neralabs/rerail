@@ -1,5 +1,4 @@
 .policy "ruff-d104-undocumented-public-package" revision 1
-.guests off
 .description "Give each public Python package a docstring at the top of its init module that describes what the package provides."
 .language python
 .mode steer

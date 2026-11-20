@@ -1,5 +1,4 @@
 .policy "ruff-c410-unnecessary-literal-within-list-call" revision 1
-.guests off
 .description "Write a list literal instead of passing a list or tuple literal to the list constructor; the call only copies the literal."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-e722-bare-except" revision 1
-.guests off
 .description "Name the exception types in except clauses instead of a bare except, unless the handler re-raises; a bare except also catches KeyboardInterrupt and SystemExit."
 .language python
 .mode steer

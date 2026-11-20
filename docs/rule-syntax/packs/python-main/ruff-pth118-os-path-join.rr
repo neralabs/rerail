@@ -1,5 +1,4 @@
 .policy "ruff-pth118-os-path-join" revision 1
-.guests off
 .description "Use Path objects with the slash operator or joinpath instead of os.path.join or os.sep.join; pathlib reads better than joining path strings."
 .language python
 .mode steer

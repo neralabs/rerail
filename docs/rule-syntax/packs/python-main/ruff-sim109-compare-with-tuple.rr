@@ -1,5 +1,4 @@
 .policy "ruff-sim109-compare-with-tuple" revision 1
-.guests off
 .description "Use a membership test against a tuple instead of several or-chained equality checks of the same variable."
 .language python
 .mode steer

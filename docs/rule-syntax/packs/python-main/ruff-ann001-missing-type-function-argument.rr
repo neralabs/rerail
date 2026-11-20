@@ -1,5 +1,4 @@
 .policy "ruff-ann001-missing-type-function-argument" revision 1
-.guests off
 .description "Annotate every function parameter with a type so type checkers can verify calls and readers know what the function accepts."
 .language python
 .mode steer

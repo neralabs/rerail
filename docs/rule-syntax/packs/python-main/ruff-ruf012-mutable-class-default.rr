@@ -1,5 +1,4 @@
 .policy "ruff-ruf012-mutable-class-default" revision 1
-.guests off
 .description "Initialize mutable class attributes such as lists, dicts and sets in the constructor, or mark them as class variables; a default in the class body is shared by every instance."
 .language python
 .mode steer

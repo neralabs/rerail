@@ -1,5 +1,4 @@
 .policy "ruff-c414-unnecessary-double-cast-or-process" revision 1
-.guests off
 .description "Remove a list, tuple, set, sorted or reversed call nested directly inside a list, tuple, set or sorted call; the outer call already accepts any iterable."
 .language python
 .mode steer

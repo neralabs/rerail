@@ -1,5 +1,4 @@
 .policy "ruff-npy002-numpy-legacy-random" revision 1
-.guests off
 .description "Use a NumPy random Generator instead of the legacy global-state functions in numpy.random."
 .language python
 .mode steer

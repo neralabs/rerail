@@ -1,5 +1,4 @@
 .policy "ruff-ruf008-mutable-dataclass-default" revision 1
-.guests off
 .description "Give dataclass and attrs fields a default factory instead of a mutable default such as a list, dict or set; one object would be shared by every instance."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-f541-f-string-missing-placeholders" revision 2
-.guests off
 .description "Remove the f prefix from Python f-strings that have no placeholders; it suggests interpolation that never happens."
 .language python
 .mode steer

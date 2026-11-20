@@ -1,5 +1,4 @@
 .policy "ruff-pth210-invalid-pathlib-with-suffix" revision 1
-.guests off
 .description "Pass a suffix that starts with a dot to Path.with_suffix(); a suffix without one raises an error at runtime."
 .language python
 .mode steer

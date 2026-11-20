@@ -1,5 +1,4 @@
 .policy "ruff-int001-f-string-in-get-text-func-call" revision 1
-.guests off
 .description "Pass a constant template to a gettext call and format the translated result; an f-string is evaluated before the catalog lookup."
 .language python
 .mode steer

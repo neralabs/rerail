@@ -1,5 +1,4 @@
 .policy "ruff-ruf010-explicit-f-string-type-conversion" revision 1
-.guests off
 .description "Use the f-string conversion flag instead of calling str, repr or ascii on an interpolated value; the flag is shorter and idiomatic."
 .language python
 .mode steer

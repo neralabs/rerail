@@ -1,5 +1,4 @@
 .policy "ruff-ruf046-unnecessary-cast-to-int" revision 1
-.guests off
 .description "Remove int() around a value that is already an integer, such as a length, an integer literal or arithmetic on integers."
 .language python
 .mode steer

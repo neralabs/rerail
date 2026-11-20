@@ -1,5 +1,4 @@
 .policy "ruff-perf101-unnecessary-list-cast" revision 1
-.guests off
 .description "Iterate over a list, tuple or set directly in a for loop instead of first copying it into a new list, unless the loop changes it; the copy only costs time."
 .language python
 .mode steer

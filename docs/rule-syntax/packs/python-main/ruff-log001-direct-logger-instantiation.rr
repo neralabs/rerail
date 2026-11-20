@@ -1,5 +1,4 @@
 .policy "ruff-log001-direct-logger-instantiation" revision 1
-.guests off
 .description "Use logging.getLogger() instead of instantiating Logger directly; a directly created logger is not part of the logger tree and bypasses logging configuration."
 .language python
 .mode steer

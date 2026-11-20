@@ -1,5 +1,4 @@
 .policy "ruff-perf402-manual-list-copy" revision 1
-.guests off
 .description "Use list or extend to copy an iterable into a list instead of appending items one by one in a for loop."
 .language python
 .mode steer

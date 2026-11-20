@@ -1,5 +1,4 @@
 .policy "ruff-ann202-missing-return-type-private-function" revision 1
-.guests off
 .description "Add a return type annotation to private and nested functions so type checkers can verify what they return."
 .language python
 .mode steer

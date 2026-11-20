@@ -1,5 +1,4 @@
 .policy "bandit-b606-start-process-with-no-shell" revision 1
-.guests off
 .description "Validate input passed to the os exec, spawn and startfile functions; they start whatever program and arguments they receive."
 .language python
 .mode steer

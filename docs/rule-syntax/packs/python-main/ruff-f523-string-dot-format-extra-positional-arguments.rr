@@ -1,5 +1,4 @@
 .policy "ruff-f523-string-dot-format-extra-positional-arguments" revision 1
-.guests off
 .description "Remove positional arguments to str.format() that no placeholder in the string uses; they are silently ignored."
 .language python
 .mode steer

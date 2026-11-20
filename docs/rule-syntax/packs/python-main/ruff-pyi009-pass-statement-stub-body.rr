@@ -1,5 +1,4 @@
 .policy "ruff-pyi009-pass-statement-stub-body" revision 1
-.guests off
 .description "Use an ellipsis instead of pass as the whole body of a function or class in stub files; stubs only declare types and are never executed."
 .language python
 .mode steer

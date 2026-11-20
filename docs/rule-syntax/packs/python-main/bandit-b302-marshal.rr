@@ -1,5 +1,4 @@
 .policy "bandit-b302-marshal" revision 1
-.guests off
 .description "Avoid marshal.load() and marshal.loads(); marshal is not safe against malicious or malformed data, so never use it on untrusted input."
 .language python
 .mode steer

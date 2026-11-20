@@ -1,5 +1,4 @@
 .policy "ruff-ruf024-mutable-fromkeys-value" revision 1
-.guests off
 .description "Don't pass a mutable object such as a list, dict or set as the value to dict.fromkeys; every key shares the same instance."
 .language python
 .mode steer

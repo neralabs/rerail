@@ -1,5 +1,4 @@
 .policy "ruff-arg005-unused-lambda-argument" revision 1
-.guests off
 .description "Remove lambda parameters the body never reads, or prefix them with an underscore when the caller passes them anyway."
 .language python
 .mode steer

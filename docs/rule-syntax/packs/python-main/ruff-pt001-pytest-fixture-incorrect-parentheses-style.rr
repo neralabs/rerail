@@ -1,5 +1,4 @@
 .policy "ruff-pt001-pytest-fixture-incorrect-parentheses-style" revision 1
-.guests off
 .description "Drop the empty parentheses from an argument-free pytest fixture decorator, so fixtures follow the style of the pytest documentation."
 .language python
 .mode steer

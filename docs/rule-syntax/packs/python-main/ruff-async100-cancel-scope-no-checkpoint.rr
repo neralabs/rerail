@@ -1,5 +1,4 @@
 .policy "ruff-async100-cancel-scope-no-checkpoint" revision 1
-.guests off
 .description "Add an await inside asyncio, anyio or trio timeout and cancel-scope blocks; without a checkpoint the timeout can never fire."
 .language python
 .mode steer

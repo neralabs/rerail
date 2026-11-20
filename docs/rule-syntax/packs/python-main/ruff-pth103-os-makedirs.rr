@@ -1,5 +1,4 @@
 .policy "ruff-pth103-os-makedirs" revision 1
-.guests off
 .description "Use Path.mkdir(parents=True) instead of os.makedirs(); path objects read better than string-based os calls."
 .language python
 .mode steer

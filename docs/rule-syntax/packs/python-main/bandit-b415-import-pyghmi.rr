@@ -1,5 +1,4 @@
 .policy "bandit-b415-import-pyghmi" revision 1
-.guests off
 .description "Avoid importing pyghmi; IPMI is an insecure protocol, so prefer an encrypted management protocol."
 .language python
 .mode steer

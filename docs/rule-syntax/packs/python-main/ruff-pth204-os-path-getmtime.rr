@@ -1,5 +1,4 @@
 .policy "ruff-pth204-os-path-getmtime" revision 1
-.guests off
 .description "Use Path.stat().st_mtime instead of os.path.getmtime(); path objects read better than string-based os.path calls."
 .language python
 .mode steer

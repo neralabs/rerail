@@ -1,5 +1,4 @@
 .policy "ruff-try003-raise-vanilla-args" revision 1
-.guests off
 .description "Build exception messages inside a custom exception class instead of passing message text at the raise site; the wording then stays consistent wherever it is raised."
 .language python
 .mode steer

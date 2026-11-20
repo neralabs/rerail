@@ -162,7 +162,7 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
                 }
             })
             .collect();
-        let guest_errors = self.guest_policy(seen.reads_guest_policy);
+        let guest_errors = self.guest_policy()?;
         if violations.is_empty() && on.is_empty() && guest_errors.is_empty() {
             return Ok(false);
         }
@@ -388,29 +388,25 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
     }
 
     /// Decision 0055's settings as `guest_policy` facts, which the corpus runner and the batch read:
-    /// - `.guests on | off`: `guest_policy("library", …)`, whether the libraries' `embed`s are made (on by default);
+    /// - `.guests on | off` and `.scope embedded true | false` are refused (decision 0494): `.embedded` says what a
+    ///   run reads of other languages' files, and a program shows files and the run language's code guests always;
     /// - `.on guest_error [GRAMMAR] skip | partial [warn | report CODE]`, or `.on guest_error [GRAMMAR] warn | report
     ///   CODE` (skip): `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`. A skipped guest is
     ///   withheld; a partial one keeps the tree it has. `warn` and `report` both give a finding, `warn`'s of severity
     ///   warning (`.severity guest_error warning`); the findings are returned, `(grammar, code)`, for `findings`.
-    fn guest_policy(&mut self, reads: bool) -> Vec<(Option<String>, String)> {
+    fn guest_policy(&mut self) -> Result<Vec<(Option<String>, String)>, Error> {
         let mut facts = Vec::new();
         let mut findings = Vec::new();
         let mut warn = false;
         let settings = self.prog.settings();
         for (key, text) in &settings {
             let words: Vec<&str> = text.split_whitespace().collect();
-            if key == "guests" {
-                if let [v @ ("on" | "off")] = words.as_slice() {
-                    facts.push(("library".to_owned(), (*v).to_owned()));
-                }
-                continue;
+            if key == "guests" || (key == "scope" && words.first() == Some(&"embedded")) {
+                return Err(Error::Syntax(format!(
+                    ".{key} {text}: retired (decision 0494): a run reads other languages' files for their programs only under `.embedded on`, and a rule reaches a string's code through `parsed`"
+                )));
             }
-            // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rr`).
             if key == "scope" {
-                if let ["embedded", v @ ("true" | "false")] = words.as_slice() {
-                    facts.push(("library".to_owned(), if *v == "true" { "on" } else { "off" }.to_owned()));
-                }
                 continue;
             }
             let ["guest_error", rest @ ..] = words.as_slice() else { continue };
@@ -436,20 +432,12 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
             all.push(("severity".to_owned(), "guest_error warning".to_owned()));
             self.prog.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&all));
         }
-        // The libraries' `embed`s are made by default: a program that reads the setting and sets none reads
-        // `guest_policy("library", "on")`, a stated fact, so `!guest_policy("library", "off")` is decided before the
-        // run (`simplify`) instead of reading a relation nothing gives.
-        // A program printed with the fact states it already.
-        let stated = self.prog.fact_rows(GUEST_POLICY).iter().any(|r| matches!(r.first(), Some(Value::Str(k)) if k == "library"));
-        if reads && !stated && !facts.iter().any(|(k, _)| k == "library") {
-            facts.push(("library".to_owned(), "on".to_owned()));
-        }
         if !facts.is_empty() {
             self.prog.declare(GUEST_POLICY, &[("k", "sym"), ("v", "sym")]);
             let rows: Vec<crate::code_rule_dsl::logic::front::List<Value>> = facts.into_iter().map(|(k, v)| [Value::Str(k.into()), Value::Str(v.into())].into()).collect();
             self.prog.add_facts(GUEST_POLICY, &rows);
         }
-        findings
+        Ok(findings)
     }
 
     /// Error directives use the same public diagnostic transport as ordinary violations.

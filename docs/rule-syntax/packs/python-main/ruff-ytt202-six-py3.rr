@@ -1,5 +1,4 @@
 .policy "ruff-ytt202-six-py3" revision 1
-.guests off
 .description "Use not six.PY2 instead of six.PY3; six.PY3 is false on Python 4 and later."
 .language python
 .mode steer

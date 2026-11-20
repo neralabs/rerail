@@ -1,5 +1,4 @@
 .policy "ruff-pyi008-unrecognized-platform-name" revision 1
-.guests off
 .description "Compare sys.platform only against linux, win32, cygwin or darwin in stub files; other names are likely typos that type checkers don't recognize."
 .language python
 .mode steer

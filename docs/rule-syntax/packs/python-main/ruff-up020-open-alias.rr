@@ -1,5 +1,4 @@
 .policy "ruff-up020-open-alias" revision 1
-.guests off
 .description "Use the builtin open instead of io.open; in Python 3 they are the same function."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-air301-airflow3-removal" revision 1
-.guests off
 .description "Replace or remove the APIs, arguments and context keys that Airflow 3 removed, so the code keeps working after the upgrade."
 .language python
 .mode steer
