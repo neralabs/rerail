@@ -861,7 +861,7 @@ function listedDocuments({ fail }: Validation, pack: RulePackFile): ReadonlyMap<
 function checkListing(validation: Validation, pack: RulePackFile, included: ReadonlySet<string>): void {
   const byDocument = listedDocuments(validation, pack);
   for (const file of filesUnder(validation.directory, join(validation.directory, "rules"))) {
-    if (!byDocument.has(file) && !included.has(file)) validation.fail("rules", `${file} is not listed in pack.json, and no listed rule includes it`);
+    if (!byDocument.has(file) && !included.has(file)) validation.fail("rules", `${file} is not listed in pack.json`);
   }
 }
 

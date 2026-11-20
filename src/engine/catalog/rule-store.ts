@@ -3,7 +3,7 @@ import { openRerailDatabase, type RerailDatabase } from "../storage/database.js"
 import { readStoredCodeRule, reportQuarantinedRule, type QuarantinedRule } from "./rule-quarantine.js";
 import { storableCodeRule } from "../code-rule/code-rule-compile.js";
 import type { CodeRule } from "../code-rule/code-rule-schema.js";
-import type { RerailRule } from "./rerail-rule.js";
+import type { RerailRule } from "./rerail-rules/rerail-rule.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
 import { parseConversationRule, type ConversationRule, type SampleBoundary } from "./rule-schema.js";

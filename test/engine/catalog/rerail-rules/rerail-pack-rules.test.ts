@@ -9,21 +9,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { keptRerailDescriber } from "../../../src/engine/catalog/kept-rerail-descriptions.js";
-import { packCompileChecks, PACK_COMPILE_CHECKS_FILE } from "../../../src/engine/catalog/pack-compile-checks.js";
-import type { RerailDescription } from "../../../src/engine/catalog/rerail-rule.js";
-import { packApprovalDigest } from "../../../src/engine/catalog/rule-approval.js";
-import { catalogDigest, readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
-import { setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
-import { readRulePack } from "../../../src/engine/catalog/rule-packs.js";
-import { CheckoutCatalogs } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
-import { openRerailDatabase } from "../../../src/engine/storage/database.js";
-import { ruleDocumentDigest } from "../../../src/engine/stable-json.js";
-import type { RrDescription } from "../../../src/engine/rr/rr-runner.js";
-import { installPackDirectory } from "../../support/installed-packs.js";
-import { fixturesPath } from "../../support/oracles.js";
-import { removeFolderSync } from "../../support/platform/remove-folder.js";
-import { setUpTestRepository } from "../../support/repository-rules.js";
+import { keptRerailDescriber } from "../../../../src/engine/catalog/rerail-rules/kept-rerail-descriptions.js";
+import { packCompileChecks, PACK_COMPILE_CHECKS_FILE } from "../../../../src/engine/catalog/pack-compile-checks.js";
+import type { RerailDescription } from "../../../../src/engine/catalog/rerail-rules/rerail-rule.js";
+import { packApprovalDigest } from "../../../../src/engine/catalog/rule-approval.js";
+import { catalogDigest, readRuleCatalog } from "../../../../src/engine/catalog/rule-catalog.js";
+import { setRuleSetting } from "../../../../src/engine/catalog/rule-configuration.js";
+import { readRulePack } from "../../../../src/engine/catalog/rule-packs.js";
+import { CheckoutCatalogs } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { openRerailDatabase } from "../../../../src/engine/storage/database.js";
+import { ruleDocumentDigest } from "../../../../src/engine/stable-json.js";
+import type { RrDescription } from "../../../../src/engine/rr/rr-runner.js";
+import { installPackDirectory } from "../../../support/installed-packs.js";
+import { fixturesPath } from "../../../support/oracles.js";
+import { removeFolderSync } from "../../../support/platform/remove-folder.js";
+import { setUpTestRepository } from "../../../support/repository-rules.js";
 
 const SAMPLE = fixturesPath("packs", "rr-sample");
 const LIBRARY = join("rules", "lib", "sample-calls.rerail");
@@ -170,17 +170,17 @@ describe("the checkout catalog's .rerail rules", () => {
     temporary.push(root);
     execFileSync("git", ["init", "--quiet"], { cwd: root });
     const databasePath = join(root, ".rerail", "rerail.sqlite");
-    const directory = samplePack();
-    installPackDirectory(directory, "rr-sample", undefined, "0.1.0");
+    // The runner reads each rule where the pack is installed, in the Rerail home.
+    const installed = installPackDirectory(samplePack(), "rr-sample", undefined, "0.1.0");
     const key = setUpTestRepository(root, { packs: ["rr-sample"] }, databasePath);
     const catalogs = new CheckoutCatalogs(databasePath);
     const database = openRerailDatabase(databasePath);
     try {
       const catalog = catalogs.catalog(root);
       expect(catalog.snapshot().codeRules).toEqual([]);
-      expect(catalog.snapshot().rerailRules.map(({ id, path, placement }) => ({ id, path, placement }))).toEqual([
-        { id: "rr-sample-assert", path: join(directory, "rules", "rr-sample-assert.rerail"), placement: [{ folder: "", mode: "steer" }] },
-        { id: "rr-sample-print-call", path: join(directory, "rules", "rr-sample-print-call.rerail"), placement: [{ folder: "", mode: "steer" }] },
+      expect(catalog.snapshot().rerailRules.map(({ id, path, scope, language, placement }) => ({ id, path, scope, language, placement }))).toEqual([
+        { id: "rr-sample-assert", path: join(installed, "rules", "rr-sample-assert.rerail"), scope: { include: ["**/*.py"], exclude: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
+        { id: "rr-sample-print-call", path: join(installed, "rules", "rr-sample-print-call.rerail"), scope: { include: ["**/*.py"], exclude: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
       ]);
       expect(catalog.status.ruleCount).toBe(2);
 

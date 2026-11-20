@@ -14,7 +14,7 @@ import type { RuleCatalog, SkippedRulePack } from "./repository-model.js";
 import { catalogDigest } from "./rule-catalog.js";
 import { parseRuleDocument, readJsonDocument } from "./rule-documents.js";
 import { compareRulePacks, type LoadedRulePack, type RulePack, type RulePackRule } from "./rule-packs.js";
-import { RERAIL_DOCUMENT_EXTENSION } from "./rerail-rule.js";
+import { RERAIL_DOCUMENT_EXTENSION } from "./rerail-rules/rerail-rule.js";
 import { ruleKindOf, type RuleDocument } from "./rule-store.js";
 
 /** Where a checkout keeps its own rules, relative to its top level. */

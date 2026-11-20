@@ -20,7 +20,7 @@ import {
   type RulePackMatch,
   type RulePackSignal,
 } from "./rule-pack-matcher.js";
-import { describeRerailRules, RERAIL_DOCUMENT_EXTENSION, rerailRuleOf, unsupportedRerailRule, type RerailDescriber } from "./rerail-rule.js";
+import { describeRerailRules, RERAIL_DOCUMENT_EXTENSION, rerailRuleOf, unsupportedRerailRule, type RerailDescriber } from "./rerail-rules/rerail-rule.js";
 import { ruleKindOf, type RuleDocument } from "./rule-store.js";
 import type { RuleKind } from "../storage/schema.js";
 import type { RrDescription } from "../rr/rr-runner.js";

@@ -76,7 +76,7 @@ export {
   unsupportedRerailRule,
   type RerailDescription,
   type RerailRule,
-} from "./catalog/rerail-rule.js";
+} from "./catalog/rerail-rules/rerail-rule.js";
 export { runRerailPolicies, type RrDescription, type RrFinding, type RrRunOutcome } from "./rr/rr-runner.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
 export { RepositoryWorktreeWalks } from "./code-rule/worktree-walks.js";

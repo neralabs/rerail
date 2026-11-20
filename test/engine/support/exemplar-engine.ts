@@ -36,14 +36,14 @@ export function nativeRefusingExemplar(native: typeof NativeModule): typeof Nati
       wrapped ??= new Proxy(binding, {
         get(target, property) {
           if (property !== "CodeRuleDslRuntime") return Reflect.get(target, property);
-          return {
-            compile(source: string, format: NativeModule.CodeRuleDslSourceFormat, capabilities: string) {
-              const document: unknown = JSON.parse(source);
-              const unsupported = namesExemplar(document) ? codeRuleLanguageNotSupported(document) : undefined;
-              if (unsupported !== undefined) throw new Error(`${unsupported.code}: ${unsupported.reason}`);
-              return target.CodeRuleDslRuntime.compile(source, format, capabilities);
-            },
+          // Only compile refuses the exemplar; every other call (testRr, pythonAstBatch) is the product build's.
+          const compile = (source: string, format: NativeModule.CodeRuleDslSourceFormat, capabilities: string) => {
+            const document: unknown = JSON.parse(source);
+            const unsupported = namesExemplar(document) ? codeRuleLanguageNotSupported(document) : undefined;
+            if (unsupported !== undefined) throw new Error(`${unsupported.code}: ${unsupported.reason}`);
+            return target.CodeRuleDslRuntime.compile(source, format, capabilities);
           };
+          return new Proxy(target.CodeRuleDslRuntime, { get: (runtime, name) => (name === "compile" ? compile : Reflect.get(runtime, name)) });
         },
       });
       return wrapped;

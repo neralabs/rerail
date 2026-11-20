@@ -4,8 +4,8 @@
  * description, language, scope and violation codes, none of which `pack.json` restates. Such a rule runs through the
  * `.rerail` runner (`src/engine/rr/`), never through the JSON engine, and takes no options.
  */
-import { describeRerailPoliciesSync, type RrDescription } from "../rr/rr-runner.js";
-import type { RuleMode } from "./rule-mode.js";
+import { describeRerailPoliciesSync, type RrDescription } from "../../rr/rr-runner.js";
+import type { RuleMode } from "../rule-mode.js";
 
 /** The extension of a rule document written in `.rerail`. */
 export const RERAIL_DOCUMENT_EXTENSION = ".rerail";
