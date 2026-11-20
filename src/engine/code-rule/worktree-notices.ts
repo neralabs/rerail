@@ -16,6 +16,7 @@
  * a path in or under what the read did not walk or observe (an ignored file or folder, another worktree). A notice the
  * system says it lost, a watch that ended, and every notice that arrives while a read runs count.
  */
+import { lstat } from "node:fs/promises";
 import type { TreeNotice, TreeWatch } from "./tree-watch.js";
 
 /** What a walk's read of a worktree saw, by paths relative to the worktree (`/`-separated, `""` for the worktree itself). */
@@ -29,10 +30,12 @@ export interface WorktreeRead {
 /** A worktree that could not be watched is tried again after this long, read on every walk meanwhile. */
 export const WATCH_RETRY_MS = 600_000;
 /**
- * A worktree whose watch ended is watched again no sooner than this after: read whole on every walk meanwhile. A watch
- * ends when the worktree or a folder above it is renamed, moved or deleted (on Windows, when the path then holds no
- * folder or another, or after a run of renames: the engine's `REOPENS` within `REOPEN_WINDOW`), or on a watch error.
- * Watching it again at once would chase a worktree still being moved or replaced, its watch ending again on every walk.
+ * A worktree whose watch ended is watched again no sooner than this after, read whole on every walk meanwhile, unless
+ * another folder than the one it watched now stands at its path (`folderAt`): a worktree made again there is watched
+ * as the next walk reads it, so a write after that read is a notice. A watch ends when the worktree or a folder above
+ * it is renamed, moved or deleted (on Windows, when the path then holds no folder or another, or after a run of renames:
+ * the engine's `REOPENS` within `REOPEN_WINDOW`), or on a watch error. Watching the same folder again at once would
+ * chase a worktree still being moved, its watch ending again on every walk.
  */
 export const REWATCH_MS = 5_000;
 
@@ -71,6 +74,25 @@ function inLeftOut(seen: WorktreeRead, event: "change" | "rename", parts: readon
     if (seen.leftOut.has(prefix) && underOrTimesOf(parts, index, event)) return true;
   }
   return false;
+}
+
+/**
+ * The folder at `root`: its device, file number and birth time (a new folder on Linux may get the file number of one
+ * just deleted); `""` when none is there. Read through Node's thread pool, so a path that does not answer (a hung
+ * network share) holds no walk of another worktree and no event in the daemon's thread.
+ */
+export async function folderAt(root: string): Promise<string> {
+  try {
+    const info = await lstat(root, { bigint: true });
+    return info.isDirectory() ? `${info.dev}:${info.ino}:${info.birthtimeNs}` : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Whether `now`, the folder at a worktree's path, is another than `before`, the one an ended watch watched (`folderAt`). */
+function remade(before: string, now: string): boolean {
+  return now !== "" && now !== before;
 }
 
 /** Whether any path a notice names counts against `seen` (`noticeCounts`). */
@@ -125,6 +147,14 @@ interface Watched {
   /** What the last finished read saw; undefined while a read runs or before the first, when every notice counts. */
   seen: WorktreeRead | undefined;
   changed: boolean;
+  /** The folder at the worktree's path as the watch began (`folderAt`). */
+  readonly folder: string;
+}
+
+/** A watch that ended: when, and the folder it watched (`folderAt`). */
+interface Ended {
+  readonly at: number;
+  readonly folder: string;
 }
 
 /**
@@ -137,18 +167,28 @@ export class WorktreeNotices {
   /** Whether the watch follows the folders a read walked (Linux), rather than each worktree's whole tree. */
   readonly #byFolder: boolean;
   readonly #now: () => number;
+  readonly #folderAt: (root: string) => Promise<string>;
   readonly #watched = new Map<string, Watched>();
   /** When each worktree that could not be watched failed. */
   readonly #failed = new Map<string, number>();
-  /** When the watch of each worktree last ended. */
-  readonly #ended = new Map<string, number>();
+  /** The watch of each worktree that last ended. */
+  readonly #ended = new Map<string, Ended>();
   /** The watched worktrees a notice counted in since a read of each began, until `noticed` hands them on. */
   readonly #noticed = new Set<string>();
+  /** The worktrees the last `retain` kept; undefined before the first. */
+  #retained: ReadonlySet<string> | undefined;
 
-  constructor(options: { treeWatch?: TreeWatch | undefined; platform?: NodeJS.Platform; now?: () => number } = {}) {
+  /** `folderAt`: the folder at a worktree's path (`folderAt` by default), which tells a worktree made again there. */
+  constructor(options: {
+    treeWatch?: TreeWatch | undefined;
+    platform?: NodeJS.Platform;
+    now?: () => number;
+    folderAt?: (root: string) => Promise<string>;
+  } = {}) {
     this.#watch = options.treeWatch;
     this.#byFolder = (options.platform ?? process.platform) === "linux";
     this.#now = options.now ?? Date.now;
+    this.#folderAt = options.folderAt ?? folderAt;
   }
 
   /** Takes every notice the watch queued since the last take, and weighs each against its worktree's last read. */
@@ -160,10 +200,10 @@ export class WorktreeNotices {
   /**
    * Whether the worktree at `root` (physical) may hold a change since its last read; the first call starts watching it,
    * before its first read. True until a watch of it was up for a whole read, after a notice that counts, and while it
-   * cannot be watched.
+   * cannot be watched. A worktree not watched yet has its folder read first (`folderAt`), which the walk awaits.
    */
-  changed(root: string): boolean {
-    return (this.#watched.get(root) ?? this.#open(root))?.changed ?? true;
+  async changed(root: string): Promise<boolean> {
+    return (this.#watched.get(root) ?? (await this.#open(root)))?.changed ?? true;
   }
 
   /** Whether `root` is watched now, so a notice would tell of a change in it. */
@@ -209,6 +249,7 @@ export class WorktreeNotices {
 
   /** Stops watching each worktree not in `roots`, releasing every handle the watch held on it. */
   retain(roots: ReadonlySet<string>): void {
+    this.#retained = roots;
     for (const root of this.#watched.keys()) {
       if (roots.has(root)) continue;
       this.#watched.delete(root);
@@ -219,9 +260,14 @@ export class WorktreeNotices {
     forgetOthers(this.#noticed, roots);
   }
 
-  /** Starts watching `root`, its root folder alone until a read names its folders; undefined when it cannot be watched now. */
-  #open(root: string): Watched | undefined {
-    if (this.#watch === undefined || this.#tooSoon(root)) return undefined;
+  /**
+   * Starts watching `root`, its root folder alone until a read names its folders; undefined when it cannot be watched
+   * now, or when a `retain` let go of it while its folder was read.
+   */
+  async #open(root: string): Promise<Watched | undefined> {
+    if (this.#watch === undefined || this.#waits(root)) return undefined;
+    const folder = await this.#folderAt(root);
+    if (this.#waitsFor(root, folder) || this.#letGo(root)) return undefined;
     this.#failed.delete(root);
     this.#ended.delete(root);
     // Up before the read: a change made while it runs is a notice.
@@ -229,17 +275,41 @@ export class WorktreeNotices {
       this.#failed.set(root, this.#now());
       return undefined;
     }
-    const watched: Watched = { followed: new FollowedFolders(), seen: undefined, changed: true };
+    const watched: Watched = { followed: new FollowedFolders(), seen: undefined, changed: true, folder };
     this.#watched.set(root, watched);
     return watched;
   }
 
-  /** Whether `root` could not be watched, or its watch ended, too lately to ask for it again now. */
-  #tooSoon(root: string): boolean {
+  /**
+   * Whether `root` is not to be watched yet, before its folder is read: it could not be watched within
+   * `WATCH_RETRY_MS`, or its watch ended within `REWATCH_MS` and no folder was read as that watch began, so none can be
+   * told from it.
+   */
+  #waits(root: string): boolean {
     const failedAt = this.#failed.get(root);
     if (failedAt !== undefined && this.#now() - failedAt < WATCH_RETRY_MS) return true;
-    const endedAt = this.#ended.get(root);
-    return endedAt !== undefined && this.#now() - endedAt < REWATCH_MS;
+    return this.#endedLately(root)?.folder === "";
+  }
+
+  /**
+   * Whether `root`, with `folder` at its path now, is not to be watched yet: its watch ended within `REWATCH_MS` and no
+   * other folder stands there (`remade`). One made again there is watched at once: no notice tells of a write in it
+   * until it is watched, and no walk may come for one.
+   */
+  #waitsFor(root: string, folder: string): boolean {
+    const ended = this.#endedLately(root);
+    return ended !== undefined && !remade(ended.folder, folder);
+  }
+
+  /** Whether the last `retain` let go of `root`: no session watches it any more. */
+  #letGo(root: string): boolean {
+    return this.#retained !== undefined && !this.#retained.has(root);
+  }
+
+  /** The watch of `root` that ended within `REWATCH_MS`; undefined when none did. */
+  #endedLately(root: string): Ended | undefined {
+    const ended = this.#ended.get(root);
+    return ended !== undefined && this.#now() - ended.at < REWATCH_MS ? ended : undefined;
   }
 
   /**
@@ -263,7 +333,7 @@ export class WorktreeNotices {
     // again as the next walk asks.
     if (notice.ended) {
       this.#watched.delete(notice.root);
-      this.#ended.set(notice.root, this.#now());
+      this.#ended.set(notice.root, { at: this.#now(), folder: watched.folder });
     }
     // The next read's folders are watched again where the engine let go of them; it keeps the watches it holds.
     if (this.#byFolder) watched.followed.noticed(notice);
