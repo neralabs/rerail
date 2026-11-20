@@ -4,7 +4,9 @@
  *
  * Bandit 1.9.4's B202 (bandit/plugins/tarfile_unsafe_members.py) does not trace the receiver. It reports a call whose
  * function name contains `extractall` once the file has run `import tarfile` (an exact module match, so
- * `from tarfile import open` does not count), unless the call passes `filter="data"`. The port used to report only a
+ * `from tarfile import open` does not count), unless the call passes `filter="data"`. A from-import with only dots
+ * for its module, `from . import tarfile`, counts too: Bandit's `visit_ImportFrom` hands it to `visit_Import`, which
+ * records the bare name; `from .pkg import tarfile` records `pkg.tarfile` and does not. The port used to report only a
  * receiver assigned from `tarfile.open(...)`, so a `with` binding, `tarfile.TarFile.open` and `tarfile.extractall`
  * were missed and `filter="data"` was still reported. Each case's expected positions are what Bandit 1.9.4 reports on
  * it (line, then its column plus one).
@@ -79,6 +81,26 @@ const cases: readonly { name: string; source: string; expected: readonly string[
     source:
       "import tarfile\n\ndef unpack(p):\n    with tarfile.open(p) as tar:\n        tar.extractall(filter=\"data\")\n" +
       "        tar.extractall(filter='data', members=m)\n        tar.extractall(filter=(\"da\" \"ta\"))\n",
+    expected: [],
+  },
+  {
+    name: "tarfile imported by a relative from-import with only dots for its module",
+    source: "from . import tarfile\nt.extractall()\n",
+    expected: ["2:1"],
+  },
+  {
+    name: "tarfile under an alias among other names of a relative from-import",
+    source: "from .. import os, tarfile as tf\nt.extractall()\n",
+    expected: ["2:1"],
+  },
+  {
+    name: "tarfile in a parenthesized relative from-import",
+    source: "from . import (\n    tarfile,\n)\nt.extractall()\n",
+    expected: ["4:1"],
+  },
+  {
+    name: "a relative from-import that names a package, a longer name or a wildcard",
+    source: "from .pkg import tarfile\nfrom . import tarfiles\nfrom . import *\nt.extractall()\n",
     expected: [],
   },
   {

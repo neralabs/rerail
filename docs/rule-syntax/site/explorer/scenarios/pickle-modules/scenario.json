@@ -1,0 +1,5 @@
+{
+  "title": "Deserialising across modules",
+  "rule": "bandit-b301-pickle",
+  "note": "B301 flags the pickle family wherever it is imported from: pickle itself, an alias of it, a name imported from it, and the libraries built on it (dill, shelve). json is not on the list."
+}

@@ -58,7 +58,7 @@ impl Repository {
                 "seed",
             ],
         );
-        Self(directory.canonicalize().unwrap())
+        Self(dunce::canonicalize(directory).unwrap())
     }
 
     fn root(&self) -> String {

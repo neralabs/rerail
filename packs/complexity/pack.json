@@ -170,7 +170,7 @@
     {
       "id": "complexity-cyclomatic-python",
       "document": "rules/complexity-cyclomatic-python.json",
-      "title": "Keep Python functions at cyclomatic complexity 6 or lower",
+      "title": "Keep Python functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -186,7 +186,7 @@
     {
       "id": "complexity-cyclomatic-typescript",
       "document": "rules/complexity-cyclomatic-typescript.json",
-      "title": "Keep TypeScript functions at cyclomatic complexity 6 or lower",
+      "title": "Keep TypeScript functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -202,7 +202,7 @@
     {
       "id": "complexity-cyclomatic-javascript",
       "document": "rules/complexity-cyclomatic-javascript.json",
-      "title": "Keep JavaScript functions at cyclomatic complexity 6 or lower",
+      "title": "Keep JavaScript functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -218,7 +218,7 @@
     {
       "id": "complexity-cyclomatic-php",
       "document": "rules/complexity-cyclomatic-php.json",
-      "title": "Keep PHP functions at cyclomatic complexity 6 or lower",
+      "title": "Keep PHP functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -234,7 +234,7 @@
     {
       "id": "complexity-cyclomatic-blade",
       "document": "rules/complexity-cyclomatic-blade.json",
-      "title": "Keep the functions in Blade templates at cyclomatic complexity 6 or lower",
+      "title": "Keep the functions in Blade templates to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -250,7 +250,7 @@
     {
       "id": "complexity-cyclomatic-rust",
       "document": "rules/complexity-cyclomatic-rust.json",
-      "title": "Keep Rust functions at cyclomatic complexity 6 or lower",
+      "title": "Keep Rust functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -266,7 +266,7 @@
     {
       "id": "complexity-cyclomatic-vue",
       "document": "rules/complexity-cyclomatic-vue.json",
-      "title": "Keep Vue component functions at cyclomatic complexity 6 or lower",
+      "title": "Keep Vue component functions to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
@@ -282,7 +282,7 @@
     {
       "id": "complexity-cyclomatic-java",
       "document": "rules/complexity-cyclomatic-java.json",
-      "title": "Keep Java methods and constructors at cyclomatic complexity 6 or lower",
+      "title": "Keep Java methods and constructors to 6 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {

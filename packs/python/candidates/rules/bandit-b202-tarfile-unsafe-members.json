@@ -98,23 +98,47 @@
               ]
             },
             "tarfile-import": {
-              "kind": "import_statement",
-              "has": {
-                "stopBy": "neighbor",
-                "any": [
-                  {
-                    "kind": "dotted_name",
-                    "regex": "^tarfile$"
-                  },
-                  {
-                    "kind": "aliased_import",
-                    "has": {
-                      "field": "name",
-                      "regex": "^tarfile$"
-                    }
+              "any": [
+                {
+                  "kind": "import_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "tarfile-name"
                   }
-                ]
-              }
+                },
+                {
+                  "kind": "import_from_statement",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "module_name",
+                        "regex": "^[.\\s]+$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "tarfile-name"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "tarfile-name": {
+              "any": [
+                {
+                  "kind": "dotted_name",
+                  "regex": "^tarfile$"
+                },
+                {
+                  "kind": "aliased_import",
+                  "has": {
+                    "field": "name",
+                    "regex": "^tarfile$"
+                  }
+                }
+              ]
             },
             "after-tarfile-import": {
               "inside": {

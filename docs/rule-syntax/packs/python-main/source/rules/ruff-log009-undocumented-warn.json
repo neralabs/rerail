@@ -1,0 +1,50 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-log009-undocumented-warn",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use logging.WARNING instead of logging.WARN; WARN is an undocumented alias that the logging documentation does not mention.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "undocumented-warn",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "any": [
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "attribute"
+       }
+      ],
+      "resolves": {
+       "import": [
+        "logging.WARN"
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "LOG009",
+    "message": "Replace this use of the undocumented `WARN` alias with `logging.WARNING` (or `WARNING` imported from `logging`); the value is identical.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "LOG009"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,41 @@
+// blade/syntax: the Blade template tree the engine reads (native/src/code_rule_dsl/blade/forte/tree.rs, Forte's
+// parse) and the PHP program the template compiles to (blade/view.rs), for the blade pack.
+//
+// A Blade document is a tree of Blade nodes, `document` at the root:
+//   text, element, component (<x-…>), slot (<x-slot>), echo ({{ }}), raw_echo ({!! !!}), triple_echo,
+//   directive (@name(args)), directive_block (a paired block: field start, its branches' directives, field end),
+//   php_block (@php … @endphp), php_tag (<?php ?>), comment, blade_comment ({{-- --}}), escape (@@if, @{{ }}),
+//   attribute (fields name: attribute_name, value: attribute_value), element_name, …
+// A directive's name is a `directive_name` leaf, written with its `@`: "@if". A block's middle directives
+// (@elseif, @else, @empty of a @forelse) are its direct `directive` children; each directive's body is its children.
+// `@@if` and `@{{ }}` are escapes, `@verbatim` text, so neither is a directive or an echo.
+//
+// Blade compiles the template to a PHP program, which the engine keeps as a document of its own derived from the
+// template (native tape.rs `DerivedImage`, embed/compiled_view.rs `Via::CompiledView`), reached as a guest tree:
+// parsed(document, "compiled-view", program). It is in tree-sitter-php's kinds, each node spanning the template
+// bytes it stands for. `@if($a) … @elseif($b) … @endif` is `if ($a): … elseif ($b): … endif;`, an echo
+// `{{ e }}` is `echo e;`, `@php … @endphp` its statements; @unless(c) is `if (!(c)):`, @isset(a)
+// `if (isset(a)):`. So PHP libraries (php/names, php/values) apply to the program as they are. Its top level is
+// the view's scope: variables come from the caller, so an undefined one is unknown, not null.
+//
+//   @if($a)  {{ $a }}  @endif
+//   document ─ directive_block(start: directive(@if), end: directive(@endif)) ─ echo …
+//   parsed(document, "compiled-view", program) ─ if_statement(condition: ($a)) ─ echo_statement …
+//
+// What a rule gets from this library:
+//   blade_directive(d, x)    d is directive @x (x without the `@`, as written: "if", "endforelse")
+//   blade_block(b, x)        directive block b starts with directive @x
+//   blade_echo(e)            e is an escaped or raw echo: {{ … }} or {!! … !!}
+//   blade_code(n)            n is a node of the compiled PHP program
+//
+// Builds on core only.
+
+.decl blade_directive(d: node, x: symbol)
+blade_directive(d, x) :- kind(d, "directive"), field(d, "name", n), text(n, t), match("@(?<x>.*)", t).
+.decl blade_block(b: node, x: symbol)
+blade_block(b, x) :- kind(b, "directive_block"), field(b, "start", d), blade_directive(d, x).
+.decl blade_echo(e: node)
+blade_echo(e) :- kind(e, "echo").
+blade_echo(e) :- kind(e, "raw_echo").
+.decl blade_code(n: node)
+blade_code(n) :- kind(r, "document"), parsed(r, "compiled-view", p), within(n, p).

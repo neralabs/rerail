@@ -358,7 +358,7 @@ const PROBES = [
   {
     name: "use-server-sync-export",
     revision: 2,
-    description: "Directive + exports: in a \"use server\" file, an exported name that is not an async function (Next allows only async functions there).",
+    description: "Directive + exports: in a \"use server\" file, an exported name whose value is not an async function (Next allows only async functions there); a call's result is left to Next's runtime check.",
     ast: {
       rule: {
         kind: "identifier",

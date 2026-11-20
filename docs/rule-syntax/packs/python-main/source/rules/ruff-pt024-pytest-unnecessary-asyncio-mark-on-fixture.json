@@ -1,0 +1,167 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt024-pytest-unnecessary-asyncio-mark-on-fixture",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't apply the pytest asyncio marker to a fixture; marks have no effect on fixtures.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "asyncio-mark-on-fixture",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "asyncio-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.mark.asyncio"
+                ]
+              }
+            },
+            "asyncio-callee": {
+              "any": [
+                {
+                  "matches": "asyncio-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "asyncio-callee"
+                  }
+                }
+              ]
+            },
+            "asyncio-expr": {
+              "any": [
+                {
+                  "matches": "asyncio-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "asyncio-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "asyncio-expr"
+                  }
+                }
+              ]
+            },
+            "fixture-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.fixture",
+                  "pytest.yield_fixture"
+                ]
+              }
+            },
+            "fixture-callee": {
+              "any": [
+                {
+                  "matches": "fixture-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-callee"
+                  }
+                }
+              ]
+            },
+            "fixture-expr": {
+              "any": [
+                {
+                  "matches": "fixture-callee"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "field": "function",
+                    "matches": "fixture-callee"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fixture-expr"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "asyncio-expr"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "all": [
+                {
+                  "has": {
+                    "field": "definition",
+                    "kind": "function_definition"
+                  }
+                },
+                {
+                  "has": {
+                    "kind": "decorator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "fixture-expr"
+                    }
+                  }
+                }
+              ]
+            },
+            "regex": "^(?P<span>(?:\"\"\"(?:(?:[^\"\\\\]|\\\\[\\s\\S])|\"(?:[^\"\\\\]|\\\\[\\s\\S])|\"\"(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:(?:[^'\\\\]|\\\\[\\s\\S])|'(?:[^'\\\\]|\\\\[\\s\\S])|''(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:[ \\t]*#[^\\n]*)?$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.span",
+        "code": "PT024",
+        "message": "Remove this `pytest.mark.asyncio` decorator; marks have no effect on fixtures. If an async fixture needs pytest-asyncio strict mode, use `@pytest_asyncio.fixture` instead.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT024"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
