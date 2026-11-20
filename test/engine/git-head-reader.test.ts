@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import type { PathLike } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -494,6 +494,57 @@ describe("gitHeadReader", () => {
       expect(answer.head, `read ${time}`).toBe(answer.expected);
       expect(answer.heads, `read ${time}`).toBe(1);
       expect(vars(before), `read ${time}`).toBe(time === 1 ? 1 : 0);
+    }
+  });
+
+  /**
+   * How a checkout's `gitdir:` line or `commondir` text names its folder through a link, `hop`, before a `..`: at first
+   * `hop` leads to a folder beside it, so the text and Git name one folder; `elsewhere` is where it then leads, where Git
+   * follows `hop` before the `..` and reads another Git folder, and cancelling `hop/..` as text names the first still.
+   */
+  const throughLinks: Array<[string, (root: string, main: string, worktree: string) => Promise<{ hop: string; elsewhere: string }>]> = [
+    ["a commondir", async (root, main) => {
+      const gitDir = join(main, ".git", "worktrees", "w");
+      await mkdir(join(gitDir, "beside"));
+      await symlink(join(gitDir, "beside"), join(gitDir, "hop"), "dir");
+      await writeFile(join(gitDir, "commondir"), "hop/../../..\n");
+      // Another common folder: the repository's as it is now, whose branches stay where they are, its `beside` copied too.
+      await cp(join(main, ".git"), join(root, "other.git"), { recursive: true });
+      return { hop: join(gitDir, "hop"), elsewhere: join(root, "other.git", "worktrees", "w", "beside") };
+    }],
+    ["a gitdir: line", async (root, main, worktree) => {
+      const worktrees = join(main, ".git", "worktrees");
+      await mkdir(join(worktrees, "beside"));
+      await symlink(join(worktrees, "beside"), join(worktrees, "hop"), "dir");
+      await writeFile(join(worktree, ".git"), `gitdir: ${worktrees}/hop/../w\n`);
+      // Another Git folder for the worktree, on branch main, in the same repository.
+      await cp(join(worktrees, "w"), join(root, "other", "w"), { recursive: true });
+      await writeFile(join(root, "other", "w", "commondir"), `${join(main, ".git")}\n`);
+      await writeFile(join(root, "other", "w", "HEAD"), "ref: refs/heads/main\n");
+      await mkdir(join(root, "other", "beside"));
+      return { hop: join(worktrees, "hop"), elsewhere: join(root, "other", "beside") };
+    }],
+  ];
+
+  // Git for Windows opens the joined text, which Windows cleans as text: there `hop/..` cancels for Git too.
+  it.skipIf(process.platform === "win32").each(throughLinks)("names HEAD as Git does where %s holds a link before a `..`, before and after the branch moves and the link leads elsewhere", async (_name, arrange) => {
+    const { root, main, worktree } = await repository();
+    const { hop, elsewhere } = await arrange(root, main, worktree);
+    const reader = filesReader();
+    const first = await read(reader, worktree);
+    expect(first.head).toBe(git(worktree, "rev-parse", "HEAD"));
+    expect(first.head).toBe(first.expected);
+    await commit(worktree, "a = 2\n");
+    const moved = await read(reader, worktree);
+    expect(moved.head).toBe(git(worktree, "rev-parse", "HEAD"));
+    await unlink(hop);
+    await symlink(elsewhere, hop, "dir");
+    const there = git(worktree, "rev-parse", "HEAD");
+    // Git now reads the other Git folder, whose branch did not move with the commit above.
+    expect(there).not.toBe(moved.head);
+    for (const time of [1, 2]) {
+      const answer = await read(reader, worktree);
+      expect(answer.head, `read ${time} once the link leads elsewhere`).toBe(there);
     }
   });
 });

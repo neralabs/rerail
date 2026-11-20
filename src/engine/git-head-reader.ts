@@ -21,7 +21,7 @@
  * and any change to the checkout's folder, its `.git` entry or its Git folder asks Git again.
  */
 import { constants } from "node:fs";
-import { type FileHandle, lstat, open, stat } from "node:fs/promises";
+import { type FileHandle, lstat, open, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileStamp } from "./file-stamp.js";
 import { gitHead, gitHome, type GitReadOptions, type GitResult, runGitAsync } from "./git.js";
@@ -146,17 +146,39 @@ async function folderAt(path: string): Promise<string | undefined> {
 async function layoutOf(cwd: string): Promise<Layout | undefined> {
   const dotGit = join(cwd, ".git");
   const text = await fileText(dotGit);
-  const gitDir = text === "absent" ? await folderAt(dotGit) : namedGitDir(cwd, text);
+  const gitDir = text === "absent" ? await folderAt(dotGit) : await namedGitDir(cwd, text);
   if (gitDir === undefined) return undefined;
-  const common = await fileText(join(gitDir, "commondir"));
-  if (common === "absent") return { gitDir, commonDir: gitDir };
-  const named = common?.trimEnd() ?? "";
-  return named === "" ? undefined : { gitDir, commonDir: resolve(gitDir, named) };
+  const commonDir = await commonDirOf(gitDir);
+  return commonDir === undefined ? undefined : { gitDir, commonDir };
 }
 
-function namedGitDir(cwd: string, text: string | undefined): string | undefined {
+/** The Git folder a `.git` file's `gitdir:` line names, from the checkout's folder that holds the file (`asGitResolves`). */
+async function namedGitDir(cwd: string, text: string | undefined): Promise<string | undefined> {
   const named = /^gitdir: (.+?)\r?\n?$/u.exec(text ?? "")?.[1];
-  return named === undefined ? undefined : resolve(cwd, named);
+  return named === undefined ? undefined : await asGitResolves(cwd, named);
+}
+
+/** The common folder `gitDir`'s `commondir` names from it (`asGitResolves`), `gitDir` itself without one. */
+async function commonDirOf(gitDir: string): Promise<string | undefined> {
+  const common = await fileText(join(gitDir, "commondir"));
+  if (common === "absent") return gitDir;
+  const named = common?.trimEnd() ?? "";
+  return named === "" ? undefined : await asGitResolves(gitDir, named);
+}
+
+/**
+ * The folder a `gitdir:` line or a `commondir` names from `base`, as Git finds it. On Linux and macOS Git takes the real
+ * path of the joined text, so a link in it is followed before the `..` after it, where `resolve` cancels `link/..` as
+ * text and names another folder; nothing is taken off the text before the system resolves it. Git for Windows opens
+ * the joined path, which Windows cleans as text. Undefined, so Git answers, where the system cannot resolve it.
+ */
+async function asGitResolves(base: string, named: string): Promise<string | undefined> {
+  if (process.platform === "win32") return resolve(base, named);
+  try {
+    return await realpath(isAbsolute(named) ? named : `${base}/${named}`);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The branch `HEAD` names (`refs/heads/...`), the commit it holds detached, or undefined where only Git can say. */
