@@ -1,4 +1,4 @@
-import { constants, existsSync, lstatSync, writeFileSync } from "node:fs";
+import { constants, type Dirent, existsSync, lstatSync, writeFileSync } from "node:fs";
 import { type FileHandle, opendir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -16,7 +16,7 @@ import {
 import { openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { tableColumns } from "../engine/storage/table-probe.js";
-import { type HookHost, scrubbedPendingText, withPendingFileLock } from "../harness/hook-adapter.js";
+import { type HookHost, pendingPath, scrubbedPendingText, withPendingFileLock } from "../harness/hook-adapter.js";
 import { preUpdateSnapshotPath } from "./project-cli.js";
 import { DAEMON_LOG_FILE } from "../runtime/daemon-control.js";
 import { scrubbedLedgerLine } from "../runtime/runtime.js";
@@ -35,7 +35,7 @@ const MID_LINE_WAIT_MS = 50;
 const RESERVE_LINE_START = '{"rerail-scrub-reserve":"';
 const RESERVE_LINE_END = '"}\n';
 /** The hosts whose hooks hold steers between hooks (`<storageRoot>/<host>-pending`). */
-const PENDING_HOSTS = Object.keys({ "claude-code": true, codex: true, cursor: true } satisfies Record<HookHost, true>);
+const PENDING_HOSTS = Object.keys({ "claude-code": true, codex: true, cursor: true } satisfies Record<HookHost, true>) as HookHost[];
 /** Written once the hint to run `rerail scrub` was shown (or had nothing to scrub), so it is shown once. */
 export const SCRUB_HINT_FILE = "scrub-hint.json";
 
@@ -378,27 +378,59 @@ function logLine(line: string): string | undefined {
 /**
  * Scrubs the steers hooks hold between hooks (`<sessions>/<host>-pending/<session>.json`). A hook reads and replaces
  * one only while it holds that session's lock, and so does this (`withPendingFileLock`), so neither replaces a steer
- * the other wrote. A folder or file that is a link is skipped, never followed.
+ * the other wrote. A folder or file that is a link is skipped, never followed. In a held-steer folder this account may
+ * not list, those of the sessions the database records ({@link listedOrRecorded}).
  */
-async function scrubPending(sessions: string, report: SessionFilesReport): Promise<void> {
+async function scrubPending(sessions: string, sessionIds: readonly string[], report: SessionFilesReport): Promise<void> {
   for (const host of PENDING_HOSTS) {
     const folder = join(sessions, `${host}-pending`);
     if (!realDirectory(folder)) continue;
-    for await (const entry of await opendir(folder)) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const path = join(folder, entry.name);
-      try {
-        const scrubbed = await withPendingFileLock(path, async () => {
-          const text = await readLedgerFile(path, folder);
-          const next = text === undefined ? undefined : scrubbedPendingText(text);
-          if (next !== undefined) await writeLedgerFile(path, folder, next);
-          return next !== undefined;
-        });
-        if (scrubbed) report.pendingFiles += 1;
-      } catch (error) {
-        report.skipped.push(`${path} (${message(error)})`);
-      }
+    const recorded = () => sessionIds.map(id => pendingPath(sessions, host, id)).filter(path => realFile(path));
+    for (const path of await listedOrRecorded(folder, entry => entry.isFile() && entry.name.endsWith(".json"), recorded)) {
+      await scrubPendingFile(path, folder, report);
     }
+  }
+}
+
+/** Scrubs one held-steer file under its session's lock, counting it in `report`, or naming it there as left. */
+async function scrubPendingFile(path: string, folder: string, report: SessionFilesReport): Promise<void> {
+  try {
+    const scrubbed = await withPendingFileLock(path, async () => {
+      const text = await readLedgerFile(path, folder);
+      const next = text === undefined ? undefined : scrubbedPendingText(text);
+      if (next !== undefined) await writeLedgerFile(path, folder, next);
+      return next !== undefined;
+    });
+    if (scrubbed) report.pendingFiles += 1;
+  } catch (error) {
+    report.skipped.push(`${path} (${message(error)})`);
+  }
+}
+
+/** A real file at `path`, never a link to one. */
+function realFile(path: string): boolean {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The paths in `folder` it lists that `listed` keeps, or, where this account may not list it, the `recorded` ones: those
+ * the database's session ids name. In a records folder another account shares, this one may make its own session
+ * folders and held steers but list neither the records folder nor a held-steer folder another account made
+ * (`keepFoundFolderPrivate`, `shareLikeParent`).
+ */
+async function listedOrRecorded(folder: string, listed: (entry: Dirent) => boolean, recorded: () => string[]): Promise<string[]> {
+  const paths: string[] = [];
+  try {
+    for await (const entry of await opendir(folder)) if (listed(entry)) paths.push(join(folder, entry.name));
+    return paths;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EACCES" && code !== "EPERM") throw error;
+    return recorded();
   }
 }
 
@@ -408,21 +440,10 @@ interface RecordedSessions {
   readonly sessionIds: readonly string[];
 }
 
-/**
- * The session folders in `sessions`, a checkout's records folder: those it lists, or, where this account may not list
- * it, those of the sessions the database records that are there. A records folder another account shares lets this one
- * make its sessions' folders there and hides the names (`keepFoundFolderPrivate`).
- */
+/** The session folders in `sessions`, a checkout's records folder, as {@link listedOrRecorded} finds them. */
 async function sessionFolders(sessions: string, sessionIds: readonly string[]): Promise<string[]> {
-  const listed: string[] = [];
-  try {
-    for await (const entry of await opendir(sessions)) if (entry.isDirectory()) listed.push(join(sessions, entry.name));
-    return listed;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EACCES" && code !== "EPERM") throw error;
-    return sessionIds.map(id => sessionDirectory(sessions, id)).filter(folder => realDirectory(folder));
-  }
+  const recorded = () => sessionIds.map(id => sessionDirectory(sessions, id)).filter(folder => realDirectory(folder));
+  return await listedOrRecorded(sessions, entry => entry.isDirectory(), recorded);
 }
 
 /**
@@ -437,7 +458,7 @@ async function scrubSessionFiles(recorded: RecordedSessions): Promise<SessionFil
     if (sessions === undefined) continue;
     report.checkouts += 1;
     for (const folder of await sessionFolders(sessions, recorded.sessionIds)) await scrubLedger(join(folder, "events.jsonl"), report);
-    await scrubPending(sessions, report);
+    await scrubPending(sessions, recorded.sessionIds, report);
   }
   return report;
 }

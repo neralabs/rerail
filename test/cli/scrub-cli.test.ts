@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { type FileHandle, mkdtemp, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -243,6 +243,32 @@ async function scrubFixture() {
   return { root, home, sessions, ledger, token, live, printed };
 }
 
+const systemTool = (name: string): string => join(process.env.SystemRoot ?? "C:\\Windows", "System32", name);
+
+/**
+ * Takes from this account the right to list `folder` and no other: a deny entry on the folder alone on Windows (its own
+ * `whoami` and `icacls` by path, as Git Bash puts a `whoami` of its own first on PATH), mode `0300` elsewhere.
+ */
+function denyListing(folder: string): { restore: () => void } {
+  if (process.platform !== "win32") {
+    chmodSync(folder, 0o300);
+    return { restore: () => chmodSync(folder, 0o700) };
+  }
+  const me = /"(S-1-[\d-]+)"\s*$/u.exec(execFileSync(systemTool("whoami.exe"), ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" }))?.[1] ?? "";
+  execFileSync(systemTool("icacls.exe"), [folder, "/deny", `*${me}:(RD)`], { stdio: "ignore" });
+  return { restore: () => execFileSync(systemTool("icacls.exe"), [folder, "/remove:d", `*${me}`], { stdio: "ignore" }) };
+}
+
+/** Whether listing `folder` is refused: root reads past a mode, and an administrator's backup privilege past a deny entry. */
+function refusesListing(folder: string): boolean {
+  try {
+    readdirSync(folder);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 function sampleLine(text: string): string {
   return `${JSON.stringify({ type: "sample", item: { ref: { source: "host:event", id: `e:${randomUUID()}` }, text, metadata: {} } })}\n`;
 }
@@ -282,6 +308,28 @@ describe("rerail scrub alongside running sessions", () => {
         chmodSync(sessions, 0o700);
       }
       expect(readFileSync(ledger, "utf8")).not.toContain(token);
+    } finally {
+      live.$client.close();
+    }
+  });
+
+  it("scrubs the held steers of the sessions it records in a held-steer folder this account may not list", async ({ skip }) => {
+    const { sessions, token, live, printed } = await scrubFixture();
+    const pending = join(sessions, "claude-code-pending");
+    const file = join(pending, `${createHash("sha256").update("s1").digest("hex")}.json`);
+    try {
+      mkdirSync(pending);
+      writeFileSync(file, JSON.stringify([{ sessionId: "s1", requested: "steer", mechanism: "deferred-context", content: `use ${token}`, ruleIds: [], rules: [] }]));
+      // As a held-steer folder another account made in a records folder both share: this one adds files, never lists.
+      const listing = denyListing(pending);
+      try {
+        if (!refusesListing(pending)) skip("this process lists past the denial");
+        expect(await runScrubCommand([], () => "usage")).toBe(0);
+      } finally {
+        listing.restore();
+      }
+      expect(readFileSync(file, "utf8")).not.toContain(token);
+      expect(printed()).toContain("1 held steer file");
     } finally {
       live.$client.close();
     }
