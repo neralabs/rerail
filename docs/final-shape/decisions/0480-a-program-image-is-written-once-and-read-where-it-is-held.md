@@ -1,4 +1,4 @@
-# 0464: A program image is written once, and read where it is held
+# 0480: A program image is written once, and read where it is held
 
 Status: accepted (2026-11-19). Q26 (handed off by 0295 §6.1). Follows 0173, 0244, 0353, 0394; decides 0295 §6.3–4.
 
@@ -101,5 +101,5 @@ farm host at load 35–53), at a282371e9:
 | warm, second | 3.3 G | 3.3 G |
 
 So the batch costs no more than before. The two columns are many commits apart, so the difference is not this
-decision's alone. Q294 records the one test that got slower on Linux, which waits on the store's msync, not on an
+decision's alone. Q335 records the one test that got slower on Linux, which waits on the store's msync, not on an
 image.

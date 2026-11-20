@@ -1,6 +1,6 @@
-# 0465: A store flushes at the OS's pace; tests flush nothing
+# 0481: A store flushes at the OS's pace; tests flush nothing
 
-Status: accepted (2026-11-19). Q294. Follows 0266 (blocks in mmap files), 0402/0456 (kept facts), 0440 (the
+Status: accepted (2026-11-19). Q335. Follows 0266 (blocks in mmap files), 0402/0456 (kept facts), 0440 (the
 deferrable tier).
 
 ## Intro
@@ -11,7 +11,7 @@ once written, was flushed and waited for: `msync(MS_SYNC)` over its whole mappin
 macOS). SQLite ran at its default `synchronous`.
 
 That wait is what made `rr::tests::library_modules_link_to_the_lowering_of_them_together` take 217 s on a DGX Spark
-(Q294): each phase 0 graph run kept its facts, and the writer msynced the kept file's reservation, 460–630 MB, of which
+(Q335): each phase 0 graph run kept its facts, and the writer msynced the kept file's reservation, 460–630 MB, of which
 a few pages were written. The test's thread waited on the writer.
 
 A test's store is thrown away when the test ends, and a run's store holds what can be derived again. Neither needs
@@ -78,7 +78,7 @@ On a DGX Spark (Linux, debug, load 1.1), where the msync was the wait:
 
 | | wall | CPU (user + sys) |
 |---|---|---|
-| before (Q294, at f9c3bd713) | 217 s | 87 s user, 40 s sys |
+| before (Q335, at f9c3bd713) | 217 s | 87 s user, 40 s sys |
 | this decision, `none` | 19.8 s | 22.7 + 0.7 s |
 | this decision, `synced` (used pages only) | 19.3 s | 21.8 + 0.6 s |
 
@@ -86,4 +86,4 @@ On the M3, the flush alone saved nothing: macOS's msync of clean pages is cheap,
 0 runs, one per program. The test now derives every pack's include graphs in one phase 0 run (`rr::modules_of`,
 as a corpus run does with `phase0::graphs`), and reads the programs on the pool. On Linux, where the msync was the
 wait, both help. At about 20 s (24.6 s beside other tests on the M1 Max) the test stays in the slow tier, without the
-longer time limit Q294 gave it.
+longer time limit Q335 gave it.

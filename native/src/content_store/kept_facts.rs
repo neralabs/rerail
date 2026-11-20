@@ -238,7 +238,7 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
             }
         }
     }
-    // Written back as the store's flush mode says (decision 0465): by default the OS writes it at its own pace.
+    // Written back as the store's flush mode says (decision 0481): by default the OS writes it at its own pace.
     let flush = crate::content_store::connection::flush_of(t);
     w.finish(flush).map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;

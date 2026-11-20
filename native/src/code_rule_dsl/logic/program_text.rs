@@ -31,7 +31,7 @@ pub struct Encoded {
     /// Whether the bytes are an image: always, for what is made now. A record written before (`Packed`) can name a
     /// text, which is kept as the source it was.
     pub image: bool,
-    /// Its bytes as they are held: an image where its version holds it, never copied (decision 0464).
+    /// Its bytes as they are held: an image where its version holds it, never copied (decision 0480).
     pub bytes: crate::content_store::record::Bytes,
 }
 
@@ -56,7 +56,7 @@ pub fn encode_version(v: &crate::code_rule_dsl::logic::program_image::Version) -
 }
 
 /// Programs `encode_version` made, and a facts entry after them, as a record's item carries them (decision 0306): their
-/// digests and kinds in its body, and as its pieces each program's bytes as held (decision 0464), then the entry's.
+/// digests and kinds in its body, and as its pieces each program's bytes as held (decision 0480), then the entry's.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Packed {
     programs: Vec<([u8; 32], bool, usize)>,
@@ -95,7 +95,7 @@ pub fn store_packed<'b>(store: &ContentStore, packed: &Packed, pieces: &'b [crat
     Ok((sources, (*pieces[n]).as_ref()))
 }
 
-/// Keeps images by their digests, placed in one segment, uncompressed, so a read maps them there (decision 0464, as
+/// Keeps images by their digests, placed in one segment, uncompressed, so a read maps them there (decision 0480, as
 /// 0394 places a stored run's); one the store holds placed keeps its place, one it holds inline is moved there. The
 /// sources, which the caller names so collection keeps them.
 pub fn store_images(store: &ContentStore, images: &[([u8; 32], &[u8])]) -> StoreResult<Vec<SourceId>> {
@@ -123,7 +123,7 @@ pub fn store_encoded(store: &ContentStore, digest: &[u8; 32], image: bool, bytes
 
 /// The images `store` keeps of the programs of sha256 `digests` (`store`), by digest, with their sources: for a caller
 /// that must read before its run's waves (decision 0104) and open them later. Each is read where it is held (decision
-/// 0464): mapped from its segment, loaded from its row at 16 bytes, or in the shipped bundle's mapping; never copied.
+/// 0480): mapped from its segment, loaded from its row at 16 bytes, or in the shipped bundle's mapping; never copied.
 /// One the store has lost, or kept as text alone, is left out.
 pub fn stored(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::collections::HashMap<[u8; 32], (crate::code_rule_dsl::logic::program_image::SharedBytes, Vec<SourceId>)>> {
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
@@ -241,7 +241,7 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
 
     fn open(&self, image: &[u8; 32]) -> Result<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>, String> {
         let e = |e: crate::content_store::StoreError| e.to_string();
-        // Read where the store holds it (decision 0464), not copied.
+        // Read where the store holds it (decision 0480), not copied.
         let Some(bytes) = self.0.source_by_alias_in_place(image_key(image)).map_err(e)? else { return Ok(None) };
         crate::code_rule_dsl::logic::program_image::Version::open_shared(std::sync::Arc::new(bytes)).map(Some)
     }
@@ -268,7 +268,7 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
             facts.entry("pipeline_step_decision".into()).or_default().push([k.clone(), Value::Int(i as i64), str_value(&d.pass), str_value(&d.what), str_value(&d.detail)].into());
         }
         // An item of the run's record (decision 0306): its pieces the image as the version holds it and the step's
-        // facts (decision 0464); the image placed in a segment (`store_images`) and the facts kept, each unless the
+        // facts (decision 0480); the image placed in a segment (`store_images`) and the facts kept, each unless the
         // store holds it already (an image another step or program stored), and both named in the run's manifest
         // (Q146).
         fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
@@ -325,7 +325,7 @@ fn text_ids(v: &Value) -> Result<Vec<u32>, String> {
 
 /// A run as a store keeps it (`store_run`).
 struct KeptRun {
-    /// The images the store holds no copy of yet, as their versions hold them (decision 0464).
+    /// The images the store holds no copy of yet, as their versions hold them (decision 0480).
     images: Vec<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Image>>,
     /// The digests of those it was opened from: named, not copied (decision 0393).
     held: Vec<[u8; 32]>,
@@ -502,7 +502,7 @@ pub fn record_runs(store: &ContentStore, runs: &[([u8; 32], &crate::code_rule_ds
     for (key, run) in runs {
         let k = kept_run(run);
         body.push(RecordedRun { key: *key, images: k.images.iter().map(|i| i.bytes().len()).collect(), held: k.held, rows: k.rows.len(), facts: k.facts.len() });
-        // Its images as their versions hold them (decision 0464), then its rows and its facts: nothing copied.
+        // Its images as their versions hold them (decision 0480), then its rows and its facts: nothing copied.
         pieces.extend(k.images.into_iter().map(|i| i as crate::content_store::record::Bytes));
         pieces.push(std::sync::Arc::new(k.rows));
         pieces.push(std::sync::Arc::new(k.facts));
@@ -591,7 +591,7 @@ impl StoredRuns<'_> {
                 (0 | 1, Some(b)) => {
                     let _s = opened();
                     let in_place = b.in_place();
-                    // Mapped from its segment, or loaded from its row at 16 bytes (decision 0464): opened where it is.
+                    // Mapped from its segment, or loaded from its row at 16 bytes (decision 0480): opened where it is.
                     let v = match kind {
                         0 => Version::open_shared(std::sync::Arc::new(b))?,
                         _ => Version::over_shared(&parent()?, std::sync::Arc::new(b))?,

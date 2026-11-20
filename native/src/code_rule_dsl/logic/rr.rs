@@ -336,7 +336,7 @@ impl Text {
                 images::read_image(store, key)
             }
         };
-        // Read where it is held (decision 0464): the bundle's mapping, a segment's, or its row loaded at 16 bytes.
+        // Read where it is held (decision 0480): the bundle's mapping, a segment's, or its row loaded at 16 bytes.
         if let Some((bytes, id)) = found
             && let Ok(version) = super::program_image::Version::open_shared(bytes)
         {
@@ -762,7 +762,7 @@ fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static
     images::export(key, (*bytes).as_ref());
     let Some(store) = store else { return false };
     // A record of its own (decision 0306), dropped where the queue is full: the image its piece, as its maker holds
-    // it, placed in a segment by the writer and read there (decision 0464).
+    // it, placed in a segment by the writer and read there (decision 0480).
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
         let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body("an image", body)?;
         let hash = crate::content_store::HashKey::sha256(cx.bytes);

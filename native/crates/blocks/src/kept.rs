@@ -455,7 +455,7 @@ impl KeptW {
     }
 
     /// The directory written, sorted by key, then the block frozen (its file truncated to what it holds) and written
-    /// back as `flush` says (decision 0465). A key put twice is refused.
+    /// back as `flush` says (decision 0481). A key put twice is refused.
     pub fn finish(mut self, flush: Flush) -> io::Result<()> {
         self.pending.sort_by(|a, b| (a.rel.as_str(), &a.ident, a.part).cmp(&(b.rel.as_str(), &b.ident, b.part)));
         if let Some(w) = self.pending.windows(2).find(|w| (w[0].rel.as_str(), &w[0].ident, w[0].part) == (w[1].rel.as_str(), &w[1].ident, w[1].part)) {

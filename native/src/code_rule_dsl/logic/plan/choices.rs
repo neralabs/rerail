@@ -392,7 +392,7 @@ fn decode_chosen(images: &HashMap<[u8; 32], crate::code_rule_dsl::logic::program
     };
     let version = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Str(digest)]) => {
-            // The image is the program's version, read where the store holds it (decision 0464), its rules in order.
+            // The image is the program's version, read where the store holds it (decision 0480), its rules in order.
             let bytes = images.get(&unhex(&digest)?)?;
             Some(super::body::Placed::whole(crate::code_rule_dsl::logic::program_image::Version::open_shared(bytes.clone()).ok()?))
         }

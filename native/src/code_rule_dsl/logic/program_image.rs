@@ -231,7 +231,7 @@ pub struct Image {
 /// mapped (decision 0394).
 pub type SharedBytes = std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>;
 
-/// How much of an image its open checks (decision 0464 §3). Every handle indexes safely, and only strings are read
+/// How much of an image its open checks (decision 0480 §3). Every handle indexes safely, and only strings are read
 /// unchecked (`text`), so what is never skipped is the header, every region's bounds, every reference into
 /// another region, and the strings' UTF-8.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -249,7 +249,7 @@ enum Buf {
     Shared(SharedBytes),
 }
 
-/// An image is its bytes, where they are: a record carries it to the store's writer as it is (decision 0464).
+/// An image is its bytes, where they are: a record carries it to the store's writer as it is (decision 0480).
 impl AsRef<[u8]> for Image {
     fn as_ref(&self) -> &[u8] {
         self.bytes()
@@ -268,9 +268,9 @@ impl Image {
     }
 
     /// The image of `bytes` the engine's store or shipped bundle holds, read where they are, not copied (decisions
-    /// 0394, 0464). Bytes not at 16 bytes are refused: an image's regions are read at 16. Its writer checked its rules'
+    /// 0394, 0480). Bytes not at 16 bytes are refused: an image's regions are read at 16. Its writer checked its rules'
     /// node trees and facts' cells from a builder's checked parts (`Placing::finish`; a debug build checks every
-    /// writer's whole), so they are not walked again here, which would touch every page (decision 0464 §3); its
+    /// writer's whole), so they are not walked again here, which would touch every page (decision 0480 §3); its
     /// header, bounds, references and strings are (`Depth::Held`). A debug build checks all of it here too.
     pub fn open_shared(bytes: SharedBytes) -> Result<Image, String> {
         let (at, len) = {
@@ -833,7 +833,7 @@ impl Check<'_> {
     }
 }
 
-// ---- writing an image in place (decision 0464) ----
+// ---- writing an image in place (decision 0480) ----
 
 /// An image's layout before it is written: each region's item count. `place` makes the one buffer the image lives in,
 /// 16-byte aligned, its header written and each region at its 16-byte offset; the writer then writes each region

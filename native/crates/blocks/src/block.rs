@@ -122,7 +122,7 @@ fn round_up(n: usize, to: usize) -> usize {
 }
 
 
-/// How a file-backed block's writes reach the disk (decision 0465).
+/// How a file-backed block's writes reach the disk (decision 0481).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Flush {
     /// Each write-back waits until the pages are on the disk (`msync` with `MS_SYNC`, then a barrier on macOS,
@@ -683,14 +683,14 @@ impl Block {
 
     /// What is written in a block mapped from its file on the disk, with `Flush::Synced`: its dirty pages written
     /// back, then the file flushed (a barrier on macOS, `fdatasync` elsewhere). Otherwise nothing: the OS writes the
-    /// pages back at its own pace (decision 0465). Nothing to do for a block with no file.
+    /// pages back at its own pace (decision 0481). Nothing to do for a block with no file.
     #[cfg(unix)]
     pub fn sync_mapped(&self, flush: Flush) -> io::Result<()> {
         if !flush.waits() {
             return Ok(());
         }
         // The pages written: nothing past `used` is (a kept file's reservation is hundreds of MB, its facts a few;
-        // asked of the whole, the kernel walked every page of it, Q294).
+        // asked of the whole, the kernel walked every page of it, Q335).
         let written = self.used().next_multiple_of(PAGE).min(self.reserved);
         // SAFETY: the block's own mapping, its first `written` bytes.
         if unsafe { libc::msync(self.base.cast(), written, libc::MS_SYNC) } != 0 {

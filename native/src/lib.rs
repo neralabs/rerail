@@ -16,7 +16,7 @@ mod build_languages;
 // Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
 #[cfg(test)]
 mod test_watchdog;
-// The test binary's stores flush nothing (`RERAIL_FLUSH=none`, decision 0465) unless the environment says otherwise.
+// The test binary's stores flush nothing (`RERAIL_FLUSH=none`, decision 0481) unless the environment says otherwise.
 #[cfg(test)]
 mod test_flush;
 #[cfg(test)]

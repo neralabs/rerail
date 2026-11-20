@@ -332,7 +332,7 @@ impl Stored {
         Ok(())
     }
 
-    /// A block's appends written back (on the disk with `Flush::Synced`, decision 0465), then its row's end moved to
+    /// A block's appends written back (on the disk with `Flush::Synced`, decision 0481), then its row's end moved to
     /// them, in the transaction.
     fn seal(connection: &Connection, seq: i64, w: &AtomsW) -> StoreResult<()> {
         w.sync().map_err(io)?;
@@ -375,7 +375,7 @@ pub(crate) fn private_dir(dir: &Path) -> std::io::Result<()> {
 }
 
 /// A new file's name on the disk before the commit that names it, with `Flush::Synced`; otherwise the OS's to write
-/// (decision 0465).
+/// (decision 0481).
 pub(crate) fn sync_dir(dir: &Path, flush: rerail_blocks::block::Flush) -> std::io::Result<()> {
     if !flush.waits() {
         return Ok(());

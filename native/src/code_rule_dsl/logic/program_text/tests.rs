@@ -1,7 +1,7 @@
 use crate::code_rule_dsl::logic::rr::parse_version;
 
 /// A stored program is kept as its image alone (decisions 0173, 0246 §6), placed in a segment and read there, not
-/// copied (decision 0464); one kept as text alone (a store written before images) is not read: a miss, which its run
+/// copied (decision 0480); one kept as text alone (a store written before images) is not read: a miss, which its run
 /// compiles again.
 #[test]
 fn a_stored_program_is_read_from_its_image() {

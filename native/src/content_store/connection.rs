@@ -266,7 +266,7 @@ pub(super) struct ThreadConnection {
     /// The store's identity when opened: a thread's connection to a store since created again at the path is not
     /// this store's.
     identity: i64,
-    /// How the store's writes reach the disk (decision 0465): each connection's `synchronous`.
+    /// How the store's writes reach the disk (decision 0481): each connection's `synchronous`.
     flush: Flush,
 }
 
@@ -421,7 +421,7 @@ pub fn set_connection_functions(install: fn(&Connection) -> rusqlite::Result<()>
     let _ = CONNECTION_FUNCTIONS.set(install);
 }
 
-/// The store's flush mode (decision 0465): how a write reaches the disk, for SQLite (`synchronous`) and for the
+/// The store's flush mode (decision 0481): how a write reaches the disk, for SQLite (`synchronous`) and for the
 /// blocks the store's rows name, which follow it. `RERAIL_FLUSH` (`synced`, `os`, `none`) names it; by default
 /// `os`, and `none` in the store's own tests (the engine's test binary sets `none` too, `test_flush`).
 pub fn store_flush() -> StoreResult<Flush> {

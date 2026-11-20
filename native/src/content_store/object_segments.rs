@@ -40,7 +40,7 @@ impl<T: AsRef<[u8]> + std::any::Any + Send + Sync> TapeHeld for T {}
 pub enum ObjectBytes {
     Heap(Arc<Vec<u8>>),
     /// Decompressed from its row's frame into a buffer at 16 bytes, of its exact length: a load into the bytes its
-    /// readers read (decision 0464: an image opens over it as over a mapping).
+    /// readers read (decision 0480: an image opens over it as over a mapping).
     Loaded(Arc<Loaded>),
     Mapped(SegmentBytes),
     /// A tape queued for the writer, in its home (decision 0353 step 4a: a slab's room, read there).
@@ -132,7 +132,7 @@ impl ObjectFrame {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    /// Its bytes at 16 bytes: a frame loaded (`Loaded`), a segment's read in place (decision 0464).
+    /// Its bytes at 16 bytes: a frame loaded (`Loaded`), a segment's read in place (decision 0480).
     pub fn bytes_aligned(&self, raw_length: usize) -> std::io::Result<ObjectBytes> {
         match self {
             ObjectFrame::Zstd(f) => Loaded::of_frame(f, raw_length).map(|b| ObjectBytes::Loaded(Arc::new(b))),
@@ -485,7 +485,7 @@ impl ContentStore {
 
     /// The source each of `aliases` names, in their order, in one read (decision 0394): one placed in a segment is
     /// read there, mapped (`ObjectBytes::in_place`): not decompressed, hashed or copied, its segment's check (when
-    /// mapped) the check; one held inline is loaded at 16 bytes (`ObjectBytes::Loaded`, decision 0464) and checked
+    /// mapped) the check; one held inline is loaded at 16 bytes (`ObjectBytes::Loaded`, decision 0480) and checked
     /// against its hash, as `get_source` does. `None` where no source has the alias, or its segment is gone.
     pub fn sources_by_alias_in_place(&self, aliases: &[HashKey]) -> StoreResult<Vec<Option<ObjectBytes>>> {
         let rows: Vec<Option<(i64, i64, Vec<u8>, HashKey, [i64; 3])>> = {

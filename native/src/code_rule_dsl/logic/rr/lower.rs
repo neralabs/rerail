@@ -1583,7 +1583,7 @@ impl Seeds {
     /// The scope's program as a version: its seeds' header, which every module linked in it starts from
     /// (`link_seeded_parts`).
     pub fn version(&self) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
-        // Written from the lowerer's builder as it is, not a clone of it (decision 0464).
+        // Written from the lowerer's builder as it is, not a clone of it (decision 0480).
         self.l.prog.base_version().map_err(Error::Syntax)
     }
 }

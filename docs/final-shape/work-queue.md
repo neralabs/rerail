@@ -1203,7 +1203,7 @@ pass.
 - **Waits for**: the deferrable tier (0295 path step 2), built on final-rerail-shape-phased-facts.
 - **Done when**: Typing-support's version tests pass on blocks, and dl1's trace validation costs no more
   instructions than 0173's.
-- **Built** (2026-11-19, decision 0464): the image is written once in place (`Layout`/`Placing`), a record carries
+- **Built** (2026-11-19, decision 0480): the image is written once in place (`Layout`/`Placing`), a record carries
   it as its version's `Arc` (record pieces), stored images are placed in segments and opened over the mapping (an
   older store's inline rows loaded at 16 bytes), and the bundle is read in place. An open checks bounds, references
   and strings, not node trees (`Depth::Held`), except for foreign bytes and in debug builds. One fold rule (0456 K4's
@@ -1211,7 +1211,7 @@ pass.
   store and logic tests pass (Linux: 204 of the engine's; M1 Max: 703 of the three crates').
 - **Done** (2026-11-19, a282371e9, the M3 at load 35–53): dl1's 44-policy batch, images required, gives 48
   findings cold and warm. It retires 79.9 G instructions cold (a26e71b5d: 81.7 G) and 3.7 G then 3.3 G warm (5.7 G
-  then 3.3 G). Decision 0464, "Measured".
+  then 3.3 G). Decision 0480, "Measured".
 
 ### Q27. `value_types_are_ws_value_types` reads only the string-typed values
 
@@ -2980,7 +2980,7 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - **Waits on the user:** 5b–5e (a complete `clif_msl`, rounds as batches) build out a shape the
   numbers say loses to one core. Question 3 below.
 
-### Q291. (done) (Q249 until 2026-11-19; the hub's Q249 is the typing oracles') A rerun over an edit that adds a request rule states one more about part than a run from scratch
+### Q332. (done) (Q249 until 2026-11-19; the hub's Q249 is the typing oracles') A rerun over an edit that adds a request rule states one more about part than a run from scratch
 
 - **Found**: merging the hub (65e368a0b) into Typing-support. The hub's new
   `program_image::tests::a_request_record_over_an_edit_is_a_run_from_scratchs` failed at its third edit. That edit
@@ -3634,7 +3634,7 @@ Q36's pricing (`field($l, "left", $t)` priced at one row a line) is lost again. 
 - **Still open** (2026-11-19, read at 049b9aaa6): neither a step's `apply` (stored) nor `find` (a hit) names the
   image's and the step facts' sources in the run's manifest (`Apply::name`). Built with Q26, which moves a stored
   image into a block: the sources named are its new home's.
-- **Done** (2026-11-19, decision 0464 §7): `keep`'s apply names the image and the facts it stores or finds, and
+- **Done** (2026-11-19, decision 0480 §7): `keep`'s apply names the image and the facts it stores or finds, and
   `find` names both through an item of the run's record. `a_found_step_names_its_sources_as_its_keeper_did`: the
   run that finds the steps names the sources the keeping run named.
 
@@ -5399,7 +5399,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Record**: done (2026-11-19, Typing-support): as **Fixed** above. The journal tests that still failed on a
   loaded host are Q223's (fseventsd delivering late), done: 22 of 22 runs on the M3.
 
-### Q292. (Q251 until 2026-11-19; the hub's Q251 is a level's fact constraints) 0364 R7 is red: after a use is added, two recheck lines are unpriced
+### Q333. (Q251 until 2026-11-19; the hub's Q251 is a level's fact constraints) 0364 R7 is red: after a use is added, two recheck lines are unpriced
 
 Seen 2026-11-19 on an M-series farm host, at this branch's a9c6b3b62 and on the hub (django-bugs' 2e9d16bc8 names it
 failing at 24740af51): `maintain_tests::r7_the_recheck_order_is_priced` fails at maintain_tests.rs:327, "R7: after a
@@ -5415,7 +5415,7 @@ regression of the maintain mode's plans (0328 §4), not a stale test.
   recheck's spec is written from the head-bound body, and the spec's cache key says which it is. R7 passes; the 139
   maintain, session, recheck and plan tests pass.
 
-### Q293. (Q252 until 2026-11-19; the hub's Q252 is a chain's reach) CPython ran on the product's path: `value::python_ast` started `python3.13` for each demand batch
+### Q334. (Q252 until 2026-11-19; the hub's Q252 is a chain's reach) CPython ran on the product's path: `value::python_ast` started `python3.13` for each demand batch
 
 Seen 2026-11-19 (Typing-support), on a Linux farm host without CPython 3.13: 9 of `rerail-lang-python`'s tests
 failed, "Canonical Python AST facts require CPython 3.13". The relational producer
@@ -5435,7 +5435,7 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   on a box, and the worker is deleted.
 - **Record**: —
 
-### Q294. (done) Linking every pack's library waits minutes on the store's msync of kept facts (Linux)
+### Q335. (done) Linking every pack's library waits minutes on the store's msync of kept facts (Linux)
 
 - **Found** (2026-11-19, Q26): `rr::tests::library_modules_link_to_the_lowering_of_them_together` takes 217 s at
   f9c3bd713 and 251 s with Q26 on a DGX Spark (debug), of which 87 s user and 40 s sys. Stack samples show the test
@@ -5444,7 +5444,7 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   tier; it is now in the slow tier with 8 periods (`.config/nextest.toml`).
 - **Cause**: the half gigabyte was the kept file's reservation, not its facts: `sync_mapped` msynced the whole
   mapping. Every block a store wrote was waited for, and the test ran phase 0 once per program.
-- **Done** (decision 0465): a store's flush mode (`synced`, `os` the default, `none`) is its connections'
+- **Done** (decision 0481): a store's flush mode (`synced`, `os` the default, `none`) is its connections'
   `synchronous`, and every block writer takes it from the connection. The engine's test binary sets `none`. A synced
   block msyncs its used pages only. The test derives every pack's include graphs in one phase 0 run (`rr::modules_of`)
   takes 140.6 s → 22.3 s wall, 1.00 T → 262 G instructions (M3, debug, alone; 24.6 s beside other tests on the M1

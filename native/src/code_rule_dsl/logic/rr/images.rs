@@ -105,7 +105,7 @@ fn map(path: &Path) -> Option<&'static [u8]> {
 }
 
 /// Where no mapping is, the file read once for the process, into a buffer at 16 bytes (its images are read in place
-/// at 16, decision 0464).
+/// at 16, decision 0480).
 #[cfg(not(unix))]
 fn map(path: &Path) -> Option<&'static [u8]> {
     use std::io::Read;
@@ -127,7 +127,7 @@ impl AsRef<[u8]> for InBundle {
     }
 }
 
-/// The image the shipped bundle keeps under `key`, read in its mapping (decision 0464): at 16 bytes, as the bundle
+/// The image the shipped bundle keeps under `key`, read in its mapping (decision 0480): at 16 bytes, as the bundle
 /// places each.
 pub fn shipped_image(key: HashKey) -> Option<crate::code_rule_dsl::logic::program_image::SharedBytes> {
     shipped().and_then(|b| b.get(key)).map(|b| Arc::new(InBundle(b)) as _)
@@ -137,7 +137,7 @@ pub fn shipped_image(key: HashKey) -> Option<crate::code_rule_dsl::logic::progra
 /// shipped with the engine).
 pub type ImageFound = (crate::code_rule_dsl::logic::program_image::SharedBytes, Option<SourceId>);
 
-/// The program image under `key`, read where it is held (decision 0464): in the shipped bundle's mapping, else the
+/// The program image under `key`, read where it is held (decision 0480): in the shipped bundle's mapping, else the
 /// store's, mapped from its segment or loaded from its row at 16 bytes; never copied.
 pub fn read_image(store: Option<&ContentStore>, key: HashKey) -> Option<ImageFound> {
     read_images(store, &[key]).pop().flatten()

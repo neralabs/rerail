@@ -1764,7 +1764,7 @@ impl<'s> Pipeline<'s> {
 
 /// A version of a stored run, over the versions before it in the run's table (decision 0333 §2).
 pub enum StoredVersion<'r> {
-    /// A base: its image, as the version holds it (a record's piece takes it so, uncopied: decision 0464).
+    /// A base: its image, as the version holds it (a record's piece takes it so, uncopied: decision 0480).
     Base(&'r Arc<super::Image>),
     /// An overlay of version `parent`: its delta's image.
     Overlay { parent: usize, delta: &'r Arc<super::Image> },

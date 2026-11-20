@@ -15,7 +15,7 @@
 //! A block no device wrapped (the host's writes alone) is written back in place: one `MS_SYNC`, the truncation and
 //! the state, and its mapping and readers stay.
 //!
-//! Each `MS_SYNC` of the host's pages waits only with `Flush::Synced` (decision 0465); by default the OS writes them
+//! Each `MS_SYNC` of the host's pages waits only with `Flush::Synced` (decision 0481); by default the OS writes them
 //! back at its own pace. A kernel's pages on macOS are written back in every mode, since the OS never writes them.
 //!
 //! Nothing else writes a kernel's pages back: not `sync`, not the OS's flush, not the process's exit (0295 §7). So
@@ -192,7 +192,7 @@ impl Sealed {
     }
 
     /// The writer's half (module doc). Returns the block mapped again read-only and frozen, its pages written back as
-    /// `flush` says (decision 0465): with `Synced` on the disk; otherwise the OS's to write, at its own pace. A
+    /// `flush` says (decision 0481): with `Synced` on the disk; otherwise the OS's to write, at its own pace. A
     /// kernel's pages on macOS are written back whatever `flush` says: the OS never writes back a page the GPU wired,
     /// so that is what makes them the file's at all.
     pub fn write_back(self, flush: Flush) -> io::Result<Frozen> {
@@ -346,7 +346,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// Written back with the OS's flush (decision 0465, the default), a host-written slab waits for no disk, yet is
+    /// Written back with the OS's flush (decision 0481, the default), a host-written slab waits for no disk, yet is
     /// frozen and holds its bytes when opened again from its file: the pages are the OS's to write.
     #[test]
     fn a_slab_written_back_by_the_os_opens_frozen_with_its_bytes() {

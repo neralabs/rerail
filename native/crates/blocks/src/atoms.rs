@@ -149,7 +149,7 @@ pub struct AtomsW {
     /// Where it writes back without a shared mapping (WASI): the block lives in memory there.
     #[cfg(not(unix))]
     file: std::fs::File,
-    /// How its write-backs reach the disk (`sync`, decision 0465).
+    /// How its write-backs reach the disk (`sync`, decision 0481).
     flush: Flush,
 }
 
@@ -301,7 +301,7 @@ impl AtomsW {
         self.raw.first + self.block.root::<AtomsRoot>().count.load(Acquire) as u32
     }
 
-    /// Every append so far written back for the commit that names them, as its `Flush` says (decision 0465): with
+    /// Every append so far written back for the commit that names them, as its `Flush` says (decision 0481): with
     /// `Synced`, on the disk (the dirty pages written back, then the file flushed: a barrier on macOS, `fdatasync`
     /// elsewhere); otherwise the OS's to write. Without shared mappings, the block's bytes are written to its file.
     pub fn sync(&self) -> io::Result<()> {

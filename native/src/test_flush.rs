@@ -1,4 +1,4 @@
-//! The engine's test binary flushes nothing (decision 0465): its stores are thrown away, so neither SQLite nor the
+//! The engine's test binary flushes nothing (decision 0481): its stores are thrown away, so neither SQLite nor the
 //! blocks the store's rows name wait for the disk. Set before `main`, as the watchdog starts (`test_watchdog`), so
 //! every store any test opens has it; a run that names a mode (`RERAIL_FLUSH=synced`) keeps its own.
 

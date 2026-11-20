@@ -454,7 +454,7 @@ impl<'p> Encoder<'p> {
     }
 
     /// The image: the rules written, and `parts`; a delta when it has a parent, removing `removed` (sorted) of its
-    /// rules. Written once, in place (`Layout`, decision 0464), from the encoder as it is: nothing it holds is copied
+    /// rules. Written once, in place (`Layout`, decision 0480), from the encoder as it is: nothing it holds is copied
     /// or consumed first, so a writer can write its image and go on. A base states every part, what `parts` leaves
     /// unstated empty: no inputs, no outputs, no `.about` rows.
     pub fn finish(&self, parts: &Parts, removed: &[u32]) -> Result<super::Image, String> {

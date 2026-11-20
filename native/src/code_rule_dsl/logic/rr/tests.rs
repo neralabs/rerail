@@ -3846,7 +3846,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&packs).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
     dirs.sort();
     let mut checked = 0;
-    // Every pack's programs' include graphs in one run of phase 0 (`modules_of`), not one a program or a pack (Q294).
+    // Every pack's programs' include graphs in one run of phase 0 (`modules_of`), not one a program or a pack (Q335).
     let srcs: Vec<(PathBuf, String)> = dirs.iter().flat_map(|dir| {
         let mut programs = walk_rr(dir);
         programs.sort();

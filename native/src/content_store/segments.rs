@@ -316,7 +316,7 @@ impl SealedSegments {
         self.placed.is_empty()
     }
     /// Writes every segment back that is not yet (the writer's half; again after a failure, only those left), as the
-    /// store's `flush` says (decision 0465).
+    /// store's `flush` says (decision 0481).
     pub(super) fn write_back(&mut self, flush: rerail_blocks::block::Flush) -> StoreResult<()> {
         for d in &mut self.done {
             match d.take() {

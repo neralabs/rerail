@@ -136,7 +136,7 @@ impl Version {
     }
 
     /// The base its writer wrote (`Builder::image`), read where it was written: no copy, and the writer's own checks
-    /// (`Placing::finish`, decision 0464).
+    /// (`Placing::finish`, decision 0480).
     pub fn of_image(image: Image) -> Result<Arc<Version>, String> {
         Version::base_of(image)
     }
@@ -288,7 +288,7 @@ impl Version {
             _ => None,
         }
     }
-    /// Its own image, as it is held (decision 0464: a record's piece takes it so, uncopied): a base's, or an overlay's
+    /// Its own image, as it is held (decision 0480: a record's piece takes it so, uncopied): a base's, or an overlay's
     /// delta; `None` for a view, which has none.
     pub fn own_image(&self) -> Option<&Arc<Image>> {
         match self {

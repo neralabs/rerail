@@ -1469,7 +1469,7 @@ fn a_new_process_reruns_only_the_passes_after_a_stored_step() {
 }
 
 /// A run that keeps a pipeline's steps, and a later run that finds them, each name the steps' sources in its manifest
-/// (Q146, decision 0464 §7): the step facts and each step's image, the same sources both times, so a collection between
+/// (Q146, decision 0480 §7): the step facts and each step's image, the same sources both times, so a collection between
 /// the two runs keeps them. Read as the run's manifest reads them, by an item at the record's end.
 #[test]
 fn a_found_step_names_its_sources_as_its_keeper_did() {
@@ -1739,7 +1739,7 @@ fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
 
 /// A stored run is read where the store placed it (decision 0394): its images, its analyses' rows and its facts in
 /// one segment, uncompressed, read there mapped, and each version opened over the mapping, not decompressed, hashed
-/// or copied. An image a store held inline (as stores kept a prepared program's before decision 0464) is moved there by
+/// or copied. An image a store held inline (as stores kept a prepared program's before decision 0480) is moved there by
 /// the keep. Its
 /// request record is kept with its steps (decision 0393), so a rerun in a new process over an edit states a run from
 /// scratch's.
