@@ -1,6 +1,6 @@
 # 0478. What a relation keeps is in blocks, the same for the CPU and the GPU
 
-Date: 2026-11-19 (0450 on Native-and-GPU-strata until the merge into investigate-bend-vs-datalog, 2026-11-19). Status: decided (user, 2026-11-19, on Q261); built in steps below.
+Date: 2026-11-19 (0450 on Native-and-GPU-strata until the merge into investigate-bend-vs-datalog, 2026-11-19). Status: decided (user, 2026-11-19, on Q314); built in steps below.
 
 ## Intro
 
@@ -16,7 +16,7 @@ each relation (`setfix::InRel`: `idx`, `chains`, `dead`, `counted`, `tables`, `k
 another, per thread (`setfix::device::RESIDENT`). The same index can exist twice: once in the relation's block,
 which the GPU reads, and once as the CPU's hash table (`Csr`).
 
-Q261 found what that costs. The device's per-thread cache holds a handle to each relation it read in place, and the
+Q314 found what that costs. The device's per-thread cache holds a handle to each relation it read in place, and the
 handle keeps the relation's pages. A chunk's device strata run in pool jobs on about 18 threads, and each thread lets
 go only at its next device stratum. So a chunk's memory is freed by the threads' timing, and the chunks that run at
 once differ from run to run.
@@ -59,7 +59,7 @@ Asked why the device caches relations at all, the user set the rule (2026-11-19)
   structure.
 - **R5** On the CPU, `InRel` keeps no index, order, dead-row list, statistic, count table or key run of its own: each
   is in the relation's block.
-- **R6** Every run of hogql on Metal holds the same bytes past each chunk, so the same chunks run at once (Q261).
+- **R6** Every run of hogql on Metal holds the same bytes past each chunk, so the same chunks run at once (Q314).
   It gives its 1,629 findings on both bindings.
 - **R7** A check refuses a new thread-local or process-wide map of relation data (as `check-no-block-copies.py`
   refuses a copy).
@@ -219,7 +219,7 @@ pending into a new buffer.
 - hogql cold, Metal, profiling, format 15, at load 57-69, after the fix: four runs of 74.8-77.4 B, peak 1,297-1,353
   MB, against step 2c's three runs at the same load of 76.6-82.4 B, peak 1,228-1,399 MB; 1,629 findings in each (the
   new binary's first launch, 100 B and 35 s, left out). The build before the fix stopped once in five runs at the ast
-  matcher wave's `BackendCapacity` (work queue, Q261 "Found"); none of the five after it did.
+  matcher wave's `BackendCapacity` (work queue, Q314 "Found"); none of the five after it did.
 
 ## Built (2026-11-19, step 2e, the cache's entries of any size)
 
@@ -281,7 +281,7 @@ that size came from the cache's first use, a 16z block decoded, and nothing else
   per-symbol table is made; its rows are the CPU's.
 - hogql cold, Metal, profiling, format 15, load 28-33, interleaved with the build before (d9ea6f1ec), 1,629 findings
   in every run: 75.9-77.2 B against 77.5-80.4 B, peak 1,365-1,416 MB against 1,443-1,494 MB. No stratum ran on the
-  host for an unheld symbol or the separator; the refusals at run time are the device's room (Q261) in both builds.
+  host for an unheld symbol or the separator; the refusals at run time are the device's room (Q314) in both builds.
   Left out: the new binary's first run, which compiles the changed kernels (89 B, 25 s).
 
 ## Built (2026-11-19, step 2e, the text functions' texts in the one cache)

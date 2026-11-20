@@ -159,7 +159,7 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
 
 /// The most instructions a read may have and still be inlined into its callers. A larger one (the 16z tape's block
 /// decode, about 3,000) is called, not copied into each caller: the backend's compile of a kernel grows with every
-/// copy, and a read that calls it from a loop gets several (Q354: one view read's pipeline took 32 s cold with its
+/// copy, and a read that calls it from a loop gets several (Q383: one view read's pipeline took 32 s cold with its
 /// copies inlined, 2 s with the decode called).
 const MOST_INLINED: usize = 1024;
 

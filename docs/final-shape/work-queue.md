@@ -4810,7 +4810,7 @@ after the phases went on the run path (0083).
 - **Taken by** 0494 (phased-facts, the user 2026-11-19: "B: lazy Batch everywhere"): a batch makes a document when
   first read, its row space from kept counts; steps 1-4 there, ep2's numbers by its step 5.
 
-### Q354. (Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
+### Q383. (Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
 
 Found 2026-11-19 while running `syntax::tests` for 0494 (on the M3 and the M1 Max, the same each run).
 - **What.** The test's `view_probe` kernel calls 16 view reads. `new_library_with_source` returned;
@@ -4829,7 +4829,7 @@ Found 2026-11-19 while running `syntax::tests` for 0494 (on the M3 and the M1 Ma
   past `Z_APART` (the 16z decode's) is `UKL_COLD` (`noinline` on Metal) by its id, as the JIT treats it. The size
   bound and `metal_tape_reads_z.metal` are gone with it.
 
-### Q353. (Q287 on phased-facts) An edit keeps the rows of the cross part's `kind`, a view of `node` (open)
+### Q382. (Q287 on phased-facts) An edit keeps the rows of the cross part's `kind`, a view of `node` (open)
 
 Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one-file edit).
 - **What.** The data-layer prelude's `kind(n, k) :- node(_, n, k, _, _)` is a view of an input's columns (Q37). The
@@ -4914,7 +4914,7 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   lookup (every stratum hashed all its rows: the edit's cross part 46.1 G, now 8.8 G), and the corpus batch made
   what the cross part does not read (tree digests). Left: the edit still makes every document of the corpus batch
   (0.45 s, most of `stats`' 9.6 G against 1.6 G before): 0458's "a document is made when first read" is not built.
-  Next: that; Q353 (`kind`'s rows kept after an edit).
+  Next: that; Q382 (`kind`'s rows kept after an edit).
 
 ### Q284. (Q243 here before the hub merge 535cc2c8b) A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 
@@ -6126,7 +6126,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     documents). Its cold count read every cell through `Source::value` (6.0 s); by the sources' walks
     (40103ffcb4), 2.55 s. `leg-083-typed` on the 901 files: 591 G to 564 G instructions, user 47.0 to 34.3 s, 18.1 s
     wall at load 18-31, peak 1,124 to 1,165 MB; outputs equal (7e44639d6fb0). Spans' own CPU 43.2 to 34.9 s: the
-    memo's base rows 4.4 s to 0, the export to the cross part 4.4 to 2.2 s; the chunks 15.3 to 16.5 s (Q355: the guest rounds made their files again; fixed, 542 G).
+    memo's base rows 4.4 s to 0, the export to the cross part 4.4 to 2.2 s; the chunks 15.3 to 16.5 s (Q384: the guest rounds made their files again; fixed, 542 G).
 
 ### Q313. (Q243 here before the merge of rr-align 62618b2e0a) At 2,410 files the mode is priced above a derive for deltas of 0.1% of the rows read
 
@@ -6719,7 +6719,7 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Do**: move each where its class says, and cut its line.
 - **Done when**: none of the five is in `global-state.txt`.
 
-### Q355. 0494's lazy batch makes 773 of a chunk run's documents twice (done)
+### Q384. 0494's lazy batch makes 773 of a chunk run's documents twice (done)
 
 Found 2026-11-19 merging phased-facts (10d3b38139) here: `leg-083-typed` on the 901 files, profiling build, the M1 Max.
 - **What.** Under `a chunk evaluated`, the batch's documents' rows were made for 2,145 documents (901 files and their
@@ -6750,7 +6750,7 @@ Found 2026-11-19 merging phased-facts (10d3b38139) here: `leg-083-typed` on the 
   reserved large and grown in place, tails released); the Metal peak footprint at big chunks
   (1.36-1.47 GB, the count's most 1.15 GB), whose largest rise t49 found in the guests' `ann_ctx` stratum.
 
-### Q379. Roll-up 8 (CUDA-support's 0440 onto rr-align): what the merge chose, and what stays open
+### Q315. Roll-up 8 (CUDA-support's 0440 onto rr-align): what the merge chose, and what stays open
 
 - **Seen** (merge of a6d9a03aa8d): each side rebuilt the same parts its own way. CUDA-support moved the kernels to
   UKL on a device layer (0440). This branch made the run and machine state explicit (0442), sized chunks by each
@@ -6772,7 +6772,7 @@ Found 2026-11-19 merging phased-facts (10d3b38139) here: `leg-083-typed` on the 
      reads' `z_lz4`, which is 0353 step 4b's one decoder. Should the library's go, or be the reads'?
   3. `<ukl/writer.h>` is 249 KB, every op `UKL_INLINE`; the MSL source it replaces was 192 KB. Measure its compile.
 
-### Q380. `open_tuple` grows faster than its chunk: 0435's bigger chunks cost ep2's cold run 35%
+### Q316. `open_tuple` grows faster than its chunk: 0435's bigger chunks cost ep2's cold run 35%
 
 - **Seen** (roll-up 8, ep2 cold, profiled, on M3 at load 20-50; 1,334 rows, 0 differing each time):
 
@@ -6788,7 +6788,7 @@ Found 2026-11-19 merging phased-facts (10d3b38139) here: `leg-083-typed` on the 
 - **Do**: find what in `open_tuple`'s plan grows with the chunk's square (a cross product of the chunk's tuples, or an
   index the planner skips at the bigger size), and fix its shape. 0435's sizing is a user decision: it stays.
 
-### Q381. Roll-up 9 (Parser-generators-final-shape onto rr-align): what the merge chose
+### Q317. Roll-up 9 (Parser-generators-final-shape onto rr-align): what the merge chose
 
 - **Seen** (merge of 6da4cd4692e; the branch has moved on to 9fc4ad9c22, and the roll-up keeps the pinned commit):
   - Both sides renumbered the same four decisions. This branch had them as 0411, 0412, 0402 and 0403. Theirs had

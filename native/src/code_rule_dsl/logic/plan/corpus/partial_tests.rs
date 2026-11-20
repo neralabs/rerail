@@ -442,7 +442,7 @@ fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Q355: a chunk's files' rows are made once, whatever guests its rules ask for. Before, the batch with guests was
+/// Q384: a chunk's files' rows are made once, whatever guests its rules ask for. Before, the batch with guests was
 /// built again and made every file's rows again (773 of `leg-083-typed`'s 901 files, 0.8 s of its chunks' CPU).
 /// Under decision 0431 an annotation is a tape value admitted in the program's fixpoint: no slice round runs and
 /// the batch never grows (R5, R10), so no file is made twice.

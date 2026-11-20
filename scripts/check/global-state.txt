@@ -262,7 +262,7 @@ native/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	stays	computed once from the
 native/src/code_rule_dsl/tape/tokens.rs::KEPT	stays	computed once from the engine's own files
 native/src/code_rule_dsl/tape/vue_lean.rs::IDS	stays	computed once from the engine's own files
 native/src/code_rule_dsl/text.rs::NAMES	stays	counter names leaked once each (`&'static str`), from the engine's own text productions: an append-only interner of the engine's names
-native/src/code_rule_dsl/text/automata.rs::AUTOMATA	shared	the text tests' and replacers' automata block (decision 0478 step 2e): Q331 moves it onto the shared object
+native/src/code_rule_dsl/text/automata.rs::AUTOMATA	shared	the text tests' and replacers' automata block (decision 0478 step 2e): Q356 moves it onto the shared object
 native/src/code_rule_dsl/transducer/packed/compile/matcher.rs::NAMES	stays	names leaked once each (`&'static str`), from the engine's own fallback reasons: an append-only interner of the engine's names
 native/src/code_rule_dsl/transducer/packed/device.rs::MATCHER	stays	code a crate above registers at load
 native/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	stays	computed once from the engine's own files
