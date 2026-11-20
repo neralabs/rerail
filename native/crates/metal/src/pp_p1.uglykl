@@ -285,6 +285,15 @@ UKL_INLINE void p1_grp_settle(UKL_GLOBAL const uint32_t* n_grp, UKL_GLOBAL const
 
 // P1's refusals (`P1_FLAGS`): a store's room, and the cases a later step of 0467 builds.
 #define P1_ROOM (1u)
+// `P1_NEED`'s words (`pp_expand.rs`'s `NEED_*`).
+#define NEED_DIRS (0u)
+#define NEED_GAPS (1u)
+#define NEED_GROUPS (2u)
+#define NEED_IF_TOP (3u)
+#define NEED_TEXT_TOP (4u)
+#define NEED_NODES (5u)
+#define NEED_NAMES (6u)
+#define NEED_REQS (7u)
 #define P1_EMBED (4u)
 #define P1_ITERATIONS (16u)
 

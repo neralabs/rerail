@@ -313,16 +313,17 @@ fn unit_key(key: u64, u: u32) -> u64 {
     h ^ (h >> 32)
 }
 
-/// P1's stores' room at its rung (`rung` from 0, doubling): the instances, the directive words,
-/// the stretch and group words, and the active text's tokens. A unit's files entered `2 << rung`
-/// times each fit; past them, P1 refuses the round for room and runs it again a rung up.
-#[derive(Clone, Copy, Debug)]
-pub struct Caps {
-    pub nodes: usize,
-    pub dirs: usize,
-    pub gaps: usize,
-    pub top: usize,
-}
+/// P1's rooms, by what each counts: the directive words, the stretches, the groups, an `#if`
+/// top's tokens, the text's, the tree's nodes, the requests' name bytes, the requests.
+pub const NEED_DIRS: usize = 0;
+pub const NEED_GAPS: usize = 1;
+pub const NEED_GROUPS: usize = 2;
+pub const NEED_IF_TOP: usize = 3;
+pub const NEED_TEXT_TOP: usize = 4;
+pub const NEED_NODES: usize = 5;
+pub const NEED_NAMES: usize = 6;
+pub const NEED_REQS: usize = 7;
+pub const NEEDS: usize = 8;
 
 /// P1's rungs.
 pub const P1_RUNGS: u32 = 8;
@@ -333,12 +334,136 @@ pub fn text_rows(rung: u32) -> usize {
     1024 << rung
 }
 
+/// P1's stores' room: the instances, the directive words, the stretch and group words, and the
+/// active text's tokens. The first run's fits a unit whose files are each entered twice; a run
+/// refused for room says what each room needed (`P1_NEED`), and the next is sized from that
+/// (`grown`): only the rooms that ran out grow, to twice their need.
+#[derive(Clone, Copy, Debug)]
+pub struct Caps {
+    pub nodes: usize,
+    pub dirs: usize,
+    pub gaps: usize,
+    pub top: usize,
+    /// The runs refused for room so far (P1's rungs, bounded by `P1_RUNGS`).
+    pub rung: u32,
+}
+
 impl Caps {
+    pub fn first(unit: &Unit, lay: &Layout) -> Caps {
+        Caps::of(unit, lay, 0)
+    }
+
+    /// Every room at `2 << rung` entries a file.
     pub fn of(unit: &Unit, lay: &Layout, rung: u32) -> Caps {
         let k = 2usize << rung.min(P1_RUNGS - 1);
         let nodes = lay.nodes.len() + unit.len() * k + 2;
         let dirs = unit.dir_bound * k + 16;
-        Caps { nodes, dirs, gaps: dirs + nodes, top: unit.node_bound * k + 16 }
+        Caps { nodes, dirs, gaps: dirs + nodes, top: unit.node_bound * k + 16, rung }
+    }
+
+    /// The next run's rooms after one refused for room that needed `need`: each room past its
+    /// cap at twice its need, the others as they were. A room that names no count (the requests'
+    /// scratch) grows them all a rung.
+    pub fn grown(self, unit: &Unit, lay: &Layout, need: [u32; NEEDS]) -> Caps {
+        let n = |k: usize| need[k] as usize;
+        if need[NEED_REQS] == u32::MAX {
+            return Caps::of(unit, lay, self.rung + 1);
+        }
+        let mut c = self;
+        c.rung += 1;
+        let past = |want: usize, cap: usize| if want > cap { want * 2 } else { cap };
+        c.nodes = past(n(NEED_NODES), c.nodes);
+        c.dirs = past(n(NEED_DIRS).max(n(NEED_REQS)), c.dirs);
+        c.top = past(n(NEED_IF_TOP).max(n(NEED_TEXT_TOP)), c.top);
+        // The stretch words are the directives' and the instances' at least.
+        c.gaps = past(n(NEED_GAPS), c.gaps).max(c.dirs + c.nodes);
+        // The groups (`dirs + nodes`) and the requests' names (64 bytes a directive word).
+        if n(NEED_GROUPS) > c.dirs + c.nodes {
+            c.dirs = n(NEED_GROUPS) * 2;
+            c.gaps = c.gaps.max(c.dirs + c.nodes);
+        }
+        if n(NEED_NAMES) > c.dirs * 64 + 4096 {
+            c.dirs = n(NEED_NAMES) / 32;
+            c.gaps = c.gaps.max(c.dirs + c.nodes);
+        }
+        if c.nodes == self.nodes && c.dirs == self.dirs && c.gaps == self.gaps && c.top == self.top {
+            return Caps::of(unit, lay, self.rung + 1);
+        }
+        c
+    }
+}
+
+/// The expansion's rooms: its tokens, lists, arguments, output, and the scratch's bytes and tokens
+/// (past the literals and the `#line` rows' room). The first run's are from the top level's
+/// tokens; a run refused for room says what each used (`Exp::room`), and the next is sized from
+/// that (`grown`): only the rooms that ran out grow, by twice what they lacked at least.
+#[derive(Clone, Copy, Debug)]
+pub struct XCaps {
+    pub tok: usize,
+    pub lists: usize,
+    pub args: usize,
+    pub out: usize,
+    pub sb: usize,
+    pub st: usize,
+    /// The queue's items: the most the work pushes (it is linear, no slot used twice).
+    pub q: usize,
+    /// The runs refused for room so far: the counters' and the text facts' rooms, and the
+    /// `#line` rows', double with it.
+    pub rung: u32,
+}
+
+impl XCaps {
+    /// Every room at rung `rung` over a top level of `top` tokens.
+    pub fn at(top: usize, rung: u32) -> XCaps {
+        let tok = (top + 4096) << (rung + 1);
+        // The scratch's bytes: a paste's or a `#`'s spelling, 2 bytes a token's room.
+        let lists = top / 2 + tok / 4 + 256;
+        XCaps { tok, lists, args: tok / 2 + 256, out: top + tok, sb: ((64usize << 10) << rung).max(2 * tok), st: tok / 4 + 256, q: 2 * lists + 64, rung }
+    }
+
+    fn max(self, a: XCaps) -> XCaps {
+        XCaps { tok: self.tok.max(a.tok), lists: self.lists.max(a.lists), args: self.args.max(a.args), out: self.out.max(a.out), sb: self.sb.max(a.sb), st: self.st.max(a.st), q: self.q.max(a.q), rung: self.rung.max(a.rung) }
+    }
+
+    /// At least the first run's rooms of a top level of `top` tokens (P1's grew).
+    pub fn fit(self, top: usize) -> XCaps {
+        let a = XCaps::at(top, 0);
+        XCaps { rung: self.rung, ..self.max(a) }
+    }
+
+    /// The next run's rooms after one refused for room that used `room` (`Exp::room`): each
+    /// room that ran out grows by twice its lack, at least doubling, and one more than half used
+    /// doubles; the others stay. A room
+    /// `room` does not name (the output, the counters) grows them all a rung.
+    pub fn grown(self, top: usize, room: [(u32, u32); 6]) -> XCaps {
+        // A run refused for room stops where the first room ran out: the others' counts are
+        // lower bounds, so a room more than half used grows with it.
+        let out = room.iter().any(|&(used, cap)| used > cap);
+        let up = |(used, cap): (u32, u32), now: usize| {
+            if used > cap {
+                (now + 2 * (used - cap) as usize).max(2 * now)
+            } else if out && used as usize * 2 > cap as usize {
+                2 * now
+            } else {
+                now
+            }
+        };
+        let mut c = self;
+        c.rung += 1;
+        let [tok, lists, args, sb, st, q] = room;
+        c.tok = up(tok, c.tok);
+        c.lists = up(lists, c.lists);
+        c.args = up(args, c.args);
+        c.sb = up(sb, c.sb);
+        c.st = up(st, c.st);
+        c.q = up(q, c.q);
+        if c.tok == self.tok && c.lists == self.lists && c.args == self.args && c.sb == self.sb && c.st == self.st && c.q == self.q {
+            let a = XCaps::at(top, self.rung + 1);
+            return XCaps { rung: a.rung, ..self.fit(top) }.max(a);
+        }
+        // The output holds the top level's and the expansion's tokens.
+        c.out = c.out.max(top + c.tok);
+        c
     }
 }
 
@@ -454,6 +579,8 @@ pub struct Vis {
     reqs: Buf,
     nreq: Buf,
     flags: Buf,
+    // What each of P1's rooms needed where it ran out (`NEED_*`), for the next run's sizes.
+    need: Buf,
     pub(crate) ufirst: Buf,
     // The active text's tokens' room.
     tc: u32,
@@ -529,10 +656,6 @@ pub struct Vis {
     pub bad: Buf,
 }
 
-/// The top level's tokens at most, at P1's rung `rung`.
-pub fn top_bound(unit: &Unit, lay: &Layout, rung: u32) -> usize {
-    Caps::of(unit, lay, rung).top
-}
 
 /// The pointer-jumping rounds a pop's value takes at most (2^32 pops' chains).
 const STACK_ROUNDS: usize = 32;
@@ -543,10 +666,9 @@ const P1_ITERS: usize = 64;
 const NO_NODE: [PpNode; 1] = [PpNode { file: 0, parent: NO_PARENT, pdir: 0, depth: 0, unit: 0 }];
 
 impl Vis {
-    pub fn new(arena: &Arena, unit: &Unit, lay: &Layout, p1_rung: u32, x_rung: u32) -> Result<Vis, Error> {
+    pub fn new(arena: &Arena, unit: &Unit, lay: &Layout, caps: Caps, x_rung: u32) -> Result<Vis, Error> {
         let words = |v: &[u32]| arena.from_slice(if v.is_empty() { &[0] } else { v });
         let zeroed = |k: usize| arena.zeroed::<u32>(k.max(1));
-        let caps = Caps::of(unit, lay, p1_rung);
         let top = caps.top;
         let (nd, ng, nb, ni) = (caps.dirs, caps.gaps, lay.builtins.len(), caps.nodes);
         // Group words: a file has a group more than its arms, so at most one more than its directives.
@@ -634,6 +756,7 @@ impl Vis {
             reqs: arena.zeroed::<[u32; 6]>(nd.max(1))?,
             nreq: zeroed(1)?,
             flags: zeroed(1)?,
+            need: zeroed(NEEDS)?,
             ufirst: zeroed(lay.units() as usize)?,
             dslot: zeroed(nd)?,
             dactive: zeroed(nd)?,
@@ -715,7 +838,7 @@ impl Vis {
         l.at("IF_OPKEYS", &self.op_keys).at("IF_OPKINDS", &self.op_kinds).word("N_FEAT", self.n_feat).at("IF_FEATKEYS", &self.feat_keys).at("IF_FEATVALS", &self.feat_vals);
         l.at("P1_MADE", &self.made).at("P1_MADEF", &self.made_file).at("P1_ENTER", &self.enter).at("P1_CAND", &self.cand).at("P1_ONCE", &self.once);
         l.at("P1_NEWF", &self.newf).at("P1_NEWAT", &self.newat).at("P1_NNEW", &self.nnew).at("P1_REQS", &self.reqs).at("P1_NREQ", &self.nreq);
-        l.at("P1_FLAGS", &self.flags).at("P1_UFIRST", &self.ufirst);
+        l.at("P1_FLAGS", &self.flags).at("P1_NEED", &self.need).at("P1_UFIRST", &self.ufirst);
         l.word("NC", self.ni as u32).word("DC", self.nd as u32).word("GC", self.ng as u32).word("TC", self.tc);
         l.at("P1_DFIRST", &self.p1_dfirst).at("P1_GFIRST", &self.p1_gfirst).at("P1_SIZE", &self.p1_size).at("P1_CSIZE", &self.p1_csize);
         l.at("P1_GC", &self.p1_gc).at("P1_GHEADS", &self.p1_gheads).at("P1_GSHIFT", &self.p1_gshift).at("P1_USIZE", &self.p1_usize);
@@ -758,6 +881,19 @@ impl Vis {
     fn word(&self, b: &Buf) -> u32 {
         // SAFETY: the device finished; the store holds a word at least.
         unsafe { *b.host().cast::<u32>() }
+    }
+
+    /// `RERAIL_PP_ARENA_LOG`: what ran out of room at P1's rung `rung`, against its caps.
+    fn log_room(&self, unit: &Unit, c: Caps) {
+        if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
+            eprintln!("p1 room at rung {}: need {:?}; caps nodes {} dirs {} gaps {} top {}; unit nodes {} dirs {} node_bound {}", c.rung, self.p1_need(), c.nodes, c.dirs, c.gaps, c.top, unit.len(), unit.dir_bound, unit.node_bound);
+        }
+    }
+
+    /// What P1's rooms needed (`NEED_*`), after the command buffer is done.
+    pub fn p1_need(&self) -> [u32; NEEDS] {
+        // SAFETY: the device finished; `need` holds `NEEDS` words.
+        unsafe { std::ptr::read(self.need.host().cast::<[u32; NEEDS]>()) }
     }
 
     /// P1's refusals (`P1_*`), after the command buffer is done.
@@ -818,6 +954,9 @@ pub const X_SPLICE: u32 = 2048;
 pub const X_BARRIER: u32 = 4096;
 /// `#` or `##` of `__COUNTER__`'s value (decision 0475 §3).
 pub const X_COUNTER_SPELLED: u32 = 8192;
+/// The host's: a unit whose expansion run ended with P1's refusals or requests, which its
+/// rounds had settled.
+pub const X_UNSETTLED: u32 = 32768;
 /// `__COUNTER__` in a directive's line (its value would count text not expanded yet).
 /// A `_Pragma` that would make a row (`once`, `push_macro`, `pop_macro`), or whose operand is a
 /// macro's.
@@ -900,20 +1039,16 @@ pub struct Exp {
 }
 
 impl Exp {
-    pub fn new(arena: &Arena, unit: &Unit, lay: &Layout, rung: u32, p1_rung: u32) -> Result<Exp, Error> {
+    pub fn new(arena: &Arena, unit: &Unit, lay: &Layout, x: XCaps, caps: Caps) -> Result<Exp, Error> {
         let zeroed = |k: usize| arena.zeroed::<u32>(k.max(1));
-        let top = top_bound(unit, lay, p1_rung);
-        // Each rung doubles the whole arena, so a short text with a large expansion fits too.
-        let tok = (top + 4096) << (rung + 1);
-        let lists = top / 2 + tok / 4 + 256;
-        let args = tok / 2 + 256;
-        let out = top + tok;
-        let q = 2 * lists + 64;
+        let top = caps.top;
+        let (rung, tok, lists, args, out) = (x.rung, x.tok, x.lists, x.args, x.out);
+        let q = x.q;
         if tok >= u32::MAX as usize / 2 || q >= u32::MAX as usize / 2 {
             return Err(Error::BackendCapacity);
         }
         let va_opt = name_key(b"__VA_OPT__");
-        // The scratch: bytes (64 KB at rung 0, doubling) and tokens, in one buffer: the tokens (an
+        // The scratch: bytes and tokens, in one buffer: the tokens (an
         // even number, so the bytes after them are 8-byte aligned), then the bytes. The first of
         // each are the files' `__FILE__` literals, the configuration's three, then the files'
         // `__FILE_NAME__` literals, placed here.
@@ -924,8 +1059,8 @@ impl Exp {
         };
         let lit_bytes: usize = (0..nf).map(|f| lit(f).len()).sum();
         // Past them, the `#line` rows' room: two tokens a directive word, and their bytes.
-        let (lb_cap, dirs) = ((16usize << 10) << rung, Caps::of(unit, lay, p1_rung).dirs);
-        let (sb, st) = (((64usize << 10) << rung) + lit_bytes + lb_cap, (tok / 4 + 256 + nf + 2 * dirs).next_multiple_of(2));
+        let (lb_cap, dirs) = ((16usize << 10) << rung, caps.dirs);
+        let (sb, st) = (x.sb + lit_bytes + lb_cap, (x.st + nf + 2 * dirs).next_multiple_of(2));
         let mut scratch = vec![0u8; st * 12 + sb + 16];
         let mut at = 0usize;
         for f in 0..nf {
@@ -939,7 +1074,10 @@ impl Exp {
         }
         // The control words: the scratch's tops past the literals.
         let cnt_cap = text_rows(rung);
-        let mut ctl = [0u32; 8];
+        // Past the tops (0, 1, 3, 4, 5) and the refusals (2): the literals' tops (6, 7), then each
+        // top's high water over the passes (8 to 13: tokens, lists, args, scratch bytes and tokens,
+        // queue items).
+        let mut ctl = [0u32; 16];
         ctl[4] = lit_bytes as u32;
         ctl[5] = nf as u32;
         let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options];
@@ -1033,12 +1171,14 @@ impl Exp {
     /// The refusals, and the output's refs where there are none (after the command buffer).
     /// Each store's use and room (`ROOM_STORES`'s order): its top (past the room where it ran
     /// out: a top only grows) and its capacity.
-    pub fn room(&self) -> [(u32, u32); 5] {
-        // SAFETY: the device finished; `ctl` and `words` are the control and capacity words.
+    pub fn room(&self) -> [(u32, u32); 6] {
+        // SAFETY: the device finished; `ctl` and `words` are the control and capacity words, and
+        // `qctl` the queue's (its tail the items pushed, past the room where it ran out).
         unsafe {
             let ctl = self.ctl.host().cast::<u32>();
             let w = self.words.host().cast::<u32>();
-            [(0, 1), (1, 2), (3, 3), (4, 8), (5, 9)].map(|(t, c)| (*ctl.add(t), *w.add(c)))
+            let [a, b, c, d, e] = [(0, 1, 8), (1, 2, 9), (3, 3, 10), (4, 8, 11), (5, 9, 12)].map(|(t, c, h)| ((*ctl.add(t)).max(*ctl.add(h)), *w.add(c)));
+            [a, b, c, d, e, ((*self.qctl.host().cast::<u32>().add(1)).max(*ctl.add(13)), self.q_cap)]
         }
     }
 
@@ -1113,7 +1253,7 @@ pub struct Expanded {
     pub scratch: Vec<u8>,
     pub stoks: Vec<[u32; 3]>,
     /// The arena's use and room at the rung it ran at, store by store (`ROOM_STORES`).
-    pub room: [(u32, u32); 5],
+    pub room: [(u32, u32); 6],
     /// P1's refusals (`P1_*`), and the round's requests (decision 0467 §1): with either, the
     /// round ended before the expansion, and `out` is empty.
     pub p1_flags: u32,
@@ -1121,7 +1261,7 @@ pub struct Expanded {
 }
 
 /// The arena's stores, as `Expanded::room` lists them.
-pub const ROOM_STORES: [&str; 5] = ["tokens", "lists", "arguments", "scratch bytes", "scratch tokens"];
+pub const ROOM_STORES: [&str; 6] = ["tokens", "lists", "arguments", "scratch bytes", "scratch tokens", "queue items"];
 
 /// A ref to a scratch token, not a tape node.
 pub const SCRATCH: u32 = 0x8000_0000;
@@ -1134,20 +1274,38 @@ pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Err
 
 /// `expand_from` on a grid of `groups` groups at first (halved after a failed barrier).
 pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Expanded, Error> {
-    let (mut def_rung, mut rung, mut groups, mut p1_rung) = (0, rung, groups, 0);
+    let (mut def_rung, mut groups, mut p1) = (0, groups, Caps::first(unit, lay));
+    let mut x = XCaps::at(p1.top, rung);
+    // The last run refused for the expansion's room: its answer stands where the next run's
+    // room is past the device's (the serial pass takes the unit).
+    let mut short: Option<Expanded> = None;
     loop {
+        x = x.fit(p1.top);
+        let rung = x.rung;
         let arena = Arena::new();
-        let front = Front::new(&arena, unit, false, groups)?;
-        let defs = Defs::new(&arena, unit, def_rung)?;
-        let vis = Vis::new(&arena, unit, lay, p1_rung, rung)?;
-        let exp = Exp::new(&arena, unit, lay, rung, p1_rung)?;
+        let made = (|| -> Result<_, Error> {
+            let front = Front::new(&arena, unit, false, groups)?;
+            let defs = Defs::new(&arena, unit, def_rung)?;
+            let vis = Vis::new(&arena, unit, lay, p1, rung)?;
+            let exp = Exp::new(&arena, unit, lay, x, p1)?;
+            Ok((front, defs, vis, exp))
+        })();
+        let (front, defs, vis, exp) = match made {
+            Ok(m) => m,
+            Err(Error::BackendCapacity) if short.is_some() => return Ok(short.take().unwrap()),
+            Err(e) => return Err(e),
+        };
         let mut l = Lay::new();
         front.lay(&mut l, TO_ALL);
         defs.lay(&mut l);
         vis.lay(&mut l);
         exp.lay(&mut l);
-        arena_log(&arena, &l, format_args!("expansion at rung {rung}, p1 rung {p1_rung}, defs rung {def_rung}"));
-        arena.lease()?;
+        arena_log(&arena, &l, format_args!("expansion at rung {rung}, p1 rung {}, defs rung {def_rung}", p1.rung));
+        match arena.lease() {
+            Ok(()) => {}
+            Err(Error::BackendCapacity) if short.is_some() => return Ok(short.take().unwrap()),
+            Err(e) => return Err(e),
+        }
         let Some((launches, gpu_seconds)) = on_grid(&arena, unit, &front, &l, groups)? else {
             groups = fewer(groups)?;
             continue;
@@ -1162,8 +1320,16 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
         }
         // P1 ended the round: room (a rung up), requests (the host's to answer), or a refusal.
         let p1_flags = vis.p1_flags();
-        if p1_flags == P1_ROOM && p1_rung + 1 < P1_RUNGS {
-            p1_rung += 1;
+        if p1_flags == P1_ROOM && p1.rung + 1 < P1_RUNGS {
+            vis.log_room(unit, p1);
+            p1 = p1.grown(unit, lay, vis.p1_need());
+            continue;
+        }
+        // The lines' room (their tokens are the expansion's stores): what they decided is not to
+        // be read, so before the requests and P1's refusals.
+        let lines = exp.line_refusals();
+        if lines & X_ROOM != 0 && lines & !X_ROOM == 0 && rung + 1 < EXP_RUNGS {
+            x = x.grown(p1.top, exp.room());
             continue;
         }
         let requests = vis.requests();
@@ -1173,7 +1339,11 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
         vis.read()?;
         let (refused, out) = exp.read();
         if refused & X_ROOM != 0 && refused & !X_ROOM == 0 && rung + 1 < EXP_RUNGS {
-            rung += 1;
+            if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
+                eprintln!("expansion room at rung {rung}: (used, cap) tokens, lists, args, scratch bytes, scratch tokens {:?}; out cap {}", exp.room(), exp.out_cap);
+            }
+            x = x.grown(p1.top, exp.room());
+            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room() });
             continue;
         }
         let (scratch, stoks) = exp.scratch();
@@ -1199,20 +1369,23 @@ fn arena_log(arena: &Arena, l: &Lay, what: std::fmt::Arguments) {
 /// command buffer: each active stretch token's meaning (`L_*`, or the directive row of its
 /// definition), in the layout's order; and P1's answer (`Vis::p1`).
 pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
-    let (mut rung, mut groups, mut p1_rung, mut x_rung) = (0, crate::pp_arena::groups(), 0, 0);
+    let (mut rung, mut groups, mut p1) = (0, crate::pp_arena::groups(), Caps::first(unit, lay));
+    let mut x = XCaps::at(p1.top, 0);
     loop {
+        x = x.fit(p1.top);
+        let x_rung = x.rung;
         let arena = Arena::new();
         let front = Front::new(&arena, unit, false, groups)?;
         let defs = Defs::new(&arena, unit, rung)?;
-        let vis = Vis::new(&arena, unit, lay, p1_rung, x_rung)?;
+        let vis = Vis::new(&arena, unit, lay, p1, x_rung)?;
         // The expansion's stores: the tests' lines are expanded in P1 (decision 0467 §4).
-        let exp = Exp::new(&arena, unit, lay, x_rung, p1_rung)?;
+        let exp = Exp::new(&arena, unit, lay, x, p1)?;
         let mut l = Lay::new();
         front.lay(&mut l, TO_VIS);
         defs.lay(&mut l);
         vis.lay(&mut l);
         exp.lay(&mut l);
-        arena_log(&arena, &l, format_args!("lookups at rung {x_rung}, p1 rung {p1_rung}, defs rung {rung}"));
+        arena_log(&arena, &l, format_args!("lookups at rung {x_rung}, p1 rung {}, defs rung {rung}", p1.rung));
         arena.lease()?;
         if on_grid(&arena, unit, &front, &l, groups)?.is_none() {
             groups = fewer(groups)?;
@@ -1228,13 +1401,14 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
         }
         let mut out = vis.p1();
         out.flags = vis.p1_flags();
-        if out.flags == P1_ROOM && p1_rung + 1 < P1_RUNGS {
-            p1_rung += 1;
+        if out.flags == P1_ROOM && p1.rung + 1 < P1_RUNGS {
+            vis.log_room(unit, p1);
+            p1 = p1.grown(unit, lay, vis.p1_need());
             continue;
         }
         out.refused = exp.line_refusals();
         if out.refused & X_ROOM != 0 && out.refused & !X_ROOM == 0 && x_rung + 1 < EXP_RUNGS {
-            x_rung += 1;
+            x = x.grown(p1.top, exp.room());
             continue;
         }
         out.requests = vis.requests();
@@ -1286,8 +1460,8 @@ pub fn stage_seconds(unit: &Unit, lay: &Layout, last: u32, stop: u32, groups: u6
     let arena = Arena::new();
     let front = Front::new(&arena, unit, false, groups)?;
     let defs = Defs::new(&arena, unit, 0)?;
-    let vis = Vis::new(&arena, unit, lay, 0, 0)?;
-    let exp = Exp::new(&arena, unit, lay, 0, 0)?;
+    let vis = Vis::new(&arena, unit, lay, Caps::first(unit, lay), 0)?;
+    let exp = Exp::new(&arena, unit, lay, XCaps::at(Caps::first(unit, lay).top, 0), Caps::first(unit, lay))?;
     arena.lease()?;
     let mut l = Lay::new();
     front.lay(&mut l, last);
@@ -1327,7 +1501,13 @@ fn many(units: &[(&Unit, &Layout)], parts: &mut Vec<Part>) -> Result<(), Error> 
     match units {
         [] => Ok(()),
         [(unit, lay)] => {
-            let x = std::rc::Rc::new(expand(unit, lay)?);
+            let mut x = expand(unit, lay)?;
+            // A unit its rounds settled that the device's run does not: its answer is not the
+            // unit's (the serial pass takes it).
+            if x.p1_flags != 0 || !x.requests.is_empty() {
+                x.refused |= X_UNSETTLED;
+            }
+            let x = std::rc::Rc::new(x);
             let out = 0..x.out.len();
             parts.push(Part { x, files: 0..unit.len(), out });
             Ok(())

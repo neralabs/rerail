@@ -1184,6 +1184,7 @@ fn the_corpus_preprocesses_on_the_device() {
 /// Boost.Preprocessor's tests (`RERAIL_PP_BOOST`, else ~/orca/rerail-shared/boost-preprocessor),
 /// each its own unit with the library's headers to include: every unit gives the serial pass's
 /// tokens on the device, none refused, 2 launches a round. The C files as C, the others as C++.
+/// `RERAIL_PP_ONLY` (a part of the name), `RERAIL_PP_FIRST` and `RERAIL_PP_COUNT` choose files.
 #[test]
 #[ignore = "Boost.Preprocessor (~/orca/rerail-shared/boost-preprocessor)"]
 fn boost_preprocessor_is_the_serial_passes() {
@@ -1193,7 +1194,9 @@ fn boost_preprocessor_is_the_serial_passes() {
     let mut paths: Vec<String> = std::fs::read_dir(root.join("test")).unwrap().flatten().map(|e| e.path().to_string_lossy().into_owned())
         .filter(|p| [".c", ".cpp", ".cxx"].iter().any(|x| p.ends_with(x)) && only.as_ref().is_none_or(|o| p.contains(o.as_str()))).collect();
     paths.sort();
-    let (c, cpp): (Vec<String>, Vec<String>) = paths.into_iter().partition(|p| p.ends_with(".c"));
+    let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
+    let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let (c, cpp): (Vec<String>, Vec<String>) = paths.into_iter().skip(first).take(count).partition(|p| p.ends_with(".c"));
     let inc = root.join("include").to_string_lossy().into_owned();
     let r = against_serial(vec![(c, false), (cpp, true)], vec![(inc, DirKind::Angle)], false);
     same(r.refused, std::collections::BTreeMap::new(), "the units refused");
@@ -1218,6 +1221,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
     use rerail_c_pp::Config;
     use rerail_c_pp::files::Search;
     use rerail_metal::pp_expand::*;
+    let mut differ: Vec<String> = Vec::new();
     let reasons = [
         (X_BUILTIN, "built-ins"),
         (X_PAST_END, "a call past a list's end"),
@@ -1232,6 +1236,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         (X_SPLICE, "# or ## of a token with a line splice"),
         (X_PRAGMA, "a _Pragma that makes a row"),
         (X_COUNTER_SPELLED, "# or ## of __COUNTER__'s value"),
+        (X_UNSETTLED, "P1 unsettled in the expansion's run"),
         (X_BARRIER, "a grid barrier"),
     ];
     let (mut same_units, mut tokens, mut launches, mut rounds) = (0, 0, 0, 0);
@@ -1318,7 +1323,8 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
                 let k = got.iter().zip(&e.serial).position(|(a, b)| a != b).unwrap_or(got.len().min(e.serial.len()));
                 let near = |v: &[Vec<u8>]| show(&v[k.saturating_sub(8)..(k + 8).min(v.len())]);
                 eprintln!("DIFF {path}: token {k} (device {}, serial {})\n  device: {}\n  serial: {}", got.len(), e.serial.len(), near(&got), near(&e.serial));
-                panic!("{path}");
+                differ.push(path.clone());
+                continue;
             }
             same_units += 1;
             tokens += got.len();
@@ -1332,6 +1338,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
     }
     eprintln!("the serial pass: {:.1} ms in all", serial_s * 1e3);
     eprintln!("the built-ins in units refused for them: {named:?}");
+    assert!(differ.is_empty(), "units unlike the serial pass's: {differ:?}");
     Against { same_units, launches, refused }
 }
 
@@ -1367,7 +1374,7 @@ fn calls_past_an_end_are_the_serial_passes() {
 /// R8 of decision 0448: a unit past its rung's room. An 8⁴ fan-out used three times wants more
 /// than rung 0's arena of tokens, and a `#` of 512 long names more scratch bytes than rung 0's
 /// 64 KB: the device refuses (`X_ROOM`), the unit runs again at the next rung, and it gives the
-/// serial pass's tokens there.
+/// serial pass's tokens there. So does an `#if` line past its room that decides an include.
 #[test]
 fn a_unit_past_its_room_runs_again_larger() {
     let fan = "#define A0 x x x x x x x x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n";
@@ -1384,6 +1391,19 @@ fn a_unit_past_its_room_runs_again_larger() {
             assert!(rung > 0, "{what}: ran at rung 0");
             eprintln!("{what}: {} tokens at rung {rung}", got.len());
         }
+    }
+    // An `#if` line past rung 0's room that decides an include: the rounds and the expansion's
+    // run both run it again larger before reading what the lines decided (a request made from
+    // a line cut short is none).
+    let fan = "#define A0 1+1+1+1+1+1+1+1\n#define A1 A0+A0+A0+A0+A0+A0+A0+A0\n#define A2 A1+A1+A1+A1+A1+A1+A1+A1\n\
+               #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n#define A4 A3+A3+A3+A3+A3+A3+A3+A3\n";
+    let main = format!("{fan}#if A4 == 32768\n#include \"h.h\"\n#endif\nend\n");
+    for cpp in [false, true] {
+        let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+        let (got, want, rung, _) = expanded_in(&[("main.c", main.as_str()), ("h.h", "in h\n")], cfg, &[], 0);
+        same(got.map(|g| show(&g)), Ok("in h end".to_string()), "a line past its room");
+        same(show(&want), "in h end".to_string(), "the serial pass");
+        assert!(rung > 0, "a line past its room: ran at rung 0");
     }
 }
 
