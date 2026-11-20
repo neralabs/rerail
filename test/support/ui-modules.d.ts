@@ -123,7 +123,7 @@ declare module "*/ui/derive.js" {
   export function isFromPack(stored: { origin: string }): boolean;
   /** Whether a rule (or a pack) waits for a person's approval, and runs in Log until then. */
   export function awaitingApproval(item: { approval?: { approved: boolean } | null }): boolean;
-  /** Whether a rule waits for approval (it runs in Log) and is one created by you, from the library, not a pack's or a worktree's, nor an edited copy of a rule Rerail ships. */
+  /** Whether a rule waits for approval (it runs in Log) and is one created by you, from the library, not a pack's or a worktree's, nor an edited copy of another rule. */
   export function awaitingYourApproval(stored: { origin: string; approval?: { approved: boolean; subject: { kind: string } } | null; copiedFromRuleId?: string | null }): boolean;
   export function publisherLabel(pack: { publisher: string }): string;
   /** The skipped entries that are files of the worktree at `checkoutPath`'s `.rerail/rules`, by file name, with why. */
