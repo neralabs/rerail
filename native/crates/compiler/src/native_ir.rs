@@ -164,8 +164,8 @@ pub enum StructuralOperation {
     Count { count: u16, up: bool, max: u16 },
     /// `CHECK`: a local check over the token's bytes (`Words::local_checks`, its index).
     Check { check: u16 },
-    /// `SETTLE`: the pending extras before mask `mask`'s first hold, settled.
-    SettleBefore { mask: u16 },
+    /// `SETTLE`: the pending extras before the first whose code has mark `mark`'s bit, settled.
+    SettleBefore { mark: u16 },
     /// `SETTLE m=1`: where gap pattern `pattern` holds at the token (`Words::gap_patterns`, its
     /// first entry), the extra pending last dropped.
     DropLast { pattern: u16 },
@@ -243,7 +243,7 @@ impl StructuralOperation {
             Self::Flag { flag, op } => (FLAG, op as u8, flag),
             Self::Count { count, up, .. } => (crate::program::COUNT, u8::from(!up), count),
             Self::Check { check } => (crate::program::CHECK, 0, check),
-            Self::SettleBefore { mask } => (crate::program::SETTLE, 0, mask),
+            Self::SettleBefore { mark } => (crate::program::SETTLE, 0, mark),
             Self::DropLast { pattern } => (crate::program::SETTLE, 1, pattern),
             Self::LoseLast { pattern, flag } => (crate::program::SETTLE, flag.map_or(2, |f| 3 + f as u8), pattern),
             Self::Return { again } => (RETURN, u8::from(again), 0),
@@ -512,7 +512,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             crate::program::CHECK => StructuralOperation::Check { check: operand },
             crate::program::SETTLE if mode == 1 => StructuralOperation::DropLast { pattern: operand },
             crate::program::SETTLE if mode >= 2 => StructuralOperation::LoseLast { pattern: operand, flag: (mode > 2).then(|| u16::from(mode - 3)) },
-            crate::program::SETTLE => StructuralOperation::SettleBefore { mask: operand },
+            crate::program::SETTLE => StructuralOperation::SettleBefore { mark: operand },
             crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,

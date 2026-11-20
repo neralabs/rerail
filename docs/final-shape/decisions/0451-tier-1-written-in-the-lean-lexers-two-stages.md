@@ -526,3 +526,28 @@ from 1,380 operations to 1,334. Tapes unchanged: the compiler's tests (131), Kot
 **Still to do:**
 - `asked_blk` and `after_asked` remain, for the escapes alone (step 5).
 - `settles` still tests a mask (step 4).
+
+## Item 4, comments, step 4: `settles` by the comment's own bit (2026-11-19)
+
+A settling mark's SETTLE settled the pending extras that start before the mark's first bit
+since the grammar token before. It read a stage-1 mask for this: the mark's mask filled to the
+next grammar token's start. The extras' own gaps split that gap exactly. So the first extra
+whose own gap holds the mark is the first after its bit, and SETTLE can read the extras'
+codes instead, as the lean parser reads `nl` on each comment.
+
+The changes:
+- `Records::own` holds the marks an extra keeps of its own gap: the blank marks, which the gap
+  patterns read, and the settling marks (Kotlin's `semi` and `semi_close`). Its text row is
+  `recown`.
+- Every tier-1 executor writes them, as in step 1 (`own` in place of `blanks`).
+- `SETTLE m=0` names the mark. Every executor reads the pending extras' records, which are the
+  records right before the token, less the one lost last if any, and settles up to the first
+  whose code has the mark's bit.
+
+**Result:**
+- Stage 1's settle masks are gone. The block program is 1,332 operations (from 1,334); tier 2
+  reads no mask to settle.
+- Tapes unchanged: the compiler's tests (131), Kotlin's (52), `kotlin_aot`'s (4) and the Metal
+  records tests pass. The corpus is 450 the same, 41 refused, 0 differ.
+- `tier1_records` over the corpus: the interpreter's and the CPU's records are equal on every
+  file tier 1 keeps. On three refused files the CPU stops at the refusal, as it should.

@@ -1932,6 +1932,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         if r.read != 0 {
             let _ = writeln!(out, "  block {at} recread {}", r.read);
         }
+        // `block N recown O`: the gap marks an extra keeps of its own gap (0451).
+        if r.own != 0 {
+            let _ = writeln!(out, "  block {at} recown {}", r.own);
+        }
         // `block N recblank K O`: gap mark `K` read from the blanks, by class output `O` (0430).
         for &(k, o) in &r.blanks {
             let _ = writeln!(out, "  block {at} recblank {k} {o}");

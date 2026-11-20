@@ -3292,7 +3292,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut gaps = 0u32;
     let mut alone = vec![false; low.marks.len()];
     let mut token_alone = 0u32;
-    let mut settle_masks: Vec<(usize, Val)> = Vec::new();
+    let mut settle_marks: Vec<usize> = Vec::new();
     for (k, (kind, m, end)) in low.marks.clone().into_iter().enumerate() {
         let gs = grammar_starts.ok_or("marks with no grammar token")?;
         // A token mark: its bit at every grammar token (its first element's word's, where it is
@@ -3595,10 +3595,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
         marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, settle: None, drop: None, lose: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![] });
+        // A settling mark: `SETTLE` reads its bit in the pending extras' codes, each the marks
+        // of its own gap (`Records::own`), as the lean lexer's `skip` knows a line end before
+        // each comment.
         if low.settles.contains(&k) {
-            // From each bit up to the next grammar token's start: an extra that starts there is
-            // after the mark's bit. Its mask after the marks' (below).
-            settle_masks.push((k, low.fill(m, gs)?));
+            settle_marks.push(k);
         }
     }
     // Any mark at a token: the marks' masks joined, after them. Marks hold at few tokens (0.8%
@@ -3617,9 +3618,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
         None => None,
     };
-    for (k, v) in settle_masks {
-        mark_masks.push(v);
-        marks[k].settle = Some(mark_masks.len() as u16 - 1);
+    for k in settle_marks {
+        marks[k].settle = Some(k as u16);
     }
     // The `drops` and `loses` questions (`Words::gap_patterns`), each mark's in turn, a drop's
     // before a lose's: `SETTLE` names each by its first entry (`bitlex_tier2::lower` writes them
@@ -4516,7 +4516,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
     }
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), read: token_read, blanks, check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
+    // The marks an extra keeps of its own gap (`Records::own`): the blank marks, which tier 2's
+    // gap patterns read, and the settling marks, which `SETTLE` reads at the extras pending.
+    let settling = low.settles.iter().filter(|&&k| gaps >> k & 1 == 1 && low.tested_only.iter().all(|&t| t != k)).fold(0u32, |a, &k| a | 1 << k);
+    let own = if extra_mark.is_some() { blanks.iter().fold(settling, |a, &(k, _)| a | 1 << k) } else { 0 };
+    let token_read = token_read | settling;
+    let records = crate::records::Records { own, starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), read: token_read, blanks, check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).

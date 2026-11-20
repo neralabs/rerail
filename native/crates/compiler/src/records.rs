@@ -107,12 +107,12 @@ pub struct Records {
     pub skip: Option<u16>,
     /// The marks (bits of `marks`) a grammar token has from the bytes before it (decision 0177):
     /// mark `k`'s bit at a token is whether its output holds anywhere after the grammar token
-    /// before up to its first byte (an extra's bits are only the blank marks of its own gap,
-    /// from the record before, `extra`). The other marks are their outputs' bits
-    /// at the token's first byte.
+    /// before up to its first byte (an extra's bits are only those it keeps of its own gap,
+    /// from the record before: `own`). The other marks are their outputs' bits at the token's
+    /// first byte.
     pub gaps: u32,
     /// The mark whose bit tells an extra's token (a comment), if any. An extra has no gap mark
-    /// but the blank marks (`blanks`) of the gap before it, as the lean lexer's `skip` knows a
+    /// but those it keeps of the gap before it (`own`), as the lean lexer's `skip` knows a
     /// line end before each comment it passes (tier 2 reads them where it places comments).
     pub extra: Option<u8>,
     /// The outputs of the errors the token loop checks (`error … by tokens`): a byte it starts a
@@ -151,6 +151,11 @@ pub struct Records {
     /// the lean lexer's `skip` sets `nl`. Metal and the interpreter read the mask, as other gap
     /// marks'.
     pub blanks: Vec<(u8, u16)>,
+    /// The gap marks an extra's code keeps of its own gap, from the byte after the record
+    /// before's first to its start (`extra`): the blank marks and the settling marks (`mark …
+    /// , settles`), as the lean lexer's `skip` knows a line end before each comment it passes.
+    /// Tier 2's gap patterns and `SETTLE` read them.
+    pub own: u32,
     /// The masks tier 2's local checks read (`program::LocalCheck::mask`, indexes into the block
     /// program's masks), and nothing else does: on the CPU, tier 2 reads each from the bytes
     /// where they make it (`native_cpu_bytes`), so the CPU's body makes none of them.
@@ -906,9 +911,9 @@ pub fn gap_marks(records: &Records, bytes: &[u8], starts: &[u32], lasts: &[u32],
         let s = s as usize;
         let h = hits(k);
         if extra(codes[k]) {
-            // An extra's own: the blank marks of the gap before it (`Records::blanks`), as the
+            // An extra's own: the marks of the gap before it it keeps (`Records::own`), as the
             // lean lexer's `skip` knows a line end before each comment it passes.
-            let own = records.blanks.iter().filter(|&&(m, _)| records.gaps >> m & 1 == 1).fold(0u32, |a, &(m, _)| if any_in(outputs, records.marks[usize::from(m)].0, from_record, s) { a | 1 << m } else { a });
+            let own = (0..records.marks.len()).filter(|&m| records.own >> m & 1 == 1 && records.gaps >> m & 1 == 1).fold(0u32, |a, m| if any_in(outputs, records.marks[m].0, from_record, s) { a | 1 << m } else { a });
             codes[k] = codes[k] & !(records.gaps << MARK_SHIFT) | own << MARK_SHIFT;
             pending |= h & low | h >> AFTER_SHIFT;
             from_record = s + 1;

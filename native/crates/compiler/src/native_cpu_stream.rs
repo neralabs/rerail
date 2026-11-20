@@ -4750,15 +4750,24 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     mset(&mut f, Mem::Pending, zero);
                     f.ins().jump(fall, &[]);
                 }
-                Op::SettleBefore { mask } => {
-                    // The pending extras, from the first, while the mask does not hold at their
-                    // starts: settled. A few rows at most (the comments on one line).
-                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                Op::SettleBefore { mark } => {
+                    // The pending extras, from the first, while their codes have no bit of the
+                    // mark (the marks of an extra's own gap, `Records::own`): settled. A few at
+                    // most (the comments on one line). They are the records before the token's,
+                    // the one lost last left out.
                     let (nodes, pending) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
                     let first = f.ins().isub(nodes, pending);
-                    let off = f.ins().imul_imm(output_stride, output as i64);
-                    let base = f.ins().iadd(outputs_p, off);
-                    let start_c = NodeCol::of(rows_here, AT_START);
+                    let (next, at_end, lost) = (mget(&mut f, Mem::Next), mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Lost));
+                    let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
+                    let not_end = f.ins().uextend(types::I64, not_end);
+                    let token = f.ins().isub(next, not_end);
+                    let was_lost = f.ins().icmp_imm(IntCC::NotEqual, lost, 0);
+                    let was_lost = f.ins().uextend(types::I64, was_lost);
+                    let from = f.ins().isub(token, pending);
+                    let from = f.ins().isub(from, was_lost);
+                    // Record `from + (i - first)` for node `i`.
+                    let record_of = f.ins().isub(from, first);
+                    let (codes, stride) = (codes_p, load(&mut f, RECORD_STRIDE));
                     let (head, test, done) = (f.create_block(), f.create_block(), f.create_block());
                     f.append_block_param(head, types::I64);
                     f.append_block_param(test, types::I64);
@@ -4771,11 +4780,11 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     f.ins().brif(more, test, &[i.into()], done, &[i.into()]);
                     f.switch_to_block(test);
                     let i = f.block_params(test)[0];
-                    let s = start_c.get(&mut f, i);
-                    let w = f.ins().ushr_imm(s, 6);
-                    let word = mask_word(&mut f, base, lasts_stride, w);
-                    let sh = f.ins().band_imm(s, 63);
-                    let bit = f.ins().ushr(word, sh);
+                    let j = f.ins().iadd(record_of, i);
+                    let off = f.ins().imul(j, stride);
+                    let a = f.ins().iadd(codes, off);
+                    let code = f.ins().uload32(MemFlags::trusted(), a, 0);
+                    let bit = f.ins().ushr_imm(code, i64::from(crate::records::MARK_SHIFT) + i64::from(mark));
                     let bit = f.ins().band_imm(bit, 1);
                     let i1 = f.ins().iadd_imm(i, 1);
                     f.ins().brif(bit, done, &[i.into()], head, &[i1.into()]);
@@ -6109,7 +6118,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::Token { .. } => vec![STARTS, NSTARTS, LASTS, CODES, ROOM_NODES, ROOM_SUPERS, ROOM_PUSHES, OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
         Op::Switch { .. } => vec![BYTES],
         Op::Mark { .. } | Op::Row { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE],
-        Op::SettleBefore { .. } => vec![OUTPUTS, OUTPUT_STRIDE, LASTS_STRIDE, ROWS],
+        Op::SettleBefore { .. } => vec![CODES, RECORD_STRIDE, ROWS],
         Op::DropLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE],
         Op::LoseLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE, ROWS],
         Op::Open { .. } => vec![ROWS, OPEN],

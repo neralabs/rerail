@@ -868,18 +868,21 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         self.nodes = n + 1;
     }
 
-    /// `SETTLE`: the pending extras, from the first, while output `o` does not hold at their
-    /// starts, settled: the nodes closed next keep them.
+    /// `SETTLE`: the pending extras, from the first, while their codes have no bit `k` (the
+    /// marks of an extra's own gap: a line end before it), settled: the nodes closed next keep
+    /// them. They are the records before the token's (the one lost last left out).
     #[inline(always)]
-    fn settle_before(&mut self, o: usize) {
-        let first = self.nodes - self.pending;
-        let mut i = first;
-        while i < self.nodes && !self.bit(o, unsafe { (*self.row(i)).start }) {
+    fn settle_before(&mut self, k: u32) {
+        let token = self.next as usize - usize::from(!self.at_end);
+        let from = token - self.pending as usize - usize::from(self.lost != 0);
+        let mut i = 0;
+        while i < self.pending as usize && unsafe { *self.codes.add((from + i) * self.rs) } >> (16 + k) & 1 == 0 {
             i += 1;
         }
-        if i > first {
-            self.keep = unsafe { (*self.row(i - 1)).end };
-            self.pending = self.nodes - i;
+        if i > 0 {
+            let first = self.nodes - self.pending;
+            self.keep = unsafe { (*self.row(first + i as u32 - 1)).end };
+            self.pending -= i as u32;
         }
     }
 
@@ -1913,7 +1916,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
             format!("s.leaf::<{deferred}, {extra}>({k}, {end});\n{}", jump(0)?)
         }
         Op::Settle { .. } => format!("s.pending = 0;\n{}", jump(0)?),
-        Op::SettleBefore { mask } => format!("s.settle_before({});\n{}", mask_output(n, mask)?, jump(0)?),
+        Op::SettleBefore { mark } => format!("s.settle_before({mark});\n{}", jump(0)?),
         // The next node made takes the dropped one's row and cells.
         // The extra pending last made again at the token, of no width: its row and cells.
         // Taken out, its kind kept: the `TOKEN` that takes the token makes it again after it.

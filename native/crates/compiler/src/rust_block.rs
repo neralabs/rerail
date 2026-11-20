@@ -113,6 +113,8 @@ impl<'a> Gen<'a> {
             // The CPU loop's reading of a gap mark from the blanks (0430): the mark's mask has
             // the same bits between tokens.
             blanks: _,
+            // The marks an extra keeps of its own gap: `token()` writes them from the masks.
+            own: _,
             // Tier 2 reads these from the bytes on the CPU (`native_cpu_bytes`).
             check_masks: _,
             prefix,
@@ -670,14 +672,12 @@ impl<'a> Gen<'a> {
             let low = (1u32 << crate::records::AFTER_SHIFT) - 1;
             let hits = if r.checks.is_empty() { "0".to_owned() } else { "hits(m, END[usize::from(src[s])], s, l)".to_owned() };
             let extra = r.extra.map_or("false".to_owned(), |e| format!("code >> {} & 1 == 1", 16 + u32::from(e)));
-            // An extra keeps the blank marks of its own gap (`Records::extra`).
-            let own: String = r
-                .blanks
-                .iter()
-                .filter(|&&(k, _)| gaps >> k & 1 == 1 && r.tested_only >> k & 1 == 0)
-                .map(|&(k, _)| format!("\n            if any_in(&{}, self.from_record, s) {{\n                code |= 1 << {};\n            }}", self.mask(r.marks[usize::from(k)].0), 16 + u32::from(k)))
+            // An extra keeps the marks of its own gap (`Records::own`).
+            let own: String = (0..r.marks.len())
+                .filter(|&k| r.own >> k & 1 == 1 && gaps >> k & 1 == 1 && r.tested_only >> k & 1 == 0)
+                .map(|k| format!("\n            if any_in(&{}, self.from_record, s) {{\n                code |= 1 << {};\n            }}", self.mask(r.marks[k].0), 16 + k))
                 .collect();
-            let _ = writeln!(out, "        let h: u32 = {hits};\n        if {extra} {{\n            // An extra's token: no gap mark but the blank marks of its own gap; its hits go on\n            // to the next grammar token.\n            code &= !(0x{gaps:x} << 16);{own}\n            self.pending |= h & 0x{low:x} | h >> 16;\n        }} else {{\n            let mut gap = 0u32;");
+            let _ = writeln!(out, "        let h: u32 = {hits};\n        if {extra} {{\n            // An extra's token: no gap mark but those it keeps of its own gap; its hits go on\n            // to the next grammar token.\n            code &= !(0x{gaps:x} << 16);{own}\n            self.pending |= h & 0x{low:x} | h >> 16;\n        }} else {{\n            let mut gap = 0u32;");
             for (k, &(o, _)) in r.marks.iter().enumerate().filter(|&(k, _)| gaps >> k & 1 == 1) {
                 let unless: Vec<String> = r.unless.iter().filter(|&&(u, _)| usize::from(u) == k).map(|&(_, w)| format!("self.word_before == {w}")).collect();
                 let none = if unless.is_empty() { String::new() } else { format!("!({}) && ", unless.join(" || ")) };
@@ -686,7 +686,7 @@ impl<'a> Gen<'a> {
             }
             let _ = writeln!(out, "            code = code & !(0x{gaps:x} << 16) | gap << 16;\n            self.from = s + 1;\n            self.word_before = code >> 8 & 0xff;\n            self.pending = h >> 16;\n        }}");
         }
-        let from_record = if gaps != 0 && r.extra.is_some() && !r.blanks.is_empty() { "        self.from_record = s + 1;\n" } else { "" };
+        let from_record = if gaps != 0 && r.extra.is_some() && r.own != 0 { "        self.from_record = s + 1;\n" } else { "" };
         let _ = writeln!(out, "{from_record}        self.starts.push(s as u32);\n        self.lasts.push(l as u32);\n        // The gap marks tier 2 tests itself.\n        self.codes.push(code & !(0x{lazy:x} << 16));\n    }}\n");
         // Unplaced.
         out.push_str("    /// Whether a bit of an `else escape` gap mark has no grammar token after it to hold it.\n    fn unplaced(&self, m: &Masks, n: usize) -> bool {\n        let _ = (m, n);\n");

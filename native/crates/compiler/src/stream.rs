@@ -71,7 +71,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         CHECK => mode == 0 && usize::from(operand) < program.local_checks.len(),
         // `m=2`, `m=3+f`: a mark's `loses`, the second where flag `f` is set.
         // A settle's mask, or a `drops`'s or `loses`'s gap pattern (`Words::gap_patterns`).
-        SETTLE if mode == 0 => usize::from(operand) < masks,
+        SETTLE if mode == 0 => operand < 32 && program.block_programs.first().and_then(|b| b.records.as_ref()).is_some_and(|r| r.own >> operand & 1 == 1),
         SETTLE => mode < 3 + 16 && program.gap_patterns.get(usize::from(operand)).is_some_and(|m| usize::from(operand) == 0 || program.gap_patterns[usize::from(operand) - 1].order != m.order),
         CLOSE => mode <= 1 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
@@ -609,8 +609,12 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             SETTLE => {
+                // The pending extras are the records before the token's (the one lost last
+                // left out): settled up to the first whose own gap has the mark.
                 let first = nodes.len() - pending;
-                let settled = (first..nodes.len()).take_while(|&i| !mask_bit(operand, nodes[i].start)).count();
+                let token = if at_end { next } else { next - 1 };
+                let from = token - pending - usize::from(lost.is_some());
+                let settled = (0..pending).take_while(|&i| tier1.codes[from + i] >> (crate::records::MARK_SHIFT + u32::from(operand)) & 1 == 0).count();
                 if settled > 0 {
                     keep = nodes[first + settled - 1].end;
                     pending -= settled;

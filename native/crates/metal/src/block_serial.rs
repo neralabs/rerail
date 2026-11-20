@@ -1584,13 +1584,11 @@ fn records_source(programs: &[&BlockNative]) -> String {
                     })
                     .collect();
                 let wb = if r.unless.is_empty() { String::new() } else { format!(" const uint wb = j >= 0 ? record_word_{p}(bytes, f, starts[j], lasts[j] + 1u - starts[j]) : 0u;") };
-                // An extra keeps the blank marks of its own gap, from the record before
-                // (`Records::extra`).
-                let own: String = r
-                    .blanks
-                    .iter()
-                    .filter(|&&(m, _)| r.gaps >> m & 1 == 1 && r.tested_only >> m & 1 == 0)
-                    .map(|&(m, _)| format!(" if (record_any(out, f, {}u, from, s)) marks |= {}u;", r.marks[usize::from(m)].0, 1u32 << m))
+                // An extra keeps the marks of its own gap (`Records::own`), from the record
+                // before.
+                let own: String = (0..r.marks.len())
+                    .filter(|&m| r.own >> m & 1 == 1 && r.gaps >> m & 1 == 1 && r.tested_only >> m & 1 == 0)
+                    .map(|m| format!(" if (record_any(out, f, {}u, from, s)) marks |= {}u;", r.marks[m].0, 1u32 << m))
                     .collect();
                 let own = if own.is_empty() { String::new() } else { format!(" else {{ const uint from = k > 0u ? starts[k - 1u] + 1u : 0u;{own} }}") };
                 format!(

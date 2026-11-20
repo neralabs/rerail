@@ -96,9 +96,9 @@ pub const COUNT: u8 = 0x65;
 /// the check holds at a bit of its mask among the token's bytes, as the lean lexer checks a
 /// string's `\u` escapes where it notes one.
 pub const CHECK: u8 = 0x66;
-/// The pending extras that start where mask `operand` (`Words::block_programs`' masks) does not
-/// hold, from the first on, are no longer pending: the nodes closed next keep them, as a leaf
-/// taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
+/// The pending extras before the first whose code has mark `operand`'s bit (the marks of its
+/// own gap, `records::Records::own`) are no longer pending: the nodes closed next keep them, as
+/// a leaf taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
 /// line break are the statement's. (0x84: 0x67 became the preprocessing words' `READ`.)
 /// `m=1` (`mark … , drops …`): where gap pattern `operand` holds at the token
 /// (`Words::gap_patterns`, its first entry), the extra pending last is dropped: no node of the
