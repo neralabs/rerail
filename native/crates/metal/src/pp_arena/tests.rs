@@ -125,6 +125,69 @@ fn the_grid_sort_alone_is_fast() {
     }
 }
 
+/// `<ukl/pool.h>` over a grid (decision 0478 §10): the pieces of ranges given, taken by every
+/// thread of 8 groups at once, then given back and taken again. No block is taken twice in a
+/// round, each lies inside one given range and fits its class, and where the takers ask for
+/// more than a class holds, every block of it is taken.
+#[test]
+fn the_pool_gives_each_block_once() {
+    use std::collections::BTreeMap;
+    let size = |c: u32| 1u32 << c;
+    let floor = |n: u32| 31 - n.leading_zeros();
+    let mut r = Rng(29);
+    // Ranges of 1 to 300 units, apart.
+    let (mut ranges, mut at) = (Vec::new(), 5u32);
+    for _ in 0..3000 {
+        let n = 1 + (r.next() % 300) as u32;
+        ranges.extend([at, n]);
+        at += n + 1 + (r.next() % 3) as u32;
+    }
+    // The pieces, as the pool gives them.
+    let mut supply: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut owner = vec![u32::MAX; at as usize];
+    for (i, w) in ranges.chunks(2).enumerate() {
+        let (mut s, mut n) = (w[0], w[1]);
+        while n > 0 {
+            let c = floor(n);
+            *supply.entry(c).or_default() += 1;
+            s += size(c);
+            n -= size(c);
+        }
+        for u in w[0]..w[0] + w[1] { owner[u as usize] = i as u32; }
+    }
+    let groups = 8u64;
+    let threads = groups as usize * TG as usize;
+    let per = 4usize;
+    // Classes the pieces have, so the takers ask for more than some hold and less than others.
+    let have: Vec<u32> = supply.keys().copied().collect();
+    let classes: Vec<u32> = (0..threads * per).map(|_| have[(r.next() % have.len() as u64) as usize]).collect();
+    let mut demand: BTreeMap<u32, usize> = BTreeMap::new();
+    for &c in &classes { *demand.entry(c).or_default() += 1; }
+    for rounds in [1u32, 3] {
+        let (ctl, rb, cb) = (zeroed::<u32>(3), buf(&ranges), buf(&classes));
+        let (heads, next, out) = (zeroed::<u32>(128), zeroed::<u32>(at as usize), zeroed::<u32>(threads * per));
+        run(|e| e.run("pb_pool", &[("ctl", &ctl), ("ranges", &rb), ("classes", &cb), ("heads", &heads), ("next", &next), ("out", &out)], Some(ProbeArgs([(ranges.len() / 2) as u32, per as u32, rounds, 0])), groups));
+        assert_eq!(read::<u32>(&ctl, 3)[2], 0, "a grid barrier failed");
+        let got = read::<u32>(&out, threads * per);
+        let mut used = vec![false; at as usize];
+        let mut taken: BTreeMap<u32, usize> = BTreeMap::new();
+        for (k, &s) in got.iter().enumerate() {
+            if s == u32::MAX { continue; }
+            let c = classes[k];
+            *taken.entry(c).or_default() += 1;
+            let o = owner[s as usize];
+            for u in s..s + size(c) {
+                assert!(o != u32::MAX && owner[u as usize] == o, "rounds {rounds}: a block of class {c} at {s} is not inside one given range");
+                assert!(!std::mem::replace(&mut used[u as usize], true), "rounds {rounds}: unit {u} taken twice");
+            }
+        }
+        for (&c, &d) in &demand {
+            let s = supply.get(&c).copied().unwrap_or(0);
+            assert_eq!(taken.get(&c).copied().unwrap_or(0), d.min(s), "rounds {rounds}: class {c}'s blocks taken ({d} asked, {s} held)");
+        }
+    }
+}
+
 /// A measurement, not a check: what a grid barrier, a device fence, a threadgroup barrier and a
 /// dependent coherent load each cost.
 #[test]
@@ -162,7 +225,7 @@ fn the_source_compiles() {
     if let Some(path) = std::env::var_os("RERAIL_PP_DUMP") {
         std::fs::write(path, rerail_ukl::metal_source("pp_setup", source()).unwrap_or_else(|e| e.to_string())).unwrap();
     }
-    for name in ["pp_setup", "pp_check", "pb_search", "pb_expand", "pd_relex_test", "pb_sort_alone", "pb_barriers_alone"] {
+    for name in ["pp_setup", "pp_check", "pb_search", "pb_expand", "pd_relex_test", "pb_sort_alone", "pb_barriers_alone", "pb_pool"] {
         kernel(name);
     }
 }

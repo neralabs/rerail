@@ -99,7 +99,8 @@ impl Slab {
         // The device first: making it installs the one block policy (decision 0342), without which no block is a
         // device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before anything else
         // touched the device (the parser crate's tests) had every lease refused as over capacity.
-        crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+        // The device layer's device may be the CPU's (`RERAIL_GPU=cpu`), with no Metal device.
+        std::sync::LazyLock::force(&crate::METAL_DEVICE);
         let device = &rerail_device::shared::get().ok_or(Error::UnsupportedBackend)?.device;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };

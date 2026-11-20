@@ -1004,8 +1004,11 @@ impl Vis {
     }
 }
 
-/// A list (`PxList` in the UKL): 24 words; an argument (`PxArg`): 3.
-const LIST_WORDS: usize = 24;
+/// The tokens' pool's heads (`<ukl/pool.h>`'s `UKL_POOL_CLASSES`, rounded up).
+const POOL_HEADS: usize = 128;
+
+/// A list (`PxList` in the UKL): 29 words; an argument (`PxArg`): 3.
+const LIST_WORDS: usize = 29;
 const ARG_WORDS: usize = 3;
 
 /// Why a unit is refused (`pp_expand.uglykl`'s `X_*`). `X_ROOM` reruns it at the next rung.
@@ -1079,7 +1082,8 @@ pub struct Exp {
     vscan: Scan,
     lists: Buf,
     /// The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth and the
-    /// origin (the list whose substitution wrote it).
+    /// origin (the list whose substitution wrote it); then the heads of the pool of blocks given
+    /// back (`POOL_HEADS`, decision 0478 §10), whose links are the first token's ref.
     tokens: Buf,
     args: Buf,
     slots: Buf,
@@ -1143,11 +1147,17 @@ impl Exp {
         let cnt_cap = text_rows(rung);
         // Past the tops (0, 1, 3, 4, 5) and the refusals (2): the literals' tops (6, 7), then each
         // top's high water over the passes (8 to 13: tokens, lists, args, scratch bytes and tokens,
-        // queue items).
-        let mut ctl = [0u32; 16];
+        // queue items), the output's (14), the mark where the blocks no item reads again are given
+        // back (15: a 32nd of the tokens' room past the front, decision 0478 §10), the times they were (16) and the
+        // drain's decision between runs (17: `PX_DRAIN`).
+        // The tokens' front between two givings: a 32nd of the room (at most 32 givings from the
+        // front's growth, within `PX_GIVES`); less to test them.
+        let gap = std::env::var("RERAIL_PP_GIVE_GAP").ok().and_then(|v| v.parse::<usize>().ok()).map_or(tok / 32, |g| g.min(tok)).max(1);
+        let mut ctl = [0u32; 18];
         ctl[4] = lit_bytes as u32;
+        ctl[15] = gap as u32;
         ctl[5] = nf as u32;
-        let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options];
+        let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options, gap as u32];
         Ok(Exp {
             list_cap: lists as u32,
             out_cap: out as u32,
@@ -1180,10 +1190,10 @@ impl Exp {
             xcover: zeroed(top)?,
             vscan: Scan::new(arena)?,
             lists: zeroed(lists * LIST_WORDS)?,
-            tokens: zeroed(tok * 5)?,
+            tokens: zeroed(tok * 5 + POOL_HEADS)?,
             args: zeroed(args * ARG_WORDS)?,
             slots: zeroed(q)?,
-            qctl: zeroed(4)?,
+            qctl: zeroed(5)?,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
             tr_sk: arena.zeroed::<u64>(cnt_cap)?,
@@ -1240,12 +1250,15 @@ impl Exp {
     /// out: a top only grows) and its capacity.
     pub fn room(&self) -> [(u32, u32); ROOMS] {
         // SAFETY: the device finished; `ctl` and `words` are the control and capacity words, and
-        // `qctl` the queue's (its tail the items pushed, past the room where it ran out).
+        // `qctl` the queue's (its tail past its ring's base the items queued since its last pause,
+        // past the room where it ran out).
         unsafe {
             let ctl = self.ctl.host().cast::<u32>();
             let w = self.words.host().cast::<u32>();
             let [a, b, c, d, e] = [(0, 1, 8), (1, 2, 9), (3, 3, 10), (4, 8, 11), (5, 9, 12)].map(|(t, c, h)| ((*ctl.add(t)).max(*ctl.add(h)), *w.add(c)));
-            let q = ((*self.qctl.host().cast::<u32>().add(1)).max(*ctl.add(13)), self.q_cap);
+            // The queue's ring: its positions past its base (decision 0478 §10).
+            let qc = self.qctl.host().cast::<u32>();
+            let q = ((*qc.add(1)).wrapping_sub(*qc.add(4)).max(*ctl.add(13)), self.q_cap);
             // The output: the pieces' total of the text and of each top before (the lines'), as
             // `pp_check` and the places compare it with the room.
             [a, b, c, d, e, q, ((*self.vscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap as u32)]
@@ -1422,7 +1435,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         // The lines' room (their tokens are the expansion's stores): what they decided is not to
         // be read, so before the requests and P1's refusals.
         let lines = exp.line_refusals();
-        if lines & X_ROOM != 0 && lines & !X_ROOM == 0 && x_tries + 1 < EXP_RUNGS {
+        if lines & X_ROOM != 0 && x_tries + 1 < EXP_RUNGS {
             x = x.grown(p1.top, exp.room());
             x_tries += 1;
             continue;
@@ -1433,7 +1446,10 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         vis.read()?;
         let (refused, out) = exp.read();
-        if refused & X_ROOM != 0 && refused & !X_ROOM == 0 && x_tries + 1 < EXP_RUNGS {
+        // A run out of room runs again larger whatever else it refused: past the room that ran
+        // out, its items read what was never written (a list cut short reads as a call past its
+        // end), so its other refusals are the larger run's to give.
+        if refused & X_ROOM != 0 && x_tries + 1 < EXP_RUNGS {
             if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
                 eprintln!("expansion room at rung {rung}: (used, cap) {:?} {:?}", ROOM_STORES, exp.room());
             }
@@ -1515,7 +1531,7 @@ pub fn lookups_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(cr
             continue;
         }
         out.refused = exp.line_refusals();
-        if out.refused & X_ROOM != 0 && out.refused & !X_ROOM == 0 && x_tries + 1 < EXP_RUNGS {
+        if out.refused & X_ROOM != 0 && x_tries + 1 < EXP_RUNGS {
             x = x.grown(p1.top, exp.room());
             x_tries += 1;
             continue;

@@ -13,7 +13,14 @@
 // - an idle worker polls a bounded number of times, then exits. A worker that pushed is still running, so a queued
 //   item has a live worker; the host launches the dispatch again while any remain at its end (`control[2]`).
 //
-// `control`: 0 head, 1 tail, 2 active (pushed, not yet done), 3 overflow. Items are below 0xFFFFFFFE.
+// `control`: 0 head, 1 tail, 2 active (pushed, not yet done), 3 overflow, 4 a ring's base. Items are below 0xFFFFFFFE.
+//
+// A ring (`ring` set, decision 0478 §10): positions run on past the capacity, position `p` in slot `p % capacity`,
+// and a push takes positions below `base + capacity` alone. At a pause, when no worker runs (so no taker is between
+// its claim of a position and its exchange of the slot), `ukl_wq_rebase_clear` and `ukl_wq_rebase` move the base up
+// to the head: the slots of the positions taken since are emptied, and pushes may use them again. Every slot a push
+// then reuses held a position below the head, taken and exchanged before the pause, so no taker sees another
+// position's item. The queue's room is then the most items queued between two pauses, not all items ever pushed.
 //
 // Two ways to take: a thread at a time (`ukl_wq_take`, `ukl_wq_idle`), or a SIMD group at a time (`ukl_wq_take_sg`,
 // `ukl_wq_idle_sg`), where one lane claims up to a group's worth of items with one compare-and-swap and hands them
@@ -33,18 +40,27 @@ typedef struct UklWorkQueue {
     UKL_GLOBAL uint32_t* slots;
     UKL_GLOBAL uint32_t* control;
     uint32_t capacity;
+    // A ring (1, with `control[4]`) or linear (0).
+    uint32_t ring;
 } UklWorkQueue;
+
+// The positions' end: a push takes positions below it.
+UKL_INLINE uint32_t ukl_wq_end(UklWorkQueue q) { return q.ring != 0u ? ukl_atomic_load(&q.control[4]) + q.capacity : q.capacity; }
+
+// Position `p`'s slot.
+UKL_INLINE uint32_t ukl_wq_slot(UklWorkQueue q, uint32_t p) { return q.ring != 0u ? p % q.capacity : p; }
 
 // Pushes `item`. False when the queue is full (the overflow flag is set).
 UKL_INLINE bool ukl_wq_push(UklWorkQueue q, uint32_t item)
 {
     ukl_atomic_add(&q.control[2], 1u);
+    uint32_t end = ukl_wq_end(q);
     // Each attempt takes a new index, so the capacity bounds them.
     for (uint32_t attempt = 0u; attempt <= q.capacity; attempt++) {
         uint32_t tail = ukl_atomic_add(&q.control[1], 1u);
-        if (tail >= q.capacity)
+        if (tail >= end)
             break;
-        if (ukl_atomic_exchange(&q.slots[tail], item + 1u) != UKL_WQ_TAKEN)
+        if (ukl_atomic_exchange(&q.slots[ukl_wq_slot(q, tail)], item + 1u) != UKL_WQ_TAKEN)
             return true;
         // A taker came first and gave this index up: take another.
     }
@@ -59,8 +75,8 @@ UKL_INLINE bool ukl_wq_take(UklWorkQueue q, UKL_PRIVATE uint32_t* item)
     uint32_t head = ukl_atomic_load(&q.control[0]);
     bool claimed = false;
     for (uint32_t attempt = 0u; attempt < UKL_WQ_TURNS && !claimed; attempt++) {
-        uint32_t tail = ukl_atomic_load(&q.control[1]);
-        tail = tail < q.capacity ? tail : q.capacity;
+        uint32_t tail = ukl_atomic_load(&q.control[1]), end = ukl_wq_end(q);
+        tail = tail < end ? tail : end;
         if (head >= tail)
             return false;
         uint32_t seen = ukl_atomic_cas(&q.control[0], head, head + 1u);
@@ -69,7 +85,7 @@ UKL_INLINE bool ukl_wq_take(UklWorkQueue q, UKL_PRIVATE uint32_t* item)
     }
     if (!claimed)
         return false;
-    uint32_t value = ukl_atomic_exchange(&q.slots[head], UKL_WQ_TAKEN);
+    uint32_t value = ukl_atomic_exchange(&q.slots[ukl_wq_slot(q, head)], UKL_WQ_TAKEN);
     if (value == UKL_WQ_EMPTY)
         return false;
     *item = value - 1u;
@@ -84,8 +100,8 @@ UKL_INLINE bool ukl_wq_take_sg(UklWorkQueue q, uint32_t lane, UKL_PRIVATE uint32
     if (lane == 0u) {
         head = ukl_atomic_load(&q.control[0]);
         for (uint32_t attempt = 0u; attempt < UKL_WQ_TURNS; attempt++) {
-            uint32_t tail = ukl_atomic_load(&q.control[1]);
-            tail = tail < q.capacity ? tail : q.capacity;
+            uint32_t tail = ukl_atomic_load(&q.control[1]), end = ukl_wq_end(q);
+            tail = tail < end ? tail : end;
             if (head >= tail)
                 break;
             uint32_t want = tail - head < UKL_SIMD_WIDTH ? tail - head : UKL_SIMD_WIDTH;
@@ -101,7 +117,7 @@ UKL_INLINE bool ukl_wq_take_sg(UklWorkQueue q, uint32_t lane, UKL_PRIVATE uint32
     count = ukl_sg_broadcast(count, 0u __UKL_ARGS);
     if (lane >= count)
         return false;
-    uint32_t value = ukl_atomic_exchange(&q.slots[head + lane], UKL_WQ_TAKEN);
+    uint32_t value = ukl_atomic_exchange(&q.slots[ukl_wq_slot(q, head + lane)], UKL_WQ_TAKEN);
     if (value == UKL_WQ_EMPTY)
         return false;
     *item = value - 1u;
@@ -133,3 +149,17 @@ UKL_INLINE bool ukl_wq_idle_sg(UklWorkQueue q, bool got, UKL_PRIVATE uint32_t* p
     ukl_poll_yield();
     return ++*polls >= limit;
 }
+
+// A ring's pause, first step (every thread, `k` from 0 below `ukl_wq_taken(q)`): the slot of the `k`th position taken
+// since the base emptied.
+UKL_INLINE uint32_t ukl_wq_taken(UklWorkQueue q) { return ukl_atomic_load(&q.control[0]) - ukl_atomic_load(&q.control[4]); }
+UKL_INLINE void ukl_wq_rebase_clear(UklWorkQueue q, uint32_t k)
+{
+    ukl_atomic_store(&q.slots[ukl_wq_slot(q, ukl_atomic_load(&q.control[4]) + k)], UKL_WQ_EMPTY);
+}
+
+// A ring's pause, second step (one thread, after a barrier): the base at the head.
+UKL_INLINE void ukl_wq_rebase(UklWorkQueue q) { ukl_atomic_store(&q.control[4], ukl_atomic_load(&q.control[0])); }
+
+// The positions queued past the base: the room a ring's run used (past `capacity`: it ran out).
+UKL_INLINE uint32_t ukl_wq_used(UklWorkQueue q) { return ukl_atomic_load(&q.control[1]) - ukl_atomic_load(&q.control[4]); }

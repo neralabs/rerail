@@ -108,3 +108,47 @@ DEFINE_KERNEL2(pp, pb_barriers_alone,
         data[256] = at;
     }
 }
+
+// The pool (`<ukl/pool.h>`) over a grid, `args.c` rounds: round 0 gives each of `args.a` ranges
+// (`ranges`: start, count), then each thread takes `args.b` blocks of the classes `classes` names
+// (its thread's `args.b` in a row), into `out` (a block's start, `UKL_POOL_NONE` none); each
+// later round gives back the blocks the round before took, then takes again. A take that finds
+// none tries again while its class is not empty, a bounded number of times.
+DEFINE_KERNEL2(pp, pb_pool,
+               RWBUFFER, uint32_t,    ctl,     "[3]",
+               ROBUFFER, uint32_t,    ranges,  "[n]",
+               ROBUFFER, uint32_t,    classes, "[n]",
+               RWBUFFER, uint32_t,    heads,   "[n]",
+               RWBUFFER, uint32_t,    next,    "[n]",
+               RWBUFFER, uint32_t,    out,     "[n]",
+               ARGS,     PpProbeArgs, args,    ,
+               SHARED,   uint32_t,    flag,    1,
+               GSZ0,     uint32_t,    gsz,     ,
+               TGID0,    uint32_t,    group,   ,
+               LID0,     uint32_t,    lid,     ,
+               LSZ0,     uint32_t,    lsz,     )
+{
+    UklGrid g;
+    g.ctl = ctl; g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;
+    UklPool p; p.heads = heads; p.next = next;
+    uint32_t t = group * lsz + lid;
+    for (uint32_t c = t; c < UKL_POOL_CLASSES; c += gsz) ukl_pool_clear(p, c);
+    if (!ukl_grid_barrier(g, flag)) return;
+    for (uint32_t r = 0u; r < args.c; r++) {
+        if (r == 0u) { for (uint32_t i = t; i < args.a; i += gsz) ukl_pool_give_range(p, ranges[2u * i], ranges[2u * i + 1u]); }
+        else for (uint32_t k = 0u; k < args.b; k++) {
+            uint32_t at = out[t * args.b + k];
+            if (at != UKL_POOL_NONE) ukl_pool_give(p, at, classes[t * args.b + k]);
+        }
+        if (!ukl_grid_barrier(g, flag)) return;
+        for (uint32_t k = 0u; k < args.b; k++) {
+            uint32_t c = classes[t * args.b + k], at = UKL_POOL_NONE;
+            for (uint32_t turn = 0u; turn < 1000u && at == UKL_POOL_NONE; turn++) {
+                at = ukl_pool_take(p, c);
+                if (at == UKL_POOL_NONE && ukl_atomic_load(&heads[c]) == UKL_POOL_NONE) break;
+            }
+            out[t * args.b + k] = at;
+        }
+        if (!ukl_grid_barrier(g, flag)) return;
+    }
+}

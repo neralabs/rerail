@@ -182,6 +182,7 @@ UKL_INLINE UklWorkQueue test_queue(UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32
     q.slots = slots;
     q.control = control;
     q.capacity = 4u * nodes;
+    q.ring = 0u;
     return q;
 }
 
