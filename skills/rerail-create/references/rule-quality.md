@@ -11,6 +11,7 @@ A draft goes to the read-back only when it passes all of these.
 | Gate | Pass | Otherwise |
 |---|---|---|
 | Valid | `rules test` reports `valid: true` | Fix what the error names. It gives the field path. |
+| Title | `title` is the rule in the person's words, plain text, as [Writing the title](code-rules.md#writing-the-title) says | Rewrite it. Without one, `rules test` reports a `refusal` and `rules add` refuses the rule |
 | Cases | Every case `ok`, none `notChecked`; at least 2 caught and 2 passed, one of them a near miss | Fix the matcher, or the case's code if it does not parse |
 | Evidence | The code or command the person corrected is a caught case | The rule does not catch what was asked for: rework it |
 | Repo matches | You read every match in `repository.matches`, and each is a real violation | Narrow the matcher, and add the false positive as a passed case |

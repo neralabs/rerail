@@ -50,6 +50,7 @@ import {
 } from "../engine/catalog/rule-library.js";
 import { configureBundledCodeRule } from "../engine/catalog/rule-config.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
+import { untitledRuleRefusal } from "../engine/catalog/rule-schema.js";
 import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage, type ExperimentalFeature } from "../engine/experimental-features.js";
 import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
 import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
@@ -293,22 +294,29 @@ export function historyScope(stores: RerailApiStores, caller: ApiCaller, reposit
   return historyRepositoryIds(stores, repositoryKey);
 }
 
-/** When each effective rule was added here and, for a rule created by you, last edited. */
+/**
+ * When each effective rule was added here and, for a rule created by you, when it was last edited and which By Rerail
+ * rule it is an edited copy of.
+ */
 interface RuleDates {
   /** `created_at` by attachment: `sourceKind\0sourceId\0folder`. */
   readonly added: ReadonlyMap<string, number>;
   /** `updated_at` by library rule id. */
   readonly updated: ReadonlyMap<string, number>;
+  /** `copied_from_rule_id` by library rule id, for the edited copies only. */
+  readonly copiedFrom: ReadonlyMap<string, string>;
 }
 
 function ruleDatesOf(db: RerailDatabase, repositoryKey: string): RuleDates {
   const attachments = db.select({
     sourceKind: ruleAttachments.sourceKind, sourceId: ruleAttachments.sourceId, folder: ruleAttachments.folder, createdAt: ruleAttachments.createdAt,
   }).from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all();
-  const library = db.select({ ruleId: libraryRules.ruleId, updatedAt: libraryRules.updatedAt }).from(libraryRules).all();
+  const library = db.select({ ruleId: libraryRules.ruleId, updatedAt: libraryRules.updatedAt, copiedFromRuleId: libraryRules.copiedFromRuleId })
+    .from(libraryRules).all();
   return {
     added: new Map(attachments.map(row => [`${row.sourceKind}\0${row.sourceId}\0${row.folder}`, row.createdAt])),
     updated: new Map(library.map(row => [row.ruleId, row.updatedAt])),
+    copiedFrom: new Map(library.flatMap(row => (row.copiedFromRuleId === null ? [] : [[row.ruleId, row.copiedFromRuleId] as const]))),
   };
 }
 
@@ -316,6 +324,7 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
   const shared = {
     addedAt: dates.added.get(`${rule.source.kind}\0${rule.source.id}\0${rule.attachmentFolder}`) ?? null,
     updatedAt: rule.source.kind === "library_rule" ? dates.updated.get(rule.source.id) ?? null : null,
+    copiedFromRuleId: rule.source.kind === "library_rule" ? dates.copiedFrom.get(rule.source.id) ?? null : null,
     source: { ...rule.source },
     folder: rule.attachmentFolder,
     on: rule.on,
@@ -782,7 +791,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "library_rules_upsert",
     method: "PUT",
     path: "/api/library-rules/{id}",
-    summary: "Create or replace a rule created by you; a code rule is compiled in the kernel first. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository; the original is switched off there once the copy is approved, at once for a person's write and, for a coding agent's, when a person approves it.",
+    summary: "Create or replace a rule created by you; a code rule is compiled in the kernel first. The rule needs a title (rule.title): the rule in the person's own words, which the dashboard lists it by; one without is refused. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository; the original is switched off there once the copy is approved, at once for a person's write and, for a coding agent's, when a person approves it.",
     params: libraryRuleId,
     body: libraryUpsertBodySchema,
     output: libraryUpsertResultSchema,
@@ -790,6 +799,8 @@ export const repositoryOperations: readonly Operation[] = [
       if (input.rule.id !== input.id) throw new ApiError(400, "rule-id-mismatch", `path id ${input.id} does not match rule.id ${input.rule.id}`);
       const db = stores.database();
       refuseExperimentsOff([{ mode: input.rule.mode, stored: getLibraryRule(db, input.id)?.document.rule.mode }], input.kind);
+      const untitled = untitledRuleRefusal(input.rule);
+      if (untitled !== undefined) throw new ApiError(400, "rule-title-required", untitled);
       const ruleCatalog = stores.ruleCatalog();
       const existing = db.select({ copiedFrom: libraryRules.copiedFromRuleId }).from(libraryRules).where(eq(libraryRules.ruleId, input.id)).get();
       // A library rule a later release bundled the id of wins over the By Rerail rule, so writing it edits it.

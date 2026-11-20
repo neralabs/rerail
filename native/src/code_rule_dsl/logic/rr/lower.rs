@@ -166,6 +166,13 @@ struct Violation {
     tag: Option<usize>,
 }
 
+impl Violation {
+    /// Whether its findings are at a tool call: its `at` is the call's id (`.scope tool_calls`).
+    fn call(&self) -> bool {
+        self.columns.first().is_some_and(|(_, ty)| ty == "symbol")
+    }
+}
+
 /// A finding's code: the violation's name, a column's value, or a constant.
 #[derive(Clone)]
 enum FindingCode {
@@ -261,6 +268,26 @@ pub fn span_columns(prog: Program) -> (Program, SpanColumns) {
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
 /// names one occurrence made inside it do not tell it from another).
 type HelperKey = (String, Vec<String>, Vec<String>);
+
+/// The relations of the tool calls a run is given (`docs/rule-syntax/tool-calls.md`), core.rerail's: `tool_call(call,
+/// tool)` and `tool_input(call, key, value)`. A run's `toolCalls` option is their rows (`corpus::added`).
+pub const TOOL_CALLS: [&str; 2] = ["tool_call", "tool_input"];
+
+/// `.scope tool_calls`: the policy reads the tool calls a run is given ([`TOOL_CALLS`]) and no file, and its findings
+/// are at a call.
+fn reads_tool_calls(settings: &[(String, String)]) -> bool {
+    settings.iter().any(|(k, t)| k == "scope" && t.trim() == "tool_calls")
+}
+
+/// Whether a `.violation`'s `at` is a node; a span, a loc and a tool call's id (a symbol, in a `.scope tool_calls`
+/// policy: `findings::tool_call_findings`) are not, and anything else is no `at`.
+fn at_is_node(name: &str, at: &str) -> Result<bool, Error> {
+    match at {
+        "node" => Ok(true),
+        "span" | "loc" | "symbol" => Ok(false),
+        _ => Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span, a loc or a tool call (symbol), not a {at}"))),
+    }
+}
 
 /// The globs a program's `.scope` settings select documents by: (within, out), `dirs` and `include` within, `exclude`
 /// and `tests false` out. `None` for no scope and for `.scope given` (the files are a caller's, a test's, not found
@@ -1026,50 +1053,88 @@ fn library_holds(seeded: &BTreeSet<String>, rel: &str, core: &BTreeSet<String>, 
 /// `link_seeded` gives it.
 fn whole(mut l: Lowerer, library: Option<&Program>) -> Result<Program, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
-    l.three_valued();
-    l.findings()?;
-    l.declare_core()?;
-    l.projections();
-    l.span_patterns()?;
-    l.grammar_names()?;
-    // The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
-    // does not derive them (`next_sibling`, `precedes`) are declared in `core.rerail` for the checker; they are no
-    // relations of the program.
-    // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0050).
-    let reads_within = l.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
-    let rewritten: Vec<&str> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).collect();
-    for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).chain(rewritten).filter(|b| !(reads_within && *b == "within")) {
-        l.prog.decls.remove(b);
-        l.prog.inputs.retain(|i| i != b);
-    }
-    // A program lowered without `core.rerail` (its own part, `parse_own`) still declares the `within` it reads.
-    if reads_within {
-        use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-        l.prog.decls.entry(WITHIN.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("a".into(), "node".into())].into());
-        if !l.prog.inputs.iter().any(|i| i == WITHIN) {
-            l.prog.inputs.push(WITHIN.to_owned());
-        }
-    }
-    l.kind_sets()?;
-    l.unit();
-    lower_boolean_relations(&mut l.prog);
-    // A printed program (its findings already rules) is read again with its `.scope` settings: the documents it
-    // selects are the same.
-    l.prog.text_globs = scope_text_globs(&l.prog.settings);
-    if l.prog.doc_scopes.is_none() {
-        l.prog.doc_scopes = scope_globs(&l.prog.settings).map(|g| vec![g]);
-    }
-    for round in ON_REQUEST {
-        sources_on_request(&mut l.prog, round);
-    }
+    l.analyses()?;
+    l.settle()?;
     drop(analyses);
     let mut program = crate::code_rule_dsl::logic::front::finish_given(l.prog, library)?;
     let demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
     super::aggregate_demand::optimize(&mut program);
     // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
     unit(&mut program);
-    // A body is a conjunction: a literal twice is the literal once. Lowering keeps each once, so a printed program
-    // (`match`'s groups printed as their bindings beside the test) lowers back to itself.
+    dedupe_bodies(&mut program);
+    // A rule whose body is its own head derives nothing: a natively made relation's rule as printed
+    // (`r(x) :- dfs_first_memo(x, …)`), whose construct lowers to the relation itself.
+    program.rules.retain(|r| !matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && a.rel == r.head.rel && a.args == r.head.args));
+    dedupe_rules(&mut program);
+    dedupe_facts(&mut program);
+    drop(demand);
+    widen_cyclic_contexts(&mut program);
+    Ok(program)
+}
+
+impl Lowerer {
+    /// `whole`'s analyses: the findings (a tool call's first, `findings::tool_call_findings`), core.rerail's
+    /// declarations, the projections, the span patterns and the grammar's names.
+    fn analyses(&mut self) -> Result<(), Error> {
+        self.three_valued();
+        self.tool_call_findings()?;
+        self.findings()?;
+        self.declare_core()?;
+        self.projections();
+        self.span_patterns()?;
+        self.grammar_names()
+    }
+
+    /// `whole`'s settling, after its analyses: the built-ins' declarations dropped, the kind sets, the unit relations,
+    /// the boolean relations, the documents read, the sources asked on request.
+    fn settle(&mut self) -> Result<(), Error> {
+        self.drop_built_ins();
+        self.kind_sets()?;
+        self.unit();
+        lower_boolean_relations(&mut self.prog);
+        self.documents();
+        for round in ON_REQUEST {
+            sources_on_request(&mut self.prog, round);
+        }
+        Ok(())
+    }
+
+    /// The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
+    /// does not derive them (`next_sibling`, `precedes`) are declared in `core.rerail` for the checker; they are no
+    /// relations of the program. `within` stays where a rule reads it: the lowering made it the engine's relation
+    /// (decision 0050).
+    fn drop_built_ins(&mut self) {
+        use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
+        let reads_within = self.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == WITHIN);
+        let rewritten: Vec<&str> = self::core::REWRITTEN.into_iter().filter(|r| self.rewritten(r)).collect();
+        for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).chain(rewritten).filter(|b| !(reads_within && *b == "within")) {
+            self.prog.decls.remove(b);
+            self.prog.inputs.retain(|i| i != b);
+        }
+        // A program lowered without `core.rerail` (its own part, `parse_own`) still declares the `within` it reads.
+        if reads_within {
+            self.prog.decls.entry(WITHIN.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("a".into(), "node".into())].into());
+            if !self.prog.inputs.iter().any(|i| i == WITHIN) {
+                self.prog.inputs.push(WITHIN.to_owned());
+            }
+        }
+    }
+
+    /// The documents the program reads. A printed program (its findings already rules) is read again with its `.scope`
+    /// settings: the documents it selects are the same. A program of tool calls selects none (no entry reads a path).
+    fn documents(&mut self) {
+        self.prog.text_globs = scope_text_globs(&self.prog.settings);
+        if reads_tool_calls(&self.prog.settings) {
+            self.prog.doc_scopes = Some(Vec::new());
+        } else if self.prog.doc_scopes.is_none() {
+            self.prog.doc_scopes = scope_globs(&self.prog.settings).map(|g| vec![g]);
+        }
+    }
+}
+
+/// A body is a conjunction: a literal twice is the literal once. Lowering keeps each once, so a printed program
+/// (`match`'s groups printed as their bindings beside the test) lowers back to itself.
+fn dedupe_bodies(program: &mut Program) {
     for rule in &mut program.rules {
         if (1..rule.body.len()).any(|i| rule.body[..i].contains(&rule.body[i])) {
             let mut kept: Vec<Literal> = Vec::with_capacity(rule.body.len());
@@ -1081,27 +1146,28 @@ fn whole(mut l: Lowerer, library: Option<&Program>) -> Result<Program, Error> {
             rule.body = kept.into();
         }
     }
-    // A rule whose body is its own head derives nothing: a natively made relation's rule as printed
-    // (`r(x) :- dfs_first_memo(x, …)`), whose construct lowers to the relation itself.
-    program.rules.retain(|r| !matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && a.rel == r.head.rel && a.args == r.head.args));
-    // So are a program's rules: a printed program states the rules its settings make (`.on syntax_error`'s finding,
-    // the scope's guards), which lowering its settings again makes once more.
-    {
-        use std::hash::{Hash, Hasher};
-        let mut seen: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
-        let mut kept: Vec<Rule> = Vec::with_capacity(program.rules.len());
-        for rule in program.rules.drain(..) {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            rule.hash(&mut h);
-            let same = seen.entry(h.finish()).or_default();
-            if same.iter().all(|&i| kept[i] != rule) {
-                same.push(kept.len());
-                kept.push(rule);
-            }
+}
+
+/// A program's rules are a set: a printed program states the rules its settings make (`.on syntax_error`'s finding,
+/// the scope's guards), which lowering its settings again makes once more.
+fn dedupe_rules(program: &mut Program) {
+    use std::hash::{Hash, Hasher};
+    let mut seen: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+    let mut kept: Vec<Rule> = Vec::with_capacity(program.rules.len());
+    for rule in program.rules.drain(..) {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        rule.hash(&mut h);
+        let same = seen.entry(h.finish()).or_default();
+        if same.iter().all(|&i| kept[i] != rule) {
+            same.push(kept.len());
+            kept.push(rule);
         }
-        program.rules = kept;
     }
-    // A relation's facts are a set too.
+    program.rules = kept;
+}
+
+/// A relation's facts are a set too.
+fn dedupe_facts(program: &mut Program) {
     for rows in program.facts.values_mut() {
         let mut kept: Vec<crate::code_rule_dsl::logic::front::List<Value>> = Vec::with_capacity(rows.len());
         for row in rows.drain(..) {
@@ -1111,9 +1177,6 @@ fn whole(mut l: Lowerer, library: Option<&Program>) -> Result<Program, Error> {
         }
         *rows = kept;
     }
-    drop(demand);
-    widen_cyclic_contexts(&mut program);
-    Ok(program)
 }
 
 /// A context relation (`Lowerer::context`'s `rr_ctx<k>`) narrows where a helper is computed to the values its rule
@@ -1481,10 +1544,7 @@ impl Lowerer {
     #[allow(clippy::too_many_arguments)]
     fn violation(&mut self, name: String, cols: Vec<(String, String)>, code: Option<Code>, code_in: Option<String>, tag: Option<String>, suppress: Vec<Suppress>, fixes: Vec<Fix>, message: String) -> Result<(), Error> {
         let Some((_, at)) = cols.first() else { return Err(Error::Syntax(format!(".violation {name} has no `at` column"))) };
-        if !matches!(at.as_str(), "node" | "span" | "loc") {
-            return Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span or a loc, not a {at}")));
-        }
-        let node = at == "node";
+        let node = at_is_node(&name, at)?;
         let column = |c: &String| cols.iter().position(|(n, _)| n == c).ok_or_else(|| Error::Syntax(format!(".violation {name}: no column {c}")));
         let tag = tag.as_ref().map(column).transpose()?;
         let code = match code {
@@ -1492,6 +1552,16 @@ impl Lowerer {
             Some(Code::Column(c)) => FindingCode::Column(column(&c)?),
             Some(Code::Constant(c)) => FindingCode::Constant(c),
         };
+        self.finding_settings(&name, suppress, fixes, code_in);
+        self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false, columns: cols.clone(), message, tag });
+        self.decl(name.clone(), cols, &[])?;
+        self.prog.outputs.push(name);
+        Ok(())
+    }
+
+    /// A `.violation`'s `suppress` and `fix` lines and `code {c} in "re"`, as the findings layer's settings
+    /// (`violation`).
+    fn finding_settings(&mut self, name: &str, suppress: Vec<Suppress>, fixes: Vec<Fix>, code_in: Option<String>) {
         for s in suppress {
             let rules = s.rules.iter().map(|r| quote(r)).collect::<Vec<_>>().join(", ");
             let over = s.over.map(|c| format!(" over {{{c}}}")).unwrap_or_default();
@@ -1503,10 +1573,6 @@ impl Lowerer {
         if let Some(re) = code_in {
             self.prog.settings.push(("code_in".to_owned(), format!("{name} {}", quote(&re))));
         }
-        self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false, columns: cols.clone(), message, tag });
-        self.decl(name.clone(), cols, &[])?;
-        self.prog.outputs.push(name);
-        Ok(())
     }
 
     /// The findings of the `.violation`s: `violation(policy, V, code, path, line)` for each row of V, at its first

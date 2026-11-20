@@ -225,7 +225,7 @@ Each `.json` rule document directly in that folder is one rule. Rerail reads the
 
 A rule document is a `rerail.policy/v1` code rule or a conversation rule; no `pack.json` or `package.json` is needed. The pack is present for the whole checkout without being added. No other checkout runs or lists it, including the main checkout and linked worktrees. It runs only while the checkout is started and its repository set up ([rule scoping](rule-scoping.md#start-and-stop)).
 
-- **Rules.** Each starts on, in its document's mode. Title: its `description`, else its id. Group: "This worktree". Settings name pack `worktree` and its rules by id: a checkout setting on the pack turns the folder off in that worktree; a repository setting applies to every checkout's own rules.
+- **Rules.** Each starts on, in its document's mode. Title: its `title`, else its `description`, else its id. Group: "This worktree". Settings name pack `worktree` and its rules by id: a checkout setting on the pack turns the folder off in that worktree; a repository setting applies to every checkout's own rules.
 - **Edits.** Adding, removing or changing a file applies at the running session's next event; nothing else needs touching.
 - **Checks.** Each file is checked on its own; a failing one is left out, with why. A file must:
   - be a regular file of at most 1 MiB (symbolic links are never followed, nor a symlinked `.rerail` or `rules` folder);
