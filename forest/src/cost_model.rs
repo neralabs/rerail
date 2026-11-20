@@ -747,6 +747,9 @@ mod tests {
     /// prediction, a memo hit as the walk that filled it.
     #[test]
     fn keys_and_the_memo_are_the_models_prediction() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
         let train = samples(3000);
         let config = CostConfig { forest: RandomForestProcedureConfig { feature_vector_samplings: 20, ..CostConfig::default().forest }, host_batch: usize::MAX, ..Default::default() };
         let model = CostModel::train(&train, &config).unwrap();
