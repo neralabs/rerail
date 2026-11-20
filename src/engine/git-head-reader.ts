@@ -511,10 +511,14 @@ function configReader(settleMs: number): (cwd: string, layout: Layout, signal: A
     return branch === known.branch && sameStamps(files, known.stamps) ? { files, branch } : undefined;
   };
 
-  /** Git's includes for `cwd`, kept once every file they depend on has settled; `HEAD` is read first, as Git reads it after. */
+  /**
+   * Git's includes for `cwd`, kept once every file they depend on has settled; `HEAD` is read first, as Git reads it
+   * after, and needed only where an `includeIf "onbranch:"` is set.
+   */
   const askedIncludes = async (cwd: string, gitDir: string, base: readonly StampedFile[], signal: AbortSignal | undefined) => {
     const head = await headText(gitDir);
-    const included = head === undefined ? undefined : await askIncludes(cwd, signal);
+    const asked = await askIncludes(cwd, signal);
+    const included = asked?.byBranch === true && head === undefined ? undefined : asked;
     const files = included === undefined ? undefined : await stampedFiles(included.paths, settleMs);
     if (files === undefined) return undefined;
     const branch = included!.byBranch ? head! : "";

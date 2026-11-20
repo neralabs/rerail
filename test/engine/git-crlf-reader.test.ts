@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -171,6 +171,22 @@ describe("gitCrlfReader", () => {
     const first = await read(reader, root);
     expect(first.rules).toEqual(first.expected);
     expect((await read(reader, root)).git).toEqual([]);
+  }, 30_000);
+
+  // Git reads `HEAD` for an include only where an `includeIf "onbranch:"` is set; here the reader cannot read it at all,
+  // as `HEAD` is past the size it reads.
+  it("answers from Git's files for a checkout with an include on no branch whose HEAD the reader cannot read", async () => {
+    const root = await repository("*.txt text eol=crlf\n");
+    await writeFile(join(root, ".git", "extra.conf"), "[core]\n\teol = lf\n");
+    git(root, "config", "include.path", "extra.conf");
+    await appendFile(join(root, ".git", "HEAD"), "\n".repeat(70_000));
+    const reader = gitCrlfReader();
+    clock.aheadMs += SETTLED_MS;
+    const first = await read(reader, root);
+    expect(first.rules).toEqual(first.expected);
+    const again = await read(reader, root);
+    expect(again.rules).toEqual(again.expected);
+    expect(again.git).toEqual([]);
   }, 30_000);
 
   it("asks Git on every call while core.attributesFile is spelled so that only Git can name its file", async () => {
