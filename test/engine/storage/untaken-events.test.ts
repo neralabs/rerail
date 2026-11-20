@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { once } from "node:events";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { on, once } from "node:events";
+import { chmodSync, existsSync, mkdirSync, watch, writeFileSync } from "node:fs";
 import { mkdtemp, readdir, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +20,7 @@ import {
   type UntakenHandler,
   type UntakenPass,
 } from "../../../src/engine/storage/untaken-events.js";
-import { removeFolder } from "../../support/platform/remove-folder.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const homes: string[] = [];
 async function home(): Promise<string> {
@@ -83,19 +83,27 @@ describe("the home's untaken events", () => {
     await leaveUntaken(rerailHome, 41, "third", 3_000);
     await leaveUntaken(rerailHome, 41, "first", 1_000);
     await leaveUntaken(rerailHome, 42, "second", 2_000);
-    const folder = untakenFolderId(rerailHome)!;
-    expect(untakenFor(rerailHome, 41, folder)).toBe(true);
-    expect(untakenFor(rerailHome, 43, folder)).toBe(false);
-    expect(untakenFor(rerailHome, 41, `${folder}0`)).toBe(false);
+    // A folder hooks made holds no daemon's mark until a daemon's watch opens on it.
+    expect(untakenFolderId(rerailHome)).toBeUndefined();
     const handler = keeper();
-    await untakenEventTaker(rerailHome, handler).taken();
-    expect(handler.events).toEqual([
-      { body: "first", arrivedAt: 1_000 },
-      { body: "second", arrivedAt: 2_000 },
-      { body: "third", arrivedAt: 3_000 },
-    ]);
-    expect(await eventFiles(rerailHome)).toEqual([]);
-    expect(untakenFor(rerailHome, 41, folder)).toBe(false);
+    const taker = untakenEventTaker(rerailHome, handler);
+    try {
+      const folder = taker.watch(() => undefined)!;
+      expect(folder).toBe(untakenFolderId(rerailHome));
+      expect(untakenFor(rerailHome, 41, folder)).toBe(true);
+      expect(untakenFor(rerailHome, 43, folder)).toBe(false);
+      expect(untakenFor(rerailHome, 41, `${folder}0`)).toBe(false);
+      await taker.taken();
+      expect(handler.events).toEqual([
+        { body: "first", arrivedAt: 1_000 },
+        { body: "second", arrivedAt: 2_000 },
+        { body: "third", arrivedAt: 3_000 },
+      ]);
+      expect(await eventFiles(rerailHome)).toEqual([]);
+      expect(untakenFor(rerailHome, 41, folder)).toBe(false);
+    } finally {
+      taker.close();
+    }
   });
 
   it("are taken as they are left once the daemon watches its home, with no request and no timer", async () => {
@@ -123,15 +131,16 @@ describe("the home's untaken events", () => {
 
   // A watch follows its folder's change notices. On Windows a moved folder sends its watch none, and a removed one fails
   // it; the state file's folder id then keeps hooks asking the daemon (hook-failures.test.ts).
-  it.runIf(process.platform !== "win32")("are taken by a watch that follows its folder once it was removed or moved, which names each new folder", async () => {
+  // A watch makes no folder where its folder went: a hook makes the next one, and the daemon's next event follows it.
+  it.runIf(process.platform !== "win32")("follow the folder a hook makes once theirs was removed or moved at the next take, then are taken by the watch alone, which names each new folder", async () => {
     const rerailHome = await home();
     const taken: string[] = [];
     const watched: (string | undefined)[] = [];
-    let next = Promise.withResolvers<void>();
+    const next = Promise.withResolvers<void>();
     const taker = untakenEventTaker(rerailHome, {
       take: async event => {
         taken.push(event.body);
-        next.resolve();
+        if (event.body === "later still") next.resolve();
       },
       passed: () => undefined,
     });
@@ -139,12 +148,10 @@ describe("the home's untaken events", () => {
       watched.push(taker.watch(folder => watched.push(folder)));
       await removeFolder(join(rerailHome, UNTAKEN_EVENTS_DIR));
       await leaveUntaken(rerailHome, 7, "after the removal", 1_000);
-      await next.promise;
-      next = Promise.withResolvers<void>();
+      await taker.taken();
       await rename(join(rerailHome, UNTAKEN_EVENTS_DIR), join(rerailHome, "moved"));
       await leaveUntaken(rerailHome, 7, "after the move", 2_000);
-      await next.promise;
-      next = Promise.withResolvers<void>();
+      await taker.taken();
       await leaveUntaken(rerailHome, 7, "later still", 3_000);
       await next.promise;
       expect(taken).toEqual(["after the removal", "after the move", "later still"]);
@@ -385,5 +392,48 @@ describe("the home's untaken events", () => {
     // Before, the call made meanwhile ended with the failed pass, and so did every call made while a later pass ran.
     await expect(after).resolves.toBeUndefined();
     expect(bodies).toEqual(["first"]);
+  });
+
+  // Linux hands one process's watches of a removed folder and of its home their notices in one read, handled together,
+  // so once the case has had the home's notice and read the home, the taker's watch has handled its own. No other
+  // system hands the two over together.
+  it.runIf(process.platform === "linux")("make nothing in the home once the folder they watch is removed, and follow the folder a hook makes there at the next take", async () => {
+    const rerailHome = await home();
+    const handler = keeper();
+    const followed: Array<string | undefined> = [];
+    const taker = untakenEventTaker(rerailHome, handler);
+    const notices = watch(rerailHome);
+    try {
+      expect(taker.watch(folder => followed.push(folder))).toBe(untakenFolderId(rerailHome));
+      // As `rm -r` of the whole home removes it: the home itself goes next, and a folder made meanwhile keeps it.
+      removeFolderSync(join(rerailHome, UNTAKEN_EVENTS_DIR));
+      for await (const [, name] of on(notices, "change") as AsyncIterable<[string, string | null]>) if (name === UNTAKEN_EVENTS_DIR) break;
+      // Before, the watch made the folder again at once, and its daemon wrote its state file to name it.
+      expect(await readdir(rerailHome)).toEqual([]);
+      expect(followed).toEqual([]);
+      // A hook that finds the daemon not reading makes the folder as it leaves its event; the daemon's next event takes it.
+      await leaveUntaken(rerailHome, 7, "left after", 5_000);
+      await taker.taken();
+      expect(handler.events).toEqual([{ body: "left after", arrivedAt: 5_000 }]);
+      expect(followed).toEqual([untakenFolderId(rerailHome)]);
+    } finally {
+      notices.close();
+      taker.close();
+    }
+  });
+
+  // Linux gives a folder made where one was removed the removed one's file id at once, and its birth time in the same tick.
+  it("leave a folder made again where one was removed unmarked until a daemon's watch follows it, so no hook takes it for the one that went", async () => {
+    const rerailHome = await home();
+    const taker = untakenEventTaker(rerailHome, keeper());
+    try {
+      const watched = taker.watch(() => undefined)!;
+      await removeFolder(join(rerailHome, UNTAKEN_EVENTS_DIR));
+      await leaveUntaken(rerailHome, 7, "left", 1_000);
+      expect(untakenFolderId(rerailHome)).not.toBe(watched);
+      expect(untakenFor(rerailHome, 7, watched)).toBe(false);
+    } finally {
+      taker.close();
+    }
   });
 });

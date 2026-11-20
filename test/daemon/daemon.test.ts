@@ -1302,43 +1302,30 @@ describe("Rerail daemon", () => {
     expect(await Promise.race([checked.promise, none])).toEqual({ events: 1, from: 5_000, to: 5_000, failed: 0 });
   });
 
-  // Windows sends a watch of a moved folder no notice; the folder id then keeps hooks asking.
-  it.runIf(process.platform !== "win32")("names in its state file the folder its watch follows to once the one it watched is moved away", async () => {
+  // A watch whose folder was moved or removed makes no folder to follow: a home that `rm -r` removes, or one moved, gets
+  // nothing written into it. It follows the folder the next hook makes at the daemon's next event, on Windows too,
+  // where a watch of a moved folder hears nothing.
+  it.each(["moved away", "removed"] as const)("names in its state file the folder a hook makes once the one it watched is %s, at its next event", async gone => {
     root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    startTestRepository(root, join(root, "rerail.sqlite"));
     const stateFile = join(root, "daemon.json");
     await start({ stateFile });
-    const before = (JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).untakenFolder;
+    // Test boundary: the state file a hook reads, parsed and asserted.
+    const named = async (): Promise<string | undefined> => (JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).untakenFolder;
+    const before = await named();
+    const session = { host: "claude-code" as const, sessionId: "untaken-follow", cwd: root };
     const home = watch(root);
+    const changes = on(home, "change") as AsyncIterableIterator<[string, string | null]>;
     try {
-      // Moved, not removed: the folder made again at the path cannot then reuse the moved one's id.
-      await rename(join(root, UNTAKEN_EVENTS_DIR), join(root, "moved-away"));
-      // Ends on the state file naming the folder at the path now; before, it kept naming the moved one.
-      for await (const [, name] of on(home, "change") as AsyncIterable<[string, string | null]>) {
-        if (name !== "daemon.json") continue;
-        const named = (JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).untakenFolder;
-        if (named !== undefined && named !== before && named === untakenFolderId(root)) break;
-      }
-    } finally {
-      home.close();
-    }
-  });
-
-  // Windows fails a watch whose folder is removed, and gives the folder made again another id. Linux gives the next
-  // folder made the removed one's id at once, so there the moved folder's case shows the follow.
-  it.runIf(process.platform === "win32")("names in its state file the folder its watch follows to once the one it watched is removed", async () => {
-    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
-    const stateFile = join(root, "daemon.json");
-    await start({ stateFile });
-    const before = (JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).untakenFolder;
-    const home = watch(root);
-    try {
-      await removeFolder(join(root, UNTAKEN_EVENTS_DIR));
-      // Ends on the state file naming the folder made again at the path; before, it kept naming the removed one.
-      for await (const [, name] of on(home, "change") as AsyncIterable<[string, string | null]>) {
-        if (name !== "daemon.json") continue;
-        const named = (JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).untakenFolder;
-        if (named !== undefined && named !== before && named === untakenFolderId(root)) break;
-      }
+      const folder = join(root, UNTAKEN_EVENTS_DIR);
+      if (gone === "removed") await removeFolder(folder);
+      else await rename(folder, join(root, "moved-away"));
+      await leaveUntaken(root, 1, engineRequestBody({ kind: "user-prompt", eventId: "left", sessionId: session.sessionId, session, text: "left" }), 1_000);
+      const { kernelSocketPath } = JSON.parse(await readFile(stateFile, "utf8")) as DaemonState;
+      await ingestEngineEvent({ socketPath: kernelSocketPath, accessToken: ACCESS }, { kind: "session-start", eventId: "start", session });
+      // Ends on the state file naming the folder the hook made; the write is the daemon's own, after the event's take.
+      while ((await named()) !== untakenFolderId(root)) await changes.next();
+      expect(untakenFolderId(root)).not.toBe(before);
     } finally {
       home.close();
     }
