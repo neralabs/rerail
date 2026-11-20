@@ -114,10 +114,19 @@ fn api() -> Result<&'static Api, String> {
             let p = unsafe { libc::dlsym(handle, c.as_ptr()) };
             if p.is_null() { Err(format!("the OpenCL library has no {name}")) } else { Ok(p) }
         };
+        /// The symbol at `p` as the function type `F` its field declares (a function pointer: its size is checked).
+        ///
+        /// # Safety
+        /// `p` is a function of `F`'s signature.
+        unsafe fn as_fn<F: Copy>(p: Ptr) -> F {
+            const { assert!(size_of::<F>() == size_of::<Ptr>(), "a function pointer") };
+            // SAFETY: the caller's; the sizes are equal.
+            unsafe { std::mem::transmute_copy::<Ptr, F>(&p) }
+        }
         // SAFETY: each symbol is OpenCL 1.2's function of that name, with the signature its field declares.
         macro_rules! f {
             ($n:literal) => {
-                unsafe { std::mem::transmute::<Ptr, _>(sym($n)?) }
+                unsafe { as_fn(sym($n)?) }
             };
         }
         Ok(Api {
@@ -377,7 +386,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> Cl
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &ClDevice, ptr: *mut u8, len: usize) -> Result<ClBuffer, String> {
     let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
-    if (ptr as usize) % page != 0 || len % 64 != 0 || len == 0 {
+    if !(ptr as usize).is_multiple_of(page) || !len.is_multiple_of(64) || len == 0 {
         return Err(format!("OpenCL: host memory at {ptr:p} ({len} bytes) is not page-aligned and a whole number of cache lines: a driver would copy it"));
     }
     let a = api()?;
@@ -630,8 +639,11 @@ struct RootState {
     backlog: std::collections::VecDeque<Pending>,
     device: ClDevice,
     /// The fill kernel (`FILL`) and its library, compiled at the root's first fill.
-    fill: Option<Result<(Arc<ClComputeFunctionLibrary>, Arc<Mutex<Kernel>>), String>>,
+    fill: Option<Result<FillKernel, String>>,
 }
+
+/// The fill kernel and the library it was compiled in.
+type FillKernel = (Arc<ClComputeFunctionLibrary>, Arc<Mutex<Kernel>>);
 
 /// A fill's kernel (`ClComputeQueue::enqueue_fill_array`), OpenCL C (the device layer is below the UKL
 /// preprocessor): word `first + i` of `out` is the pattern's word `i % period`, for `i < count`.
@@ -728,9 +740,12 @@ struct Enqueue<'a> {
     kernels: Vec<Event>,
 }
 
+/// Work a queue enqueues when its turn comes.
+type Work = Box<dyn FnOnce(&mut Enqueue) -> Result<(), String> + Send>;
+
 /// An operation of a queue: work to enqueue, or a wait for a host-signalled event that holds what follows.
 enum Op {
-    Run(Box<dyn FnOnce(&mut Enqueue) -> Result<(), String> + Send>),
+    Run(Work),
     Wait(ClSharedEvent, u64),
 }
 
@@ -829,7 +844,7 @@ impl ClComputeQueue {
         let words: Option<Vec<u32>> = match size {
             1 => Some(vec![u32::from_ne_bytes([one[0]; 4])]),
             2 => Some(vec![u32::from_ne_bytes([one[0], one[1], one[0], one[1]])]),
-            _ if size % 4 == 0 && size <= 32 => Some(one.chunks(4).map(|w| u32::from_ne_bytes(w.try_into().unwrap())).collect()),
+            _ if size.is_multiple_of(4) && size <= 32 => Some(one.chunks(4).map(|w| u32::from_ne_bytes(w.try_into().unwrap())).collect()),
             _ => None,
         };
         let (start, bytes) = (offset * size, count * size);
@@ -991,7 +1006,7 @@ impl ClBindContext<'_> {
             return Ok(());
         }
         let align = self.function.device.0.base_align;
-        if offset % align != 0 || offset >= buffer.length() {
+        if !offset.is_multiple_of(align) || offset >= buffer.length() {
             return Err(format!("{}: argument {arg_num} at byte {offset} of a {}-byte buffer: OpenCL binds a region at a multiple of {align} bytes", self.function.name, buffer.length()));
         }
         let a = api()?;
