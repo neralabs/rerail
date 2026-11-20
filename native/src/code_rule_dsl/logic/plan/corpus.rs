@@ -5305,13 +5305,9 @@ fn run_observed(
         }
 
         /// The main thread's wait for `poll`, under `site`: on the bell, running no job, while the pool has other
-        /// threads to take the jobs; with one thread, or where the run is itself a job on one of the pool's threads (the
-        /// typing run `bridge::facts` starts), running them itself. A job that waited running none would hold its pool
-        /// thread for the whole nested run: with 2 threads, the process's main thread and the typing run's both waited
-        /// for chunks no thread was left to build.
+        /// threads to take the jobs; with one thread, running them itself (none else would).
         fn main_wait<T>(&self, site: &'static str, poll: impl FnMut() -> Option<T>) -> T {
-            let job = rerail_accel::exec::on_pool() && !crate::threads::is_main_thread();
-            if crate::threads::max() >= 2 && !job {
+            if crate::threads::max() >= 2 {
                 self.bell.wait_as(site, poll)
             } else {
                 rerail_accel::exec::help_until_as(site, poll)
