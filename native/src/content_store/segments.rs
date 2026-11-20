@@ -250,10 +250,8 @@ impl SegmentWriter {
         private_dir(&self.dir)?;
         let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let file = self.dir.join(format!("w-{}-{n}.seg", std::process::id()));
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let open = Open::Mapped(rerail_accel::gpu::shared::lease_deferrable_host(kind::JOURNAL, bytes, &file).map_err(StoreError::Invalid)?);
-        #[cfg(target_os = "linux")]
-        let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true, None)?);
         #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
         let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true)?);
         #[cfg(not(unix))]

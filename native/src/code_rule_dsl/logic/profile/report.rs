@@ -742,9 +742,9 @@ fn metal_summary(r: &mut String, state: &State) {
         let _ = writeln!(r, "  {form:<26} {:<4} {n:>6} launches {wall:>9.2} s wall {cpu:>9.2} s job CPU ({:.2} ms wall a launch)", lane.name(), wall * 1e3 / *n as f64);
     }
     let _ = writeln!(r, "  matcher label passes: {label_gpu:.1} ms on the GPU (command buffers); the GPU lane's wall less it is the host's part and the waits");
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let (begun, beside) = rerail_accel::gpu::programs_begun();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let (begun, beside) = (0, 0);
     if begun > 0 {
         let _ = writeln!(r, "  GPU lane programs: {begun} batches begun, {beside} of them while another ran (decision 0344: one's host part beside another's command buffers)");

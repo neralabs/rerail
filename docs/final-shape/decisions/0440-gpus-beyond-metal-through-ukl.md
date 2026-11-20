@@ -1430,6 +1430,62 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
   host's, `lease_deferrable_host`), so the test stops there on that refusal alone. Open: whether native Linux's
   Intel driver has the same limit, and what a device lease of the deferrable tier is on a device that has it.
 
+**E, part 2: the engine's GPU lane builds on Linux (2026-11-19).**
+
+- **Corrected from part 1:** the device layer is macOS's and Linux's alone (`rerail-device` and `rerail-gpu` are
+  gated on those targets), so plain dependencies broke accel's WASM build. They are dependencies on those two
+  targets. The lane is `cfg(gpu_lane)`, which `accel/build.rs` sets where the `gpu` feature is on and the device
+  layer is. accel checks for `wasm32-wasip1` again.
+- **One gate, "where the device layer is":** every gate on the GPU lane in the engine's crates
+  (`rerail-metal`, `rerail-device-metal`, the engine, `rerail-facts`, `rerail-c-directives`, `rerail-rr-parser`,
+  `rerail-parser-tests`) is `any(target_os = "macos", target_os = "linux")`, where it was macOS's (about 150).
+  These stay macOS's:
+  - the OS's own facts (resource usage in bytes, FSEvents, Mach, thread names);
+  - Metal's own tier: the kernel store's archives and maintenance, Metal-only kernels and tests, the cost models'
+    Metal forests, the Neural Engine and SME;
+  - the Apple Silicon benches, and the machine-code budgets of the AArch64 tests (`target_arch = "aarch64"`).
+- **`rerail-metal` is the lane's host side on any device:** `HostMapped` is its host-mapped buffer. A pipeline's
+  limits are `lane::limits` (Metal's pipeline; `None` elsewhere), and a command's times are `launch::command_times`.
+  `MappedBuffer`, `PrivateInputUpload`, the private-bytes statics and the queue accessors were dead: deleted.
+  Their ledger tests run on `HostMapped`. `residency::metal` only re-exported `MappedBuffer`: deleted.
+- **Found on the way:**
+  - **CUDA ran submissions out of order.** A queue root had 16 streams, each new queue taking the next, and a
+    queue issued each launch, copy and fill as it was encoded. Metal runs nothing until a command buffer is committed,
+    and a queue's command buffers in the order they are committed, and the engine relies on both: a batch reads
+    what one committed before it wrote (`Batch::commit_open`), and a `Pass` dropped uncommitted runs nothing. Two
+    threads' submissions ran at once, one thread's launch before another's earlier commit: the device tests faulted
+    (an illegal address in `dedup_scatter`, then error 715 for every later launch of the process), and, rarely, a
+    stratum read 0 rows. A root is one stream (the waiting root's stays its own, so an armed wait holds back nothing
+    else), and a queue records its operations (`Op`) and issues them at `flush`, a submission's contiguously
+    (`ISSUE`), between its own two events (its GPU time is its own). A queue dropped unflushed runs nothing.
+  - **NVRTC has no `offsetof`.** Its front end is EDG's, with no `__builtin_offsetof` and no standard headers, so the
+    layout checks of every generated read header (`reads/ids.h`, `reads/view.h`, the blocks', `join_stages`) did
+    not compile on CUDA: 29 of the lane's device tests failed. They are `UKL_OFFSETOF` (`backend.h`): EDG's
+    `__INTADDR__` on CUDA, `__builtin_offsetof` elsewhere. Probed on the GB10: a wrong offset fails the assert.
+  - **`rerail-clif` linked Cranelift's JIT on WASM.** It takes the tree's stand-in there, as the compiler does, so
+    the engine checks for WASM. (The break predates this step: 0325 step 1.)
+  - **`Source::in_block` was gated on macOS**, though host code reads it and `InBlock` is on every target: ungated.
+  - The AOT preprocessor's generated Rust is NEON: generated on AArch64 alone.
+  - A view read in place is wanted wherever buffers have addresses (`Device::has_addresses`), not on Metal alone.
+  - Linux-only warnings (unused AArch64-only helpers, a profiler's `mut`) fixed by moving the code under its gate.
+- **Results:**
+  - The engine, `rerail-parser-tests` and `rerail-device-metal` (libraries and tests) check on Linux and macOS; the
+    engine checks for WASM.
+  - The Mac's lane suite (`rerail-device-metal`) passes on Metal and on OpenCL (59 each); `rerail-metal`'s 15 and
+    the header writers' tests (`rerail-clif`, `rerail-blocks`) pass.
+  - On CUDA (a GB10): the lane suite's 58 (the Mac's one more is Metal's) pass, four runs of four with the tests in
+    parallel, five of five one at a time; `rerail-device`'s, `rerail-gpu`'s and `rerail-metal`'s pass.
+  - **The data layer's replay on the device.** The replay of the 142 checks' recorded tests ran every program bound to
+    the CPU (`finding_keys`), so it said nothing of the GPU lane: profiled on the GB10, its sample launched no
+    kernel. It takes the CLI's binding (`RERAIL_DEVICE=metal`, by price, or `always`). With `always`, the sample
+    (two events a check) gives the recorded findings exactly on CUDA: 413,000 launches, 3.4 s of GPU time
+    (`nsys`; joins' counts and scatters, copies, dedups, indexes, the library's scans and sorts, text verdicts,
+    the label passes).
+- **Open:** `rerail-device-metal`'s tests register Python's and `.rr`'s packs (`test_languages`) only where two tests
+  call it, while its corpus runs read `.rr` documents (`lines::of`) in tests that do not: a CPU worker panics
+  ("no language registered for Rr"), now and then by which test runs first, caught and run again. Every test passes
+  through it, on the Mac as on Linux. The crate's tests need the engine's load-time registration.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

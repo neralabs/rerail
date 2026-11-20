@@ -15,6 +15,9 @@
 //!   select), in the relation's family.
 //! - [`inline`]: the JIT's one inlining pass: a call of a hot read is replaced by its body, a cold
 //!   one stays a call of the read compiled once in the module.
+// The JIT by one name on every target: Cranelift's, or the tree's stand-in on WASM (`Cargo.toml`).
+#[cfg(all(feature = "ir", target_family = "wasm"))]
+extern crate cranelift_jit_wasm as cranelift_jit;
 pub mod ids;
 #[cfg(feature = "ir")]
 pub mod id_reads;

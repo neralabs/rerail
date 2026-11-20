@@ -5177,7 +5177,7 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         .unwrap();
         let placed = TapeImage::from_home(home, &grammar).unwrap();
         assert_eq!(placed.format(), format, "held as stored");
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_eq!(placed.placed(), crate::code_rule_dsl::tape::placed::device().is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
         let text = Arc::new(source.clone());

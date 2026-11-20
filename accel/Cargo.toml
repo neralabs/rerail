@@ -25,6 +25,9 @@ rerail-blocks = { path = "../native/crates/blocks" }
 # A kernel that takes UKL's library (the reads written once in CLIF) preprocessed before the Metal front end
 # (`gpu::kernels::msl`, decision 0440 §3.3).
 rerail-ukl = { path = "../native/crates/ukl" }
+
+# The device layer, where it is (macOS and Linux): the GPU lane's targets (`gpu_lane`, `build.rs`).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 # The pool's buffers and the blocks' wraps: the device layer's (decision 0440 step B).
 rerail-device = { path = "../gpu/device" }
 # Kernels on a device other than Metal, compiled from UKL by the device layer (`gpu::kernels::function`, 0440 step C).
@@ -42,4 +45,5 @@ cc = "=1.10.0"
 
 [lints.rust]
 # objc 0.2's `msg_send!` tests a `cargo-clippy` feature in the calling crate.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+# `gpu_lane`: the `gpu` feature on a target with the device layer (`build.rs`).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))', 'cfg(gpu_lane)'] }

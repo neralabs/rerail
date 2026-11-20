@@ -121,7 +121,7 @@ macro_rules! structure {
                 $(s += &format!("    {};\n", <$t as $crate::KernelField>::decl(stringify!($f)));)*
                 s += &format!("}} {};\n", stringify!($name));
                 s += &format!("UKL_STATIC_ASSERT(sizeof({0}) == {1}, \"{0}: size\");\n", stringify!($name), core::mem::size_of::<$name>());
-                $(s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof({0}, {1}) == {2}, \"{0}.{1}\");\n",
+                $(s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF({0}, {1}) == {2}, \"{0}.{1}\");\n",
                     stringify!($name), stringify!($f), core::mem::offset_of!($name, $f));)*
                 if !out.contains(&s) { out.push(s); }
             }

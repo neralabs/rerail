@@ -50,11 +50,6 @@ pub fn pool_peak() -> &'static AtomicUsize {
     LEDGERS.with(|ledgers| ledgers.peak)
 }
 
-/// Left out in a test build: the driver's figure is the process's, every test's buffers.
-pub fn driver_bytes(_device: &metal::DeviceRef) -> u64 {
-    0
-}
-
 /// Waits (bounded) until `bytes` fit beside what the other tests hold, then counts them.
 pub fn admit(bytes: usize) {
     let held = HELD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);

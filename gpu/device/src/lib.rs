@@ -110,9 +110,9 @@ pub mod shared {
     fn open() -> Option<Shared> {
         use crate::compute_kernel_cuda::{CudaDevice, CudaQueueRoot};
         let device = CudaDevice::system_default()?;
-        // The waiting root first: its one stream is the only one an armed wait holds (`CudaQueueRoot`).
-        let waiting = QueueRoot::Native(CudaQueueRoot::new(device, 1));
-        let queue = QueueRoot::Native(CudaQueueRoot::new(device, 16));
+        // The waiting root first: its stream is the only one an armed wait holds (`CudaQueueRoot`).
+        let waiting = QueueRoot::Native(CudaQueueRoot::new(device));
+        let queue = QueueRoot::Native(CudaQueueRoot::new(device));
         Some(Shared { device: Device::Native(device), queue, waiting })
     }
 }

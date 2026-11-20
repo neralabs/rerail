@@ -1098,14 +1098,14 @@
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
             // directory, its tapes and core.rr's lines in the batch's block; a guest's (a copied stretch) through its
-            // host's lines and its placement. With the guest and without. Made where the device is not Metal (the
-            // directory's addresses are Metal's, decision 0440 step C).
+            // host's lines and its placement. With the guest and without. Made where the device's buffers have no
+            // addresses, which the directory is of (OpenCL 1.2's, decision 0440 step C).
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
             for views in [&core_views, &own_views] {
                 for name in ["line", "end_line", "col", "docof"] {
                     let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
                     let d = src.device_view().unwrap_or_else(|| panic!("{name}: on the device"));
-                    assert_eq!(d.in_place.is_some(), device.metal().is_some(), "{name}: read in place on Metal alone");
+                    assert_eq!(d.in_place.is_some(), device.has_addresses(), "{name}: read in place where buffers have addresses");
                     let n = src.len();
                     assert!(n > 0, "{name}: rows");
                     for cols in [vec![0, 1], vec![1]] {

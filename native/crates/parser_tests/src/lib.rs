@@ -14,7 +14,7 @@ mod corpus_tests;
 pub mod json;
 #[cfg(test)]
 mod json_tests;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod metal_tests;
 #[cfg(test)]
 mod rr_tests;

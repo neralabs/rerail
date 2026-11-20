@@ -15,12 +15,6 @@ rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-tape-format = { path = "../tape_format" }
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-rerail-metal = { path = "../metal" }
-
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-rerail-metal = { path = "../metal", features = ["test-hooks"] }
-
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-rr-parser = { path = ".", features = ["test-hooks"] }
@@ -33,3 +27,11 @@ sha2 = "0.10"
 cranelift-codegen = "=0.125.4"
 # JSON's baseline: simdjson's stage 1, against tier 1 (`json_tier1_by_pass`).
 rerail-simdjson-native = { path = "../simdjson_native" }
+
+# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+rerail-metal = { path = "../metal" }
+
+# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dev-dependencies]
+rerail-metal = { path = "../metal", features = ["test-hooks"] }

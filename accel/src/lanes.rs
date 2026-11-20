@@ -74,11 +74,11 @@ pub fn sme2() -> bool {
 /// A GPU on any backend the device layer has (Metal, CUDA, OpenCL; decision 0440 step E): not the CPU's
 /// backend, which runs kernels on the host and is chosen only to test them (`RERAIL_GPU=cpu`).
 fn gpu() -> bool {
-    #[cfg(feature = "gpu")]
+    #[cfg(gpu_lane)]
     {
         crate::gpu::shared::layer().is_some_and(|l| !matches!(l.device, rerail_device::device::Device::Cpu(_)))
     }
-    #[cfg(not(feature = "gpu"))]
+    #[cfg(not(gpu_lane))]
     {
         false
     }

@@ -51,14 +51,14 @@ pub trait RowCells: Send+Sync {
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
 /// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub struct DeviceView<'a> {
     pub block: &'a rerail_blocks::Block,
     pub root: usize,
     pub view: u32,
     pub rows: usize,
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub in_place: Option<ViewInPlace>,
 }
 
@@ -68,7 +68,7 @@ pub struct DeviceView<'a> {
 /// addresses (`device_chunk::views_in_place`).
 /// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
 /// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[derive(Clone)]
 pub struct ViewInPlace {
     pub dir: u64,
@@ -79,7 +79,7 @@ pub struct ViewInPlace {
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl ViewInPlace {
     /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
     pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
@@ -227,13 +227,12 @@ pub trait Source: Send + Sync {
     }
     /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
     /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
     /// device reads where they lie (decision 0325 step 3). `None`: the device copies them (`device_view`, `row_at`).
-    #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None
     }
@@ -1485,7 +1484,6 @@ impl Source for Relation {
     fn len(&self) -> usize {
         self.rows
     }
-    #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<super::rows::InBlock> {
         self.cells().in_block()
     }

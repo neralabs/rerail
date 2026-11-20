@@ -26,7 +26,7 @@ use rerail_compiler::*;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
 use rerail_compiler::bitlex_masks as bitlex_compile;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_metal as metal_program_backend;
 use ::bitlex::syntax::{Stmt, parse};
 use std::collections::HashMap;
@@ -613,7 +613,7 @@ fn executors_equal_the_interpreter(metal: bool) {
     eprintln!("interpreted and compiled in {:.1} s", seconds(t));
     let mut runs: Vec<(String, Vec<Vec<Vec<u64>>>)> =
         vec![("cranelift".to_owned(), native_cpu_block::run_batch(&refs, &files).into_iter().map(|r| r.outputs).collect())];
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if metal {
         use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
         let forms: Vec<&block_native::BlockNative> = natives.iter().collect();
@@ -895,7 +895,7 @@ fn a_file_on_every_executor() {
     for (name, k) in &case.checked {
         eprintln!("{name:>8} interpreter {:x?}", want[*k]);
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with, run_generated_with};
         if let Some(dump) = std::env::var_os("RERAIL_DUMP_MSL") {

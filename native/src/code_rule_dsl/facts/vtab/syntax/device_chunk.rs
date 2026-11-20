@@ -137,14 +137,14 @@ pub struct Chunk {
     lines: std::sync::OnceLock<bool>,
     /// The views' directory (`views_in_place`), once asked; `None` when a document's tape is not where the device
     /// reads it.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     views: std::sync::OnceLock<Option<ViewsInPlace>>,
 }
 
 /// A batch's documents as the views' reads find them on the device (decision 0353 step 4d, `ViewDir`): each one's
 /// entry, beside its projection's numbering in the batch's block, and its tape where it lies in its slab. A stage
 /// reads a view through them; nothing makes the view's rows.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub struct ViewsInPlace {
     /// The directory's GPU address, which a stage's constants point at (`Stage::v_dir`).
     pub dir: u64,
@@ -164,7 +164,7 @@ pub struct ViewsInPlace {
 
 
 /// The batch's cache's counts in the profile when its directory goes (the statistics mode's too, where it is on).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl Drop for ViewsInPlace {
     fn drop(&mut self) {
         if let Some(cache) = &self.cache {
@@ -179,12 +179,12 @@ impl Drop for ViewsInPlace {
 
 /// The batch's views' directory (`ViewsInPlace`), made on its first ask: `None` when a document's tape is not in a
 /// slab (a tape held in a vector of its own), or the batch has no device.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsInPlace> {
     chunk.views.get_or_init(|| build_views(batch, chunk)).as_ref()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     use rerail_clif::view_reads::{ViewDir, ViewRow};
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
@@ -453,7 +453,7 @@ fn build_in(batch: &Batch) -> Chunk {
         root: at,
         locs: std::sync::OnceLock::new(),
         lines: std::sync::OnceLock::new(),
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         views: std::sync::OnceLock::new(),
     }
 }

@@ -466,7 +466,7 @@ fn room_for(k: usize, rows: usize) -> usize {
 /// refusal running it on the CPU). Without Metal, anonymous memory.
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
     use rerail_blocks::alloc::{Budget, Device, Need, Size, Writes};
-    let device = if cfg!(target_os = "macos") && life == Life::Device { Device::Must } else { Device::No };
+    let device = if cfg!(any(target_os = "macos", target_os = "linux")) && life == Life::Device { Device::Must } else { Device::No };
     rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Once, device, size: Size::Exact, budget: Budget::Join })
 }
 

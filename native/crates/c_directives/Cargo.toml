@@ -24,9 +24,10 @@ rerail-c-pp = { path = "../c_pp" }
 rerail-c-lean = { path = "../c_lean" }
 rerail-simd8 = { path = "../simd8" }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-rerail-metal = { path = "../metal" }
-
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-c-directives = { path = ".", features = ["test-hooks"] }
+
+# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+rerail-metal = { path = "../metal" }

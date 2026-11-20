@@ -377,6 +377,15 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { atom
 #ifndef UKL_STATIC_ASSERT
 #define UKL_STATIC_ASSERT(c, m) static_assert(c, m)
 #endif
+// A field's offset, as a constant for `UKL_STATIC_ASSERT`. NVRTC (its front end is EDG's) has no `offsetof` nor
+// `__builtin_offsetof`, and no standard headers; EDG's own `__INTADDR__` makes the address a constant.
+#ifndef UKL_OFFSETOF
+#if defined(UKL_CUDA)
+#define UKL_OFFSETOF(T, f) ((unsigned long)__INTADDR__(&(((T*)0)->f)))
+#else
+#define UKL_OFFSETOF(T, f) __builtin_offsetof(T, f)
+#endif
+#endif
 
 // A program's specialization constant (decision 0440 step B): `UKL_CONSTANT_U32(name)` declares `name`, a uint32_t
 // fixed when the program is made, so the compiler folds it (the label passes' tape format). Metal's function constant

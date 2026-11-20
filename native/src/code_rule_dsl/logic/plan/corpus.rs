@@ -6799,7 +6799,7 @@ fn run_observed(
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
             at_once_allowed.store(sized.at_once, std::sync::atomic::Ordering::Relaxed);
             // The device pool's share of what the chunk was sized under: its blocks leased and idle, the rows' blocks.
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             crate::code_rule_dsl::logic::profile::decision("chunk size: the device pool", || {
                 let (live, idle) = rerail_accel::gpu::shared::held_bytes();
                 let h = crate::code_rule_dsl::facts::rows::held();

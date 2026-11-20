@@ -37,7 +37,7 @@ pub mod sql;
 pub mod sme;
 pub mod upkeep;
 
-#[cfg(feature = "gpu")]
+#[cfg(gpu_lane)]
 pub mod gpu;
 
 #[cfg(all(feature = "ane", target_os = "macos"))]

@@ -84,7 +84,7 @@ pub fn ukl() -> String {
     s += &format!("UKL_STATIC_ASSERT(sizeof(TapeView) == {}, \"TapeView: size\");\n", std::mem::size_of::<TapeView>());
     for (_, name, at) in fields.iter() {
         let name = name.split('[').next().unwrap_or(name);
-        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(TapeView, {name}) == {at}, \"TapeView.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(TapeView, {name}) == {at}, \"TapeView.{name}\");\n");
     }
     s
 }

@@ -121,9 +121,9 @@ impl Written {
 pub fn written() -> Written {
     let heap = HEAP.get().map_or(0, |f| f());
     let host_blocks = crate::blocks::host_held().0;
-    #[cfg(feature = "gpu")]
+    #[cfg(gpu_lane)]
     let ((leased, idle), ledger) = (crate::gpu::shared::held_bytes(), crate::gpu::shared::ledger_bytes());
-    #[cfg(not(feature = "gpu"))]
+    #[cfg(not(gpu_lane))]
     let ((leased, idle), ledger) = ((0, 0), 0);
     let w = Written { heap, host_blocks, leased, idle, ledger };
     MOST.fetch_max(w.total(), Ordering::Relaxed);

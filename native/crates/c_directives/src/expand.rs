@@ -259,7 +259,7 @@ pub fn ukl() -> Result<&'static str, String> {
 }
 
 /// The words on the process's device, a TU a batch (`rerail_metal::pp_on`).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn on_device(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> {
     let source = ukl().map_err(|_| pp_words::Refused { pc: 0, why: "the words do not translate to UKL" })?;
     let ran = rerail_metal::pp_on::run_batch(source, &[(program, files, env, bounds)], 1).map_err(|_| pp_words::Refused { pc: 0, why: "the device refused the batch" })?;
