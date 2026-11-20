@@ -211,6 +211,28 @@ describe("Cursor plugin contract", () => {
     }
   });
 
+  it("links a steer the transcript's lines found with the answer that found it, so the hook that carries it asks the daemon nothing after its answer", async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    const daemon = await countingDaemon(home);
+    try {
+      const transcript = join(root, "transcript.jsonl");
+      await writeFile(transcript, `${JSON.stringify({ role: "assistant", message: { content: [{ type: "text", text: "answer one" }] } })}\n`);
+      const common = { conversation_id: "cursor-session", cwd: root, transcript_path: transcript, tool_use_id: "t1", tool_name: "Shell", tool_input: { command: "ls" } };
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const steer = [delivery("steer", "Remove print.", ["acme:no-print"])];
+      await handleCursorEvent({ ...common, hook_event_name: "preToolUse" }, answering(scriptedLoop({ "assistant-message": steer }), { dashboard }), join(root, "sessions"));
+
+      // The result's answer links nothing of its own, so it carries no dashboard.
+      const result = await handleCursorEvent({ ...common, hook_event_name: "postToolUse", tool_output: "a" }, scriptedLoop({}), join(root, "sessions"));
+      expect(JSON.stringify(result)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      await daemon.close();
+    }
+  });
+
   it("preserves pre-tool code rule violations until Cursor can expose them after the tool", async () => {
     const root = await temporaryDirectory();
     const storage = join(root, "sessions");
@@ -321,26 +343,6 @@ describe("a Cursor hook while the daemon is not reading", () => {
     await writeFile(transcript, `${line("user", "<timestamp>t</timestamp>\n<user_query>\nprompt one\n</user_query>")}\n${line("assistant", "answer one")}\n`);
     return { storage: join(root, "sessions"), common: { conversation_id: "cursor-session", generation_id: "g1", cwd: root, transcript_path: transcript } };
   }
-
-  it("links a steer the transcript's lines found with the answer that found it, so the hook that carries it asks the daemon nothing after its answer", async () => {
-    const { storage, common } = await unreadTranscript();
-    const home = join(String(common.cwd), "home");
-    vi.stubEnv("RERAIL_HOME", home);
-    const daemon = await countingDaemon(home);
-    try {
-      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
-      const tool = { tool_use_id: "t1", tool_name: "Shell", tool_input: { command: "ls" } };
-      const steer = [delivery("steer", "Remove print.", ["acme:no-print"])];
-      await handleCursorEvent({ ...common, ...tool, hook_event_name: "preToolUse" }, answering(scriptedLoop({ "assistant-message": steer }), { dashboard }), storage);
-
-      // The result's answer links nothing of its own, so it carries no dashboard.
-      const result = await handleCursorEvent({ ...common, ...tool, hook_event_name: "postToolUse", tool_output: "a" }, scriptedLoop({}), storage);
-      expect(JSON.stringify(result)).toContain(`${dashboard}#rule/acme%3Ano-print`);
-      expect(daemon.requests).toEqual([]);
-    } finally {
-      await daemon.close();
-    }
-  });
 
   /** A loop that leaves each event for a daemon that is not reading, as a hook does once one was left untaken. */
   function untakenLoop(): RerailEventLoop & { events: AdapterEvent[] } {
