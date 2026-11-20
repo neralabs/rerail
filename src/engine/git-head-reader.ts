@@ -544,9 +544,19 @@ async function askHead(cwd: string, signal: AbortSignal | undefined): Promise<As
   const printed = await gitRun(cwd, ["rev-parse", "--show-cdup", "--git-dir", "--git-common-dir", "--verify", "--quiet", "HEAD"], signal);
   const lines = printedLines(printed);
   if (printed?.status === 0 && lines.length === 4) return askedOf(cwd, lines);
-  // Git named the folders and no commit: `HEAD` names none. Any other end is asked as `gitHead` asks it.
-  if (printed?.status === 1 && lines.length === 3) return { layout: undefined, head: undefined };
+  if (namesNoCommit(printed, lines)) return { layout: undefined, head: undefined };
+  // Any other end is asked as `gitHead` asks it.
   return { layout: undefined, head: await gitHead(cwd, { signal }) };
+}
+
+/**
+ * Whether Git's end names no commit: Git named the folders and no commit, or found no repository. Git looks for the
+ * repository before it answers the first option and, finding none, stops there (128) having printed nothing, where
+ * `gitHead`'s `rev-parse` stops too.
+ */
+function namesNoCommit(printed: GitResult | undefined, lines: readonly string[]): boolean {
+  if (printed?.status === 128 && lines.length === 0) return true;
+  return printed?.status === 1 && lines.length === 3;
 }
 
 /** The lines Git printed, without the empty one after the last newline. */

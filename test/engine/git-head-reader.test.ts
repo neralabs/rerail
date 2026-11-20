@@ -272,6 +272,18 @@ describe("gitHeadReader", () => {
     }
   });
 
+  it("starts one Git process a read in a folder outside any repository", async () => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "rerail-head-reader-")));
+    folders.push(outside);
+    const reader = filesReader();
+    for (const time of [1, 2]) {
+      const answer = await read(reader, outside);
+      expect(answer.expected, `read ${time}`).toBeUndefined();
+      expect(answer.head, `read ${time}`).toBeUndefined();
+      expect(answer.git, `read ${time}`).toBe(1);
+    }
+  });
+
   it("asks Git on every read while a configuration file was written less than the settle time ago", async () => {
     const { main } = await repository();
     const reader = gitHeadReader({ settleMs: 600_000, owners: async () => "owner" });
