@@ -429,7 +429,8 @@ impl Parts for std::sync::Arc<Version> {
     /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
     /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
     fn part<S: AsRef<str>>(&self, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
-        let mut p = Pipeline::new("part", self.clone());
+        // `Retain` keeps whole relations, and `PartOf` states the record of those with rules.
+        let mut p = Pipeline::stating_record("part", self.clone());
         p.program(&mut Retain(rules)).program(&mut PartOf { inputs, outputs, fields });
         Ok(p.finish()?.0)
     }

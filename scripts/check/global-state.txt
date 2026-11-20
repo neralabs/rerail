@@ -26,10 +26,13 @@ native/crates/c_directives/src/expand.rs::PROGRAM	stays	computed once from the e
 native/crates/c_directives/src/expand.rs::SAME	stays	computed once from the engine's own constants (the ahead-of-time build against its source)
 native/crates/c_directives/src/lib.rs::LOWERED	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/lib.rs::PARSER	stays	computed once from the engine's own grammar
+native/crates/c_directives/src/pp.rs::C	stays	computed once from the engine's own grammar
+native/crates/c_directives/src/pp.rs::CPP	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::C	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::CPP	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::CPP_WORDS	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/tokens.rs::C_WORDS	stays	computed once from the engine's own grammar
+native/crates/c_pp/src/tape.rs::LANG	stays	computed once from the engine's own constants (the preprocessor tape's kinds and fields)
 native/crates/context/src/lib.rs::MISSES	stays	the reads outside any run (decision 0442): the process's error report, as its stderr is (a read outside any run is no run's); never read by the engine
 native/crates/context/src/lib.rs::N	stays	the most threads of a machine's pool (RERAIL_THREADS, else the cores): the process's environment, read once; every machine of the process is the same machine
 native/crates/context/src/lib.rs::TESTS	stays	test builds only (`test-hooks`): the tests' shared object, for a test that models no caller
@@ -43,6 +46,7 @@ native/crates/metal/src/block_program.rs::INTERPRETER	stays	computed once from t
 native/crates/metal/src/launch.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
 native/crates/metal/src/lib.rs::METAL_DEVICE	stays	the device (code registered at load)
 native/crates/metal/src/lib.rs::POOL_HOOKS	stays	installs the pool's hooks into this crate once (code registered at load)
+native/crates/metal/src/pp_blocks.rs::SOURCE	stays	the engine's own MSL, preprocessed once
 native/crates/metal/src/slabs.rs::ONE	stays	a test lock
 native/crates/prof/src/lib.rs::DROPPED	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::KEYS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
@@ -132,7 +136,6 @@ native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counte
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/logic/native/setfix/runs.rs::READS	stays	a test's counter
 native/src/code_rule_dsl/logic/plan.rs::RUNS	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid (RERAIL_REL_ROWS's dumps)
-native/src/code_rule_dsl/logic/plan/body.rs::NORMALIZED	stays	exists only in a test build (cfg test-hooks): a test's count of the programs normalized, never in a product build
 native/src/code_rule_dsl/logic/plan/corpus.rs::CROSS_FILE	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	stays	a hook registered once
 native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	stays	the default store's path, from the process's working directory (itself the process's), or a test process's tape cache
@@ -158,7 +161,7 @@ native/src/code_rule_dsl/logic/profile/memory.rs::PEAK	stays	the process's footp
 native/src/code_rule_dsl/logic/profile/memory.rs::SAMPLED	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
 native/src/code_rule_dsl/logic/profile/memory.rs::START	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
 native/src/code_rule_dsl/logic/profile/memory.rs::STARTED	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
-native/src/code_rule_dsl/logic/profile/memory.rs::TOLD	review	a profiler's print limit: the first refusals of a process are told (Q203 (c), benchmarks-on-integration)
+native/src/code_rule_dsl/logic/profile/memory.rs::TOLD	stays	the process's footprint sampler's refusal reporter (Q203 (c)): it tells the first few device leases the process refuses, with the heap sampler's holdings
 native/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr.rs::SHAPE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/images.rs::SHIPPED	stays	computed once from the engine's own files

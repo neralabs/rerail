@@ -155,9 +155,10 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         }
     }
     // Every cycle passes a `TOKEN` or a `RETURN`: with their edges cut, the graph is acyclic.
-    // A `RETURN` pops a call, and from a `PUSH` no `RETURN` is reached before a `TOKEN` (below):
-    // a cycle with no `TOKEN` pushes nothing, so it turns at most once per call made, and calls
-    // are made only between tokens. The returns of a file are at most its calls.
+    // A `RETURN` pops a call, and from a `PUSH` no `RETURN` is reached before a `TOKEN` or a
+    // taken mark (below): a cycle with no `TOKEN` pushes nothing, so it turns at most once per
+    // call made, and calls are made only between tokens and taken marks. The returns of a file
+    // are at most its calls.
     let step = |pc: usize, cut_return: bool| -> Vec<usize> {
         let (opcode, mode, operand) = split(words[pc]);
         match opcode {
@@ -182,29 +183,35 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     // From a `PUSH`, no `RETURN` before a `TOKEN`; but a `RETURN m=0` after a `SPAN`: the call
     // took the token, and its return lands on the caller's `TOKEN`, which takes the next. (A
     // call that takes no token itself, a function a rule's, goes to its callee's start, whose arm
-    // takes it.) A `RETURN m=1` switches on the token again: a `TOKEN` must come first.
+    // takes it.) A `RETURN m=1` switches on the token again: a `TOKEN` must come first, or a
+    // mark taken: a `MARK` that holds (its next word) and is not kept clears itself and the marks
+    // before it, and only `TOKEN` sets them again, so a token's calls that take only marks are
+    // at most the marks, 32. A kept mark (`MARK_KEEP`, its callee's to take) is no progress.
     for (pc, &w) in words.iter().enumerate() {
         if split(w).0 != PUSH {
             continue;
         }
-        // Each place, seen before or after a `SPAN`.
-        let mut seen = vec![[false; 2]; words.len()];
-        let mut todo = vec![(pc, false)];
-        while let Some((q, spanned)) = todo.pop() {
-            let spanned = spanned || split(words[q]).0 == SPAN;
+        // Each place, seen before or after a `SPAN` (bit 0) and a taken mark (bit 1).
+        let mut seen = vec![[false; 4]; words.len()];
+        let mut todo = vec![(pc, 0u8)];
+        while let Some((q, done)) = todo.pop() {
+            let (op_q, mode_q, _) = split(words[q]);
+            let done = done | u8::from(op_q == SPAN);
             for n in step(q, false) {
                 if n >= words.len() {
                     return Err(Error::InvalidTarget(q));
                 }
+                // The mark's next word runs where it holds: taken, unless kept.
+                let done = done | if op_q == MARK && n == q + 1 && mode_q & MARK_KEEP == 0 { 2 } else { 0 };
                 let (op, mode, _) = split(words[n]);
                 if op == RETURN {
-                    if spanned && mode == 0 {
+                    if done & 2 != 0 || (done & 1 != 0 && mode == 0) {
                         continue;
                     }
                     return Err(Error::NonProgressingCycle(n));
                 }
-                if !std::mem::replace(&mut seen[n][usize::from(spanned)], true) {
-                    todo.push((n, spanned));
+                if !std::mem::replace(&mut seen[n][usize::from(done)], true) {
+                    todo.push((n, done));
                 }
             }
         }

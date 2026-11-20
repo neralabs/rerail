@@ -7,7 +7,7 @@ description = "The engine's Metal runtime: device, buffer budget, mapped buffers
 
 [features]
 # Per-thread buffer ledgers and buffer observations, for tests (the engine's and this crate's).
-test-hooks = ["rerail-context/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-prof/test-hooks"]
+test-hooks = ["rerail-context/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-tape-format/test-hooks", "rerail-ukl/test-hooks"]
 
 [dependencies]
 rerail-context = { path = "../context" }
@@ -17,6 +17,9 @@ rerail-accel = { path = "../../../accel" }
 rerail-blocks = { path = "../blocks" }
 rerail-compiler = { path = "../compiler" }
 rerail-prof = { path = "../prof" }
+# The preprocessor tape's format 16 placement (decision 0468 §1), and the reads' preprocessing for Metal.
+rerail-tape-format = { path = "../tape_format" }
+rerail-ukl = { path = "../ukl" }
 libc = "0.2.189"
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10"

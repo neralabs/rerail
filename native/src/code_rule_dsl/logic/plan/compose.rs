@@ -127,7 +127,7 @@ fn head(p: &Placed, k: usize) -> &str {
     p.v.rel_name(p.rule(k).head().rel())
 }
 
-/// `p`'s composed query: its rules read by their handles, its fields from its version (`Placed::of_program`, or an
+/// `p`'s composed query: its rules read by their handles, its fields from its version (`Placed::whole`, or an
 /// edit of one).
 pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
     let pf = p.fields()?;

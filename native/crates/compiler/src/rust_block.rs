@@ -98,6 +98,7 @@ impl<'a> Gen<'a> {
             skip,
             gaps: _,
             extra: _,
+            kind_rows: _,
             untaken: _,
             unless: _,
             unplaced: _,

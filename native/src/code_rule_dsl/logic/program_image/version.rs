@@ -554,11 +554,15 @@ pub fn same_program(a: &Version, b: &Version) -> bool {
 /// What two versions differ in, by text: the rules, declarations, facts and about rows only one has (a debug check's
 /// message).
 pub fn differences(a: &Version, b: &Version) -> String {
-    use std::collections::BTreeSet;
-    let texts = |v: &Version| -> BTreeSet<String> {
-        let mut out: BTreeSet<String> = v.rules().map(|r| format!("rule {}", v.show_rule(r))).collect();
+    // Each text with how often it is held: a part held twice digests twice.
+    let texts = |v: &Version| -> std::collections::BTreeMap<String, usize> {
+        let mut out = std::collections::BTreeMap::<String, usize>::new();
+        let mut add = |t: String| *out.entry(t).or_default() += 1;
+        for r in v.rules() {
+            add(format!("rule {}", v.show_rule(r)));
+        }
         for d in v.decls() {
-            out.insert(format!("decl {}({})", v.text(d.name()), d.cols().map(|(n, t)| format!("{}: {}", v.text(n), v.text(t))).collect::<Vec<_>>().join(", ")));
+            add(format!("decl {}({})", v.text(d.name()), d.cols().map(|(n, t)| format!("{}: {}", v.text(n), v.text(t))).collect::<Vec<_>>().join(", ")));
         }
         let cell = |c: Cell| match c {
             Cell::Int(i) => i.to_string(),
@@ -567,17 +571,24 @@ pub fn differences(a: &Version, b: &Version) -> String {
         };
         for f in v.all_facts().into_iter().chain(v.about_facts()) {
             // Named, rows or none: an empty relation is one too.
-            out.insert(format!("{} {} ({} rows)", if f.about() { "about" } else { "fact" }, v.text(f.name()), f.rows().count()));
+            add(format!("{} {} ({} rows)", if f.about() { "about" } else { "fact" }, v.text(f.name()), f.rows().count()));
             for (k, row) in f.rows().enumerate() {
-                out.insert(format!("{} {} #{k} ({})", if f.about() { "about" } else { "fact" }, v.text(f.name()), row.map(cell).collect::<Vec<_>>().join(", ")));
+                add(format!("{} {} #{k} ({})", if f.about() { "about" } else { "fact" }, v.text(f.name()), row.map(cell).collect::<Vec<_>>().join(", ")));
             }
         }
-        out.insert(format!("inputs {:?}", v.inputs().map(|a| v.text(a)).collect::<Vec<_>>()));
-        out.insert(format!("outputs {:?}", v.outputs().map(|a| v.text(a)).collect::<Vec<_>>()));
+        add(format!("inputs {:?}", v.inputs().map(|a| v.text(a)).collect::<Vec<_>>()));
+        add(format!("outputs {:?}", v.outputs().map(|a| v.text(a)).collect::<Vec<_>>()));
         out
     };
     let (ta, tb) = (texts(a), texts(b));
-    let only = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.difference(y).take(40).cloned().collect::<Vec<_>>().join("\n    ");
+    let only = |x: &std::collections::BTreeMap<String, usize>, y: &std::collections::BTreeMap<String, usize>| {
+        x.iter()
+            .filter(|(t, n)| y.get(*t).is_none_or(|m| m < *n))
+            .take(40)
+            .map(|(t, n)| if y.contains_key(t) { format!("{t} (×{n}, against ×{})", y[t]) } else { t.clone() })
+            .collect::<Vec<_>>()
+            .join("\n    ")
+    };
     // The same texts may lie in another order: the first rule out of place.
     let order = |v: &Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>();
     let (oa, ob) = (order(a), order(b));

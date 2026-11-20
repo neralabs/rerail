@@ -436,7 +436,11 @@ pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
             declared.insert(name.to_owned());
         }
     }
-    let built_in = |rel: &str| TESTS.iter().any(|(t, _)| *t == rel) || RELATION_ARG.iter().any(|(r, _)| *r == rel) || super::lower::BUILT_INS.contains(&rel);
+    // The import closure's relations (`rr_cx_*`) are the engine's: a run adds `components.rerail` to a program that reads
+    // one, with their declarations (`plan::corpus`'s `reads_components`, decision 0450 §3).
+    let built_in = |rel: &str| {
+        TESTS.iter().any(|(t, _)| *t == rel) || RELATION_ARG.iter().any(|(r, _)| *r == rel) || super::lower::BUILT_INS.contains(&rel) || rel.starts_with("rr_cx_")
+    };
     let mut out = BTreeSet::new();
     for s in statements.iter().filter(|s| s.what() == Some(S::Clause)) {
         let (f, n) = (s.file(), s.node());

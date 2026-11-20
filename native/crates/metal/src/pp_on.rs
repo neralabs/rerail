@@ -55,6 +55,8 @@ struct PpBatch {
     hb: u64,
     count: u32,
     pad: u32,
+    /// The contexts' table's row bytes: a context's slot `j` is `j` rows on (0408, L2).
+    cs: u64,
 }
 // SAFETY: plain integers, no padding.
 unsafe impl rerail_device::Pod for PpBatch {}
@@ -120,7 +122,7 @@ fn laid_out(kernel: &Kernel, jobs: &[Job<'_>], workers: usize, size: usize) -> R
     let mut full = false;
     let mut backs: Vec<Back> = Vec::new();
     let mut prepared = Vec::with_capacity(jobs.len());
-    let mut ctx_at = Vec::with_capacity(jobs.len());
+    let table_at;
     {
         // Each buffer at the next 16 bytes, its written part copied in; its address the arena's.
         let mut place = |b: Buf| -> u64 {
@@ -138,27 +140,29 @@ fn laid_out(kernel: &Kernel, jobs: &[Job<'_>], workers: usize, size: usize) -> R
             hb + at as u64
         };
         for &(program, files, env, bounds) in jobs {
-            match pp_words::prepare(program, files, env, bounds, &mut place) {
-                Ok(p) => {
-                    let bytes = p.ctx_bytes();
-                    let at = place(Buf { ptr: bytes.as_ptr().cast_mut(), len: bytes.len(), room: bytes.len(), write: false });
-                    ctx_at.push(Some(at));
-                    prepared.push(Ok(p));
-                }
-                Err(r) => {
-                    ctx_at.push(None);
-                    prepared.push(Err(r));
-                }
+            prepared.push(pp_words::prepare(program, files, env, bounds, &mut place));
+        }
+        // The contexts across the batch (0408, L2): the table's row `j` is each context's 8 bytes
+        // at `8 j`, a context a column, so a SIMD group's lanes read one field as adjacent words.
+        // The TUs `prepare` refused never run: the columns are the others'.
+        let runnable: Vec<&pp_words::Prepared<'_>> = prepared.iter().filter_map(|p| p.as_ref().ok()).collect();
+        let slots = runnable.first().map_or(0, |p| p.ctx_bytes().len() / 8);
+        let mut table = vec![0u64; slots * runnable.len()];
+        for (k, p) in runnable.iter().enumerate() {
+            for (j, w) in p.ctx_bytes().chunks_exact(8).enumerate() {
+                table[j * runnable.len() + k] = u64::from_le_bytes(w.try_into().expect("8 bytes"));
             }
         }
+        let bytes = table.len() * 8;
+        table_at = place(Buf { ptr: table.as_mut_ptr().cast(), len: bytes, room: bytes, write: false });
     }
     if full {
         return Ok(None);
     }
     let n = jobs.len();
-    // The TUs `prepare` refused never run: the contexts are the others'.
-    let runnable: Vec<usize> = (0..n).filter(|&i| ctx_at[i].is_some()).collect();
-    let ctxs: Vec<u64> = runnable.iter().map(|&i| ctx_at[i].expect("placed")).chain(std::iter::once(0)).collect();
+    let runnable: Vec<usize> = (0..n).filter(|&i| prepared[i].is_ok()).collect();
+    let stride = 8 * runnable.len() as u64;
+    let ctxs: Vec<u64> = (0..runnable.len() as u64).map(|k| table_at + 8 * k).chain(std::iter::once(0)).collect();
     let order = crate::pool::upload(&ctxs)?;
     let results = crate::pool::zeroed::<u64>(runnable.len().max(1))?;
     let ticket = crate::pool::zeroed::<u32>(1)?;
@@ -175,7 +179,7 @@ fn laid_out(kernel: &Kernel, jobs: &[Job<'_>], workers: usize, size: usize) -> R
         .buffer("results", results.device_buffer())
         .buffer("ticket", ticket.device_buffer())
         .buffer("heap", arena.device_buffer())
-        .value("p", &PpBatch { hb, count, pad: 0 })
+        .value("p", &PpBatch { hb, count, pad: 0, cs: stride })
         .groups([groups as u64, 1, 1], [group as u64, 1, 1]);
     let gpu_seconds = command.run()?.device;
     let words: Vec<u64> = results.read(runnable.len().max(1));
@@ -184,20 +188,21 @@ fn laid_out(kernel: &Kernel, jobs: &[Job<'_>], workers: usize, size: usize) -> R
         // SAFETY: each is a buffer the words write, its room reserved on the host (`prepare`).
         unsafe { std::ptr::copy_nonoverlapping(base.add(b.at), b.host, b.bytes) };
     }
-    let mut r_of = vec![0u64; n];
-    for (k, &i) in runnable.iter().enumerate() {
-        r_of[i] = words[k];
-    }
+    let (table_at, columns) = ((table_at - hb) as usize, runnable.len());
+    // SAFETY: the table, as the code left it, within the arena.
+    let table: &[u64] = unsafe { std::slice::from_raw_parts(base.add(table_at).cast::<u64>(), stride as usize / 8 * prepared.iter().filter_map(|p| p.as_ref().ok()).next().map_or(0, |p| p.ctx_bytes().len() / 8)) };
+    let mut k = 0;
     let results = prepared
         .into_iter()
-        .enumerate()
-        .map(|(i, p)| {
+        .map(|p| {
             let mut p = p?;
-            let at = (ctx_at[i].expect("placed") - hb) as usize;
+            let column: Vec<u8> = (0..p.ctx_bytes().len() / 8).flat_map(|j| table[j * columns + k].to_le_bytes()).collect();
+            let r = words[k];
+            k += 1;
             // SAFETY: the context as the code left it, then the buffers it wrote, within their rooms.
             unsafe {
-                p.ctx_from(std::slice::from_raw_parts(base.add(at), std::mem::size_of_val(p.ctx_bytes())));
-                pp_words::complete(p, r_of[i], rerail_compiler::native_cpu_pp::REASONS)
+                p.ctx_from(&column);
+                pp_words::complete(p, r, rerail_compiler::native_cpu_pp::REASONS)
             }
         })
         .collect();

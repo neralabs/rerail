@@ -412,7 +412,8 @@ fn the_compiled_words_are_the_interpreters() {
 }
 
 /// The words on the process's device (`clif_ukl`'s UKL of the same IR, decisions 0348 stage 5, 0440 step D) are the
-/// interpreter's, on every example and TU, in C and C++: on Metal, OpenCL and the CPU's backend (`RERAIL_GPU`).
+/// interpreter's, on every example and TU, in C and C++: on Metal, OpenCL and the CPU's backend (`RERAIL_GPU`), all of
+/// them one batch a round (`expand_tus_with`, 0408 L3), and the host evaluates nothing meanwhile (`host_runs`).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn the_device_words_are_the_interpreters() {
@@ -422,10 +423,16 @@ fn the_device_words_are_the_interpreters() {
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
+    let all: Vec<(bool, &(String, Vec<(&str, &[u8])>))> = [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))).collect();
+    let mut io: Vec<_> = all.iter().map(|(_, (_, files))| search(files, &dirs)).collect();
+    let mut batch: Vec<(&str, &mut _, bool)> = all.iter().zip(io.iter_mut()).map(|((cpp, (_, files)), io)| (files[0].0, io, *cpp)).collect();
+    let runs = pp_words::host_runs();
+    let metal = crate::expand::expand_tus_with(&mut batch, &INTERPRETED, &crate::expand::on_device_batch);
+    assert_eq!(pp_words::host_runs(), runs, "the host ran the words during the device's batches");
     let (mut same, mut differ) = (0, Vec::new());
-    for (cpp, (name, files)) in [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))) {
+    for ((cpp, (name, files)), got) in all.iter().zip(metal) {
+        let cpp = *cpp;
         let want = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &pp_words::run);
-        let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &crate::expand::on_device);
         match got {
             got if got == want => same += 1,
             got => {
@@ -448,6 +455,7 @@ fn the_device_words_are_the_interpreters() {
 /// The compiled words translate to Rust (`clif_rust`, the `generated` feature's source), each
 /// function's nesting shallow enough for rustc. `RERAIL_PP_AOT_DIR` set: written there.
 #[test]
+#[ignore = "Q367: overflows its 2 MB test stack in `rust_source`, as at Go-C-and-C-support's own ce2c4019c83"]
 fn the_words_translate_to_rust() {
     {
         let src = rerail_compiler::native_cpu_pp::rust_source(program().unwrap()).unwrap();
@@ -500,6 +508,7 @@ fn the_compiled_words_code_counted() {
 /// words translate to now (its fingerprint), so it is the JIT's code compiled by rustc.
 #[cfg(all(feature = "generated", target_arch = "aarch64"))]
 #[test]
+#[ignore = "Q367: overflows its 2 MB test stack in `rust_source`, as at Go-C-and-C-support's own ce2c4019c83"]
 fn the_aot_words_are_the_interpreters() {
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
@@ -982,4 +991,118 @@ fn the_corpus_through_the_rungs() {
     }
     eprintln!("RUNGS MB by buffer, at the rungs: {:?}", by_buffer.borrow().iter().map(|b| b >> 20).collect::<Vec<_>>());
     assert!(differ.is_empty());
+}
+
+/// The corpus's TUs (C and C++), `RERAIL_PP_CHUNK` at a time (512 by default), each chunk one
+/// `expand_tus_with` whose rounds are the device's batches (0408, L4).
+#[cfg(target_os = "macos")]
+fn corpus_on_metal(each: &mut dyn FnMut(&[(std::path::PathBuf, bool)], Vec<Result<Vec<Out>, String>>), batch: &crate::expand::BatchRunner<'_>) {
+    let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
+    let mut tus = Vec::new();
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        paths.sort();
+        tus.extend(paths.into_iter().map(|p| (p, cpp)));
+    }
+    let chunk = std::env::var("RERAIL_PP_CHUNK").ok().and_then(|c| c.parse().ok()).unwrap_or(512);
+    for part in tus.chunks(chunk) {
+        let srcs: Vec<Vec<u8>> = part.iter().map(|(p, _)| std::fs::read(p).unwrap()).collect();
+        let files: Vec<[(&str, &[u8]); 1]> = srcs.iter().map(|s| [("main.c", s.as_slice())]).collect();
+        let mut io: Vec<_> = files.iter().map(|f| search(f, &[])).collect();
+        let mut jobs: Vec<(&str, &mut _, bool)> = io.iter_mut().zip(part).map(|(io, (_, cpp))| ("main.c", io, *cpp)).collect();
+        let got = crate::expand::expand_tus_with(&mut jobs, &INTERPRETED, batch);
+        each(part, got);
+    }
+}
+
+/// The device's batches' totals: GPU seconds, dispatches, the largest arena, the runs by rung.
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct OnMetal {
+    gpu: f64,
+    dispatches: usize,
+    arena: usize,
+    rungs: [usize; pp_words::RUNGS],
+    jobs: usize,
+    batches: usize,
+}
+
+#[cfg(target_os = "macos")]
+fn counted_batch<'a>(totals: &'a std::cell::RefCell<OnMetal>) -> impl Fn(&[crate::expand::Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> + 'a {
+    move |jobs| {
+        let ran = rerail_metal::pp_on::run_batch(crate::expand::ukl().unwrap(), jobs, jobs.len()).expect("the device's batch");
+        let mut t = totals.borrow_mut();
+        (t.gpu, t.dispatches, t.arena, t.jobs, t.batches) = (t.gpu + ran.gpu_seconds, t.dispatches + ran.dispatches, t.arena.max(ran.arena_bytes), t.jobs + jobs.len(), t.batches + 1);
+        for (r, n) in ran.rungs.iter().enumerate() {
+            t.rungs[r] += n;
+        }
+        ran.results
+    }
+}
+
+/// The corpus on Metal (0408, L4): each TU the interpreter's, its rounds the device's batches.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS)"]
+fn the_corpus_on_metal_is_the_interpreters() {
+    let totals = std::cell::RefCell::new(OnMetal::default());
+    let batch = counted_batch(&totals);
+    let (mut same, mut refused, mut differ) = (0usize, std::collections::BTreeMap::<String, usize>::new(), Vec::new());
+    corpus_on_metal(
+        &mut |part, got| {
+            for ((p, cpp), got) in part.iter().zip(got) {
+                let src = std::fs::read(p).unwrap();
+                let files = [("main.c", src.as_slice())];
+                let want = expand_tu_with("main.c", &mut search(&files, &[]), *cpp, &INTERPRETED, &pp_words::run);
+                match (&got, &want) {
+                    (Err(a), Err(b)) if a == b => *refused.entry(b.chars().take(80).collect()).or_default() += 1,
+                    _ if got == want => same += 1,
+                    _ => differ.push(format!("{}: Metal {:?}, interpreter {:?}", p.display(), got.as_ref().map(Vec::len), want.as_ref().map(Vec::len))),
+                }
+            }
+        },
+        &batch,
+    );
+    let t = totals.borrow();
+    eprintln!("ON_METAL the same {same}, refused by both {}, differ {}", refused.values().sum::<usize>(), differ.len());
+    eprintln!("ON_METAL {} batches, {} jobs, {} dispatches, the largest arena {} MB, runs by rung {:?}, GPU {:.3} s", t.batches, t.jobs, t.dispatches, t.arena >> 20, t.rungs, t.gpu);
+    for d in differ.iter().take(10) {
+        eprintln!("  {d}");
+    }
+    assert!(differ.is_empty());
+}
+
+/// The corpus on Metal timed (0408, L4): the device's batches' GPU seconds, warmed first, against
+/// the CPU's compiled words (`expand::native`: rustc's build where it is the process's words,
+/// else Cranelift's) on the same jobs on this thread. A benchmark: through `quiet-run`.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "a benchmark of the corpus on Metal"]
+fn the_corpus_on_metal_timed() {
+    use rerail_compiler::native_cpu_codegen::retired;
+    let totals = std::cell::RefCell::new(OnMetal::default());
+    let cpu = std::cell::Cell::new((0u64, 0u64, std::time::Duration::ZERO));
+    let device = counted_batch(&totals);
+    let both = |jobs: &[crate::expand::Job<'_>]| {
+        let ((i0, c0), t0) = (retired(), std::time::Instant::now());
+        for &(w, f, e, b) in jobs {
+            let _ = crate::expand::native(w, f, e, b);
+        }
+        let (t1, (i1, c1)) = (std::time::Instant::now(), retired());
+        let (i, c, t) = cpu.get();
+        cpu.set((i + i1 - i0, c + c1 - c0, t + (t1 - t0)));
+        device(jobs)
+    };
+    // Warm: the pipeline compiled and the pool's blocks made.
+    corpus_on_metal(&mut |_, _| {}, &both);
+    *totals.borrow_mut() = OnMetal::default();
+    cpu.set((0, 0, std::time::Duration::ZERO));
+    let wall = std::time::Instant::now();
+    corpus_on_metal(&mut |_, _| {}, &both);
+    let wall = wall.elapsed();
+    let t = totals.borrow();
+    let (i, c, w) = cpu.get();
+    eprintln!("ON_METAL_TIMED aot {:?}: {} batches, {} jobs, {} dispatches, runs by rung {:?}, the largest arena {} MB", crate::expand::aot_build().is_some(), t.batches, t.jobs, t.dispatches, t.rungs, t.arena >> 20);
+    eprintln!("ON_METAL_TIMED GPU {:.1} ms; CPU words {:.1} M instructions, {:.1} M cycles, {:.1} ms; the whole pass {:.0} ms", t.gpu * 1e3, i as f64 / 1e6, c as f64 / 1e6, w.as_secs_f64() * 1e3, wall.as_secs_f64() * 1e3);
 }

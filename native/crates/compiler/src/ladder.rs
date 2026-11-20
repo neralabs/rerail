@@ -525,25 +525,50 @@ pub struct Compiled {
     pub program: Words,
     pub native: Structure,
     pub parser: crate::native_cpu_stream::Parser,
+    /// The program's text, as the assembler read it.
+    pub text: String,
+    /// Tier 2's state machine as text (`grammar::text`).
+    pub machine: String,
 }
 
 pub fn compile_step(name: &str, source: &str) -> Compiled {
-    compile_step_as(name, source, false)
+    compile_step_shaped(name, source, crate::bitlex_masks::Shape::Auto)
+}
+
+/// `compile_step` with tier 2's shape: `Shape::Rules` makes the rules calls.
+pub fn compile_step_shaped(name: &str, source: &str, shape: crate::bitlex_masks::Shape) -> Compiled {
+    compile_step_with(name, source, shape, false)
 }
 
 /// A step compiled as a rules grammar's parser is (`kotlin_parser::compile_text`'s way, `rules`): tier 2 shaped by its
 /// rules (`Shape::Rules`), tier 1's blocks padded for the bytes before (`native_cpu_block::BACK`), the clusters by rule;
 /// else as `compile_step`.
 pub fn compile_step_as(name: &str, source: &str, rules: bool) -> Compiled {
+    let shape = if rules { crate::bitlex_masks::Shape::Rules } else { crate::bitlex_masks::Shape::Auto };
+    compile_step_with(name, source, shape, rules)
+}
+
+/// A step in tier 2's `shape`; `by_rules`: tier 1 padded for the bytes before and the clusters by rule.
+fn compile_step_with(name: &str, source: &str, shape: crate::bitlex_masks::Shape, by_rules: bool) -> Compiled {
+    // `RERAIL_STEP_TIMES`: each phase's time.
+    let times = std::env::var_os("RERAIL_STEP_TIMES").is_some();
+    let (mut t0, mut c0) = (std::time::Instant::now(), crate::native_cpu_block::thread_cpu());
+    let mut phase = |what: &str| {
+        let c = crate::native_cpu_block::thread_cpu();
+        if times {
+            eprintln!("{name}: {what} {:.2?} wall, {:.2}s CPU", t0.elapsed(), c - c0);
+        }
+        (t0, c0) = (std::time::Instant::now(), c);
+    };
     let stmts = parse(source).unwrap_or_else(|e| panic!("{name}: parses: {e}"));
     let ids = Ids::default();
     let compiled = {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
         let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
-        let shape = if rules { crate::bitlex_masks::Shape::Rules } else { crate::bitlex_masks::Shape::Auto };
         crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
+    phase("bitlex compile");
     let text = compiled.text();
     // `RERAIL_LADDER_DUMP`: the program as text, for a step whose name holds it.
     if std::env::var("RERAIL_LADDER_DUMP").is_ok_and(|d| name.contains(&d)) {
@@ -551,7 +576,8 @@ pub fn compile_step_as(name: &str, source: &str, rules: bool) -> Compiled {
     }
     let program = crate::rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
     let mut native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
-    let parser = if rules {
+    phase("assemble and lower");
+    let parser = if by_rules {
         for b in &mut native.block_programs {
             b.pad = crate::native_cpu_block::BACK as u16;
         }
@@ -560,7 +586,19 @@ pub fn compile_step_as(name: &str, source: &str, rules: bool) -> Compiled {
         crate::native_cpu_stream::Parser::new(&native)
     };
     let parser = parser.unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
-    Compiled { stmts, ids, program, native, parser }
+    phase("Cranelift (tier 1 and tier 2)");
+    let machine = compiled.machine.clone();
+    Compiled { stmts, ids, program, native, parser, text, machine }
+}
+
+/// Why the compiler refuses `source` in tier 2's `shape`; `None` where it compiles.
+pub fn compile_error_shaped(source: &str, shape: crate::bitlex_masks::Shape) -> Option<String> {
+    let stmts = parse(source).unwrap_or_else(|e| panic!("parses: {e}"));
+    let ids = Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).err()
 }
 
 /// Why the compiler refuses `source`; `None` where it compiles.

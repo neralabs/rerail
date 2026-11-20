@@ -105,7 +105,7 @@ fn numeric_call(b: &Body<'_>, t: TermRef<'_>) -> bool {
         && strings::functions::native_call(b.v.text(f)).is_some_and(|(_, _, k)| k == strings::functions::Kind::Number))
 }
 
-/// A test's patterns: one string, or a set `{a, b}` of strings (`strings::patterns`).
+/// A test's patterns: one string, or a set `{a, b}` of strings (as `preparation::text` reads one).
 fn patterns(b: &Body<'_>, t: TermRef<'_>) -> Option<Vec<String>> {
     match t {
         TermRef::Str(s) => Some(vec![b.v.text(s).to_owned()]),

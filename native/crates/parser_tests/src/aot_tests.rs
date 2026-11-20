@@ -213,14 +213,23 @@ fn documents(c: &Compiled, name: &str, ladder: &Ladder) -> (Vec<Vec<u8>>, Vec<bo
         // Only the documents that still parse joined to themselves: one that does not (its last token running on into
         // the next, a comment to the line's end) would refuse the whole join.
         let joins: Vec<&&Vec<u8>> = accepted.iter().filter(|d| c.parser.parse(&[&d[..], sep, &d[..]].concat()).is_ok()).collect();
-        let mut long = Vec::new();
-        for d in joins.iter().cycle().take(joins.len().max(1) * 400) {
+        // Joined until the join's nodes pass 3,000 (a document of comments holds few for its bytes, and the join
+        // merges their roots), to 4 MB: each round adds as many again as the nodes still short.
+        let nodes: Vec<usize> = joins.iter().map(|d| c.parser.parse(d).map_or(0, |n| n.len())).collect();
+        let (mut long, mut held, mut want) = (Vec::new(), 0, 3200);
+        let mut each = joins.iter().zip(&nodes).cycle().take(if nodes.iter().any(|&n| n > 0) { usize::MAX } else { 0 });
+        while long.len() <= 4 << 20 {
+            let Some((d, n)) = each.next() else { break };
             if !long.is_empty() {
                 long.extend_from_slice(sep);
             }
             long.extend_from_slice(d);
-            if long.len() > 100_000 {
-                break;
+            held += n;
+            if held > want {
+                match c.parser.parse(&long).map(|n| n.len()) {
+                    Ok(got) if got <= 3000 && got > 0 => want = held * 3200 / got,
+                    _ => break,
+                }
             }
         }
         if c.parser.parse(&long).is_ok_and(|n| n.len() > 3000) {
@@ -234,7 +243,7 @@ fn documents(c: &Compiled, name: &str, ladder: &Ladder) -> (Vec<Vec<u8>>, Vec<bo
 
 /// Each step's Rust in format 16 writes the JIT's format 16 tapes (and 16z), presence and all, on every document the
 /// JIT writes one for, and refuses (to the engine) every one the JIT refuses; in format 15, the JIT's image. Where the
-/// Rust backend refuses a step, the reason is named, and the steps it takes are counted.
+/// Rust backend refuses a step, the reason is named, and the test fails: it takes every step.
 #[test]
 fn ladder_steps_rust_tapes_are_the_jits() {
     use rerail_tape_format::f16::{Lang as F16Lang, Written};
@@ -243,7 +252,7 @@ fn ladder_steps_rust_tapes_are_the_jits() {
         w.extent().to_vec()
     };
     let mut refused: Vec<String> = Vec::new();
-    let (mut taken, mut written, mut long, mut direct) = (0, 0, 0, 0);
+    let (mut taken, mut written, mut long, mut direct, mut steps) = (0, 0, 0, 0, 0);
     // `RERAIL_AOT_LADDER`: one ladder only, by name.
     let only = std::env::var("RERAIL_AOT_LADDER").ok();
     // `RERAIL_AOT_STEPS`: the steps whose names hold one of these words (comma-separated), only.
@@ -251,6 +260,7 @@ fn ladder_steps_rust_tapes_are_the_jits() {
     for ladder in LADDERS.iter().filter(|l| only.as_deref().is_none_or(|o| o == l.name)) {
         let mut built: Vec<(String, Compiled, String, String)> = Vec::new();
         for (name, source) in (ladder.steps)().into_iter().filter(|(n, _)| pick.as_deref().is_none_or(|p| p.split(',').filter(|w| !w.is_empty()).any(|w| n.contains(w)))) {
+            steps += 1;
             let t0 = std::time::Instant::now();
             let c = compile_step_as(&name, &source, ladder.rules);
             eprintln!("{} {name}: compiled in {:?}", ladder.name, t0.elapsed());
@@ -337,6 +347,6 @@ fn ladder_steps_rust_tapes_are_the_jits() {
         }
     }
     eprintln!("{taken} steps taken ({direct} direct), {written} format 16 homes the JIT's ({long} of documents of 3,000 nodes or more); refused:\n{}", refused.join("\n"));
-    // 8 with the ladders' last steps and the probes (decision 0422).
-    assert!(taken >= if only.is_some() || pick.is_some() { 1 } else { 8 } && long > 0, "the steps the Rust backend takes");
+    // Every step the ladders keep (0422: each its last, eight in all), taken: none refused.
+    assert!(taken == steps && taken >= 1 && long > 0, "the steps the Rust backend takes: {taken} of {steps}, {long} long");
 }

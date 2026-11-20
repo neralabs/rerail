@@ -374,6 +374,23 @@ pub(super) fn with_modules(digest: [u8; 32], modules: &BTreeMap<String, String>)
     hash.finalize().into()
 }
 
+/// `digest` with the folders whose Python files no regular package holds folded in (`corpus::package_root_modules`,
+/// core.rerail's `unpackaged`): a file's `unpackaged` row follows from its folder, which an `__init__.py` added or removed
+/// changes. A file added to such a folder changes nothing. None leaves the digest as it was.
+pub(super) fn with_unpackaged(digest: [u8; 32], folders: &BTreeSet<&str>) -> [u8; 32] {
+    if folders.is_empty() {
+        return digest;
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-unpackaged/v1\0");
+    hash.update(digest);
+    for folder in folders {
+        hash.update(folder.as_bytes());
+        hash.update(b"\0");
+    }
+    hash.finalize().into()
+}
+
 /// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).
 pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
     let mut hash = Sha256::new();

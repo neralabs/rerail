@@ -1,17 +1,22 @@
 // ukl/body/radix_tile.h: ukl/radix.h's passes over one key type (decision 0440 §3.5: a type in C is a parameter of
 // an included body). Included once per key type, with, defined first:
 // - `UKL_RADIX_NAME(f)`: the instance's name of each function `f` (`f##_u32`, ...);
-// - `UKL_RADIX_KEY`: the key type.
+// - `UKL_RADIX_KEY`: the key type;
+// - optionally `UKL_RADIX_SPACE`: the address space of the rows, the histograms and the offsets (`UKL_GLOBAL`;
+//   `UKL_COHERENT` where other threadgroups of the dispatch wrote them, as a persistent grid's passes do, ukl/grid.h).
 // They are undefined at the end. Not `#pragma once`.
 
 #if !defined(UKL_RADIX_NAME) || !defined(UKL_RADIX_KEY)
 #error "ukl/body/radix_tile.h needs UKL_RADIX_NAME and UKL_RADIX_KEY (ukl/radix.h)"
 #endif
+#ifndef UKL_RADIX_SPACE
+#define UKL_RADIX_SPACE UKL_GLOBAL
+#endif
 
 UKL_INLINE uint32_t UKL_RADIX_NAME(ukl_radix_digit)(UKL_RADIX_KEY key, uint32_t shift) { return (uint32_t)(key >> shift) & (UKL_RADIX_DIGITS - 1u); }
 
 // The tile's digit histogram, into `hist` digit-major. `h`: `UKL_RADIX_DIGITS` threadgroup words.
-UKL_INLINE void UKL_RADIX_NAME(ukl_radix_hist_tile)(UKL_GLOBAL const UKL_RADIX_KEY* keys, UKL_GLOBAL uint32_t* hist, UklRadixArgs args, UKL_LOCAL uint32_t* h, uint32_t tile, uint32_t t)
+UKL_INLINE void UKL_RADIX_NAME(ukl_radix_hist_tile)(UKL_RADIX_SPACE const UKL_RADIX_KEY* keys, UKL_RADIX_SPACE uint32_t* hist, UklRadixArgs args, UKL_LOCAL uint32_t* h, uint32_t tile, uint32_t t)
 {
     h[t] = 0u;
     ukl_tg_barrier();
@@ -28,8 +33,8 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_hist_tile)(UKL_GLOBAL const UKL_RADIX_K
 // rows of each digit, by rank group); `before`, `base`: `UKL_RADIX_DIGITS` each (the digit's rows in the earlier
 // rounds; its offset for the tile); `digits`: `UKL_RADIX_SPILL` (each thread's digit, where a rank group is not a SIMD
 // group).
-UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_GLOBAL const UKL_RADIX_KEY* keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* offsets,
-                                       UKL_GLOBAL UKL_RADIX_KEY* outKeys, UKL_GLOBAL uint32_t* outValues, UklRadixArgs args, UKL_LOCAL uint32_t* counts,
+UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_RADIX_SPACE const UKL_RADIX_KEY* keys, UKL_RADIX_SPACE const uint32_t* values, UKL_RADIX_SPACE const uint32_t* offsets,
+                                       UKL_RADIX_SPACE UKL_RADIX_KEY* outKeys, UKL_RADIX_SPACE uint32_t* outValues, UklRadixArgs args, UKL_LOCAL uint32_t* counts,
                                        UKL_LOCAL uint32_t* before, UKL_LOCAL uint32_t* base, UKL_LOCAL uint32_t* digits, uint32_t tile, uint32_t t __UKL_PARAMS)
 {
     uint32_t me = t % UKL_RADIX_RG, sg = t / UKL_RADIX_RG;
@@ -84,3 +89,4 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_GLOBAL const UKL_RADI
 
 #undef UKL_RADIX_NAME
 #undef UKL_RADIX_KEY
+#undef UKL_RADIX_SPACE
