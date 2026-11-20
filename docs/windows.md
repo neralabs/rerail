@@ -503,7 +503,14 @@ hook in the process Claude Code ends, as on macOS and Linux.
 Windows never kills a child with its parent, so the hook ran on holding its session's lock, and the
 session's next hook waited up to 30 s for it. A hook that exits holding its session's lock now removes it as it exits,
 and a lock whose holder has stopped touching it for 10 s is taken by the next hook, even when Windows has given the
-holder's pid to another process. The watch checks the parent once a second. Since the watch does nothing
+holder's pid to another process. The watch checks the parent once a second, so a Claude Code hook whose `cmd.exe`
+parent was killed runs on until its next check. On a Windows 11 machine, 10 runs each with the kill falling across
+that second, such a hook ended 16 to 933 ms after the kill (median 480 ms), where a `node` entry's hook, which the
+kill ends itself, ended within 4 to 20 ms. A Claude Code hook lets go of its session's lock while the daemon checks
+its event, the wait a timeout usually cuts short: the session's next hook, started at the kill, then took the lock
+within 16 ms with either entry. A hook killed while it held the lock holds it until it ends: the next hook then waited 2
+to 878 ms for it (median 427 ms), where after a `node` entry's kill it took the lock from the ended holder in 3 to
+10 ms. Since the watch does nothing
 off Windows, `test/harness/hook-entries.test.ts` checks that `serveHookEntry` ends a hook whose parent is gone while
 the hook still runs, and that each entry module serves its hook through `serveHookEntry`.
 
