@@ -339,6 +339,34 @@ directory left out of Defender's scanning (`Add-MpPreference -ExclusionPath`), a
 account rustup with the pinned toolchain (`x86_64-pc-windows-msvc`, and the ARM64 target) and
 cargo-nextest's Windows build in `%USERPROFILE%\.cargo\bin`.
 
+### A Windows VM on a Mac
+
+A Windows 11 ARM VM in Parallels is a Windows host for `aarch64-pc-windows-msvc` builds and
+runs. Windows' boot manager panicked in the VM with nested virtualisation on (Parallels 27.1 on an
+M5 Max, 2026-11-20), so the VM has no WSL2: WSL1 carries the agent instead. WSL1 needs no
+virtualisation, runs Windows' programs, and shares Windows' network (its sshd, on a port of its
+own, has the VM's address). WSL1 is not a Linux host to run jobs on: a slow file system over NTFS,
+no containers. So the Linux entry takes none (`"tests": false, "mirror": false`; `setup` says
+"takes no jobs") and holds only the checkout's copy for the Windows entry that `shares` it.
+
+Set up once, from the Mac (`prlctl exec VM ...` runs as SYSTEM, until Windows' sshd is up; its
+command line is short, so a longer script goes in by chunks):
+
+- The VM: CPUs and memory (`prlctl set`), autostart with the Mac, nested virtualisation off.
+- In Windows, the farm account, OpenSSH, long paths, the farm directory out of Defender's
+  scanning, no sleep, as on a PC; the WSL feature only (not `VirtualMachinePlatform`), Microsoft's
+  WSL MSI (arm64), `wsl --set-default-version 1`. `wsl --install` turns
+  `VirtualMachinePlatform` on again, so Ubuntu's ARM64 `.wsl` image (its URL and SHA-256 in WSL's
+  `DistributionInfo.json`) goes in by `wsl --import ... --version 1`, its directory out of
+  Defender's scanning too.
+- In Ubuntu: openssh-server, rsync, python3, zstd, git; the `farm` user with the key; sshd on its
+  port, password logins off; `/etc/wsl.conf` with the default user and no Windows PATH. WSL1 has no
+  systemd: the startup task (as the account, S4U) runs `sshd -D` itself.
+- Windows' toolchain as on a PC, for ARM64: rustup-init's `aarch64-pc-windows-msvc` build,
+  nextest's `windows-arm` build, and VS Build Tools with the ARM64 tools.
+
+The VM's disk is this Mac's: its entries' `max_target_gb` keeps the targets in it small.
+
 ### Mac compiles on a Linux host
 
 A Linux host compiles this Mac's registry libraries (`remote_eligible`: an rlib, nothing linked),
