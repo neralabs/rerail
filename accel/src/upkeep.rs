@@ -946,10 +946,8 @@ mod tests {
     }
 
     /// A job over a file: a run over the file stops it until its deadline.
-    #[cfg(unix)]
     struct OverFile(Counter, std::path::PathBuf);
 
-    #[cfg(unix)]
     impl Job for OverFile {
         fn name(&self) -> String {
             self.0.name()
