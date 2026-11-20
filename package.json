@@ -69,6 +69,8 @@
     "native/*.node",
     "model",
     "native/src/code_rule_dsl/capabilities.json",
+    "native/src/code_rule_dsl/typing/programs/*.rerail",
+    "docs/rule-syntax/lib",
     "LICENSE",
     "NOTICE",
     ".claude-plugin",

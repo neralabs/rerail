@@ -1,0 +1,34 @@
+.policy "package-smoke-no-os-system" revision 1
+.description "os.system runs its argument through a shell."
+.language python
+.mode steer
+.scope include "**/*.py"
+// The package smoke check's rule (scripts/check/ci/installed-rr-tests.mjs): its tests run from the installed package,
+// so they read the engine's typing programs and the rule library the package ships. Name resolution through imports
+// (`sym_of`, python/names.rerail) needs the library well past core.rerail, and phase 1 (sources.rerail) reads the
+// imports.
+
+#include "python/calls.rerail"
+
+.violation OsSystem(at: node) code "OS001" "os.system runs its argument through a shell; call subprocess.run with a list instead."
+OsSystem(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, "os.system").
+
+.test imported_and_aliased_calls_are_reported exactly
+    .fixture "app/run.py" ```
+        import os as o
+        from os import system
+        o.system("ls")
+        system("ls")
+        print("ls")
+        ```
+    .expect OS001 at "app/run.py":3
+    .expect OS001 at "app/run.py":4
+.end
+
+.test a_local_function_of_that_name_is_not_reported exactly
+    .fixture "app/local.py" ```
+        def system(command):
+            return command
+        system("ls")
+        ```
+.end
