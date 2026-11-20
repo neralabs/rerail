@@ -3003,8 +3003,8 @@ export class CodeRuleBridge {
    * session's edit. Of those, only a source this session had changed is still audited, as the source it now is with no
    * generated lines and in `log` mode: the evaluator holds its older text, and steers queued for that text are out of
    * date. Any other is the same to the evaluator as the files it never saw. The walk of the other worktrees drops every
-   * change of a checkout in a worktree it may show the session first (`#mayFirstSee`), or finds a file of gone in, whose
-   * `.git` entry is gone once its Git has been read (`#checkoutStands`).
+   * change of a checkout in a worktree it may show the session first (`#mayFirstSee`), or in one it knew where it finds
+   * a file gone, whose `.git` entry is gone once its Git has been read (`#checkoutStands`).
    */
   async #separateOwnWrites(
     discovery: SourceDiscovery,
@@ -3032,8 +3032,10 @@ export class CodeRuleBridge {
    * started there once the entry is gone reads no checkout, or the one around the worktree, so each of those files
    * would be taken for a write. There the entry is looked for once Git has answered: still there, Git read this
    * checkout; gone, the worktree is being removed or was, its files went with it, as a worktree gone before the walk is
-   * applied took its own (`#syncWorktrees`), and none of them is an edit. A walk that finds only writes in a worktree it
-   * knew, as it does on most walks, looks for nothing.
+   * applied took its own (`#syncWorktrees`), and none of them is an edit. The removal deletes a folder's entries in the
+   * order the file system lists them, so the entry may still be there at the look while the removal goes on: the files
+   * it deleted before then are deletions Git's verdicts judge, as a person's are. A walk that finds only writes in a
+   * worktree it knew, as it does on most walks, looks for nothing.
    */
   async #checkoutStands(discovery: SourceDiscovery, walk: WalkStart, checkout: string, group: readonly CodeRuleEdit[]): Promise<boolean> {
     if (walk.inSession) return true;
