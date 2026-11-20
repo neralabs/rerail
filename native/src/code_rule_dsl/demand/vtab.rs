@@ -423,7 +423,7 @@ impl PackedDemand {
         let matches = range
             .clone()
             .into_par_iter()
-            .map(|file| {
+            .map(crate::code_rule_dsl::logic::profile::carried("demand walks (pool)", |file| {
                 let tape = &self.files[file];
                 let mut frames = Frames::default();
                 let mut records = Vec::new();
@@ -495,7 +495,7 @@ impl PackedDemand {
                         Some(found)
                     })
                     .collect::<Option<Vec<_>>>()
-            })
+            }))
             .collect::<Option<Vec<_>>>()?;
         crate::code_rule_dsl::prof::count("demand.walked", matches.iter().flatten().map(Vec::len).sum());
         Some(RootsExecution::Walked { files: range.len(), programs: programs.len(), matches })
@@ -726,9 +726,9 @@ impl PackedDemand {
         );
         let sizes = (0..self.files.len())
             .into_par_iter()
-            .map(|file| {
+            .map(crate::code_rule_dsl::logic::profile::carried("demand workspace sizes (pool)", |file| {
                 packed_workspace_size(&self.programs, &self.files[file..=file], &self.anchors[file..=file], &self.result_limits).ok()
-            })
+            }))
             .collect::<Vec<_>>();
         let bytes = sizes.iter().map(|size| size.map_or(u64::MAX, |(bytes, _)| bytes)).collect::<Vec<_>>();
         let mut ranges = Vec::new();
@@ -885,6 +885,7 @@ impl PackedDemand {
             .flat_map(|range| {
                 // A range of several files fits (each was sized); a single file that could not be
                 // sized may not.
+                #[allow(clippy::single_range_in_vec_init)]
                 let groups = if range.len() == 1 && sizes[range.start] == u64::MAX {
                     crate::code_rule_dsl::prof::time("demand.groups", || self.program_groups(range))
                 } else {
@@ -912,8 +913,8 @@ impl PackedDemand {
             let _roots = crate::code_rule_dsl::prof::Stage::start("demand.roots");
             // The roots as micro walks' records where every terminal program is one (decision
             // 0024 §3), else (or where a walk overflows) the backend's execution.
-            if (!metal || !self.records.is_empty()) && std::env::var_os("RERAIL_ROOTS_JIT").is_none() {
-                if let Some(walked) = self.walked(range.clone(), programs.clone()) {
+            if (!metal || !self.records.is_empty()) && std::env::var_os("RERAIL_ROOTS_JIT").is_none()
+                && let Some(walked) = self.walked(range.clone(), programs.clone()) {
                     if std::env::var_os("RERAIL_ROOTS_CHECK").is_some() {
                         let packed = execute_planned(
                             self.backend,
@@ -927,7 +928,6 @@ impl PackedDemand {
                     }
                     return Ok((range.start, programs.start, walked));
                 }
-            }
             execute_planned(
                 self.backend,
                 self.plan_of(programs.clone()),

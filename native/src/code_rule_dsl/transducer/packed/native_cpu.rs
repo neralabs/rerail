@@ -24,7 +24,7 @@ use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 pub struct DemandZeroRegion<T> {
     pointer: NonNull<T>,
@@ -135,7 +135,7 @@ impl<T> Drop for DemandZeroRegion<T> {
 // Windows: committed VirtualAlloc pages are demand-zero, as an anonymous mapping's are.
 #[cfg(windows)]
 impl<T> DemandZeroRegion<T> {
-    fn new(count: usize) -> Result<Self, Error> {
+    pub fn new(count: usize) -> Result<Self, Error> {
         use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
         let mapped_bytes = count
             .checked_mul(mem::size_of::<T>())
@@ -359,8 +359,8 @@ unsafe impl Sync for CompiledStraightLine {}
 
 // A wave's programs (its labels' and roots') fit: past this the oldest key goes.
 const CPU_JIT_CACHE_LIMIT: usize = 4096;
-static CPU_JIT_CACHE: LazyLock<Mutex<BTreeMap<String, Arc<CompiledStraightLine>>>> =
-    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+#[derive(Default)]
+struct CpuPrograms(Mutex<BTreeMap<String, Arc<CompiledStraightLine>>>);
 
 impl CompiledStraightLine {
     pub fn execute(&self, context: &mut NativeTaskContext) {
@@ -462,7 +462,7 @@ fn reverse_pending(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::
     };
     let last = function.ins().iadd_imm(high, -1);
     let (a, b) = (record(function, low), record(function, last));
-    const _: () = assert!(mem::size_of::<PendingRecord>() % 4 == 0);
+    const _: () = assert!(mem::size_of::<PendingRecord>().is_multiple_of(4));
     for word in 0..mem::size_of::<PendingRecord>() as i32 / 4 {
         let x = function.ins().load(types::I32, flags, a, 4 * word);
         let y = function.ins().load(types::I32, flags, b, 4 * word);
@@ -2529,14 +2529,15 @@ pub(super) fn batch_key(programs: &[Program]) -> String {
 
 /// Whether every one of `programs` is compiled (`compile_cached`), without compiling any.
 pub(super) fn compiled(programs: &[Program]) -> Result<bool, Error> {
-    let cache = CPU_JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<CpuPrograms>();
+    let cache = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     Ok(programs.iter().all(|program| cache.contains_key(&cache_key(program))))
 }
 
 pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLine>, Error> {
     crate::code_rule_dsl::prof::count("jit.programs", 1);
     let key = crate::code_rule_dsl::prof::time("jit.key", || cache_key(program));
-    if let Some(compiled) = CPU_JIT_CACHE
+    if let Some(compiled) = crate::code_rule_dsl::logic::profile::shared::<CpuPrograms>().0
         .lock()
         .map_err(|_| Error::BackendFailure)?
         .get(&key)
@@ -2547,7 +2548,8 @@ pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLi
     crate::code_rule_dsl::prof::count("jit.misses", 1);
     let native = crate::code_rule_dsl::prof::time("jit.lower", || super::native_ir::lower(program)).unwrap_or_else(|e| compile_failed("the program's lowering", e));
     let compiled = Arc::new(crate::code_rule_dsl::prof::time("jit.straight_line", || compile_straight_line(&native))?);
-    let mut cache = CPU_JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<CpuPrograms>();
+    let mut cache = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(existing) = cache.get(&key) {
         return Ok(Arc::clone(existing));
     }
@@ -2907,8 +2909,7 @@ fn execute_batch_packed_once(
             return Err(Error::BackendFailure);
         }
     }
-    let task_outputs = (|| {
-        spans
+    let task_outputs = spans
             .into_par_iter()
             .map(|span| span.iter_mut().map(|(program, context)| {
                 // The queue uses tombstones within a task. Keeping a full
@@ -2976,8 +2977,7 @@ fn execute_batch_packed_once(
                     },
                 })
             }).collect::<Result<Vec<_>, Error>>())
-            .collect::<Result<Vec<Vec<_>>, Error>>()
-    })()?
+            .collect::<Result<Vec<Vec<_>>, Error>>()?
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();

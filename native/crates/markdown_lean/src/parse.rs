@@ -14,7 +14,7 @@
 use crate::kinds::{K, f};
 use crate::scan::{Found, Scanner, Valid, bit, t::*};
 use crate::{Refusal, Tape, key, stores};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 type R<T> = Result<T, Refusal>;
 
@@ -145,7 +145,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
-pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     if let Some(at) = src.iter().position(|&c| c == 0) {
         return Err(Refusal::Lex(at as u32));
     }
@@ -154,15 +154,15 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
     }
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P { src, sc: Scanner::new(src), at: 0, last: 0, w: Writer::new(0, widths, src.len() / 2 + 16), open: Vec::new(), title_at: usize::MAX, gap: Vec::new() };
+        let mut p = P { src, sc: Scanner::new(src), at: 0, last: 0, w: Writer::new(0, widths, src.len() / 2 + 16).to(finish.target(), src), open: Vec::new(), title_at: usize::MAX, gap: Vec::new() };
         p.document()?;
         if p.sc.unsure {
             return Err(Refusal::Parse(0));
         }
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -170,6 +170,9 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
         }
     }
 }
+
+/// A table row's token (`row_tokens`): its start, end, class and punctuation.
+type RowToken = (usize, usize, u8, Option<K>);
 
 impl<'a> P<'a> {
     fn refuse<T>(&self) -> R<T> {
@@ -365,6 +368,11 @@ impl<'a> P<'a> {
         let mut blank_start = if ctx == Ctx::Item { 0 } else { u8::MAX };
         loop {
             let paragraph = after_paragraph.take();
+            // A document's blocks so far are final, unless a setext underline may follow the paragraph just read:
+            // their nodes are committed (passed to format 16's ops; decision 0426 §2).
+            if ctx == Ctx::Document && paragraph.is_none() {
+                self.w.commit();
+            }
             let Some(t) = next else {
                 if self.at >= self.src.len() {
                     if ctx != Ctx::Document {
@@ -431,8 +439,7 @@ impl<'a> P<'a> {
                     blank_start = u8::MAX;
                     self.open(K::ThematicBreak, 0, t.start);
                     self.take(t);
-                    let n = self.line_end_or_eof(V_BLOCK)?;
-                    n
+                    self.line_end_or_eof(V_BLOCK)?
                 }
                 BLOCK_QUOTE_START => {
                     blank_start = u8::MAX;
@@ -840,7 +847,7 @@ impl<'a> P<'a> {
                 Some(e) => return Err(Refusal::Parse(e.start as u32)),
                 None => {
                     let Some((lexed, end)) = self.line_token() else { return self.refuse() };
-                    if !(first && lexed == Lexed::Space) && !inline {
+                    if !(inline || (first && lexed == Lexed::Space)) {
                         self.open(K::Inline, f::HEADING_CONTENT, self.at);
                         inline = true;
                     }
@@ -1256,7 +1263,7 @@ impl<'a> P<'a> {
 
     /// A row's tokens, to the scanner's token that ends it (scanned, not taken): `(start, end,
     /// class, punctuation)`, the class 0 a pipe, 1 white space, 2 a cell's token.
-    fn row_tokens(&mut self, valid: Valid) -> R<(Vec<(usize, usize, u8, Option<K>)>, Tok)> {
+    fn row_tokens(&mut self, valid: Valid) -> R<(Vec<RowToken>, Tok)> {
         let mut toks = Vec::new();
         loop {
             if let Some(e) = self.next(valid)? {

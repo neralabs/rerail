@@ -399,6 +399,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
 
     r.push_str(&crate::code_rule_dsl::logic::lanes::prof::report());
+    copies(&mut r);
     stages(&mut r);
     let _ = writeln!(r, "\n== Device (Metal): per span and kernel; GPU = command buffers' GPU time, wait = host wall time");
     if state.devices.is_empty() {
@@ -494,7 +495,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     let cut: u64 = state.decisions.iter().filter(|((topic, _), _)| topic == "chunk cut by the run's memory line").map(|(_, n)| n).sum();
     let sized: u64 = state.decisions.iter().filter(|((topic, _), _)| topic == "chunk size").map(|(_, n)| n).sum();
     if cut > 0 {
-        let _ = writeln!(r, "- {cut} of {sized} chunk sizings (every phase's) were cut by the run's memory line (the footprint left under a quarter of a chunk's MB): every stratum and matcher wave runs once per chunk, so the device gets small grains and pays its per-launch latency per chunk. See \"chunk size\" under == Decisions; RERAIL_RUN_MB moves the line.");
+        let _ = writeln!(r, "- {cut} of {sized} chunk sizings (every phase's) were held by the run's memory limit (what the count written leaves held them under the caller's most, decision 0435): every stratum and matcher wave runs once per chunk, so the device gets small grains and pays its per-launch latency per chunk. See \"chunk size\" under == Decisions; RERAIL_RUN_MB moves the line.");
         warned += 1;
     }
     if !state.hazards.is_empty() {
@@ -573,7 +574,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
             warned += 1;
         }
     }
-    for ((topic, text), _) in &state.decisions {
+    for (topic, text) in state.decisions.keys() {
         if topic == "fallback" {
             let _ = writeln!(r, "- fallback: {text}");
             warned += 1;
@@ -590,6 +591,21 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::write(dir.join("profile.txt"), r)
 }
 
+/// The copies decision 0353 still lists (`rerail_prof::copies`), by its table's row: the bytes each site copied, its
+/// calls and its CPU. Its steps drive the total to 0; a site not named here copied nothing in the run.
+fn copies(r: &mut String) {
+    use std::fmt::Write as _;
+    let sites = rerail_prof::copies::sites();
+    let (bytes, cpu) = sites.iter().fold((0u64, 0u64), |(b, c), (_, t)| (b + t.bytes, c + t.cpu_ns));
+    let _ = writeln!(r, "\n== copies (decision 0353): {:.1} MB, {:.1} ms CPU in all; by row of its table, the step that removes each", bytes as f64 / 1e6, cpu as f64 / 1e6);
+    if sites.is_empty() {
+        r.push_str("(none)\n");
+    }
+    for (site, t) in sites {
+        let _ = writeln!(r, "  row {:>2}  step {:<3} {:>10.1} MB {:>9} calls {:>9.1} ms  {}", site.row, site.step, t.bytes as f64 / 1e6, t.calls, t.cpu_ns as f64 / 1e6, site.name);
+    }
+}
+
 /// The stage counters (`rerail_prof`): the device runs' host stages (CPU of the thread that ran
 /// them), their GPU time (`gpu.device_us`), memory readings and counts. With
 /// `RERAIL_GPU_KERNEL_TIMES` set, `kernel_us.<kernel>` splits the GPU time by kernel (each a
@@ -604,12 +620,12 @@ fn stages(r: &mut String) {
     }
     // Timed stages by CPU, then the counts by name.
     let mut timed: Vec<_> = stages.iter().filter(|(_, (d, _))| !d.is_zero()).collect();
-    timed.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    timed.sort_by_key(|b| std::cmp::Reverse(b.1.0));
     for (name, (d, calls)) in timed {
         let _ = writeln!(r, "{:>12.1} ms {calls:>9}  {name}", d.as_secs_f64() * 1e3);
     }
     let mut kernels: Vec<_> = stages.iter().filter(|(n, _)| n.starts_with("kernel_us.")).collect();
-    kernels.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+    kernels.sort_by_key(|b| std::cmp::Reverse(b.1.1));
     for (name, (_, us)) in &kernels {
         let k = &name["kernel_us.".len()..];
         let n = stages.get(&format!("kernel_n.{k}")).map_or(0, |e| e.1);
@@ -619,7 +635,7 @@ fn stages(r: &mut String) {
     // their walks and longest walk: a long walk is a dispatch's critical path.
     let mut walks: Vec<_> = stages.iter().filter_map(|(n, e)| n.strip_prefix("walk_steps.").map(|w| (w, e.1))).collect();
     if !walks.is_empty() {
-        walks.sort_by(|a, b| b.1.cmp(&a.1));
+        walks.sort_by_key(|b| std::cmp::Reverse(b.1));
         let total: usize = walks.iter().map(|w| w.1).sum();
         let _ = writeln!(r, "\n  micro walks by steps ({total} steps in all; t0 = 8 frames, t2 = the loop tier):");
         // Each tier's walks and steps over every pass, not the 30 listed: two runs walked the same starts where these
@@ -642,28 +658,6 @@ fn stages(r: &mut String) {
         if d.is_zero() && !name.starts_with("kernel_") && !name.starts_with("walk_") {
             let _ = writeln!(r, "{:>12} {count:>12}  {name}", "count");
         }
-    }
-}
-
-// Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The span tree: each span under its recorded parent, children by CPU; a span whose parent was not recorded is
-    /// a root (`x/y`), and a span under 0.1% of the run below the roots is left out (`a/tiny`).
-    #[test]
-    fn the_span_tree_nests_children_by_cpu() {
-        let mut spans = BTreeMap::new();
-        for (path, cpu) in [("a", 10.0), ("a/b", 6.0), ("a/b/c", 5.0), ("a/d", 3.0), ("a/tiny", 0.001), ("x/y", 2.0), ("z", 1.0), ("z/e", 0.5)] {
-            spans.insert(path.to_owned(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
-        }
-        let mut r = String::new();
-        super::span_tree(&mut r, &spans, 20.0);
-        let names: Vec<&str> = r.lines().map(|l| &l[38..]).collect();
-        assert_eq!(names, ["a", "  b", "    c", "  d", "y", "z", "  e"], "{r}");
     }
 }
 
@@ -749,5 +743,27 @@ fn metal_summary(r: &mut String, state: &State) {
     let cut: u64 = state.decisions.iter().filter(|((t, _), _)| t == "chunk cut by the run's memory line").map(|(_, n)| n).sum();
     if sized > 0 {
         let _ = writeln!(r, "Grain: {cut} of {sized} chunk sizings (every phase's) cut by the run's memory line; each stratum and matcher wave runs once a chunk (== Warnings)");
+    }
+}
+
+// Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rerail` libraries).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The span tree: each span under its recorded parent, children by CPU; a span whose parent was not recorded is
+    /// a root (`x/y`), and a span under 0.1% of the run below the roots is left out (`a/tiny`).
+    #[test]
+    fn the_span_tree_nests_children_by_cpu() {
+        let mut spans = BTreeMap::new();
+        for (path, cpu) in [("a", 10.0), ("a/b", 6.0), ("a/b/c", 5.0), ("a/d", 3.0), ("a/tiny", 0.001), ("x/y", 2.0), ("z", 1.0), ("z/e", 0.5)] {
+            spans.insert(path.to_owned(), SpanTotal { calls: 1, total: cpu, ..Default::default() });
+        }
+        let mut r = String::new();
+        super::span_tree(&mut r, &spans, 20.0);
+        let names: Vec<&str> = r.lines().map(|l| &l[38..]).collect();
+        assert_eq!(names, ["a", "  b", "    c", "  d", "y", "z", "  e"], "{r}");
     }
 }

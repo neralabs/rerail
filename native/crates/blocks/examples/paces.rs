@@ -25,7 +25,9 @@
 //!
 //! Usage: `paces [docs] [runs] [dir]`.
 
-use rerail_blocks::block::{Block, kind};
+#[cfg(target_os = "macos")]
+use rerail_blocks::block::Block;
+use rerail_blocks::block::kind;
 use rerail_blocks::chunk::{self, DocIn};
 use rerail_blocks::facts::{Facts, FrozenFacts, RelDef, Schema};
 use rerail_blocks::journal::{self, Journal};
@@ -466,6 +468,7 @@ fn join_gpu(cx: &Ctx, base: Option<&Block>, top: &Block, imp: View, def: View, o
 }
 
 /// A cold run: every chunk evaluated (or hit), every block written full.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn cold(cx: &Ctx, srcs: &[Src], store: Option<&Store>, journal: Option<&Journal>, gpu_edge: bool) -> Kept {
     let sc = cx.sc;
     let refs: Vec<&Src> = srcs.iter().collect();
@@ -497,6 +500,7 @@ fn cold(cx: &Ctx, srcs: &[Src], store: Option<&Store>, journal: Option<&Journal>
 
     p1.begin(1);
     p1.create(P_EDGE);
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut on_gpu = false;
     #[cfg(target_os = "macos")]
     if gpu_edge && cx.gpu.is_some() {
@@ -884,7 +888,8 @@ fn main() {
         // A benchmark of its own process: it makes the device and queue the engine's owner would hand it.
         metal::Device::system_default().ok_or_else(|| "no Metal device".to_string()).and_then(|d| {
             let q = d.new_command_queue();
-            rerail_blocks::gpu::Gpu::on(d, q)
+            let msl = rerail_ukl::metal_source("join.metal", &rerail_blocks::gpu::source()).map_err(|e| e.to_string())?;
+            rerail_blocks::gpu::Gpu::on(d, q, &msl)
         })
     } } {
         Ok(g) => Some(g),

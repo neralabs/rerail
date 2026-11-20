@@ -1,4 +1,4 @@
-//! E6: what format 16's writer costs, against format 15's, on the lean `.rr` parser's path.
+//! E6: what format 16's writer costs, against format 15's, on the lean `.rerail` parser's path.
 //!
 //! The lean parser pushes and closes nodes into `tape_format::Writer`, and the writer finishes the image.
 //! A format-16 writer would take the same pushes and closes, and finish events instead. So per file:

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,8 @@ import {
   readRemoteAddress,
   resolveCloneId,
 } from "../../../src/engine/catalog/repository-identity.js";
+import { linkFolder, symlinkOrSkip } from "../../support/platform/links.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 /** When set, the next `mkdirSync` of a `.rerail` folder loses a race: another process creates it first. */
 const race = vi.hoisted(() => ({ armed: false }));
@@ -57,7 +59,7 @@ describe("normalizeRemoteAddress", () => {
 describe("readRemoteAddress", () => {
   const roots: string[] = [];
   afterEach(() => {
-    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    for (const root of roots.splice(0)) removeFolderSync(root);
   });
 
   const repository = (...remotes: [string, string][]): string => {
@@ -87,7 +89,7 @@ describe("readRemoteAddress", () => {
 describe("clone identity files", () => {
   const roots: string[] = [];
   afterEach(() => {
-    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    for (const root of roots.splice(0)) removeFolderSync(root);
   });
   const folder = (): string => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-identity-")));
@@ -95,15 +97,9 @@ describe("clone identity files", () => {
     return root;
   };
 
-  it("refuses an identity that is a symlink, malformed, or kept in a symlinked .rerail, and never follows one", () => {
+  it("refuses an identity that is a symlink, malformed, or kept in a symlinked .rerail, and never follows one", context => {
     const outside = folder();
     writeFileSync(join(outside, "secret"), "git:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n");
-
-    const linkedFile = folder();
-    mkdirSync(join(linkedFile, ".rerail"));
-    symlinkSync(join(outside, "secret"), join(linkedFile, ".rerail", "repository-id"));
-    expect(readCloneId(linkedFile)).toBeUndefined();
-    expect(() => resolveCloneId(linkedFile)).toThrow(/not a regular file/u);
 
     const malformed = folder();
     mkdirSync(join(malformed, ".rerail"));
@@ -112,8 +108,16 @@ describe("clone identity files", () => {
     expect(() => resolveCloneId(malformed)).toThrow(/malformed/u);
 
     const linkedDirectory = folder();
-    symlinkSync(outside, join(linkedDirectory, ".rerail"));
+    linkFolder(outside, join(linkedDirectory, ".rerail"));
     expect(() => resolveCloneId(linkedDirectory)).toThrow(/not a directory/u);
+    expect(readdirSync(outside)).toEqual(["secret"]);
+
+    // Last, since a Windows machine that cannot make a file link skips the rest of the test here.
+    const linkedFile = folder();
+    mkdirSync(join(linkedFile, ".rerail"));
+    symlinkOrSkip(context, join(outside, "secret"), join(linkedFile, ".rerail", "repository-id"));
+    expect(readCloneId(linkedFile)).toBeUndefined();
+    expect(() => resolveCloneId(linkedFile)).toThrow(/not a regular file/u);
     expect(readdirSync(outside)).toEqual(["secret"]);
   });
 
@@ -123,6 +127,31 @@ describe("clone identity files", () => {
     const { cloneId } = resolveCloneId(root);
     expect(race.armed).toBe(false);
     expect(resolveCloneId(root).cloneId).toBe(cloneId);
+  });
+
+  it("checks the complete identity file at the byte limit", () => {
+    const root = folder();
+    mkdirSync(join(root, ".rerail"));
+    const path = join(root, ".rerail", "repository-id");
+    const id = "short-id".padEnd(128, " ");
+    writeFileSync(path, id);
+    expect(resolveCloneId(root).cloneId).toBe("short-id");
+    for (const suffix of [" ", "trailing-content"]) {
+      writeFileSync(path, id + suffix);
+      expect(() => resolveCloneId(root)).toThrow(/malformed/u);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("rejects a pipe without waiting for a writer", () => {
+    const root = folder();
+    mkdirSync(join(root, ".rerail"));
+    execFileSync("mkfifo", [join(root, ".rerail", "repository-id")]);
+    const reader = new URL("../../../src/engine/catalog/repository-identity.ts", import.meta.url);
+    const out = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      const {resolveCloneId} = await import(process.argv[1]);
+      try { resolveCloneId(process.argv[2]); } catch (error) { process.stdout.write(error.message); }
+    `, reader.href, root], { encoding: "utf8", timeout: 4000 });
+    expect(out).toMatch(/not a regular file/u);
   });
 
   it("creates a well-formed id once and reads the same id back", () => {

@@ -132,9 +132,9 @@ jobs:
           NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && secrets.NPM_PACKS_READ_TOKEN || '' }}
         run: node scripts/release/packs-plan.mjs ${{ github.event_name == 'pull_request' && '--all' || '' }}
 
-  # Fills the Actions cache with every pack's test data for the pack job (.github/actions/pack-test-data,
-  # `fetch: "true"`): from S3 under an OIDC token on a miss, which GitHub gives no fork's or Dependabot's pull request
-  # (those run no dry run). It runs nothing but the pull and never extracts a cache entry.
+  # Uploads every pack's test data as this run's artifact for the pack job (.github/actions/pack-test-data,
+  # `fetch: "true"`): from S3 under an OIDC token, which GitHub gives no fork's or Dependabot's pull request (those run
+  # no dry run). It runs nothing but the pull and never downloads an artifact.
   test-data:
     name: Pack test data
     needs: plan
@@ -165,7 +165,7 @@ jobs:
 
   # The publish gate and the tarballs. The pack tests need the release native engine; as in ci.yml's build job, main's
   # cached build is reused when the engine's inputs are unchanged. The pack validation reads every pack's test data,
-  # restored from what the test-data job saved; this job restores caches, so it holds no OIDC token.
+  # downloaded from what the test-data job uploaded; this job restores caches, so it holds no OIDC token.
   pack:
     name: Validate and pack
     needs: [plan, test-data]

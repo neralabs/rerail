@@ -1,15 +1,11 @@
 //! The profile accounts for every CPU second: each thread's CPU, under its spans and outside them.
+//! They read the engine (a temporary directory, the report), which the profile's own crate cannot build.
 
 use crate::code_rule_dsl::logic::profile::{self, report};
 
 /// Spins until this thread has taken `seconds` of CPU, not of wall time: on a loaded machine a wall-time spin gets a
 /// fraction of its time on a core (0.08 s of 0.15 s at load 64), and the assertions below are of CPU.
 fn burn(seconds: f64) {
-    let thread_cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
     let start = thread_cpu();
     let mut x = 0u64;
     while thread_cpu() - start < seconds {
@@ -17,12 +13,28 @@ fn burn(seconds: f64) {
     }
 }
 
+/// The calling thread's CPU seconds.
+#[cfg(unix)]
+fn thread_cpu() -> f64 {
+    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: fills `t` with the calling thread's CPU time.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
+}
+
+/// Without a thread clock, the wall clock's seconds since first asked.
+#[cfg(not(unix))]
+fn thread_cpu() -> f64 {
+    static START: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(std::time::Instant::now);
+    START.elapsed().as_secs_f64()
+}
+
 /// Work a span starts on threads that open no span of their own (rayon's, a helper thread) is in the report: the
 /// threads' CPU adds up to the process's, and what no span covered is named by thread.
 #[test]
 fn the_profile_accounts_for_every_threads_cpu() {
-    // The profile is the process's: another test's run must not turn it off under this one.
-    let _run = profile::one_run();
+    // The test's own run, profiled (decision 0442: the switch is its caller's, the records its run's).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
     let (park, parked) = std::sync::mpsc::channel::<()>();
     let (burnt, done) = std::sync::mpsc::channel::<()>();
@@ -62,12 +74,17 @@ fn the_profile_accounts_for_every_threads_cpu() {
 /// opened next, so CPU outside every span points at the code that runs it.
 #[test]
 fn cpu_between_spans_is_named_by_the_spans_around_it() {
-    // The profile is the process's: another test's run must not turn it off under this one.
-    let _run = profile::one_run();
+    // The test's own run, profiled (decision 0442: the switch is its caller's, the records its run's).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
+    let run = profile::run_own();
     let t = std::thread::Builder::new()
         .name("xgaps".into())
-        .spawn(|| {
+        .spawn(move || {
+            // In the test's run, as a job of it is.
+            let _in = profile::enter(run);
+            // A thread of its own, profiled as its caller is (the switch is a caller's, carried to its jobs).
+            profile::set(true);
             drop(profile::span(|| "xgap before".into()));
             burn(0.1);
             drop(profile::span(|| "xgap after".into()));
@@ -91,7 +108,7 @@ fn cpu_between_spans_is_named_by_the_spans_around_it() {
 /// of what it charged.
 #[test]
 fn the_run_threads_time_is_charged_to_its_innermost_span_by_phase() {
-    let _run = profile::one_run();
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
     profile::track_run_thread();
     {

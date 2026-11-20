@@ -4,8 +4,8 @@ Tags: **M** measured on the 9,010-file gate corpus (Apple M5 Max, 18 cores), **D
 
 ## 0. Answers in brief
 
-- **Why we run regexes over file text.** The 14 rules that do it are ports of nera-data-layer's own regex linters (`scripts/lint_*.py`). Those linters scan lines of text; 9 of the 14 never parse Python.
-  - The port aimed at exact parity with them (NER-1969, NER-1971, and the batch-two additions: per-file line state, indentation filters, LF-only splitting, content gates).
+- **Why we run regexes over file text.** The 14 rules that do it are ports of the data-layer repository's own regex linters (`scripts/lint_*.py`). Those linters scan lines of text; 9 of the 14 never parse Python.
+  - The port aimed at exact parity with them (the line-query and line-context features, and the batch-two additions: per-file line state, indentation filters, LF-only splitting, content gates).
   - Those features rebuild parser knowledge by hand:
     - the "line state machine" (`compile/line_state.rs`, 8 clauses) tracks triple-quoted strings, i.e. a hand-made Python tokenizer;
     - `lines.exclude: ^\s*#` means "not a comment";

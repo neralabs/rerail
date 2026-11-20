@@ -1,0 +1,31 @@
+name: Save the Rust compile cache
+description: >-
+  Saves the store `./.github/actions/rust-compile-cache` set up as an artifact of the run, for later runs to start from
+  (they take the newest from main). Use it as the job's last step, on main only, in one job per store name and run
+  (an artifact's name is unique within a run). A store is 0.5 to 0.7 GB.
+
+inputs:
+  artifact:
+    description: The set-up step's `artifact` output.
+    required: true
+  dir:
+    description: The set-up step's `dir` output.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The server's objects are on disk already; it stops so none is half written when the upload reads the directory.
+    - name: Stop sccache
+      shell: bash
+      run: sccache --show-stats && sccache --stop-server || true
+
+    - name: Upload the compile cache
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ inputs.dir }}
+        # The objects are zstd already.
+        compression-level: 0
+        retention-days: 7
+        if-no-files-found: ignore

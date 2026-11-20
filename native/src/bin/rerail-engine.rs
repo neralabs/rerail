@@ -2,15 +2,20 @@
 //!
 //!   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
 //!   rerail-engine asm <file.rir>
-//!   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]
+//!   rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>]
 //!   rerail-engine gc <store.sqlite> [--history-mb <n>]
 //!   rerail-engine sql <store.sqlite> <request.json>
-//!   rerail-engine flatten <program.rr>
+//!   rerail-engine flatten <program.rerail>
 //!   rerail-engine csv <out dir> [<to dir>]   (a run's outputs, `outputs.rro`, as `.csv` files)
 //!   rerail-engine run-rr | run-policies | check-rr | convert-rr ... (`tools::cli`)
 //!
 //! Every command takes `--memory-mb <n>` (the overall memory budget, 1 GB by default) and `--metal-mb <n>` (the Metal
 //! budget, on top of it: half the overall budget by default); `RERAIL_MEMORY_MB` and `RERAIL_METAL_MB` set them too.
+//!
+//! Runaways (decision 0462): a derived relation holds at most `RERAIL_WIDEST_ROWS` rows (50 M by default). Past it the
+//! run stops naming the relation's rules, or with `RERAIL_WIDEST=cut` keeps the rows so far, goes on, and exits 3.
+//! A run past `RERAIL_MEMORY_MAX_MB` resident (three quarters of the machine's memory by default) is stopped, naming
+//! its widest relations; a path that does not stop by then, the process stops, exit code 3.
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -24,10 +29,19 @@ fn main() -> ExitCode {
     // one of them.
     rerail_engine::threads::configure(true);
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match rerail_engine::tools::cli(&args) {
+    let (out, incomplete) = rerail_engine::tools::cli(&args);
+    match out {
         Ok(text) => {
             print!("{text}");
-            ExitCode::SUCCESS
+            // Decision 0462: the command cut a relation at the width cap (`RERAIL_WIDEST=cut`): its results are
+            // incomplete. Decision 0442: it read state outside any run, which was refused.
+            match incomplete {
+                Some(message) => {
+                    eprintln!("rerail-engine: {message}");
+                    ExitCode::from(3)
+                }
+                None => ExitCode::SUCCESS,
+            }
         }
         Err(error) => {
             eprintln!("rerail-engine: {error}");

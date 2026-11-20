@@ -6,13 +6,18 @@ import { expect, it } from "vitest";
 import { replay } from "../../../conformance/data-layer/replay.js";
 import { loadNativeBinding } from "../../../src/engine/index.js";
 import { capabilitiesJson } from "../../../conformance/engine.js";
-import { fixturesPath } from "../../support/oracles.js";
+import { requirePackFixture } from "../../../scripts/s3/pack-fixtures.mjs";
+import { repositoryPath } from "../../support/oracles.js";
 
-const recording = fixturesPath("host", "data-layer-port", "batch-01-recording.json");
-const secondRecording = fixturesPath("host", "data-layer-port", "batch-02-recording.json");
-const secondProbes = fixturesPath("host", "data-layer-port", "batch-02-probes.json");
-const thirdRecording = fixturesPath("host", "data-layer-port", "batch-03-recording.json");
-const thirdProbes = fixturesPath("host", "data-layer-port", "batch-03-probes.json");
+// The data-layer port's recordings are pack test data, not in git: `npm run fixtures:pull` fetches them.
+const portData = (name: string) =>
+  requirePackFixture(repositoryPath("packs", "data-layer", "upstream", "lint", "authored", "fixtures", "host", "data-layer-port", name));
+
+const recording = portData("batch-01-recording.json");
+const secondRecording = portData("batch-02-recording.json");
+const secondProbes = portData("batch-02-probes.json");
+const thirdRecording = portData("batch-03-recording.json");
+const thirdProbes = portData("batch-03-probes.json");
 const policies = new URL("../../../packs/data-layer/candidates/rules/", import.meta.url);
 const summarySchema = z.object({ replayedCalls: z.number(), positiveCalls: z.number(), cleanCalls: z.number(),
   falsePositives: z.number(), falseNegatives: z.number(), engineFailures: z.number(), executionPathDifferences: z.number(), missingCoverage: z.array(z.unknown()) });
@@ -171,7 +176,7 @@ it.each([
 });
 
 it("matches fourth-batch upstream detections without claiming missing positive coverage", async () => {
-  const { passed, summary } = await run(undefined, fixturesPath("host", "data-layer-port", "batch-04-recording.json"));
+  const { passed, summary } = await run(undefined, portData("batch-04-recording.json"));
   expect(passed).toBe(false);
   expect(summary).toEqual({ replayedCalls: 206, positiveCalls: 130, cleanCalls: 76,
     falsePositives: 0, falseNegatives: 0, engineFailures: 0, executionPathDifferences: 0,
@@ -180,7 +185,7 @@ it("matches fourth-batch upstream detections without claiming missing positive c
 }, 60_000);
 
 it("ports the fourth batch across the expanded positive and clean oracle corpus", async () => {
-  const { passed, summary } = await run(undefined, fixturesPath("host", "data-layer-port", "batch-04-probes.json"));
+  const { passed, summary } = await run(undefined, portData("batch-04-probes.json"));
   expect(passed).toBe(true);
   expect(summary).toEqual({ replayedCalls: 367, positiveCalls: 218, cleanCalls: 149,
     falsePositives: 0, falseNegatives: 0, engineFailures: 0, executionPathDifferences: 0, missingCoverage: [] });
@@ -189,8 +194,8 @@ it("ports the fourth batch across the expanded positive and clean oracle corpus"
 it("certifies fourth-batch coverage from the original tests and supplemental corpus together", async () => {
   const output = join(mkdtempSync(join(tmpdir(), "rerail-data-layer-fourth-combined-")), "report.json");
   const passed = await replay([
-    fixturesPath("host", "data-layer-port", "batch-04-recording.json"),
-    fixturesPath("host", "data-layer-port", "batch-04-probes.json"),
+    portData("batch-04-recording.json"),
+    portData("batch-04-probes.json"),
   ], output);
   expect(passed).toBe(true);
   expect(summarySchema.parse(JSON.parse(readFileSync(output, "utf8")))).toEqual({
@@ -200,7 +205,7 @@ it("certifies fourth-batch coverage from the original tests and supplemental cor
 }, 60_000);
 
 it("refuses to combine recordings from different source commits", async () => {
-  const original = fixturesPath("host", "data-layer-port", "batch-04-recording.json");
+  const original = portData("batch-04-recording.json");
   const directory = mkdtempSync(join(tmpdir(), "rerail-data-layer-source-pin-"));
   const modified = z.object({ commit: z.string() }).passthrough().parse(JSON.parse(readFileSync(original, "utf8")));
   modified.commit = "different-source";
@@ -210,14 +215,14 @@ it("refuses to combine recordings from different source commits", async () => {
 });
 
 it("rejects an empty fourth-batch detector on the original positive corpus", async () => {
-  const { passed, summary } = await run(sentinel("\\b\\B"), fixturesPath("host", "data-layer-port", "batch-04-recording.json"));
+  const { passed, summary } = await run(sentinel("\\b\\B"), portData("batch-04-recording.json"));
   expect(passed).toBe(false);
   expect(summary.falseNegatives).toBe(146);
   expect(summary.engineFailures).toBe(0);
 }, 60_000);
 
 it("rejects an always-reporting fourth-batch detector on the original clean corpus", async () => {
-  const { passed, summary } = await run(sentinel("\\A"), fixturesPath("host", "data-layer-port", "batch-04-recording.json"));
+  const { passed, summary } = await run(sentinel("\\A"), portData("batch-04-recording.json"));
   expect(passed).toBe(false);
   expect(summary.falsePositives).toBeGreaterThan(0);
   expect(summary.engineFailures).toBe(0);

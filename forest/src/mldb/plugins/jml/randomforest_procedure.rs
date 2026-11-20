@@ -409,7 +409,7 @@ const DEVICE_BAG_MIN_ROWS: f64 = 256.0;
 /// on the device, and the draw's settings. `None` when the host should draw: too few rows for a bag's total to stay
 /// near 1 (the fixed-point accumulators hold under 2), or a row heavy enough to push it there alone.
 struct DeviceBags {
-    base: metal::Buffer,
+    base: crate::device::Buffer,
     keep24: u32,
     sample: u32,
     scale: f32,
@@ -434,7 +434,7 @@ impl DeviceBags {
         }
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         Ok(Some(DeviceBags {
-            base: crate::compute_kernel_metal::transfer_to_device_immutable(&shared.device, &base),
+            base: crate::device::transfer_to_device_immutable(&shared.device, &base),
             keep24: ((prop * (1u32 << 24) as f64).ceil() as u32).min(1 << 24),
             sample,
             scale: (1.0 / expected) as f32,
@@ -445,7 +445,7 @@ impl DeviceBags {
     fn draw(&self, partition: &FeatureSamplingTrainerPartition, num_examples: usize, b: usize) -> Result<TreeRows, String> {
         use crate::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Float, Int};
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
-        let decoded = crate::compute_kernel_metal::alloc_uninitialized_array_sync::<crate::randomforest_types::RowWeights>(&shared.device, num_examples);
+        let decoded = crate::device::alloc_uninitialized_array_sync::<crate::randomforest_types::RowWeights>(&shared.device, num_examples);
         partition.launch("bagRows", &[
             ("numExamples", Int(num_examples as i64)),
             ("seed", Int(bag_seed(b) as i64)),
@@ -620,7 +620,7 @@ pub fn train_forest_compacted(all_data: &PartitionData, config: &RandomForestPro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute_kernel_metal::transfer_to_host_sync;
+    use crate::device::transfer_to_host_sync;
     use crate::randomforest::tests::deep_dataset;
     use crate::randomforest::{compare_trees, FeatureSamplingTrainerKernel};
     use crate::randomforest_recursive::decode_rows;
@@ -795,9 +795,9 @@ mod tests {
         let (prop, keep24) = (0.3f64, ((0.3 * (1u32 << 24) as f64).ceil() as u32));
         let sum: f64 = base.iter().map(|b| b[0] as f64).sum();
         let scale = (1.0 / (sum * prop)) as f32;
-        let base_buf = crate::compute_kernel_metal::transfer_to_device_immutable(&shared.device, &base);
-        let out = crate::compute_kernel_metal::alloc_uninitialized_array_sync::<[f32; 2]>(&shared.device, n);
-        let mut q = crate::compute_kernel_metal::MetalComputeQueue::new(&shared.queue);
+        let base_buf = crate::device::transfer_to_device_immutable(&shared.device, &base);
+        let out = crate::device::alloc_uninitialized_array_sync::<[f32; 2]>(&shared.device, n);
+        let mut q = crate::device::ComputeQueue::new(&shared.queue);
         for b in [0usize, 1, 57] {
             use crate::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Float, Int};
             let k = crate::randomforest_kernels_grid::kernel("bagRows").unwrap();
@@ -805,7 +805,7 @@ mod tests {
             k.enqueue(&[("numExamples", Int(n as i64)), ("seed", Int(bag_seed(b) as i64)), ("keep24", Int(keep24 as i64)), ("sample", Int(1)), ("scale", Float(scale as f64)), ("baseRows", B(&base_buf)), ("decodedRowsOut", B(&out))], &[n as u32], &mut ctx).unwrap();
             drop(ctx);
             q.flush().await_().unwrap();
-            let got = crate::compute_kernel_metal::transfer_to_host_sync::<[f32; 2]>(&out, n);
+            let got = crate::device::transfer_to_host_sync::<[f32; 2]>(&out, n);
             let (mut kept, mut counted, mut total) = (0usize, 0u64, 0f64);
             for e in 0..n {
                 let c = bag_count(bag_seed(b), e as u32, keep24, 1);

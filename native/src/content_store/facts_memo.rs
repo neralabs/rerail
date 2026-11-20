@@ -336,6 +336,7 @@ impl ContentStore {
     /// counts) at the content-pure path or at `key.path`. Returns the run's digest
     /// (`FactsMemo::run_digest`) when it covered every clause of `set`. Writes nothing, and returns `None`, when the
     /// source was collected after the caller resolved it (O95): the file is evaluated again next time.
+    #[allow(clippy::type_complexity)]
     pub fn put_facts_memo(
         &self,
         key: FactsMemoKey<'_>,
@@ -505,7 +506,7 @@ impl ContentStore {
     /// The store's current generation (collection advances it): a source created before it and
     /// held by nothing is collectable.
     pub fn facts_generation(&self) -> StoreResult<i64> {
-        self.immediate_transaction(|transaction| generation(transaction))
+        self.immediate_transaction(generation)
     }
 
     fn plan_set(
@@ -588,8 +589,8 @@ fn merge_completion(
         // are evaluated again when next read.
         Some((w, codec, raw_length, frame)) => match decode(codec, raw_length, &frame).and_then(|b| decode_counts(&b)) {
             Ok(counts) => (
-                w.chunks_exact(8)
-                    .map(|c| u64::from_le_bytes(c.try_into().expect("eight bytes")))
+                w.as_chunks::<8>().0.iter()
+                    .map(|c| u64::from_le_bytes(*c))
                     .collect::<Vec<_>>(),
                 counts,
             ),
@@ -666,7 +667,7 @@ fn decode(codec: i64, raw_length: i64, frame: &[u8]) -> StoreResult<Vec<u8>> {
     if codec != CODEC_ZSTD {
         return Err(StoreError::Corrupt(format!("unsupported facts memo codec {codec}")));
     }
-    let bytes = super::decompress(&frame, 0)?;
+    let bytes = super::decompress(frame, 0)?;
     if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
         return Err(StoreError::Corrupt(
             "facts memo length does not match metadata".to_owned(),

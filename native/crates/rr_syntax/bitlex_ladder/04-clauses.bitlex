@@ -1,4 +1,4 @@
-# `.rr`, step 4: clauses, `r(x, "a", 1), s(_) :- t(x, f(y), k: z), u().`
+# `.rerail`, step 4: clauses, `r(x, "a", 1), s(_) :- t(x, f(y), k: z), u().`
 #
 # The engine's parser (logic/rr/syntax.rs) is the reference. What this step adds:
 #   - A clause: its heads, each a relation and its arguments, then `:-` and a body, a

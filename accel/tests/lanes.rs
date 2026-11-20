@@ -246,7 +246,8 @@ fn small_joins_and_staged_columns_match_the_reference() {
     let ex = Executor::new();
     let mut rng = Rng(0x5eed);
     let mut col = |n: usize, m: u64| -> Vec<i64> { (0..n).map(|_| rng.below(m) as i64 - (m as i64) / 2).collect() };
-    let mut cases: Vec<(Vec<Vec<i64>>, Vec<Vec<i64>>)> = Vec::new();
+    type Sides = (Vec<Vec<i64>>, Vec<Vec<i64>>);
+    let mut cases: Vec<Sides> = Vec::new();
     for (nl, nr, k, m) in [(1500, 2048, 1, 700), (3000, 1000, 2, 40), (10, 1, 3, 3), (0, 50, 1, 9), (40, 0, 2, 9), (5000, 1999, 3, 6), (6000, 5000, 1, 50), (4000, 9000, 2, 30)] {
         cases.push(((0..k).map(|_| col(nl, m)).collect(), (0..k).map(|_| col(nr, m)).collect()));
     }
@@ -355,7 +356,8 @@ fn launches_planned_on_a_lane_behind_its_plan_are_claimed_by_the_others() {
     let delay = std::time::Duration::from_millis(300);
     let mut ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Slow(delay))]);
     // The device priced far cheaper, so the plan puts every launch there.
-    for f in [rerail_accel::kernel::Form::Probe] {
+    {
+        let f = rerail_accel::kernel::Form::Probe;
         ex.prices.set(f, Lane::Gpu, Some(1e-15));
     }
     ex.prices.latency = [0.0; Lane::COUNT];
@@ -602,7 +604,9 @@ fn polling_a_batch_preserves_its_outputs_and_scoreboard_completion() {
     let mut running=executor.begin(Batch(vec![Launch::on(kernel.clone(),Lane::Cpu),Launch::on(kernel,Lane::Cpu)])).unwrap();
     let started=std::time::Instant::now();
     while !running.ready() {
-        assert!(started.elapsed()<std::time::Duration::from_secs(5));
+        // A guard against a batch that never completes, not a time limit: the pool this batch queues on is shared
+        // with the other tests here, which on a two-core runner hold it for many seconds.
+        assert!(started.elapsed()<std::time::Duration::from_secs(120), "the batch never completed");
         if !rerail_accel::exec::on_pool() || !rerail_accel::exec::help_once() {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -648,6 +652,40 @@ fn learned_rates_come_from_warm_samples_of_one_kernel() {
     assert_eq!(fitted.len(), 1, "{fitted:?}");
     assert_eq!((fitted[0].name.as_str(), fitted[0].lane, fitted[0].samples), ("test-learned-span", Lane::Gpu, MIN_SAMPLES));
     assert!((fitted[0].per_unit - 2e-9).abs() < 1e-12, "{}", fitted[0].per_unit);
+}
+
+/// A stored rate is fitted from its kernel's newest points alone (`FIT_HELD`, the samples newest first): many
+/// thousand older samples at another rate neither move it nor cost the fit their pairs.
+#[test]
+fn a_stored_rate_is_fitted_from_its_newest_samples() {
+    use rerail_accel::price::{FIT_HELD, Prices, fit_rates};
+    use rerail_accel::score::Sample;
+    let fixed = Prices::default().fixed[Lane::Gpu.index()];
+    let sample = |units: f64, per: f64| Sample {
+        lane: Lane::Gpu,
+        forms: "test-newest-span".to_owned(),
+        launches: 1,
+        units,
+        estimate: 0.0,
+        host_estimate: 0.0,
+        wall: fixed.submission + fixed.launch + per * units,
+        cpu: 0.0,
+        waited: 0.0,
+        phases: String::new(),
+        cold: false,
+        ok: true,
+        load: 1.0,
+        threads: 1,
+    };
+    let mut samples: Vec<Sample> = (0..FIT_HELD).map(|i| sample(1e5 * (1.0 + i as f64), 3e-9)).collect();
+    samples.extend((0..20_000).map(|i| sample(1e5 * (1.0 + (i % 500) as f64), 9e-9)));
+    let t = std::time::Instant::now();
+    let fitted = fit_rates(&samples);
+    let took = t.elapsed();
+    assert_eq!(fitted.len(), 1, "{fitted:?}");
+    assert_eq!(fitted[0].samples, FIT_HELD);
+    assert!((fitted[0].per_unit - 3e-9).abs() < 1e-12, "the newest points' rate: {}", fitted[0].per_unit);
+    assert!(took < std::time::Duration::from_millis(500), "the fit took {took:?}");
 }
 
 /// A program that holds its lane's host for `hold` (a wave's encoding and its wait on the device), and says which

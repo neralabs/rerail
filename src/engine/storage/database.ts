@@ -33,7 +33,7 @@ export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = proce
  * it read-only, and the writer would then change its mode before failing.
  */
 function connectSqlite(path: string, readonly: boolean): RerailDatabase {
-  if (!readonly) {
+  if (!readonly && path !== ":memory:") {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     // The folder too: SQLite writes its journal and WAL beside the file.
     for (const target of existsSync(path) ? [path, dirname(path)] : []) accessSync(target, constants.W_OK);
@@ -55,24 +55,43 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
  * creates the database file's mode. `secure_delete` zeroes what a delete frees (cells and pages), so deleted history
  * does not linger in free space; it costs writes only on deletes.
  */
-function prepareWriter(database: RerailDatabase, path: string): void {
-  keepFilesPrivate(dirname(path), [basename(path)]);
-  enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
+function prepareWriter(database: RerailDatabase, path: string, journalMode: "wal" | "delete" = "wal"): void {
+  if (path !== ":memory:") {
+    keepFilesPrivate(dirname(path), [basename(path)]);
+    if (journalMode === "delete") database.run(sql`PRAGMA journal_mode = DELETE`);
+    else enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
+  }
   database.run(sql`PRAGMA foreign_keys = ON`);
   database.run(sql`PRAGMA synchronous = FULL`);
   database.run(sql`PRAGMA secure_delete = ON`);
 }
 
 /** Open the Node-owned SQLite database without applying Rerail's project schema. */
-export function openSqliteDatabase(path: string, options: OpenRerailDatabaseOptions = {}): RerailDatabase {
+export function openSqliteDatabase(path: string, options: OpenRerailDatabaseOptions & { journalMode?: "wal" | "delete" } = {}): RerailDatabase {
   const readonly = options.readonly === true;
   const database = connectSqlite(path, readonly);
   try {
-    if (!readonly) prepareWriter(database, path);
+    if (!readonly) prepareWriter(database, path, options.journalMode);
     return database;
   } catch (error) {
     database.$client.close();
     throw error;
+  }
+}
+
+/**
+ * Throws SQLite's `SQLITE_BUSY` at once while another connection holds the write lock of the database at `path`, where
+ * a write would wait for it up to `busy_timeout` (5 s) on the caller's thread; takes and gives back the lock otherwise.
+ * For work that can wait for the lock without holding the thread: the daemon's reopen of a quiet session for a scan.
+ */
+export function failWhileWriteLocked(path: string): void {
+  const database = openSqliteDatabase(path);
+  try {
+    database.$client.pragma("busy_timeout = 0");
+    database.$client.exec("BEGIN IMMEDIATE");
+    database.$client.exec("ROLLBACK");
+  } finally {
+    database.$client.close();
   }
 }
 
@@ -382,9 +401,10 @@ export function resetRepositoryHistory(path: string, repositoryId: string): Hist
 /**
  * Delete the execution history recorded under `repositoryIds` (one repository's key, aliases and clone ids) in ONE
  * write transaction. Events, work links, steer feedback notes, audits, audit requests, and repository audits of those
- * sessions go; ended sessions go with them. Still-running sessions keep their row and runtime ownership claim so live
- * processes carry on recording. Rules, other repositories' history, audit settings, and presentation preferences are
- * untouched. The file is never unlinked or rebuilt, so every connection holding it open keeps working.
+ * sessions go; ended sessions go with them, with Merge Assist's record of the conflict notes each was handed.
+ * Still-running sessions keep their row and runtime ownership claim so live processes carry on recording. Rules, other
+ * repositories' history, audit settings, and presentation preferences are untouched. The file is never unlinked or
+ * rebuilt, so every connection holding it open keeps working.
  */
 export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds: readonly string[]): HistoryResetReport {
   return database.transaction(() => {
@@ -402,6 +422,8 @@ export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds
       database.run(sql`DELETE FROM ${schema.steerFeedback} WHERE ${schema.steerFeedback.repositoryId} = ${repositoryId}`);
       const ended = schema.sessionsOfRepository(repositoryId, { ended: true });
       database.run(sql`DELETE FROM ${schema.policySessionOwners} WHERE ${schema.policySessionOwners.sessionId} IN (${ended})`);
+      // Merge Assist's record of the conflict notes each of those sessions was handed (`delivered:<session id>`).
+      database.run(sql`DELETE FROM ${schema.mergeAssistState} WHERE ${schema.mergeAssistState.key} IN (SELECT 'delivered:' || session_id FROM (${ended}))`);
       database.run(sql`DELETE FROM ${schema.sessions} WHERE ${schema.sessions.sessionId} IN (${ended})`);
       sessions += counts.ended;
       openSessions += counts.open;

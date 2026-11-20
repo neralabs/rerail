@@ -1,11 +1,5 @@
-//! Keeps the store's folder and files private to the user who runs Rerail.
-//!
-//! The store holds copies of every source file the engine read. A folder made `0700` and a database made `0600`
-//! before SQLite opens it stay private: SQLite gives the `-wal`, `-shm` and `-journal` files it creates the
-//! database file's mode. `mkdir` and `open` apply a mode only when they create, so on Unix an existing folder or
-//! file that allows group or other access (an older release's, a loose umask's) loses that access when the store
-//! opens, as long as it belongs to this user. A symlink is never followed. Windows has no such modes; there the
-//! folder is created as it always was.
+//! Unix permissions for content stores. SQLite uses the database mode for its journals.
+//! The caller owns an existing parent directory. Rerail owns its database and the directories it allocates for cache data.
 
 use std::fs;
 use std::io;
@@ -15,21 +9,30 @@ use std::path::Path;
 #[cfg(unix)]
 const JOURNAL_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
 
-/// Creates the store's folder and database file where absent, private on Unix, and tightens existing ones.
+fn create_directory(path: &Path) -> io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(path)
+}
+
+/// Creates a directory reserved for the cache and repairs its Unix mode on reopening.
+pub fn prepare_cache_directory(path: &Path) -> io::Result<()> {
+    create_directory(path)?;
+    #[cfg(unix)]
+    keep_private(path, true)?;
+    Ok(())
+}
+
+/// Prepares a database at a caller-supplied path. Only new parent directories get a mode here.
 pub(super) fn prepare(path: &Path) -> io::Result<()> {
-    let folder = path
-        .parent()
-        .filter(|folder| !folder.as_os_str().is_empty());
+    if let Some(folder) = path.parent().filter(|folder| !folder.as_os_str().is_empty()) {
+        create_directory(folder)?;
+    }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-        if let Some(folder) = folder {
-            fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(folder)?;
-            keep_private(folder)?;
-        }
+        use std::os::unix::fs::OpenOptionsExt;
         // The database is created here only when absent; an existing one is never opened by this code, because
         // closing any descriptor of it would drop the POSIX locks this process's other connections hold on it.
         if fs::symlink_metadata(path).is_err() {
@@ -44,17 +47,11 @@ pub(super) fn prepare(path: &Path) -> io::Result<()> {
                 Err(error) => return Err(error),
             }
         }
-        keep_private(path)?;
+        keep_private(path, false)?;
         for suffix in JOURNAL_SUFFIXES {
             let mut journal = path.as_os_str().to_owned();
             journal.push(suffix);
-            keep_private(Path::new(&journal))?;
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        if let Some(folder) = folder {
-            fs::create_dir_all(folder)?;
+            keep_private(Path::new(&journal), false)?;
         }
     }
     Ok(())
@@ -65,7 +62,7 @@ pub(super) fn prepare(path: &Path) -> io::Result<()> {
 /// closing any descriptor of a database file drops every POSIX lock this process holds on it, SQLite's included. A
 /// missing path, a symlink, another user's, or anything else is left alone.
 #[cfg(unix)]
-fn keep_private(path: &Path) -> io::Result<()> {
+fn keep_private(path: &Path, directory: bool) -> io::Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -83,9 +80,9 @@ fn keep_private(path: &Path) -> io::Result<()> {
     if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 == 0 {
         return Ok(());
     }
-    let mode = if metadata.is_dir() {
+    let mode = if directory && metadata.is_dir() {
         0o700
-    } else if metadata.is_file() {
+    } else if !directory && metadata.is_file() {
         0o600
     } else {
         return Ok(());

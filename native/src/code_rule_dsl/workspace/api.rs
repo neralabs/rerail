@@ -22,7 +22,6 @@ use super::storage::{Attached, StorageContext, attach_storage, unix_seconds};
 use super::{
     CLAUSE_WORK_BUDGET, CandidateSets, STORED_RESULT_UNAVAILABLE, WorkspaceState, check_closed,
 };
-use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
@@ -32,16 +31,18 @@ use crate::code_rule_dsl::model::{
     ClauseKind, CodeRuleScope, CompiledCodeRule, Evaluation, Metrics, Query, Snapshot,
 };
 use crate::code_rule_dsl::placement::parse_placement;
+use crate::code_rule_dsl::prof::release_allocator_memory;
+use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
 use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
-use crate::code_rule_dsl::prof::release_allocator_memory;
+use crate::content_store::analysis_scope::{self, AnalysisOwner, AnalysisRun};
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
 use napi_derive::napi;
 use serde_json::json;
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
@@ -53,16 +54,22 @@ static WORKSPACE_INSTANCES: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 
 #[napi]
 pub struct CodeRuleDslWorkspace {
-    #[napi(skip)] pub state: Arc<Mutex<WorkspaceState>>,
+    #[napi(skip)]
+    pub state: Arc<Mutex<WorkspaceState>>,
     /// Each registered code rule's scope, and whether the code rule reads text
     /// (`CompiledCodeRule::reads_text`), answered without the state lock.
-    #[napi(skip)] pub scopes: Mutex<Vec<(CodeRuleScope, bool)>>,
+    #[napi(skip)]
+    pub scopes: Mutex<Vec<(CodeRuleScope, bool)>>,
     /// Whether a code rule reads `file.package.serverGraph`, answered without the state lock.
     pub(super) server_graph: AtomicBool,
     /// Whether a code rule has an AST clause in a family whose files read their nearest
     /// `package.json`, answered without the state lock.
     pub(super) package_manifests: AtomicBool,
-    #[napi(skip)] pub closed: Arc<AtomicBool>,
+    #[napi(skip)]
+    pub closed: Arc<AtomicBool>,
+    /// What the workspace's runs share by design (decision 0442): its own, as apart from another workspace's as one
+    /// in another process.
+    #[napi(skip)] pub shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
 }
 
 impl Default for CodeRuleDslWorkspace {
@@ -71,10 +78,271 @@ impl Default for CodeRuleDslWorkspace {
     }
 }
 
+/// One resolved commit or tree, pinned for the lifetime of a scan.
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub struct GitRevisionSource {
+    snapshot: Arc<crate::git_workspace::snapshot::Snapshot>,
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct GitDirectoryEntry {
+    pub name: Option<String>,
+    pub name_bytes: Option<Buffer>,
+    pub mode: u32,
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct GitSourceFailure {
+    pub path: String,
+    pub message: String,
+    pub path_identity: GitPathIdentity,
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct GitPathIdentity {
+    pub encoding: String,
+    pub value: String,
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct GitSourceRead {
+    pub status: String,
+    pub bytes: Option<Buffer>,
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct GitPathStatus {
+    pub status: String,
+    pub mode: Option<u32>,
+}
+
+#[cfg(not(feature = "headless"))]
+fn file_byte_limit(limit: f64) -> Result<u64> {
+    if !(0.0..=f64::from(u32::MAX)).contains(&limit) || limit.fract() != 0.0 {
+        return Err(invalid("file byte limit must be an integer between 0 and 4294967295"));
+    }
+    Ok(limit as u64)
+}
+
+#[cfg(not(feature = "headless"))]
+impl GitRevisionSource {
+    pub fn pinned_snapshot(&self) -> Arc<crate::git_workspace::snapshot::Snapshot> {
+        Arc::clone(&self.snapshot)
+    }
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+impl GitRevisionSource {
+    #[napi(constructor)]
+    pub fn new(root: String, revision: String, analysis_scope: String, invocation: Option<String>) -> Result<Self> {
+        let snapshot = crate::git_workspace::snapshot::Snapshot::scoped_from(
+            Path::new(&root), &revision, &analysis_scope, Path::new(invocation.as_deref().unwrap_or(&root)),
+        )
+            .map_err(invalid)?;
+        Ok(Self { snapshot: Arc::new(snapshot) })
+    }
+
+    #[napi(getter)]
+    pub fn tree(&self) -> String {
+        self.snapshot.tree()
+    }
+
+    #[napi(getter)]
+    pub fn commit(&self) -> Option<String> {
+        self.snapshot.commit()
+    }
+
+    #[napi]
+    pub fn invalid_paths(&self) -> Vec<String> {
+        self.snapshot.invalid_paths()
+    }
+
+    #[napi]
+    pub fn source_failures(&self) -> Vec<GitSourceFailure> {
+        use crate::git_workspace::snapshot::PathIdentity;
+        self.snapshot.source_failures().into_iter().map(|failure| {
+            let (encoding, value) = match failure.path_identity {
+                PathIdentity::Utf8(path) => ("utf8", path),
+                PathIdentity::Hex(bytes) => ("hex", bytes),
+            };
+            GitSourceFailure { path: failure.path, message: failure.message, path_identity: GitPathIdentity { encoding: encoding.into(), value } }
+        }).collect()
+    }
+
+    #[napi]
+    pub fn contains_path(&self, path: String) -> Result<bool> {
+        self.snapshot.contains_path(Path::new(&path)).map_err(|err| invalid(err.to_string()))
+    }
+
+    #[napi]
+    pub fn path_status(&self, path: String) -> Result<GitPathStatus> {
+        let (status, mode) = self.snapshot.path_status(Path::new(&path)).map_err(|err| invalid(err.to_string()))?;
+        Ok(GitPathStatus { status: status.to_owned(), mode: mode.map(u32::from) })
+    }
+
+    #[napi]
+    pub fn read_directory(&self, path: String) -> Result<Option<Vec<GitDirectoryEntry>>> {
+        let entries = self.snapshot.directory_entries(&path).map_err(|err| invalid(err.to_string()))?;
+        Ok(entries.map(|entries| entries.into_iter()
+            .map(|(name, mode)| {
+                let (name, name_bytes) = match String::from_utf8(name) {
+                    Ok(name) => (Some(name), None),
+                    Err(error) => (None, Some(error.into_bytes().into())),
+                };
+                GitDirectoryEntry { name, name_bytes, mode: u32::from(mode) }
+            })
+            .collect()))
+    }
+
+    /// An oversized file has no result. A read failure is an error.
+    #[napi]
+    pub fn read_file(&self, path: String, limit: f64) -> Result<Option<Buffer>> {
+        match self.snapshot.read_source(&path, file_byte_limit(limit)?) {
+            Ok(bytes) => Ok(Some(bytes.into())),
+            Err(err) if err.kind() == std::io::ErrorKind::FileTooLarge => Ok(None),
+            Err(err) => Err(invalid(err.to_string())),
+        }
+    }
+
+    #[napi]
+    pub fn read_source_checked(&self, path: String, limit: f64) -> Result<GitSourceRead> {
+        let (status, bytes) = match self.snapshot.read_source(&path, file_byte_limit(limit)?) {
+            Ok(bytes) => ("ok", Some(bytes.into())),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => ("absent", None),
+            Err(err) if err.kind() == std::io::ErrorKind::FileTooLarge => ("too-large", None),
+            Err(err) => return Err(invalid(format!("cannot read {path}: {err}"))),
+        };
+        Ok(GitSourceRead { status: status.to_owned(), bytes })
+    }
+
+    #[napi]
+    pub fn read_source(&self, path: String) -> Option<napi::bindgen_prelude::Buffer> {
+        self.snapshot.read_source(&path, 32_000_000).ok().map(Into::into)
+    }
+
+    #[napi]
+    pub fn restrict_paths(&self, paths: Vec<String>) -> Result<()> {
+        self.snapshot.restrict_paths(paths).map_err(|err| invalid(err.to_string()))
+    }
+
+    #[napi]
+    pub fn set_source_languages(&self, json: String) -> Result<()> {
+        self.snapshot.set_source_languages(serde_json::from_str(&json).map_err(json_error)?);
+        Ok(())
+    }
+}
+
+#[napi]
+pub struct AnalysisScopeRun(Mutex<AnalysisRun>);
+
+fn analysis_generation(value: f64) -> Result<i64> {
+    if !(0.0..=analysis_scope::MAX_GENERATION as f64).contains(&value) || value.fract() != 0.0 {
+        return Err(invalid("analysis generation must be a nonnegative safe integer"));
+    }
+    Ok(value as i64)
+}
+
+#[napi]
+impl AnalysisScopeRun {
+    #[napi(constructor)]
+    pub fn new(store_path: String, value: String, directory: bool, id: String, generation: f64, home: Option<String>, expected_store: Option<String>) -> Result<Self> {
+        let generation = analysis_generation(generation)?;
+        let scope = if directory { analysis_scope::directory_in(Path::new(&value), home.as_deref()) }
+            else { analysis_scope::named(&value).ok_or_else(|| invalid("analysis scope name must not be empty"))? };
+        let store = crate::content_store::ContentStore::open(Path::new(&store_path)).map_err(|e| invalid(e.to_string()))?;
+        check_store_identity(&store, expected_store.as_deref()).map_err(|err| invalid(err.to_string()))?;
+        let mut run = AnalysisRun::begin_at(store, &scope, &id, generation).map_err(|e| invalid(e.to_string()))?;
+        if directory { run.set_directory_scope(Path::new(&value)); }
+        Ok(Self(Mutex::new(run)))
+    }
+
+    #[cfg(not(feature = "headless"))]
+    #[napi]
+    pub fn select_source(&self, root: String, source: Option<&GitRevisionSource>) -> Result<()> {
+        let selected = source.map_or_else(|| analysis_scope::RunSource::directory(Path::new(&root)), |view| view.snapshot.run_source());
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).select_source(selected).map_err(|e| invalid(e.to_string()))
+    }
+
+    #[napi]
+    pub fn finish(&self, succeeded: bool) -> Result<Option<String>> {
+        let mut run = self.0.lock().unwrap_or_else(|err| err.into_inner());
+        run.finish(succeeded).map_err(|e| invalid(e.to_string()))?;
+        Ok(run.publication_warning())
+    }
+
+    #[napi(getter)]
+    pub fn publication(&self) -> Option<String> {
+        self.0.lock().unwrap_or_else(|err| err.into_inner()).publication.map(|p| p.as_str().to_owned())
+    }
+
+    #[napi(getter)]
+    pub fn store_identity(&self) -> String {
+        self.0.lock().unwrap_or_else(|err| err.into_inner()).store_identity().to_string()
+    }
+
+    #[napi(getter)]
+    pub fn acquisition(&self) -> String {
+        self.0.lock().unwrap_or_else(|err| err.into_inner()).acquisition().to_string()
+    }
+
+    #[napi]
+    pub fn warn(&self, message: String) {
+        self.0.lock().unwrap_or_else(|err| err.into_inner()).owner.warn(message);
+    }
+}
+
+#[cfg(not(feature = "headless"))]
+impl AnalysisScopeRun {
+    pub fn owner_for(&self, store: &Path, root: &Path, source: Option<&GitRevisionSource>) -> Result<AnalysisOwner> {
+        let mut run = self.0.lock().unwrap_or_else(|err| err.into_inner());
+        if !run.is_open() {
+            return Err(invalid("analysis scope run has finished"));
+        }
+        if store != run.store_path() && !store.canonicalize().ok().zip(run.store_path().canonicalize().ok())
+            .is_some_and(|(requested, owned)| requested == owned) {
+            return Err(invalid("analysis scope run belongs to another content store"));
+        }
+        let selected = source.map_or_else(|| analysis_scope::RunSource::directory(root), |s| s.snapshot.run_source());
+        run.select_source(selected).map_err(|e| invalid(e.to_string()))?;
+        Ok(run.owner.clone())
+    }
+}
+
+fn check_store_identity(store: &crate::content_store::ContentStore, expected: Option<&str>) -> std::result::Result<(), StoreError> {
+    if expected.is_some_and(|id| id.parse::<i64>().ok() != Some(store.identity())) {
+        return Err(StoreError::Invalid(format!("analysis store identity changed at {}", store.database_path().display())));
+    }
+    Ok(())
+}
+
+/// The Node environment's machine (decision 0442). The addon's caller is the environment: it makes one machine and
+/// keeps it in its instance data, so every workspace it makes shares its pool, its CPU slot and its learned model,
+/// each workspace on a shared object of its own. Another environment (a worker thread) has its own.
+fn environment_machine(env: &napi::Env) -> Result<Arc<crate::code_rule_dsl::logic::profile::Machine>> {
+    if let Some(machine) = env.get_instance_data::<Arc<crate::code_rule_dsl::logic::profile::Machine>>()? {
+        return Ok(Arc::clone(machine));
+    }
+    let machine = crate::code_rule_dsl::logic::profile::Machine::new();
+    env.set_instance_data(Arc::clone(&machine), (), |_| {})?;
+    Ok(machine)
+}
+
 #[napi]
 impl CodeRuleDslWorkspace {
-    #[napi(constructor)]
+    /// A workspace on the tests' shared object (a product build's: one of its own), for a caller with no Node
+    /// environment.
     pub fn new() -> Self {
+        Self::on(crate::code_rule_dsl::logic::profile::default_shared())
+    }
+
+    fn on(shared: Arc<crate::code_rule_dsl::logic::profile::Shared>) -> Self {
         let state = WorkspaceState {
             instance: WORKSPACE_INSTANCES.fetch_add(1, Ordering::Relaxed),
             ..WorkspaceState::default()
@@ -85,7 +353,17 @@ impl CodeRuleDslWorkspace {
             server_graph: AtomicBool::new(false),
             package_manifests: AtomicBool::new(false),
             closed: Arc::new(AtomicBool::new(false)),
+            shared,
         }
+    }
+}
+
+#[napi]
+impl CodeRuleDslWorkspace {
+    /// A workspace on a shared object of its own, on the environment's machine (`environment_machine`).
+    #[napi(constructor)]
+    pub fn construct(env: napi::Env) -> Result<Self> {
+        Ok(Self::on(crate::code_rule_dsl::logic::profile::Shared::on(&environment_machine(&env)?)))
     }
 
     /// Attaches the content store file at `store_path` to the Git repository containing `root`.
@@ -100,12 +378,39 @@ impl CodeRuleDslWorkspace {
         root: String,
         store_path: String,
         secret_names: SecretNamePatterns,
+        analysis: Option<&AnalysisScopeRun>,
+        generation: Option<f64>,
+        home: Option<String>,
+        expected_store: Option<String>,
     ) -> Result<AsyncTask<WorkspaceStorageTask>> {
-        Ok(AsyncTask::new(self.storage_task(
-            root,
+        let generation = analysis_generation(generation.unwrap_or_default())?;
+        let owner = analysis.map(|run| run.owner_for(Path::new(&store_path), Path::new(&root), None)).transpose()?;
+        let mut task = self.storage_task(root, store_path, &secret_names)?;
+        task.analysis_owner = owner;
+        task.analysis_generation = generation;
+        task.analysis_home = home;
+        task.expected_store = expected_store;
+        Ok(AsyncTask::new(task))
+    }
+
+    #[cfg(not(feature = "headless"))]
+    #[napi]
+    pub fn enable_revision_storage_async(
+        &self,
+        source: &GitRevisionSource,
+        store_path: String,
+        secret_names: SecretNamePatterns,
+        analysis: Option<&AnalysisScopeRun>,
+    ) -> Result<AsyncTask<WorkspaceStorageTask>> {
+        let owner = analysis.map(|run| run.owner_for(Path::new(&store_path), source.snapshot.root(), Some(source))).transpose()?;
+        let mut task = self.storage_task(
+            source.snapshot.root().to_string_lossy().into_owned(),
             store_path,
             &secret_names,
-        )?))
+        )?;
+        task.snapshot = Some(Arc::clone(&source.snapshot));
+        task.analysis_owner = owner;
+        Ok(AsyncTask::new(task))
     }
 
     pub fn storage_task(
@@ -120,7 +425,13 @@ impl CodeRuleDslWorkspace {
         Ok(WorkspaceStorageTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
             root,
+            snapshot: None,
+            analysis_owner: None,
+            analysis_generation: 0,
+            expected_store: None,
+            analysis_home: None,
             store_path: PathBuf::from(store_path),
             secret_names: Arc::new(SecretNames::compile(secret_names)?),
         })
@@ -137,6 +448,8 @@ impl CodeRuleDslWorkspace {
         compiled: &CompiledCodeRuleDsl,
         placement: Option<String>,
     ) -> Result<()> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let placement = placement.as_deref().map(parse_placement).transpose()?;
         let guard = match self.state.try_lock() {
             Ok(guard) => guard,
@@ -236,6 +549,7 @@ impl CodeRuleDslWorkspace {
                                     producer.violation.project.clear();
                                     producer.violation.each = None;
                                     producer.violation.node_regexes.clear();
+                                    producer.violation.gap_tests.clear();
                                 }
                                 id
                             })
@@ -337,10 +651,12 @@ impl CodeRuleDslWorkspace {
 
     #[napi(catch_unwind)]
     pub fn try_apply(&self, request_json: String) -> Result<Option<String>> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         if self.closed.load(Ordering::Acquire) || request_json.len() > 8192 {
             return Ok(None);
         }
-        let Some(_slot) = cpu_slot().try_lock() else {
+        let Some(_slot) = cpu_slot().try_lock_arc() else {
             return Ok(None);
         };
         // Upkeep yields to the apply (decision 0190 §8).
@@ -438,6 +754,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(WorkspaceApplyTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
             request_json,
             request_buffer: None,
             request_direct: None,
@@ -449,6 +766,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(WorkspaceApplyTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
             request_json: String::new(),
             request_buffer: Some(request.to_vec()),
             request_direct: None,
@@ -465,6 +783,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(WorkspaceIndexTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
             options,
         })
     }
@@ -475,10 +794,19 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(self.completion_task())
     }
 
+    #[napi]
+    pub fn retain_analysis_scope_async(&self) -> AsyncTask<WorkspaceCompletionTask> {
+        let mut task = self.completion_task();
+        task.retain_scope = true;
+        AsyncTask::new(task)
+    }
+
     pub fn completion_task(&self) -> WorkspaceCompletionTask {
         WorkspaceCompletionTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            retain_scope: false,
+            shared: Arc::clone(&self.shared),
         }
     }
 
@@ -489,25 +817,28 @@ impl CodeRuleDslWorkspace {
         &self,
         cursor: u32,
         maximum_bytes: u32,
+        include_fingerprints: Option<bool>,
     ) -> AsyncTask<WorkspaceResultPageTask> {
-        AsyncTask::new(self.result_page_task(cursor, maximum_bytes))
+        let mut task = self.result_page_task(cursor, maximum_bytes);
+        task.include_fingerprints = include_fingerprints.unwrap_or_default();
+        AsyncTask::new(task)
     }
 
-    pub fn result_page_task(
-        &self,
-        cursor: u32,
-        maximum_bytes: u32,
-    ) -> WorkspaceResultPageTask {
+    pub fn result_page_task(&self, cursor: u32, maximum_bytes: u32) -> WorkspaceResultPageTask {
         WorkspaceResultPageTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
+            shared: Arc::clone(&self.shared),
             cursor: cursor as usize,
             maximum_bytes: maximum_bytes as usize,
+            include_fingerprints: false,
         }
     }
 
     #[napi(catch_unwind)]
     pub fn memory_profile(&self) -> Result<String> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let state = match self.state.lock() {
             Ok(guard) => StateLease {
                 guard: Some(guard),
@@ -529,6 +860,8 @@ impl CodeRuleDslWorkspace {
     /// least recently used documents, which later loads bring back from the store or a reparse.
     #[napi(catch_unwind)]
     pub fn set_document_residency_limit(&self, bytes: u32) -> Result<()> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         self.state_now()?.documents.set_limit(bytes as usize);
         Ok(())
     }
@@ -539,6 +872,8 @@ impl CodeRuleDslWorkspace {
     /// apply that defers nothing evaluate again the files whose clauses read import targets.
     #[napi(catch_unwind)]
     pub fn set_root(&self, root: String) -> Result<()> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let root = PathBuf::from(root);
         if !root.is_absolute() {
             return Err(invalid("workspace root must be an absolute path"));
@@ -552,7 +887,16 @@ impl CodeRuleDslWorkspace {
     }
 
     #[napi(catch_unwind)]
+    pub fn set_scan_fingerprint_prefix(&self, prefix: String) -> Result<()> {
+        let mut state = self.state_now()?;
+        state.scan_fingerprints = Some(super::scan_fingerprints::ScanFingerprints::new(prefix));
+        Ok(())
+    }
+
+    #[napi(catch_unwind)]
     pub fn evict_inactive(&self) -> Result<bool> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let mut state = self.state_now()?;
         // Cross-file clauses read the evidence index and the call graph, which eviction keeps: they
         // are summaries of the files, and an edit after eviction updates the graph in place.
@@ -606,6 +950,8 @@ impl CodeRuleDslWorkspace {
         start_byte: u32,
         end_byte: u32,
     ) -> Result<Option<String>> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let mut state = self.state_now()?;
         documents::reference(&mut state, &path, start_byte as usize, end_byte as usize)?
             .map(|reference| serde_json::to_string(&reference).map_err(json_error))
@@ -616,6 +962,8 @@ impl CodeRuleDslWorkspace {
     /// reference whose file version is no longer current is refused.
     #[napi(catch_unwind)]
     pub fn resolve_node_reference(&self, reference: String) -> Result<String> {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         let reference: documents::NodeReference =
             serde_json::from_str(&reference).map_err(json_error)?;
         let mut state = self.state_now()?;
@@ -624,6 +972,8 @@ impl CodeRuleDslWorkspace {
 
     #[napi(catch_unwind)]
     pub fn close(&self) {
+        // On the workspace's shared object (decision 0442).
+        let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
         self.closed.store(true, Ordering::Release);
         clear_if_unlocked(&self.state);
         match self.scopes.lock() {
@@ -788,6 +1138,7 @@ thread_local! {
 pub struct StorageAttachment {
     pub attached: bool,
     pub reason: Option<String>,
+    pub cache_unavailable: bool,
     pub discovery_milliseconds: f64,
     pub publication_milliseconds: f64,
 }
@@ -798,7 +1149,14 @@ pub struct StorageAttachment {
 pub struct WorkspaceStorageTask {
     state: Arc<Mutex<WorkspaceState>>,
     closed: Arc<AtomicBool>,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
     root: String,
+    snapshot: Option<Arc<crate::git_workspace::snapshot::Snapshot>>,
+    analysis_owner: Option<AnalysisOwner>,
+    analysis_generation: i64,
+    expected_store: Option<String>,
+    analysis_home: Option<String>,
     /// The store file the host named.
     store_path: PathBuf,
     /// The names whose files the store never holds.
@@ -812,13 +1170,51 @@ impl Task for WorkspaceStorageTask {
 
     fn compute(&mut self) -> Result<StorageAttachment> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
             // A workspace Git cannot describe (no repository, an unreadable untracked directory, a
             // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
             // and interactive edits evaluate without reuse. Only a root outside any repository is
             // expected; any other cause is reported, so reuse is never lost silently.
             let discovery_started = Instant::now();
-            let discovered = crate::git_workspace::discover(std::path::Path::new(&self.root));
+            let cache_failed = |error: StoreError| StorageAttachment {
+                attached: false,
+                reason: Some(error.to_string()),
+                cache_unavailable: true,
+                discovery_milliseconds: discovery_started.elapsed().as_secs_f64() * 1000.0,
+                publication_milliseconds: 0.0,
+            };
+            let deferred = self.snapshot.is_some() || self.analysis_owner.is_some();
+            let owner = if let Some(owner) = self.analysis_owner.take() {
+                Some(owner)
+            } else if self.store_path == Path::new(":memory:") {
+                None
+            } else {
+                let store = match crate::content_store::ContentStore::open(&self.store_path) {
+                    Ok(store) => store,
+                    Err(error) => return Ok(cache_failed(error)),
+                };
+                if let Err(error) = check_store_identity(&store, self.expected_store.as_deref()) { return Ok(cache_failed(error)); }
+                let scope = crate::git_workspace::snapshot::analysis_scope(Path::new(&self.root))
+                    .unwrap_or_else(|| analysis_scope::directory_in(Path::new(&self.root), self.analysis_home.as_deref()));
+                match store.begin_analysis_scope_at(&scope, self.analysis_generation) {
+                    Ok(owner) => Some(owner),
+                    Err(error) => return Ok(cache_failed(error)),
+                }
+            };
+            let discovered = if let Some(snapshot) = &self.snapshot {
+                use crate::git_workspace::snapshot::InventoryError;
+                match snapshot.workspace(&self.store_path, owner.as_ref()) {
+                    Ok(discovered) => Ok(discovered),
+                    Err(InventoryError::Source(error)) => Err(crate::git_workspace::DiscoveryError::Failed(error)),
+                    Err(InventoryError::Cache(error)) => return Ok(cache_failed(error)),
+                }
+            } else {
+                // Only the open is under a Git read's time limit (`git_workspace::discover`): the walk
+                // and status of a large checkout may take longer, as they always could.
+                crate::git_workspace::discover(std::path::Path::new(&self.root))
+            };
             let discovery_milliseconds = discovery_started.elapsed().as_secs_f64() * 1000.0;
             let discovered = match discovered {
                 Ok(discovered) => discovered,
@@ -826,6 +1222,7 @@ impl Task for WorkspaceStorageTask {
                     return Ok(StorageAttachment {
                         attached: false,
                         reason: (!error.is_no_repository()).then(|| error.to_string()),
+                        cache_unavailable: false,
                         discovery_milliseconds,
                         publication_milliseconds: 0.0,
                     });
@@ -838,14 +1235,16 @@ impl Task for WorkspaceStorageTask {
                 discovered,
                 std::mem::take(&mut self.store_path),
                 Arc::clone(&self.secret_names),
+                deferred,
             )?;
             let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
             let context = match attached {
                 Attached::Storage(context) => context,
-                Attached::Busy(reason) => {
+                Attached::Unavailable(reason) => {
                     return Ok(StorageAttachment {
                         attached: false,
                         reason: Some(reason),
+                        cache_unavailable: true,
                         discovery_milliseconds,
                         publication_milliseconds,
                     });
@@ -873,6 +1272,18 @@ impl Task for WorkspaceStorageTask {
                     "storage must be attached before the workspace's first apply",
                 ));
             }
+            if self.snapshot.is_some() {
+                state.import_root = Some(PathBuf::from(&self.root));
+                state.import_generation += 1;
+            }
+            if let Some(owner) = owner {
+                if deferred {
+                    state.pending_analysis = Some((owner, self.root.clone()));
+                } else {
+                    context.store.own_analysis_snapshot(&owner, &self.root, context.snapshot_id)
+                        .map_err(|err| invalid(err.to_string()))?;
+                }
+            }
             state.storage = Some(context);
             #[cfg(any(test, feature = "test-hooks"))]
             if let Some(on_attached) = ON_STORAGE_ATTACHED.take() {
@@ -881,6 +1292,7 @@ impl Task for WorkspaceStorageTask {
             Ok(StorageAttachment {
                 attached: true,
                 reason: None,
+                cache_unavailable: false,
                 discovery_milliseconds,
                 publication_milliseconds,
             })
@@ -895,6 +1307,8 @@ impl Task for WorkspaceStorageTask {
 pub struct WorkspaceApplyTask {
     pub state: Arc<Mutex<WorkspaceState>>,
     pub closed: Arc<AtomicBool>,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    pub shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
     pub request_json: String,
     pub request_buffer: Option<Vec<u8>>,
     pub request_direct: Option<Request>,
@@ -904,18 +1318,29 @@ pub struct WorkspaceApplyTask {
 #[napi]
 pub const WORKSPACE_BUSY: &str = "WORKSPACE_BUSY";
 
-/// One apply at a time across the process's workspaces. It guards no data, so it is a mutex a
-/// panic does not poison: an apply that panics while holding it frees it for the next one.
-pub fn cpu_slot() -> &'static parking_lot::Mutex<()> {
-    static SLOT: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
-    &SLOT
+/// An operation failed in the store, after the workspace had already attached it.
+const WORKSPACE_STORE_UNAVAILABLE: &str = "WORKSPACE_STORE_UNAVAILABLE";
+
+pub(super) fn store_unavailable(error: StoreError) -> napi::Error {
+    invalid(format!("{WORKSPACE_STORE_UNAVAILABLE}\n{error}"))
+}
+
+/// One apply at a time across the machine's workspaces (decision 0442: the machine's, so a Node environment's
+/// workspaces share it). It guards no data, so it is a mutex a panic does not poison: an apply that panics while
+/// holding it frees it for the next one.
+pub fn cpu_slot() -> Arc<parking_lot::Mutex<()>> {
+    #[derive(Default)]
+    struct CpuSlot(Arc<parking_lot::Mutex<()>>);
+    Arc::clone(&crate::code_rule_dsl::logic::profile::machine::<CpuSlot>().0)
 }
 impl Task for WorkspaceApplyTask {
     type Output = ResultText;
     type JsValue = ResultText;
     fn compute(&mut self) -> Result<ResultText> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
-            let Some(_slot) = cpu_slot().try_lock() else {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
+            let Some(_slot) = cpu_slot().try_lock_arc() else {
                 return Err(invalid(WORKSPACE_BUSY));
             };
             // Upkeep yields to the apply (decision 0190 §8): its steps stop, their work left due.
@@ -1070,6 +1495,7 @@ impl WorkspaceApplyTask {
             return Err(error);
         }
         CrossFileScheduler::release_producer_scopes(&mut state, &producer_batch);
+        super::scan_fingerprints::capture_local(&mut state, &replaced)?;
         #[cfg(feature = "code-rule-profile")]
         let _storage_write_timer = profile::PhaseTimer::start(profile::Phase::StoreWrite);
         let storage_write_started = Instant::now();
@@ -1117,7 +1543,7 @@ impl WorkspaceApplyTask {
                 {
                     state.pending_removals.extend(pending);
                     if !matches!(error, StoreError::Busy) {
-                        return Err(invalid(error.to_string()));
+                        return Err(store_unavailable(error));
                     }
                     busy = true;
                     state.note_store_busy("while deleting removed files");
@@ -1187,8 +1613,8 @@ impl WorkspaceApplyTask {
                 metrics.storage_reconciliation_passes += publication.reconciliation_passes;
                 metrics.reused_sources += publication.reused_sources;
                 metrics.reused_tapes += publication.reused_tapes;
-                metrics.compressed_sources += publication.compressed_sources;
-                metrics.compressed_tapes += publication.compressed_tapes;
+                metrics.written_sources += publication.written_sources;
+                metrics.written_tapes += publication.written_tapes;
                 check_closed(&self.closed)?;
                 for (path, stored) in paths.iter().zip(publication.files) {
                     if let Some(file) = state.files.get_mut(path) {
@@ -1288,6 +1714,7 @@ impl WorkspaceApplyTask {
                 }
                 metrics.visited_nodes += evaluation.metrics.visited_nodes;
                 metrics.observe_native_work(&evaluation.metrics);
+                super::scan_fingerprints::capture_global(&mut state, &evaluation.violations)?;
                 let previous = state.global_results.insert(index, evaluation);
                 complete |= !replace_global_changes(
                     previous.as_ref(),
@@ -1329,8 +1756,11 @@ impl Drop for PurgeAfterApply {
 pub struct WorkspaceResultPageTask {
     state: Arc<Mutex<WorkspaceState>>,
     closed: Arc<AtomicBool>,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
     cursor: usize,
     maximum_bytes: usize,
+    include_fingerprints: bool,
 }
 
 impl Task for WorkspaceResultPageTask {
@@ -1339,6 +1769,8 @@ impl Task for WorkspaceResultPageTask {
 
     fn compute(&mut self) -> Result<String> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             if self.maximum_bytes == 0 || self.maximum_bytes > 64 * 1024 * 1024 {
                 return Err(invalid(
                     "result page limit must be between 1 byte and 64 MiB",
@@ -1361,7 +1793,7 @@ impl Task for WorkspaceResultPageTask {
                 closed: &self.closed,
             };
             check_closed(&self.closed)?;
-            serialize_result_page(&mut state, self.cursor, self.maximum_bytes)
+            serialize_result_page(&mut state, self.cursor, self.maximum_bytes, self.include_fingerprints)
         })
     }
 
@@ -1382,6 +1814,9 @@ impl Task for WorkspaceResultPageTask {
 pub struct WorkspaceCompletionTask {
     state: Arc<Mutex<WorkspaceState>>,
     closed: Arc<AtomicBool>,
+    retain_scope: bool,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
 }
 
 impl WorkspaceCompletionTask {
@@ -1483,7 +1918,17 @@ impl Task for WorkspaceCompletionTask {
 
     fn compute(&mut self) -> Result<()> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
+            if self.retain_scope {
+                let state = self.lock_state()?;
+                if let Some((owner, workspace)) = &state.pending_analysis {
+                    let storage = state.storage.as_ref().ok_or_else(|| invalid("Repository storage did not attach"))?;
+                    storage.store.own_analysis_snapshot(owner, workspace, storage.snapshot_id).map_err(|err| invalid(err.to_string()))?;
+                }
+                return Ok(());
+            }
             // One deadline for the publication under the lock and the completion write after it,
             // so an apply waiting on the lock waits at most one.
             let _deadline = OperationDeadline::enter();

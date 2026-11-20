@@ -10,8 +10,8 @@
 //! PHP coerces. The oracle is PHP 8.5.11 (`fixtures/php/value/generate_php.php`); PHPStan
 //! 2.2.16 reads the constants followed (`fixtures/php/compile/format-args/phpstan/constants.php`).
 
-use crate::code_rule_dsl::tree::Tree;
 use super::{BigInt, ContainerKind, Context, Value};
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::value::NodeRef;
 use ast_grep_core::{Doc, Node};
 use num_traits::ToPrimitive;
@@ -193,7 +193,6 @@ pub(crate) fn key<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Opti
     key_of(&known(decode(node, context))?)
 }
 
-
 fn only_child<'a, D: Doc>(node: &Node<'a, D>) -> Option<Node<'a, D>> {
     let mut children = node.named_code();
     let child = children.next()?;
@@ -307,7 +306,8 @@ fn single_quoted(text: &str) -> Option<Vec<u8>> {
 /// Whether a double-quoted string or heredoc body holds only literal text and escapes, not an
 /// interpolation, which a constant expression refuses.
 fn literal_parts<D: Doc>(node: &Node<'_, D>) -> bool {
-    node.named_code().all(|child| matches!(child.kind().as_ref(), "string_content" | "escape_sequence"))
+    node.named_code()
+        .all(|child| matches!(child.kind().as_ref(), "string_content" | "escape_sequence"))
 }
 
 fn double_quoted(text: &str) -> Option<Vec<u8>> {
@@ -1090,7 +1090,8 @@ impl Prefix {
         match node.kind().as_ref() {
             "unary_op_expression" => Some((
                 Self::Operator(node.operator_token()?.text().to_string()),
-                node.field("argument").or_else(|| node.named_code().last())?,
+                node.field("argument")
+                    .or_else(|| node.named_code().last())?,
             )),
             "cast_expression" => Some((
                 Self::Cast(node.field("type")?.text().to_ascii_lowercase()),

@@ -1,8 +1,41 @@
 use super::*;
-use crate::code_rule_dsl::logic::plan::{KeepPlans, Model, Stats, atom_sig, body};
+use crate::code_rule_dsl::logic::plan::{KeepPlans, Model, Stats, body};
 use crate::code_rule_dsl::logic::plan::Inputs;
-use crate::code_rule_dsl::logic::rr::parse;
+use crate::code_rule_dsl::logic::program_image::{Lit, TermRef, Version};
+use crate::code_rule_dsl::logic::rr::parse_version as parse;
 use std::collections::{BTreeSet, HashSet};
+
+/// The relations `v`'s rules derive.
+fn derived_of(v: &Version) -> HashSet<String> {
+    v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect()
+}
+
+/// An argument of a test rule's atom, as a test runs the rule by hand: an integer, a variable by name, or another.
+enum Arg {
+    Int(i64),
+    Var(String),
+    Other,
+}
+
+/// The body atoms of `v`'s first rule, in order, each its relation and its arguments (`None` for another literal).
+fn atoms(v: &Version) -> Vec<Option<(String, Vec<Arg>)>> {
+    let r = v.rules().next().expect("a rule");
+    r.body()
+        .map(|l| match l.view() {
+            Lit::Atom(a) => Some((
+                v.rel_name(a.rel()).to_owned(),
+                a.args()
+                    .map(|t| match t {
+                        TermRef::Int(i) => Arg::Int(i),
+                        TermRef::Var(x) => Arg::Var(v.text(r.var(x)).to_owned()),
+                        _ => Arg::Other,
+                    })
+                    .collect(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
 
 /// The memo is the process's: tests that write it take turns.
 static SERIAL: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
@@ -57,7 +90,7 @@ fn random_orders_are_distinct_connected_and_start_where_asked() {
 #[test]
 fn the_critical_path_is_the_heaviest_chain_and_its_heavy_lines_are_noted() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     // s0 -> s1 -> s3 (work 10 + 200k + 10), s0 -> s2 -> s3 (10 + 50k + 10).
     let names: Vec<String> = ["s0", "s1", "s2", "s3"].map(String::from).to_vec();
     let producers = vec![vec![], vec![0], vec![0], vec![1, 2]];
@@ -72,13 +105,12 @@ fn the_critical_path_is_the_heaviest_chain_and_its_heavy_lines_are_noted() {
     assert_eq!(n.tried.len(), 1);
     assert!((n.tried[0].ratio - 200.0).abs() < 1e-6, "measured over priced: {n:?}");
     assert!(note(&102).is_none() && note(&100).is_none());
-    clear();
 }
 
 #[test]
 fn a_choice_is_corrected_by_what_its_order_measured_and_rounds_choose_together() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     let candidates = vec![Candidate { order: order(&[0, 1]), est: 100.0, steps: Vec::new() }, Candidate { order: order(&[1, 0]), est: 300.0, steps: Vec::new() }];
     // Not noted: the search's best.
@@ -94,13 +126,12 @@ fn a_choice_is_corrected_by_what_its_order_measured_and_rounds_choose_together()
     let round = vec![Choice { key: 200, candidates: candidates.clone(), chosen: 0, why: "" }, Choice { key: 201, candidates, chosen: 0, why: "" }];
     let made = finish_round(round);
     assert_eq!(made.iter().map(|c| c.chosen).collect::<Vec<_>>(), vec![1, 0]);
-    clear();
 }
 
 #[test]
 fn a_noted_line_explores_untried_orders_within_the_margin() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 300, rule: 1, order: steps(&order(&[0, 1, 2])), work: 1e6, est: 1e6, ..Default::default() }]);
     let candidates = vec![
@@ -117,7 +148,6 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
     assert!(explored[1] > 0, "an untried order within the margin is tried now and then: {explored:?}");
     assert_eq!(explored[2], 0, "never one past the margin");
     assert!(explored[0] > explored[1], "mostly the best: {explored:?}");
-    clear();
 }
 
 /// `h(x, z) :- a(x, y), b(y, z)`: priced from its statistics, `a` (50 rows) leads and each probes `b` by `y` for a
@@ -127,7 +157,7 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
 #[test]
 fn a_run_that_changes_no_decision_writes_no_notes() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
     let line = |work: f64| LineRun { stratum: "s".into(), key: 220, rule: 1, order: steps(&order), work, est: 1e5, ..Default::default() };
     critical(&["s".into()], &[vec![]], &[line(2e5)]);
@@ -138,13 +168,12 @@ fn a_run_that_changes_no_decision_writes_no_notes() {
     // Measured at four times: its order's ratio moves, and the note is written.
     critical(&["s".into()], &[vec![]], &[line(8e5)]);
     assert!(to_store().is_some(), "a changed measure is written");
-    clear();
 }
 
 #[test]
 fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     // The order that ran measured twice its price; the other is priced ten times higher.
     critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 210, rule: 1, order: steps(&order(&[0, 1])), work: 2e5, est: 1e5, ..Default::default() }]);
@@ -164,19 +193,18 @@ fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     // An untried order within the margin is still explored now and then (`explore_rate`, a draw): that is not its walk
     // taken.
     assert!(round[0].chosen == 0 || round[0].why.starts_with("explored"), "within the walks' spread: {}", round[0].why);
-    clear();
 }
 
 #[test]
 fn exact_statistics_and_the_memo_change_the_plan() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let p = parse(".decl a(x: number, y: number)\n.decl b(y: number, z: number)\n.decl h(x: number, z: number)\nh(x, z) :- a(x, y), b(y, z).\n.output h\n").unwrap();
-    let placed = body::Placed::of_program(&p).unwrap();
+    let placed = body::Placed::whole(p.clone());
     let pf = placed.fields().unwrap();
     let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let derived: HashSet<String> = derived_of(&p);
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&pf), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     for (rel, rows) in [("a", 50.0), ("b", 100.0)] {
         model.stats.card.insert(rel, rows);
         for c in 0..2 {
@@ -184,15 +212,13 @@ fn exact_statistics_and_the_memo_change_the_plan() {
             model.stats.fan.insert((rel, c), 1.0);
         }
     }
-    let r = &p.rules[0];
-    let v = body::alone(r).unwrap();
-    let b = body::nth(&v, 0);
-    let lead = |order: &[Step]| r.body[order[0].at].atom().map(|a| a.rel.to_string()).unwrap();
+    let b = body::nth(&p, 0);
+    let lead = |order: &[Step]| b.rel(b.atom(order[0].at).unwrap()).to_owned();
     let ((order, work, _), _) = model.plan_inner(pf, &b, None, None, false).unwrap();
     assert_eq!(lead(&order), "a", "{work}");
-    let bound: BTreeSet<String> = ["x", "y"].map(String::from).into();
-    let atom_b = r.body[1].atom().unwrap();
-    put_exact(1, b.observed_key(), vec![(atom_sig(atom_b, &bound), [50, 50_000])]);
+    let mut bound = body::VarSet::new();
+    (0..b.len()).filter(|&i| b.atom(i).is_some()).take(1).for_each(|i| bound.extend(&b.vars(i)));
+    put_exact(1, b.observed_key(), vec![(b.sig(1, &bound), [50, 50_000])]);
     let ((order, work, _), _) = model.plan_inner(pf, &b, None, None, false).unwrap();
     assert_eq!(lead(&order), "b", "exact: {work}");
     clear();
@@ -209,7 +235,6 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let n = note(&key).unwrap();
     // Decision 0243: the wider search is the background's, asked for at the line's end; the plan makes none.
     assert!(n.wants_search && n.proposals.is_empty(), "no wider search at the plan: {n:?}");
-    clear();
 }
 
 /// A wider search asked for is run by the upkeep job's step (here on the test's thread): its orders are the line's
@@ -217,9 +242,10 @@ fn exact_statistics_and_the_memo_change_the_plan() {
 #[test]
 fn a_requested_search_proposes_its_orders() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     {
-        let mut m = MEMO.write();
+        let held = joins();
+        let mut m = held.memo.write();
         noted_mut(&mut m, 400, 1).wants_search = true;
     }
     request(400, 1.0, false, Box::new(|_| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0), (vec![(0, None), (1, None)], 3.0)], walked: None }));
@@ -230,7 +256,6 @@ fn a_requested_search_proposes_its_orders() {
     let n = note(&400).unwrap();
     assert_eq!(n.proposals.iter().map(|p| p.1).collect::<Vec<_>>(), vec![3.0, 5.0]);
     assert!(!n.wants_search);
-    clear();
 }
 
 /// Decision 0272 (O167): a one-shot process serves its waiting searches at its run's end, so their proposals are
@@ -238,9 +263,9 @@ fn a_requested_search_proposes_its_orders() {
 #[test]
 fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     drain_at_end(false);
-    noted_mut(&mut MEMO.write(), 410, 1).wants_search = true;
+    noted_mut(&mut joins().memo.write(), 410, 1).wants_search = true;
     request(410, 1.0, false, Box::new(|_| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0)], walked: None }));
     drain();
     assert_eq!(requests(), 1, "a long-lived process leaves the search to the idle job");
@@ -249,7 +274,6 @@ fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
     drain_at_end(false);
     assert_eq!(requests(), 0, "a one-shot run serves it at its end");
     assert_eq!(note(&410).unwrap().proposals.iter().map(|p| p.1).collect::<Vec<_>>(), vec![5.0]);
-    clear();
 }
 
 /// Decision 0207: a line's orders are trialled once in a process, and once more after a flag; each trial's ratio is
@@ -257,9 +281,9 @@ fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
 #[test]
 fn trials_are_taken_once_and_their_ratios_kept() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     assert!(!take_trial(500), "decision 0274: a line not seen on a critical path is not trialled");
-    noted_mut(&mut MEMO.write(), 500, 1).critical = 0.5;
+    noted_mut(&mut joins().memo.write(), 500, 1).critical = 0.5;
     assert!(take_trial(500) && !take_trial(500), "once");
     flag_slow(500, 1, &[Step { at: 0, mode: None }, Step { at: 1, mode: None }], 10.0, 1e6);
     assert!(take_trial(500), "again after a flag");
@@ -271,7 +295,6 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     // Decision 0247: a trial moves the ratio a quarter of the way (in logs), as a run would half of it.
     let quarter = 4f64.powf(0.75) * 16f64.powf(0.25);
     assert!((t.ratio - quarter).abs() < 1e-9 && t.runs == 2, "a trial weighs a quarter: {t:?}");
-    clear();
 }
 
 /// Q80: a slow line keeps what it measured. Its flag measures its rule's exact statistics, which no longer key its
@@ -280,7 +303,7 @@ fn trials_are_taken_once_and_their_ratios_kept() {
 #[test]
 fn a_slow_lines_measure_outlives_its_exact_statistics() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     let (ran, other) = (order(&[0, 1, 2]), order(&[1, 0, 2]));
     // `pre_546` on hogql: priced 400 for its first rows, 102 K rows of work.
@@ -301,7 +324,6 @@ fn a_slow_lines_measure_outlives_its_exact_statistics() {
     assert_eq!(over_measured(&[(other.clone(), 5_000.0)], 102_000.0, 10, 4_000), Some(other.clone()));
     assert_eq!(over_measured(&[(other.clone(), 5e7)], 102_000.0, 10, 4_000), None);
     assert_eq!(over_measured(&[(other.clone(), 5e4)], 102_000.0, 0, 4_000), Some(other), "no row done: at least its work again");
-    clear();
 }
 
 /// Decision 0274: trials follow the critical path as runs observe it. A line with a share of the measured path is
@@ -310,7 +332,7 @@ fn a_slow_lines_measure_outlives_its_exact_statistics() {
 #[test]
 fn trials_are_for_lines_observed_on_the_critical_path() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let order = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }];
     let run = |key: PlanKey, work: f64| LineRun { stratum: "s".into(), key, rule: 1, order: steps(&order), work, est: 0.0, wall: 0.0 };
     let strata = ["s".to_owned()];
@@ -329,7 +351,6 @@ fn trials_are_for_lines_observed_on_the_critical_path() {
         assert!(runs <= 5, "a line off the path stops being trialled");
     }
     assert!(on_critical_path(&602) && trial_due(&602), "the new path's line is trialled");
-    clear();
 }
 
 /// A trial cut at its budget measured only part of its order's work: the cut work over the order's price is no
@@ -339,7 +360,7 @@ fn trials_are_for_lines_observed_on_the_critical_path() {
 #[test]
 fn a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let good = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }, Step { at: 2, mode: None }];
     let cross = vec![Step { at: 0, mode: None }, Step { at: 2, mode: None }, Step { at: 1, mode: None }];
     // Over a sample: the good order priced 100, measured 300, ran to its end; the cross product priced 1e6, cut at
@@ -356,7 +377,6 @@ fn a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced() {
     // A cut trial that measured more than its price already says so: kept, as a floor.
     put_trial(301, 1, &cross, 5e6, 1e6, true);
     assert_eq!(note(&301).unwrap().tried[0].ratio, 5.0);
-    clear();
 }
 
 /// A trial cut at its budget measured a floor of its work (decision 0267): under its price it says nothing, so an
@@ -364,7 +384,7 @@ fn a_trial_cut_at_its_budget_never_makes_its_order_look_cheaper_than_priced() {
 #[test]
 fn a_cut_trial_is_a_floor_of_its_ratio() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let cheap = vec![Step { at: 0, mode: None }, Step { at: 1, mode: None }];
     let dear = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
     // The trials over a sample (pre_570's at 35 files): the running order 3,736 rows of work against its price of
@@ -387,7 +407,6 @@ fn a_cut_trial_is_a_floor_of_its_ratio() {
     let n = note(&501).unwrap();
     let t = n.tried.iter().find(|t| t.order == steps(&cheap)).unwrap();
     assert!((t.ratio - 3.0).abs() < 1e-9 && t.runs == 1, "a floor raises the ratio, never lowers it: {t:?}");
-    clear();
 }
 
 /// Decision 0271: a slow line is bounded on every path. One a trial cannot sample (pre_570: 0 of 423 lead rows done
@@ -406,7 +425,15 @@ fn a_slow_line_is_bounded_on_every_path() {
     assert_eq!(limit_again(1.5, 0.0, 50.0, 300.0), f * 1.5 * 50.0);
     // Neither order has done a row: the one that goes on may double its work before the next comparison.
     assert_eq!(limit_again(f64::INFINITY, 201_431.0, 423.0, 201_431.0), 2.0 * 201_431.0);
-    assert_eq!(limit_again(f64::INFINITY, 0.0, 423.0, 0.0), 1.0);
+    assert_eq!(limit_again(f64::INFINITY, 0.0, 423.0, 0.0), 2.0);
+    // A replacement that starts its counts again (`base` 0) and is cut with no row done at each limit: the limit grows
+    // with each cut, so a row that costs a million rows of work is reached within 20 cuts, never cut at 2 for ever.
+    let (mut limit, mut cuts) = (2.0, 0);
+    while limit < 1e6 {
+        limit = limit_again(f64::INFINITY, 0.0, 209.0, limit);
+        cuts += 1;
+    }
+    assert!(cuts <= 20, "{cuts} cuts");
     for (rate, base, left, work) in [(0.0, 0.0, 0.0, 0.0), (f64::INFINITY, 0.0, 0.0, 7.0), (1e9, 1e9, 1e9, 1e9)] {
         assert!(limit_again(rate, base, left, work).is_finite(), "no order goes on unlimited: {rate} {base} {left} {work}");
     }
@@ -418,7 +445,7 @@ fn a_slow_line_is_bounded_on_every_path() {
 #[test]
 fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
     let _serial = SERIAL.lock();
-    clear();
+    let _own = own();
     let names: Vec<String> = ["s0", "s1", "s2", "s3"].map(String::from).to_vec();
     let producers = vec![vec![], vec![0], vec![0], vec![1, 2]];
     let timeline = vec![Some((0.0, 0.1, 0)), Some((0.1, 0.3, 1)), Some((0.12, 0.9, 0)), Some((0.95, 1.0, 0))];
@@ -435,20 +462,20 @@ fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
     assert_eq!(noted, vec![702, 703], "the lines on the measured path, by seconds: {:?}", path.lines);
     assert!(note(&701).is_none(), "s1 is off the measured path");
     assert!((path.lines[0].1 - 0.7 / 0.74).abs() < 1e-9);
-    clear();
 }
 
-/// Decision 0209 §4: `h(a, b) :- r(f, a), r(f, b), r(f, c)` over a key of 100 values of one row and one of 300. A
+/// Decision 0209 §4: `h(a, b, c) :- r(f, a), r(f, b), r(f, c)` over a key of 100 values of one row and one of 300. A
 /// fanout (sq / rows) prices the third atom as the second: 20.3 M rows. Its heavy values price each step by the
-/// binding drawn through the atoms before it, so the third reads cube / sq a binding: Σ count³, 27.0 M, exact.
+/// binding drawn through the atoms before it, so the third reads cube / sq a binding: Σ count³, 27.0 M, exact. (The
+/// head reads `c`: one that did not would need one witness of the third atom a binding, Q240.)
 #[test]
 fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
-    let p = parse(".decl r(f: number, x: number)\n.decl h(a: number, b: number)\nh(a, b) :- r(f, a), r(f, b), r(f, c).\n.output h\n").unwrap();
-    let placed = body::Placed::of_program(&p).unwrap();
+    let p = parse(".decl r(f: number, x: number)\n.decl h(a: number, b: number, c: number)\nh(a, b, c) :- r(f, a), r(f, b), r(f, c).\n.output h\n").unwrap();
+    let placed = body::Placed::whole(p.clone());
     let pf = placed.fields().unwrap();
     let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(&p), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let derived: HashSet<String> = derived_of(&p);
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&pf), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
     let counts: Vec<(i64, u64)> = (0..100).map(|v| (v, 1)).chain([(1000, 300)]).collect();
     let h = crate::code_rule_dsl::logic::plan::table::HeavyCol::of_counts(counts);
     model.stats.card.insert("r", h.rows);
@@ -456,9 +483,7 @@ fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
     model.stats.fan.insert(("r", 0), h.sq / h.rows);
     model.ndv.insert(("r", 1), h.rows);
     model.stats.fan.insert(("r", 1), 1.0);
-    let r = &p.rules[0];
-    let v = body::alone(r).unwrap();
-    let b = body::nth(&v, 0);
+    let b = body::nth(&p, 0);
     let last = |m: &Model| *m.plan_rule_step_rows(pf, &b, None).unwrap().1.last().unwrap();
     let by_fan = last(&model);
     assert!((by_fan / (h.sq * h.sq / h.rows) - 1.0).abs() < 0.01, "{by_fan}");
@@ -474,14 +499,11 @@ fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
 /// size and one count of calls, with unlike edges among their nodes, have unlike work.
 #[test]
 fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
-    use crate::code_rule_dsl::logic::front::{Literal, Term};
     use crate::code_rule_dsl::logic::native::component::InRel;
     use crate::code_rule_dsl::logic::plan::{Step, Walker};
     use std::collections::HashMap;
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl e(a: number, b: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 1), r(f, m), k(m, 2), r(f, j), e(n, j), k(j, 3).\n.output h\n").unwrap();
-    let rule = &p.rules[0];
-    let rule_v = body::alone(rule).unwrap();
-    let rb = body::nth(&rule_v, 0);
+    let rb = body::nth(&p, 0);
     // Two functions of 30 nodes: 3 calls (kind 1), 2 returns (kind 2), the rest identifiers (kind 3). Function 1's
     // calls have an edge to every node; function 2's, one each.
     let (mut r, mut k, mut e): (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new(), Vec::new());
@@ -499,21 +521,22 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
     let rels: HashMap<&str, std::sync::Arc<InRel>> = [("r", rel(&r)), ("k", rel(&k)), ("e", rel(&e))].into_iter().collect();
     let order: Vec<Step> = [3, 2, 0, 1, 4, 5, 6].into_iter().map(|at| Step { at, mode: None }).collect();
     // The order run by hand: every binding enumerated, each step adding the bindings it reads.
+    let body_atoms = atoms(&p);
     let run = |start: [i64; 2]| -> f64 {
         let mut binds: Vec<HashMap<String, i64>> = vec![[("m".to_owned(), start[0])].into_iter().collect()];
         let mut work = 0.0;
         for s in order.iter().skip(1) {
             work += binds.len() as f64;
-            let Literal::Atom(a) = &rule.body[s.at] else { unreachable!() };
-            let rows = match a.rel.as_ref() { "r" => &r, "k" => &k, _ => &e };
+            let (rel, args) = body_atoms[s.at].as_ref().expect("an atom");
+            let rows = match rel.as_str() { "r" => &r, "k" => &k, _ => &e };
             let mut next = Vec::new();
             for b in &binds {
                 for row in rows.iter() {
                     let mut nb = b.clone();
-                    let ok = a.args.iter().zip(row).all(|(t, &v)| match t {
-                        Term::Int(i) => *i == v,
-                        Term::Var(x) => match nb.get(x.as_ref()) { Some(&w) => w == v, None => { nb.insert(x.to_string(), v); true } },
-                        _ => true,
+                    let ok = args.iter().zip(row).all(|(t, &v)| match t {
+                        Arg::Int(i) => *i == v,
+                        Arg::Var(x) => match nb.get(x.as_str()) { Some(&w) => w == v, None => { nb.insert(x.clone(), v); true } },
+                        Arg::Other => true,
                     });
                     if ok { next.push(nb) }
                 }
@@ -574,14 +597,11 @@ fn a_sampled_probe_reads_its_limit_and_estimates_its_matches() {
 /// of its lead's rows, exactly where the samples hold every row, and it ranks them where their prices misled.
 #[test]
 fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
-    use crate::code_rule_dsl::logic::front::{Literal, Term};
     use crate::code_rule_dsl::logic::native::component::InRel;
     use crate::code_rule_dsl::logic::plan::{Step, WalkSnap};
     use std::collections::HashMap;
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl e(a: number, b: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 1), r(f, m), k(m, 2), r(f, j), e(n, j), k(j, 3).\n.output h\n").unwrap();
-    let rule = &p.rules[0];
-    let rule_v = body::alone(rule).unwrap();
-    let rb = body::nth(&rule_v, 0);
+    let rb = body::nth(&p, 0);
     // The triangle's functions (decision 0232's test): 30 nodes each, 3 calls, 2 returns; function 1's calls have an
     // edge to every node, function 2's one each.
     let (mut r, mut k, mut e): (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new(), Vec::new());
@@ -597,25 +617,26 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
     }
     let table = |rel: &str| -> &Vec<[i64; 2]> { match rel { "r" => &r, "k" => &k, _ => &e } };
     // An order run by hand from every row of its lead, each step adding the bindings it reads.
+    let body_atoms = atoms(&p);
     let run = |order: &[usize]| -> f64 {
-        let Literal::Atom(lead) = &rule.body[order[0]] else { unreachable!() };
-        let bind = |b: &HashMap<String, i64>, a: &crate::code_rule_dsl::logic::front::Atom, row: &[i64; 2]| -> Option<HashMap<String, i64>> {
+        let lead = body_atoms[order[0]].as_ref().expect("an atom");
+        let bind = |b: &HashMap<String, i64>, args: &[Arg], row: &[i64; 2]| -> Option<HashMap<String, i64>> {
             let mut nb = b.clone();
-            for (t, &v) in a.args.iter().zip(row) {
+            for (t, &v) in args.iter().zip(row) {
                 match t {
-                    Term::Int(i) if *i != v => return None,
-                    Term::Var(x) => match nb.get(x.as_ref()) { Some(&w) if w != v => return None, Some(_) => {}, None => { nb.insert(x.to_string(), v); } },
+                    Arg::Int(i) if *i != v => return None,
+                    Arg::Var(x) => match nb.get(x.as_str()) { Some(&w) if w != v => return None, Some(_) => {}, None => { nb.insert(x.clone(), v); } },
                     _ => {}
                 }
             }
             Some(nb)
         };
-        let mut binds: Vec<HashMap<String, i64>> = table(&lead.rel).iter().filter_map(|row| bind(&HashMap::new(), lead, row)).collect();
+        let mut binds: Vec<HashMap<String, i64>> = table(&lead.0).iter().filter_map(|row| bind(&HashMap::new(), &lead.1, row)).collect();
         let mut work = 0.0;
         for &at in &order[1..] {
             work += binds.len() as f64;
-            let Literal::Atom(a) = &rule.body[at] else { unreachable!() };
-            binds = binds.iter().flat_map(|b| table(&a.rel).iter().filter_map(|row| bind(b, a, row)).collect::<Vec<_>>()).collect();
+            let (rel, args) = body_atoms[at].as_ref().expect("an atom");
+            binds = binds.iter().flat_map(|b| table(rel).iter().filter_map(|row| bind(b, args, row)).collect::<Vec<_>>()).collect();
         }
         // Decision 0273: and the rows the last step makes.
         work + binds.len() as f64
@@ -647,9 +668,7 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     use std::collections::HashMap;
     // From the calls: each call's function, then the function's nodes, then their kinds.
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- k(n, 1), r(f, n), r(f, m), k(m, 2).\n.output h\n").unwrap();
-    let rule = &p.rules[0];
-    let rule_v = body::alone(rule).unwrap();
-    let rb = body::nth(&rule_v, 0);
+    let rb = body::nth(&p, 0);
     // 1,000 functions of 30 nodes with 5 calls, and 2 of 2,000 nodes with 50: 2% of the calls, 56% of the work.
     let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
     let mut add = |f: i64, nodes: i64, calls: i64| for i in 0..nodes {
@@ -688,9 +707,7 @@ fn a_walk_past_a_rare_check_starts_from_the_checks_rows() {
     use std::collections::HashMap;
     // From every node, a check on a kind 10 nodes of 30,000 have, then the function's nodes and their kinds.
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 9), r(f, m), k(m, 2).\n.output h\n").unwrap();
-    let rule = &p.rules[0];
-    let rule_v = body::alone(rule).unwrap();
-    let rb = body::nth(&rule_v, 0);
+    let rb = body::nth(&p, 0);
     let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
     for f in 1..=1000i64 {
         for i in 0..30 {
@@ -717,9 +734,7 @@ fn a_wildcard_in_a_check_is_no_column_of_its_probe() {
     use std::collections::HashMap;
     // 100 functions of 10 nodes; half the nodes have a kind, whatever it is (`k(n, _)`).
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, m: number)\nh(f, m) :- r(f, n), k(n, _), r(f, m).\n.output h\n").unwrap();
-    let rule = &p.rules[0];
-    let rule_v = body::alone(rule).unwrap();
-    let rb = body::nth(&rule_v, 0);
+    let rb = body::nth(&p, 0);
     let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
     for f in 1..=100i64 {
         for i in 0..10 {
@@ -751,16 +766,16 @@ fn a_maintenance_rule_starts_from_its_source_rules_order() {
     // written as `maintain::write_ir` writes it: the source's literals, `e`'s over its lost rows, and a test the
     // rewrite adds.
     let p = parse(".decl e(x: number, y: number)\n.decl q(y: number)\n.decl h(x: number, y: number)\nh(x, y) :- e(x, y), q(y).\n.decl a(x: number)\n.decl c(y: number, z: number)\n.decl g(x: number, z: number)\ng(x, z) :- a(x), e(x, y), c(y, z).\n.output h\n.output g\n").unwrap();
-    let placed = Placed::of_program(&p).unwrap();
+    let placed = Placed::whole(p.clone());
     let src_id = placed.id(0);
     let mut b = Builder::under(&placed.v);
     let (x, y) = (T::Var("x"), T::Var("y"));
-    b.rule().head("h__del", &[x.clone(), y.clone()]).atom("q", &[y.clone()]).atom("e__minus", &[x.clone(), y.clone()]).not("h__old", &[x.clone(), y.clone()]).source(src_id).finish().unwrap();
+    b.rule().head("h__del", &[x.clone(), y.clone()]).atom("q", std::slice::from_ref(&y)).atom("e__minus", &[x.clone(), y.clone()]).not("h__old", &[x.clone(), y.clone()]).source(src_id).finish().unwrap();
     // A rule written with no source has no origin.
-    b.rule().head("h__ins", &[x.clone(), y.clone()]).atom("e__plus", &[x.clone(), y.clone()]).atom("q", &[y.clone()]).finish().unwrap();
+    b.rule().head("h__ins", &[x.clone(), y.clone()]).atom("e__plus", &[x.clone(), y.clone()]).atom("q", std::slice::from_ref(&y)).finish().unwrap();
     // An insert of `g`'s first position, its delta `a__plus`.
     let z = T::Var("z");
-    b.rule().head("g__ins", &[x.clone(), z.clone()]).atom("a__plus", &[x.clone()]).atom("e", &[x.clone(), y.clone()]).atom("c", &[y.clone(), z.clone()]).source(placed.id(1)).finish().unwrap();
+    b.rule().head("g__ins", &[x.clone(), z.clone()]).atom("a__plus", std::slice::from_ref(&x)).atom("e", &[x.clone(), y.clone()]).atom("c", &[y.clone(), z.clone()]).source(placed.id(1)).finish().unwrap();
     let (form, _) = b.finish().unwrap();
     let mut vs = Versions::of_placed(placed);
     let k = vs.push(Placed::whole(form));
@@ -789,4 +804,45 @@ fn a_maintenance_rule_starts_from_its_source_rules_order() {
     assert_eq!(gmap, vec![Some(0), Some(1), Some(2)]);
     let got = source_order(&ins, &gsrc, &gmap, &steps(&[2, 1, 0]), Some(0)).expect("an order");
     assert_eq!(got.iter().map(|s| s.at).collect::<Vec<_>>(), vec![0, 1, 2]);
+}
+
+/// A running line against its order's step rows (`step_miss`): the widest step blown up past `slow_factor` (8) times
+/// its price, a step far under a high price, each per row the lead step made; noise and misaligned steps left alone.
+#[test]
+fn a_line_misses_its_step_rows_by_a_blow_up_or_an_over_estimate() {
+    use super::{Miss, step_miss};
+    // As priced: no miss.
+    assert_eq!(step_miss(&[100.0, 1_000.0, 500.0], &[(0, 100), (100, 1_000), (1_000, 500)], 250.0), None);
+    // Part way through its lead rows, in proportion: no miss.
+    assert_eq!(step_miss(&[1_000.0, 8_000.0], &[(0, 100), (100, 800)], 250.0), None);
+    // The widest step priced at 200 rows made 50,000: blown up (past 8 x a search's 250 too).
+    assert_eq!(step_miss(&[100.0, 200.0, 100.0], &[(0, 100), (100, 200), (200, 50_000)], 250.0), Some(Miss::Wide { est: 200.0, ran: 50_000.0 }));
+    // Under 8 x a search's work, a blow-up costs less than replanning it: left.
+    assert_eq!(step_miss(&[100.0, 10.0], &[(0, 100), (100, 1_500)], 250.0), None);
+    // A step priced at 1,000 rows a binding (100,000 rows) made 5 a binding: over-estimated.
+    assert_eq!(step_miss(&[100.0, 100_000.0, 10.0], &[(0, 100), (100, 500), (500, 10)], 250.0), Some(Miss::Over { at: 1, est: 1_000.0, ran: 5.0 }));
+    // The expansion before it priced as it came; the last step priced to multiply by 4, it cut to 1 in 100: over.
+    assert_eq!(
+        step_miss(&[100.0, 50_000.0, 200_000.0], &[(0, 100), (100, 50_000), (50_000, 500)], 250.0),
+        Some(Miss::Over { at: 2, est: 4.0, ran: 0.01 })
+    );
+    // Entered with 10 bindings only: noise, not judged.
+    assert_eq!(step_miss(&[10.0, 100_000.0], &[(0, 10), (10, 5)], 250.0), None);
+    // Steps that are not the order's one for one, or no lead rows yet: not judged.
+    assert_eq!(step_miss(&[100.0, 100_000.0], &[(0, 100)], 250.0), None);
+    assert_eq!(step_miss(&[100.0, 100_000.0], &[(0, 0), (0, 0)], 250.0), None);
+}
+
+/// Clears the test's own memo (`own`), in the middle of a test: its relations keep their numbers.
+fn clear() {
+    let joins = joins();
+    *joins.memo.write() = Memo::default();
+    joins.noted.store(false, Relaxed);
+    joins.exact.store(false, Relaxed);
+    joins.requests.lock().clear();
+}
+
+/// A shared object of the test's own, so its memo is empty and no other test's (decision 0442).
+fn own() -> impl Drop {
+    crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new())
 }

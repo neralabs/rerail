@@ -29,11 +29,12 @@ pub mod deferrable;
 pub mod facts;
 pub mod free;
 /// A relation's reads, generated from their CLIF (decision 0325; `rerail_clif::relation`): what `Rows` and
-/// `Relation` read through, the same reads the kernels' MSL (`relation_reads.metal`) and the JIT make.
+/// `Relation` read through, the same reads the kernels' (`<ukl/reads/relation.h>`) and the JIT make.
 #[rustfmt::skip]
 pub mod generated_reads;
-/// The same reads in MSL, for every kernel that reads a relation in its block (decision 0325).
-pub const RELATION_READS: &str = include_str!("relation_reads.metal");
+/// The same reads in UKL, for every kernel that reads a relation in its block (decision 0325): the library's header,
+/// which a kernel source including it is preprocessed with (`rerail_ukl::metal_source`; decision 0440 §3.3).
+pub const RELATION_READS: &str = "#include <ukl/reads/relation.h>\n";
 pub mod journal;
 pub mod kept;
 pub mod mem;
@@ -45,6 +46,16 @@ pub mod relation;
 pub mod rows;
 pub mod scratch;
 pub mod sort;
+
+/// The flag an anonymous mapping takes to be address space reserved, its pages committed as they are written: Linux's
+/// `MAP_NORESERVE`. Without it Linux's overcommit heuristic refuses a reservation larger than memory and swap (a 64
+/// GiB scratch region on a 16 GiB runner), which macOS grants as it maps every anonymous region so.
+#[cfg(target_os = "linux")]
+pub(crate) const RESERVE_ONLY: libc::c_int = libc::MAP_NORESERVE;
+#[cfg(all(unix, not(target_os = "linux")))]
+pub(crate) const RESERVE_ONLY: libc::c_int = 0;
+#[cfg(windows)]
+mod windows;
 #[cfg(target_os = "macos")]
 pub mod gpu;
 

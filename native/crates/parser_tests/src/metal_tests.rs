@@ -15,7 +15,7 @@ use rerail_metal::block_program;
 #[test]
 fn every_step_on_metal_equals_the_interpreter() {
     use block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-    let steps = steps_in(DIR);
+    let steps = steps_in(&dir());
     let compiled: Vec<Compiled> = steps.iter().map(|(n, s)| compile_step(n, s)).collect();
     let docs: Vec<Vec<Vec<u8>>> = compiled.iter().zip(&steps).map(|(c, (n, _))| documents(&Lang::of(&c.stmts), seed(n), &|b| reference(c, b).is_some()).0).collect();
     let all: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
@@ -28,15 +28,29 @@ fn every_step_on_metal_equals_the_interpreter() {
     let forms: Vec<&native_ir::BlockNative> = run_on.iter().map(|&k| all[k]).collect();
     let files: Vec<block::BatchFile<'_>> = run_on.iter().enumerate().flat_map(|(p, &k)| docs[k].iter().map(move |b| block::BatchFile { bytes: b, program: p })).collect();
     let run = run_split(&forms, &files, LaneWidth::W32, Executor::Generated(ClassStrategy::Planes), 64).unwrap_or_else(|e| panic!("metal: {e:?}"));
-    let mut differ = Vec::new();
+    let (mut differ, mut excused_differ) = (Vec::new(), 0);
     for (f, got) in files.iter().zip(&run.files) {
         let k = run_on[f.program];
-        let want = compiled[k].program.block_programs[0].run_files(&[f.bytes]).remove(0);
-        if got.outputs != want.outputs || got.positions != want.positions {
-            differ.push(format!("{}: {:?}", steps[k].0, String::from_utf8_lossy(f.bytes)));
+        let program = &compiled[k].program.block_programs[0];
+        let want = program.run_files(&[f.bytes]).remove(0);
+        // Where the interpreter makes the tokens' records itself (the loop's starts and lasts,
+        // decision 0177 stage 2a; the lasts by the gaps, 0411), they are proved equal to the
+        // masks' only where the file is taken: a refused file's are excused (tier 2 reads none),
+        // so Metal's starts and lasts extracts are not compared there.
+        let refused = want.totals.iter().any(|&t| t != 0);
+        let excused: Vec<usize> = program
+            .records
+            .as_ref()
+            .filter(|r| refused && (r.skip.is_some() || r.gap.is_some()))
+            .map_or(Vec::new(), |r| vec![usize::from(r.starts), usize::from(r.lasts)]);
+        excused_differ += usize::from(excused.iter().any(|&e| got.positions.get(e) != want.positions.get(e)));
+        let outputs: Vec<usize> = (0..want.outputs.len()).filter(|&o| got.outputs.get(o) != want.outputs.get(o)).collect();
+        let positions: Vec<usize> = (0..want.positions.len()).filter(|e| !excused.contains(e) && got.positions.get(*e) != want.positions.get(*e)).collect();
+        if !outputs.is_empty() || !positions.is_empty() || got.outputs.len() != want.outputs.len() || got.positions.len() != want.positions.len() {
+            differ.push(format!("{} (refused {refused}; outputs {outputs:?}, extracts {positions:?}): {:?}", steps[k].0, String::from_utf8_lossy(f.bytes)));
         }
     }
-    eprintln!("{} files over {} steps on Metal, {} refused", files.len(), run_on.len(), refused.len());
+    eprintln!("{} files over {} steps on Metal, {} refused; {excused_differ} refused files' records differ (excused)", files.len(), run_on.len(), refused.len());
     assert!(differ.is_empty(), "{} files differ:\n{}", differ.len(), differ.join("\n"));
 }
 

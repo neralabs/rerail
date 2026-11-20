@@ -272,7 +272,8 @@ fn identity(plan: &AnchorPlan, lang: u32) -> PlanId {
 }
 
 /// The process's compiled gates, in memory before the store (`stats::plans`' bounded cache).
-static PLANS: std::sync::LazyLock<Mutex<Plans>> = std::sync::LazyLock::new(Default::default);
+#[derive(Default)]
+struct GatePlans(Mutex<Plans>);
 
 /// What a batch's gates selected.
 pub(super) struct Gated {
@@ -289,7 +290,8 @@ pub(super) fn select(db: &Connection, lang: u32, plans: &[&AnchorPlan], files: &
     let statistics = Statistics::read(db, plans.iter().map(|plan| (lang, *plan)))?;
     let current = statistics.reads();
     let ids = plans.iter().map(|plan| identity(plan, lang)).collect::<Vec<_>>();
-    let mut compiled = PLANS.lock().expect("gate plans mutex poisoned");
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<GatePlans>();
+    let mut compiled = held_.0.lock().expect("gate plans mutex poisoned");
     let valid = compiled.valid(db, &ids, &current)?;
     let mut gates = Vec::with_capacity(plans.len());
     for (plan, id) in plans.iter().zip(&ids) {

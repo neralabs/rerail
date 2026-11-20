@@ -1,7 +1,20 @@
-//! `rr::lower::sources_on_request` on the version (decision 0174, 0281's path, step 7a-1): each per-node source
-//! attribute of a round of `ON_REQUEST` answered on request, its readers asking for the nodes they bind, and the
-//! relations that read an attribute read through their widened copies (`Widen`). See there for what each part does
-//! and why: this is that pass over the version's rules, each rule it makes written from the reader it is made of.
+//! Each per-node source attribute of `ON_REQUEST` answered on request (decision 0174, 0281's path, step 7a-1), after
+//! 0145's shape: each rule reading `a(n, x)` with `n` bound by its other literals asks for those nodes,
+//! `rr_a_req(n) :- <those literals>`, and one rule answers the requests, `a(n, x) :- rr_a_req(n), x = @f(n)`. Each
+//! rule it makes is written from the reader it is made of.
+//!
+//! A request's literals are the reader's own, less those that read the attribute's value (`x`, and what is computed
+//! from it), those not joined to `n`, negations and aggregates. Dropping a literal widens a request, which is sound;
+//! asking too little is not. A relation that reads an attribute is read through its widened copy, `rr_wide_<r>`: its
+//! rules with the attributes and the same literals dropped, on the columns they still bind (`Widen`). It holds every
+//! row of `r` and reads no attribute, so requests stratify below every reader (read through `r` itself, a request
+//! would be recursive with the attribute, and through a negation, not stratifiable).
+//!
+//! A negated read asks as a positive one does (its node bound by the rule's other literals, the rows it tests asked
+//! for). Where a reader reads the attribute inside an aggregate, of a constant node, or does not bind `n`, it stays an
+//! input, made for every node, as all are with `RERAIL_NODE_SOURCES=eager`. The analysis is made either way and
+//! written to the profile's decisions (`<a> on request`, its readers and the widened copies): what each reader asks,
+//! what it leaves out and why.
 
 use super::simplify::Tm;
 use crate::code_rule_dsl::logic::front::{List, Value};
@@ -14,9 +27,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 type Result<T> = std::result::Result<T, String>;
 
-/// `sources_on_request` of one round of `ON_REQUEST`.
-pub(crate) struct SourcesOnRequest {
-    pub(crate) round: &'static [OnRequest],
+/// One round of `ON_REQUEST` answered on request (the module's doc).
+pub struct SourcesOnRequest {
+    pub round: &'static [OnRequest],
 }
 
 /// A literal of a rule made from a reader: one of the reader's own, or an atom read through its widened copy on
@@ -128,9 +141,10 @@ fn written(v: &Version, r: RuleRef<'_>, item: &Item, wild: &BTreeSet<Slot>, name
     }
 }
 
-/// `rr::lower::wild_singletons` over items: the variables, other than `head`, that only one atom reads, once (its
-/// written columns: a widened atom's kept ones), as wildcards; and without each positive atom another positive one of
-/// the same relation is an instance of. To a fixpoint (decision 0291).
+/// `body` with each variable, other than `head`, that only one atom reads, once (its written columns: a widened atom's
+/// kept ones), a wildcard; and without each positive atom another positive one of the same relation is an instance of
+/// (`kind(_, k)` beside `kind(e, k)`), which only tests what that one holds. To a fixpoint: a dropped atom can leave
+/// another variable read once (decision 0291).
 fn wild_singletons(v: &Version, r: RuleRef<'_>, mut body: Vec<Item>, head: Slot) -> (Vec<Item>, BTreeSet<Slot>) {
     fn count(t: TermRef<'_>, n: &mut BTreeMap<Slot, usize>) {
         match t {
@@ -286,7 +300,9 @@ impl New {
     }
 }
 
-/// `Widen` over the version: the relations that read an attribute, and the columns their widened copies keep.
+/// The widened copies a request reads: for each relation `r` that reads an attribute, `rr_wide_<r>` on the columns
+/// its rules bind without one. The copies' prefix is `rr_wide_<a>_`, `a` the round's first attribute (a relation may
+/// be copied in each round).
 struct Widen<'v> {
     v: &'v Version,
     attrs: BTreeSet<&'static str>,
@@ -364,7 +380,10 @@ impl<'v> Widen<'v> {
         format!("; left out: {}", dropped.iter().map(|(l, why)| format!("`{l}` ({why})")).collect::<Vec<_>>().join(", "))
     }
 
-    /// `Widen::widen` of rule `r`'s body: the items it keeps, the variables they bind, and what it left out.
+    /// Rule `r`'s body widened: without literal `skip`, the attributes, negations, aggregates, and literals that read
+    /// `out`; a relation that reads an attribute read through its widened copy; joined to `to` (where given); the
+    /// comparisons over what the rest binds. The items it keeps, the variables they bind, and what it left out (but
+    /// `skip`), and why.
     fn widen(&self, r: RuleRef<'_>, skip: Option<usize>, out: &BTreeSet<Slot>, to: Option<Slot>) -> (Vec<Item>, BTreeSet<Slot>, Vec<(String, &'static str)>) {
         let v = self.v;
         let mut dropped: Vec<(String, &'static str)> = Vec::new();
@@ -733,7 +752,7 @@ impl ProgramPass for SourcesOnRequest {
                     // Narrowed by what the reader's own readers ask of it (decision 0291): where `n` is a column of the
                     // reader's head that every rule reading it binds, the request joins those rules' asks.
                     // The request kept whole for the readers that ask for all, each its gate: with the narrowed one, which
-                    // it subsumes where both are reached (`front::subsume_requests`).
+                    // it subsumes where both are reached (`simplify::SubsumeRequests`).
                     let mut whole: Option<(New, BTreeSet<String>)> = None;
                     // The narrowed request serves the reader's readers that ask (with none of them reached it asks for
                     // nothing); unnarrowed, it serves the reader.
@@ -774,7 +793,7 @@ impl ProgramPass for SourcesOnRequest {
                 0 => "no rule reads it: it stays an input, which a run that reads nothing of it binds for no node".to_owned(),
                 n => format!("{}: {n} readers ask, by {} request rules", if applied { "yes" } else { "possible (RERAIL_NODE_SOURCES=eager)" }, requests.len()),
             });
-            // Read by no rule, an attribute has nothing to answer, and stays an input (`sources_on_request`).
+            // Read by no rule, an attribute has nothing to answer, and stays an input (`on_request::SourcesOnRequest`).
             if requests.is_empty() {
                 continue;
             }
@@ -813,8 +832,8 @@ impl ProgramPass for SourcesOnRequest {
             let n = cols.len();
             if let Some(input) = eager {
                 answers.push(Answering::Eager { rel, input, n });
-                declare_columns(b, input, &cols);
-                b.add_input(input);
+                declare_columns(&mut b.fields(), input, &cols);
+                b.fields().add_input(input);
             }
             match answer {
                 Answer::Function(function) => answers.push(Answering::Function { rel, req, function, n }),
@@ -822,31 +841,31 @@ impl ProgramPass for SourcesOnRequest {
                     answers.push(Answering::Children { rel, req, named, n });
                     let mut named_cols = cols.clone();
                     named_cols[2] = col("c", "node");
-                    declare_columns(b, named, &named_cols);
-                    b.add_input(named);
+                    declare_columns(&mut b.fields(), named, &named_cols);
+                    b.fields().add_input(named);
                     if !b.input_names().iter().any(|i| i == "node_text") {
-                        b.declare_absent("node_text", &[("n", cols[0].1.as_str()), ("s", cols[2].1.as_str())]);
-                        b.add_input("node_text");
+                        b.fields().declare_absent("node_text", &[("n", cols[0].1.as_str()), ("s", cols[2].1.as_str())]);
+                        b.fields().add_input("node_text");
                     }
                 }
             }
-            b.declare(req, &[(cols[0].0.as_str(), "node")]);
-            b.retain_inputs(&|i: &str| i != rel);
+            b.fields().declare(req, &[(cols[0].0.as_str(), "node")]);
+            b.fields().retain_inputs(&|i: &str| i != rel);
         }
         for (r, cols) in &wide.decls {
-            declare_columns(b, r, cols);
+            declare_columns(&mut b.fields(), r, cols);
         }
         for dem in demanded {
-            b.declare(&dem, &[("n", "node")]);
+            b.fields().declare(&dem, &[("n", "node")]);
         }
         for (rel, rows) in wide.facts {
             let rows: Vec<List<Value>> = rows.into_iter().map(List::from).collect();
-            b.add_facts(&rel, &rows);
+            b.fields().add_facts(&rel, &rows);
         }
         let mut all_asked = b.asked();
         all_asked.extend(asked);
         all_asked.extend(wide.asked);
-        b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Asked(&all_asked));
+        b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Asked(&all_asked));
         // In the tree's order: the requests and answers, then the widened copies.
         let names: Vec<String> = (0..answers.iter().map(|a| match a { Answering::Eager { n, .. } | Answering::Function { n, .. } | Answering::Children { n, .. } => *n }).max().unwrap_or(0)).map(|i| format!("x{i}")).collect();
         let x = |i: usize| T::Var(names[i].as_str());

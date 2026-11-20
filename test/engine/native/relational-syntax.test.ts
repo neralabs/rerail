@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { codeRuleSchema, loadNativeBinding } from "../../../src/engine/index.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const native = loadNativeBinding();
 const caps = readFileSync(new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url), "utf8");
@@ -180,7 +181,7 @@ it("restores shared metadata after document eviction and refuses stale source va
     const actual = JSON.parse(await workspace.applyAsync(JSON.stringify({ revision: 2, files: edited, removed: [] }))).evaluation;
     expect(actual.failures).toEqual([]);
     expect(actual.violations).toEqual(evaluate(rule, edited).violations);
-  } finally { workspace.close(); rmSync(root, { recursive: true, force: true }); }
+  } finally { workspace.close(); removeFolderSync(root); }
 });
 
 it("rejects unavailable gates and fields, conflicting names and incompatible graph declarations", () => {

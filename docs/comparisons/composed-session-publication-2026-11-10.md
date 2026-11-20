@@ -109,7 +109,7 @@ This separate integration limitation is not repaired by the composed-retention o
 Integration's native default remains unchanged.
 
 Reproduction commands, failures, traces, measurements, and hashes are in
-[`session-publication`](../../benchmark/async-family-integration/session-publication/README.md).
+`session-publication` (`packs/data-layer/upstream/benchmarks/authored/async-family-integration/session-publication/README.md`).
 
 ## Bounded preparation
 

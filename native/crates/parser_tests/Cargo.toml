@@ -3,7 +3,7 @@ name = "rerail-parser-tests"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The parsers' tests that need no engine: the .rr ladder against the engine's .rr parser, the JSON suite against tree-sitter, and both on Metal."
+description = "The parsers' tests that need no engine: the .rerail ladder against the engine's .rerail parser, the JSON suite against tree-sitter, and both on Metal."
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
@@ -22,5 +22,6 @@ tree-sitter-json = "=0.24.8"
 rerail-metal = { path = "../metal", features = ["test-hooks"] }
 
 [dev-dependencies]
+rerail-context = { path = "../context", features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-parser-tests = { path = ".", features = ["test-hooks"] }

@@ -18,18 +18,8 @@ use std::alloc::{Layout, alloc, alloc_zeroed, dealloc};
 use std::any::TypeId;
 use std::sync::{Arc, Weak};
 
-/// A plain value a region can be viewed as: any bit pattern is a value, no padding read as data, no pointers.
-///
-/// # Safety
-/// Implementors must be `Copy`, without padding that is read, and valid for every bit pattern.
-pub unsafe trait Pod: Copy + 'static {}
-macro_rules! pod {
-    ($($t:ty),*) => {$( unsafe impl Pod for $t {} )*};
-}
-pod!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64);
-
-// Pairs of floats (a row's weights to false and true).
-unsafe impl Pod for [f32; 2] {}
+/// A plain value a region can be viewed as (`rerail_gpu::Pod`, where the device's buffers use it too).
+pub use rerail_gpu::Pod;
 
 /// Handle to a memory pool, which is a set of memory attached by some kind of a bus to one or more devices.
 #[derive(Clone, Copy, Debug, Default)]

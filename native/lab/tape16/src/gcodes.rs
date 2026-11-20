@@ -280,7 +280,7 @@ pub struct Report {
     pub low_bytes: u32,
 }
 
-/// A language Rerail parses itself (`.rr`, Blade) declares no node types: the bound is every kind under every
+/// A language Rerail parses itself (`.rerail`, Blade) declares no node types: the bound is every kind under every
 /// field (or none), plain, extra or missing, and ERROR under every field, with no supertypes.
 pub fn own_bound(tag: u8, ids: &Ids) -> Allowed {
     let kinds: BTreeSet<Kind> = ids.kinds.iter().filter(|((t, id), _)| *t == tag && *id != 0).map(|(_, k)| k.clone()).collect();

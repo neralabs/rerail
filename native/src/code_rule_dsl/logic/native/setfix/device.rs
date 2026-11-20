@@ -70,7 +70,7 @@ fn admitted(rules: &[(&Plan, &JoinRule, usize)], rep: &mut Report) -> Result<rer
 
 /// A join stage's table, in rows, before it runs: the growth the stage was seen to have (`seen`, rows out a row in);
 /// else the planner's estimate of its rows (`est`, `JoinRule::est`) with a margin; else twice its input (`cap_in`).
-/// Q180: doubling each stage's input compounded down a plan, and a cold run's tables were a hundred times their rows,
+/// Q203: doubling each stage's input compounded down a plan, and a cold run's tables were a hundred times their rows,
 /// refused past the device's budget. A `scan` (no keys, one binding in) holds its relation's rows (`nr`) at most. An
 /// overflow runs the stage again exactly.
 fn table_rows(cap_in: usize, nr: usize, scan: bool, seen: Option<f64>, est: Option<f64>) -> usize {
@@ -171,22 +171,6 @@ thread_local! {
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The slots of the rule being compiled whose values are arena texts (`mj::ROWTEXT`'s).
     static ARENA: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The component's own columns whose values are arena texts (decision 0307: a `shortlex_min` relation's value,
-    /// made by its rules' rounds into one arena), as (relation, column): set while its plans compile (`own_texts`).
-    static OWN_TEXTS: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Runs `f` (a component's plans compiled) with `cols` its own columns of arena texts (decision 0307).
-pub(in crate::code_rule_dsl) fn own_texts<T>(cols: Vec<(usize, usize)>, f: impl FnOnce() -> T) -> T {
-    let was = OWN_TEXTS.with_borrow_mut(|o| std::mem::replace(o, cols));
-    let out = f();
-    OWN_TEXTS.with_borrow_mut(|o| *o = was);
-    out
-}
-
-/// Whether column `c` of own relation `rel` holds arena texts (`own_texts`).
-fn own_text(rel: usize, c: usize) -> bool {
-    OWN_TEXTS.with_borrow(|o| o.contains(&(rel, c)))
 }
 
 /// Whether slot `x` of the rule being compiled holds an arena text (a text function's value).
@@ -452,8 +436,10 @@ fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
     Some(PStage { first: i, span: j.steps.len() - i, kind: Kind::Witness { rel: rel.clone(), cols, rest: probes }, desc: d, npassed: 0 })
 }
 
-/// `j`'s device plan, or the step the device cannot run.
-pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
+/// `j`'s device plan, or the step the device cannot run. `own_texts`: the component's own columns whose values are
+/// arena texts (decision 0307: a `shortlex_min` relation's value, made by its rules' rounds into one arena), as
+/// (relation, column).
+pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<Plan, String> {
     let mut bound = vec![false; j.nslots];
     // Where each slot's value came from: a column of an input relation (a text test's terms are its symbols).
     let mut origin: Vec<Option<(Arc<InRel>, usize)>> = vec![None; j.nslots];
@@ -512,8 +498,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 }
                 // An own column of arena texts (decision 0307) is read as the binding's text, never matched by value:
                 // one text made in two rounds has two values.
-                if let Some((rel, _)) = own && OWN_TEXTS.with_borrow(|o| o.iter().any(|&(r, _)| r == rel)) {
-                    let text = |c: usize| own_text(rel, c);
+                if let Some((rel, _)) = own && own_texts.iter().any(|&(r, _)| r == rel) {
+                    let text = |c: usize| own_texts.contains(&(rel, c));
                     if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || j.fused[i].is_some() || *neg {
                         return Err("a made text across rounds matched, tested or negated (decision 0307: read only as a text)".into());
                     }
@@ -1346,7 +1332,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
         want.dedup();
         let found = res.entries.iter().position(|e| e.owner.same(&owner));
         let at = match found {
-            Some(at) if want.iter().all(|c| res.entries[at].cols.contains(c)) => {
+            // A source's rows can grow under it (a chunk's tape values, admitted inside its fixpoint, decision 0431 §8):
+            // its entry is of the rows it had then.
+            Some(at) if want.iter().all(|c| res.entries[at].cols.contains(c)) && (matches!(owner, Owner::Rel(_)) || res.entries[at].dev.rows == rel.len() || rel.view.as_ref().is_some_and(|v| v.src.made_on_lookup())) => {
                 rep.resident_hits += 1;
                 at
             }
@@ -1366,7 +1354,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 // view's source's (the vtab's `Relation`). Nothing uploaded, and the entry holds every column (the
                 // owner's), each at its own place.
                 let placed = match (&owner, &rel.view) {
-                    (Owner::Src(_), Some(view)) => view.src.in_block().filter(|b| ids.is_none() && b.rows as usize == n).map(|b| (b, view.src.columns().len())),
+                    // A source made on lookup numbers only the rows looked up so far; the relation it is bound by holds every
+                    // pair (a layered axis's, its tape values' too, decision 0431 §8).
+                    (Owner::Src(_), Some(view)) => view.src.in_block().filter(|b| ids.is_none() && (b.rows as usize == n || view.src.made_on_lookup())).map(|b| (b, view.src.columns().len())),
                     (Owner::Src(_), None) => None,
                     // Dead rows stay, marked by the relation's dead rows' delta (`InBlock::dead`), which the
                     // kernels skip.
@@ -1493,6 +1483,12 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
             return Ok((dev, Some(ix.clone()), place));
         }
         let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+        // `child` probed by its parent: its children off the tape, no index of the view (decision 0353 step 4c).
+        if let Some(ix) = batch.by_parent(&dev, &by).map_err(|e| format!("{e:?}: a parent probe"))? {
+            let ix = Rc::new(ix);
+            e.indexes.push((key, ix.clone()));
+            return Ok((dev, Some(ix), place));
+        }
         let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         // Built here, or found the relation's own already (decision 0325 step 5).
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
@@ -2970,6 +2966,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         };
 // copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
 // of the run's life from its start (decision 0353).
+        const TOTAL: rerail_prof::copies::Site = rerail_prof::copies::Site::new(10, "6", "a device fixpoint's total copied into a run's block");
+        TOTAL.copied(8 * k * total.rows);
         let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, total.rows)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst, at).map_err(|e| format!("{e:?}: a component's rows placed"))?;

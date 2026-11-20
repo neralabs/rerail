@@ -32,7 +32,7 @@ fn atom(language: &str, kind: &str) -> u32 {
 #[test]
 fn columns_are_a_preorder_tree_with_children_and_kind_postings() {
     let f = facts("a.py", "python", "value = left + right\nprint(value)\n");
-    assert_eq!(f.parent_or_none(0 as u32), NONE);
+    assert_eq!(f.parent_or_none(0_u32), NONE);
     for id in 1..f.len() as u32 {
         let parent = f.parent(id).unwrap();
         assert!(parent < id, "a parent precedes its children in preorder");
@@ -135,5 +135,50 @@ fn every_format_reads_the_same_facts_off_the_tape() {
             assert_eq!(old.syntax_errors(), new.syntax_errors(), "{at}");
             assert_eq!(old.depth(), new.depth(), "{at}");
         }
+    }
+}
+
+/// Decision 0426 §4, step 6: a parsed tape's home holds its presence after it; the store keeps the two as one, and a
+/// tape read back from the store answers each block's kinds as the parse's did, by the same read where it lies
+/// (`tape_has_kind`). Format 16 and 16z alike: the stored frame is the tape's bytes as they are, and its presence is
+/// read there unloaded.
+#[test]
+fn a_stored_tape_holds_the_presence_its_writer_made() {
+    use crate::code_rule_dsl::build_ids::grammar_version;
+    use crate::code_rule_dsl::tape::{self, PRESENCE_BLOCK};
+    use crate::code_rule_dsl::tape::formats::{Format, this_thread_stores};
+    use crate::code_rule_dsl::facts::core::build_cached_with_tape;
+    for format in [Format::F16, Format::F16Z] {
+        this_thread_stores(format);
+        let at = format.name();
+        let dir = tempfile::tempdir().unwrap();
+        let cache = crate::content_store::ContentStore::open(&dir.path().join("p.sqlite")).unwrap();
+        // Past two blocks of nodes: the class is in the first alone.
+        let file = Text("python".into(), Arc::new(format!("class A:\n    def f(self):\n        return g(1)\n{}", "x = 1\n".repeat(500))));
+        let (_, _, parsed) = build_cached_with_tape(&file, &cache, None, true).unwrap();
+        let parsed = parsed.expect("the tape");
+        assert!(parsed.has_presence(), "{at}: a parse lays its presence in the tape's home");
+        cache.written().unwrap();
+        let tag = i64::from(tape_tag(dialect_by_label("python").unwrap()).unwrap());
+        let (gv, fv) = (grammar_version(), i64::from(tape::formats::stored_version()));
+        let source = cache.source_by_hash(crate::content_store::HashKey::sha256(file.source().as_bytes())).unwrap().expect("the source, stored");
+        let frame = cache.tape_frames_for(&[source], tag, gv, fv).unwrap().remove(0).expect("the tape, stored");
+        let bytes = frame.in_place();
+        let stored = tape::stored_presence(bytes, tag as u8).unwrap_or_else(|| panic!("{at}: the presence, stored"));
+        let (_, doc) = build_in_wave_with_tape(&file, &cache, None, Some(&frame), false, true).unwrap();
+        let doc = doc.expect("the tape, read from the store");
+        assert!(doc.has_presence(), "{at}: a stored tape's home holds its presence");
+        let blocks = parsed.transducer_len().div_ceil(PRESENCE_BLOCK);
+        assert!(blocks >= 2, "{blocks} blocks");
+        let mut lacking = false;
+        for kind in 0..400u16 {
+            assert_eq!(doc.may_have_kind(kind), parsed.may_have_kind(kind), "{at}: kind {kind}");
+            assert_eq!(stored.has_kind(u32::MAX, kind), parsed.may_have_kind(kind), "{at}: kind {kind}, unloaded");
+            for b in 0..blocks {
+                assert_eq!(doc.block_may_have_kind(b, kind), parsed.block_may_have_kind(b, kind), "{at}: block {b}, kind {kind}");
+            }
+            lacking |= parsed.may_have_kind(kind) && !parsed.block_may_have_kind(blocks - 1, kind);
+        }
+        assert!(lacking, "{at}: a kind of the document the last block lacks");
     }
 }

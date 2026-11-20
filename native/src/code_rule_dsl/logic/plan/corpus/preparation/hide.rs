@@ -209,7 +209,7 @@ impl ProgramPass for Hide {
                 let grammar_of = |s: Slot| facts.get(&s).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
                 // A kind read off a guest's node is its grammar's (decision 0222): `kind(f, k), fn_scope(k)` over a view's
                 // node reads the kind set named in the view's grammar, and `k = "arrow_function"` names that grammar's
-                // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rr
+                // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rerail
                 // read over a Vue component's view) finds none of its kinds.
                 let kind_of: BTreeMap<Slot, String> = rule
                     .body
@@ -363,18 +363,18 @@ impl ProgramPass for Hide {
             touched = edited.into_iter().chain(first_copy..rules.len()).collect();
             delta.changed(&rules, &touched);
             for (name, cols) in decls {
-                declare_columns(&mut prog.b, &name, &cols);
+                declare_columns(&mut prog.b.fields(), &name, &cols);
             }
             all_kindsets.extend(kindsets);
             for (name, orig, kinds) in kind_facts {
                 if let Some(d) = prog.columns_of(orig.as_str()) {
-                    declare_columns(&mut prog.b, &name, &d);
+                    declare_columns(&mut prog.b.fields(), &name, &d);
                 }
                 let rows: Vec<front::List<Value>> = kinds.iter().map(|k| [Value::Str(k.as_str().into())].into()).collect();
-                prog.b.set_facts(&name, &rows);
+                prog.b.fields().set_facts(&name, &rows);
             }
             for axis in axes {
-                prog.b.add_input(&axis);
+                prog.b.fields().add_input(&axis);
             }
             if !changed {
                 break;
@@ -468,13 +468,13 @@ impl ProgramPass for Hide {
         });
         for h in &helpers {
             let cols: Vec<(&str, &str)> = h.vars.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            prog.b.declare(&h.name, &cols);
+            prog.b.fields().declare(&h.name, &cols);
         }
         // The version: every rule copied from its source with its edits, then the helpers, then the fields.
         let b = w.derive()?;
-        b.state_fields_of(&prog.b);
+        b.fields().state_fields_of(&prog.b);
         if all_kindsets != v.kindsets() {
-            b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&all_kindsets));
+            b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&all_kindsets));
         }
         let asked = asked_after(v, &rules);
         for (rule, fin) in rules.iter().zip(&finals) {
@@ -503,7 +503,7 @@ impl ProgramPass for Hide {
             out.finish()?;
         }
         if let Some(asked) = asked {
-            b.set_asked(&asked);
+            b.fields().set_asked(&asked);
         }
         self.kept = plan_rows(&reached, &made, &specialized, &asking, &carried);
         Ok(())
@@ -1383,7 +1383,7 @@ mod tests {
         assert!(out.iter().any(|r| r.contains("rr_in_sql_0_sql_1_pair(")), "{out:?}");
     }
 
-    /// O110: a column filled by host and guest nodes alike (`calls.rr`'s `tv`) is not a guest's column. A rule reading
+    /// O110: a column filled by host and guest nodes alike (`calls.rerail`'s `tv`) is not a guest's column. A rule reading
     /// a relation with a variable from it keeps reading the relation for the host's nodes, and a clone reads the
     /// guest's copy; before, the rule read only the copy, and `tbv` lost every host assignment.
     #[test]
@@ -1451,7 +1451,7 @@ mod tests {
                 read
             } else {
                 let mut b = Builder::on(&read);
-                b.set_facts(GUEST_POLICY, &[[Value::Str("library".into()), Value::Str("off".into())].into()]);
+                b.fields().set_facts(GUEST_POLICY, &[[Value::Str("library".into()), Value::Str("off".into())].into()]);
                 b.finish().unwrap().0
             };
             let mut p = Pipeline::new("test", read);

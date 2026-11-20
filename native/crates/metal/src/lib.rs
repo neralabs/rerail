@@ -12,6 +12,8 @@
 /// files read in place from source slabs.
 pub mod block_program;
 pub mod buffer_observation;
+/// The engine's commands on the device layer (decision 0440 step C).
+pub mod lane;
 pub mod launch;
 pub mod launch_budget;
 /// The preprocessing words on the device (decision 0348, stage 5).

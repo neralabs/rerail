@@ -1,4 +1,4 @@
-# `.rr`, step 13: floats.
+# `.rerail`, step 13: floats.
 #
 #   .mode 1.5
 #   r(x) :- s(x, y), y > 0.10, x = -2.5 * y.

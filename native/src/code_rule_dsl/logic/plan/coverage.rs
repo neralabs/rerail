@@ -7,11 +7,11 @@
 //! operations from the language's own tables, not by hand:
 //!
 //! - every comparison operator, over every pair of operand kinds (numbers, symbols, constants, computed values);
-//! - every function `strings::functions` registers, every functor `plan::sql_term` computes, `.rr`'s arithmetic
+//! - every function `strings::functions` registers, every functor `plan::sql_term` computes, `.rerail`'s arithmetic
 //!   and Soufflé's built-ins;
-//! - every text test (`.rr`'s names, `rr::lower::TESTS`), with a constant, a set and a bound pattern;
+//! - every text test (`.rerail`'s names, `rr::lower::TESTS`), with a constant, a set and a bound pattern;
 //! - every aggregate (`front::AggOp`, matched exhaustively: a new one does not compile until it has a probe);
-//! - every literal form (`front::Literal`, matched exhaustively), negation, recursion and computed heads.
+//! - every literal form (`program_image::Lit`, matched exhaustively), negation, recursion and computed heads.
 //!
 //! Each probe is a one-rule program over a few facts. It runs on SQLite, on the native engine and on the device
 //! (placed there wherever it has every form, `placement::Binding::Always`), and the native engine's rows must be
@@ -20,7 +20,7 @@
 //! written again (`RERAIL_BLESS_COVERAGE=1`). The ledger is the list of work the executors lack.
 //!
 //! The census (`every_operation_a_shipped_rule_uses_has_a_probe`) closes the loop from the other side: every
-//! function, comparison, aggregate and text test any shipped `.rr` file uses must be one the matrix probes.
+//! function, comparison, aggregate and text test any shipped `.rerail` file uses must be one the matrix probes.
 
 use super::*;
 use crate::content_store::ContentStore;
@@ -63,13 +63,13 @@ fn probe(name: impl Into<String>, ops: &[&str], cols: &'static str, rule: impl I
     Probe { name: name.into(), ops: ops.iter().map(|s| (*s).to_owned()).collect(), cols, rule: rule.into() }
 }
 
-/// The comparison operators `.rr` writes.
+/// The comparison operators `.rerail` writes.
 const COMPARISONS: [&str; 6] = ["=", "!=", "<", "<=", ">", ">="];
 
-/// `.rr`'s arithmetic, and the functor each lowers to.
+/// `.rerail`'s arithmetic, and the functor each lowers to.
 const ARITHMETIC: [(&str, &str); 5] = [("+", "add"), ("-", "sub"), ("*", "mul"), ("/", "div"), ("%", "mod")];
 
-/// Soufflé's built-in (non-`@`) functions `rr::lower` takes, by `.rr` name, with each argument's kind and the
+/// Soufflé's built-in (non-`@`) functions `rr::lower` takes, by `.rerail` name, with each argument's kind and the
 /// functor it lowers to.
 const BUILTINS: [(&str, &[Kind], &str); 7] = [
     ("strlen", &[Kind::Text], "strlen"),
@@ -109,12 +109,12 @@ fn aggregate(op: &AggOp) -> Probe {
     }
 }
 
-/// A literal form's probes, one or more per `Literal` variant: the match has no wildcard, so a new form needs its
+/// A literal form's probes, one or more per `Lit` variant: the match has no wildcard, so a new form needs its
 /// probe to compile. `nearest` and `ast` read the syntax tree, which these facts have none of: their probes run in
 /// `tree_forms_run_on_every_executor`.
-fn form(l: &Literal) -> Vec<Probe> {
+fn form(l: crate::code_rule_dsl::logic::program_image::Lit<'_>) -> Vec<Probe> {
     match l {
-        Literal::Atom(_) => vec![
+        crate::code_rule_dsl::logic::program_image::Lit::Atom(_) => vec![
             probe("join", &["atom"], "x: number, y: number", "{HEAD}(x, y) :- e(x, y), n(y)."),
             probe("join of three", &["atom"], "x: number, z: number", "{HEAD}(x, z) :- e(x, y), e(y, z), n(z)."),
             probe("negation", &["atom", "negation"], "x: number", "{HEAD}(x) :- n(x), !m(x)."),
@@ -129,10 +129,10 @@ fn form(l: &Literal) -> Vec<Probe> {
             probe("computed head", &["atom", "call add"], "x: number", "{HEAD}(x + 1) :- n(x)."),
             probe("computed symbol head", &["atom", "call cat"], "a: symbol", "{HEAD}(@dot(a, \"x\")) :- s(a)."),
         ],
-        Literal::Cmp { .. } => Vec::new(),
-        Literal::Agg { .. } => Vec::new(),
-        Literal::Nearest { .. } => Vec::new(),
-        Literal::Ast { .. } => Vec::new(),
+        crate::code_rule_dsl::logic::program_image::Lit::Cmp { .. } => Vec::new(),
+        crate::code_rule_dsl::logic::program_image::Lit::Agg { .. } => Vec::new(),
+        crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. } => Vec::new(),
+        crate::code_rule_dsl::logic::program_image::Lit::Ast { .. } => Vec::new(),
     }
 }
 
@@ -180,7 +180,7 @@ fn probes() -> Vec<Probe> {
         out.push(probe(format!("functor @{name}/{}", kinds.len()), &[&format!("call {op}")], value(ret), format!("{{HEAD}}(v) :- {}, v = @{name}({}).", binds(kinds), args.join(", "))));
     }
     for &(name, kinds, ret) in functions() {
-        // `rr_*` are the native engine's names of `.rr`'s own arithmetic and built-ins, probed above by their spellings.
+        // `rr_*` are the native engine's names of `.rerail`'s own arithmetic and built-ins, probed above by their spellings.
         if name.starts_with("rr_") {
             continue;
         }
@@ -250,16 +250,23 @@ fn probes() -> Vec<Probe> {
         ".decl {HEAD}_l(a: number, d: min<>) widen 8\n{HEAD}_l(x, 0) :- n(x), x = 1.\n{HEAD}_l(y, d + 1) :- {HEAD}_l(x, d), e(x, y).\n{HEAD}(a, d) :- {HEAD}_l(a, d)."));
     out.push(probe("aggregate count = 0 (a negation)", &["agg count"], "a: symbol", "{HEAD}(a) :- s(a), count : { p(a, _) } = 0."));
     out.push(probe("aggregate over two atoms' bag", &["agg count"], "a: symbol, c: number", "{HEAD}(a, c) :- t(a), c = count : { q(a, _) }."));
-    let a = Atom { rel: "n".into(), args: Vec::new().into(), neg: false, gated: false };
-    let t = Term::Wild;
-    for l in [
-        Literal::Atom(a.clone()),
-        Literal::Cmp { l: t.clone(), op: "=", r: t },
-        Literal::Agg { var: String::new(), op: AggOp::Count, over: None, atom: a },
-        Literal::Nearest { n: String::new(), a: String::new(), kindset: String::new() },
-        Literal::Ast { document: String::new(), node: String::new(), matcher: String::new(), captures: Vec::new() },
-    ] {
-        out.extend(form(&l));
+    // One rule holding each literal form, read back as the image's literals.
+    use crate::code_rule_dsl::logic::program_image::{Builder, CmpOp, T};
+    let mut b = Builder::base();
+    b.fields().declare("h", &[]);
+    b.fields().declare("n", &[]);
+    let mut o = b.open_rule();
+    b.put_head(&mut o, "h", &[]);
+    b.put_atom(&mut o, "n", &[], false, false);
+    b.put_cmp(&mut o, T::Wild, CmpOp::of("=").expect("equality"), T::Wild);
+    b.put_agg(&mut o, "c", &AggOp::Count, None, "n", &[]);
+    b.put_nearest(&mut o, "x", "y", "k");
+    b.put_ast(&mut o, "d", "x", "m", &[]);
+    b.close_rule(o).expect("a rule of every form");
+    let (v, _) = b.finish().expect("the forms' version");
+    let rule = v.rules().next().expect("the rule");
+    for l in rule.body() {
+        out.extend(form(l.view()));
     }
     out
 }
@@ -291,13 +298,15 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = crate::code_rule_dsl::logic::rr::parse_version(src).map_err(|e| format!("unparsed: {e}"))?;
     let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
         let (_path, store, db) = fresh();
-        // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
+        // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it. The
+        // probe's run holds it (decision 0442).
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
-        let was = placement::set_binding(binding);
+        let bound = placement::set_binding(binding);
         let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).map_err(|e| format!("stats: {e}"))?, BTreeSet::new(), modes);
-        placement::set_binding(was);
+        drop(bound);
         let got = got.map_err(|e| format!("error: {e}"))?;
         let ran = placement::recorded(rel);
         Ok((sorted(got.outputs.get(rel).map(|r| r.shown()).unwrap_or_default()), got.native.iter().any(|k| k.split('/').any(|r| r == rel)), ran))
@@ -343,7 +352,7 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
             return rest.split('/').next().unwrap_or("?").to_owned();
         }
         if let Some((_, rest)) = f.split_once("/rule-syntax/") {
-            return rest.split('/').next().filter(|d| !d.ends_with(".rr")).unwrap_or("rule-syntax").to_owned();
+            return rest.split('/').next().filter(|d| !d.ends_with(".rerail")).unwrap_or("rule-syntax").to_owned();
         }
         if f.contains("/programs/data_layer/") { "data-layer (engine)".into() } else { "engine".into() }
     };
@@ -474,17 +483,19 @@ fn every_operation_runs_on_every_executor() {
     }
 }
 
-/// The operations a file's statements use, by the names the probes give them (`Probe::ops`): read from the `.rr`
+/// The operations a file's statements use, by the names the probes give them (`Probe::ops`): read from the `.rerail`
 /// syntax (`rerail_rr_syntax`), as written, so no file needs its includes or a lowering to be counted.
-fn ops_of(items: &[rerail_rr_syntax::syntax::Statement], out: &mut BTreeMap<String, String>, file: &str) {
-    use rerail_rr_syntax::syntax::{Item, Lit, Term as S};
+fn ops_of(file: &std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>, out: &mut BTreeMap<String, String>, name: &str) -> Option<()> {
+    use crate::code_rule_dsl::logic::rr::clause::{At, L, LitAt, Reads, T};
+    use crate::code_rule_dsl::logic::rr::from_tape::{RrFile, S};
+    use crate::code_rule_dsl::logic::rr::tape::Field;
     let tests: BTreeMap<&str, &str> = crate::code_rule_dsl::logic::rr::lower::TESTS.into_iter().collect();
     let mut add = |op: String| {
-        out.entry(op).or_insert_with(|| file.to_owned());
+        out.entry(op).or_insert_with(|| name.to_owned());
     };
-    fn term(t: &S, add: &mut dyn FnMut(String), tests: &BTreeMap<&str, &str>) {
-        match t {
-            S::Call { name, functor, args } => {
+    fn term(f: &RrFile, t: &At, add: &mut dyn FnMut(String), tests: &BTreeMap<&str, &str>) {
+        match f.tv(t) {
+            T::Call { name, functor, args } => {
                 let name = match (name.as_str(), functor) {
                     ("dot", true) => "cat",
                     ("cat", false) => "concat",
@@ -492,62 +503,67 @@ fn ops_of(items: &[rerail_rr_syntax::syntax::Statement], out: &mut BTreeMap<Stri
                 };
                 add(format!("call {name}"));
                 add(format!("arity {name} {}", args.len()));
-                args.iter().for_each(|a| term(a, add, tests));
+                args.iter().for_each(|a| term(f, a, add, tests));
             }
-            S::Bin { op, l, r } => {
-                if let Some((_, f)) = ARITHMETIC.iter().find(|(o, _)| o == op) {
-                    add(format!("call {f}"));
+            T::Bin { op, l, r } => {
+                if let Some((_, fun)) = ARITHMETIC.iter().find(|(o, _)| *o == op) {
+                    add(format!("call {fun}"));
                 }
-                term(l, add, tests);
-                term(r, add, tests);
+                term(f, &l, add, tests);
+                term(f, &r, add, tests);
             }
-            S::Agg { op, over, by, body, .. } => {
+            T::Agg { op, over, by, body, .. } => {
                 add(format!("agg {op}"));
-                over.iter().for_each(|o| term(o, add, tests));
-                by.iter().for_each(|b| term(b, add, tests));
-                body.iter().for_each(|l| lit(l, add, tests));
+                over.iter().for_each(|o| term(f, o, add, tests));
+                by.iter().for_each(|b| term(f, b, add, tests));
+                body.iter().for_each(|l| lit(f, l, add, tests));
             }
-            S::Named(_, t) => term(t, add, tests),
+            T::Named(_, t) => term(f, &t, add, tests),
             _ => {}
         }
     }
-    fn lit(l: &Lit, add: &mut dyn FnMut(String), tests: &BTreeMap<&str, &str>) {
-        match l {
-            Lit::Atom { rel, args, neg } => {
+    fn lit(f: &RrFile, l: &LitAt, add: &mut dyn FnMut(String), tests: &BTreeMap<&str, &str>) {
+        match f.lit(l) {
+            L::Atom { rel, args, neg } => {
                 match rel.as_str() {
                     r if tests.contains_key(r) => add(format!("test {}", tests[r])),
                     "nearest" | "ast" => add(rel.clone()),
-                    _ => add(if *neg { "negation" } else { "atom" }.to_owned()),
+                    _ => add(if neg { "negation" } else { "atom" }.to_owned()),
                 }
-                args.iter().for_each(|a| term(a, add, tests));
+                args.iter().for_each(|a| term(f, a, add, tests));
             }
-            Lit::Cmp { l, op, r } => {
+            L::Cmp { l, op, r } => {
                 add(format!("cmp {op}"));
-                term(l, add, tests);
-                term(r, add, tests);
+                term(f, &l, add, tests);
+                term(f, &r, add, tests);
             }
-            Lit::Pattern { subject, .. } => {
+            L::Pattern { subject, .. } => {
                 add("test rx".to_owned());
-                term(subject, add, tests);
+                term(f, &subject, add, tests);
             }
-            Lit::Group { alts, .. } => alts.iter().flatten().for_each(|l| lit(l, add, tests)),
+            L::Group { alts, .. } => alts.iter().flatten().for_each(|l| lit(f, l, add, tests)),
         }
     }
-    for (item, _) in items {
-        match item {
-            Item::Lattice { .. } => add("lattice".to_owned()),
-            Item::Clause { heads, body, .. } => {
-                for h in heads {
-                    h.args.iter().for_each(|t| term(t, &mut add, &tests));
+    let t = file.tape();
+    for st in file.statements() {
+        match st.what() {
+            Some(S::Lattice(_)) => add("lattice".to_owned()),
+            Some(S::Clause) => {
+                let c = st.node();
+                file.check_clause(c).ok()?;
+                for h in file.heads_at(c) {
+                    h.args.iter().for_each(|a| term(file, a, &mut add, &tests));
                 }
-                body.iter().for_each(|l| lit(l, &mut add, &tests));
+                let body = t.get(c, Field::Body).map_or_else(Vec::new, |b| file.body_at(b, 0));
+                body.iter().for_each(|l| lit(file, l, &mut add, &tests));
             }
             _ => {}
         }
     }
+    Some(())
 }
 
-/// The shipped `.rr` files: the packs and the engine's own programs.
+/// The shipped `.rerail` files: the packs and the engine's own programs.
 fn shipped() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
@@ -579,9 +595,9 @@ fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
             .par_iter()
             .map(|f| {
                 let text = std::fs::read_to_string(f).ok()?;
-                let items = rerail_rr_syntax::syntax::Parser::new(&text).and_then(|mut p| p.statements()).ok()?;
+                let file = crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(text).ok()?;
                 let mut used = BTreeMap::new();
-                ops_of(&items, &mut used, &f.display().to_string());
+                ops_of(&file, &mut used, &f.display().to_string())?;
                 Some(used)
             })
             .collect();
@@ -596,7 +612,7 @@ fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
     })
 }
 
-/// The `.functor` declarations of the shipped files (`core.rr`'s and any file's own): each name's arguments' kinds
+/// The `.functor` declarations of the shipped files (`core.rerail`'s and any file's own): each name's arguments' kinds
 /// and its result's.
 fn functor_decls() -> BTreeMap<String, (Vec<Kind>, Kind)> {
     let kind = |t: &str| if t.trim() == "number" || t.trim() == "float" { Kind::Number } else { Kind::Text };

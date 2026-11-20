@@ -1,7 +1,7 @@
-//! Testing mode (decision 0130): the tests a `.rr` file carries, each run as the file's program over its fixtures.
+//! Testing mode (decision 0130): the tests a `.rerail` file carries, each run as the file's program over its fixtures.
 //!
-//! A test is `.test name [exactly] [uses a, b]` … `.end` (`syntax::Item::Test`); a fixture set, `.fixtures name` …
-//! `.end` (`syntax::Item::Fixtures`), is what the tests that name it in `uses` read too. Lowering never reads either,
+//! A test is `.test name [exactly] [uses a, b]` … `.end` (`from_tape::S::Test`); a fixture set, `.fixtures name` …
+//! `.end` (`from_tape::S::Fixtures`), is what the tests that name it in `uses` read too. Lowering never reads either,
 //! so a file's program is the same with its tests or without them.
 //!
 //! Here a test's program is the file's statements with the test's own (declarations, clauses, facts) spliced in after
@@ -14,7 +14,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::syntax::{self, Item, Statement, Tok};
+use super::from_tape::{S, Stmt};
+use super::syntax::{self, Tok};
 
 /// One test of a file, its fixture sets merged in.
 #[derive(Clone, Debug)]
@@ -28,7 +29,7 @@ pub struct Test {
     /// The relations whose rules the test drops (`.given`): their rows are the test's facts.
     pub givens: Vec<(String, usize)>,
     /// The test's own declarations, clauses and facts.
-    pub rules: Vec<Statement>,
+    pub rules: Vec<Stmt>,
     pub expects: Vec<Expect>,
 }
 
@@ -96,43 +97,49 @@ fn bad<T>(path: &Path, line: usize, what: impl std::fmt::Display) -> Result<T, S
 struct Block {
     fixtures: Vec<(String, Vec<u8>)>,
     givens: Vec<(String, usize)>,
-    rules: Vec<Statement>,
+    rules: Vec<Stmt>,
     expects: Vec<Expect>,
 }
 
-fn block(path: &Path, items: Vec<Statement>, test: bool) -> Result<Block, String> {
+fn block(path: &Path, items: Vec<Stmt>, test: bool) -> Result<Block, String> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let what = if test { "a test holds `.fixture`, `.given`, `.expect`, declarations and clauses" } else { "a fixture set holds `.fixture`, `.given`, declarations and clauses" };
     let mut b = Block::default();
-    for (item, at) in items {
-        match item {
-            Item::Setting { key, text } if key == "fixture" => b.fixtures.push(fixture(path, dir, at, &text)?),
-            Item::Setting { key, text } if key == "given" => {
+    for st in items {
+        let at = st.line();
+        match st.read().map_err(|e| format!("{}:{at}: {e}", path.display()))? {
+            S::Setting { key, text } if key == "fixture" => b.fixtures.push(fixture(path, dir, at, text)?),
+            S::Setting { key, text } if key == "given" => {
                 b.givens.extend(text.split(',').map(str::trim).filter(|r| !r.is_empty()).map(|r| (r.to_owned(), at)));
             }
-            Item::Setting { key, text } if key == "expect" && test => b.expects.push(expect(path, at, &text)?),
-            Item::Setting { key, .. } if key != "input" && key != "output" => return bad(path, at, format!(".{key}: {what}")),
-            Item::Include(_) | Item::Policy(_) | Item::Violation { .. } => return bad(path, at, what),
-            item => b.rules.push((item, at)),
+            S::Setting { key, text } if key == "expect" && test => b.expects.push(expect(path, at, text)?),
+            S::Setting { key, .. } if key != "input" && key != "output" => return bad(path, at, format!(".{key}: {what}")),
+            S::Include(_) | S::Policy | S::Violation(_) => return bad(path, at, what),
+            _ => b.rules.push(st.clone()),
         }
     }
     Ok(b)
 }
 
-/// The tests of the `.rr` file at `path`, in order, each with the fixture sets it uses merged in (theirs first).
+/// The tests of the `.rerail` file at `path`, in order, each with the fixture sets it uses merged in (theirs first).
 pub fn tests(path: &Path) -> Result<Vec<Test>, String> {
     let (statements, _) = super::read(path).map_err(|e| e.to_string())?;
     let mut sets: BTreeMap<String, Block> = BTreeMap::new();
-    for (item, line) in &statements {
-        if let Item::Fixtures { name, items } = item {
-            if sets.insert(name.clone(), block(path, items.clone(), false)?).is_some() {
-                return bad(path, *line, format!("a second fixture set named {name}"));
-            }
+    // A block's statements: nodes of the file's tape, as its other statements are.
+    let block_of = |st: &Stmt| {
+        let (t, n) = st.tape();
+        t.block(n).map(|(name, exactly, uses, body)| (name, exactly, uses, body.into_iter().map(|c| Stmt::at(st.file(), c)).collect::<Vec<_>>())).map_err(|e| format!("{}:{}: {e}", path.display(), st.line()))
+    };
+    for st in statements.iter().filter(|s| s.what() == Some(S::Fixtures)) {
+        let (name, _, _, items) = block_of(st)?;
+        if sets.insert(name.clone(), block(path, items, false)?).is_some() {
+            return bad(path, st.line(), format!("a second fixture set named {name}"));
         }
     }
     let mut out: Vec<Test> = Vec::new();
-    for (item, line) in statements {
-        let Item::Test { name, exactly, uses, items } = item else { continue };
+    for st in statements.iter().filter(|s| s.what() == Some(S::Test)) {
+        let line = st.line();
+        let (name, exactly, uses, items) = block_of(st)?;
         if out.iter().any(|t| t.name == name) {
             return bad(path, line, format!("a second test named {name}"));
         }
@@ -159,7 +166,7 @@ pub fn tests(path: &Path) -> Result<Vec<Test>, String> {
     Ok(out)
 }
 
-/// `.fixture "path" <fenced text>` or `.fixture "path" from "file"` (beside the `.rr` file).
+/// `.fixture "path" <fenced text>` or `.fixture "path" from "file"` (beside the `.rerail` file).
 fn fixture(path: &Path, dir: &Path, line: usize, text: &str) -> Result<(String, Vec<u8>), String> {
     let spanned = syntax::tokens(text).map_err(|e| format!("{}:{line}: {e:?}", path.display()))?;
     let toks: Vec<&Tok> = spanned.iter().map(|(t, _, _)| t).collect();
@@ -353,15 +360,15 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
         if super::core_names().contains(relation) {
             return bad(path, *line, format!(".given {relation}: a core relation is the engine's; give a `.fixture` file instead"));
         }
-        let declared = modules.iter().flat_map(|(_, s)| s).chain(&test.rules).any(|(item, _)| matches!(item, Item::Decl { name, .. } if name == relation));
+        let declared = modules.iter().flat_map(|(_, s)| s).chain(&test.rules).any(|s| s.what() == Some(S::Decl(relation)));
         if !declared {
             return bad(path, *line, format!(".given {relation}: no rule declares it"));
         }
     }
     for (_, statements) in &mut modules {
-        statements.retain(|(item, _)| !matches!(item, Item::Clause { heads, .. } if heads.iter().any(|h| given.contains(h.rel.as_str()))));
+        statements.retain(|s| !s.heads().iter().any(|h| given.contains(h)));
     }
-    let own = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+    let own = dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let Some((_, statements)) = modules.iter_mut().find(|(p, _)| *p == own) else {
         return Err(format!("{}: not among its program's modules", path.display()));
     };
@@ -379,7 +386,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
         if !declared.contains(relation) {
             return bad(path, e.line, format!("`.expect` names {relation}, which no rule declares"));
         }
-        program.add_output(relation);
+        program.fields().add_output(relation);
     }
     let program = program.finish().map(|(v, _)| v).map_err(|e| format!("{id}: {e}"))?;
     let report = crate::code_rule_dsl::tools::run_program(program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;
@@ -486,7 +493,7 @@ pub fn blocks(src: &str) -> Vec<String> {
         .collect()
 }
 
-/// A test as `.rr` text: its fixtures as fenced texts (each fence longer than any run of backticks it holds), then
+/// A test as `.rerail` text: its fixtures as fenced texts (each fence longer than any run of backticks it holds), then
 /// its `.expect` lines (as written after `.expect`).
 pub fn print_test(name: &str, exactly: bool, fixtures: &[(String, String)], expects: &[String]) -> String {
     let mut out = format!(".test {name}{}\n", if exactly { " exactly" } else { "" });
@@ -542,7 +549,7 @@ pub fn tests_of_cases(cases: &serde_json::Value) -> Result<String, String> {
 
 // ---------------------------------------------------------------- the command
 
-/// Every `.rr` file under each of `paths` (a file, or a directory read recursively), sorted.
+/// Every `.rerail` file under each of `paths` (a file, or a directory read recursively), sorted.
 pub fn rule_files(paths: &[PathBuf]) -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
@@ -550,7 +557,7 @@ pub fn rule_files(paths: &[PathBuf]) -> Vec<PathBuf> {
             let p = entry.path();
             if p.is_dir() {
                 walk(&p, out);
-            } else if p.extension().is_some_and(|e| e == "rr") {
+            } else if p.extension().is_some_and(|e| e == "rerail") {
                 out.push(p);
             }
         }
@@ -568,7 +575,7 @@ pub fn may_hold_tests(text: &str) -> bool {
     text.lines().any(|l| l.trim_start().starts_with(".test "))
 }
 
-/// Each test of each `.rr` file under `paths` whose `<file>::<name>` contains `filter`: `[{file, test, line, status:
+/// Each test of each `.rerail` file under `paths` whose `<file>::<name>` contains `filter`: `[{file, test, line, status:
 /// "pass" | "fail", failures, findings}]`.
 pub fn report(paths: &[PathBuf], filter: Option<&str>) -> Result<serde_json::Value, String> {
     // The runs' directories, removed when the report is made.

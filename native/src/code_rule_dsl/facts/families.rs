@@ -416,7 +416,7 @@ impl Families {
             return Ok(None);
         };
         let source = Arc::new(source);
-        let Some((bytes, _)) = store.get_tapes_bulk(&[id])?.remove(&id) else {
+        let Some(bytes) = store.get_tapes_bulk(&[id])?.remove(&id) else {
             return Ok(None);
         };
         let grammar = tape::Grammar::new(language).map_err(StoreError::Invalid)?;
@@ -468,12 +468,11 @@ impl Families {
     /// tape), else the store's.
     pub fn stored(graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<Option<Arc<Tape>>> {
         let read = graph.binding(&tape_name(scope, path))?.unwrap_or(ABSENT);
-        if read != ABSENT {
-            if let Some(tape) = graph.store().working_set().tape(read).and_then(|tape| tape.downcast::<Tape>().ok()) {
+        if read != ABSENT
+            && let Some(tape) = graph.store().working_set().tape(read).and_then(|tape| tape.downcast::<Tape>().ok()) {
                 crate::code_rule_dsl::prof::count("working_set.tape_hits", 1);
                 return Ok(Some(tape));
             }
-        }
         Self::default().take(graph, scope, path, read)
     }
 

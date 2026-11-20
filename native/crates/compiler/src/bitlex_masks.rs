@@ -3453,7 +3453,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
     }
     // Any mark at a token: the marks' masks joined, after them. Marks hold at few tokens (0.8%
-    // of the tests of `.rr`'s corpus), so `TOKEN` reads this once and the marks are live only
+    // of the tests of `.rerail`'s corpus), so `TOKEN` reads this once and the marks are live only
     // where it holds (`TOKEN m=1+k`).
     let any_mark = match mark_masks.split_first() {
         // With the marks the records' (`looped`), tier 2 reads them from the codes.

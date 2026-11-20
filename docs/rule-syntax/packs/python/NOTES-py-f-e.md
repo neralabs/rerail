@@ -8,8 +8,8 @@ The rules share two new libraries:
 
 | file | lines | what |
 |---|---|---|
-| `lib/python/pyflakes.rr` | 291 | bare handlers; where code runs (`run_scope`: function, lambda, class, module, comprehension, generator, as CPython compiles it); loop bodies; Ruff's literal tests; full builtins; unbound names and star imports; `__all__` entries; statement-level noqa; dict-key values (`1 == 1.0 == True == 1+0j`) |
-| `lib/python/pyflakes-format.rr` | 182 | printf-style and str.format strings parsed as CPython parses them (one regex step per token over the string's value); format-call arguments; operands whose type is known not to be a tuple |
+| `lib/python/pyflakes.rerail` | 291 | bare handlers; where code runs (`run_scope`: function, lambda, class, module, comprehension, generator, as CPython compiles it); loop bodies; Ruff's literal tests; full builtins; unbound names and star imports; `__all__` entries; statement-level noqa; dict-key values (`1 == 1.0 == True == 1+0j`) |
+| `lib/python/pyflakes-format.rerail` | 182 | printf-style and str.format strings parsed as CPython parses them (one regex step per token over the string's value); format-call arguments; operands whose type is known not to be a tuple |
 
 The 43 rules have 987 lines in total, comments and directives included. They range from 15 to 60 lines (E721 carries the JSON's 92 class names).
 
@@ -109,7 +109,7 @@ F722 cannot be scored: rrlab does not model `parsed`.
 
 ## Review fixes (after Ruff 0.15.7 probes)
 
-### Changes to lib/python/names.rr
+### Changes to lib/python/names.rerail
 
 All the changes are additive. The interface relations keep their names and arities. `scope`, `scope_node` and
 `qualname` are unchanged.
@@ -133,7 +133,7 @@ All the changes are additive. The interface relations keep their names and ariti
   - `type TA = ...` and `type A[T] = ...` bind the alias name. The binding form is "type", through new
     `target_stmt` and `form_of_kind` rows.
   - New `tp_name(o, x)`, with `tp_list` and `tp_decl`: the type parameters of a def, class or alias. These
-    could not reuse ast.rr's `type_param`, because ast.rr includes names.rr.
+    could not reuse ast.rerail's `type_param`, because ast.rerail includes names.rerail.
   - New `tp_ref(n, x)`: a read of T inside the definition that declares it. Such a read is not looked up
     (`walk` skips it), so it is never a miss, in methods included.
 - **Class bodies** bind `__qualname__` and `__module__`. This adds a `bound_in` rule.
@@ -184,7 +184,7 @@ Against Ruff 0.15.7 on the review's probe files, the only differences left are t
   applies it on the last line of a multi-line string (W605_1.py:39), and honours a file-level `# ruff: noqa: F541`
   (RUF100_7.py:7). rrlab now does both; F541 is 22 / 0 / 0 (python merge rescore).
 - **H3, F504 (1 FP + 1 FN, same finding).** F504.py contains a lone `\r`. Ruff counts it as a line break, so the
-  finding is at line 20. tree-sitter, and so rrlab, puts it at line 19. core.rr's `src_line` splits Python as
+  finding is at line 20. tree-sitter, and so rrlab, puts it at line 19. core.rerail's `src_line` splits Python as
   `str.splitlines()` does, so the engine's `line` should agree with Ruff.
 - **H4, F632 (1 FN), F722 (13 FN).** Findings inside string annotations (`variable: "123 is not y"`, F632.py:34,
   and every F722). They need `parsed`, which rrlab leaves empty. Both rules read the parsed tree through the
@@ -234,12 +234,12 @@ about 5 MB of scanning. A native tokenizer (C4) would make this linear.
 - **C1, python/names: complete `builtin`.** The `builtin` table lacks about 45 names: `None`, `True`,
   `ExceptionGroup`, `BlockingIOError`, `SyntaxError`, `exit`, `__builtins__`, …. As a result
   `builtin_ref`/`sym_of` miss them (E721 needs `BlockingIOError`, F822 needs `__builtins__`).
-  `lib/python/pyflakes.rr` carries the rest as `builtin_more`. Proposal: add those rows (the `builtin_more`
-  list, verbatim) to `builtin` in names.rr, and make `builtin_name` an alias, or drop it.
+  `lib/python/pyflakes.rerail` carries the rest as `builtin_more`. Proposal: add those rows (the `builtin_more`
+  list, verbatim) to `builtin` in names.rerail, and make `builtin_name` an alias, or drop it.
 - **C2, python/names: export `bound_in` and `walk`, and add visit-order lookup.** F402, F405, F633, F822,
   F823 and F842 use `bound_in(s, x)`, `walk(n, x, s)` and `miss(n, x)`. Those are "layers 1-6 (internal)", so
-  they should be interface. pyflakes.rr's `unbound_ref` now does a visit-order lookup for module and class
-  bodies. As a names.rr relation, F633 and F821 could share it. Also proposed:
+  they should be interface. pyflakes.rerail's `unbound_ref` now does a visit-order lookup for module and class
+  bodies. As a names.rerail relation, F633 and F821 could share it. Also proposed:
 
   ```
   // bound_before(n, x, s): scope s has a binding of x before n in visit order. Ruff resolves a read in its own
@@ -256,10 +256,10 @@ about 5 MB of scanning. A native tokenizer (C4) would make this linear.
   ```
 - **C4, core (optional): format-string tokens.** If format strings turn out costly, add a native
   `format_part(s, style, i, kind, name, spec)` ("percent" or "brace"), the way `str_part` decodes literals. The
-  Datalog parser in pyflakes-format.rr is exact for the fixtures, and could stay as the reference.
+  Datalog parser in pyflakes-format.rerail is exact for the fixtures, and could stay as the reference.
 - **C5, suppression on a parent statement.** Ruff lets the first line of a finding's statement silence it for
   F822 (`__all__ = [  # noqa: F822` covers each name below). `suppress` checks the finding's own line. F822 does
-  this in Datalog (pyflakes.rr's `noqa`/`noqa_ask`). A directive form would keep it out of rules:
+  this in Datalog (pyflakes.rerail's `noqa`/`noqa_ask`). A directive form would keep it out of rules:
   `suppress ruff "F822" at statement`.
 - **rrlab (harness):**
   - model `.scope exclude`;

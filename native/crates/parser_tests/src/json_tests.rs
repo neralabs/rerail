@@ -228,8 +228,11 @@ fn median(mut xs: Vec<f64>) -> f64 {
 fn json_bench() {
     // `RERAIL_OPT`: Cranelift's optimizer on tier 1 (`1`), tier 2 (`2`), or both (`1,2`).
     let opt = std::env::var("RERAIL_OPT").unwrap_or_default();
-    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(opt.split(',').any(|t| t == "1"), std::sync::atomic::Ordering::Relaxed);
-    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER2.store(opt.split(',').any(|t| t == "2"), std::sync::atomic::Ordering::Relaxed);
+    // The compiles' options are the run's (decision 0442).
+    let _run = rerail_context::test_run();
+    let options = rerail_compiler::native_cpu_codegen::options();
+    options.optimize_tier1.store(opt.split(',').any(|t| t == "1"), std::sync::atomic::Ordering::Relaxed);
+    options.optimize_tier2.store(opt.split(',').any(|t| t == "2"), std::sync::atomic::Ordering::Relaxed);
     let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
     // `RERAIL_FORMS`: other Bitlex files to time, as paths, in place of the two forms.
     let forms: Vec<(String, Compiled)> = match std::env::var("RERAIL_FORMS") {
@@ -318,16 +321,19 @@ fn json_optimizer_bench() {
     let paths = files_in("RERAIL_JSON_CORPUS");
     let files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
     let bytes: usize = files.iter().map(Vec::len).sum();
+    // The compiles' options are the run's (decision 0442).
+    let _run = rerail_context::test_run();
+    let options = rerail_compiler::native_cpu_codegen::options();
     let forms: Vec<(&str, Compiled)> = [("off", false, false), ("tier 1", true, false), ("tier 2", false, true), ("both", true, true)]
         .into_iter()
         .map(|(label, one, two)| {
-            rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(one, Relaxed);
-            rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER2.store(two, Relaxed);
+            options.optimize_tier1.store(one, Relaxed);
+            options.optimize_tier2.store(two, Relaxed);
             (label, form(&name))
         })
         .collect();
-    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(false, Relaxed);
-    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER2.store(false, Relaxed);
+    options.optimize_tier1.store(false, Relaxed);
+    options.optimize_tier2.store(false, Relaxed);
     // Each form's batches and tapes, made once.
     let mut state: Vec<Vec<_>> = forms
         .iter()
@@ -392,12 +398,12 @@ fn jsonc_comments_equal_tree_sitter() {
         let Some(tree) = tree_sitter_json_with(&bytes, true) else { continue };
         let mut parent: Vec<usize> = vec![usize::MAX; tree.len()];
         let mut open: Vec<usize> = Vec::new();
-        for i in 0..tree.len() {
+        for (i, p) in parent.iter_mut().enumerate() {
             while open.last().is_some_and(|&o| i >= o + tree[o].4) {
                 open.pop();
             }
             if let Some(&o) = open.last() {
-                parent[i] = o;
+                *p = o;
             }
             open.push(i);
         }
@@ -561,7 +567,7 @@ fn json_tier1_vectors_equal_the_interpreter() {
             let len = 1 + rng.below(300) as usize;
             while f.len() < len {
                 // Mostly ASCII, so that some blocks are all ASCII and others not.
-                let p = if rng.below(4) == 0 { *rng.pick(&pieces) } else { &pieces[..2][rng.below(2) as usize] };
+                let p = if rng.below(4) == 0 { *rng.pick(&pieces) } else { pieces[..2][rng.below(2) as usize] };
                 f.extend_from_slice(p);
             }
             files.push(f);

@@ -164,7 +164,8 @@ impl<'a> Run<'a, '_> {
         native_rels: &BTreeSet<String>,
     ) -> Option<Arc<JoinSpec>> {
         let _span = super::super::profile::span(|| "a line's join spec".into());
-        let mut bound = VarSet::new();
+        // A recheck's head is bound by its candidate (`Body::with_head_bound`).
+        let mut bound = b.bound_before();
         for s in steps {
             let mut add = |t: TermRef<'_>| {
                 if let TermRef::Var(v) = t {
@@ -221,8 +222,11 @@ impl<'a> Run<'a, '_> {
     ) -> Option<Arc<JoinSpec>> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
+            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`), a mode line's from
+            // the variables its delta binds (`Body::with_bound`): another spec each.
+            b.digest_pre(d);
             if bare {
-                // The tree's head of no terms, as `digest_atom` writes it.
+                // A head of no terms, as `Body::digest_atom` writes it.
                 d.str(b.rel(b.head()));
                 d.u64(0);
                 d.u64(0);
@@ -302,6 +306,16 @@ impl<'a> Run<'a, '_> {
         let pf = self.fields();
         let atoms = self.model.inputs.atoms;
         let mut slots = Slots::default();
+        // What the body has bound before its first step (a recheck's head, `Body::with_head_bound`; a mode line's
+        // delta, `Body::with_bound`): slots before any item, which the engine fills from the candidate or the delta's
+        // row (`Line::Recheck`). A step reads them as bound, and a test of them can come first, as the planner orders
+        // it (Q208). Unregistered, such a test met an unbound variable and no spec was made, and an aggregate whose
+        // group only the head binds (`fanout(f, n) :- def(f, _), n = count : { uses(_, f) }`) fell back to the rule's
+        // own order, unpriced (0364 R7). A bare prefix has no head: a recheck's head binds nothing there.
+        let bound = if bare && b.head_bound() { VarSet::new() } else { b.bound_before() };
+        for v in bound.iter() {
+            slots.slot(Key::Var(v));
+        }
         // A variable's type: its column's in a positive atom; a count's, a sum's or a number function's value is a
         // number. A variable equal to another (`$m = $a`, a capture's alias) has the other's type.
         let typ = |t: TermRef<'_>| -> Option<String> {
@@ -400,7 +414,7 @@ impl<'a> Run<'a, '_> {
             let decl = pf.columns(rel)?;
             let types: String = keep
                 .iter()
-                .map(|&c| sym_char(&self.model.inputs, &decl.get(c).unwrap_or_else(|| panic!("{rel} is declared with {} columns and read with {}", decl.len(), args.len())).1))
+                .map(|&c| sym_char(&self.model.inputs, decl.get(c).unwrap_or_else(|| panic!("{rel} is declared with {} columns and read with {}", decl.len(), args.len())).1))
                 .collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
             let mut sel = self.model.relation(pf, projected.map_or(rel, |(base, _)| base), false).render();
@@ -438,7 +452,7 @@ impl<'a> Run<'a, '_> {
                     lines.push(JoinItem::Atom { neg: l.neg(), src, args });
                 }
                 Lit::Cmp { l: TermRef::Call(fl, xl), op: op @ (CmpOp::Eq | CmpOp::Ne), r: TermRef::Call(fr, xr) }
-                    if b.v.text(fl) == "doc" && b.v.text(fr) == "doc" && xl.clone().count() == 1 && xr.clone().count() == 1 =>
+                    if b.v.text(fl) == "doc" && b.v.text(fr) == "doc" && xl.count() == 1 && xr.count() == 1 =>
                 {
                     // `@doc($a) = @doc($b)` (the split's same-document join): both nodes bound.
                     let (x, y) = (xl.clone().next().expect("one"), xr.clone().next().expect("one"));
@@ -448,7 +462,7 @@ impl<'a> Run<'a, '_> {
                     let (a, c) = (t_tok(b, x, &mut slots)?, t_tok(b, y, &mut slots)?);
                     lines.push(JoinItem::Doc { a, b: c, eq: op == CmpOp::Eq });
                 }
-                Lit::Cmp { l: TermRef::Var(d), op: CmpOp::Eq, r: TermRef::Call(f, args) } if b.v.text(f) == "doc" && args.clone().count() == 1 => {
+                Lit::Cmp { l: TermRef::Var(d), op: CmpOp::Eq, r: TermRef::Call(f, args) } if b.v.text(f) == "doc" && args.count() == 1 => {
                     // `$d = @doc($n)` (the cross-file memo's guard, decision 0076): n bound; d bound or tested.
                     let x = args.clone().next().expect("one");
                     if !slots.bound(x) {
@@ -476,7 +490,7 @@ impl<'a> Run<'a, '_> {
                         JoinItem::TestSet { op: f.to_string(), s: a, want: want == 1, members }
                     });
                 }
-                Lit::Cmp { l: TermRef::Call(f, args), op: CmpOp::Eq, r: TermRef::Int(want @ (0 | 1)) } if strings::is_test(b.v.text(f)) && args.clone().count() == 2 => {
+                Lit::Cmp { l: TermRef::Call(f, args), op: CmpOp::Eq, r: TermRef::Int(want @ (0 | 1)) } if strings::is_test(b.v.text(f)) && args.count() == 2 => {
                     // `@prefix($s, p) = 1` (or `= 0`): a text test of a string no text relation gives (`strings::as_test`
                     // takes the others to the vocabulary), its string and pattern bound; a set's patterns as one string.
                     let args: Vec<TermRef<'_>> = args.collect();
@@ -661,7 +675,7 @@ impl<'a> Run<'a, '_> {
         let head_args: Vec<TermRef<'_>> = if bare { Vec::new() } else { b.head().args().collect() };
         for (k, t) in head_args.into_iter().enumerate() {
             match t {
-                TermRef::Call(_, args) if call_of(t, "cat") && args.clone().count() == 2 && args.clone().all(|x| slots.bound(x)) => {
+                TermRef::Call(_, args) if call_of(t, "cat") && args.count() == 2 && args.clone().all(|x| slots.bound(x)) => {
                     let mut args = args;
                     let (x, y) = (args.next().expect("two"), args.next().expect("two"));
                     let (Some(Tok::Slot(a)), Some(Tok::Slot(c))) = (t_tok(b, x, &mut slots), t_tok(b, y, &mut slots)) else { return None };
@@ -670,7 +684,7 @@ impl<'a> Run<'a, '_> {
                 // `sym_at($e, @cat(1539, $x))`: a qualified name of a constant scope (the planner folds a scope's name
                 // to its symbol) and a bound part, or two constants: the name made into a slot of its own first.
                 // A part that is itself computed (`walk_qualname(f, @cat(p, @nfkc(x)))`) goes to `expr` below.
-                TermRef::Call(_, args) if call_of(t, "cat") && args.clone().count() == 2 && args.clone().all(|x| is_const(x) || slots.bound(x)) => {
+                TermRef::Call(_, args) if call_of(t, "cat") && args.count() == 2 && args.clone().all(|x| is_const(x) || slots.bound(x)) => {
                     let mut args = args;
                     let (x, y) = (args.next().expect("two"), args.next().expect("two"));
                     let (a, c) = (t_tok(b, x, &mut slots)?, t_tok(b, y, &mut slots)?);

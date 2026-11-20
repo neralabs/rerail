@@ -94,9 +94,21 @@ impl Gpu {
     }
 }
 
-fn gpu() -> Option<&'static Gpu> {
-    static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
-    GPU.get_or_init(|| Gpu::new().map_err(|e| eprintln!("{e}")).ok()).as_ref()
+/// The machine's GPU lane (decision 0442): its device's queue and pipelines, and its batches' counts.
+#[derive(Default)]
+struct GpuLane {
+    gpu: OnceLock<Option<Arc<Gpu>>>,
+    running: std::sync::atomic::AtomicUsize,
+    begun: std::sync::atomic::AtomicUsize,
+    beside: std::sync::atomic::AtomicUsize,
+}
+
+fn gpu_lane() -> Arc<GpuLane> {
+    rerail_context::machine::<GpuLane>()
+}
+
+fn gpu() -> Option<Arc<Gpu>> {
+    gpu_lane().gpu.get_or_init(|| Gpu::new().map_err(|e| eprintln!("{e}")).ok().map(Arc::new)).clone()
 }
 
 /// This lane's backend, when this machine has a Metal device and the kernels compiled.
@@ -111,7 +123,7 @@ pub fn backend() -> Option<Arc<dyn Backend>> {
 
 /// The gpu lane.
 pub struct GpuBackend {
-    gpu: &'static Gpu,
+    gpu: Arc<Gpu>,
     /// What the lane keeps between batches: joins' right sides (decision 0100 §4).
     space: std::sync::Mutex<space::Space>,
 }
@@ -234,13 +246,14 @@ impl Backend for GpuBackend {
                 Kernel::Program(p) => Arc::clone(&p.0),
                 _ => unreachable!("a program"),
             }).collect();
-            let beside = RUNNING.fetch_add(1, std::sync::atomic::Ordering::AcqRel) > 0;
-            BEGUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let lane = gpu_lane();
+            let beside = lane.running.fetch_add(1, std::sync::atomic::Ordering::AcqRel) > 0;
+            lane.begun.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if beside {
-                BESIDE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                lane.beside.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             let take = crate::exec::lane_spawn(move || {
-                let _running = RunningCount;
+                let _running = RunningCount(lane);
                 programs
                     .iter()
                     .map(|p| {
@@ -282,8 +295,8 @@ impl crate::exec::Pending for space::Started {
 /// Whether a batch of programs runs beside the one before (0344): on unless `RERAIL_GPU_OVERLAP=off`, which runs
 /// each as it begins on the lane's worker, to time what the overlap gives.
 fn overlap() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RERAIL_GPU_OVERLAP").as_deref() != Ok("off"))
+    // The run's setting (decision 0442).
+    rerail_context::setting(|| std::env::var("RERAIL_GPU_OVERLAP").as_deref() != Ok("off"))
 }
 
 /// A submission that ran as it began.
@@ -298,22 +311,19 @@ impl crate::exec::Pending for Done {
     }
 }
 
-static RUNNING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static BEGUN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static BESIDE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The GPU lane's batches of programs begun in this process, and how many of them began while another still ran
+/// The GPU lane's batches of programs begun on this machine, and how many of them began while another still ran
 /// (decision 0344: one's host part beside another's command buffers).
 pub fn programs_begun() -> (usize, usize) {
-    (BEGUN.load(std::sync::atomic::Ordering::Relaxed), BESIDE.load(std::sync::atomic::Ordering::Relaxed))
+    let lane = gpu_lane();
+    (lane.begun.load(std::sync::atomic::Ordering::Relaxed), lane.beside.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// One running batch of programs, counted while it lives.
-struct RunningCount;
+struct RunningCount(Arc<GpuLane>);
 
 impl Drop for RunningCount {
     fn drop(&mut self) {
-        RUNNING.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        self.0.running.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
@@ -340,7 +350,7 @@ impl GpuBackend {
     /// Runs `ks` as one submission, with what it took on the device.
     pub fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Stats), String> {
         objc::rc::autoreleasepool(|| {
-            let mut plan = Planner { gpu: self.gpu, inputs: HashMap::new(), leases: Default::default() };
+            let mut plan = Planner { gpu: &self.gpu, inputs: HashMap::new(), leases: Default::default() };
             let t = std::time::Instant::now();
             let jobs: Vec<Job> = crate::score::phase("upload", || ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>())?;
             let mut stats = Stats { encode: t.elapsed().as_secs_f64(), ..Stats::default() };
@@ -398,7 +408,7 @@ impl GpuBackend {
     /// One command buffer: every job's stage `s`, then a barrier over what stage `s` wrote, then stage `s + 1`.
     #[allow(unexpected_cfgs)] // `msg_send!` expands to a `cargo-clippy` cfg check.
     fn execute<'a>(&self, jobs: impl Iterator<Item = &'a [Stage]> + Clone, stats: &mut Stats) -> Result<(), String> {
-        let gpu = self.gpu;
+        let gpu = &*self.gpu;
         let (c0, t0) = (crate::score::thread_cpu(), std::time::Instant::now());
         let cb = gpu.queue.new_command_buffer();
         let enc = cb.compute_command_encoder_with_dispatch_type(MTLDispatchType::Concurrent);
@@ -534,8 +544,8 @@ impl Job {
 }
 
 /// Builds a submission's jobs; inputs shared by several launches are wrapped once.
-struct Planner {
-    gpu: &'static Gpu,
+struct Planner<'g> {
+    gpu: &'g Gpu,
     inputs: HashMap<(usize, usize), Buffer>,
     /// The pooled buffers the submission's jobs use, returned once its command buffers have completed and its
     /// outputs are read (when the planner drops).
@@ -546,7 +556,7 @@ fn u(x: usize) -> u32 {
     x as u32
 }
 
-impl Planner {
+impl Planner<'_> {
     /// A zeroed buffer of the pool (the kernels count into some, and read a new buffer as zero).
     fn alloc(&self, bytes: u64) -> Buffer {
         let lease = shared::lease_zeroed(bytes.max(16) as usize).unwrap_or_else(|e| panic!("gpu lane: {e}"));
@@ -791,3 +801,75 @@ impl Planner {
 
 #[cfg(test)]
 mod tests;
+
+/// Decision 0440 step 5's speed gate for the histogram: the UKL library's (`rerail_gpu::library::histogram`) against
+/// this lane's `hist`, on the same buffers: GPU time of the command buffer, warmed, the median of nine runs taken in
+/// turn. A measurement: `--ignored`.
+#[cfg(test)]
+mod library_speed {
+    use super::*;
+    use rerail_gpu::device::ComputeQueue;
+    use rerail_gpu::kernels::{alloc, buffer_of};
+
+    fn median(mut v: Vec<f64>) -> f64 {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    }
+
+    #[test]
+    #[ignore = "a measurement"]
+    fn the_library_histogram_is_no_slower_than_the_lane() {
+        let lane = gpu().expect("a Metal device");
+        let shared = rerail_gpu::shared::get().expect("a Metal device");
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let (parts, per) = (1024usize, 4096usize);
+        for width in [1000u32, 5000] {
+            let codes: Vec<u16> = (0..parts * per)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    (x % width as u64) as u16
+                })
+                .collect();
+            let offsets: Vec<u32> = (0..=parts).map(|p| (p * per) as u32).collect();
+            let (cb, ob) = (buffer_of(&codes).unwrap(), buffer_of(&offsets).unwrap());
+            let (h, bad) = (alloc::<u32>(parts * width as usize).unwrap(), buffer_of(&[0u32; 4]).unwrap());
+            let run_lane = || {
+                let command = lane.queue.new_command_buffer().to_owned();
+                let enc = command.new_compute_command_encoder();
+                enc.set_compute_pipeline_state(&lane.pipes[Pipe::Hist as usize]);
+                for (i, b) in [&cb, &ob, &h].into_iter().enumerate() {
+                    enc.set_buffer(i as u64, Some(b.metal().expect("a Metal buffer")), 0);
+                }
+                enc.set_bytes(3, 4, (&width as *const u32).cast());
+                enc.set_buffer(4, Some(bad.metal().expect("a Metal buffer")), 0);
+                enc.dispatch_thread_groups(MTLSize::new(parts as u64, 1, 1), MTLSize::new(TG, 1, 1));
+                enc.end_encoding();
+                command.commit();
+                command.wait_until_completed();
+                let (s, e): (f64, f64) = unsafe { (objc::msg_send![&*command, GPUStartTime], objc::msg_send![&*command, GPUEndTime]) };
+                e - s
+            };
+            let run_lib = || {
+                let mut q = ComputeQueue::new(&shared.queue);
+                rerail_gpu::library::histogram::<u16>(&q, &cb, &ob, parts as u32, width, &h, &bad).unwrap();
+                let e = q.flush();
+                e.await_().unwrap();
+                e.gpu_seconds()
+            };
+            for _ in 0..3 {
+                run_lane();
+                run_lib();
+            }
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            for _ in 0..9 {
+                a.push(run_lane());
+                b.push(run_lib());
+            }
+            let (a, b) = (median(a) * 1e3, median(b) * 1e3);
+            eprintln!("histogram of 4M u16 codes, width {width}, 1024 partitions: lane {a:.3} ms, UKL library {b:.3} ms ({:.2}x)", b / a);
+            assert!(b <= a * 1.1, "the library's histogram is slower than the lane's");
+        }
+    }
+}

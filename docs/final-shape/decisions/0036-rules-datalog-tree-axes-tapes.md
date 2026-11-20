@@ -25,7 +25,7 @@ containment, or provided as a built-in computed by the transducer, as `nearest` 
 
 ## Evidence
 
-`measure_inside_three_ways` asks "calls inside a function" over nera-data-layer `2b1504ad`
+`measure_inside_three_ways` asks "calls inside a function" over the data-layer repository at `2b1504ad`
 (9,010 files, 28.2M nodes, 104 chunks). It is CPU, at load 43–87, and every way finds 999,607
 rows.
 

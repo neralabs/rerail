@@ -44,13 +44,13 @@ structure! {
     }
 }
 
-/// The bit a node id is split at (decision 0443 K2): an id is `document << 32 | slot << 18 | index` (decisions 0083
+/// The bit a node id is split at (decision 0456 K2): an id is `document << 32 | slot << 18 | index` (decisions 0083
 /// §3, 0094 §2), so above it is the id's granule, below it its index there. The engine's `granules::INDEX_BITS`,
 /// which asserts they are equal.
 pub const ID_SPLIT: u32 = 18;
 
 structure! {
-    /// A column of a packed relation (decision 0443 K2). `split` 0: its values whole, in `hi`. Else split at bit
+    /// A column of a packed relation (decision 0456 K2). `split` 0: its values whole, in `hi`. Else split at bit
     /// `split`: `hi` holds each value's `v >> split` and `lo` its `v & (2^split - 1)`, so a sorted id column is runs
     /// of granules and small indexes where a group of 128 ids would span documents. `rel` 1: each part is less
     /// column 0's same part at the row (an id near the row's first id, as a child is near its parent); column 0 is
@@ -72,7 +72,7 @@ structure! {
         pub okey: [u16; 8],
         pub cols: Span<PCol>,
         pub indexes: Span<PIndex>,
-        /// Each row's level (decision 0090), in the rows' order; empty when they have none (decision 0443 K1).
+        /// Each row's level (decision 0090), in the rows' order; empty when they have none (decision 0456 K1).
         pub levels: IntCol,
     }
 }
@@ -274,7 +274,7 @@ fn stats_of(plan: &Plan, bytes: usize) -> PackStats {
 type Job<'a> = (&'a Choice, &'a [i64], &'a mut [u64], &'a mut [u64]);
 
 /// Places `plan` in `block` (open): its descriptor first, then its columns' words, all from one point on, so the
-/// packed relation is one contiguous range of the block (decision 0443 K4: it moves by `memcpy`).
+/// packed relation is one contiguous range of the block (decision 0456 K4: it moves by `memcpy`).
 fn place_at(block: &Block, plan: &Plan, spec: &Spec) -> *mut Packed {
     let p: *mut Packed = block.alloc_t(1);
     let cp: *mut PCol = block.alloc_t(plan.arity);
@@ -358,8 +358,8 @@ pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Bl
     crate::scratch::with(|s| {
         let a = rel.arity as usize;
         let n = rel.rows.len() as usize;
-        let raw: &mut [i64] = s.take(n * a);
         let rows = &rel.rows;
+        let raw: &mut [i64] = s.take(n * a);
         let read = |(c, col): (usize, &mut [i64])| {
             rows.read_col(c, n as u32, col);
             col.iter().fold((i64::MAX, i64::MIN), |(a, b), &v| (a.min(v), b.max(v)))
@@ -400,7 +400,7 @@ pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Bl
     })
 }
 
-/// Rows ready to be placed (decision 0443 K3): in canonical order, without duplicates, each column's encoding chosen.
+/// Rows ready to be placed (decision 0456 K3): in canonical order, without duplicates, each column's encoding chosen.
 pub struct Prepared<'s> {
     plan: Plan<'s>,
     order: Vec<u16>,
@@ -779,7 +779,7 @@ mod tests {
         (0..p.len()).map(|i| [p.get(i, 0), p.get(i, 1)]).collect()
     }
 
-    /// K-R2 (decision 0443): rows already in canonical order and distinct are packed without a sort, and read as the
+    /// K-R2 (decision 0456): rows already in canonical order and distinct are packed without a sort, and read as the
     /// same rows given out of order are after theirs.
     #[test]
     fn a_sorted_input_is_not_sorted_again() {
@@ -803,7 +803,7 @@ mod tests {
         assert_eq!(b, sorted);
     }
 
-    /// K-R12 (decision 0443 K2): node ids (`document << 32 | slot << 18 | index`, documents numbered as digests are)
+    /// K-R12 (decision 0456 K2): node ids (`document << 32 | slot << 18 | index`, documents numbered as digests are)
     /// are split at `ID_SPLIT`, a child's id relative to its parent's in column 0; every value reads back, by `get`,
     /// `for_each` and the order's probe, in fewer bytes than whole columns take.
     #[test]

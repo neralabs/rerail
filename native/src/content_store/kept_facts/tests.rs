@@ -28,6 +28,11 @@ impl KeptRows for Lent {
 }
 
 fn lent(rows: &[(i64, i64)]) -> Box<dyn KeptRows> {
+    lent_dead(rows, &[])
+}
+
+/// `lent`, its rows `dead` killed by the run (the entry's dead bits).
+fn lent_dead(rows: &[(i64, i64)], dead: &[u32]) -> Box<dyn KeptRows> {
     let block = Block::anon(kind::FACTS, 16 << 20);
     let spec = Spec { widths: vec![8, 8], order: vec![0], indexes: vec![vec![0]], min_log: 4 };
     let rel = Relation::create(&block, &spec, None);
@@ -38,7 +43,11 @@ fn lent(rows: &[(i64, i64)]) -> Box<dyn KeptRows> {
     }
     freeze(&block, rel, &spec, None);
     let at = block.offset_of(std::ptr::from_ref(rel));
-    Box::new(Lent { block, at, dead: Vec::new() })
+    let mut bits = vec![0u64; rows.len().div_ceil(64)];
+    for id in dead {
+        bits[*id as usize / 64] |= 1 << (id % 64);
+    }
+    Box::new(Lent { block, at, dead: if dead.is_empty() { Vec::new() } else { bits } })
 }
 
 const SPACE: [u8; 32] = [7; 32];
@@ -49,7 +58,7 @@ fn put(rel: &str, part: i64, digest: u64, what: KeptWhat) -> KeptPut {
 }
 
 fn flat(rows: &[i64]) -> KeptWhat {
-    KeptWhat::Flat { widths: vec![8, 8], rows: std::sync::Arc::new(rows.to_vec()), n: rows.len() / 2, levels: None, given: false }
+    KeptWhat::Flat { widths: vec![8, 8], rows: rows.to_vec(), n: rows.len() / 2, levels: None, given: false }
 }
 
 /// A store's file with its schema, and a connection to it.
@@ -82,7 +91,7 @@ fn files(path: &Path) -> Vec<String> {
     out
 }
 
-/// K-R5 (decision 0443): a write appends one file of its puts only (a relation's live rows packed, a granule's
+/// K-R5 (decision 0456): a write appends one file of its puts only (a relation's live rows packed, a granule's
 /// rows, a reads-only entry, a gone entry), read with the chain as one; small writes merge into the newest small
 /// file; a write as big as the chain merges every file into one, read the same, and a reader of the old chain reads
 /// it still; the files a commit replaced go at the next write.
@@ -171,8 +180,9 @@ fn a_waves_kept_puts_are_one_file_a_space_and_a_key_keeps_its_last() {
     assert_eq!(g.bytes(), 4 * 2 * 8 + 4 * 64);
     let closed = Box::new(g).close().expect("a job");
     let super::super::write_back::Work(super::super::write_back::Kind::Kept(w)) = closed.job else { panic!("a kept write") };
-    let spaces: Vec<([u8; 32], Vec<(String, u64)>)> = w.spaces.iter().map(|(s, puts)| (*s, puts.iter().map(|p| (p.rel.clone(), p.digest)).collect())).collect();
-    assert_eq!(spaces, vec![(SPACE, vec![("b".into(), 2), ("a".into(), 3)]), (OTHER, vec![("c".into(), 5)])]);
+    // Each space's puts as a set: a key put again is replaced where it was put first.
+    let spaces: Vec<([u8; 32], std::collections::BTreeSet<(String, u64)>)> = w.spaces.iter().map(|(s, puts)| (*s, puts.iter().map(|p| (p.rel.clone(), p.digest)).collect())).collect();
+    assert_eq!(spaces, vec![(SPACE, [("a".into(), 3), ("b".into(), 2)].into()), (OTHER, [("c".into(), 5)].into())]);
     // Written, the space reads back the last put of each key.
     let (path, c) = store("gathered");
     let mut w = w;
@@ -183,96 +193,104 @@ fn a_waves_kept_puts_are_one_file_a_space_and_a_key_keeps_its_last() {
     assert_eq!(got, vec![("a".into(), 3), ("b".into(), 2)]);
 }
 
-/// K-R8a (decision 0443 step 5): a run binds a relation whose frame its space's chain keeps (the same digest and
-/// types) from the chain: its rows in canonical order, its frame's digest and reads, and its levels as the entry has
-/// them, in its rows' order (not the frame's levels part, in the frame's order); a relation whose entry is stale or
-/// missing (a store from before the chain) from its frame. A frame's levels part whose entry has none is absent
-/// (ep2's k1 panicked on it: the part was bound after its part 0 had removed it).
+/// A wave's puts are gathered by space and appended as one file each: a later put of a key replaces an earlier one, a
+/// retag keeps the rows the wave gave its key with its own reads, and a gone entry stays gone. Two spaces, one
+/// write each.
 #[test]
-fn a_kept_relation_is_bound_from_its_chain() {
-    use crate::content_store::{FRAME_LEVELS_PART, FramePut, FrameRel, FrameRows, FrameStored};
-    let (path, c) = store("bind");
-    let rel = |n: &str| FrameRel { name: n.into(), ident: ID };
-    let (p, q, s) = (rel("p"), rel("q"), rel("s"));
-    let bare: Vec<FrameRel> = (0..8).map(|i| rel(&format!("t{i}"))).collect();
-    let frame = |rel: &FrameRel, part: i64, types: &[u8], v: &[i64]| FramePut { rel: rel.clone(), part, digest: 1, reads: vec![("r".into(), 1)], rows: FrameRows { types: types.to_vec(), rows: v.to_vec(), n: v.len() / types.len() } };
-    {
-        let cs = crate::content_store::ContentStore::open(&path).unwrap();
-        let mut puts = vec![frame(&p, 0, b"ii", &[3, 30, 1, 10]), frame(&p, FRAME_LEVELS_PART, b"i", &[5, 6]), frame(&q, 0, b"ii", &[5, 50]), frame(&s, 0, b"ii", &[7, 70])];
-        // Eight, so the map's order visits some levels part after its part 0.
-        for t in &bare {
-            puts.extend([frame(t, 0, b"ii", &[2, 20]), frame(t, FRAME_LEVELS_PART, b"i", &[4])]);
-        }
-        cs.keep_frames(&SPACE, &puts, &[], None).unwrap();
+fn a_waves_puts_are_one_file_a_space() {
+    let (path, c) = store("gather");
+    const OTHER: [u8; 32] = [9; 32];
+    let mut g = KeptGather::default();
+    g.add(SPACE, vec![put("p", 0, 1, flat(&[1, 1])), put("q", 0, 2, flat(&[2, 2])), put("g", 0, 3, flat(&[3, 3]))]);
+    g.add(OTHER, vec![put("o", 0, 4, flat(&[4, 4]))]);
+    // `p` replaced; `q` retagged (its rows and digest this wave's, its reads the retag's: a retag carries no digest,
+    // `retain::kept_reads`); `g` gone.
+    let mut retag = put("q", 0, 0, KeptWhat::Reads);
+    retag.reads = vec![("r".into(), 77)];
+    g.add(SPACE, vec![put("p", 0, 11, flat(&[5, 5, 6, 6])), retag, put("g", 0, 0, KeptWhat::Gone)]);
+    assert_eq!(g.spaces[&SPACE].0.len(), 3, "each key once");
+    let spaces: Vec<([u8; 32], Vec<KeptPut>)> = g.spaces.into_iter().map(|(s, (p, _))| (s, p)).collect();
+    c.execute_batch("BEGIN IMMEDIATE").unwrap();
+    for (space, puts) in spaces {
+        write_space(&path, &c, &space, puts, None).unwrap();
     }
-    // p's entry is its frame's, with its levels; q's is stale (another digest); s has none.
+    c.execute_batch("COMMIT").unwrap();
+    let got = read(&path, &c);
+    assert_eq!(
+        got.iter().map(|(r, p, d, rows)| (r.as_str(), *p, *d, rows.clone())).collect::<Vec<_>>(),
+        [("p", 0, 11, vec![vec![5, 5], vec![6, 6]]), ("q", 0, 2, vec![vec![2, 2]])],
+        "p replaced, q retagged with this wave's rows and digest, g gone"
+    );
+    let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
+    let q = space.view().get(&FactKey { rel: "q", ident: &ID, part: 0 }).map(|k| k.reads().map(|(r, d)| (r.to_owned(), d)).collect::<Vec<_>>());
+    assert_eq!(q, Some(vec![("r".to_owned(), 77)]));
+    assert_eq!(files(&path).len(), 1, "one file for the space's wave: {:?}", files(&path));
+    assert_eq!(chain_rows(&c, &OTHER).unwrap().len(), 1, "the other space written in the same job");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// F-R5 (decisions 0401 F5, 0439): the kept relations read through SQL are their entries. `kept_entries` gives each
+/// entry's key, digest, types, reads and rows' count; `kept_facts` each entry's rows, a row the run killed not kept;
+/// an entry not kept has no rows.
+#[test]
+fn the_kept_relations_read_through_sql_equal_their_entries() {
+    let (path, c) = store("entries");
+    write(&path, &c, vec![put("q", 0, 2, KeptWhat::Rows(lent_dead(&[(1, 10), (2, 20), (3, 30)], &[1]))), put("p", 4, 3, flat(&[7, 70, 8, 80]))]);
+    crate::content_store::atoms::Atoms::attach(&c).unwrap();
+    let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
+    let view = space.view();
+    let entries_of: Vec<(String, i64, i64, i64, Vec<Vec<i64>>)> = view.all().map(|k| (k.key.rel.to_owned(), k.key.part, k.digest as i64, k.rows.len() as i64, (0..k.rows.len()).map(|i| k.row(i)).collect())).collect();
+    let entries: Vec<(String, i64, i64, i64, String, String)> = c
+        .prepare("SELECT rel, part, digest, rows, types, reads FROM kept_entries WHERE space = ?1 ORDER BY rel, part")
+        .unwrap()
+        .query_map([SPACE.as_slice()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(entries.iter().map(|e| (e.0.clone(), e.1, e.2, e.3)).collect::<Vec<_>>(), entries_of.iter().map(|v| (v.0.clone(), v.1, v.2, v.3)).collect::<Vec<_>>());
+    assert_eq!((entries[1].4.as_str(), entries[1].5.as_str()), ("ii", "r:0000000000000002"), "q's types and reads");
+    for (rel, part, _, _, rows) in &entries_of {
+        let sql: Vec<Vec<i64>> = c
+            .prepare("SELECT c0, c1 FROM kept_facts WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")
+            .unwrap()
+            .query_map(rusqlite::params![SPACE.as_slice(), rel, ID.as_slice(), part], |r| Ok(vec![r.get(0)?, r.get(1)?]))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(&sql, rows, "{rel}'s rows through SQL");
+    }
+    assert_eq!(entries_of[1].4, [vec![1, 10], vec![3, 30]], "the killed row is not kept");
+    let none: i64 = c.query_row("SELECT count(*) FROM kept_facts WHERE space = ?1 AND rel = 'nothing'", [SPACE.as_slice()], |r| r.get(0)).unwrap();
+    assert_eq!(none, 0, "an entry not kept has no rows");
+    let all: i64 = c.query_row("SELECT count(*) FROM kept_entries", [], |r| r.get(0)).unwrap();
+    assert_eq!(all, 2, "every space's entries, unconstrained");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// K-R8a's and K-R9's store halves (decision 0456 step 5-6): an entry's levels follow its rows into canonical order;
+/// an entry put as given (an input's granule, read by position) is read in its order, every row. (Their frames
+/// halves went with the frames, decision 0439.)
+#[test]
+fn levels_follow_their_rows_and_an_entry_put_as_given_keeps_its_order() {
+    let (path, c) = store("levels-given");
     let mut with_levels = put("p", 0, 1, flat(&[3, 30, 1, 10]));
     if let KeptWhat::Flat { levels, .. } = &mut with_levels.what {
         *levels = Some(vec![5, 6]);
     }
-    let mut entries = vec![with_levels, put("q", 0, 2, flat(&[5, 50]))];
-    entries.extend(bare.iter().map(|t| put(&t.name, 0, 1, flat(&[2, 20]))));
-    write(&path, &c, entries);
-    let cs = crate::content_store::ContentStore::open(&path).unwrap();
-    cs.preload_frames().unwrap();
-    let mut asked = vec![(p.clone(), 0), (p.clone(), FRAME_LEVELS_PART), (q.clone(), 0), (s.clone(), 0)];
-    asked.extend(bare.iter().flat_map(|t| [(t.clone(), 0), (t.clone(), FRAME_LEVELS_PART)]));
-    let got = cs.admit_frame_parts(&SPACE, &asked).unwrap();
-    for t in &bare {
-        assert!(got[&(t.clone(), 0)].from_chain() && !got.contains_key(&(t.clone(), FRAME_LEVELS_PART)), "an entry with no levels: none");
-    }
-    let (rows, levels) = (&got[&(p.clone(), 0)], &got[&(p.clone(), FRAME_LEVELS_PART)]);
-    assert!(rows.from_chain() && levels.from_chain(), "a kept relation and its levels are read from the chain");
-    assert_eq!(rows.stored, FrameStored { digest: 1, reads: vec![("r".into(), 1)] });
-    assert_eq!((rows.rows().unwrap().rows, rows.len()), (vec![1, 10, 3, 30], Some(2)));
-    assert_eq!(levels.rows().unwrap().rows, vec![6, 5], "the levels follow the entry's rows");
-    assert!(!got[&(q.clone(), 0)].from_chain() && !got[&(s.clone(), 0)].from_chain(), "a stale or missing entry: the frame");
-    assert_eq!(got[&(q.clone(), 0)].rows().unwrap().rows, vec![5, 50]);
-    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
-    let _ = std::fs::remove_dir_all(path.parent().unwrap());
-}
-
-/// K-R9 (decision 0443 step 6): a frame whose kept entry is put beside it (`in_chain`) is written as its relation's
-/// metadata, no rows; read back (from SQL and from the snapshot), its rows are its entry's; with no entry it is
-/// absent, so its relation is derived again; the frames' segments compacted, it stays. An entry put as given (an
-/// input's granule, read by position) is read in its order, every row (ep2's edit runs read a granule's entry in
-/// canonical order, its owners' ranges broken; its kept statistics, words, were sorted and deduplicated).
-#[test]
-fn a_frame_in_the_chain_is_its_metadata() {
-    use crate::content_store::{FramePut, FrameRel, FrameRows};
-    let (path, c) = store("in-chain");
-    let rel = |n: &str| FrameRel { name: n.into(), ident: ID };
-    let (p, q, g) = (rel("p"), rel("q"), rel("g"));
     let granule_rows = vec![9, 2, 8, 1, 9, 2];
-    let granule = FramePut { rel: g.clone(), part: 0, digest: 0, reads: Vec::new(), rows: FrameRows { types: b"ii".to_vec(), rows: granule_rows.clone(), n: 3 } }.encoded().in_chain();
-    let frame = |r: &FrameRel| FramePut { rel: r.clone(), part: 0, digest: 1, reads: vec![("r".into(), 1)], rows: FrameRows { types: b"ii".to_vec(), rows: vec![3, 30, 1, 10], n: 2 } }.encoded().in_chain();
-    {
-        let cs = crate::content_store::ContentStore::open(&path).unwrap();
-        cs.queue_kept(SPACE, vec![put("p", 0, 1, flat(&[3, 30, 1, 10])), put("g", 0, 0, KeptWhat::Flat { widths: vec![8, 8], rows: std::sync::Arc::new(granule_rows.clone()), n: 3, levels: None, given: true })]);
-        cs.queue_encoded(SPACE, vec![frame(&p), frame(&q), granule], vec![], None);
-        cs.written().unwrap();
-        // The frames' segments compacted: a frame in the chain names none, and stays (ep2 lost every one so).
-        cs.compact_frame_segments(0).unwrap();
-    }
-    let stored: (i64, i64, i64) = c.query_row("SELECT seg, length(data), rows FROM frames WHERE rel = 'p'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
-    assert_eq!(stored, (-1, 0, 2), "the relation's metadata, its rows in the chain");
-    let cs = crate::content_store::ContentStore::open(&path).unwrap();
-    for snapshot in [false, true] {
-        if snapshot {
-            cs.preload_frames().unwrap();
-        }
-        let got = cs.admit_frames(&SPACE, &[p.clone(), q.clone(), g.clone()], 0).unwrap();
-        assert!(got[&g].from_chain(), "snapshot {snapshot}");
-        assert_eq!(got[&g].rows().unwrap().rows, granule_rows, "a granule in its order, every row (snapshot {snapshot})");
-        assert!(got[&p].from_chain(), "snapshot {snapshot}");
-        assert_eq!(got[&p].rows().unwrap().rows, vec![1, 10, 3, 30]);
-        assert!(!got.contains_key(&q), "a frame in the chain with no entry is absent (snapshot {snapshot})");
-    }
-    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
+    write(&path, &c, vec![with_levels, put("g", 0, 0, KeptWhat::Flat { widths: vec![8, 8], rows: granule_rows.clone(), n: 3, levels: None, given: true })]);
+    let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
+    let view = space.view();
+    let p = view.get(&FactKey { rel: "p", ident: &ID, part: 0 }).unwrap();
+    assert_eq!((0..p.rows.len()).map(|i| p.row(i)).collect::<Vec<_>>(), [vec![1, 10], vec![3, 30]]);
+    let levels = p.rows.levels().expect("its levels");
+    assert_eq!((0..2).map(|i| levels.get(i)).collect::<Vec<_>>(), [6, 5], "the levels follow the entry's rows");
+    let g = view.get(&FactKey { rel: "g", ident: &ID, part: 0 }).unwrap();
+    assert_eq!((0..g.rows.len()).flat_map(|i| g.row(i)).collect::<Vec<_>>(), granule_rows, "a granule in its order, every row");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// K-R10 (decision 0443 step 6, 0401 F5): the kept facts are a virtual table: a space's relation's rows by `rel` and
+/// K-R10 (decision 0456 step 6, 0401 F5): the kept facts are a virtual table: a space's relation's rows by `rel` and
 /// `part`, newest entry only, a gone one absent; `c0 = ?` a range of the entry; columns past the arity NULL.
 #[test]
 fn kept_facts_are_a_virtual_table() {
@@ -288,6 +306,7 @@ fn kept_facts_are_a_virtual_table() {
     assert_eq!(rows("SELECT c0, c1, part FROM kept_facts WHERE space = ?1 AND rel = 'q'"), [[Some(6), Some(60), Some(0)]], "the newest entry");
     assert!(rows("SELECT c0, c1, part FROM kept_facts WHERE space = ?1 AND rel = 'g'").is_empty(), "gone");
     assert_eq!(rows("SELECT c0, c1, level FROM kept_facts WHERE space = ?1 AND rel = 'p' AND c0 = 3"), [[Some(3), Some(30), None], [Some(3), Some(31), None]]);
+    assert_eq!(rows("SELECT c0, c1, id FROM kept_facts WHERE space = ?1 AND rel = 'p' AND c0 = 3"), [[Some(3), Some(30), Some(1)], [Some(3), Some(31), Some(2)]], "each row's place in its entry, where `c0 = ?` narrows it");
     let n: i64 = c.query_row("SELECT count(*) FROM kept_facts", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 4, "every space, every live entry");
     // `c0 = ?` is a range because the entry records its canonical order (an entry put as given records none).
@@ -295,7 +314,7 @@ fn kept_facts_are_a_virtual_table() {
     let view = space.view();
     let p = view.all().find(|k| k.key.rel == "p").unwrap();
     assert!(p.rows.leads(0) && !p.rows.leads(1), "a canonical entry leads by its first column");
-    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Flat { widths: vec![8, 8], rows: std::sync::Arc::new(vec![2, 0, 1, 0]), n: 2, levels: None, given: true })]);
+    write(&path, &c, vec![put("r", 0, 5, KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 0, 1, 0], n: 2, levels: None, given: true })]);
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     let r = view.all().find(|k| k.key.rel == "r").unwrap();
@@ -304,208 +323,46 @@ fn kept_facts_are_a_virtual_table() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// K-R7 (decision 0443 step 4), over a real store (`RERAIL_KEPT_STORE`, a copy no run is writing): every kept entry's
-/// rows equal its frame's as sets, and the chain's bytes against the frames' segments, with what each encoding holds.
-/// Run with `--ignored`; prints its report.
-#[test]
-#[ignore = "reads the store RERAIL_KEPT_STORE names"]
-fn kept_entries_equal_their_frames() {
-    let path = PathBuf::from(std::env::var("RERAIL_KEPT_STORE").expect("RERAIL_KEPT_STORE: a store's file"));
-    let store = crate::content_store::ContentStore::open(&path).unwrap();
-    let c = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let spaces: Vec<Vec<u8>> = c.prepare("SELECT DISTINCT space FROM facts_chain").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
-    let (mut entries, mut rows, mut differ, mut no_frame, mut chain_bytes, mut files) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
-    let mut by_tag: std::collections::BTreeMap<String, (usize, usize, usize)> = Default::default();
-    let mut levels_bytes = 0usize;
-    for s in &spaces {
-        let space: [u8; 32] = s.as_slice().try_into().unwrap();
-        let kept = KeptSpace::open(&path, &space, &chain_rows(&c, &space).unwrap()).unwrap();
-        files += kept.files.len();
-        chain_bytes += kept.view().bytes();
-        for k in kept.view().all() {
-            entries += 1;
-            rows += k.rows.len();
-            for col in 0..k.rows.arity as usize {
-                let ic = k.rows.col(col);
-                let e = by_tag.entry(ic.form()).or_default();
-                (e.0, e.1, e.2) = (e.0 + 1, e.1 + ic.len(), e.2 + ic.bytes());
-            }
-            levels_bytes += k.rows.levels().map_or(0, |l| l.bytes());
-            let rel = crate::content_store::FrameRel { name: k.key.rel.to_owned(), ident: *k.key.ident };
-            let Some(frame) = store.frame_rows(&space, &rel, k.key.part).unwrap() else {
-                no_frame += 1;
-                continue;
-            };
-            let w = frame.types.len();
-            // A nullary relation's rows are its count: one row (true) or none.
-            let mut want: Vec<Vec<i64>> = if w == 0 { vec![Vec::new(); frame.n.min(1)] } else { frame.rows.chunks_exact(w).map(<[i64]>::to_vec).collect() };
-            want.sort();
-            want.dedup();
-            let mut got: Vec<Vec<i64>> = (0..k.rows.len()).map(|i| k.row(i)).collect();
-            got.sort();
-            if got != want {
-                differ += 1;
-                if differ <= 5 {
-                    eprintln!("differs: {} part {}: kept {} rows, frame {}", k.key.rel, k.key.part, got.len(), want.len());
-                }
-            }
-        }
-    }
-    // Every frame of a space with a chain has its kept entry (a delta frame, part < 0, is its relation's part 0's).
-    let mut no_kept = 0usize;
-    for s in &spaces {
-        let space: [u8; 32] = s.as_slice().try_into().unwrap();
-        let kept = KeptSpace::open(&path, &space, &chain_rows(&c, &space).unwrap()).unwrap();
-        let view = kept.view();
-        let mut st = c.prepare("SELECT rel, ident, part FROM frames WHERE space = ?1 AND part >= 0 AND rel NOT IN ('local', 'local_out')").unwrap();
-        let keys: Vec<(String, Vec<u8>, i64)> = st.query_map([&space[..]], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().collect::<Result<_, _>>().unwrap();
-        for (rel, ident, part) in keys {
-            let ident: [u8; 32] = ident.as_slice().try_into().unwrap();
-            if view.get(&FactKey { rel: &rel, ident: &ident, part }).is_none() {
-                no_kept += 1;
-                if no_kept <= 5 {
-                    eprintln!("no kept entry: space {:02x}{:02x}{:02x}{:02x} {rel} part {part}", space[0], space[1], space[2], space[3]);
-                }
-            }
-        }
-    }
-    let (held, named) = store.frame_segment_bytes().unwrap();
-    eprintln!("spaces {}  files {files}  entries {entries}  rows {rows}", spaces.len());
-    eprintln!("chain {chain_bytes} bytes; frames' segments {held} bytes ({named} named by rows)");
-    for (tag, (cols, values, bytes)) in &by_tag {
-        eprintln!("  {tag:6} {cols:7} columns {values:11} values {bytes:11} bytes  {:.2} bits a value", *bytes as f64 * 8.0 / (*values).max(1) as f64);
-    }
-    eprintln!("  levels {levels_bytes} bytes");
-    eprintln!("differ {differ}  with no frame {no_frame}  frames with no kept entry {no_kept}");
-    assert_eq!((differ, no_kept), (0, 0));
-}
-
-/// Decision 0443's open question, over a real store (`RERAIL_KEPT_STORE`): what each column of the chain would take
+/// Decision 0456's open question, over a real store (`RERAIL_KEPT_STORE`): what each column of the chain would take
 /// under the candidate encodings. Leading columns and the rest apart; GROUPS' group widths; sample values. Run with
 /// `--ignored --nocapture`; prints its report.
 #[test]
 #[ignore = "reads the store RERAIL_KEPT_STORE names"]
-fn chain_columns_by_candidate() {
-    use rerail_blocks::col;
+fn chain_bytes_by_relation() {
     let path = PathBuf::from(std::env::var("RERAIL_KEPT_STORE").expect("RERAIL_KEPT_STORE: a store's file"));
-    let c = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let spaces: Vec<Vec<u8>> = c.prepare("SELECT DISTINCT space FROM facts_chain").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
-    let bits = |r: u64| 64 - r.leading_zeros() as usize;
-    // A group of 128 on a line of its own: its first value and slope, then each residual at the group's width.
-    let gline = |v: &[i64]| -> usize {
-        let (lo, hi) = v.iter().fold((i64::MAX, i64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
-        let mut data = 0usize;
-        let (mut slo, mut shi) = (i64::MAX, i64::MIN);
-        for g in v.chunks(128) {
-            let n = g.len();
-            let slope = if n > 1 { (((g[n - 1] as i128 - g[0] as i128) << 16) / (n as i128 - 1)) as i64 } else { 0 };
-            (slo, shi) = (slo.min(slope), shi.max(slope));
-            let r: Vec<i128> = g.iter().enumerate().map(|(i, &x)| x as i128 - (g[0] as i128 + ((i as i128 * slope as i128) >> 16))).collect();
-            let (a, b) = r.iter().fold((i128::MAX, i128::MIN), |(a, b), &x| (a.min(x), b.max(x)));
-            data += n * bits((b - a) as u64);
-        }
-        let ng = v.len().div_ceil(128);
-        let entry = bits((hi as i128 - lo as i128) as u64) + bits((shi as i128 - slo as i128) as u64) + 7 + bits(data as u64) + 16;
-        (data + ng * entry).div_ceil(64) * 8 + 16
-    };
-    // Each value's delta from the one before, in its own bits (a delta varint's floor; not random access).
-    let deltas = |v: &[i64]| -> usize { v.windows(2).map(|w| bits((w[1] as i128 - w[0] as i128).unsigned_abs() as u64) + 1).sum::<usize>().div_ceil(8) };
-    #[derive(Default)]
-    struct Sum { cols: usize, values: usize, now: usize, gline: usize, rel0: usize, split: usize, s18: usize, r18: usize, best: usize, deltas: usize }
-    let mut by: std::collections::BTreeMap<String, Sum> = Default::default();
-    let mut widths = [0usize; 65];
-    let mut by_rel: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
-    let mut shown = [0usize; 2];
-    for s in &spaces {
-        let space: [u8; 32] = s.as_slice().try_into().unwrap();
-        let kept = KeptSpace::open(&path, &space, &chain_rows(&c, &space).unwrap()).unwrap();
-        for k in kept.view().all() {
-            let cols: Vec<Vec<i64>> = (0..k.rows.arity as usize).map(|i| { let mut v = Vec::with_capacity(k.rows.len()); k.rows.col(i).for_each(|x| v.push(x)); v }).collect();
-            for (i, v) in cols.iter().enumerate() {
-                let ic = k.rows.col(i);
-                let now = ic.bytes();
-                let g = if v.len() > 1 { gline(v) } else { now };
-                let rel0 = if i > 0 { col::choose(&v.iter().zip(&cols[0]).map(|(a, b)| a.wrapping_sub(*b)).collect::<Vec<_>>()).bytes() } else { now };
-                let split = col::choose(&v.iter().map(|x| x >> 32).collect::<Vec<_>>()).bytes() + col::choose(&v.iter().map(|x| x & 0xffff_ffff).collect::<Vec<_>>()).bytes() + 64;
-                let ch = |x: Vec<i64>| col::choose(&x).bytes();
-                let s18 = ch(v.iter().map(|x| x >> 18).collect()) + ch(v.iter().map(|x| x & 0x3ffff).collect()) + 64;
-                let r18 = if i > 0 { ch(v.iter().zip(&cols[0]).map(|(a, b)| (a >> 18).wrapping_sub(b >> 18)).collect()) + ch(v.iter().zip(&cols[0]).map(|(a, b)| (a & 0x3ffff) - (b & 0x3ffff)).collect()) + 64 } else { s18 };
-                let key = format!("{} {}", ic.form(), if k.rows.leads(i) { "lead" } else if i == 0 { "first" } else { "rest" });
-                let e = by.entry(key).or_default();
-                e.cols += 1;
-                e.values += v.len();
-                e.now += now;
-                e.gline += g.min(now);
-                e.rel0 += rel0.min(now);
-                e.split += split.min(now);
-                e.s18 += s18.min(now);
-                e.r18 += r18.min(rel0).min(s18).min(now);
-                e.best += now.min(g).min(rel0).min(split).min(s18).min(r18);
-                e.deltas += deltas(v);
-                let r = by_rel.entry(format!("{} c{i}", k.key.rel)).or_default();
-                (r.0, r.1) = (r.0 + v.len(), r.1 + now);
-                if ic.form() == "groups" {
-                    for gr in v.chunks(128) {
-                        let (a, b) = gr.iter().fold((i64::MAX, i64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
-                        widths[bits((b as i128 - a as i128) as u64)] += gr.len();
-                    }
-                    for (gi, gr) in v.chunks(128).enumerate() {
-                        let (a, b) = gr.iter().fold((i64::MAX, i64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
-                        let w = bits((b as i128 - a as i128) as u64);
-                        let slot = if w >= 50 { 1 } else if w >= 30 { 0 } else { continue };
-                        if shown[slot] < 6 {
-                            shown[slot] += 1;
-                            let show: Vec<String> = gr.iter().step_by(8).map(|x| format!("{x:x}")).collect();
-                            eprintln!("wide {w} {} c{i} of {} group {gi} ({} rows, leads {}): {}", k.key.rel, k.rows.arity, v.len(), k.rows.leads(i), show.join(" "));
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    eprintln!("{:14} {:>7} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11}", "tag place", "cols", "values", "now", "gline", "rel c0", "split", "s18", "r18", "best", "deltas");
-    let mut t = Sum::default();
-    for (key, e) in &by {
-        eprintln!("{key:14} {:7} {:11} {:11} {:11} {:11} {:11} {:11} {:11} {:11} {:11}   now {:.1} best {:.1} deltas {:.1} bits", e.cols, e.values, e.now, e.gline, e.rel0, e.split, e.s18, e.r18, e.best, e.deltas, e.now as f64 * 8.0 / e.values.max(1) as f64, e.best as f64 * 8.0 / e.values.max(1) as f64, e.deltas as f64 * 8.0 / e.values.max(1) as f64);
-        (t.values, t.now, t.gline, t.rel0, t.split, t.s18, t.r18, t.best, t.deltas) = (t.values + e.values, t.now + e.now, t.gline + e.gline, t.rel0 + e.rel0, t.split + e.split, t.s18 + e.s18, t.r18 + e.r18, t.best + e.best, t.deltas + e.deltas);
-    }
-    eprintln!("all: now {} gline {} rel c0 {} split {} s18 {} r18 (with rel c0, s18) {} best {} deltas {}", t.now, t.gline, t.rel0, t.split, t.s18, t.r18, t.best, t.deltas);
-    eprintln!("GROUPS' values by their group's width: {}", widths.iter().enumerate().filter(|x| *x.1 > 0).map(|(w, n)| format!("{w}:{n}")).collect::<Vec<_>>().join(" "));
-    let mut top: Vec<_> = by_rel.into_iter().collect();
-    top.sort_by_key(|x| std::cmp::Reverse(x.1.1));
-    for (name, (values, bytes)) in top.iter().take(25) {
-        eprintln!("  {name:40} {values:10} values {bytes:11} bytes {:.1} bits", *bytes as f64 * 8.0 / (*values).max(1) as f64);
+    let rows = by_relation(&path).unwrap();
+    let total: usize = rows.iter().map(|(_, (_, _, b))| b).sum();
+    let by_what = |w: &str| rows.iter().filter(|((_, x), _)| *x == w).map(|(_, (_, _, b))| b).sum::<usize>();
+    eprintln!("{total} bytes of values: rows {}, granules {}, beside {}", by_what("rows"), by_what("granule"), by_what("beside"));
+    for ((rel, what), (n, r, b)) in rows.iter().take(40) {
+        eprintln!("{b:>11} {:5.1}%  {what:7} {n:6} entries {r:10} rows  {rel}", *b as f64 * 100.0 / total.max(1) as f64);
     }
 }
 
-/// Q203 item 4: an input's granule is queued as its kept entry with a frame that shares its rows
-/// (`Put::queued_in_chain`): nothing encoded, no segment written. Memory is ahead of the store: queued, the frame
-/// reads the rows (from the snapshot); written, it is the relation's metadata, its rows the entry's.
+/// A wave's kept puts queued through the store inside a run's waves (`ContentStore::queue_kept`, `run_waves`) are one
+/// file a space when the wave is sealed, a key put again in the wave keeping its last put: queued as a job each,
+/// every input's puts wrote a file of its own (O125 step 05: 112 a run). Bend's 5649467a58 (t43 step 16), on 0456's
+/// chain, where the gather replaces a key's earlier put: one file, where its batches in order wrote two.
 #[test]
-fn a_frame_queued_beside_its_entry_shares_its_rows_and_writes_no_segment() {
-    use crate::content_store::{FramePut, FrameRel};
-    let (path, c) = store("queued-beside");
-    let g = FrameRel { name: "g".into(), ident: ID };
-    let rows = std::sync::Arc::new(vec![9, 2, 8, 1, 9, 2]);
-    let cs = crate::content_store::ContentStore::open(&path).unwrap();
-    cs.preload_frames().unwrap();
-    let frame = FramePut::queued_in_chain(g.clone(), 0, 0, Vec::new(), b"ii".to_vec(), 3, std::sync::Arc::clone(&rows));
-    cs.queue_kept(SPACE, vec![put("g", 0, 0, KeptWhat::Flat { widths: vec![8, 8], rows: std::sync::Arc::clone(&rows), n: 3, levels: None, given: true })]);
-    cs.queue_encoded(SPACE, vec![frame], vec![], None);
-    let queued = cs.admit_frames(&SPACE, std::slice::from_ref(&g), 0).unwrap();
-    assert_eq!(queued[&g].rows().unwrap().rows, *rows, "queued: read from the shared rows");
-    cs.written().unwrap();
-    let stored: (i64, i64, i64) = c.query_row("SELECT seg, length(data), rows FROM frames WHERE rel = 'g'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
-    assert_eq!(stored, (-1, 0, 3), "written: the relation's metadata");
-    let segments: i64 = c.query_row("SELECT count(*) FROM frame_segments", [], |r| r.get(0)).unwrap();
-    assert_eq!(segments, 0, "no segment written");
-    drop(cs);
-    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
-    let cs = crate::content_store::ContentStore::open(&path).unwrap();
-    let got = cs.admit_frames(&SPACE, std::slice::from_ref(&g), 0).unwrap();
-    assert!(got[&g].from_chain());
-    assert_eq!(got[&g].rows().unwrap().rows, *rows, "read back from the chain, in its order");
-    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
-    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+fn a_waves_kept_puts_through_the_store_are_one_file_a_space() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.sqlite");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    store.queue_kept(SPACE, vec![put("base", 0, 1, flat(&(0..40_000).collect::<Vec<i64>>()))]);
+    store.written().unwrap();
+    let before = files(&path);
+    {
+        let _waves = crate::content_store::write_back::run_waves();
+        for (i, rel) in ["a", "b", "c", "d"].into_iter().enumerate() {
+            store.queue_kept(SPACE, vec![put(rel, 0, 10 + i as u64, flat(&[i as i64, 1]))]);
+        }
+        store.queue_kept(SPACE, vec![put("a", 0, 20, flat(&[7, 7]))]);
+    }
+    store.written().unwrap();
+    let c = Connection::open(&path).unwrap();
+    let mut got: Vec<(String, u64, Vec<Vec<i64>>)> = read(&path, &c).into_iter().map(|(r, _, d, rows)| (r, d, rows)).filter(|(r, _, _)| r != "base").collect();
+    got.sort();
+    assert_eq!(got, [("a".into(), 20, vec![vec![7, 7]]), ("b".into(), 11, vec![vec![1, 1]]), ("c".into(), 12, vec![vec![2, 1]]), ("d".into(), 13, vec![vec![3, 1]])]);
+    let made = files(&path).into_iter().filter(|f| !before.contains(f)).count();
+    assert_eq!(made, 1, "one file made in the wave: {:?} after {before:?}", files(&path));
 }

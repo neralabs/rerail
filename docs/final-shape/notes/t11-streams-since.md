@@ -6,7 +6,7 @@ Research track T11. Read-only notes; nothing was built, run, or benchmarked.
 
 - Worktree roots (all paths below are relative to these):
   - **DLRE** = `/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity` (HEAD `b1d36739` "test: require schema reuse, scope isolation and bounded completed rows").
-  - **N1562** = `/Users/jeremy/orca/workspaces/rerail/ner-1562-scale-test-the-re-railer` (HEAD `e481c192` "TDD-RED: packetize expanded relational navigation").
+  - **N1562** = `/Users/jeremy/orca/workspaces/rerail/scale-test-the-re-railer` (HEAD `e481c192` "TDD-RED: packetize expanded relational navigation").
   - **SSC** = `/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition` (HEAD `b3e97cd4` "Define transition from matcher continuations to shared execution plans").
 - Citations are `file:line` (line numbers of the files at those HEADs).
 - Tags: **M** = a measured number reported by the source; **D** = a decision the source records (keep/reject/selected); **A** = an assertion, proposal, or design requirement that the source does not claim to have measured or implemented.
@@ -380,7 +380,7 @@ In journal order:
 
 ---
 
-## Source 2: N1562 (ner-1562-scale-test-the-re-railer)
+## Source 2: N1562 (scale-test-the-re-railer)
 
 ### 2.1 Design doc: `docs/sql-scope-and-operational-semantics-design.md` (776 lines)
 

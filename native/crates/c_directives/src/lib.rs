@@ -1,6 +1,6 @@
 //! C's and C++'s directives in Bitlex (decision 0327, mode (a) compiled): the grammar of
 //! `bitlex_ladder/`'s last step, compiled once a process through the Bitlex compiler to tier 1
-//! and tier 2 on Cranelift, as `.rr`'s (`rerail_rr_parser`) and Kotlin's are.
+//! and tier 2 on Cranelift, as `.rerail`'s (`rerail_rr_parser`) and Kotlin's are.
 //!
 //! Its tape is the directive tape: a `directives` root and a node a directive, of its kind
 //! (`KINDS`), from its `#` to its line's last token's end, its operands fields' nodes below it.

@@ -5,7 +5,7 @@ use super::*;
 /// T's programs split into file-local relations and the rest: what the cross-file rest reads.
 #[test]
 fn t_programs_split_into_file_local_and_cross_file() {
-    for name in ["calls.rr", "calls_rust.rr", "workload.rr"] {
+    for name in ["calls.rerail", "calls_rust.rerail", "workload.rerail"] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs").join(name);
         let v = crate::code_rule_dsl::logic::rr::parse_version(&crate::code_rule_dsl::logic::settings::program_text(&path).unwrap()).unwrap();
         let local = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&v).unwrap().local.clone();
@@ -23,7 +23,7 @@ fn t_programs_split_into_file_local_and_cross_file() {
         }
         // Projections of the tree are file-local; what an import binds is not.
         assert!(local.contains("kind"), "{name}");
-        assert!(!local.contains("calls") && !local.contains("res") || name == "workload.rr", "{name}");
+        assert!(!local.contains("calls") && !local.contains("res") || name == "workload.rerail", "{name}");
         eprintln!("SPLIT {name}: {} local, {} cross-file {global:?}\n  cross-file reads base {reads_base:?}\n  and local {reads_local:?}", local.len(), global.len());
     }
 }

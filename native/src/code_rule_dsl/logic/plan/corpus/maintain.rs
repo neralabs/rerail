@@ -42,20 +42,41 @@ pub const FIRST_RUN: &str = "nothing kept: its part's first run";
 pub const THRESHOLD: &str = "the edit reaches too much of it (0090 §4)";
 /// A part the level driver does not walk (no kept part, or gates): every stratum of its cut derived again.
 pub const NOT_WALKED: &str = "its part is not walked: no kept part, or gates";
+/// A stratum no changed read reaches whose rows are not kept (a fact relation's, or one the last run did not keep):
+/// derived from its reads, as they were.
+pub const NOT_KEPT: &str = "not reached, its rows not kept";
+/// A native operator's stratum (the reach index, decision 0119): made again from its reads as they are now.
+pub const NATIVE_OPERATOR: &str = "a native operator's stratum, made again";
 /// A read changed with no version (a relation derived again in SQL, or with its kept rows not held).
 pub const NO_VERSION: &str = "a read changed without a version";
 
-/// 0090 §4's threshold (0364 R4): whether an edit whose changed reads give `delta` rows reaches too much of a
-/// stratum of `kept` rows to maintain it: `delta ≥ θ · kept` (`RERAIL_AGAIN_THETA`, default 0.25) and `delta ≥
+/// 0090 §4's threshold (0364 R4): whether an edit whose changed reads give `delta` rows, of the `stored` rows those
+/// reads hold, reaches too much of a stratum to maintain it: `delta ≥ θ · stored` (`RERAIL_AGAIN_THETA`, default 0.25) and `delta ≥
 /// RERAIL_AGAIN_MIN` (default 1,024 rows: below it, maintaining costs little whatever the share). `RERAIL_AGAIN=off`
 /// maintains every stratum. Read at each choice, so a test can set them.
-pub fn past_threshold(delta: usize, kept: usize) -> bool {
+pub fn past_threshold(delta: usize, stored: usize) -> bool {
     if std::env::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
         return false;
     }
     let theta = std::env::var("RERAIL_AGAIN_THETA").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.25);
     let min = std::env::var("RERAIL_AGAIN_MIN").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(1024);
-    delta >= min && delta as f64 >= theta * kept as f64
+    delta >= min && delta as f64 >= theta * stored as f64
+}
+
+/// Whether a change of `delta` rows is past `RERAIL_AGAIN_MIN` (default 1,024): below it, a stratum is maintained
+/// whatever its share or price.
+pub fn past_floor(delta: usize) -> bool {
+    if std::env::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
+        return false;
+    }
+    delta >= std::env::var("RERAIL_AGAIN_MIN").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(1024)
+}
+
+/// 0090 §4's second clause (0364 R4): whether maintaining, priced at `mode` work, costs more than deriving again at
+/// `derive` (`RERAIL_AGAIN_PRICE`: the mode's share of a derive past which it derives again, default 1).
+pub fn costs_more(mode: f64, derive: f64) -> bool {
+    let share = std::env::var("RERAIL_AGAIN_PRICE").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0);
+    mode > share * derive
 }
 
 /// The class of a reason the maintain mode gave for not taking a stratum (`Run::maintain_mode_blocks`), as the
@@ -67,8 +88,8 @@ pub fn reason_class(why: &str) -> &'static str {
         "a gated aggregate",
         "a native, lattice, gate, request, produced, input or fact relation",
         "a nearest or ast literal: no native step",
-        "an aggregate over a changed input",
-        "an aggregate over a changed view of an input",
+        NOT_KEPT,
+        NATIVE_OPERATOR,
         "an aggregate over its own stratum",
         "its kept rows are not in memory",
         "no rules",
@@ -102,15 +123,29 @@ pub fn by_levels_ran() {
     BY_LEVELS.with(|c| c.set(c.get() + 1));
 }
 
-/// What a run did that decision 0364's required shape (§ "Required shape") rules out, counted over the process: read
+/// What a run did that decision 0364's required shape (§ "Required shape") rules out, counted on the shared object: read
 /// by the requirement tests (`maintain_tests`), never by a run. nextest runs each test as a process of its own.
 pub mod shape {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
-    static ROWS_COPIED: AtomicUsize = AtomicUsize::new(0);
-    static MAINTENANCE_HELD: AtomicUsize = AtomicUsize::new(0);
-    static FRAMES_READ: AtomicUsize = AtomicUsize::new(0);
-    static RECHECKS_UNPRICED: AtomicUsize = AtomicUsize::new(0);
+    /// The counts, on the shared object (decision 0442): over the runs that share it, as a test reads them.
+    #[derive(Default)]
+    struct Counts {
+        rows_copied: AtomicUsize,
+        maintenance_held: AtomicUsize,
+        frames_read: AtomicUsize,
+        rechecks_unpriced: AtomicUsize,
+        negated_led: AtomicUsize,
+        drivers_unled: AtomicUsize,
+        measures_unkeyed: AtomicUsize,
+        inputs_hashed: AtomicUsize,
+        inputs_from_entries: AtomicUsize,
+        inputs_hashed_whole: AtomicUsize,
+    }
+
+    fn counts() -> std::sync::Arc<Counts> {
+        crate::code_rule_dsl::logic::profile::shared::<Counts>()
+    }
 
     /// The counts so far.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -124,31 +159,88 @@ pub mod shape {
         pub frames_read: usize,
         /// R7: recheck lines ordered without a price.
         pub rechecks_unpriced: usize,
+        /// R4 at scale: mode lines driven by a negated changed read whose delta leads the line.
+        pub negated_led: usize,
+        /// R4 at scale: mode lines whose changed read's delta does not lead the line (a negated read's line planned
+        /// with its variables bound had no order): it walks its other reads whole.
+        pub drivers_unled: usize,
+        /// R6: proved components whose measure is by a node's depth or document order, run where that key is not
+        /// read: their candidates go unordered, a stay checked again as each of its supports goes.
+        pub measures_unkeyed: usize,
+        /// R2: a session's inputs whose delta was found by hashing their documents (`retain::document_delta`),
+        /// which reads every document's rows, the unchanged ones too, not the changed documents' memo entries.
+        pub inputs_hashed: usize,
+        /// R2: a session's inputs whose delta was read from the changed documents' memo entries (`input_delta`).
+        pub inputs_from_entries: usize,
+        /// R2: of `inputs_hashed`, those whose every row was hashed (`retain::document_delta`'s pass), not only the
+        /// rows of the documents that changed (`retain::document_delta_except`).
+        pub inputs_hashed_whole: usize,
     }
 
     pub fn now() -> Shape {
-        Shape { rows_copied: ROWS_COPIED.load(Relaxed), maintenance_held: MAINTENANCE_HELD.load(Relaxed), frames_read: FRAMES_READ.load(Relaxed), rechecks_unpriced: RECHECKS_UNPRICED.load(Relaxed) }
+        let c = counts();
+        Shape {
+            rows_copied: c.rows_copied.load(Relaxed),
+            maintenance_held: c.maintenance_held.load(Relaxed),
+            frames_read: c.frames_read.load(Relaxed),
+            rechecks_unpriced: c.rechecks_unpriced.load(Relaxed),
+            negated_led: c.negated_led.load(Relaxed),
+            drivers_unled: c.drivers_unled.load(Relaxed),
+            measures_unkeyed: c.measures_unkeyed.load(Relaxed),
+            inputs_hashed: c.inputs_hashed.load(Relaxed),
+            inputs_from_entries: c.inputs_from_entries.load(Relaxed),
+            inputs_hashed_whole: c.inputs_hashed_whole.load(Relaxed),
+        }
     }
 
     /// What happened between `before` and now.
     pub fn since(before: Shape) -> Shape {
         let n = now();
-        Shape { rows_copied: n.rows_copied - before.rows_copied, maintenance_held: n.maintenance_held - before.maintenance_held, frames_read: n.frames_read - before.frames_read, rechecks_unpriced: n.rechecks_unpriced - before.rechecks_unpriced }
+        Shape {
+            rows_copied: n.rows_copied - before.rows_copied,
+            maintenance_held: n.maintenance_held - before.maintenance_held,
+            frames_read: n.frames_read - before.frames_read,
+            rechecks_unpriced: n.rechecks_unpriced - before.rechecks_unpriced,
+            negated_led: n.negated_led - before.negated_led,
+            drivers_unled: n.drivers_unled - before.drivers_unled,
+            measures_unkeyed: n.measures_unkeyed - before.measures_unkeyed,
+            inputs_hashed: n.inputs_hashed - before.inputs_hashed,
+            inputs_from_entries: n.inputs_from_entries - before.inputs_from_entries,
+            inputs_hashed_whole: n.inputs_hashed_whole - before.inputs_hashed_whole,
+        }
     }
 
     pub fn rows_copied(n: usize) {
-        ROWS_COPIED.fetch_add(n, Relaxed);
+        counts().rows_copied.fetch_add(n, Relaxed);
     }
     pub fn frames_read(n: usize) {
-        FRAMES_READ.fetch_add(n, Relaxed);
+        counts().frames_read.fetch_add(n, Relaxed);
     }
     pub fn recheck_unpriced() {
-        RECHECKS_UNPRICED.fetch_add(1, Relaxed);
+        counts().rechecks_unpriced.fetch_add(1, Relaxed);
+    }
+    pub fn negated_led() {
+        counts().negated_led.fetch_add(1, Relaxed);
+    }
+    pub fn input_hashed_whole() {
+        counts().inputs_hashed_whole.fetch_add(1, Relaxed);
+    }
+    pub fn input_from_entries() {
+        counts().inputs_from_entries.fetch_add(1, Relaxed);
+    }
+    pub fn input_hashed() {
+        counts().inputs_hashed.fetch_add(1, Relaxed);
+    }
+    pub fn measure_unkeyed() {
+        counts().measures_unkeyed.fetch_add(1, Relaxed);
+    }
+    pub fn driver_unled() {
+        counts().drivers_unled.fetch_add(1, Relaxed);
     }
     /// Notes a relation held under `name`, if it is a maintenance name.
     pub fn held(name: &str) {
         if is_maintenance_name(name) {
-            MAINTENANCE_HELD.fetch_add(1, Relaxed);
+            counts().maintenance_held.fetch_add(1, Relaxed);
             // `RERAIL_SHAPE_TRACE`: each one named, to find what still holds them.
             if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
                 eprintln!("RERAIL_SHAPE_TRACE held {name}");

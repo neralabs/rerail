@@ -4,13 +4,13 @@ Compiled 2026-10-25, read-only.
 
 **Abbreviations**
 - Prior work:
-  - **PR** = nera-data-layer PR 2539, tip `281f500d7c` (2026-06-27). Docs are under `docs/design/`.
+  - **PR** = the data-layer repository's PR 2539, tip `281f500d7c` (2026-06-27). Docs are under `docs/design/`.
   - **AIS** = ast-index-spike, `main` plus `origin/jeremybarnes/seadragon`. **TAIL** = seadragon's `TAIL_LATENCY_WORKPLAN.md`.
 - Current branches:
   - **DLRE** = `rerail/Data-layer-rule-expressivity`, 2026-10-19 → 10-24. **J** = its `docs/data-layer-performance-journal.md`; **WP** = its `docs/sql-performance-recovery-workplan.md`.
   - **SSC** = `rerail/…Moti-Velz-sql-set-composition`, 10-16 → 10-24.
-  - **N1562** = `rerail/ner-1562-scale-test-the-re-railer`, 10-16 → 10-25.
-  - **Tempo** = `nera-landing-2/…/tempo/docs`. "-sql" means the 09-24 → 10-16 docs; "-metal" means the 09-30 → 10-25 docs.
+  - **N1562** = `rerail/scale-test-the-re-railer`, 10-16 → 10-25.
+  - **Tempo** = Landing's `…/tempo/docs`. "-sql" means the 09-24 → 10-16 docs; "-metal" means the 09-30 → 10-25 docs.
   - **Main** = `rerail/Pulling-it-all-together`.
 
 **Status words**
@@ -29,7 +29,7 @@ Compiled 2026-10-25, read-only.
 
 | | PR 2539 | DLRE |
 |---|---|---|
-| Repository revision | nera-data-layer at `281f500d7c` | data-layer main at `2b1504ad` |
+| Repository revision | the data-layer repository at `281f500d7c` | data-layer main at `2b1504ad` |
 | `.py` files | 5,078 | 9,010 |
 | `.py` bytes | 83.5 MB | 137.9 MB |
 | Files and bytes run | — | 9,021 files including 11 Rust grammar files; 137,924,324 B |

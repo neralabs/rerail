@@ -10,7 +10,7 @@ Rules live in the Rerail database, attach to repositories per folder, and run as
 - **Attachments** add rule packs, By Rerail rules and rules created by you to a repository, per folder.
 - **Rule settings** turn rules or packs on or off and set their mode, for the repository or one checkout.
 - **Code rule**: a path scope plus clauses the native engine evaluates against source.
-- **Conversation rule** ([internal testing](../README.md#internal-testing)): a standing semantic query over one event source and boundary. Its reference describes what to detect; its action, the context to deliver.
+- **Conversation rule** ([internal testing](../README.md#internal-testing); experimental, checked only while `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1`): a standing semantic query over one event source and boundary. Its reference describes what to detect; its action, the context to deliver.
 
 Each file is judged by the checkout that owns it; conversation rules come from the folder the session started in. See [Rule scoping](rule-scoping.md).
 
@@ -46,7 +46,7 @@ Editing a By Rerail rule stores a copy in the library, added where the original 
 
 ### Packs
 
-A **rule pack** (`packs/<id>/`, [pack format](pack-format.md)) holds rule documents in `rules/` and a `pack.json`, but no code. Set-up recommends the packs that fit; `rerail packs list`, `add`, `remove` and `recommend` manage them afterwards. See [Rule packs](rule-packs.md).
+A **rule pack** (`packs/<id>/`, [pack format](pack-format.md)) holds rule documents in `rules/` and a `pack.json`, but no code. Set-up recommends the packs that fit; `rerail packs list`, `add`, `remove` and `recommend` manage them afterwards. `rerail packs calibrate [--repo <dir>] [--dry-run] [--json]` reads the repository's own lint config again, as set-up does, and updates the settings it gave the repository's packs: a setting you made yourself stays ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). See [Rule packs](rule-packs.md).
 
 <details>
 <summary>How matching works, and your own packs</summary>
@@ -113,12 +113,12 @@ Every rule, conversation or code, needs a `mode`:
 
 - **`log`** records a match for review; no guidance.
 - **`steer`** sends the rule's guidance to the agent.
-- **`block`** ([internal testing](../README.md#internal-testing)) steers until block enforcement lands.
+- **`block`** ([internal testing](../README.md#internal-testing)) steers until block enforcement lands. Setting it is experimental: a write that sets it is refused unless `RERAIL_EXPERIMENTAL_BLOCK_MODE=1`; a rule already on Block keeps it, and an edit may write it back on Block.
 
 <details>
 <summary>How Block reports that it steers</summary>
 
-A `block` rule is stored and reported as `block` but delivered exactly like `steer`. Whatever puts a rule on `block` says so. `rerail rules add`, `rerail rules import`, `rerail rules list` and `rerail rules approve` print that Block does not block in this release. `library_rules_upsert`, `repository_settings_set` and `repository_attachments_set` return a `note`. The dashboard shows `Block (steers for now)`.
+A `block` rule is stored and reported as `block` but delivered exactly like `steer`. Whatever puts a rule on `block` says so. `rerail rules add` and `rerail rules import` print that Block does not block in this release. `library_rules_upsert`, `repository_settings_set` and `repository_attachments_set` return a `note`. The dashboard shows `Block (steers for now)`.
 
 </details>
 
@@ -187,7 +187,7 @@ Code-rule path filters (`scope.include`, `scope.exclude`; exclusions win) apply 
 `rerail scrub` covers:
 
 - **Database**: event payloads, audit findings (message, captured variables, fix text) and audit errors, in batches, then `VACUUM` in place as `rerail reset` does.
-- **Ledgers**: each checkout's `.rerail/sessions/*/events.jsonl` (linked folders skipped). Sample text and delivery content are scrubbed; a secret-holding preimage becomes its SHA-256 and size.
+- **Ledgers**: each checkout's `.rerail/sessions/*/events.jsonl` (linked folders skipped). Sample text, delivery content and the steers and findings a session still owes after its memory was freed or its daemon stopped are scrubbed; a secret-holding preimage becomes its SHA-256 and size.
 - **Held steers**: `.rerail/sessions/<host>-pending/*.json`, under the hook's session lock.
 - **`daemon.log`**.
 
@@ -213,7 +213,7 @@ Rerail sends notes nowhere. To share them with Nera, attach `rerail feedback lis
 <details>
 <summary>What is recorded and printed</summary>
 
-A steer asks the coding agent to fix the problem, or tell the user in one line why not and record it: `rerail feedback <rule-id> '<that line>'`. A line containing `'` goes on stdin: `rerail feedback <rule-id> - <<'LINE'`. The id appears in the command only if a shell reads it as one word.
+A steer asks the coding agent to fix the problem, or tell the user in one line why not and record it: `rerail feedback <rule-id> '<that line>'`. A line containing `'` goes on stdin: `rerail feedback <rule-id> - <<'LINE'`. The id appears in the command only if a shell reads it as one word. On Windows the line always goes on stdin. Git Bash gets `echo '<that line>' | rerail feedback <rule-id> -`: it runs the `rerail` sh launcher, never `rerail.cmd`, and as the launcher starts node it rewrites an argument that starts with `/` into a Windows path. Codex and Cursor, which run PowerShell there, where `rerail` is `rerail.cmd` and cmd.exe would split its arguments at a `&` or `|`, get three lines: `$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, a space and the line, then `'@ | rerail feedback <rule-id> -`. PowerShell reads nothing inside the here-string (`@'` … `'@`), so no quote in the line ends it early, though PowerShell reads `'`, `‘`, `’`, `‚` and `‛` all as single quotes; the space keeps a line that starts with a quote and `@` from closing it, and the first line has Windows PowerShell 5.1 pipe UTF-8, where it pipes ASCII unless told otherwise.
 
 Notes go to `steer_feedback` with the rule's pack and version, repository, coding agent, last-steered session and Rerail version, for tuning rules that get pushback. Ids or reasons with control or invisible characters (bidi override, zero-width space) are refused.
 
@@ -274,16 +274,19 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 
 `setup` installs under `~/.rerail/versions/<version>`, points `~/.rerail/current` and the launcher `~/.rerail/bin/rerail` at it, and adds `~/.rerail/bin` to `PATH`.
 
-- `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay]` takes the answers as arguments.
+- `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay] [--powershell]` takes the answers as arguments. With `--powershell` each answer command is written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`), every value PowerShell would read in single quotes (`--packs 'typescript@0.1.1,complexity@0.1.1'`, which it would otherwise split at the comma), and carries `--powershell` on; Codex's and Cursor's `/rerail-start` pass it on Windows, where they run PowerShell. Without it the answers are written for a POSIX shell, Git Bash on Windows, where Claude Code runs them, starting with the sh launcher `rerail`. No answer runs `rerail.cmd`, since cmd.exe would read its arguments again: a `&` in a folder name would end the command there.
 - `rerail install --agents <list> [--dry-run]` only connects coding agents.
 - `rerail install --remove` removes Rerail, keeping `rerail.sqlite` in a dated backup.
+- `rerail install --remove --delete-data` removes Rerail and deletes its data, backups and home.
 
 <details>
 <summary>Launcher, PATH and removal details</summary>
 
 On Windows the launcher is `rerail.cmd`, plus `rerail` for Git Bash. The `PATH` entry is a marked block in your shell startup file, or the Windows user `Path`; `RERAIL_MODIFY_PATH=0` leaves `PATH` to you. `rerail update` adds it where an older set-up didn't. `rerail update` shells out to `npm` with your `~/.npmrc`.
 
-`rerail install --remove` disconnects every coding agent, takes Rerail off `PATH` and stops the daemon. It moves `rerail.sqlite` to a dated backup, so rules and history are kept. Then it deletes `current`, the launcher, every version, the rule packs and `~/.cache/rerail`, naming each.
+`rerail install --remove` disconnects every coding agent, takes Rerail off `PATH` and stops the daemon. It moves `rerail.sqlite` to a dated backup, so rules and history are kept. Then it deletes `current`, the launcher, every version, the rule packs and the content cache (`~/.cache/rerail`; on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there), naming each.
+
+`rerail install --remove --delete-data` deletes instead of backing up, then deletes the rest of the Rerail home. [What each removal leaves behind](how-setup-works.md#what-each-removal-leaves-behind) lists what stays after each.
 
 </details>
 
@@ -321,17 +324,17 @@ OMP and Pi run Rerail inside their extension host; Claude Code, Codex and Cursor
 
 - **OMP**: `dist/hosts/omp/default-extension.js`, in the package's `omp` manifest.
 - **Pi**: `dist/hosts/pi/pi-extension.js`, in the `pi` manifest; loadable with `pi -e`.
-- **Persistent event stream**: `dist/harness/event-stream.js` or `rerail events` ([internal testing](../README.md#internal-testing)).
+- **Persistent event stream**: `dist/harness/event-stream.js` or `rerail events` ([internal testing](../README.md#internal-testing); experimental: `rerail events` refuses unless `RERAIL_EXPERIMENTAL_EVENT_STREAM=1`, while `dist/harness/event-stream.js` is not gated).
 - **Claude Code and Codex**: `createClaudeEventHandler(...)` and `createCodexEventHandler(...)` for harness-owned hook registration.
 - **Cursor**: `.cursor-plugin/plugin.json`, backed by `dist/hosts/cursor/cursor-hook.js`.
 
-Lifecycle ingestion is not an MCP tool surface. OMP and Pi run a session-scoped `RerailRuntime` in their extension host. Claude Code, Codex and Cursor hooks send normalized events to the daemon's resident kernel over an owner-only Unix socket or local Windows named pipe, so policy state outlives each hook process. Persistent integrations can use the newline-delimited `RERAIL-EVENTS/1` stream. All share one event runtime, cosine registry and executable-policy bridge.
+Lifecycle ingestion is not an MCP tool surface. OMP and Pi send each session's events to the daemon, which runs its `RerailRuntime`; only a Pi session of a build from a checkout runs one in process. Claude Code, Codex and Cursor hooks send normalized events to the daemon's resident kernel over an owner-only Unix socket or local Windows named pipe, so policy state outlives each hook process. Persistent integrations can use the newline-delimited `RERAIL-EVENTS/1` stream. All share one event runtime, cosine registry and executable-policy bridge.
 
 </details>
 
 ## Activate
 
-Activation binds a machine to a signed customer profile; it is in [internal testing](../README.md#internal-testing).
+Activation binds a machine to a signed customer profile; it is in [internal testing](../README.md#internal-testing), and experimental: `activate`, `activation request`, `profile select` and `--profile` refuse unless `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES=1`. `profile status` and `profile remove` work either way, and a profile stored earlier still restricts `rerail update` and `rerail events`.
 
 ```sh
 rerail --profile acme activate \
@@ -367,7 +370,7 @@ rerail update check       # resolve the channel without installing
 rerail update             # install and activate a newer version
 ```
 
-`rerail update` backs up the database, installs and validates the new version, activates it, and re-registers your connected coding agents.
+`rerail update` backs up the database, installs and validates the new version, activates it, and re-registers your connected coding agents. It names each step on stderr as it starts, and ends by listing the installed rule packs with a newer version.
 
 <details>
 <summary>Update steps and failures</summary>
@@ -379,6 +382,9 @@ rerail update             # install and activate a newer version
 3. Validates its native runtime and event stream.
 4. Activates it atomically for new harness sessions; `rerail update status` names the replaced version.
 5. Updated or not, re-registers every connected coding agent (`rerail install --refresh`, which also runs on its own), adding new commands, skills and hooks and removing retired ones. A coding agent never connected is left alone.
+6. Updated or not, once the refresh succeeds, lists each installed rule pack with a newer version on the channel that fits the active core (on `next` for a pack the channel has no version of, which is where set-up installs it from; its line says `(on next)`), and the `rerail packs add <id>@<version>` command that installs them ([rule packs](rule-packs.md#third-parties-packs)). It installs none. A pack npm cannot be asked about gets a `warning:` line; the update still succeeds.
+
+Steps 2 to 4 and 6 each print a line on stderr as they start. On a terminal the line counts the step's time up; elsewhere (a coding agent, CI) a step that runs past 30 s prints `… still running after 30 s`, then again every 30 s. An npm request warns that npm may be stuck after 30 s and is stopped at 3 min; the download warns at 3 min and is stopped at 20. Step 6 asks npm about each pack with requests stopped at 1 min each. A stopped npm that has not exited 5 s later is killed. A stopped step fails the update, and the version that was active stays active. A version change prints `Updated Rerail <old> → <new> in <time>` on stdout.
 
 An agent that can't be re-registered is named with the reason, the rest are refreshed, and the update exits 1 with the new version active. One whose configuration can't be read is named and skipped. Coming from a version without step 5, run `rerail install --refresh` once.
 
@@ -390,15 +396,16 @@ An agent that can't be re-registered is named with the reason, the rest are refr
 
 ```sh
 rerail daemon start            # background daemon on the port it last ran on, else http://127.0.0.1:4737/ (a free port when those are held), opens nothing
-rerail daemon start --open     # same, then opens the browser view
+rerail daemon start --open     # same, then opens the browser view, unless BROWSER=none
 rerail daemon start --host 0.0.0.0 --allow-remote --public-host rerail.example --tls-cert cert.pem --tls-key key.pem   # bind off loopback over https (see below)
+rerail daemon start --workspace-root <dir>   # serve, and look for Git, as if started in <dir> rather than the current folder; a coding agent's session that starts the daemon passes its own folder this way
 rerail start                   # start Rerail in this checkout and the checkouts inside it (--repository: every checkout); in a repository that is not set up, first runs set-up's questions there
 rerail stop [<host> [<session-id>]]   # stop Rerail in this checkout and the checkouts inside it (--repository: every checkout); the shared daemon keeps running for other checkouts and coding agents, and the reply names rerail daemon stop. A coding agent's host sets the reply's command sigil, and its session (rerail stop codex: CODEX_THREAD_ID) makes the reply name the rules that steered it
 rerail state                   # prints started, stopped, or not-set-up for this checkout
 rerail status                  # whether Rerail is on here, then the daemon, its engine and its model (Model: ok, or the problem and file, e.g. checksum mismatch (model.safetensors)); exit 3 when the daemon is not running, 4 when it does not answer, 5 when its engine or model is not ok
-rerail manage [--print]        # prints the dashboard's Overview URL and opens it; --print only prints
-rerail session [<host> <session-id>] [--open]   # this session's status line and page URL; --open opens it
-rerail daemon stop             # shut the daemon down for every checkout and coding agent; graceful stop where supported; forced termination after 10 s, and an error if the process outlives that by 5 s. A coding agent's session in a checkout where Rerail is started starts it again with its next event, unless RERAIL_AUTOSTART=0
+rerail manage [--print]        # prints the dashboard's Overview URL and opens it; --print only prints, and so does BROWSER=none
+rerail session [<host> <session-id>] [--open]   # this session's status line and page URL; --open opens it, unless BROWSER=none
+rerail daemon stop             # shut the daemon down for every checkout and coding agent; a graceful stop (SIGTERM, or on Windows a request over its API), which goes on running the events the daemon took in, answers each one that ends, and cuts off a coding agent's request that stops arriving partway once it has sent nothing for a second or two; forced termination after 10 s, and an error if the process outlives that by 5 s. A coding agent's session in a checkout where Rerail is started starts it again with its next event, unless RERAIL_AUTOSTART=0
 ```
 
 <details>
@@ -433,7 +440,7 @@ Without the native addon the daemon still runs: `status`, `/healthz` and the UI 
 
 ### API operations
 
-Every operation is both an HTTP route under `/api` and an MCP tool of the same name. Each is defined once (id, route, zod schemas, handler) in `src/api/operations.ts` or `src/api/repository-operations.ts`, so a new operation needs no other wiring.
+Every operation is both an HTTP route under `/api` and an MCP tool of the same name, but for one of an [experimental feature](internal-testing.md) the daemon runs without (its `experiment`): that one answers `404 experimental-off` and is left out of the MCP tool list. Each is defined once (id, route, zod schemas, handler) in `src/api/operations.ts`, `src/api/repository-operations.ts` or `src/api/merge-assist-operations.ts`, so a new operation needs no other wiring.
 
 <details>
 <summary>All operations, wiring and error codes</summary>
@@ -466,12 +473,22 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `work_links_add` | `PUT /api/sessions/{sessionId}/work-links` | `{ kind, reference, url? }`; re-linking updates the url. |
 | `audit_settings_get` | `GET /api/sessions/{sessionId}/audit-settings` | Defaults (`scope`, `mode`, experimental `steerStrategy`) and the first `repositoryAudit` for the session's canonical workspace, with its `repositoryAuditRecord`. |
 | `audit_settings_update` | `PATCH /api/sessions/{sessionId}/audit-settings` | People only (`rerail settings`). Set defaults, which outlast the session: `mode` `steer`/`log`; `steerStrategy` `message`/`rewind`/`subagent`. |
-| `audit_requests_create` | `POST /api/sessions/{sessionId}/audit-requests` | Internal testing. Queue an audit for a session. |
-| `audit_requests_list` | `GET /api/sessions/{sessionId}/audit-requests` | Internal testing. `{ auditRequests }` with their `auditIds`. |
-| `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=` | `{ audits, total }` with `violations` and failures; `mode` is run mode. |
+| `audit_requests_create` | `POST /api/sessions/{sessionId}/audit-requests` | Internal testing; experimental: the four audit-request and repository-audit operations answer `404 experimental-off`, and are no MCP tools, unless the daemon runs with `RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1`. Queue an audit for a session. |
+| `audit_requests_list` | `GET /api/sessions/{sessionId}/audit-requests` | Internal testing; experimental. `{ auditRequests }` with their `auditIds`. |
+| `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=&origin=` | `{ audits, total }` with `violations` and failures; `mode` is run mode, `origin` is `ongoing` or `scan`. |
 | `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session, `host`, `auditId`, and `logged` (the agent wasn't told: the audit or the rule was in Log mode); `total`, `nextCursor`. |
-| `repository_audits_list` | `GET /api/repository-audits` | Internal testing. Each repository's `repositoryAudit` and latest `audit` summary with `violationCount`. |
-| `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Internal testing. Paged entries; `kind` `violation`/`failure`, `mode` the rule's mode. |
+| `rule_approvals_set` | `POST /api/rule-approvals` | Approve a rule's or pack's content so it steers; people only ([Approval](rule-scoping.md#approval)). |
+| `presentation_get` | `GET /api/presentation?repository=&host=&sessionId=&onDemand=&spelling=` | The presentation preference that applies, optionally with that session's status ([Hiding the footer](in-session-surfaces.md#hiding-the-footer)). On Windows, `spelling` is the folder as its host spelt it, read only for a start or stop Rerail 0.1.4 saved under it. |
+| `presentation_preferences_list` | `GET /api/presentation-preferences` | The stored presentation preferences. |
+| `presentation_preferences_upsert` | `PUT /api/presentation-preferences` | Set `compact` or `silent` for a repository and coding agent; people only. |
+| `presentation_preferences_remove` | `DELETE /api/presentation-preferences?repository=&host=` | Remove an override, so the next default applies; people only. |
+| `repository_audits_list` | `GET /api/repository-audits` | Internal testing; experimental. Each repository's `repositoryAudit` and latest `audit` summary with `violationCount`. |
+| `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Internal testing; experimental. Paged entries; `kind` `violation`/`failure`, `mode` the rule's mode. |
+| `merge_assist_get` | `GET /api/merge-assist?repository=&checkout=` | Internal testing; experimental: every `merge_assist_*` operation answers `404 experimental-off` unless the daemon runs with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1`. [Merge Assist](#merge-assist) for one checkout: on or off, the branch and base branch, `gh`'s readiness (`missing`, `signed-out`, `signed-in`, `not-github`, `unavailable` when its sign-in could not be read, `unchecked` while Merge Assist is off, when no `gh` runs), whether a scan is running, the last scan (`lastScan`: when, how many branches and pull requests it compared, and what it could not read), the person's `settings`, and the in-flight `conflicts`, open ones not quiet first and then newest first, then the latest 20 dismissed (each with `quiet`, `summary`, the hook command's last answer, `hook`, and, once dismissed, `dismissal: { name, at }`; a dismissed one keeps no hunks). Reads only. |
+| `merge_assist_settings_get` | `GET /api/merge-assist/settings?repository=&checkout=` | Internal testing; experimental. The person's Merge Assist settings for the checkout's repository: `{ hook }`, the conflict hook command `{ command, timeoutSeconds }` or null. Reads only; a coding agent may read them. |
+| `merge_assist_scan` | `POST /api/merge-assist/scan` | Internal testing; experimental. Find the checkout's in-flight conflicts now: overlapping changes with open pull requests, listed afresh through `gh`, and with branches checked out in other worktrees of the repository (recent remote-tracking branches when pull requests cannot be read). A coding agent may scan only its own checkout and the checkouts inside it. |
+| `merge_assist_settings_set` | `PUT /api/merge-assist/settings` | Internal testing; experimental. `{ enabled?, hook? }`, at least one: `enabled` turns Merge Assist on or off for the checkout's repository (off fires `closed` for every open conflict, then clears every checkout's conflicts, last scan and `gh` readiness; the settings stay); `hook` sets the conflict hook command, `{ command: string[], timeoutSeconds? }` (an argv array of 1–64 non-empty strings, run without a shell; 1–60 seconds, 10 by default), or `null` removes it. Answers the status. People only. |
+| `merge_assist_conflict_dismiss` | `POST /api/merge-assist/conflicts/dismiss` | Internal testing; experimental. `{ repository?, checkout?, conflictId }`: dismiss an open in-flight conflict as not a conflict. It stays dismissed for its question and that branch, and the conflict hook hears `closed` once. Answers the status. People only: a coding agent reads conflicts through `merge_assist_get` and gets `403 agent-not-permitted` here; a conflict already dismissed is `409 invalid-state`, an unknown one `404 not-found`, and with Merge Assist off `409 disabled`. |
 
 `src/api/http.ts` mounts the operations with Hono and emits OpenAPI; `src/api/mcp.ts` registers them as MCP tools.
 
@@ -496,7 +513,7 @@ After that check a request costs one file read, and the bridge re-checks only on
 
 ### Targets and what a coding agent may change
 
-`/api` callers are people; `/mcp` callers are coding agents. This scopes agent tools; it is not authentication, since any local process can call `/api`.
+`/api` callers are people; `/mcp` callers are coding agents. This scopes agent tools; it is not authentication, since any local process can call `/api`. The CLI runs as the person too: a coding agent with shell access can run any `rerail` command, the people-only ones included, so the people-only rules here cover the `/mcp` surface.
 
 An agent reaches only its checkout's repository and checkouts nested in its own, and may change little there. Anything else is `403 agent-not-permitted` with the dashboard URL to do it there: `<origin>/?repository=<key>&checkout=<path>#rules`. See [Rule scoping](rule-scoping.md).
 
@@ -548,7 +565,7 @@ A daemon reachable from other machines (off loopback, or answering a `--public-h
 <details>
 <summary>Certificate rules and pinning</summary>
 
-`--tls-cert` takes the certificate, or a chain with the server's first. Both files are read once at start, and also work on loopback. A key file with any group or other permission bit (such as `0644`) is refused; `chmod 600` it.
+`--tls-cert` takes the certificate, or a chain with the server's first. Both files are read once at start, and also work on loopback. The key must be readable by its owner only: a key file with any group or other permission bit (such as `0644`), or on Windows one whose ACL lets another account read it (as a key under `C:\certs` inherits), is never served with; `chmod 600` it, or run the `icacls` command Rerail prints. With such a key, when you can read it, it parses as a private key and `--tls-cert` names its certificate, the daemon still starts, for this computer alone: it serves `127.0.0.1` over http and leaves out `--host`, `--public-host` and the TLS files, so hooks keep recording and steering, and `rerail daemon start`, `rerail status`, `daemon.log` and `daemon.json` (`remoteRefused`) say why. A start that asked for other machines (`--allow-remote`, `--public-host`) still exits 1, with the refusal on stderr, as does a later one that finds this daemon running; the loopback daemon keeps running, and comes back from a restart at its heap ceiling on loopback, still saying why, even once the key is fixed. Fix the key, then run `rerail daemon stop` and start it again.
 
 Without TLS such a daemon won't start, since the access capability would cross the network in clear. `--insecure-http` overrides this for a trusted network: a container port published only on host loopback, or a local TLS-terminating proxy.
 
@@ -599,14 +616,16 @@ Anything else, including `/native/*`, `/mcp`, `/healthz` and the page, gets `421
 
 ### Daemon state
 
-`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. `RERAIL_AUTOSTART=0` stops automatic daemon creation, so command hooks need an existing daemon or explicit endpoint.
+`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. Each line the daemon writes there starts with the UTC time it was written (`2026-11-11T15:33:02.123Z `); what Node or the engine write to the file directly, such as the report of a fatal error, has no time, nor do the lines of the `rerail daemon start` that a hook or session runs to start the daemon. `RERAIL_AUTOSTART=0` or `RERAIL_AUTOSTART=false` stops automatic daemon creation (any other value leaves it on): no hook or set-up starts the daemon (OMP sessions, and Pi sessions of a managed install, start their own), so command hooks need an existing daemon or explicit endpoint. A hook that finds none records nothing and logs no failure; the session's start says so (Claude Code and Codex show the line, and Cursor's agent is asked to relay it), and `rerail status` says the same: the daemon is not running, and `RERAIL_AUTOSTART=0` keeps hooks from starting it, so nothing is recorded until it runs.
 
 <details>
 <summary>Ports, reuse and the kernel socket</summary>
 
 `daemon-port.json` remembers the last port (or `--port`), reused by a start without `--port` so dashboard links survive restarts. `rerail daemon start` reuses a running daemon and says where; stale state from a crash or reboot is cleared. `stop`, `status` and `manage` run from the launcher you invoked, not the managed version, so they work mid-update.
 
-`daemon.json` also records `kernelSocketPath` (Unix socket or Windows named pipe), which hooks reuse; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. Events there need `x-rerail-access`. For a `RERAIL_ENGINE_SOCKET` socket, hooks send the capability from the Rerail home's `daemon.json` if it names the same socket.
+A Rerail home has one daemon. The daemon holds `locks/daemon.lock` in the home for as long as it runs, and a second daemon started there stops after about a second, naming the first. The daemon also checks every second that `daemon.json` still holds what it wrote and writes it again when it is gone or changed, so `rerail daemon start` and `rerail daemon stop` find a running daemon even after its `daemon.json` was removed.
+
+`daemon.json` also records `kernelSocketPath` (Unix socket or Windows named pipe), which hooks reuse; when another process already holds the default pipe name, the daemon listens on that name with a random suffix and records that one; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. Events there need `x-rerail-access`. For a `RERAIL_ENGINE_SOCKET` socket, hooks send the capability from the Rerail home's `daemon.json` if it names the same socket.
 
 </details>
 
@@ -624,6 +643,7 @@ Each session has its own serialized lane, and native tool-call IDs pair edits wi
 - Pairing holds even for concurrent calls to one tool.
 - Lanes are keyed by runtime configuration and session ID. One agent's open, audit or delivery never holds up another, and separate databases or workspaces never share a lane, even when session IDs coincide.
 - Pending calls and captured preimages survive daemon restarts.
+- A call the daemon takes up only after its tool ran (the hook gave up waiting on a busy daemon) captures the file as the tool left it. In Claude Code, once the session's code rules are open, its edit is then read against the file as the tool's result says it was: an empty file where the Write's result says `type: "create"`; otherwise the text the result's line diff (`structuredPatch`) rebuilds from the file, or `originalFile` where the result has no line diff or the file no longer holds the diff's lines. Where the file changed again after the call captured it (a formatter, the next edit), the text before is rebuilt from that capture instead, and the edit takes in the later change too, as an edit whose call came on time does. An edit whose call came on time keeps its own capture: the line diff places a capture taken before the tool ran, with the diff's lines before the tool where `oldStart` puts them and a removed line, a line after an added one or the file's end where the tool's lines go; an edit whose file was put back before its result then changes nothing. A Write whose result says it made a file the call read with other text than its `content` (in the file's form, with or without a last line ending) keeps that capture: the file was removed between the call and the tool, or a formatter changed the made file before the call was taken up, and no result tells the two apart. The line diff shows each tab of the run of tabs a line starts with as two spaces; the rebuild reads it that way and puts the tabs back where the file's lines there indent with tabs. The line diff may show the file's first line without its byte order mark: the rebuild matches that line with or without the mark and puts the mark back. `originalFile` takes the file's byte order mark, and its CRLF line endings where it has none of its own; a made file's `content` is compared with the file in that form. Where the file no longer holds the diff's lines, the result has no `originalFile` and the capture is the file now, what the file held is unknown: the edit is checked over its whole file, as a shell write to a file never seen is. Where the file changed again and the result neither rebuilds the text from the capture nor places it before the tool, the edit is read against `originalFile`, an empty file for a Write that made the file, or the text the diff rebuilds from the capture; where the result says none of these, against the capture, as an edit whose result says nothing is.
 - Turn checkpoints catch filesystem changes from shells or tools without explicit edit paths. They keep source fingerprints, not a copy of the source or a baseline of violations.
 
 OMP captures pre-edit source in its awaited `tool_call` hook and submits post-edit source from `tool_result` for background evaluation. Its asynchronous `tool_execution_start` and `tool_execution_end` notifications aren't execution barriers and aren't used.
@@ -632,9 +652,31 @@ Cursor Read and Write hook phases may share a native tool-call ID but keep disti
 
 </details>
 
+### Merge Assist
+
+Merge Assist is experimental, in [internal testing](../README.md#internal-testing), and off by default: nothing of it runs unless `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1` (or `RERAIL_EXPERIMENTAL=1`) is set for the Rerail daemon and for the shell running `rerail merge-assist` ([Internal testing](internal-testing.md#merge-assist)), and then only in a repository where a person turned it on. Without the variable, `rerail merge-assist` exits 1 naming it and the operations answer `404 experimental-off`. It watches the branches and pull requests in flight and tells the person and their coding agent when their work collides with someone else's, before it merges: it compares this checkout's work, committed and not, with open pull requests the repository holds and with branches checked out in its other worktrees (recently committed remote-tracking branches when pull requests cannot be read), and reports each overlap as an in-flight conflict. An in-flight conflict is not a Git merge conflict: it is a possible one, changes within a few lines of each other that often still merge cleanly, and it says both sides are working on the same code. [docs/merge-assist-v1-build.md](merge-assist-v1-build.md) describes it, with its security model.
+
+```sh
+rerail merge-assist [status] [--repo <dir>] [--json]   # this checkout: on or off, readiness, the last scan, and its conflicts
+rerail merge-assist on | off [--repo <dir>]            # the person's; off clears every checkout's conflicts, last scan and gh readiness
+rerail merge-assist scan [--repo <dir>] [--json]       # find conflicts now, with open pull requests listed afresh; waits for the hook command's answer
+rerail merge-assist conflicts [--repo <dir>] [--json]  # in-flight conflicts with other branches: summary, whether quiet, both hunks, and a failed hook
+rerail merge-assist dismiss <conflict-id> [--repo <dir>] [--json]   # Not a conflict: the person's only action on one; waits for the hook command's answer
+rerail merge-assist settings [--repo <dir>] [--json]   # the person's conflict hook for this repository
+rerail merge-assist settings --hook-command '["/bin/sh","/Users/me/bin/conflict-hook.sh"]' [--hook-timeout <s>]
+rerail merge-assist settings --hook-timeout <s>        # the current command's timeout; fails when none is set
+rerail merge-assist settings --no-hook                 # remove the command
+```
+
+The command runs in its own process against the Rerail database, on the checkout `--repo` (or the current folder) is in, and prints the dashboard's Merge Assist page when the daemon is running. `scan` and `dismiss` wait for the conflict hook command's answer and print the status with it; Ctrl-C stops the command. Every Merge Assist operation names a checkout as the repository operations do; naming only a repository picks its main checkout. Turning Merge Assist on or off, changing its settings and dismissing a conflict are people's: each changes what reaches a coding agent or what runs on the person's machine, so `/mcp` answers them `403 agent-not-permitted`. A coding agent may read Merge Assist and its settings in its own repository, and scan only its own checkout and the checkouts inside it. The service's refusals keep their codes: `not-a-checkout` and `not-found` are `404`, `invalid-state` and `disabled` are `409`. As with every people-only operation, this holds for `/mcp`: `rerail merge-assist` runs as the person, so an agent with shell access can run `on` or `dismiss`.
+
+In-flight conflicts ([detection](merge-assist-v1-build.md#detection) in the build document) list each conflict with a one-line summary, `<their label> (<author>) is changing <symbol or file>`, set at detection, and `(quiet)` when every contested file is a lockfile, a changelog document, generated output or under `docs/`: a quiet conflict is listed here and on the dashboard only, never told to the agent or shown in the footer. The person's only action is Dismiss (Not a conflict), and a coding agent is refused it. `settings` holds the conflict hook command per repository, kept in the Rerail database on this machine, never in a committed file. `--hook-command` sets it, a JSON array of non-empty strings run without a shell from the checkout's root on each `detected` and `closed` event, with the conflict as JSON on stdin; it may answer `{ "note"?, "status"? }` on stdout: `note` joins the agent's note, and `status` replaces the conflict's summary in the footer (Claude Code's status line, OMP's and Pi's widget) and in Codex's person's line, since Codex has no footer. `--hook-timeout` is 1 to 60 seconds, 10 by default. A failing command is recorded on the conflict and never changes delivery; the contract is in [the conflict hook](merge-assist-v1-build.md#the-conflict-hook).
+
+Open pull requests are read through the person's own `gh` sign-in, read-only. [Privacy](privacy.md) lists what that sends.
+
 ### Scan and settings controls
 
-An audit runs code rules at one of three scopes, in one of two independent run modes. Full-repository scanning (`rerail scan`, explicit audit requests, the automatic first repository audit, repository audit operations) is in [internal testing](../README.md#internal-testing).
+An audit runs code rules at one of three scopes, in one of two independent run modes. Full-repository scanning (`rerail scan`, explicit audit requests, repository audit operations) is in [internal testing](../README.md#internal-testing), and experimental: `rerail scan --session` and the audit-request and repository-audit operations need `RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1` for the daemon, and `rerail scan` without `--session` needs `RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1` ([Internal testing](internal-testing.md)). The automatic first repository audit is a separate experiment, `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` for the runtime's process, and runs without `REPOSITORY_SCAN` ([below](#defaults-and-requested-audits)); the repository-audit operations list its result only with `REPOSITORY_SCAN` on.
 
 #### Scopes and run modes
 
@@ -649,6 +691,8 @@ An audit runs code rules at one of three scopes, in one of two independent run m
 
 Nothing is acknowledged, baselined or suppressed as already seen: changing relevant source can raise the same violation again.
 
+An audit someone asked for (`rerail scan --session`, an audit request, the first repository audit) is recorded with `origin: "scan"`; the audits of a session's own edits are `ongoing`. A scan finds what the checkout already holds, so the dashboard, `violations_list`, `rules_activity` and the sessions' counts leave it out: its violations are not the session's (no violation card, not counted as logged or steered) and it is no run of its rules. `rerail scan --wait` prints its run ids; read its findings with `GET /api/audits?auditId=<run id>`, or every scan with `?origin=scan`.
+
 #### Steer strategies (experimental)
 
 The workspace's `steerStrategy` ([internal testing](../README.md#internal-testing)) sets how a code-rule steer reaches the agent: `message` (default), `subagent` or `rewind`. It needs `RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1` for the process running Rerail's runtime; otherwise every steer is a `message`.
@@ -662,7 +706,7 @@ The runtime process is the daemon for OMP, Claude Code, Codex and Cursor, and th
 - **`subagent`**: the same, ending with an instruction to delegate the fix to a subagent (`rerail_fix` in Pi, registered by Rerail; `task` in OMP; `Task` in Claude Code and Cursor; `spawn_agent` in Codex) and stay on task.
 - **`rewind`**: if an edit's own check steers before its tool result is answered, every file the call captured returns to its preimage (created files deleted), all or none. The steer goes into that tool result, saying what was restored and that the edit must be redone following the rule. The rollback is audited in `log` mode, so the restored file steers nothing on its own.
 
-`rewind` falls back to `message` when the preimage was unreadable, the call didn't capture the file, or the steer came after the result was answered (a one-shot hook waits a second). Ledger `delivery` entries record each steer's `strategy`, plus a rewound edit's `toolCallId` and `rewound` paths.
+`rewind` falls back to `message` when the preimage was unreadable, the call didn't capture the file, the edit was read against anything but what the call captured (a call that reached Rerail only after its tool wrote the file is read against what the tool's result says the file held, or over its whole file), or the steer came after the result was answered (a one-shot hook waits a second). Ledger `delivery` entries record each steer's `strategy`, plus a rewound edit's `toolCallId` and `rewound` paths.
 
 </details>
 
@@ -671,11 +715,11 @@ The runtime process is the daemon for OMP, Claude Code, Codex and Cursor, and th
 Rerail audits a repository only when asked, and user-requested scans are `log`-only.
 
 <details>
-<summary>Runtime defaults and the first repository audit</summary>
+<summary>Runtime defaults and the first repository audit (experimental)</summary>
 
 `RerailRuntime` accepts ongoing `auditSettings: { scope, mode, steerStrategy }`; `NativeCodeRuleEnforcer` accepts `scope` and `mode`.
 
-With `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` set for the runtime's process, Rerail runs one independent `log`-mode full-repository audit the first time it sees a canonical workspace in local storage. It is never repeated there. User-requested scans cover the whole eligible repository or the tracked, staged and untracked files in the current Git diff.
+With `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` set for the runtime's process, Rerail runs one independent `log`-mode full-repository audit the first time it sees a canonical workspace in local storage. Once it completes, it is never repeated there; an interrupted one runs again at the next session, and a failed one only when it could now come out differently (the compiled catalog changed, or it failed only on files read in part). User-requested scans cover the whole eligible repository or the tracked, staged and untracked files in the current Git diff.
 
 </details>
 
@@ -708,7 +752,7 @@ A file written and committed in one command stays an edit, measured from the tre
 <details>
 <summary>What counts as the session's own write</summary>
 
-A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp, and by its folder's for a file removed. An agent writes only through its tool calls, so each session notes when each of its calls ran, whatever the tool, including those answered while its code rules were still opening. A Codex `apply_patch` runs no hook, so a Codex session counts its whole turn, from your prompt (or, after a daemon restart, its next tool call) to the turn's end, as one call. A change stamped while one of them ran is the session's own. Any other is another writer's (another session, your editor, a process a command left running in the background): it steers nobody, and the session's next shell edit of the file is measured from what that writer left; where the session had changed the file, the change is recorded in Log with no generated lines. When two sessions' calls ran at once, both take a change made then, so a Codex session in the middle of a turn takes another session's change too. A call whose result never comes (one you interrupted) counts as running until the turn ends.
+A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp, and by its folder's for a file removed. An agent writes only through its tool calls, so each session notes when each of its calls ran, whatever the tool, including those answered while its code rules were still opening. A Codex `apply_patch` runs no hook, so a Codex session counts its whole turn, from your prompt (or, after a daemon restart, its next tool call) to the turn's end, as one call. A change stamped while one of them ran is the session's own. Any other is another writer's (another session, your editor, a process a command left running in the background): it steers nobody, and the session's next shell edit of the file is measured from what that writer left; where the session had changed the file, the change is recorded in Log with no generated lines. When two sessions' calls ran at once, both take a change made then, so a Codex session in the middle of a turn takes another session's change too. A call whose result never comes (one you interrupted) counts as running until the turn or the session ends; a subagent's, until the main agent's next stop after its own.
 
 </details>
 
@@ -739,7 +783,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 | `/rerail-start` | Start in this checkout and its worktrees, attached to the session; runs set-up's questions first if needed. |
 | `/rerail-stop` | Stop recording, evaluation, steering and daemon autostart here and in its worktrees. |
 | `/rerail-update` | Install the newest version. |
-| `/rerail-uninstall` | `rerail install --remove`, keeping a backup of rules and history. Asks first. |
+| `/rerail-uninstall` | `rerail install --remove`, keeping a backup of rules and history, or `--remove --delete-data`, deleting everything. Asks first. |
 | `/rerail-help` | Same as `/rerail`. |
 | `/rerail-show-me` | One-minute demo: the agent breaks a demo rule, is steered and fixes it. |
 | `/rerail-bug-report` | The agent reads a support bundle to tell an engine bug, a shipped-rule bug or your rule's bug. |
@@ -752,7 +796,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 - **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts the rule, tests it (`rerail rules test <draft.json>`) and reads it back. On your yes, `rerail rules add <draft.json>` and `rerail rules approve <id>` add it to your library and this repository, setting the repository up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
 - **`/rerail-start`**: OMP and Pi ask set-up's questions via their picker; Claude Code and Cursor as text.
 - **`/rerail-stop`**: the shared daemon keeps running; the reply names `rerail daemon stop`, run in a terminal.
-- **`/rerail-uninstall`**: OMP and Pi ask via a native selector; Claude Code doesn't pre-approve it.
+- **`/rerail-uninstall`**: offers both removals, keeping a backup or deleting everything, the second with its `--dry-run` output. OMP and Pi ask via a native selector, then confirm a full deletion after showing that output; Claude Code doesn't pre-approve either removal.
 - **`/rerail-show-me`**: `rerail show-me` adds rule `local:rerail-show-me`, scoped to `rerail-show-me.js`. The agent writes that file breaking the rule, is steered, and fixes it. `rerail show-me --cleanup` removes both (a concurrent demo elsewhere keeps the rule). It needs Rerail on and set up, never starts or sets up Rerail, and touches only what it wrote. The steer stays in History.
 - **`/rerail-bug-report`**: following `skills/rerail-bug-report`, the agent reads `rerail support-bundle` output (allowlisted, scrubbed diagnostics). It fixes your rule via `/rerail-create`'s Tune. Otherwise it checks the bundle with you and offers a filled-in issue, or files it if asked. Nothing is sent without you ([what the bundle holds](troubleshooting.md#reporting-a-problem)). Claude Code pre-approves the bundle's fixed invocations, `rerail update check` and `rerail rules test`; `--output`, `rerail rules add` and filing ask first.
 
@@ -803,7 +847,7 @@ Rerail is off in every repository until started. Rules belong to the repository;
 <details>
 <summary>What stopping does, inheritance and the footer</summary>
 
-A stopped checkout records nothing, runs no rules, delivers no guidance, and its hooks never autostart or contact the daemon.
+A stopped checkout records nothing, runs no rules and delivers no guidance. Its Claude Code, Codex and Cursor hooks never start the daemon, but each one still asks a running daemon whether Rerail is on in the checkout, and so does the Claude Code status line. A busy daemon gets up to 2 s to answer (on Windows up to 4 s: 2 s for its engine to prove itself over its pipe, then 2 s for the answer); past that, or with no daemon running, the hook reads the database itself.
 
 A checkout without its own value inherits from the nearest containing checkout of the same repository with one, else the repository. Starting or stopping a checkout reaches the checkouts inside it, which follow it again.
 
@@ -837,18 +881,18 @@ rerail scan --session <session-id> --scope git-diff --wait --json
 
 Without `--wait`, the request prints immediately. `--wait` polls up to ten seconds and prints the latest state; `--json` prints the structured record.
 
-Findings alone don't turn successful execution into a failure. Inspect outcomes in Diagnostics by the reported request/run IDs. The Rerail home's daemon serves every recorded session, so the commands work from any directory.
+Findings alone don't turn successful execution into a failure. Read outcomes by the reported run IDs, with `GET /api/audits?auditId=<run id>`; the dashboard does not show scans. The Rerail home's daemon serves every recorded session, so the commands work from any directory.
 
 </details>
 
-#### Settings, Diagnostics and Sessions pages
+#### Audit settings and scan operations
 
-For hosts without native selector components, the standalone UI has **Settings** (ongoing scope and enforcement mode), **Diagnostics** (log-only scans and results) and **Sessions** (transcript events).
+The dashboard has no page for audit settings or scans: `rerail settings`, `rerail scan` and the operations below read and change them. Its **Sessions** page shows transcript events.
 
 The default is automatic `ai-output` audits in `steer` mode with the `message` strategy: an edit hears only about violations in lines it added or changed. `--scope touched-files` reports whole edited files.
 
 <details>
-<summary>Page operations, ownership and scan scope</summary>
+<summary>Operations, ownership and scan scope</summary>
 
 | Operation                   | HTTP surface                                       |
 | --------------------------- | -------------------------------------------------- |
@@ -863,7 +907,7 @@ The default is automatic `ai-output` audits in `steer` mode with the `message` s
 
 The default ignores what the rest of an edited file already broke. Saved settings keep their scope. Changes apply to later automatic evaluations, running sessions included, never to a running evaluation or recorded results.
 
-Each repository in retained scan history gets one automatic full-repository, `log`-only baseline, never repeated. If Rerail becomes active in such a repository without one, it runs it before ordinary evaluation. A later user-requested scan becomes the latest Diagnostics result without changing saved defaults. History filters never change evaluation settings.
+With `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` ([internal testing](internal-testing.md)), each repository gets one automatic full-repository, `log`-only audit at its first session, never repeated; without it, none runs. A later user-requested scan becomes the repository's latest audit without changing saved defaults. History filters never change evaluation settings.
 
 **Scope and outcomes.** Explicit repository scans cover the whole eligible workspace. Git-diff scans take tracked, staged and untracked changed files at request time; an empty diff fails rather than scanning everything. Automatic AI-output evaluation keeps using captured preimages and changed ranges.
 
@@ -879,7 +923,7 @@ Full-repository work is capped by a five-minute execution budget, a 100,000-file
 <details>
 <summary>Per-file failures and large files</summary>
 
-A single file may use the policy engine's 32 MB source allowance. Unreadable files never stop a scan. At most 20 per-file failures are listed; the audit record and session summary keep the total (`failureCount`, with `unlistedFailureCount` unlisted), and the footer says `audit failed (N failures)`.
+A single file may use the policy engine's 32 MB source allowance. Unreadable files never stop a scan. At most 20 per-file failures are listed; the audit record and session summary keep the total (`failureCount`, with `unlistedFailureCount` unlisted), and the footer says `audit failed (N failures)`. A scan reads files in path order, the order Git sorts paths in. Where Rerail walks the folders itself (a folder that is not a Git checkout, a checkout whose repository storage did not attach, and the folders a touched-files audit is given), a scan that stays within its budgets lists the same failures for the same files on every machine. In a Git checkout, failures to list a folder, read a `.gitignore` or read a name that is not UTF-8 still come in the order the filesystem lists folders, and the 100,000-file budget keeps the files the filesystem listed first.
 
 Large files have no fixed cut-off:
 
@@ -903,9 +947,9 @@ A scan whose only failures are gaps completes, `rerail scan` exits `0`, and the 
 
 </details>
 
-#### Diagnostics
+#### Scan results
 
-Diagnostics keeps one-shot requests and results apart from ongoing settings and transcripts; a completed scan with no violations is a successful empty result.
+Scan requests and results are kept apart from ongoing settings and transcripts; a completed scan with no violations is a successful empty result.
 
 <details>
 <summary>Results, filters and host delivery</summary>
@@ -915,7 +959,7 @@ Diagnostics keeps one-shot requests and results apart from ongoing settings and 
 - Requests link to the audit IDs they produced; history keeps session, workspace, source revision and evaluated rule revisions.
 - Historical records and work cancelled before evaluation have no compiled-rule provenance, so aren't attributed to today's rules. A recorded catalog with no individual revisions had no enabled code rules.
 
-It indexes every repository in retained session history and shows the latest repository audit's violations and failures as separate accessible records. Filters run in the daemon with bounded pagination; the UI never loads or filters a full result set in memory. Filters are entry type (`kind=violation|failure`), rule mode (`mode=log|steer|block`), exact code, path substring and free text. Rule mode differs from an audit's run mode, filtered by `mode=steer|log` on `/api/audits`.
+`repository_audits_list` indexes every repository in retained session history, and `repository_audit_entries_list` returns the latest repository audit's violations and failures as separate records. Filters run in the daemon with bounded pagination, so no caller loads a full result set. Filters are entry type (`kind=violation|failure`), rule mode (`mode=log|steer|block`), exact code, path substring and free text. Rule mode differs from an audit's run mode, filtered by `mode=steer|log` on `/api/audits`.
 
 **Host capabilities.** Only the runtime owning a session executes its requests. OMP/Pi deliver in the background; Claude Code, Codex and Cursor get buffered guidance at their next supported hook event, so a finished scan doesn't prove delivery. Runtime failures stay diagnostics, never guidance. A closed or unavailable session can't be swapped for another.
 

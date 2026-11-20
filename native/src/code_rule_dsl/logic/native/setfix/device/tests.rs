@@ -1069,7 +1069,7 @@
         }
         assert_eq!(seen, 10);
         assert_eq!(in_place, 10, "node, child, field, core_node and line read in place");
-        // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
+        // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
             // With a guest (decision 0055): its places are its host's lines, through its placement, found on the
@@ -1081,7 +1081,7 @@
             // At the host's second line (byte 10 of "import os\nx = f(1, y=2)\n"): the guest's two lines are the
             // host's line 2.
             let place = Placement::Copied { delta: 10, within: [10, 24] };
-            let guest = Guest { host: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
+            let guest = Guest { host: 7, file: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
             docs.push(Document { key: 100, core: "/w#core:d0.py#guest:python:0".to_owned(), digest: core::digest(&facts), path: "d0.py".to_owned(), facts, tape: None, guest: Some(Arc::new(guest)), module: None });
             let core_views = shaped(&store, docs, &Projection::core()).unwrap();
             {
@@ -1092,7 +1092,7 @@
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
-            // directory, its tapes and core.rr's lines in the batch's block; a guest's (a copied stretch) through its
+            // directory, its tapes and core.rerail's lines in the batch's block; a guest's (a copied stretch) through its
             // host's lines and its placement. With the guest and without.
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
             for views in [&core_views, &own_views] {
@@ -1116,8 +1116,8 @@
                 }
             }
         }
-        // The kind-set axes and containment, read whole: the batch's solve, its answer as ids in a block of its own,
-        // which the device reads where it lies (decision 0353 step 5): nothing made on the device for it.
+        // The kind-set axes and containment, read whole: the batch's solve, a relation of ids written once where it is
+        // computed (decision 0353 step 5), which the device reads where it lies; no view of the chunk makes it.
         use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Mode, Within};
         use crate::code_rule_dsl::facts::nearest::Binding;
         use crate::code_rule_dsl::facts::vtab::Source as _;
@@ -1151,14 +1151,27 @@
             ("within", Within::new(Arc::clone(&batch), Mode::Tree)),
         ];
         for (name, src) in &axes {
-            assert!(src.len() > 0, "{name}: rows");
-            assert!(src.device_view().is_none(), "{name}: no view made on the device");
+            let n = src.len();
+            assert!(n > 0, "{name}: rows");
+            assert!(src.device_view().is_none(), "{name}: no view of the chunk makes it");
+            let held = src.in_block().unwrap_or_else(|| panic!("{name}: a relation in its block"));
+            assert_eq!(held.rows as usize, n, "{name}");
+            let dev = mj::DevRel::in_block(&held, 2).unwrap();
+            assert_eq!(dev.rows, n, "{name}: bound where it lies");
+            // Each row's ids are its nodes': `n` a member's descendant (an ancestor `a` of it), as the tree says.
+            for r in (0..n).step_by(11) {
+                let (inner, outer) = (src.value(r, 0), src.value(r, 1));
+                let (Some((d0, l0)), Some((d1, l1))) = (batch.node(inner), batch.node(outer)) else { panic!("{name}: row {r}'s ids are nodes") };
+                assert_eq!(d0, d1, "{name}: row {r} within one document");
+                assert_ne!(l0, l1, "{name}: row {r} strictly below");
+            }
+            // Its columns read by a stage where the relation lies: the host's values.
             for cols in [vec![0, 1], vec![1]] {
                 read_in_place(name, src, &cols);
             }
         }
-        // On the device's binding the solve itself is made on the device in the chunk: the host's rows, in its order,
-        // and its runs per looked-up node.
+        // On the device's binding the solve itself is made on the device: the host's rows, in its order, and its runs
+        // per looked-up node.
         for axis in [Axis::Nearest, Axis::Inside] {
             let host = Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Cpu);
             let dev = Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Metal);
@@ -1175,24 +1188,23 @@
             // The device's solve, its answer as ids too: read where it lies.
             read_in_place("the device's solve", &dev, &[0, 1]);
         }
-        // Containment over every kind, in one submission (space sized before the count) and past a bound of no rows
-        // (written again once the total is read): the same pairs, as many as the host's containment.
+        // Containment over every kind: a relation of exactly the total's rows, as many as the host's containment, and
+        // the same rows on a second solve.
         let chunk = batch.chunk();
-        let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<u64> {
-            // SAFETY: the solve completed; `len` pairs at `pairs`.
-            unsafe { std::slice::from_raw_parts(chunk.block.ptr::<u64>(c.pairs), c.len) }.to_vec()
-        };
-        let once = mj::axis_in_chunk_bounded(chunk, None, true, 8).unwrap();
-        let again = mj::axis_in_chunk_bounded(chunk, None, true, 0).unwrap();
-        assert!(once.len > 0);
-        assert_eq!(once.len, Within::new(Arc::clone(&batch), Mode::Tree).len());
+        let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<(i64, i64)> { (0..c.rows.len()).map(|r| (c.rows.get(r, 0), c.rows.get(r, 1))).collect() };
+        let once = mj::axis_in_chunk(&[chunk], None, true).unwrap();
+        let again = mj::axis_in_chunk(&[chunk], None, true).unwrap();
+        assert!(once.rows.len() > 0);
+        assert_eq!(once.rows.len() as usize, Within::new(Arc::clone(&batch), Mode::Tree).len());
+        // Room for its rows, rounded up to whole chunks: not a bound sized before the count.
+        assert!(once.rows.rel().rows.reserved() < once.rows.len().next_multiple_of(64) + 64, "room for its rows, not more");
         assert_eq!(read(&again), read(&once));
-        // `has` is made per looked-up node, not by the batch's solve: uploaded as before.
-        assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).device_view().is_none());
+        // `has` is made per looked-up node, not by the batch's solve: no relation of it, uploaded as before.
+        assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).in_block().is_none());
         let _ = std::fs::remove_file(&store_path);
     }
 
-    /// Q180: a stage's table before it runs is the planner's estimate of its rows with a margin, not its input
+    /// Q203: a stage's table before it runs is the planner's estimate of its rows with a margin, not its input
     /// doubled: rr_token_req's tables were 730,304 rows for 7,453 made, and refused past the device's budget. The
     /// growth a stage was seen to have still sizes it first, a scan holds its relation's rows at most, and a rule the
     /// planner did not price keeps doubling.

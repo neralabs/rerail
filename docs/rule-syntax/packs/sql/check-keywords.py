@@ -13,7 +13,7 @@ CASES = {"sqlfluff-rf04-references-keywords": ("sql_keyword", "(?i)^(?:{})$"),
 def main():
     bad = 0
     for rule, (rel, shape) in CASES.items():
-        ws = re.findall(rel + r'\("([^"]*)"\)\.', open(os.path.join(HERE, rule + ".facts.rr")).read())
+        ws = re.findall(rel + r'\("([^"]*)"\)\.', open(os.path.join(HERE, rule + ".facts.rerail")).read())
         built = shape.format("|".join(ws))
         if json.dumps(built) in open(os.path.join(RULES, rule + ".json")).read():
             print(f"ok: {rule}: {len(ws)} words round-trip to the JSON's regex")

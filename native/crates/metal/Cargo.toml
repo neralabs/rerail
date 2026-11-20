@@ -7,9 +7,10 @@ description = "The engine's Metal runtime: device, buffer budget, mapped buffers
 
 [features]
 # Per-thread buffer ledgers and buffer observations, for tests (the engine's and this crate's).
-test-hooks = ["rerail-compiler/test-hooks", "rerail-prof/test-hooks"]
+test-hooks = ["rerail-context/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-prof/test-hooks"]
 
 [dependencies]
+rerail-context = { path = "../context" }
 # The view a document is read by (decision 0310), without the reads' IR.
 rerail-clif = { path = "../clif", default-features = false }
 rerail-accel = { path = "../../../accel" }
@@ -23,6 +24,8 @@ sha2 = "0.10"
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1.6"
 metal = "0.33.0"
+# A slab's buffer: the device layer's (decision 0440 step C).
+rerail-device = { path = "../../../gpu/device" }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

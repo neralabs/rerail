@@ -8,7 +8,8 @@ use super::super::super::PackedPattern;
 use std::fmt::Write as _;
 
 pub(super) const KERNEL: &str = "clause_patterns";
-/// The item pattern of a fact's root (`Pass::Fact`): its constraints are (target node, label) pairs.
+/// The item pattern of a fact's findings on one file (`Pass::Fact`), read in the fact block (`facts`, Q317): its first
+/// constraint is (file, whether the findings are bits), then a (0, label) per slot; `root` is the findings' first u32.
 pub(super) const FACT: u32 = u32::MAX;
 /// The threads a pattern pass's item (a group of 64 nodes) takes, each finding the roots among 16 of them; a fact's
 /// item keeps one thread for its one root, so no lane is a fact's idle copy. A thread a group gave the kernel a
@@ -22,8 +23,8 @@ using namespace metal;
 struct Var { uint mode,a,from,n,multi; };
 // The item's document (decision 0032): nodes are the batch's numbering, read at `node - d.node_base`.
 struct Ctx { device const uchar* s; DocView d; constant uchar* text; device atomic_uint* flags; };
-// A pattern pass (its roots: its rule at `root` in `roots`, `LANES` threads a group of 64 nodes) or a
-// fact's root (`root`, one thread); its threads from `threadStart`.
+// A pattern pass (its roots: its rule at `root` in `roots`, `LANES` threads a group of 64 nodes) or a fact's
+// findings on a file (at `root` in `facts`: a thread a row, or a word of its bits); its threads from `threadStart`.
 struct Item { uint pattern,target,root,constraintStart,constraintCount,threadStart; };
 struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps; };
 inline uint c_local(Ctx c,uint node){return node-c.d.node_base;}
@@ -52,7 +53,6 @@ static bool bind_multi(Ctx c,thread Var& v,uint mode,uint a,uint from,uint n){
   Var w;w.mode=mode;w.a=a;w.from=from;w.n=n;w.multi=1u;uint i=0u,j=0u;
   while(true){while(i<v.n&&(c_flags(c,var_at(c,v,i))&1u)==0u)i++;while(j<w.n&&(c_flags(c,var_at(c,w,j))&1u)==0u)j++;if(i==v.n||j==w.n)return i==v.n&&j==w.n;if(!exact(c,var_at(c,v,i),var_at(c,w,j)))return false;i++;j++;}
 }
-static uint doc_at(device const DocView* docs,uint count,uint node){uint first=0u,last=count;while(last-first>1u){uint middle=(first+last)/2u;if(docs[middle].node_base<=node)first=middle;else last=middle;}return first;}
 "#;
 
 /// Patterns a pattern kernel holds (`source`). A kernel's thread memory is the driver's scratch,
@@ -63,8 +63,8 @@ pub(super) const GROUP: usize = 8;
 /// The kernel source for `patterns`, numbered from `first` (the plan's numbering, which items
 /// carry), with each pattern's metavariable names in index order. Every group's kernel answers
 /// the fact case.
-pub(super) fn source(patterns: &[&PackedPattern], first: usize) -> (String, Vec<Vec<String>>) {
-    let mut out = format!("{}{COMMON}", *super::TAPE_VIEW);
+pub(super) fn source(patterns: &[&PackedPattern], first: usize, format: u32) -> (String, Vec<Vec<String>>) {
+    let mut out = format!("{}{COMMON}", super::tape_view(format));
     let mut text = Vec::<u8>::new();
     let mut names = Vec::new();
     let mut bodies = String::new();
@@ -90,7 +90,7 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize) -> (String, Vec<
     // Whether the item's pattern matches at `node` (`c.d` its document) with its constraints held.
     let _ = write!(
         out,
-        "static bool item_matches(Ctx c,Item item,uint node,device const uint* labels,device const uint2* constraints,constant Shape& shape){{\n  switch(item.pattern){{\n"
+        "static bool item_matches(Ctx c,Item item,uint node,device const uint* labels,device const uint2* constraints,device const uint* facts,uint row,constant Shape& shape){{\n  switch(item.pattern){{\n"
     );
     for (index, vars) in names.iter().enumerate() {
         let index = first + index;
@@ -102,16 +102,17 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize) -> (String, Vec<
     }
     let _ = writeln!(
         out,
-        "  case {FACT}u:{{for(uint at=0u;at<item.constraintCount;at++){{uint2 constraint=constraints[item.constraintStart+at];uint node=constraint.x;if(((labels[constraint.y*shape.words+node/32u]>>(node%32u))&1u)==0u)return false;}}return true;}}"
+        "  case {FACT}u:{{(void)node;device const uint* targets=facts+item.root+row*(item.constraintCount+1u)+1u;for(uint at=0u;at<item.constraintCount;at++){{uint t=c.d.node_base+targets[at],label=constraints[item.constraintStart+1u+at].y;if(((labels[label*shape.words+t/32u]>>(t%32u))&1u)==0u)return false;}}return true;}}"
     );
     out.push_str("  default:return false;\n  }\n}\n");
     // A pattern pass's item is a group of 64 of the batch's nodes, `LANES` threads, each finding the roots among its
-    // share of them (`root_mask_in`); a fact's item is one thread, holding its one root. A SIMD group tests all its
+    // share of them (`root_mask_in`); a fact's item is a file's findings, a thread holding a row's node or a word of
+    // its bits, read where the host wrote them. A SIMD group tests all its
     // lanes' roots, one a lane a round (`simd_roots`): lanes need not line up with the items.
     let (lanes, per) = (LANES, 64 / LANES);
     let _ = write!(
         out,
-        "kernel void {KERNEL}(device const DocView* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],device const uint* roots [[buffer(6)]],constant Shape& shape [[buffer(7)]],device const uchar* chunk [[buffer(27)]],uint tid [[thread_position_in_grid]],uint lane [[thread_index_in_simdgroup]]){{\n  ulong mask=0ul;uint at=0u,file=0u,base=0u,group=0u;\n  if(tid<shape.itemCount&&atomic_load_explicit(&flags[2],memory_order_relaxed)==0u){{\n  uint low=0u,high=shape.taskCount;while(high-low>1u){{uint middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}\n  Item item=items[low];at=low;\n  if(item.pattern=={FACT}u){{file=doc_at(docs,shape.fileCount,item.root);base=item.root;mask=1ul;}}\n  else{{uint rel=tid-item.threadStart,part=rel%{lanes}u;group=rel/{lanes}u;file=roots_file(roots,group);group-=roots_first_group(roots,file);mask=root_mask_in(chunk,docs[file],roots,item.root,file,group,part*{per}u,(part+1u)*{per}u);base=docs[file].node_base;}}\n  }}\n  SimdRoots r=simd_roots(mask);\n  for(uint round=0u;round<r.total;round+=32u){{\n    uint i=round+lane;ushort owner=ushort(simd_root_lane(r,i));\n    uint lo=simd_shuffle(uint(mask),owner),hi=simd_shuffle(uint(mask>>32u),owner),from=simd_shuffle(r.prefix,owner);\n    uint a=simd_shuffle(at,owner),f=simd_shuffle(file,owner),b=simd_shuffle(base,owner),g=simd_shuffle(group,owner);\n    if(i>=r.total)continue;\n    Item item=items[a];Ctx c;c.s=chunk;c.d=docs[f];c.text=TEXT;c.flags=flags;\n    uint node=b+g*ROOT_GROUP+mask_nth(lo,hi,i-from);\n    if(item_matches(c,item,node,labels,constraints,shape))atomic_fetch_or_explicit(&scratch[item.target*shape.words+node/32u],1u<<(node%32u),memory_order_relaxed);\n  }}\n}}\n"
+        "kernel void {KERNEL}(device const DocView* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],device const uint* roots [[buffer(6)]],device const uint* facts [[buffer(7)]],constant Shape& shape [[buffer(8)]],device const uchar* chunk [[buffer(27)]],uint tid [[thread_position_in_grid]],uint lane [[thread_index_in_simdgroup]]){{\n  ulong mask=0ul;uint at=0u,file=0u,base=0u,group=0u,row=0u;\n  if(tid<shape.itemCount&&atomic_load_explicit(&flags[2],memory_order_relaxed)==0u){{\n  uint low=0u,high=shape.taskCount;while(high-low>1u){{uint middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}\n  Item item=items[low];at=low;\n  if(item.pattern=={FACT}u){{uint rel=tid-item.threadStart;uint2 head=constraints[item.constraintStart];file=head.x;base=docs[file].node_base;if(head.y!=0u){{mask=ulong(facts[item.root+2u*rel])|(ulong(facts[item.root+2u*rel+1u])<<32u);base+=rel*64u;}}else{{row=rel;base+=facts[item.root+rel*(item.constraintCount+1u)];mask=1ul;}}}}\n  else{{uint rel=tid-item.threadStart,part=rel%{lanes}u;group=rel/{lanes}u;file=roots_file(roots,group);group-=roots_first_group(roots,file);mask=root_mask_in(chunk,docs[file],roots,item.root,file,group,part*{per}u,(part+1u)*{per}u);base=docs[file].node_base;}}\n  }}\n  SimdRoots r=simd_roots(mask,lane);\n  for(uint round=0u;round<r.total;round+=32u){{\n    uint i=round+lane;ushort owner=ushort(simd_root_lane(r,i));\n    uint lo=simd_shuffle(uint(mask),owner),hi=simd_shuffle(uint(mask>>32u),owner),from=simd_shuffle(r.prefix,owner);\n    uint a=simd_shuffle(at,owner),f=simd_shuffle(file,owner),b=simd_shuffle(base,owner),g=simd_shuffle(group,owner),w=simd_shuffle(row,owner);\n    if(i>=r.total)continue;\n    Item item=items[a];Ctx c;c.s=chunk;c.d=docs[f];c.text=TEXT;c.flags=flags;\n    uint node=b+g*ROOT_GROUP+mask_nth(lo,hi,i-from);\n    if(item_matches(c,item,node,labels,constraints,facts,w,shape))atomic_fetch_or_explicit(&scratch[item.target*shape.words+node/32u],1u<<(node%32u),memory_order_relaxed);\n  }}\n}}\n"
     );
     (out, names)
 }

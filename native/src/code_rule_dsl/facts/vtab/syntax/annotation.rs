@@ -1,4 +1,4 @@
-//! Python's string annotations as core.rr's relation, made by a batch only for a program that reads it
+//! Python's string annotations as core.rerail's relation, made by a batch only for a program that reads it
 //! (`Annotations::new`'s `reads`), off the document's tape (`Document::tape`):
 //!
 //! ```text
@@ -101,7 +101,11 @@ impl Annotations {
             .collect();
         if let Some(g) = d.guest.as_deref() {
             if g.grammar == GRAMMAR {
-                self.guests.push((g.at, by_range));
+                // A tape value (decision 0431) is at each string holding its text.
+                match &g.made {
+                    super::Made::Tape { places } => self.guests.extend(places.iter().map(|at| (at.at, by_range.clone()))),
+                    _ => self.guests.push((g.at, by_range)),
+                }
             }
             return Ok(());
         }
@@ -140,8 +144,10 @@ impl Annotations {
         Ok(())
     }
 
-    /// The relation read: the files' string annotations, and those nested in the annotation guests of the batch.
-    pub(super) fn relations(mut self) -> Vec<(&'static str, Relation)> {
+    /// The relation read: the files' string annotations, and those nested in the annotation guests of the batch, made
+    /// since the last call. A guest whose host's annotations are not known yet waits for a later call (a batch that
+    /// grows asks after each round, decision 0431 §6), and each annotation's nested ones are kept for their guests.
+    pub(super) fn relations(&mut self) -> Vec<(&'static str, Relation)> {
         if !self.string_annotation {
             return Vec::new();
         }
@@ -166,8 +172,9 @@ impl Annotations {
                 break;
             }
         }
+        self.guests = pending;
         let mut r = Relation::new(&["s"]);
-        let hosts: BTreeSet<i64> = self.hosts.into_iter().collect();
+        let hosts: BTreeSet<i64> = std::mem::take(&mut self.hosts).into_iter().collect();
         hosts.iter().for_each(|&s| r.push(&[s]));
         vec![(RELATION, r)]
     }
@@ -195,8 +202,8 @@ impl super::ProducerRun for Annotations {
     fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, _: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         Annotations::document(self, p, d, dialect, own)
     }
-    fn relations(self: Box<Self>, _: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
-        Annotations::relations(*self)
+    fn relations(&mut self, _: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
+        Annotations::relations(self)
     }
     fn reads_guests(&self) -> bool {
         true

@@ -349,19 +349,19 @@ impl ColumnInfo {
     /// points over the distinct values, and one copy of the packed words.
     pub fn from_column_device(column_name: &str, data: &ColumnData, max_num_buckets: i32) -> Result<ColumnInfo, String> {
         use crate::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Int};
-        use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeQueue};
+        use crate::device::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, ComputeQueue};
         use crate::randomforest_kernels_grid::kernel;
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
         let n = data.len();
-        let run = |queue: &MetalComputeQueue, name: &str, args: &[(&str, crate::compute_kernel_grid::ComputeKernelArgument)], grid: u32| -> Result<(), String> {
+        let run = |queue: &ComputeQueue, name: &str, args: &[(&str, crate::compute_kernel_grid::ComputeKernelArgument)], grid: u32| -> Result<(), String> {
             let k = kernel(name)?;
             let mut ctx = queue.new_bind_context(k.function);
             k.enqueue(args, &[grid], &mut ctx)
         };
         let mut descriptions = BucketDescriptions::default();
         let buckets = alloc_uninitialized_array_sync::<u32>(device, n);
-        let mut queue = MetalComputeQueue::new(&shared.queue);
+        let mut queue = ComputeQueue::new(&shared.queue);
         match data {
             ColumnData::Numeric(values) => {
                 let mut has_nulls = false;

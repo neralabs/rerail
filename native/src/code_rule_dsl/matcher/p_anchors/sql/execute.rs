@@ -75,7 +75,7 @@ pub fn prepare_structural(store: &Store, files: &[i64]) -> Result<()> {
 
 fn compile<T>(prepare: impl FnOnce() -> T) -> T {
     use crate::code_rule_dsl::phase_clock;
-    phase_clock::timed(&phase_clock::ANCHOR_COMPILE, prepare)
+    phase_clock::timed(|c| &c.anchor_compile, prepare)
 }
 
 pub fn rows_for(

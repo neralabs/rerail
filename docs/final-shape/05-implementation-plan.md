@@ -23,12 +23,12 @@ Status: plan, 2026-10-26.
 
 | Key | Worktree / ref | SHA |
 |---|---|---|
-| N | `rerail/ner-1562-scale-test-the-re-railer` | 17991359 |
+| N | `rerail/scale-test-the-re-railer` | 17991359 |
 | D | `rerail/Data-layer-rule-expressivity` | fe4a6707 |
 | P | `rerail/Pulling-it-all-together` | cbee7a03 |
 | S | `rerail/Shared-structural-execution` | e1ffeaf2 |
 | T | `rerail/Typing-support` (`spikes/datalog-engines/`) | 7ebcffe0 |
-| G | `nera-landing-2/ner-1562-scale-test-the-re-railer/tempo` (Tempo) | 4c94cf77e (committed HEAD only) |
+| G | `scale-test-the-re-railer/tempo` (Tempo) | 4c94cf77e (committed HEAD only) |
 | M | `origin/Moti-Velz/facts-engine` | 5b0d63a7 |
 | W | wolfeel itself (main) | 5cf4246e |
 
@@ -627,7 +627,7 @@ What was left, and how each was closed (2026-11-03, the user's choice for the fi
 
 | Copy | From | To | Adaptations |
 |---|---|---|---|
-| Data-layer gate | D `packs/data-layer/candidates/rules/*.json`, `conformance/data-layer/{suite.ts, replay.ts}`, `scripts/dsl/data_layer_suite_record.py`, `fixtures/host/data-layer-port/batch-0{1..6}-recording.json`, `scripts/profiling/process.py` | same paths | 10 of 60 rules carry SQL (`relational` stages). Rewrite them as named facts plus logic (B2) before they enter the gate. Gate on CPU (M1), RSS ≤ 500 MB, and finding-key sets. |
+| Data-layer gate | D `packs/data-layer/candidates/rules/*.json`, `conformance/data-layer/{suite.ts, replay.ts}`, `scripts/dsl/data_layer_suite_record.py`, `packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-0{1..6}-recording.json`, `scripts/profiling/process.py` | same paths | 10 of 60 rules carry SQL (`relational` stages). Rewrite them as named facts plus logic (B2) before they enter the gate. Gate on CPU (M1), RSS ≤ 500 MB, and finding-key sets. |
 | Profiling | D or P `cr/profile/{sql.rs, memory.rs, trace.rs}`, P `phase_clock.rs`, `budget.rs` | `cr/profile/` | Fixed stage names from 03. Construction is reported separately (M2). |
 
 **Status (2026-10-27): copies done (`8cb32ac5`, moved under `gate/data-layer/` by `d0c47184`; profiling `8dcf82a1`, from P, under `profile/copied/`); adaptations outstanding. Profiling placed (`16bb6e48` copy of the rest of the unit, `5c77b049`; `8637fba8` `working_set`), tests passing with `code-rule-profile`.**

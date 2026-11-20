@@ -1,4 +1,4 @@
-"""Write react-no-unknown-property.props.rr: the name tables of react/no-unknown-property, read from the JSON.
+"""Write react-no-unknown-property.props.rerail: the name tables of react/no-unknown-property, read from the JSON.
 
 The JSON spells eslint-plugin-react's tables as regex alternations; this reads them back into facts:
   dom_property(x)        a DOM property name React knows, in its exact case (getDOMPropertyNames, React 19)
@@ -72,7 +72,7 @@ def write(t):
     rows(lambda p: f"only_on_says({q(p[0])}, {q(p[1])}).", t["only_on_says"], 1)
     rows(lambda x: f"any_case({q(x)}).", t["any_case"], 4)
     rows(lambda x: f"aria_property({q(x)}).", t["aria"], 4)
-    open(os.path.join(HERE, "react-no-unknown-property.props.rr"), "w").write("\n".join(lines) + "\n")
+    open(os.path.join(HERE, "react-no-unknown-property.props.rerail"), "w").write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":

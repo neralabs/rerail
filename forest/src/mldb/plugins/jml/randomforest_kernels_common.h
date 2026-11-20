@@ -89,9 +89,10 @@ UKL_FUNCTION(v1,uint16_t,extract16BitRange32)(ROBUFFER(uint32_t) data,
         return extract_bits(data[wordNumber], wordOffset, bottomBits);
     }
     else {
-        uint2 words = CAST_ROBUFFER(data + wordNumber, uint2)[0];
-        uint16_t bottom = extract_bits(ukl_vec_el(words, x), wordOffset, bottomBits);
-        return bottom | extract_bits(ukl_vec_el(words, y), 0, topBits) << bottomBits;
+        // Two loads of a word, not one of a uint2: `data + wordNumber` is only 4-byte aligned, and an 8-byte load
+        // from it faults on CUDA (Apple's GPUs tolerate it).
+        uint16_t bottom = extract_bits(data[wordNumber], wordOffset, bottomBits);
+        return bottom | extract_bits(data[wordNumber + 1], 0, topBits) << bottomBits;
     }
 }
 
@@ -337,7 +338,7 @@ decompressRowsImpl)(ROBUFFER(uint64_t) rowData,
     }
 }
 
-uint32_t testRow(uint32_t rowId,
+UKL_FUNCTION(v1,uint32_t,testRow)(uint32_t rowId,
                  ROBUFFER(float) rowData,
                  uint32_t numRows,
                  
@@ -533,8 +534,8 @@ UKL_FUNCTION(v1,float,nextFloat)(float val, int32_t n)
 // Stable SQRT: take the largest value which when squared is less than or equal to the desired value
 UKL_FUNCTION(v1,float,sqrt3)(float val)
 {
-    constexpr float SQRT3_MULT_BEFORE = 65536.0f;
-    constexpr float SQRT3_MULT_AFTER  = 1.0f / 256.0f;
+    const float SQRT3_MULT_BEFORE = 65536.0f;
+    const float SQRT3_MULT_AFTER  = 1.0f / 256.0f;
 
     val *= SQRT3_MULT_BEFORE;
     float approx = nextFloat(sqrt(val), 3);

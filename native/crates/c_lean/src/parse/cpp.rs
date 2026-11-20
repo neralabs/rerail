@@ -848,14 +848,13 @@ impl<'a> P<'a> {
         loop {
             match self.kind_at(j) {
                 T::Lt => angles[depth] += 1,
-                T::Gt => {
-                    if angles[depth] > 0 {
+                T::Gt
+                    if angles[depth] > 0 => {
                         angles[depth] -= 1;
                         if depth == 0 && angles[0] == 0 {
                             return Some((j, false));
                         }
                     }
-                }
                 T::GtGt => {
                     if depth == 0 {
                         match angles[0] {

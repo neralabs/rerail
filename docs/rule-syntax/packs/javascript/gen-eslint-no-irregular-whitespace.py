@@ -1,4 +1,4 @@
-"""Writes eslint-no-irregular-whitespace.chars.rr from the policy JSON's character classes.
+"""Writes eslint-no-irregular-whitespace.chars.rerail from the policy JSON's character classes.
     python3 docs/rule-syntax/packs/javascript/gen-eslint-no-irregular-whitespace.py
 Each row is one code point: irregular(cp, re, what). re is a regex fragment matching that one character: the
 character itself (UTF-8), or \\xhh below 0x80, so the rule can join the rows into an alternation."""
@@ -45,4 +45,4 @@ if __name__ == "__main__":
          ".decl irregular(cp: number, re: symbol, what: symbol)"]
     for cp, what in rows():
         L.append(f'irregular({cp}, "{frag(cp)}", "{what}").  // U+{cp:04X}')
-    open(os.path.join(HERE, "eslint-no-irregular-whitespace.chars.rr"), "w", encoding="utf-8").write("\n".join(L) + "\n")
+    open(os.path.join(HERE, "eslint-no-irregular-whitespace.chars.rerail"), "w", encoding="utf-8").write("\n".join(L) + "\n")

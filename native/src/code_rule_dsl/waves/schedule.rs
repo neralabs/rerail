@@ -336,11 +336,10 @@ fn waves_with(lease: &impl SqlOwner, program: &Program, token: Option<i64>, max_
                     // SQL of each statement slower than that.
                     let started = std::time::Instant::now();
                     crate::code_rule_dsl::prof::time(&format!("step.{output}"), || statement.raw_execute())?;
-                    if let Some(slow) = std::env::var("RERAIL_PROF_SLOW_MS").ok().and_then(|ms| ms.parse::<u128>().ok()) {
-                        if started.elapsed().as_millis() >= slow {
+                    if let Some(slow) = std::env::var("RERAIL_PROF_SLOW_MS").ok().and_then(|ms| ms.parse::<u128>().ok())
+                        && started.elapsed().as_millis() >= slow {
                             eprintln!("slow step {output} ({:?}): {text}", started.elapsed());
                         }
-                    }
                     Ok(true)
             })?;
             if !executed {continue;}

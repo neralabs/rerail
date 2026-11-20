@@ -2,9 +2,8 @@ use super::ast_rule::{compile_ast_rule, validate_ast_rule};
 use super::resolve::{BINDING_KEYS, OCCURRENCE_KEY};
 use super::utils::{UtilIds, UtilScope};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::language::adapter::{
-    ScopeFeature, gate,
-};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use crate::code_rule_dsl::language::adapter::{ScopeFeature, gate};
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::Semantic;
@@ -13,7 +12,6 @@ use crate::code_rule_dsl::model::Limits;
 use napi::Result;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Filters over a binding, in `binds` and `resolves.binding`.
 pub const FILTER_KEYS: &[&str] = &[
@@ -104,15 +102,17 @@ pub fn validate_filter(object: &Map<String, Value>, path: &str) -> Result<()> {
     // Every family's names, in the order its errors list them; each family's compile narrows
     // them to its own.
     if let Some(form) = object.get("form") {
-        let known = every_family(
-            |family| { let pack = language_pack::pack(family); pack.scope_forms() },
-        );
+        let known = every_family(|family| {
+            let pack = language_pack::pack(family);
+            pack.scope_forms()
+        });
         names(form, &format!("{path}/form"), &known, "binding form")?;
     }
     if let Some(scope) = object.get("scope") {
-        let known = every_family(
-            |family| { let pack = language_pack::pack(family); pack.scope_scopes() },
-        );
+        let known = every_family(|family| {
+            let pack = language_pack::pack(family);
+            pack.scope_scopes()
+        });
         names(scope, &format!("{path}/scope"), &known, "scope kind")?;
     }
     for key in BOOLEAN_FILTER_KEYS {
@@ -178,7 +178,8 @@ fn binding_count(value: &Value, path: &str) -> Result<BindingCount> {
 /// configured globals (`builtin`) are TypeScript's. `bindings` counts a scope's bindings of the
 /// name in all three: Ruff's `scope.get_all`, eslint-scope's `defs`, PHP's binding sites.
 pub fn compile_filter(
-    pack: &dyn language_pack::LanguagePack, object: &Map<String, Value>,
+    pack: &dyn language_pack::LanguagePack,
+    object: &Map<String, Value>,
     language: GrammarDialect,
     path: &str,
     utils: &UtilScope,
@@ -306,14 +307,16 @@ pub(super) fn compile_binds(
     gaps: &mut Vec<String>,
     utils: &UtilScope,
 ) -> Result<AstMatcher> {
-    { let pack = language_pack::pack(Family::of(language)); compile_binds_in(pack, 
-        value, language, path, gaps, utils,
-    ) }
+    {
+        let pack = language_pack::pack(Family::of(language));
+        compile_binds_in(pack, value, language, path, gaps, utils)
+    }
 }
 
 /// `compile_binds`, for the family `S` reads.
 fn compile_binds_in(
-    pack: &dyn language_pack::LanguagePack, value: &Value,
+    pack: &dyn language_pack::LanguagePack,
+    value: &Value,
     language: GrammarDialect,
     path: &str,
     gaps: &mut Vec<String>,

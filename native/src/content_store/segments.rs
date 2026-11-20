@@ -61,21 +61,11 @@ pub(super) struct Place {
     pub len: usize,
 }
 
-/// Makes `dir` (a store's segments: facts derived from its sources) private to its owner where it is made, as the
-/// store's own files are (`private_files`).
-fn private_dir(dir: &Path) -> std::io::Result<()> {
-    let mut b = std::fs::DirBuilder::new();
-    b.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
-    b.create(dir)
-}
-
-/// The bytes of the store's segments on disk (the memo's, the frames', the tapes' and sources'): the directories
+/// The bytes of the store's segments on disk (the memo's, the tapes' and sources', the atoms', the kept facts'): the directories
 /// beside its file, as the store's disk budget counts them.
 pub(super) fn segment_bytes(database: &Path) -> u64 {
     let mut bytes = 0;
-    for suffix in [".memo", ".frames", ".objects", ".atoms", ".facts"] {
+    for suffix in [".memo", ".objects", ".atoms", ".facts"] {
         let mut dir = database.as_os_str().to_owned();
         dir.push(suffix);
         let Ok(entries) = std::fs::read_dir(PathBuf::from(dir)) else { continue };
@@ -247,12 +237,14 @@ impl SegmentWriter {
 
     fn lease(&self, bytes: usize) -> StoreResult<Open> {
         static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        private_dir(&self.dir)?;
+        super::prepare_cache_directory(&self.dir)?;
         let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let file = self.dir.join(format!("w-{}-{n}.seg", std::process::id()));
         #[cfg(target_os = "macos")]
         let open = Open::Mapped(rerail_accel::gpu::shared::lease_deferrable_host(kind::JOURNAL, bytes, &file).map_err(StoreError::Invalid)?);
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(target_os = "linux")]
+        let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true, None)?);
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
         let open = Open::Mapped(rerail_blocks::deferrable::Deferrable::create(&file, kind::JOURNAL, bytes, true)?);
         #[cfg(not(unix))]
         let open = Open::Memory(rerail_blocks::alloc::host(kind::JOURNAL, bytes.next_multiple_of(rerail_blocks::block::PAGE)), file);
@@ -367,3 +359,24 @@ pub(super) fn write_segments(dir: &Path, entries: &[(&[u8], i64, &[u8; 32])]) ->
     Ok(segments)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_underestimated_batch_grows_segment_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut writer = SegmentWriter::new(dir.path(), 1, ALIGN);
+        for value in 0..32u64 {
+            let bytes = value.to_le_bytes();
+            writer.put(bytes.len(), value as i64, &[0; 32], |out| out.copy_from_slice(&bytes)).unwrap();
+        }
+        let mut segments = writer.seal();
+        let files = segments.files().len();
+        assert!(files <= 6, "expected at most 6 segments for 32 small entries, got {files}");
+        segments.write_back().unwrap();
+        for value in 0..32u64 {
+            assert_eq!(segments.entry(value as usize).bytes(), value.to_le_bytes());
+        }
+    }
+}

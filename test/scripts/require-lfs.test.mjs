@@ -1,10 +1,11 @@
 // scripts/build/require-lfs.mjs: build:native stops on a Git LFS pointer in place of an LFS-tracked file.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { lfsPointerFiles } from "../../scripts/build/require-lfs.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const POINTER = "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a\nsize 1301504\n";
 const roots = [];
@@ -20,7 +21,7 @@ function checkout(files) {
 }
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 describe("the build's Git LFS preflight", () => {

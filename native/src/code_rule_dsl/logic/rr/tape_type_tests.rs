@@ -1,6 +1,6 @@
 //! The `tape` column type: a tape stands only in tape columns.
 
-use crate::code_rule_dsl::logic::rr::parse;
+use crate::code_rule_dsl::logic::rr::parse_version as parse;
 
 const DECLS: &str = ".decl q(s: symbol)\n.input q\n";
 

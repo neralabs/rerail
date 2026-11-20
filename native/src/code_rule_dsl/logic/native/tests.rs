@@ -14,7 +14,9 @@ fn connection() -> Connection {
 #[test]
 fn computed_sql_inputs_do_not_reenter_a_held_symbol_lock() {
     let (send, receive) = std::sync::mpsc::channel();
+    let caller = crate::code_rule_dsl::logic::profile::caller();
     std::thread::spawn(move || {
+        let _caller = caller.enter();
         let db = connection();
         super::register_symbols(&db).unwrap();
         let atom: i64 = db.query_row("SELECT sym_atom('kept')", [], |r| r.get(0)).unwrap();
@@ -204,6 +206,8 @@ fn a_declared_lattice_replaces_the_join() {
         fn top(&self) -> i64 { 0b111 }
         fn finite(&self) -> bool { true }
     }
+    // The test's run holds the lattice it declares (decision 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     super::declare("bits", std::sync::Arc::new(Or));
     let db = connection();
     db.execute_batch(

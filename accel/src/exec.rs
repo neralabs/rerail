@@ -66,7 +66,11 @@ pub fn configure(this_thread: bool) {
     MADE.get_or_init(|| {
         // Every block is made by the one policy from here on (decision 0342).
         crate::blocks::install();
-        let b = rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}")).stack_size(POOL_STACK);
+        let b = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads())
+            .thread_name(|i| format!("rerail-cpu {i}"))
+            .stack_size(POOL_STACK)
+            .start_handler(|_| rerail_context::engine_thread());
         let _ = if this_thread { b.use_current_thread() } else { b }.build_global();
     });
 }
@@ -121,21 +125,17 @@ thread_local! {
 
 /// Each named job's expected wall seconds: a running mean of its last runs ([`as_job`]), for a wait with a deadline
 /// to know which jobs fit the time it has ([`declines`]). One atomic a name (its `f64`'s bits, `u64::MAX` before its
-/// first run), found once a thread through `WALL_OF`: a lock taken at every job's end was contended (ab71: 0.5 s).
-static JOB_WALL: std::sync::Mutex<BTreeMap<&'static str, &'static std::sync::atomic::AtomicU64>> = std::sync::Mutex::new(BTreeMap::new());
+/// first run), the machine's (decision 0442: a measure of this machine, as the cost model is), found under a read
+/// lock: a lock taken for writing at every job's end was contended (ab71: 0.5 s).
+#[derive(Default)]
+struct JobWalls(std::sync::RwLock<BTreeMap<&'static str, Arc<std::sync::atomic::AtomicU64>>>);
 
-thread_local! {
-    /// This thread's view of `JOB_WALL`, by the name's address.
-    static WALL_OF: std::cell::RefCell<std::collections::HashMap<(usize, usize), &'static std::sync::atomic::AtomicU64>> = std::cell::RefCell::new(Default::default());
-}
-
-fn wall_of(name: &'static str) -> &'static std::sync::atomic::AtomicU64 {
-    let key = (name.as_ptr() as usize, name.len());
-    WALL_OF.with(|m| {
-        *m.borrow_mut().entry(key).or_insert_with(|| {
-            *JOB_WALL.lock().unwrap_or_else(|p| p.into_inner()).entry(name).or_insert_with(|| Box::leak(Box::new(std::sync::atomic::AtomicU64::new(u64::MAX))))
-        })
-    })
+fn wall_of(name: &'static str) -> Arc<std::sync::atomic::AtomicU64> {
+    let walls = rerail_context::machine::<JobWalls>();
+    if let Some(w) = walls.0.read().unwrap_or_else(|p| p.into_inner()).get(name) {
+        return Arc::clone(w);
+    }
+    Arc::clone(walls.0.write().unwrap_or_else(|p| p.into_inner()).entry(name).or_insert_with(|| Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX))))
 }
 
 /// A job's expected wall seconds from its runs so far; `None` before its first.
@@ -302,11 +302,20 @@ pub struct LateBy {
     pub late_max: f64,
 }
 
-static WAITS: std::sync::Mutex<(BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>)> = std::sync::Mutex::new((BTreeMap::new(), BTreeMap::new()));
+/// Every site's wait stats, and by job the waits it made late.
+type WaitTables = (BTreeMap<&'static str, WaitStats>, BTreeMap<&'static str, LateBy>);
 
-/// Every site's waits so far, and the jobs that made them late: for the profile.
-pub fn waits() -> (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>) {
-    let w = WAITS.lock().unwrap_or_else(|p| p.into_inner());
+/// The run's waits, by site, and the jobs that made them late (decision 0442: the profile's, so the run's).
+#[derive(Default)]
+struct Waits(std::sync::Mutex<WaitTables>);
+
+/// [`waits`]: every site's waits, and the jobs that made them late.
+pub type SiteWaits = (Vec<(&'static str, WaitStats)>, Vec<(&'static str, LateBy)>);
+
+/// Every site's waits so far in the run under way, and the jobs that made them late: for the profile.
+pub fn waits() -> SiteWaits {
+    let waits = rerail_context::local::<Waits>();
+    let w = waits.0.lock().unwrap_or_else(|p| p.into_inner());
     (w.0.iter().map(|(k, v)| (*k, v.clone())).collect(), w.1.iter().map(|(k, v)| (*k, v.clone())).collect())
 }
 
@@ -384,7 +393,8 @@ impl Waiting {
             self.s.late_exact = ready.map_or(0.0, |r| ended.saturating_duration_since(r).as_secs_f64().min(wall));
             late_by = Some((name, wall));
         }
-        let mut w = WAITS.lock().unwrap_or_else(|p| p.into_inner());
+        let waits = rerail_context::local::<Waits>();
+        let mut w = waits.0.lock().unwrap_or_else(|p| p.into_inner());
         let t = w.0.entry(self.site).or_default();
         t.waits += self.s.waits;
         t.helping += self.s.helping;
@@ -491,12 +501,12 @@ impl Bell {
 /// every 100 ms. On a shared machine the cores' threads get less than a core each, so their wall time stretches; a
 /// device's does not.
 pub fn cores_slowdown() -> f64 {
-    static LAST: std::sync::Mutex<Option<(Instant, f64)>> = std::sync::Mutex::new(None);
-    let mut last = LAST.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some((at, v)) = *last {
-        if at.elapsed().as_secs_f64() < 0.1 {
-            return v;
-        }
+    let pools = pools();
+    let mut last = pools.load.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((at, v)) = *last
+        && at.elapsed().as_secs_f64() < 0.1
+    {
+        return v;
     }
     let ncpu = std::thread::available_parallelism().map_or(1, |n| n.get()) as f64;
     #[cfg(unix)]
@@ -520,13 +530,12 @@ pub fn measured_lane() -> Option<Lane> {
 }
 
 fn measured_pin() -> Option<(Lane, Option<String>)> {
-    static PIN: OnceLock<Option<(Lane, Option<String>)>> = OnceLock::new();
-    PIN.get_or_init(|| {
+    // The run's setting (decision 0442), read as it first needs it.
+    rerail_context::setting(|| {
         let v = std::env::var("RERAIL_LANE_PIN").ok()?;
         let (lane, name) = v.split_once(':').map_or((v.trim(), None), |(l, n)| (l.trim(), Some(n.trim().to_owned())));
         Lane::ALL.into_iter().find(|l| l.name() == lane).map(|l| (l, name))
     })
-    .clone()
 }
 
 /// The lane `RERAIL_LANE_PIN` measures `kernel` on, if it names one for it.
@@ -768,18 +777,27 @@ pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOn
         b = b.stack_size(s);
     }
     let named = name.to_owned();
+    // The service reads its starter's shared and machine values (decision 0442), and keeps no run of its alive: it
+    // may outlive it. One started outside any run (the process's signal watcher, from `main`) has none to carry.
+    let shared = rerail_context::starter_object();
     b.spawn(move || {
-        struct Listed(String);
+        rerail_context::engine_thread();
+        // Listed in its machine's services (one with no object has no machine, and is listed in none).
+        let pools = shared.as_ref().map(|s| s.machine().get::<Pools>());
+        let _within = shared.map(rerail_context::within);
+        struct Listed(String, Arc<Pools>);
         impl Drop for Listed {
             fn drop(&mut self) {
-                let mut l = SERVICES.lock().unwrap_or_else(|e| e.into_inner());
+                let mut l = self.1.services.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(i) = l.iter().position(|n| *n == self.0) {
                     l.swap_remove(i);
                 }
             }
         }
-        SERVICES.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
-        let _listed = Listed(named);
+        let _listed = pools.map(|pools| {
+            pools.services.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
+            Listed(named, pools)
+        });
         f()
     })
 }
@@ -790,17 +808,38 @@ pub fn scoped<'env, T>(f: impl for<'scope> FnOnce(&'scope std::thread::Scope<'sc
     std::thread::scope(f)
 }
 
-static SERVICES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+/// What the machine's pools hold beside rayon's one pool (decision 0442: the machine's, `rerail_context::Machine`):
+/// the device lanes' pool and their submissions' slots, the services alive, the load last read.
+#[derive(Default)]
+struct Pools {
+    /// The device lanes' own pool ([`lane_host`]): `None` where it could not be made.
+    lanes: OnceLock<Option<rayon::ThreadPool>>,
+    /// The submissions' slots ([`lane_spawn`]): whether each is busy, and its pool.
+    busy: [std::sync::atomic::AtomicBool; SLOTS],
+    slots: [OnceLock<Option<rayon::ThreadPool>>; SLOTS],
+    /// The names of the [`service`] threads alive.
+    services: std::sync::Mutex<Vec<String>>,
+    /// The cores' slowdown last read, and when ([`cores_slowdown`]).
+    load: std::sync::Mutex<Option<(Instant, f64)>>,
+}
+
+fn pools() -> Arc<Pools> {
+    rerail_context::machine::<Pools>()
+}
 
 /// The names of the [`service`] threads alive now.
 pub fn services() -> Vec<String> {
-    SERVICES.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    pools().services.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// Drops `x` beside the caller, as a job on the pool: freeing what it holds is no step's work, and a drop waits for
 /// nothing.
 pub fn drop_beside<T: Send + 'static>(x: T) {
-    rayon::spawn(move || drop(x));
+    let run = rerail_context::job_run();
+    rayon::spawn(move || {
+        let _run = rerail_context::enter(run);
+        drop(x)
+    });
 }
 
 /// The worker of a device lane, until the executor drops: two submissions deep (decision 0100 §11).
@@ -900,24 +939,20 @@ fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
     struct Handed<T>(T);
     // SAFETY: see `Handed`: the caller is blocked for as long as the other thread holds it.
     unsafe impl<T> Send for Handed<T> {}
-    match lanes_pool() {
+    let pools = pools();
+    match pools.lanes.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).start_handler(|_| rerail_context::engine_thread()).build().ok()) {
         Some(pool) => {
             let f = Handed(f);
+            let run = rerail_context::job_run();
             pool.install(move || {
                 let f = f;
+                let _run = rerail_context::enter(run);
                 Handed((f.0)())
             })
             .0
         }
         None => f(),
     }
-}
-
-/// The device lanes' own pool ([`lane_host`]): `None` where it could not be made.
-fn lanes_pool() -> Option<&'static rayon::ThreadPool> {
-    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
-    POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).build().ok())
-        .as_ref()
 }
 
 /// Runs a device lane's submission on a pool of its own and returns at once: its result, and the CPU seconds of the
@@ -930,22 +965,24 @@ fn lanes_pool() -> Option<&'static rayon::ThreadPool> {
 /// thread-local evaluation (the launch budget, the profile's spans) was the first's, and the first waited for the
 /// whole of the second. With every slot busy (more in flight than [`SLOTS`]) it runs here.
 pub fn lane_spawn<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> std::sync::mpsc::Receiver<(std::thread::Result<R>, f64)> {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static BUSY: [AtomicBool; SLOTS] = [const { AtomicBool::new(false) }; SLOTS];
-    static POOLS: [OnceLock<Option<rayon::ThreadPool>>; SLOTS] = [const { OnceLock::new() }; SLOTS];
+    use std::sync::atomic::Ordering;
     let (send, take) = std::sync::mpsc::channel();
+    let pools = pools();
+    let run = rerail_context::job_run();
+    let held = Arc::clone(&pools);
     let job = move |slot: Option<usize>| {
+        let _run = rerail_context::enter(run);
         let c0 = thread_cpu();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
         let cpu = thread_cpu() - c0;
         if let Some(slot) = slot {
-            BUSY[slot].store(false, Ordering::Release);
+            held.busy[slot].store(false, Ordering::Release);
         }
         let _ = send.send((r, cpu));
     };
-    let claimed = (0..SLOTS).find(|&i| BUSY[i].compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_ok());
+    let claimed = (0..SLOTS).find(|&i| pools.busy[i].compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_ok());
     let pool = claimed.and_then(|i| {
-        POOLS[i]
+        pools.slots[i]
             .get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(move |t| format!("rerail-lane-slot {i}.{t}")).build().ok())
             .as_ref()
             .map(|pool| (i, pool))
@@ -954,7 +991,7 @@ pub fn lane_spawn<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> 
         Some((i, pool)) => pool.spawn(move || job(Some(i))),
         None => {
             if let Some(i) = claimed {
-                BUSY[i].store(false, Ordering::Release);
+                pools.busy[i].store(false, Ordering::Release);
             }
             job(None)
         }
@@ -1192,6 +1229,10 @@ impl<R> Job<R> {
     }
 }
 
+/// A batch's placement ([`Executor::place`]): per launch, its lane, its cost there and the fastest lane's; and the
+/// load it was weighed against.
+pub type Placement = (Vec<(Lane, Cost, Cost)>, Load);
+
 impl Executor {
     /// The executor's scoreboard, shared: a host stream ([`crate::stream`]) scores its jobs on it.
     pub fn board(&self) -> Arc<Scoreboard> {
@@ -1337,7 +1378,7 @@ impl Executor {
 
     /// Places each launch of a batch of kind `tag`, largest first, by host CPU (`Prices::choose_host`): per launch,
     /// in the batch's order, its lane, its cost there and the fastest lane's; and the load it was weighed against.
-    pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+    pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<Placement, String> {
         let predicted = self.predict(batch, &self.load(tag));
         self.place_predicted(tag, batch, &predicted)
     }
@@ -1350,7 +1391,7 @@ impl Executor {
     }
 
     /// [`Executor::place`] with the model's costs (`predicted`, per launch by lane).
-    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<Placement, String> {
         let mut order: Vec<usize> = (0..batch.0.len()).collect();
         order.sort_by(|&a, &b| batch.0[b].kernel.units().total_cmp(&batch.0[a].kernel.units()));
         let prices = self.measured_prices();
@@ -1481,7 +1522,12 @@ impl Executor {
                     hosts.push(Arc::clone(b));
                     for _ in 0..per_lane[lane.index()].min(threads()) {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
-                        rayon::spawn_fifo(move || as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend)));
+                        // The launches run in their submitter's run, on whichever pool thread takes them.
+                        let run = rerail_context::job_run();
+                        rayon::spawn_fifo(move || {
+                            let _run = rerail_context::enter(run);
+                            as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
+                        });
                     }
                 }
                 // A device lane: its worker claims its share when it reaches the batch, and a device with nothing
@@ -1512,7 +1558,10 @@ impl Executor {
                 job();
             });
         }
+        // The job is its caller's run's (decision 0442), on whichever pool thread takes it.
+        let run = rerail_context::job_run();
         queue(Box::new(move || {
+            let _run = rerail_context::enter(run);
             board.start(&mut ticket);
             let r = as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
             board.finish(ticket, r.is_ok());
@@ -1636,10 +1685,10 @@ impl Running {
             moved += u64::from(lane != claims.plan[i]);
             report.launches[lane.index()] += 1;
             report.lost += (c.wall - fastest.wall).max(0.0);
-            if !lane.is_pool() {
-                if let Some(cc) = claims.costs[i][Lane::Cpu.index()] {
-                    report.cpu_freed += cc.wall;
-                }
+            if !lane.is_pool()
+                && let Some(cc) = claims.costs[i][Lane::Cpu.index()]
+            {
+                report.cpu_freed += cc.wall;
             }
             done.push(Done { out, lane, estimate: c.wall, fastest: fastest.wall, host: c.host });
         }
@@ -1836,10 +1885,10 @@ impl Backend for CpuBackend {
         Ok((ran.into_iter().map(|r| r.0).collect(), Phases { worker_cpu, ..Phases::default() }))
     }
     fn forget(&self, id: u64) {
-        if let Ok(mut s) = self.space.lock() {
-            if let Some((rows, k)) = s.sorted.remove(&id) {
-                s.bytes -= rows * 12 + k.runs.len() * 16;
-            }
+        if let Ok(mut s) = self.space.lock()
+            && let Some((rows, k)) = s.sorted.remove(&id)
+        {
+            s.bytes -= rows * 12 + k.runs.len() * 16;
         }
     }
     fn clear(&self) {

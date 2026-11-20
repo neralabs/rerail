@@ -15,8 +15,8 @@ pub fn max() -> usize {
 }
 
 /// Makes the one pool, sized to `max`: called before anything uses it (the engine's `main`; Node's registration of
-/// the addon, `lib.rs`, never its constructor). On the process's main thread it is called with `this_thread`, so that
-/// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
+/// the addon, `lib.rs`). The CLI registers its main thread. Node uses dedicated workers because its loading thread
+/// can wait for a background call. A pool already made is left as it is.
 pub fn configure(this_thread: bool) {
     rerail_accel::exec::configure(this_thread);
     // Every job of the pool keeps its device wave apart from its thread's (decision 0386).
@@ -32,8 +32,8 @@ pub fn is_main_thread() -> bool {
     }
     #[cfg(target_os = "linux")]
     {
-        // SAFETY: no arguments.
-        unsafe { libc::gettid() == libc::getpid() }
+        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
+        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
@@ -97,12 +97,11 @@ pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
 }
 
 /// A job that takes turns with its caller (a request and its answers): it waits for the caller, so the caller's
-/// waits must never run it on the caller's own stack. It runs on another of the pool's threads, and the caller runs
-/// no other job until it has started ([`Beside::wait_for`]); with one thread (or none), on a thread of its own: one
-/// thread cannot hold both stacks.
+/// waits must never run it on the caller's own stack. A pool worker or a service thread owns the job before the
+/// caller can help with other work.
 pub(crate) struct Beside<T> {
     name: &'static str,
-    slot: std::sync::Arc<(parking_lot::Mutex<Option<std::thread::Result<T>>>, std::sync::atomic::AtomicBool)>,
+    slot: std::sync::Arc<parking_lot::Mutex<Option<std::thread::Result<T>>>>,
 }
 
 /// Frees `value` on the pool, off the caller's thread: freeing a large structure (a program analysis's results for
@@ -113,42 +112,48 @@ pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
 
 /// Starts `f` beside the caller ([`Beside`]).
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
-    let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
+    let slot = std::sync::Arc::new(parking_lot::Mutex::new(None));
     let held = std::sync::Arc::clone(&slot);
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
     let run = move || {
-        held.1.store(true, std::sync::atomic::Ordering::Release);
         let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
-        *held.0.lock() = Some(r);
+        *held.lock() = Some(r);
     };
-    if cfg!(not(target_family = "wasm")) && max() >= 2 {
-        rayon::spawn(run);
+    let unclaimed = if cfg!(not(target_family = "wasm")) && max() >= 2 {
+        let pending = std::sync::Arc::new(parking_lot::Mutex::new(Some(run)));
+        let queued = std::sync::Arc::clone(&pending);
+        let (claimed, ready) = std::sync::mpsc::channel();
+        rayon::spawn(move || {
+            let job = queued.lock().take();
+            if let Some(job) = job {
+                let _ = claimed.send(());
+                job();
+            }
+        });
+        // Each available worker could itself be starting a request/answer pair.
+        // Give another worker first claim, without depending on one becoming free.
+        let _ = ready.recv_timeout(std::time::Duration::from_millis(1));
+        pending.lock().take()
     } else {
-        let _ = rerail_accel::exec::service(name, None, run);
+        Some(run)
+    };
+    if let Some(job) = unclaimed && let Err(error) = rerail_accel::exec::service(name, None, job) {
+        *slot.lock() = Some(Err(Box::new(error)));
     }
     Beside { name, slot }
 }
 
 impl<T> Beside<T> {
-    /// Waits until `poll` gives a value, the wait recorded under `site`. Once the job has started, the wait runs the
-    /// pool's other jobs; before, it only sleeps (a little more each time, to 1 ms), so it never takes the job itself.
-    pub(crate) fn wait_for<V>(&self, site: &'static str, mut poll: impl FnMut() -> Option<V>) -> V {
-        let mut nap = 20e-6f64;
-        while !self.slot.1.load(std::sync::atomic::Ordering::Acquire) {
-            if let Some(v) = poll() {
-                return v;
-            }
-            std::thread::sleep(std::time::Duration::from_secs_f64(nap));
-            nap = (nap * 2.0).min(1e-3);
-        }
+    /// Waits until `poll` gives a value, running queued jobs and recording the wait under `site`.
+    pub(crate) fn wait_for<V>(&self, site: &'static str, poll: impl FnMut() -> Option<V>) -> V {
         rerail_accel::exec::help_until_as(site, poll)
     }
 
     /// Its result, once it ends (a panic as `Err`).
     pub(crate) fn join(self) -> std::thread::Result<T> {
-        self.wait_for(self.name, || self.slot.0.lock().take())
+        self.wait_for(self.name, || self.slot.lock().take())
     }
 }
 

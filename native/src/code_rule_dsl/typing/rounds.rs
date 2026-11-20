@@ -592,14 +592,16 @@ trait AL: Sync {
 /// Cv in one word: 0 = Bot, 1 = Top, `v << 2 | 2` for a constant that fits in 62 bits, and `i << 2 | 3` for an
 /// interned larger one. Interning keeps equal constants equal as words, so `join` never has to decode.
 struct ACv;
-static BIGS: std::sync::Mutex<(Vec<i64>, Option<HashMap<i64, u64>>)> = std::sync::Mutex::new((Vec::new(), None));
+/// The larger constants interned, the shared object's (decision 0442): a word is its own object's.
+#[derive(Default)]
+struct Bigs(std::sync::Mutex<(Vec<i64>, Option<HashMap<i64, u64>>)>);
 fn cv_enc(c: &Cv) -> u64 {
     match c {
         Cv::Bot => 0,
         Cv::Top => 1,
         Cv::C(v) if *v < (1 << 61) && *v >= -(1 << 61) => ((*v as u64) << 2) | 2,
-        Cv::C(v) => {
-            let mut g = BIGS.lock().unwrap();
+        Cv::C(v) => crate::code_rule_dsl::logic::profile::with_shared::<Bigs, _>(|bigs| {
+            let mut g = bigs.0.lock().unwrap();
             let (list, map) = &mut *g;
             let map = map.get_or_insert_with(HashMap::new);
             let i = *map.entry(*v).or_insert_with(|| {
@@ -607,7 +609,7 @@ fn cv_enc(c: &Cv) -> u64 {
                 (list.len() - 1) as u64
             });
             (i << 2) | 3
-        }
+        }),
     }
 }
 fn cv_dec(x: u64) -> Cv {
@@ -615,7 +617,7 @@ fn cv_dec(x: u64) -> Cv {
         (0, _) => Cv::Bot,
         (1, _) => Cv::Top,
         (_, 2) => Cv::C((x as i64) >> 2),
-        _ => Cv::C(BIGS.lock().unwrap().0[(x >> 2) as usize]),
+        _ => Cv::C(crate::code_rule_dsl::logic::profile::with_shared::<Bigs, _>(|bigs| bigs.0.lock().unwrap().0[(x >> 2) as usize])),
     }
 }
 impl AL for ACv {
@@ -911,11 +913,10 @@ fn build(f: &mut Facts) -> Built {
                     if f.kind[p as usize] == k_ident && f.text[p as usize] != NONE {
                         bound.insert((v, f.text[p as usize]));
                     }
-                    if let Some(&i) = f.kids(p).first() {
-                        if f.kind[i as usize] == k_ident && f.text[i as usize] != NONE {
+                    if let Some(&i) = f.kids(p).first()
+                        && f.kind[i as usize] == k_ident && f.text[i as usize] != NONE {
                             bound.insert((v, f.text[i as usize]));
                         }
-                    }
                 }
             }
         }
@@ -944,9 +945,9 @@ fn build(f: &mut Facts) -> Built {
     let mut retslot = vec![NONE; n];
     let mut gdoc = f.doc.clone();
     let mut gn = n as u32;
-    for v in 0..n {
+    for (v, slot) in retslot.iter_mut().enumerate() {
         if f.kind[v] == k_fn {
-            retslot[v] = gn;
+            *slot = gn;
             gn += 1;
             gdoc.push(f.doc[v]);
         }
@@ -990,12 +991,11 @@ fn build(f: &mut Facts) -> Built {
         } else if kd == k_ident {
             cv_seed[vi] = Cv::Top;
         }
-        if kd == k_paren {
-            if let Some(&c) = f.kids(v).first() {
+        if kd == k_paren
+            && let Some(&c) = f.kids(v).first() {
                 ty_edges.push((c, v));
                 cv_edges.push((c, v));
             }
-        }
         if kd == k_call {
             for fnode in f.field(v, f_function).collect::<Vec<_>>() {
                 let fi = fnode as usize;
@@ -1025,11 +1025,10 @@ fn build(f: &mut Facts) -> Built {
         }
         if kd == k_ret {
             let fs = anc[vi];
-            if fs != NONE && f.kind[fs as usize] == k_fn {
-                if let Some(&e) = f.kids(v).first() {
+            if fs != NONE && f.kind[fs as usize] == k_fn
+                && let Some(&e) = f.kids(v).first() {
                     ty_edges.push((e, retslot[fs as usize]));
                 }
-            }
         }
         // W4b seeds and binary transfers.
         let is_const_kind = kd == k_int || kd == k_ident || kd == k_binop || kd == k_paren;
@@ -1084,8 +1083,8 @@ fn golden(dir: &str, name: &str) -> Vec<String> {
 }
 fn ty_rows(f: &Facts, vals: &[Ty]) -> Vec<String> {
     let mut out = Vec::new();
-    for v in 0..f.n {
-        for &t in &vals[v].0 {
+    for (v, val) in vals.iter().enumerate().take(f.n) {
+        for &t in &val.0 {
             out.push(format!("{v}\t{}", f.sy.s(t)));
         }
     }
@@ -1095,12 +1094,11 @@ fn ty_rows(f: &Facts, vals: &[Ty]) -> Vec<String> {
 fn cv_rows(f: &Facts, vals: &[Cv]) -> Vec<String> {
     let (ki, kb) = (f.sy.get("identifier"), f.sy.get("binary_operator"));
     let mut out = Vec::new();
-    for v in 0..f.n {
-        if let Cv::C(x) = vals[v] {
-            if f.kind[v] == ki || f.kind[v] == kb {
+    for (v, val) in vals.iter().enumerate().take(f.n) {
+        if let Cv::C(x) = *val
+            && (f.kind[v] == ki || f.kind[v] == kb) {
                 out.push(format!("{v}\t{x}"));
             }
-        }
     }
     out.sort();
     out

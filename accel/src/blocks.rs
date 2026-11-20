@@ -4,16 +4,16 @@
 //! - `Device::Must`: a slab of the GPU pool within the Metal budget (`gpu::shared::lease_block_within`: the pool's
 //!   eviction order makes room); an exact block in a join's budget is a pooled buffer of its size, leased as the
 //!   join's buffers are (`gpu::shared::lease_block_for_join`: a device run's own relation, decision 0325 step 5).
-//! - `Device::May`: a slab only when the budget holds it with nothing evicted and half of it left to the device's
-//!   own buffers (`lease_block_spare`); else host
-//!   memory, which the device reads in place through a no-copy buffer.
+//! - `Device::May`: host memory, resident only where written, which the device reads in place through a no-copy
+//!   wrap of its used extent (`Block::gpu_buffer`). Never a pool slab: a slab's whole length held the Metal budget
+//!   while a few MB of it were written (decision 0435 §1).
 //! - `Device::No`: host memory: anonymous, resident only where written.
 //!
 //! Host blocks are counted (`host_held`) beside the pool's leases (`gpu::shared::held_bytes`): the profile reads
 //! both, and a policy that weighs the host's pressure reads the same ledger.
 
 use rerail_blocks::Block;
-use rerail_blocks::alloc::{Budget, Device, Need, Size};
+use rerail_blocks::alloc::{Device, Need};
 
 /// Installs this policy as the process's (`rerail_blocks::alloc::install`).
 pub fn install() {
@@ -22,37 +22,40 @@ pub fn install() {
 
 /// A block for `need` (module docs).
 pub fn policy(need: &Need) -> Result<Block, String> {
-    let shaped = |b| rerail_blocks::alloc::shaped(b, need);
     match need.device {
-        #[cfg(target_os = "macos")]
-        Device::Must => match (need.size, need.budget) {
-            (Size::Slab, Budget::Metal) => crate::gpu::shared::lease_block_within(need.kind, need.bytes),
-            (Size::Exact, Budget::Join) => crate::gpu::shared::lease_block_for_join(need.kind, need.bytes),
-            (size, budget) => Err(format!("a device block of {} bytes, {size:?} in the {budget:?} budget: no such lease", need.bytes)),
-        }
-        .map(shaped),
-        #[cfg(not(target_os = "macos"))]
-        Device::Must => Err(format!("a device block of {} bytes with no device", need.bytes)),
-        #[cfg(target_os = "macos")]
-        // Half the Metal budget stays the device's own buffers': taking the last room had the residency drop
-        // everything it held 28 times a run (decision 0325 step 3, `lease_block_spare`'s `keep`).
-        Device::May => match crate::gpu::shared::lease_block_spare(need.kind, need.bytes, crate::budget::metal() / 2) {
-            Ok(b) => Ok(shaped(b)),
-            Err(_) => Ok(host(need)),
-        },
-        #[cfg(not(target_os = "macos"))]
-        Device::May => Ok(host(need)),
-        Device::No => Ok(host(need)),
+        Device::Must => leased(need).map(|b| rerail_blocks::alloc::shaped(b, need)),
+        // Host memory the device reads through a wrap of its used extent (decision 0435 §1).
+        Device::May | Device::No => Ok(host(need)),
     }
 }
 
-/// The host blocks made, while they live (their extents; a dropped block's is gone).
-static HOST: std::sync::Mutex<Vec<std::sync::Weak<rerail_blocks::block::Extent>>> = std::sync::Mutex::new(Vec::new());
+/// A device block for `need`, leased from the pool in its budget.
+#[cfg(target_os = "macos")]
+fn leased(need: &Need) -> Result<Block, String> {
+    use rerail_blocks::alloc::{Budget, Size};
+    match (need.size, need.budget) {
+        (Size::Slab, Budget::Metal) => crate::gpu::shared::lease_block_within(need.kind, need.bytes),
+        (Size::Exact, Budget::Join) => crate::gpu::shared::lease_block_for_join(need.kind, need.bytes),
+        (size, budget) => Err(format!("a device block of {} bytes, {size:?} in the {budget:?} budget: no such lease", need.bytes)),
+    }
+}
+
+/// A device block for `need`: none without a device.
+#[cfg(not(target_os = "macos"))]
+fn leased(need: &Need) -> Result<Block, String> {
+    Err(format!("a device block of {} bytes with no device", need.bytes))
+}
+
+/// The host blocks made, while they live (their extents; a dropped block's is gone): the machine's memory account
+/// (decision 0442).
+#[derive(Default)]
+struct Host(std::sync::Mutex<Vec<std::sync::Weak<rerail_blocks::block::Extent>>>);
 
 /// A host block for `need`, counted.
 fn host(need: &Need) -> Block {
     let b = rerail_blocks::alloc::shaped(Block::anon(need.kind, rerail_blocks::alloc::bytes_of(need)), need);
-    let mut live = HOST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let host = rerail_context::machine::<Host>();
+    let mut live = host.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     live.retain(|e| e.strong_count() > 0);
     live.push(b.meter());
     b
@@ -65,7 +68,8 @@ pub fn zeroed_bytes() -> u64 {
 
 /// The host blocks live now: bytes used in them, and of those the bytes their free lists hold.
 pub fn host_held() -> (usize, usize) {
-    let mut live = HOST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let host = rerail_context::machine::<Host>();
+    let mut live = host.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     live.retain(|e| e.strong_count() > 0);
     live.iter().filter_map(std::sync::Weak::upgrade).fold((0, 0), |(u, f), e| {
         (u + e.top.load(std::sync::atomic::Ordering::Relaxed), f + e.free.load(std::sync::atomic::Ordering::Relaxed))
@@ -75,7 +79,7 @@ pub fn host_held() -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rerail_blocks::alloc::Writes;
+    use rerail_blocks::alloc::{Budget, Size, Writes};
     use rerail_blocks::block::kind;
 
     fn need(writes: Writes, device: Device) -> Need {
@@ -98,21 +102,26 @@ mod tests {
         assert!(host_held().0 < used, "not counted once dropped");
     }
 
-    /// A block the device must read is a slab of the pool; one it may read is a slab when the budget has room
-    /// spare. Without a device, the first is refused and the second is host memory.
+    /// A block the device must read is a slab of the pool. One it may read is host memory, even when the Metal budget
+    /// has room (decision 0435 R1), and the device reads it through a wrap of its used extent: at least 1 MB, at most
+    /// twice what it holds. Without a device, the first is refused.
     #[test]
-    fn the_device_gets_a_slab_when_it_must_or_when_one_is_spare() {
+    fn a_block_the_device_may_read_is_host_memory_wrapped_by_its_used_extent() {
         let must = policy(&need(Writes::Once, Device::Must));
         let may = policy(&need(Writes::Churn, Device::May)).unwrap();
         assert!(may.has_free_list());
+        assert!(!may.in_slab(), "host memory, though the budget has room");
         #[cfg(target_os = "macos")]
-        if crate::gpu::shared::get().is_some() {
+        if let Some(s) = crate::gpu::shared::get() {
             assert!(must.unwrap().in_slab(), "a device block is a slab");
-            assert!(may.in_slab(), "a slab when one is spare");
+            let at = may.try_alloc_chunk(3 << 20, 1 << 14).unwrap();
+            assert!(at > 0);
+            let used = may.used();
+            let wrap = may.gpu_buffer(&s.device).length() as usize;
+            assert!(wrap >= used && wrap <= (2 * used).max(1 << 20).min(may.reserved()), "a wrap of {wrap} bytes for {used} used");
             return;
         }
         assert!(must.is_err());
-        assert!(!may.in_slab());
     }
 
     /// A device run's own relation (Q205): an exact block counted in a join's budget is a pooled buffer of its

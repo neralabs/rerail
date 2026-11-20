@@ -5,9 +5,9 @@ Forty of 142 checks have authored native candidates.
 The private pack remains inactive; its manifest has an empty `rules` list.
 No Linear issues were created.
 
-The source remains pinned to `2b1504adc4291daaf080b2e932962b134da1a69a` in `neralabs/nera-data-layer`.
+The source remains pinned to `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
 The [failure analysis](data-layer-batch-four-root-causes.md) explains each root cause and its TDD ladder.
-The [evidence file](../fixtures/host/data-layer-port/batch-04-evidence.json) records counts, hashes, measurements, and retained contracts.
+The [evidence file](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-04-evidence.json) records counts, hashes, measurements, and retained contracts.
 
 ## Rules and coverage
 
@@ -133,7 +133,7 @@ It also preserves policy hashes and compilation times.
 
 ## Aggregate reporter completion
 
-The original [reporter](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_sql_grammar_escape_hatches.py#L1175) verifies its signed allowlist before it applies a global ceiling.
+The original reporter (`scripts/lint_sql_grammar_escape_hatches.py`, line 1175) verifies its signed allowlist before it applies a global ceiling.
 The earlier source gate left these observations out of native comparison.
 That was incomplete reporter coverage.
 
@@ -179,7 +179,7 @@ DL_PYTHON=/path/to/data-layer/.venv/bin/python
 
 "$DL_PYTHON" scripts/dsl/data_layer_probe_four.py \
   --source "$DL_SOURCE" --repo "$DL_REPO" \
-  --inputs fixtures/host/data-layer-port/batch-04-probes.json \
+  --inputs packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-04-probes.json \
   --output /tmp/batch-04-probes.json
 
 node --import tsx conformance/data-layer/replay.ts \

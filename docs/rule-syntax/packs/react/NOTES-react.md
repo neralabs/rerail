@@ -1,13 +1,13 @@
 # Notes: batch react (eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1)
 
-The pack's 40 rules, written by hand as .rr in four groups. Each group has its own library over one base:
+The pack's 40 rules, written by hand as .rerail in four groups. Each group has its own library over one base:
 
 | Library | Lines | Group |
 |---|---|---|
-| `lib/tsx/react.rr` | 216 | all: the jsxRuntime gate (`react_doc`), the pragma, JSX open tags and props, createElement, class components |
-| `lib/tsx/react-hooks.rr` | 395 | rules-of-hooks, exhaustive-deps |
-| `lib/tsx/react-compiler.rr` | 264 | the eight React Compiler rules |
-| `lib/tsx/react-class.rr` | 216 | class components and older APIs (13 rules) |
+| `lib/tsx/react.rerail` | 216 | all: the jsxRuntime gate (`react_doc`), the pragma, JSX open tags and props, createElement, class components |
+| `lib/tsx/react-hooks.rerail` | 395 | rules-of-hooks, exhaustive-deps |
+| `lib/tsx/react-compiler.rerail` | 264 | the eight React Compiler rules |
+| `lib/tsx/react-class.rerail` | 216 | class components and older APIs (13 rules) |
 
 The libraries combine with each other and with jsx, names, modules, values and eslint-a-common: check_rr shows no
 line naming them.
@@ -28,7 +28,7 @@ fixes.
 
 ## JSX and createElement rules (17)
 
-Library: `lib/tsx/react.rr` (base for the whole batch): the `file.jsxRuntime` gate (`react_doc`), the pragma, JSX
+Library: `lib/tsx/react.rerail` (base for the whole batch): the `file.jsxRuntime` gate (`react_doc`), the pragma, JSX
 open tags and props, createElement calls and their props, class components. Scores are `rrlab score react <id>
 --all` (eslint-plugin-react 7.37.5 recording, 637 fixtures); rules the recording does not run were compared with
 ESLint 9.39 + eslint-plugin-react 7.37.5 (no settings, as the generator) on every fixture of both recordings and on
@@ -60,10 +60,10 @@ jsx-no-leaked-render (TypeScript `f?.()`, a template `` is not safe), no-array-i
 cloneElement, `i?.toString()` not checked), self-closing-comp and no-unknown-property.
 
 1. jsx-no-script-url: a JSX attribute string has no escapes, so `href="\x01javascript:"` is not a script URL.
-   ESLint agrees. core's `value`/`str` unescape it as JS, which is why react.rr has `jsx_string`. HTML entities
+   ESLint agrees. core's `value`/`str` unescape it as JS, which is why react.rerail has `jsx_string`. HTML entities
    (`&#106;avascript:`) are decoded by JSX and not by `jsx_string`, so they are a known miss.
 2. jsx-no-target-blank, jsx-no-leaked-render: ESLint's fixes are not offered, as in the JSON.
-3. jsx-no-undef: names.rr's `ref` skips every `name` field, so JSX tags have no `ref_site`. The rule looks the tag
+3. jsx-no-undef: names.rerail's `ref` skips every `name` field, so JSX tags have no `ref_site`. The rule looks the tag
    up in enclosing scopes with `decl_site`, in both namespaces, plus TypeScript's enums, namespaces and type
    parameters, as typescript-eslint's scope manager declares them. ESLint's quirk is followed too: the module scope's first child scope
    counts, so `function m() { var V } <V/>` is reported unless m is the first function.
@@ -75,7 +75,7 @@ cloneElement, `i?.toString()` not checked), self-closing-comp and no-unknown-pro
    a time with captures. (Superseded: see the start of this item.)
 5. no-unknown-property follows the tool's algorithm: normalise the any-case names, skip data-*/aria-*, apply the
    tag map, look up the HTML/SVG attribute name, then the case-insensitive DOM property. The tables are
-   `react-no-unknown-property.props.rr`, generated from the JSON by `gen-react-no-unknown-property.py`.
+   `react-no-unknown-property.props.rerail`, generated from the JSON by `gen-react-no-unknown-property.py`.
    `check-react-no-unknown-property.py` rebuilds every name set of the JSON from them, runs the JSON's own
    `transform` steps on each HTML/SVG name to check the standard-name column, and prints `ok`. The JSON
    fixes only the HTML/SVG rename; ESLint also fixes the wrong-case rename, and so does this rule.
@@ -83,16 +83,16 @@ cloneElement, `i?.toString()` not checked), self-closing-comp and no-unknown-pro
 
 ### Library and core change requests (JSX part)
 
-- Done in this batch: `lib/tsx/names.rr` binds a named function or class expression's own name inside it, and
+- Done in this batch: `lib/tsx/names.rerail` binds a named function or class expression's own name inside it, and
   `for (const x of …)` / `for (var k in …)` bindings; `generator_function` joined fn_scope so a generator
-  expression's parameters and name have a scope. `lib/tsx/jsx.rr`'s `returned` skips a comment after `return`.
-  Rescored after the names.rr change: javascript no-redeclare, no-setter-return, no-var, id-length,
+  expression's parameters and name have a scope. `lib/tsx/jsx.rerail`'s `returned` skips a comment after `return`.
+  Rescored after the names.rerail change: javascript no-redeclare, no-setter-return, no-var, id-length,
   prefer-numeric-literals, no-prototype-builtins, use-isnan, no-array-constructor unchanged; accessor-pairs one
   FP fewer. (radix fails on `to_number("inf")` with or without the change.)
-- `lib/tsx/names.rr`: `ref` excludes identifiers in any `name` field, which drops JSX tag names
+- `lib/tsx/names.rerail`: `ref` excludes identifiers in any `name` field, which drops JSX tag names
   (`jsx_opening_element.name`, `jsx_self_closing_element.name`). Proposed: also add
   `ref(r, x, "value") :- kind(r, "identifier"), text(r, x), field(o, "name", r), (kind(o, "jsx_opening_element") ; kind(o, "jsx_self_closing_element")).`
-  jsx-no-undef and react-compiler.rr could then use `ref_site`. Done at the merge (names.rr `jsx_tag_ref`, for tags
+  jsx-no-undef and react-compiler.rerail could then use `ref_site`. Done at the merge (names.rerail `jsx_tag_ref`, for tags
   not starting lower-case): react-compiler's `rc_tag_site` and react-hooks' `deps_site` are gone. jsx-no-undef keeps
   its own lookup: it follows ESLint's quirks (both namespaces, enums and namespaces, the first child scope).
 - rrlab: `match_all` is not modelled, and neither is `(?s)` in match (the functor's regex dialect). Write
@@ -107,7 +107,7 @@ cloneElement, `i?.toString()` not checked), self-closing-comp and no-unknown-pro
 
 ## Hooks: rules-of-hooks and exhaustive-deps
 
-Library: `lib/tsx/react-hooks.rr` (395 lines), over `tsx/react.rr`. Scores are `rrlab score react <id> --all`
+Library: `lib/tsx/react-hooks.rerail` (395 lines), over `tsx/react.rerail`. Scores are `rrlab score react <id> --all`
 (eslint-plugin-react-hooks 7.1.1 recording, 429 fixtures), matched on path, line and code; the column-level scores
 are the same. Ad-hoc cases were diffed against ESLint 9.39 with the plugin at 7.1.1 (scratch `cases-hooks/`), all
 equal by line except the unreachable-code quirk below.
@@ -147,21 +147,21 @@ findings (two Hooks list the same built-anew value, or not-array plus missing at
   is the effect Hooks it has a callback index for.
 
 ### Library and core changes (hooks)
-- `lib/tsx/names.rr`: `look` starts at both the nearest block scope and the nearest function scope, so a reference
+- `lib/tsx/names.rerail`: `look` starts at both the nearest block scope and the nearest function scope, so a reference
   inside an expression-bodied arrow resolves to the arrow's parameter *and* to an outer declaration of the same name
-  (`setCount(count => increment(count))` with an outer `count`). react-hooks.rr works around it with `deps_site`
+  (`setCount(count => increment(count))` with an outer `count`). react-hooks.rerail works around it with `deps_site`
   (the candidate in the deepest scope). Proposed fix: start only at the nearer of the two:
   `look(r, x, sp, s) :- ref(r, x, sp), nearest(r, s, scope_any).` with `scope_any` the union of fn_scope and
   block_scope kinds.
-- `lib/tsx/names.rr`: tsx `undefined` is its own node kind (`undefined`), not an identifier; rules testing
+- `lib/tsx/names.rerail`: tsx `undefined` is its own node kind (`undefined`), not an identifier; rules testing
   `text(n, "undefined")` on identifiers miss it. Worth a line in the header.
 - No core changes.
 
 ### Duplicates to merge (hooks)
 - `deps_bare` (as-casts and parentheses dropped) is close to eslint-a-common's `deparen` plus `as`; kept separate
   because the plugin also drops `as`.
-- `deps_arg` / `react.rr`'s `create_arg` / eslint-a-common's `call_arg`: the same argument numbering.
-- `hook_fn_kind` and jsx.rr's `fn_kind`/modules.rr's `function_kind`: function kinds (this one includes methods
+- `deps_arg` / `react.rerail`'s `create_arg` / eslint-a-common's `call_arg`: the same argument numbering.
+- `hook_fn_kind` and jsx.rerail's `fn_kind`/modules.rerail's `function_kind`: function kinds (this one includes methods
   and generators, as eslint-scope's function scopes).
 
 ## React Compiler rules (eslint-plugin-react-hooks 7.1.1)
@@ -184,7 +184,7 @@ compiler too), matched on (path, line).
 | react-hooks-set-state-in-render | 30 | 2 files | 0/0/0 | none seen |
 | react-hooks-static-components | 34 | 2 files | 0/0/0 | none seen |
 
-Shared vocabulary: `lib/tsx/react-compiler.rr` (264 lines, over `tsx/react-hooks.rr`, whose Hook names,
+Shared vocabulary: `lib/tsx/react-compiler.rerail` (264 lines, over `tsx/react-hooks.rerail`, whose Hook names,
 callees, function kinds, memo/forwardRef wrappers, `deps_name` and `effect_hook` it reuses): which functions the compiler compiles
 (`rc_compiled`, `rc_component`: getComponentOrHookLike, isValidComponentParams, returnsNonNode, the outermost
 candidate, classes skipped, the plugin's mayContainReactCode file test, and the two bail-outs the JSON names),
@@ -222,31 +222,31 @@ signatures of built-ins and hooks. The rules are the syntactic core of each vali
   `createRef().current` in render); a ref read in a useMemo/useCallback dependency list is not reported (the
   compiler drops manual memo dependencies: fixture exhaustive-deps/invalid-074); immutability's
   `param-reassign` without a closure is not reported (`function C({ x }) { x = 2; }`: the tool is silent).
-- **jsxRuntime.** Gated with react.rr's `react_doc`.
+- **jsxRuntime.** Gated with react.rerail's `react_doc`.
 
 ### Library and core change requests
 
-- `lib/tsx/names.rr`: `ref` excludes every `name` field, so a JSX tag (`<Row/>`, the opening element's `name`) is
-  never a reference and has no `ref_site`. react-compiler.rr resolves tags itself (`rc_tag_site`). Proposed: in
+- `lib/tsx/names.rerail`: `ref` excludes every `name` field, so a JSX tag (`<Row/>`, the opening element's `name`) is
+  never a reference and has no `ref_site`. react-compiler.rerail resolves tags itself (`rc_tag_site`). Proposed: in
   `ref`, allow `field(o, "name", r)` when `o` is a `jsx_opening_element` or `jsx_self_closing_element` and r starts
   with a capital (React's component rule); then `rc_tag_site` goes.
-- check_rr did not report a body atom of an undeclared relation (`tagged`, declared in values.rr, used without
+- check_rr did not report a body atom of an undeclared relation (`tagged`, declared in values.rerail, used without
   including it); rrlab found it only by giving no rows.
 
 ### Duplicates to merge
 
-- Merged with react-hooks.rr: `rc_fn_kind` is `hook_fn_kind` without methods, and scopes are `hook_fn`;
+- Merged with react-hooks.rerail: `rc_fn_kind` is `hook_fn_kind` without methods, and scopes are `hook_fn`;
   `rc_hook_ref`/`rc_hook_call` are react-hooks' callee less bare `use`; `rc_react_call` is a call of `deps_name`;
-  memo/forwardRef is `hook_wrapped`; `rc_effect_call` uses `effect_hook`. Both still overlap modules.rr's
-  `function_kind` and jsx.rr's `fn_kind` (no generators).
-- `rc_param` duplicates eslint-a-functions.rr's `fn_param` (not included, to keep the include set small).
+  memo/forwardRef is `hook_wrapped`; `rc_effect_call` uses `effect_hook`. Both still overlap modules.rerail's
+  `function_kind` and jsx.rerail's `fn_kind` (no generators).
+- `rc_param` duplicates eslint-a-functions.rerail's `fn_param` (not included, to keep the include set small).
 - `rc_name` (the compiler's getFunctionName, through parentheses) and react-hooks' `hook_fn_name` (the plugin's,
   with object methods) differ on purpose; `rc_state_setter` and exhaustive-deps' stable setters (`deps_second`)
   read the same pattern and could share one relation.
 
 ## Class components and older APIs (13 rules)
 
-Library: `lib/tsx/react-class.rr` (216 lines), over `tsx/react.rr` and `tsx/eslint-a-common.rr`. Class
+Library: `lib/tsx/react-class.rerail` (216 lines), over `tsx/react.rerail` and `tsx/eslint-a-common.rerail`. Class
 components come from tsx/react (`class_component`, `react_component`, `comp_member`, TypeScript included). The
 library adds the component a node belongs to (`comp_owner`, and `parent_component` with function components),
 member keys as ESTree's `key.name` (`method_key`, `estree_name`, `member_named`), the kinds of fresh values
@@ -332,8 +332,8 @@ two entries with no replacement (`React.isValidClass`, `React.addons.LinkedState
 
 ### Library and core change requests
 
-1. **Done:** tsx/react.rr's `class_component` now also reads TypeScript's `extends_clause`
-   (`class_heritage > extends_clause > value`); react-class.rr's `cls_component` and `class_or_spec` workarounds
+1. **Done:** tsx/react.rerail's `class_component` now also reads TypeScript's `extends_clause`
+   (`class_heritage > extends_clause > value`); react-class.rerail's `cls_component` and `class_or_spec` workarounds
    are gone, replaced by `class_component` and `react_component`.
 2. **Soufflé aggregate capture (a note for every author):** a variable used inside `max … : { … }` that also appears
    later in the body is the outer variable, not a fresh one. no-direct-mutation-state first had this bug.
@@ -341,16 +341,16 @@ two entries with no replacement (`React.isValidClass`, `React.addons.LinkedState
 ### Duplicates to merge
 
 - `fn_component` / `ret_jsx` overlap with tsx/jsx's `component` and `returned` (theirs: by symbol, for render
-  position; mine: the plugin's detection, with `null` returns and positions). Possibly with react-hooks.rr's
+  position; mine: the plugin's detection, with `null` returns and positions). Possibly with react-hooks.rerail's
   component detection, if the hooks fork wrote one.
 - `same_scope` / `scope_holder` may duplicate eslint-b-scope's `escope_of` once that library is committed.
 
 ## Merged at integration (see packs/MERGE-tsx.md)
 
-The duplicates listed above are settled: `deps_site` and `rc_tag_site` are names.rr's `ref_site` (JSX tags are
+The duplicates listed above are settled: `deps_site` and `rc_tag_site` are names.rerail's `ref_site` (JSX tags are
 references there); `deps_arg` and `create_arg` are eslint-a-common's `call_arg`; `hook_fn_kind` / `hook_fn` are
-modules.rr's `function_kind` / eslint-a-common's `function_node` (the same six kinds); `rc_param` is
-eslint-a-functions' `fn_param`; jsx.rr's `fn_kind` is gone (`returned` now stops at any function, methods and
+modules.rerail's `function_kind` / eslint-a-common's `function_node` (the same six kinds); `rc_param` is
+eslint-a-functions' `fn_param`; jsx.rerail's `fn_kind` is gone (`returned` now stops at any function, methods and
 generators included), and react-class's `fn_returns` is built on `returned`. Kept apart on purpose: `rc_fn_kind`
 (Babel's Function, no methods), `deps_bare` (also drops `as`), `rc_state_setter` / `deps_second` (the compiler takes
-the second element, the plugin wants exactly two), `fn_component` / jsx.rr's `component`, and `scope_holder`.
+the second element, the plugin wants exactly two), `fn_component` / jsx.rerail's `component`, and `scope_holder`.

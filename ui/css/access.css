@@ -1,0 +1,8 @@
+/* The page that asks to connect this browser (views/access.js). Nothing of the repository can be read without the
+ * daemon's capability, so the frame keeps only the wordmark: the menu toggle, repository, status and sidebar would
+ * read as an empty install. The command sizes to its words, centred under the text like the rest of the empty state. */
+
+body[data-page="access"] :is(.navtoggle,#repopick,#status,#sidenav){display:none}
+body[data-page="access"] .cwrap{display:block}
+.list.access{margin-top:24px}
+.access .cmd{display:inline-flex}

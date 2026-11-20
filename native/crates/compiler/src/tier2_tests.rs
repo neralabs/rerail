@@ -13,9 +13,6 @@ use crate::{native_ir, rir_asm, stream};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-/// The ladder's files.
-const DIR: &str = crate::ladder::DIR;
-
 /// A kind or field id per name, in order of first use, as a grammar would number them.
 #[derive(Default)]
 struct Ids(RefCell<HashMap<String, u16>>);
@@ -59,7 +56,7 @@ const DOCUMENTS: &[&str] = &[
 /// refuse at the same word.
 #[test]
 fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
-    let mut steps: Vec<_> = std::fs::read_dir(DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
+    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
     steps.sort();
     assert!(steps.len() >= 15, "{} steps", steps.len());
     let mut parsed = 0;
@@ -95,7 +92,7 @@ fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
 /// are the interpreter's, and its image is the writer's: offsets at 4 bytes, the rest at 2.
 #[test]
 fn a_tape_past_two_byte_columns_is_read_at_four() {
-    let mut steps: Vec<_> = std::fs::read_dir(DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
+    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
     steps.sort();
     let mut wide = 0;
     for path in steps {
@@ -124,6 +121,67 @@ fn a_tape_past_two_byte_columns_is_read_at_four() {
     assert!(wide >= 10, "{wide} documents written at 4-byte offsets");
 }
 
+/// Decision 0426 §6, R17: tier 2 writes format 16 (and 16z) as it parses, passing its nodes to the writer's ops at
+/// its commit points (`Parser::image16`), with no format 15 image made, and its tape is the one the writer makes of
+/// tier 2's format 15 tape (`f16::write_from`), byte for byte: on every ladder step's documents, long ones (blocks
+/// past the first, deep nesting) and ones with 70,000 blanks in them.
+#[test]
+fn tier2_writes_format_16_by_the_ops() {
+    use rerail_tape_format::f16::{self, Lang, Written};
+    use rerail_tape_format::tape::{F15, Tape, f15_columns};
+    let bytes_of = |w: &Written| match w {
+        Written::F16(t) => t.as_bytes().to_vec(),
+        Written::F16Z(t) => t.as_bytes().to_vec(),
+    };
+    let mut docs: Vec<String> = DOCUMENTS.iter().map(|d| d.to_string()).collect();
+    for d in DOCUMENTS {
+        if let Some(at) = d.find([';', ',']) {
+            docs.push(format!("{}{}{}", &d[..=at], " ".repeat(70_000), &d[at + 1..]));
+        }
+    }
+    docs.push(format!("({})", vec!["vrai"; 3000].join(";")));
+    docs.push(format!("{}vrai{}", "(".repeat(300), ")".repeat(300)));
+    docs.push(format!("<{}>", (0..1500).map(|k| format!("#k{k}# = (1;~2,5e3;#t^#x#)")).collect::<Vec<_>>().join("; ")));
+    docs.push(format!("[{}]", vec!["{\"a\": [1, 2.5e3, true, null, \"x\\n\"]} // c\n"; 800].join(", ")));
+    docs.push(format!("{}1{}", "[".repeat(400), "]".repeat(400)));
+    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
+    steps.sort();
+    let (mut written, mut long) = (0, 0);
+    for path in steps {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(&path).expect("a step")).expect("parses");
+        let ids = Ids::default();
+        let kind = |n: &str| Some(ids.of(n));
+        let field = |n: &str| Some(ids.of(&format!("field {n}")));
+        let symbols = Symbols { kind: &kind, field: &field };
+        let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
+        let words = rir_asm::assemble(&compiled.text()).expect("assembles");
+        let structure = native_ir::lower(&words, 0, 0).expect("lowers");
+        let parser = Parser::new(&structure).expect("Cranelift compiles");
+        let sixteen = parser.sixteen().unwrap_or_else(|| panic!("{name}: a format 16 tier 2"));
+        for doc in &docs {
+            let bytes = doc.as_bytes();
+            let shown = &doc[..doc.len().min(60)];
+            let Ok(image) = parser.image(bytes) else { continue };
+            let (columns, table) = f15_columns(&image).expect("a format 15 tape");
+            let t = F15::new(&image, columns, &table).expect("reads");
+            let lang = Lang::new(table.clone(), [1, 1, 1], 1).expect("a language");
+            let number = f16::numbers(&lang, &table).expect("numbers");
+            let numbers = sixteen.numbers(&lang);
+            for z in [false, true] {
+                let want = f16::write_from(&lang, &t, &number, bytes, structure.tag, z).expect("the writer's tape");
+                let got = parser.image16(bytes, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: {shown:?} (16z {z}): {e}"));
+                let (got, want) = (bytes_of(&got), bytes_of(&want));
+                let first = (0..got.len().min(want.len())).find(|&k| got[k] != want[k]);
+                assert!(got == want, "{name}: {shown:?} (16z {z}): format 16 by tier 2's passes: lengths {} and {}, first differing at {first:?}", got.len(), want.len());
+            }
+            written += 1;
+            long += usize::from(t.len() > 1024);
+        }
+    }
+    assert!(written >= 40 && long >= 3, "{written} documents, {long} past a block");
+}
+
 /// The crate's assembler takes a parser's program only: a matcher's rows are the engine's.
 #[test]
 fn the_crate_assembles_only_a_parsers_program() {
@@ -139,7 +197,7 @@ fn the_crate_assembles_only_a_parsers_program() {
 /// wherever such a place holds a word that can refuse).
 #[test]
 fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
-    let mut steps: Vec<_> = std::fs::read_dir(DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
+    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
     steps.sort();
     let (mut runs, mut bodies, mut inside, mut refusing) = (0, 0, 0, 0);
     for path in steps {
@@ -176,7 +234,7 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
                 let want = stream::run(&words, bytes, &block.run(bytes)).map_err(|r| r.pc);
                 assert_eq!(parser.parse(bytes).map_err(|r| r.pc), want, "{name}: {:?}", String::from_utf8_lossy(bytes));
                 if let Err(pc) = want {
-                    inside += usize::from([pc.wrapping_sub(1), pc].iter().any(|&pc| (pc as usize) < shared.skipped.len() && shared.skipped[pc as usize]));
+                    inside += usize::from([pc.wrapping_sub(1), pc].iter().any(|&pc| pc < shared.skipped.len() && shared.skipped[pc]));
                 }
             }
         }
@@ -224,7 +282,7 @@ fn a_numbers_check_runs_over_its_tokens_bytes() {
         }
         i == s.len()
     }
-    let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("the ladder's JSON");
+    let source = std::fs::read_to_string(format!("{}/14-json.bitlex", crate::ladder::dir())).expect("the ladder's JSON");
     let c = crate::ladder::compile_step("14-json", &source);
     assert!(c.program.local_checks.iter().any(|k| k.token), "no token's check:\n{:?}", c.program.local_checks);
     let block = &c.program.block_programs[0];
@@ -299,7 +357,7 @@ fn a_unicode_escapes_checks_run_at_its_u() {
         }
         !want_low
     }
-    let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("the ladder's JSON");
+    let source = std::fs::read_to_string(format!("{}/14-json.bitlex", crate::ladder::dir())).expect("the ladder's JSON");
     let c = crate::ladder::compile_step("14-json", &source);
     // One token's check past its token (the hex digits and the lone high, merged), and no mask's.
     assert_eq!(c.program.local_checks.iter().filter(|k| k.token && k.delay == 8).count(), 1, "{:?}", c.program.local_checks);
@@ -481,7 +539,7 @@ fn utf8s_two_byte_rules_are_one_pair_lookup() {
 /// and inside a string.
 #[test]
 fn utf8_in_simdjsons_form_refuses_as_the_plain_form() {
-    let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("14-json");
+    let source = std::fs::read_to_string(format!("{}/14-json.bitlex", crate::ladder::dir())).expect("14-json");
     let at = source.find("error \"invalid UTF-8\"").expect("the check");
     let end = at + source[at..].find("\nerror ").expect("the next error");
     // The plain form: the lead bytes 1, 2 and 3 back say where a continuation is needed.

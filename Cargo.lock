@@ -310,9 +310,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.10.0"
+version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0"
+checksum = "4ff2a8126fff0f8c839080d619675a585e61720bb12d2baceae45769fd66f155"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1077,9 +1077,9 @@ checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "flate2"
-version = "1.1.10"
+version = "1.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
+checksum = "626d4928326b646e70f65ed36fc7cf9f206bdb68a0019ee7c6b4709da4e084c4"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -2630,9 +2630,9 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "napi"
-version = "3.16.1"
+version = "3.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "907ff7366fb7182e28edd0f08ef8ac5d6b13b8d65a3c0b3a10bf3ac092437d6b"
+checksum = "567c62b9c2d0fae123713f766686ad66a2c75b45ba3ee01ed8b06a7e99bc435b"
 dependencies = [
  "bitflags 2.13.2",
  "ctor",
@@ -2652,9 +2652,9 @@ checksum = "b899b545d3aa6dca985939059f258c5488d34e4ecf39c274e20009748f4b846d"
 
 [[package]]
 name = "napi-derive"
-version = "3.7.0"
+version = "3.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d32eb00f92f84cf462fc328f49082b29c2a7d2eebeb1d447d19c1f9fdd9f89ee"
+checksum = "94c8098ed9d61a1bbd019519c637817531b0e24023ef4b5678f2f0cbe24bed9c"
 dependencies = [
  "convert_case",
  "ctor",
@@ -2666,9 +2666,9 @@ dependencies = [
 
 [[package]]
 name = "napi-derive-backend"
-version = "7.0.0"
+version = "7.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1fe28c64d8fc12e69f9b817d0febdbe7914555760f1e353106281b8ff99cc90"
+checksum = "314cd6ca42bd978fd8bae84b4137e1322bbf3e83552fca8dbd7d18034188ff3a"
 dependencies = [
  "convert_case",
  "proc-macro2",
@@ -2765,6 +2765,28 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "onig"
+version = "6.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc3cbf698f9438986c11a880c90a6d04b9de27575afd28bbf45b154b6c709e2"
+dependencies = [
+ "bitflags 2.13.2",
+ "libc",
+ "once_cell",
+ "onig_sys",
+]
+
+[[package]]
+name = "onig_sys"
+version = "69.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e68317604e77e53b85896388e1a803c1d21b74c899ec9e5e1112db90735edd7"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
 
 [[package]]
 name = "ordermap"
@@ -3158,7 +3180,11 @@ dependencies = [
  "parking_lot",
  "rayon",
  "rerail-blocks",
+ "rerail-context",
+ "rerail-device",
  "rerail-forest",
+ "rerail-gpu",
+ "rerail-ukl",
  "rustc-hash",
  "sha2 0.10.9",
 ]
@@ -3171,6 +3197,11 @@ dependencies = [
  "libc",
  "metal",
  "rayon",
+ "rerail-blocks",
+ "rerail-context",
+ "rerail-device",
+ "rerail-ukl",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3192,6 +3223,7 @@ dependencies = [
 name = "rerail-c-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-c-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -3202,6 +3234,7 @@ name = "rerail-c-pp"
 version = "0.1.0"
 dependencies = [
  "rerail-c-lean",
+ "rerail-c-pp",
  "rerail-simd8",
 ]
 
@@ -3214,6 +3247,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-module",
  "rerail-blocks",
+ "rerail-clif",
 ]
 
 [[package]]
@@ -3231,7 +3265,17 @@ dependencies = [
  "rayon",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-context",
  "rerail-tape-format",
+ "rustc-hash",
+]
+
+[[package]]
+name = "rerail-context"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "rerail-context",
  "rustc-hash",
 ]
 
@@ -3239,6 +3283,7 @@ dependencies = [
 name = "rerail-csharp-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-csharp-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -3248,8 +3293,20 @@ dependencies = [
 name = "rerail-css-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-css-lean",
  "rerail-simd8",
  "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-device"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "libc",
+ "metal",
+ "objc",
+ "rerail-ukl",
 ]
 
 [[package]]
@@ -3332,6 +3389,7 @@ dependencies = [
 name = "rerail-ecma-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-ecma-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -3352,6 +3410,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -3389,6 +3448,7 @@ dependencies = [
  "rerail-ecma-lean",
  "rerail-facts",
  "rerail-go-lean",
+ "rerail-gpu",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-kotlin-lean",
@@ -3460,6 +3520,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -3521,11 +3582,12 @@ name = "rerail-forest"
 version = "0.1.0"
 dependencies = [
  "block",
- "cc",
  "libc",
  "metal",
  "objc",
  "rayon",
+ "rerail-gpu",
+ "rerail-ukl",
  "sha2 0.10.9",
 ]
 
@@ -3533,15 +3595,31 @@ dependencies = [
 name = "rerail-go-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-go-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
 ]
 
 [[package]]
+name = "rerail-gpu"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "libc",
+ "lz4-sys",
+ "metal",
+ "objc",
+ "rerail-blocks",
+ "rerail-device",
+ "rerail-ukl",
+]
+
+[[package]]
 name = "rerail-html-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-html-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -3550,6 +3628,7 @@ dependencies = [
 name = "rerail-java-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-java-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -3579,6 +3658,7 @@ dependencies = [
 name = "rerail-kotlin-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-kotlin-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -3699,6 +3779,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -4122,6 +4203,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -4185,6 +4267,7 @@ dependencies = [
 name = "rerail-markdown-inline-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-markdown-inline-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -4193,6 +4276,7 @@ dependencies = [
 name = "rerail-markdown-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-markdown-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -4208,6 +4292,8 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-context",
+ "rerail-device",
  "rerail-metal",
  "rerail-prof",
  "serde",
@@ -4220,6 +4306,7 @@ version = "0.1.0"
 dependencies = [
  "bitlex",
  "rerail-compiler",
+ "rerail-context",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
@@ -4231,6 +4318,7 @@ dependencies = [
 name = "rerail-php-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-php-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -4281,6 +4369,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-context",
  "rerail-prof",
  "rerail-rr-syntax",
  "ruff_python_ast",
@@ -4321,6 +4410,7 @@ dependencies = [
 name = "rerail-python-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-python-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -4402,6 +4492,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "rerail-compiler",
+ "rerail-context",
  "rerail-rr-aot",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4414,9 +4505,10 @@ version = "0.1.0"
 dependencies = [
  "bitlex",
  "cranelift-codegen",
- "libc",
  "rerail-compiler",
+ "rerail-context",
  "rerail-metal",
+ "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-simdjson-native",
@@ -4462,6 +4554,7 @@ dependencies = [
  "regex",
  "regex-automata",
  "regex-syntax",
+ "rerail-context",
  "rerail-rr-syntax",
  "rerail-simd8",
  "rerail-tape-format",
@@ -4490,6 +4583,7 @@ dependencies = [
 name = "rerail-rust-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-rust-lean",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
@@ -4499,6 +4593,7 @@ dependencies = [
 name = "rerail-scala-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-scala-lean",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -4518,6 +4613,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -4600,6 +4696,7 @@ name = "rerail-sql-lean"
 version = "0.1.0"
 dependencies = [
  "rerail-simd8",
+ "rerail-sql-lean",
  "rerail-tape-format",
 ]
 
@@ -4607,24 +4704,30 @@ dependencies = [
 name = "rerail-store"
 version = "0.1.0"
 dependencies = [
+ "clru",
+ "dunce",
  "foldhash",
  "gix",
  "hashbrown 0.16.1",
  "libc",
+ "onig",
  "parking_lot",
  "rayon",
  "regex",
+ "regex-automata",
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
  "rerail-prof",
  "rerail-store",
  "rusqlite",
+ "same-file",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
  "tikv-jemalloc-sys",
+ "windows-sys 0.61.2",
  "zstd",
 ]
 
@@ -4633,6 +4736,7 @@ name = "rerail-swift-lean"
 version = "0.1.0"
 dependencies = [
  "rerail-simd8",
+ "rerail-swift-lean",
  "rerail-tape-format",
 ]
 
@@ -4643,8 +4747,10 @@ dependencies = [
  "lz4-sys",
  "memchr",
  "rerail-clif",
+ "rerail-gpu",
  "rerail-simd8",
- "sha2 0.10.9",
+ "rerail-tape-format",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -4662,6 +4768,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -4686,6 +4793,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
  "rerail-facts",
@@ -4719,12 +4827,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-ukl"
+version = "0.1.0"
+dependencies = [
+ "rerail-c-lean",
+ "rerail-c-pp",
+ "rerail-ukl",
+]
+
+[[package]]
 name = "rerail-vue-lean"
 version = "0.1.0"
 dependencies = [
  "rerail-html-lean",
  "rerail-simd8",
  "rerail-tape-format",
+ "rerail-vue-lean",
 ]
 
 [[package]]
@@ -4742,6 +4860,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "dunce",
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
@@ -4766,6 +4885,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -5063,7 +5183,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
- "sha2-asm",
 ]
 
 [[package]]
@@ -5075,15 +5194,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "digest 0.11.3",
-]
-
-[[package]]
-name = "sha2-asm"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -5478,9 +5588,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-generate"
-version = "0.27.1"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60418c249e4317a2fc9a3959dab47e50ca60910460b8a82a7f73d6e28a73470d"
+checksum = "2bda1e3c7d894b84a0ffef541cfc6deb08e58beed98e39bd5a5b2067ed2dbdfb"
 dependencies = [
  "bitflags 2.13.2",
  "dunce",

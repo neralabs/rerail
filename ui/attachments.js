@@ -26,7 +26,7 @@ function recommendedFor(scope) {
 /** After set-up: the packs it added, by name (their folders show on each pack page). */
 function setUpMessage(added) {
   const repo = data.repository?.name ?? "This repo";
-  return added.length === 0 ? `${repo} is set up, but no rule pack fits it yet.`
+  return added.length === 0 ? `${repo} is set up. No rule pack matches what it’s built with.`
     : `${repo} is set up with ${andList(added.map(({ sourceId }) => packName(sourceId)))}.`;
 }
 

@@ -15,10 +15,11 @@ import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import { MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** Zod accepts it; the engine rejects it because `$TYPO` names no capture of the query. */
 const unboundMessage: CodeRule = {
@@ -44,7 +45,7 @@ beforeEach(async () => {
 afterEach(async () => {
   if (originalEnginePath === undefined) delete process.env.RERAIL_ENGINE_PATH;
   else process.env.RERAIL_ENGINE_PATH = originalEnginePath;
-  await rm(root, { recursive: true, force: true });
+  await removeFolder(root);
 });
 
 function library(name = "rerail.sqlite"): RerailDatabase {

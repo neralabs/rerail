@@ -1,4 +1,5 @@
     use super::*;
+    use std::collections::BTreeSet;
 
     /// Each `ast` atom without captures reads its matcher's relation, one per distinct matcher; `docof` joins the node
     /// to its document only where the rule reads the document; an atom with captures is left as written.
@@ -12,27 +13,64 @@
 a(c) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
 b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
 "#;
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
-        assert_eq!(absorb(&mut prog.clone(), false), 1);
-        let mut captured = prog.clone();
-        assert_eq!(absorb(&mut captured, true), 2, "with captures, the field the head reads is part of the matcher");
-        let b = captured.rules.iter().find(|r| r.head.rel == "b").unwrap().body.clone();
-        assert_eq!(b.len(), 1);
-        let Literal::Ast { captures, matcher, node, .. } = &b[0] else { panic!("not a matcher: {:?}", b[0]) };
-        assert_eq!(node, "c");
-        assert_eq!(captures, &vec![("C1".to_owned(), "f".to_owned())], "the field's node captured");
-        let m: serde_json::Value = serde_json::from_str(matcher).unwrap();
+        use crate::code_rule_dsl::logic::plan::corpus::preparation::text::tree_parts_as_matchers;
+        use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, Version};
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+        fn rule<'v>(v: &'v Version, head: &str) -> RuleRef<'v> {
+            v.rules().find(|r| v.rel_name(r.head().rel()) == head).unwrap()
+        }
+        assert_eq!(tree_parts_as_matchers(prog.clone(), false).unwrap().1, 1);
+        let (captured, made) = tree_parts_as_matchers(prog.clone(), true).unwrap();
+        assert_eq!(made, 2, "with captures, the field the head reads is part of the matcher");
+        let b = rule(&captured, "b");
+        assert_eq!(b.body().count(), 1);
+        let Lit::Ast { captures, matcher, node, .. } = b.body().next().unwrap().view() else { panic!("not a matcher: {}", captured.show_rule(b)) };
+        assert_eq!(captured.text(b.var(node)), "c");
+        let captures: Vec<(String, String)> = captures.map(|(n, s)| (captured.text(n).to_owned(), captured.text(b.var(s)).to_owned())).collect();
+        assert_eq!(captures, vec![("C1".to_owned(), "f".to_owned())], "the field's node captured");
+        let m: serde_json::Value = serde_json::from_str(captured.text(matcher)).unwrap();
         assert_eq!(m["rule"]["all"][1]["has"]["pattern"], "$C1");
-        assert_eq!(absorb(&mut prog, false), 1);
-        let body = |head: &str| prog.rules.iter().find(|r| r.head.rel == head).unwrap().body.clone();
+        let (prog, made) = tree_parts_as_matchers(prog, false).unwrap();
+        assert_eq!(made, 1);
+        let body = |head: &str| rule(&prog, head);
         let a = body("a");
-        assert_eq!(a.len(), 1);
-        let Literal::Ast { matcher, node, .. } = &a[0] else { panic!("not a matcher: {:?}", a[0]) };
-        assert_eq!(node, "c");
-        let m: serde_json::Value = serde_json::from_str(matcher).unwrap();
+        assert_eq!(a.body().count(), 1);
+        let Lit::Ast { matcher, node, .. } = a.body().next().unwrap().view() else { panic!("not a matcher: {}", prog.show_rule(a)) };
+        assert_eq!(prog.text(a.var(node)), "c");
+        let m: serde_json::Value = serde_json::from_str(prog.text(matcher)).unwrap();
         assert_eq!(m["rule"]["all"][1]["has"]["field"], "function");
         assert_eq!(m["rule"]["all"][1]["has"]["kind"], "attribute");
-        assert_eq!(body("b").len(), 3, "a field the head reads stays a join");
+        assert_eq!(body("b").body().count(), 3, "a field the head reads stays a join");
+    }
+
+    /// A matcher whose every read joins its node with a column only another matcher's roots fill is bound only at
+    /// those roots (decision 0424); one read anywhere else, under a negation or with no such join, everywhere.
+    #[test]
+    fn a_matcher_read_only_at_another_matchers_roots_is_bound_there() {
+        let src = r#"
+.decl ident(w: node, d: number)
+.decl inner(w: node, f: node)
+.decl free(w: node)
+.decl mixed(w: node)
+.decl unjoined(w: node)
+.output inner, free, mixed, unjoined
+ident(w, d) :- ast(d, w, {"language": "python", "rule": {"kind": "identifier"}}).
+inner(w, f) :- ident(w, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"kind": "function_definition"}, {"pattern": "$F"}], "stopBy": "end"}}}, F: f).
+free(w) :- ast(d, w, {"language": "python", "rule": {"kind": "call"}}).
+mixed(w) :- ident(w, _), ast(d, w, {"language": "python", "rule": {"inside": {"kind": "class_definition", "stopBy": "end"}}}).
+unjoined(w) :- ast(d, w, {"language": "python", "rule": {"inside": {"kind": "class_definition", "stopBy": "end"}}}).
+"#;
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
+        let matchers = lower(&mut prog);
+        let at = |needle: &str| matchers.iter().position(|(_, text, _)| text.contains(needle)).unwrap();
+        // The run reads the rules from the prepared program's image (decision 0281, step R).
+        let (image, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).unwrap();
+        let demand = demanded_by_roots(&image, &matchers);
+        let word = at("identifier");
+        assert_eq!(demand[at("function_definition")], Some(vec![word]), "inner's node is ident's, which only the identifier matcher fills");
+        assert_eq!(demand[at("\"call\"")], None, "free joins with nothing");
+        assert_eq!(demand[word], None, "the identifier matcher is read where nothing bounds it");
+        assert_eq!(demand[at("class_definition")], None, "a matcher one rule reads unjoined is bound everywhere");
     }
 
     /// `any`'s arms bind into the environment only when they match, so two arms binding one name share nothing; a
@@ -109,23 +147,24 @@ a(n) :- ast(d, n, {"language": "python", "rule": {"kind": "call"}}).
 b(n, d) :- ast(d, n, {"language": "python", "rule": {"kind": "call"}}).
 c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x).
 "#;
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
-        let found = lower(&mut prog);
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+        let (prog, found) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(prog).unwrap();
         assert_eq!(found.len(), 2, "one distinct matcher without captures, one with");
         let rel = &found[0].0;
-        let body = |head: &str| prog.rules.iter().find(|r| r.head.rel == head).unwrap().body.clone();
-        let reads = |head: &str| body(head).iter().filter_map(|l| l.atom().map(|a| a.rel.clone())).collect::<Vec<_>>();
+        let body = |head: &str| prog.rules().find(|r| prog.rel_name(r.head().rel()) == head).unwrap();
+        let reads = |head: &str| body(head).body().filter_map(|l| l.atom().map(|a| prog.rel_name(a.rel()).to_owned())).collect::<Vec<_>>();
         assert_eq!(reads("a"), vec![rel.clone()]);
         assert_eq!(reads("b"), vec![rel.clone(), "docof".to_owned()]);
         // A captured matcher's relation has the root and a column a capture (decision 0107).
         assert_eq!(found[1].0, "rr_ast_1_1");
         assert_eq!(found[1].2, vec!["X".to_owned()]);
         assert_eq!(reads("c"), vec!["rr_ast_1_1".to_owned()]);
-        let Some(Literal::Atom(c)) = body("c").into_iter().next() else { panic!("not an atom") };
-        assert_eq!(c.args, vec![Term::Var("n".into()), Term::Var("x".into())]);
+        let c = body("c");
+        let Some(first) = c.body().next().and_then(|l| l.atom()) else { panic!("not an atom") };
+        assert_eq!(first.args().map(|t| prog.show_term(c, t)).collect::<Vec<_>>(), vec!["$n".to_owned(), "$x".to_owned()]);
         assert_eq!(columns("rr_ast_1_1"), &["n", "x1"]);
         assert_eq!(columns("rr_ast_0"), &["n"]);
-        assert!(prog.inputs.contains(rel) && prog.decls.contains_key(rel.as_str()));
+        assert!(prog.input_names().contains(rel) && prog.declares(rel));
     }
 
     /// A `filePath` test below a matcher's root conjuncts (here in an `any`) is the document's: the matcher holds in
@@ -139,7 +178,7 @@ c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x)
         std::fs::create_dir_all(root.join("b")).unwrap();
         std::fs::write(root.join("a/x.py"), "f()\n").unwrap();
         std::fs::write(root.join("b/y.py"), "f()\nzz()\n").unwrap();
-        let policy = root.with_extension("policy.rr");
+        let policy = root.with_extension("policy.rerail");
         let rule = r#"{"language": "python", "rule": {"all": [{"kind": "call"}, {"any": [{"filePath": {"regex": "^a/"}}, {"has": {"field": "function", "regex": "^zz"}}]}]}}"#;
         std::fs::write(&policy, format!(".language python\n.violation hit(at: node) code \"X1\" \"hit\"\nhit(n) :- ast(d, n, {rule}).\n")).unwrap();
         let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();

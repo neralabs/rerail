@@ -1,20 +1,74 @@
 //! Capacity limits, object pins, and collection of unreachable rows.
 
-#[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
 use super::connection::{BusyRetries, retry_busy};
 use super::rows::{generation, intern_string};
 use super::snapshots::GIT_TREE_BATCH_ENTRIES;
 use super::{
-    CapacityState, CollectionReport, ContentStore, HashKey, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId,
-    StoreCapacity, StoreError, StoreResult, TapeId,
+    CapacityState, CollectionReport, ContentStore, HashKey, MAX_COLLECTION_BATCH, STRING_OWNER,
+    SourceId, StoreCapacity, StoreError, StoreResult, TapeId,
 };
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rusqlite::{Connection, OptionalExtension, Params, TransactionBehavior, params};
 use std::fs;
-use std::time::Instant;
 
-const OBJECT_TAPE: i64 = 1;
-const OBJECT_SOURCE: i64 = 2;
+pub(super) const OBJECT_TAPE: i64 = 1;
+/// A store session's kind (`store_sessions.kind`, decision 0450 §2): a workspace, keyed by its root's path.
+pub(super) const SESSION_WORKSPACE: i64 = 1;
+/// A corpus lane, keyed by a digest of its root and lane (`corpus_runs::lane_session`).
+pub(super) const SESSION_LANE: i64 = 2;
+/// A pin's owner, keyed by its name's `strings` id: its source and tape pins are its data.
+pub(super) const SESSION_PINS: i64 = 3;
+
+/// The ended sessions of the kinds collection ages (workspaces and pin owners) with the aged bytes of those ended
+/// since, newest first, them included: one budget for both (decision 0450 step 3).
+macro_rules! aged_sessions {
+    () => {
+        "(SELECT kind, key, ended, sum(aged_bytes) OVER (ORDER BY ended DESC, kind, key ROWS UNBOUNDED PRECEDING) held \
+         FROM store_sessions WHERE kind IN (1,3) AND ended IS NOT NULL)"
+    };
+}
+
+/// How long an ended store session's data is kept (decision 0450 step 3; 0053 §3's marks and backstop until the user
+/// sets others): the sessions ended last keep theirs while together they hold at most `bytes`, and none past
+/// `backstop_secs` after it ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ageing {
+    pub bytes: u64,
+    pub backstop_secs: i64,
+}
+
+impl Default for Ageing {
+    fn default() -> Self {
+        Ageing { bytes: 384 << 20, backstop_secs: 30 * 86_400 }
+    }
+}
+
+/// A store handle's `Ageing`, which a test may change (`set_session_ageing`).
+#[derive(Default)]
+pub(super) struct SessionAgeing(parking_lot::Mutex<Ageing>);
+
+impl SessionAgeing {
+    pub(super) fn get(&self) -> Ageing {
+        *self.0.lock()
+    }
+}
+
+impl Clone for SessionAgeing {
+    fn clone(&self) -> Self {
+        SessionAgeing(parking_lot::Mutex::new(self.get()))
+    }
+}
+
+impl ContentStore {
+    /// Keeps ended sessions' data as `ageing` says, on this handle (a test's: `Ageing { bytes: 0, backstop_secs: 0 }`
+    /// releases an ended workspace at the next pass, as before decision 0450 step 3).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn set_session_ageing(&self, ageing: Ageing) {
+        *self.session_ageing.0.lock() = ageing;
+    }
+}
+pub(super) const OBJECT_SOURCE: i64 = 2;
 pub(super) const STORE_SOFT_LIMIT: u64 = 7 * 1024 * 1024 * 1024;
 pub(super) const STORE_HARD_LIMIT: u64 = 9 * 1024 * 1024 * 1024;
 pub(super) const STORE_ABSOLUTE_LIMIT: u64 = 10 * 1024 * 1024 * 1024;
@@ -32,7 +86,10 @@ impl ContentStore {
     /// When `owner`'s pin of `source_id` ends (unix seconds), where it has one: a reader renews a lease only once it
     /// has run down, so a run that reads what an earlier run kept writes nothing (decision 0250).
     pub fn source_lease(&self, source_id: SourceId, owner: &str) -> StoreResult<Option<i64>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
         connection
             .query_row_cached(
                 "SELECT p.lease_until FROM object_pins p JOIN strings s ON s.string_id=p.owner_string_id \
@@ -72,12 +129,19 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let owner_id = intern_string(&transaction, STRING_OWNER, owner)?;
         transaction.execute_cached(
             "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
              ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
             params![object_kind, object_id, owner_id, lease_until],
+        )?;
+        // Its owner is a store session (decision 0450 §2), live while one of its pins is.
+        transaction.execute_cached(
+            "INSERT INTO store_sessions(kind,key,latest,last_used,ended,aged_bytes) VALUES (?1,?2,?3,?4,NULL,0) \
+             ON CONFLICT(kind,key) DO UPDATE SET latest=excluded.latest,last_used=excluded.last_used,ended=NULL,aged_bytes=0",
+            params![SESSION_PINS, owner_id, generation(&transaction)?, super::unix_seconds()?],
         )?;
         self.commit(transaction)?;
         Ok(())
@@ -86,21 +150,27 @@ impl ContentStore {
     /// The stored source of each of `hashes`, in their order: one read, nothing written. A run holds what it finds by
     /// its collection lease (`hold_collection`, decision 0306 step 4).
     pub fn sources_by_hashes(&self, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
         sources_by_hashes(&connection, hashes)
     }
 
     pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
         // A write: it waits out other writers as every store write does, the connection held by each attempt alone.
         retry_busy(&mut BusyRetries::default(), || {
-            self.connection
-                .lock()
-                .expect("content store mutex poisoned")
-                .execute(
-                    "DELETE FROM object_pins WHERE owner_string_id IN (SELECT string_id FROM strings WHERE domain_id=?1 AND value=?2)",
-                    params![STRING_OWNER, owner],
-                )
-                .map_err(StoreError::from)
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let Some(owner_id) = connection
+                .query_row_cached("SELECT string_id FROM strings WHERE domain_id=?1 AND value=?2", params![STRING_OWNER, owner], |r| r.get::<_, i64>(0))
+                .optional()?
+            else {
+                return Ok(0);
+            };
+            let released = connection.execute_cached("DELETE FROM object_pins WHERE owner_string_id=?1", [owner_id])?;
+            // Released by its owner, what it pinned is not aged (decision 0450 step 3): its session goes with its pins.
+            connection.execute_cached("DELETE FROM store_sessions WHERE kind=?1 AND key=?2", params![SESSION_PINS, owner_id])?;
+            Ok(released)
         })
     }
 
@@ -160,13 +230,18 @@ impl ContentStore {
     /// vacuum (a write too), wait out other writers as every store write does (`retry_busy`): one attempt each, with
     /// SQLite's busy timeout alone, failed the pass while parallel writers held the store (O-collector-busy-flake).
     pub(super) fn collect_held(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
-        let report = retry_busy(&mut BusyRetries::default(), || self.collect_held_once(now, batch))?;
+        let report = retry_busy(&mut BusyRetries::default(), || {
+            self.collect_held_once(now, batch)
+        })?;
         // Free pages back to the file system, a write of its own after the pass committed: a writer holding the
         // store past the retries leaves them to the next pass. Failing the pass for it failed a collector whose rows
         // were already collected. A file mostly free is the upkeep job's, vacuumed whole: an incremental vacuum's
         // cost grows with the free list (ep2: 8.1 s for these 4,096 pages with 1.8M free, behind every run).
         match retry_busy(&mut BusyRetries::default(), || {
-            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let connection = self
+                .connection
+                .lock()
+                .expect("content store mutex poisoned");
             connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
             if super::upkeep::leaves_to_whole_vacuum(&connection, self.database_path())? {
                 return Ok(());
@@ -176,10 +251,6 @@ impl ContentStore {
             Ok(()) | Err(StoreError::Busy) => {}
             Err(error) => return Err(error),
         }
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .clear();
         self.local_result_cache
             .lock()
             .expect("local result cache mutex poisoned")
@@ -189,10 +260,6 @@ impl ContentStore {
 
     /// One attempt at `collect_held`'s transaction: run again whole if it finds the store busy.
     fn collect_held_once(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .expire(Instant::now());
         let limit = i64::try_from(batch)
             .map_err(|_| StoreError::Invalid("collection batch exceeds i64".to_owned()))?;
         let entry_budget = GIT_TREE_BATCH_ENTRIES as i64;
@@ -201,40 +268,99 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
-        let expired_pins = execute_collect(
-            &transaction,
-            "DELETE FROM object_pins WHERE (object_kind_id,object_id,owner_string_id) IN (\
-             SELECT object_kind_id,object_id,owner_string_id FROM object_pins WHERE lease_until < ?1 \
-             ORDER BY object_kind_id,object_id,owner_string_id LIMIT ?2)",
-            params![now, limit],
-        )?;
-        let mut report = CollectionReport {
-            expired_pins,
-            ..CollectionReport::default()
-        };
+        Self::discard_abandoned_analysis(&transaction)?;
+        let mut report = CollectionReport::default();
         execute_collect(
             &transaction,
             "UPDATE workspaces SET state_id=2 WHERE state_id=1 AND lease_until < ?1",
             [now],
         )?;
+        // A workspace's store session ends when its lease does (decision 0450 §2), with the bytes its snapshot and
+        // overlay hold; its data is aged, not released at once.
+        let mut ended = execute_collect(
+            &transaction,
+            "UPDATE store_sessions SET ended=w.lease_until, aged_bytes=\
+             coalesce((SELECT sum(o.seg_len) FROM snapshot_files f JOIN source_objects o ON o.source_id=f.source_id WHERE f.snapshot_id=w.snapshot_id),0)\
+             +coalesce((SELECT sum(t.seg_len) FROM snapshot_files f JOIN tape_objects t ON t.tape_id=f.tape_id WHERE f.snapshot_id=w.snapshot_id),0)\
+             +coalesce((SELECT sum(o.seg_len) FROM workspace_overlay v JOIN source_objects o ON o.source_id=v.source_id WHERE v.workspace_id=w.workspace_id),0)\
+             +coalesce((SELECT sum(t.seg_len) FROM workspace_overlay v JOIN tape_objects t ON t.tape_id=v.tape_id WHERE v.workspace_id=w.workspace_id),0) \
+             FROM workspaces w WHERE store_sessions.kind=?1 AND store_sessions.key=w.root_path_id AND store_sessions.ended IS NULL \
+             AND w.state_id=2",
+            [SESSION_WORKSPACE],
+        )?;
+        // A pin owner's session ends when its last source or tape pin lapses, with the bytes they hold.
+        ended += execute_collect(
+            &transaction,
+            "UPDATE store_sessions SET ended=coalesce((SELECT max(p.lease_until) FROM object_pins p WHERE p.owner_string_id=store_sessions.key),?2), \
+             aged_bytes=coalesce((SELECT sum(o.seg_len) FROM object_pins p JOIN source_objects o ON o.source_id=p.object_id \
+                                  WHERE p.owner_string_id=store_sessions.key AND p.object_kind_id=?3),0)\
+             +coalesce((SELECT sum(t.seg_len) FROM object_pins p JOIN tape_objects t ON t.tape_id=p.object_id \
+                        WHERE p.owner_string_id=store_sessions.key AND p.object_kind_id=?4),0) \
+             WHERE kind=?1 AND ended IS NULL \
+             AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.owner_string_id=store_sessions.key AND p.lease_until>=?2)",
+            params![SESSION_PINS, now, OBJECT_SOURCE, OBJECT_TAPE],
+        )?;
+        if ended > 0 {
+            // What they hold may be archived (decision 0450 step 4).
+            execute_collect(&transaction, "UPDATE corpus_state SET archive_due=1 WHERE singleton=1", [])?;
+        }
+        // An ended workspace is released (state 3) once it ended `backstop` ago, or once the sessions that ended after
+        // it hold the budget; one with no session (a store of an older binary) at once.
+        let ageing = self.session_ageing.get();
+        execute_collect(
+            &transaction,
+            concat!(
+                "UPDATE workspaces SET state_id=3 WHERE state_id=2 AND workspace_id IN (SELECT w.workspace_id FROM workspaces w \
+                 LEFT JOIN ",
+                aged_sessions!(),
+                " r ON r.kind=?1 AND r.key=w.root_path_id \
+                 WHERE w.state_id=2 AND (r.key IS NULL OR r.ended <= ?2 - ?3 OR r.held > ?4))"
+            ),
+            params![SESSION_WORKSPACE, now, ageing.backstop_secs, i64::try_from(ageing.bytes).unwrap_or(i64::MAX)],
+        )?;
+        // A lapsed pin goes at once unless it is a source's or tape's and its owner's session is aged: a live owner's
+        // lapsed pins are not its latest data, and a plan's hold lapses (`corpus_runs::lapsed_plan_hold`).
+        report.expired_pins = execute_collect(
+            &transaction,
+            concat!(
+                "DELETE FROM object_pins WHERE (object_kind_id,object_id,owner_string_id) IN (\
+                 SELECT p.object_kind_id,p.object_id,p.owner_string_id FROM object_pins p LEFT JOIN ",
+                aged_sessions!(),
+                " r ON r.kind=?1 AND r.key=p.owner_string_id \
+                 WHERE p.lease_until < ?2 AND (p.object_kind_id NOT IN (?5,?6) OR r.key IS NULL OR r.ended <= ?2 - ?3 OR r.held > ?4) \
+                 ORDER BY p.object_kind_id,p.object_id,p.owner_string_id LIMIT ?7)"
+            ),
+            params![SESSION_PINS, now, ageing.backstop_secs, i64::try_from(ageing.bytes).unwrap_or(i64::MAX), OBJECT_SOURCE, OBJECT_TAPE, limit],
+        )?;
+        execute_collect(
+            &transaction,
+            "DELETE FROM store_sessions WHERE kind=?1 AND ended IS NOT NULL \
+             AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.owner_string_id=store_sessions.key)",
+            [SESSION_PINS],
+        )?;
+        execute_collect(
+            &transaction,
+            "DELETE FROM store_sessions WHERE kind=?1 AND key IN (SELECT root_path_id FROM workspaces WHERE state_id=3)",
+            [SESSION_WORKSPACE],
+        )?;
         execute_collect(
             &transaction,
             "DELETE FROM workspace_overlay WHERE (workspace_id,path_id) IN (\
              SELECT o.workspace_id,o.path_id FROM workspace_overlay o JOIN workspaces w ON w.workspace_id=o.workspace_id \
-             WHERE w.state_id=2 ORDER BY o.workspace_id,o.path_id LIMIT ?1)",
+             WHERE w.state_id=3 ORDER BY o.workspace_id,o.path_id LIMIT ?1)",
             [limit],
         )?;
         execute_collect(
             &transaction,
             "DELETE FROM completed_workspace_revisions WHERE workspace_id IN (SELECT w.workspace_id FROM workspaces w \
-             WHERE w.state_id=2 AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.workspace_id=w.workspace_id) \
+             WHERE w.state_id=3 AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.workspace_id=w.workspace_id) \
              ORDER BY w.workspace_id LIMIT ?1)",
             [limit],
         )?;
         report.retired_workspaces = execute_collect(
             &transaction,
             "DELETE FROM workspaces WHERE workspace_id IN (SELECT w.workspace_id FROM workspaces w \
-             WHERE w.state_id=2 AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.workspace_id=w.workspace_id) \
+             WHERE w.state_id=3 AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.workspace_id=w.workspace_id) \
              ORDER BY w.workspace_id LIMIT ?1)",
             [limit],
         )?;
@@ -242,6 +368,8 @@ impl ContentStore {
             .query_row(
                 collect_sql(
                     "SELECT s.snapshot_id FROM snapshots s WHERE NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.snapshot_id=s.snapshot_id) \
+                     AND NOT EXISTS (SELECT 1 FROM analysis_scope_snapshot a WHERE a.snapshot_id=s.snapshot_id) \
+                     AND NOT EXISTS (SELECT 1 FROM analysis_scope_workspace_snapshot a WHERE a.snapshot_id=s.snapshot_id) \
                      ORDER BY s.snapshot_id LIMIT 1",
                 ),
                 [],
@@ -294,18 +422,6 @@ impl ContentStore {
         )?;
         execute_collect(
             &transaction,
-            "DELETE FROM local_check_results WHERE source_id IN (SELECT s.source_id FROM source_objects s \
-             WHERE s.created_generation < ?1 \
-             AND NOT EXISTS (SELECT 1 FROM tape_objects t WHERE t.source_id=s.source_id) \
-             AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
-             AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
-             AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
-             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
-             ORDER BY s.source_id LIMIT ?3)",
-            params![current_generation, OBJECT_SOURCE, limit],
-        )?;
-        execute_collect(
-            &transaction,
             "DELETE FROM context_check_results WHERE source_id IN (SELECT s.source_id FROM source_objects s \
              WHERE s.created_generation < ?1 \
              AND NOT EXISTS (SELECT 1 FROM tape_objects t WHERE t.source_id=s.source_id) \
@@ -331,8 +447,7 @@ impl ContentStore {
         report.candidate_checks = execute_collect(
             &transaction,
             "DELETE FROM candidate_checks WHERE check_id IN (SELECT c.check_id FROM candidate_checks c \
-             WHERE NOT EXISTS (SELECT 1 FROM local_check_results r WHERE r.check_id=c.check_id) \
-             AND NOT EXISTS (SELECT 1 FROM context_check_results r WHERE r.check_id=c.check_id) \
+             WHERE NOT EXISTS (SELECT 1 FROM context_check_results r WHERE r.check_id=c.check_id) \
              ORDER BY c.check_id LIMIT ?1)",
             [limit],
         )?;
@@ -436,14 +551,32 @@ impl ContentStore {
              ORDER BY p.set_digest LIMIT ?1)",
             [limit],
         )?;
-        // Pages no name binds: no scope's page derivation outputs them (tree_pages.rs). A page set
-        // whose binding is still in an unwritten overlay layer can be collected; its next lookup
-        // misses and recomputes it.
+        // Pages no name binds: no scope's page derivation outputs them (tree_pages.rs). A set whose binding is still
+        // in an overlay layer not yet written is pending (`tree_pages_pending`), held by the process that put it: it
+        // stays until its binding is seen here, or that process is gone.
+        execute_collect(
+            &transaction,
+            "DELETE FROM tree_pages_pending WHERE EXISTS (SELECT 1 FROM name_bindings b WHERE b.digest=tree_pages_pending.digest)",
+            [],
+        )?;
+        let holders: Vec<i64> = transaction
+            .prepare_cached(collect_sql("SELECT DISTINCT pid FROM tree_pages_pending"))?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        let gone: Vec<i64> = holders.into_iter().filter(|&pid| i32::try_from(pid).is_ok_and(super::corpus_runs::process_gone)).collect();
+        if !gone.is_empty() {
+            execute_collect(
+                &transaction,
+                "DELETE FROM tree_pages_pending WHERE pid IN (SELECT value FROM json_each(?1))",
+                [serde_json::to_string(&gone).expect("integers")],
+            )?;
+        }
         execute_collect(
             &transaction,
             "DELETE FROM tree_pages WHERE page_key IN (\
              SELECT DISTINCT p.page_key FROM tree_pages p \
              WHERE NOT EXISTS (SELECT 1 FROM name_bindings b WHERE b.digest=p.digest) \
+             AND NOT EXISTS (SELECT 1 FROM tree_pages_pending q WHERE q.digest=p.digest) \
              ORDER BY p.page_key LIMIT ?1)",
             [limit],
         )?;
@@ -503,19 +636,30 @@ pub(super) fn capacity_state(bytes: u64) -> CapacityState {
 }
 
 /// The stored source of each of `hashes`, in their order, read on `connection` in one statement.
-fn sources_by_hashes(connection: &rusqlite::Connection, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
+fn sources_by_hashes(
+    connection: &rusqlite::Connection,
+    hashes: &[HashKey],
+) -> StoreResult<Vec<Option<SourceId>>> {
     let mut out = vec![None; hashes.len()];
     if hashes.is_empty() {
         return Ok(out);
     }
-    let list = serde_json::to_string(&hashes.iter().map(|h| super::rows::hash_params(*h)).collect::<Vec<_>>()).expect("integers");
+    let list = serde_json::to_string(
+        &hashes
+            .iter()
+            .map(|h| super::rows::hash_params(*h))
+            .collect::<Vec<_>>(),
+    )
+    .expect("integers");
     let mut statement = connection.prepare_cached(
         "SELECT j.key, s.source_id FROM json_each(?1) j JOIN hashes h INDEXED BY hashes_by_prefix \
          ON h.algorithm_id=json_extract(j.value,'$[0]') AND h.lane0=json_extract(j.value,'$[1]') \
          AND h.lane1=json_extract(j.value,'$[2]') AND h.lane2=json_extract(j.value,'$[3]') AND h.lane3=json_extract(j.value,'$[4]') \
          JOIN source_objects s ON s.canonical_hash_id=h.hash_id",
     )?;
-    for row in statement.query_map([&list], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))? {
+    for row in statement.query_map([&list], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })? {
         let (at, id) = row?;
         out[at as usize] = Some(SourceId(id));
     }

@@ -59,6 +59,10 @@ fn w(document: &Json, files: &[(String, String)]) -> (contracts::Key, BTreeSet<E
 
 /// The corpus runner's graph over the files under `dir` under the `.references` setting `setting`.
 fn ours(dir: &std::path::Path, setting: &str) -> Graph {
+    ours_at(dir, &dir.join(".out"), setting)
+}
+
+fn ours_at(dir: &std::path::Path, out: &std::path::Path, setting: &str) -> Graph {
     let program = format!(
         "{setting}
 .decl doc(d: number, path: symbol, module: symbol)
@@ -73,9 +77,8 @@ open(p, s, e) :- reference_open(n), node(d, n, _, s, e), doc(d, p, _).
 .output edge, open
 "
     );
-    let out = dir.join(".out");
-    crate::code_rule_dsl::logic::plan::corpus::run(&program, dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
-    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap();
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, dir, None, out, "program", Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(out).unwrap();
     let text = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| r.get(c).to_string();
     let num = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| u32::try_from(r.get(c).int().expect("a number")).unwrap();
     Graph {
@@ -150,6 +153,9 @@ fn compare(rule: &std::path::Path, adjust: &Adjust, files: &[(String, String)], 
 /// `reference_rows`, which its relational stages read.
 #[test]
 fn reference_edge_is_ws_reference_graph_on_the_fixtures() {
+    // Every event of the two policies, each run and compared with W's graph: about 11 minutes on CI's 4-vCPU runner (2
+    // cores, hyperthreaded) beside the rest of its leg, past a test's 10. More than that, never hours.
+    crate::test_watchdog::allow(std::time::Duration::from_secs(1500));
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("references");
     let mut seen = Seen::default();
     let mut skipped = 0;
@@ -268,4 +274,53 @@ fn reference_edge_is_ws_reference_graph_on_projects() {
         assert!(seen.vias.contains_key(via), "no edge {via}: {:?}", seen.vias);
     }
     assert!(seen.open > 0, "no open definition");
+}
+
+#[test]
+fn reference_edge_matches_the_eager_graph_after_git_cache_reuse() {
+    use crate::code_rule_dsl::logic::plan::corpus::with_tape_cache_path;
+    use crate::content_store::{ContentStore, analysis_scope::AnalysisRun};
+    use crate::git_workspace::snapshot::Snapshot;
+
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    write_files(&repo, PACKAGE.into_iter());
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgSign=false"])
+            .args(args).current_dir(&repo).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    };
+    git(&["init", "-q"]);
+    for (path, _) in PACKAGE {
+        git(&["add", "--", path]);
+    }
+    git(&["commit", "-qm", "reference fixtures"]);
+    let program = convert(&rule_file(CHECKS[0]).unwrap(), &Adjust {
+        scope: Some((vec!["**".to_owned()], Vec::new())),
+        ..Adjust::default()
+    }).unwrap_or_else(|failure| panic!("{failure}")).program;
+    let setting = program.lines().find(|line| line.starts_with(".references ")).unwrap();
+    let store = root.path().join("retained.sqlite");
+    let graph_at = |id: &str| {
+        let snapshot = Snapshot::scoped(&repo, "HEAD", "links").unwrap();
+        let mut analysis = AnalysisRun::begin(ContentStore::open(&store).unwrap(), "named:links", id).unwrap();
+        let graph = with_tape_cache_path(&store, Some((snapshot.root().to_owned(), analysis.owner.clone())), || ours_at(snapshot.root(), &root.path().join(id), setting));
+        analysis.finish(true).unwrap();
+        graph
+    };
+    let before = ours(&repo, setting);
+    assert!(before.edges.iter().any(|(_, via)| via == "param_type"));
+    assert!(!before.open.is_empty());
+    assert_eq!(graph_at("cold"), before);
+    assert_eq!(graph_at("warm"), before);
+    let conn = repo.join("pkg/conn.py");
+    let changed = std::fs::read_to_string(&conn).unwrap().replace("def close", "def shutdown");
+    std::fs::write(conn, changed).unwrap();
+    git(&["add", "--", "pkg/conn.py"]);
+    git(&["commit", "-qm", "remove a method binding"]);
+    let after = ours(&repo, setting);
+    assert_ne!(after, before);
+    assert_eq!(graph_at("edited"), after);
+    rerail_accel::upkeep::retire_files_under(root.path());
 }

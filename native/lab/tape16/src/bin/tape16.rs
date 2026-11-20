@@ -5,7 +5,7 @@
 //!              (A: codec, layout, cut, dict, k, extras, dictcut; all = every one but codec and dictcut)
 //! tape16 text  <cap>                                    T6, E5: text levels against the stored source
 //! tape16 edits <pairs.cap>                              T7, E4: blocks and rows an edit changes, per identity
-//! tape16 writer <cap> (--features lean for A)           E6: format 16's writer against format 15's, on .rr files
+//! tape16 writer <cap> (--features lean for A)           E6: format 16's writer against format 15's, on .rerail files
 //! tape16 keys  <cap>                                    E8: widths every key and count needs
 //! tape16 scan  <cap>                                    T5 on Metal: positions, depth, parents, ends from events
 //! tape16 dicts <cap>                                    T4: the dictionary size training gives per size asked
@@ -654,7 +654,7 @@ fn columns_row(name: &str, corpus: &Corpus, test: &[&solution::Prepared], ins: &
     println!(" {:.0} | {:.2} | {:.1} | {:.1} | {ok} |", total * 1e6, total * 1e9 / nodes as f64, cpu_nanos as f64 / 1e6, cpu_nanos as f64 / nodes as f64);
 }
 
-/// E6: format 16's writer against format 15's on the captured `.rr` files (tag 13); with `--features lean`,
+/// E6: format 16's writer against format 15's on the captured `.rerail` files (tag 13); with `--features lean`,
 /// the lean parse too (A), else A is left out.
 fn cmd_writer(path: &str) {
     use rerail_tape_lab::measure::cost;
@@ -686,7 +686,7 @@ fn cmd_writer(path: &str) {
         }
     }
     let m = |x: &rerail_tape_lab::measure::Cost| x.instructions as f64 / 1e6;
-    println!("{path}: {} .rr files, {nodes} nodes, {} KB of source; images equal to the capture: {same}\n", files.len(), bytes / 1024);
+    println!("{path}: {} .rerail files, {nodes} nodes, {} KB of source; images equal to the capture: {same}\n", files.len(), bytes / 1024);
     println!("| part | M instructions | instructions/node | ms |");
     println!("|---|---|---|---|");
     if cfg!(feature = "lean") {
@@ -1762,6 +1762,57 @@ fn cmd_f16(path: &str) {
     }
 }
 
+/// Decision 0426 §6: 16z's pieces by compressor, HC 9 against lower levels and LZ4's fast one (`zlevel.rs`).
+fn cmd_zlevel(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let title = format!("{path}, {} ({tag})", capture::language(*tag));
+        match rerail_tape_lab::zlevel::run(fs) {
+            Ok(r) => rerail_tape_lab::zlevel::print(&title, &r),
+            Err(e) => println!("### {title}\n\n{e}\n"),
+        }
+    }
+}
+
+/// Decision 0426 §5 (step 5): 16z's pieces as LZ4 sequences of node-range matches, against HC 9 (`zlevel.rs`).
+fn cmd_zrange(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let title = format!("{path}, {} ({tag})", capture::language(*tag));
+        match rerail_tape_lab::zlevel::ranges(fs) {
+            Ok(r) => rerail_tape_lab::zlevel::print_ranges(&title, &r),
+            Err(e) => println!("### {title}\n\n{e}\n"),
+        }
+    }
+}
+
+/// Decision 0426 §6: the writer's ops in CLIF against the reference writer, on every file (`zlevel.rs`).
+fn cmd_zops(path: &str) {
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(f);
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, fs) in &by_tag {
+        let title = format!("{path}, {} ({tag})", capture::language(*tag));
+        match rerail_tape_lab::zlevel::ops(fs) {
+            Ok(r) => rerail_tape_lab::zlevel::print_ops(&title, &r),
+            Err(e) => println!("### {title}\n\n{e}\n"),
+        }
+    }
+}
+
 /// E25 (t39 step 17): every code the grammar allows, checked against every node of the capture (`gcodes.rs`).
 #[cfg(feature = "grammar")]
 fn cmd_gcodes(path: &str) {
@@ -1922,6 +1973,9 @@ fn main() {
         "code8" => cmd_code8(path),
         "nofield" => cmd_nofield(path),
         "f16" => cmd_f16(path),
+        "zlevel" => cmd_zlevel(path),
+        "zops" => cmd_zops(path),
+        "zrange" => cmd_zrange(path),
         "f16w" => cmd_f16w(path),
         #[cfg(target_os = "macos")]
         "f16-gpu" => cmd_f16_gpu(path),

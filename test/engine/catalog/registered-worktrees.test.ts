@@ -1,20 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { existsSync, mkdtempSync } from "node:fs";
+import { copyFile, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { recordCheckout, recordStartedWorktree } from "../../../src/engine/catalog/repository-registry.js";
-import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
-import { runGit } from "../../../src/engine/git.js";
+import { pruneCheckouts, recordCheckout, recordStartedWorktree } from "../../../src/engine/catalog/repository-registry.js";
+import { repositoryIdentityLocation, worktreeRegistry } from "../../../src/engine/catalog/repository-identity.js";
+import { runGitBytes } from "../../../src/engine/git.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { checkouts } from "../../../src/engine/storage/schema.js";
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
-  return { ...actual, runGit: vi.fn(actual.runGit) };
+  return { ...actual, runGitBytes: vi.fn(actual.runGitBytes) };
 });
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -29,7 +30,7 @@ function git(cwd: string, ...args: string[]): void {
 /** A started repository's main checkout, recorded, with one `.git` file naming its Git folder. */
 async function startedRepository() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-registered-worktrees-")));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  cleanups.push(() => removeFolder(root));
   const main = join(root, "main");
   await mkdir(main);
   git(main, "init", "--quiet");
@@ -49,13 +50,39 @@ function caseInsensitiveFilesystem(): boolean {
   try {
     return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
   } finally {
-    rmSync(probe, { recursive: true, force: true });
+    removeFolderSync(probe);
   }
 }
 
-const worktreeLists = () => vi.mocked(runGit).mock.calls.filter(([, args]) => args[0] === "worktree").length;
+const worktreeLists = () => vi.mocked(runGitBytes).mock.calls.filter(([, args]) => args[0] === "worktree").length;
 
 describe("recordStartedWorktree", () => {
+  it.skipIf(process.platform === "win32").each([false, true])("registers and preserves a worktree with a newline (legacy Git: %s)", async legacy => {
+    const { root, main, database } = await startedRepository();
+    const path = join(root, "feature\nsecond line");
+    git(main, "worktree", "add", "--quiet", "--detach", path);
+    const actual = (await vi.importActual<typeof import("../../../src/engine/git.js")>("../../../src/engine/git.js")).runGitBytes;
+    await vi.mocked(runGitBytes).withImplementation((cwd, args, options) => legacy && args.includes("-z")
+      ? { status: 129, stdout: Buffer.alloc(0), stderr: "unknown switch" } : actual(cwd, args, options), async () => {
+      expect(worktreeRegistry(main)?.worktrees).toEqual([main, path]);
+      expect(recordStartedWorktree(database, path, repositoryIdentityLocation(path))).toBe(true);
+      database.$client.prepare("INSERT INTO rule_settings(owner_kind,owner_id,folder,target_kind,target_id,\"on\",updated_at) VALUES ('checkout',?,'','rule','r',0,1)").run(path);
+      expect(await pruneCheckouts(database)).toEqual([]);
+      expect(database.$client.prepare("SELECT owner_id FROM rule_settings WHERE owner_kind='checkout'").pluck().all()).toEqual([path]);
+    });
+  });
+
+  it("reads the replacement checkout's common directory when a linked worktree path changes hands", async () => {
+    const a = await startedRepository(), b = await startedRepository();
+    const path = join(a.root, "linked"), moved = join(a.root, "moved");
+    git(a.main, "worktree", "add", "--quiet", "--detach", path);
+    expect(worktreeRegistry(path)).toMatchObject({ commonDirectory: join(a.main, ".git"), worktrees: [a.main, path] });
+    git(a.main, "worktree", "move", path, moved);
+    expect(worktreeRegistry(path)).toBeUndefined();
+    git(b.main, "worktree", "add", "--quiet", "--detach", path);
+    expect(worktreeRegistry(path)).toMatchObject({ commonDirectory: join(b.main, ".git"), worktrees: [b.main, path] });
+    expect(worktreeRegistry(moved)).toMatchObject({ commonDirectory: join(a.main, ".git"), worktrees: [a.main, moved] });
+  });
   it("asks Git once for a .git file it does not list, however often that folder is looked at", async () => {
     const { database, forged } = await startedRepository();
     const location = repositoryIdentityLocation(forged);

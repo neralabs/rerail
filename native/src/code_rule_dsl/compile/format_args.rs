@@ -5,9 +5,8 @@ use super::ast_rule::{compile_ast_rule, validate_ast_rule};
 use super::parse::{capture_name, compile_sub_rule, validate_sub_rule};
 use super::utils::{UtilIds, UtilScope};
 use crate::code_rule_dsl::json::{invalid, non_empty_str, object, reject_unknown};
-use crate::code_rule_dsl::language::adapter::{
-    FormatArgFeature, gate,
-};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use crate::code_rule_dsl::language::adapter::{FormatArgFeature, gate};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{
@@ -17,7 +16,6 @@ use crate::code_rule_dsl::model::Limits;
 use napi::Result;
 use serde_json::Value;
 use std::collections::BTreeSet;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 const KEYS: &[&str] = &["style", "string", "args", "unused", "missing"];
 
@@ -36,7 +34,11 @@ fn style(value: &Value, path: &str) -> Result<Style> {
 
 /// Whether `A`'s format strings follow their bindings (`FormatArgRules::FOLLOWS_STRINGS`), once
 /// `A` reads `style`'s format calls.
-fn follows_strings(pack: &dyn language_pack::LanguagePack, path: &str, style: Style) -> Result<bool> {
+fn follows_strings(
+    pack: &dyn language_pack::LanguagePack,
+    path: &str,
+    style: Style,
+) -> Result<bool> {
     gate(
         &format!("{path}/style"),
         pack.format_args_feature(FormatArgFeature::Style(style)),
@@ -88,7 +90,10 @@ pub(super) fn compile_format_args(
     utils: &UtilScope,
 ) -> Result<AstMatcher> {
     let style = style(value, path)?;
-    let follows = { let pack = language_pack::pack(Family::of(language)); follows_strings(pack, path, style) }?;
+    let follows = {
+        let pack = language_pack::pack(Family::of(language));
+        follows_strings(pack, path, style)
+    }?;
     let unused = value
         .get("unused")
         .map(|unused| compile_ast_rule(unused, language, &format!("{path}/unused"), gaps, utils))

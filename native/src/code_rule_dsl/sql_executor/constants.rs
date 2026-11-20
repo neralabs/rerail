@@ -33,7 +33,7 @@ pub fn uses_integer_domain(query: &Query) -> bool {
         {
             e.visit(&mut |e| {
                 if let E::Scalar(q) | E::Exists { query: q, .. } = e {
-                    found |= block(&q);
+                    found |= block(q);
                 }
             });
         }

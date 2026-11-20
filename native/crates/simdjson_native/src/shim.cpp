@@ -25,14 +25,23 @@
 #include "simdjson.h"
 #include "simdjson.cpp"
 
-// A lambda inlined where it is called.
+// MSVC emits the instructions named by its intrinsics. GCC and Clang also need a per-function target.
+#if defined(_MSC_VER) && !defined(__clang__)
+#define RERAIL_TARGET(T)
+#define simdjson_inline_lambda
+#else
+#define RERAIL_TARGET(T) __attribute__((target(T)))
 #define simdjson_inline_lambda __attribute__((always_inline))
+#endif
 
 #include <array>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 #if SIMDJSON_IMPLEMENTATION_ARM64
 #include <arm_neon.h>
 #if defined(__linux__)
@@ -40,7 +49,9 @@
 #endif
 #endif
 #if SIMDJSON_IS_X86_64
+#if !defined(_MSC_VER)
 #include <cpuid.h>
+#endif
 #include <immintrin.h>
 #endif
 
@@ -50,6 +61,9 @@
 #if defined(__clang__)
 #define RERAIL_TARGET_REGION(T) _Pragma(RERAIL_STRINGIFY(clang attribute push(__attribute__((target(T))), apply_to = function)))
 #define RERAIL_UNTARGET_REGION _Pragma("clang attribute pop")
+#elif defined(_MSC_VER)
+#define RERAIL_TARGET_REGION(T)
+#define RERAIL_UNTARGET_REGION
 #else
 #define RERAIL_TARGET_REGION(T) _Pragma("GCC push_options") _Pragma(RERAIL_STRINGIFY(GCC target(T)))
 #define RERAIL_UNTARGET_REGION _Pragma("GCC pop_options")
@@ -99,6 +113,14 @@ struct rerail_v9np_sink {
   uint8_t code_value[36];
   // The source's SHA-256.
   uint8_t digest[32];
+  // Format 16 (decision 0426): where `ev` is set, the walk writes no column. Each node is an event of three
+  // words appended to `ev` (`EV_OPEN | id << 8, start, 0`; `EV_LEAF | id << 8, start, end`; `EV_CLOSE, end, 0`,
+  // `id` the node's code), and `flush` is called with `ev_len` words when `ev_cap` are full and at the end: the
+  // caller gives them to format 16's ops. A walk never edits a node it wrote.
+  uint32_t* ev;
+  uint32_t ev_len;
+  uint32_t ev_cap;
+  void (*flush)(rerail_v9np_sink* sink);
 };
 
 // --- SHA-256 ------------------------------------------------------------------------------------------
@@ -140,7 +162,13 @@ struct sha256_portable {
   simdjson_inline void block(const uint8_t* p) {
     uint32_t w[16];
     std::memcpy(w, p, sizeof(w));
-    for (int i = 0; i < 16; i++) { w[i] = __builtin_bswap32(w[i]); }
+    for (int i = 0; i < 16; i++) {
+#if defined(_MSC_VER)
+      w[i] = _byteswap_ulong(w[i]);
+#else
+      w[i] = __builtin_bswap32(w[i]);
+#endif
+    }
     uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], k = h[7];
 #define RERAIL_SCHEDULE(i)                                                                                  \
   (w[(i) & 15] += (rotr(w[((i) - 2) & 15], 17) ^ rotr(w[((i) - 2) & 15], 19) ^ (w[((i) - 2) & 15] >> 10)) + \
@@ -189,7 +217,7 @@ struct sha256_arm {
     abcd = vld1q_u32(SHA_H);
     efgh = vld1q_u32(SHA_H + 4);
   }
-  __attribute__((target(RERAIL_ARM_SHA))) simdjson_inline void block(const uint8_t* p) {
+  RERAIL_TARGET(RERAIL_ARM_SHA) simdjson_inline void block(const uint8_t* p) {
     uint32x4_t m0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p)));
     uint32x4_t m1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p + 16)));
     uint32x4_t m2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p + 32)));
@@ -246,13 +274,13 @@ bool cpu_has_sha() {
 // time (`sha256msg1`, `sha256msg2`).
 struct sha256_ni {
   __m128i abef, cdgh;
-  __attribute__((target(RERAIL_NI_SHA))) sha256_ni() {
+  RERAIL_TARGET(RERAIL_NI_SHA) sha256_ni() {
     const __m128i cdab = _mm_shuffle_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i*>(SHA_H)), 0xB1);
     const __m128i efgh = _mm_shuffle_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i*>(SHA_H + 4)), 0x1B);
     abef = _mm_alignr_epi8(cdab, efgh, 8);
     cdgh = _mm_blend_epi16(efgh, cdab, 0xF0);
   }
-  __attribute__((target(RERAIL_NI_SHA))) simdjson_inline void block(const uint8_t* p) {
+  RERAIL_TARGET(RERAIL_NI_SHA) simdjson_inline void block(const uint8_t* p) {
     const __m128i swap = _mm_set_epi64x(0x0c0d0e0f08090a0bULL, 0x0405060700010203ULL);
     __m128i m[4];
     for (int i = 0; i < 4; i++) { m[i] = _mm_shuffle_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(p + 16 * i)), swap); }
@@ -272,7 +300,7 @@ struct sha256_ni {
     abef = _mm_add_epi32(s0, abef);
     cdgh = _mm_add_epi32(s1, cdgh);
   }
-  __attribute__((target(RERAIL_NI_SHA))) void words(uint32_t* out) const {
+  RERAIL_TARGET(RERAIL_NI_SHA) void words(uint32_t* out) const {
     const __m128i feba = _mm_shuffle_epi32(abef, 0x1B);
     const __m128i dchg = _mm_shuffle_epi32(cdgh, 0xB1);
     _mm_storeu_si128(reinterpret_cast<__m128i*>(out), _mm_blend_epi16(feba, dchg, 0xF0));      // DCBA
@@ -282,8 +310,16 @@ struct sha256_ni {
 
 // Whether this CPU has SHA-NI (CPUID leaf 7, EBX bit 29).
 bool cpu_has_sha() {
+#if defined(_MSC_VER)
+  int registers[4];
+  __cpuid(registers, 0);
+  if (registers[0] < 7) { return false; }
+  __cpuidex(registers, 7, 0);
+  return (registers[1] & (1u << 29)) != 0;
+#else
   unsigned a = 0, b = 0, c = 0, d = 0;
   return __get_cpuid_count(7, 0, &a, &b, &c, &d) && (b & (1u << 29)) != 0;
+#endif
 }
 #endif
 

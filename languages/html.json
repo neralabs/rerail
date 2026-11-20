@@ -23,5 +23,19 @@
     "calls": "not-supported-yet",
     "formatArgs": "not-supported-yet"
   },
-  "suppressions": []
+  "suppressions": [],
+  "embeds": [
+    {
+      "language": "javascript",
+      "via": "raw-text"
+    },
+    {
+      "language": "json",
+      "via": "raw-text"
+    },
+    {
+      "language": "css",
+      "via": "raw-text"
+    }
+  ]
 }

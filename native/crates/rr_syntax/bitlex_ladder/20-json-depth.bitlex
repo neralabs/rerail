@@ -1,4 +1,4 @@
-# `.rr`, step 20: a policy document nested deeper than the JSON reader's limit.
+# `.rerail`, step 20: a policy document nested deeper than the JSON reader's limit.
 #
 #   .policy {"a": [[[ … ]]]}
 #

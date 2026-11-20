@@ -13,9 +13,10 @@ pub const HEADER_LEN: usize = HEADER;
 
 /// What admission reads of format 16 (for a reader that does not link the format's crate).
 pub use rerail_tape_format::f16::{Tape16Z, placement};
+pub use rerail_tape_format::home::{Home, Room};
 
 /// A stored image's format, from its magic: the device reads format 15's columns and format 16's arrays in place;
-/// a 16z image is laid out as the format 16 tape it is the blocks of where it is placed (its pieces decoded on the device, `residency::slabs`).
+/// a 16z image is placed as stored and read through a cache of its decoded blocks (decision 0353 step 4b).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stored {
     F15,
@@ -85,7 +86,7 @@ pub fn header_counts(header: &[u8]) -> Result<(usize, usize), String> {
     }
     Ok((u64_at(header, header::NODES)?, u64_at(header, header::CODES)?))
 }
-const _: () = assert!(HEADER == HEADER_BYTES && HEADER % COLUMN_ALIGN == 0);
+const _: () = assert!(HEADER == HEADER_BYTES && HEADER.is_multiple_of(COLUMN_ALIGN));
 
 /// Where an image's columns and tables are, as byte offsets from the image's start.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

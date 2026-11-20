@@ -1,4 +1,4 @@
-//! A program read from its image (`body::Placed::of_program`, decision 0173): its other fields beside its rules, by
+//! A program read from its image (`body::Placed::whole`, decision 0173): its other fields beside its rules, by
 //! name, as the tree passes read `Program`'s (`keeps::choose`, `demand::split_negations`; t36 item 6), and as `plan::run`
 //! reads them (t36 item 7). A maintained program's `again` and `together` are not here: they are `body::Maint`'s.
 
@@ -328,22 +328,25 @@ impl<'v> Fields<'v> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::front::{Atom, LatticeDecl, Literal, Native, Program, Rule, Term};
-    use super::super::body::{Placed, Versions};
+    use super::super::super::front::{LatticeDecl, Native};
+    use super::super::super::program_facts::Field;
+    use super::super::super::program_image::{Builder, T, fields::FieldsMut};
+    use super::super::body::{Freeze as _, Placed, Versions};
     use super::Fields;
 
-    /// A version's fields are read once, shared by its clones, and say the tree's fields.
+    /// A version's fields are read once, shared by its clones, and say what was written.
     #[test]
-    fn fields_are_read_once_and_say_the_trees() {
-        let atom = |rel: &str, args: &[&str]| Atom { rel: rel.into(), args: args.iter().map(|a| Term::Var((*a).into())).collect::<Vec<_>>().into(), neg: false, gated: false };
-        let mut p = Program::default();
-        p.decls.insert("e".into(), [("a".into(), "int".into()), ("b".into(), "sym".into())].into());
-        p.inputs = vec!["e".into(), "s".into()];
-        p.outputs = vec!["best".into(), "far".into()];
-        p.rules = vec![Rule { head: atom("best", &["x", "y"]), body: vec![Literal::Atom(atom("e", &["x", "y"]))].into() }];
-        p.lattice.insert("best".into(), LatticeDecl { keys: 1, ty: "sym".into(), merge: Some("type_join".into()), widen: Some(2) });
-        p.natives.insert("far".into(), Native::DfsFirst { edge: "e".into(), target: "s".into(), roots: Some("s".into()) });
-        let placed = Placed::of_program(&p).unwrap();
+    fn fields_are_read_once_and_say_what_was_written() {
+        let mut b = Builder::base();
+        b.fields().declare("e", &[("a", "int"), ("b", "sym")]);
+        b.fields().add_input("e");
+        b.fields().add_input("s");
+        b.fields().add_output("best");
+        b.fields().add_output("far");
+        b.rule().head("best", &[T::Var("x"), T::Var("y")]).atom("e", &[T::Var("x"), T::Var("y")]).finish().unwrap();
+        b.fields().set_field(Field::Lattice(&[("best".to_owned(), LatticeDecl { keys: 1, ty: "sym".into(), merge: Some("type_join".into()), widen: Some(2) })].into()));
+        b.fields().set_field(Field::Natives(&[("far".to_owned(), Native::DfsFirst { edge: "e".into(), target: "s".into(), roots: Some("s".into()) })].into()));
+        let placed = b.freeze().unwrap();
         let f = Fields::of(&placed).unwrap();
         assert!(std::ptr::eq(f.about, Fields::of(&placed.clone()).unwrap().about));
         assert_eq!(f.inputs().collect::<Vec<_>>(), ["e", "s"]);
@@ -358,19 +361,17 @@ mod tests {
             s => panic!("{s:?}"),
         }
         // The run's version 0 is the program's.
-        let vs = Versions::with(&p, placed.clone());
+        let vs = Versions::of_placed(placed.clone());
         assert!(std::ptr::eq(vs.fields(0).unwrap().about, f.about));
         assert!(vs.fields(1).is_none());
         // A whole program added (a maintained form) is a whole version of its own.
         let mut vs = vs;
-        let mut form = Program::default();
-        form.decls.insert("e".into(), [("a".into(), "int".into())].into());
-        form.inputs = vec!["e".into()];
-        let k = vs.push(Placed::of_program(&form).unwrap());
+        let mut form = Builder::base();
+        form.fields().declare("e", &[("a", "int")]);
+        form.fields().add_input("e");
+        let k = vs.push(form.freeze().unwrap());
         assert_eq!(k, 1);
         assert_eq!((vs.whole(k).inputs().collect::<Vec<_>>(), vs.whole(k).columns("e")), (vec!["e"], Some(vec![("a", "int")])));
         assert!(vs.fields(2).is_none());
-        // A version of rules alone has none.
-        assert!(Fields::of(&Placed::made(&p.rules).unwrap()).is_none());
     }
 }

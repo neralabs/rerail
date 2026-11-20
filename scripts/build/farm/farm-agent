@@ -655,10 +655,19 @@ def busy():
     return out
 
 
+# A target used this recently is kept while the disk is over `min_free_gb`, under the headroom
+# above it: a host whose own data holds it there (an M3 at 50-60 GB free, the farm's part 67 GB of
+# it) had every target no command held that minute removed by each sweep, and the next command of
+# its checkout rebuilt it whole; runs never reached their tests (2026-11-18).
+RECENT_TARGET_SECONDS = 2 * 3600
+
+
 def prune(keep, min_free_gb):
     """Removes test target directories of TARGETS (never anything else): those unused for TARGET_DAYS,
-    then the least recently used while the disk is short of `min_free_gb`. Never one a command is
-    running in (its lock is held): removing those failed other checkouts' builds mid-run (2026-11-16)."""
+    then the least recently used while the disk is short of `min_free_gb` + PRUNE_HEADROOM_GB: under
+    the headroom only those unused for RECENT_TARGET_SECONDS, under `min_free_gb` itself any. Never
+    one a command is running in (its lock is held): removing those failed other checkouts' builds
+    mid-run (2026-11-16)."""
     import shutil, time
     used = []
     for name in os.listdir(TARGETS):
@@ -671,7 +680,8 @@ def prune(keep, min_free_gb):
             used.append((0, d))
     used.sort()
     for when, d in used:
-        if time.time() - when > TARGET_DAYS * 86400 or free_gb() < min_free_gb + PRUNE_HEADROOM_GB:
+        age, free = time.time() - when, free_gb()
+        if age > TARGET_DAYS * 86400 or free < min_free_gb or (free < min_free_gb + PRUNE_HEADROOM_GB and age > RECENT_TARGET_SECONDS):
             lock = target_lock(os.path.basename(d), True)
             if lock is None:
                 continue
@@ -924,9 +934,14 @@ def tidy_root(min_free_gb):
     except OSError:
         pass
     open(stamp, "w").close()
+    import warnings
     try:
-        if os.fork():
-            return
+        # (Python 3.12, the Linux hosts' own, warns at every fork of a process with threads, into
+        # the command's output: the child here holds to the rule below.)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            if os.fork():
+                return
     except OSError:
         return
     # The child: only file system calls from here, never this process's streams or threads' locks.

@@ -154,18 +154,18 @@ The async workload uses an unbound suffix, and its generated SQL is unchanged by
 The nine composition tests and four retained-demand tests pass.
 The new prefix test checks ordinary text, Unicode, prefixes longer than 4,096 characters, and a mismatching already-bound suffix.
 
-Evidence is in [`shape-regression`](../../benchmark/async-family-integration/shape-regression/README.md).
+Evidence is in `shape-regression` (`packs/data-layer/upstream/benchmarks/authored/async-family-integration/shape-regression/README.md`).
 
 ## Reproduction
 
 Use the profiling test binary and the corpus identified in the evidence manifest. Run all builds and workloads at nice level 19.
 
 ```sh
-nice -n 19 python3 benchmark/async-family-integration/shape-lab.py \
+nice -n 19 python3 packs/data-layer/upstream/benchmarks/authored/async-family-integration/shape-lab.py \
   --binary "$RERAIL_TEST_BINARY" --corpus "$RERAIL_CORPUS" \
   --out "$RERAIL_RESULTS" --mode timings
 
-nice -n 19 python3 benchmark/async-family-integration/shape-lab.py \
+nice -n 19 python3 packs/data-layer/upstream/benchmarks/authored/async-family-integration/shape-lab.py \
   --binary "$RERAIL_TEST_BINARY" --corpus "$RERAIL_CORPUS" \
   --out "$RERAIL_RESULTS" --mode replay --cases "$RERAIL_CASES"
 ```

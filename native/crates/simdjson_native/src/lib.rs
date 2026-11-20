@@ -8,6 +8,10 @@
 //! - `Kernel`: stage 1 with the source's SHA-256 in it and our stage 2, which writes the tape into the
 //!   caller's buffers (`Sink`). One for each implementation, with the CPU's SHA-256 instructions and
 //!   without: `Kernel::ALL` lists them best first, and `Kernel::runs` says which this CPU runs.
+//!
+//! Nothing on MSVC, which compiles none of the C++ (GCC and Clang target regions and attributes): the
+//! engine reads JSON there without simdjson (`json_parser::fallback`).
+#![cfg(not(all(windows, target_env = "msvc")))]
 
 use std::ffi::{CStr, c_char};
 
@@ -42,6 +46,12 @@ pub struct Sink {
     pub code_field: [u16; 36],
     pub code_value: [u8; 36],
     pub digest: [u8; 32],
+    /// Format 16 (decision 0426): where `ev` is set, the walk writes no column but each node's event, three words,
+    /// and calls `flush` with `ev_len` words when `ev_cap` are full and at the end (`rerail_simdjson::events_with`).
+    pub ev: *mut u32,
+    pub ev_len: u32,
+    pub ev_cap: u32,
+    pub flush: unsafe extern "C" fn(*mut Sink),
 }
 
 /// A v9np kernel: simdjson's stage 1 for one of its implementations, the source hashed in it, and our

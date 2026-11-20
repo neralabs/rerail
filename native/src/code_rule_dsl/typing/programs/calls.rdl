@@ -31,15 +31,15 @@
 .decl host_node(n: node, h: node)
 .input parsed, host_node
 // Libraries (t21): the run's settings, the file system the library rules read, and the documents they load. The
-// rules are Python's (python/modules.rr, which reads python/env.rr): an import resolved into typeshed's standard
+// rules are Python's (python/modules.rerail, which reads python/env.rerail): an import resolved into typeshed's standard
 // library loads that stub as a document named by its module, so the program reads it as it reads a workspace file.
 .decl env(key: sym, value: sym)
 .decl dir_entry(dir: sym, name: sym, is_dir: int)
 .decl file_line(path: sym, i: int, text: sym)
 .decl load(path: sym, module: sym, grammar: sym)
 .decl loaded(path: sym, module: sym, grammar: sym)
-#include "python/modules.rr"
-#include "python/conditions.rr"
+#include "python/modules.rerail"
+#include "python/conditions.rerail"
 
 .kindset scope = "module" | "function_definition" | "class_definition" | "lambda"
 // What a name in a scope sees when its own scope does not bind it: class scopes are skipped.
@@ -650,6 +650,9 @@ qn($n, $q) :- look($n, $x, $s), ibind($s, $x, $q).
 qn($n, @cat($q, $a)) :- attr_of($n, $o, $a), qn($o, $q).
 // What a workspace qualified name denotes: a module, or a module-level binding of one.
 .decl qv(q: sym, k: sym, v: node)
+// A qualified name's attribute is bound a few times at most: `qv("builtins.object", "cls", c)` gives the few class
+// nodes of one name, so a rule pairing them with every reference is no node product (Q249).
+.layout qv fanout(q, k -> v, few)
 qv($q, "mod", $m) :- modname($m, $q).
 qv(@cat($q, $x), $k, $v) :- modname($m, $q), bv($m, $x, $k, $v).
 .decl isqmod(q: sym)
@@ -813,7 +816,9 @@ bq($n, $q) :- builtin_ref($n, $x), $x != "super", $x != "object", $q = @cat("bui
 pv($n, $k, $v) :- bq($n, $q), qv($q, $k, $v).
 // `object` as an attribute's receiver (`object.__getattribute__(v, "x")`, `object.__setattr__`) is the class itself, one
 // definite value: its methods are the attribute.
-pv($o, "cls", $c) :- attr_of(_, $o, _), builtin_ref($o, "object"), qv("builtins.object", "cls", $c).
+// The class a builtin name names, by its qualified name (a join on the name: the reference and the class are not
+// a product of two node ranges, which the product-demand pass refuses for an output).
+pv($o, "cls", $c) :- attr_of(_, $o, _), builtin_ref($o, $x), $x = "object", $q = @cat("builtins", $x), qv($q, "cls", $c).
 .decl lit_cls(kind: sym, q: sym)
 lit_cls("integer", "builtins.int"). lit_cls("float", "builtins.float"). lit_cls("string", "builtins.str").
 lit_cls("concatenated_string", "builtins.str"). lit_cls("true", "builtins.bool"). lit_cls("false", "builtins.bool").

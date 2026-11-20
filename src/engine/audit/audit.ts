@@ -8,6 +8,13 @@ export const AUDIT_STATUSES = ["running", "completed", "failed", "interrupted", 
 export type AuditScope = (typeof AUDIT_SCOPES)[number];
 export type AuditMode = (typeof AUDIT_MODES)[number];
 export type AuditStatus = (typeof AUDIT_STATUSES)[number];
+/**
+ * What started an audit. `ongoing`: the session's own work, an edit or a boundary checked as it happens (in flight).
+ * `scan`: someone asked for it (`rerail scan`, the first repository audit), and it finds what the checkout already
+ * holds. The dashboard's violations, counts and rule activity come from ongoing audits alone (`audit-history.ts`).
+ */
+export const AUDIT_ORIGINS = ["ongoing", "scan"] as const;
+export type AuditOrigin = (typeof AUDIT_ORIGINS)[number];
 
 /** Audits recorded before repository-owned rules: the rule's project-catalog applicability. */
 export interface LegacyAuditRuleProvenance {
@@ -79,7 +86,7 @@ export type AuditBlindReason = (typeof AUDIT_BLIND_REASONS)[number];
  */
 export const AUDIT_FAILURE_CODES = [
   "budget-exceeded", "file-budget-exceeded", "witness-limit", "input-limit", "missing-capability", "source-incomplete",
-  "source-partial", "adapter-error",
+  "source-partial", "adapter-error", "cache-unavailable",
 ] as const;
 
 export interface AuditFailure {
@@ -194,6 +201,8 @@ export interface AuditInput {
   workspaceRoot: string;
   scope: AuditScope;
   mode: AuditMode;
+  /** `ongoing` when absent. */
+  origin?: AuditOrigin;
   revision: number;
   /** Digest of the compiled code-rule catalog; null when the audit never reached evaluation. */
   catalogRevision: string | null;
@@ -211,7 +220,8 @@ export interface AuditResult {
   unlistedFailureCount?: number;
 }
 
-export interface AuditRecord extends Omit<AuditInput, "ruleProvenance"> {
+export interface AuditRecord extends Omit<AuditInput, "ruleProvenance" | "origin"> {
+  origin: AuditOrigin;
   ruleProvenance: AuditRuleProvenance[];
   auditId: string;
   startedAt: number;

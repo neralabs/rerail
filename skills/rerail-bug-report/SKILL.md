@@ -35,7 +35,9 @@ for that kind. The person decides; nothing leaves their computer until they say 
 
    It reports this repository's latest session. If the problem was in an earlier one, ask for its id, which is in its dashboard
    address (`sessionId=…`), and run `rerail support-bundle --json --session <id>` instead. Read the file the output's `path`
-   names. If the command fails, its message is your evidence: the kind is an engine bug, and there is no bundle to attach.
+   names. It can wait about 12 s for a busy daemon (a 2 s health check, then 10 s more), so give it a minute; if it is
+   stopped while it waits, read the file its waiting message names, which already holds a bundle. If the command fails, its
+   message is your evidence: the kind is an engine bug, and there is no bundle to attach.
 3. **Check the version.** Run `rerail update check`. If a newer version exists, say so and suggest `/rerail-update` and trying
    again before reporting. The person can still report it.
 4. **Work out the kind**, in this order, and stop at the first that fits:
@@ -43,7 +45,7 @@ for that kind. The person decides; nothing leaves their computer until they say 
    **Not a bug**, when one of these explains it:
 
    - `repository.state` is not `started`: Rerail is not on here. `/rerail-start` starts it.
-   - Nothing steered, and the rule's `on` is false or its `mode` is `log`: on Log, Rerail keeps a record and the agent is not
+   - Nothing steered, and the rule's `on` is false or its `mode` is `log`: on Log, Rerail only records it and the agent is not
      told. A Log rule that recorded fine code as a violation is still a rule bug.
    - The rule is not in `repository.rules`: it is not on in this repository, or its pack is not installed
      (`rerail packs add <id>`).

@@ -49,7 +49,7 @@ impl Observed {
         });
         running.insert(statement as usize, Running { receipt, vm_before });
         drop(running);
-        let first = sql.trim_start().split_whitespace().next().unwrap_or("");
+        let first = sql.split_whitespace().next().unwrap_or("");
         let recovery =
             first.eq_ignore_ascii_case("ROLLBACK") || first.eq_ignore_ascii_case("RELEASE");
         let admitted = self
@@ -95,7 +95,11 @@ pub struct Observer {
     pub shared: Arc<Observed>,
 }
 impl Observer {
-    /// The observer must drop before the connection. A later profiler can adopt `shared`.
+    /// A later profiler can adopt `shared`.
+    ///
+    /// # Safety
+    ///
+    /// The observer must drop before the connection: it registers a raw pointer to itself with SQLite.
     pub unsafe fn install(
         db: &Connection,
         ledger: Arc<Ledger>,

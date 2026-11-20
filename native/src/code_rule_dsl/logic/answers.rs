@@ -1,7 +1,7 @@
 //! Requests answered inside the fixpoint (decision 0065 §2a).
 //!
 //! A program's `answers` name request relations (`rr_dir_req`, `load`, …) and what an answer adds rows to
-//! (`dir_entry`, `loaded`, a loaded document's per-file rows). `front::strata` counts each produced relation as
+//! (`dir_entry`, `loaded`, a loaded document's per-file rows). `analyses::strata` counts each produced relation as
 //! reading its request, so a request that depends on its own answers is one recursive component with them, and the
 //! native fixpoint pauses for the runner to answer (`setfix`'s `request` and `produced`).
 //!
@@ -15,13 +15,13 @@
 //! Both passes are made on the program's version (decision 0241's form), reading its rules by their handles and its
 //! fields, never a tree.
 
-use super::front::{Edges, Program, tarjan};
-use super::magic::Gate;
+use super::front::{Edges, tarjan};
+use super::front::ast::Gate;
 use super::plan::body::Placed;
 use super::plan::fields::{Fields, FieldsData};
 use super::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
 use super::program_image::passes::{PartOf, Retain, SetAnswers};
-use super::program_image::{AtomRef, Builder, Lit, LitRef, PartFields, Rewrite, RuleRef, T, TermRef, Version};
+use super::program_image::{AtomRef, Builder, Lit, LitRef, PartFields, Rewrite, RuleBuilder, RuleRef, T, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
@@ -34,11 +34,6 @@ pub(in crate::code_rule_dsl) const HELD_BACK: &str = "rr_held_back:";
 /// joins only once they are bound.
 pub(in crate::code_rule_dsl) fn is_gate(rel: &str) -> bool {
     rel.starts_with("done_")
-}
-
-/// Every produced relation, with its request.
-pub fn produced(prog: &Program) -> BTreeMap<&str, &str> {
-    prog.answers.iter().flat_map(|(req, ps)| ps.iter().map(move |p| (p.as_str(), req.as_str()))).collect()
 }
 
 /// A term of `v`'s rule `r`, to write into a builder under `v`'s ids.
@@ -70,6 +65,22 @@ enum Out {
     DoneAll(String),
     Done(String, Vec<usize>, usize),
     Gated(usize),
+}
+
+impl Out {
+    /// This part of rule `r`'s rewritten body (`lits` its literals), written to `rb`.
+    fn put<'b, 'p>(&'b self, rb: RuleBuilder<'b, 'p>, v: &Version, r: RuleRef<'_>, lits: &[LitRef<'_>]) -> RuleBuilder<'b, 'p> {
+        match self {
+            Out::Copy(i) => rb.lit(v, r, lits[*i]),
+            Out::DoneAll(done) => rb.atom(done.as_str(), &[T::Int(0)]),
+            Out::Done(done, at, i) => {
+                let args: Vec<TermRef<'_>> = lits[*i].atom().expect("a negated atom").args().collect();
+                let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
+                rb.atom(done.as_str(), &key)
+            }
+            Out::Gated(i) => rb.lit_with(v, r, lits[*i], &mut Gated(v)),
+        }
+    }
 }
 
 /// A gate `gate` makes: its `done` relation, its `ask` (none: the whole relation's gate, `done_N(0)`), the negated
@@ -183,14 +194,13 @@ impl RulePass for GateRules<'_> {
                 outs.push(Out::DoneAll(done));
             } else {
                 let (ask, done) = (format!("ask_{rel}_{ad}"), format!("done_{rel}_{ad}"));
-                // The keys asked about: the rule's literals before the negation.
+                // The keys asked about: the rule's literals before the negation, as the rule is rewritten (`outs`
+                // so far): an earlier negation inside the component gated too, else the ask read it ungated and was
+                // recursive through that negation (`type_root`'s `!typing_sym(h, "Literal"), !annotated_meta(s, a)`).
                 let args: Vec<TermRef<'_>> = a.args().collect();
                 let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
-                let mut rb = out.rule().head(ask.as_str(), &key);
-                for &l in &lits[..i] {
-                    rb = rb.lit(v, r, l);
-                }
-                rb.finish()?;
+                let rb = out.rule().head(ask.as_str(), &key);
+                outs.iter().fold(rb, |rb, o| o.put(rb, v, r, &lits)).finish()?;
                 if !self.made.iter().any(|(d, ..)| *d == done) {
                     self.made.push((done.clone(), Some(ask), rel.to_owned(), cols));
                 }
@@ -201,20 +211,8 @@ impl RulePass for GateRules<'_> {
         if outs.iter().all(|o| matches!(o, Out::Copy(_))) {
             return Ok(Step::Keep);
         }
-        let mut rb = out.rule().head_from(v, r, r.head());
-        for o in &outs {
-            rb = match o {
-                Out::Copy(i) => rb.lit(v, r, lits[*i]),
-                Out::DoneAll(done) => rb.atom(done.as_str(), &[T::Int(0)]),
-                Out::Done(done, at, i) => {
-                    let args: Vec<TermRef<'_>> = lits[*i].atom().expect("a negated atom").args().collect();
-                    let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
-                    rb.atom(done.as_str(), &key)
-                }
-                Out::Gated(i) => rb.lit_with(v, r, lits[*i], &mut Gated(v)),
-            };
-        }
-        rb.finish()?;
+        let rb = out.rule().head_from(v, r, r.head());
+        outs.iter().fold(rb, |rb, o| o.put(rb, v, r, &lits)).finish()?;
         Ok(Step::Written)
     }
     /// The gates' relations, and each `done` fed from its `ask` once what its relation reads inside the component is
@@ -224,10 +222,10 @@ impl RulePass for GateRules<'_> {
         let f = Fields::over(cx.v(), d);
         for (done, ask, rel, cols) in &self.made {
             let decl: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            b.declare(done, &decl);
+            b.fields().declare(done, &decl);
             match ask {
                 Some(ask) => {
-                    b.declare(ask, &decl);
+                    b.fields().declare(ask, &decl);
                     let vs: Vec<String> = (0..cols.len()).map(|i| format!("_g{i}")).collect();
                     let vs: Vec<T<'_>> = vs.iter().map(|x| T::Var(x.as_str())).collect();
                     b.rule().head(done.as_str(), &vs).atom(ask.as_str(), &vs).finish()?;
@@ -257,7 +255,7 @@ impl ProgramPass for GateFields<'_, '_> {
         let names: BTreeSet<String> = g.made.iter().map(|(d, ..)| d.clone()).collect();
         let mut reads: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for r in w_.rules() {
-            for a in r.reads().filter(|a| !(a.neg() && a.gated()) && !names.contains(w_.rel_name(a.rel()))) {
+            for a in r.reads().filter(|a| !((a.neg() && a.gated()) || names.contains(w_.rel_name(a.rel())))) {
                 reads.entry(w_.rel_name(r.head().rel()).to_owned()).or_default().insert(w_.rel_name(a.rel()).to_owned());
             }
         }
@@ -291,8 +289,8 @@ impl ProgramPass for GateFields<'_, '_> {
         }
         cx.decide("gated", || format!("{} gates in {} answered components", gates.len(), g.answered.len()));
         let b = w.overlay()?;
-        b.add_tree_gates(&gates);
-        b.set_answers(g.answers);
+        b.fields().add_tree_gates(&gates);
+        b.fields().set_answers(g.answers);
         Ok(())
     }
 }
@@ -415,31 +413,30 @@ pub mod tests {
     /// `!seen(x)` inside a component that loads waits for its key's gate; the rule asking about it is its prefix.
     #[test]
     fn a_negation_inside_a_loading_component_is_gated_per_key() {
-        let prog = super::super::rr::parse(
+        let prog = super::super::rr::parse_version(
             ".decl want(x: symbol)\n.decl req(x: symbol)\n.decl got(x: symbol, y: symbol)\n.decl seen(x: symbol)\n.decl fresh(x: symbol)\n\
              want(\"a\").\nwant(y) :- got(_, y).\nseen(y) :- got(_, y).\nfresh(x) :- want(x), !seen(x).\nreq(x) :- fresh(x).\n",
         )
         .unwrap();
         let answers: BTreeMap<String, Vec<String>> = [("req".to_owned(), vec!["got".to_owned()])].into();
-        let lists = super::super::front::Lists::default();
-        let mut ungated = prog.clone();
-        ungated.answers = answers.clone();
-        assert!(super::super::front::strata(&ungated).is_err(), "ungated, the negation is inside the component");
-        let gated = gate(&Placed::of_program(&prog).unwrap(), &answers).unwrap();
-        // Checked on the tree the version is (a test's reading).
-        let tree = Placed::whole(gated.clone()).program(&lists).unwrap();
-        let (sccs, _) = super::super::front::strata(&tree).unwrap();
+        let mut ungated = Builder::on(&prog);
+        ungated.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Answers(&answers));
+        let (ungated, _) = ungated.finish().unwrap();
+        assert!(Placed::whole(ungated).components().is_err(), "ungated, the negation is inside the component");
+        let gated = gate(&Placed::whole(prog.clone()), &answers).unwrap();
+        let sccs = Placed::whole(gated.clone()).components().unwrap();
         let loading = sccs.iter().find(|s| s.contains("req")).unwrap();
         for rel in ["got", "want", "fresh", "seen", "ask_seen_b", "done_seen_b"] {
             assert!(loading.contains(rel), "{rel} in {loading:?}");
         }
-        let (done, g) = &tree.gates[0];
+        let gates = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::gates(&*gated);
+        let (done, g) = &gates[0];
         assert_eq!((done.as_str(), g.src.as_deref(), g.rel.as_str()), ("done_seen_b", Some("ask_seen_b"), "seen"));
         assert!(g.quiet.contains(&"req".to_owned()), "a request unanswered keeps the gate shut: {:?}", g.quiet);
-        let shown = super::super::rr::parse(".decl fresh(x: symbol)\n.decl shown(x: symbol)\nshown(x) :- fresh(x).\n").unwrap();
+        let shown = super::super::rr::parse_version(".decl fresh(x: symbol)\n.decl shown(x: symbol)\nshown(x) :- fresh(x).\n").unwrap();
         let mut b = Builder::on(&gated);
-        b.add(&shown.rules[0]).unwrap();
-        b.declare("shown", &[("x", "sym")]);
+        b.copy(&shown, shown.rules().next().unwrap());
+        b.fields().declare("shown", &[("x", "sym")]);
         let (with_shown, _) = b.finish().unwrap();
         let parts = split(&Placed::whole(with_shown.clone())).unwrap();
         let (load, rest) = parts.parts(&with_shown).unwrap();

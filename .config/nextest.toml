@@ -11,9 +11,11 @@
 # programs, or every authored rule file, end to end. A test that grows past 20 s joins here.
 [profile.default]
 default-filter = """not (
-    test(/^code_rule_dsl::logic::convert::tests::(a_sample_of_the_replay_gives_the_recorded_findings|the_pack_holds_the_converters_run_over_every_authored_file|reference_tests::reference_edge_is_ws_reference_graph_on_the_fixtures)$/)
-  | test(/^code_rule_dsl::logic::rr::tests::(dropping_unreached_clauses_prunes_to_the_same_program|lowering_is_idempotent)/)
+    binary(=git_revision_cli)
+  | test(/^code_rule_dsl::logic::convert::tests::(a_sample_of_the_replay_gives_the_recorded_findings|the_pack_holds_the_converters_run_over_every_authored_file|reference_tests::reference_edge_is_ws_reference_graph_on_the_fixtures)$/)
+  | test(/^code_rule_dsl::logic::rr::tests::(dropping_unreached_clauses_prunes_to_the_same_program|lowering_is_idempotent|library_modules_link_to_the_lowering_of_them_together)/)
   | test(=code_rule_dsl::logic::rr::tests::rule_syntax_files_pass_check_rr)
+  | test(=code_rule_dsl::logic::rr::tests::library_modules_link_to_the_lowering_of_them_together)
   | test(/^code_rule_dsl::logic::program_image::tests::(pack_programs_read_back_from_their_images|the_passes_over_a_version_are_the_tree_passes|the_planners_reading_of_a_rule_is_the_trees|the_analyses_over_a_version_say_what_the_tree_says|views_and_overlays_are_the_programs_they_say)$/)
   | test(=code_rule_dsl::logic::program_text::tests::pack_programs_read_back_from_their_text)
   | test(=code_rule_dsl::transducer::packed::metal_program_backend::tape_tests::the_label_kernels_compile_for_every_format)
@@ -36,6 +38,23 @@ failure-output = "final"
 # (70–80 s in a debug build on an M3 Max), and the token tests two (C's and C++'s).
 [[profile.default.overrides]]
 filter = "package(rerail-c-directives)"
+slow-timeout = { period = "60s", terminate-after = 8 }
+
+# The FSEvents tests (the store's journal and observer, the engine's tree watch): each waits on the journal's cookies,
+# which `fseventsd` tells every stream of the machine in turn. Run at once, they push one another's notices past their
+# waits (Q253: 11 of 51 failed together on an M3, none alone): one at a time, beside everything else.
+[test-groups]
+fsevents = { max-threads = 1 }
+
+[[profile.default.overrides]]
+platform = "cfg(target_os = \"macos\")"
+filter = "test(/^(content_store::(observe|journal)|tree_watch)::/)"
+test-group = "fsevents"
+
+# Linking every pack's library from its modules derives phase 0's graphs, whose runs wait on the store's msync of
+# 460-630 MB of kept facts on Linux: 217-251 s on a DGX Spark, 87 s of it CPU (Q331).
+[[profile.default.overrides]]
+filter = "test(=code_rule_dsl::logic::rr::tests::library_modules_link_to_the_lowering_of_them_together)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
 [profile.default.junit]

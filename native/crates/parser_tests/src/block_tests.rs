@@ -994,21 +994,45 @@ fn fnv(indexes: &[u32]) -> u64 {
 fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
     let block = &p.block_programs[0];
     let native = native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0);
-    let mut out = vec![
-        // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
-        ("cpu interpreter".to_owned(), block.run(bytes)),
-    ];
-    #[cfg(target_os = "macos")]
-    {
-        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret_extract, run_generated_extract};
-        for width in LaneWidth::ALL {
-            let w = width.bytes();
-            out.push((format!("metal interpreter, {w}-byte lanes"), interpret_extract(block, bytes, width).expect("runs")));
-            let (got, _) = run_generated_extract(&native, bytes, width, ClassStrategy::Planes).expect("runs");
-            out.push((format!("generated msl, {w}-byte lanes"), got));
-        }
+    // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
+    let mut out = vec![("cpu interpreter".to_owned(), block.run(bytes))];
+    out.extend(metal_extract_runs(block, &native, bytes));
+    out
+}
+
+/// The Metal executors' runs with the extract pass (`extract_executors`), each lane width's interpreter and
+/// generated MSL.
+#[cfg(target_os = "macos")]
+fn metal_extract_runs(block: &block::BlockProgram, native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret_extract, run_generated_extract};
+    let mut out = Vec::new();
+    for width in LaneWidth::ALL {
+        let w = width.bytes();
+        out.push((format!("metal interpreter, {w}-byte lanes"), interpret_extract(block, bytes, width).expect("runs")));
+        let (got, _) = run_generated_extract(native, bytes, width, ClassStrategy::Planes).expect("runs");
+        out.push((format!("generated msl, {w}-byte lanes"), got));
     }
     out
+}
+
+/// No Metal executors off macOS.
+#[cfg(not(target_os = "macos"))]
+fn metal_extract_runs(_: &block::BlockProgram, _: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
+    Vec::new()
+}
+
+/// Generated MSL's run with the extract pass, 64-byte lanes (a large file's, `extract_executors` for the rest).
+#[cfg(target_os = "macos")]
+fn metal_extract_generated(native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_extract};
+    let (got, _) = run_generated_extract(native, bytes, LaneWidth::W64, ClassStrategy::Planes).expect("runs");
+    vec![("generated msl".to_owned(), got)]
+}
+
+/// No Metal executors off macOS.
+#[cfg(not(target_os = "macos"))]
+fn metal_extract_generated(_: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
+    Vec::new()
 }
 
 /// The extract pass writes a plane's set bits as positions, none past the end, on every
@@ -1151,12 +1175,7 @@ fn stage1_equals_simdjson_on_every_executor() {
             extract_executors(&p, &bytes)
         } else {
             let mut runs = vec![("cranelift".to_owned(), compiled.extract(&bytes))];
-            #[cfg(target_os = "macos")]
-            {
-                use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_extract};
-                let (got, _) = run_generated_extract(&native, &bytes, LaneWidth::W64, ClassStrategy::Planes).expect("runs");
-                runs.push(("generated msl".to_owned(), got));
-            }
+            runs.extend(metal_extract_generated(&native, &bytes));
             runs
         };
         for (name, got) in runs {
@@ -1203,8 +1222,11 @@ fn stage1_cost_per_block() {
         // look-back runs out of polls; repeated launches are timed, and counted).
         let mut masks = native.clone();
         masks.extracts.clear();
-        use metal_program_backend::block_program::REPEATED_LAUNCHES;
-        let before = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed);
+        use metal_program_backend::block_program::RepeatedLaunches;
+        // The count is the run's (decision 0442).
+        let _run = rerail_context::test_run();
+        let repeated = rerail_context::local::<RepeatedLaunches>();
+        let before = repeated.0.load(std::sync::atomic::Ordering::Relaxed);
         for (what, program) in [("masks", &masks), ("masks + extract", &native)] {
             for strategy in ClassStrategy::ALL {
                 for width in LaneWidth::ALL {
@@ -1219,7 +1241,7 @@ fn stage1_cost_per_block() {
                 }
             }
         }
-        let repeats = REPEATED_LAUNCHES.load(std::sync::atomic::Ordering::Relaxed) - before;
+        let repeats = repeated.0.load(std::sync::atomic::Ordering::Relaxed) - before;
         println!("repeated launches: {repeats} over 60 runs");
     }
 }

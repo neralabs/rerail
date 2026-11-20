@@ -98,7 +98,7 @@ Run builds and tests with `nice -n 19`, as required by this repository.
 The existing runner exercises cold, warm, profiled warm, edited, and edited-warm conditions:
 
 ```sh
-python3 benchmark/async-family-integration/fact-admission/run.py \
+python3 packs/data-layer/upstream/benchmarks/authored/async-family-integration/fact-admission/run.py \
   --binary /path/to/verified-tests \
   --corpus /path/to/corpus-fce4dc72 \
   --out /path/to/fresh-native-results --engine native

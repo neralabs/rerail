@@ -140,29 +140,42 @@ impl RelStats {
         self.rows_of(flat, width, sign, Some(at), None)
     }
 
+    /// `documents_at` over `n` rows read where they lie (`value(row, column)`, a source's), not a flat copy of them:
+    /// a base relation's documents counted off the corpus batch (decision 0458).
+    pub(in crate::code_rule_dsl) fn documents_read(&mut self, n: usize, width: usize, value: &dyn Fn(usize, usize) -> i64, from: &[usize], sign: i64) {
+        debug_assert_eq!(from.len(), self.cols.len());
+        self.count(n, width, value, sign, None, Some(from))
+    }
+
     fn rows_of(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<Option<usize>>, from: Option<&[usize]>) {
         if width == 0 || flat.is_empty() {
             return;
         }
+        self.count(flat.len() / width, width, &|r, c| flat[r * width + c], sign, at, from)
+    }
+
+    fn count(&mut self, n: usize, width: usize, value: &dyn Fn(usize, usize) -> i64, sign: i64, at: Option<Option<usize>>, from: Option<&[usize]>) {
+        if width == 0 || n == 0 {
+            return;
+        }
         // A row's document (as `doc32` and `document_of` read its first column, else by `at`), and whether `v` names it.
-        let of = |row: &[i64]| match at {
-            None => (doc32(row[0]), document_of(row[0])),
+        let of = |r: usize| match at {
+            None => (doc32(value(r, 0)), document_of(value(r, 0))),
             Some(at) => {
-                let d = at.map_or(-1, |c| row[c] >> 32);
+                let d = at.map_or(-1, |c| value(r, c) >> 32);
                 (d, d)
             }
         };
-        let names = |v: i64, row: &[i64]| match at {
-            None => names_doc(v, row[0]),
-            Some(at) => at.is_some_and(|c| v >> 32 == row[c] >> 32),
+        let names = |v: i64, r: usize| match at {
+            None => names_doc(v, value(r, 0)),
+            Some(at) => at.is_some_and(|c| v >> 32 == value(r, c) >> 32),
         };
-        let n = flat.len() / width;
         self.rows += sign * n as i64;
         // One pass a column: each row's (document, value, whether its `doc32` is 0) is listed; in order (node
         // columns mostly are), each (document, value) is a run, else they are counted in one map kept across columns. `syntax::measured` groups sqd by `doc32`: every row whose first column is a document key is one
         // group, so those rows' counts are summed by value across documents (`zero`). A map a document and one a
         // value, an entry a row each, were most of a file's count (O125 cold: 0.15 s and 363 MB allocated).
-        let docs: Vec<(i64, i64)> = flat.chunks_exact(width).map(of).collect();
+        let docs: Vec<(i64, i64)> = (0..n).map(of).collect();
         let mut keys: Vec<(i64, i64, bool)> = Vec::with_capacity(n);
         let mut values: Vec<(i64, i64)> = Vec::new();
         let mut zero: Vec<(i64, i64)> = Vec::new();
@@ -180,10 +193,10 @@ impl RelStats {
             // Whether a document holds a value naming another: its rows mostly come together, so it is looked up
             // once a run of them.
             let mut at: Option<(i64, bool)> = None;
-            for (row, &(d32, doc)) in flat.chunks_exact(width).zip(&docs) {
-                let v = row[c];
+            for (r, &(d32, doc)) in docs.iter().enumerate() {
+                let v = value(r, c);
                 keys.push((doc, v, d32 == 0));
-                let crosses = !names(v, row);
+                let crosses = !names(v, r);
                 match &mut at {
                     Some((d, x)) if *d == doc => *x |= crosses,
                     _ => {
@@ -557,7 +570,7 @@ pub mod tests {
     fn measured(docs: &[Vec<i64>]) -> Vec<(String, i64, i64, i64, i64)> {
         let mut cols = vec![Vec::new(); 3];
         for d in docs {
-            for row in d.chunks_exact(3) {
+            for row in d.as_chunks::<3>().0 {
                 for (c, v) in row.iter().enumerate() {
                     cols[c].push(*v);
                 }
@@ -569,6 +582,34 @@ pub mod tests {
     /// Kept by delta, the statistics are those of the documents counted in, whatever came and went before: node
     /// and few-valued columns exactly as measured, a many-valued one within the planner's margin. The blob reads
     /// back the same.
+    /// A base relation's documents counted where their rows lie (`documents_read`, decision 0458), at some of its
+    /// columns, are counted as their flat rows are; an edit's patch (the old document out, the new in) is a count
+    /// from scratch of the documents now.
+    #[test]
+    fn documents_read_where_they_lie_count_as_their_flat_rows() {
+        let docs: Vec<Vec<i64>> = (1..=20).map(|d| doc(d, 30 + d * 7, d % 3)).collect();
+        let all: Vec<i64> = docs.concat();
+        let n = all.len() / 3;
+        fn read(rows: &[i64]) -> impl Fn(usize, usize) -> i64 + '_ {
+            move |r, c| rows[r * 3 + c]
+        }
+        let from = [0usize, 2];
+        let names = || vec!["n".to_owned(), "name".to_owned()];
+        let (mut flat, mut placed) = (RelStats::new(names()), RelStats::new(names()));
+        flat.documents_at(&all, 3, &from, 1);
+        placed.documents_read(n, 3, &read(&all), &from, 1);
+        assert_eq!(placed, flat);
+        let edited = doc(5, 90, 1);
+        placed.documents_read(docs[4].len() / 3, 3, &read(&docs[4]), &from, -1);
+        placed.documents_read(edited.len() / 3, 3, &read(&edited), &from, 1);
+        let mut now = docs.clone();
+        now[4] = edited;
+        let now = now.concat();
+        let mut fresh = RelStats::new(names());
+        fresh.documents_read(now.len() / 3, 3, &read(&now), &from, 1);
+        assert_eq!(placed, fresh);
+    }
+
     #[test]
     fn statistics_kept_by_document_are_those_of_the_documents_counted_in() {
         let docs: Vec<Vec<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();
@@ -712,8 +753,8 @@ pub mod tests {
             flat.extend([first, i % 4, other]);
         }
         // One document's rows alone, in order (no sort), and its rows reversed (sorted).
-        let one: Vec<i64> = flat.chunks_exact(3).filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
-        let reversed: Vec<i64> = one.chunks_exact(3).rev().flatten().copied().collect();
+        let one: Vec<i64> = flat.as_chunks::<3>().0.iter().filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
+        let reversed: Vec<i64> = one.as_chunks::<3>().0.iter().rev().flatten().copied().collect();
         // Many values in one column: past the exact map's bound.
         let wide: Vec<i64> = (0..700i64).flat_map(|i| [5 << 32 | i, i % 3, i]).collect();
         let names = || vec!["x".to_owned(), "k".into(), "y".into()];
