@@ -3,10 +3,11 @@ import { constants, PerformanceObserver, type PerformanceEntry, type Performance
 import { getHeapStatistics } from "node:v8";
 
 /**
- * What the daemon's memory reads as at one moment, in bytes. `heapUsed` is the heap in use as the last full collection
- * ended once `memoryRoom` watches them, else the heap's count now. `available` is what the system says other programs can still have; undefined where its
- * figure does not count what the system would free: on macOS libuv reads only the free pages, and the system keeps most
- * of its memory as cache it gives back on demand, so the figure is low on an idle Mac.
+ * What the daemon's memory reads as at one moment, in bytes. `heapUsed` is the heap in use just after the last full
+ * collection, read as its entry is delivered, once `memoryRoom` watches full collections, else the heap's count now.
+ * `available` is what the system says other programs can still have; undefined where its figure does not count what the
+ * system would free: on macOS libuv reads only the free pages, and the system keeps most of its memory as cache it gives
+ * back on demand, so the figure is low on an idle Mac.
  */
 export interface MemoryReading {
   readonly heapUsed: number;

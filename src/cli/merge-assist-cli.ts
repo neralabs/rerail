@@ -437,7 +437,6 @@ function outcomeText(outcome: Outcome, name: string, dashboardUrl: string | null
   return resultText(outcome.step, outcome.status, name, dashboardUrl);
 }
 
-/** What the command answers while the experiment is off, under `experimental-off`. */
 /**
  * Ends this process with `code` once what it wrote has reached stdout and stderr. The command answers once: a stat of
  * `gh`'s hosts file still out when its answer is written (gh-config.ts: a folder on a drive that does not answer) is
