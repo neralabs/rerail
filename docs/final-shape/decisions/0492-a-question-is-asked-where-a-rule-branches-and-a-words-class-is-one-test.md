@@ -32,7 +32,22 @@ may be names.
 The generated tier 2 (`tier2_aot.rs`) is 26,750 lines, from 43,619. `import_header` is 332 lines,
 from 689.
 
+3. **The operators are one loop** (2026-11-20). `expression` was `unary_level` and then eleven
+   loops in a row, `(as_op)* (mul_op)* … (disj_op)*`, and each operand was the same chain cut
+   short. Each operator's right operand already takes every operator that binds tighter, so the
+   loop can never meet a tighter operator after a looser one. One loop of the operators is the
+   same language: `unary_level (as_op | mul_op | … | disj_op)*`, as the lean parser's `expr_in`
+   loops over every operator with `p > min`. Each operand is one loop of the operators that bind
+   tighter than its own.
+   - Corpus: unchanged (452 the same, 39 refused, 0 differ).
+   - `expression` is 478 lines, from 850; `disj_operand` is 410, from 735. `tier2_aot.rs` is
+     24,480 lines.
+
 ## What is still apart from the lean parser
+
+- **Seven operand functions.** The lean parser has one `expr(min)`, its minimum level a
+  parameter. Ours has one loop for each minimum level: the same shape, specialised at compile
+  time. One function would need the call to carry the level, and the loop's arms to test it.
 
 - **Word numbering.** The lean words are numbered by class (hard keywords, then `SOFT` and up), so
   `ident_word` is one compare. Ours are numbered in grammar order, so one class is several runs.

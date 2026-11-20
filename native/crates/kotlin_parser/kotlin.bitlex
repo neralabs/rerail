@@ -596,8 +596,10 @@ tree kotlin {
 
   # --- Expressions -------------------------------------------------------------------------------
 
-  # By tree-sitter-kotlin's precedences, each operation around the left side so far.
-  choice expression nested = unary_level (as_op)* (mul_op)* (add_op)* (range_op)* (infix_op)* (elvis_op)* (check_op)* (cmp_op)* (eq_op)* (conj_op)* (disj_op)*
+  # By tree-sitter-kotlin's precedences, each operation around the left side so far: one loop, as
+  # the lean parser's `expr_in` (decision 0492). An operator's right operand takes every operator
+  # that binds tighter, so the loop never meets one after a looser one.
+  choice expression nested = unary_level (as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op | conj_op | disj_op)*
   choice mul_op         = wrap multiplicative_expression _ ('*' | '/' | '%') as_operand
   # The type after `as`: a dotted name, or one name with type arguments. With both, the lean
   # parser reads a comparison where an expression follows on the next line: refused.
@@ -614,16 +616,16 @@ tree kotlin {
   choice eq_op          = wrap equality_expression _ ('==' | '!=' | '===' | '!==') eq_operand
   choice conj_op        = wrap conjunction_expression _ '&&' conj_operand
   choice disj_op        = wrap disjunction_expression _ '||' disj_operand
-  # Each operator's right side: the operations that bind tighter.
-  choice add_operand nested = unary_tight (as_op)* (mul_op)*
-  choice range_operand nested = unary_tight (as_op)* (mul_op)* (add_op)*
-  choice infix_operand nested = unary_tight (as_op)* (mul_op)* (add_op)* (range_op)*
-  choice elvis_operand nested = unary_tight (as_op)* (mul_op)* (add_op)* (range_op)* (infix_op)*
-  choice check_operand nested = unary_tight (as_op)* (mul_op)* (add_op)* (range_op)* (infix_op)* (elvis_op)*
-  choice cmp_operand nested = unary_tight (as_op)* (mul_op)* (add_op)* (range_op)* (infix_op)* (elvis_op)* (check_op)*
-  choice eq_operand nested = unary_level (as_op)* (mul_op)* (add_op)* (range_op)* (infix_op)* (elvis_op)* (check_op)* (cmp_op)*
-  choice conj_operand nested = unary_level (as_op)* (mul_op)* (add_op)* (range_op)* (infix_op)* (elvis_op)* (check_op)* (cmp_op)* (eq_op)*
-  choice disj_operand nested = unary_level (as_op)* (mul_op)* (add_op)* (range_op)* (infix_op)* (elvis_op)* (check_op)* (cmp_op)* (eq_op)* (conj_op)*
+  # Each operator's right side: the operations that bind tighter, in one loop.
+  choice add_operand nested = unary_tight (as_op | mul_op)*
+  choice range_operand nested = unary_tight (as_op | mul_op | add_op)*
+  choice infix_operand nested = unary_tight (as_op | mul_op | add_op | range_op)*
+  choice elvis_operand nested = unary_tight (as_op | mul_op | add_op | range_op | infix_op)*
+  choice check_operand nested = unary_tight (as_op | mul_op | add_op | range_op | infix_op | elvis_op)*
+  choice cmp_operand nested = unary_tight (as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op)*
+  choice eq_operand nested = unary_level (as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op)*
+  choice conj_operand nested = unary_level (as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op)*
+  choice disj_operand nested = unary_level (as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op | conj_op)*
 
   # A prefix operator's operand: the postfix operations bind tighter.
   choice unary_level nested = prefix_expression | primary_tight (postfix_level | unless no_lambda lambda_call)*
