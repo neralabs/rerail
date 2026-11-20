@@ -37,11 +37,13 @@ pub mod generated_reads;
 pub const RELATION_READS: &str = "#include <ukl/reads/relation.h>\n";
 pub mod journal;
 pub mod kept;
+pub mod ledger;
 pub mod mem;
 pub mod packed;
 pub mod ranged;
 pub mod program;
 pub mod refs;
+pub mod region;
 pub mod relation;
 pub mod rows;
 pub mod scratch;
@@ -131,7 +133,7 @@ macro_rules! structure {
                 $(s += &format!("    {};\n", <$t as $crate::KernelField>::decl(stringify!($f)));)*
                 s += &format!("}} {};\n", stringify!($name));
                 s += &format!("UKL_STATIC_ASSERT(sizeof({0}) == {1}, \"{0}: size\");\n", stringify!($name), core::mem::size_of::<$name>());
-                $(s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof({0}, {1}) == {2}, \"{0}.{1}\");\n",
+                $(s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF({0}, {1}) == {2}, \"{0}.{1}\");\n",
                     stringify!($name), stringify!($f), core::mem::offset_of!($name, $f));)*
                 if !out.contains(&s) { out.push(s); }
             }

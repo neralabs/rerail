@@ -14,8 +14,6 @@
 
 use rerail_blocks::Block;
 use rerail_blocks::alloc::{Device, Need};
-#[cfg(target_os = "macos")]
-use rerail_blocks::alloc::{Budget, Size};
 
 /// Installs this policy as the process's (`rerail_blocks::alloc::install`).
 pub fn install() {
@@ -24,21 +22,29 @@ pub fn install() {
 
 /// A block for `need` (module docs).
 pub fn policy(need: &Need) -> Result<Block, String> {
-    #[cfg(target_os = "macos")]
-    let shaped = |b| rerail_blocks::alloc::shaped(b, need);
     match need.device {
-        #[cfg(target_os = "macos")]
-        Device::Must => match (need.size, need.budget) {
-            (Size::Slab, Budget::Metal) => crate::gpu::shared::lease_block_within(need.kind, need.bytes),
-            (Size::Exact, Budget::Join) => crate::gpu::shared::lease_block_for_join(need.kind, need.bytes),
-            (size, budget) => Err(format!("a device block of {} bytes, {size:?} in the {budget:?} budget: no such lease", need.bytes)),
-        }
-        .map(shaped),
-        #[cfg(not(target_os = "macos"))]
-        Device::Must => Err(format!("a device block of {} bytes with no device", need.bytes)),
+        Device::Must => device(need),
         // Host memory the device reads through a wrap of its used extent (decision 0435 §1).
         Device::May | Device::No => Ok(host(need)),
     }
+}
+
+/// A device block for `need`: a lease of the GPU pool's.
+#[cfg(gpu_lane)]
+fn device(need: &Need) -> Result<Block, String> {
+    use rerail_blocks::alloc::{Budget, Size};
+    match (need.size, need.budget) {
+        (Size::Slab, Budget::Metal) => crate::gpu::shared::lease_block_within(need.kind, need.bytes),
+        (Size::Exact, Budget::Join) => crate::gpu::shared::lease_block_for_join(need.kind, need.bytes),
+        (size, budget) => Err(format!("a device block of {} bytes, {size:?} in the {budget:?} budget: no such lease", need.bytes)),
+    }
+    .map(|b| rerail_blocks::alloc::shaped(b, need))
+}
+
+/// No GPU lane: no device block.
+#[cfg(not(gpu_lane))]
+fn device(need: &Need) -> Result<Block, String> {
+    Err(format!("a device block of {} bytes with no device", need.bytes))
 }
 
 /// The host blocks made, while they live (their extents; a dropped block's is gone): the machine's memory account
@@ -74,9 +80,7 @@ pub fn host_held() -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(not(target_os = "macos"))]
-    use rerail_blocks::alloc::{Budget, Size};
-    use rerail_blocks::alloc::Writes;
+    use rerail_blocks::alloc::{Budget, Size, Writes};
     use rerail_blocks::block::kind;
 
     fn need(writes: Writes, device: Device) -> Need {

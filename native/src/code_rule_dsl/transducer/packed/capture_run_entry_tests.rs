@@ -289,7 +289,7 @@ fn streaming_outer_capture_runs_preserve_complete_values_raw_counts_and_semantic
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 #[ignore = "red at Tempo@4c94cf77e, the commit that adds this bound (313 dispatches > 260)"]
 fn metal_outer_capture_runs_bound_generations_and_preserve_complete_values() {

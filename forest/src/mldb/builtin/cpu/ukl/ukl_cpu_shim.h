@@ -37,8 +37,8 @@
 #include "ukl_auto_macros.h"
 #include "ukl_macros.h"
 
-// 32 lanes, as on Metal and CUDA; another power of two up to 32 (`RERAIL_CPU_SIMD_WIDTH`) runs a kernel as a narrower
-// device would.
+// 32 lanes, as on Metal and CUDA; another power of two up to 64 (`RERAIL_CPU_SIMD_WIDTH`) runs a kernel as a narrower
+// device would, or a 64-lane one (AMD's).
 #ifndef UKL_SIMD_WIDTH
 #define UKL_SIMD_WIDTH 32
 #endif
@@ -379,17 +379,18 @@ static inline uint64_t __ukl_cpu_exchange(uint64_t v, uint32_t from_lane)
     return r;
 }
 
-static inline uint32_t __ukl_cpu_ballot(bool b)
+// The lanes whose `b` holds, lane `l` at bit `l` (64 bits: the widest group).
+static inline uint64_t __ukl_cpu_ballot(bool b)
 {
     __ukl_cpu_thread* t = __ukl_self;
     __ukl_cpu_sched* s = __ukl_sched;
     s->slots[t->index] = b;
     __ukl_cpu_wait(__UKL_AT_SG);
-    uint32_t m = 0;
+    uint64_t m = 0;
     for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
         uint32_t i = t->simd * UKL_SIMD_WIDTH + l;
         if (i < s->n && s->threads[i].state != __UKL_DONE && s->slots[i])
-            m |= 1u << l;
+            m |= (uint64_t)1 << l;
     }
     __ukl_cpu_wait(__UKL_AT_SG);
     return m;
@@ -486,10 +487,11 @@ static inline float reinterpretIntAsFloat(int32_t val)
     return r;
 }
 
-// Upstream's SIMD-group operations (`simd_lane` and `tmp` are the signature Metal's and the CPU's share).
+// Upstream's SIMD-group operations (`simd_lane` and `tmp` are the signature Metal's and the CPU's share), written for
+// groups of 32 lanes at most: their ballot is 32 bits.
 static inline uint32_t ukl_simdgroup_ballot(bool val, uint16_t simd_lane, atomic_uint * tmp)
 {
-    return __ukl_cpu_ballot(val);
+    return (uint32_t)__ukl_cpu_ballot(val);
 }
 
 static inline uint32_t ukl_simdgroup_sum(uint32_t val, uint16_t simd_lane, atomic_uint * tmp)
@@ -506,13 +508,13 @@ static inline uint32_t ukl_prefix_exclusive_sum_bitmask(uint32_t bits, uint16_t 
 
 static inline uint32_t ukl_simdgroup_prefix_exclusive_sum_bools(bool val, uint16_t simd_lane, atomic_uint * tmp)
 {
-    return ukl_prefix_exclusive_sum_bitmask(__ukl_cpu_ballot(val), simd_lane);
+    return ukl_prefix_exclusive_sum_bitmask((uint32_t)__ukl_cpu_ballot(val), simd_lane);
 }
 
 static inline uint32_t ukl_simdgroup_broadcast_first(uint32_t val, uint16_t simd_lane, atomic_uint * tmp)
 {
-    uint32_t live = __ukl_cpu_ballot(true);
-    return (uint32_t)__ukl_cpu_exchange(val, __builtin_ctz(live));
+    uint64_t live = __ukl_cpu_ballot(true);
+    return (uint32_t)__ukl_cpu_exchange(val, (uint32_t)__builtin_ctzll(live));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -342,7 +342,7 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
         // SAFETY: the starts' pages lie in the chunk's block, which outlives the work: it is waited for below.
         let starts = unsafe { rerail_device::device::wrap_host_memory(device, b.ptr::<u8>(start_at), start_bytes)? };
         let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0, 0, 0, 0];
-        let scan = Scan::owned(n + 1)?;
+        let scan = Scan::owned(n)?;
         let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
         let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
         pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
@@ -1022,7 +1022,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// by the host when handed out again, and no host write is ordered after a device read).
     keep: Vec<Held>,
     /// Text buffers its passes read, kept until it is done (a chain's intermediate texts are dropped by their
-    /// maker once the next pass is encoded: their buffers must not be reused while the GPU reads them).
+    /// maker once the next pass is encoded, and a relation's texts go with its resident entry, which a later upload
+    /// may trim: their buffers must not be reused while the GPU reads them).
     read: Vec<std::rc::Rc<DevRel>>,
     /// What its passes write that their maker gave up before it was done (a stratum refused after some of its rules
     /// were encoded): kept until it is, so no buffer it writes goes back to the pool while the GPU may write it.
@@ -1374,7 +1375,7 @@ impl Batch {
             let scount = pipeline("join", "scan_count", || SOURCE.to_owned())?;
             let sscatter = pipeline("join", "scan_scatter", || SOURCE.to_owned())?;
             let n = stage.nr as usize + 1;
-            let counts = scratch(FREE, 4 * n)?;
+            let counts = scratch(FREE, 4 * (n + 1))?;
             let scan = Scan::new(n)?;
             let sb = self.block(stage.bytes())?;
             let pass = self.pass(12)?;
@@ -1388,7 +1389,7 @@ impl Batch {
             return Ok(());
         }
         let n = left.cap + 1;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let scan = Scan::new(n)?;
         let arena: Buffer = if matches!(stage.mode, STRCMP | TEXTOP) && (stage.agg[1] & 15 == OPND_ARENA || stage.agg[1] >> 4 == OPND_ARENA) {
             self.arena()?.buffer.buffer.clone()
@@ -1470,7 +1471,7 @@ impl Batch {
         }
         let held = Held::of(probes.iter().flat_map(|p| p.bytes().iter().copied()).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
         let n = left.cap + 1;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let scan = Scan::new(n)?;
         // The bindings with a witness out as they are: a semi-join's scatter (mode 1 writes the binding alone).
         let mut write = stage;
@@ -1516,7 +1517,7 @@ impl Batch {
         let [kept, states, classes, start] = auto.map_or([1, 0, 0, 0], |a| a.1);
         let work = Held::new(ngroups * 2 * simd_group() * kept.max(1) as usize)?;
         let p = Held::of([ngroups as u32, kept, states, classes, start, id, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let values = Held::new(8 * n)?;
         let scan = Scan::new(n)?;
         let arena = self.arena()?.buffer.buffer.clone();
@@ -1563,7 +1564,7 @@ impl Batch {
         let bytes: &[u8] = unsafe { std::slice::from_raw_parts(d.as_ptr().cast::<u8>(), std::mem::size_of_val(&d)) };
         let p = Held::new(4 * places)?;
         let n = table.cap + 1;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let scan = Scan::new(n)?;
         let db = self.block(bytes)?;
         let pass = self.pass(12)?;

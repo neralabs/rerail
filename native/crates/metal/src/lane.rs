@@ -35,6 +35,32 @@ pub fn device() -> Result<&'static Device, Error> {
     rerail_accel::gpu::shared::layer().map(|l| l.device).ok_or(Error::UnsupportedBackend)
 }
 
+/// A compiled kernel's limits as its pipeline reports them: the most threads a group its registers allow, its SIMD
+/// width, and its static threadgroup memory. Metal's pipeline reports them; elsewhere none (`None`), and a caller
+/// takes the device's (`Device::max_threadgroup`, `Device::simd_width`).
+#[derive(Clone, Copy, Debug)]
+pub struct Limits {
+    pub threads: u64,
+    pub simd: u64,
+    pub threadgroup_memory: u64,
+}
+
+/// `kernel`'s [`Limits`], where its backend reports them.
+pub fn limits(kernel: &ComputeFunction) -> Option<Limits> {
+    #[cfg(target_os = "macos")]
+    {
+        kernel.metal().map(|m| {
+            let p = &m.compute_pipeline_state;
+            Limits { threads: p.max_total_threads_per_threadgroup(), simd: p.thread_execution_width(), threadgroup_memory: p.static_threadgroup_memory_length() }
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = kernel;
+        None
+    }
+}
+
 /// The kernel `name` of `source` (UKL), with `constant` at specialization constant 0 (`UKL_CONSTANT_U32`).
 pub fn kernel(source: &str, name: &str, constant: Option<u32>) -> Kernel {
     rerail_accel::gpu::kernels::function(source, name, constant)
@@ -320,7 +346,7 @@ impl Committed {
             return Err(Error::BackendFailure);
         }
         crate::launch::mark(std::ptr::from_ref::<u8>(&self.key) as usize, true);
-        let host = self.event.metal().map_or([0.0; 3], crate::launch::command_times);
+        let host = crate::launch::command_times(&self.event);
         Ok(Times { device: self.event.gpu_seconds(), wall: crate::launch::host_seconds() - self.started, committed: self.started, host })
     }
 }

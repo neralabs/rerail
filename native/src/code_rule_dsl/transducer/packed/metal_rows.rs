@@ -13,8 +13,7 @@
 //! **The kernels**, generated from the row program (one generator, not one per case):
 //! - `rows_count`: each thread a row, its predicate a straight-line expression of the program's
 //!   operations; the tile's passing rows summed by a SIMD group sum into its count;
-//! - `rows_scan` (the joins' fixed one, `rerail_accel::gpu::join`): the counts' exclusive prefix sum, one
-//!   threadgroup, each thread a run of tiles;
+//! - the counts' exclusive prefix sum: the UKL library's scan (`rerail_accel::gpu::join::Scan`);
 //! - `rows_scatter`: the predicate again, each passing row written at its tile's offset plus its
 //!   rank (a SIMD group's exclusive sum). The output is in order, with no atomic append.
 //!
@@ -31,7 +30,7 @@ use super::metal_sort::Held;
 pub use rerail_accel::gpu::tile::{Form, Resident};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use rerail_accel::gpu::tile::{Joined, tile_join};
-use rerail_accel::gpu::join::{Pass, pipeline};
+use rerail_accel::gpu::join::{Pass, Scan, pipeline};
 use rerail_device::device::Buffer;
 use std::fmt::Write as _;
 
@@ -123,8 +122,7 @@ pub(in crate::code_rule_dsl) fn predicate(program: &BlockProgram, inputs: &[Inpu
     Ok(body)
 }
 
-/// The two kernels of a row program over a resident relation's forms (the scan between them is the joins'
-/// `rows_scan`).
+/// The two kernels of a row program over a resident relation's forms (the scan between them is the library's).
 fn source(body: &str, forms: &[Form]) -> String {
     let ty = |f: Form| match f {
         Form::Low16 => "uint16_t",
@@ -194,13 +192,14 @@ pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, param
     let src = source(&body, &resident.forms);
     // One variant per program's source: the predicate is the program's.
     let count = pipeline(&src, "rows_count", || src.clone()).map_err(device_err)?;
-    let prefix = rerail_accel::gpu::join::fixed("rows_scan").map_err(device_err)?;
     let scatter = pipeline(&src, "rows_scatter", || src.clone()).map_err(device_err)?;
     let wide: Vec<i64> = params.iter().flat_map(|&p| [p, p >> 16, p & 0xffff]).chain([0]).collect();
     let params = Held::of(wide.iter().copied()).map_err(device_err)?;
     let tiles = resident.tile_count;
     let counts = Held::new(4 * tiles).map_err(device_err)?;
     let offsets = Held::new(4 * (tiles + 1)).map_err(device_err)?;
+    // This thread's scratch: the submission is awaited here.
+    let prefix = Scan::new(tiles).map_err(device_err)?;
     // The outputs are at most the rows.
     let out = Held::new(4 * resident.rows).map_err(device_err)?;
     let pass = Pass::new().map_err(device_err)?;
@@ -210,7 +209,7 @@ pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, param
         let mut with_counts = inputs.clone();
         with_counts.push(&counts.buffer);
         pass.run(&count, &with_counts, &[], &[], tiles);
-        pass.run(&prefix, &[&counts.buffer, &offsets.buffer], &[tiles as u32], &[], 1);
+        prefix.encode_into(&pass, &counts.buffer, &offsets.buffer).map_err(device_err)?;
         let mut with_out = inputs;
         with_out.extend([&offsets.buffer, &resident.perm.buffer, &out.buffer]);
         pass.run(&scatter, &with_out, &[], &[], tiles);

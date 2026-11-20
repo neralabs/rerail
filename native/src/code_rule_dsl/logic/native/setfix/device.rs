@@ -1640,7 +1640,7 @@ impl<'p> Run<'p> {
             return Some("a text test of a bound pattern holding the set separator (a set of patterns)".to_owned());
         }
         // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b).
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if self.rels.iter().flatten().filter_map(|(r, _)| r.view.as_ref()).any(|v| v.cache_failed() > v.failed) {
             return Some("a 16z block found no room in its batch's cache".to_owned());
         }

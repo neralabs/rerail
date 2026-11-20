@@ -37,8 +37,10 @@
                 );
             }
             if name != "metal_backend.rs" {
+                // A commit is the checked pass's (`rerail_accel::gpu::join::Pass::commit`, which checks the
+                // submission's budget), never a Metal command buffer's this file made.
                 assert!(
-                    !source.contains(".commit()"),
+                    !(source.contains(".commit()") && source.contains("new_command_buffer")),
                     "{name} bypasses checked submission"
                 );
             } else {

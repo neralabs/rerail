@@ -1426,10 +1426,14 @@ fn findings(program: &str, dir: &Path) -> Result<Vec<String>, String> {
     Ok(finding_keys(program, dir)?.into_iter().map(|(path, line, code)| format!("{path}:{line}:{code}")).collect())
 }
 
-/// A program's findings over the files under `dir`: (path, line, code).
+/// A program's findings over the files under `dir`: (path, line, code). On the device as the CLI places it
+/// (`tools::cli_in`): `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can), on the process's GPU, whichever
+/// backend it is; else on the CPU.
 fn finding_keys(program: &str, dir: &Path) -> Result<Vec<(String, u64, String)>, String> {
+    use crate::code_rule_dsl::typing::file_local::Binding;
     let out = dir.join(".out");
-    super::super::plan::corpus::run(program, dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map_err(|e| e.to_string())?;
+    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    super::super::plan::corpus::run(program, dir, None, &out, "program", binding, 1 << 18).map_err(|e| e.to_string())?;
     // Every output is in the image, empty or not: no `violation` is a program without violations.
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).map_err(|e| format!("violation: {e}"))?;
     let violation = outputs.get("violation").ok_or("violation: no such relation")?;

@@ -3225,6 +3225,7 @@ dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",
+ "cranelift-jit-wasm",
  "cranelift-module",
  "rerail-blocks",
  "rerail-clif",
@@ -4273,7 +4274,6 @@ dependencies = [
 name = "rerail-metal"
 version = "0.1.0"
 dependencies = [
- "block",
  "libc",
  "metal",
  "rerail-accel",
