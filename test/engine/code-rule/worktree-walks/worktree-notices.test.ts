@@ -395,6 +395,30 @@ describe("WorktreeNotices", () => {
     expect(await states(subject, ["/w"])).toEqual([[true, true]]);
   });
 
+  it("records no failed watch for a worktree a walk let go of while its path was read again after the engine refused it", async () => {
+    const watch = new ScriptedWatch();
+    const reads: ((folder: string) => void)[] = [];
+    const subject = new WorktreeNotices({
+      treeWatch: watch,
+      platform: "darwin",
+      now: () => 0,
+      folderAt: async () => await new Promise<string>(done => reads.push(done)),
+    });
+    subject.retain(new Set(["/w"]));
+    watch.refused.add("/w");
+    const changed = subject.changed("/w");
+    reads[0]!("a");
+    await vi.waitFor(() => expect(reads).toHaveLength(2));
+    // Every session watching it closed while the path was read again.
+    subject.retain(new Set());
+    reads[1]!("a");
+    expect([await changed, watch.calls]).toEqual([true, ["watch /w []"]]);
+    // A session watches it again: no failed watch is held over from before.
+    subject.retain(new Set(["/w"]));
+    watch.refused.delete("/w");
+    expect(await states(subject, ["/w"])).toEqual([[true, true]]);
+  });
+
   it.skipIf(process.platform === "win32")("asks the engine once per retry, not on every walk, to watch a worktree whose folder is there and cannot be read", async context => {
     const root = await mkdtemp(join(tmpdir(), "rerail-unreadable-"));
     const parent = join(root, "parent");
