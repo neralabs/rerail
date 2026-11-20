@@ -85,6 +85,16 @@ function recordingAudits(): { recorder: AuditRecorder; audits: Map<string, Audit
   };
 }
 
+/** `recordingAudits` where an audit keeps its first result, as the audit store does: a later finish changes nothing. */
+function firstResultAudits(): ReturnType<typeof recordingAudits> {
+  const recording = recordingAudits();
+  const finish = recording.recorder.finish.bind(recording.recorder);
+  const keepFirst = (auditId: string, result: AuditResult) => {
+    if (recording.audits.get(auditId)?.result === undefined) finish(auditId, result);
+  };
+  return { ...recording, recorder: { ...recording.recorder, finish: keepFirst } };
+}
+
 /** At most one NEEDLE among the Python sources under api/: a count across files. */
 function needleBudgetRule() {
   return codeRuleSchema.parse({
@@ -147,7 +157,7 @@ function editableCodeRules(initial: readonly CodeRule[]) {
   };
 }
 
-async function fixture({ codeRules = [needleCodeRule(1)], undelivered, ...options }: {
+async function fixture({ codeRules = [needleCodeRule(1)], undelivered, revised, ...options }: {
   scope?: "repository" | "touched-files" | "ai-output";
   mode?: "steer" | "log";
   audits?: AuditRecorder;
@@ -156,6 +166,8 @@ async function fixture({ codeRules = [needleCodeRule(1)], undelivered, ...option
   steerShell?: "posix" | "git-bash" | "powershell";
   /** The runtime's answer to whether a path's steer was dropped before delivery (`RuleSteerDelivery.undelivered`). */
   undelivered?: (sessionId: string, path: string) => boolean;
+  /** The runtime's side of a revised source's steers (`RuleSteerDelivery.revised`). */
+  revised?: (sessionId: string, revision: number, paths: readonly string[]) => readonly string[];
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "rerail-enforcer-"));
   roots.push(root);
@@ -167,7 +179,7 @@ async function fixture({ codeRules = [needleCodeRule(1)], undelivered, ...option
   const requestSteer = vi.fn(async (_sessionId: string, _delivery: "steer", _content: string, _metadata?: SteerMetadata) => undefined);
   const enforcer = new NativeCodeRuleEnforcer(catalog, {
     workspaceRoot: root,
-    steerDelivery: { requestSteer, ...(undelivered === undefined ? {} : { undelivered }) },
+    steerDelivery: { requestSteer, ...(undelivered === undefined ? {} : { undelivered }), ...(revised === undefined ? {} : { revised }) },
     ...options,
   });
   return { root, catalog, enforcer, requestSteer, rules };
@@ -1052,6 +1064,53 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
+  /** A NEEDLE reported where some file under api/ holds a witness of `exists`: the workspace's other files decide it. */
+  function needleWhenRule(exists: Record<string, unknown>) {
+    return codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:needle-when", revision: 1, mode: "block",
+      scope: { include: ["api/**/*.py"], exclude: [] },
+      clauses: [{
+        id: "when", violation: { code: "WHEN", anchor: "witness.span", message: "No NEEDLE here" },
+        forbid: { select_when: { select: { ast: { language: "python", rule: { kind: "identifier", regex: "^NEEDLE$" } } }, exists } },
+      }],
+    });
+  }
+
+  /**
+   * The steers a check of `logged` (a walk's log edits) then the session's `api/a_own.py` asked for, as `code@path`;
+   * `earlier`, a walk's log edits checked before both are queued.
+   */
+  async function steeredAfterLog(codeRule: CodeRule, session: string, edits: { earlier?: Record<string, string>; logged: Record<string, string>; own: string }): Promise<string[]> {
+    const { root, enforcer, requestSteer } = await fixture({ codeRules: [codeRule] });
+    const batch = (texts: Record<string, string>) => Object.entries(texts).map(([path, text]) => ({ path, language: "python" as const, generatedText: text }));
+    try {
+      for (const [path, text] of Object.entries(edits.logged)) await writeFile(join(root, path), text);
+      await writeFile(join(root, "api/a_own.py"), edits.own);
+      await enforcer.openWorkspace(session);
+      await enforcer.auditGeneratedEdits(session, { revision: 1, checkpoints: ["edit"], mode: "log", edits: batch(edits.earlier ?? {}) });
+      await settled(enforcer);
+      await enforcer.auditGeneratedEdits(session, { revision: 2, checkpoints: ["edit"], mode: "log", edits: batch(edits.logged) });
+      await enforcer.auditGeneratedEdits(session, { revision: 3, checkpoints: ["edit"], edits: [{ path: "api/a_own.py", language: "python", generatedText: edits.own }] });
+      await settled(enforcer);
+      return requestSteer.mock.calls.flatMap(([, , , metadata]) => metadata?.generatedEdit?.violations ?? []).map(violation => `${violation.code}@${violation.path}`);
+    } finally { await enforcer.close(); }
+  }
+
+  // A `select_when` reads the whole workspace: the tool call's edit is checked with the log edits queued ahead of it held,
+  // so it is steered as when the edits were checked in the order they came.
+  it("steers a tool call's edit as in the order the edits came where a select_when's other side sits in a log edit ahead of it", async () => {
+    const anchor = { ast: { language: "python", rule: { kind: "identifier", regex: "^ANCHOR$" } } };
+    const logged = { ...Object.fromEntries(LOGGED.map(path => [path, "safe()\n"])), "api/z_other.py": "ANCHOR\n" };
+    expect(await steeredAfterLog(needleWhenRule(anchor), "select-when-exists", { logged, own: "NEEDLE\n" })).toEqual(["WHEN@api/a_own.py"]);
+  });
+
+  it("steers no tool call's edit where a log edit ahead of it took away a select_when's last witness", async () => {
+    // A witness is a file with no ANCHOR: z_other.py was one, and the log edit gives it an ANCHOR, as the own file has.
+    const noAnchor = { ast: { language: "python", rule: { kind: "module", not: { has: { kind: "identifier", regex: "^ANCHOR$", stopBy: "end" } } } } };
+    const edits = { earlier: { "api/z_other.py": "other = 1\n" }, logged: { "api/z_other.py": "ANCHOR\n" }, own: "NEEDLE\nANCHOR\n" };
+    expect(await steeredAfterLog(needleWhenRule(noAnchor), "select-when-absent", edits)).toEqual([]);
+  });
+
   it("lets a tool call's result wait for its own edit's steer, not for the log edits checked with it in one engine call", async () => {
     const { recorder, finished } = recordingAudits();
     const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [needleBudgetRule()] });
@@ -1125,9 +1184,9 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
-  // The same check of several, failing partway: each edit it had not finished is recorded failed, and the revision goes
-  // out with the findings of those it finished once the last is recorded, not at some later check.
-  it("answers a log revision with the edits it finished when a check of several fails partway through them", async () => {
+  // The same check of several, where reading one log edit's findings throws: that edit alone is recorded failed, the
+  // edits after it are finished as with no throw, and the revision goes out once the last is recorded.
+  it("fails only the log edit whose findings could not be read in a check of several, and answers with every other", async () => {
     const undelivered = (_sessionId: string, path: string): boolean => {
       if (path === "api/l2.py") throw new Error("the runtime could not answer");
       return false;
@@ -1145,8 +1204,171 @@ describe("mechanical code rule regressions", () => {
       });
       const status = await settled(enforcer);
       // The last log edit is finished first in the unreadable edit's place, then the others in the order they came.
-      expect(status.failures.map(failure => failure.path)).toEqual(expect.arrayContaining(["api/l2.py", "api/l3.py", "api/l4.py"]));
-      expect(status.violations.map(violation => violation.path).toSorted()).toEqual(["api/l0.py", "api/l1.py", "api/z_other.py"]);
+      expect(status.failures.map(failure => failure.path).toSorted()).toEqual(["api/a_own.py", "api/l2.py"]);
+      expect(status.violations.map(violation => violation.path).toSorted()).toEqual(["api/l0.py", "api/l1.py", "api/l3.py", "api/l4.py", "api/z_other.py"]);
+    } finally { await enforcer.close(); }
+  });
+
+  // A check of several where the runtime refuses the tool call's steer: as `#check` does for one edit, the failure is
+  // listed on that edit, whose finding stands, and the log edits checked with it keep theirs.
+  it("fails only the tool call's edit whose steer could not be published in a check of several, the log edits keeping their findings", async () => {
+    const { recorder, audits } = firstResultAudits();
+    const codeRules = [needleCodeRule(1), needleBudgetRule(), modeCodeRule("test:gamma", "GAMMA", "log")];
+    const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules });
+    requestSteer.mockRejectedValueOnce(new Error("injected steer failure"));
+    const logged = [...LOGGED, "api/z_other.py"];
+    try {
+      for (const path of logged) await writeFile(join(root, path), "GAMMA\n");
+      await writeFile(join(root, "api/a_own.py"), "NEEDLE\n");
+      await enforcer.openWorkspace("steer-refused");
+      await enforcer.auditGeneratedEdits("steer-refused", {
+        revision: 1, checkpoints: ["edit"], mode: "log", edits: logged.map(path => ({ path, language: "python" as const, generatedText: "GAMMA\n" })),
+      });
+      await enforcer.auditGeneratedEdits("steer-refused", { revision: 2, checkpoints: ["edit"], edits: [{ path: "api/a_own.py", language: "python", generatedText: "NEEDLE\n" }] });
+      const { failures } = await settled(enforcer);
+      expect([...logged, "api/a_own.py"].map(path => auditForPath(audits, path)?.result?.status)).toEqual([...logged, "own"].map(() => "completed"));
+      expect(auditForPath(audits, "api/l0.py")?.result?.violations?.map(violation => violation.code)).toEqual(["GAMMA"]);
+      expect(failures.filter(item => item.message.includes("injected steer failure")).map(item => item.path)).toEqual(["api/a_own.py"]);
+      // The evaluator goes on: the next tool call's edit is checked and steered.
+      await enforcer.auditGeneratedEdits("steer-refused", { revision: 3, checkpoints: ["edit"], edits: [{ path: "api/b_next.py", language: "python", generatedText: "NEEDLE\n" }] });
+      await settled(enforcer);
+      expect(requestSteer.mock.calls.map(([, , , metadata]) => metadata?.revision)).toEqual([2, 3]);
+    } finally { await enforcer.close(); }
+  });
+
+  // A check of several where one log edit's stored text cannot be loaded: that edit alone fails, as `#check` fails it,
+  // and the others are checked in the same engine call.
+  it("fails only the log edit whose stored text could not be loaded in a check of several", async () => {
+    const { recorder, audits } = firstResultAudits();
+    const { enforcer } = await fixture({ audits: recorder, codeRules: [needleCodeRule(1), needleBudgetRule()] });
+    const logged = [...LOGGED, "api/z_big.py"];
+    // Past the bytes the evaluator keeps in memory, so it is stored on disk, and read back as it is checked.
+    const text = (path: string) => (path === "api/z_big.py" ? "x".repeat(9 * 1024 * 1024) : "safe()\n");
+    try {
+      await enforcer.openWorkspace("lost-in-several");
+      await settled(enforcer);
+      vi.mocked(readFile).mockRejectedValueOnce(new Error("Retained source is unavailable"));
+      await enforcer.auditGeneratedEdits("lost-in-several", {
+        revision: 1, checkpoints: ["edit"], mode: "log", edits: logged.map(path => ({ path, language: "python" as const, generatedText: text(path) })),
+      });
+      await enforcer.auditGeneratedEdits("lost-in-several", { revision: 2, checkpoints: ["edit"], edits: [{ path: "api/a_own.py", language: "python", generatedText: "NEEDLE\n" }] });
+      await settled(enforcer);
+      expect([...LOGGED, "api/a_own.py"].map(path => auditForPath(audits, path)?.result?.status)).toEqual([...LOGGED, "own"].map(() => "completed"));
+      expect(auditForPath(audits, "api/z_big.py")).toMatchObject({
+        result: { status: "failed", failures: [expect.objectContaining({ message: "Retained source is unavailable" })] },
+      });
+    } finally {
+      vi.mocked(readFile).mockReset();
+      await enforcer.close();
+    }
+  });
+
+  // A check of several none of whose texts could be read ends the tool call's revision, whose first edit was checked
+  // before: what that revision's publish throws is listed on the tool call's edit, as `#check` lists it.
+  it("lists on the tool call's edit what its revision's publish throws when no edit of a check of several could be read", async () => {
+    const { recorder, audits } = firstResultAudits();
+    const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [needleCodeRule(1), needleBudgetRule()] });
+    requestSteer.mockRejectedValueOnce(new Error("injected steer failure"));
+    try {
+      await writeFile(join(root, "api/own1.py"), "NEEDLE\n");
+      await enforcer.openWorkspace("none-readable");
+      // The tool call's two edits and a walk's log edit come at once: each is queued as it is stored, the log edit
+      // between the two, so the second is checked with it, after the first.
+      await Promise.all([
+        enforcer.auditGeneratedEdits("none-readable", { revision: 1, checkpoints: ["edit"], edits: [
+          { path: "api/own1.py", language: "python", generatedText: "NEEDLE\n" },
+          { path: "api/own2.py", language: "python", readError: "EACCES: permission denied" },
+        ] }),
+        enforcer.auditGeneratedEdits("none-readable", {
+          revision: 2, checkpoints: ["edit"], mode: "log", edits: [{ path: "api/l0.py", language: "python", readError: "EACCES: permission denied" }],
+        }),
+      ]);
+      const { failures } = await settled(enforcer);
+      expect([...audits.values()].map(audit => [audit.paths[0], audit.result?.status])).toEqual([
+        ["api/own1.py", "completed"], ["api/l0.py", "failed"], ["api/own2.py", "failed"],
+      ]);
+      expect(failures.filter(item => item.message.includes("injected steer failure")).map(item => item.path)).toEqual(["api/own2.py"]);
+    } finally { await enforcer.close(); }
+  });
+
+  // A publish that sends two revisions, the first refused by the runtime: the second goes out with the publish that
+  // follows the failure's record, so the session is answered with the newest revision, as with the edits checked in order.
+  it("answers with the newest revision when the runtime refuses an older one published in the same pass", async () => {
+    const { root, enforcer, requestSteer } = await fixture({ codeRules: [needleCodeRule(1), needleBudgetRule(), modeCodeRule("test:gamma", "GAMMA", "log")] });
+    requestSteer.mockRejectedValueOnce(new Error("injected steer failure"));
+    try {
+      await writeFile(join(root, "api/own1.py"), "NEEDLE\n");
+      await writeFile(join(root, "api/l0.py"), "GAMMA\n");
+      await enforcer.openWorkspace("two-revisions");
+      // As above: the log edit is queued between the tool call's two, and checked with the second, which cannot be read.
+      await Promise.all([
+        enforcer.auditGeneratedEdits("two-revisions", { revision: 1, checkpoints: ["edit"], edits: [
+          { path: "api/own1.py", language: "python", generatedText: "NEEDLE\n" },
+          { path: "api/own2.py", language: "python", readError: "EACCES: permission denied" },
+        ] }),
+        enforcer.auditGeneratedEdits("two-revisions", { revision: 2, checkpoints: ["edit"], mode: "log", edits: [{ path: "api/l0.py", language: "python", generatedText: "GAMMA\n" }] }),
+      ]);
+      const status = await settled(enforcer);
+      expect(requestSteer).toHaveBeenCalledTimes(1);
+      expect(status.violations.map(violation => `${violation.code}@${violation.path}`)).toEqual(["GAMMA@api/l0.py"]);
+    } finally { await enforcer.close(); }
+  });
+
+  // The last edit of a check of several, a walk's manifest edit: what it publishes for the source it refreshed throws
+  // after its audit is recorded. The failure is listed on it, as on any edit, though no edit of the check is left.
+  it("lists the failure of the last edit of a check of several when what it publishes throws after its audit is recorded", async () => {
+    const { recorder, audits } = firstResultAudits();
+    const requireRule = codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:require", revision: 1, mode: "steer", scope: { include: ["**/*.js"], exclude: [] },
+      clauses: [
+        { id: "require", violation: { code: "REQUIRE", anchor: "witness.span", message: "CommonJS require" }, forbid: { ast: { language: "typescript", languageOptions: {}, rule: { kind: "identifier", resolves: { global: ["require"] } } } } },
+        { id: "budget", violation: { code: "BUDGET", anchor: "witness.span", message: "Too many files" }, budget: { query: { evidence: { as: "n", query: { ast: { language: "typescript", rule: { kind: "program" } } }, project: { path: "file.path" } } }, count: { lte: 100 } } },
+      ],
+    });
+    const revised = () => { throw new Error("the runtime could not revise"); };
+    const { root, enforcer } = await fixture({ audits: recorder, scope: "touched-files", codeRules: [requireRule], revised });
+    try {
+      await mkdir(join(root, "lib"));
+      await writeFile(join(root, "package.json"), '{ "type": "commonjs" }\n');
+      await writeFile(join(root, "lib/plain.js"), "module.exports = require('x');\n");
+      await writeFile(join(root, "lib/own.js"), "export const own = 1;\n");
+      await enforcer.openWorkspace("last-publish-throws");
+      await enforcer.auditGeneratedEdits("last-publish-throws", { revision: 1, checkpoints: ["edit"], edits: [{ path: "lib/plain.js", language: "javascript", generatedText: "module.exports = require('x');\n" }] });
+      await settled(enforcer);
+      // A walk's manifest edit makes lib/plain.js a module: finished last, it reports that source again.
+      await writeFile(join(root, "package.json"), '{ "type": "module" }\n');
+      await enforcer.auditGeneratedEdits("last-publish-throws", { revision: 2, checkpoints: ["edit"], mode: "log", edits: [{ path: "package.json", language: "json", generatedText: '{ "type": "module" }\n' }] });
+      await enforcer.auditGeneratedEdits("last-publish-throws", { revision: 3, checkpoints: ["edit"], edits: [{ path: "lib/own.js", language: "javascript", generatedText: "export const own = 1;\n" }] });
+      const { failures } = await settled(enforcer);
+      expect(["package.json", "lib/own.js"].map(path => auditForPath(audits, path)?.result?.status)).toEqual(["completed", "completed"]);
+      expect(failures.filter(item => item.message.includes("could not revise")).map(item => item.path)).toEqual(["package.json"]);
+    } finally { await enforcer.close(); }
+  });
+
+  // A tool call's edit is checked before the log edits queued ahead of it, whose audits begin first. Rules replaced
+  // before their check: each audit names the rules that checked it.
+  it("records the rules that check a log edit a tool call's edit passed over, when they were replaced before its check", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer, requestSteer, rules } = await fixture({ audits: recorder });
+    // The tool call's steer goes out while the log edits it passed over still wait: the rules change then.
+    requestSteer.mockImplementationOnce(async () => {
+      rules.upsert(needleCodeRule(2, "FRESH", "FRESH"));
+      enforcer.refreshCodeRules();
+    });
+    try {
+      await logThenOwn(enforcer, root, { session: "passed-over-replaced", logged: LOGGED, own: ["api/own.py"], loggedText: "FRESH\n" });
+      await settled(enforcer);
+      const logAudits = [...audits.values()].filter(audit => LOGGED.includes(audit.paths[0]!));
+      const checked = logAudits.filter(audit => audit.result?.status === "completed");
+      // Each log edit is checked once; the one under way as the tool call came, if any, under the first rules.
+      expect(checked.map(audit => audit.paths[0]).toSorted()).toEqual(LOGGED);
+      expect(checked.filter(audit => audit.ruleRevisions[0]?.revision === 2).length).toBeGreaterThanOrEqual(LOGGED.length - 1);
+      // The rules an audit names are the ones that found what it lists: revision 2 finds FRESH, revision 1 nothing here.
+      expect(checked.map(audit => [audit.ruleRevisions[0]?.revision, audit.result?.violations?.map(violation => violation.code)]))
+        .toEqual(checked.map(audit => (audit.ruleRevisions[0]?.revision === 2 ? [2, ["FRESH"]] : [1, []])));
+      // An audit begun under the replaced rules and never checked by them ends as superseded.
+      expect(logAudits.filter(audit => audit.result?.status !== "completed").map(audit => audit.result?.status)).toEqual(
+        logAudits.filter(audit => audit.result?.status !== "completed").map(() => "superseded"));
     } finally { await enforcer.close(); }
   });
 

@@ -596,6 +596,32 @@ describe("Rerail tool results waiting for their edit's check", () => {
     }
   });
 
+  // An OMP turn end waits for every edit within ten seconds, and stops on a walk's log edits still being checked. The
+  // next tool call's edit is checked ahead of them: its result still waits for that check, and its steer goes back with it.
+  it("answers an OMP tool call's result with its edit's steer after a turn end stopped waiting for a walk's log edits", async () => {
+    const { runtime, check, checking, edit, turnEnd, walk, walkQueued, settles } = await hookSession("omp");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await walkQueued();
+      const ending = turnEnd("turn");
+      await checking.promise;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await ending).toEqual([]);
+      vi.useRealTimers();
+
+      const { answering } = await edit("t1", BAD);
+      // The result waits for the edits that may steer: no earlier wait for those went overdue.
+      await vi.waitFor(() => expect(settles).toEqual([undefined, "steering"]));
+      check.resolve();
+      expect((await answering).map(delivery => delivery.content)).toEqual([STEER]);
+    } finally {
+      vi.useRealTimers();
+      walk.resolve();
+      check.resolve();
+      await runtime.dispose();
+    }
+  });
+
   // Claude Code's Write and Edit results, as its PostToolUse hook carries them: `type: "create"` for a file the Write
   // made, else the text the tool replaced in `originalFile` or, where that is null, the line diff it made.
   it.each([

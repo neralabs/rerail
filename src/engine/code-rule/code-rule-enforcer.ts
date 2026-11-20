@@ -728,8 +728,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #busy = false;
   /** The edit being checked, while one is. */
   #checking: StoredEdit | undefined;
-  /** The edits a check of several (`#checkTogether`) has yet to finish: their revisions are not published before them. */
-  #unfinished: StoredEdit[] = [];
+  /**
+   * The edits a check of several (`#checkTogether`) has yet to finish, by path: their revisions are not published before
+   * them. Each leaves as it ends, checked or failed; what fails them all fails those still here.
+   */
+  #unfinished: [string, StoredEdit][] = [];
   /** Told as the pump ends a check, or ends: what a wait for the edits that may steer wakes on (`settleGeneratedEdits`). */
   readonly #checkEnds = new Set<() => void>();
   #closing = false;
@@ -1232,33 +1235,64 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   /** Installs `replacement` unless a newer catalog superseded (and closed) it meanwhile. */
   async #replaceWorkspace(replacement: PreparedWorkspace): Promise<void> {
+    if (!(await this.#attached(replacement))) return;
     try {
-      await replacement.storage;
-    } catch (error) {
-      // Keep serving the current catalog; the next refresh prepares the replacement again.
-      if (this.#replacement !== replacement) return;
-      this.#replacement = undefined;
-      this.#disposeWorkspace(replacement.workspace);
-      this.#readFailures.set("catalog", failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate"));
-      return;
-    }
-    try {
-      // One facts cache for the pass: each package's graph is walked on disk once, not once per applied source.
-      const facts = sourceFactsCache();
-      for (const stored of this.#applied.values())
-        await this.#apply(replacement.workspace, await this.#load(stored), facts);
-      const result = await this.#applyRequest(replacement.workspace, { files: [], removed: [] });
-      if (this.#replacement !== replacement) return;
-      this.#replacement = undefined;
-      if (this.#workspace !== undefined) this.#disposeWorkspace(this.#workspace.workspace);
-      this.#workspace = replacement;
-      this.#readFailures.delete("catalog");
-      this.#evaluation = result;
+      const result = await this.#replayed(replacement);
+      if (this.#replacement === replacement) this.#install(replacement, result);
     } catch (error) {
       if (this.#replacement !== replacement) return;
       this.#replacement = undefined;
       this.#disposeWorkspace(replacement.workspace);
       throw error;
+    }
+  }
+
+  /**
+   * Whether `replacement`'s storage attached. One that did not, if still the replacement wanted, is closed and its
+   * failure kept: the current catalog serves on, and the next refresh prepares the replacement again.
+   */
+  async #attached(replacement: PreparedWorkspace): Promise<boolean> {
+    try {
+      await replacement.storage;
+      return true;
+    } catch (error) {
+      if (this.#replacement === replacement) {
+        this.#replacement = undefined;
+        this.#disposeWorkspace(replacement.workspace);
+        this.#readFailures.set("catalog", failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate"));
+      }
+      return false;
+    }
+  }
+
+  /** `replacement` given every applied edit again, and its evaluation then. */
+  async #replayed(replacement: PreparedWorkspace): Promise<Evaluation> {
+    // One facts cache for the pass: each package's graph is walked on disk once, not once per applied source.
+    const facts = sourceFactsCache();
+    for (const stored of this.#applied.values())
+      await this.#apply(replacement.workspace, await this.#load(stored), facts);
+    return await this.#applyRequest(replacement.workspace, { files: [], removed: [] });
+  }
+
+  /** Makes `replacement`, given every applied edit and evaluated as `result`, the workspace that checks edits. */
+  #install(replacement: PreparedWorkspace, result: Evaluation): void {
+    this.#replacement = undefined;
+    if (this.#workspace !== undefined) this.#disposeWorkspace(this.#workspace.workspace);
+    this.#workspace = replacement;
+    this.#beginPassedOverAgain();
+    this.#readFailures.delete("catalog");
+    this.#evaluation = result;
+  }
+
+  /**
+   * The audits of the queued `log` edits a steering edit passed over began under the rules just replaced (`#take`): each
+   * ends as superseded, and begins again as `#take` reaches its edit, so each records the rules that check it.
+   */
+  #beginPassedOverAgain(): void {
+    for (const stored of this.#pending.values()) {
+      if (stored.auditId === undefined) continue;
+      this.#finishAudit(stored.auditId, "superseded", [], []);
+      stored.auditId = undefined;
     }
   }
 
@@ -1302,7 +1336,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /**
    * The edits checked next, out of the queue: the oldest that may steer, with the `log` edits queued ahead of it as
    * `#takenWith` says, else the oldest. The audits of every edit up to it begin now, in the order the edits came, as
-   * the Log lists audits by when they began.
+   * the Log lists audits by when they began; those of edits left queued begin again if the rules are replaced before
+   * their check (`#beginPassedOverAgain`).
    */
   #take(): [string, StoredEdit][] {
     const entry = this.#pending.next();
@@ -1325,19 +1360,20 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return this.#workspace?.crossFile === false ? [entry] : [...ahead, entry];
   }
 
-  /** Checks `taken`, an edit that may steer and the `log` edits queued ahead of it, in one engine call. */
+  /**
+   * Checks `taken`, an edit that may steer and the `log` edits queued ahead of it, in one engine call. What throws for
+   * one edit (its text's load, reading or publishing its findings) fails that edit alone (`#failEdit`), as `#check`
+   * fails its one edit, and the others go on; what throws for all (their apply, a workspace gone) fails each edit not
+   * finished yet.
+   */
   async #checkTogether(taken: readonly [string, StoredEdit][]): Promise<void> {
     this.#busy = true;
     this.#checking = taken.at(-1)![1];
+    this.#unfinished = [...taken];
     try {
       await this.#evaluateTogether(taken);
     } catch (error) {
-      for (const [path, stored] of this.#notFinished(taken)) {
-        // Out of the unfinished before its failure is recorded: the publish after the last record then sends the revision
-        // the edits finished before the error made ready, rather than leaving it for some later check.
-        this.#unfinished = this.#unfinished.filter(other => other !== stored);
-        await this.#recordPendingEvaluationError(path, stored, error);
-      }
+      for (const [path, stored] of [...this.#unfinished]) await this.#failEdit(path, stored, error);
     } finally {
       this.#busy = false;
       this.#checking = undefined;
@@ -1347,9 +1383,18 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
   }
 
-  /** The edits of `taken` whose audit has not ended. */
-  #notFinished(taken: readonly [string, StoredEdit][]): [string, StoredEdit][] {
-    return taken.filter(([, stored]) => stored.auditId === undefined || this.#runningAudits.has(stored.auditId));
+  /**
+   * An edit whose check threw: out of the unfinished first, so the publish after its record sends the revisions the
+   * edits finished before it made ready, then failed as `#recordPendingEvaluationError` fails it. A finding it recorded
+   * before the throw stands (an audit keeps its first result).
+   */
+  async #failEdit(path: string, stored: StoredEdit, error: unknown): Promise<void> {
+    this.#leaveUnfinished(stored);
+    await this.#recordPendingEvaluationError(path, stored, error);
+  }
+
+  #leaveUnfinished(stored: StoredEdit): void {
+    this.#unfinished = this.#unfinished.filter(([, other]) => other !== stored);
   }
 
   /**
@@ -1362,7 +1407,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const prepared = this.#workspace;
     const loaded = await this.#loadReadable(taken);
     if (this.#closing) return;
-    if (loaded.length === 0) return await this.#publishReady();
+    // None could be read: what their reads made ready is published as the edit that may steer ends, as `#check` does.
+    if (loaded.length === 0) return await this.#publishFor(...taken.at(-1)!);
     if (prepared === undefined) throw new Error("Policy workspace could not be initialized");
     await this.#finishAllTogether(prepared.workspace, loaded);
   }
@@ -1373,7 +1419,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#readFailures.delete("worker");
     const applied = await this.#applyTogether(workspace, loaded.map(([, , edit]) => edit));
     for (const [path, stored, edit] of loaded) this.#replaceAppliedEdit(path, stored, edit);
-    this.#unfinished = loaded.map(([, stored]) => stored);
     const [steering, ...others] = [loaded.at(-1)!, ...loaded.slice(0, -1)];
     await this.#finishTogether(steering!, applied);
     // The edit that may steer is checked: a result's wait for such edits (`settleGeneratedEdits`) ends here.
@@ -1382,27 +1427,54 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     for (const checked of others) await this.#finishTogether(checked, applied);
   }
 
-  /** One edit of a check of several: its findings, and those of the sources it repackaged, read from their evaluation. */
+  /**
+   * One edit of a check of several: its findings, and those of the sources it repackaged, read from their evaluation and
+   * published. A throw while it does fails it alone (`#failEdit`).
+   */
   async #finishTogether([path, stored, edit]: [string, StoredEdit, CodeRuleEdit], applied: AppliedTogether): Promise<void> {
-    this.#unfinished = this.#unfinished.filter(other => other !== stored);
+    this.#leaveUnfinished(stored);
     const repackaged = applied.repackaged.get(path) ?? [];
-    await this.#finishPendingEvaluation(path, stored, edit, applied.evaluation, repackaged, () => applied.unreported(repackaged));
+    try {
+      await this.#finishPendingEvaluation(path, stored, edit, applied.evaluation, repackaged, () => applied.unreported(repackaged));
+    } catch (error) {
+      await this.#failEdit(path, stored, error);
+    }
   }
 
-  /** The edits of `taken` with their text; each whose text could not be read fails as `#evaluatePendingEdit` fails it. */
+  /** Publishes what is ready as `stored` ends; a publish that throws fails `stored` (`#failEdit`). */
+  async #publishFor(path: string, stored: StoredEdit): Promise<void> {
+    try {
+      await this.#publishReady();
+    } catch (error) {
+      await this.#failEdit(path, stored, error);
+    }
+  }
+
+  /**
+   * The edits of `taken` with their text. Each whose text could not be read fails as `#evaluatePendingEdit` fails it, and
+   * each whose stored text could not be loaded as `#check` fails it (`#failEdit`): alone, the others read on.
+   */
   async #loadReadable(taken: readonly [string, StoredEdit][]): Promise<[string, StoredEdit, CodeRuleEdit][]> {
     const loaded: [string, StoredEdit, CodeRuleEdit][] = [];
     for (const [path, stored] of taken) {
-      const edit = await this.#load(stored);
-      const readFailure = this.#readFailureForEdit(path, edit);
-      if (readFailure === undefined) {
-        loaded.push([path, stored, edit]);
-        continue;
+      try {
+        const edit = await this.#load(stored);
+        if (this.#readable(path, stored, edit)) loaded.push([path, stored, edit]);
+      } catch (error) {
+        await this.#failEdit(path, stored, error);
       }
-      this.#readFailures.set(path, readFailure);
-      this.#finishAudit(stored.auditId, "failed", [], [readFailure]);
     }
     return loaded;
+  }
+
+  /** Whether `edit`'s text could be read; if not, its read failure is recorded and it leaves the unfinished. */
+  #readable(path: string, stored: StoredEdit, edit: CodeRuleEdit): boolean {
+    const readFailure = this.#readFailureForEdit(path, edit);
+    if (readFailure === undefined) return true;
+    this.#leaveUnfinished(stored);
+    this.#readFailures.set(path, readFailure);
+    this.#finishAudit(stored.auditId, "failed", [], [readFailure]);
+    return false;
   }
 
   async #check(path: string, stored: StoredEdit): Promise<void> {
@@ -1411,7 +1483,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     try {
       await this.#evaluatePendingEdit(path, stored);
     } catch (error) {
-      await this.#recordPendingEvaluationError(path, stored, error);
+      await this.#failEdit(path, stored, error);
     } finally {
       this.#busy = false;
       this.#checking = undefined;
@@ -2355,22 +2427,27 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * in a steer of their own.
    */
   async #publishReady(): Promise<void> {
-    for (const [revision, byPath] of this.#takeReady()) {
-      const current = [...byPath].filter(([path]) => this.#versions.get(path) === revision);
-      if (current.length === 0) continue;
-      const violations = current.flatMap(([, pathViolations]) => pathViolations);
-      const mode = this.#readyModes.get(revision) ?? this.#mode;
-      this.#readyModes.delete(revision);
-      this.#answerWith(revision, violations, mode);
-      await this.#publish(
-        revision,
-        current.map(([path]) => path),
-        violations,
-        mode,
-        { kind: "edit" },
-        true,
-      );
+    const ready = this.#takeReady();
+    for (const [index, [revision, byPath]] of ready.entries()) {
+      try {
+        await this.#publishRevision(revision, byPath);
+      } catch (error) {
+        // The revisions after it were never tried: ready again, for the publish that follows the failure's record.
+        for (const [later, paths] of ready.slice(index + 1)) this.#readyViolations.set(later, paths);
+        throw error;
+      }
     }
+  }
+
+  /** The findings `revision` holds for the sources it still speaks for, as the answer and, steering, as a steer. */
+  async #publishRevision(revision: number, byPath: ReadonlyMap<string, CodeRuleViolation[]>): Promise<void> {
+    const current = [...byPath].filter(([path]) => this.#versions.get(path) === revision);
+    if (current.length === 0) return;
+    const violations = current.flatMap(([, pathViolations]) => pathViolations);
+    const mode = this.#readyModes.get(revision) ?? this.#mode;
+    this.#readyModes.delete(revision);
+    this.#answerWith(revision, violations, mode);
+    await this.#publish(revision, current.map(([path]) => path), violations, mode, { kind: "edit" }, true);
   }
 
   /**
@@ -2379,7 +2456,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    */
   #takeReady(): [number, Map<string, CodeRuleViolation[]>][] {
     const queued = this.#pending.revisions();
-    for (const stored of this.#unfinished) queued.add(stored.revision);
+    for (const [, stored] of this.#unfinished) queued.add(stored.revision);
     const ready = [...this.#readyViolations].filter(([revision]) => !queued.has(revision));
     for (const [revision] of ready) this.#readyViolations.delete(revision);
     return ready;
