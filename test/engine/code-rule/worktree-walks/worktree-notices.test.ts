@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { TreeNotice, TreeWatch } from "../../../../src/engine/code-rule/tree-watch.js";
 import {
-  folderAt, NOTICE_PATHS_CAP, noticeCounts, REWATCH_MS, SharedTreeWatch, WATCH_RETRY_MS, WorktreeNotices,
+  folderAt, folderIdentity, NOTICE_PATHS_CAP, noticeCounts, REWATCH_MS, SharedTreeWatch, WATCH_RETRY_MS, WorktreeNotices,
 } from "../../../../src/engine/code-rule/worktree-notices.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 
@@ -232,6 +232,16 @@ describe("WorktreeNotices", () => {
     clock.now = REWATCH_MS;
     folders.set("/gone", "c2");
     expect(["/same", "/gone"].map(root => [subject.changed(root), subject.watching(root)])).toEqual([[true, true], [true, true]]);
+  });
+
+  it("watches again at once a worktree whose watch ended on a file system that records no birth time, where a folder made again may take the old one's file number", () => {
+    const watch = new ScriptedWatch();
+    const folder = folderIdentity({ isDirectory: () => true, dev: 1n, ino: 2n, birthtimeNs: 0n });
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "darwin", now: () => 0, folderAt: () => folder });
+    read(subject, "/w");
+    watch.notice("/w", { ended: true });
+    subject.collect();
+    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, true]);
   });
 
   it("tries to watch at the next walk a worktree whose folder was gone as its watch would begin, not after the retry", () => {

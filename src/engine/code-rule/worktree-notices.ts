@@ -18,7 +18,7 @@
  * (`watchRegistry`): `git worktree add`, `remove`, `move`, `repair` and `prune` change an entry there, so a notice of one
  * tells the walks that Git's list may name a worktree it did not, such as one removed and added again at its path.
  */
-import { lstatSync, readdirSync } from "node:fs";
+import { type BigIntStats, lstatSync, readdirSync } from "node:fs";
 import type { TreeNotice, TreeWatch } from "./tree-watch.js";
 
 /** What a walk's read of a worktree saw, by paths relative to the worktree (`/`-separated, `""` for the worktree itself). */
@@ -33,8 +33,9 @@ export interface WorktreeRead {
 export const WATCH_RETRY_MS = 600_000;
 /**
  * A worktree whose watch ended is watched again no sooner than this after, read whole on every walk meanwhile, unless
- * another folder than the one it watched now stands at its path (`folderAt`): a worktree made again there is watched as
- * the next walk reads it, so a write after that read is a notice. A watch ends when the worktree or a folder above it is
+ * another folder than the one it watched now stands at its path (`folderAt`), or its file system cannot tell
+ * (`UNKNOWN_FOLDER`): a worktree made again there is watched as the next walk reads it, so a write after that read is a
+ * notice. A watch ends when the worktree or a folder above it is
  * renamed, moved or deleted (on Windows, when the path then holds no folder or another, or after a run of renames: the
  * engine's `REOPENS` within `REOPEN_WINDOW`), or on a watch error. Watching the same folder again at once would chase a
  * worktree still being moved, its watch ending again on every walk.
@@ -104,16 +105,27 @@ function registryCounts(notice: TreeNotice): boolean {
 }
 
 /**
+ * What `folderAt` gives for a folder on a file system that records no birth time (ext3, for one): there a folder made
+ * again may take the file number of one just removed, so it is never taken for the folder that stood there before.
+ */
+export const UNKNOWN_FOLDER = "?";
+
+/**
  * The folder at `root`: its device, file number and birth time (a folder made on Linux may take the file number of one
  * just removed); `""` when none is there.
  */
 export function folderAt(root: string): string {
   try {
-    const info = lstatSync(root, { bigint: true });
-    return info.isDirectory() ? `${info.dev}:${info.ino}:${info.birthtimeNs}` : "";
+    return folderIdentity(lstatSync(root, { bigint: true }));
   } catch {
     return "";
   }
+}
+
+/** `folderAt` of the entry `info` describes: `""` for no folder, `UNKNOWN_FOLDER` for one with no birth time. */
+export function folderIdentity(info: Pick<BigIntStats, "dev" | "ino" | "birthtimeNs" | "isDirectory">): string {
+  if (!info.isDirectory()) return "";
+  return info.birthtimeNs === 0n ? UNKNOWN_FOLDER : `${info.dev}:${info.ino}:${info.birthtimeNs}`;
 }
 
 /** The folders a watch of the registry `folder` follows on Linux: its own, and each worktree's entry, where Git writes `gitdir` and `locked`. */
@@ -296,11 +308,12 @@ export class WorktreeNotices {
 
   /**
    * Whether the watch of `root` ended within `REWATCH_MS` and `folder`, the folder at its path now, is the one it
-   * watched: another folder there is a worktree made again, watched at once.
+   * watched: another folder there, or one its file system cannot tell from it (`UNKNOWN_FOLDER`), is a worktree made
+   * again, watched at once.
    */
   #endedAt(root: string, folder: string): boolean {
     const ended = this.#ended.get(root);
-    return ended !== undefined && this.#now() - ended.at < REWATCH_MS && folder === ended.folder;
+    return ended !== undefined && this.#now() - ended.at < REWATCH_MS && folder === ended.folder && folder !== UNKNOWN_FOLDER;
   }
 
   /** Watches the registry `folder`, spare, with the folders it follows now (`registryFolders` on Linux); one the watch refuses is let go. */

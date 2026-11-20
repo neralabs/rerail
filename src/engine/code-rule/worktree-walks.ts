@@ -405,7 +405,7 @@ export class WorktreeWalks {
   #wake: (() => void) | undefined;
   /** Times the walk that reads the worktree whose last read is next due (`WORKTREE_FULL_WALK_MS`). */
   #reread: NodeJS.Timeout | undefined;
-  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree is watched. */
+  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree or a registry folder is watched. */
   #pump: NodeJS.Timeout | undefined;
   /** Whether a walk is reading: it takes the notices itself, and asks for the walk they call for as it ends. */
   #walking = false;
@@ -551,7 +551,7 @@ export class WorktreeWalks {
     return Date.now() - kept.readAt >= this.#fullWalkMs;
   }
 
-  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree is watched, and stops once not. */
+  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree or a registry folder is watched, and stops once not. */
   #armPump(): void {
     const pumping = this.#watching.length > 0 && this.#notices.watchingAny();
     if (pumping && this.#pump === undefined) {
