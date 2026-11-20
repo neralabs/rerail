@@ -94,4 +94,14 @@ describe("rule approvals", () => {
     expect(after.get("mine")).toMatchObject({ mode: "steer", approval: { subject: { kind: "rule", id: "mine" }, approved: true } });
     expect(after.get("agents")).toMatchObject({ mode: "log", approval: { subject: { kind: "rule", id: "agents" }, approved: false } });
   });
+
+  it("names the By Rerail rule an edited copy was made from, so the dashboard can say approving it turns that rule off", async () => {
+    const originalId = "typescript-eslint-consistent-type-definitions";
+    const original: Json = (await rules()).get(originalId)!.rule;
+    await asAgent("library_rules_upsert", { id: originalId, kind: "code", rule: { ...original, revision: (original.revision as number) + 1 } });
+
+    const after = await rules();
+    expect(after.get(`${originalId}-copy`)).toMatchObject({ copiedFromRuleId: originalId, approval: { subject: { kind: "rule" }, approved: false } });
+    expect(after.get(originalId)).toMatchObject({ copiedFromRuleId: null });
+  });
 });

@@ -239,8 +239,8 @@ function storedRule(entry) {
     addedAt: entry.addedAt ?? null,
     // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
     approval: entry.approval ?? null,
-    // Your edited copy of a rule Rerail ships (`<id>-copy`): the rule it was copied from, once the daemon says so.
-    copiedFromRuleId: entry.copiedFromRuleId ?? entry.rule?.copiedFromRuleId ?? null,
+    // Your edited copy of a rule Rerail ships (`<id>-copy`): the rule it was copied from.
+    copiedFromRuleId: entry.copiedFromRuleId ?? null,
     updatedAt: entry.updatedAt ?? null,
   };
 }
