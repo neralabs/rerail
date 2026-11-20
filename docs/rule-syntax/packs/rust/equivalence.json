@@ -1,0 +1,118 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "rust",
+  "equivalent": false,
+  "untranslated": {
+    "clippy-redundant-field-names": "failed: check-rr reader-failed clippy-redundant-field-names.rerail: .violation redundant_field_names message: no column  x "
+  },
+  "different": {
+    "clippy-allow-attributes": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        }
+      }
+    },
+    "clippy-decimal-literal-representation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "rerail-native": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        }
+      }
+    },
+    "clippy-decimal-literal-representation-threshold": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "rerail-native": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        }
+      }
+    },
+    "clippy-double-parens": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "clippy-inconsistent-digit-grouping-no-fractions": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "clippy-many-single-char-names": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        },
+        "rerail-native": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
+    "clippy-needless-raw-string-hashes": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "clippy-needless-raw-string-hashes-one-allowed": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "clippy-precedence": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 12
+        }
+      }
+    },
+    "clippy-unnested-or-patterns": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        },
+        "rerail-native": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    }
+  }
+}

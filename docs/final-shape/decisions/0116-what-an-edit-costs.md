@@ -33,7 +33,7 @@ Why, when the edit adds a few dozen rows?
 
 - **The corpus:** 20 `.py` files (476 KB), with the data-layer rules (278 programs).
 - **The build:** debug-profile, under strict mode, with the writer queue's cap at 4 GB.
-- **The runs:** a cold run, then an assignment appended to `_internal/connection_helpers.py`, then the run after the
+- **The runs:** a cold run, then an assignment appended to one of the corpus's helper modules, then the run after the
   edit, against the cold run's store.
 - **No profile.** The profile adds 258 G instructions and 26 s of wall time to an edit's run, so the times below are
   from unprofiled runs. The counts come from a profiled run, since they do not depend on its timing.

@@ -490,7 +490,7 @@ CREATE TABLE IF NOT EXISTS push_pending (
 -- Collection keeps pages some binding names (tree_pages.rs).
 CREATE INDEX IF NOT EXISTS name_bindings_by_digest ON name_bindings(digest);
 
--- Per-directory result pages (tree_pages.rs, from Tempo's tree_result_segments), keyed by what the
+-- Per-directory result pages (tree_pages.rs), keyed by what the
 -- directory's result depends on; `digest` is the page derivation's output digest.
 CREATE TABLE IF NOT EXISTS tree_pages (
     page_key BLOB NOT NULL CHECK(length(page_key) = 32),

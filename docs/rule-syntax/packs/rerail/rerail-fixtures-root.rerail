@@ -1,0 +1,93 @@
+.policy "rerail-fixtures-root" revision 3
+.description "Use the fixtures_dir and oracle macros to reach the fixtures directory from Rust code in native, not relative paths or the oracles variable; only they follow its override."
+.language rust
+.mode steer
+.scope include "native/**/*.rs"
+.scope exclude "native/build.rs", "native/src/code_rule_dsl/fixtures.rs", "native/target/**"
+// The fixtures directory is reached through `fixtures_dir!()` and `oracle!(…)`, the only paths that follow its override
+// (RERAIL_ORACLES_DIR, resolved once by native/build.rs); native/src/code_rule_dsl/fixtures.rs defines them and is left
+// out.
+//   include_str!("../../fixtures/rust/a.rs")                              RELATIVE_FIXTURES_PATH (climbs to fixtures/)
+//   Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("fixtures")  RELATIVE_FIXTURES_PATH
+//   std::env::var("RERAIL_ORACLES_DIR")                                   ORACLES_VARIABLE_READ
+//   oracle!("rust/scope/crate/src/closures.rs")                           not reported
+// The JSON's `regex` tests a node's text, as ast-grep's do (a search; `^`/`$` anchor the whole text); its `inside`
+// without `stopBy` is the parent, with `stopBy: end` any ancestor.
+
+// A string literal that climbs to a fixtures directory: "../fixtures/…", "../../fixtures", r#"../fixtures/x"#.
+.violation RELATIVE_FIXTURES_PATH(at: node) "Read this with `crate::code_rule_dsl::oracle!(\"<path under fixtures/>\")`, or build the path from `fixtures_dir!()`, not relative to this file or crate; only those follow RERAIL_ORACLES_DIR."
+RELATIVE_FIXTURES_PATH(n) :- kind(n, "string_literal"), match("\"(?:[^\"\\\\]*/)?\\.\\./fixtures(?:/|\")(?s:.*)", n).
+RELATIVE_FIXTURES_PATH(n) :- kind(n, "raw_string_literal"), match("r#*\"(?:[^\"\\\\]*/)?\\.\\./fixtures(?:/|\")(?s:.*)", n).
+// "fixtures" or "fixtures/…" joined onto the crate's parent: the argument of the call that ends the chain.
+RELATIVE_FIXTURES_PATH(n) :- kind(n, "string_literal"), match("\"fixtures(?:/[^\"\\\\]*)?\"", n),
+    child(args, n, _), kind(args, "arguments"), child(call, args, _), kind(call, "call_expression"),
+    contains("CARGO_MANIFEST_DIR", call),
+    match("(?s:.*)(?:\\.parent\\(\\)(?:\\s*\\.(?:unwrap\\(\\)|expect\\(\"[^\"]*\"\\)))?|\\.join\\(\\s*\"\\.\\.\"\\s*\\))\\s*\\.join\\(\\s*\"fixtures(?:/[^\"]*)?\"\\s*\\)", call).
+
+// The override's variable named where it is read: in env!/option_env! (or a macro that wraps one), or as
+// std::env::var's argument.
+.violation ORACLES_VARIABLE_READ(at: node) "Use `crate::code_rule_dsl::fixtures_dir!()`, or `oracle!(…)` for one file's text, instead of reading this variable; native/build.rs resolves it once for every test."
+ORACLES_VARIABLE_READ(n) :- variable_name(n), env_macro(n).
+ORACLES_VARIABLE_READ(n) :- variable_name(n), child(args, n, _), kind(args, "arguments"),
+    child(call, args, _), kind(call, "call_expression"), match("(?:::)?(?:std::)?(?:env::)?var(?:_os)?\\s*\\((?s:.*)", call).
+.decl variable_name(n: node)
+variable_name(n) :- kind(n, "string_literal"), glob("\"RERAIL_{ORACLES,FIXTURES}_DIR\"", n).
+.decl env_macro(n: node)
+env_macro(n) :- inside(n, m, "macro_invocation"), reads_variable(m).
+env_macro(n) :- inside(n, m, "macro_definition"), reads_variable(m).
+.decl reads_variable(m: node)
+reads_variable(m) :- (kind(m, "macro_invocation") ; kind(m, "macro_definition")),
+    match("(?s:.*)(?:^|[^\\w])(?:option_)?env!\\s*\\(\\s*\"RERAIL_(?:ORACLES|FIXTURES)_DIR\"(?s:.*)", m).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_relative_include_is_reported exactly
+    .fixture "native/src/code_rule_dsl/scope/rust/tests.rs" ```
+        fn source(path: &str) -> &'static str {
+            match path {
+                "closures.rs" => include_str!("../../../../../fixtures/rust/scope/crate/src/closures.rs"),
+                other => panic!("unknown fixture {other}"),
+            }
+        }
+        ```
+    .expect RELATIVE_FIXTURES_PATH at "native/src/code_rule_dsl/scope/rust/tests.rs":3
+.end
+
+.test joins_and_the_variable_are_reported exactly
+    .fixture "native/src/lab/paths.rs" ```
+        fn root() -> PathBuf {
+            Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("fixtures")
+        }
+        fn raw() -> &'static str { r#"../fixtures/x"# }
+        fn over() -> Option<String> { std::env::var("RERAIL_ORACLES_DIR").ok() }
+        const DIR: &str = env!("RERAIL_FIXTURES_DIR");
+        const OTHER: &str = "RERAIL_FIXTURES_DIR";
+        ```
+    .expect RELATIVE_FIXTURES_PATH at "native/src/lab/paths.rs":2
+    .expect RELATIVE_FIXTURES_PATH at "native/src/lab/paths.rs":4
+    .expect ORACLES_VARIABLE_READ at "native/src/lab/paths.rs":5
+    .expect ORACLES_VARIABLE_READ at "native/src/lab/paths.rs":6
+.end
+
+// The pack's passing example, and the files the scope leaves out.
+.test the_macros_pass exactly
+    .fixture "native/src/code_rule_dsl/scope/rust/tests.rs" ```
+        use crate::code_rule_dsl::oracle;
+
+        fn source(path: &str) -> &'static str {
+            match path {
+                "closures.rs" => oracle!("rust/scope/crate/src/closures.rs"),
+                other => panic!("unknown fixture {other}"),
+            }
+        }
+        ```
+    .fixture "native/build.rs" ```
+        fn main() { let _ = std::env::var("RERAIL_ORACLES_DIR"); }
+        ```
+    .fixture "native/src/code_rule_dsl/fixtures.rs" ```
+        macro_rules! __rerail_fixtures_dir {
+            () => {
+                env!("RERAIL_FIXTURES_DIR", "Rerail fixtures not found")
+            };
+        }
+        ```
+.end

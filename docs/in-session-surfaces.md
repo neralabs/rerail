@@ -158,11 +158,12 @@ Block-mode rules steer the same way; blocking is not built yet. Log-mode rules n
 
 ### What you see
 
-One line per rule, `◆ Rerail · <rule id>  steered  ·  why?`, where `why?` opens the rule on your dashboard.
+One line per rule, `◆ Rerail · <rule>  steered  ·  why?`, where `why?` opens the rule on your dashboard.
 
 <details>
-<summary>Mark, link and glyphs</summary>
+<summary>Rule, mark, link and glyphs</summary>
 
+- **Rule:** the rule's title, as the dashboard lists it: the one you gave a rule of yours, or the one its rule pack lists. A rule with neither shows its id. The coding agent's block still names the id, which its `rerail feedback` command takes.
 - **Mark:** the footer's coloured `R E R A I L` where the agent draws colour (Claude Code, OMP); the word in Codex and Cursor.
 - **Link:** `why?` appears only while a daemon answers on a loopback address. With none, or one bound to `0.0.0.0`, the line has no link rather than a dead one.
 - **Glyphs:** `◆ steered`, `○ logged`. Log-mode rules never reach a session, so sessions show `◆` only.
@@ -176,7 +177,7 @@ Where your line appears, and what happens to a steer found as the turn ends:
 
 - **Claude Code:** under the tool call, after `PostToolUse:<Tool> says:`; two or more lines start on their own line. `why?` is a link in terminals known to draw them ([below](#links-in-the-terminal)), else `why? → <url>`. A turn-end steer goes out at the turn's end: its line for you, and its block for the agent as `Stop hook feedback`, which continues the turn so the agent can act on it. Once a Stop hook, Rerail's or another, has kept the turn going, a steer found when it ends again waits, line and block together, for the agent's next tool call or session start, led as a late steer, so Rerail never keeps a turn going twice.
 - **Codex:** under the tool call (`↳ Hook · …`), plain: `… steered  ·  why? → <url>`. Codex takes a turn-end block as your message, so a turn-end steer shows nothing then: its line and its block ride the next hook carrying context (your next prompt, a tool call, a session start), the block led as a late steer.
-- **Cursor:** no line of Rerail's own; the agent is asked to begin its reply with `… steered  ·  [why?](<url>)`. A turn-end steer waits for the next tool result or session start.
+- **Cursor:** no line of Rerail's own; the agent is asked to begin its reply with `` `◆ Rerail · <rule>  steered`  ·  [why?](<url>) ``, the rule's name as inline code so a title shows as written. A turn-end steer waits for the next tool result or session start.
 - **OMP:** drawn in OMP's theme colours, `why?` a link where the terminal draws them. Ctrl+O expands it to show each rule's source and the block, dimmed. A steer riding an edit's tool result shows right after that call's results, before the next model call; the agent never sees the line. At turn end, the run waits up to 10 seconds for the turn's check, then pending steers continue the run before it reports done. A steer arriving once the session is idle waits for your next message.
 - **Pi:** Pi's default message card, showing the whole block. Turn end as OMP.
 
@@ -219,6 +220,7 @@ Rerail checks shell-written files when the command finishes. Edits made while a 
 <summary>Shell edits and indexing</summary>
 
 - A shell result, or a turn end, waits up to 10 seconds for Rerail to find what the shell wrote. Later finds are steered at a later step, and the dashboard timeline says rules had not yet seen shell edits there.
+- A turn end whose walks of the session's folder and the repository's other worktrees could not check part of them (a folder or file Rerail cannot read; a file over 1,000,000 bytes that a rule would read; a source or text file holding binary data, such as UTF-16 text; a walk that fails) goes on the session's record: each place once (`source-discovery-gap`), with its path and the reason, however many turn ends meet it, in whatever order, after the session reopens and after a daemon restart. A place is its path and its error's code, so one that heals and breaks again for the same reason is not recorded again; another reason is. Shell writes in a place Rerail could not read are not checked. A file or folder removed before the walk reached it, or being removed as it looks, is no gap. On Windows a path refuses the walk with EPERM both while its delete is pending (a delete that is not POSIX, as on FAT, exFAT and network volumes, while another program holds the file open) and when the user is denied it; after the walk, Rerail looks once more at its attributes and its lstat, reading none of it, and only a path still there whose attributes Windows gives, as it gives a denied one's, is a gap. A walk looks at most at 100 such paths, the first in path order with those an earlier walk found being deleted last, and not at one the record already holds; in another worktree, whose walk serves every session watching it, not at one every such session's record holds. A turn end records at most 100 new places, in path order on every system, and later turn ends record the next, the places an earlier turn end could not record among them. Past 1,000 places in one session, one more record says the walks met more, and no other is recorded. `sessions_get` counts the places recorded in `gaps.discoveryGaps`, says in `gaps.discoveryGapsMore` whether the walks met more, and lists the first 20 in `gaps.discoveryGapPlaces`. The dashboard's session timeline says rules could not fully check part of the repository, with the count (past the bound: more than 1,000 places, 1,000 recorded), and lists those places, each path with its reason. The coding agent is not told of them and reads no place: `session_events` withholds the events' payload, and `sessions_get` gives it the count and whether the walks met more, never a place.
 - A file the shell deleted is reported only if Rerail had seen it.
 
 In a large repository, Rerail indexes at session start before code rules can run; nothing waits for it.

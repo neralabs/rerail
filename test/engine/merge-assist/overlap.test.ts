@@ -264,7 +264,7 @@ describe("a conflict's quiet files and id", () => {
   it("keeps the same id for the same question and ref", () => {
     expect(conflictId("overlap:abc", "refs/pull/398/head")).toBe(conflictId("overlap:abc", "refs/pull/398/head"));
     expect(conflictId("overlap:abc", "refs/pull/398/head")).toMatch(/^conflict:overlap:abc:[0-9a-f]{8}$/u);
-    expect(conflictId("overlap:abc", "jbarnes/x")).not.toBe(conflictId("overlap:abc", "refs/pull/398/head"));
+    expect(conflictId("overlap:abc", "jdoe/x")).not.toBe(conflictId("overlap:abc", "refs/pull/398/head"));
   });
 
   it("anchors what a change contests on the base text: lines added above or whitespace keep it, other text changes it", async () => {

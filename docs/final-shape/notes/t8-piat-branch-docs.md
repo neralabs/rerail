@@ -1,6 +1,6 @@
 # T8 notes: Pulling-it-all-together branch docs
 
-Source root: `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/docs/` (excluding `rule-engine-direction/`). This repository's copies of these docs were removed; at 7efcac9c67.
+Source root: `Pulling-it-all-together:docs/` (excluding `rule-engine-direction/`). This repository's copies of these docs were removed; at 7efcac9c67.
 Citations are `file:line` relative to that root. Read-only research; nothing built or run.
 
 Number tags: **M** = measured (the doc reports a run), **D** = design target/limit/declared constant, **A** = arithmetic/derived by the doc or by me from the doc's numbers (I mark mine "A, mine").
@@ -263,7 +263,7 @@ Rules (D) (:16-32)
 
 Enforcement (:36-46): with fixed dependencies and sufficient capacity, 100x more independent roots or files must keep the same producer stage count; thread/row counts scale with volume; genuinely dependent producer requires a subsequent wave; repeated SQL scans or insertion batch size changes cannot create more stages (:36-39). CPU stage traces are CPU passes, not GPU launches; a GPU backend must record kernel launches, command submissions, intermediate readbacks separately and preserve GPU-owned counts between dependent kernels; general recursive inference can require additional semantic waves (:42-46).
 
-Provenance (:50-53): Landing's scale-test branch at `ce7d2da32` is the execution-shape reference (broad classes, homogeneous signature blocks, compact frontiers, shared-command counts); its dynamic production integration incomplete; Rerail does not import Landing's rule engine or persisted tape ABI.
+Provenance (:50-53): the predecessor repository's scale-test branch at `ce7d2da32` is the execution-shape reference (broad classes, homogeneous signature blocks, compact frontiers, shared-command counts); its dynamic production integration incomplete; Rerail does not import the predecessor repository's rule engine or persisted tape ABI.
 
 Current CPU implementation (:57-89)
 - Workspace driver collects dirty relational work across policies, clauses, files; stateless collects all partitions in the policy (:57-58). SQL sessions retain connections, stage positions, work counters, diagnostic anchors across suspension (:59). File-local result caches keep exact document-version keys (:60). Workspace eligibility witnesses gate native syntax inputs (:61). Global clauses can keep selective projected evidence when a file gate can't express row selection (:62). Preparation extracts full declared inputs before consumers run (:63).
@@ -338,7 +338,7 @@ Regressions found (SQL-shape lessons) (:180-200)
 ## data-layer-engine-gaps.md (159 lines) -- feature ledger
 
 Not about storage/perf mostly. Facts:
-- Every new Linear issue requires Jeremy's approval (:3-5). Oracle revision `2b1504ad...` (:9).
+- Every new Linear issue needs approval (:3-5). Oracle revision `2b1504ad...` (:9).
 - Retained feature issues (implemented): line queries/filters/first matches/paths/same-file gates/line terminators; whole-file valid/invalid syntax gates; current/previous line predicates, bounded context (:18-22). Seven withdrawn issues (:34-42).
 - String parity defects: adjacent literal concatenation and decoded-newline second diagnostic line; outside passing 317-call corpus (:46-61).
 - Batch two: per-file content gates, bounded line state, indentation filters, LF-only scanning, bounded context windows (:78-83).
@@ -559,7 +559,7 @@ Store tables named here: `file_kind_counts(fid,code)` + posting segment, `nera_p
 
 ## sql-composition-opportunities.md (179 lines)
 
-- Sibling branches surveyed (:11-16): `Moti-Velz/sql-set-composition` `e1a46a28`; `jeremy/sql-capture-demand-spikes` `f0907707...`; `jbarnes/sql-rerailer` `9bc40b37`.
+- Sibling branches surveyed (:11-16): `sql-set-composition` `e1a46a28`; `sql-capture-demand-spikes` `f0907707...`; `sql-rerailer` `9bc40b37`.
 - Sibling numbers (M, other branches): generated B023 SQL over 138 files 125.553 ms kernel CPU vs older frame compiler 5,478.944 ms vs handwritten 63.349 ms; generated query 51.560 ms in preparation (:24-28). NER sibling: 164,480,024-byte query and > 2 GiB during preparation for `eager_resolve`; "Named CTEs alone do not establish bounded preparation cost." (:30-32)
 - 1. Tree intervals: `relational/forest.rs` computed preorder ranges then expanded every root into pairs; proposed `(file, root, lo, hi, expand)`; requires proven tree with contiguous subtrees; excluded edges/nested stop conditions need proof; raw CST bounds alone insufficient (:36-48).
 - 2. Push demand: separate semantic node sets from answer construction; kind/field/value predicates restrict keys before joins; semijoins for existence; capture text deferred (:56-59). `removed-calls` shape `call.function -> attribute.attribute -> identifier`: reference decodes all identifier text; candidate decodes only identifiers on demanded path; SQLite can evaluate native predicate before selective joins (control) (:61-66). Covers capture-free conjunction only; not ordered choice, negative captures, unknown results, reached failures (:68-70).
@@ -746,7 +746,7 @@ The journal is written newest-first (:11 is 2026-10-24 latest; :3463 is the 2026
 - Remaining: 22.052 s SQL batch, 5.785 s input prep (:3002).
 
 ### 2026-10-21 SQLite positional kind anchors, after `5616076a` (:2789-2921)
-- **Decision: use the positional FTS5 kind index from `ast-index-spike`** (`bench/tape_store.py::_build_kind_fts`): one contentless FTS5 row per file; each preorder node contributes a bare token `k<base36(language * 1024 + kind)>` including anonymous nodes; FTS5 instance vocabulary returns file IDs + preorder positions; contentless deletion for replacement/removal; no field tokens or persistent row per AST node (:2791-2798).
+- **Decision: use the positional FTS5 kind index from the SQL index prototype** (`bench/tape_store.py::_build_kind_fts`): one contentless FTS5 row per file; each preorder node contributes a bare token `k<base36(language * 1024 + kind)>` including anonymous nodes; FTS5 instance vocabulary returns file IDs + preorder positions; contentless deletion for replacement/removal; no field tokens or persistent row per AST node (:2791-2798).
 - Storage: real temp file, 1 MiB main page-cache target, file-backed temp storage with 512 KiB target, mmap disabled; a 4,816,896-byte DB -> 1,114,704 bytes SQLite page cache + schema + statements (:2800-2805).
 - SQL selects candidates via kind postings, text predicates, field constraints, parent relationships; existing matcher constructs captures and checks semantics (:2807-2809).
 - Rejected trials (:2825-2876): loading full tape BLOBs 16.005 s vs Rust 2.631-2.848 s, 76.33% in `pread`; incremental BLOB reads -> 3.867 s. CTE reference expansion -> 178 table-reference-limit errors; fix: temp tables at shared deps with large expansion estimates (physical boundaries). **`SQLITE_ENABLE_MEMORY_MANAGEMENT` forced all connections into one shared page-cache group: 44.84% samples in mutex wakeups; disabled.** Pattern plans scanned postings per candidate root and estimated by kind counts; fixed to actual posting counts + indexed temp tables; materialized span relation computes subtree end once. Ancestor walks replaced by indexed SQL range queries since subtree ordinals form intervals; inside predicates remove nested intervals with a SQL window (:2869-2874).
@@ -773,7 +773,7 @@ The journal is written newest-first (:11 is 2026-10-24 latest; :3463 is the 2026
 - Batched SQL vs Rust index: +362.9% CPU on positive control, +11.6% quality (:2595).
 
 ### 2026-10-21 Candidate SQL CPU root cause (:2476-2570)
-- "The kind postings match `ast-index-spike`'s encoding, but the value access path is missing." Reference persists value postings in `vidx` and distinct-term vocabulary in `vlex`; evaluates text predicates against vocabulary terms then seeks postings; ours decoded and tested individual occurrences (:2479-2483). Reference has coverage checks and bounded residue to avoid false absence (:2485-2486).
+- "The kind postings match [the SQL index prototype]'s encoding, but the value access path is missing." Reference persists value postings in `vidx` and distinct-term vocabulary in `vlex`; evaluates text predicates against vocabulary terms then seeks postings; ours decoded and tested individual occurrences (:2479-2483). Reference has coverage checks and bounded residue to avoid false absence (:2485-2486).
 - Positive control: 164,171,085 VM steps, 2,174 sorts; one statement with 710 CTEs and 536 sorts; redundant `s162 = s160 INTERSECT s5` then intersect with `s5` twice more (:2492-2499). Compiler reuses identical relations + canonical intersections (:2500). After cleanup: statements 82 -> 72; VM 164,171,085 -> 111,766,482; sorts 2,174 -> 1,292; BLOB reads 2,858,925 -> 2,791,126; text extractions 519,033 -> 517,994 (:2505-2512). BLOB API transferred 102,258,042 bytes, repeated packed-span blocks 82,960,502, source text 8,637,096; 340,517 AST nodes indexed once (:2516-2519).
 - Measurement error: an internal FTS cursor open while other statements run reported 14.5 CPU s lifetime during a 2.547 s cold phase (:2534-2538).
 - M: positive 2.216 -> 1.783 s (-19.5%); quality 2.948 -> 2.984 s (:2547-2548).
@@ -1018,7 +1018,7 @@ Physical layouts named in the sources
 - Syntax relations exposed to SQL: node / edge / owner virtual tables over shared metadata; equality + IN via postings; start ranges by binary search; `subtree_end` (exclusive preorder interval end) for containment `child.id>=root.id AND child.id<root.subtree_end` (shared-syntax-implementation.md:33-38; sql-composition-implementation.md:39-43).
 - Field-aware anchors: sparse postings per requested AST field (first child), stored parent links (journal :2928-2933).
 - Workspace corpus DB (one file-backed SQLite DB per workspace, WAL, leased connections; survives workspace revisions, not process restarts) (journal :2698-2719):
-  - positional FTS5 kind index from ast-index-spike: one contentless row per file, token `k<base36(lang*1024+kind)>` per preorder node incl. anonymous nodes (journal :2791-2798);
+  - positional FTS5 kind index from the SQL index prototype: one contentless row per file, token `k<base36(lang*1024+kind)>` per preorder node incl. anonymous nodes (journal :2791-2798);
   - `file_kind_counts(fid, code)` PK with a delta-varint posting segment per row, expanded by `nera_postings` (sql-composition-implementation.md:138-152) -- replaced FTS vocab access because the vocab table cannot seek document constraints;
   - value postings `vidx` PK `(lang, term, fid, kind)` with delta-varint segments, distinct-term vocabulary `vlex`, coverage `vcov`; clean-token limit 96 chars, residue 4,096 occurrences per language+kind, <= 384 KiB residue text per kind per publication (D) (journal :2394-2409; :2479-2486);
   - decoded structural properties, span offsets, first-child field lookups in ordinary SQL tables keyed by file + preorder, FK-invalidated on file replacement (journal :2416-2420); owners `decoded_spans`, `decoded_children` (NULL child = completed absence; missing coverage tested by absent owner row) (shared-producer-contracts.md:67-68; journal :620-622);
@@ -1090,7 +1090,7 @@ Measured per-edit costs (M; "edit" = one-file edit, CPU unless noted)
 - Rules (D): vtab callbacks only read prepared data; never dispatch producers or wait on a device. Source text = immutable side array with checked ranges; paths/grammar names stay host metadata. Output order uses logical request identities. Per-relation completion or failure; failure exposes no partial rows, cannot prove absence, cannot spend another relation's allowance. "Resident input and result capacity determine execution partitions. SQL insertion batches, publication pages, file boundaries, and exact signatures cannot determine dispatch boundaries." 100x more roots/files must keep the same stage count; only true dependencies add waves.
 - CPU backend limits (D): 64 MiB packed input arena, 256 MiB result columns, 100 producer passes per batch across waves, 256 MiB SQLite admission target (not a process memory bound). Measured CPU backend: cold 2.898 -> 2.553 s, edit 1.192 -> 1.036 s, RSS 572 -> 652 MiB (M).
 - GPU-specific: CPU stage traces are not GPU launches; a GPU backend must record kernel launches, command submissions, readbacks separately; no fixed launch count across recursive algorithms. Transducer-era rule: partitioning loop only for a hard device limit, recorded (sql-driven-transducer-execution.md:168-170). "CPU SQL statements are not equivalent to GPU kernel launches." (sql-preparation-architecture.md:274-281). Any GPU measurement in these docs: not found (copied-column batch prototype adds ~3.3 MiB and is CPU-only; "Future GPU work needs ... a separate transfer measurement", sql-composition-opportunities.md:160-162).
-- Provenance: Landing's scale-test branch `ce7d2da32` is the execution-shape reference; Rerail imports neither its engine nor its tape ABI (gpu contract :50-53).
+- Provenance: the predecessor repository's scale-test branch `ce7d2da32` is the execution-shape reference; Rerail imports neither its engine nor its tape ABI (gpu contract :50-53).
 
 ### 5. SQL execution-shape lessons with measurements
 1. Execute fewer copies of shared work: 9 -> 3 grouped clauses: cold CPU 46.707 -> 14.370 s (relational-execution-design.md:93-106). Repeated `descendants` (six identical recursive queries, 23,860,081 VM each) and per-scope `nodes`/`ownership` were the dominant early costs (code-rule-profiling.md:273-278; shared-sql-performance.md:55-98).

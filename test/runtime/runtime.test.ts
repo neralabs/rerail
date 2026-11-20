@@ -1036,6 +1036,7 @@ describe("Rerail session restore", () => {
         rule: {
           id: "acme:no-force-push",
           mode: "steer",
+          title: "Ask before force-pushing",
           match: { field: "input.command", regex: String.raw`\bgit\s+push\b[^\n]*--force\b` },
           sample: { source: "tool:Bash", boundary: "tool-call" },
           action: { content: "Ask before force-pushing." },
@@ -1069,7 +1070,7 @@ describe("Rerail session restore", () => {
           steerLatitude("claude-code", "acme:no-force-push", "Follow"),
         ].join("\n"),
         ruleIds: ["acme:no-force-push"],
-        rules: [{ id: "acme:no-force-push", state: "steered" }],
+        rules: [{ id: "acme:no-force-push", title: "Ask before force-pushing", state: "steered" }],
       })]);
     } finally {
       await runtime.dispose();

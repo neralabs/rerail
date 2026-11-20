@@ -1,0 +1,112 @@
+.policy "rerail-session-paths" revision 2
+.description "Resolve a session's storage root and model path in one place and pass them in, instead of re-reading the environment or rebuilding the defaults; copies disagree."
+.language typescript
+.mode steer
+.scope include "src/**/*.ts"
+.scope exclude "**/*.test.ts", "src/engine/package-root.ts", "src/runtime/session-paths.ts"
+// src/runtime/session-paths.ts resolves a session's storage root and model path (resolveSessionPaths,
+// resolveModelPath) and says whether a root is the default (isDefaultStorageRoot). Four clauses, as the JSON's:
+//   process.env.RERAIL_STORAGE_ROOT ?? defaultRoot      SESSION_PATH_ENV_READ (the variable used as a path)
+//   const { RERAIL_MODEL_PATH } = process.env;          SESSION_PATH_ENV_READ
+//   join(workspaceRoot, ".rerail", "sessions")          SESSION_ROOT_DEFAULT (the default root rebuilt)
+//   resolve(here, "../model")   new URL("model/", import.meta.url)   MODEL_PATH_FROM_FILE
+//   basename(dirname(root)) === ".rerail"   root.endsWith("/.rerail")   SESSION_ROOT_GUESS
+//   const { storageRoot } = resolveSessionPaths(workspaceRoot);   not reported
+// The JSON's `regex` tests a node's text, as ast-grep's do (a search; `^`/`$` anchor the whole text); its `inside`
+// and `has` without `stopBy` are the parent and a child.
+
+.decl literal_kind(k: symbol)
+literal_kind("string"). literal_kind("template_string").
+
+.violation SESSION_PATH_ENV_READ(at: node) "Call resolveSessionPaths() or resolveModelPath() from src/runtime/session-paths.ts where the session starts and pass the result in, instead of reading the variable here."
+// env.RERAIL_STORAGE_ROOT or env["RERAIL_MODEL_PATH"] (any object named …env…), as the left or right of ?? or ||,
+// in a ternary's test, as a declaration's value, or as an argument of resolve() or join().
+SESSION_PATH_ENV_READ(n) :- env_read(n), child(b, n, _), kind(b, "binary_expression"), (op(b, "??") ; op(b, "||")).
+SESSION_PATH_ENV_READ(n) :- env_read(n), child(b, n, _), kind(b, "binary_expression"),
+    field(t, "condition", b), kind(t, "ternary_expression").
+SESSION_PATH_ENV_READ(n) :- env_read(n), field(v, "value", n), kind(v, "variable_declarator").
+SESSION_PATH_ENV_READ(n) :- env_read(n), child(a, n, _), kind(a, "arguments"), child(c, a, _),
+    kind(c, "call_expression"), field(c, "function", f), match("(?:(?s:.*)\\.)?(?:resolve|join)", f).
+// const { RERAIL_STORAGE_ROOT } = process.env, without a rest pattern.
+SESSION_PATH_ENV_READ(v) :- kind(v, "variable_declarator"), field(v, "name", o), kind(o, "object_pattern"),
+    match("(?s:.*)(?:\\bRERAIL_(?:STORAGE_ROOT|MODEL_PATH)\\b)(?s:.*)", o), !has_rest(o), field(v, "value", e), match("(?:[\\w$]+\\??\\.)*[\\w$]*(?:env|Env|ENV|environment|Environment)[\\w$]*", e).
+.decl env_read(n: node)
+env_read(n) :- kind(n, "member_expression"), match("(?:[\\w$]+\\??\\.)*[\\w$]*(?:env|Env|ENV|environment|Environment)[\\w$]*\\??\\.RERAIL_(?:STORAGE_ROOT|MODEL_PATH)", n).
+env_read(n) :- kind(n, "subscript_expression"), match("(?:[\\w$]+\\??\\.)*[\\w$]*(?:env|Env|ENV|environment|Environment)[\\w$]*(?:\\?\\.)?\\[\\s*[\\\"'`]RERAIL_(?:STORAGE_ROOT|MODEL_PATH)[\\\"'`]\\s*\\]", n).
+.decl has_rest(o: node)
+has_rest(o) :- kind(o, "object_pattern"), child(o, r, _), kind(r, "rest_pattern").
+
+.violation SESSION_ROOT_DEFAULT(at: node) "Take the storage root from resolveSessionPaths() in src/runtime/session-paths.ts or the caller instead of rebuilding .rerail/sessions; for another checkout's default use defaultStorageRoot(checkout)."
+// ".rerail/sessions", `${root}/.rerail/${x}/sessions/a`, or ".rerail" and "sessions" in one argument list.
+SESSION_ROOT_DEFAULT(s) :- literal_kind(k), kind(s, k), match("[\\\"'`][^\\s\\\"'`]*\\.rerail(?:[/\\\\]|\\$\\{[^}]*\\})+(?:\\./)?sessions(?:[/\\\\][^\\s\\\"'`]*)?[\\\"'`]", s).
+SESSION_ROOT_DEFAULT(a) :- kind(a, "arguments"), child(a, x, _), kind(x, "string"), match("[\\\"'`]\\.rerail[/\\\\]?[\\\"'`]", x),
+    child(a, y, _), kind(y, "string"), match("[\\\"'`](?:\\./)?sessions[/\\\\]?[\\\"'`]", y).
+
+.violation MODEL_PATH_FROM_FILE(at: node) "Take the model path from resolveModelPath() in src/runtime/session-paths.ts, or from the caller, instead of building the path to the bundled model here; a built path breaks when files move."
+// "model", "../model/" as an argument of resolve(), join() or new URL().
+MODEL_PATH_FROM_FILE(s) :- kind(s, "string"), match("[\\\"'`](?:\\.{1,2}/)*model/?[\\\"'`]", s), child(a, s, _), kind(a, "arguments"),
+    child(c, a, _), builds_path(c).
+.decl builds_path(c: node)
+builds_path(c) :- kind(c, "call_expression"), field(c, "function", f), match("(?:(?s:.*)\\.)?(?:resolve|join)", f).
+builds_path(c) :- kind(c, "new_expression"), field(c, "constructor", f), text(f, "URL").
+
+.violation SESSION_ROOT_GUESS(at: node) "Ask isDefaultStorageRoot() in src/runtime/session-paths.ts whether the storage root is the default instead of guessing from a folder name. If this checks another folder, keep it."
+SESSION_ROOT_GUESS(b) :- kind(b, "binary_expression"), match("(?s)(?:(?:[\\w$]+\\.)?basename\\(\\s*(?:[\\w$]+\\.)?dirname\\(.*\\)\\s*\\)\\s*[!=]==?\\s*[\\\"'`]\\.rerail[\\\"'`]|[\\\"'`]\\.rerail[\\\"'`]\\s*[!=]==?\\s*(?:[\\w$]+\\.)?basename\\(\\s*(?:[\\w$]+\\.)?dirname\\(.*)", b).
+SESSION_ROOT_GUESS(c) :- kind(c, "call_expression"), match("(?s:.*)\\.endsWith\\([^)]*\\.rerail[\\\"'`]\\s*\\)", c).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_rebuilt_root_is_reported exactly
+    .fixture "src/daemon/daemon.ts" ```
+        const storageRoot = join(workspaceRoot, ".rerail", "sessions");
+        ```
+    .expect SESSION_ROOT_DEFAULT at "src/daemon/daemon.ts":1
+.end
+
+.test reading_the_variables_is_reported exactly
+    .fixture "src/cli/paths.ts" ```
+        const root = process.env.RERAIL_STORAGE_ROOT ?? defaultRoot;
+        const model = env["RERAIL_MODEL_PATH"];
+        const where = process.env.RERAIL_MODEL_PATH && ok ? a : b;
+        const full = resolve(process.env.RERAIL_STORAGE_ROOT);
+        const { RERAIL_STORAGE_ROOT } = process.env;
+        const { RERAIL_MODEL_PATH, ...rest } = process.env;
+        log(process.env.RERAIL_STORAGE_ROOT);
+        ```
+    .expect SESSION_PATH_ENV_READ at "src/cli/paths.ts":1
+    .expect SESSION_PATH_ENV_READ at "src/cli/paths.ts":2
+    .expect SESSION_PATH_ENV_READ at "src/cli/paths.ts":3
+    .expect SESSION_PATH_ENV_READ at "src/cli/paths.ts":4
+    .expect SESSION_PATH_ENV_READ at "src/cli/paths.ts":5
+.end
+
+.test defaults_and_guesses_are_reported exactly
+    .fixture "src/runtime/model.ts" ```
+        const a = `${root}/.rerail/sessions`;
+        const b = resolve(here, "../model");
+        const c = new URL("model/", import.meta.url);
+        const d = basename(dirname(root)) === ".rerail";
+        const e = root.endsWith("/.rerail");
+        const f = ".rerail/sessions/x.db";
+        ```
+    .expect SESSION_ROOT_DEFAULT at "src/runtime/model.ts":1
+    .expect MODEL_PATH_FROM_FILE at "src/runtime/model.ts":2
+    .expect MODEL_PATH_FROM_FILE at "src/runtime/model.ts":3
+    .expect SESSION_ROOT_GUESS at "src/runtime/model.ts":4
+    .expect SESSION_ROOT_GUESS at "src/runtime/model.ts":5
+    .expect SESSION_ROOT_DEFAULT at "src/runtime/model.ts":6
+.end
+
+// The pack's passing example, and the owner itself.
+.test the_resolver_and_its_callers_pass exactly
+    .fixture "src/daemon/daemon.ts" ```
+        import { resolveSessionPaths } from "../runtime/session-paths.js";
+
+        export function sessionPaths(workspaceRoot: string) {
+          const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);
+          return { storageRoot, modelPath };
+        }
+        ```
+    .fixture "src/runtime/session-paths.ts" ```
+        const root = process.env.RERAIL_STORAGE_ROOT ?? join(workspaceRoot, ".rerail", "sessions");
+        ```
+.end

@@ -114,7 +114,7 @@ There is no `MetalNode` expansion and no CSR child list.
 4. Set semantics only.
 5. Every loop is bounded by a batch constant: depth, fan-out or range.
 
-**Relationship to SQL.** The node sets are the SQL layer's own objects: kind postings and interval containment. The same plan therefore lowers to pure SQL through `fts5vocab` offsets and interval predicates, which is ast-index-spike's approach.
+**Relationship to SQL.** The node sets are the SQL layer's own objects: kind postings and interval containment. The same plan therefore lowers to pure SQL through `fts5vocab` offsets and interval predicates, which is the SQL index prototype's approach.
 
 ## Measurements
 

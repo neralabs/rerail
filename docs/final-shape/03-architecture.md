@@ -65,7 +65,7 @@ Budgets: 500 MB RAM in total, 10 GB disk.
 4. Changes are written back to SQLite **eventually, not in the fast path.**
 - **Research basis.** This mechanism already exists in several streams:
   - main's `calls` per-consumer stamps;
-  - Moti's Y1 read-set memos with cutoff and backdating;
+  - The facts-engine stream's Y1 read-set memos with cutoff and backdating;
   - Typing's interface digests: a body edit re-derives 1 module instead of 408, and an interface edit 123 instead of 408 (M);
   - PR 2539's dependency cone.
 
@@ -133,7 +133,7 @@ matcher rule ──► datalog rules (relations to other facts)
   - batch size.
 - Decisions are recorded in `compiled_plans` with the statistic intervals over which they stay valid. Nothing counts rows at run time (DLRE trap T18).
 - **Research basis.**
-  - ast-index-spike: a positional kind index took an identifier anchor from 1.8 s to 64 ms (M).
+  - SQL index prototype: a positional kind index took an identifier anchor from 1.8 s to 64 ms (M).
   - t4 #20–28 and decisions 0006 cover the rest.
 
 ## 7. Everything is set-based; recursion is waves
@@ -358,7 +358,7 @@ Source: Tempo, `scale-test-the-re-railer/tempo/docs/workspace-store-runtime-jour
 
 ## 16. Regex
 
-Guided by ast-index-spike (`notes/t4` §4–5; PIAT `research/regex.md`, `spec-indexes.md`, shape-fixes §17).
+Guided by the SQL index prototype (`notes/t4` §4–5; PIAT `research/regex.md`, `spec-indexes.md`, shape-fixes §17).
 
 **Where regexes run.**
 1. **Filtering files and candidates runs the regex over the vocabulary, not file text.**

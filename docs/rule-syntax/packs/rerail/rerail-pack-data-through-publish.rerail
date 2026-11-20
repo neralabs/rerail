@@ -1,0 +1,173 @@
+.policy "rerail-pack-data-through-publish" revision 2
+.mode steer
+.scope tool_calls
+// Pack data reaches the fixtures bucket only through review: staged in publish/ (fixtures:stage), committed, and
+// published by the pack-data-publish workflow. This rule reads each command a coding agent runs (any tool's
+// `command`, the JSON's `tool:*`) and reports one that uploads pack data itself:
+//   npm run fixtures:push -- --pack react                  reported (also pnpm, yarn, bun; behind env, timeout, …)
+//   node scripts/s3/pack-fixtures.mjs push --pack react    reported (push, upload, samples push)
+//   aws s3 sync publish/ s3://nera-test-fixtures/rerail/
+//                                                          reported (cp, mv or sync into the bucket's rerail/)
+//   aws s3api put-object --bucket nera-test-fixtures --key rerail/x
+//                                                          reported (s3api's writes, either flag first)
+//   npm run fixtures:push -- --pack react --dry-run        not reported (a dry run, the whole command)
+//   git commit -m "…; npm run fixtures:push"               not reported (git commit, gh pr/issue/release, a
+//                                                          heredoc, a search with rg, grep, sed or awk)
+// The JSON's regexes search the command, so each is `(?s:.*)(?:R)(?s:.*)` here, R copied exactly. Its dry-run
+// exemption is the same on its two script forms, so it is said once, over both.
+
+// pushed_by_script(c): c runs a package script's fixtures:push, or pack-fixtures.mjs's push.
+.decl pushed_by_script(c: symbol)
+pushed_by_script(c) :- tool_input(c, "command", s), match("(?s:.*)(?:(?:^|[;&|(`\\n{]|\\bthen\\s|\\bdo\\s|\\b(?:bash|sh|zsh)\\s+-[A-Za-z]*c\\s+[\"']?)\\s*(?:(?:env|time|command|exec|nohup|sudo|timeout|gtimeout|nice|caffeinate|xargs)\\s+(?:-\\S+\\s+|\\d\\S*\\s+)*|aws-vault\\s+exec\\s+\\S+\\s+(?:-\\S+\\s+)*--\\s+|op\\s+run\\s+(?:-\\S+\\s+)*--\\s+|[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:npm|pnpm|yarn|bun)\\s[^\\n;&|]*\\bfixtures:push(?:[\\s\"')`]|$))(?s:.*)", s).
+pushed_by_script(c) :- tool_input(c, "command", s), match("(?s:.*)(?:(?:^|[;&|(`\\n{]|\\bthen\\s|\\bdo\\s|\\b(?:bash|sh|zsh)\\s+-[A-Za-z]*c\\s+[\"']?)\\s*(?:(?:env|time|command|exec|nohup|sudo|timeout|gtimeout|nice|caffeinate|xargs)\\s+(?:-\\S+\\s+|\\d\\S*\\s+)*|aws-vault\\s+exec\\s+\\S+\\s+(?:-\\S+\\s+)*--\\s+|op\\s+run\\s+(?:-\\S+\\s+)*--\\s+|[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:(?:node|bun|tsx|deno|npx)\\s[^\\n;&|]*?)?[\"']?\\S*pack-fixtures\\.mjs[\"']?(?:\\s+--?[A-Za-z][\\w-]*(?:[=\\s][^\\s;&|-]\\S*)?)*\\s+(?:push|upload|samples\\s+push)(?:[\\s\"')`]|$))(?s:.*)", s).
+
+// dry_run(c): c is only a dry run of one of them, its output perhaps cut by tail, head or grep.
+.decl dry_run(c: symbol)
+dry_run(c) :- tool_input(c, "command", s), match("(?s:.*)(?:^\\s*(?:(?:timeout\\s+\\S+|[A-Za-z_]\\w*=\\S*)[ \\t]+)*(?:npm[ \\t]+(?:run|run-script)[ \\t]+fixtures:push[ \\t](?:[^\\n;&|<>]*[ \\t])?--|(?:pnpm|yarn|bun)[ \\t]+(?:run[ \\t]+)?fixtures:push|(?:node[ \\t]+)?\\S*pack-fixtures\\.mjs)(?:[ \\t][^\\n;&|<>]*)?[ \\t]--dry-run(?:[ \\t][^\\n;&|<>]*)?(?:[ \\t]+2>&1)?(?:[ \\t]*\\|[ \\t]*(?:tail|head|grep)\\b[^\\n;&|]*)?[ \\t]*$)(?s:.*)", s).
+
+// written_to_bucket(c): c writes into the bucket's rerail/ with the AWS CLI: s3 cp, mv or sync, or s3api's writes.
+.decl written_to_bucket(c: symbol)
+written_to_bucket(c) :- tool_input(c, "command", s), match("(?s:.*)(?:(?:^|[;&|(`\\n{]|\\bthen\\s|\\bdo\\s|\\b(?:bash|sh|zsh)\\s+-[A-Za-z]*c\\s+[\"']?)\\s*(?:(?:env|time|command|exec|nohup|sudo|timeout|gtimeout|nice|caffeinate|xargs)\\s+(?:-\\S+\\s+|\\d\\S*\\s+)*|aws-vault\\s+exec\\s+\\S+\\s+(?:-\\S+\\s+)*--\\s+|op\\s+run\\s+(?:-\\S+\\s+)*--\\s+|[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*aws\\s[^\\n;&|]*\\bs3\\s+(?:cp|mv|sync)\\s[^\\n;&|]*\\s[\"']?s3://nera-test-fixtures(?:/rerail/[^\\s\"']*|/rerail|/)?[\"']?(?:\\s+--?[\\w-]+(?:[=\\s][^\\s;&|<>-]\\S*)?)*\\s*(?:$|[;&|)\"'\\n<>]|\\d+>))(?s:.*)", s).
+written_to_bucket(c) :- tool_input(c, "command", s), match("(?s:.*)(?:(?:^|[;&|(`\\n{]|\\bthen\\s|\\bdo\\s|\\b(?:bash|sh|zsh)\\s+-[A-Za-z]*c\\s+[\"']?)\\s*(?:(?:env|time|command|exec|nohup|sudo|timeout|gtimeout|nice|caffeinate|xargs)\\s+(?:-\\S+\\s+|\\d\\S*\\s+)*|aws-vault\\s+exec\\s+\\S+\\s+(?:-\\S+\\s+)*--\\s+|op\\s+run\\s+(?:-\\S+\\s+)*--\\s+|[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*aws\\s[^\\n;&|]*\\bs3api\\s+(?:put-object|copy-object|create-multipart-upload|upload-part(?:-copy)?)(?:\\s[^\\n;&|]*)?\\s--bucket[=\\s]+[\"']?nera-test-fixtures\\b[^\\n;&|]*\\s--key[=\\s]+[\"']?rerail/)(?s:.*)", s).
+written_to_bucket(c) :- tool_input(c, "command", s), match("(?s:.*)(?:(?:^|[;&|(`\\n{]|\\bthen\\s|\\bdo\\s|\\b(?:bash|sh|zsh)\\s+-[A-Za-z]*c\\s+[\"']?)\\s*(?:(?:env|time|command|exec|nohup|sudo|timeout|gtimeout|nice|caffeinate|xargs)\\s+(?:-\\S+\\s+|\\d\\S*\\s+)*|aws-vault\\s+exec\\s+\\S+\\s+(?:-\\S+\\s+)*--\\s+|op\\s+run\\s+(?:-\\S+\\s+)*--\\s+|[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*aws\\s[^\\n;&|]*\\bs3api\\s+(?:put-object|copy-object|create-multipart-upload|upload-part(?:-copy)?)(?:\\s[^\\n;&|]*)?\\s--key[=\\s]+[\"']?rerail/[^\\n;&|]*\\s--bucket[=\\s]+[\"']?nera-test-fixtures\\b)(?s:.*)", s).
+
+// not_run(c): the push is text c writes or searches: a commit message, an issue's body, a heredoc, a search.
+.decl not_run(c: symbol)
+not_run(c) :- tool_input(c, "command", s), match("(?s:.*)(?:\\bgit\\s+commit\\b|\\bgh\\s+(?:pr|issue|release)\\s+(?:create|edit|comment)\\b|<<-?\\s*['\"]?[A-Za-z_]\\w*|^\\s*(?:rg|grep|egrep|git\\s+grep|sed|awk)\\s)(?s:.*)", s).
+
+.violation PACK_DATA_PUSHED(at: symbol) code "rerail-pack-data-through-publish" "Pack data reaches S3 through review: stage it in publish/ with fixtures:stage and commit it; a maintainer dispatches pack-data-publish. Restore locks this rewrote from HEAD. Repair S3 only if asked."
+PACK_DATA_PUSHED(c) :- tool_call(c, _), pushed_by_script(c), !dry_run(c), !not_run(c).
+PACK_DATA_PUSHED(c) :- tool_call(c, _), written_to_bucket(c), !not_run(c).
+
+// The pack's examples (packs/rerail/pack.json).
+.test a_fixtures_push_is_reported exactly
+    .tool_call "Bash" `{"command": "npm run fixtures:push -- --pack react --tool eslint-plugin-react"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test staging_passes
+    .tool_call "Bash" `{"command": "npm run fixtures:stage -- --pack react --tool eslint-plugin-react --all"}`
+    .expect no "rerail-pack-data-through-publish"
+.end
+
+// Each package manager, and a command behind a wrapper or another command.
+.test pnpm_is_reported exactly
+    .tool_call "Bash" `{"command": "pnpm fixtures:push --pack react"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test yarn_is_reported exactly
+    .tool_call "Bash" `{"command": "yarn run fixtures:push --pack react"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test bun_after_cd_is_reported exactly
+    .tool_call "Bash" `{"command": "cd ~/rerail && bun run fixtures:push"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test behind_wrappers_is_reported exactly
+    .tool_call "Bash" `{"command": "AWS_PROFILE=fixtures timeout 600 npm run fixtures:push -- --pack react"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test through_aws_vault_is_reported exactly
+    .tool_call "Bash" `{"command": "aws-vault exec fixtures -- npm run fixtures:push -- --pack react"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test in_a_shell_is_reported exactly
+    .tool_call "Bash" `{"command": "bash -lc 'npm run fixtures:push -- --pack react'"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+// pack-fixtures.mjs: push, upload and samples push, after its options too.
+.test the_script_itself_is_reported exactly
+    .tool_call "Bash" `{"command": "node scripts/s3/pack-fixtures.mjs push --pack react"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test an_upload_after_options_is_reported exactly
+    .tool_call "Bash" `{"command": "node scripts/s3/pack-fixtures.mjs --pack react upload"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test a_samples_push_is_reported exactly
+    .tool_call "Bash" `{"command": "npx tsx ./scripts/s3/pack-fixtures.mjs samples push"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test reading_the_script_passes
+    .tool_call "Bash" `{"command": "node scripts/s3/pack-fixtures.mjs pull --pack react"}`
+    .tool_call "Bash" `{"command": "npm run fixtures:pull -- --pack react"}`
+    .expect no "rerail-pack-data-through-publish"
+.end
+
+// The AWS CLI writing into the bucket.
+.test an_s3_sync_is_reported exactly
+    .tool_call "Bash" `{"command": "aws s3 sync publish/react/ s3://nera-test-fixtures/rerail/react/ --delete"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test an_s3_copy_to_the_bucket_root_is_reported exactly
+    .tool_call "Bash" `{"command": "aws --profile fixtures s3 cp react.tgz s3://nera-test-fixtures/"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test a_put_object_is_reported exactly
+    .tool_call "Bash" `{"command": "aws s3api put-object --bucket nera-test-fixtures --key rerail/react/files.tgz --body files.tgz"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test a_put_object_key_first_is_reported exactly
+    .tool_call "Bash" `{"command": "aws s3api put-object --key rerail/react/files.tgz --bucket nera-test-fixtures --body files.tgz"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test reads_and_other_places_pass
+    .tool_call "Bash" `{"command": "aws s3 cp s3://nera-test-fixtures/rerail/react/files.tgz ."}`
+    .tool_call "Bash" `{"command": "aws s3 ls s3://nera-test-fixtures/rerail/"}`
+    .tool_call "Bash" `{"command": "aws s3 cp react.tgz s3://nera-test-fixtures/other/"}`
+    .tool_call "Bash" `{"command": "aws s3api get-object --bucket nera-test-fixtures --key rerail/react/files.tgz files.tgz"}`
+    .tool_call "Bash" `{"command": "aws s3api put-object --bucket nera-test-fixtures --key other/files.tgz --body files.tgz"}`
+    .expect no "rerail-pack-data-through-publish"
+.end
+
+// A dry run, when it is the whole command.
+.test a_dry_run_passes
+    .tool_call "Bash" `{"command": "npm run fixtures:push -- --pack react --dry-run"}`
+    .tool_call "Bash" `{"command": "pnpm fixtures:push --pack react --dry-run"}`
+    .tool_call "Bash" `{"command": "node scripts/s3/pack-fixtures.mjs push --pack react --dry-run 2>&1 | tail -20"}`
+    .expect no "rerail-pack-data-through-publish"
+.end
+
+.test a_dry_run_then_a_push_is_reported exactly
+    .tool_call "Bash" `{"command": "npm run fixtures:push -- --dry-run && npm run fixtures:push"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+// A --dry-run before `--` is npm's, not the script's: the JSON reports the push.
+.test npms_own_dry_run_is_reported exactly
+    .tool_call "Bash" `{"command": "npm run fixtures:push --dry-run"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+// Text a command writes or searches.
+.test text_that_is_not_run_passes
+    .tool_call "Bash" `{"command": "git commit -m \"Scripts: stop; npm run fixtures:push\""}`
+    .tool_call "Bash" `{"command": "gh pr comment 12 --body \"then; npm run fixtures:push\""}`
+    .tool_call "Bash" `{"command": "cat <<'EOF' > notes.md\nnpm run fixtures:push\nEOF"}`
+    .tool_call "Bash" `{"command": "grep -n 'x; npm run fixtures:push' README.md"}`
+    .expect no "rerail-pack-data-through-publish"
+.end
+
+// Any tool's command (the JSON samples tool:*); a call without one passes.
+.test any_tool_is_read exactly
+    .tool_call "Shell" `{"command": "npm run fixtures:push"}`
+    .expect "rerail-pack-data-through-publish"
+.end
+
+.test a_call_without_a_command_passes
+    .tool_call "Edit" `{"file_path": "notes.md", "new_string": "npm run fixtures:push"}`
+    .expect no "rerail-pack-data-through-publish"
+.end

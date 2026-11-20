@@ -77,7 +77,7 @@ goes to tree-sitter-go.
 
 **The oracle** (`rerail-go-lean`'s ignored `oracle` test, run live under Relax) compares the
 parser's tape with tree-sitter's, line by line. Its sets, from the shared corpus
-(`~/orca/rerail-shared/lean-corpus/go`: 873 files of the stored repositories, 12 a repository):
+(`<shared data>/lean-corpus/go`: 873 files of the stored repositories, 12 a repository):
 
 | set | clean texts: same / differ / refused | texts with errors: as tree-sitter / differ / refused |
 |---|---|---|

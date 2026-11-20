@@ -4,18 +4,19 @@
 // committed blob ids (`git ls-files --stage`: the same on every OS, whatever a checkout does to line ends or times):
 //   - the crates the engine builds and their build scripts: native/ (the vendored dependencies and grammars with it)
 //     and every crate a manifest reaches from it by a `path` (accel/, forest/, tools/bitlex/ today), read from the
-//     manifests, so a crate added later counts without a change here;
+//     manifests, so a crate added later counts without a change here, but for the Markdown the build never reads
+//     (`unreadDoc`);
 //   - the language registry the build script generates tables from (languages/);
 //   - the lockfile, the workspace manifest and its profiles, cargo's configuration, the toolchain, the checkout's line
 //     ends (.gitattributes);
 //   - the release build's script and this one, package.json's `napi` block (the engine file's name and the loader
 //     napi writes), and the napi CLI and cross toolchain versions package-lock.json pins;
-//   - every file outside those that an engine source embeds (`include_str!`/`include_bytes!` with a literal path:
-//     packs' rules, docs' `.rerail` libraries, capabilities.json, test fixtures), found by reading the sources, so an
-//     embed added later counts without a change here.
-// A path that changes none of these (TypeScript, docs, the rest of packs/) leaves the hash, and the engine, as they were.
-// test-selection.mjs reads the same inputs (`engineSources`, `isEngineInput`): a change to one is a change to the
-// engine the tests load.
+//   - every file that an engine source embeds (`include_str!`/`include_bytes!` with a literal path: packs' rules, docs'
+//     `.rerail` libraries, capabilities.json, test fixtures, a vendored crate's README as its docs), found by reading
+//     the sources, so an embed added later counts without a change here.
+// A path that changes none of these (TypeScript, docs, the rest of packs/, a README beside the crates) leaves the hash,
+// and the engine, as they were. test-selection.mjs reads the same inputs (`engineSources`, `isEngineInput`), every file
+// of the engine's directories included: a change to one is a change to the engine the tests load.
 //
 //   node scripts/check/ci/engine-inputs.mjs           the hash (hex) on stdout
 //   node scripts/check/ci/engine-inputs.mjs --list    the entries it hashes, one per line
@@ -83,9 +84,20 @@ function engineDirs(root, blobs) {
   return [...dirs].sort();
 }
 
-/** The tracked files `path`, an engine source, embeds by a literal path. */
+/**
+ * Whether `path`, in the engine's directories, is Markdown the build never reads. The build scripts read named files,
+ * `*.json` from languages/ (native/src/build_languages.rs), and every file under native/src/, which native/build.rs
+ * hashes into the engine's build id (`collect_sources`, RERAIL_ENGINE_BUILD_ID), notes included; tree-sitter's build
+ * script lists its src/ only to watch it, and compiles lib.c. A Markdown file a source embeds stays an input whatever
+ * this says: the embed scan adds it.
+ */
+export function unreadDoc(path) {
+  return path.endsWith(".md") && !path.startsWith("native/src/");
+}
+
+/** The tracked files `path`, an engine source (a vendored one included), embeds by a literal path. */
 function embeds(root, path, blobs) {
-  if (!path.endsWith(".rs") || path.startsWith("native/vendor/")) return [];
+  if (!path.endsWith(".rs")) return [];
   const found = [];
   for (const [, target] of readFileSync(`${root}/${path}`, "utf8").matchAll(EMBED)) {
     const embedded = posix.normalize(posix.join(posix.dirname(path), target));
@@ -95,15 +107,16 @@ function embeds(root, path, blobs) {
 }
 
 /**
- * What the engine is built from: `dirs`, the directories (`dir/`) whose every file is an input, and `paths`, every
- * tracked input file (those directories' files, the single files, the files their sources embed).
+ * What the engine is built from: `dirs`, the directories (`dir/`) whose files are inputs, but for the Markdown the
+ * build never reads (`unreadDoc`), and `paths`, every tracked input file (those directories' files, the single files,
+ * the files their sources embed).
  */
 export function engineSources(root, blobs = trackedBlobs(root)) {
   const dirs = engineDirs(root, blobs);
   const paths = new Set(ENGINE_FILES.filter((path) => blobs.has(path)));
   for (const path of blobs.keys()) {
     if (!dirs.some((dir) => path.startsWith(dir))) continue;
-    paths.add(path);
+    if (!unreadDoc(path)) paths.add(path);
     for (const embedded of embeds(root, path, blobs)) paths.add(embedded);
   }
   return { dirs, paths };
