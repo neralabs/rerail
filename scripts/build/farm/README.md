@@ -425,6 +425,36 @@ about 70 s (31 s for the start, then ssh); the first checkout sent through the t
 then about 1 s; a command 3 s warm. When `gcloud`'s sign-in has expired its state is unknown and
 nothing starts it: `gcloud auth login` brings it back.
 
+#### Cloud cost
+
+A cloud guest bills while it runs, so four things keep that known and bounded (2026-11-20):
+
+- **A ledger and budgets.** Each cloud guest's entry gives its price (`"cost_per_hour"`, US$). Every
+  start and stop the farm makes or sees goes in `guests/cost.jsonl` in the farm's state directory,
+  a hand start or stop included (the watcher sees it within a minute). A start is refused once
+  today's or this month's spend reaches its budget, and a guest the farm started is stopped when
+  either is reached. The limits are the configuration's `"cloud"`: `budget_day_usd` (20),
+  `budget_month_usd` (200), `max_hours` (4) and `deadman_minutes` (30).
+- **The provider's own limit.** Before each start the farm sets the VM's scheduling (`gcloud
+  compute instances set-scheduling`): stopped `max_hours` after a start (`--max-run-duration`,
+  `--instance-termination-action=STOP`), and never restarted by the provider after a host's
+  maintenance or failure (`--no-restart-on-failure`). These hold however the VM is started, by
+  hand included, and whatever happens on the Mac or the VM. The farm also stops a guest that has
+  run `max_hours`.
+- **A drop-dead switch on the VM.** At each start the farm installs `cloud-deadman` on the VM with
+  a systemd timer, run every minute. The VM powers itself off (a stop: the machine's billing ends,
+  its disk stays) once the farm's heartbeat file has not been touched for `deadman_minutes`. The
+  watcher touches it every minute, so a VM outlives the Mac that runs it (a crash, a closed lid,
+  the network gone) by half an hour at most. Tested on 2026-11-20: fired by hand, the VM stopped,
+  the provider reported it stopped, and the watcher closed the ledger and said so.
+- **The user told.** A notification on this Mac at every cloud start and stop, the farm's own or
+  not, and each hour a guest started outside the farm runs over budget. The dashboard's header
+  shows today's and this month's spend against the budgets, and a cloud guest's line shows its
+  price, its cost so far and its hard stop.
+
+The disk of a stopped VM still bills (about US$4 a month for 100 GB of standard disk); the ledger
+counts only the running time.
+
 `scripts/build/farm/guests` lists them (state, size, when each stops); `guests start NAME` and
 `guests stop NAME` do it by hand. The dashboard shows each guest on its machine's card, and its own
 card after it, with its state, size and when it stops.

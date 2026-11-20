@@ -277,6 +277,7 @@ class Gce:
     no external address. gcloud's sign-in expires: then its state is unknown, and `gcloud auth
     login` (by the user) brings it back."""
     FIXED = True
+    CLOUD = True
     GCLOUD = "PATH=/opt/homebrew/bin:/usr/local/bin:$PATH; gcloud --quiet --verbosity=error "
     STATES = {"RUNNING": "running", "TERMINATED": "stopped", "STOPPED": "stopped", "SUSPENDED": "stopped",
               "PROVISIONING": "starting", "STAGING": "starting", "STOPPING": "stopping", "SUSPENDING": "stopping"}
@@ -293,6 +294,18 @@ class Gce:
 
     def machine(self):
         return 0, 0, self.g.get("cpus", 0)
+
+    def prepare(self, hours):
+        """The provider's own limits, set while it is stopped (they hold however it is started):
+        stopped `hours` after a start, and never restarted on its own after a host's maintenance
+        or failure (which would bill unseen). None, or why they could not be set."""
+        out = on_parent(self.g, self.GCLOUD + f"compute instances describe {shlex.quote(self.vm)}{self.where} "
+                        "--format='value(scheduling.maxRunDuration.seconds,scheduling.instanceTerminationAction,scheduling.automaticRestart)'", 60)
+        if out is not None and out.returncode == 0 and out.stdout.split() == [str(int(hours * 3600)), "STOP", "False"]:
+            return None
+        out = on_parent(self.g, self.GCLOUD + f"compute instances set-scheduling {shlex.quote(self.vm)}{self.where} "
+                        f"--max-run-duration={int(hours * 3600)}s --instance-termination-action=STOP --no-restart-on-failure", 120)
+        return None if out is not None and out.returncode == 0 else ((out.stderr.strip().splitlines() or ["failed"])[-1] if out else "failed")
 
     def size(self, cpus, gb):
         return None
@@ -323,6 +336,111 @@ def size(g, machine):
     if gb < MIN_GB:
         return None, f"its machine has {avail / GB:.1f} GB available, under {MIN_GB + RESERVE_GB} GB"
     return cpus, gb
+
+
+# ---- cloud cost: a ledger, budgets, a drop-dead switch, and the user told
+
+CLOUD = {"budget_day_usd": 20, "budget_month_usd": 200, "max_hours": 4, "deadman_minutes": 30}
+HEARTBEAT = "/var/tmp/rerail-farm-heartbeat"
+
+
+def cloud_limits():
+    """The configuration's `cloud` limits over CLOUD's defaults."""
+    return dict(CLOUD, **(farm.config().get("cloud") or {}))
+
+
+def is_cloud(g):
+    return bool(g) and getattr(KINDS.get(g.get("kind")), "CLOUD", False)
+
+
+def ledger(event, name, rate):
+    """One line of the cloud ledger (`guests/cost.jsonl`): a cloud guest seen to start or stop."""
+    with open(farm.state("guests", "cost.jsonl"), "a") as f:
+        f.write(json.dumps({"t": round(time.time(), 1), "guest": name, "event": event, "rate": rate}) + "\n")
+
+
+def spend(since, now=None):
+    """US$ the cloud guests ran up since `since` (a time), by the ledger: each start to its stop (to
+    now for one running), at its rate then. {guest: usd}."""
+    now = now or time.time()
+    out, open_ = {}, {}
+    try:
+        lines = open(farm.state("guests", "cost.jsonl")).read().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if e["event"] == "start":
+            open_.setdefault(e["guest"], (e["t"], e.get("rate") or 0))
+        elif e["event"] == "stop" and e["guest"] in open_:
+            t0, rate = open_.pop(e["guest"])
+            out[e["guest"]] = out.get(e["guest"], 0) + rate * max(0, e["t"] - max(t0, since)) / 3600
+    for name, (t0, rate) in open_.items():
+        out[name] = out.get(name, 0) + rate * max(0, now - max(t0, since)) / 3600
+    return out
+
+
+def day_start():
+    t = time.localtime()
+    return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1))
+
+
+def month_start():
+    t = time.localtime()
+    return time.mktime((t.tm_year, t.tm_mon, 1, 0, 0, 0, 0, 0, -1))
+
+
+def budget():
+    """{"day": spent, "month": spent, "day_limit", "month_limit", "over": why or None}."""
+    lim = cloud_limits()
+    day, month = sum(spend(day_start()).values()), sum(spend(month_start()).values())
+    over = (f"US${day:.2f} spent today, the day's budget is US${lim['budget_day_usd']}" if day >= lim["budget_day_usd"] else
+            f"US${month:.2f} spent this month, the month's budget is US${lim['budget_month_usd']}" if month >= lim["budget_month_usd"] else None)
+    return {"day": round(day, 2), "month": round(month, 2), "day_limit": lim["budget_day_usd"],
+            "month_limit": lim["budget_month_usd"], "over": over}
+
+
+def notify(message):
+    """Said where the user sees it: a notification on this Mac, and the guests' log."""
+    log("notified: " + message)
+    try:
+        subprocess.run(["osascript", "-e", f"display notification {json.dumps(message)} with title \"Rerail farm: cloud\""],
+                       timeout=10, capture_output=True)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def arm(base, g):
+    """The VM's own drop-dead switch (cloud-deadman), installed and armed, and the heartbeat
+    touched: None, or why it could not be."""
+    minutes = int(cloud_limits()["deadman_minutes"])
+    script = open(os.path.join(HERE, "cloud-deadman")).read()
+    unit = ("[Unit]\nDescription=Rerail farm: power off when the farm is gone\n[Service]\nType=oneshot\n"
+            f"ExecStart=/usr/local/sbin/rerail-farm-deadman {minutes}\n")
+    timer = "[Unit]\nDescription=Rerail farm drop-dead check\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=1min\n[Install]\nWantedBy=timers.target\n"
+    cmd = (f"touch {HEARTBEAT} && sudo -n sh -c " + shlex.quote(
+        f"cat > /usr/local/sbin/rerail-farm-deadman <<'DEADMAN'\n{script}DEADMAN\n"
+        "chmod 755 /usr/local/sbin/rerail-farm-deadman\n"
+        f"printf %s {shlex.quote(unit)} > /etc/systemd/system/rerail-farm-deadman.service\n"
+        f"printf %s {shlex.quote(timer)} > /etc/systemd/system/rerail-farm-deadman.timer\n"
+        "systemctl daemon-reload && systemctl enable --now rerail-farm-deadman.timer >/dev/null 2>&1\n"
+        "systemctl is-active rerail-farm-deadman.timer"))
+    try:
+        out = subprocess.run(farm.ssh(base["name"], cmd, "health"), capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return "timed out"
+    return None if out.returncode == 0 and "active" in out.stdout else (out.stderr.strip()[-200:] or out.stdout.strip()[-200:] or "failed")
+
+
+def beat(base):
+    """The heartbeat the VM's drop-dead switch reads, touched (the watcher, every minute)."""
+    try:
+        return subprocess.run(farm.ssh(base["name"], f"touch {HEARTBEAT}", "health"), capture_output=True, timeout=30).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
 
 
 # ---- what the guest is doing
@@ -410,6 +528,18 @@ def start(name, why="a command needs it"):
         if cpus is None and not getattr(k, "FIXED", False):
             update(base["name"], state="stopped", why=gb, failed_at=time.time())
             return gb
+        cloud = is_cloud(g)
+        if cloud:
+            b = budget()
+            if b["over"]:
+                update(base["name"], state="stopped", why="not started: " + b["over"], failed_at=time.time())
+                notify(f"{base['name']} not started: {b['over']}")
+                return b["over"]
+            hours = cloud_limits()["max_hours"]
+            why_not = k.prepare(hours)
+            if why_not:
+                update(base["name"], state="stopped", why=f"not started: its stop after {hours} h could not be set ({why_not})", failed_at=time.time())
+                return why_not
         started = time.time()
         # `ours`: the farm started it, so the watcher may stop it (one started by hand is left alone).
         update(base["name"], state="starting", cpus=cpus, memory_gb=gb, since=started, why=why, ours=True,
@@ -417,6 +547,8 @@ def start(name, why="a command needs it"):
         k.size(cpus, gb)
         out = k.start()
         started_cmd = round(time.time() - started)
+        if cloud:
+            ledger("start", base["name"], g.get("cost_per_hour", 0))
         while time.time() - started < START_SECONDS:
             try:
                 if subprocess.run(farm.ssh(base["name"], "true", "health"), capture_output=True, timeout=10).returncode == 0:
@@ -428,9 +560,19 @@ def start(name, why="a command needs it"):
             err = (out.stderr.strip().splitlines() or [""])[-1] if out is not None else "timed out"
             update(base["name"], state="stopped", why=f"did not come up in {START_SECONDS} s ({err})", failed_at=time.time())
             k.stop()
+            if cloud:
+                ledger("stop", base["name"], g.get("cost_per_hour", 0))
+                notify(f"{base['name']} did not come up, and was stopped")
             return "did not come up"
         now = time.time()
         update(base["name"], state="running", since=now, last_busy=now, boot_s=round(now - started), why=None, checked=now)
+        if cloud:
+            armed = arm(base, g)
+            b = budget()
+            notify(f"{base['name']} started ({why}): US${g.get('cost_per_hour', 0)}/h; stops when idle "
+                   f"{g.get('idle_minutes', IDLE_MINUTES)} min, and at {cloud_limits()['max_hours']} h whatever. "
+                   f"Today US${b['day']} of US${b['day_limit']}."
+                   + ("" if armed is None else f" ITS DROP-DEAD SWITCH IS NOT ARMED: {armed}"))
         log(f"{base['name']}: guest started on {g['on']} ({cpus} CPUs, {gb} GB) in {round(now - started)} s"
             f" (its start command {started_cmd} s, then ssh)")
     finally:
@@ -481,6 +623,9 @@ def stop(name, why):
             farm.close_masters(h["name"])
         update(base["name"], state="stopped", since=time.time(), why=why, checked=time.time(), ours=None)
         log(f"{base['name']}: guest stopped ({why})")
+        if is_cloud(g):
+            ledger("stop", base["name"], g.get("cost_per_hour", 0))
+            notify(f"{base['name']} stopped ({why}); today US${budget()['day']}")
     finally:
         for h in held:
             h.release()
@@ -502,7 +647,12 @@ def watch_once():
         if actual is None:
             update(name, checked=now, reachable=False)
             continue
+        cloud = is_cloud(g)
         if actual != "running":
+            if cloud and r.get("state") == "running":
+                # Stopped without the farm (by hand, its own limit, its drop-dead switch): the ledger closes.
+                ledger("stop", name, g.get("cost_per_hour", 0))
+                notify(f"{name} is stopped (not by the farm: by hand, or its own limits)")
             if r.get("state") != "stopped" or r.get("reachable") is False:
                 update(name, state="stopped", since=r.get("since") if r.get("state") == "stopped" else now,
                        checked=now, reachable=True)
@@ -514,6 +664,24 @@ def watch_once():
             ours = r.get("state") == "starting" and r.get("ours") is not False
             r = update(name, state="running", since=now, last_busy=now, why=None if ours else "started outside the farm: left to whoever did",
                        ours=ours)
+            if cloud and not ours:
+                ledger("start", name, g.get("cost_per_hour", 0))
+                notify(f"{name} is running, started outside the farm: US${g.get('cost_per_hour', 0)}/h until it is stopped "
+                       f"(its own limit stops it {cloud_limits()['max_hours']} h after its start)")
+        if cloud:
+            # Its drop-dead switch hears the farm; and the farm keeps to its budget and its hours.
+            beat(base)
+            b = budget()
+            hours = (now - (r.get("since") or now)) / 3600
+            if b["over"] and r.get("ours") is not False:
+                stop(name, "over budget: " + b["over"])
+                continue
+            if b["over"] and time.time() - r.get("told_over", 0) > 3600:
+                update(name, told_over=time.time())
+                notify(f"{name} runs over budget ({b['over']}), started outside the farm: stop it, or it stops at its own limit")
+            if hours >= cloud_limits()["max_hours"]:
+                stop(name, f"ran {hours:.1f} h, the limit is {cloud_limits()['max_hours']} h")
+                continue
         held = take_all(base)
         busy = held is None
         for h in held or []:

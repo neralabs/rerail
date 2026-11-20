@@ -131,6 +131,10 @@ def choose(named, oses, roots):
             what = "its guest " + base["name"] if base["name"] != named else "the guest"
             if farm.host_os(host) == "windows" and base["name"] != named:
                 what = f"{base['name']}, its WSL (which runs its Windows jobs)"
+            if guest.is_cloud(base["guest"]):
+                b = guest.budget()
+                what += (f", a cloud VM at US${base['guest'].get('cost_per_hour', '?')}/h (today US${b['day']} of US${b['day_limit']};"
+                         f" it stops when idle {base['guest'].get('idle_minutes', guest.IDLE_MINUTES)} min, and by {guest.cloud_limits()['max_hours']} h)")
             say(f"{named}: starting {what} (guest.py; up to {guest.START_SECONDS // 60} min)")
             h = wait_for_guest(host)
         if not h.get("ok"):

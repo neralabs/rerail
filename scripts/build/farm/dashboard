@@ -83,7 +83,9 @@ class Machine:
                 "state": r.get("state", "unknown"), "cpus": r.get("cpus"), "memory_gb": r.get("memory_gb"),
                 "since": r.get("since"), "last_busy": r.get("last_busy"), "busy": r.get("busy"),
                 "stop_at": r.get("stop_at"), "why": r.get("why"), "boot_s": r.get("boot_s"),
-                "idle_minutes": g.get("idle_minutes", guest.IDLE_MINUTES)}
+                "idle_minutes": g.get("idle_minutes", guest.IDLE_MINUTES),
+                "cost_per_hour": g.get("cost_per_hour") if guest.is_cloud(g) else None,
+                "max_hours": guest.cloud_limits()["max_hours"] if guest.is_cloud(g) else None}
 
     def parent(self, g):
         """The machine this one runs on (a guest's placement; WSL's, its Windows host), or None."""
@@ -227,7 +229,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/api/state"):
-            self.send(json.dumps({"now": time.time(), "machines": [m.state() for m in MACHINES]}), "application/json")
+            self.send(json.dumps({"now": time.time(), "machines": [m.state() for m in MACHINES], "cloud": guest.budget()}), "application/json")
         elif self.path in ("/", "/index.html"):
             self.send(PAGE, "text/html; charset=utf-8")
         else:
@@ -390,6 +392,11 @@ function guestLine(g) {
   if (g.state === "running") when = g.busy ? "in use" : g.stop_at ? "idle, stops in " + Math.max(0, Math.round((g.stop_at - now) / 60)) + " min" : "";
   else if (g.state === "stopped") when = "since " + ago(g.since) + " · starts when a command needs it";
   else if (g.state === "starting") when = "for " + ago(g.since).replace(" ago", "");
+  // A cloud guest: its price, and while it runs what it has cost and its hard stop.
+  if (g.cost_per_hour != null) {
+    const ran = g.state === "running" ? (now - g.since) / 3600 : 0;
+    when += ` · US$${g.cost_per_hour}/h` + (g.state === "running" ? `, US$${(ran * g.cost_per_hour).toFixed(2)} so far, stops by ${g.max_hours} h` : "");
+  }
   return `<i class="dot" style="background:${STATE_COLOR[g.state] || "var(--bad)"}"></i><b>${esc(g.state)}</b> · ${esc(size)}` +
     `${when ? " · " + esc(when) : ""}${g.why && g.state !== "running" ? " · " + esc(g.why) : ""}`;
 }
@@ -476,7 +483,9 @@ async function tick() {
       jobs += (d.jobs || []).length; memAv += d.mem.available; memT += d.mem.total; }
     $("#sum").innerHTML = `<b>${s.machines.filter(m => m.connected && m.last).length}</b> of ${s.machines.length} machines connected · <b>${cores}</b> cores: farm <b>${farm.toFixed(1)}</b>, ` +
       `fleet <b>${fleet.toFixed(1)}</b>, own <b>${own.toFixed(1)}</b>, idle <b>${Math.max(0, cores - farm - fleet - own).toFixed(1)}</b> · ` +
-      `<b>${jobs}</b> farm jobs · memory ${MEM(memAv)} available of ${MEM(memT)}`;
+      `<b>${jobs}</b> farm jobs · memory ${MEM(memAv)} available of ${MEM(memT)}` +
+      (s.cloud ? ` · cloud <b ${s.cloud.over ? 'style="color:var(--bad)"' : ""}>US$${s.cloud.day.toFixed(2)}</b> today of US$${s.cloud.day_limit},` +
+        ` US$${s.cloud.month.toFixed(2)} this month of US$${s.cloud.month_limit}` + (s.cloud.over ? " · ⚠ over budget: no cloud start" : "") : "");
     $("#grid").innerHTML = s.machines.map(m => `<section class="card ${m.connected ? "" : "off"} ${m.parent ? "guestcard" : ""}">${card(m, s.machines)}</section>`).join("");
   } catch (e) { $("#sum").textContent = "the dashboard's server is not answering: " + e; }
 }
