@@ -1560,10 +1560,13 @@ fn node_ids_in_place_equal_the_numbered_ones() {
         return;
     }
     let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
+    // An anchor first, then the root's own tokens (`;`) far past its subtree: the index reaches them.
+    let tail: String = format!("def f():\n    return 1\n{}a = 1; b = 2\n", (0..200).map(|i| format!("v{i} = {i}\n")).collect::<String>());
     let cases: &[(&str, &str)] = &[
         ("python", "if a is not b and c not in d:\n    pass\n"),
         ("python", "import os\nX = 1\n\n# c\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]  # t\n\nclass C(B):\n    y: int = 3\n    def m(self):\n        def inner():\n            pass\n        return inner\n\nif X:\n    print(f(1))\n"),
         ("python", &many),
+        ("python", &tail),
         ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\ninterface I { y: string }\nfunction g(n: number) { if (n) { return n; } }\n"),
         ("tsx", "export function A() { return <div className=\"x\">{[1].map(v => <B key={v} />)}</div>; }\nconst y = 2;\n"),
         ("javascript", "const a = 1;\nexport default class Z extends Y { static s = 1; get g() { return 1 } }\nfunction* h() { yield 1 }\n"),

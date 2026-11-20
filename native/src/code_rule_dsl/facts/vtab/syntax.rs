@@ -1870,8 +1870,11 @@ impl Projected {
         };
         // The walk: which tape nodes the projection numbers, marked in its rank index (`ranks`) in the block. A node's
         // local id is its rank among them, in preorder.
-        let (lo, hi) = (ranges.first().map_or(first, |r| r.0), ranges.last().map_or(first, |r| r.1).max(first + 1));
         let core_tokens = shape == Shape::Core && dialect.is_some() && !withheld;
+        // Walked by anchors, the root's tokens (below) lie anywhere in the document, past the last anchored subtree
+        // too: the index then reaches the document's end.
+        let root_tokens = ranges.len() > 1 && core_tokens && f.named(first);
+        let (lo, hi) = (ranges.first().map_or(first, |r| r.0), if root_tokens { end } else { ranges.last().map_or(first, |r| r.1) }.max(first + 1));
         let ranks = ranks::Ranks::build(block, lo, hi, |marks| {
             if withheld {
                 return;
@@ -1879,7 +1882,7 @@ impl Projected {
             // Walked by anchors, the root's own range is the root alone: its tokens between the anchored subtrees (a
             // `;` between two statements) are in no range, yet are tokens of an included node, as `Projected::span`
             // reads them.
-            if ranges.len() > 1 && core_tokens && f.named(first) {
+            if root_tokens {
                 let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
                 for c in f.children(first) {
                     if !f.named(c) && f.end(c) > f.start(c) && outside(c) {
