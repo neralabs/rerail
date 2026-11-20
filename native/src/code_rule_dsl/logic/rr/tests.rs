@@ -3450,24 +3450,37 @@ fn files_with_tests() -> Vec<PathBuf> {
     files
 }
 
-/// Every test a rule file carries passes (`rerail-engine test-rr` over `docs/rule-syntax/`).
+/// Every test a rule file carries passes (`rerail-engine test-rr` over `docs/rule-syntax/`). Each test is a run of
+/// its own (`testing::run`, 3–9 s at O0): four run at once, so the 44 the files carry fit the test's time.
 #[test]
 fn rule_files_pass_their_own_tests() {
     let work = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-tests");
-    let mut failed = Vec::new();
-    let mut ran = 0;
+    let mut cases = Vec::new();
     for (k, file) in files_with_tests().iter().enumerate() {
-        for (j, test) in super::testing::tests(file).unwrap().iter().enumerate() {
-            ran += 1;
-            match super::testing::run(file, test, &work.join(format!("{k}-{j}"))) {
-                Ok(outcome) if outcome.passed() => {}
-                Ok(outcome) => failed.push(format!("{}::{}: {:?} (findings {:?})", file.display(), test.name, outcome.failures, outcome.findings)),
-                Err(e) => failed.push(format!("{}::{}: {e}", file.display(), test.name)),
-            }
+        for (j, test) in super::testing::tests(file).unwrap().into_iter().enumerate() {
+            cases.push((file.clone(), test, work.join(format!("{k}-{j}"))));
         }
     }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let failed = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..4 {
+            s.spawn(|| {
+                while let Some((file, test, dir)) = cases.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)) {
+                    let why = match super::testing::run(file, test, dir) {
+                        Ok(outcome) if outcome.passed() => continue,
+                        Ok(outcome) => format!("{}::{}: {:?} (findings {:?})", file.display(), test.name, outcome.failures, outcome.findings),
+                        Err(e) => format!("{}::{}: {e}", file.display(), test.name),
+                    };
+                    failed.lock().unwrap().push(why);
+                }
+            });
+        }
+    });
     let _ = std::fs::remove_dir_all(&work);
-    assert!(ran >= 6, "{ran} tests");
+    assert!(cases.len() >= 6, "{} tests", cases.len());
+    let mut failed = failed.into_inner().unwrap();
+    failed.sort();
     assert!(failed.is_empty(), "{failed:#?}");
 }
 
