@@ -4437,7 +4437,92 @@ pub fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
 }
 
 /// `statistics`, measured from the rows (a source that keeps its own calls this once).
+///
+/// Two walks of the source (`for_rows`), no sort: the first finds the key columns (strictly increasing: every value
+/// once) and whether the rows come in document order; the second counts each other column's values, over all rows
+/// (ndv, and sq from each value's count) and within each document (sqd), a document's counts closed where its rows
+/// end. Rows out of document order are measured by sorting (`measured_sorted`). The two give the same numbers.
 pub fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
+    let rows = source.len();
+    let names = source.columns();
+    let width = names.len();
+    let all: Vec<usize> = (0..width).collect();
+    // The first walk: each column's strictly increasing, and the documents' order.
+    let (mut increasing, mut ordered) = (vec![true; width], true);
+    let mut last: Option<Vec<i64>> = None;
+    source.for_rows(&all, &mut |_, row| {
+        if let Some(was) = &mut last {
+            ordered &= was[0] >> 32 <= row[0] >> 32;
+            for c in 0..width {
+                increasing[c] &= was[c] < row[c];
+            }
+            was.copy_from_slice(row);
+        } else {
+            last = Some(row.to_vec());
+        }
+    });
+    if !ordered {
+        return measured_sorted(source);
+    }
+    let key = (rows as i64, rows as i64, rows as i64, rows as i64);
+    let counted: Vec<usize> = (0..width).filter(|&c| !increasing[c]).collect();
+    // The second walk, of the other columns: every value's count, and its count in the document under way.
+    struct Count {
+        all: rustc_hash::FxHashMap<i64, i64>,
+        doc: rustc_hash::FxHashMap<i64, i64>,
+        sqd: i64,
+    }
+    impl Count {
+        fn close(&mut self) {
+            self.sqd += self.doc.drain().map(|(_, n)| n * n).sum::<i64>();
+        }
+    }
+    let mut counts: Vec<Count> = counted.iter().map(|_| Count { all: Default::default(), doc: Default::default(), sqd: 0 }).collect();
+    if !counted.is_empty() {
+        let mut read: Vec<usize> = vec![0];
+        read.extend(counted.iter().copied().filter(|&c| c != 0));
+        let at: Vec<usize> = counted.iter().map(|c| read.iter().position(|r| r == c).expect("read")).collect();
+        let mut doc = None;
+        source.for_rows(&read, &mut |_, row| {
+            let d = row[0] >> 32;
+            if doc != Some(d) {
+                doc = Some(d);
+                counts.iter_mut().for_each(Count::close);
+            }
+            for (count, &i) in counts.iter_mut().zip(&at) {
+                *count.all.entry(row[i]).or_default() += 1;
+                *count.doc.entry(row[i]).or_default() += 1;
+            }
+        });
+        counts.iter_mut().for_each(Count::close);
+    }
+    let shadow = crate::code_rule_dsl::logic::plan::sketch::shadowing();
+    let mut counts = counts.into_iter();
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(c, name)| {
+            if increasing[c] {
+                return (name, key.0, key.1, key.2, key.3);
+            }
+            let count = counts.next().expect("a count per counted column");
+            let sq = count.all.values().map(|n| n * n).sum::<i64>();
+            if shadow {
+                let mut sketch = crate::code_rule_dsl::logic::plan::sketch::Sketch::default();
+                let mut values: Vec<(i64, i64)> = count.all.iter().map(|(v, n)| (*v, *n)).collect();
+                values.sort_unstable();
+                for (v, n) in values {
+                    sketch.add(v, n);
+                }
+                crate::code_rule_dsl::logic::plan::sketch::shadow("measured", &name, rows as i64, count.all.len() as i64, sq, &sketch);
+            }
+            (name, rows as i64, count.all.len() as i64, sq, count.sqd)
+        })
+        .collect()
+}
+
+/// `measured` by sorting each column's (value, document) pairs: for rows out of document order.
+pub fn measured_sorted(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
     let rows = source.len();
     // Each row's document (the first column's high half), read once for every column. Every read here is the
     // source's walk (`for_rows`): a view of a batch's documents reads each document's nodes once, where a read by

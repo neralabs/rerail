@@ -4849,6 +4849,12 @@ fn run_observed_within(
     // and read with it on the kept route (`kept_inputs`): by relation, the rows' digest and the statistics.
     let mut kept_input_stats: HashMap<String, (u64, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     let mut semijoin_stats: HashMap<String, Vec<(String, i64, i64, i64, i64)>> = HashMap::new();
+    // The semi-join's relations' statistics, counted where the run reads their rows (`keptstats::SemijoinCounts`):
+    // each chunk's rows at the nodes its exports hold, each hit's entry's. They are the rows the cross part looks up,
+    // so its statistics are theirs, not every node's: decision 0458 binds the whole view, whose every row is computed
+    // from the tape (1.2-1.5 M rows on hogql, 1 s to measure). `None` once a chunk's rows could not be attributed:
+    // then every row is measured.
+    let semijoin_counts: std::cell::RefCell<Option<HashMap<String, keptstats::SemijoinCounts>>> = std::cell::RefCell::new((!semijoin.is_empty()).then(HashMap::new));
     // The atoms the inputs' digests read their content by (`retain::cells_of`, decision 0212).
     let input_atoms = store.atoms_handle();
     // The values the program tests, of any relation and column: per value, the totals count only those (and every
@@ -6995,6 +7001,17 @@ fn run_observed_within(
                             own_totals.add_rows(&entry.rows);
                             if keeper.borrow().is_some() { own_seen.add_rows(&entry.rows); }
                         }
+                        // Its semi-join rows, the rows the cross part looks up, counted (`semijoin_counts`).
+                        if let Some(counts) = semijoin_counts.borrow_mut().as_mut() {
+                            for rel in &semijoin {
+                                let Some((w, flat)) = entry.rows.get(&memo::base_key(rel)) else { continue };
+                                let at = super::super::sql::select::input_columns(rel).and_then(|c| c.iter().position(|c| *c == "n"));
+                                if let Some(at) = at.filter(|at| at < w) {
+                                    let counts = counts.entry(rel.clone()).or_default();
+                                    flat.chunks_exact(*w).for_each(|r| counts.row(r[at], at, r));
+                                }
+                            }
+                        }
                         // Its document, for the corpus batch (decision 0458): made from its tape once the chunks are done, its
                         // guests from the requests its entry kept, round by round (moved out: nothing else reads them).
                         if !stored.is_empty() {
@@ -7442,6 +7459,12 @@ fn run_observed_within(
         }
         // Each memoised file's base rows, once the exports name the nodes a semi-join keeps. Not for a chunk of
         // partial hits: its documents' base rows are their entries' (below), so none is attributed again.
+        // A chunk whose base rows the memo does not attribute leaves the semi-join's rows uncounted (`semijoin_counts`).
+        if semijoin_seen && !(attributable && cone.is_none()) && semijoin_counts.borrow_mut().take().is_some() {
+            crate::code_rule_dsl::logic::profile::decision("a semi-join's rows measured whole", || {
+                format!("a chunk's base rows not attributed to its files ({}), or a chunk of partial hits ({})", !attributable, cone.is_some())
+            });
+        }
         if attributable && cone.is_none() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "base rows for the memo".into()); 
             for entry in entries.values_mut() {
@@ -7459,8 +7482,14 @@ fn run_observed_within(
                     memo::Owner::Text(i) => at.get(i).map(|&c| (c, source)),
                     memo::Owner::Node(_) => None,
                 })
-                .flat_map(|(c, source)| (0..source.len()).map(move |r| source.value(r, c)))
-                .collect();
+                .fold(std::collections::HashSet::new(), |mut wanted, (c, source)| {
+                    // Read through the source's walk: a view of the corpus batch reads its documents' nodes in turn,
+                    // where a read by row locates the row first.
+                    source.for_rows(&[c], &mut |_, v| {
+                        wanted.insert(v[0]);
+                    });
+                    wanted
+                });
             let mut string_files: HashMap<i64, BTreeSet<i64>> = HashMap::new();
             if !wanted.is_empty() {
                 for (rel, source) in &text_sources {
@@ -7475,14 +7504,16 @@ fn run_observed_within(
                     let memo::Owner::Node(o) = memo::owner(rel) else { continue };
                     let Some(owner) = columns.get(o).and_then(|c| at(c)) else { continue };
                     let texts: Vec<usize> = texts.iter().filter_map(|&c| columns.get(c).and_then(|c| at(c))).collect();
-                    for r in 0..source.len() {
-                        for &c in &texts {
-                            let v = source.value(r, c);
+                    let mut read = texts.clone();
+                    read.push(owner);
+                    source.for_rows(&read, &mut |_, row| {
+                        let (texts, owner) = row.split_at(row.len() - 1);
+                        for &v in texts {
                             if wanted.contains(&v) {
-                                string_files.entry(v).or_default().extend(owners(source.value(r, owner)));
+                                string_files.entry(v).or_default().extend(owners(owner[0]));
                             }
                         }
-                    }
+                    });
                 }
             }
             'base: for (rel, at, source) in &base_seen {
@@ -7494,6 +7525,7 @@ fn run_observed_within(
                 // keeps it, as a rule-made string a joined test reads is kept.
                 let made_value = !rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) && strings;
                 let key = memo::base_key(rel);
+                let _rel_span = crate::code_rule_dsl::logic::profile::span(|| rel.clone());
                 // A semi-join's relation: the rows of the nodes the chunk's exports hold, as the cross part keeps.
                 let node = semijoin.contains(rel).then(|| source.columns().iter().position(|h| h == "n")).flatten();
                 let Some(&first) = at.get(owner) else {
@@ -7504,40 +7536,136 @@ fn run_observed_within(
                 // The rows by file, handed to the entries once; a run of one document's rows finds its owners once.
                 let mut by_file: HashMap<i64, Vec<i64>> = HashMap::new();
                 let mut run: Option<(i64, Vec<i64>)> = None;
-                let mut row = Vec::with_capacity(at.len());
-                for r in (0..source.len()).filter(|&r| node.is_none_or(|n| mentioned.contains(&source.value(r, n)))) {
+                // The rows of the run's document not yet handed to its owners.
+                let mut pending: Vec<i64> = Vec::new();
+                fn flush(run: &mut Option<(i64, Vec<i64>)>, pending: &mut Vec<i64>, by_file: &mut HashMap<i64, Vec<i64>>) {
+                    if let Some((_, files)) = run.take() {
+                        for f in &files {
+                            by_file.entry(*f).or_default().extend_from_slice(pending);
+                        }
+                    }
+                    pending.clear();
+                }
+                // Read through the source's walk (a view of the corpus batch reads its documents' nodes in turn, where
+                // a read by row locates the row first): the row's columns in `at`'s order, then a semi-join's node.
+                let _ = first;
+                let mut read = at.clone();
+                let node_at = node.map(|n| {
+                    read.push(n);
+                    read.len() - 1
+                });
+                let mut failed: Option<&'static str> = None;
+                let mut keep = |vals: &[i64]| -> bool {
+                    if node_at.is_some_and(|i| !mentioned.contains(&vals[i])) {
+                        return true;
+                    }
                     // A row is each of its owners' (a guest's is its host's; a value document's, each asking file's):
                     // rows are sets, so a row kept by several files restores as one.
-                    let v = source.value(r, first);
+                    let v = vals[owner];
                     let files: Vec<i64> = if strings {
                         // A string of another chunk's file (a path `doc` gives every chunk) is that chunk's to keep.
                         let files: Vec<i64> = string_files.get(&v).map_or_else(Vec::new, |f| f.iter().copied().filter(|f| entries.contains_key(f)).collect());
                         if files.is_empty() && string_files.contains_key(&v) {
-                            continue;
+                            return true;
                         }
                         // A string no file's text holds (a rule made it): every file of the chunk keeps the row,
                         // where the cross-file rules read the test only joined.
                         if files.is_empty() && (made_value || joined_tests.contains(rel.as_str())) { entries.keys().copied().collect() } else { files }
                     } else {
+                        // A run of one document's rows: its owners found once, its rows gathered and handed to them
+                        // as the run ends (`flush`), not each row's.
                         let d = memo::document_of(v);
-                        match &run {
-                            Some((rd, files)) if *rd == d => files.clone(),
-                            _ => owners(v),
+                        if run.as_ref().is_some_and(|(rd, _)| *rd == d) {
+                            pending.extend_from_slice(&vals[..at.len()]);
+                            return true;
                         }
+                        flush(&mut run, &mut pending, &mut by_file);
+                        owners(v)
                     };
                     if files.is_empty() || !files.iter().all(|f| entries.contains_key(f)) {
-                        memo_why.insert(format!("base {rel}: {}", if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
-                        attributable = false;
-                        break 'base;
+                        failed = Some(if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" });
+                        return false;
                     }
-                    row.clear();
-                    row.extend(at.iter().map(|c| source.value(r, *c)));
-                    for f in &files {
-                        by_file.entry(*f).or_default().extend_from_slice(&row);
-                    }
-                    if !strings {
+                    if strings {
+                        for f in &files {
+                            by_file.entry(*f).or_default().extend_from_slice(&vals[..at.len()]);
+                        }
+                    } else {
+                        pending.extend_from_slice(&vals[..at.len()]);
                         run = Some((memo::document_of(v), files));
                     }
+                    true
+                };
+                // A semi-join's relation read at its node: by its key (`key_row`), else by the source's lookup
+                // (`lookup_read`, asked first whether it has one: a node no row names finds nothing).
+                let keyed = node.is_some_and(|n| source.keys_rows(n));
+                let reads = node.is_some_and(|n| !keyed && source.lookup_read(n, i64::MIN, &read, &mut |_, _| {}));
+                let looks_up = node.is_some_and(|n| keyed || reads || source.lookup(n, &[]).is_some());
+                match node.filter(|_| looks_up) {
+                    // The rows of the nodes the exports hold, each found by its node, in node order (so in document
+                    // order), where a walk read every node's row of the view.
+                    Some(n) => {
+                        let mut nodes: Vec<i64> = mentioned.iter().copied().collect();
+                        nodes.sort_unstable();
+                        let mut vals = vec![0i64; read.len()];
+                        // Each row counted for the cross part's statistics as it is read (`semijoin_counts`).
+                        let mut held = semijoin_counts.borrow_mut();
+                        let mut counts = held.as_mut().map(|c| c.entry(rel.clone()).or_default());
+                        let width = at.len();
+                        let n_at = super::super::sql::select::input_columns(rel).and_then(|c| c.iter().position(|c| *c == "n")).unwrap_or(usize::MAX);
+                        let mut each = |v: i64, row: &[i64]| -> bool {
+                            if let Some(c) = counts.as_mut() {
+                                c.row(v, n_at, &row[..width]);
+                            }
+                            keep(row)
+                        };
+                        for v in nodes {
+                            if keyed {
+                                let Some(r) = source.key_row(n, v) else { continue };
+                                source.row_at(r, &read, &mut vals);
+                                if !each(v, &vals) {
+                                    break;
+                                }
+                            } else if reads {
+                                let mut go = true;
+                                source.lookup_read(n, v, &read, &mut |_, row| {
+                                    if go {
+                                        go = each(v, row);
+                                    }
+                                });
+                                if !go {
+                                    break;
+                                }
+                            } else {
+                                let mut go = true;
+                                for r in source.lookup(n, &[v]).unwrap_or_default() {
+                                    source.row_at(r, &read, &mut vals);
+                                    go = each(v, &vals);
+                                    if !go {
+                                        break;
+                                    }
+                                }
+                                if !go {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        source.for_rows_in(0..source.len(), &read, &mut |_, vals| keep(vals));
+                        if node.is_some() && semijoin_counts.borrow_mut().take().is_some() {
+                            crate::code_rule_dsl::logic::profile::decision("a semi-join's rows measured whole", || {
+                                format!("{rel}: its node column is no key of its rows ({:?})", source.columns())
+                            });
+                        }
+                    }
+                }
+                flush(&mut run, &mut pending, &mut by_file);
+                if let Some(why) = failed {
+                    *semijoin_counts.borrow_mut() = None;
+                    memo_why.insert(format!("base {rel}: {why}"));
+                    attributable = false;
+                    break 'base;
                 }
                 // Moved into the entries, not copied: each entry's base rows start empty.
                 for (f, values) in by_file {
@@ -8969,8 +9097,23 @@ fn run_observed_within(
             }
             // Read off the corpus batch's documents (decision 0458), not the rows the chunks gathered.
             let source = Arc::clone(corpus_sources.get(&rel).ok_or_else(|| Error::Plan(format!("{rel} is not in the corpus batch")))?);
-            let rows = source.len();
             let columns = source.columns();
+            // A semi-join's relation is read by the cross part only at the nodes the exports hold: its statistics are
+            // those rows', counted as the run read them (`semijoin_counts`), not every node's measured.
+            let looked_up = semijoin.contains(&rel).then(|| {
+                let input = super::super::sql::select::input_columns(&rel)?;
+                let held = semijoin_counts.borrow();
+                let counts = held.as_ref()?;
+                let empty = keptstats::SemijoinCounts::default();
+                let st = counts.get(&rel).unwrap_or(&empty).statistics(input, &columns)?;
+                Some((st.first().map_or(0, |s| s.1 as usize), st))
+            }).flatten();
+            if semijoin.contains(&rel) && looked_up.is_none() {
+                crate::code_rule_dsl::logic::profile::decision("a semi-join's rows measured whole", || {
+                    format!("{rel}: counted {}, columns {columns:?}, input {:?}", semijoin_counts.borrow().is_some(), super::super::sql::select::input_columns(&rel))
+                });
+            }
+            let rows = looked_up.as_ref().map_or_else(|| source.len(), |(rows, _)| *rows);
             let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
             let statistics = kept.as_ref().and_then(|m| m.get(&memo::base_key(&rel))).filter(|r| r.rows() == rows as i64).map(|r| {
                 let by_name: HashMap<String, (String, i64, i64, i64, i64)> = r.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
@@ -8978,7 +9121,11 @@ fn run_observed_within(
                 columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), n, n, n, n))).collect::<Vec<_>>()
             });
             let source = retain::kept_source_digested(parts.as_deref(), &rel, Arc::clone(&source), base_digest(&rel), &mut input_digests);
-            let statistics = statistics.unwrap_or_else(|| {
+            let statistics = statistics.or_else(|| looked_up.map(|(_, st)| st)).unwrap_or_else(|| {
+                crate::code_rule_dsl::logic::profile::decision("a base relation measured, not kept", || {
+                    let k = kept.as_ref().map(|m| m.get(&memo::base_key(&rel)).map(|r| r.rows()));
+                    format!("{rel}: {rows} rows; the keeper's {}", match k { None => "none (no keeper)".to_owned(), Some(None) => "none for it".to_owned(), Some(Some(n)) => format!("{n} rows") })
+                });
                 let _m = crate::code_rule_dsl::logic::profile::span(|| format!("a base relation measured ({rows} rows)"));
                 let st = syntax::statistics(source.as_ref());
                 // A semi-join's, kept beside its frame for the next run's kept route (`kept_input_stats`).

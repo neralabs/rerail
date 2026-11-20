@@ -228,6 +228,8 @@ fn a_views_measured_statistics_are_its_per_row_reads() {
             })
             .collect();
         assert_eq!(super::measured(source.as_ref()), per_row, "{name}");
+        assert_eq!(super::measured_sorted(source.as_ref()), per_row, "{name}: sorted");
+        assert!(per_row.iter().any(|m| m.2 < m.1), "{name}: a column with repeated values, counted");
     }
 }
 

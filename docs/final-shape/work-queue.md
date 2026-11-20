@@ -7708,11 +7708,27 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   source's walk (`for_rows`). The 1.24 M-row measure went from 0.58 s to 0.25-0.28 s; the 1.51 M-row one stays
   0.32-0.40 s, as its cost is the sort of each column's (value, document) pairs. Test:
   `a_views_measured_statistics_are_its_per_row_reads`.
-- **Left:**
-  - the measure's sorts (0.65 s, one thread): a view's statistics answered by the tape, or measured by each chunk
-    as it is evaluated (on the pool) and merged, as before 0458;
-  - the memo's base rows of the corpus views (0.33 s): kept only if a later run reads them; else not made (0353:
-    they are the tape's rows written again).
+- **The cause, found** (2026-11-20, the user: "get the work back to" 81 B): the measured relations are the
+  semi-join's (`ast_depth`, `col`, `line`, `node`). The cross part reads them only as lookups of the nodes its
+  exports hold, 291,775 of them; the old engine bound and measured just those rows. 0458 binds the whole view, and
+  every row of `line`, `col` and `ast_depth` is computed from the tape (`ast_depth` walks to the root), so reading
+  1.24-1.51 M rows costs about 1 s however it is read: a hashed count in place of the sort was slower (1.0 s), and
+  the sample has the time in `Viewed::value_of`, not in the counting.
+- **Done:** the semi-join's statistics are counted where the run already reads its rows
+  (`keptstats::SemijoinCounts`): each chunk's rows at the nodes its exports hold (the memo's base rows), each hit's
+  entry's, a node's row once, exactly as `measured` would give them over those rows (its test). The memo's loop
+  finds those rows by their node (`key_row`, `lookup_read`, else `lookup`), not by walking every row, and hands a
+  document's rows to its owners once. A chunk whose rows are not attributed turns the counts off, and every row is
+  measured as before. Key-like statistics with no rows read were tried and are worse (92-94 B): the planner needs
+  the values' statistics.
+- **Measured** (cold, CPU binding, 1,629 findings each): 83.7 and 84.0 B at load 15 (from 99.7 B), against this
+  morning's 81.0 and 81.9 B at load 13. Wall 2.25-2.48 s, against 1.75-1.78 s.
+- **Left (about 2.5 B):** the memo's base rows of the semi-join (0.35 s: `ast_depth` 0.12, `node` 0.09, `line`
+  0.07, `col` 0.07), 0458's copy 2. They are what the counts and a hit's statistics read. They go with 0458 step
+  4's rest, once a hit's statistics come from somewhere else (its document's rows at its exports' nodes, or kept
+  statistics). The rules' changes (#898) about cancel out: `pre_75`, `pre_65` and `parsed` +0.42 s, `param`,
+  `tp_decl`, `pre_76` and others -0.66 s. The corpus batch's projection (0.34 s) is the chunks' guests' projection
+  (0.34 s) moved.
 
 ### Q397. (Q266 on Native-GPU-strata) The CPU JIT runs a quantified query 6-10 times slower than the interpreter, and more so as its runs grow
 
