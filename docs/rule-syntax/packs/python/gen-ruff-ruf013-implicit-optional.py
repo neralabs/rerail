@@ -3,7 +3,7 @@
 (known_stdlib.rs). The JSON's `known-name` list is that table at Python 3.10; check-…py compares them.
     RUFF_SRC=<Ruff checkout at 0be08a2> python3 docs/rule-syntax/packs/python/gen-ruff-ruf013-implicit-optional.py
 """
-import json, os, re
+import json, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-ruf013-implicit-optional.json")
 OUT = os.path.join(HERE, "ruff-ruf013-implicit-optional.stdlib.rerail")
@@ -22,7 +22,7 @@ def modules(policy):
 
 def known_stdlib():
     """known_stdlib.rs's text, from the Ruff checkout RUFF_SRC names (at 0be08a206f9c3180afd3e93bcc792ed5cb1f4db1)."""
-    root = os.environ.get("RUFF_SRC") or exit("set RUFF_SRC to a Ruff checkout at 0be08a206f9c3180afd3e93bcc792ed5cb1f4db1")
+    root = os.environ.get("RUFF_SRC") or sys.exit("set RUFF_SRC to a Ruff checkout at 0be08a206f9c3180afd3e93bcc792ed5cb1f4db1")
     return open(os.path.join(root, "crates", "ruff_python_stdlib", "src", "sys", "known_stdlib.rs")).read()
 
 
@@ -62,4 +62,5 @@ def render(every, some):
 
 
 if __name__ == "__main__":
-    open(OUT, "w").write(render(*split(table(known_stdlib()))))
+    text = render(*split(table(known_stdlib())))
+    open(OUT, "w").write(text)
