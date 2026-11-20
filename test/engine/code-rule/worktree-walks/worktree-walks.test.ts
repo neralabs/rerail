@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import type * as FileSystem from "node:fs/promises";
 import { cp, lstat, mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -155,6 +156,11 @@ interface SessionOptions {
   readonly ignores?: (path: string) => boolean;
   /** Checkouts nested in the worktrees, each owning its files, which no session watches as a worktree. */
   readonly nested?: readonly string[];
+  /**
+   * Where Git registers the worktrees, as the router names it: with it, as the router does, the session watches only
+   * the other worktrees whose folder is there.
+   */
+  readonly registry?: string;
 }
 
 /**
@@ -166,7 +172,7 @@ async function opened(
   folder: string,
   checkouts: readonly string[],
   walks: WorktreeWalks,
-  { rules, ignores, nested = [] }: SessionOptions = {},
+  { rules, ignores, nested = [], registry }: SessionOptions = {},
 ) {
   const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => ({
     revision: batch.revision, disposition: "continue" as const, violations: [], failures: [],
@@ -182,8 +188,9 @@ async function opened(
     close: async () => undefined,
     sourceRoot: path => innermost([...checkouts, ...nested], resolve(folder, path)),
     // As the router does: the session's own checkout is never one of the other worktrees.
-    worktreeRoots: () => checkouts.filter(checkout => checkout !== innermost(checkouts, folder)),
+    worktreeRoots: () => checkouts.filter(checkout => checkout !== innermost(checkouts, folder) && (registry === undefined || existsSync(checkout))),
     ...(ignores === undefined ? {} : { ignoresPath: ignores }),
+    ...(registry === undefined ? {} : { worktreeRegistry: () => registry }),
   };
   const bridge = new CodeRuleBridge(folder, auditor, { worktreeWalks: walks });
   bridges.push(bridge);
@@ -221,6 +228,20 @@ async function turn(...sessions: Session[]): Promise<void> {
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
   }
+}
+
+/**
+ * The session's next audit of edits from here on, waited for itself rather than for a set time: a walk's delivery
+ * comes when the walks' gap allows, which on a loaded runner is later than a fixed wait.
+ */
+function nextAudit({ auditGeneratedEdits }: Session): Promise<void> {
+  const delivered = Promise.withResolvers<void>();
+  const audit = auditGeneratedEdits.getMockImplementation()!;
+  auditGeneratedEdits.mockImplementation(async (sessionId, batch) => {
+    delivered.resolve();
+    return await audit(sessionId, batch);
+  });
+  return delivered.promise;
 }
 
 /** Every edit a session's auditor was given, with its mode, in order. */
@@ -914,6 +935,52 @@ describe("a walk of the other worktrees with change notices", () => {
     await vi.waitFor(() => expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]), { timeout: 5_000 });
   });
 
+  it("reads a worktree removed and added again at its path after a walk while its folder was gone, and records a write there, with no later event of the session", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const watch = new StampTreeWatch();
+    const registry = join(main, ".git", "worktrees");
+    const watching = await session(worktrees[0]!, checkouts, noticedWalks(watch), { registry });
+    const w3 = worktrees[2]!;
+    // Its watch ends once its folder is gone, as the engine's does, and tells of nothing before.
+    watch.hold(w3);
+    await removeFolder(w3);
+    watch.end(w3);
+    watch.release(w3);
+    // Git still lists the worktree; the walk finds no folder there and lets go of it.
+    await turn(watching);
+    expect([watch.folders.has(w3), watch.folders.has(registry), watch.unwatched.includes(registry)]).toEqual([false, true, false]);
+    git(main, "worktree", "add", "--quiet", "--force", "--detach", w3);
+    await watch.until(() => watch.folders.has(w3));
+    // The session let go of the worktree, so the walk that reads it again is its first read there, its baseline: the
+    // write comes after it, and its change notice alone starts the walk that records it.
+    await turn(watching);
+    const delivered = nextAudit(watching);
+    await writeFile(join(w3, "src", "a.py"), "old\nmine\n");
+    await delivered;
+    expect(owned(watching)).toEqual([[["../w3/src/a.py"], "log", "repository"]]);
+    await watching.bridge.close();
+    expect(watch.unwatched).toContain(registry);
+  });
+
+  it("watches a worktree removed and added again at its path as the next walk reads it, and records a later write there, with no later event of the session", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const watch = new StampTreeWatch();
+    const watching = await session(worktrees[0]!, checkouts, noticedWalks(watch), { registry: join(main, ".git", "worktrees") });
+    const w3 = worktrees[2]!;
+    // The watch of the folder that went tells of nothing until it ends, after the new folder is made.
+    watch.hold(w3);
+    await removeFolder(w3);
+    git(main, "worktree", "add", "--quiet", "--force", "--detach", w3);
+    watch.end(w3);
+    watch.release(w3);
+    // Its watch let go, then watched again: the new folder.
+    await watch.until(() => watch.unwatched.includes(w3) && watch.folders.has(w3));
+    const delivered = nextAudit(watching);
+    await writeFile(join(w3, "src", "a.py"), "old\nmine\n");
+    await delivered;
+    expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]);
+  });
+
   it("records no deletion of a file its tool call made in another worktree when the walk after it had no notice of it yet", async () => {
     const { worktrees, checkouts } = await repository();
     const watch = new StampTreeWatch();
@@ -948,6 +1015,21 @@ describe("a session's close and the watches of the other worktrees", () => {
     expect(watch.unwatched.sort()).toEqual([main, ...worktrees].sort());
     expect(runningIn(worktrees[2]!)).toEqual([]);
     git(main, "worktree", "remove", worktrees[2]!);
+  });
+});
+
+describe("a session's close and the watch of where Git registers the worktrees", () => {
+  it("keeps watching where Git registers the worktrees while any session of the repository is open", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const watch = new StampTreeWatch();
+    const walks = noticedWalks(watch);
+    const registry = join(main, ".git", "worktrees");
+    const first = await session(worktrees[0]!, checkouts, walks, { registry });
+    const second = await session(worktrees[1]!, checkouts, walks, { registry });
+    await first.bridge.close();
+    expect(watch.unwatched).not.toContain(registry);
+    await second.bridge.close();
+    expect(watch.unwatched).toContain(registry);
   });
 });
 

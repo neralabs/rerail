@@ -141,6 +141,11 @@ export interface WatcherWalk {
   readonly checkout: string | undefined;
   /** The session folder, physical: in `checkout`, which it may be. */
   readonly folder: string;
+  /**
+   * The folder where Git registers the repository's linked worktrees, physical (`CodeRuleAuditor.worktreeRegistry`):
+   * watched, so Git adding a worktree, or one removed and added again at its path, asks for a walk. None when unknown.
+   */
+  readonly registry?: string | undefined;
   /** Those of `worktrees` the session takes for the first time, or had a subtree of it could not read. */
   readonly firstSight: ReadonlySet<string>;
   /** When the session opened, on the filesystem's clock. */
@@ -229,6 +234,8 @@ interface Watching {
   /** The checkout its session folder was in, and that folder, as the last walk began (`WatcherWalk`). */
   checkout: string | undefined;
   folder: string | undefined;
+  /** `WatcherWalk.registry` as the last walk began. */
+  registry: string | undefined;
   closed: boolean;
 }
 
@@ -376,6 +383,11 @@ function leftOut(roots: ReadonlySet<string>, walks: Iterable<WatcherWalk>): Set<
   return skip;
 }
 
+/** What a session's walk has the notices watch: its worktrees, and the folder where Git registers them. */
+function rootsOf({ worktrees, registry }: { readonly worktrees: ReadonlySet<string>; readonly registry?: string | undefined }): ReadonlySet<string> {
+  return registry === undefined ? worktrees : new Set([...worktrees, registry]);
+}
+
 /** The innermost of `roots` that `path` lies inside; undefined when it lies in none. A worktree's read leaves out those inside it. */
 function worktreeAround(roots: ReadonlySet<string>, path: string): string | undefined {
   let around: string | undefined;
@@ -463,7 +475,7 @@ export class WorktreeWalks {
   #wake: (() => void) | undefined;
   /** Times the walk that reads the worktree whose last read is next due (`WORKTREE_FULL_WALK_MS`). */
   #reread: NodeJS.Timeout | undefined;
-  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree is watched. */
+  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree or a registry folder is watched. */
   #pump: NodeJS.Timeout | undefined;
   /** Whether a walk is reading: it takes the notices itself, and asks for the walk they call for as it ends. */
   #walking = false;
@@ -491,7 +503,7 @@ export class WorktreeWalks {
   watch(watcher: WorktreeWatcher): WorktreeWatch {
     const watching: Watching = {
       watcher, requested: false, asked: 0, answered: 0, nextWalkAt: 0, taking: undefined, waiting: undefined, takingPart: undefined,
-      worktrees: new Set(), checkout: undefined, folder: undefined, closed: false,
+      worktrees: new Set(), checkout: undefined, folder: undefined, registry: undefined, closed: false,
     };
     this.#watching.push(watching);
     if (this.#watching.length === 1) this.#onWatching?.(true);
@@ -609,7 +621,7 @@ export class WorktreeWalks {
     return Date.now() - kept.readAt >= this.#fullWalkMs;
   }
 
-  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree is watched, and stops once not. */
+  /** Takes the notices every `WORKTREE_NOTICE_MS` while a session watches and a worktree or a registry folder is watched, and stops once not. */
   #armPump(): void {
     const pumping = this.#watching.length > 0 && this.#notices.watchingAny();
     if (pumping && this.#pump === undefined) {
@@ -633,7 +645,7 @@ export class WorktreeWalks {
   #askNoticed(): void {
     const noticed = this.#notices.noticed();
     if (noticed.size === 0) return;
-    for (const watching of this.#watching) if ([...watching.worktrees].some(root => noticed.has(root))) watching.requested = true;
+    for (const watching of this.#watching) if ([...rootsOf(watching)].some(root => noticed.has(root))) watching.requested = true;
     this.#schedule();
   }
 
@@ -667,7 +679,7 @@ export class WorktreeWalks {
     watching.requested = false;
     watching.waiting = undefined;
     this.#watching.splice(this.#watching.indexOf(watching), 1);
-    this.#forget(this.#watching.map(other => other.worktrees));
+    this.#forget(this.#watching.map(other => rootsOf(other)));
     // A walk timed for its ask alone is called off; one timed for another session's waits on.
     this.#wake?.();
     if (this.#watching.length > 0) return;
@@ -699,7 +711,10 @@ export class WorktreeWalks {
     this.#departed.push(departed);
   }
 
-  /** Drops what was kept of each worktree no session watches, and stops watching it. */
+  /**
+   * Drops what was kept of each worktree no session watches, and stops watching it, and each folder where Git registers
+   * worktrees that no session names.
+   */
   #forget(watched: ReadonlyArray<ReadonlySet<string>>): void {
     const roots = new Set(watched.flatMap(worktrees => [...worktrees]));
     for (const root of this.#kept.keys()) if (!roots.has(root)) this.#kept.delete(root);
@@ -713,7 +728,8 @@ export class WorktreeWalks {
   /** One walk, for every session asking and every session sharing a worktree with one; returns the sessions that asked. */
   async #walkOnce(): Promise<Watching[]> {
     const starts = this.#start();
-    this.#forget([...starts.values()].map(walk => walk.worktrees));
+    this.#forget([...starts.values()].map(walk => rootsOf(walk)));
+    this.#watchRegistries(starts.values());
     const askers = [...starts.keys()].filter(watching => watching.requested);
     const walking = this.#walkers(starts);
     if (walking.size === 0) return askers;
@@ -805,9 +821,15 @@ export class WorktreeWalks {
       watching.worktrees = walk.worktrees;
       watching.checkout = walk.checkout;
       watching.folder = walk.folder;
+      watching.registry = walk.registry;
       starts.set(watching, walk);
     }
     return starts;
+  }
+
+  /** Watches the folder where Git registers the worktrees, as each session named it as this walk began. */
+  #watchRegistries(walks: Iterable<WatcherWalk>): void {
+    for (const { registry } of walks) if (registry !== undefined) this.#notices.watchRegistry(registry);
   }
 
   /**

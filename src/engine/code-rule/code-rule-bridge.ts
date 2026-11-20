@@ -2456,6 +2456,7 @@ export class CodeRuleBridge {
       worktrees: new Set(worktrees),
       checkout: this.#owningCheckout(discovery.root, ""),
       folder: discovery.root,
+      registry: this.#auditor.worktreeRegistry?.(),
       firstSight: new Set(worktrees.filter(worktree => this.#mayFirstSee(discovery, sessionPath(discovery.root, worktree)))),
       startedAt: discovery.startedAt,
       heads: new Set([...discovery.heads.keys()].filter(root => inWorktrees(discovery, root))),

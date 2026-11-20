@@ -1629,6 +1629,11 @@ export interface CodeRuleAuditor {
   /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
   worktreeRoots?(): readonly string[];
   /**
+   * The folder where Git registers the repository's linked worktrees (`worktrees` in its common Git folder), physical, as
+   * `worktreeRoots` last found it: a change there may add one of them. Undefined when unknown; none when absent.
+   */
+  worktreeRegistry?(): string | undefined;
+  /**
    * The checkouts (physical) whose Git ignore rules the session's checks follow, beside the session folder's own: a
    * change to their exclude files changes what is checked. None beyond the session folder's when absent.
    */
