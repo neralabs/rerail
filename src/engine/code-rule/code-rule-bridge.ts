@@ -1320,6 +1320,7 @@ function batchDigests(edits: readonly CodeRuleEdit[], uncaptured: ReadonlyMap<st
   }
   return digests;
 }
+
 /**
  * Puts in `recovered` each of `paths` (owned by `checkout`) whose Git index or `HEAD` blob has the digest `uncaptured`
  * names for it.
