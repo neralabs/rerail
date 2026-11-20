@@ -95,10 +95,11 @@ by any caller in the process, so two callers of different trust could not be kep
     item.
   - The process lock that let one profiled run at a time (`one_run`) is gone. A corpus run holds its run's records
     (`hold_records`); one nested in it neither resets nor writes them.
-  - The threads' CPU accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) are the pool's, which is shared by design. They
-    move with the pool into `Shared` (step 5).
-  - Not done yet: `WAVES` (the process's count of waves, for a thread with no run's context) and `WARM_FAULTS` (the
-    process's exit status under `RERAIL_WARM=list`).
+  - The threads' CPU accounts (`THREADS`, `EXITED`, `EXITED_GAPS`) were to move with the pool (step 5). They stay
+    with the threads, the process's: a machine's pool threads are threads of the process (step 5, below).
+  - `WAVES` (an id counter) and `WARM_FAULTS` (the process's exit status under `RERAIL_WARM=list`, which an atexit
+    handler reads) stay (step 5's list, below); which wave a thread's writes join is the run's context
+    (`write_back::RunWaves`).
 - Step 4 (the connection), first part:
   - Each connection holds the engine's values for it in its SQLite client data (`vtab::ConnData`, by type). They are
     dropped as it closes, after `Forget::scope` has taken what it frees on a thread of its own.
