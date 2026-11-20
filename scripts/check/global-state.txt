@@ -261,8 +261,8 @@ native/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	stays	computed
 native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::DOM	stays	code registered at load
 native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	stays	computed once from the engine's own files
 native/src/code_rule_dsl/transducer/packed/metal_join.rs::SOURCE	stays	computed once from the engine's own source
-native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::SOURCE	stays	computed once from the engine's own source
-native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::TAPE_VIEW	stays	computed once from the engine's own source
+native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::SOURCES	stays	computed once from the engine's own source
+native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::TAPE_VIEWS	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::EVICTOR	stays	registers the workspaces' evictor once (code registered at load, a hook)
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::RESIDENT_PREFIX	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::TAPE_PREFIX	stays	computed once from the engine's own source
@@ -277,7 +277,6 @@ native/src/code_rule_dsl/workspace/ingest.rs::PACKAGE_CONTEXT_PATH_VISITS	stays	
 native/src/code_rule_dsl/workspace/ingest.rs::PROJECT	stays	code a crate above registers at load
 native/src/code_rule_dsl/workspace/ingest.rs::REPOSITORY_CONTEXT	stays	code registered at load
 native/src/content_store/atoms.rs::GIVEN	stays	a test's counter
-native/src/content_store/compression.rs::LANGUAGE_TAGS	stays	code a crate above registers at load
 native/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate above registers at load
 native/src/content_store/connection.rs::MADE	stays	process-unique numbers of the connection registries (a thread's connections are kept by them)
 native/src/content_store/connection.rs::ONCE	stays	a hook registered once

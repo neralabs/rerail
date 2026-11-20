@@ -18,7 +18,7 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Metrics, Query, Terms};
 use crate::code_rule_dsl::tape;
 use crate::content_store::{
-    CandidateClause, HashKey, LocalResultPublication, StoredLocalResult, compress,
+    CandidateClause, HashKey, LocalResultPublication, StoredLocalResult,
 };
 use ast_grep_core::AstGrep as Root;
 use napi::Result;
@@ -647,13 +647,10 @@ pub(super) fn summary_publication(file: &FileState) -> Result<Option<LocalResult
     }) else {
         return Ok(None);
     };
-    let bytes = summary.encode();
-    let frame = compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
     Ok(Some(LocalResultPublication {
         candidate: summary_candidate(),
         context: file_context(&file.input),
-        raw_length: bytes.len(),
-        frame,
+        bytes: summary.encode(),
     }))
 }
 

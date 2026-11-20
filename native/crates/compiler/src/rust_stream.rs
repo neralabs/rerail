@@ -341,7 +341,7 @@ pub struct Ctx {
     room_supers: u64, room_pushes: u64, stack_base: u64, stack_limit: u64, frame_shift: u64,
     state: [u64; $STATE], size_c: *mut u8, off_c: *mut u8, tail_c: *mut u8, base_c: *mut u32,
     image: *mut u8, id_of: *mut u16, code_kf: *mut u32, code_first: *mut u32,
-    record_stride: u64,
+    record_stride: u64, writer: *mut u8, numbers: *const u32,
 }
 
 /// A node's working row (`native_cpu_tape::ROW`): its key (kind and field), its bytes. Not

@@ -46,6 +46,12 @@ const FACT_STORE: &[&str] = &[
     "snapshots",
     "snapshot_files",
     "workspaces",
+    // A store session per durable owner (decision 0450 §2): which data the store keeps.
+    "store_sessions",
+    // Page sets put and not yet bound (decision 0450): which a collection keeps.
+    "tree_pages_pending",
+    // The archive of aged sources and tapes (decision 0450 step 4): their bytes, compressed.
+    "object_archive",
     "workspace_overlay",
     "node",
     "tape",
@@ -132,9 +138,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("corpus_decided", "3"),
     ("corpus_swept", "3"),
     ("corpus_stats", "3"),
-    ("cross_rows", "3"),
-    ("cross_blocks", "3"),
-    ("cross_components", "3"),
     ("slice_rules", "3"),
     ("slice_document", "3"),
     ("slice_match", "3"),
@@ -171,13 +174,12 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("completed_directory_reuse", "8"),
     ("candidate_catalogs", "8"),
     ("candidate_checks", "8"),
-    ("local_check_results", "8"),
     ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
-/// merge took one out (2026-11-12).
-const NOT_YET_TABLES_PIN: usize = 61;
+/// merge took one out (2026-11-12); 58 when the cross-file memo's three tables went (decision 0450 §3, 2026-11-19); 57 when `local_check_results`, which nothing wrote, went (0450 step 2).
+const NOT_YET_TABLES_PIN: usize = 57;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
@@ -236,11 +238,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
-    // This thread's zstd contexts by dictionary (RER-131): open things, not results.
-    ("content_store/compression.rs", "DECODERS"),
-    ("content_store/compression.rs", "DICT_ENCODERS"),
-    // The language tags the store's dictionaries are chosen by (RER-131): set once as the library loads.
-    ("content_store/compression.rs", "LANGUAGE_TAGS"),
+    // This thread's zstd decompression context (RER-131): an open thing, not a result.
+    ("content_store/compression.rs", "DECODER"),
     // The store handles open in this process, by path (RER-131): a registry of open things.
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),

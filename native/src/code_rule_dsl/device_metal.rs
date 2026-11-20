@@ -181,8 +181,8 @@ pub mod matcher {
             matcher_metal::wave_labelled(wave, tapes, active, roots)
         }
 
-        fn wave_pattern_sources(&self, wave: &LoweredWave) -> Result<Vec<String>, Error> {
-            matcher_metal::wave_pattern_sources(wave)
+        fn wave_pattern_sources(&self, wave: &LoweredWave, format: u32) -> Result<Vec<String>, Error> {
+            matcher_metal::wave_pattern_sources(wave, format)
         }
 
         fn patterns_ready(&self, sources: &[String], format: u32) -> bool {

@@ -1169,7 +1169,9 @@ impl Observer {
             let named: BTreeSet<&Path> = exact.iter().chain(whole).map(PathBuf::as_path).collect();
             self.new_canon.retain(|(k, _)| !named.contains(k.as_path()) && !k.ancestors().any(|a| whole.iter().any(|w| w == a)));
         }
-        for p in exact.iter().chain(whole) {
+        // What the journal records: each path named (a directory whose listing changed, as its entries: `dir_named`).
+        let logged: Vec<PathBuf> = exact.iter().chain(whole).cloned().collect();
+        for p in &logged {
             self.changes.insert(p.clone(), generation);
         }
         self.counts.forgotten += forgotten;
@@ -1201,7 +1203,7 @@ impl Observer {
                     let _ = canon.execute(params![at, format!("{at}/"), format!("{at}/\u{10ffff}")]);
                 }
                 let Ok(mut log) = tx.prepare_cached("INSERT OR REPLACE INTO observed_changes VALUES (?1, ?2)") else { return };
-                for p in exact.iter().chain(&whole) {
+                for p in &logged {
                     let _ = log.execute(params![p.to_string_lossy(), generation as i64]);
                 }
                 let _ = tx.execute_cached("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
@@ -1550,29 +1552,41 @@ impl Observer {
                 waiting.push(path);
                 continue;
             }
-            let Some((kind, stat)) = Self::own_stat(&path) else { continue };
-            if kind != e.kind || stat != e.stat {
-                continue;
-            }
-            let (digest, listing) = match kind {
-                Kind::File => {
-                    let Ok(bytes) = std::fs::read(&path) else { continue };
-                    self.counts.hashed += 1;
-                    self.counts.bytes += bytes.len() as u64;
-                    (Sha256::digest(&bytes).into(), None)
-                }
-                Kind::Dir => {
-                    let Some(l) = self.read_listing(&path, false) else { continue };
-                    self.counts.listed += 1;
-                    (listing_digest(&l), Some(l))
-                }
-                _ => continue,
-            };
-            if digest == e.digest && Self::own_stat(&path).is_some_and(|(_, s)| s == e.stat) {
-                self.remember(&path, Entry { listing: listing.or(e.listing), recorded_ns: now, ..e });
-            }
+            self.settle_one(&path, e, now);
         }
         self.racy.extend(waiting);
+    }
+
+    /// Whether `e`, the racy answer at `path`, is still what is there: the same stat, and the same bytes (or listing)
+    /// read now. Recorded again by `now` where the window has passed (`settle_racy`); inside it, left racy (a later
+    /// write in the same tick keeps the stat), but what a reader read is what is there now. Sound as `settle_racy`
+    /// is: a write after this read changes the stat.
+    fn settle_one(&mut self, path: &Path, e: Entry, now: i64) -> bool {
+        let Some((kind, stat)) = Self::own_stat(path) else { return false };
+        if kind != e.kind || stat != e.stat {
+            return false;
+        }
+        let (digest, listing) = match kind {
+            Kind::File => {
+                let Ok(bytes) = std::fs::read(path) else { return false };
+                self.counts.hashed += 1;
+                self.counts.bytes += bytes.len() as u64;
+                (Sha256::digest(&bytes).into(), None)
+            }
+            Kind::Dir => {
+                let Some(l) = self.read_listing(path, false) else { return false };
+                self.counts.listed += 1;
+                (listing_digest(&l), Some(l))
+            }
+            _ => return false,
+        };
+        if digest == e.digest && Self::own_stat(path).is_some_and(|(_, s)| s == e.stat) {
+            if e.stat.mtime_ns.max(e.stat.ctime_ns) < now - RACY_NS {
+                self.remember(path, Entry { listing: listing.or(e.listing), recorded_ns: now, ..e });
+            }
+            return true;
+        }
+        false
     }
 
     /// The digest of `dir`'s listing, as `listing` gives it.
@@ -3453,6 +3467,46 @@ mod tests {
         assert_eq!(told, [Some(vec![files[3].clone()])], "nothing changed since: the same answer");
         let (_, told) = run(None, &[c4]);
         assert_eq!(told, [Some(vec![])]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// R8: the observer's journal tells a reader what changed, as FSEvents' replay did: a file added to a listed
+    /// directory is named, not the directory (whose answer, its listing, is forgotten all the same; a reader takes a
+    /// path named with all under it, as the cone's `still` does); and a file written just before one run and not since
+    /// is not named to the next while its answer is still inside the racy window, its bytes being the answer's.
+    #[cfg(unix)]
+    #[test]
+    fn the_journal_names_an_added_entry_and_not_a_racy_answer_that_holds() {
+        let (base, root, files) = listing_tree("told");
+        let store = base.join("store.files");
+        let pkg = root.join("pkg");
+        let run = |asked: &[String]| -> (String, Vec<Option<Vec<PathBuf>>>, Counts) {
+            let mut o = Observer::open(Some(&store));
+            o.begin();
+            let cursor = o.mark(&[root.clone()]).unwrap().remove(0);
+            o.listing(&pkg);
+            for f in &files {
+                o.digest(f);
+            }
+            let told = asked.iter().map(|c| o.changed_since("test-told", &[root.clone()], &[c.clone()]).map(|mut v| { v.sort(); v })).collect();
+            o.flush();
+            o.written();
+            (cursor, told, o.counts)
+        };
+        run(&[]);
+        std::thread::sleep(std::time::Duration::from_nanos(RACY_NS as u64 + 50_000_000));
+        let (c1, _, _) = run(&[]);
+        std::fs::write(pkg.join("new.py"), "y = 1\n").unwrap();
+        let (c2, told, counts) = run(std::slice::from_ref(&c1));
+        assert_eq!(told, [Some(vec![pkg.join("new.py")])], "the entry added, not its directory");
+        assert_eq!(counts.checked_named, 1, "the directory's answer is forgotten: {counts}");
+        // Written now: the next run records its answer inside the window; the one after reads it again and names
+        // nothing, its bytes unchanged.
+        std::fs::write(&files[1], "x = 7\n").unwrap();
+        let (c3, told, _) = run(std::slice::from_ref(&c2));
+        assert_eq!(told, [Some(vec![files[1].clone()])]);
+        let (_, told, counts) = run(std::slice::from_ref(&c3));
+        assert_eq!(told, [Some(vec![])], "the racy answer's bytes are still the file's: {counts}");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

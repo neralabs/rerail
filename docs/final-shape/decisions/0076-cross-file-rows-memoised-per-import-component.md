@@ -1,6 +1,8 @@
 # 0076: A corpus run's cross-file rows are memoised per import component, keyed by facts the run derives
 
 Status: built (2026-11-07; steps 1–4, Python imports). Measured on the typing corpus (§7): correct, and no faster.
+Retired for typing by 0083 and 0094 §7 (2026-11-08); removed by 0450 §3 (2026-11-19). The import closure
+(`components.rr`, less the component key) stays, for the programs that read it.
 
 ## Intro
 

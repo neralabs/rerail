@@ -1250,8 +1250,8 @@ impl WorkspaceApplyTask {
                 metrics.storage_reconciliation_passes += publication.reconciliation_passes;
                 metrics.reused_sources += publication.reused_sources;
                 metrics.reused_tapes += publication.reused_tapes;
-                metrics.compressed_sources += publication.compressed_sources;
-                metrics.compressed_tapes += publication.compressed_tapes;
+                metrics.written_sources += publication.written_sources;
+                metrics.written_tapes += publication.written_tapes;
                 check_closed(&self.closed)?;
                 for (path, stored) in paths.iter().zip(publication.files) {
                     if let Some(file) = state.files.get_mut(path) {

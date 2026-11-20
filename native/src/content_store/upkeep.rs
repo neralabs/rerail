@@ -244,8 +244,12 @@ impl Job for SqliteFile {
     }
 }
 
+/// Sources and tapes one archive step takes of each (`ContentStore::archive_aged`).
+const ARCHIVE_BATCH: usize = 256;
+
 /// The store's collection (decision 0053): corpus runs' passes when collection is due (idle work, run within
-/// an hour of waiting), and at once past the store's soft limit (urgent work).
+/// an hour of waiting), and at once past the store's soft limit (urgent work); then the archive of what is aged
+/// (decision 0450 step 4).
 pub struct Collect {
     store: Weak<ContentStore>,
     name: String,
@@ -274,7 +278,7 @@ impl Job for Collect {
         if store.capacity().is_ok_and(|c| !matches!(c.state, CapacityState::Normal)) {
             return Due::Urgent;
         }
-        if store.corpus_pass_wanted(&self.policy, unix_now()).unwrap_or(false) {
+        if store.corpus_pass_wanted(&self.policy, unix_now()).unwrap_or(false) || store.archive_due().unwrap_or(false) {
             return Due::Idle { starve: Duration::from_secs(3600) };
         }
         Due::No
@@ -291,7 +295,15 @@ impl Job for Collect {
         while !slice.over() {
             match store.collect_corpus_pass(&self.policy, now) {
                 Ok(pass) if pass.did_work() => {}
-                Ok(_) => return Ok(Step::Done),
+                Ok(_) => break,
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        // Then the archive (decision 0450 step 4): what collection left aged, compressed into rows.
+        while !slice.over() {
+            match store.archive_due().and_then(|due| if due { store.archive_aged(now, ARCHIVE_BATCH) } else { Ok(0) }) {
+                Ok(0) => return Ok(Step::Done),
+                Ok(_) => {}
                 Err(e) => return Err(e.to_string()),
             }
         }

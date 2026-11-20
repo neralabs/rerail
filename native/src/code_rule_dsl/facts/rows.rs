@@ -1537,17 +1537,20 @@ impl Rows {
         let (segs, tail) = (&self.segs[..], &self.tail);
         // Parts that do not: merged (a part appended after rows of another relation, `append_part`, counted there).
         Some((self.merged.get_or_init(|| {
-                let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
-                let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
-                let m = merged_counts();
-                m.0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                m.0[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
-                crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
-                let mut one = Part::new(self.life, self.k, rows);
-                for p in parts {
-                    one.copy_from(p, 0, p.len());
-                }
-                one
+                const COPIED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation's parts merged into one for the device (Rows::in_block)");
+                COPIED.time(|| {
+                    let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
+                    let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
+                    let m = merged_counts();
+                    m.0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    m.0[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
+                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
+                    let mut one = Part::new(self.life, self.k, rows);
+                    for p in parts {
+                        one.copy_from(p, 0, p.len());
+                    }
+                    (one, 8 * self.k * rows)
+                })
             }), self.rows() as u32))
     }
 

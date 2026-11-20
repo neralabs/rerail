@@ -3104,31 +3104,31 @@ fn paged_results_equal_complete_results_for_each_violations_and_capture_anchors(
     workspace.close();
 }
 
-/// Every stored local result as `(path, clause, codec, raw length, frame)`, in that order.
-fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, i64, i64, Vec<u8>)> {
+/// Every stored local result as `(path, clause, bytes)`, in that order: its bytes read where its segment holds
+/// them (decision 0450 step 2).
+fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, Vec<u8>)> {
     let connection = rusqlite::Connection::open(store).unwrap();
+    let mut maps = crate::content_store::ObjectMaps::new(store);
     let mut statement = connection
         .prepare(
-            "SELECT ps.value,cs.value,r.codec_id,r.raw_length,r.frame FROM context_check_results r \
+            "SELECT ps.value,cs.value,r.seg,r.seg_at,r.seg_len FROM context_check_results r \
              JOIN workspace_overlay o ON o.source_id=r.source_id \
              JOIN paths p ON p.path_id=o.path_id JOIN strings ps ON ps.string_id=p.string_id \
              JOIN candidate_checks c ON c.check_id=r.check_id \
              JOIN strings cs ON cs.string_id=c.check_string_id ORDER BY 1,2",
         )
         .unwrap();
-    statement
-        .query_map([], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        })
+    let rows: Vec<(String, String, [i64; 3])> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, [row.get(2)?, row.get(3)?, row.get(4)?])))
         .unwrap()
         .collect::<rusqlite::Result<_>>()
-        .unwrap()
+        .unwrap();
+    rows.into_iter()
+        .map(|(path, clause, [seg, at, len])| {
+            let frame = maps.frame(seg, at, len).expect("a stored result's segment");
+            (path, clause, frame.segment().bytes().to_vec())
+        })
+        .collect()
 }
 
 #[test]
@@ -3167,14 +3167,12 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
             "{clause}: {stored:?}"
         );
     }
-    for (path, clause, _, raw_length, frame) in &stored {
-        let bytes = zstd::stream::decode_all(std::io::Cursor::new(frame)).unwrap();
-        assert_eq!(bytes.len() as i64, *raw_length, "{path} {clause}");
+    for (path, clause, bytes) in &stored {
         // A result is the canonical (key-ordered) serialization of its JSON value.
         let value = serde_json::from_slice::<Value>(&bytes).unwrap();
         assert_eq!(
             serde_json::to_vec(&value).unwrap(),
-            bytes,
+            *bytes,
             "{path} {clause}"
         );
         assert_eq!(value["version"], 4, "{path} {clause}");
@@ -4134,6 +4132,53 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
     narrowed.close();
 }
 
+/// Decision 0434 §4, step 6: with no search index built, a stored file is skipped by the presence stored with its
+/// tape, read in place in the tape's frame (its bytes as they are): `plain.py` has no lambda and no error node;
+/// `broken.py`'s error node keeps it decoded, as the index's syntax errors do; the results are a fresh workspace's.
+#[test]
+fn stored_presences_skip_only_error_free_tapes_that_cannot_match() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("presences");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let file =
+        |path: &str, source: &str| json!({ "path": path, "language": "python", "source": source });
+    let files = json!([
+        file("lambda.py", "f = lambda: 1\n"),
+        file("plain.py", "value = 1\n"),
+        file("broken.py", "value = (\n"),
+    ]);
+    // Store the tapes, their presences with them; no selector index is built.
+    let first = stored_workspace(&store, "/presences-first", &print_code_rule());
+    apply_json(&first, 1, files.clone());
+    first.close();
+    store.written().unwrap();
+    let lambdas = compile(
+        "lambdas",
+        json!([{
+            "id": "lambda",
+            "violation": { "anchor": "witness.span", "code": "L", "message": "lambda" },
+            "forbid": { "ast": { "language": "python", "rule": { "kind": "lambda" } } }
+        }]),
+    );
+    let narrowed = stored_workspace(&store, "/presences-second", &lambdas);
+    let applied = apply_json(&narrowed, 1, files.clone());
+    let mut unstored = CodeRuleDslWorkspace::new();
+    unstored.add_code_rule(&lambdas, None).unwrap();
+    let fresh = apply_json(&unstored, 1, files);
+    unstored.close();
+    for key in ["violations", "failures"] {
+        assert_eq!(applied["evaluation"][key], fresh["evaluation"][key], "{key}");
+    }
+    assert_eq!(located(&applied["evaluation"]["violations"]).len(), 1);
+    let skipped = |workspace: &CodeRuleDslWorkspace, path: &str| {
+        workspace.state.lock().unwrap().files[path].selector_skipped
+    };
+    assert!(skipped(&narrowed, "plain.py"), "no lambda, no error node: skipped by its presence");
+    assert!(!skipped(&narrowed, "broken.py"));
+    assert!(!skipped(&narrowed, "lambda.py"));
+    narrowed.close();
+}
+
 /// A Next package with no server graph (one of its folders cannot be read on disk, or a file set
 /// holds more sources than `module_graph::MAX_GRAPH_FILES`) gives its files no membership:
 /// neither `serverGraph: true` nor `serverGraph: false` holds, rather than every file outside.
@@ -4607,7 +4652,7 @@ fn derived_documents_restored_from_the_store_evaluate_as_a_fresh_parse() {
     for path in ["src/Counter.vue", "views/sum.blade.php"] {
         let file = &state.files[path];
         assert!(
-            !file.selector_skipped && (file.tape_cache_hit || file.tape_decompressed),
+            !file.selector_skipped && file.tape_from_store,
             "{path} read its stored documents"
         );
     }
@@ -4667,7 +4712,7 @@ fn a_stored_tape_missing_a_derived_tape_is_parsed_again() {
         let state = restored.state.lock().unwrap();
         let file = &state.files["src/Counter.vue"];
         assert!(
-            !file.tape_cache_hit && !file.tape_decompressed,
+            !file.tape_from_store,
             "the file was parsed, not restored in part"
         );
     }

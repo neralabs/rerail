@@ -40,10 +40,6 @@ fn benchmark_phase_0() {
         super::usage().2
     );
 }
-/// Decision 0076: cross-file rows memoised per import component. b imports a; c imports nothing. An edit
-/// re-derives the edited file's component and its importers' only; `verify` derives everything again and
-/// compares; the contract refuses a relation that reads an undeclared cross-file one, and a row naming a node
-/// outside its closure.
 /// Q203 item 3 (ii): a corpus run's chunks read one normalized program, made once, not one each (each chunk's
 /// own version held every analysis of it again); the findings are those of one chunk.
 #[test]
@@ -88,74 +84,38 @@ calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The import closure (`components.rr`, decision 0450 §3): a program that reads `rr_cx_reach` has its rules added. b
+/// imports a; c imports nothing. The cross-file memo's pragma is refused: the memo is removed.
 #[test]
-fn cross_file_rows_are_memoised_per_import_component() {
+fn a_program_reading_the_import_closure_has_its_rules() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cross-memo");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("import-closure");
     std::fs::create_dir_all(&dir).unwrap();
     let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
     write("a.py", "def f():\n    pass\n");
     write("b.py", "from a import f\ndef g():\n    pass\n");
     write("c.py", "def h():\n    pass\n");
-    let program = |pragma: &str, extra: &str| {
+    let program = |text: &str| {
         let rule = dir.join("uses.rr");
-        std::fs::write(&rule, format!(r#"
-.pragma "cross-memo" "{pragma}"
-.decl def(n: node, q: symbol)
-def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
-.decl imp(n: node, q: symbol)
-imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
-uses(n, f) :- imp(n, q), def(f, q).
-{extra}
-.output uses
-"#)).unwrap();
-        crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
+        std::fs::write(&rule, text).unwrap();
+        crate::code_rule_dsl::logic::rr::parse_file(&rule).map(|p| crate::code_rule_dsl::logic::rr::print(&p).unwrap())
     };
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = |text: &str| super::run(text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
-    let uses = || crate::code_rule_dsl::logic::plan::output::shown(&out, "uses").unwrap();
-    let text = program("uses", "");
-    let first = run(&text).unwrap();
-    assert_eq!(first.cross, (0, 3), "three components, none stored yet");
-    let derived = uses();
-    assert_eq!(derived.len(), 1, "{derived:?}");
-    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap();
-    assert_eq!(outputs.rows("uses")[0].get(0).path(), Some("b.py"), "{derived:?}");
-    drop(outputs);
-    assert_eq!(run(&text).unwrap().cross, (3, 0), "unchanged: every component found");
-    assert_eq!(uses(), derived, "replayed rows are the derived ones");
-    // An edit to c, which nothing imports: c alone is derived.
-    write("c.py", "def h():\n    return 1\n");
-    assert_eq!(run(&text).unwrap().cross, (2, 1));
-    assert_eq!(uses(), derived);
-    // An edit to a: a and b, which imports it, are derived; c is found.
-    write("a.py", "def f():\n    return 2\n");
-    assert_eq!(run(&text).unwrap().cross, (1, 2));
-    assert_eq!(uses(), derived);
-    // Verify: nothing replayed, every found component's stored rows equal to those derived.
-    let switched = super::switches::set(&[("RERAIL_CROSS_MEMO", "verify")]);
-    let verified = run(&text);
-    drop(switched);
-    assert_eq!(verified.unwrap().cross, (3, 0));
-    assert_eq!(uses(), derived);
-    // The contract: a memoised relation reading a cross-file relation the pragma does not name is refused.
-    let reads = program("wide", ".decl wide(n: node)\nwide(n) :- uses(n, _).\n.output wide");
-    let err = run(&reads).err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(err.contains("wide") && err.contains("uses"), "{err}");
-    // A row about a whose other node is in b, which a does not import, is outside a's closure.
-    let back = program("uses back", ".decl back(f: node, n: node)\nback(f, n) :- uses(n, f).\n.output back");
-    let err = run(&back).err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(err.contains("back") && err.contains("outside its import closure"), "{err}");
-    // A memoised relation is stored, though inlining would unfold it into its readers (decision 0099): its derived
-    // rows are read from its table to be recorded ("no such table: near" before).
-    let near = program("uses near", ".decl near(n: node, f: node)\nnear(n, f) :- uses(n, f).\n.decl far(n: node)\nfar(n) :- near(n, _).\n.output far");
-    let switched = super::switches::set(&[("RERAIL_INLINE_ONLY", "near")]);
-    let stored = run(&near);
-    drop(switched);
-    stored.unwrap();
-    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "far").unwrap().len(), 1);
+    let text = program(
+        r#"
+#include "core.rr"
+.decl seen(p: symbol, q: symbol)
+seen(p, q) :- rr_cx_reach(d, e), d != e, doc(d, p, _), doc(e, q, _).
+.output seen
+"#,
+    )
+    .unwrap();
+    run(&text).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap(), [["b.py", "a.py"]]);
+    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol)\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
+    assert!(err.contains("cross-memo") && err.contains("removed"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -564,6 +524,39 @@ finding("unused", q, f) :- def(f, q), !used(f).
     let names: Vec<&str> = rows.iter().map(|row| row[1].as_str()).collect();
     assert!(rows.iter().all(|row| row.len() == 3 && row[0] == "unused"), "{rows:?}");
     assert!(names.iter().any(|q| q.ends_with("g")) && !names.iter().any(|q| q.ends_with(".f")), "g is unused, f is imported: {rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0434 §4, step 6: a run's parses are stored with their presences after them, each tape's home as one: a
+/// tape read back from the store holds its document's kinds.
+#[test]
+fn a_runs_tapes_are_stored_with_their_presences() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("stored-presences");
+    std::fs::create_dir_all(&dir).unwrap();
+    let bodies = [("a.py", "def f():\n    pass\n"), ("b.py", "class B:\n    x = 1\n"), ("c.py", "print(1)\n")];
+    for (file, body) in bodies {
+        std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    }
+    let rule = ".decl f(n: node)\nf(n) :- kind(n, \"function_definition\").\n.output f\n";
+    let out = dir.join("out");
+    let store = dir.join("stored.sqlite");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.clone()));
+    super::run(rule, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let cache = crate::content_store::ContentStore::open(&store).unwrap();
+    let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+    let tag = i64::from(crate::code_rule_dsl::language::tape_tag(python).unwrap());
+    let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
+    // The kind of a `function_definition` node.
+    let function = ast_grep_language::LanguageExt::get_ts_language(&python).id_for_node_kind("function_definition", true);
+    for (file, body) in bodies {
+        let source = cache.source_by_hash(crate::content_store::HashKey::sha256(format!("{marker}{body}").as_bytes())).unwrap().expect("the source, stored");
+        let frame = cache.tape_frames_for(&[source], tag, gv, fv).unwrap().remove(0).unwrap_or_else(|| panic!("{file}'s tape, stored"));
+        let bytes = frame.bytes().unwrap();
+        let presence = crate::code_rule_dsl::tape::stored_presence(&bytes, tag as u8).unwrap_or_else(|| panic!("{file}'s presence, stored with its tape"));
+        assert_eq!(presence.has_kind(u32::MAX, function), body.starts_with("def"), "{file}: its document's kinds");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1840,7 +1833,7 @@ fn every_switch_lowering_reads_is_classified() {
     // `RERAIL_OBSERVED_STEPS`).
     let mut preparing = sources(&[
         "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
-        "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
+        "logic/plan/corpus/import_closure.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
         // Its passes, on the version (`preparation`): the front's, the lowering's, `FoldOwn`'s and the merges, and
         // the combine's fact spaces.
         "logic/plan/corpus/preparation.rs", "logic/plan/corpus/preparation",

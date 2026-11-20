@@ -67,11 +67,7 @@ oracle_score_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
 /// Runs `program` over the oracle project and gives each answered call's answer, keyed by (file, start, end).
 fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) -> BTreeMap<(String, usize, usize), Answer> {
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("score");
-    let mut src = format!("{program}\n{SPANS}");
-    // `RERAIL_PYTHON_CROSS_MEMO`, as the corpus benchmark reads it.
-    if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
-        src.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
-    }
+    let src = format!("{program}\n{SPANS}");
     corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let outputs = Outputs::open(&out).unwrap();
     // Each node's document and span, keyed by the node as shown.
@@ -1335,14 +1331,9 @@ fn benchmark_python_calls_program_corpus() {
         Ok(f) => crate::code_rule_dsl::logic::settings::program_text(Path::new(&f)).unwrap(),
         Err(_) => program(&calls_name()),
     };
-    let mut text = format!("{source}\n{}", jedi_spans(&calls_name()));
-    // `RERAIL_PYTHON_CROSS_MEMO`: relations memoised per import component (decision 0076), as `.pragma "cross-memo"`.
-    if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
-        text.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
-    }
+    let text = format!("{source}\n{}", jedi_spans(&calls_name()));
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
-    println!("cross-file memo: {} components found, {} derived", report.cross.0, report.cross.1);
     println!("phase 0: {}; {}", report.files_observed, report.phases.first().map_or("", |p| p.0));
     println!("calls.rr over {} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
     // The comparison below is the benchmark's, not the run's: its own span, for the memory sampler's peaks.

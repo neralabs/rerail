@@ -95,6 +95,11 @@ form. This decision says which of them go and what replaces them.
    to the host's decode. What is not built yet: a 16z tape resident as stored with blocks decoded as a job's reads
    reach them, and so the planner's choice between that and the whole decode (Q65). Today every 16z document is
    decoded whole, on the GPU, when placed.
+   - **Superseded (2026-11-18, the merge of Native-and-GPU-strata into oscar):** decision 0353 step 4b builds
+     what this item left open, and goes further: a 16z tape is resident as stored, and every reader (the CPU, the
+     JIT and the kernels) decodes a block where a read falls, into a rolling cache. The whole decode on placement
+     is a copy (0353 row 15), so it is gone: `decode16z.metal`, `Decodes` and `Tape16Z::piece_jobs` are deleted.
+     The cache's decoder (`z_decode`, CLIF) decodes 0434's four pieces a block.
 
 ## Consequences
 

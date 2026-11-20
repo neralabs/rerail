@@ -2934,7 +2934,7 @@ pub mod tests {
     /// in, not the other span's own (Q203 item 3); the caller's thread runs its own pieces as its own.
     #[test]
     fn a_piece_taken_inside_another_span_is_charged_apart() {
-        let _serial = one_run();
+        let _serial = test_run();
         set(true);
         reset();
         let spin = |ms: u64| {
@@ -2950,8 +2950,11 @@ pub mod tests {
             piece(1);
             piece
         };
+        // The other thread in the test's run, profiled (decision 0442), its own span open when it takes the piece.
+        let run = run_own();
         std::thread::scope(|t| {
             t.spawn(|| {
+                let _run = InRun::enter(&run, true);
                 let _waiting = span(|| "waiting".into());
                 piece(30);
             });

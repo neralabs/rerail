@@ -215,6 +215,12 @@ impl CodeSet {
 pub trait Tape {
     /// The nodes.
     fn len(&self) -> usize;
+    /// Whether block `block` (nodes `f16::Z * block ..`; `u32::MAX`: the document) may have a node of kind `kind`,
+    /// by the tape's presence in its home (`tape_has_kind`, decision 0434 §4, step 6): true for a tape that has none.
+    fn has_kind(&self, block: u32, kind: u16) -> bool {
+        let _ = (block, kind);
+        true
+    }
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -255,6 +261,15 @@ pub trait Tape {
     #[inline(always)]
     fn end_with_start(&self, i: usize, _start: u64) -> u64 {
         self.end(i)
+    }
+    /// `match_groups` over the blocks `block` admits alone (block `b`: nodes `f16::Z * b ..`), as a planner tells
+    /// them from the tape's presence (`has_kind`): a format 16 or 16z tape reads no codes of a block left out.
+    fn match_groups_in(&self, set: &CodeSet, block: &dyn Fn(u32) -> bool, mut f: impl FnMut(usize, u64)) {
+        self.match_groups(set, |base, m| {
+            if block((base / crate::f16::Z) as u32) {
+                f(base, m);
+            }
+        });
     }
     /// The codes 64 nodes at a time: `f(base, m)`, bit j of `m` set when node `base + j` is in `set`.
     fn match_groups(&self, set: &CodeSet, mut f: impl FnMut(usize, u64)) {
@@ -330,6 +345,8 @@ pub struct F15Columns<'a> {
     pub tail: &'a [u8],
     pub widths: [u8; 3],
     pub from_start: bool,
+    /// The source's length (its header's, or its image's): a view's spans are held to it (decision 0463).
+    pub source_len: u64,
 }
 
 /// Format 15, read where its columns lie, through the tape's reads (decision 0310's Rust backend,
@@ -433,6 +450,13 @@ impl Tape for F15<'_> {
     fn end(&self, i: usize) -> u64 {
         u64::from(reads::tape_end(self.bytes, &self.view, i as u32))
     }
+    /// A scan's span is the tape's as stated (decision 0463: what its check reads; its slices are checked).
+    fn start_next(&self, i: usize, _prev_start: u64) -> u64 {
+        u64::from(reads::tape_start_stated(self.bytes, &self.view, i as u32))
+    }
+    fn end_with_start(&self, i: usize, _start: u64) -> u64 {
+        u64::from(reads::tape_end_stated(self.bytes, &self.view, i as u32))
+    }
 }
 
 /// A stored format 15 image's columns and its code table (`MAGIC`, `FORMAT_VERSION`), read where they lie.
@@ -457,6 +481,7 @@ impl F15Columns<'_> {
         let widths = u32::from(self.widths[0]) | u32::from(self.widths[1]) << 4 | u32::from(self.widths[2]) << 8 | u32::from(self.from_start) << 12;
         Ok(rerail_clif::view::TapeView {
             nodes: u32::try_from(self.code.len() / 2).map_err(|_| "a tape past 4 G nodes".to_owned())?,
+            source_len: u32::try_from(self.source_len).map_err(|_| "a source past 4 GiB".to_owned())?,
             format: 15,
             widths,
             columns: [at(self.code)?, at(self.size)?, at(self.base)?, at(self.off)?, at(self.tail)?],
@@ -513,7 +538,8 @@ pub fn f15_columns(bytes: &[u8]) -> Result<(F15Columns<'_>, CodeTable), String> 
             Ok(Entry { kind: kf & ((1 << crate::KIND_BITS) - 1), field: kf >> crate::KIND_BITS, flags, alias, classes })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    Ok((F15Columns { code, size, base, off, tail, widths, from_start }, CodeTable::new(entries)))
+    let source_len = u64_at(header::SOURCE_LEN)? as u64;
+    Ok((F15Columns { code, size, base, off, tail, widths, from_start, source_len }, CodeTable::new(entries)))
 }
 
 // ---- bulk answers ------------------------------------------------------------------------------------------
@@ -632,6 +658,12 @@ impl Tape for AnyTape<'_> {
     }
     fn match_groups(&self, set: &CodeSet, f: impl FnMut(usize, u64)) {
         with_tape!(self, |t| t.match_groups(set, f))
+    }
+    fn match_groups_in(&self, set: &CodeSet, block: &dyn Fn(u32) -> bool, f: impl FnMut(usize, u64)) {
+        with_tape!(self, |t| t.match_groups_in(set, block, f))
+    }
+    fn has_kind(&self, block: u32, kind: u16) -> bool {
+        with_tape!(self, |t| t.has_kind(block, kind))
     }
     fn path(&self, i: usize, out: &mut Vec<usize>) {
         with_tape!(self, |t| t.path(i, out))

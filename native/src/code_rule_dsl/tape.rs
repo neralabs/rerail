@@ -29,11 +29,8 @@ pub const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
 /// (decision 0140), and an image is one byte string however it was made.
 pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
 pub use rerail_tape_format::CODE_EXTRA;
-/// The language tag (`language::tape_tag`) a stored tape image names in its header, if `bytes`
-/// starts like one (any format version): the store picks a frame's dictionary by it.
-pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
-    (bytes.len() > header::LANGUAGE && bytes.starts_with(&TAPE_MAGIC[..6])).then(|| bytes[header::LANGUAGE])
-}
+/// Format 16's writer and tables, for the parsers the engine's crates compile (JSON's kernels: `encode_16`).
+pub use rerail_tape_format::f16;
 pub const NONE: u32 = u32::MAX;
 pub const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 
@@ -383,6 +380,24 @@ pub struct TapeImage {
     /// an image read from bytes, whose store pairs it with its source.
     pub source_digest: Option<[u8; 32]>,
 }
+
+/// A stored tape's presence, read in place in its stored bytes (`f16::StoredPresence`).
+pub use rerail_tape_format::f16::StoredPresence;
+
+/// The presence the stored bytes `bytes` of a tape of tape tag `tag` hold after the tape, read in place; `None` where
+/// they hold none.
+pub fn stored_presence(bytes: &[u8], tag: u8) -> Option<StoredPresence<'_>> {
+    StoredPresence::of(bytes, rerail_tape_format::f16::lang(tag)?)
+}
+
+/// The kind a presence records for a node of kind `kind`: its own, an ERROR node's `ERROR_CODE` (the tape's folded
+/// code, decision 0434 §4). The kernels' `presence_kind`.
+pub fn presence_kind(kind: u16) -> u16 {
+    if kind == ERROR_SYMBOL { ERROR_CODE } else { kind }
+}
+
+/// Nodes a block's presence covers (`f16::PART`): block `b` is nodes `PRESENCE_BLOCK * b ..`.
+pub const PRESENCE_BLOCK: usize = rerail_tape_format::f16::PART;
 
 /// A tape as held, in one format.
 #[derive(Clone)]
@@ -974,14 +989,62 @@ pub fn with_all_tokens<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// Appends `root`'s tree to `nodes` in preorder, `language` its grammar. An embedded program's
-/// placeholders its segments mark (`omitted`) are left out, with their subtrees.
-/// Tree-sitter's tree under `root` into `nodes`, in preorder. Where `filter` (the grammar's token
-/// automata) is given, a token it implies is skipped as the walk meets it: it is never a record
-/// (`tokens::TokenGrammar::stored_children`, RER-131).
+/// A tree-sitter node as the cursor walk reads it (`visit`): its code's kind and field, its span and flags, and its
+/// contextual alias.
+pub struct Visit {
+    pub kf: u16,
+    pub start: u32,
+    pub end: u32,
+    pub extra: bool,
+    pub error: bool,
+    pub missing: bool,
+    pub kind_alias: Option<(String, bool)>,
+}
+
+/// Where the cursor walk writes a tree's nodes, in preorder (decision 0434 §2): format 15's pending nodes
+/// (`Pendings`), or format 16's ops (`formats::TreeOps`). The walk is the same for both.
+pub trait TreeOut {
+    /// Node `v` under `parent` (an index this gave), open, a member of the supertypes `classes`: its index.
+    fn open(&mut self, v: Visit, parent: Option<u32>, classes: &[u16]) -> Result<u32, String>;
+    /// The innermost open node's subtree is written.
+    fn close(&mut self);
+}
+
+/// Format 15's output of the walk: the nodes, their sizes added up at `TapeImage::finish`, and each supertype
+/// membership.
+#[derive(Default)]
+struct Pendings {
+    nodes: Vec<Pending>,
+    supertypes: Vec<(u32, u16)>,
+}
+
+impl TreeOut for Pendings {
+    fn open(&mut self, v: Visit, parent: Option<u32>, classes: &[u16]) -> Result<u32, String> {
+        let index = u32::try_from(self.nodes.len()).map_err(|_| "rec6 node count overflow")?;
+        self.nodes.push(Pending {
+            kf: v.kf,
+            parent,
+            start: v.start,
+            length: v.end - v.start,
+            size: 1,
+            extra: v.extra,
+            error: v.error,
+            missing: v.missing,
+            kind_alias: v.kind_alias,
+        });
+        self.supertypes.extend(classes.iter().map(|&class| (index, class)));
+        Ok(index)
+    }
+
+    fn close(&mut self) {}
+}
+
+/// Tree-sitter's tree under `root` written to `out` in preorder, `language` its grammar. An embedded
+/// program's placeholders its segments mark (`omitted`) are left out, with their subtrees. Where
+/// `filter` (the grammar's token automata) is given, a token it implies is skipped as the walk meets
+/// it: it is never a record (`tokens::TokenGrammar::stored_children`, RER-131).
 fn encode_tree(
-    nodes: &mut Vec<Pending>,
-    supertypes: &mut Vec<(u32, u16)>,
+    out: &mut (impl TreeOut + ?Sized),
     root: TsNode<'_>,
     language: &Language,
     filter: Option<&tokens::TokenGrammar>,
@@ -1020,13 +1083,11 @@ fn encode_tree(
             let (classes, count, field) = cursor_status(&cursor);
             let extra = node.is_extra();
             let field = if extra { 0 } else { field };
-            let index = encode_node(nodes, node, parent, field, extra, language, &mut catalog)?;
-            for class in classes.into_iter().take(count) {
-                if usize::from(class) >= KIND_LIMIT {
-                    return Err("supertype symbol exceeds tape limit".into());
-                }
-                supertypes.push((index, class));
+            let classes = &classes[..count];
+            if classes.iter().any(|&class| usize::from(class) >= KIND_LIMIT) {
+                return Err("supertype symbol exceeds tape limit".into());
             }
+            let index = out.open(visit(node, field, extra, language, &mut catalog)?, parent, classes)?;
             if cursor.goto_first_child() {
                 above.push(parent);
                 parent = Some(index);
@@ -1035,6 +1096,7 @@ fn encode_tree(
                 place = 0;
                 continue;
             }
+            out.close();
         }
         // The next sibling, of this node or of its nearest ancestor that has one.
         loop {
@@ -1046,6 +1108,7 @@ fn encode_tree(
                 break;
             }
             cursor.goto_parent();
+            out.close();
             above.pop();
             parent = grandparent;
             if let Some(mask) = stored.take() { scratch.recycle(mask); }
@@ -1054,17 +1117,14 @@ fn encode_tree(
     }
 }
 
-/// Appends `node` under `parent` as the child in `field`; its tape index.
-fn encode_node<'l>(
-    nodes: &mut Vec<Pending>,
+/// `node` as the child in `field`, checked against the tape's limits.
+fn visit<'l>(
     node: TsNode<'_>,
-    parent: Option<u32>,
     field: u16,
     extra: bool,
     language: &'l Language,
     catalog: &mut [Option<(Option<&'l str>, bool)>],
-) -> Result<u32, String> {
-    let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
+) -> Result<Visit, String> {
     let code = node.kind_id();
     let kind = usize::from(code);
     // ts_node_is_error repeats ts_node_symbol. The pinned runtime defines it
@@ -1096,7 +1156,7 @@ fn encode_node<'l>(
     }
     let start = u32::try_from(span.start).map_err(|_| "node span overflow")?;
     let end = u32::try_from(span.end).map_err(|_| "node span overflow")?;
-    let length = end.checked_sub(start).ok_or("inverted node span")?;
+    end.checked_sub(start).ok_or("inverted node span")?;
     let kind_alias = if error {
         None
     } else {
@@ -1116,18 +1176,7 @@ fn encode_node<'l>(
         });
         (!same_name || named != node.is_named()).then(|| (node.kind().to_owned(), node.is_named()))
     };
-    nodes.push(Pending {
-        kf: if error { ERROR_CODE } else { code } | (field << 10),
-        parent,
-        start,
-        length,
-        size: 1,
-        extra,
-        error,
-        missing,
-        kind_alias,
-    });
-    Ok(index)
+    Ok(Visit { kf: if error { ERROR_CODE } else { code } | (field << 10), start, end, extra, error, missing, kind_alias })
 }
 
 impl TapeImage {
@@ -1140,8 +1189,15 @@ impl TapeImage {
 
     /// The tape as the store keeps it (`to_bytes`), written straight into its home, a slab's room (decision 0353
     /// step 4a): the store's writer and every reader take it there.
+    // copy (0353 step 4a): the parsers write their columns into a vector of their own, which goes once its stored
+    // bytes are in their room. It goes when a parser writes into the room (decision 0353).
     pub fn place_stored(&self) -> Result<rerail_tape_format::home::Home, String> {
+        const INTO_ROOM: rerail_prof::copies::Site = rerail_prof::copies::Site::new(15, "4a", "a parser's tape copied into its room (place_stored)");
         let len = self.stored_len();
+        INTO_ROOM.time(|| (self.place_stored_in(len), len))
+    }
+
+    fn place_stored_in(&self, len: usize) -> Result<rerail_tape_format::home::Home, String> {
         placed::place(len, |out| {
             let mut at = 0;
             self.emit(&mut |b| {
@@ -1163,8 +1219,8 @@ impl TapeImage {
                 let code_bytes = c.codes.iter().map(Code::stored_len).sum::<usize>();
                 HEADER_BYTES + c.columns_bytes().len() + code_bytes + alias_bytes
             }
-            Held::F16(t) => t.as_bytes().len(),
-            Held::F16Z(t) => t.as_bytes().len(),
+            Held::F16(t) => t.extent().len(),
+            Held::F16Z(t) => t.extent().len(),
         }
     }
 
@@ -1172,14 +1228,24 @@ impl TapeImage {
     fn emit(&self, put: &mut dyn FnMut(&[u8])) -> Result<(), String> {
         match &self.held {
             Held::F15(c) => self.emit15(c, put),
+            // The tape's home: the tape, and its presence after it (decision 0434 §4, step 6), stored and placed as one.
             Held::F16(t) => {
-                put(t.as_bytes());
+                put(t.extent());
                 Ok(())
             }
             Held::F16Z(t) => {
-                put(t.as_bytes());
+                put(t.extent());
                 Ok(())
             }
+        }
+    }
+
+    /// Whether the tape's home holds its presence (decision 0434 §4, step 6).
+    pub fn has_presence(&self) -> bool {
+        match &self.held {
+            Held::F15(_) => false,
+            Held::F16(t) => t.presence_bytes().is_some(),
+            Held::F16Z(t) => t.presence_bytes().is_some(),
         }
     }
 
@@ -1532,11 +1598,8 @@ impl TapeImage {
         {
             return Err("source exceeds tape range or does not match parsed root".into());
         }
-        let mut nodes = Vec::<Pending>::new();
-        let mut supertypes = Vec::new();
         let filter = if ALL_TOKENS.get() { None } else { tokens::TokenGrammar::of(grammar.lang, language) };
-        encode_tree(&mut nodes, &mut supertypes, root, language, filter.as_deref(), omitted, budget)?;
-        Self::finish(nodes, supertypes, grammar, source, budget)
+        Self::walked(grammar, source, root.descendant_count(), budget, |out| encode_tree(out, root, language, filter.as_deref(), omitted, budget))
     }
 
     /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
@@ -1558,7 +1621,7 @@ impl TapeImage {
                 image.source_digest = Some(source_digest(source, budget)?);
                 Ok(image)
             }
-            formats::RrTape::Written(written) => Self::written_16(written, grammar.lang, source, budget),
+            formats::RrTape::Written(written) => Self::written_16(written, grammar.lang, source, None, budget),
         }
     }
 
@@ -1603,16 +1666,36 @@ impl TapeImage {
         if !omitted {
             return Ok(self.clone());
         }
-        let (nodes, supertypes) = rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, budget))?;
-        Self::finish(nodes, supertypes, grammar, source, budget)
+        let count = rerail_tape_format::with_tape!(self.tape(), |t| t.len());
+        Self::walked(grammar, source, count, budget, |out| rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, out, budget)))
     }
 
-    /// The nodes of `t` that `segments` does not omit, nor any of their ancestors, as `finish` takes them.
-    fn kept<T: Tape>(t: &T, segments: &SegmentMap, budget: &impl Fn() -> bool) -> Result<(Vec<Pending>, Vec<(u32, u16)>), String> {
+    /// The tape `walk` writes in preorder, in the run's format (decision 0434 §2): by format 16's ops where the run
+    /// stores 16 or 16z and the language has a table, no format 15 node made; else format 15's nodes, packed at
+    /// `finish`. `nodes` is about the nodes `walk` writes. Where format 16 cannot hold the nodes (a code the table
+    /// lacks, said once a language), `walk` runs again for format 15.
+    pub fn walked(
+        grammar: &Grammar,
+        source: &str,
+        nodes: usize,
+        budget: &impl Fn() -> bool,
+        mut walk: impl FnMut(&mut dyn TreeOut) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        if let Some(mut ops) = formats::TreeOps::of_run(grammar.lang, source.as_bytes(), nodes) {
+            walk(&mut ops)?;
+            if let Some(written) = ops.finish() {
+                return Self::written_16(written, grammar.lang, source, None, budget);
+            }
+        }
+        let mut out = Pendings::default();
+        walk(&mut out)?;
+        Self::finish(out.nodes, out.supertypes, grammar, source, budget)
+    }
+
+    /// The nodes of `t` that `segments` does not omit, nor any of their ancestors, written to `out` in preorder.
+    fn kept<T: Tape>(t: &T, segments: &SegmentMap, out: &mut (impl TreeOut + ?Sized), budget: &impl Fn() -> bool) -> Result<(), String> {
         let count = t.len();
-        let mut nodes = Vec::<Pending>::with_capacity(count);
-        let mut supertypes = Vec::new();
-        // Per open ancestor: its index in `nodes`, and where its subtree ends in `t`.
+        // Per open ancestor: its index in `out`, and where its subtree ends in `t`.
         let mut open: Vec<(u32, usize)> = Vec::new();
         let mut i = 0;
         while i < count {
@@ -1621,6 +1704,7 @@ impl TapeImage {
             }
             while open.last().is_some_and(|&(_, last)| last <= i) {
                 open.pop();
+                out.close();
             }
             let (start, end, until) = (t.start(i), t.end(i), t.subtree_end(i));
             if segments.omitted(start as usize..end as usize) {
@@ -1628,27 +1712,26 @@ impl TapeImage {
                 continue;
             }
             let code = t.table().entry(t.code(i));
-            let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
-            let start = u32::try_from(start).map_err(|_| "span outside source")?;
-            nodes.push(Pending {
+            if code.alias.is_some() {
+                return Err("a written tape's contextual alias".into());
+            }
+            let visit = Visit {
                 kf: code.kind | code.field << rerail_tape_format::KIND_BITS,
-                parent: open.last().map(|&(at, _)| at),
-                start,
-                length: u32::try_from(end).map_err(|_| "span outside source")? - start,
-                size: 1,
+                start: u32::try_from(start).map_err(|_| "span outside source")?,
+                end: u32::try_from(end).map_err(|_| "span outside source")?,
                 extra: code.flags & CODE_EXTRA != 0,
                 error: code.flags & CODE_ERROR != 0,
                 missing: code.flags & CODE_MISSING != 0,
                 kind_alias: None,
-            });
-            if code.alias.is_some() {
-                return Err("a written tape's contextual alias".into());
-            }
-            supertypes.extend(code.classes.iter().map(|&class| (index, class)));
+            };
+            let index = out.open(visit, open.last().map(|&(at, _)| at), &code.classes)?;
             open.push((index, until));
             i += 1;
         }
-        Ok((nodes, supertypes))
+        for _ in open {
+            out.close();
+        }
+        Ok(())
     }
 
     /// An image from columns a parser wrote itself, in this format (codes numbered by first use, `base`
@@ -1823,7 +1906,7 @@ impl TapeImage {
         use rerail_tape_format::tape::{AnyTape, F15};
         let lang = |tag: u8| rerail_tape_format::f16::lang(tag).expect("a format 16 tape is held with its language's table");
         match &self.held {
-            Held::F15(c) => AnyTape::F15(F15::over(c.laid_out().0, c.view(), self.code_table())),
+            Held::F15(c) => AnyTape::F15(F15::over(c.laid_out().0, c.view(self.source_len), self.code_table())),
             Held::F16(t) => AnyTape::F16(t.reader(lang(t.tag())).expect("checked when held")),
             Held::F16Z(t) => AnyTape::F16Z(t.reader(lang(t.tag())).expect("checked when held")),
         }
@@ -2729,6 +2812,39 @@ impl TapeDoc {
     pub fn transducer_kind(&self, node: u32) -> u16 {
         read!("kind");
         kind_of(self.entry(node))
+    }
+
+    /// Whether a node of the document may have kind `kind` (`transducer_kind`'s), by its image's presence (decision
+    /// 0434 §4), read before any node is: `false` only where the writer saw no node of that kind. An error node's
+    /// kind is `ERROR_SYMBOL`, which no presence holds, so it is always possible.
+    pub fn may_have_kind(&self, kind: u16) -> bool {
+        use rerail_tape_format::tape::Tape;
+        rerail_tape_format::with_tape!(self.tape(), |t| t.has_kind(u32::MAX, presence_kind(kind)))
+    }
+
+    /// Whether block `b` (nodes `PRESENCE_BLOCK * b ..`) may hold a node of kind `kind`: as `may_have_kind`, by the
+    /// block's presence where the tape holds it, else the document's (the same read as the kernels', `tape_has_kind`).
+    pub fn block_may_have_kind(&self, b: usize, kind: u16) -> bool {
+        use rerail_tape_format::tape::Tape;
+        rerail_tape_format::with_tape!(self.tape(), |t| t.has_kind(u32::try_from(b).unwrap_or(u32::MAX - 1), presence_kind(kind)))
+    }
+
+    /// `transducer_nodes_where` in the blocks `block` admits alone (`block_may_have_kind` tells them): a block left
+    /// out has none of its codes read (the kernels' `rule_may_in`, the same read).
+    pub fn transducer_nodes_where_in(&self, admits: impl Fn(u16, &[u16]) -> bool, block: &dyn Fn(u32) -> bool, out: &mut Vec<u32>) {
+        let t = self.t();
+        let set = t.table().set(|e| admits(kind_of(e), &e.classes));
+        t.match_groups_in(&set, block, |base, mut m| {
+            while m != 0 {
+                out.push((base + m.trailing_zeros() as usize) as u32);
+                m &= m - 1;
+            }
+        });
+    }
+
+    /// Whether the tape's home holds its presence (decision 0434 §4, step 6): a format 16 or 16z writer's.
+    pub fn has_presence(&self) -> bool {
+        self.image.has_presence()
     }
 
     fn node_is_named(&self, node: u32) -> bool {

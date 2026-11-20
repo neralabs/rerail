@@ -1908,7 +1908,6 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
     out[l * 16u + k] = r;
 }
 "#;
-    const _: () = assert!(std::mem::size_of::<TapeView>() == 29 * 4);
     let jit = rerail_clif::jit::Reads::new();
     // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
     let read = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };

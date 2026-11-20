@@ -40,9 +40,22 @@ inline uint clif_aadd(device const uchar* t,ulong a,uint x){return atomic_fetch_
 inline uint clif_acas(device const uchar* t,ulong a,uint e,uint n){for(uint k=0u;k<64u;k++){uint x=e;if(atomic_compare_exchange_weak_explicit((device atomic_uint*)(t+a),&x,n,memory_order_relaxed,memory_order_relaxed))return e;if(x!=e)return x;}return ~e;}
 inline void clif_fence(){atomic_thread_fence(mem_flags::mem_device,memory_order_seq_cst,thread_scope_device);}
 #endif
+inline ulong clif_tape_f16_side_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
+inline uint clif_tape_size_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_number_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_start_stated_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_end_stated_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_parent_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_length_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_start_next_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
+inline ulong clif_tape_slot_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_line_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_line_start_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 __attribute__((noinline)) ulong clif_tape_f16_side(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 inline uint clif_tape_size(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_number(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_start_stated(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_end_stated(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_start(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_end(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 __attribute__((noinline)) uint clif_tape_parent(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
@@ -58,40 +71,2029 @@ inline ulong clif_tape_slot(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
 __attribute__((noinline)) uint clif_tape_line_select(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 inline uint clif_tape_line(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_has_kind(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 __attribute__((noinline)) ulong clif_tape_z_block(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline ulong clif_tape_f16_side_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
+ ulong v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v6=0;
+ ulong v9=0;
+ uint v10=0;
+ uint v11=0;
+ ulong v12=0;
+ uint v13=0;
+ ulong v15=0;
+ uint v17=0;
+ ulong v59=0;
+ ulong v60=0;
+ uint v64=0;
+ uint v76=0;
+ uint v83=0;
+ uint v90=0;
+ uint v117=0;
+ uint v118=0;
+ uint v119=0;
+ uint v120=0;
+ uint v121=0;
+ ulong v170=0;
+ ulong v171=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ v3=a3;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  v4=uint((uint)(v3)>>(uint(10)&31u));
+  uint v5=uint((uint)(v4)<<(uint(10)&31u));
+  v6=v3&uint(1023ul);
+  uint v7=uint(clif_view(v,(v1+uint(32u))));
+  ulong v8=ulong(v7);
+  v9=v8+ulong(18446744073709551615ul);
+  v10=uint(clif_view(v,(v1+uint(36u))));
+  uint v14=uint(0ul);
+  {{uint t0=v14;v11=t0;}b=1u;continue;}
+ }
+ case 1u:{
+  v15=clif_tape_z_block(t,v,v4);
+  ulong v16=v15+ulong(8ul);
+  v17=clif_ald(t,ulong(v16));
+  uint v18=uint(0ul);
+  if(v10!=0){b=2u;continue;}else{{ulong t0=v15;uint t1=v18;v12=t0;v13=t1;}b=3u;continue;}
+ }
+ case 2u:{
+  clif_fence();
+  uint v19=uint(clif_view(v,(v1+uint(52u))));
+  uint v20=uint(clif_view(v,(v1+uint(56u))));
+  ulong v21=ulong(v19);
+  ulong v22=ulong(v20);
+  ulong v23=ulong((ulong)(v22)<<(uint(32)&63u));
+  ulong v24=v21|v23;
+  ulong v25=ulong((ulong)(v24)<<(uint(22)&63u));
+  ulong v26=ulong(v4);
+  ulong v27=v25|v26;
+  ulong v28=ulong(clif_c64(t,ulong(v15)));
+  uchar v29=uchar((ulong)(v28)==(ulong)(v27));
+  uint v30=v17&uint(2147483648ul);
+  uchar v31=uchar((uint)(v30)==(uint)(uint(0ul)));
+  uchar v32=uchar((uint)(v17)!=(uint)(uint(0ul)));
+  uchar v33=v29&v31;
+  uchar v34=v33&v32;
+  uint v35=uint(1ul);
+  if(v34!=0){{ulong t0=v15;uint t1=v35;v12=t0;v13=t1;}b=3u;continue;}else{b=6u;continue;}
+ }
+ case 6u:{
+  uchar v36=uchar((uint)(v11)>=(uint)(uint(4ul)));
+  if(v36!=0){b=7u;continue;}else{b=4u;continue;}
+ }
+ case 7u:{
+  uint v37=uint(clif_view(v,(v1+uint(44u))));
+  uint v38=uint(clif_view(v,(v1+uint(48u))));
+  ulong v39=ulong(v37);
+  ulong v40=ulong(v38);
+  ulong v41=ulong((ulong)(v40)<<(uint(32)&63u));
+  ulong v42=v39|v41;
+  ulong v43=v0+v42;
+  uint v44=uint(1ul);
+  ulong v45=v43+ulong(32ul);
+  uint v46=clif_aadd(t,ulong(v45),uint(v44));
+  uint v47=uint(clif_view(v,(v1+uint(44u))));
+  uint v48=uint(clif_view(v,(v1+uint(48u))));
+  ulong v49=ulong(v47);
+  ulong v50=ulong(v48);
+  ulong v51=ulong((ulong)(v50)<<(uint(32)&63u));
+  ulong v52=v49|v51;
+  ulong v53=v0+v52;
+  ulong v54=v53+ulong(28ul);
+  uint v55=clif_ald(t,ulong(v54));
+  ulong v56=ulong(v55);
+  ulong v57=v53+v56;
+  uint v58=uint(0ul);
+  {{ulong t0=v57;uint t1=v58;v12=t0;v13=t1;}b=3u;continue;}
+ }
+ case 3u:{
+  v59=v12+ulong(144ul);
+  v60=v12+ulong(16ul);
+  ulong v61=ulong(v2);
+  ulong v62=ulong((ulong)(v61)<<(uint(2)&63u));
+  ulong v63=v60+v62;
+  v64=uint(clif_c32(t,(ulong(v63)+ulong(long(44)))));
+  ulong v65=ulong(v2);
+  ulong v66=ulong((ulong)(v65)<<(uint(2)&63u));
+  ulong v67=v60+v66;
+  uint v68=uint(clif_c32(t,(ulong(v67)+ulong(long(60)))));
+  uint v69=uint((uint)(v6)>>(uint(10)&31u));
+  uint v70=v69*uint(4ul);
+  ulong v71=ulong(v68);
+  ulong v72=ulong(v70);
+  ulong v73=v71+v72;
+  ulong v74=v73&v9;
+  ulong v75=v59+v74;
+  v76=uint(clif_c32(t,ulong(v75)));
+  uint v77=v70+uint(4ul);
+  ulong v78=ulong(v68);
+  ulong v79=ulong(v77);
+  ulong v80=v78+v79;
+  ulong v81=v80&v9;
+  ulong v82=v59+v81;
+  v83=uint(clif_c32(t,ulong(v82)));
+  uint v84=uint(clif_c32(t,(ulong(v60)+ulong(long(4)))));
+  uint v85=v84+uint(255ul);
+  uint v86=uint((uint)(v85)>>(uint(8)&31u));
+  uint v87=v69*uint(4ul);
+  uint v88=v86-v87;
+  uint v89=uint(4ul);
+  v90=min(v89,v88);
+  uint v91=uint((uint)(v6)>>(uint(8)&31u));
+  uint v92=v91&uint(3ul);
+  uchar v93=uchar((uint)(v92)==(uint)(uint(0ul)));
+  uint v94=v92+uint(18446744073709551615ul);
+  uint v95=uint(0ul);
+  uint v96=v93!=0?v95:v94;
+  uint v97=v96*uint(2ul);
+  uint v98=v76+v97;
+  uint v99=min(v98,v83);
+  ulong v100=ulong(v64);
+  ulong v101=ulong(v99);
+  ulong v102=v100+v101;
+  ulong v103=v102&v9;
+  ulong v104=v59+v103;
+  uint v105=uint(clif_c16(t,ulong(v104)));
+  uint v106=v93!=0?v95:v105;
+  uint v107=v92*uint(2ul);
+  uint v108=v76+v107;
+  uint v109=min(v108,v83);
+  ulong v110=ulong(v64);
+  ulong v111=ulong(v109);
+  ulong v112=v110+v111;
+  ulong v113=v112&v9;
+  ulong v114=v59+v113;
+  uint v115=uint(clif_c16(t,ulong(v114)));
+  uint v116=v90*uint(2ul);
+  v117=v76+v116;
+  v118=v6&uint(255ul);
+  {{uint t0=v106;uint t1=v115;v119=t0;v120=t1;}b=8u;continue;}
+ }
+ case 8u:{
+  uchar v122=uchar((uint)(v119)<(uint)(v120));
+  if(v122!=0){b=9u;continue;}else{{uint t0=v119;v121=t0;}b=10u;continue;}
+ }
+ case 9u:{
+  uint v123=v119+v120;
+  uint v124=uint((uint)(v123)>>(uint(1)&31u));
+  uint v125=v117+v124;
+  uint v126=min(v125,v83);
+  ulong v127=ulong(v64);
+  ulong v128=ulong(v126);
+  ulong v129=v127+v128;
+  ulong v130=v129&v9;
+  ulong v131=v59+v130;
+  uint v132=uint(clif_c8(t,ulong(v131)));
+  uchar v133=uchar((uint)(v132)<(uint)(v118));
+  uint v134=v124+uint(1ul);
+  uint v135=v133!=0?v134:v119;
+  uint v136=v133!=0?v120:v124;
+  {{uint t0=v135;uint t1=v136;v119=t0;v120=t1;}b=8u;continue;}
+ }
+ case 10u:{
+  uint v137=v2*uint(4ul);
+  uint v138=v137+uint(16ul);
+  uint v139=uint(clif_c32(t,(ulong(v60)+ulong(long(16)))));
+  uint v140=uint((uint)(v139)>>(uint(v138)&31u));
+  uint v141=v140&uint(15ul);
+  uint v142=v90+uint(18446744073709551615ul);
+  uint v143=v142*uint(2ul);
+  uint v144=v76+v143;
+  uint v145=min(v144,v83);
+  ulong v146=ulong(v64);
+  ulong v147=ulong(v145);
+  ulong v148=v146+v147;
+  ulong v149=v148&v9;
+  ulong v150=v59+v149;
+  uint v151=uint(clif_c16(t,ulong(v150)));
+  uint v152=v117+v151;
+  uint v153=v121*v141;
+  uint v154=v152+v153;
+  uint v155=min(v154,v83);
+  ulong v156=ulong(v64);
+  ulong v157=ulong(v155);
+  ulong v158=v156+v157;
+  ulong v159=v158&v9;
+  ulong v160=v59+v159;
+  ulong v161=ulong(clif_c64(t,ulong(v160)));
+  uint v162=v141*uint(8ul);
+  ulong v163=ulong(1ul);
+  uint v164=uint(v162);
+  ulong v165=ulong((ulong)(v163)<<(uint(v164)&63u));
+  ulong v166=v165+ulong(18446744073709551615ul);
+  uchar v167=uchar((uint)(v141)>=(uint)(uint(8ul)));
+  ulong v168=ulong(18446744073709551615ul);
+  ulong v169=v167!=0?v168:v166;
+  v170=v161&v169;
+  if(v13!=0){b=11u;continue;}else{{ulong t0=v170;v171=t0;}b=5u;continue;}
+ }
+ case 11u:{
+  clif_fence();
+  ulong v172=v12+ulong(8ul);
+  uint v173=clif_ald(t,ulong(v172));
+  uchar v174=uchar((uint)(v17)==(uint)(v173));
+  if(v174!=0){{ulong t0=v170;v171=t0;}b=5u;continue;}else{b=12u;continue;}
+ }
+ case 12u:{
+  uchar v175=uchar((uint)(v11)>=(uint)(uint(4ul)));
+  if(v175!=0){b=13u;continue;}else{b=4u;continue;}
+ }
+ case 13u:{
+  uint v176=uint(clif_view(v,(v1+uint(44u))));
+  uint v177=uint(clif_view(v,(v1+uint(48u))));
+  ulong v178=ulong(v176);
+  ulong v179=ulong(v177);
+  ulong v180=ulong((ulong)(v179)<<(uint(32)&63u));
+  ulong v181=v178|v180;
+  ulong v182=v0+v181;
+  uint v183=uint(1ul);
+  ulong v184=v182+ulong(32ul);
+  uint v185=clif_aadd(t,ulong(v184),uint(v183));
+  uint v186=uint(clif_view(v,(v1+uint(44u))));
+  uint v187=uint(clif_view(v,(v1+uint(48u))));
+  ulong v188=ulong(v186);
+  ulong v189=ulong(v187);
+  ulong v190=ulong((ulong)(v189)<<(uint(32)&63u));
+  ulong v191=v188|v190;
+  ulong v192=v0+v191;
+  ulong v193=v192+ulong(28ul);
+  uint v194=clif_ald(t,ulong(v193));
+  ulong v195=ulong(v194);
+  ulong v196=v192+v195;
+  uint v197=uint(0ul);
+  {{ulong t0=v196;uint t1=v197;v12=t0;v13=t1;}b=3u;continue;}
+ }
+ case 4u:{
+  uint v198=v11+uint(1ul);
+  {{uint t0=v198;v11=t0;}b=1u;continue;}
+ }
+ case 5u:{
+  return v171;
+ }
+ default:return 0;
+ }}
+}
+inline uint clif_tape_size_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ ulong v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v5=0;
+ ulong v8=0;
+ uint v9=0;
+ uint v10=0;
+ ulong v11=0;
+ uint v12=0;
+ ulong v14=0;
+ uint v16=0;
+ ulong v92=0;
+ ulong v94=0;
+ uint v104=0;
+ uint v105=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  v3=uint((uint)(v2)>>(uint(10)&31u));
+  v4=uint((uint)(v3)<<(uint(10)&31u));
+  v5=v2&uint(1023ul);
+  uint v6=uint(clif_view(v,(v1+uint(32u))));
+  ulong v7=ulong(v6);
+  v8=v7+ulong(18446744073709551615ul);
+  v9=uint(clif_view(v,(v1+uint(36u))));
+  uint v13=uint(0ul);
+  {{uint t0=v13;v10=t0;}b=1u;continue;}
+ }
+ case 1u:{
+  v14=clif_tape_z_block(t,v,v3);
+  ulong v15=v14+ulong(8ul);
+  v16=clif_ald(t,ulong(v15));
+  uint v17=uint(0ul);
+  if(v9!=0){b=2u;continue;}else{{ulong t0=v14;uint t1=v17;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 2u:{
+  clif_fence();
+  uint v18=uint(clif_view(v,(v1+uint(52u))));
+  uint v19=uint(clif_view(v,(v1+uint(56u))));
+  ulong v20=ulong(v18);
+  ulong v21=ulong(v19);
+  ulong v22=ulong((ulong)(v21)<<(uint(32)&63u));
+  ulong v23=v20|v22;
+  ulong v24=ulong((ulong)(v23)<<(uint(22)&63u));
+  ulong v25=ulong(v3);
+  ulong v26=v24|v25;
+  ulong v27=ulong(clif_c64(t,ulong(v14)));
+  uchar v28=uchar((ulong)(v27)==(ulong)(v26));
+  uint v29=v16&uint(2147483648ul);
+  uchar v30=uchar((uint)(v29)==(uint)(uint(0ul)));
+  uchar v31=uchar((uint)(v16)!=(uint)(uint(0ul)));
+  uchar v32=v28&v30;
+  uchar v33=v32&v31;
+  uint v34=uint(1ul);
+  if(v33!=0){{ulong t0=v14;uint t1=v34;v11=t0;v12=t1;}b=3u;continue;}else{b=6u;continue;}
+ }
+ case 6u:{
+  uchar v35=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v35!=0){b=7u;continue;}else{b=4u;continue;}
+ }
+ case 7u:{
+  uint v36=uint(clif_view(v,(v1+uint(44u))));
+  uint v37=uint(clif_view(v,(v1+uint(48u))));
+  ulong v38=ulong(v36);
+  ulong v39=ulong(v37);
+  ulong v40=ulong((ulong)(v39)<<(uint(32)&63u));
+  ulong v41=v38|v40;
+  ulong v42=v0+v41;
+  uint v43=uint(1ul);
+  ulong v44=v42+ulong(32ul);
+  uint v45=clif_aadd(t,ulong(v44),uint(v43));
+  uint v46=uint(clif_view(v,(v1+uint(44u))));
+  uint v47=uint(clif_view(v,(v1+uint(48u))));
+  ulong v48=ulong(v46);
+  ulong v49=ulong(v47);
+  ulong v50=ulong((ulong)(v49)<<(uint(32)&63u));
+  ulong v51=v48|v50;
+  ulong v52=v0+v51;
+  ulong v53=v52+ulong(28ul);
+  uint v54=clif_ald(t,ulong(v53));
+  ulong v55=ulong(v54);
+  ulong v56=v52+v55;
+  uint v57=uint(0ul);
+  {{ulong t0=v56;uint t1=v57;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 3u:{
+  ulong v58=v11+ulong(144ul);
+  ulong v59=v11+ulong(16ul);
+  uint v60=uint(clif_c32(t,(ulong(v59)+ulong(long(16)))));
+  uint v61=uint((uint)(v60)>>(uint(0)&31u));
+  uint v62=v61&uint(15ul);
+  uint v63=uint((uint)(v5)>>(uint(10)&31u));
+  uint v64=v5&uint(1023ul);
+  uint v65=uint(clif_c32(t,(ulong(v59)+ulong(long(20)))));
+  uint v66=uint(clif_c32(t,(ulong(v59)+ulong(long(40)))));
+  uint v67=v63*v66;
+  uint v68=v67+v65;
+  uint v69=uint(clif_c32(t,(ulong(v59)+ulong(long(4)))));
+  uint v70=uint((uint)(v63)<<(uint(10)&31u));
+  uint v71=v69-v70;
+  uint v72=uint(1024ul);
+  uint v73=min(v71,v72);
+  uint v74=uint(clif_c32(t,(ulong(v59)+ulong(long(24)))));
+  uint v75=v73*v74;
+  uint v76=v68+v75;
+  uint v77=v64*v62;
+  ulong v78=ulong(v76);
+  ulong v79=ulong(v77);
+  ulong v80=v78+v79;
+  ulong v81=v80&v8;
+  ulong v82=v58+v81;
+  ulong v83=ulong(clif_c64(t,ulong(v82)));
+  uint v84=v62*uint(8ul);
+  ulong v85=ulong(1ul);
+  uint v86=uint(v84);
+  ulong v87=ulong((ulong)(v85)<<(uint(v86)&63u));
+  ulong v88=v87+ulong(18446744073709551615ul);
+  uchar v89=uchar((uint)(v62)>=(uint)(uint(8ul)));
+  ulong v90=ulong(18446744073709551615ul);
+  ulong v91=v89!=0?v90:v88;
+  v92=v83&v91;
+  uchar v93=uchar((ulong)(v92)==(ulong)(v91));
+  if(v93!=0){b=8u;continue;}else{b=9u;continue;}
+ }
+ case 8u:{
+  uint v95=uint(1ul);
+  uint v96=v5+v4;
+  ulong v97=clif_tape_f16_side(t,v,v95,v96);
+  {{ulong t0=v97;v94=t0;}b=10u;continue;}
+ }
+ case 9u:{
+  {{ulong t0=v92;v94=t0;}b=10u;continue;}
+ }
+ case 10u:{
+  ulong v98=v94&ulong(1ul);
+  uchar v99=uchar((ulong)(v98)!=(ulong)(ulong(0ul)));
+  uint v100=uint((ulong)(v94)>>1u);
+  uint v101=uint(v100);
+  uint v102=uint(1ul);
+  uint v103=max(v101,v102);
+  v104=v99!=0?v102:v103;
+  if(v12!=0){b=11u;continue;}else{{uint t0=v104;v105=t0;}b=5u;continue;}
+ }
+ case 11u:{
+  clif_fence();
+  ulong v106=v11+ulong(8ul);
+  uint v107=clif_ald(t,ulong(v106));
+  uchar v108=uchar((uint)(v16)==(uint)(v107));
+  if(v108!=0){{uint t0=v104;v105=t0;}b=5u;continue;}else{b=12u;continue;}
+ }
+ case 12u:{
+  uchar v109=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v109!=0){b=13u;continue;}else{b=4u;continue;}
+ }
+ case 13u:{
+  uint v110=uint(clif_view(v,(v1+uint(44u))));
+  uint v111=uint(clif_view(v,(v1+uint(48u))));
+  ulong v112=ulong(v110);
+  ulong v113=ulong(v111);
+  ulong v114=ulong((ulong)(v113)<<(uint(32)&63u));
+  ulong v115=v112|v114;
+  ulong v116=v0+v115;
+  uint v117=uint(1ul);
+  ulong v118=v116+ulong(32ul);
+  uint v119=clif_aadd(t,ulong(v118),uint(v117));
+  uint v120=uint(clif_view(v,(v1+uint(44u))));
+  uint v121=uint(clif_view(v,(v1+uint(48u))));
+  ulong v122=ulong(v120);
+  ulong v123=ulong(v121);
+  ulong v124=ulong((ulong)(v123)<<(uint(32)&63u));
+  ulong v125=v122|v124;
+  ulong v126=v0+v125;
+  ulong v127=v126+ulong(28ul);
+  uint v128=clif_ald(t,ulong(v127));
+  ulong v129=ulong(v128);
+  ulong v130=v126+v129;
+  uint v131=uint(0ul);
+  {{ulong t0=v130;uint t1=v131;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 4u:{
+  uint v132=v10+uint(1ul);
+  {{uint t0=v132;v10=t0;}b=1u;continue;}
+ }
+ case 5u:{
+  return v105;
+ }
+ default:return 0;
+ }}
+}
+inline uint clif_tape_number_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ ulong v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v5=0;
+ ulong v8=0;
+ uint v9=0;
+ uint v10=0;
+ ulong v11=0;
+ uint v12=0;
+ ulong v14=0;
+ uint v16=0;
+ ulong v59=0;
+ uint v71=0;
+ uint v72=0;
+ uint v74=0;
+ uint v84=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  v3=uint((uint)(v2)>>(uint(10)&31u));
+  v4=uint((uint)(v3)<<(uint(10)&31u));
+  v5=v2&uint(1023ul);
+  uint v6=uint(clif_view(v,(v1+uint(32u))));
+  ulong v7=ulong(v6);
+  v8=v7+ulong(18446744073709551615ul);
+  v9=uint(clif_view(v,(v1+uint(36u))));
+  uint v13=uint(0ul);
+  {{uint t0=v13;v10=t0;}b=1u;continue;}
+ }
+ case 1u:{
+  v14=clif_tape_z_block(t,v,v3);
+  ulong v15=v14+ulong(8ul);
+  v16=clif_ald(t,ulong(v15));
+  uint v17=uint(0ul);
+  if(v9!=0){b=2u;continue;}else{{ulong t0=v14;uint t1=v17;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 2u:{
+  clif_fence();
+  uint v18=uint(clif_view(v,(v1+uint(52u))));
+  uint v19=uint(clif_view(v,(v1+uint(56u))));
+  ulong v20=ulong(v18);
+  ulong v21=ulong(v19);
+  ulong v22=ulong((ulong)(v21)<<(uint(32)&63u));
+  ulong v23=v20|v22;
+  ulong v24=ulong((ulong)(v23)<<(uint(22)&63u));
+  ulong v25=ulong(v3);
+  ulong v26=v24|v25;
+  ulong v27=ulong(clif_c64(t,ulong(v14)));
+  uchar v28=uchar((ulong)(v27)==(ulong)(v26));
+  uint v29=v16&uint(2147483648ul);
+  uchar v30=uchar((uint)(v29)==(uint)(uint(0ul)));
+  uchar v31=uchar((uint)(v16)!=(uint)(uint(0ul)));
+  uchar v32=v28&v30;
+  uchar v33=v32&v31;
+  uint v34=uint(1ul);
+  if(v33!=0){{ulong t0=v14;uint t1=v34;v11=t0;v12=t1;}b=3u;continue;}else{b=6u;continue;}
+ }
+ case 6u:{
+  uchar v35=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v35!=0){b=7u;continue;}else{b=4u;continue;}
+ }
+ case 7u:{
+  uint v36=uint(clif_view(v,(v1+uint(44u))));
+  uint v37=uint(clif_view(v,(v1+uint(48u))));
+  ulong v38=ulong(v36);
+  ulong v39=ulong(v37);
+  ulong v40=ulong((ulong)(v39)<<(uint(32)&63u));
+  ulong v41=v38|v40;
+  ulong v42=v0+v41;
+  uint v43=uint(1ul);
+  ulong v44=v42+ulong(32ul);
+  uint v45=clif_aadd(t,ulong(v44),uint(v43));
+  uint v46=uint(clif_view(v,(v1+uint(44u))));
+  uint v47=uint(clif_view(v,(v1+uint(48u))));
+  ulong v48=ulong(v46);
+  ulong v49=ulong(v47);
+  ulong v50=ulong((ulong)(v49)<<(uint(32)&63u));
+  ulong v51=v48|v50;
+  ulong v52=v0+v51;
+  ulong v53=v52+ulong(28ul);
+  uint v54=clif_ald(t,ulong(v53));
+  ulong v55=ulong(v54);
+  ulong v56=v52+v55;
+  uint v57=uint(0ul);
+  {{ulong t0=v56;uint t1=v57;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 3u:{
+  ulong v58=v11+ulong(144ul);
+  v59=v11+ulong(16ul);
+  uint v60=uint((uint)(v5)>>(uint(10)&31u));
+  uint v61=v5&uint(1023ul);
+  uint v62=uint(clif_c32(t,(ulong(v59)+ulong(long(20)))));
+  uint v63=uint(clif_c32(t,(ulong(v59)+ulong(long(40)))));
+  uint v64=v60*v63;
+  uint v65=v64+v62;
+  ulong v66=ulong(v65);
+  ulong v67=ulong(v61);
+  ulong v68=v66+v67;
+  ulong v69=v68&v8;
+  ulong v70=v58+v69;
+  v71=uint(clif_c8(t,ulong(v70)));
+  v72=uint(clif_c32(t,(ulong(v59)+ulong(long(76)))));
+  uchar v73=uchar((uint)(v71)<(uint)(v72));
+  if(v73!=0){b=8u;continue;}else{b=9u;continue;}
+ }
+ case 8u:{
+  {{uint t0=v71;v74=t0;}b=10u;continue;}
+ }
+ case 9u:{
+  uint v75=uint(clif_c32(t,(ulong(v59)+ulong(long(80)))));
+  uint v76=v71-v72;
+  uint v77=v76*v75;
+  uint v78=uint(0ul);
+  uint v79=v5+v4;
+  uint v80=clif_tape_f16_side(t,v,v78,v79);
+  uint v81=uint(v80);
+  uint v82=v72+v77;
+  uint v83=v82+v81;
+  {{uint t0=v83;v74=t0;}b=10u;continue;}
+ }
+ case 10u:{
+  if(v12!=0){b=11u;continue;}else{{uint t0=v74;v84=t0;}b=5u;continue;}
+ }
+ case 11u:{
+  clif_fence();
+  ulong v85=v11+ulong(8ul);
+  uint v86=clif_ald(t,ulong(v85));
+  uchar v87=uchar((uint)(v16)==(uint)(v86));
+  if(v87!=0){{uint t0=v74;v84=t0;}b=5u;continue;}else{b=12u;continue;}
+ }
+ case 12u:{
+  uchar v88=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v88!=0){b=13u;continue;}else{b=4u;continue;}
+ }
+ case 13u:{
+  uint v89=uint(clif_view(v,(v1+uint(44u))));
+  uint v90=uint(clif_view(v,(v1+uint(48u))));
+  ulong v91=ulong(v89);
+  ulong v92=ulong(v90);
+  ulong v93=ulong((ulong)(v92)<<(uint(32)&63u));
+  ulong v94=v91|v93;
+  ulong v95=v0+v94;
+  uint v96=uint(1ul);
+  ulong v97=v95+ulong(32ul);
+  uint v98=clif_aadd(t,ulong(v97),uint(v96));
+  uint v99=uint(clif_view(v,(v1+uint(44u))));
+  uint v100=uint(clif_view(v,(v1+uint(48u))));
+  ulong v101=ulong(v99);
+  ulong v102=ulong(v100);
+  ulong v103=ulong((ulong)(v102)<<(uint(32)&63u));
+  ulong v104=v101|v103;
+  ulong v105=v0+v104;
+  ulong v106=v105+ulong(28ul);
+  uint v107=clif_ald(t,ulong(v106));
+  ulong v108=ulong(v107);
+  ulong v109=v105+v108;
+  uint v110=uint(0ul);
+  {{ulong t0=v109;uint t1=v110;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 4u:{
+  uint v111=v10+uint(1ul);
+  {{uint t0=v111;v10=t0;}b=1u;continue;}
+ }
+ case 5u:{
+  return v84;
+ }
+ default:return 0;
+ }}
+}
+inline uint clif_tape_start_stated_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ ulong v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v5=0;
+ ulong v8=0;
+ uint v9=0;
+ uint v10=0;
+ ulong v11=0;
+ uint v12=0;
+ ulong v14=0;
+ uint v16=0;
+ ulong v58=0;
+ ulong v59=0;
+ uint v93=0;
+ uint v94=0;
+ uint v95=0;
+ uint v96=0;
+ uint v97=0;
+ uint v98=0;
+ ulong v129=0;
+ ulong v183=0;
+ uint v185=0;
+ uint v191=0;
+ uint v192=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  v3=uint((uint)(v2)>>(uint(10)&31u));
+  v4=uint((uint)(v3)<<(uint(10)&31u));
+  v5=v2&uint(1023ul);
+  uint v6=uint(clif_view(v,(v1+uint(32u))));
+  ulong v7=ulong(v6);
+  v8=v7+ulong(18446744073709551615ul);
+  v9=uint(clif_view(v,(v1+uint(36u))));
+  uint v13=uint(0ul);
+  {{uint t0=v13;v10=t0;}b=1u;continue;}
+ }
+ case 1u:{
+  v14=clif_tape_z_block(t,v,v3);
+  ulong v15=v14+ulong(8ul);
+  v16=clif_ald(t,ulong(v15));
+  uint v17=uint(0ul);
+  if(v9!=0){b=2u;continue;}else{{ulong t0=v14;uint t1=v17;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 2u:{
+  clif_fence();
+  uint v18=uint(clif_view(v,(v1+uint(52u))));
+  uint v19=uint(clif_view(v,(v1+uint(56u))));
+  ulong v20=ulong(v18);
+  ulong v21=ulong(v19);
+  ulong v22=ulong((ulong)(v21)<<(uint(32)&63u));
+  ulong v23=v20|v22;
+  ulong v24=ulong((ulong)(v23)<<(uint(22)&63u));
+  ulong v25=ulong(v3);
+  ulong v26=v24|v25;
+  ulong v27=ulong(clif_c64(t,ulong(v14)));
+  uchar v28=uchar((ulong)(v27)==(ulong)(v26));
+  uint v29=v16&uint(2147483648ul);
+  uchar v30=uchar((uint)(v29)==(uint)(uint(0ul)));
+  uchar v31=uchar((uint)(v16)!=(uint)(uint(0ul)));
+  uchar v32=v28&v30;
+  uchar v33=v32&v31;
+  uint v34=uint(1ul);
+  if(v33!=0){{ulong t0=v14;uint t1=v34;v11=t0;v12=t1;}b=3u;continue;}else{b=6u;continue;}
+ }
+ case 6u:{
+  uchar v35=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v35!=0){b=7u;continue;}else{b=4u;continue;}
+ }
+ case 7u:{
+  uint v36=uint(clif_view(v,(v1+uint(44u))));
+  uint v37=uint(clif_view(v,(v1+uint(48u))));
+  ulong v38=ulong(v36);
+  ulong v39=ulong(v37);
+  ulong v40=ulong((ulong)(v39)<<(uint(32)&63u));
+  ulong v41=v38|v40;
+  ulong v42=v0+v41;
+  uint v43=uint(1ul);
+  ulong v44=v42+ulong(32ul);
+  uint v45=clif_aadd(t,ulong(v44),uint(v43));
+  uint v46=uint(clif_view(v,(v1+uint(44u))));
+  uint v47=uint(clif_view(v,(v1+uint(48u))));
+  ulong v48=ulong(v46);
+  ulong v49=ulong(v47);
+  ulong v50=ulong((ulong)(v49)<<(uint(32)&63u));
+  ulong v51=v48|v50;
+  ulong v52=v0+v51;
+  ulong v53=v52+ulong(28ul);
+  uint v54=clif_ald(t,ulong(v53));
+  ulong v55=ulong(v54);
+  ulong v56=v52+v55;
+  uint v57=uint(0ul);
+  {{ulong t0=v56;uint t1=v57;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 3u:{
+  v58=v11+ulong(144ul);
+  v59=v11+ulong(16ul);
+  uint v60=uint((uint)(v5)>>(uint(3)&31u));
+  uint v61=uint(clif_c32(t,(ulong(v59)+ulong(long(16)))));
+  uint v62=uint((uint)(v61)>>(uint(12)&31u));
+  uint v63=v62&uint(15ul);
+  uint v64=uint((uint)(v60)>>(uint(7)&31u));
+  uint v65=uint(clif_c32(t,(ulong(v59)+ulong(long(20)))));
+  uint v66=uint(clif_c32(t,(ulong(v59)+ulong(long(40)))));
+  uint v67=v64*v66;
+  uint v68=v67+v65;
+  uint v69=uint(clif_c32(t,(ulong(v59)+ulong(long(4)))));
+  uint v70=uint((uint)(v64)<<(uint(10)&31u));
+  uint v71=v69-v70;
+  uint v72=uint(1024ul);
+  uint v73=min(v71,v72);
+  uint v74=uint(clif_c32(t,(ulong(v59)+ulong(long(36)))));
+  uint v75=v73*v74;
+  uint v76=v68+v75;
+  uint v77=v60&uint(127ul);
+  uint v78=v77*v63;
+  ulong v79=ulong(v76);
+  ulong v80=ulong(v78);
+  ulong v81=v79+v80;
+  ulong v82=v81&v8;
+  ulong v83=v58+v82;
+  uint v84=uint(clif_c32(t,ulong(v83)));
+  uint v85=v63*uint(8ul);
+  uint v86=uint(1ul);
+  uint v87=uint(v85);
+  uint v88=((uint(v87)&63u)<32u?uint(v86)<<(uint(v87)&31u):0u);
+  uint v89=v88+uint(18446744073709551615ul);
+  uchar v90=uchar((uint)(v63)>=(uint)(uint(8ul)));
+  uint v91=uint(18446744073709551615ul);
+  uint v92=v90!=0?v91:v89;
+  v93=v84&v92;
+  v94=v60*uint(8ul);
+  v95=v5-v94;
+  if(v95!=0){b=8u;continue;}else{{uint t0=v93;v98=t0;}b=13u;continue;}
+ }
+ case 8u:{
+  uint v99=uint(clif_c32(t,(ulong(v59)+ulong(long(16)))));
+  uint v100=uint((uint)(v99)>>(uint(4)&31u));
+  uint v101=v100&uint(15ul);
+  uchar v102=uchar((uint)(v101)==(uint)(uint(1ul)));
+  if(v102!=0){b=9u;continue;}else{b=10u;continue;}
+ }
+ case 9u:{
+  uint v103=uint((uint)(v94)>>(uint(10)&31u));
+  uint v104=v94&uint(1023ul);
+  uint v105=uint(clif_c32(t,(ulong(v59)+ulong(long(20)))));
+  uint v106=uint(clif_c32(t,(ulong(v59)+ulong(long(40)))));
+  uint v107=v103*v106;
+  uint v108=v107+v105;
+  uint v109=uint(clif_c32(t,(ulong(v59)+ulong(long(4)))));
+  uint v110=uint((uint)(v103)<<(uint(10)&31u));
+  uint v111=v109-v110;
+  uint v112=uint(1024ul);
+  uint v113=min(v111,v112);
+  uint v114=uint(clif_c32(t,(ulong(v59)+ulong(long(28)))));
+  uint v115=v113*v114;
+  uint v116=v108+v115;
+  ulong v117=ulong(v116);
+  ulong v118=ulong(v104);
+  ulong v119=v117+v118;
+  ulong v120=v119&v8;
+  ulong v121=v58+v120;
+  ulong v122=ulong(clif_c64(t,ulong(v121)));
+  ulong v123=ulong(18446744073709551615ul);
+  uint v124=uint(7ul)-v95;
+  uint v125=v124*uint(8ul);
+  uint v126=uint(v125);
+  ulong v127=ulong((ulong)(v123)>>(uint(v126)&63u));
+  ulong v128=v127&ulong(18446744073709551360ul);
+  v129=v122&v128;
+  ulong v130=~v129;
+  ulong v131=v130&ulong(9187201950435737471ul);
+  ulong v132=v131+ulong(9187201950435737471ul);
+  ulong v133=v132|v130;
+  ulong v134=~v133;
+  ulong v135=v134&ulong(9259542123273814144ul);
+  ulong v136=v135&v128;
+  if(v136!=0){b=10u;continue;}else{b=14u;continue;}
+ }
+ case 14u:{
+  ulong v137=v129&ulong(71777214294589695ul);
+  ulong v138=ulong((ulong)(v129)>>(uint(8)&63u));
+  ulong v139=v138&ulong(71777214294589695ul);
+  ulong v140=v137+v139;
+  ulong v141=v140&ulong(281470681808895ul);
+  ulong v142=ulong((ulong)(v140)>>(uint(16)&63u));
+  ulong v143=v142&ulong(281470681808895ul);
+  ulong v144=v141+v143;
+  uint v145=uint(v144)&uint(4294967295ul);
+  uint v146=uint((ulong)(v144)>>32u);
+  uint v147=v145+v146;
+  uint v148=v93+v147;
+  {{uint t0=v148;v98=t0;}b=13u;continue;}
+ }
+ case 10u:{
+  uint v149=v94+uint(1ul);
+  {{uint t0=v149;uint t1=v93;v96=t0;v97=t1;}b=11u;continue;}
+ }
+ case 11u:{
+  uchar v150=uchar((uint)(v96)<=(uint)(v5));
+  if(v150!=0){b=12u;continue;}else{{uint t0=v97;v98=t0;}b=13u;continue;}
+ }
+ case 12u:{
+  uint v151=uint(clif_c32(t,(ulong(v59)+ulong(long(16)))));
+  uint v152=uint((uint)(v151)>>(uint(4)&31u));
+  uint v153=v152&uint(15ul);
+  uint v154=uint((uint)(v96)>>(uint(10)&31u));
+  uint v155=v96&uint(1023ul);
+  uint v156=uint(clif_c32(t,(ulong(v59)+ulong(long(20)))));
+  uint v157=uint(clif_c32(t,(ulong(v59)+ulong(long(40)))));
+  uint v158=v154*v157;
+  uint v159=v158+v156;
+  uint v160=uint(clif_c32(t,(ulong(v59)+ulong(long(4)))));
+  uint v161=uint((uint)(v154)<<(uint(10)&31u));
+  uint v162=v160-v161;
+  uint v163=uint(1024ul);
+  uint v164=min(v162,v163);
+  uint v165=uint(clif_c32(t,(ulong(v59)+ulong(long(28)))));
+  uint v166=v164*v165;
+  uint v167=v159+v166;
+  uint v168=v155*v153;
+  ulong v169=ulong(v167);
+  ulong v170=ulong(v168);
+  ulong v171=v169+v170;
+  ulong v172=v171&v8;
+  ulong v173=v58+v172;
+  ulong v174=ulong(clif_c64(t,ulong(v173)));
+  uint v175=v153*uint(8ul);
+  ulong v176=ulong(1ul);
+  uint v177=uint(v175);
+  ulong v178=ulong((ulong)(v176)<<(uint(v177)&63u));
+  ulong v179=v178+ulong(18446744073709551615ul);
+  uchar v180=uchar((uint)(v153)>=(uint)(uint(8ul)));
+  ulong v181=ulong(18446744073709551615ul);
+  ulong v182=v180!=0?v181:v179;
+  v183=v174&v182;
+  uchar v184=uchar((ulong)(v183)==(ulong)(v182));
+  if(v184!=0){b=15u;continue;}else{b=16u;continue;}
+ }
+ case 15u:{
+  uint v186=uint(2ul);
+  uint v187=v96+v4;
+  uint v188=clif_tape_f16_side(t,v,v186,v187);
+  {{uint t0=v188;v185=t0;}b=17u;continue;}
+ }
+ case 16u:{
+  {{uint t0=v183;v185=t0;}b=17u;continue;}
+ }
+ case 17u:{
+  uint v189=v97+v185;
+  uint v190=v96+uint(1ul);
+  {{uint t0=v190;uint t1=v189;v96=t0;v97=t1;}b=11u;continue;}
+ }
+ case 13u:{
+  v191=uint(v98);
+  if(v12!=0){b=18u;continue;}else{{uint t0=v191;v192=t0;}b=5u;continue;}
+ }
+ case 18u:{
+  clif_fence();
+  ulong v193=v11+ulong(8ul);
+  uint v194=clif_ald(t,ulong(v193));
+  uchar v195=uchar((uint)(v16)==(uint)(v194));
+  if(v195!=0){{uint t0=v191;v192=t0;}b=5u;continue;}else{b=19u;continue;}
+ }
+ case 19u:{
+  uchar v196=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v196!=0){b=20u;continue;}else{b=4u;continue;}
+ }
+ case 20u:{
+  uint v197=uint(clif_view(v,(v1+uint(44u))));
+  uint v198=uint(clif_view(v,(v1+uint(48u))));
+  ulong v199=ulong(v197);
+  ulong v200=ulong(v198);
+  ulong v201=ulong((ulong)(v200)<<(uint(32)&63u));
+  ulong v202=v199|v201;
+  ulong v203=v0+v202;
+  uint v204=uint(1ul);
+  ulong v205=v203+ulong(32ul);
+  uint v206=clif_aadd(t,ulong(v205),uint(v204));
+  uint v207=uint(clif_view(v,(v1+uint(44u))));
+  uint v208=uint(clif_view(v,(v1+uint(48u))));
+  ulong v209=ulong(v207);
+  ulong v210=ulong(v208);
+  ulong v211=ulong((ulong)(v210)<<(uint(32)&63u));
+  ulong v212=v209|v211;
+  ulong v213=v0+v212;
+  ulong v214=v213+ulong(28ul);
+  uint v215=clif_ald(t,ulong(v214));
+  ulong v216=ulong(v215);
+  ulong v217=v213+v216;
+  uint v218=uint(0ul);
+  {{ulong t0=v217;uint t1=v218;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 4u:{
+  uint v219=v10+uint(1ul);
+  {{uint t0=v219;v10=t0;}b=1u;continue;}
+ }
+ case 5u:{
+  return v192;
+ }
+ default:return 0;
+ }}
+}
+inline uint clif_tape_end_stated_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ ulong v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v5=0;
+ ulong v8=0;
+ uint v9=0;
+ uint v10=0;
+ ulong v11=0;
+ uint v12=0;
+ ulong v14=0;
+ uint v16=0;
+ uint v61=0;
+ ulong v94=0;
+ uint v96=0;
+ uint v101=0;
+ uint v102=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  v3=uint((uint)(v2)>>(uint(10)&31u));
+  v4=uint((uint)(v3)<<(uint(10)&31u));
+  v5=v2&uint(1023ul);
+  uint v6=uint(clif_view(v,(v1+uint(32u))));
+  ulong v7=ulong(v6);
+  v8=v7+ulong(18446744073709551615ul);
+  v9=uint(clif_view(v,(v1+uint(36u))));
+  uint v13=uint(0ul);
+  {{uint t0=v13;v10=t0;}b=1u;continue;}
+ }
+ case 1u:{
+  v14=clif_tape_z_block(t,v,v3);
+  ulong v15=v14+ulong(8ul);
+  v16=clif_ald(t,ulong(v15));
+  uint v17=uint(0ul);
+  if(v9!=0){b=2u;continue;}else{{ulong t0=v14;uint t1=v17;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 2u:{
+  clif_fence();
+  uint v18=uint(clif_view(v,(v1+uint(52u))));
+  uint v19=uint(clif_view(v,(v1+uint(56u))));
+  ulong v20=ulong(v18);
+  ulong v21=ulong(v19);
+  ulong v22=ulong((ulong)(v21)<<(uint(32)&63u));
+  ulong v23=v20|v22;
+  ulong v24=ulong((ulong)(v23)<<(uint(22)&63u));
+  ulong v25=ulong(v3);
+  ulong v26=v24|v25;
+  ulong v27=ulong(clif_c64(t,ulong(v14)));
+  uchar v28=uchar((ulong)(v27)==(ulong)(v26));
+  uint v29=v16&uint(2147483648ul);
+  uchar v30=uchar((uint)(v29)==(uint)(uint(0ul)));
+  uchar v31=uchar((uint)(v16)!=(uint)(uint(0ul)));
+  uchar v32=v28&v30;
+  uchar v33=v32&v31;
+  uint v34=uint(1ul);
+  if(v33!=0){{ulong t0=v14;uint t1=v34;v11=t0;v12=t1;}b=3u;continue;}else{b=6u;continue;}
+ }
+ case 6u:{
+  uchar v35=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v35!=0){b=7u;continue;}else{b=4u;continue;}
+ }
+ case 7u:{
+  uint v36=uint(clif_view(v,(v1+uint(44u))));
+  uint v37=uint(clif_view(v,(v1+uint(48u))));
+  ulong v38=ulong(v36);
+  ulong v39=ulong(v37);
+  ulong v40=ulong((ulong)(v39)<<(uint(32)&63u));
+  ulong v41=v38|v40;
+  ulong v42=v0+v41;
+  uint v43=uint(1ul);
+  ulong v44=v42+ulong(32ul);
+  uint v45=clif_aadd(t,ulong(v44),uint(v43));
+  uint v46=uint(clif_view(v,(v1+uint(44u))));
+  uint v47=uint(clif_view(v,(v1+uint(48u))));
+  ulong v48=ulong(v46);
+  ulong v49=ulong(v47);
+  ulong v50=ulong((ulong)(v49)<<(uint(32)&63u));
+  ulong v51=v48|v50;
+  ulong v52=v0+v51;
+  ulong v53=v52+ulong(28ul);
+  uint v54=clif_ald(t,ulong(v53));
+  ulong v55=ulong(v54);
+  ulong v56=v52+v55;
+  uint v57=uint(0ul);
+  {{ulong t0=v56;uint t1=v57;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 3u:{
+  ulong v58=v11+ulong(144ul);
+  ulong v59=v11+ulong(16ul);
+  uint v60=v5+v4;
+  v61=clif_tape_start_stated(t,v,v60);
+  uint v62=uint(clif_c32(t,(ulong(v59)+ulong(long(16)))));
+  uint v63=uint((uint)(v62)>>(uint(8)&31u));
+  uint v64=v63&uint(15ul);
+  uint v65=uint((uint)(v5)>>(uint(10)&31u));
+  uint v66=v5&uint(1023ul);
+  uint v67=uint(clif_c32(t,(ulong(v59)+ulong(long(20)))));
+  uint v68=uint(clif_c32(t,(ulong(v59)+ulong(long(40)))));
+  uint v69=v65*v68;
+  uint v70=v69+v67;
+  uint v71=uint(clif_c32(t,(ulong(v59)+ulong(long(4)))));
+  uint v72=uint((uint)(v65)<<(uint(10)&31u));
+  uint v73=v71-v72;
+  uint v74=uint(1024ul);
+  uint v75=min(v73,v74);
+  uint v76=uint(clif_c32(t,(ulong(v59)+ulong(long(32)))));
+  uint v77=v75*v76;
+  uint v78=v70+v77;
+  uint v79=v66*v64;
+  ulong v80=ulong(v78);
+  ulong v81=ulong(v79);
+  ulong v82=v80+v81;
+  ulong v83=v82&v8;
+  ulong v84=v58+v83;
+  ulong v85=ulong(clif_c64(t,ulong(v84)));
+  uint v86=v64*uint(8ul);
+  ulong v87=ulong(1ul);
+  uint v88=uint(v86);
+  ulong v89=ulong((ulong)(v87)<<(uint(v88)&63u));
+  ulong v90=v89+ulong(18446744073709551615ul);
+  uchar v91=uchar((uint)(v64)>=(uint)(uint(8ul)));
+  ulong v92=ulong(18446744073709551615ul);
+  ulong v93=v91!=0?v92:v90;
+  v94=v85&v93;
+  uchar v95=uchar((ulong)(v94)==(ulong)(v93));
+  if(v95!=0){b=8u;continue;}else{b=9u;continue;}
+ }
+ case 8u:{
+  uint v97=uint(3ul);
+  uint v98=v5+v4;
+  uint v99=clif_tape_f16_side(t,v,v97,v98);
+  {{uint t0=v99;v96=t0;}b=10u;continue;}
+ }
+ case 9u:{
+  {{uint t0=v94;v96=t0;}b=10u;continue;}
+ }
+ case 10u:{
+  uint v100=uint(v96);
+  v101=v61+v100;
+  if(v12!=0){b=11u;continue;}else{{uint t0=v101;v102=t0;}b=5u;continue;}
+ }
+ case 11u:{
+  clif_fence();
+  ulong v103=v11+ulong(8ul);
+  uint v104=clif_ald(t,ulong(v103));
+  uchar v105=uchar((uint)(v16)==(uint)(v104));
+  if(v105!=0){{uint t0=v101;v102=t0;}b=5u;continue;}else{b=12u;continue;}
+ }
+ case 12u:{
+  uchar v106=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v106!=0){b=13u;continue;}else{b=4u;continue;}
+ }
+ case 13u:{
+  uint v107=uint(clif_view(v,(v1+uint(44u))));
+  uint v108=uint(clif_view(v,(v1+uint(48u))));
+  ulong v109=ulong(v107);
+  ulong v110=ulong(v108);
+  ulong v111=ulong((ulong)(v110)<<(uint(32)&63u));
+  ulong v112=v109|v111;
+  ulong v113=v0+v112;
+  uint v114=uint(1ul);
+  ulong v115=v113+ulong(32ul);
+  uint v116=clif_aadd(t,ulong(v115),uint(v114));
+  uint v117=uint(clif_view(v,(v1+uint(44u))));
+  uint v118=uint(clif_view(v,(v1+uint(48u))));
+  ulong v119=ulong(v117);
+  ulong v120=ulong(v118);
+  ulong v121=ulong((ulong)(v120)<<(uint(32)&63u));
+  ulong v122=v119|v121;
+  ulong v123=v0+v122;
+  ulong v124=v123+ulong(28ul);
+  uint v125=clif_ald(t,ulong(v124));
+  ulong v126=ulong(v125);
+  ulong v127=v123+v126;
+  uint v128=uint(0ul);
+  {{ulong t0=v127;uint t1=v128;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 4u:{
+  uint v129=v10+uint(1ul);
+  {{uint t0=v129;v10=t0;}b=1u;continue;}
+ }
+ case 5u:{
+  return v102;
+ }
+ default:return 0;
+ }}
+}
+inline uint clif_tape_parent_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ uint v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v4=0;
+ uint v6=0;
+ uint v7=0;
+ uint v8=0;
+ ulong v10=0;
+ uint v13=0;
+ uint v16=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uchar v3=uchar((uint)(v2)==(uint)(uint(0ul)));
+ if(v3!=0){
+  uint v5=uint(4294967295ul);
+  {uint t0=v5;v4=t0;}
+ }else{
+  {uint t0=v2;v6=t0;}
+  while(true){
+   v8=uint(4294967295ul);
+   if(v6!=0){
+    uint v9=v6+uint(18446744073709551615ul);
+    v10=clif_tape_slot(t,v,v9);
+    ulong v11=v10&ulong(1ul);
+    if(v11!=0){
+     uint v12=uint((ulong)(v10)>>2u);
+     v13=uint(v12);
+     uint v14=v13+uint(18446744073709551615ul);
+     uchar v15=uchar((uint)(v14)<(uint)(v6));
+     if(v15!=0){
+      v16=v6-v13;
+      ulong v17=v10&ulong(2ul);
+      if(v17!=0){
+       {uint t0=v16;v7=t0;}
+       break;
+      }else{
+       {uint t0=v16;v6=t0;}
+       continue;
+      }
+     }else{
+      {uint t0=v8;v7=t0;}
+      break;
+     }
+    }else{
+     {uint t0=v9;v7=t0;}
+     break;
+    }
+   }else{
+    {uint t0=v8;v7=t0;}
+    break;
+   }
+  }
+  {uint t0=v7;v4=t0;}
+ }
+ return v4;
+}
+inline uint clif_tape_length_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ ulong v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v5=0;
+ ulong v8=0;
+ uint v9=0;
+ uint v10=0;
+ ulong v11=0;
+ uint v12=0;
+ ulong v14=0;
+ uint v16=0;
+ ulong v92=0;
+ uint v94=0;
+ uint v98=0;
+ uint v99=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  v3=uint((uint)(v2)>>(uint(10)&31u));
+  v4=uint((uint)(v3)<<(uint(10)&31u));
+  v5=v2&uint(1023ul);
+  uint v6=uint(clif_view(v,(v1+uint(32u))));
+  ulong v7=ulong(v6);
+  v8=v7+ulong(18446744073709551615ul);
+  v9=uint(clif_view(v,(v1+uint(36u))));
+  uint v13=uint(0ul);
+  {{uint t0=v13;v10=t0;}b=1u;continue;}
+ }
+ case 1u:{
+  v14=clif_tape_z_block(t,v,v3);
+  ulong v15=v14+ulong(8ul);
+  v16=clif_ald(t,ulong(v15));
+  uint v17=uint(0ul);
+  if(v9!=0){b=2u;continue;}else{{ulong t0=v14;uint t1=v17;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 2u:{
+  clif_fence();
+  uint v18=uint(clif_view(v,(v1+uint(52u))));
+  uint v19=uint(clif_view(v,(v1+uint(56u))));
+  ulong v20=ulong(v18);
+  ulong v21=ulong(v19);
+  ulong v22=ulong((ulong)(v21)<<(uint(32)&63u));
+  ulong v23=v20|v22;
+  ulong v24=ulong((ulong)(v23)<<(uint(22)&63u));
+  ulong v25=ulong(v3);
+  ulong v26=v24|v25;
+  ulong v27=ulong(clif_c64(t,ulong(v14)));
+  uchar v28=uchar((ulong)(v27)==(ulong)(v26));
+  uint v29=v16&uint(2147483648ul);
+  uchar v30=uchar((uint)(v29)==(uint)(uint(0ul)));
+  uchar v31=uchar((uint)(v16)!=(uint)(uint(0ul)));
+  uchar v32=v28&v30;
+  uchar v33=v32&v31;
+  uint v34=uint(1ul);
+  if(v33!=0){{ulong t0=v14;uint t1=v34;v11=t0;v12=t1;}b=3u;continue;}else{b=6u;continue;}
+ }
+ case 6u:{
+  uchar v35=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v35!=0){b=7u;continue;}else{b=4u;continue;}
+ }
+ case 7u:{
+  uint v36=uint(clif_view(v,(v1+uint(44u))));
+  uint v37=uint(clif_view(v,(v1+uint(48u))));
+  ulong v38=ulong(v36);
+  ulong v39=ulong(v37);
+  ulong v40=ulong((ulong)(v39)<<(uint(32)&63u));
+  ulong v41=v38|v40;
+  ulong v42=v0+v41;
+  uint v43=uint(1ul);
+  ulong v44=v42+ulong(32ul);
+  uint v45=clif_aadd(t,ulong(v44),uint(v43));
+  uint v46=uint(clif_view(v,(v1+uint(44u))));
+  uint v47=uint(clif_view(v,(v1+uint(48u))));
+  ulong v48=ulong(v46);
+  ulong v49=ulong(v47);
+  ulong v50=ulong((ulong)(v49)<<(uint(32)&63u));
+  ulong v51=v48|v50;
+  ulong v52=v0+v51;
+  ulong v53=v52+ulong(28ul);
+  uint v54=clif_ald(t,ulong(v53));
+  ulong v55=ulong(v54);
+  ulong v56=v52+v55;
+  uint v57=uint(0ul);
+  {{ulong t0=v56;uint t1=v57;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 3u:{
+  ulong v58=v11+ulong(144ul);
+  ulong v59=v11+ulong(16ul);
+  uint v60=uint(clif_c32(t,(ulong(v59)+ulong(long(16)))));
+  uint v61=uint((uint)(v60)>>(uint(8)&31u));
+  uint v62=v61&uint(15ul);
+  uint v63=uint((uint)(v5)>>(uint(10)&31u));
+  uint v64=v5&uint(1023ul);
+  uint v65=uint(clif_c32(t,(ulong(v59)+ulong(long(20)))));
+  uint v66=uint(clif_c32(t,(ulong(v59)+ulong(long(40)))));
+  uint v67=v63*v66;
+  uint v68=v67+v65;
+  uint v69=uint(clif_c32(t,(ulong(v59)+ulong(long(4)))));
+  uint v70=uint((uint)(v63)<<(uint(10)&31u));
+  uint v71=v69-v70;
+  uint v72=uint(1024ul);
+  uint v73=min(v71,v72);
+  uint v74=uint(clif_c32(t,(ulong(v59)+ulong(long(32)))));
+  uint v75=v73*v74;
+  uint v76=v68+v75;
+  uint v77=v64*v62;
+  ulong v78=ulong(v76);
+  ulong v79=ulong(v77);
+  ulong v80=v78+v79;
+  ulong v81=v80&v8;
+  ulong v82=v58+v81;
+  ulong v83=ulong(clif_c64(t,ulong(v82)));
+  uint v84=v62*uint(8ul);
+  ulong v85=ulong(1ul);
+  uint v86=uint(v84);
+  ulong v87=ulong((ulong)(v85)<<(uint(v86)&63u));
+  ulong v88=v87+ulong(18446744073709551615ul);
+  uchar v89=uchar((uint)(v62)>=(uint)(uint(8ul)));
+  ulong v90=ulong(18446744073709551615ul);
+  ulong v91=v89!=0?v90:v88;
+  v92=v83&v91;
+  uchar v93=uchar((ulong)(v92)==(ulong)(v91));
+  if(v93!=0){b=8u;continue;}else{b=9u;continue;}
+ }
+ case 8u:{
+  uint v95=uint(3ul);
+  uint v96=v5+v4;
+  uint v97=clif_tape_f16_side(t,v,v95,v96);
+  {{uint t0=v97;v94=t0;}b=10u;continue;}
+ }
+ case 9u:{
+  {{uint t0=v92;v94=t0;}b=10u;continue;}
+ }
+ case 10u:{
+  v98=uint(v94);
+  if(v12!=0){b=11u;continue;}else{{uint t0=v98;v99=t0;}b=5u;continue;}
+ }
+ case 11u:{
+  clif_fence();
+  ulong v100=v11+ulong(8ul);
+  uint v101=clif_ald(t,ulong(v100));
+  uchar v102=uchar((uint)(v16)==(uint)(v101));
+  if(v102!=0){{uint t0=v98;v99=t0;}b=5u;continue;}else{b=12u;continue;}
+ }
+ case 12u:{
+  uchar v103=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v103!=0){b=13u;continue;}else{b=4u;continue;}
+ }
+ case 13u:{
+  uint v104=uint(clif_view(v,(v1+uint(44u))));
+  uint v105=uint(clif_view(v,(v1+uint(48u))));
+  ulong v106=ulong(v104);
+  ulong v107=ulong(v105);
+  ulong v108=ulong((ulong)(v107)<<(uint(32)&63u));
+  ulong v109=v106|v108;
+  ulong v110=v0+v109;
+  uint v111=uint(1ul);
+  ulong v112=v110+ulong(32ul);
+  uint v113=clif_aadd(t,ulong(v112),uint(v111));
+  uint v114=uint(clif_view(v,(v1+uint(44u))));
+  uint v115=uint(clif_view(v,(v1+uint(48u))));
+  ulong v116=ulong(v114);
+  ulong v117=ulong(v115);
+  ulong v118=ulong((ulong)(v117)<<(uint(32)&63u));
+  ulong v119=v116|v118;
+  ulong v120=v0+v119;
+  ulong v121=v120+ulong(28ul);
+  uint v122=clif_ald(t,ulong(v121));
+  ulong v123=ulong(v122);
+  ulong v124=v120+v123;
+  uint v125=uint(0ul);
+  {{ulong t0=v124;uint t1=v125;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 4u:{
+  uint v126=v10+uint(1ul);
+  {{uint t0=v126;v10=t0;}b=1u;continue;}
+ }
+ case 5u:{
+  return v99;
+ }
+ default:return 0;
+ }}
+}
+inline uint clif_tape_start_next_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
+ ulong v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v5=0;
+ uint v6=0;
+ ulong v9=0;
+ uint v10=0;
+ uint v11=0;
+ ulong v12=0;
+ uint v13=0;
+ ulong v15=0;
+ uint v17=0;
+ ulong v59=0;
+ ulong v60=0;
+ uint v62=0;
+ ulong v95=0;
+ uint v97=0;
+ uint v138=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ v3=a3;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  v4=uint((uint)(v2)>>(uint(10)&31u));
+  v5=uint((uint)(v4)<<(uint(10)&31u));
+  v6=v2&uint(1023ul);
+  uint v7=uint(clif_view(v,(v1+uint(32u))));
+  ulong v8=ulong(v7);
+  v9=v8+ulong(18446744073709551615ul);
+  v10=uint(clif_view(v,(v1+uint(36u))));
+  uint v14=uint(0ul);
+  {{uint t0=v14;v11=t0;}b=1u;continue;}
+ }
+ case 1u:{
+  v15=clif_tape_z_block(t,v,v4);
+  ulong v16=v15+ulong(8ul);
+  v17=clif_ald(t,ulong(v16));
+  uint v18=uint(0ul);
+  if(v10!=0){b=2u;continue;}else{{ulong t0=v15;uint t1=v18;v12=t0;v13=t1;}b=3u;continue;}
+ }
+ case 2u:{
+  clif_fence();
+  uint v19=uint(clif_view(v,(v1+uint(52u))));
+  uint v20=uint(clif_view(v,(v1+uint(56u))));
+  ulong v21=ulong(v19);
+  ulong v22=ulong(v20);
+  ulong v23=ulong((ulong)(v22)<<(uint(32)&63u));
+  ulong v24=v21|v23;
+  ulong v25=ulong((ulong)(v24)<<(uint(22)&63u));
+  ulong v26=ulong(v4);
+  ulong v27=v25|v26;
+  ulong v28=ulong(clif_c64(t,ulong(v15)));
+  uchar v29=uchar((ulong)(v28)==(ulong)(v27));
+  uint v30=v17&uint(2147483648ul);
+  uchar v31=uchar((uint)(v30)==(uint)(uint(0ul)));
+  uchar v32=uchar((uint)(v17)!=(uint)(uint(0ul)));
+  uchar v33=v29&v31;
+  uchar v34=v33&v32;
+  uint v35=uint(1ul);
+  if(v34!=0){{ulong t0=v15;uint t1=v35;v12=t0;v13=t1;}b=3u;continue;}else{b=6u;continue;}
+ }
+ case 6u:{
+  uchar v36=uchar((uint)(v11)>=(uint)(uint(4ul)));
+  if(v36!=0){b=7u;continue;}else{b=4u;continue;}
+ }
+ case 7u:{
+  uint v37=uint(clif_view(v,(v1+uint(44u))));
+  uint v38=uint(clif_view(v,(v1+uint(48u))));
+  ulong v39=ulong(v37);
+  ulong v40=ulong(v38);
+  ulong v41=ulong((ulong)(v40)<<(uint(32)&63u));
+  ulong v42=v39|v41;
+  ulong v43=v0+v42;
+  uint v44=uint(1ul);
+  ulong v45=v43+ulong(32ul);
+  uint v46=clif_aadd(t,ulong(v45),uint(v44));
+  uint v47=uint(clif_view(v,(v1+uint(44u))));
+  uint v48=uint(clif_view(v,(v1+uint(48u))));
+  ulong v49=ulong(v47);
+  ulong v50=ulong(v48);
+  ulong v51=ulong((ulong)(v50)<<(uint(32)&63u));
+  ulong v52=v49|v51;
+  ulong v53=v0+v52;
+  ulong v54=v53+ulong(28ul);
+  uint v55=clif_ald(t,ulong(v54));
+  ulong v56=ulong(v55);
+  ulong v57=v53+v56;
+  uint v58=uint(0ul);
+  {{ulong t0=v57;uint t1=v58;v12=t0;v13=t1;}b=3u;continue;}
+ }
+ case 3u:{
+  v59=v12+ulong(144ul);
+  v60=v12+ulong(16ul);
+  uint v61=v6&uint(7ul);
+  if(v61!=0){b=8u;continue;}else{b=9u;continue;}
+ }
+ case 8u:{
+  uint v63=uint(clif_c32(t,(ulong(v60)+ulong(long(16)))));
+  uint v64=uint((uint)(v63)>>(uint(4)&31u));
+  uint v65=v64&uint(15ul);
+  uint v66=uint((uint)(v6)>>(uint(10)&31u));
+  uint v67=v6&uint(1023ul);
+  uint v68=uint(clif_c32(t,(ulong(v60)+ulong(long(20)))));
+  uint v69=uint(clif_c32(t,(ulong(v60)+ulong(long(40)))));
+  uint v70=v66*v69;
+  uint v71=v70+v68;
+  uint v72=uint(clif_c32(t,(ulong(v60)+ulong(long(4)))));
+  uint v73=uint((uint)(v66)<<(uint(10)&31u));
+  uint v74=v72-v73;
+  uint v75=uint(1024ul);
+  uint v76=min(v74,v75);
+  uint v77=uint(clif_c32(t,(ulong(v60)+ulong(long(28)))));
+  uint v78=v76*v77;
+  uint v79=v71+v78;
+  uint v80=v67*v65;
+  ulong v81=ulong(v79);
+  ulong v82=ulong(v80);
+  ulong v83=v81+v82;
+  ulong v84=v83&v9;
+  ulong v85=v59+v84;
+  ulong v86=ulong(clif_c64(t,ulong(v85)));
+  uint v87=v65*uint(8ul);
+  ulong v88=ulong(1ul);
+  uint v89=uint(v87);
+  ulong v90=ulong((ulong)(v88)<<(uint(v89)&63u));
+  ulong v91=v90+ulong(18446744073709551615ul);
+  uchar v92=uchar((uint)(v65)>=(uint)(uint(8ul)));
+  ulong v93=ulong(18446744073709551615ul);
+  ulong v94=v92!=0?v93:v91;
+  v95=v86&v94;
+  uchar v96=uchar((ulong)(v95)==(ulong)(v94));
+  if(v96!=0){b=11u;continue;}else{b=12u;continue;}
+ }
+ case 11u:{
+  uint v98=uint(2ul);
+  uint v99=v6+v5;
+  uint v100=clif_tape_f16_side(t,v,v98,v99);
+  {{uint t0=v100;v97=t0;}b=13u;continue;}
+ }
+ case 12u:{
+  {{uint t0=v95;v97=t0;}b=13u;continue;}
+ }
+ case 13u:{
+  uint v101=uint(v97);
+  uint v102=v3+v101;
+  {{uint t0=v102;v62=t0;}b=10u;continue;}
+ }
+ case 9u:{
+  uint v103=uint((uint)(v6)>>(uint(3)&31u));
+  uint v104=uint(clif_c32(t,(ulong(v60)+ulong(long(16)))));
+  uint v105=uint((uint)(v104)>>(uint(12)&31u));
+  uint v106=v105&uint(15ul);
+  uint v107=uint((uint)(v103)>>(uint(7)&31u));
+  uint v108=uint(clif_c32(t,(ulong(v60)+ulong(long(20)))));
+  uint v109=uint(clif_c32(t,(ulong(v60)+ulong(long(40)))));
+  uint v110=v107*v109;
+  uint v111=v110+v108;
+  uint v112=uint(clif_c32(t,(ulong(v60)+ulong(long(4)))));
+  uint v113=uint((uint)(v107)<<(uint(10)&31u));
+  uint v114=v112-v113;
+  uint v115=uint(1024ul);
+  uint v116=min(v114,v115);
+  uint v117=uint(clif_c32(t,(ulong(v60)+ulong(long(36)))));
+  uint v118=v116*v117;
+  uint v119=v111+v118;
+  uint v120=v103&uint(127ul);
+  uint v121=v120*v106;
+  ulong v122=ulong(v119);
+  ulong v123=ulong(v121);
+  ulong v124=v122+v123;
+  ulong v125=v124&v9;
+  ulong v126=v59+v125;
+  uint v127=uint(clif_c32(t,ulong(v126)));
+  uint v128=v106*uint(8ul);
+  uint v129=uint(1ul);
+  uint v130=uint(v128);
+  uint v131=((uint(v130)&63u)<32u?uint(v129)<<(uint(v130)&31u):0u);
+  uint v132=v131+uint(18446744073709551615ul);
+  uchar v133=uchar((uint)(v106)>=(uint)(uint(8ul)));
+  uint v134=uint(18446744073709551615ul);
+  uint v135=v133!=0?v134:v132;
+  uint v136=v127&v135;
+  uint v137=uint(v136);
+  {{uint t0=v137;v62=t0;}b=10u;continue;}
+ }
+ case 10u:{
+  if(v13!=0){b=14u;continue;}else{{uint t0=v62;v138=t0;}b=5u;continue;}
+ }
+ case 14u:{
+  clif_fence();
+  ulong v139=v12+ulong(8ul);
+  uint v140=clif_ald(t,ulong(v139));
+  uchar v141=uchar((uint)(v17)==(uint)(v140));
+  if(v141!=0){{uint t0=v62;v138=t0;}b=5u;continue;}else{b=15u;continue;}
+ }
+ case 15u:{
+  uchar v142=uchar((uint)(v11)>=(uint)(uint(4ul)));
+  if(v142!=0){b=16u;continue;}else{b=4u;continue;}
+ }
+ case 16u:{
+  uint v143=uint(clif_view(v,(v1+uint(44u))));
+  uint v144=uint(clif_view(v,(v1+uint(48u))));
+  ulong v145=ulong(v143);
+  ulong v146=ulong(v144);
+  ulong v147=ulong((ulong)(v146)<<(uint(32)&63u));
+  ulong v148=v145|v147;
+  ulong v149=v0+v148;
+  uint v150=uint(1ul);
+  ulong v151=v149+ulong(32ul);
+  uint v152=clif_aadd(t,ulong(v151),uint(v150));
+  uint v153=uint(clif_view(v,(v1+uint(44u))));
+  uint v154=uint(clif_view(v,(v1+uint(48u))));
+  ulong v155=ulong(v153);
+  ulong v156=ulong(v154);
+  ulong v157=ulong((ulong)(v156)<<(uint(32)&63u));
+  ulong v158=v155|v157;
+  ulong v159=v0+v158;
+  ulong v160=v159+ulong(28ul);
+  uint v161=clif_ald(t,ulong(v160));
+  ulong v162=ulong(v161);
+  ulong v163=v159+v162;
+  uint v164=uint(0ul);
+  {{ulong t0=v163;uint t1=v164;v12=t0;v13=t1;}b=3u;continue;}
+ }
+ case 4u:{
+  uint v165=v11+uint(1ul);
+  {{uint t0=v165;v11=t0;}b=1u;continue;}
+ }
+ case 5u:{
+  return v138;
+ }
+ default:return 0;
+ }}
+}
+inline ulong clif_tape_slot_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ ulong v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v5=0;
+ ulong v8=0;
+ uint v9=0;
+ uint v10=0;
+ ulong v11=0;
+ uint v12=0;
+ ulong v14=0;
+ uint v16=0;
+ ulong v92=0;
+ ulong v94=0;
+ ulong v98=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  v3=uint((uint)(v2)>>(uint(10)&31u));
+  v4=uint((uint)(v3)<<(uint(10)&31u));
+  v5=v2&uint(1023ul);
+  uint v6=uint(clif_view(v,(v1+uint(32u))));
+  ulong v7=ulong(v6);
+  v8=v7+ulong(18446744073709551615ul);
+  v9=uint(clif_view(v,(v1+uint(36u))));
+  uint v13=uint(0ul);
+  {{uint t0=v13;v10=t0;}b=1u;continue;}
+ }
+ case 1u:{
+  v14=clif_tape_z_block(t,v,v3);
+  ulong v15=v14+ulong(8ul);
+  v16=clif_ald(t,ulong(v15));
+  uint v17=uint(0ul);
+  if(v9!=0){b=2u;continue;}else{{ulong t0=v14;uint t1=v17;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 2u:{
+  clif_fence();
+  uint v18=uint(clif_view(v,(v1+uint(52u))));
+  uint v19=uint(clif_view(v,(v1+uint(56u))));
+  ulong v20=ulong(v18);
+  ulong v21=ulong(v19);
+  ulong v22=ulong((ulong)(v21)<<(uint(32)&63u));
+  ulong v23=v20|v22;
+  ulong v24=ulong((ulong)(v23)<<(uint(22)&63u));
+  ulong v25=ulong(v3);
+  ulong v26=v24|v25;
+  ulong v27=ulong(clif_c64(t,ulong(v14)));
+  uchar v28=uchar((ulong)(v27)==(ulong)(v26));
+  uint v29=v16&uint(2147483648ul);
+  uchar v30=uchar((uint)(v29)==(uint)(uint(0ul)));
+  uchar v31=uchar((uint)(v16)!=(uint)(uint(0ul)));
+  uchar v32=v28&v30;
+  uchar v33=v32&v31;
+  uint v34=uint(1ul);
+  if(v33!=0){{ulong t0=v14;uint t1=v34;v11=t0;v12=t1;}b=3u;continue;}else{b=6u;continue;}
+ }
+ case 6u:{
+  uchar v35=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v35!=0){b=7u;continue;}else{b=4u;continue;}
+ }
+ case 7u:{
+  uint v36=uint(clif_view(v,(v1+uint(44u))));
+  uint v37=uint(clif_view(v,(v1+uint(48u))));
+  ulong v38=ulong(v36);
+  ulong v39=ulong(v37);
+  ulong v40=ulong((ulong)(v39)<<(uint(32)&63u));
+  ulong v41=v38|v40;
+  ulong v42=v0+v41;
+  uint v43=uint(1ul);
+  ulong v44=v42+ulong(32ul);
+  uint v45=clif_aadd(t,ulong(v44),uint(v43));
+  uint v46=uint(clif_view(v,(v1+uint(44u))));
+  uint v47=uint(clif_view(v,(v1+uint(48u))));
+  ulong v48=ulong(v46);
+  ulong v49=ulong(v47);
+  ulong v50=ulong((ulong)(v49)<<(uint(32)&63u));
+  ulong v51=v48|v50;
+  ulong v52=v0+v51;
+  ulong v53=v52+ulong(28ul);
+  uint v54=clif_ald(t,ulong(v53));
+  ulong v55=ulong(v54);
+  ulong v56=v52+v55;
+  uint v57=uint(0ul);
+  {{ulong t0=v56;uint t1=v57;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 3u:{
+  ulong v58=v11+ulong(144ul);
+  ulong v59=v11+ulong(16ul);
+  uint v60=uint(clif_c32(t,(ulong(v59)+ulong(long(16)))));
+  uint v61=uint((uint)(v60)>>(uint(0)&31u));
+  uint v62=v61&uint(15ul);
+  uint v63=uint((uint)(v5)>>(uint(10)&31u));
+  uint v64=v5&uint(1023ul);
+  uint v65=uint(clif_c32(t,(ulong(v59)+ulong(long(20)))));
+  uint v66=uint(clif_c32(t,(ulong(v59)+ulong(long(40)))));
+  uint v67=v63*v66;
+  uint v68=v67+v65;
+  uint v69=uint(clif_c32(t,(ulong(v59)+ulong(long(4)))));
+  uint v70=uint((uint)(v63)<<(uint(10)&31u));
+  uint v71=v69-v70;
+  uint v72=uint(1024ul);
+  uint v73=min(v71,v72);
+  uint v74=uint(clif_c32(t,(ulong(v59)+ulong(long(24)))));
+  uint v75=v73*v74;
+  uint v76=v68+v75;
+  uint v77=v64*v62;
+  ulong v78=ulong(v76);
+  ulong v79=ulong(v77);
+  ulong v80=v78+v79;
+  ulong v81=v80&v8;
+  ulong v82=v58+v81;
+  ulong v83=ulong(clif_c64(t,ulong(v82)));
+  uint v84=v62*uint(8ul);
+  ulong v85=ulong(1ul);
+  uint v86=uint(v84);
+  ulong v87=ulong((ulong)(v85)<<(uint(v86)&63u));
+  ulong v88=v87+ulong(18446744073709551615ul);
+  uchar v89=uchar((uint)(v62)>=(uint)(uint(8ul)));
+  ulong v90=ulong(18446744073709551615ul);
+  ulong v91=v89!=0?v90:v88;
+  v92=v83&v91;
+  uchar v93=uchar((ulong)(v92)==(ulong)(v91));
+  if(v93!=0){b=8u;continue;}else{b=9u;continue;}
+ }
+ case 8u:{
+  uint v95=uint(1ul);
+  uint v96=v5+v4;
+  ulong v97=clif_tape_f16_side(t,v,v95,v96);
+  {{ulong t0=v97;v94=t0;}b=10u;continue;}
+ }
+ case 9u:{
+  {{ulong t0=v92;v94=t0;}b=10u;continue;}
+ }
+ case 10u:{
+  if(v12!=0){b=11u;continue;}else{{ulong t0=v94;v98=t0;}b=5u;continue;}
+ }
+ case 11u:{
+  clif_fence();
+  ulong v99=v11+ulong(8ul);
+  uint v100=clif_ald(t,ulong(v99));
+  uchar v101=uchar((uint)(v16)==(uint)(v100));
+  if(v101!=0){{ulong t0=v94;v98=t0;}b=5u;continue;}else{b=12u;continue;}
+ }
+ case 12u:{
+  uchar v102=uchar((uint)(v10)>=(uint)(uint(4ul)));
+  if(v102!=0){b=13u;continue;}else{b=4u;continue;}
+ }
+ case 13u:{
+  uint v103=uint(clif_view(v,(v1+uint(44u))));
+  uint v104=uint(clif_view(v,(v1+uint(48u))));
+  ulong v105=ulong(v103);
+  ulong v106=ulong(v104);
+  ulong v107=ulong((ulong)(v106)<<(uint(32)&63u));
+  ulong v108=v105|v107;
+  ulong v109=v0+v108;
+  uint v110=uint(1ul);
+  ulong v111=v109+ulong(32ul);
+  uint v112=clif_aadd(t,ulong(v111),uint(v110));
+  uint v113=uint(clif_view(v,(v1+uint(44u))));
+  uint v114=uint(clif_view(v,(v1+uint(48u))));
+  ulong v115=ulong(v113);
+  ulong v116=ulong(v114);
+  ulong v117=ulong((ulong)(v116)<<(uint(32)&63u));
+  ulong v118=v115|v117;
+  ulong v119=v0+v118;
+  ulong v120=v119+ulong(28ul);
+  uint v121=clif_ald(t,ulong(v120));
+  ulong v122=ulong(v121);
+  ulong v123=v119+v122;
+  uint v124=uint(0ul);
+  {{ulong t0=v123;uint t1=v124;v11=t0;v12=t1;}b=3u;continue;}
+ }
+ case 4u:{
+  uint v125=v10+uint(1ul);
+  {{uint t0=v125;v10=t0;}b=1u;continue;}
+ }
+ case 5u:{
+  return v98;
+ }
+ default:return 0;
+ }}
+}
+inline uint clif_tape_line_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ uint v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v11=0;
+ uint v19=0;
+ uint v20=0;
+ ulong v25=0;
+ uint v26=0;
+ uint v28=0;
+ uint v35=0;
+ uint v36=0;
+ uint v37=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uint v3=uint(clif_view(v,(v1+uint(96u))));
+ uint v4=uint(0ul);
+ uint v5=uint(v3);
+ uint v6=uint(v4);
+ uint v7=v0+v5;
+ uint v8=v7+v6;
+ uint v9=uint(clif_u32(t,v8));
+ uchar v10=uchar((uint)(v9)==(uint)(uint(0ul)));
+ if(v10!=0){
+  uint v12=uint(0ul);
+  {uint t0=v12;v11=t0;}
+ }else{
+  uint v13=uint(clif_view(v,(v1+uint(96u))));
+  uint v14=uint(4ul);
+  uint v15=uint(v13);
+  uint v16=uint(v14);
+  uint v17=v0+v15;
+  uint v18=v17+v16;
+  v19=uint(clif_u32(t,v18));
+  v20=uint((uint)(v2)>>(uint(v19)&31u));
+  uint v21=uint(1ul);
+  uint v22=uint((uint)(v21)<<(uint(v19)&31u));
+  uint v23=v22+uint(18446744073709551615ul);
+  uint v24=v2&v23;
+  v25=ulong(v24);
+  v26=uint(0ul);
+  uchar v27=uchar((uint)(v20)==(uint)(uint(0ul)));
+  if(v27!=0){
+   uint v29=uint(0ul);
+   {uint t0=v29;v28=t0;}
+  }else{
+   uint v30=v20+uint(18446744073709551615ul);
+   uint v31=clif_tape_line_select(t,v,v26,v30);
+   uint v32=v31-v30;
+   {uint t0=v32;v28=t0;}
+  }
+  uint v33=clif_tape_line_select(t,v,v26,v20);
+  uint v34=v33-v20;
+  {uint t0=v28;uint t1=v34;v35=t0;v36=t1;}
+  while(true){
+   uchar v38=uchar((uint)(v35)<(uint)(v36));
+   if(v38!=0){
+    uint v39=v35+v36;
+    uint v40=uint((uint)(v39)>>(uint(1)&31u));
+    uint v41=uint(clif_view(v,(v1+uint(96u))));
+    uint v42=uint(8ul);
+    uint v43=uint(v41);
+    uint v44=uint(v42);
+    uint v45=v0+v43;
+    uint v46=v45+v44;
+    uint v47=uint(clif_u32(t,v46));
+    uint v48=uint(clif_view(v,(v1+uint(96u))));
+    uint v49=uint(12ul);
+    uint v50=uint(v48);
+    uint v51=uint(v49);
+    uint v52=v0+v50;
+    uint v53=v52+v51;
+    uint v54=uint(clif_u32(t,v53));
+    uint v55=uint(clif_view(v,(v1+uint(96u))));
+    uint v56=uint(16ul);
+    uint v57=uint(v55);
+    uint v58=uint(v56);
+    uint v59=v0+v57;
+    uint v60=v59+v58;
+    uint v61=uint(clif_u32(t,v60));
+    uint v62=v47+v54;
+    uint v63=v62+v61;
+    uint v64=v63*uint(8ul);
+    uint v65=uint(clif_view(v,(v1+uint(96u))));
+    uint v66=v65+v64;
+    uint v67=v66+uint(20ul);
+    ulong v68=ulong(v40);
+    ulong v69=ulong(v19);
+    ulong v70=v68*v69;
+    uint v71=uint((ulong)(v70)>>3u);
+    uint v72=uint(v71);
+    uint v73=uint(v67);
+    uint v74=uint(v72);
+    uint v75=v0+v73;
+    uint v76=v75+v74;
+    ulong v77=ulong(clif_u64(t,v76));
+    uint v78=uint(v70)&uint(7ul);
+    ulong v79=ulong((ulong)(v77)>>(uint(v78)&63u));
+    ulong v80=ulong(1ul);
+    ulong v81=ulong((ulong)(v80)<<(uint(v69)&63u));
+    ulong v82=v81+ulong(18446744073709551615ul);
+    ulong v83=v79&v82;
+    uchar v84=uchar((ulong)(v83)<(ulong)(v25));
+    uint v85=v40+uint(1ul);
+    uint v86=v84!=0?v85:v35;
+    uint v87=v84!=0?v36:v40;
+    {uint t0=v86;uint t1=v87;v35=t0;v36=t1;}
+    continue;
+   }else{
+    {uint t0=v35;v37=t0;}
+    break;
+   }
+  }
+  {uint t0=v37;v11=t0;}
+ }
+ return v11;
+}
+inline uint clif_tape_line_start_z(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ uint v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v4=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uchar v3=uchar((uint)(v2)==(uint)(uint(0ul)));
+ if(v3!=0){
+  uint v5=uint(0ul);
+  {uint t0=v5;v4=t0;}
+ }else{
+  uint v6=v2+uint(18446744073709551615ul);
+  uint v7=uint(1ul);
+  uint v8=clif_tape_line_select(t,v,v7,v6);
+  uint v9=v8-v6;
+  uint v10=uint(clif_view(v,(v1+uint(96u))));
+  uint v11=uint(4ul);
+  uint v12=uint(v10);
+  uint v13=uint(v11);
+  uint v14=v0+v12;
+  uint v15=v14+v13;
+  uint v16=uint(clif_u32(t,v15));
+  uint v17=uint((uint)(v9)<<(uint(v16)&31u));
+  uint v18=uint(clif_view(v,(v1+uint(96u))));
+  uint v19=uint(8ul);
+  uint v20=uint(v18);
+  uint v21=uint(v19);
+  uint v22=v0+v20;
+  uint v23=v22+v21;
+  uint v24=uint(clif_u32(t,v23));
+  uint v25=uint(clif_view(v,(v1+uint(96u))));
+  uint v26=uint(12ul);
+  uint v27=uint(v25);
+  uint v28=uint(v26);
+  uint v29=v0+v27;
+  uint v30=v29+v28;
+  uint v31=uint(clif_u32(t,v30));
+  uint v32=uint(clif_view(v,(v1+uint(96u))));
+  uint v33=uint(16ul);
+  uint v34=uint(v32);
+  uint v35=uint(v33);
+  uint v36=v0+v34;
+  uint v37=v36+v35;
+  uint v38=uint(clif_u32(t,v37));
+  uint v39=v24+v31;
+  uint v40=v39+v38;
+  uint v41=v40*uint(8ul);
+  uint v42=uint(clif_view(v,(v1+uint(96u))));
+  uint v43=v42+v41;
+  uint v44=v43+uint(20ul);
+  ulong v45=ulong(v6);
+  ulong v46=ulong(v16);
+  ulong v47=v45*v46;
+  uint v48=uint((ulong)(v47)>>3u);
+  uint v49=uint(v48);
+  uint v50=uint(v44);
+  uint v51=uint(v49);
+  uint v52=v0+v50;
+  uint v53=v52+v51;
+  ulong v54=ulong(clif_u64(t,v53));
+  uint v55=uint(v47)&uint(7ul);
+  uint v56=uint((ulong)(v54)>>(uint(v55)&63u));
+  uint v57=uint(1ul);
+  uint v58=((uint(uint(v46))&63u)<32u?uint(v57)<<(uint(uint(v46))&31u):0u);
+  uint v59=v58+uint(18446744073709551615ul);
+  uint v60=v56&v59;
+  uint v61=uint(v60);
+  uint v62=v17|v61;
+  uint v63=v62+uint(1ul);
+  {uint t0=v63;v4=t0;}
+ }
+ return v4;
+}
 __attribute__((noinline)) ulong clif_tape_f16_side(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
  uint v0=0;
  uint v1=0;
  uint v2=0;
  uint v3=0;
  ulong v6=0;
- uint v7=0;
- uint v9=0;
- ulong v12=0;
- uint v13=0;
- uint v14=0;
- ulong v16=0;
- uint v18=0;
- ulong v37=0;
- ulong v38=0;
- uint v42=0;
- uint v54=0;
+ uint v11=0;
+ uint v22=0;
+ uint v28=0;
+ uint v35=0;
+ uint v60=0;
  uint v61=0;
- uint v86=0;
- uint v87=0;
- uint v88=0;
- uint v89=0;
- uint v90=0;
- ulong v136=0;
- ulong v137=0;
- uint v147=0;
- uint v158=0;
- uint v165=0;
- uint v188=0;
- uint v189=0;
- uint v190=0;
- uint v191=0;
- uint v192=0;
+ uint v62=0;
+ uint v63=0;
+ uint v64=0;
  v0=0;
  v1=0;
  v2=a2;
@@ -99,276 +2101,120 @@ __attribute__((noinline)) ulong clif_tape_f16_side(device const uchar* t,CLIF_VI
  uint v4=uint(clif_view(v,(v1+uint(12u))));
  uchar v5=uchar((uint)(v4)==(uint)(uint(1016ul)));
  if(v5!=0){
-  v7=uint((uint)(v3)>>(uint(10)&31u));
-  uint v8=uint((uint)(v7)<<(uint(10)&31u));
-  v9=v3&uint(1023ul);
-  uint v10=uint(clif_view(v,(v1+uint(32u))));
-  ulong v11=ulong(v10);
-  v12=v11+ulong(18446744073709551615ul);
-  v13=uint(clif_view(v,(v1+uint(36u))));
-  uint v15=uint(0ul);
-  {uint t0=v15;v14=t0;}
-  while(true){
-   v16=clif_tape_z_block(t,v,v7);
-   ulong v17=v16+ulong(8ul);
-   v18=clif_ald(t,ulong(v17));
-   if(v13!=0){
-    clif_fence();
-    uint v19=uint(clif_view(v,(v1+uint(48u))));
-    uint v20=uint(clif_view(v,(v1+uint(52u))));
-    ulong v21=ulong(v19);
-    ulong v22=ulong(v20);
-    ulong v23=ulong((ulong)(v22)<<(uint(32)&63u));
-    ulong v24=v21|v23;
-    ulong v25=ulong((ulong)(v24)<<(uint(22)&63u));
-    ulong v26=ulong(v7);
-    ulong v27=v25|v26;
-    ulong v28=ulong(clif_c64(t,ulong(v16)));
-    uchar v29=uchar((ulong)(v28)==(ulong)(v27));
-    uint v30=v18&uint(2147483648ul);
-    uchar v31=uchar((uint)(v30)==(uint)(uint(0ul)));
-    uchar v32=uchar((uint)(v18)!=(uint)(uint(0ul)));
-    uchar v33=v29&v31;
-    uchar v34=v33&v32;
-    uchar v35=uchar((uint)(v14)>=(uint)(uint(4ul)));
-    uchar v36=v34|v35;
-    if(v36!=0){
-    }else{
-     uint v143=v14+uint(1ul);
-     {uint t0=v143;v14=t0;}
-     continue;
-    }
-   }else{
-   }
-   v37=v16+ulong(144ul);
-   v38=v16+ulong(16ul);
-   ulong v39=ulong(v2);
-   ulong v40=ulong((ulong)(v39)<<(uint(2)&63u));
-   ulong v41=v38+v40;
-   v42=uint(clif_c32(t,(ulong(v41)+ulong(long(40)))));
-   ulong v43=ulong(v2);
-   ulong v44=ulong((ulong)(v43)<<(uint(2)&63u));
-   ulong v45=v38+v44;
-   uint v46=uint(clif_c32(t,(ulong(v45)+ulong(long(56)))));
-   uint v47=uint((uint)(v9)>>(uint(10)&31u));
-   uint v48=v47*uint(4ul);
-   ulong v49=ulong(v46);
-   ulong v50=ulong(v48);
-   ulong v51=v49+v50;
-   ulong v52=v51&v12;
-   ulong v53=v37+v52;
-   v54=uint(clif_c32(t,ulong(v53)));
-   uint v55=uint(clif_c32(t,(ulong(v38)+ulong(long(4)))));
-   uint v56=v55+uint(255ul);
-   uint v57=uint((uint)(v56)>>(uint(8)&31u));
-   uint v58=v47*uint(4ul);
-   uint v59=v57-v58;
-   uint v60=uint(4ul);
-   v61=min(v60,v59);
-   uint v62=uint((uint)(v9)>>(uint(8)&31u));
-   uint v63=v62&uint(3ul);
-   uchar v64=uchar((uint)(v63)==(uint)(uint(0ul)));
-   uint v65=v63+uint(18446744073709551615ul);
-   uint v66=uint(0ul);
-   uint v67=v64!=0?v66:v65;
-   uint v68=v67*uint(2ul);
-   uint v69=v54+v68;
-   ulong v70=ulong(v42);
-   ulong v71=ulong(v69);
-   ulong v72=v70+v71;
-   ulong v73=v72&v12;
-   ulong v74=v37+v73;
-   uint v75=uint(clif_c16(t,ulong(v74)));
-   uint v76=v64!=0?v66:v75;
-   uint v77=v63*uint(2ul);
-   uint v78=v54+v77;
-   ulong v79=ulong(v42);
-   ulong v80=ulong(v78);
-   ulong v81=v79+v80;
-   ulong v82=v81&v12;
-   ulong v83=v37+v82;
-   uint v84=uint(clif_c16(t,ulong(v83)));
-   uint v85=v61*uint(2ul);
-   v86=v54+v85;
-   v87=v9&uint(255ul);
-   {uint t0=v76;uint t1=v84;v88=t0;v89=t1;}
-   while(true){
-    uchar v91=uchar((uint)(v88)<(uint)(v89));
-    if(v91!=0){
-     uint v92=v88+v89;
-     uint v93=uint((uint)(v92)>>(uint(1)&31u));
-     uint v94=v86+v93;
-     ulong v95=ulong(v42);
-     ulong v96=ulong(v94);
-     ulong v97=v95+v96;
-     ulong v98=v97&v12;
-     ulong v99=v37+v98;
-     uint v100=uint(clif_c8(t,ulong(v99)));
-     uchar v101=uchar((uint)(v100)<(uint)(v87));
-     uint v102=v93+uint(1ul);
-     uint v103=v101!=0?v102:v88;
-     uint v104=v101!=0?v89:v93;
-     {uint t0=v103;uint t1=v104;v88=t0;v89=t1;}
-     continue;
-    }else{
-     {uint t0=v88;v90=t0;}
-     break;
-    }
-   }
-   uint v105=v2*uint(4ul);
-   uint v106=v105+uint(16ul);
-   uint v107=uint(clif_c32(t,(ulong(v38)+ulong(long(16)))));
-   uint v108=uint((uint)(v107)>>(uint(v106)&31u));
-   uint v109=v108&uint(15ul);
-   uint v110=v61+uint(18446744073709551615ul);
-   uint v111=v110*uint(2ul);
-   uint v112=v54+v111;
-   ulong v113=ulong(v42);
-   ulong v114=ulong(v112);
-   ulong v115=v113+v114;
-   ulong v116=v115&v12;
-   ulong v117=v37+v116;
-   uint v118=uint(clif_c16(t,ulong(v117)));
-   uint v119=v86+v118;
-   uint v120=v90*v109;
-   uint v121=v119+v120;
-   ulong v122=ulong(v42);
-   ulong v123=ulong(v121);
-   ulong v124=v122+v123;
-   ulong v125=v124&v12;
-   ulong v126=v37+v125;
-   ulong v127=ulong(clif_c64(t,ulong(v126)));
-   uint v128=v109*uint(8ul);
-   ulong v129=ulong(1ul);
-   uint v130=uint(v128);
-   ulong v131=ulong((ulong)(v129)<<(uint(v130)&63u));
-   ulong v132=v131+ulong(18446744073709551615ul);
-   uchar v133=uchar((uint)(v109)>=(uint)(uint(8ul)));
-   ulong v134=ulong(18446744073709551615ul);
-   ulong v135=v133!=0?v134:v132;
-   v136=v127&v135;
-   if(v13!=0){
-    clif_fence();
-    ulong v138=v16+ulong(8ul);
-    uint v139=clif_ald(t,ulong(v138));
-    uchar v140=uchar((uint)(v18)==(uint)(v139));
-    uchar v141=uchar((uint)(v14)>=(uint)(uint(4ul)));
-    uchar v142=v140|v141;
-    if(v142!=0){
-     {ulong t0=v136;v137=t0;}
-     break;
-    }else{
-     uint v143=v14+uint(1ul);
-     {uint t0=v143;v14=t0;}
-     continue;
-    }
-   }else{
-    {ulong t0=v136;v137=t0;}
-    break;
-   }
-  }
-  {ulong t0=v137;v6=t0;}
+  ulong v7=clif_tape_f16_side_z(t,v,v2,v3);
+  {ulong t0=v7;v6=t0;}
  }else{
-  uint v144=uint(v2);
-  uint v145=((uint(2)&63u)<32u?uint(v144)<<(uint(2)&31u):0u);
-  uint v146=v1+v145;
-  v147=uint(clif_view(v,(v146+uint(40u))));
-  uint v148=uint(v2);
-  uint v149=((uint(2)&63u)<32u?uint(v148)<<(uint(2)&31u):0u);
-  uint v150=v1+v149;
-  uint v151=uint(clif_view(v,(v150+uint(56u))));
-  uint v152=uint((uint)(v3)>>(uint(10)&31u));
-  uint v153=v152*uint(4ul);
-  uint v154=uint(v151);
-  uint v155=uint(v153);
-  uint v156=v0+v154;
-  uint v157=v156+v155;
-  v158=uint(clif_u32(t,v157));
-  uint v159=uint(clif_view(v,(v1+uint(4u))));
-  uint v160=v159+uint(255ul);
-  uint v161=uint((uint)(v160)>>(uint(8)&31u));
-  uint v162=v152*uint(4ul);
-  uint v163=v161-v162;
-  uint v164=uint(4ul);
-  v165=min(v164,v163);
-  uint v166=uint((uint)(v3)>>(uint(8)&31u));
-  uint v167=v166&uint(3ul);
-  uchar v168=uchar((uint)(v167)==(uint)(uint(0ul)));
-  uint v169=v167+uint(18446744073709551615ul);
-  uint v170=uint(0ul);
-  uint v171=v168!=0?v170:v169;
-  uint v172=v171*uint(2ul);
-  uint v173=v158+v172;
-  uint v174=uint(v147);
-  uint v175=uint(v173);
-  uint v176=v0+v174;
-  uint v177=v176+v175;
-  uint v178=uint(clif_u16(t,v177));
-  uint v179=v168!=0?v170:v178;
-  uint v180=v167*uint(2ul);
-  uint v181=v158+v180;
-  uint v182=uint(v147);
-  uint v183=uint(v181);
-  uint v184=v0+v182;
-  uint v185=v184+v183;
-  uint v186=uint(clif_u16(t,v185));
-  uint v187=v165*uint(2ul);
-  v188=v158+v187;
-  v189=v3&uint(255ul);
-  {uint t0=v179;uint t1=v186;v190=t0;v191=t1;}
+  uint v8=uint(v2);
+  uint v9=((uint(2)&63u)<32u?uint(v8)<<(uint(2)&31u):0u);
+  uint v10=v1+v9;
+  v11=uint(clif_view(v,(v10+uint(44u))));
+  uint v12=uint(v2);
+  uint v13=((uint(2)&63u)<32u?uint(v12)<<(uint(2)&31u):0u);
+  uint v14=v1+v13;
+  uint v15=uint(clif_view(v,(v14+uint(60u))));
+  uint v16=uint((uint)(v3)>>(uint(10)&31u));
+  uint v17=v16*uint(4ul);
+  uint v18=uint(v15);
+  uint v19=uint(v17);
+  uint v20=v0+v18;
+  uint v21=v20+v19;
+  v22=uint(clif_u32(t,v21));
+  uint v23=v17+uint(4ul);
+  uint v24=uint(v15);
+  uint v25=uint(v23);
+  uint v26=v0+v24;
+  uint v27=v26+v25;
+  v28=uint(clif_u32(t,v27));
+  uint v29=uint(clif_view(v,(v1+uint(4u))));
+  uint v30=v29+uint(255ul);
+  uint v31=uint((uint)(v30)>>(uint(8)&31u));
+  uint v32=v16*uint(4ul);
+  uint v33=v31-v32;
+  uint v34=uint(4ul);
+  v35=min(v34,v33);
+  uint v36=uint((uint)(v3)>>(uint(8)&31u));
+  uint v37=v36&uint(3ul);
+  uchar v38=uchar((uint)(v37)==(uint)(uint(0ul)));
+  uint v39=v37+uint(18446744073709551615ul);
+  uint v40=uint(0ul);
+  uint v41=v38!=0?v40:v39;
+  uint v42=v41*uint(2ul);
+  uint v43=v22+v42;
+  uint v44=min(v43,v28);
+  uint v45=uint(v11);
+  uint v46=uint(v44);
+  uint v47=v0+v45;
+  uint v48=v47+v46;
+  uint v49=uint(clif_u16(t,v48));
+  uint v50=v38!=0?v40:v49;
+  uint v51=v37*uint(2ul);
+  uint v52=v22+v51;
+  uint v53=min(v52,v28);
+  uint v54=uint(v11);
+  uint v55=uint(v53);
+  uint v56=v0+v54;
+  uint v57=v56+v55;
+  uint v58=uint(clif_u16(t,v57));
+  uint v59=v35*uint(2ul);
+  v60=v22+v59;
+  v61=v3&uint(255ul);
+  {uint t0=v50;uint t1=v58;v62=t0;v63=t1;}
   while(true){
-   uchar v193=uchar((uint)(v190)<(uint)(v191));
-   if(v193!=0){
-    uint v194=v190+v191;
-    uint v195=uint((uint)(v194)>>(uint(1)&31u));
-    uint v196=v188+v195;
-    uint v197=uint(v147);
-    uint v198=uint(v196);
-    uint v199=v0+v197;
-    uint v200=v199+v198;
-    uint v201=uint(clif_u8(t,v200));
-    uchar v202=uchar((uint)(v201)<(uint)(v189));
-    uint v203=v195+uint(1ul);
-    uint v204=v202!=0?v203:v190;
-    uint v205=v202!=0?v191:v195;
-    {uint t0=v204;uint t1=v205;v190=t0;v191=t1;}
+   uchar v65=uchar((uint)(v62)<(uint)(v63));
+   if(v65!=0){
+    uint v66=v62+v63;
+    uint v67=uint((uint)(v66)>>(uint(1)&31u));
+    uint v68=v60+v67;
+    uint v69=min(v68,v28);
+    uint v70=uint(v11);
+    uint v71=uint(v69);
+    uint v72=v0+v70;
+    uint v73=v72+v71;
+    uint v74=uint(clif_u8(t,v73));
+    uchar v75=uchar((uint)(v74)<(uint)(v61));
+    uint v76=v67+uint(1ul);
+    uint v77=v75!=0?v76:v62;
+    uint v78=v75!=0?v63:v67;
+    {uint t0=v77;uint t1=v78;v62=t0;v63=t1;}
     continue;
    }else{
-    {uint t0=v190;v192=t0;}
+    {uint t0=v62;v64=t0;}
     break;
    }
   }
-  uint v206=v2*uint(4ul);
-  uint v207=v206+uint(16ul);
-  uint v208=uint(clif_view(v,(v1+uint(16u))));
-  uint v209=uint((uint)(v208)>>(uint(v207)&31u));
-  uint v210=v209&uint(15ul);
-  uint v211=v165+uint(18446744073709551615ul);
-  uint v212=v211*uint(2ul);
-  uint v213=v158+v212;
-  uint v214=uint(v147);
-  uint v215=uint(v213);
-  uint v216=v0+v214;
-  uint v217=v216+v215;
-  uint v218=uint(clif_u16(t,v217));
-  uint v219=v188+v218;
-  uint v220=v192*v210;
-  uint v221=v219+v220;
-  uint v222=uint(v147);
-  uint v223=uint(v221);
-  uint v224=v0+v222;
-  uint v225=v224+v223;
-  ulong v226=ulong(clif_u64(t,v225));
-  uint v227=v210*uint(8ul);
-  ulong v228=ulong(1ul);
-  uint v229=uint(v227);
-  ulong v230=ulong((ulong)(v228)<<(uint(v229)&63u));
-  ulong v231=v230+ulong(18446744073709551615ul);
-  uchar v232=uchar((uint)(v210)>=(uint)(uint(8ul)));
-  ulong v233=ulong(18446744073709551615ul);
-  ulong v234=v232!=0?v233:v231;
-  ulong v235=v226&v234;
-  {ulong t0=v235;v6=t0;}
+  uint v79=v2*uint(4ul);
+  uint v80=v79+uint(16ul);
+  uint v81=uint(clif_view(v,(v1+uint(16u))));
+  uint v82=uint((uint)(v81)>>(uint(v80)&31u));
+  uint v83=v82&uint(15ul);
+  uint v84=v35+uint(18446744073709551615ul);
+  uint v85=v84*uint(2ul);
+  uint v86=v22+v85;
+  uint v87=min(v86,v28);
+  uint v88=uint(v11);
+  uint v89=uint(v87);
+  uint v90=v0+v88;
+  uint v91=v90+v89;
+  uint v92=uint(clif_u16(t,v91));
+  uint v93=v60+v92;
+  uint v94=v64*v83;
+  uint v95=v93+v94;
+  uint v96=min(v95,v28);
+  uint v97=uint(v11);
+  uint v98=uint(v96);
+  uint v99=v0+v97;
+  uint v100=v99+v98;
+  ulong v101=ulong(clif_u64(t,v100));
+  uint v102=v83*uint(8ul);
+  ulong v103=ulong(1ul);
+  uint v104=uint(v102);
+  ulong v105=ulong((ulong)(v103)<<(uint(v104)&63u));
+  ulong v106=v105+ulong(18446744073709551615ul);
+  uchar v107=uchar((uint)(v83)>=(uint)(uint(8ul)));
+  ulong v108=ulong(18446744073709551615ul);
+  ulong v109=v107!=0?v108:v106;
+  ulong v110=v101&v109;
+  {ulong t0=v110;v6=t0;}
  }
  return v6;
 }
@@ -378,23 +2224,11 @@ inline uint clif_tape_size(device const uchar* t,CLIF_VIEW_SPACE const uint* v,u
  uint v2=0;
  uint v3=0;
  uint v5=0;
- ulong v24=0;
- ulong v26=0;
- uint v36=0;
- uint v37=0;
- uint v38=0;
- uint v39=0;
- ulong v42=0;
- uint v43=0;
- uint v44=0;
- ulong v46=0;
- uint v48=0;
- ulong v88=0;
- ulong v90=0;
- uint v99=0;
- uint v100=0;
- uint v107=0;
- uint v112=0;
+ ulong v37=0;
+ ulong v39=0;
+ uint v50=0;
+ uint v52=0;
+ uint v57=0;
  v0=0;
  v1=0;
  v2=a2;
@@ -404,167 +2238,84 @@ inline uint clif_tape_size(device const uchar* t,CLIF_VIEW_SPACE const uint* v,u
   uint v6=uint(clif_view(v,(v1+uint(16u))));
   uint v7=uint((uint)(v6)>>(uint(0)&31u));
   uint v8=v7&uint(15ul);
-  uint v9=uint(clif_view(v,(v1+uint(24u))));
-  uint v10=v2*v8;
-  uint v11=uint(v9);
-  uint v12=uint(v10);
-  uint v13=v0+v11;
-  uint v14=v13+v12;
-  ulong v15=ulong(clif_u64(t,v14));
-  uint v16=v8*uint(8ul);
-  ulong v17=ulong(1ul);
-  uint v18=uint(v16);
-  ulong v19=ulong((ulong)(v17)<<(uint(v18)&63u));
-  ulong v20=v19+ulong(18446744073709551615ul);
-  uchar v21=uchar((uint)(v8)>=(uint)(uint(8ul)));
-  ulong v22=ulong(18446744073709551615ul);
-  ulong v23=v21!=0?v22:v20;
-  v24=v15&v23;
-  uchar v25=uchar((ulong)(v24)==(ulong)(v23));
-  if(v25!=0){
-   uint v27=uint(1ul);
-   ulong v28=clif_tape_f16_side(t,v,v27,v2);
-   {ulong t0=v28;v26=t0;}
+  uint v9=uint((uint)(v2)>>(uint(10)&31u));
+  uint v10=v2&uint(1023ul);
+  uint v11=uint(clif_view(v,(v1+uint(20u))));
+  uint v12=uint(clif_view(v,(v1+uint(40u))));
+  uint v13=v9*v12;
+  uint v14=v13+v11;
+  uint v15=uint(clif_view(v,(v1+uint(4u))));
+  uint v16=uint((uint)(v9)<<(uint(10)&31u));
+  uint v17=v15-v16;
+  uint v18=uint(1024ul);
+  uint v19=min(v17,v18);
+  uint v20=uint(clif_view(v,(v1+uint(24u))));
+  uint v21=v19*v20;
+  uint v22=v14+v21;
+  uint v23=v10*v8;
+  uint v24=uint(v22);
+  uint v25=uint(v23);
+  uint v26=v0+v24;
+  uint v27=v26+v25;
+  ulong v28=ulong(clif_u64(t,v27));
+  uint v29=v8*uint(8ul);
+  ulong v30=ulong(1ul);
+  uint v31=uint(v29);
+  ulong v32=ulong((ulong)(v30)<<(uint(v31)&63u));
+  ulong v33=v32+ulong(18446744073709551615ul);
+  uchar v34=uchar((uint)(v8)>=(uint)(uint(8ul)));
+  ulong v35=ulong(18446744073709551615ul);
+  ulong v36=v34!=0?v35:v33;
+  v37=v28&v36;
+  uchar v38=uchar((ulong)(v37)==(ulong)(v36));
+  if(v38!=0){
+   uint v40=uint(1ul);
+   ulong v41=clif_tape_f16_side(t,v,v40,v2);
+   {ulong t0=v41;v39=t0;}
   }else{
-   {ulong t0=v24;v26=t0;}
+   {ulong t0=v37;v39=t0;}
   }
-  ulong v29=v26&ulong(1ul);
-  uchar v30=uchar((ulong)(v29)!=(ulong)(ulong(0ul)));
-  uint v31=uint((ulong)(v26)>>1u);
-  uint v32=uint(v31);
-  uint v33=uint(1ul);
-  uint v34=v30!=0?v33:v32;
-  {uint t0=v34;v5=t0;}
+  ulong v42=v39&ulong(1ul);
+  uchar v43=uchar((ulong)(v42)!=(ulong)(ulong(0ul)));
+  uint v44=uint((ulong)(v39)>>1u);
+  uint v45=uint(v44);
+  uint v46=uint(1ul);
+  uint v47=max(v45,v46);
+  uint v48=v43!=0?v46:v47;
+  {uint t0=v48;v5=t0;}
  }else{
-  uchar v35=uchar((uint)(v3)==(uint)(uint(1016ul)));
-  if(v35!=0){
-   v37=uint((uint)(v2)>>(uint(10)&31u));
-   v38=uint((uint)(v37)<<(uint(10)&31u));
-   v39=v2&uint(1023ul);
-   uint v40=uint(clif_view(v,(v1+uint(32u))));
-   ulong v41=ulong(v40);
-   v42=v41+ulong(18446744073709551615ul);
-   v43=uint(clif_view(v,(v1+uint(36u))));
-   uint v45=uint(0ul);
-   {uint t0=v45;v44=t0;}
-   while(true){
-    v46=clif_tape_z_block(t,v,v37);
-    ulong v47=v46+ulong(8ul);
-    v48=clif_ald(t,ulong(v47));
-    if(v43!=0){
-     clif_fence();
-     uint v49=uint(clif_view(v,(v1+uint(48u))));
-     uint v50=uint(clif_view(v,(v1+uint(52u))));
-     ulong v51=ulong(v49);
-     ulong v52=ulong(v50);
-     ulong v53=ulong((ulong)(v52)<<(uint(32)&63u));
-     ulong v54=v51|v53;
-     ulong v55=ulong((ulong)(v54)<<(uint(22)&63u));
-     ulong v56=ulong(v37);
-     ulong v57=v55|v56;
-     ulong v58=ulong(clif_c64(t,ulong(v46)));
-     uchar v59=uchar((ulong)(v58)==(ulong)(v57));
-     uint v60=v48&uint(2147483648ul);
-     uchar v61=uchar((uint)(v60)==(uint)(uint(0ul)));
-     uchar v62=uchar((uint)(v48)!=(uint)(uint(0ul)));
-     uchar v63=v59&v61;
-     uchar v64=v63&v62;
-     uchar v65=uchar((uint)(v44)>=(uint)(uint(4ul)));
-     uchar v66=v64|v65;
-     if(v66!=0){
-     }else{
-      uint v106=v44+uint(1ul);
-      {uint t0=v106;v44=t0;}
-      continue;
-     }
-    }else{
-    }
-    ulong v67=v46+ulong(144ul);
-    ulong v68=v46+ulong(16ul);
-    uint v69=uint(clif_c32(t,(ulong(v68)+ulong(long(16)))));
-    uint v70=uint((uint)(v69)>>(uint(0)&31u));
-    uint v71=v70&uint(15ul);
-    uint v72=uint(clif_c32(t,(ulong(v68)+ulong(long(24)))));
-    uint v73=v39*v71;
-    ulong v74=ulong(v72);
-    ulong v75=ulong(v73);
-    ulong v76=v74+v75;
-    ulong v77=v76&v42;
-    ulong v78=v67+v77;
-    ulong v79=ulong(clif_c64(t,ulong(v78)));
-    uint v80=v71*uint(8ul);
-    ulong v81=ulong(1ul);
-    uint v82=uint(v80);
-    ulong v83=ulong((ulong)(v81)<<(uint(v82)&63u));
-    ulong v84=v83+ulong(18446744073709551615ul);
-    uchar v85=uchar((uint)(v71)>=(uint)(uint(8ul)));
-    ulong v86=ulong(18446744073709551615ul);
-    ulong v87=v85!=0?v86:v84;
-    v88=v79&v87;
-    uchar v89=uchar((ulong)(v88)==(ulong)(v87));
-    if(v89!=0){
-     uint v91=uint(1ul);
-     uint v92=v39+v38;
-     ulong v93=clif_tape_f16_side(t,v,v91,v92);
-     {ulong t0=v93;v90=t0;}
-    }else{
-     {ulong t0=v88;v90=t0;}
-    }
-    ulong v94=v90&ulong(1ul);
-    uchar v95=uchar((ulong)(v94)!=(ulong)(ulong(0ul)));
-    uint v96=uint((ulong)(v90)>>1u);
-    uint v97=uint(v96);
-    uint v98=uint(1ul);
-    v99=v95!=0?v98:v97;
-    if(v43!=0){
-     clif_fence();
-     ulong v101=v46+ulong(8ul);
-     uint v102=clif_ald(t,ulong(v101));
-     uchar v103=uchar((uint)(v48)==(uint)(v102));
-     uchar v104=uchar((uint)(v44)>=(uint)(uint(4ul)));
-     uchar v105=v103|v104;
-     if(v105!=0){
-      {uint t0=v99;v100=t0;}
-      break;
-     }else{
-      uint v106=v44+uint(1ul);
-      {uint t0=v106;v44=t0;}
-      continue;
-     }
-    }else{
-     {uint t0=v99;v100=t0;}
-     break;
-    }
-   }
-   {uint t0=v100;v36=t0;}
+  uchar v49=uchar((uint)(v3)==(uint)(uint(1016ul)));
+  if(v49!=0){
+   uint v51=clif_tape_size_z(t,v,v2);
+   {uint t0=v51;v50=t0;}
   }else{
-   v107=uint(clif_view(v,(v1+uint(24u))));
-   uint v108=uint(clif_view(v,(v1+uint(16u))));
-   uint v109=uint((uint)(v108)>>(uint(0)&31u));
-   uint v110=v109&uint(15ul);
-   uchar v111=uchar((uint)(v110)==(uint)(uint(2ul)));
-   if(v111!=0){
-    uint v113=v2*uint(2ul);
-    uint v114=uint(v107);
-    uint v115=uint(v113);
-    uint v116=v0+v114;
-    uint v117=v116+v115;
-    uint v118=uint(clif_u16(t,v117));
-    {uint t0=v118;v112=t0;}
+   v52=uint(clif_view(v,(v1+uint(24u))));
+   uint v53=uint(clif_view(v,(v1+uint(16u))));
+   uint v54=uint((uint)(v53)>>(uint(0)&31u));
+   uint v55=v54&uint(15ul);
+   uchar v56=uchar((uint)(v55)==(uint)(uint(2ul)));
+   if(v56!=0){
+    uint v58=v2*uint(2ul);
+    uint v59=uint(v52);
+    uint v60=uint(v58);
+    uint v61=v0+v59;
+    uint v62=v61+v60;
+    uint v63=uint(clif_u16(t,v62));
+    {uint t0=v63;v57=t0;}
    }else{
-    uint v119=v2*uint(4ul);
-    uint v120=uint(v107);
-    uint v121=uint(v119);
-    uint v122=v0+v120;
-    uint v123=v122+v121;
-    uint v124=uint(clif_u32(t,v123));
-    {uint t0=v124;v112=t0;}
+    uint v64=v2*uint(4ul);
+    uint v65=uint(v52);
+    uint v66=uint(v64);
+    uint v67=v0+v65;
+    uint v68=v67+v66;
+    uint v69=uint(clif_u32(t,v68));
+    {uint t0=v69;v57=t0;}
    }
-   uint v125=uint(1ul);
-   uint v126=max(v112,v125);
-   {uint t0=v126;v36=t0;}
+   uint v70=uint(1ul);
+   uint v71=max(v57,v70);
+   {uint t0=v71;v50=t0;}
   }
-  {uint t0=v36;v5=t0;}
+  {uint t0=v50;v5=t0;}
  }
  return v5;
 }
@@ -574,195 +2325,81 @@ inline uint clif_tape_number(device const uchar* t,CLIF_VIEW_SPACE const uint* v
  uint v2=0;
  uint v3=0;
  uint v5=0;
- uint v11=0;
- uint v12=0;
- uint v14=0;
- uint v24=0;
- uint v25=0;
- uint v26=0;
- uint v27=0;
- ulong v30=0;
- uint v31=0;
- uint v32=0;
- ulong v34=0;
- uint v36=0;
- ulong v56=0;
- uint v63=0;
- uint v64=0;
- uint v66=0;
- uint v76=0;
+ uint v16=0;
+ uint v17=0;
+ uint v19=0;
+ uint v29=0;
  v0=0;
  v1=0;
  v2=a2;
  v3=uint(clif_view(v,(v1+uint(12u))));
  uchar v4=uchar((uint)(v3)==(uint)(uint(16ul)));
  if(v4!=0){
-  uint v6=uint(clif_view(v,(v1+uint(20u))));
-  uint v7=uint(v6);
-  uint v8=uint(v2);
-  uint v9=v0+v7;
-  uint v10=v9+v8;
-  v11=uint(clif_u8(t,v10));
-  v12=uint(clif_view(v,(v1+uint(72u))));
-  uchar v13=uchar((uint)(v11)<(uint)(v12));
-  if(v13!=0){
-   {uint t0=v11;v14=t0;}
+  uint v6=uint((uint)(v2)>>(uint(10)&31u));
+  uint v7=v2&uint(1023ul);
+  uint v8=uint(clif_view(v,(v1+uint(20u))));
+  uint v9=uint(clif_view(v,(v1+uint(40u))));
+  uint v10=v6*v9;
+  uint v11=v10+v8;
+  uint v12=uint(v11);
+  uint v13=uint(v7);
+  uint v14=v0+v12;
+  uint v15=v14+v13;
+  v16=uint(clif_u8(t,v15));
+  v17=uint(clif_view(v,(v1+uint(76u))));
+  uchar v18=uchar((uint)(v16)<(uint)(v17));
+  if(v18!=0){
+   {uint t0=v16;v19=t0;}
   }else{
-   uint v15=uint(clif_view(v,(v1+uint(76u))));
-   uint v16=v11-v12;
-   uint v17=v16*v15;
-   uint v18=uint(0ul);
-   uint v19=clif_tape_f16_side(t,v,v18,v2);
-   uint v20=uint(v19);
-   uint v21=v12+v17;
-   uint v22=v21+v20;
-   {uint t0=v22;v14=t0;}
+   uint v20=uint(clif_view(v,(v1+uint(80u))));
+   uint v21=v16-v17;
+   uint v22=v21*v20;
+   uint v23=uint(0ul);
+   uint v24=clif_tape_f16_side(t,v,v23,v2);
+   uint v25=uint(v24);
+   uint v26=v17+v22;
+   uint v27=v26+v25;
+   {uint t0=v27;v19=t0;}
   }
-  {uint t0=v14;v5=t0;}
+  {uint t0=v19;v5=t0;}
  }else{
-  uchar v23=uchar((uint)(v3)==(uint)(uint(1016ul)));
-  if(v23!=0){
-   v25=uint((uint)(v2)>>(uint(10)&31u));
-   v26=uint((uint)(v25)<<(uint(10)&31u));
-   v27=v2&uint(1023ul);
-   uint v28=uint(clif_view(v,(v1+uint(32u))));
-   ulong v29=ulong(v28);
-   v30=v29+ulong(18446744073709551615ul);
-   v31=uint(clif_view(v,(v1+uint(36u))));
-   uint v33=uint(0ul);
-   {uint t0=v33;v32=t0;}
-   while(true){
-    v34=clif_tape_z_block(t,v,v25);
-    ulong v35=v34+ulong(8ul);
-    v36=clif_ald(t,ulong(v35));
-    if(v31!=0){
-     clif_fence();
-     uint v37=uint(clif_view(v,(v1+uint(48u))));
-     uint v38=uint(clif_view(v,(v1+uint(52u))));
-     ulong v39=ulong(v37);
-     ulong v40=ulong(v38);
-     ulong v41=ulong((ulong)(v40)<<(uint(32)&63u));
-     ulong v42=v39|v41;
-     ulong v43=ulong((ulong)(v42)<<(uint(22)&63u));
-     ulong v44=ulong(v25);
-     ulong v45=v43|v44;
-     ulong v46=ulong(clif_c64(t,ulong(v34)));
-     uchar v47=uchar((ulong)(v46)==(ulong)(v45));
-     uint v48=v36&uint(2147483648ul);
-     uchar v49=uchar((uint)(v48)==(uint)(uint(0ul)));
-     uchar v50=uchar((uint)(v36)!=(uint)(uint(0ul)));
-     uchar v51=v47&v49;
-     uchar v52=v51&v50;
-     uchar v53=uchar((uint)(v32)>=(uint)(uint(4ul)));
-     uchar v54=v52|v53;
-     if(v54!=0){
-     }else{
-      uint v82=v32+uint(1ul);
-      {uint t0=v82;v32=t0;}
-      continue;
-     }
-    }else{
-    }
-    ulong v55=v34+ulong(144ul);
-    v56=v34+ulong(16ul);
-    uint v57=uint(clif_c32(t,(ulong(v56)+ulong(long(20)))));
-    ulong v58=ulong(v57);
-    ulong v59=ulong(v27);
-    ulong v60=v58+v59;
-    ulong v61=v60&v30;
-    ulong v62=v55+v61;
-    v63=uint(clif_c8(t,ulong(v62)));
-    v64=uint(clif_c32(t,(ulong(v56)+ulong(long(72)))));
-    uchar v65=uchar((uint)(v63)<(uint)(v64));
-    if(v65!=0){
-     {uint t0=v63;v66=t0;}
-    }else{
-     uint v67=uint(clif_c32(t,(ulong(v56)+ulong(long(76)))));
-     uint v68=v63-v64;
-     uint v69=v68*v67;
-     uint v70=uint(0ul);
-     uint v71=v27+v26;
-     uint v72=clif_tape_f16_side(t,v,v70,v71);
-     uint v73=uint(v72);
-     uint v74=v64+v69;
-     uint v75=v74+v73;
-     {uint t0=v75;v66=t0;}
-    }
-    if(v31!=0){
-     clif_fence();
-     ulong v77=v34+ulong(8ul);
-     uint v78=clif_ald(t,ulong(v77));
-     uchar v79=uchar((uint)(v36)==(uint)(v78));
-     uchar v80=uchar((uint)(v32)>=(uint)(uint(4ul)));
-     uchar v81=v79|v80;
-     if(v81!=0){
-      {uint t0=v66;v76=t0;}
-      break;
-     }else{
-      uint v82=v32+uint(1ul);
-      {uint t0=v82;v32=t0;}
-      continue;
-     }
-    }else{
-     {uint t0=v66;v76=t0;}
-     break;
-    }
-   }
-   {uint t0=v76;v24=t0;}
+  uchar v28=uchar((uint)(v3)==(uint)(uint(1016ul)));
+  if(v28!=0){
+   uint v30=clif_tape_number_z(t,v,v2);
+   {uint t0=v30;v29=t0;}
   }else{
-   uint v83=uint(clif_view(v,(v1+uint(20u))));
-   uint v84=v2*uint(2ul);
-   uint v85=uint(v83);
-   uint v86=uint(v84);
-   uint v87=v0+v85;
-   uint v88=v87+v86;
-   uint v89=uint(clif_u16(t,v88));
-   {uint t0=v89;v24=t0;}
+   uint v31=uint(clif_view(v,(v1+uint(20u))));
+   uint v32=v2*uint(2ul);
+   uint v33=uint(v31);
+   uint v34=uint(v32);
+   uint v35=v0+v33;
+   uint v36=v35+v34;
+   uint v37=uint(clif_u16(t,v36));
+   {uint t0=v37;v29=t0;}
   }
-  {uint t0=v24;v5=t0;}
+  {uint t0=v29;v5=t0;}
  }
  return v5;
 }
-inline uint clif_tape_start(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+inline uint clif_tape_start_stated(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
  uint v0=0;
  uint v1=0;
  uint v2=0;
  uint v3=0;
  uint v5=0;
- uint v25=0;
- uint v26=0;
- uint v27=0;
- uint v28=0;
- uint v29=0;
- uint v30=0;
- ulong v47=0;
- ulong v87=0;
- uint v89=0;
- uint v96=0;
- uint v97=0;
- uint v98=0;
- uint v99=0;
- ulong v102=0;
- uint v103=0;
- uint v104=0;
- ulong v106=0;
- uint v108=0;
- ulong v127=0;
- ulong v128=0;
- uint v149=0;
+ uint v38=0;
+ uint v39=0;
+ uint v40=0;
+ uint v41=0;
+ uint v42=0;
+ uint v43=0;
+ ulong v73=0;
+ ulong v126=0;
+ uint v128=0;
+ uint v135=0;
+ uint v144=0;
+ uint v145=0;
  uint v150=0;
- uint v151=0;
- uint v152=0;
- uint v153=0;
- uint v154=0;
- ulong v172=0;
- ulong v213=0;
- uint v215=0;
- uint v221=0;
- uint v222=0;
- uint v236=0;
- uint v237=0;
- uint v242=0;
  v0=0;
  v1=0;
  v2=a2;
@@ -773,618 +2410,381 @@ inline uint clif_tape_start(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
   uint v7=uint(clif_view(v,(v1+uint(16u))));
   uint v8=uint((uint)(v7)>>(uint(12)&31u));
   uint v9=v8&uint(15ul);
-  uint v10=uint(clif_view(v,(v1+uint(36u))));
-  uint v11=v6*v9;
-  uint v12=uint(v10);
-  uint v13=uint(v11);
-  uint v14=v0+v12;
-  uint v15=v14+v13;
-  uint v16=uint(clif_u32(t,v15));
-  uint v17=v9*uint(8ul);
-  uint v18=uint(1ul);
-  uint v19=uint(v17);
-  uint v20=((uint(v19)&63u)<32u?uint(v18)<<(uint(v19)&31u):0u);
-  uint v21=v20+uint(18446744073709551615ul);
-  uchar v22=uchar((uint)(v9)>=(uint)(uint(8ul)));
-  uint v23=uint(18446744073709551615ul);
-  uint v24=v22!=0?v23:v21;
-  v25=v16&v24;
-  v26=v6*uint(8ul);
-  v27=v2-v26;
-  if(v27!=0){
-   uint v31=uint(clif_view(v,(v1+uint(16u))));
-   uint v32=uint((uint)(v31)>>(uint(4)&31u));
-   uint v33=v32&uint(15ul);
-   uchar v34=uchar((uint)(v33)==(uint)(uint(1ul)));
-   if(v34!=0){
-    uint v35=uint(clif_view(v,(v1+uint(28u))));
-    uint v36=uint(v35);
-    uint v37=uint(v26);
-    uint v38=v0+v36;
-    uint v39=v38+v37;
-    ulong v40=ulong(clif_u64(t,v39));
-    ulong v41=ulong(18446744073709551615ul);
-    uint v42=uint(7ul)-v27;
-    uint v43=v42*uint(8ul);
-    uint v44=uint(v43);
-    ulong v45=ulong((ulong)(v41)>>(uint(v44)&63u));
-    ulong v46=v45&ulong(18446744073709551360ul);
-    v47=v40&v46;
-    ulong v48=~v47;
-    ulong v49=v48&ulong(9187201950435737471ul);
-    ulong v50=v49+ulong(9187201950435737471ul);
-    ulong v51=v50|v48;
-    ulong v52=~v51;
-    ulong v53=v52&ulong(9259542123273814144ul);
-    ulong v54=v53&v46;
-    if(v54!=0){
-     uint v67=v26+uint(1ul);
-     {uint t0=v67;uint t1=v25;v28=t0;v29=t1;}
+  uint v10=uint((uint)(v6)>>(uint(7)&31u));
+  uint v11=uint(clif_view(v,(v1+uint(20u))));
+  uint v12=uint(clif_view(v,(v1+uint(40u))));
+  uint v13=v10*v12;
+  uint v14=v13+v11;
+  uint v15=uint(clif_view(v,(v1+uint(4u))));
+  uint v16=uint((uint)(v10)<<(uint(10)&31u));
+  uint v17=v15-v16;
+  uint v18=uint(1024ul);
+  uint v19=min(v17,v18);
+  uint v20=uint(clif_view(v,(v1+uint(36u))));
+  uint v21=v19*v20;
+  uint v22=v14+v21;
+  uint v23=v6&uint(127ul);
+  uint v24=v23*v9;
+  uint v25=uint(v22);
+  uint v26=uint(v24);
+  uint v27=v0+v25;
+  uint v28=v27+v26;
+  uint v29=uint(clif_u32(t,v28));
+  uint v30=v9*uint(8ul);
+  uint v31=uint(1ul);
+  uint v32=uint(v30);
+  uint v33=((uint(v32)&63u)<32u?uint(v31)<<(uint(v32)&31u):0u);
+  uint v34=v33+uint(18446744073709551615ul);
+  uchar v35=uchar((uint)(v9)>=(uint)(uint(8ul)));
+  uint v36=uint(18446744073709551615ul);
+  uint v37=v35!=0?v36:v34;
+  v38=v29&v37;
+  v39=v6*uint(8ul);
+  v40=v2-v39;
+  if(v40!=0){
+   uint v44=uint(clif_view(v,(v1+uint(16u))));
+   uint v45=uint((uint)(v44)>>(uint(4)&31u));
+   uint v46=v45&uint(15ul);
+   uchar v47=uchar((uint)(v46)==(uint)(uint(1ul)));
+   if(v47!=0){
+    uint v48=uint((uint)(v39)>>(uint(10)&31u));
+    uint v49=v39&uint(1023ul);
+    uint v50=uint(clif_view(v,(v1+uint(20u))));
+    uint v51=uint(clif_view(v,(v1+uint(40u))));
+    uint v52=v48*v51;
+    uint v53=v52+v50;
+    uint v54=uint(clif_view(v,(v1+uint(4u))));
+    uint v55=uint((uint)(v48)<<(uint(10)&31u));
+    uint v56=v54-v55;
+    uint v57=uint(1024ul);
+    uint v58=min(v56,v57);
+    uint v59=uint(clif_view(v,(v1+uint(28u))));
+    uint v60=v58*v59;
+    uint v61=v53+v60;
+    uint v62=uint(v61);
+    uint v63=uint(v49);
+    uint v64=v0+v62;
+    uint v65=v64+v63;
+    ulong v66=ulong(clif_u64(t,v65));
+    ulong v67=ulong(18446744073709551615ul);
+    uint v68=uint(7ul)-v40;
+    uint v69=v68*uint(8ul);
+    uint v70=uint(v69);
+    ulong v71=ulong((ulong)(v67)>>(uint(v70)&63u));
+    ulong v72=v71&ulong(18446744073709551360ul);
+    v73=v66&v72;
+    ulong v74=~v73;
+    ulong v75=v74&ulong(9187201950435737471ul);
+    ulong v76=v75+ulong(9187201950435737471ul);
+    ulong v77=v76|v74;
+    ulong v78=~v77;
+    ulong v79=v78&ulong(9259542123273814144ul);
+    ulong v80=v79&v72;
+    if(v80!=0){
+     uint v93=v39+uint(1ul);
+     {uint t0=v93;uint t1=v38;v41=t0;v42=t1;}
      while(true){
-      uchar v68=uchar((uint)(v28)<=(uint)(v2));
-      if(v68!=0){
-       uint v69=uint(clif_view(v,(v1+uint(16u))));
-       uint v70=uint((uint)(v69)>>(uint(4)&31u));
-       uint v71=v70&uint(15ul);
-       uint v72=uint(clif_view(v,(v1+uint(28u))));
-       uint v73=v28*v71;
-       uint v74=uint(v72);
-       uint v75=uint(v73);
-       uint v76=v0+v74;
-       uint v77=v76+v75;
-       ulong v78=ulong(clif_u64(t,v77));
-       uint v79=v71*uint(8ul);
-       ulong v80=ulong(1ul);
-       uint v81=uint(v79);
-       ulong v82=ulong((ulong)(v80)<<(uint(v81)&63u));
-       ulong v83=v82+ulong(18446744073709551615ul);
-       uchar v84=uchar((uint)(v71)>=(uint)(uint(8ul)));
-       ulong v85=ulong(18446744073709551615ul);
-       ulong v86=v84!=0?v85:v83;
-       v87=v78&v86;
-       uchar v88=uchar((ulong)(v87)==(ulong)(v86));
-       if(v88!=0){
-        uint v90=uint(2ul);
-        uint v91=clif_tape_f16_side(t,v,v90,v28);
-        {uint t0=v91;v89=t0;}
+      uchar v94=uchar((uint)(v41)<=(uint)(v2));
+      if(v94!=0){
+       uint v95=uint(clif_view(v,(v1+uint(16u))));
+       uint v96=uint((uint)(v95)>>(uint(4)&31u));
+       uint v97=v96&uint(15ul);
+       uint v98=uint((uint)(v41)>>(uint(10)&31u));
+       uint v99=v41&uint(1023ul);
+       uint v100=uint(clif_view(v,(v1+uint(20u))));
+       uint v101=uint(clif_view(v,(v1+uint(40u))));
+       uint v102=v98*v101;
+       uint v103=v102+v100;
+       uint v104=uint(clif_view(v,(v1+uint(4u))));
+       uint v105=uint((uint)(v98)<<(uint(10)&31u));
+       uint v106=v104-v105;
+       uint v107=uint(1024ul);
+       uint v108=min(v106,v107);
+       uint v109=uint(clif_view(v,(v1+uint(28u))));
+       uint v110=v108*v109;
+       uint v111=v103+v110;
+       uint v112=v99*v97;
+       uint v113=uint(v111);
+       uint v114=uint(v112);
+       uint v115=v0+v113;
+       uint v116=v115+v114;
+       ulong v117=ulong(clif_u64(t,v116));
+       uint v118=v97*uint(8ul);
+       ulong v119=ulong(1ul);
+       uint v120=uint(v118);
+       ulong v121=ulong((ulong)(v119)<<(uint(v120)&63u));
+       ulong v122=v121+ulong(18446744073709551615ul);
+       uchar v123=uchar((uint)(v97)>=(uint)(uint(8ul)));
+       ulong v124=ulong(18446744073709551615ul);
+       ulong v125=v123!=0?v124:v122;
+       v126=v117&v125;
+       uchar v127=uchar((ulong)(v126)==(ulong)(v125));
+       if(v127!=0){
+        uint v129=uint(2ul);
+        uint v130=clif_tape_f16_side(t,v,v129,v41);
+        {uint t0=v130;v128=t0;}
        }else{
-        {uint t0=v87;v89=t0;}
+        {uint t0=v126;v128=t0;}
        }
-       uint v92=v29+v89;
-       uint v93=v28+uint(1ul);
-       {uint t0=v93;uint t1=v92;v28=t0;v29=t1;}
+       uint v131=v42+v128;
+       uint v132=v41+uint(1ul);
+       {uint t0=v132;uint t1=v131;v41=t0;v42=t1;}
        continue;
       }else{
-       {uint t0=v29;v30=t0;}
+       {uint t0=v42;v43=t0;}
        break;
       }
      }
     }else{
-     ulong v55=v47&ulong(71777214294589695ul);
-     ulong v56=ulong((ulong)(v47)>>(uint(8)&63u));
-     ulong v57=v56&ulong(71777214294589695ul);
-     ulong v58=v55+v57;
-     ulong v59=v58&ulong(281470681808895ul);
-     ulong v60=ulong((ulong)(v58)>>(uint(16)&63u));
-     ulong v61=v60&ulong(281470681808895ul);
-     ulong v62=v59+v61;
-     uint v63=uint(v62)&uint(4294967295ul);
-     uint v64=uint((ulong)(v62)>>32u);
-     uint v65=v63+v64;
-     uint v66=v25+v65;
-     {uint t0=v66;v30=t0;}
+     ulong v81=v73&ulong(71777214294589695ul);
+     ulong v82=ulong((ulong)(v73)>>(uint(8)&63u));
+     ulong v83=v82&ulong(71777214294589695ul);
+     ulong v84=v81+v83;
+     ulong v85=v84&ulong(281470681808895ul);
+     ulong v86=ulong((ulong)(v84)>>(uint(16)&63u));
+     ulong v87=v86&ulong(281470681808895ul);
+     ulong v88=v85+v87;
+     uint v89=uint(v88)&uint(4294967295ul);
+     uint v90=uint((ulong)(v88)>>32u);
+     uint v91=v89+v90;
+     uint v92=v38+v91;
+     {uint t0=v92;v43=t0;}
     }
    }else{
-    uint v67=v26+uint(1ul);
-    {uint t0=v67;uint t1=v25;v28=t0;v29=t1;}
+    uint v93=v39+uint(1ul);
+    {uint t0=v93;uint t1=v38;v41=t0;v42=t1;}
     while(true){
-     uchar v68=uchar((uint)(v28)<=(uint)(v2));
-     if(v68!=0){
-      uint v69=uint(clif_view(v,(v1+uint(16u))));
-      uint v70=uint((uint)(v69)>>(uint(4)&31u));
-      uint v71=v70&uint(15ul);
-      uint v72=uint(clif_view(v,(v1+uint(28u))));
-      uint v73=v28*v71;
-      uint v74=uint(v72);
-      uint v75=uint(v73);
-      uint v76=v0+v74;
-      uint v77=v76+v75;
-      ulong v78=ulong(clif_u64(t,v77));
-      uint v79=v71*uint(8ul);
-      ulong v80=ulong(1ul);
-      uint v81=uint(v79);
-      ulong v82=ulong((ulong)(v80)<<(uint(v81)&63u));
-      ulong v83=v82+ulong(18446744073709551615ul);
-      uchar v84=uchar((uint)(v71)>=(uint)(uint(8ul)));
-      ulong v85=ulong(18446744073709551615ul);
-      ulong v86=v84!=0?v85:v83;
-      v87=v78&v86;
-      uchar v88=uchar((ulong)(v87)==(ulong)(v86));
-      if(v88!=0){
-       uint v90=uint(2ul);
-       uint v91=clif_tape_f16_side(t,v,v90,v28);
-       {uint t0=v91;v89=t0;}
+     uchar v94=uchar((uint)(v41)<=(uint)(v2));
+     if(v94!=0){
+      uint v95=uint(clif_view(v,(v1+uint(16u))));
+      uint v96=uint((uint)(v95)>>(uint(4)&31u));
+      uint v97=v96&uint(15ul);
+      uint v98=uint((uint)(v41)>>(uint(10)&31u));
+      uint v99=v41&uint(1023ul);
+      uint v100=uint(clif_view(v,(v1+uint(20u))));
+      uint v101=uint(clif_view(v,(v1+uint(40u))));
+      uint v102=v98*v101;
+      uint v103=v102+v100;
+      uint v104=uint(clif_view(v,(v1+uint(4u))));
+      uint v105=uint((uint)(v98)<<(uint(10)&31u));
+      uint v106=v104-v105;
+      uint v107=uint(1024ul);
+      uint v108=min(v106,v107);
+      uint v109=uint(clif_view(v,(v1+uint(28u))));
+      uint v110=v108*v109;
+      uint v111=v103+v110;
+      uint v112=v99*v97;
+      uint v113=uint(v111);
+      uint v114=uint(v112);
+      uint v115=v0+v113;
+      uint v116=v115+v114;
+      ulong v117=ulong(clif_u64(t,v116));
+      uint v118=v97*uint(8ul);
+      ulong v119=ulong(1ul);
+      uint v120=uint(v118);
+      ulong v121=ulong((ulong)(v119)<<(uint(v120)&63u));
+      ulong v122=v121+ulong(18446744073709551615ul);
+      uchar v123=uchar((uint)(v97)>=(uint)(uint(8ul)));
+      ulong v124=ulong(18446744073709551615ul);
+      ulong v125=v123!=0?v124:v122;
+      v126=v117&v125;
+      uchar v127=uchar((ulong)(v126)==(ulong)(v125));
+      if(v127!=0){
+       uint v129=uint(2ul);
+       uint v130=clif_tape_f16_side(t,v,v129,v41);
+       {uint t0=v130;v128=t0;}
       }else{
-       {uint t0=v87;v89=t0;}
+       {uint t0=v126;v128=t0;}
       }
-      uint v92=v29+v89;
-      uint v93=v28+uint(1ul);
-      {uint t0=v93;uint t1=v92;v28=t0;v29=t1;}
+      uint v131=v42+v128;
+      uint v132=v41+uint(1ul);
+      {uint t0=v132;uint t1=v131;v41=t0;v42=t1;}
       continue;
      }else{
-      {uint t0=v29;v30=t0;}
+      {uint t0=v42;v43=t0;}
       break;
      }
     }
    }
   }else{
-   {uint t0=v25;v30=t0;}
+   {uint t0=v38;v43=t0;}
   }
-  uint v94=uint(v30);
-  {uint t0=v94;v5=t0;}
+  uint v133=uint(v43);
+  {uint t0=v133;v5=t0;}
  }else{
-  uchar v95=uchar((uint)(v3)==(uint)(uint(1016ul)));
-  if(v95!=0){
-   v97=uint((uint)(v2)>>(uint(10)&31u));
-   v98=uint((uint)(v97)<<(uint(10)&31u));
-   v99=v2&uint(1023ul);
-   uint v100=uint(clif_view(v,(v1+uint(32u))));
-   ulong v101=ulong(v100);
-   v102=v101+ulong(18446744073709551615ul);
-   v103=uint(clif_view(v,(v1+uint(36u))));
-   uint v105=uint(0ul);
-   {uint t0=v105;v104=t0;}
-   while(true){
-    v106=clif_tape_z_block(t,v,v97);
-    ulong v107=v106+ulong(8ul);
-    v108=clif_ald(t,ulong(v107));
-    if(v103!=0){
-     clif_fence();
-     uint v109=uint(clif_view(v,(v1+uint(48u))));
-     uint v110=uint(clif_view(v,(v1+uint(52u))));
-     ulong v111=ulong(v109);
-     ulong v112=ulong(v110);
-     ulong v113=ulong((ulong)(v112)<<(uint(32)&63u));
-     ulong v114=v111|v113;
-     ulong v115=ulong((ulong)(v114)<<(uint(22)&63u));
-     ulong v116=ulong(v97);
-     ulong v117=v115|v116;
-     ulong v118=ulong(clif_c64(t,ulong(v106)));
-     uchar v119=uchar((ulong)(v118)==(ulong)(v117));
-     uint v120=v108&uint(2147483648ul);
-     uchar v121=uchar((uint)(v120)==(uint)(uint(0ul)));
-     uchar v122=uchar((uint)(v108)!=(uint)(uint(0ul)));
-     uchar v123=v119&v121;
-     uchar v124=v123&v122;
-     uchar v125=uchar((uint)(v104)>=(uint)(uint(4ul)));
-     uchar v126=v124|v125;
-     if(v126!=0){
-     }else{
-      uint v228=v104+uint(1ul);
-      {uint t0=v228;v104=t0;}
-      continue;
-     }
-    }else{
-    }
-    v127=v106+ulong(144ul);
-    v128=v106+ulong(16ul);
-    uint v129=uint((uint)(v99)>>(uint(3)&31u));
-    uint v130=uint(clif_c32(t,(ulong(v128)+ulong(long(16)))));
-    uint v131=uint((uint)(v130)>>(uint(12)&31u));
-    uint v132=v131&uint(15ul);
-    uint v133=uint(clif_c32(t,(ulong(v128)+ulong(long(36)))));
-    uint v134=v129*v132;
-    ulong v135=ulong(v133);
-    ulong v136=ulong(v134);
-    ulong v137=v135+v136;
-    ulong v138=v137&v102;
-    ulong v139=v127+v138;
-    uint v140=uint(clif_c32(t,ulong(v139)));
-    uint v141=v132*uint(8ul);
-    uint v142=uint(1ul);
-    uint v143=uint(v141);
-    uint v144=((uint(v143)&63u)<32u?uint(v142)<<(uint(v143)&31u):0u);
-    uint v145=v144+uint(18446744073709551615ul);
-    uchar v146=uchar((uint)(v132)>=(uint)(uint(8ul)));
-    uint v147=uint(18446744073709551615ul);
-    uint v148=v146!=0?v147:v145;
-    v149=v140&v148;
-    v150=v129*uint(8ul);
-    v151=v99-v150;
-    if(v151!=0){
-     uint v155=uint(clif_c32(t,(ulong(v128)+ulong(long(16)))));
-     uint v156=uint((uint)(v155)>>(uint(4)&31u));
-     uint v157=v156&uint(15ul);
-     uchar v158=uchar((uint)(v157)==(uint)(uint(1ul)));
-     if(v158!=0){
-      uint v159=uint(clif_c32(t,(ulong(v128)+ulong(long(28)))));
-      ulong v160=ulong(v159);
-      ulong v161=ulong(v150);
-      ulong v162=v160+v161;
-      ulong v163=v162&v102;
-      ulong v164=v127+v163;
-      ulong v165=ulong(clif_c64(t,ulong(v164)));
-      ulong v166=ulong(18446744073709551615ul);
-      uint v167=uint(7ul)-v151;
-      uint v168=v167*uint(8ul);
-      uint v169=uint(v168);
-      ulong v170=ulong((ulong)(v166)>>(uint(v169)&63u));
-      ulong v171=v170&ulong(18446744073709551360ul);
-      v172=v165&v171;
-      ulong v173=~v172;
-      ulong v174=v173&ulong(9187201950435737471ul);
-      ulong v175=v174+ulong(9187201950435737471ul);
-      ulong v176=v175|v173;
-      ulong v177=~v176;
-      ulong v178=v177&ulong(9259542123273814144ul);
-      ulong v179=v178&v171;
-      if(v179!=0){
-       uint v192=v150+uint(1ul);
-       {uint t0=v192;uint t1=v149;v152=t0;v153=t1;}
-       while(true){
-        uchar v193=uchar((uint)(v152)<=(uint)(v99));
-        if(v193!=0){
-         uint v194=uint(clif_c32(t,(ulong(v128)+ulong(long(16)))));
-         uint v195=uint((uint)(v194)>>(uint(4)&31u));
-         uint v196=v195&uint(15ul);
-         uint v197=uint(clif_c32(t,(ulong(v128)+ulong(long(28)))));
-         uint v198=v152*v196;
-         ulong v199=ulong(v197);
-         ulong v200=ulong(v198);
-         ulong v201=v199+v200;
-         ulong v202=v201&v102;
-         ulong v203=v127+v202;
-         ulong v204=ulong(clif_c64(t,ulong(v203)));
-         uint v205=v196*uint(8ul);
-         ulong v206=ulong(1ul);
-         uint v207=uint(v205);
-         ulong v208=ulong((ulong)(v206)<<(uint(v207)&63u));
-         ulong v209=v208+ulong(18446744073709551615ul);
-         uchar v210=uchar((uint)(v196)>=(uint)(uint(8ul)));
-         ulong v211=ulong(18446744073709551615ul);
-         ulong v212=v210!=0?v211:v209;
-         v213=v204&v212;
-         uchar v214=uchar((ulong)(v213)==(ulong)(v212));
-         if(v214!=0){
-          uint v216=uint(2ul);
-          uint v217=v152+v98;
-          uint v218=clif_tape_f16_side(t,v,v216,v217);
-          {uint t0=v218;v215=t0;}
-         }else{
-          {uint t0=v213;v215=t0;}
-         }
-         uint v219=v153+v215;
-         uint v220=v152+uint(1ul);
-         {uint t0=v220;uint t1=v219;v152=t0;v153=t1;}
-         continue;
-        }else{
-         {uint t0=v153;v154=t0;}
-         break;
-        }
-       }
-      }else{
-       ulong v180=v172&ulong(71777214294589695ul);
-       ulong v181=ulong((ulong)(v172)>>(uint(8)&63u));
-       ulong v182=v181&ulong(71777214294589695ul);
-       ulong v183=v180+v182;
-       ulong v184=v183&ulong(281470681808895ul);
-       ulong v185=ulong((ulong)(v183)>>(uint(16)&63u));
-       ulong v186=v185&ulong(281470681808895ul);
-       ulong v187=v184+v186;
-       uint v188=uint(v187)&uint(4294967295ul);
-       uint v189=uint((ulong)(v187)>>32u);
-       uint v190=v188+v189;
-       uint v191=v149+v190;
-       {uint t0=v191;v154=t0;}
-      }
-     }else{
-      uint v192=v150+uint(1ul);
-      {uint t0=v192;uint t1=v149;v152=t0;v153=t1;}
-      while(true){
-       uchar v193=uchar((uint)(v152)<=(uint)(v99));
-       if(v193!=0){
-        uint v194=uint(clif_c32(t,(ulong(v128)+ulong(long(16)))));
-        uint v195=uint((uint)(v194)>>(uint(4)&31u));
-        uint v196=v195&uint(15ul);
-        uint v197=uint(clif_c32(t,(ulong(v128)+ulong(long(28)))));
-        uint v198=v152*v196;
-        ulong v199=ulong(v197);
-        ulong v200=ulong(v198);
-        ulong v201=v199+v200;
-        ulong v202=v201&v102;
-        ulong v203=v127+v202;
-        ulong v204=ulong(clif_c64(t,ulong(v203)));
-        uint v205=v196*uint(8ul);
-        ulong v206=ulong(1ul);
-        uint v207=uint(v205);
-        ulong v208=ulong((ulong)(v206)<<(uint(v207)&63u));
-        ulong v209=v208+ulong(18446744073709551615ul);
-        uchar v210=uchar((uint)(v196)>=(uint)(uint(8ul)));
-        ulong v211=ulong(18446744073709551615ul);
-        ulong v212=v210!=0?v211:v209;
-        v213=v204&v212;
-        uchar v214=uchar((ulong)(v213)==(ulong)(v212));
-        if(v214!=0){
-         uint v216=uint(2ul);
-         uint v217=v152+v98;
-         uint v218=clif_tape_f16_side(t,v,v216,v217);
-         {uint t0=v218;v215=t0;}
-        }else{
-         {uint t0=v213;v215=t0;}
-        }
-        uint v219=v153+v215;
-        uint v220=v152+uint(1ul);
-        {uint t0=v220;uint t1=v219;v152=t0;v153=t1;}
-        continue;
-       }else{
-        {uint t0=v153;v154=t0;}
-        break;
-       }
-      }
-     }
-    }else{
-     {uint t0=v149;v154=t0;}
-    }
-    v221=uint(v154);
-    if(v103!=0){
-     clif_fence();
-     ulong v223=v106+ulong(8ul);
-     uint v224=clif_ald(t,ulong(v223));
-     uchar v225=uchar((uint)(v108)==(uint)(v224));
-     uchar v226=uchar((uint)(v104)>=(uint)(uint(4ul)));
-     uchar v227=v225|v226;
-     if(v227!=0){
-      {uint t0=v221;v222=t0;}
-      break;
-     }else{
-      uint v228=v104+uint(1ul);
-      {uint t0=v228;v104=t0;}
-      continue;
-     }
-    }else{
-     {uint t0=v221;v222=t0;}
-     break;
-    }
-   }
-   {uint t0=v222;v96=t0;}
+  uchar v134=uchar((uint)(v3)==(uint)(uint(1016ul)));
+  if(v134!=0){
+   uint v136=clif_tape_start_stated_z(t,v,v2);
+   {uint t0=v136;v135=t0;}
   }else{
-   uint v229=uint(clif_view(v,(v1+uint(28u))));
-   uint v230=uint((uint)(v2)>>(uint(4)&31u));
-   uint v231=v230*uint(4ul);
-   uint v232=uint(v229);
-   uint v233=uint(v231);
-   uint v234=v0+v232;
-   uint v235=v234+v233;
-   v236=uint(clif_u32(t,v235));
-   v237=uint(clif_view(v,(v1+uint(32u))));
-   uint v238=uint(clif_view(v,(v1+uint(16u))));
-   uint v239=uint((uint)(v238)>>(uint(4)&31u));
-   uint v240=v239&uint(15ul);
-   uchar v241=uchar((uint)(v240)==(uint)(uint(2ul)));
-   if(v241!=0){
-    uint v243=v2*uint(2ul);
-    uint v244=uint(v237);
-    uint v245=uint(v243);
-    uint v246=v0+v244;
-    uint v247=v246+v245;
-    uint v248=uint(clif_u16(t,v247));
-    {uint t0=v248;v242=t0;}
+   uint v137=uint(clif_view(v,(v1+uint(28u))));
+   uint v138=uint((uint)(v2)>>(uint(4)&31u));
+   uint v139=v138*uint(4ul);
+   uint v140=uint(v137);
+   uint v141=uint(v139);
+   uint v142=v0+v140;
+   uint v143=v142+v141;
+   v144=uint(clif_u32(t,v143));
+   v145=uint(clif_view(v,(v1+uint(32u))));
+   uint v146=uint(clif_view(v,(v1+uint(16u))));
+   uint v147=uint((uint)(v146)>>(uint(4)&31u));
+   uint v148=v147&uint(15ul);
+   uchar v149=uchar((uint)(v148)==(uint)(uint(2ul)));
+   if(v149!=0){
+    uint v151=v2*uint(2ul);
+    uint v152=uint(v145);
+    uint v153=uint(v151);
+    uint v154=v0+v152;
+    uint v155=v154+v153;
+    uint v156=uint(clif_u16(t,v155));
+    {uint t0=v156;v150=t0;}
    }else{
-    uint v249=v2*uint(4ul);
-    uint v250=uint(v237);
-    uint v251=uint(v249);
-    uint v252=v0+v250;
-    uint v253=v252+v251;
-    uint v254=uint(clif_u32(t,v253));
-    {uint t0=v254;v242=t0;}
+    uint v157=v2*uint(4ul);
+    uint v158=uint(v145);
+    uint v159=uint(v157);
+    uint v160=v0+v158;
+    uint v161=v160+v159;
+    uint v162=uint(clif_u32(t,v161));
+    {uint t0=v162;v150=t0;}
    }
-   uint v255=v236+v242;
-   {uint t0=v255;v96=t0;}
+   uint v163=v144+v150;
+   {uint t0=v163;v135=t0;}
   }
-  {uint t0=v96;v5=t0;}
+  {uint t0=v135;v5=t0;}
  }
  return v5;
 }
-inline uint clif_tape_end(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+inline uint clif_tape_end_stated(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
  uint v0=0;
  uint v1=0;
  uint v2=0;
  uint v3=0;
  uint v5=0;
  uint v6=0;
- ulong v25=0;
- uint v27=0;
- uint v33=0;
- uint v34=0;
- uint v35=0;
- uint v36=0;
- ulong v39=0;
+ ulong v38=0;
  uint v40=0;
- uint v41=0;
- ulong v43=0;
- uint v45=0;
- uint v67=0;
- ulong v87=0;
- uint v89=0;
- uint v94=0;
- uint v95=0;
- uint v109=0;
- uint v110=0;
- uint v115=0;
+ uint v46=0;
+ uint v55=0;
+ uint v56=0;
+ uint v61=0;
  v0=0;
  v1=0;
  v2=a2;
  v3=uint(clif_view(v,(v1+uint(12u))));
  uchar v4=uchar((uint)(v3)==(uint)(uint(16ul)));
  if(v4!=0){
-  v6=clif_tape_start(t,v,v2);
+  v6=clif_tape_start_stated(t,v,v2);
   uint v7=uint(clif_view(v,(v1+uint(16u))));
   uint v8=uint((uint)(v7)>>(uint(8)&31u));
   uint v9=v8&uint(15ul);
-  uint v10=uint(clif_view(v,(v1+uint(32u))));
-  uint v11=v2*v9;
-  uint v12=uint(v10);
-  uint v13=uint(v11);
-  uint v14=v0+v12;
-  uint v15=v14+v13;
-  ulong v16=ulong(clif_u64(t,v15));
-  uint v17=v9*uint(8ul);
-  ulong v18=ulong(1ul);
-  uint v19=uint(v17);
-  ulong v20=ulong((ulong)(v18)<<(uint(v19)&63u));
-  ulong v21=v20+ulong(18446744073709551615ul);
-  uchar v22=uchar((uint)(v9)>=(uint)(uint(8ul)));
-  ulong v23=ulong(18446744073709551615ul);
-  ulong v24=v22!=0?v23:v21;
-  v25=v16&v24;
-  uchar v26=uchar((ulong)(v25)==(ulong)(v24));
-  if(v26!=0){
-   uint v28=uint(3ul);
-   uint v29=clif_tape_f16_side(t,v,v28,v2);
-   {uint t0=v29;v27=t0;}
+  uint v10=uint((uint)(v2)>>(uint(10)&31u));
+  uint v11=v2&uint(1023ul);
+  uint v12=uint(clif_view(v,(v1+uint(20u))));
+  uint v13=uint(clif_view(v,(v1+uint(40u))));
+  uint v14=v10*v13;
+  uint v15=v14+v12;
+  uint v16=uint(clif_view(v,(v1+uint(4u))));
+  uint v17=uint((uint)(v10)<<(uint(10)&31u));
+  uint v18=v16-v17;
+  uint v19=uint(1024ul);
+  uint v20=min(v18,v19);
+  uint v21=uint(clif_view(v,(v1+uint(32u))));
+  uint v22=v20*v21;
+  uint v23=v15+v22;
+  uint v24=v11*v9;
+  uint v25=uint(v23);
+  uint v26=uint(v24);
+  uint v27=v0+v25;
+  uint v28=v27+v26;
+  ulong v29=ulong(clif_u64(t,v28));
+  uint v30=v9*uint(8ul);
+  ulong v31=ulong(1ul);
+  uint v32=uint(v30);
+  ulong v33=ulong((ulong)(v31)<<(uint(v32)&63u));
+  ulong v34=v33+ulong(18446744073709551615ul);
+  uchar v35=uchar((uint)(v9)>=(uint)(uint(8ul)));
+  ulong v36=ulong(18446744073709551615ul);
+  ulong v37=v35!=0?v36:v34;
+  v38=v29&v37;
+  uchar v39=uchar((ulong)(v38)==(ulong)(v37));
+  if(v39!=0){
+   uint v41=uint(3ul);
+   uint v42=clif_tape_f16_side(t,v,v41,v2);
+   {uint t0=v42;v40=t0;}
   }else{
-   {uint t0=v25;v27=t0;}
+   {uint t0=v38;v40=t0;}
   }
-  uint v30=uint(v27);
-  uint v31=v6+v30;
-  {uint t0=v31;v5=t0;}
+  uint v43=uint(v40);
+  uint v44=v6+v43;
+  {uint t0=v44;v5=t0;}
  }else{
-  uchar v32=uchar((uint)(v3)==(uint)(uint(1016ul)));
-  if(v32!=0){
-   v34=uint((uint)(v2)>>(uint(10)&31u));
-   v35=uint((uint)(v34)<<(uint(10)&31u));
-   v36=v2&uint(1023ul);
-   uint v37=uint(clif_view(v,(v1+uint(32u))));
-   ulong v38=ulong(v37);
-   v39=v38+ulong(18446744073709551615ul);
-   v40=uint(clif_view(v,(v1+uint(36u))));
-   uint v42=uint(0ul);
-   {uint t0=v42;v41=t0;}
-   while(true){
-    v43=clif_tape_z_block(t,v,v34);
-    ulong v44=v43+ulong(8ul);
-    v45=clif_ald(t,ulong(v44));
-    if(v40!=0){
-     clif_fence();
-     uint v46=uint(clif_view(v,(v1+uint(48u))));
-     uint v47=uint(clif_view(v,(v1+uint(52u))));
-     ulong v48=ulong(v46);
-     ulong v49=ulong(v47);
-     ulong v50=ulong((ulong)(v49)<<(uint(32)&63u));
-     ulong v51=v48|v50;
-     ulong v52=ulong((ulong)(v51)<<(uint(22)&63u));
-     ulong v53=ulong(v34);
-     ulong v54=v52|v53;
-     ulong v55=ulong(clif_c64(t,ulong(v43)));
-     uchar v56=uchar((ulong)(v55)==(ulong)(v54));
-     uint v57=v45&uint(2147483648ul);
-     uchar v58=uchar((uint)(v57)==(uint)(uint(0ul)));
-     uchar v59=uchar((uint)(v45)!=(uint)(uint(0ul)));
-     uchar v60=v56&v58;
-     uchar v61=v60&v59;
-     uchar v62=uchar((uint)(v41)>=(uint)(uint(4ul)));
-     uchar v63=v61|v62;
-     if(v63!=0){
-     }else{
-      uint v101=v41+uint(1ul);
-      {uint t0=v101;v41=t0;}
-      continue;
-     }
-    }else{
-    }
-    ulong v64=v43+ulong(144ul);
-    ulong v65=v43+ulong(16ul);
-    uint v66=v36+v35;
-    v67=clif_tape_start(t,v,v66);
-    uint v68=uint(clif_c32(t,(ulong(v65)+ulong(long(16)))));
-    uint v69=uint((uint)(v68)>>(uint(8)&31u));
-    uint v70=v69&uint(15ul);
-    uint v71=uint(clif_c32(t,(ulong(v65)+ulong(long(32)))));
-    uint v72=v36*v70;
-    ulong v73=ulong(v71);
-    ulong v74=ulong(v72);
-    ulong v75=v73+v74;
-    ulong v76=v75&v39;
-    ulong v77=v64+v76;
-    ulong v78=ulong(clif_c64(t,ulong(v77)));
-    uint v79=v70*uint(8ul);
-    ulong v80=ulong(1ul);
-    uint v81=uint(v79);
-    ulong v82=ulong((ulong)(v80)<<(uint(v81)&63u));
-    ulong v83=v82+ulong(18446744073709551615ul);
-    uchar v84=uchar((uint)(v70)>=(uint)(uint(8ul)));
-    ulong v85=ulong(18446744073709551615ul);
-    ulong v86=v84!=0?v85:v83;
-    v87=v78&v86;
-    uchar v88=uchar((ulong)(v87)==(ulong)(v86));
-    if(v88!=0){
-     uint v90=uint(3ul);
-     uint v91=v36+v35;
-     uint v92=clif_tape_f16_side(t,v,v90,v91);
-     {uint t0=v92;v89=t0;}
-    }else{
-     {uint t0=v87;v89=t0;}
-    }
-    uint v93=uint(v89);
-    v94=v67+v93;
-    if(v40!=0){
-     clif_fence();
-     ulong v96=v43+ulong(8ul);
-     uint v97=clif_ald(t,ulong(v96));
-     uchar v98=uchar((uint)(v45)==(uint)(v97));
-     uchar v99=uchar((uint)(v41)>=(uint)(uint(4ul)));
-     uchar v100=v98|v99;
-     if(v100!=0){
-      {uint t0=v94;v95=t0;}
-      break;
-     }else{
-      uint v101=v41+uint(1ul);
-      {uint t0=v101;v41=t0;}
-      continue;
-     }
-    }else{
-     {uint t0=v94;v95=t0;}
-     break;
-    }
-   }
-   {uint t0=v95;v33=t0;}
+  uchar v45=uchar((uint)(v3)==(uint)(uint(1016ul)));
+  if(v45!=0){
+   uint v47=clif_tape_end_stated_z(t,v,v2);
+   {uint t0=v47;v46=t0;}
   }else{
-   uint v102=uint(clif_view(v,(v1+uint(16u))));
-   uint v103=v102&uint(4096ul);
-   uchar v104=uchar((uint)(v103)!=(uint)(uint(0ul)));
-   uint v105=clif_tape_size(t,v,v2);
-   uint v106=v2+v105;
-   uint v107=v106+uint(18446744073709551615ul);
-   uint v108=v104!=0?v2:v107;
-   v109=clif_tape_start(t,v,v108);
-   v110=uint(clif_view(v,(v1+uint(36u))));
-   uint v111=uint(clif_view(v,(v1+uint(16u))));
-   uint v112=uint((uint)(v111)>>(uint(8)&31u));
-   uint v113=v112&uint(15ul);
-   uchar v114=uchar((uint)(v113)==(uint)(uint(2ul)));
-   if(v114!=0){
-    uint v116=v2*uint(2ul);
-    uint v117=uint(v110);
-    uint v118=uint(v116);
-    uint v119=v0+v117;
-    uint v120=v119+v118;
-    uint v121=uint(clif_u16(t,v120));
-    {uint t0=v121;v115=t0;}
+   uint v48=uint(clif_view(v,(v1+uint(16u))));
+   uint v49=v48&uint(4096ul);
+   uchar v50=uchar((uint)(v49)!=(uint)(uint(0ul)));
+   uint v51=clif_tape_size(t,v,v2);
+   uint v52=v2+v51;
+   uint v53=v52+uint(18446744073709551615ul);
+   uint v54=v50!=0?v2:v53;
+   v55=clif_tape_start_stated(t,v,v54);
+   v56=uint(clif_view(v,(v1+uint(36u))));
+   uint v57=uint(clif_view(v,(v1+uint(16u))));
+   uint v58=uint((uint)(v57)>>(uint(8)&31u));
+   uint v59=v58&uint(15ul);
+   uchar v60=uchar((uint)(v59)==(uint)(uint(2ul)));
+   if(v60!=0){
+    uint v62=v2*uint(2ul);
+    uint v63=uint(v56);
+    uint v64=uint(v62);
+    uint v65=v0+v63;
+    uint v66=v65+v64;
+    uint v67=uint(clif_u16(t,v66));
+    {uint t0=v67;v61=t0;}
    }else{
-    uint v122=v2*uint(4ul);
-    uint v123=uint(v110);
-    uint v124=uint(v122);
-    uint v125=v0+v123;
-    uint v126=v125+v124;
-    uint v127=uint(clif_u32(t,v126));
-    {uint t0=v127;v115=t0;}
+    uint v68=v2*uint(4ul);
+    uint v69=uint(v56);
+    uint v70=uint(v68);
+    uint v71=v0+v69;
+    uint v72=v71+v70;
+    uint v73=uint(clif_u32(t,v72));
+    {uint t0=v73;v61=t0;}
    }
-   uint v128=v109+v115;
-   {uint t0=v128;v33=t0;}
+   uint v74=v55+v61;
+   {uint t0=v74;v46=t0;}
   }
-  {uint t0=v33;v5=t0;}
+  {uint t0=v46;v5=t0;}
  }
  return v5;
+}
+inline uint clif_tape_start(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ uint v0=0;
+ uint v1=0;
+ uint v2=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uint v3=clif_tape_start_stated(t,v,v2);
+ uint v4=uint(clif_view(v,(v1+uint(92u))));
+ uint v5=min(v3,v4);
+ return v5;
+}
+inline uint clif_tape_end(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+ uint v0=0;
+ uint v1=0;
+ uint v2=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ uint v3=clif_tape_start(t,v,v2);
+ uint v4=clif_tape_end_stated(t,v,v2);
+ uint v5=max(v4,v3);
+ uint v6=uint(clif_view(v,(v1+uint(92u))));
+ uint v7=min(v5,v6);
+ return v7;
 }
 __attribute__((noinline)) uint clif_tape_parent(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
  uint v0=0;
@@ -1395,23 +2795,21 @@ __attribute__((noinline)) uint clif_tape_parent(device const uchar* t,CLIF_VIEW_
  uint v8=0;
  uint v9=0;
  uint v10=0;
+ uint v11=0;
  uint v12=0;
- ulong v31=0;
- ulong v33=0;
- uint v39=0;
- uint v42=0;
- uint v43=0;
- uint v44=0;
- ulong v47=0;
+ ulong v44=0;
+ ulong v46=0;
  uint v51=0;
- uint v53=0;
  uint v54=0;
- uint v55=0;
+ uint v57=0;
+ uint v59=0;
  uint v60=0;
- uint v65=0;
+ uint v61=0;
  uint v66=0;
- uint v67=0;
- uint v71=0;
+ uint v75=0;
+ uint v76=0;
+ uint v77=0;
+ uint v85=0;
  v0=0;
  v1=0;
  v2=a2;
@@ -1425,48 +2823,68 @@ __attribute__((noinline)) uint clif_tape_parent(device const uchar* t,CLIF_VIEW_
   if(v7!=0){
    {uint t0=v2;v9=t0;}
    while(true){
-    uint v11=uint(4294967295ul);
+    v11=uint(4294967295ul);
     if(v9!=0){
      v12=v9+uint(18446744073709551615ul);
      uint v13=uint(clif_view(v,(v1+uint(16u))));
      uint v14=uint((uint)(v13)>>(uint(0)&31u));
      uint v15=v14&uint(15ul);
-     uint v16=uint(clif_view(v,(v1+uint(24u))));
-     uint v17=v12*v15;
-     uint v18=uint(v16);
-     uint v19=uint(v17);
-     uint v20=v0+v18;
-     uint v21=v20+v19;
-     ulong v22=ulong(clif_u64(t,v21));
-     uint v23=v15*uint(8ul);
-     ulong v24=ulong(1ul);
-     uint v25=uint(v23);
-     ulong v26=ulong((ulong)(v24)<<(uint(v25)&63u));
-     ulong v27=v26+ulong(18446744073709551615ul);
-     uchar v28=uchar((uint)(v15)>=(uint)(uint(8ul)));
-     ulong v29=ulong(18446744073709551615ul);
-     ulong v30=v28!=0?v29:v27;
-     v31=v22&v30;
-     uchar v32=uchar((ulong)(v31)==(ulong)(v30));
-     if(v32!=0){
-      uint v34=uint(1ul);
-      ulong v35=clif_tape_f16_side(t,v,v34,v12);
-      {ulong t0=v35;v33=t0;}
+     uint v16=uint((uint)(v12)>>(uint(10)&31u));
+     uint v17=v12&uint(1023ul);
+     uint v18=uint(clif_view(v,(v1+uint(20u))));
+     uint v19=uint(clif_view(v,(v1+uint(40u))));
+     uint v20=v16*v19;
+     uint v21=v20+v18;
+     uint v22=uint(clif_view(v,(v1+uint(4u))));
+     uint v23=uint((uint)(v16)<<(uint(10)&31u));
+     uint v24=v22-v23;
+     uint v25=uint(1024ul);
+     uint v26=min(v24,v25);
+     uint v27=uint(clif_view(v,(v1+uint(24u))));
+     uint v28=v26*v27;
+     uint v29=v21+v28;
+     uint v30=v17*v15;
+     uint v31=uint(v29);
+     uint v32=uint(v30);
+     uint v33=v0+v31;
+     uint v34=v33+v32;
+     ulong v35=ulong(clif_u64(t,v34));
+     uint v36=v15*uint(8ul);
+     ulong v37=ulong(1ul);
+     uint v38=uint(v36);
+     ulong v39=ulong((ulong)(v37)<<(uint(v38)&63u));
+     ulong v40=v39+ulong(18446744073709551615ul);
+     uchar v41=uchar((uint)(v15)>=(uint)(uint(8ul)));
+     ulong v42=ulong(18446744073709551615ul);
+     ulong v43=v41!=0?v42:v40;
+     v44=v35&v43;
+     uchar v45=uchar((ulong)(v44)==(ulong)(v43));
+     if(v45!=0){
+      uint v47=uint(1ul);
+      ulong v48=clif_tape_f16_side(t,v,v47,v12);
+      {ulong t0=v48;v46=t0;}
      }else{
-      {ulong t0=v31;v33=t0;}
+      {ulong t0=v44;v46=t0;}
      }
-     ulong v36=v33&ulong(1ul);
-     if(v36!=0){
-      uint v37=uint((ulong)(v33)>>2u);
-      uint v38=uint(v37);
-      v39=v9-v38;
-      ulong v40=v33&ulong(2ul);
-      if(v40!=0){
-       {uint t0=v39;v10=t0;}
-       break;
+     ulong v49=v46&ulong(1ul);
+     if(v49!=0){
+      uint v50=uint((ulong)(v46)>>2u);
+      v51=uint(v50);
+      uint v52=v51+uint(18446744073709551615ul);
+      uchar v53=uchar((uint)(v52)<(uint)(v9));
+      if(v53!=0){
+       v54=v9-v51;
+       ulong v55=v46&ulong(2ul);
+       if(v55!=0){
+        {uint t0=v54;v10=t0;}
+        break;
+       }else{
+        {uint t0=v54;v9=t0;}
+        continue;
+       }
       }else{
-       {uint t0=v39;v9=t0;}
-       continue;
+       {uint t0=v11;v10=t0;}
+       break;
       }
      }else{
       {uint t0=v12;v10=t0;}
@@ -1479,94 +2897,75 @@ __attribute__((noinline)) uint clif_tape_parent(device const uchar* t,CLIF_VIEW_
    }
    {uint t0=v10;v8=t0;}
   }else{
-   uchar v41=uchar((uint)(v6)==(uint)(uint(1016ul)));
-   if(v41!=0){
-    {uint t0=v2;v43=t0;}
-    while(true){
-     uint v45=uint(4294967295ul);
-     if(v43!=0){
-      uint v46=v43+uint(18446744073709551615ul);
-      v47=clif_tape_slot(t,v,v46);
-      ulong v48=v47&ulong(1ul);
-      if(v48!=0){
-       uint v49=uint((ulong)(v47)>>2u);
-       uint v50=uint(v49);
-       v51=v43-v50;
-       ulong v52=v47&ulong(2ul);
-       if(v52!=0){
-        {uint t0=v51;v44=t0;}
-        break;
-       }else{
-        {uint t0=v51;v43=t0;}
-        continue;
-       }
-      }else{
-       {uint t0=v46;v44=t0;}
-       break;
-      }
-     }else{
-      {uint t0=v45;v44=t0;}
-      break;
-     }
-    }
-    {uint t0=v44;v42=t0;}
+   uchar v56=uchar((uint)(v6)==(uint)(uint(1016ul)));
+   if(v56!=0){
+    uint v58=clif_tape_parent_z(t,v,v2);
+    {uint t0=v58;v57=t0;}
    }else{
-    uint v56=uint(0ul);
-    {uint t0=v2;uint t1=v56;v54=t0;v55=t1;}
-    uint e24=0u;
+    uint v62=uint(0ul);
+    {uint t0=v2;uint t1=v62;v60=t0;v61=t1;}
+    uint e20=0u;
     while(true){
-     uchar v57=uchar((uint)(v54)!=(uint)(uint(0ul)));
-     uchar v58=uchar((uint)(v55)<(uint)(uint(64ul)));
-     uchar v59=v57&v58;
-     if(v59!=0){
-      v60=v54+uint(18446744073709551615ul);
-      uint v61=clif_tape_size(t,v,v60);
-      uint v62=v60+v61;
-      uchar v63=uchar((uint)(v62)>(uint)(v2));
-      if(v63!=0){
-       {uint t0=v60;v53=t0;}
-       e24=0u;
+     uchar v63=uchar((uint)(v60)!=(uint)(uint(0ul)));
+     uchar v64=uchar((uint)(v61)<(uint)(uint(64ul)));
+     uchar v65=v63&v64;
+     if(v65!=0){
+      v66=v60+uint(18446744073709551615ul);
+      uint v67=clif_tape_size(t,v,v66);
+      uint v68=v66+v67;
+      uint v69=v66+uint(1ul);
+      uint v70=max(v68,v69);
+      uint v71=uint(clif_view(v,(v1+uint(4u))));
+      uint v72=min(v70,v71);
+      uchar v73=uchar((uint)(v72)>(uint)(v2));
+      if(v73!=0){
+       {uint t0=v66;v59=t0;}
+       e20=0u;
        break;
       }else{
-       uint v64=v55+uint(1ul);
-       {uint t0=v60;uint t1=v64;v54=t0;v55=t1;}
+       uint v74=v61+uint(1ul);
+       {uint t0=v66;uint t1=v74;v60=t0;v61=t1;}
        continue;
       }
      }else{
-      e24=1u;
+      e20=1u;
       break;
      }
     }
-    if(e24==1u){
-     uint v68=uint(0ul);
-     {uint t0=v68;v65=t0;}
+    if(e20==1u){
+     uint v78=uint(0ul);
+     {uint t0=v78;v75=t0;}
      while(true){
-      uint v69=v65+uint(1ul);
-      {uint t0=v65;uint t1=v69;v66=t0;v67=t1;}
+      uint v79=v75+uint(1ul);
+      {uint t0=v75;uint t1=v79;v76=t0;v77=t1;}
       while(true){
-       uint v70=clif_tape_size(t,v,v67);
-       v71=v67+v70;
-       uchar v72=uchar((uint)(v71)<=(uint)(v2));
-       if(v72!=0){
-        {uint t0=v66;uint t1=v71;v66=t0;v67=t1;}
+       uint v80=clif_tape_size(t,v,v77);
+       uint v81=v77+v80;
+       uint v82=v77+uint(1ul);
+       uint v83=max(v81,v82);
+       uint v84=uint(clif_view(v,(v1+uint(4u))));
+       v85=min(v83,v84);
+       uchar v86=uchar((uint)(v85)<=(uint)(v2));
+       if(v86!=0){
+        {uint t0=v76;uint t1=v85;v76=t0;v77=t1;}
         continue;
        }else{
         break;
        }
       }
-      uchar v73=uchar((uint)(v67)==(uint)(v2));
-      if(v73!=0){
-       {uint t0=v66;v53=t0;}
+      uchar v87=uchar((uint)(v77)==(uint)(v2));
+      if(v87!=0){
+       {uint t0=v76;v59=t0;}
        break;
       }else{
-       {uint t0=v67;v65=t0;}
+       {uint t0=v77;v75=t0;}
        continue;
       }
      }
     }
-    {uint t0=v53;v42=t0;}
+    {uint t0=v59;v57=t0;}
    }
-   {uint t0=v42;v8=t0;}
+   {uint t0=v57;v8=t0;}
   }
   {uint t0=v8;v4=t0;}
  }
@@ -1581,7 +2980,11 @@ inline uint clif_tape_end_of(device const uchar* t,CLIF_VIEW_SPACE const uint* v
  v2=a2;
  uint v3=clif_tape_size(t,v,v2);
  uint v4=v2+v3;
- return v4;
+ uint v5=v2+uint(1ul);
+ uint v6=max(v4,v5);
+ uint v7=uint(clif_view(v,(v1+uint(4u))));
+ uint v8=min(v6,v7);
+ return v8;
 }
 inline uint clif_tape_next_in(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
  uint v0=0;
@@ -1653,8 +3056,12 @@ inline uint clif_tape_child_count(device const uchar* t,CLIF_VIEW_SPACE const ui
   if(v9!=0){
    uint v10=clif_tape_size(t,v,v5);
    uint v11=v5+v10;
-   uint v12=v6+uint(1ul);
-   {uint t0=v11;uint t1=v12;v5=t0;v6=t1;}
+   uint v12=v5+uint(1ul);
+   uint v13=max(v11,v12);
+   uint v14=uint(clif_view(v,(v1+uint(4u))));
+   uint v15=min(v13,v14);
+   uint v16=v6+uint(1ul);
+   {uint t0=v15;uint t1=v16;v5=t0;v6=t1;}
    continue;
   }else{
    {uint t0=v6;v7=t0;}
@@ -1686,8 +3093,12 @@ inline uint clif_tape_child(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
    if(v7!=0){
     uint v11=clif_tape_size(t,v,v6);
     uint v12=v6+v11;
-    uint v13=v7+uint(18446744073709551615ul);
-    {uint t0=v12;uint t1=v13;v6=t0;v7=t1;}
+    uint v13=v6+uint(1ul);
+    uint v14=max(v12,v13);
+    uint v15=uint(clif_view(v,(v1+uint(4u))));
+    uint v16=min(v14,v15);
+    uint v17=v7+uint(18446744073709551615ul);
+    {uint t0=v16;uint t1=v17;v6=t0;v7=t1;}
     continue;
    }else{
     {uint t0=v6;v8=t0;}
@@ -1706,21 +3117,9 @@ inline uint clif_tape_length(device const uchar* t,CLIF_VIEW_SPACE const uint* v
  uint v2=0;
  uint v3=0;
  uint v5=0;
- ulong v24=0;
- uint v26=0;
- uint v31=0;
- uint v32=0;
- uint v33=0;
- uint v34=0;
  ulong v37=0;
- uint v38=0;
  uint v39=0;
- ulong v41=0;
- uint v43=0;
- ulong v83=0;
- uint v85=0;
- uint v89=0;
- uint v90=0;
+ uint v44=0;
  v0=0;
  v1=0;
  v2=a2;
@@ -1730,136 +3129,57 @@ inline uint clif_tape_length(device const uchar* t,CLIF_VIEW_SPACE const uint* v
   uint v6=uint(clif_view(v,(v1+uint(16u))));
   uint v7=uint((uint)(v6)>>(uint(8)&31u));
   uint v8=v7&uint(15ul);
-  uint v9=uint(clif_view(v,(v1+uint(32u))));
-  uint v10=v2*v8;
-  uint v11=uint(v9);
-  uint v12=uint(v10);
-  uint v13=v0+v11;
-  uint v14=v13+v12;
-  ulong v15=ulong(clif_u64(t,v14));
-  uint v16=v8*uint(8ul);
-  ulong v17=ulong(1ul);
-  uint v18=uint(v16);
-  ulong v19=ulong((ulong)(v17)<<(uint(v18)&63u));
-  ulong v20=v19+ulong(18446744073709551615ul);
-  uchar v21=uchar((uint)(v8)>=(uint)(uint(8ul)));
-  ulong v22=ulong(18446744073709551615ul);
-  ulong v23=v21!=0?v22:v20;
-  v24=v15&v23;
-  uchar v25=uchar((ulong)(v24)==(ulong)(v23));
-  if(v25!=0){
-   uint v27=uint(3ul);
-   uint v28=clif_tape_f16_side(t,v,v27,v2);
-   {uint t0=v28;v26=t0;}
+  uint v9=uint((uint)(v2)>>(uint(10)&31u));
+  uint v10=v2&uint(1023ul);
+  uint v11=uint(clif_view(v,(v1+uint(20u))));
+  uint v12=uint(clif_view(v,(v1+uint(40u))));
+  uint v13=v9*v12;
+  uint v14=v13+v11;
+  uint v15=uint(clif_view(v,(v1+uint(4u))));
+  uint v16=uint((uint)(v9)<<(uint(10)&31u));
+  uint v17=v15-v16;
+  uint v18=uint(1024ul);
+  uint v19=min(v17,v18);
+  uint v20=uint(clif_view(v,(v1+uint(32u))));
+  uint v21=v19*v20;
+  uint v22=v14+v21;
+  uint v23=v10*v8;
+  uint v24=uint(v22);
+  uint v25=uint(v23);
+  uint v26=v0+v24;
+  uint v27=v26+v25;
+  ulong v28=ulong(clif_u64(t,v27));
+  uint v29=v8*uint(8ul);
+  ulong v30=ulong(1ul);
+  uint v31=uint(v29);
+  ulong v32=ulong((ulong)(v30)<<(uint(v31)&63u));
+  ulong v33=v32+ulong(18446744073709551615ul);
+  uchar v34=uchar((uint)(v8)>=(uint)(uint(8ul)));
+  ulong v35=ulong(18446744073709551615ul);
+  ulong v36=v34!=0?v35:v33;
+  v37=v28&v36;
+  uchar v38=uchar((ulong)(v37)==(ulong)(v36));
+  if(v38!=0){
+   uint v40=uint(3ul);
+   uint v41=clif_tape_f16_side(t,v,v40,v2);
+   {uint t0=v41;v39=t0;}
   }else{
-   {uint t0=v24;v26=t0;}
+   {uint t0=v37;v39=t0;}
   }
-  uint v29=uint(v26);
-  {uint t0=v29;v5=t0;}
+  uint v42=uint(v39);
+  {uint t0=v42;v5=t0;}
  }else{
-  uchar v30=uchar((uint)(v3)==(uint)(uint(1016ul)));
-  if(v30!=0){
-   v32=uint((uint)(v2)>>(uint(10)&31u));
-   v33=uint((uint)(v32)<<(uint(10)&31u));
-   v34=v2&uint(1023ul);
-   uint v35=uint(clif_view(v,(v1+uint(32u))));
-   ulong v36=ulong(v35);
-   v37=v36+ulong(18446744073709551615ul);
-   v38=uint(clif_view(v,(v1+uint(36u))));
-   uint v40=uint(0ul);
-   {uint t0=v40;v39=t0;}
-   while(true){
-    v41=clif_tape_z_block(t,v,v32);
-    ulong v42=v41+ulong(8ul);
-    v43=clif_ald(t,ulong(v42));
-    if(v38!=0){
-     clif_fence();
-     uint v44=uint(clif_view(v,(v1+uint(48u))));
-     uint v45=uint(clif_view(v,(v1+uint(52u))));
-     ulong v46=ulong(v44);
-     ulong v47=ulong(v45);
-     ulong v48=ulong((ulong)(v47)<<(uint(32)&63u));
-     ulong v49=v46|v48;
-     ulong v50=ulong((ulong)(v49)<<(uint(22)&63u));
-     ulong v51=ulong(v32);
-     ulong v52=v50|v51;
-     ulong v53=ulong(clif_c64(t,ulong(v41)));
-     uchar v54=uchar((ulong)(v53)==(ulong)(v52));
-     uint v55=v43&uint(2147483648ul);
-     uchar v56=uchar((uint)(v55)==(uint)(uint(0ul)));
-     uchar v57=uchar((uint)(v43)!=(uint)(uint(0ul)));
-     uchar v58=v54&v56;
-     uchar v59=v58&v57;
-     uchar v60=uchar((uint)(v39)>=(uint)(uint(4ul)));
-     uchar v61=v59|v60;
-     if(v61!=0){
-     }else{
-      uint v96=v39+uint(1ul);
-      {uint t0=v96;v39=t0;}
-      continue;
-     }
-    }else{
-    }
-    ulong v62=v41+ulong(144ul);
-    ulong v63=v41+ulong(16ul);
-    uint v64=uint(clif_c32(t,(ulong(v63)+ulong(long(16)))));
-    uint v65=uint((uint)(v64)>>(uint(8)&31u));
-    uint v66=v65&uint(15ul);
-    uint v67=uint(clif_c32(t,(ulong(v63)+ulong(long(32)))));
-    uint v68=v34*v66;
-    ulong v69=ulong(v67);
-    ulong v70=ulong(v68);
-    ulong v71=v69+v70;
-    ulong v72=v71&v37;
-    ulong v73=v62+v72;
-    ulong v74=ulong(clif_c64(t,ulong(v73)));
-    uint v75=v66*uint(8ul);
-    ulong v76=ulong(1ul);
-    uint v77=uint(v75);
-    ulong v78=ulong((ulong)(v76)<<(uint(v77)&63u));
-    ulong v79=v78+ulong(18446744073709551615ul);
-    uchar v80=uchar((uint)(v66)>=(uint)(uint(8ul)));
-    ulong v81=ulong(18446744073709551615ul);
-    ulong v82=v80!=0?v81:v79;
-    v83=v74&v82;
-    uchar v84=uchar((ulong)(v83)==(ulong)(v82));
-    if(v84!=0){
-     uint v86=uint(3ul);
-     uint v87=v34+v33;
-     uint v88=clif_tape_f16_side(t,v,v86,v87);
-     {uint t0=v88;v85=t0;}
-    }else{
-     {uint t0=v83;v85=t0;}
-    }
-    v89=uint(v85);
-    if(v38!=0){
-     clif_fence();
-     ulong v91=v41+ulong(8ul);
-     uint v92=clif_ald(t,ulong(v91));
-     uchar v93=uchar((uint)(v43)==(uint)(v92));
-     uchar v94=uchar((uint)(v39)>=(uint)(uint(4ul)));
-     uchar v95=v93|v94;
-     if(v95!=0){
-      {uint t0=v89;v90=t0;}
-      break;
-     }else{
-      uint v96=v39+uint(1ul);
-      {uint t0=v96;v39=t0;}
-      continue;
-     }
-    }else{
-     {uint t0=v89;v90=t0;}
-     break;
-    }
-   }
-   {uint t0=v90;v31=t0;}
+  uchar v43=uchar((uint)(v3)==(uint)(uint(1016ul)));
+  if(v43!=0){
+   uint v45=clif_tape_length_z(t,v,v2);
+   {uint t0=v45;v44=t0;}
   }else{
-   uint v97=clif_tape_end(t,v,v2);
-   uint v98=clif_tape_start(t,v,v2);
-   uint v99=v97-v98;
-   {uint t0=v99;v31=t0;}
+   uint v46=clif_tape_end_stated(t,v,v2);
+   uint v47=clif_tape_start_stated(t,v,v2);
+   uint v48=v46-v47;
+   {uint t0=v48;v44=t0;}
   }
-  {uint t0=v31;v5=t0;}
+  {uint t0=v44;v5=t0;}
  }
  return v5;
 }
@@ -1871,23 +3191,9 @@ inline uint clif_tape_start_next(device const uchar* t,CLIF_VIEW_SPACE const uin
  uint v4=0;
  uint v6=0;
  uint v8=0;
- ulong v27=0;
- uint v29=0;
- uint v56=0;
- uint v57=0;
- uint v58=0;
- uint v59=0;
- ulong v62=0;
- uint v63=0;
- uint v64=0;
- ulong v66=0;
- uint v68=0;
- ulong v87=0;
- ulong v88=0;
- uint v90=0;
- ulong v110=0;
- uint v112=0;
- uint v140=0;
+ ulong v40=0;
+ uint v42=0;
+ uint v82=0;
  v0=0;
  v1=0;
  v2=a2;
@@ -1900,189 +3206,94 @@ inline uint clif_tape_start_next(device const uchar* t,CLIF_VIEW_SPACE const uin
    uint v9=uint(clif_view(v,(v1+uint(16u))));
    uint v10=uint((uint)(v9)>>(uint(4)&31u));
    uint v11=v10&uint(15ul);
-   uint v12=uint(clif_view(v,(v1+uint(28u))));
-   uint v13=v2*v11;
-   uint v14=uint(v12);
-   uint v15=uint(v13);
-   uint v16=v0+v14;
-   uint v17=v16+v15;
-   ulong v18=ulong(clif_u64(t,v17));
-   uint v19=v11*uint(8ul);
-   ulong v20=ulong(1ul);
-   uint v21=uint(v19);
-   ulong v22=ulong((ulong)(v20)<<(uint(v21)&63u));
-   ulong v23=v22+ulong(18446744073709551615ul);
-   uchar v24=uchar((uint)(v11)>=(uint)(uint(8ul)));
-   ulong v25=ulong(18446744073709551615ul);
-   ulong v26=v24!=0?v25:v23;
-   v27=v18&v26;
-   uchar v28=uchar((ulong)(v27)==(ulong)(v26));
-   if(v28!=0){
-    uint v30=uint(2ul);
-    uint v31=clif_tape_f16_side(t,v,v30,v2);
-    {uint t0=v31;v29=t0;}
+   uint v12=uint((uint)(v2)>>(uint(10)&31u));
+   uint v13=v2&uint(1023ul);
+   uint v14=uint(clif_view(v,(v1+uint(20u))));
+   uint v15=uint(clif_view(v,(v1+uint(40u))));
+   uint v16=v12*v15;
+   uint v17=v16+v14;
+   uint v18=uint(clif_view(v,(v1+uint(4u))));
+   uint v19=uint((uint)(v12)<<(uint(10)&31u));
+   uint v20=v18-v19;
+   uint v21=uint(1024ul);
+   uint v22=min(v20,v21);
+   uint v23=uint(clif_view(v,(v1+uint(28u))));
+   uint v24=v22*v23;
+   uint v25=v17+v24;
+   uint v26=v13*v11;
+   uint v27=uint(v25);
+   uint v28=uint(v26);
+   uint v29=v0+v27;
+   uint v30=v29+v28;
+   ulong v31=ulong(clif_u64(t,v30));
+   uint v32=v11*uint(8ul);
+   ulong v33=ulong(1ul);
+   uint v34=uint(v32);
+   ulong v35=ulong((ulong)(v33)<<(uint(v34)&63u));
+   ulong v36=v35+ulong(18446744073709551615ul);
+   uchar v37=uchar((uint)(v11)>=(uint)(uint(8ul)));
+   ulong v38=ulong(18446744073709551615ul);
+   ulong v39=v37!=0?v38:v36;
+   v40=v31&v39;
+   uchar v41=uchar((ulong)(v40)==(ulong)(v39));
+   if(v41!=0){
+    uint v43=uint(2ul);
+    uint v44=clif_tape_f16_side(t,v,v43,v2);
+    {uint t0=v44;v42=t0;}
    }else{
-    {uint t0=v27;v29=t0;}
+    {uint t0=v40;v42=t0;}
    }
-   uint v32=uint(v29);
-   uint v33=v3+v32;
-   {uint t0=v33;v8=t0;}
+   uint v45=uint(v42);
+   uint v46=v3+v45;
+   {uint t0=v46;v8=t0;}
   }else{
-   uint v34=uint((uint)(v2)>>(uint(3)&31u));
-   uint v35=uint(clif_view(v,(v1+uint(16u))));
-   uint v36=uint((uint)(v35)>>(uint(12)&31u));
-   uint v37=v36&uint(15ul);
-   uint v38=uint(clif_view(v,(v1+uint(36u))));
-   uint v39=v34*v37;
-   uint v40=uint(v38);
-   uint v41=uint(v39);
-   uint v42=v0+v40;
-   uint v43=v42+v41;
-   uint v44=uint(clif_u32(t,v43));
-   uint v45=v37*uint(8ul);
-   uint v46=uint(1ul);
-   uint v47=uint(v45);
-   uint v48=((uint(v47)&63u)<32u?uint(v46)<<(uint(v47)&31u):0u);
-   uint v49=v48+uint(18446744073709551615ul);
-   uchar v50=uchar((uint)(v37)>=(uint)(uint(8ul)));
-   uint v51=uint(18446744073709551615ul);
-   uint v52=v50!=0?v51:v49;
-   uint v53=v44&v52;
-   uint v54=uint(v53);
-   {uint t0=v54;v8=t0;}
+   uint v47=uint((uint)(v2)>>(uint(3)&31u));
+   uint v48=uint(clif_view(v,(v1+uint(16u))));
+   uint v49=uint((uint)(v48)>>(uint(12)&31u));
+   uint v50=v49&uint(15ul);
+   uint v51=uint((uint)(v47)>>(uint(7)&31u));
+   uint v52=uint(clif_view(v,(v1+uint(20u))));
+   uint v53=uint(clif_view(v,(v1+uint(40u))));
+   uint v54=v51*v53;
+   uint v55=v54+v52;
+   uint v56=uint(clif_view(v,(v1+uint(4u))));
+   uint v57=uint((uint)(v51)<<(uint(10)&31u));
+   uint v58=v56-v57;
+   uint v59=uint(1024ul);
+   uint v60=min(v58,v59);
+   uint v61=uint(clif_view(v,(v1+uint(36u))));
+   uint v62=v60*v61;
+   uint v63=v55+v62;
+   uint v64=v47&uint(127ul);
+   uint v65=v64*v50;
+   uint v66=uint(v63);
+   uint v67=uint(v65);
+   uint v68=v0+v66;
+   uint v69=v68+v67;
+   uint v70=uint(clif_u32(t,v69));
+   uint v71=v50*uint(8ul);
+   uint v72=uint(1ul);
+   uint v73=uint(v71);
+   uint v74=((uint(v73)&63u)<32u?uint(v72)<<(uint(v73)&31u):0u);
+   uint v75=v74+uint(18446744073709551615ul);
+   uchar v76=uchar((uint)(v50)>=(uint)(uint(8ul)));
+   uint v77=uint(18446744073709551615ul);
+   uint v78=v76!=0?v77:v75;
+   uint v79=v70&v78;
+   uint v80=uint(v79);
+   {uint t0=v80;v8=t0;}
   }
   {uint t0=v8;v6=t0;}
  }else{
-  uchar v55=uchar((uint)(v4)==(uint)(uint(1016ul)));
-  if(v55!=0){
-   v57=uint((uint)(v2)>>(uint(10)&31u));
-   v58=uint((uint)(v57)<<(uint(10)&31u));
-   v59=v2&uint(1023ul);
-   uint v60=uint(clif_view(v,(v1+uint(32u))));
-   ulong v61=ulong(v60);
-   v62=v61+ulong(18446744073709551615ul);
-   v63=uint(clif_view(v,(v1+uint(36u))));
-   uint v65=uint(0ul);
-   {uint t0=v65;v64=t0;}
-   while(true){
-    v66=clif_tape_z_block(t,v,v57);
-    ulong v67=v66+ulong(8ul);
-    v68=clif_ald(t,ulong(v67));
-    if(v63!=0){
-     clif_fence();
-     uint v69=uint(clif_view(v,(v1+uint(48u))));
-     uint v70=uint(clif_view(v,(v1+uint(52u))));
-     ulong v71=ulong(v69);
-     ulong v72=ulong(v70);
-     ulong v73=ulong((ulong)(v72)<<(uint(32)&63u));
-     ulong v74=v71|v73;
-     ulong v75=ulong((ulong)(v74)<<(uint(22)&63u));
-     ulong v76=ulong(v57);
-     ulong v77=v75|v76;
-     ulong v78=ulong(clif_c64(t,ulong(v66)));
-     uchar v79=uchar((ulong)(v78)==(ulong)(v77));
-     uint v80=v68&uint(2147483648ul);
-     uchar v81=uchar((uint)(v80)==(uint)(uint(0ul)));
-     uchar v82=uchar((uint)(v68)!=(uint)(uint(0ul)));
-     uchar v83=v79&v81;
-     uchar v84=v83&v82;
-     uchar v85=uchar((uint)(v64)>=(uint)(uint(4ul)));
-     uchar v86=v84|v85;
-     if(v86!=0){
-     }else{
-      uint v146=v64+uint(1ul);
-      {uint t0=v146;v64=t0;}
-      continue;
-     }
-    }else{
-    }
-    v87=v66+ulong(144ul);
-    v88=v66+ulong(16ul);
-    uint v89=v59&uint(7ul);
-    if(v89!=0){
-     uint v91=uint(clif_c32(t,(ulong(v88)+ulong(long(16)))));
-     uint v92=uint((uint)(v91)>>(uint(4)&31u));
-     uint v93=v92&uint(15ul);
-     uint v94=uint(clif_c32(t,(ulong(v88)+ulong(long(28)))));
-     uint v95=v59*v93;
-     ulong v96=ulong(v94);
-     ulong v97=ulong(v95);
-     ulong v98=v96+v97;
-     ulong v99=v98&v62;
-     ulong v100=v87+v99;
-     ulong v101=ulong(clif_c64(t,ulong(v100)));
-     uint v102=v93*uint(8ul);
-     ulong v103=ulong(1ul);
-     uint v104=uint(v102);
-     ulong v105=ulong((ulong)(v103)<<(uint(v104)&63u));
-     ulong v106=v105+ulong(18446744073709551615ul);
-     uchar v107=uchar((uint)(v93)>=(uint)(uint(8ul)));
-     ulong v108=ulong(18446744073709551615ul);
-     ulong v109=v107!=0?v108:v106;
-     v110=v101&v109;
-     uchar v111=uchar((ulong)(v110)==(ulong)(v109));
-     if(v111!=0){
-      uint v113=uint(2ul);
-      uint v114=v59+v58;
-      uint v115=clif_tape_f16_side(t,v,v113,v114);
-      {uint t0=v115;v112=t0;}
-     }else{
-      {uint t0=v110;v112=t0;}
-     }
-     uint v116=uint(v112);
-     uint v117=v3+v116;
-     {uint t0=v117;v90=t0;}
-    }else{
-     uint v118=uint((uint)(v59)>>(uint(3)&31u));
-     uint v119=uint(clif_c32(t,(ulong(v88)+ulong(long(16)))));
-     uint v120=uint((uint)(v119)>>(uint(12)&31u));
-     uint v121=v120&uint(15ul);
-     uint v122=uint(clif_c32(t,(ulong(v88)+ulong(long(36)))));
-     uint v123=v118*v121;
-     ulong v124=ulong(v122);
-     ulong v125=ulong(v123);
-     ulong v126=v124+v125;
-     ulong v127=v126&v62;
-     ulong v128=v87+v127;
-     uint v129=uint(clif_c32(t,ulong(v128)));
-     uint v130=v121*uint(8ul);
-     uint v131=uint(1ul);
-     uint v132=uint(v130);
-     uint v133=((uint(v132)&63u)<32u?uint(v131)<<(uint(v132)&31u):0u);
-     uint v134=v133+uint(18446744073709551615ul);
-     uchar v135=uchar((uint)(v121)>=(uint)(uint(8ul)));
-     uint v136=uint(18446744073709551615ul);
-     uint v137=v135!=0?v136:v134;
-     uint v138=v129&v137;
-     uint v139=uint(v138);
-     {uint t0=v139;v90=t0;}
-    }
-    if(v63!=0){
-     clif_fence();
-     ulong v141=v66+ulong(8ul);
-     uint v142=clif_ald(t,ulong(v141));
-     uchar v143=uchar((uint)(v68)==(uint)(v142));
-     uchar v144=uchar((uint)(v64)>=(uint)(uint(4ul)));
-     uchar v145=v143|v144;
-     if(v145!=0){
-      {uint t0=v90;v140=t0;}
-      break;
-     }else{
-      uint v146=v64+uint(1ul);
-      {uint t0=v146;v64=t0;}
-      continue;
-     }
-    }else{
-     {uint t0=v90;v140=t0;}
-     break;
-    }
-   }
-   {uint t0=v140;v56=t0;}
+  uchar v81=uchar((uint)(v4)==(uint)(uint(1016ul)));
+  if(v81!=0){
+   uint v83=clif_tape_start_next_z(t,v,v2,v3);
+   {uint t0=v83;v82=t0;}
   }else{
-   uint v147=clif_tape_start(t,v,v2);
-   {uint t0=v147;v56=t0;}
+   uint v84=clif_tape_start(t,v,v2);
+   {uint t0=v84;v82=t0;}
   }
-  {uint t0=v56;v6=t0;}
+  {uint t0=v82;v6=t0;}
  }
  return v6;
 }
@@ -2091,147 +3302,58 @@ inline ulong clif_tape_slot(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
  uint v1=0;
  uint v2=0;
  ulong v5=0;
- uint v6=0;
- uint v7=0;
- uint v8=0;
- ulong v11=0;
- uint v12=0;
- uint v13=0;
- ulong v15=0;
- uint v17=0;
- ulong v57=0;
- ulong v59=0;
- ulong v63=0;
- ulong v88=0;
- ulong v90=0;
+ ulong v38=0;
+ ulong v40=0;
  v0=0;
  v1=0;
  v2=a2;
  uint v3=uint(clif_view(v,(v1+uint(12u))));
  uchar v4=uchar((uint)(v3)==(uint)(uint(1016ul)));
  if(v4!=0){
-  v6=uint((uint)(v2)>>(uint(10)&31u));
-  v7=uint((uint)(v6)<<(uint(10)&31u));
-  v8=v2&uint(1023ul);
-  uint v9=uint(clif_view(v,(v1+uint(32u))));
-  ulong v10=ulong(v9);
-  v11=v10+ulong(18446744073709551615ul);
-  v12=uint(clif_view(v,(v1+uint(36u))));
-  uint v14=uint(0ul);
-  {uint t0=v14;v13=t0;}
-  while(true){
-   v15=clif_tape_z_block(t,v,v6);
-   ulong v16=v15+ulong(8ul);
-   v17=clif_ald(t,ulong(v16));
-   if(v12!=0){
-    clif_fence();
-    uint v18=uint(clif_view(v,(v1+uint(48u))));
-    uint v19=uint(clif_view(v,(v1+uint(52u))));
-    ulong v20=ulong(v18);
-    ulong v21=ulong(v19);
-    ulong v22=ulong((ulong)(v21)<<(uint(32)&63u));
-    ulong v23=v20|v22;
-    ulong v24=ulong((ulong)(v23)<<(uint(22)&63u));
-    ulong v25=ulong(v6);
-    ulong v26=v24|v25;
-    ulong v27=ulong(clif_c64(t,ulong(v15)));
-    uchar v28=uchar((ulong)(v27)==(ulong)(v26));
-    uint v29=v17&uint(2147483648ul);
-    uchar v30=uchar((uint)(v29)==(uint)(uint(0ul)));
-    uchar v31=uchar((uint)(v17)!=(uint)(uint(0ul)));
-    uchar v32=v28&v30;
-    uchar v33=v32&v31;
-    uchar v34=uchar((uint)(v13)>=(uint)(uint(4ul)));
-    uchar v35=v33|v34;
-    if(v35!=0){
-    }else{
-     uint v69=v13+uint(1ul);
-     {uint t0=v69;v13=t0;}
-     continue;
-    }
-   }else{
-   }
-   ulong v36=v15+ulong(144ul);
-   ulong v37=v15+ulong(16ul);
-   uint v38=uint(clif_c32(t,(ulong(v37)+ulong(long(16)))));
-   uint v39=uint((uint)(v38)>>(uint(0)&31u));
-   uint v40=v39&uint(15ul);
-   uint v41=uint(clif_c32(t,(ulong(v37)+ulong(long(24)))));
-   uint v42=v8*v40;
-   ulong v43=ulong(v41);
-   ulong v44=ulong(v42);
-   ulong v45=v43+v44;
-   ulong v46=v45&v11;
-   ulong v47=v36+v46;
-   ulong v48=ulong(clif_c64(t,ulong(v47)));
-   uint v49=v40*uint(8ul);
-   ulong v50=ulong(1ul);
-   uint v51=uint(v49);
-   ulong v52=ulong((ulong)(v50)<<(uint(v51)&63u));
-   ulong v53=v52+ulong(18446744073709551615ul);
-   uchar v54=uchar((uint)(v40)>=(uint)(uint(8ul)));
-   ulong v55=ulong(18446744073709551615ul);
-   ulong v56=v54!=0?v55:v53;
-   v57=v48&v56;
-   uchar v58=uchar((ulong)(v57)==(ulong)(v56));
-   if(v58!=0){
-    uint v60=uint(1ul);
-    uint v61=v8+v7;
-    ulong v62=clif_tape_f16_side(t,v,v60,v61);
-    {ulong t0=v62;v59=t0;}
-   }else{
-    {ulong t0=v57;v59=t0;}
-   }
-   if(v12!=0){
-    clif_fence();
-    ulong v64=v15+ulong(8ul);
-    uint v65=clif_ald(t,ulong(v64));
-    uchar v66=uchar((uint)(v17)==(uint)(v65));
-    uchar v67=uchar((uint)(v13)>=(uint)(uint(4ul)));
-    uchar v68=v66|v67;
-    if(v68!=0){
-     {ulong t0=v59;v63=t0;}
-     break;
-    }else{
-     uint v69=v13+uint(1ul);
-     {uint t0=v69;v13=t0;}
-     continue;
-    }
-   }else{
-    {ulong t0=v59;v63=t0;}
-    break;
-   }
-  }
-  {ulong t0=v63;v5=t0;}
+  ulong v6=clif_tape_slot_z(t,v,v2);
+  {ulong t0=v6;v5=t0;}
  }else{
-  uint v70=uint(clif_view(v,(v1+uint(16u))));
-  uint v71=uint((uint)(v70)>>(uint(0)&31u));
-  uint v72=v71&uint(15ul);
-  uint v73=uint(clif_view(v,(v1+uint(24u))));
-  uint v74=v2*v72;
-  uint v75=uint(v73);
-  uint v76=uint(v74);
-  uint v77=v0+v75;
-  uint v78=v77+v76;
-  ulong v79=ulong(clif_u64(t,v78));
-  uint v80=v72*uint(8ul);
-  ulong v81=ulong(1ul);
-  uint v82=uint(v80);
-  ulong v83=ulong((ulong)(v81)<<(uint(v82)&63u));
-  ulong v84=v83+ulong(18446744073709551615ul);
-  uchar v85=uchar((uint)(v72)>=(uint)(uint(8ul)));
-  ulong v86=ulong(18446744073709551615ul);
-  ulong v87=v85!=0?v86:v84;
-  v88=v79&v87;
-  uchar v89=uchar((ulong)(v88)==(ulong)(v87));
-  if(v89!=0){
-   uint v91=uint(1ul);
-   ulong v92=clif_tape_f16_side(t,v,v91,v2);
-   {ulong t0=v92;v90=t0;}
+  uint v7=uint(clif_view(v,(v1+uint(16u))));
+  uint v8=uint((uint)(v7)>>(uint(0)&31u));
+  uint v9=v8&uint(15ul);
+  uint v10=uint((uint)(v2)>>(uint(10)&31u));
+  uint v11=v2&uint(1023ul);
+  uint v12=uint(clif_view(v,(v1+uint(20u))));
+  uint v13=uint(clif_view(v,(v1+uint(40u))));
+  uint v14=v10*v13;
+  uint v15=v14+v12;
+  uint v16=uint(clif_view(v,(v1+uint(4u))));
+  uint v17=uint((uint)(v10)<<(uint(10)&31u));
+  uint v18=v16-v17;
+  uint v19=uint(1024ul);
+  uint v20=min(v18,v19);
+  uint v21=uint(clif_view(v,(v1+uint(24u))));
+  uint v22=v20*v21;
+  uint v23=v15+v22;
+  uint v24=v11*v9;
+  uint v25=uint(v23);
+  uint v26=uint(v24);
+  uint v27=v0+v25;
+  uint v28=v27+v26;
+  ulong v29=ulong(clif_u64(t,v28));
+  uint v30=v9*uint(8ul);
+  ulong v31=ulong(1ul);
+  uint v32=uint(v30);
+  ulong v33=ulong((ulong)(v31)<<(uint(v32)&63u));
+  ulong v34=v33+ulong(18446744073709551615ul);
+  uchar v35=uchar((uint)(v9)>=(uint)(uint(8ul)));
+  ulong v36=ulong(18446744073709551615ul);
+  ulong v37=v35!=0?v36:v34;
+  v38=v29&v37;
+  uchar v39=uchar((ulong)(v38)==(ulong)(v37));
+  if(v39!=0){
+   uint v41=uint(1ul);
+   ulong v42=clif_tape_f16_side(t,v,v41,v2);
+   {ulong t0=v42;v40=t0;}
   }else{
-   {ulong t0=v88;v90=t0;}
+   {ulong t0=v38;v40=t0;}
   }
-  {ulong t0=v90;v5=t0;}
+  {ulong t0=v40;v5=t0;}
  }
  return v5;
 }
@@ -2250,14 +3372,14 @@ __attribute__((noinline)) uint clif_tape_line_select(device const uchar* t,CLIF_
  v1=0;
  v2=a2;
  v3=a3;
- uint v4=uint(clif_view(v,(v1+uint(92u))));
+ uint v4=uint(clif_view(v,(v1+uint(96u))));
  uint v5=uint(8ul);
  uint v6=uint(v4);
  uint v7=uint(v5);
  uint v8=v0+v6;
  uint v9=v8+v7;
  uint v10=uint(clif_u32(t,v9));
- uint v11=uint(clif_view(v,(v1+uint(92u))));
+ uint v11=uint(clif_view(v,(v1+uint(96u))));
  uint v12=uint(12ul);
  uint v13=uint(v11);
  uint v14=uint(v12);
@@ -2270,7 +3392,7 @@ __attribute__((noinline)) uint clif_tape_line_select(device const uchar* t,CLIF_
  uint v21=uint((uint)(v3)>>(uint(8)&31u));
  uint v22=v21*uint(8ul);
  uint v23=v20+v22;
- uint v24=uint(clif_view(v,(v1+uint(92u))));
+ uint v24=uint(clif_view(v,(v1+uint(96u))));
  uint v25=v24+v23;
  uint v26=v25+uint(20ul);
  uint v27=uint(v26);
@@ -2286,7 +3408,7 @@ __attribute__((noinline)) uint clif_tape_line_select(device const uchar* t,CLIF_
  uint v37=uint(clif_u32(t,v36));
  uint v38=v10+v17;
  uint v39=v38*uint(8ul);
- uint v40=uint(clif_view(v,(v1+uint(92u))));
+ uint v40=uint(clif_view(v,(v1+uint(96u))));
  uint v41=v40+v39;
  v42=v41+uint(20ul);
  {uint t0=v31;uint t1=v37;v43=t0;v44=t1;}
@@ -2394,26 +3516,17 @@ inline uint clif_tape_line(device const uchar* t,CLIF_VIEW_SPACE const uint* v,u
  uint v39=0;
  uint v40=0;
  uint v92=0;
- uint v101=0;
- uint v109=0;
- uint v110=0;
- ulong v115=0;
- uint v116=0;
- uint v118=0;
- uint v125=0;
- uint v126=0;
- uint v127=0;
- uint v178=0;
- uint v180=0;
- uint v181=0;
- uint v182=0;
+ uint v94=0;
+ uint v96=0;
+ uint v97=0;
+ uint v98=0;
  v0=0;
  v1=0;
  v2=a2;
  v3=uint(clif_view(v,(v1+uint(12u))));
  uchar v4=uchar((uint)(v3)==(uint)(uint(16ul)));
  if(v4!=0){
-  uint v6=uint(clif_view(v,(v1+uint(92u))));
+  uint v6=uint(clif_view(v,(v1+uint(96u))));
   uint v7=uint(0ul);
   uint v8=uint(v6);
   uint v9=uint(v7);
@@ -2425,7 +3538,7 @@ inline uint clif_tape_line(device const uchar* t,CLIF_VIEW_SPACE const uint* v,u
    uint v15=uint(0ul);
    {uint t0=v15;v14=t0;}
   }else{
-   uint v16=uint(clif_view(v,(v1+uint(92u))));
+   uint v16=uint(clif_view(v,(v1+uint(96u))));
    uint v17=uint(4ul);
    uint v18=uint(v16);
    uint v19=uint(v17);
@@ -2457,21 +3570,21 @@ inline uint clif_tape_line(device const uchar* t,CLIF_VIEW_SPACE const uint* v,u
     if(v41!=0){
      uint v42=v38+v39;
      uint v43=uint((uint)(v42)>>(uint(1)&31u));
-     uint v44=uint(clif_view(v,(v1+uint(92u))));
+     uint v44=uint(clif_view(v,(v1+uint(96u))));
      uint v45=uint(8ul);
      uint v46=uint(v44);
      uint v47=uint(v45);
      uint v48=v0+v46;
      uint v49=v48+v47;
      uint v50=uint(clif_u32(t,v49));
-     uint v51=uint(clif_view(v,(v1+uint(92u))));
+     uint v51=uint(clif_view(v,(v1+uint(96u))));
      uint v52=uint(12ul);
      uint v53=uint(v51);
      uint v54=uint(v52);
      uint v55=v0+v53;
      uint v56=v55+v54;
      uint v57=uint(clif_u32(t,v56));
-     uint v58=uint(clif_view(v,(v1+uint(92u))));
+     uint v58=uint(clif_view(v,(v1+uint(96u))));
      uint v59=uint(16ul);
      uint v60=uint(v58);
      uint v61=uint(v59);
@@ -2481,7 +3594,7 @@ inline uint clif_tape_line(device const uchar* t,CLIF_VIEW_SPACE const uint* v,u
      uint v65=v50+v57;
      uint v66=v65+v64;
      uint v67=v66*uint(8ul);
-     uint v68=uint(clif_view(v,(v1+uint(92u))));
+     uint v68=uint(clif_view(v,(v1+uint(96u))));
      uint v69=v68+v67;
      uint v70=v69+uint(20ul);
      ulong v71=ulong(v43);
@@ -2517,136 +3630,37 @@ inline uint clif_tape_line(device const uchar* t,CLIF_VIEW_SPACE const uint* v,u
  }else{
   uchar v91=uchar((uint)(v3)==(uint)(uint(1016ul)));
   if(v91!=0){
-   uint v93=uint(clif_view(v,(v1+uint(92u))));
-   uint v94=uint(0ul);
-   uint v95=uint(v93);
-   uint v96=uint(v94);
-   uint v97=v0+v95;
-   uint v98=v97+v96;
-   uint v99=uint(clif_u32(t,v98));
-   uchar v100=uchar((uint)(v99)==(uint)(uint(0ul)));
-   if(v100!=0){
-    uint v102=uint(0ul);
-    {uint t0=v102;v101=t0;}
-   }else{
-    uint v103=uint(clif_view(v,(v1+uint(92u))));
-    uint v104=uint(4ul);
-    uint v105=uint(v103);
-    uint v106=uint(v104);
-    uint v107=v0+v105;
-    uint v108=v107+v106;
-    v109=uint(clif_u32(t,v108));
-    v110=uint((uint)(v2)>>(uint(v109)&31u));
-    uint v111=uint(1ul);
-    uint v112=uint((uint)(v111)<<(uint(v109)&31u));
-    uint v113=v112+uint(18446744073709551615ul);
-    uint v114=v2&v113;
-    v115=ulong(v114);
-    v116=uint(0ul);
-    uchar v117=uchar((uint)(v110)==(uint)(uint(0ul)));
-    if(v117!=0){
-     uint v119=uint(0ul);
-     {uint t0=v119;v118=t0;}
-    }else{
-     uint v120=v110+uint(18446744073709551615ul);
-     uint v121=clif_tape_line_select(t,v,v116,v120);
-     uint v122=v121-v120;
-     {uint t0=v122;v118=t0;}
-    }
-    uint v123=clif_tape_line_select(t,v,v116,v110);
-    uint v124=v123-v110;
-    {uint t0=v118;uint t1=v124;v125=t0;v126=t1;}
-    while(true){
-     uchar v128=uchar((uint)(v125)<(uint)(v126));
-     if(v128!=0){
-      uint v129=v125+v126;
-      uint v130=uint((uint)(v129)>>(uint(1)&31u));
-      uint v131=uint(clif_view(v,(v1+uint(92u))));
-      uint v132=uint(8ul);
-      uint v133=uint(v131);
-      uint v134=uint(v132);
-      uint v135=v0+v133;
-      uint v136=v135+v134;
-      uint v137=uint(clif_u32(t,v136));
-      uint v138=uint(clif_view(v,(v1+uint(92u))));
-      uint v139=uint(12ul);
-      uint v140=uint(v138);
-      uint v141=uint(v139);
-      uint v142=v0+v140;
-      uint v143=v142+v141;
-      uint v144=uint(clif_u32(t,v143));
-      uint v145=uint(clif_view(v,(v1+uint(92u))));
-      uint v146=uint(16ul);
-      uint v147=uint(v145);
-      uint v148=uint(v146);
-      uint v149=v0+v147;
-      uint v150=v149+v148;
-      uint v151=uint(clif_u32(t,v150));
-      uint v152=v137+v144;
-      uint v153=v152+v151;
-      uint v154=v153*uint(8ul);
-      uint v155=uint(clif_view(v,(v1+uint(92u))));
-      uint v156=v155+v154;
-      uint v157=v156+uint(20ul);
-      ulong v158=ulong(v130);
-      ulong v159=ulong(v109);
-      ulong v160=v158*v159;
-      uint v161=uint((ulong)(v160)>>3u);
-      uint v162=uint(v161);
-      uint v163=uint(v157);
-      uint v164=uint(v162);
-      uint v165=v0+v163;
-      uint v166=v165+v164;
-      ulong v167=ulong(clif_u64(t,v166));
-      uint v168=uint(v160)&uint(7ul);
-      ulong v169=ulong((ulong)(v167)>>(uint(v168)&63u));
-      ulong v170=ulong(1ul);
-      ulong v171=ulong((ulong)(v170)<<(uint(v159)&63u));
-      ulong v172=v171+ulong(18446744073709551615ul);
-      ulong v173=v169&v172;
-      uchar v174=uchar((ulong)(v173)<(ulong)(v115));
-      uint v175=v130+uint(1ul);
-      uint v176=v174!=0?v175:v125;
-      uint v177=v174!=0?v126:v130;
-      {uint t0=v176;uint t1=v177;v125=t0;v126=t1;}
-      continue;
-     }else{
-      {uint t0=v125;v127=t0;}
-      break;
-     }
-    }
-    {uint t0=v127;v101=t0;}
-   }
-   {uint t0=v101;v92=t0;}
+   uint v93=clif_tape_line_z(t,v,v2);
+   {uint t0=v93;v92=t0;}
   }else{
-   v178=uint(clif_view(v,(v1+uint(92u))));
-   uint v179=uint(clif_view(v,(v1+uint(96u))));
-   uint v183=uint(1ul);
-   {uint t0=v183;uint t1=v179;v180=t0;v181=t1;}
+   v94=uint(clif_view(v,(v1+uint(96u))));
+   uint v95=uint(clif_view(v,(v1+uint(100u))));
+   uint v99=uint(1ul);
+   {uint t0=v99;uint t1=v95;v96=t0;v97=t1;}
    while(true){
-    uchar v184=uchar((uint)(v180)<(uint)(v181));
-    if(v184!=0){
-     uint v185=v180+v181;
-     uint v186=uint((uint)(v185)>>(uint(1)&31u));
-     uint v187=v186*uint(4ul);
-     uint v188=uint(v178);
-     uint v189=uint(v187);
-     uint v190=v0+v188;
-     uint v191=v190+v189;
-     uint v192=uint(clif_u32(t,v191));
-     uchar v193=uchar((uint)(v192)>(uint)(v2));
-     uint v194=v186+uint(1ul);
-     uint v195=v193!=0?v180:v194;
-     uint v196=v193!=0?v186:v181;
-     {uint t0=v195;uint t1=v196;v180=t0;v181=t1;}
+    uchar v100=uchar((uint)(v96)<(uint)(v97));
+    if(v100!=0){
+     uint v101=v96+v97;
+     uint v102=uint((uint)(v101)>>(uint(1)&31u));
+     uint v103=v102*uint(4ul);
+     uint v104=uint(v94);
+     uint v105=uint(v103);
+     uint v106=v0+v104;
+     uint v107=v106+v105;
+     uint v108=uint(clif_u32(t,v107));
+     uchar v109=uchar((uint)(v108)>(uint)(v2));
+     uint v110=v102+uint(1ul);
+     uint v111=v109!=0?v96:v110;
+     uint v112=v109!=0?v102:v97;
+     {uint t0=v111;uint t1=v112;v96=t0;v97=t1;}
      continue;
     }else{
-     {uint t0=v180;v182=t0;}
+     {uint t0=v96;v98=t0;}
      break;
     }
    }
-   uint v197=v182+uint(18446744073709551615ul);
-   {uint t0=v197;v92=t0;}
+   uint v113=v98+uint(18446744073709551615ul);
+   {uint t0=v113;v92=t0;}
   }
   {uint t0=v92;v5=t0;}
  }
@@ -2660,7 +3674,6 @@ inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uin
  uint v5=0;
  uint v7=0;
  uint v68=0;
- uint v70=0;
  v0=0;
  v1=0;
  v2=a2;
@@ -2676,7 +3689,7 @@ inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uin
    uint v10=uint(1ul);
    uint v11=clif_tape_line_select(t,v,v10,v9);
    uint v12=v11-v9;
-   uint v13=uint(clif_view(v,(v1+uint(92u))));
+   uint v13=uint(clif_view(v,(v1+uint(96u))));
    uint v14=uint(4ul);
    uint v15=uint(v13);
    uint v16=uint(v14);
@@ -2684,21 +3697,21 @@ inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uin
    uint v18=v17+v16;
    uint v19=uint(clif_u32(t,v18));
    uint v20=uint((uint)(v12)<<(uint(v19)&31u));
-   uint v21=uint(clif_view(v,(v1+uint(92u))));
+   uint v21=uint(clif_view(v,(v1+uint(96u))));
    uint v22=uint(8ul);
    uint v23=uint(v21);
    uint v24=uint(v22);
    uint v25=v0+v23;
    uint v26=v25+v24;
    uint v27=uint(clif_u32(t,v26));
-   uint v28=uint(clif_view(v,(v1+uint(92u))));
+   uint v28=uint(clif_view(v,(v1+uint(96u))));
    uint v29=uint(12ul);
    uint v30=uint(v28);
    uint v31=uint(v29);
    uint v32=v0+v30;
    uint v33=v32+v31;
    uint v34=uint(clif_u32(t,v33));
-   uint v35=uint(clif_view(v,(v1+uint(92u))));
+   uint v35=uint(clif_view(v,(v1+uint(96u))));
    uint v36=uint(16ul);
    uint v37=uint(v35);
    uint v38=uint(v36);
@@ -2708,7 +3721,7 @@ inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uin
    uint v42=v27+v34;
    uint v43=v42+v41;
    uint v44=v43*uint(8ul);
-   uint v45=uint(clif_view(v,(v1+uint(92u))));
+   uint v45=uint(clif_view(v,(v1+uint(96u))));
    uint v46=v45+v44;
    uint v47=v46+uint(20ul);
    ulong v48=ulong(v9);
@@ -2736,85 +3749,90 @@ inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uin
  }else{
   uchar v67=uchar((uint)(v3)==(uint)(uint(1016ul)));
   if(v67!=0){
-   uchar v69=uchar((uint)(v2)==(uint)(uint(0ul)));
-   if(v69!=0){
-    uint v71=uint(0ul);
-    {uint t0=v71;v70=t0;}
-   }else{
-    uint v72=v2+uint(18446744073709551615ul);
-    uint v73=uint(1ul);
-    uint v74=clif_tape_line_select(t,v,v73,v72);
-    uint v75=v74-v72;
-    uint v76=uint(clif_view(v,(v1+uint(92u))));
-    uint v77=uint(4ul);
-    uint v78=uint(v76);
-    uint v79=uint(v77);
-    uint v80=v0+v78;
-    uint v81=v80+v79;
-    uint v82=uint(clif_u32(t,v81));
-    uint v83=uint((uint)(v75)<<(uint(v82)&31u));
-    uint v84=uint(clif_view(v,(v1+uint(92u))));
-    uint v85=uint(8ul);
-    uint v86=uint(v84);
-    uint v87=uint(v85);
-    uint v88=v0+v86;
-    uint v89=v88+v87;
-    uint v90=uint(clif_u32(t,v89));
-    uint v91=uint(clif_view(v,(v1+uint(92u))));
-    uint v92=uint(12ul);
-    uint v93=uint(v91);
-    uint v94=uint(v92);
-    uint v95=v0+v93;
-    uint v96=v95+v94;
-    uint v97=uint(clif_u32(t,v96));
-    uint v98=uint(clif_view(v,(v1+uint(92u))));
-    uint v99=uint(16ul);
-    uint v100=uint(v98);
-    uint v101=uint(v99);
-    uint v102=v0+v100;
-    uint v103=v102+v101;
-    uint v104=uint(clif_u32(t,v103));
-    uint v105=v90+v97;
-    uint v106=v105+v104;
-    uint v107=v106*uint(8ul);
-    uint v108=uint(clif_view(v,(v1+uint(92u))));
-    uint v109=v108+v107;
-    uint v110=v109+uint(20ul);
-    ulong v111=ulong(v72);
-    ulong v112=ulong(v82);
-    ulong v113=v111*v112;
-    uint v114=uint((ulong)(v113)>>3u);
-    uint v115=uint(v114);
-    uint v116=uint(v110);
-    uint v117=uint(v115);
-    uint v118=v0+v116;
-    uint v119=v118+v117;
-    ulong v120=ulong(clif_u64(t,v119));
-    uint v121=uint(v113)&uint(7ul);
-    uint v122=uint((ulong)(v120)>>(uint(v121)&63u));
-    uint v123=uint(1ul);
-    uint v124=((uint(uint(v112))&63u)<32u?uint(v123)<<(uint(uint(v112))&31u):0u);
-    uint v125=v124+uint(18446744073709551615ul);
-    uint v126=v122&v125;
-    uint v127=uint(v126);
-    uint v128=v83|v127;
-    uint v129=v128+uint(1ul);
-    {uint t0=v129;v70=t0;}
-   }
-   {uint t0=v70;v68=t0;}
+   uint v69=clif_tape_line_start_z(t,v,v2);
+   {uint t0=v69;v68=t0;}
   }else{
-   uint v130=uint(clif_view(v,(v1+uint(92u))));
-   uint v131=v2*uint(4ul);
-   uint v132=uint(v130);
-   uint v133=uint(v131);
-   uint v134=v0+v132;
-   uint v135=v134+v133;
-   uint v136=uint(clif_u32(t,v135));
-   {uint t0=v136;v68=t0;}
+   uint v70=uint(clif_view(v,(v1+uint(96u))));
+   uint v71=v2*uint(4ul);
+   uint v72=uint(v70);
+   uint v73=uint(v71);
+   uint v74=v0+v72;
+   uint v75=v74+v73;
+   uint v76=uint(clif_u32(t,v75));
+   {uint t0=v76;v68=t0;}
   }
   {uint t0=v68;v5=t0;}
  }
  return v5;
+}
+inline uint clif_tape_has_kind(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
+ uint v0=0;
+ uint v1=0;
+ uint v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v6=0;
+ uint v8=0;
+ uint v13=0;
+ uint v14=0;
+ uint v16=0;
+ v0=0;
+ v1=0;
+ v2=a2;
+ v3=a3;
+ v4=uint(clif_view(v,(v1+uint(120u))));
+ uchar v5=uchar((uint)(v4)==(uint)(uint(0ul)));
+ if(v5!=0){
+  uint v7=uint(1ul);
+  {uint t0=v7;v6=t0;}
+ }else{
+  v8=uint(0ul);
+  uint v9=uint(v4);
+  uint v10=uint(v8);
+  uint v11=v0+v9;
+  uint v12=v11+v10;
+  v13=uint(clif_u32(t,v12));
+  v14=uint((uint)(v3)>>(uint(6)&31u));
+  uchar v15=uchar((uint)(v14)>=(uint)(v13));
+  if(v15!=0){
+   uint v17=uint(0ul);
+   {uint t0=v17;v16=t0;}
+  }else{
+   uint v18=uint(4ul);
+   uint v19=uint(v4);
+   uint v20=uint(v18);
+   uint v21=v0+v19;
+   uint v22=v21+v20;
+   uint v23=uint(clif_u32(t,v22));
+   uint v24=uint(8ul);
+   uint v25=uint(v4);
+   uint v26=uint(v24);
+   uint v27=v0+v25;
+   uint v28=v27+v26;
+   uint v29=uint(clif_u32(t,v28));
+   uint v30=v2+uint(1ul);
+   uchar v31=uchar((uint)(v30)<(uint)(v29));
+   uint v32=v31!=0?v30:v8;
+   uint v33=v13+v23;
+   uint v34=v32*v33;
+   uint v35=v34+v14;
+   uint v36=uint((uint)(v35)<<(uint(3)&31u));
+   uint v37=v36+uint(16ul);
+   uint v38=uint(v4);
+   uint v39=uint(v37);
+   uint v40=v0+v38;
+   uint v41=v40+v39;
+   ulong v42=ulong(clif_u64(t,v41));
+   uint v43=v3&uint(63ul);
+   uint v44=uint(v43);
+   uint v45=uint((ulong)(v42)>>(uint(v44)&63u));
+   uint v46=v45&uint(1ul);
+   uint v47=uint(v46);
+   {uint t0=v47;v16=t0;}
+  }
+  {uint t0=v16;v6=t0;}
+ }
+ return v6;
 }
 __attribute__((noinline)) ulong clif_tape_z_block(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
  ulong v0=0;
@@ -2823,327 +3841,156 @@ __attribute__((noinline)) ulong clif_tape_z_block(device const uchar* t,CLIF_VIE
  ulong v9=0;
  ulong v18=0;
  ulong v20=0;
- uint v22=0;
- uint v25=0;
- uint v29=0;
- uint v31=0;
- uint v33=0;
- uint v36=0;
+ ulong v25=0;
+ uint v34=0;
+ uint v37=0;
  uint v41=0;
- uint v42=0;
- ulong v43=0;
- uint v44=0;
+ uint v43=0;
  uint v45=0;
- uint v47=0;
  uint v48=0;
- uint v49=0;
- ulong v56=0;
- uint v58=0;
+ uint v53=0;
+ uint v54=0;
+ ulong v55=0;
+ uint v56=0;
+ uint v57=0;
+ uint v59=0;
  uint v60=0;
- ulong v66=0;
- uint v68=0;
+ uint v61=0;
+ ulong v68=0;
+ uint v70=0;
  uint v72=0;
- uint v74=0;
- ulong v90=0;
- uchar v93=0;
- uint v95=0;
- ulong v98=0;
- uint v99=0;
- uint v100=0;
- uint v106=0;
- uint v109=0;
- uchar v114=0;
- uint v115=0;
- ulong v132=0;
- ulong v133=0;
- uint v134=0;
- ulong v139=0;
- uint v143=0;
- ulong v150=0;
- uint v151=0;
+ ulong v78=0;
+ uint v80=0;
+ uint v84=0;
+ uint v86=0;
+ ulong v102=0;
+ uchar v105=0;
+ uint v107=0;
+ ulong v110=0;
+ uint v111=0;
+ uint v112=0;
+ uint v118=0;
+ uint v121=0;
+ uchar v126=0;
+ uint v127=0;
+ ulong v144=0;
+ ulong v145=0;
+ uint v146=0;
+ ulong v151=0;
  uint v155=0;
- uint v168=0;
- ulong v174=0;
- ulong v189=0;
- ulong v191=0;
- uint v202=0;
- uint v217=0;
- ulong v222=0;
- uint v224=0;
- uint v225=0;
- ulong v238=0;
- ulong v239=0;
- uint v240=0;
- ulong v245=0;
- uint v249=0;
- ulong v256=0;
- uint v257=0;
+ ulong v162=0;
+ uint v163=0;
+ uint v167=0;
+ uint v180=0;
+ ulong v186=0;
+ ulong v201=0;
+ ulong v203=0;
+ uint v214=0;
+ uint v229=0;
+ ulong v234=0;
+ uint v236=0;
+ uint v237=0;
+ ulong v250=0;
+ ulong v251=0;
+ uint v252=0;
+ ulong v257=0;
  uint v261=0;
- uint v274=0;
- ulong v280=0;
- uint v296=0;
- uint v297=0;
- uint v299=0;
- uint v300=0;
- uint v302=0;
- uint v313=0;
- uint v324=0;
- uint v335=0;
- uint v346=0;
- uint v358=0;
- uint v361=0;
- uint v362=0;
- uint v363=0;
- uint v364=0;
- uint v365=0;
- uint v367=0;
- uint v369=0;
- uint v371=0;
- uint v373=0;
- uint v375=0;
- uint v377=0;
- uint v379=0;
- uint v381=0;
- uint v383=0;
- uint v385=0;
- uint v397=0;
- ulong v399=0;
- ulong v401=0;
- uint v402=0;
- uint v403=0;
- uint v404=0;
+ ulong v268=0;
+ uint v269=0;
+ uint v273=0;
+ uint v286=0;
+ ulong v292=0;
+ uint v308=0;
+ uint v310=0;
+ uint v328=0;
+ uint v344=0;
+ uint v360=0;
+ uint v376=0;
+ uint v389=0;
+ uint v391=0;
+ uint v394=0;
+ uint v398=0;
+ uint v401=0;
  uint v405=0;
+ uint v408=0;
  uint v412=0;
- ulong v444=0;
- ulong v448=0;
- ulong v449=0;
- ulong v450=0;
- ulong v452=0;
- ulong v454=0;
+ uint v415=0;
+ uint v419=0;
+ uint v420=0;
+ uint v423=0;
+ uint v426=0;
+ uint v431=0;
+ ulong v433=0;
+ ulong v434=0;
+ uint v436=0;
+ ulong v442=0;
+ uint v453=0;
+ ulong v455=0;
+ ulong v456=0;
  ulong v457=0;
  ulong v458=0;
- ulong v459=0;
- uint v461=0;
- uint v464=0;
- ulong v465=0;
- uint v466=0;
- ulong v467=0;
- ulong v474=0;
- ulong v475=0;
- ulong v477=0;
- ulong v478=0;
- ulong v490=0;
- ulong v496=0;
- ulong v503=0;
- ulong v506=0;
- uint v509=0;
- ulong v510=0;
- uint v511=0;
- ulong v512=0;
- ulong v524=0;
- ulong v528=0;
- ulong v529=0;
- ulong v548=0;
+ ulong v470=0;
+ ulong v476=0;
+ uint v483=0;
+ uint v484=0;
+ uint v486=0;
+ uint v488=0;
+ uint v489=0;
+ uint v490=0;
+ ulong v533=0;
+ ulong v534=0;
+ ulong v535=0;
+ ulong v547=0;
  ulong v549=0;
- ulong v555=0;
- ulong v556=0;
+ ulong v551=0;
+ ulong v552=0;
+ uint v554=0;
+ uint v557=0;
+ ulong v558=0;
+ uint v559=0;
+ ulong v560=0;
+ ulong v567=0;
  ulong v568=0;
+ ulong v573=0;
  ulong v574=0;
- ulong v581=0;
- ulong v582=0;
- ulong v583=0;
- ulong v595=0;
- ulong v601=0;
- ulong v608=0;
+ ulong v586=0;
+ ulong v592=0;
+ ulong v599=0;
+ ulong v603=0;
+ uint v606=0;
+ ulong v607=0;
+ uint v608=0;
  ulong v609=0;
  ulong v621=0;
- ulong v627=0;
- uint v634=0;
- ulong v635=0;
- ulong v636=0;
- ulong v648=0;
+ ulong v625=0;
+ ulong v626=0;
+ ulong v645=0;
+ ulong v646=0;
+ ulong v653=0;
  ulong v654=0;
- uint v661=0;
- uint v668=0;
- ulong v700=0;
+ ulong v655=0;
+ ulong v667=0;
+ ulong v673=0;
+ uint v684=0;
+ uint v699=0;
  ulong v704=0;
- ulong v705=0;
- ulong v706=0;
- ulong v708=0;
- ulong v710=0;
- ulong v713=0;
- ulong v714=0;
- ulong v715=0;
- uint v717=0;
- uint v720=0;
- ulong v721=0;
- uint v722=0;
- ulong v723=0;
- ulong v730=0;
- ulong v731=0;
- ulong v733=0;
- ulong v734=0;
- ulong v746=0;
- ulong v752=0;
- ulong v759=0;
- ulong v762=0;
- uint v765=0;
- ulong v766=0;
- uint v767=0;
- ulong v768=0;
- ulong v780=0;
- ulong v784=0;
- ulong v785=0;
- ulong v804=0;
- ulong v805=0;
- ulong v811=0;
- ulong v812=0;
- ulong v824=0;
- ulong v830=0;
- ulong v837=0;
- ulong v838=0;
- ulong v839=0;
- ulong v851=0;
- ulong v857=0;
- ulong v864=0;
- ulong v865=0;
- ulong v877=0;
- ulong v883=0;
- uint v890=0;
- ulong v891=0;
- ulong v892=0;
- ulong v904=0;
- ulong v910=0;
- uint v917=0;
- uint v924=0;
- ulong v956=0;
- ulong v960=0;
- ulong v961=0;
- ulong v962=0;
- ulong v964=0;
- ulong v966=0;
- ulong v969=0;
- ulong v970=0;
- ulong v971=0;
- uint v973=0;
- uint v976=0;
- ulong v977=0;
- uint v978=0;
- ulong v979=0;
- ulong v986=0;
- ulong v987=0;
- ulong v989=0;
- ulong v990=0;
- ulong v1002=0;
- ulong v1008=0;
- ulong v1015=0;
- ulong v1018=0;
- uint v1021=0;
- ulong v1022=0;
- uint v1023=0;
- ulong v1024=0;
- ulong v1036=0;
- ulong v1040=0;
- ulong v1041=0;
- ulong v1060=0;
- ulong v1061=0;
- ulong v1067=0;
- ulong v1068=0;
- ulong v1080=0;
- ulong v1086=0;
- ulong v1093=0;
- ulong v1094=0;
- ulong v1095=0;
- ulong v1107=0;
- ulong v1113=0;
- ulong v1120=0;
- ulong v1121=0;
- ulong v1133=0;
- ulong v1139=0;
- uint v1146=0;
- ulong v1147=0;
- ulong v1148=0;
- ulong v1160=0;
- ulong v1166=0;
- uint v1173=0;
- uint v1180=0;
- ulong v1212=0;
- ulong v1216=0;
- ulong v1217=0;
- ulong v1218=0;
- ulong v1220=0;
- ulong v1222=0;
- ulong v1225=0;
- ulong v1226=0;
- ulong v1227=0;
- uint v1229=0;
- uint v1232=0;
- ulong v1233=0;
- uint v1234=0;
- ulong v1235=0;
- ulong v1242=0;
- ulong v1243=0;
- ulong v1245=0;
- ulong v1246=0;
- ulong v1258=0;
- ulong v1264=0;
- ulong v1271=0;
- ulong v1274=0;
- uint v1277=0;
- ulong v1278=0;
- uint v1279=0;
- ulong v1280=0;
- ulong v1292=0;
- ulong v1296=0;
- ulong v1297=0;
- ulong v1316=0;
- ulong v1317=0;
- ulong v1323=0;
- ulong v1324=0;
- ulong v1336=0;
- ulong v1342=0;
- ulong v1349=0;
- ulong v1350=0;
- ulong v1351=0;
- ulong v1363=0;
- ulong v1369=0;
- ulong v1376=0;
- ulong v1377=0;
- ulong v1389=0;
- ulong v1395=0;
- uint v1402=0;
- ulong v1403=0;
- ulong v1404=0;
- ulong v1416=0;
- ulong v1422=0;
- uint v1436=0;
- uint v1440=0;
- ulong v1442=0;
- ulong v1443=0;
- ulong v1444=0;
- ulong v1445=0;
- ulong v1457=0;
- ulong v1463=0;
- uint v1503=0;
- uint v1518=0;
- ulong v1523=0;
- uint v1525=0;
- uint v1526=0;
+ uint v706=0;
+ uint v707=0;
  v0=0;
  v1=0;
  v2=a2;
  uint b=0;
  while(true){switch(b){
  case 0u:{
-  uint v3=uint(clif_view(v,(v1+uint(40u))));
-  uint v4=uint(clif_view(v,(v1+uint(44u))));
+  uint v3=uint(clif_view(v,(v1+uint(44u))));
+  uint v4=uint(clif_view(v,(v1+uint(48u))));
   ulong v5=ulong(v3);
   ulong v6=ulong(v4);
   ulong v7=ulong((ulong)(v6)<<(uint(32)&63u));
   ulong v8=v5|v7;
   v9=v0+v8;
-  uint v10=uint(clif_view(v,(v1+uint(48u))));
-  uint v11=uint(clif_view(v,(v1+uint(52u))));
+  uint v10=uint(clif_view(v,(v1+uint(52u))));
+  uint v11=uint(clif_view(v,(v1+uint(56u))));
   ulong v12=ulong(v10);
   ulong v13=ulong(v11);
   ulong v14=ulong((ulong)(v13)<<(uint(32)&63u));
@@ -3153,2723 +4000,1179 @@ __attribute__((noinline)) ulong clif_tape_z_block(device const uchar* t,CLIF_VIE
   v18=v16|v17;
   uint v19=uint(clif_view(v,(v1+uint(32u))));
   v20=ulong(v19);
-  ulong v21=v9+ulong(4ul);
-  v22=clif_ald(t,ulong(v21));
-  ulong v23=v9+ulong(12ul);
-  uint v24=clif_ald(t,ulong(v23));
-  v25=uint(v24);
-  ulong v26=v9+ulong(16ul);
-  uint v27=clif_ald(t,ulong(v26));
-  ulong v28=v9+ulong(20ul);
-  v29=clif_ald(t,ulong(v28));
-  ulong v30=v9+ulong(24ul);
-  v31=clif_ald(t,ulong(v30));
-  ulong v32=v9+ulong(8ul);
-  v33=clif_ald(t,ulong(v32));
-  ulong v34=v18*ulong(11400714819323198485ul);
-  uint v35=uint((ulong)(v34)>>32u);
-  v36=uint(v35);
-  ulong v37=v18*ulong(14029467366897019727ul);
-  uint v38=uint((ulong)(v37)>>48u);
-  uint v39=uint(v38);
-  uint v40=v39|uint(1ul);
-  v41=uint((uint)(v40)<<(uint(16)&31u));
-  v42=v27+uint(18446744073709551615ul);
-  v45=uint(0ul);
-  {{uint t0=v45;v44=t0;}b=2u;continue;}
+  uint v21=uint(clif_view(v,(v1+uint(4u))));
+  uint v22=v21+uint(1023ul);
+  uint v23=uint((uint)(v22)>>(uint(10)&31u));
+  uchar v24=uchar((uint)(v2)<(uint)(v23));
+  if(v24!=0){b=1u;continue;}else{b=2u;continue;}
  }
  case 2u:{
-  ulong v46=v9+ulong(0ul);
-  v47=clif_ald(t,ulong(v46));
-  v48=v22+uint(18446744073709551615ul);
-  {{uint t0=v45;v49=t0;}b=3u;continue;}
+  uint v26=uint(1ul);
+  ulong v27=v9+ulong(32ul);
+  uint v28=clif_aadd(t,ulong(v27),uint(v26));
+  ulong v29=v9+ulong(28ul);
+  uint v30=clif_ald(t,ulong(v29));
+  ulong v31=ulong(v30);
+  ulong v32=v9+v31;
+  {{ulong t0=v32;v25=t0;}b=3u;continue;}
  }
- case 3u:{
-  uchar v50=uchar((uint)(v49)<(uint)(v48));
-  if(v50!=0){b=10u;continue;}else{b=9u;continue;}
- }
- case 10u:{
-  uint v51=v47-v49;
-  uint v52=v51%v22;
-  uint v53=v52*v29;
-  ulong v54=ulong(v53);
-  ulong v55=v54+ulong(64ul);
-  v56=v9+v55;
-  ulong v57=v56+ulong(0ul);
-  v58=clif_ald(t,ulong(v57));
-  uchar v59=uchar((uint)(v58)==(uint)(v51));
-  if(v59!=0){b=4u;continue;}else{b=7u;continue;}
- }
- case 4u:{
-  {{uint t0=v45;v60=t0;}b=5u;continue;}
+ case 1u:{
+  ulong v33=v9+ulong(4ul);
+  v34=clif_ald(t,ulong(v33));
+  ulong v35=v9+ulong(12ul);
+  uint v36=clif_ald(t,ulong(v35));
+  v37=uint(v36);
+  ulong v38=v9+ulong(16ul);
+  uint v39=clif_ald(t,ulong(v38));
+  ulong v40=v9+ulong(20ul);
+  v41=clif_ald(t,ulong(v40));
+  ulong v42=v9+ulong(24ul);
+  v43=clif_ald(t,ulong(v42));
+  ulong v44=v9+ulong(8ul);
+  v45=clif_ald(t,ulong(v44));
+  ulong v46=v18*ulong(11400714819323198485ul);
+  uint v47=uint((ulong)(v46)>>32u);
+  v48=uint(v47);
+  ulong v49=v18*ulong(14029467366897019727ul);
+  uint v50=uint((ulong)(v49)>>48u);
+  uint v51=uint(v50);
+  uint v52=v51|uint(1ul);
+  v53=uint((uint)(v52)<<(uint(16)&31u));
+  v54=v39+uint(18446744073709551615ul);
+  v57=uint(0ul);
+  {{uint t0=v57;v56=t0;}b=5u;continue;}
  }
  case 5u:{
-  uchar v61=uchar((uint)(v60)<(uint)(uint(16ul)));
-  if(v61!=0){b=11u;continue;}else{b=7u;continue;}
- }
- case 11u:{
-  uint v62=v36+v60;
-  uint v63=v62&v42;
-  uint v64=v63*uint(4ul);
-  ulong v65=ulong(v64);
-  v66=v56+v65;
-  ulong v67=v66+ulong(16ul);
-  v68=clif_ald(t,ulong(v67));
-  uchar v69=uchar((uint)(v68)==(uint)(uint(0ul)));
-  if(v69!=0){b=7u;continue;}else{b=12u;continue;}
- }
- case 12u:{
-  uint v70=v68&uint(18446744073709486080ul);
-  uchar v71=uchar((uint)(v70)==(uint)(v41));
-  if(v71!=0){b=13u;continue;}else{b=6u;continue;}
- }
- case 13u:{
-  v72=v68&uint(65535ul);
-  uchar v73=uchar((uint)(v72)==(uint)(uint(0ul)));
-  if(v73!=0){b=15u;continue;}else{b=14u;continue;}
- }
- case 15u:{
-  {{uint t0=v45;v74=t0;}b=16u;continue;}
- }
- case 16u:{
-  uchar v75=uchar((uint)(v74)<(uint)(uint(65536ul)));
-  if(v75!=0){b=17u;continue;}else{b=18u;continue;}
- }
- case 17u:{
-  clif_fence();
-  ulong v76=v66+ulong(16ul);
-  uint v77=clif_ald(t,ulong(v76));
-  uchar v78=uchar((uint)(v77)!=(uint)(v68));
-  uint v79=v74+uint(1ul);
-  if(v78!=0){b=11u;continue;}else{{uint t0=v79;v74=t0;}b=16u;continue;}
- }
- case 18u:{
-  ulong v80=v9+ulong(48ul);
-  uint v81=clif_ald(t,ulong(v80));
-  if(v81!=0){b=19u;continue;}else{b=20u;continue;}
- }
- case 19u:{
-  uint v82=uint(1ul);
-  ulong v83=v9+ulong(60ul);
-  uint v84=clif_aadd(t,ulong(v83),uint(v82));
-  {b=20u;continue;}
- }
- case 20u:{
-  {b=9u;continue;}
- }
- case 14u:{
-  uint v85=v72+uint(18446744073709551615ul);
-  ulong v86=ulong(v85);
-  ulong v87=ulong((ulong)(v86)<<(uint(v25)&63u));
-  ulong v88=ulong(v31);
-  ulong v89=v87+v88;
-  v90=v56+v89;
-  ulong v91=v90+ulong(0ul);
-  ulong v92=ulong(clif_c64(t,ulong(v91)));
-  v93=uchar((ulong)(v92)==(ulong)(v18));
-  ulong v94=v90+ulong(8ul);
-  v95=clif_ald(t,ulong(v94));
-  uchar v96=uchar((uint)(v95)==(uint)(v58));
-  uchar v97=v93&v96;
-  if(v97!=0){b=21u;continue;}else{b=22u;continue;}
- }
- case 21u:{
-  ulong v101=v9+ulong(48ul);
-  uint v102=clif_ald(t,ulong(v101));
-  if(v102!=0){b=23u;continue;}else{b=24u;continue;}
- }
- case 23u:{
-  uint v103=uint(1ul);
-  ulong v104=v9+ulong(52ul);
-  uint v105=clif_aadd(t,ulong(v104),uint(v103));
-  {b=24u;continue;}
- }
- case 24u:{
-  {{ulong t0=v90;uint t1=v49;uint t2=v58;v98=t0;v99=t1;v100=t2;}b=8u;continue;}
- }
- case 22u:{
-  v106=v58|uint(2147483648ul);
-  uchar v107=uchar((uint)(v95)==(uint)(v106));
-  uchar v108=v93&v107;
-  if(v108!=0){{uint t0=v45;v109=t0;}b=25u;continue;}else{b=6u;continue;}
- }
- case 25u:{
-  uchar v110=uchar((uint)(v109)<(uint)(uint(65536ul)));
-  if(v110!=0){b=26u;continue;}else{b=28u;continue;}
- }
- case 26u:{
-  clif_fence();
-  ulong v111=v90+ulong(8ul);
-  uint v112=clif_ald(t,ulong(v111));
-  uchar v113=uchar((uint)(v112)==(uint)(v58));
-  v114=uchar((uint)(v112)==(uint)(v106));
-  v115=v109+uint(1ul);
-  if(v113!=0){b=27u;continue;}else{b=29u;continue;}
- }
- case 29u:{
-  if(v114!=0){{uint t0=v115;v109=t0;}b=25u;continue;}else{b=6u;continue;}
- }
- case 27u:{
-  ulong v116=v9+ulong(48ul);
-  uint v117=clif_ald(t,ulong(v116));
-  if(v117!=0){b=30u;continue;}else{b=31u;continue;}
- }
- case 30u:{
-  uint v118=uint(1ul);
-  ulong v119=v9+ulong(56ul);
-  uint v120=clif_aadd(t,ulong(v119),uint(v118));
-  {b=31u;continue;}
- }
- case 31u:{
-  {{ulong t0=v90;uint t1=v49;uint t2=v58;v98=t0;v99=t1;v100=t2;}b=8u;continue;}
- }
- case 28u:{
-  ulong v121=v9+ulong(48ul);
-  uint v122=clif_ald(t,ulong(v121));
-  if(v122!=0){b=32u;continue;}else{b=33u;continue;}
- }
- case 32u:{
-  uint v123=uint(1ul);
-  ulong v124=v9+ulong(60ul);
-  uint v125=clif_aadd(t,ulong(v124),uint(v123));
-  {b=33u;continue;}
- }
- case 33u:{
-  {b=9u;continue;}
+  ulong v58=v9+ulong(0ul);
+  v59=clif_ald(t,ulong(v58));
+  v60=v34+uint(18446744073709551615ul);
+  {{uint t0=v57;v61=t0;}b=6u;continue;}
  }
  case 6u:{
-  uint v126=v60+uint(1ul);
-  {{uint t0=v126;v60=t0;}b=5u;continue;}
+  uchar v62=uchar((uint)(v61)<(uint)(v60));
+  if(v62!=0){b=13u;continue;}else{b=12u;continue;}
+ }
+ case 13u:{
+  uint v63=v59-v61;
+  uint v64=v63%v34;
+  uint v65=v64*v41;
+  ulong v66=ulong(v65);
+  ulong v67=v66+ulong(64ul);
+  v68=v9+v67;
+  ulong v69=v68+ulong(0ul);
+  v70=clif_ald(t,ulong(v69));
+  uchar v71=uchar((uint)(v70)==(uint)(v63));
+  if(v71!=0){b=7u;continue;}else{b=10u;continue;}
  }
  case 7u:{
-  uint v127=v49+uint(1ul);
-  {{uint t0=v127;v49=t0;}b=3u;continue;}
+  {{uint t0=v57;v72=t0;}b=8u;continue;}
  }
  case 8u:{
-  uint v128=v48+uint(18446744073709551615ul);
-  uchar v129=uchar((uint)(v99)==(uint)(v128));
-  uchar v130=uchar((uint)(v48)>(uint)(uint(1ul)));
-  uchar v131=v129&v130;
-  if(v131!=0){b=34u;continue;}else{{ulong t0=v98;v43=t0;}b=1u;continue;}
+  uchar v73=uchar((uint)(v72)<(uint)(uint(16ul)));
+  if(v73!=0){b=14u;continue;}else{b=10u;continue;}
+ }
+ case 14u:{
+  uint v74=v48+v72;
+  uint v75=v74&v54;
+  uint v76=v75*uint(4ul);
+  ulong v77=ulong(v76);
+  v78=v68+v77;
+  ulong v79=v78+ulong(16ul);
+  v80=clif_ald(t,ulong(v79));
+  uchar v81=uchar((uint)(v80)==(uint)(uint(0ul)));
+  if(v81!=0){b=10u;continue;}else{b=15u;continue;}
+ }
+ case 15u:{
+  uint v82=v80&uint(18446744073709486080ul);
+  uchar v83=uchar((uint)(v82)==(uint)(v53));
+  if(v83!=0){b=16u;continue;}else{b=9u;continue;}
+ }
+ case 16u:{
+  v84=v80&uint(65535ul);
+  uchar v85=uchar((uint)(v84)==(uint)(uint(0ul)));
+  if(v85!=0){b=18u;continue;}else{b=17u;continue;}
+ }
+ case 18u:{
+  {{uint t0=v57;v86=t0;}b=19u;continue;}
+ }
+ case 19u:{
+  uchar v87=uchar((uint)(v86)<(uint)(uint(65536ul)));
+  if(v87!=0){b=20u;continue;}else{b=21u;continue;}
+ }
+ case 20u:{
+  clif_fence();
+  ulong v88=v78+ulong(16ul);
+  uint v89=clif_ald(t,ulong(v88));
+  uchar v90=uchar((uint)(v89)!=(uint)(v80));
+  uint v91=v86+uint(1ul);
+  if(v90!=0){b=14u;continue;}else{{uint t0=v91;v86=t0;}b=19u;continue;}
+ }
+ case 21u:{
+  ulong v92=v9+ulong(48ul);
+  uint v93=clif_ald(t,ulong(v92));
+  if(v93!=0){b=22u;continue;}else{b=23u;continue;}
+ }
+ case 22u:{
+  uint v94=uint(1ul);
+  ulong v95=v9+ulong(60ul);
+  uint v96=clif_aadd(t,ulong(v95),uint(v94));
+  {b=23u;continue;}
+ }
+ case 23u:{
+  {b=12u;continue;}
+ }
+ case 17u:{
+  uint v97=v84+uint(18446744073709551615ul);
+  ulong v98=ulong(v97);
+  ulong v99=ulong((ulong)(v98)<<(uint(v37)&63u));
+  ulong v100=ulong(v43);
+  ulong v101=v99+v100;
+  v102=v68+v101;
+  ulong v103=v102+ulong(0ul);
+  ulong v104=ulong(clif_c64(t,ulong(v103)));
+  v105=uchar((ulong)(v104)==(ulong)(v18));
+  ulong v106=v102+ulong(8ul);
+  v107=clif_ald(t,ulong(v106));
+  uchar v108=uchar((uint)(v107)==(uint)(v70));
+  uchar v109=v105&v108;
+  if(v109!=0){b=24u;continue;}else{b=25u;continue;}
+ }
+ case 24u:{
+  ulong v113=v9+ulong(48ul);
+  uint v114=clif_ald(t,ulong(v113));
+  if(v114!=0){b=26u;continue;}else{b=27u;continue;}
+ }
+ case 26u:{
+  uint v115=uint(1ul);
+  ulong v116=v9+ulong(52ul);
+  uint v117=clif_aadd(t,ulong(v116),uint(v115));
+  {b=27u;continue;}
+ }
+ case 27u:{
+  {{ulong t0=v102;uint t1=v61;uint t2=v70;v110=t0;v111=t1;v112=t2;}b=11u;continue;}
+ }
+ case 25u:{
+  v118=v70|uint(2147483648ul);
+  uchar v119=uchar((uint)(v107)==(uint)(v118));
+  uchar v120=v105&v119;
+  if(v120!=0){{uint t0=v57;v121=t0;}b=28u;continue;}else{b=9u;continue;}
+ }
+ case 28u:{
+  uchar v122=uchar((uint)(v121)<(uint)(uint(65536ul)));
+  if(v122!=0){b=29u;continue;}else{b=31u;continue;}
+ }
+ case 29u:{
+  clif_fence();
+  ulong v123=v102+ulong(8ul);
+  uint v124=clif_ald(t,ulong(v123));
+  uchar v125=uchar((uint)(v124)==(uint)(v70));
+  v126=uchar((uint)(v124)==(uint)(v118));
+  v127=v121+uint(1ul);
+  if(v125!=0){b=30u;continue;}else{b=32u;continue;}
+ }
+ case 32u:{
+  if(v126!=0){{uint t0=v127;v121=t0;}b=28u;continue;}else{b=9u;continue;}
+ }
+ case 30u:{
+  ulong v128=v9+ulong(48ul);
+  uint v129=clif_ald(t,ulong(v128));
+  if(v129!=0){b=33u;continue;}else{b=34u;continue;}
+ }
+ case 33u:{
+  uint v130=uint(1ul);
+  ulong v131=v9+ulong(56ul);
+  uint v132=clif_aadd(t,ulong(v131),uint(v130));
+  {b=34u;continue;}
  }
  case 34u:{
-  v133=ulong(0ul);
-  v134=uint(0ul);
-  uint v135=v47%v22;
-  uint v136=v135*v29;
-  ulong v137=ulong(v136);
-  ulong v138=v137+ulong(64ul);
-  v139=v9+v138;
-  ulong v140=v139+ulong(0ul);
-  uint v141=clif_ald(t,ulong(v140));
-  uchar v142=uchar((uint)(v141)==(uint)(v47));
-  if(v142!=0){b=36u;continue;}else{{ulong t0=v133;v132=t0;}b=35u;continue;}
+  {{ulong t0=v102;uint t1=v61;uint t2=v70;v110=t0;v111=t1;v112=t2;}b=11u;continue;}
+ }
+ case 31u:{
+  ulong v133=v9+ulong(48ul);
+  uint v134=clif_ald(t,ulong(v133));
+  if(v134!=0){b=35u;continue;}else{b=36u;continue;}
+ }
+ case 35u:{
+  uint v135=uint(1ul);
+  ulong v136=v9+ulong(60ul);
+  uint v137=clif_aadd(t,ulong(v136),uint(v135));
+  {b=36u;continue;}
  }
  case 36u:{
-  {{uint t0=v134;v143=t0;}b=38u;continue;}
+  {b=12u;continue;}
  }
- case 38u:{
-  uchar v144=uchar((uint)(v143)<(uint)(uint(16ul)));
-  if(v144!=0){b=39u;continue;}else{b=37u;continue;}
+ case 9u:{
+  uint v138=v72+uint(1ul);
+  {{uint t0=v138;v72=t0;}b=8u;continue;}
+ }
+ case 10u:{
+  uint v139=v61+uint(1ul);
+  {{uint t0=v139;v61=t0;}b=6u;continue;}
+ }
+ case 11u:{
+  uint v140=v60+uint(18446744073709551615ul);
+  uchar v141=uchar((uint)(v111)==(uint)(v140));
+  uchar v142=uchar((uint)(v60)>(uint)(uint(1ul)));
+  uchar v143=v141&v142;
+  if(v143!=0){b=37u;continue;}else{{ulong t0=v110;v55=t0;}b=4u;continue;}
+ }
+ case 37u:{
+  v145=ulong(0ul);
+  v146=uint(0ul);
+  uint v147=v59%v34;
+  uint v148=v147*v41;
+  ulong v149=ulong(v148);
+  ulong v150=v149+ulong(64ul);
+  v151=v9+v150;
+  ulong v152=v151+ulong(0ul);
+  uint v153=clif_ald(t,ulong(v152));
+  uchar v154=uchar((uint)(v153)==(uint)(v59));
+  if(v154!=0){b=39u;continue;}else{{ulong t0=v145;v144=t0;}b=38u;continue;}
  }
  case 39u:{
-  uint v145=v36+v143;
-  uint v146=v145&v42;
-  uint v147=v146*uint(4ul);
-  ulong v148=ulong(v147);
-  ulong v149=v139+v148;
-  v150=v149+ulong(16ul);
-  v151=clif_acas(t,ulong(v150),uint(v134),uint(v41));
-  uchar v152=uchar((uint)(v151)==(uint)(uint(0ul)));
-  if(v152!=0){b=44u;continue;}else{b=40u;continue;}
- }
- case 40u:{
-  uint v153=v151&uint(18446744073709486080ul);
-  uchar v154=uchar((uint)(v153)==(uint)(v41));
-  if(v154!=0){b=41u;continue;}else{b=43u;continue;}
+  {{uint t0=v146;v155=t0;}b=41u;continue;}
  }
  case 41u:{
-  v155=v151&uint(65535ul);
-  uchar v156=uchar((uint)(v155)==(uint)(uint(0ul)));
-  if(v156!=0){b=42u;continue;}else{b=45u;continue;}
- }
- case 45u:{
-  uint v157=v155+uint(18446744073709551615ul);
-  ulong v158=ulong(v157);
-  ulong v159=ulong((ulong)(v158)<<(uint(v25)&63u));
-  ulong v160=ulong(v31);
-  ulong v161=v159+v160;
-  ulong v162=v139+v161;
-  ulong v163=ulong(clif_c64(t,ulong(v162)));
-  uchar v164=uchar((ulong)(v163)==(ulong)(v18));
-  if(v164!=0){b=42u;continue;}else{b=43u;continue;}
+  uchar v156=uchar((uint)(v155)<(uint)(uint(16ul)));
+  if(v156!=0){b=42u;continue;}else{b=40u;continue;}
  }
  case 42u:{
-  {{ulong t0=v133;v132=t0;}b=35u;continue;}
+  uint v157=v48+v155;
+  uint v158=v157&v54;
+  uint v159=v158*uint(4ul);
+  ulong v160=ulong(v159);
+  ulong v161=v151+v160;
+  v162=v161+ulong(16ul);
+  v163=clif_acas(t,ulong(v162),uint(v146),uint(v53));
+  uchar v164=uchar((uint)(v163)==(uint)(uint(0ul)));
+  if(v164!=0){b=47u;continue;}else{b=43u;continue;}
  }
  case 43u:{
-  uint v165=v143+uint(1ul);
-  {{uint t0=v165;v143=t0;}b=38u;continue;}
+  uint v165=v163&uint(18446744073709486080ul);
+  uchar v166=uchar((uint)(v165)==(uint)(v53));
+  if(v166!=0){b=44u;continue;}else{b=46u;continue;}
  }
  case 44u:{
-  {b=46u;continue;}
- }
- case 46u:{
-  uint v166=uint(1ul);
-  ulong v167=v139+ulong(4ul);
-  v168=clif_aadd(t,ulong(v167),uint(v166));
-  uchar v169=uchar((uint)(v168)<(uint)(v33));
-  if(v169!=0){b=47u;continue;}else{b=48u;continue;}
+  v167=v163&uint(65535ul);
+  uchar v168=uchar((uint)(v167)==(uint)(uint(0ul)));
+  if(v168!=0){b=45u;continue;}else{b=48u;continue;}
  }
  case 48u:{
-  clif_ast(t,ulong(v150),uint(v134));
-  {b=37u;continue;}
+  uint v169=v167+uint(18446744073709551615ul);
+  ulong v170=ulong(v169);
+  ulong v171=ulong((ulong)(v170)<<(uint(v37)&63u));
+  ulong v172=ulong(v43);
+  ulong v173=v171+v172;
+  ulong v174=v151+v173;
+  ulong v175=ulong(clif_c64(t,ulong(v174)));
+  uchar v176=uchar((ulong)(v175)==(ulong)(v18));
+  if(v176!=0){b=45u;continue;}else{b=46u;continue;}
+ }
+ case 45u:{
+  {{ulong t0=v145;v144=t0;}b=38u;continue;}
+ }
+ case 46u:{
+  uint v177=v155+uint(1ul);
+  {{uint t0=v177;v155=t0;}b=41u;continue;}
  }
  case 47u:{
-  ulong v170=ulong(v168);
-  ulong v171=ulong((ulong)(v170)<<(uint(v25)&63u));
-  ulong v172=ulong(v31);
-  ulong v173=v171+v172;
-  v174=v139+v173;
-  ulong v175=v174+ulong(8ul);
-  uint v176=clif_ald(t,ulong(v175));
-  uint v177=v176&uint(2147483648ul);
-  uint v178=v47|uint(2147483648ul);
-  ulong v179=v174+ulong(8ul);
-  uint v180=clif_acas(t,ulong(v179),uint(v176),uint(v178));
-  uchar v181=uchar((uint)(v180)==(uint)(v176));
-  uchar v182=uchar((uint)(v177)==(uint)(uint(0ul)));
-  uchar v183=v181&v182;
-  if(v183!=0){b=49u;continue;}else{b=46u;continue;}
+  {b=49u;continue;}
  }
  case 49u:{
-  clif_fence();
-  clif_st64(t,ulong(v174),ulong(v18));
-  clif_fence();
-  uint v184=v168+uint(1ul);
-  uint v185=v41|v184;
-  clif_ast(t,ulong(v150),uint(v185));
-  ulong v186=ulong(1ul);
-  ulong v187=ulong((ulong)(v186)<<(uint(v25)&63u));
-  ulong v188=v187+ulong(18446744073709551600ul);
-  ulong v190=ulong(16ul);
-  v191=v188+ulong(16ul);
-  {{ulong t0=v190;v189=t0;}b=50u;continue;}
- }
- case 50u:{
-  uchar v192=uchar((ulong)(v189)<(ulong)(v191));
-  if(v192!=0){b=51u;continue;}else{b=52u;continue;}
+  uint v178=uint(1ul);
+  ulong v179=v151+ulong(4ul);
+  v180=clif_aadd(t,ulong(v179),uint(v178));
+  uchar v181=uchar((uint)(v180)<(uint)(v45));
+  if(v181!=0){b=50u;continue;}else{b=51u;continue;}
  }
  case 51u:{
-  ulong v193=v98+v189;
-  ulong v194=ulong(clif_c64(t,ulong(v193)));
-  ulong v195=v174+v189;
-  clif_st64(t,ulong(v195),ulong(v194));
-  ulong v196=v189+ulong(8ul);
-  {{ulong t0=v196;v189=t0;}b=50u;continue;}
+  clif_ast(t,ulong(v162),uint(v146));
+  {b=40u;continue;}
+ }
+ case 50u:{
+  ulong v182=ulong(v180);
+  ulong v183=ulong((ulong)(v182)<<(uint(v37)&63u));
+  ulong v184=ulong(v43);
+  ulong v185=v183+v184;
+  v186=v151+v185;
+  ulong v187=v186+ulong(8ul);
+  uint v188=clif_ald(t,ulong(v187));
+  uint v189=v188&uint(2147483648ul);
+  uint v190=v59|uint(2147483648ul);
+  ulong v191=v186+ulong(8ul);
+  uint v192=clif_acas(t,ulong(v191),uint(v188),uint(v190));
+  uchar v193=uchar((uint)(v192)==(uint)(v188));
+  uchar v194=uchar((uint)(v189)==(uint)(uint(0ul)));
+  uchar v195=v193&v194;
+  if(v195!=0){b=52u;continue;}else{b=49u;continue;}
  }
  case 52u:{
   clif_fence();
-  ulong v197=v98+ulong(8ul);
-  uint v198=clif_ald(t,ulong(v197));
-  uchar v199=uchar((uint)(v198)==(uint)(v100));
-  if(v199!=0){b=53u;continue;}else{b=54u;continue;}
- }
- case 54u:{
-  ulong v200=v174+ulong(8ul);
-  clif_ast(t,ulong(v200),uint(v134));
-  {{ulong t0=v133;v132=t0;}b=35u;continue;}
+  clif_st64(t,ulong(v186),ulong(v18));
+  clif_fence();
+  uint v196=v180+uint(1ul);
+  uint v197=v53|v196;
+  clif_ast(t,ulong(v162),uint(v197));
+  ulong v198=ulong(1ul);
+  ulong v199=ulong((ulong)(v198)<<(uint(v37)&63u));
+  ulong v200=v199+ulong(18446744073709551600ul);
+  ulong v202=ulong(16ul);
+  v203=v200+ulong(16ul);
+  {{ulong t0=v202;v201=t0;}b=53u;continue;}
  }
  case 53u:{
-  clif_fence();
-  ulong v201=v174+ulong(8ul);
-  clif_ast(t,ulong(v201),uint(v47));
-  {{ulong t0=v174;v132=t0;}b=35u;continue;}
+  uchar v204=uchar((ulong)(v201)<(ulong)(v203));
+  if(v204!=0){b=54u;continue;}else{b=55u;continue;}
  }
- case 37u:{
-  v202=v47+uint(1ul);
-  uint v203=v202%v22;
-  uint v204=v203*v29;
-  ulong v205=ulong(v204);
-  ulong v206=v205+ulong(64ul);
-  ulong v207=v9+v206;
-  ulong v208=v207+ulong(0ul);
-  uint v209=clif_ald(t,ulong(v208));
-  uchar v210=uchar((uint)(v209)==(uint)(v202));
-  if(v210!=0){b=55u;continue;}else{{ulong t0=v133;v132=t0;}b=35u;continue;}
+ case 54u:{
+  ulong v205=v110+v201;
+  ulong v206=ulong(clif_c64(t,ulong(v205)));
+  ulong v207=v186+v201;
+  clif_st64(t,ulong(v207),ulong(v206));
+  ulong v208=v201+ulong(8ul);
+  {{ulong t0=v208;v201=t0;}b=53u;continue;}
  }
  case 55u:{
-  ulong v211=v9+ulong(0ul);
-  uint v212=clif_acas(t,ulong(v211),uint(v47),uint(v202));
-  uchar v213=uchar((uint)(v212)==(uint)(v47));
-  if(v213!=0){b=56u;continue;}else{{ulong t0=v133;v132=t0;}b=35u;continue;}
- }
- case 56u:{
-  uint v214=uint(1ul);
-  ulong v215=v9+ulong(44ul);
-  uint v216=clif_aadd(t,ulong(v215),uint(v214));
-  v217=v47+uint(2ul);
-  uint v218=v217%v22;
-  uint v219=v218*v29;
-  ulong v220=ulong(v219);
-  ulong v221=v220+ulong(64ul);
-  v222=v9+v221;
-  ulong v223=v222+ulong(0ul);
-  clif_ast(t,ulong(v223),uint(v134));
   clif_fence();
-  v224=v42+uint(1ul);
-  {{uint t0=v134;v225=t0;}b=57u;continue;}
+  ulong v209=v110+ulong(8ul);
+  uint v210=clif_ald(t,ulong(v209));
+  uchar v211=uchar((uint)(v210)==(uint)(v112));
+  if(v211!=0){b=56u;continue;}else{b=57u;continue;}
  }
  case 57u:{
-  uchar v226=uchar((uint)(v225)<(uint)(v224));
-  if(v226!=0){b=58u;continue;}else{b=59u;continue;}
+  ulong v212=v186+ulong(8ul);
+  clif_ast(t,ulong(v212),uint(v146));
+  {{ulong t0=v145;v144=t0;}b=38u;continue;}
+ }
+ case 56u:{
+  clif_fence();
+  ulong v213=v186+ulong(8ul);
+  clif_ast(t,ulong(v213),uint(v59));
+  {{ulong t0=v186;v144=t0;}b=38u;continue;}
+ }
+ case 40u:{
+  v214=v59+uint(1ul);
+  uint v215=v214%v34;
+  uint v216=v215*v41;
+  ulong v217=ulong(v216);
+  ulong v218=v217+ulong(64ul);
+  ulong v219=v9+v218;
+  ulong v220=v219+ulong(0ul);
+  uint v221=clif_ald(t,ulong(v220));
+  uchar v222=uchar((uint)(v221)==(uint)(v214));
+  if(v222!=0){b=58u;continue;}else{{ulong t0=v145;v144=t0;}b=38u;continue;}
  }
  case 58u:{
-  uint v227=v225*uint(4ul);
-  ulong v228=ulong(v227);
-  ulong v229=v222+v228;
-  ulong v230=v229+ulong(16ul);
-  clif_ast(t,ulong(v230),uint(v134));
-  uint v231=v225+uint(1ul);
-  {{uint t0=v231;v225=t0;}b=57u;continue;}
+  ulong v223=v9+ulong(0ul);
+  uint v224=clif_acas(t,ulong(v223),uint(v59),uint(v214));
+  uchar v225=uchar((uint)(v224)==(uint)(v59));
+  if(v225!=0){b=59u;continue;}else{{ulong t0=v145;v144=t0;}b=38u;continue;}
  }
  case 59u:{
-  ulong v232=v222+ulong(4ul);
-  clif_ast(t,ulong(v232),uint(v134));
+  uint v226=uint(1ul);
+  ulong v227=v9+ulong(44ul);
+  uint v228=clif_aadd(t,ulong(v227),uint(v226));
+  v229=v59+uint(2ul);
+  uint v230=v229%v34;
+  uint v231=v230*v41;
+  ulong v232=ulong(v231);
+  ulong v233=v232+ulong(64ul);
+  v234=v9+v233;
+  ulong v235=v234+ulong(0ul);
+  clif_ast(t,ulong(v235),uint(v146));
   clif_fence();
-  ulong v233=v222+ulong(0ul);
-  clif_ast(t,ulong(v233),uint(v217));
-  {{ulong t0=v133;v132=t0;}b=35u;continue;}
- }
- case 35u:{
-  uchar v234=uchar((ulong)(v132)!=(ulong)(ulong(0ul)));
-  if(v234!=0){b=60u;continue;}else{{ulong t0=v98;v43=t0;}b=1u;continue;}
+  v236=v54+uint(1ul);
+  {{uint t0=v146;v237=t0;}b=60u;continue;}
  }
  case 60u:{
-  uint v235=uint(1ul);
-  ulong v236=v9+ulong(40ul);
-  uint v237=clif_aadd(t,ulong(v236),uint(v235));
-  {{ulong t0=v132;v43=t0;}b=1u;continue;}
- }
- case 9u:{
-  v239=ulong(0ul);
-  v240=uint(0ul);
-  uint v241=v47%v22;
-  uint v242=v241*v29;
-  ulong v243=ulong(v242);
-  ulong v244=v243+ulong(64ul);
-  v245=v9+v244;
-  ulong v246=v245+ulong(0ul);
-  uint v247=clif_ald(t,ulong(v246));
-  uchar v248=uchar((uint)(v247)==(uint)(v47));
-  if(v248!=0){b=62u;continue;}else{{ulong t0=v239;v238=t0;}b=61u;continue;}
- }
- case 62u:{
-  {{uint t0=v240;v249=t0;}b=64u;continue;}
- }
- case 64u:{
-  uchar v250=uchar((uint)(v249)<(uint)(uint(16ul)));
-  if(v250!=0){b=65u;continue;}else{b=63u;continue;}
- }
- case 65u:{
-  uint v251=v36+v249;
-  uint v252=v251&v42;
-  uint v253=v252*uint(4ul);
-  ulong v254=ulong(v253);
-  ulong v255=v245+v254;
-  v256=v255+ulong(16ul);
-  v257=clif_acas(t,ulong(v256),uint(v240),uint(v41));
-  uchar v258=uchar((uint)(v257)==(uint)(uint(0ul)));
-  if(v258!=0){b=70u;continue;}else{b=66u;continue;}
- }
- case 66u:{
-  uint v259=v257&uint(18446744073709486080ul);
-  uchar v260=uchar((uint)(v259)==(uint)(v41));
-  if(v260!=0){b=67u;continue;}else{b=69u;continue;}
- }
- case 67u:{
-  v261=v257&uint(65535ul);
-  uchar v262=uchar((uint)(v261)==(uint)(uint(0ul)));
-  if(v262!=0){b=68u;continue;}else{b=71u;continue;}
- }
- case 71u:{
-  uint v263=v261+uint(18446744073709551615ul);
-  ulong v264=ulong(v263);
-  ulong v265=ulong((ulong)(v264)<<(uint(v25)&63u));
-  ulong v266=ulong(v31);
-  ulong v267=v265+v266;
-  ulong v268=v245+v267;
-  ulong v269=ulong(clif_c64(t,ulong(v268)));
-  uchar v270=uchar((ulong)(v269)==(ulong)(v18));
-  if(v270!=0){b=68u;continue;}else{b=69u;continue;}
- }
- case 68u:{
-  {{ulong t0=v239;v238=t0;}b=61u;continue;}
- }
- case 69u:{
-  uint v271=v249+uint(1ul);
-  {{uint t0=v271;v249=t0;}b=64u;continue;}
- }
- case 70u:{
-  {b=72u;continue;}
- }
- case 72u:{
-  uint v272=uint(1ul);
-  ulong v273=v245+ulong(4ul);
-  v274=clif_aadd(t,ulong(v273),uint(v272));
-  uchar v275=uchar((uint)(v274)<(uint)(v33));
-  if(v275!=0){b=73u;continue;}else{b=74u;continue;}
- }
- case 74u:{
-  clif_ast(t,ulong(v256),uint(v240));
-  {b=63u;continue;}
- }
- case 73u:{
-  ulong v276=ulong(v274);
-  ulong v277=ulong((ulong)(v276)<<(uint(v25)&63u));
-  ulong v278=ulong(v31);
-  ulong v279=v277+v278;
-  v280=v245+v279;
-  ulong v281=v280+ulong(8ul);
-  uint v282=clif_ald(t,ulong(v281));
-  uint v283=v282&uint(2147483648ul);
-  uint v284=v47|uint(2147483648ul);
-  ulong v285=v280+ulong(8ul);
-  uint v286=clif_acas(t,ulong(v285),uint(v282),uint(v284));
-  uchar v287=uchar((uint)(v286)==(uint)(v282));
-  uchar v288=uchar((uint)(v283)==(uint)(uint(0ul)));
-  uchar v289=v287&v288;
-  if(v289!=0){b=75u;continue;}else{b=72u;continue;}
- }
- case 75u:{
-  clif_fence();
-  clif_st64(t,ulong(v280),ulong(v18));
-  clif_fence();
-  uint v290=v274+uint(1ul);
-  uint v291=v41|v290;
-  clif_ast(t,ulong(v256),uint(v291));
-  uint v292=uint(clif_view(v,(v1+uint(4u))));
-  uint v293=uint((uint)(v2)<<(uint(10)&31u));
-  uint v294=v292-v293;
-  uint v295=uint(1024ul);
-  v296=min(v294,v295);
-  v297=v2*uint(4ul);
-  uint v298=v297+uint(4ul);
-  v299=uint(clif_view(v,(v1+uint(56u))));
-  v300=uint(clif_view(v,(v1+uint(60u))));
-  uint v301=uint(clif_view(v,(v1+uint(64u))));
-  v302=uint(clif_view(v,(v1+uint(68u))));
-  uint v303=uint(v299);
-  uint v304=uint(v297);
-  uint v305=uint(v0)+v303;
-  uint v306=v305+v304;
-  uint v307=uint(clif_u32(t,v306));
-  uint v308=uint(v299);
-  uint v309=uint(v298);
-  uint v310=uint(v0)+v308;
-  uint v311=v310+v309;
-  uint v312=uint(clif_u32(t,v311));
-  v313=v312-v307;
-  uint v314=uint(v300);
-  uint v315=uint(v297);
-  uint v316=uint(v0)+v314;
-  uint v317=v316+v315;
-  uint v318=uint(clif_u32(t,v317));
-  uint v319=uint(v300);
-  uint v320=uint(v298);
-  uint v321=uint(v0)+v319;
-  uint v322=v321+v320;
-  uint v323=uint(clif_u32(t,v322));
-  v324=v323-v318;
-  uint v325=uint(v301);
-  uint v326=uint(v297);
-  uint v327=uint(v0)+v325;
-  uint v328=v327+v326;
-  uint v329=uint(clif_u32(t,v328));
-  uint v330=uint(v301);
-  uint v331=uint(v298);
-  uint v332=uint(v0)+v330;
-  uint v333=v332+v331;
-  uint v334=uint(clif_u32(t,v333));
-  v335=v334-v329;
-  uint v336=uint(v302);
-  uint v337=uint(v297);
-  uint v338=uint(v0)+v336;
-  uint v339=v338+v337;
-  uint v340=uint(clif_u32(t,v339));
-  uint v341=uint(v302);
-  uint v342=uint(v298);
-  uint v343=uint(v0)+v341;
-  uint v344=v343+v342;
-  uint v345=uint(clif_u32(t,v344));
-  v346=v345-v340;
-  uint v347=uint(clif_view(v,(v1+uint(16u))));
-  uint v348=uint((uint)(v347)>>(uint(0)&31u));
-  uint v349=v348&uint(15ul);
-  uint v350=uint(clif_view(v,(v1+uint(16u))));
-  uint v351=uint((uint)(v350)>>(uint(4)&31u));
-  uint v352=v351&uint(15ul);
-  uint v353=uint(clif_view(v,(v1+uint(16u))));
-  uint v354=uint((uint)(v353)>>(uint(8)&31u));
-  uint v355=v354&uint(15ul);
-  uint v356=uint(clif_view(v,(v1+uint(16u))));
-  uint v357=uint((uint)(v356)>>(uint(12)&31u));
-  v358=v357&uint(15ul);
-  uint v359=v296+uint(7ul);
-  uint v360=uint((uint)(v359)>>(uint(3)&31u));
-  v361=v296*v349;
-  v362=v296*v352;
-  v363=v296*v355;
-  v364=v360*v358;
-  v365=uint(0ul);
-  uint v366=v365+v296;
-  v367=v366+uint(8ul);
-  uint v368=v367+v361;
-  v369=v368+uint(8ul);
-  uint v370=v369+v362;
-  v371=v370+uint(8ul);
-  uint v372=v371+v363;
-  v373=v372+uint(8ul);
-  uint v374=v373+v364;
-  v375=v374+uint(8ul);
-  uint v376=v375+v313;
-  v377=v376+uint(8ul);
-  uint v378=v377+v324;
-  v379=v378+uint(8ul);
-  uint v380=v379+v335;
-  v381=v380+uint(8ul);
-  uint v382=v381+v346;
-  v383=v382+uint(8ul);
-  uint v384=v383+uint(39ul);
-  v385=v384&uint(18446744073709551608ul);
-  uint v386=v296+v313;
-  uint v387=v361+v324;
-  uint v388=v362+v335;
-  uint v389=v363+v346;
-  uint v390=max(v386,v387);
-  uint v391=max(v390,v388);
-  uint v392=max(v391,v389);
-  uint v393=v385+v392;
-  ulong v394=ulong(v393);
-  ulong v395=v394+ulong(208ul);
-  uchar v396=uchar((ulong)(v395)<=(ulong)(v20));
-  uint v398=uint(0ul);
-  if(v396!=0){b=76u;continue;}else{{uint t0=v398;v397=t0;}b=77u;continue;}
- }
- case 76u:{
-  v399=v280+ulong(144ul);
-  ulong v400=ulong(v385);
-  v401=v399+v400;
-  v402=uint(clif_view(v,(v1+uint(20u))));
-  v403=uint(clif_view(v,(v1+uint(24u))));
-  v404=uint(clif_view(v,(v1+uint(28u))));
-  v405=v297+uint(0ul);
-  uint v406=uint(v403);
-  uint v407=uint(v405);
-  uint v408=uint(v0)+v406;
-  uint v409=v408+v407;
-  uint v410=uint(clif_u8(t,v409));
-  uchar v411=uchar((uint)(v410)==(uint)(uint(2ul)));
-  if(v411!=0){b=78u;continue;}else{b=79u;continue;}
- }
- case 78u:{
-  uint v413=v405*uint(4ul);
-  uint v414=uint(v402);
-  uint v415=uint(v413);
-  uint v416=uint(v0)+v414;
-  uint v417=v416+v415;
-  uint v418=uint(clif_u32(t,v417));
-  uint v419=uint(v404);
-  uint v420=uint(v418);
-  uint v421=uint(v0)+v419;
-  uint v422=v421+v420;
-  uint v423=uint(clif_u32(t,v422));
-  {{uint t0=v423;v412=t0;}b=80u;continue;}
- }
- case 79u:{
-  {{uint t0=v405;v412=t0;}b=80u;continue;}
- }
- case 80u:{
-  uint v424=uint(v403);
-  uint v425=uint(v412);
-  uint v426=uint(v0)+v424;
-  uint v427=v426+v425;
-  uint v428=uint(clif_u8(t,v427));
-  uint v429=v412*uint(4ul);
-  uint v430=uint(v402);
-  uint v431=uint(v429);
-  uint v432=uint(v0)+v430;
-  uint v433=v432+v431;
-  uint v434=uint(clif_u32(t,v433));
-  uint v435=v429+uint(4ul);
-  uint v436=uint(v402);
-  uint v437=uint(v435);
-  uint v438=uint(v0)+v436;
-  uint v439=v438+v437;
-  uint v440=uint(clif_u32(t,v439));
-  ulong v441=ulong(v404);
-  ulong v442=ulong(v434);
-  ulong v443=v0+v441;
-  v444=v443+v442;
-  ulong v445=ulong(v404);
-  ulong v446=ulong(v440);
-  ulong v447=v0+v445;
-  v448=v447+v446;
-  v449=ulong(v296);
-  v450=ulong(v313);
-  ulong v451=ulong(v365);
-  v452=v399+v451;
-  ulong v453=ulong(v375);
-  v454=v399+v453;
-  uchar v455=uchar((uint)(v428)==(uint)(uint(1ul)));
-  if(v455!=0){b=81u;continue;}else{b=82u;continue;}
- }
- case 81u:{
-  ulong v456=v449+v450;
-  v457=v401+v456;
-  {{ulong t0=v444;ulong t1=v401;v458=t0;v459=t1;}b=84u;continue;}
- }
- case 84u:{
-  uchar v460=uchar((ulong)(v458)<(ulong)(v448));
-  if(v460!=0){b=85u;continue;}else{b=89u;continue;}
- }
- case 85u:{
-  v461=uint(clif_u8(t,v458));
-  ulong v462=v458+ulong(1ul);
-  uint v463=uint((uint)(v461)>>(uint(4)&31u));
-  uchar v468=uchar((uint)(v463)==(uint)(uint(15ul)));
-  if(v468!=0){{uint t0=v463;ulong t1=v462;v464=t0;v465=t1;}b=90u;continue;}else{{uint t0=v463;ulong t1=v462;v466=t0;v467=t1;}b=92u;continue;}
- }
- case 90u:{
-  uchar v469=uchar((ulong)(v465)<(ulong)(v448));
-  if(v469!=0){b=91u;continue;}else{{uint t0=v464;ulong t1=v465;v466=t0;v467=t1;}b=92u;continue;}
- }
- case 91u:{
-  uint v470=uint(clif_u8(t,v465));
-  uint v471=v464+v470;
-  ulong v472=v465+ulong(1ul);
-  uchar v473=uchar((uint)(v470)==(uint)(uint(255ul)));
-  if(v473!=0){{uint t0=v471;ulong t1=v472;v464=t0;v465=t1;}b=90u;continue;}else{{uint t0=v471;ulong t1=v472;v466=t0;v467=t1;}b=92u;continue;}
- }
- case 92u:{
-  v474=ulong(v466);
-  v475=v459+v474;
-  uchar v476=uchar((ulong)(v475)<=(ulong)(v457));
-  if(v476!=0){b=86u;continue;}else{b=89u;continue;}
- }
- case 86u:{
-  v478=v474&ulong(18446744073709551608ul);
-  ulong v479=ulong(0ul);
-  {{ulong t0=v479;v477=t0;}b=93u;continue;}
- }
- case 93u:{
-  uchar v480=uchar((ulong)(v477)<(ulong)(v478));
-  if(v480!=0){b=94u;continue;}else{b=95u;continue;}
- }
- case 94u:{
-  uint v481=uint(v467)+uint(v477);
-  ulong v482=ulong(clif_u64(t,v481));
-  ulong v483=v459+v477;
-  clif_st64(t,ulong(v483),ulong(v482));
-  ulong v484=v477+ulong(8ul);
-  {{ulong t0=v484;v477=t0;}b=93u;continue;}
- }
- case 95u:{
-  ulong v485=v474&ulong(4ul);
-  if(v485!=0){b=96u;continue;}else{b=97u;continue;}
- }
- case 96u:{
-  uint v486=uint(v467)+uint(v478);
-  ulong v487=v459+v478;
-  uint v488=uint(clif_u32(t,v486));
-  clif_st32(t,ulong(v487),ulong(v488));
-  {b=97u;continue;}
- }
- case 97u:{
-  ulong v489=v474&ulong(4ul);
-  v490=v478+v489;
-  ulong v491=v474&ulong(2ul);
-  if(v491!=0){b=98u;continue;}else{b=99u;continue;}
- }
- case 98u:{
-  uint v492=uint(v467)+uint(v490);
-  ulong v493=v459+v490;
-  ushort v494=ushort(clif_u16(t,v492));
-  clif_st16(t,ulong(v493),ulong(v494));
-  {b=99u;continue;}
- }
- case 99u:{
-  ulong v495=v474&ulong(2ul);
-  v496=v490+v495;
-  ulong v497=v474&ulong(1ul);
-  if(v497!=0){b=100u;continue;}else{b=101u;continue;}
- }
- case 100u:{
-  uint v498=uint(v467)+uint(v496);
-  ulong v499=v459+v496;
-  uchar v500=uchar(clif_u8(t,v498));
-  clif_st8(t,ulong(v499),ulong(v500));
-  {b=101u;continue;}
- }
- case 101u:{
-  uint v501=uint(v474)&uint(1ul);
-  uint v502=uint(v496)+v501;
-  v503=v467+v474;
-  uchar v504=uchar((ulong)(v503)<(ulong)(v448));
-  if(v504!=0){b=87u;continue;}else{b=89u;continue;}
- }
- case 87u:{
-  uint v505=uint(clif_u16(t,v503));
-  v506=ulong(v505);
-  ulong v507=v503+ulong(2ul);
-  uint v508=v461&uint(15ul);
-  uchar v513=uchar((uint)(v508)==(uint)(uint(15ul)));
-  if(v513!=0){{uint t0=v508;ulong t1=v507;v509=t0;v510=t1;}b=102u;continue;}else{{uint t0=v508;ulong t1=v507;v511=t0;v512=t1;}b=104u;continue;}
- }
- case 102u:{
-  uchar v514=uchar((ulong)(v510)<(ulong)(v448));
-  if(v514!=0){b=103u;continue;}else{{uint t0=v509;ulong t1=v510;v511=t0;v512=t1;}b=104u;continue;}
- }
- case 103u:{
-  uint v515=uint(clif_u8(t,v510));
-  uint v516=v509+v515;
-  ulong v517=v510+ulong(1ul);
-  uchar v518=uchar((uint)(v515)==(uint)(uint(255ul)));
-  if(v518!=0){{uint t0=v516;ulong t1=v517;v509=t0;v510=t1;}b=102u;continue;}else{{uint t0=v516;ulong t1=v517;v511=t0;v512=t1;}b=104u;continue;}
- }
- case 104u:{
-  uint v519=v511+uint(4ul);
-  ulong v520=ulong(v519);
-  ulong v521=v475-v401;
-  uchar v522=uchar((ulong)(v506)!=(ulong)(ulong(0ul)));
-  uchar v523=uchar((ulong)(v506)<=(ulong)(v521));
-  v524=v475+v520;
-  uchar v525=uchar((ulong)(v524)<=(ulong)(v457));
-  uchar v526=v522&v523;
-  uchar v527=v526&v525;
-  if(v527!=0){b=88u;continue;}else{b=89u;continue;}
- }
- case 88u:{
-  v528=v475-v506;
-  uchar v530=uchar((ulong)(v506)<(ulong)(ulong(8ul)));
-  if(v530!=0){b=105u;continue;}else{b=106u;continue;}
- }
- case 105u:{
-  uint v531=uint(clif_c8(t,ulong(v528)));
-  clif_st8(t,ulong(v475),ulong(v531));
-  uint v532=uint(clif_c8(t,(ulong(v528)+ulong(long(1)))));
-  clif_st8(t,(ulong(v475)+ulong(long(1))),ulong(v532));
-  uint v533=uint(clif_c8(t,(ulong(v528)+ulong(long(2)))));
-  clif_st8(t,(ulong(v475)+ulong(long(2))),ulong(v533));
-  uint v534=uint(clif_c8(t,(ulong(v528)+ulong(long(3)))));
-  clif_st8(t,(ulong(v475)+ulong(long(3))),ulong(v534));
-  uint v535=((uint(2)&63u)<32u?uint(uint(v506))<<(uint(2)&31u):0u);
-  ulong v536=ulong(1145049616ul);
-  ulong v537=ulong((ulong)(v536)>>(uint(v535)&63u));
-  ulong v538=v537&ulong(15ul);
-  ulong v539=v528+v538;
-  uint v540=uint(clif_c32(t,ulong(v539)));
-  clif_st32(t,(ulong(v475)+ulong(long(4))),ulong(v540));
-  ulong v541=ulong(1984967748ul);
-  ulong v542=ulong((ulong)(v541)>>(uint(v535)&63u));
-  ulong v543=v542&ulong(15ul);
-  ulong v544=v539+ulong(4ul);
-  ulong v545=v544-v543;
-  {{ulong t0=v545;v529=t0;}b=107u;continue;}
- }
- case 106u:{
-  ulong v546=ulong(clif_c64(t,ulong(v528)));
-  clif_st64(t,ulong(v475),ulong(v546));
-  ulong v547=v528+ulong(8ul);
-  {{ulong t0=v547;v529=t0;}b=107u;continue;}
- }
- case 107u:{
-  ulong v550=v475+ulong(8ul);
-  {{ulong t0=v550;ulong t1=v529;v548=t0;v549=t1;}b=108u;continue;}
- }
- case 108u:{
-  uchar v551=uchar((ulong)(v548)<(ulong)(v524));
-  if(v551!=0){b=109u;continue;}else{{ulong t0=v512;ulong t1=v524;v458=t0;v459=t1;}b=84u;continue;}
- }
- case 109u:{
-  ulong v552=ulong(clif_c64(t,ulong(v549)));
-  clif_st64(t,ulong(v548),ulong(v552));
-  ulong v553=v548+ulong(8ul);
-  ulong v554=v549+ulong(8ul);
-  {{ulong t0=v553;ulong t1=v554;v548=t0;v549=t1;}b=108u;continue;}
- }
- case 89u:{
-  v556=v449&ulong(18446744073709551608ul);
-  ulong v557=ulong(0ul);
-  {{ulong t0=v557;v555=t0;}b=110u;continue;}
- }
- case 110u:{
-  uchar v558=uchar((ulong)(v555)<(ulong)(v556));
-  if(v558!=0){b=111u;continue;}else{b=112u;continue;}
- }
- case 111u:{
-  ulong v559=v401+v555;
-  ulong v560=ulong(clif_c64(t,ulong(v559)));
-  ulong v561=v452+v555;
-  clif_st64(t,ulong(v561),ulong(v560));
-  ulong v562=v555+ulong(8ul);
-  {{ulong t0=v562;v555=t0;}b=110u;continue;}
- }
- case 112u:{
-  ulong v563=v449&ulong(4ul);
-  if(v563!=0){b=113u;continue;}else{b=114u;continue;}
- }
- case 113u:{
-  ulong v564=v401+v556;
-  ulong v565=v452+v556;
-  uint v566=uint(clif_c32(t,ulong(v564)));
-  clif_st32(t,ulong(v565),ulong(v566));
-  {b=114u;continue;}
- }
- case 114u:{
-  ulong v567=v449&ulong(4ul);
-  v568=v556+v567;
-  ulong v569=v449&ulong(2ul);
-  if(v569!=0){b=115u;continue;}else{b=116u;continue;}
- }
- case 115u:{
-  ulong v570=v401+v568;
-  ulong v571=v452+v568;
-  ushort v572=ushort(clif_c16(t,ulong(v570)));
-  clif_st16(t,ulong(v571),ulong(v572));
-  {b=116u;continue;}
- }
- case 116u:{
-  ulong v573=v449&ulong(2ul);
-  v574=v568+v573;
-  ulong v575=v449&ulong(1ul);
-  if(v575!=0){b=117u;continue;}else{b=118u;continue;}
- }
- case 117u:{
-  ulong v576=v401+v574;
-  ulong v577=v452+v574;
-  uchar v578=uchar(clif_c8(t,ulong(v576)));
-  clif_st8(t,ulong(v577),ulong(v578));
-  {b=118u;continue;}
- }
- case 118u:{
-  uint v579=uint(v449)&uint(1ul);
-  uint v580=uint(v574)+v579;
-  v581=v401+v449;
-  v583=v450&ulong(18446744073709551608ul);
-  ulong v584=ulong(0ul);
-  {{ulong t0=v584;v582=t0;}b=119u;continue;}
- }
- case 119u:{
-  uchar v585=uchar((ulong)(v582)<(ulong)(v583));
-  if(v585!=0){b=120u;continue;}else{b=121u;continue;}
- }
- case 120u:{
-  ulong v586=v581+v582;
-  ulong v587=ulong(clif_c64(t,ulong(v586)));
-  ulong v588=v454+v582;
-  clif_st64(t,ulong(v588),ulong(v587));
-  ulong v589=v582+ulong(8ul);
-  {{ulong t0=v589;v582=t0;}b=119u;continue;}
- }
- case 121u:{
-  ulong v590=v450&ulong(4ul);
-  if(v590!=0){b=122u;continue;}else{b=123u;continue;}
- }
- case 122u:{
-  ulong v591=v581+v583;
-  ulong v592=v454+v583;
-  uint v593=uint(clif_c32(t,ulong(v591)));
-  clif_st32(t,ulong(v592),ulong(v593));
-  {b=123u;continue;}
- }
- case 123u:{
-  ulong v594=v450&ulong(4ul);
-  v595=v583+v594;
-  ulong v596=v450&ulong(2ul);
-  if(v596!=0){b=124u;continue;}else{b=125u;continue;}
- }
- case 124u:{
-  ulong v597=v581+v595;
-  ulong v598=v454+v595;
-  ushort v599=ushort(clif_c16(t,ulong(v597)));
-  clif_st16(t,ulong(v598),ulong(v599));
-  {b=125u;continue;}
- }
- case 125u:{
-  ulong v600=v450&ulong(2ul);
-  v601=v595+v600;
-  ulong v602=v450&ulong(1ul);
-  if(v602!=0){b=126u;continue;}else{b=127u;continue;}
- }
- case 126u:{
-  ulong v603=v581+v601;
-  ulong v604=v454+v601;
-  uchar v605=uchar(clif_c8(t,ulong(v603)));
-  clif_st8(t,ulong(v604),ulong(v605));
-  {b=127u;continue;}
- }
- case 127u:{
-  uint v606=uint(v450)&uint(1ul);
-  uint v607=uint(v601)+v606;
-  {b=83u;continue;}
- }
- case 82u:{
-  v609=v449&ulong(18446744073709551608ul);
-  ulong v610=ulong(0ul);
-  {{ulong t0=v610;v608=t0;}b=128u;continue;}
- }
- case 128u:{
-  uchar v611=uchar((ulong)(v608)<(ulong)(v609));
-  if(v611!=0){b=129u;continue;}else{b=130u;continue;}
- }
- case 129u:{
-  uint v612=uint(v444)+uint(v608);
-  ulong v613=ulong(clif_u64(t,v612));
-  ulong v614=v452+v608;
-  clif_st64(t,ulong(v614),ulong(v613));
-  ulong v615=v608+ulong(8ul);
-  {{ulong t0=v615;v608=t0;}b=128u;continue;}
- }
- case 130u:{
-  ulong v616=v449&ulong(4ul);
-  if(v616!=0){b=131u;continue;}else{b=132u;continue;}
- }
- case 131u:{
-  uint v617=uint(v444)+uint(v609);
-  ulong v618=v452+v609;
-  uint v619=uint(clif_u32(t,v617));
-  clif_st32(t,ulong(v618),ulong(v619));
-  {b=132u;continue;}
- }
- case 132u:{
-  ulong v620=v449&ulong(4ul);
-  v621=v609+v620;
-  ulong v622=v449&ulong(2ul);
-  if(v622!=0){b=133u;continue;}else{b=134u;continue;}
- }
- case 133u:{
-  uint v623=uint(v444)+uint(v621);
-  ulong v624=v452+v621;
-  ushort v625=ushort(clif_u16(t,v623));
-  clif_st16(t,ulong(v624),ulong(v625));
-  {b=134u;continue;}
- }
- case 134u:{
-  ulong v626=v449&ulong(2ul);
-  v627=v621+v626;
-  ulong v628=v449&ulong(1ul);
-  if(v628!=0){b=135u;continue;}else{b=136u;continue;}
- }
- case 135u:{
-  uint v629=uint(v444)+uint(v627);
-  ulong v630=v452+v627;
-  uchar v631=uchar(clif_u8(t,v629));
-  clif_st8(t,ulong(v630),ulong(v631));
-  {b=136u;continue;}
- }
- case 136u:{
-  uint v632=uint(v449)&uint(1ul);
-  uint v633=uint(v627)+v632;
-  v634=uint(v444)+uint(v449);
-  v636=v450&ulong(18446744073709551608ul);
-  ulong v637=ulong(0ul);
-  {{ulong t0=v637;v635=t0;}b=137u;continue;}
- }
- case 137u:{
-  uchar v638=uchar((ulong)(v635)<(ulong)(v636));
-  if(v638!=0){b=138u;continue;}else{b=139u;continue;}
- }
- case 138u:{
-  uint v639=v634+uint(v635);
-  ulong v640=ulong(clif_u64(t,v639));
-  ulong v641=v454+v635;
-  clif_st64(t,ulong(v641),ulong(v640));
-  ulong v642=v635+ulong(8ul);
-  {{ulong t0=v642;v635=t0;}b=137u;continue;}
- }
- case 139u:{
-  ulong v643=v450&ulong(4ul);
-  if(v643!=0){b=140u;continue;}else{b=141u;continue;}
- }
- case 140u:{
-  uint v644=v634+uint(v636);
-  ulong v645=v454+v636;
-  uint v646=uint(clif_u32(t,v644));
-  clif_st32(t,ulong(v645),ulong(v646));
-  {b=141u;continue;}
- }
- case 141u:{
-  ulong v647=v450&ulong(4ul);
-  v648=v636+v647;
-  ulong v649=v450&ulong(2ul);
-  if(v649!=0){b=142u;continue;}else{b=143u;continue;}
- }
- case 142u:{
-  uint v650=v634+uint(v648);
-  ulong v651=v454+v648;
-  ushort v652=ushort(clif_u16(t,v650));
-  clif_st16(t,ulong(v651),ulong(v652));
-  {b=143u;continue;}
- }
- case 143u:{
-  ulong v653=v450&ulong(2ul);
-  v654=v648+v653;
-  ulong v655=v450&ulong(1ul);
-  if(v655!=0){b=144u;continue;}else{b=145u;continue;}
- }
- case 144u:{
-  uint v656=v634+uint(v654);
-  ulong v657=v454+v654;
-  uchar v658=uchar(clif_u8(t,v656));
-  clif_st8(t,ulong(v657),ulong(v658));
-  {b=145u;continue;}
- }
- case 145u:{
-  uint v659=uint(v450)&uint(1ul);
-  uint v660=uint(v654)+v659;
-  {b=83u;continue;}
- }
- case 83u:{
-  v661=v297+uint(1ul);
-  uint v662=uint(v403);
-  uint v663=uint(v661);
-  uint v664=uint(v0)+v662;
-  uint v665=v664+v663;
-  uint v666=uint(clif_u8(t,v665));
-  uchar v667=uchar((uint)(v666)==(uint)(uint(2ul)));
-  if(v667!=0){b=146u;continue;}else{b=147u;continue;}
- }
- case 146u:{
-  uint v669=v661*uint(4ul);
-  uint v670=uint(v402);
-  uint v671=uint(v669);
-  uint v672=uint(v0)+v670;
-  uint v673=v672+v671;
-  uint v674=uint(clif_u32(t,v673));
-  uint v675=uint(v404);
-  uint v676=uint(v674);
-  uint v677=uint(v0)+v675;
-  uint v678=v677+v676;
-  uint v679=uint(clif_u32(t,v678));
-  {{uint t0=v679;v668=t0;}b=148u;continue;}
- }
- case 147u:{
-  {{uint t0=v661;v668=t0;}b=148u;continue;}
- }
- case 148u:{
-  uint v680=uint(v403);
-  uint v681=uint(v668);
-  uint v682=uint(v0)+v680;
-  uint v683=v682+v681;
-  uint v684=uint(clif_u8(t,v683));
-  uint v685=v668*uint(4ul);
-  uint v686=uint(v402);
-  uint v687=uint(v685);
-  uint v688=uint(v0)+v686;
-  uint v689=v688+v687;
-  uint v690=uint(clif_u32(t,v689));
-  uint v691=v685+uint(4ul);
-  uint v692=uint(v402);
-  uint v693=uint(v691);
-  uint v694=uint(v0)+v692;
-  uint v695=v694+v693;
-  uint v696=uint(clif_u32(t,v695));
-  ulong v697=ulong(v404);
-  ulong v698=ulong(v690);
-  ulong v699=v0+v697;
-  v700=v699+v698;
-  ulong v701=ulong(v404);
-  ulong v702=ulong(v696);
-  ulong v703=v0+v701;
-  v704=v703+v702;
-  v705=ulong(v361);
-  v706=ulong(v324);
-  ulong v707=ulong(v367);
-  v708=v399+v707;
-  ulong v709=ulong(v377);
-  v710=v399+v709;
-  uchar v711=uchar((uint)(v684)==(uint)(uint(1ul)));
-  if(v711!=0){b=149u;continue;}else{b=150u;continue;}
- }
- case 149u:{
-  ulong v712=v705+v706;
-  v713=v401+v712;
-  {{ulong t0=v700;ulong t1=v401;v714=t0;v715=t1;}b=152u;continue;}
- }
- case 152u:{
-  uchar v716=uchar((ulong)(v714)<(ulong)(v704));
-  if(v716!=0){b=153u;continue;}else{b=157u;continue;}
- }
- case 153u:{
-  v717=uint(clif_u8(t,v714));
-  ulong v718=v714+ulong(1ul);
-  uint v719=uint((uint)(v717)>>(uint(4)&31u));
-  uchar v724=uchar((uint)(v719)==(uint)(uint(15ul)));
-  if(v724!=0){{uint t0=v719;ulong t1=v718;v720=t0;v721=t1;}b=158u;continue;}else{{uint t0=v719;ulong t1=v718;v722=t0;v723=t1;}b=160u;continue;}
- }
- case 158u:{
-  uchar v725=uchar((ulong)(v721)<(ulong)(v704));
-  if(v725!=0){b=159u;continue;}else{{uint t0=v720;ulong t1=v721;v722=t0;v723=t1;}b=160u;continue;}
- }
- case 159u:{
-  uint v726=uint(clif_u8(t,v721));
-  uint v727=v720+v726;
-  ulong v728=v721+ulong(1ul);
-  uchar v729=uchar((uint)(v726)==(uint)(uint(255ul)));
-  if(v729!=0){{uint t0=v727;ulong t1=v728;v720=t0;v721=t1;}b=158u;continue;}else{{uint t0=v727;ulong t1=v728;v722=t0;v723=t1;}b=160u;continue;}
- }
- case 160u:{
-  v730=ulong(v722);
-  v731=v715+v730;
-  uchar v732=uchar((ulong)(v731)<=(ulong)(v713));
-  if(v732!=0){b=154u;continue;}else{b=157u;continue;}
- }
- case 154u:{
-  v734=v730&ulong(18446744073709551608ul);
-  ulong v735=ulong(0ul);
-  {{ulong t0=v735;v733=t0;}b=161u;continue;}
- }
- case 161u:{
-  uchar v736=uchar((ulong)(v733)<(ulong)(v734));
-  if(v736!=0){b=162u;continue;}else{b=163u;continue;}
- }
- case 162u:{
-  uint v737=uint(v723)+uint(v733);
-  ulong v738=ulong(clif_u64(t,v737));
-  ulong v739=v715+v733;
-  clif_st64(t,ulong(v739),ulong(v738));
-  ulong v740=v733+ulong(8ul);
-  {{ulong t0=v740;v733=t0;}b=161u;continue;}
- }
- case 163u:{
-  ulong v741=v730&ulong(4ul);
-  if(v741!=0){b=164u;continue;}else{b=165u;continue;}
- }
- case 164u:{
-  uint v742=uint(v723)+uint(v734);
-  ulong v743=v715+v734;
-  uint v744=uint(clif_u32(t,v742));
-  clif_st32(t,ulong(v743),ulong(v744));
-  {b=165u;continue;}
- }
- case 165u:{
-  ulong v745=v730&ulong(4ul);
-  v746=v734+v745;
-  ulong v747=v730&ulong(2ul);
-  if(v747!=0){b=166u;continue;}else{b=167u;continue;}
- }
- case 166u:{
-  uint v748=uint(v723)+uint(v746);
-  ulong v749=v715+v746;
-  ushort v750=ushort(clif_u16(t,v748));
-  clif_st16(t,ulong(v749),ulong(v750));
-  {b=167u;continue;}
- }
- case 167u:{
-  ulong v751=v730&ulong(2ul);
-  v752=v746+v751;
-  ulong v753=v730&ulong(1ul);
-  if(v753!=0){b=168u;continue;}else{b=169u;continue;}
- }
- case 168u:{
-  uint v754=uint(v723)+uint(v752);
-  ulong v755=v715+v752;
-  uchar v756=uchar(clif_u8(t,v754));
-  clif_st8(t,ulong(v755),ulong(v756));
-  {b=169u;continue;}
- }
- case 169u:{
-  uint v757=uint(v730)&uint(1ul);
-  uint v758=uint(v752)+v757;
-  v759=v723+v730;
-  uchar v760=uchar((ulong)(v759)<(ulong)(v704));
-  if(v760!=0){b=155u;continue;}else{b=157u;continue;}
- }
- case 155u:{
-  uint v761=uint(clif_u16(t,v759));
-  v762=ulong(v761);
-  ulong v763=v759+ulong(2ul);
-  uint v764=v717&uint(15ul);
-  uchar v769=uchar((uint)(v764)==(uint)(uint(15ul)));
-  if(v769!=0){{uint t0=v764;ulong t1=v763;v765=t0;v766=t1;}b=170u;continue;}else{{uint t0=v764;ulong t1=v763;v767=t0;v768=t1;}b=172u;continue;}
- }
- case 170u:{
-  uchar v770=uchar((ulong)(v766)<(ulong)(v704));
-  if(v770!=0){b=171u;continue;}else{{uint t0=v765;ulong t1=v766;v767=t0;v768=t1;}b=172u;continue;}
- }
- case 171u:{
-  uint v771=uint(clif_u8(t,v766));
-  uint v772=v765+v771;
-  ulong v773=v766+ulong(1ul);
-  uchar v774=uchar((uint)(v771)==(uint)(uint(255ul)));
-  if(v774!=0){{uint t0=v772;ulong t1=v773;v765=t0;v766=t1;}b=170u;continue;}else{{uint t0=v772;ulong t1=v773;v767=t0;v768=t1;}b=172u;continue;}
- }
- case 172u:{
-  uint v775=v767+uint(4ul);
-  ulong v776=ulong(v775);
-  ulong v777=v731-v401;
-  uchar v778=uchar((ulong)(v762)!=(ulong)(ulong(0ul)));
-  uchar v779=uchar((ulong)(v762)<=(ulong)(v777));
-  v780=v731+v776;
-  uchar v781=uchar((ulong)(v780)<=(ulong)(v713));
-  uchar v782=v778&v779;
-  uchar v783=v782&v781;
-  if(v783!=0){b=156u;continue;}else{b=157u;continue;}
- }
- case 156u:{
-  v784=v731-v762;
-  uchar v786=uchar((ulong)(v762)<(ulong)(ulong(8ul)));
-  if(v786!=0){b=173u;continue;}else{b=174u;continue;}
- }
- case 173u:{
-  uint v787=uint(clif_c8(t,ulong(v784)));
-  clif_st8(t,ulong(v731),ulong(v787));
-  uint v788=uint(clif_c8(t,(ulong(v784)+ulong(long(1)))));
-  clif_st8(t,(ulong(v731)+ulong(long(1))),ulong(v788));
-  uint v789=uint(clif_c8(t,(ulong(v784)+ulong(long(2)))));
-  clif_st8(t,(ulong(v731)+ulong(long(2))),ulong(v789));
-  uint v790=uint(clif_c8(t,(ulong(v784)+ulong(long(3)))));
-  clif_st8(t,(ulong(v731)+ulong(long(3))),ulong(v790));
-  uint v791=((uint(2)&63u)<32u?uint(uint(v762))<<(uint(2)&31u):0u);
-  ulong v792=ulong(1145049616ul);
-  ulong v793=ulong((ulong)(v792)>>(uint(v791)&63u));
-  ulong v794=v793&ulong(15ul);
-  ulong v795=v784+v794;
-  uint v796=uint(clif_c32(t,ulong(v795)));
-  clif_st32(t,(ulong(v731)+ulong(long(4))),ulong(v796));
-  ulong v797=ulong(1984967748ul);
-  ulong v798=ulong((ulong)(v797)>>(uint(v791)&63u));
-  ulong v799=v798&ulong(15ul);
-  ulong v800=v795+ulong(4ul);
-  ulong v801=v800-v799;
-  {{ulong t0=v801;v785=t0;}b=175u;continue;}
- }
- case 174u:{
-  ulong v802=ulong(clif_c64(t,ulong(v784)));
-  clif_st64(t,ulong(v731),ulong(v802));
-  ulong v803=v784+ulong(8ul);
-  {{ulong t0=v803;v785=t0;}b=175u;continue;}
- }
- case 175u:{
-  ulong v806=v731+ulong(8ul);
-  {{ulong t0=v806;ulong t1=v785;v804=t0;v805=t1;}b=176u;continue;}
- }
- case 176u:{
-  uchar v807=uchar((ulong)(v804)<(ulong)(v780));
-  if(v807!=0){b=177u;continue;}else{{ulong t0=v768;ulong t1=v780;v714=t0;v715=t1;}b=152u;continue;}
- }
- case 177u:{
-  ulong v808=ulong(clif_c64(t,ulong(v805)));
-  clif_st64(t,ulong(v804),ulong(v808));
-  ulong v809=v804+ulong(8ul);
-  ulong v810=v805+ulong(8ul);
-  {{ulong t0=v809;ulong t1=v810;v804=t0;v805=t1;}b=176u;continue;}
- }
- case 157u:{
-  v812=v705&ulong(18446744073709551608ul);
-  ulong v813=ulong(0ul);
-  {{ulong t0=v813;v811=t0;}b=178u;continue;}
- }
- case 178u:{
-  uchar v814=uchar((ulong)(v811)<(ulong)(v812));
-  if(v814!=0){b=179u;continue;}else{b=180u;continue;}
- }
- case 179u:{
-  ulong v815=v401+v811;
-  ulong v816=ulong(clif_c64(t,ulong(v815)));
-  ulong v817=v708+v811;
-  clif_st64(t,ulong(v817),ulong(v816));
-  ulong v818=v811+ulong(8ul);
-  {{ulong t0=v818;v811=t0;}b=178u;continue;}
- }
- case 180u:{
-  ulong v819=v705&ulong(4ul);
-  if(v819!=0){b=181u;continue;}else{b=182u;continue;}
- }
- case 181u:{
-  ulong v820=v401+v812;
-  ulong v821=v708+v812;
-  uint v822=uint(clif_c32(t,ulong(v820)));
-  clif_st32(t,ulong(v821),ulong(v822));
-  {b=182u;continue;}
- }
- case 182u:{
-  ulong v823=v705&ulong(4ul);
-  v824=v812+v823;
-  ulong v825=v705&ulong(2ul);
-  if(v825!=0){b=183u;continue;}else{b=184u;continue;}
- }
- case 183u:{
-  ulong v826=v401+v824;
-  ulong v827=v708+v824;
-  ushort v828=ushort(clif_c16(t,ulong(v826)));
-  clif_st16(t,ulong(v827),ulong(v828));
-  {b=184u;continue;}
- }
- case 184u:{
-  ulong v829=v705&ulong(2ul);
-  v830=v824+v829;
-  ulong v831=v705&ulong(1ul);
-  if(v831!=0){b=185u;continue;}else{b=186u;continue;}
- }
- case 185u:{
-  ulong v832=v401+v830;
-  ulong v833=v708+v830;
-  uchar v834=uchar(clif_c8(t,ulong(v832)));
-  clif_st8(t,ulong(v833),ulong(v834));
-  {b=186u;continue;}
- }
- case 186u:{
-  uint v835=uint(v705)&uint(1ul);
-  uint v836=uint(v830)+v835;
-  v837=v401+v705;
-  v839=v706&ulong(18446744073709551608ul);
-  ulong v840=ulong(0ul);
-  {{ulong t0=v840;v838=t0;}b=187u;continue;}
- }
- case 187u:{
-  uchar v841=uchar((ulong)(v838)<(ulong)(v839));
-  if(v841!=0){b=188u;continue;}else{b=189u;continue;}
- }
- case 188u:{
-  ulong v842=v837+v838;
-  ulong v843=ulong(clif_c64(t,ulong(v842)));
-  ulong v844=v710+v838;
-  clif_st64(t,ulong(v844),ulong(v843));
-  ulong v845=v838+ulong(8ul);
-  {{ulong t0=v845;v838=t0;}b=187u;continue;}
- }
- case 189u:{
-  ulong v846=v706&ulong(4ul);
-  if(v846!=0){b=190u;continue;}else{b=191u;continue;}
- }
- case 190u:{
-  ulong v847=v837+v839;
-  ulong v848=v710+v839;
-  uint v849=uint(clif_c32(t,ulong(v847)));
-  clif_st32(t,ulong(v848),ulong(v849));
-  {b=191u;continue;}
- }
- case 191u:{
-  ulong v850=v706&ulong(4ul);
-  v851=v839+v850;
-  ulong v852=v706&ulong(2ul);
-  if(v852!=0){b=192u;continue;}else{b=193u;continue;}
- }
- case 192u:{
-  ulong v853=v837+v851;
-  ulong v854=v710+v851;
-  ushort v855=ushort(clif_c16(t,ulong(v853)));
-  clif_st16(t,ulong(v854),ulong(v855));
-  {b=193u;continue;}
- }
- case 193u:{
-  ulong v856=v706&ulong(2ul);
-  v857=v851+v856;
-  ulong v858=v706&ulong(1ul);
-  if(v858!=0){b=194u;continue;}else{b=195u;continue;}
- }
- case 194u:{
-  ulong v859=v837+v857;
-  ulong v860=v710+v857;
-  uchar v861=uchar(clif_c8(t,ulong(v859)));
-  clif_st8(t,ulong(v860),ulong(v861));
-  {b=195u;continue;}
- }
- case 195u:{
-  uint v862=uint(v706)&uint(1ul);
-  uint v863=uint(v857)+v862;
-  {b=151u;continue;}
- }
- case 150u:{
-  v865=v705&ulong(18446744073709551608ul);
-  ulong v866=ulong(0ul);
-  {{ulong t0=v866;v864=t0;}b=196u;continue;}
- }
- case 196u:{
-  uchar v867=uchar((ulong)(v864)<(ulong)(v865));
-  if(v867!=0){b=197u;continue;}else{b=198u;continue;}
- }
- case 197u:{
-  uint v868=uint(v700)+uint(v864);
-  ulong v869=ulong(clif_u64(t,v868));
-  ulong v870=v708+v864;
-  clif_st64(t,ulong(v870),ulong(v869));
-  ulong v871=v864+ulong(8ul);
-  {{ulong t0=v871;v864=t0;}b=196u;continue;}
- }
- case 198u:{
-  ulong v872=v705&ulong(4ul);
-  if(v872!=0){b=199u;continue;}else{b=200u;continue;}
- }
- case 199u:{
-  uint v873=uint(v700)+uint(v865);
-  ulong v874=v708+v865;
-  uint v875=uint(clif_u32(t,v873));
-  clif_st32(t,ulong(v874),ulong(v875));
-  {b=200u;continue;}
- }
- case 200u:{
-  ulong v876=v705&ulong(4ul);
-  v877=v865+v876;
-  ulong v878=v705&ulong(2ul);
-  if(v878!=0){b=201u;continue;}else{b=202u;continue;}
- }
- case 201u:{
-  uint v879=uint(v700)+uint(v877);
-  ulong v880=v708+v877;
-  ushort v881=ushort(clif_u16(t,v879));
-  clif_st16(t,ulong(v880),ulong(v881));
-  {b=202u;continue;}
- }
- case 202u:{
-  ulong v882=v705&ulong(2ul);
-  v883=v877+v882;
-  ulong v884=v705&ulong(1ul);
-  if(v884!=0){b=203u;continue;}else{b=204u;continue;}
- }
- case 203u:{
-  uint v885=uint(v700)+uint(v883);
-  ulong v886=v708+v883;
-  uchar v887=uchar(clif_u8(t,v885));
-  clif_st8(t,ulong(v886),ulong(v887));
-  {b=204u;continue;}
- }
- case 204u:{
-  uint v888=uint(v705)&uint(1ul);
-  uint v889=uint(v883)+v888;
-  v890=uint(v700)+uint(v705);
-  v892=v706&ulong(18446744073709551608ul);
-  ulong v893=ulong(0ul);
-  {{ulong t0=v893;v891=t0;}b=205u;continue;}
- }
- case 205u:{
-  uchar v894=uchar((ulong)(v891)<(ulong)(v892));
-  if(v894!=0){b=206u;continue;}else{b=207u;continue;}
- }
- case 206u:{
-  uint v895=v890+uint(v891);
-  ulong v896=ulong(clif_u64(t,v895));
-  ulong v897=v710+v891;
-  clif_st64(t,ulong(v897),ulong(v896));
-  ulong v898=v891+ulong(8ul);
-  {{ulong t0=v898;v891=t0;}b=205u;continue;}
- }
- case 207u:{
-  ulong v899=v706&ulong(4ul);
-  if(v899!=0){b=208u;continue;}else{b=209u;continue;}
- }
- case 208u:{
-  uint v900=v890+uint(v892);
-  ulong v901=v710+v892;
-  uint v902=uint(clif_u32(t,v900));
-  clif_st32(t,ulong(v901),ulong(v902));
-  {b=209u;continue;}
- }
- case 209u:{
-  ulong v903=v706&ulong(4ul);
-  v904=v892+v903;
-  ulong v905=v706&ulong(2ul);
-  if(v905!=0){b=210u;continue;}else{b=211u;continue;}
- }
- case 210u:{
-  uint v906=v890+uint(v904);
-  ulong v907=v710+v904;
-  ushort v908=ushort(clif_u16(t,v906));
-  clif_st16(t,ulong(v907),ulong(v908));
-  {b=211u;continue;}
- }
- case 211u:{
-  ulong v909=v706&ulong(2ul);
-  v910=v904+v909;
-  ulong v911=v706&ulong(1ul);
-  if(v911!=0){b=212u;continue;}else{b=213u;continue;}
- }
- case 212u:{
-  uint v912=v890+uint(v910);
-  ulong v913=v710+v910;
-  uchar v914=uchar(clif_u8(t,v912));
-  clif_st8(t,ulong(v913),ulong(v914));
-  {b=213u;continue;}
- }
- case 213u:{
-  uint v915=uint(v706)&uint(1ul);
-  uint v916=uint(v910)+v915;
-  {b=151u;continue;}
- }
- case 151u:{
-  v917=v297+uint(2ul);
-  uint v918=uint(v403);
-  uint v919=uint(v917);
-  uint v920=uint(v0)+v918;
-  uint v921=v920+v919;
-  uint v922=uint(clif_u8(t,v921));
-  uchar v923=uchar((uint)(v922)==(uint)(uint(2ul)));
-  if(v923!=0){b=214u;continue;}else{b=215u;continue;}
- }
- case 214u:{
-  uint v925=v917*uint(4ul);
-  uint v926=uint(v402);
-  uint v927=uint(v925);
-  uint v928=uint(v0)+v926;
-  uint v929=v928+v927;
-  uint v930=uint(clif_u32(t,v929));
-  uint v931=uint(v404);
-  uint v932=uint(v930);
-  uint v933=uint(v0)+v931;
-  uint v934=v933+v932;
-  uint v935=uint(clif_u32(t,v934));
-  {{uint t0=v935;v924=t0;}b=216u;continue;}
- }
- case 215u:{
-  {{uint t0=v917;v924=t0;}b=216u;continue;}
- }
- case 216u:{
-  uint v936=uint(v403);
-  uint v937=uint(v924);
-  uint v938=uint(v0)+v936;
-  uint v939=v938+v937;
-  uint v940=uint(clif_u8(t,v939));
-  uint v941=v924*uint(4ul);
-  uint v942=uint(v402);
-  uint v943=uint(v941);
-  uint v944=uint(v0)+v942;
-  uint v945=v944+v943;
-  uint v946=uint(clif_u32(t,v945));
-  uint v947=v941+uint(4ul);
-  uint v948=uint(v402);
-  uint v949=uint(v947);
-  uint v950=uint(v0)+v948;
-  uint v951=v950+v949;
-  uint v952=uint(clif_u32(t,v951));
-  ulong v953=ulong(v404);
-  ulong v954=ulong(v946);
-  ulong v955=v0+v953;
-  v956=v955+v954;
-  ulong v957=ulong(v404);
-  ulong v958=ulong(v952);
-  ulong v959=v0+v957;
-  v960=v959+v958;
-  v961=ulong(v362);
-  v962=ulong(v335);
-  ulong v963=ulong(v369);
-  v964=v399+v963;
-  ulong v965=ulong(v379);
-  v966=v399+v965;
-  uchar v967=uchar((uint)(v940)==(uint)(uint(1ul)));
-  if(v967!=0){b=217u;continue;}else{b=218u;continue;}
- }
- case 217u:{
-  ulong v968=v961+v962;
-  v969=v401+v968;
-  {{ulong t0=v956;ulong t1=v401;v970=t0;v971=t1;}b=220u;continue;}
- }
- case 220u:{
-  uchar v972=uchar((ulong)(v970)<(ulong)(v960));
-  if(v972!=0){b=221u;continue;}else{b=225u;continue;}
- }
- case 221u:{
-  v973=uint(clif_u8(t,v970));
-  ulong v974=v970+ulong(1ul);
-  uint v975=uint((uint)(v973)>>(uint(4)&31u));
-  uchar v980=uchar((uint)(v975)==(uint)(uint(15ul)));
-  if(v980!=0){{uint t0=v975;ulong t1=v974;v976=t0;v977=t1;}b=226u;continue;}else{{uint t0=v975;ulong t1=v974;v978=t0;v979=t1;}b=228u;continue;}
- }
- case 226u:{
-  uchar v981=uchar((ulong)(v977)<(ulong)(v960));
-  if(v981!=0){b=227u;continue;}else{{uint t0=v976;ulong t1=v977;v978=t0;v979=t1;}b=228u;continue;}
- }
- case 227u:{
-  uint v982=uint(clif_u8(t,v977));
-  uint v983=v976+v982;
-  ulong v984=v977+ulong(1ul);
-  uchar v985=uchar((uint)(v982)==(uint)(uint(255ul)));
-  if(v985!=0){{uint t0=v983;ulong t1=v984;v976=t0;v977=t1;}b=226u;continue;}else{{uint t0=v983;ulong t1=v984;v978=t0;v979=t1;}b=228u;continue;}
- }
- case 228u:{
-  v986=ulong(v978);
-  v987=v971+v986;
-  uchar v988=uchar((ulong)(v987)<=(ulong)(v969));
-  if(v988!=0){b=222u;continue;}else{b=225u;continue;}
- }
- case 222u:{
-  v990=v986&ulong(18446744073709551608ul);
-  ulong v991=ulong(0ul);
-  {{ulong t0=v991;v989=t0;}b=229u;continue;}
- }
- case 229u:{
-  uchar v992=uchar((ulong)(v989)<(ulong)(v990));
-  if(v992!=0){b=230u;continue;}else{b=231u;continue;}
- }
- case 230u:{
-  uint v993=uint(v979)+uint(v989);
-  ulong v994=ulong(clif_u64(t,v993));
-  ulong v995=v971+v989;
-  clif_st64(t,ulong(v995),ulong(v994));
-  ulong v996=v989+ulong(8ul);
-  {{ulong t0=v996;v989=t0;}b=229u;continue;}
- }
- case 231u:{
-  ulong v997=v986&ulong(4ul);
-  if(v997!=0){b=232u;continue;}else{b=233u;continue;}
- }
- case 232u:{
-  uint v998=uint(v979)+uint(v990);
-  ulong v999=v971+v990;
-  uint v1000=uint(clif_u32(t,v998));
-  clif_st32(t,ulong(v999),ulong(v1000));
-  {b=233u;continue;}
- }
- case 233u:{
-  ulong v1001=v986&ulong(4ul);
-  v1002=v990+v1001;
-  ulong v1003=v986&ulong(2ul);
-  if(v1003!=0){b=234u;continue;}else{b=235u;continue;}
- }
- case 234u:{
-  uint v1004=uint(v979)+uint(v1002);
-  ulong v1005=v971+v1002;
-  ushort v1006=ushort(clif_u16(t,v1004));
-  clif_st16(t,ulong(v1005),ulong(v1006));
-  {b=235u;continue;}
- }
- case 235u:{
-  ulong v1007=v986&ulong(2ul);
-  v1008=v1002+v1007;
-  ulong v1009=v986&ulong(1ul);
-  if(v1009!=0){b=236u;continue;}else{b=237u;continue;}
- }
- case 236u:{
-  uint v1010=uint(v979)+uint(v1008);
-  ulong v1011=v971+v1008;
-  uchar v1012=uchar(clif_u8(t,v1010));
-  clif_st8(t,ulong(v1011),ulong(v1012));
-  {b=237u;continue;}
- }
- case 237u:{
-  uint v1013=uint(v986)&uint(1ul);
-  uint v1014=uint(v1008)+v1013;
-  v1015=v979+v986;
-  uchar v1016=uchar((ulong)(v1015)<(ulong)(v960));
-  if(v1016!=0){b=223u;continue;}else{b=225u;continue;}
- }
- case 223u:{
-  uint v1017=uint(clif_u16(t,v1015));
-  v1018=ulong(v1017);
-  ulong v1019=v1015+ulong(2ul);
-  uint v1020=v973&uint(15ul);
-  uchar v1025=uchar((uint)(v1020)==(uint)(uint(15ul)));
-  if(v1025!=0){{uint t0=v1020;ulong t1=v1019;v1021=t0;v1022=t1;}b=238u;continue;}else{{uint t0=v1020;ulong t1=v1019;v1023=t0;v1024=t1;}b=240u;continue;}
- }
- case 238u:{
-  uchar v1026=uchar((ulong)(v1022)<(ulong)(v960));
-  if(v1026!=0){b=239u;continue;}else{{uint t0=v1021;ulong t1=v1022;v1023=t0;v1024=t1;}b=240u;continue;}
- }
- case 239u:{
-  uint v1027=uint(clif_u8(t,v1022));
-  uint v1028=v1021+v1027;
-  ulong v1029=v1022+ulong(1ul);
-  uchar v1030=uchar((uint)(v1027)==(uint)(uint(255ul)));
-  if(v1030!=0){{uint t0=v1028;ulong t1=v1029;v1021=t0;v1022=t1;}b=238u;continue;}else{{uint t0=v1028;ulong t1=v1029;v1023=t0;v1024=t1;}b=240u;continue;}
- }
- case 240u:{
-  uint v1031=v1023+uint(4ul);
-  ulong v1032=ulong(v1031);
-  ulong v1033=v987-v401;
-  uchar v1034=uchar((ulong)(v1018)!=(ulong)(ulong(0ul)));
-  uchar v1035=uchar((ulong)(v1018)<=(ulong)(v1033));
-  v1036=v987+v1032;
-  uchar v1037=uchar((ulong)(v1036)<=(ulong)(v969));
-  uchar v1038=v1034&v1035;
-  uchar v1039=v1038&v1037;
-  if(v1039!=0){b=224u;continue;}else{b=225u;continue;}
- }
- case 224u:{
-  v1040=v987-v1018;
-  uchar v1042=uchar((ulong)(v1018)<(ulong)(ulong(8ul)));
-  if(v1042!=0){b=241u;continue;}else{b=242u;continue;}
- }
- case 241u:{
-  uint v1043=uint(clif_c8(t,ulong(v1040)));
-  clif_st8(t,ulong(v987),ulong(v1043));
-  uint v1044=uint(clif_c8(t,(ulong(v1040)+ulong(long(1)))));
-  clif_st8(t,(ulong(v987)+ulong(long(1))),ulong(v1044));
-  uint v1045=uint(clif_c8(t,(ulong(v1040)+ulong(long(2)))));
-  clif_st8(t,(ulong(v987)+ulong(long(2))),ulong(v1045));
-  uint v1046=uint(clif_c8(t,(ulong(v1040)+ulong(long(3)))));
-  clif_st8(t,(ulong(v987)+ulong(long(3))),ulong(v1046));
-  uint v1047=((uint(2)&63u)<32u?uint(uint(v1018))<<(uint(2)&31u):0u);
-  ulong v1048=ulong(1145049616ul);
-  ulong v1049=ulong((ulong)(v1048)>>(uint(v1047)&63u));
-  ulong v1050=v1049&ulong(15ul);
-  ulong v1051=v1040+v1050;
-  uint v1052=uint(clif_c32(t,ulong(v1051)));
-  clif_st32(t,(ulong(v987)+ulong(long(4))),ulong(v1052));
-  ulong v1053=ulong(1984967748ul);
-  ulong v1054=ulong((ulong)(v1053)>>(uint(v1047)&63u));
-  ulong v1055=v1054&ulong(15ul);
-  ulong v1056=v1051+ulong(4ul);
-  ulong v1057=v1056-v1055;
-  {{ulong t0=v1057;v1041=t0;}b=243u;continue;}
- }
- case 242u:{
-  ulong v1058=ulong(clif_c64(t,ulong(v1040)));
-  clif_st64(t,ulong(v987),ulong(v1058));
-  ulong v1059=v1040+ulong(8ul);
-  {{ulong t0=v1059;v1041=t0;}b=243u;continue;}
- }
- case 243u:{
-  ulong v1062=v987+ulong(8ul);
-  {{ulong t0=v1062;ulong t1=v1041;v1060=t0;v1061=t1;}b=244u;continue;}
- }
- case 244u:{
-  uchar v1063=uchar((ulong)(v1060)<(ulong)(v1036));
-  if(v1063!=0){b=245u;continue;}else{{ulong t0=v1024;ulong t1=v1036;v970=t0;v971=t1;}b=220u;continue;}
- }
- case 245u:{
-  ulong v1064=ulong(clif_c64(t,ulong(v1061)));
-  clif_st64(t,ulong(v1060),ulong(v1064));
-  ulong v1065=v1060+ulong(8ul);
-  ulong v1066=v1061+ulong(8ul);
-  {{ulong t0=v1065;ulong t1=v1066;v1060=t0;v1061=t1;}b=244u;continue;}
- }
- case 225u:{
-  v1068=v961&ulong(18446744073709551608ul);
-  ulong v1069=ulong(0ul);
-  {{ulong t0=v1069;v1067=t0;}b=246u;continue;}
- }
- case 246u:{
-  uchar v1070=uchar((ulong)(v1067)<(ulong)(v1068));
-  if(v1070!=0){b=247u;continue;}else{b=248u;continue;}
- }
- case 247u:{
-  ulong v1071=v401+v1067;
-  ulong v1072=ulong(clif_c64(t,ulong(v1071)));
-  ulong v1073=v964+v1067;
-  clif_st64(t,ulong(v1073),ulong(v1072));
-  ulong v1074=v1067+ulong(8ul);
-  {{ulong t0=v1074;v1067=t0;}b=246u;continue;}
- }
- case 248u:{
-  ulong v1075=v961&ulong(4ul);
-  if(v1075!=0){b=249u;continue;}else{b=250u;continue;}
- }
- case 249u:{
-  ulong v1076=v401+v1068;
-  ulong v1077=v964+v1068;
-  uint v1078=uint(clif_c32(t,ulong(v1076)));
-  clif_st32(t,ulong(v1077),ulong(v1078));
-  {b=250u;continue;}
- }
- case 250u:{
-  ulong v1079=v961&ulong(4ul);
-  v1080=v1068+v1079;
-  ulong v1081=v961&ulong(2ul);
-  if(v1081!=0){b=251u;continue;}else{b=252u;continue;}
- }
- case 251u:{
-  ulong v1082=v401+v1080;
-  ulong v1083=v964+v1080;
-  ushort v1084=ushort(clif_c16(t,ulong(v1082)));
-  clif_st16(t,ulong(v1083),ulong(v1084));
-  {b=252u;continue;}
- }
- case 252u:{
-  ulong v1085=v961&ulong(2ul);
-  v1086=v1080+v1085;
-  ulong v1087=v961&ulong(1ul);
-  if(v1087!=0){b=253u;continue;}else{b=254u;continue;}
- }
- case 253u:{
-  ulong v1088=v401+v1086;
-  ulong v1089=v964+v1086;
-  uchar v1090=uchar(clif_c8(t,ulong(v1088)));
-  clif_st8(t,ulong(v1089),ulong(v1090));
-  {b=254u;continue;}
- }
- case 254u:{
-  uint v1091=uint(v961)&uint(1ul);
-  uint v1092=uint(v1086)+v1091;
-  v1093=v401+v961;
-  v1095=v962&ulong(18446744073709551608ul);
-  ulong v1096=ulong(0ul);
-  {{ulong t0=v1096;v1094=t0;}b=255u;continue;}
- }
- case 255u:{
-  uchar v1097=uchar((ulong)(v1094)<(ulong)(v1095));
-  if(v1097!=0){b=256u;continue;}else{b=257u;continue;}
- }
- case 256u:{
-  ulong v1098=v1093+v1094;
-  ulong v1099=ulong(clif_c64(t,ulong(v1098)));
-  ulong v1100=v966+v1094;
-  clif_st64(t,ulong(v1100),ulong(v1099));
-  ulong v1101=v1094+ulong(8ul);
-  {{ulong t0=v1101;v1094=t0;}b=255u;continue;}
- }
- case 257u:{
-  ulong v1102=v962&ulong(4ul);
-  if(v1102!=0){b=258u;continue;}else{b=259u;continue;}
- }
- case 258u:{
-  ulong v1103=v1093+v1095;
-  ulong v1104=v966+v1095;
-  uint v1105=uint(clif_c32(t,ulong(v1103)));
-  clif_st32(t,ulong(v1104),ulong(v1105));
-  {b=259u;continue;}
- }
- case 259u:{
-  ulong v1106=v962&ulong(4ul);
-  v1107=v1095+v1106;
-  ulong v1108=v962&ulong(2ul);
-  if(v1108!=0){b=260u;continue;}else{b=261u;continue;}
- }
- case 260u:{
-  ulong v1109=v1093+v1107;
-  ulong v1110=v966+v1107;
-  ushort v1111=ushort(clif_c16(t,ulong(v1109)));
-  clif_st16(t,ulong(v1110),ulong(v1111));
-  {b=261u;continue;}
- }
- case 261u:{
-  ulong v1112=v962&ulong(2ul);
-  v1113=v1107+v1112;
-  ulong v1114=v962&ulong(1ul);
-  if(v1114!=0){b=262u;continue;}else{b=263u;continue;}
- }
- case 262u:{
-  ulong v1115=v1093+v1113;
-  ulong v1116=v966+v1113;
-  uchar v1117=uchar(clif_c8(t,ulong(v1115)));
-  clif_st8(t,ulong(v1116),ulong(v1117));
-  {b=263u;continue;}
- }
- case 263u:{
-  uint v1118=uint(v962)&uint(1ul);
-  uint v1119=uint(v1113)+v1118;
-  {b=219u;continue;}
- }
- case 218u:{
-  v1121=v961&ulong(18446744073709551608ul);
-  ulong v1122=ulong(0ul);
-  {{ulong t0=v1122;v1120=t0;}b=264u;continue;}
- }
- case 264u:{
-  uchar v1123=uchar((ulong)(v1120)<(ulong)(v1121));
-  if(v1123!=0){b=265u;continue;}else{b=266u;continue;}
- }
- case 265u:{
-  uint v1124=uint(v956)+uint(v1120);
-  ulong v1125=ulong(clif_u64(t,v1124));
-  ulong v1126=v964+v1120;
-  clif_st64(t,ulong(v1126),ulong(v1125));
-  ulong v1127=v1120+ulong(8ul);
-  {{ulong t0=v1127;v1120=t0;}b=264u;continue;}
- }
- case 266u:{
-  ulong v1128=v961&ulong(4ul);
-  if(v1128!=0){b=267u;continue;}else{b=268u;continue;}
- }
- case 267u:{
-  uint v1129=uint(v956)+uint(v1121);
-  ulong v1130=v964+v1121;
-  uint v1131=uint(clif_u32(t,v1129));
-  clif_st32(t,ulong(v1130),ulong(v1131));
-  {b=268u;continue;}
- }
- case 268u:{
-  ulong v1132=v961&ulong(4ul);
-  v1133=v1121+v1132;
-  ulong v1134=v961&ulong(2ul);
-  if(v1134!=0){b=269u;continue;}else{b=270u;continue;}
- }
- case 269u:{
-  uint v1135=uint(v956)+uint(v1133);
-  ulong v1136=v964+v1133;
-  ushort v1137=ushort(clif_u16(t,v1135));
-  clif_st16(t,ulong(v1136),ulong(v1137));
-  {b=270u;continue;}
- }
- case 270u:{
-  ulong v1138=v961&ulong(2ul);
-  v1139=v1133+v1138;
-  ulong v1140=v961&ulong(1ul);
-  if(v1140!=0){b=271u;continue;}else{b=272u;continue;}
- }
- case 271u:{
-  uint v1141=uint(v956)+uint(v1139);
-  ulong v1142=v964+v1139;
-  uchar v1143=uchar(clif_u8(t,v1141));
-  clif_st8(t,ulong(v1142),ulong(v1143));
-  {b=272u;continue;}
- }
- case 272u:{
-  uint v1144=uint(v961)&uint(1ul);
-  uint v1145=uint(v1139)+v1144;
-  v1146=uint(v956)+uint(v961);
-  v1148=v962&ulong(18446744073709551608ul);
-  ulong v1149=ulong(0ul);
-  {{ulong t0=v1149;v1147=t0;}b=273u;continue;}
- }
- case 273u:{
-  uchar v1150=uchar((ulong)(v1147)<(ulong)(v1148));
-  if(v1150!=0){b=274u;continue;}else{b=275u;continue;}
- }
- case 274u:{
-  uint v1151=v1146+uint(v1147);
-  ulong v1152=ulong(clif_u64(t,v1151));
-  ulong v1153=v966+v1147;
-  clif_st64(t,ulong(v1153),ulong(v1152));
-  ulong v1154=v1147+ulong(8ul);
-  {{ulong t0=v1154;v1147=t0;}b=273u;continue;}
- }
- case 275u:{
-  ulong v1155=v962&ulong(4ul);
-  if(v1155!=0){b=276u;continue;}else{b=277u;continue;}
- }
- case 276u:{
-  uint v1156=v1146+uint(v1148);
-  ulong v1157=v966+v1148;
-  uint v1158=uint(clif_u32(t,v1156));
-  clif_st32(t,ulong(v1157),ulong(v1158));
-  {b=277u;continue;}
- }
- case 277u:{
-  ulong v1159=v962&ulong(4ul);
-  v1160=v1148+v1159;
-  ulong v1161=v962&ulong(2ul);
-  if(v1161!=0){b=278u;continue;}else{b=279u;continue;}
- }
- case 278u:{
-  uint v1162=v1146+uint(v1160);
-  ulong v1163=v966+v1160;
-  ushort v1164=ushort(clif_u16(t,v1162));
-  clif_st16(t,ulong(v1163),ulong(v1164));
-  {b=279u;continue;}
- }
- case 279u:{
-  ulong v1165=v962&ulong(2ul);
-  v1166=v1160+v1165;
-  ulong v1167=v962&ulong(1ul);
-  if(v1167!=0){b=280u;continue;}else{b=281u;continue;}
- }
- case 280u:{
-  uint v1168=v1146+uint(v1166);
-  ulong v1169=v966+v1166;
-  uchar v1170=uchar(clif_u8(t,v1168));
-  clif_st8(t,ulong(v1169),ulong(v1170));
-  {b=281u;continue;}
- }
- case 281u:{
-  uint v1171=uint(v962)&uint(1ul);
-  uint v1172=uint(v1166)+v1171;
-  {b=219u;continue;}
- }
- case 219u:{
-  v1173=v297+uint(3ul);
-  uint v1174=uint(v403);
-  uint v1175=uint(v1173);
-  uint v1176=uint(v0)+v1174;
-  uint v1177=v1176+v1175;
-  uint v1178=uint(clif_u8(t,v1177));
-  uchar v1179=uchar((uint)(v1178)==(uint)(uint(2ul)));
-  if(v1179!=0){b=282u;continue;}else{b=283u;continue;}
- }
- case 282u:{
-  uint v1181=v1173*uint(4ul);
-  uint v1182=uint(v402);
-  uint v1183=uint(v1181);
-  uint v1184=uint(v0)+v1182;
-  uint v1185=v1184+v1183;
-  uint v1186=uint(clif_u32(t,v1185));
-  uint v1187=uint(v404);
-  uint v1188=uint(v1186);
-  uint v1189=uint(v0)+v1187;
-  uint v1190=v1189+v1188;
-  uint v1191=uint(clif_u32(t,v1190));
-  {{uint t0=v1191;v1180=t0;}b=284u;continue;}
- }
- case 283u:{
-  {{uint t0=v1173;v1180=t0;}b=284u;continue;}
- }
- case 284u:{
-  uint v1192=uint(v403);
-  uint v1193=uint(v1180);
-  uint v1194=uint(v0)+v1192;
-  uint v1195=v1194+v1193;
-  uint v1196=uint(clif_u8(t,v1195));
-  uint v1197=v1180*uint(4ul);
-  uint v1198=uint(v402);
-  uint v1199=uint(v1197);
-  uint v1200=uint(v0)+v1198;
-  uint v1201=v1200+v1199;
-  uint v1202=uint(clif_u32(t,v1201));
-  uint v1203=v1197+uint(4ul);
-  uint v1204=uint(v402);
-  uint v1205=uint(v1203);
-  uint v1206=uint(v0)+v1204;
-  uint v1207=v1206+v1205;
-  uint v1208=uint(clif_u32(t,v1207));
-  ulong v1209=ulong(v404);
-  ulong v1210=ulong(v1202);
-  ulong v1211=v0+v1209;
-  v1212=v1211+v1210;
-  ulong v1213=ulong(v404);
-  ulong v1214=ulong(v1208);
-  ulong v1215=v0+v1213;
-  v1216=v1215+v1214;
-  v1217=ulong(v363);
-  v1218=ulong(v346);
-  ulong v1219=ulong(v371);
-  v1220=v399+v1219;
-  ulong v1221=ulong(v381);
-  v1222=v399+v1221;
-  uchar v1223=uchar((uint)(v1196)==(uint)(uint(1ul)));
-  if(v1223!=0){b=285u;continue;}else{b=286u;continue;}
- }
- case 285u:{
-  ulong v1224=v1217+v1218;
-  v1225=v401+v1224;
-  {{ulong t0=v1212;ulong t1=v401;v1226=t0;v1227=t1;}b=288u;continue;}
- }
- case 288u:{
-  uchar v1228=uchar((ulong)(v1226)<(ulong)(v1216));
-  if(v1228!=0){b=289u;continue;}else{b=293u;continue;}
- }
- case 289u:{
-  v1229=uint(clif_u8(t,v1226));
-  ulong v1230=v1226+ulong(1ul);
-  uint v1231=uint((uint)(v1229)>>(uint(4)&31u));
-  uchar v1236=uchar((uint)(v1231)==(uint)(uint(15ul)));
-  if(v1236!=0){{uint t0=v1231;ulong t1=v1230;v1232=t0;v1233=t1;}b=294u;continue;}else{{uint t0=v1231;ulong t1=v1230;v1234=t0;v1235=t1;}b=296u;continue;}
- }
- case 294u:{
-  uchar v1237=uchar((ulong)(v1233)<(ulong)(v1216));
-  if(v1237!=0){b=295u;continue;}else{{uint t0=v1232;ulong t1=v1233;v1234=t0;v1235=t1;}b=296u;continue;}
- }
- case 295u:{
-  uint v1238=uint(clif_u8(t,v1233));
-  uint v1239=v1232+v1238;
-  ulong v1240=v1233+ulong(1ul);
-  uchar v1241=uchar((uint)(v1238)==(uint)(uint(255ul)));
-  if(v1241!=0){{uint t0=v1239;ulong t1=v1240;v1232=t0;v1233=t1;}b=294u;continue;}else{{uint t0=v1239;ulong t1=v1240;v1234=t0;v1235=t1;}b=296u;continue;}
- }
- case 296u:{
-  v1242=ulong(v1234);
-  v1243=v1227+v1242;
-  uchar v1244=uchar((ulong)(v1243)<=(ulong)(v1225));
-  if(v1244!=0){b=290u;continue;}else{b=293u;continue;}
- }
- case 290u:{
-  v1246=v1242&ulong(18446744073709551608ul);
-  ulong v1247=ulong(0ul);
-  {{ulong t0=v1247;v1245=t0;}b=297u;continue;}
- }
- case 297u:{
-  uchar v1248=uchar((ulong)(v1245)<(ulong)(v1246));
-  if(v1248!=0){b=298u;continue;}else{b=299u;continue;}
- }
- case 298u:{
-  uint v1249=uint(v1235)+uint(v1245);
-  ulong v1250=ulong(clif_u64(t,v1249));
-  ulong v1251=v1227+v1245;
-  clif_st64(t,ulong(v1251),ulong(v1250));
-  ulong v1252=v1245+ulong(8ul);
-  {{ulong t0=v1252;v1245=t0;}b=297u;continue;}
- }
- case 299u:{
-  ulong v1253=v1242&ulong(4ul);
-  if(v1253!=0){b=300u;continue;}else{b=301u;continue;}
- }
- case 300u:{
-  uint v1254=uint(v1235)+uint(v1246);
-  ulong v1255=v1227+v1246;
-  uint v1256=uint(clif_u32(t,v1254));
-  clif_st32(t,ulong(v1255),ulong(v1256));
-  {b=301u;continue;}
- }
- case 301u:{
-  ulong v1257=v1242&ulong(4ul);
-  v1258=v1246+v1257;
-  ulong v1259=v1242&ulong(2ul);
-  if(v1259!=0){b=302u;continue;}else{b=303u;continue;}
- }
- case 302u:{
-  uint v1260=uint(v1235)+uint(v1258);
-  ulong v1261=v1227+v1258;
-  ushort v1262=ushort(clif_u16(t,v1260));
-  clif_st16(t,ulong(v1261),ulong(v1262));
-  {b=303u;continue;}
- }
- case 303u:{
-  ulong v1263=v1242&ulong(2ul);
-  v1264=v1258+v1263;
-  ulong v1265=v1242&ulong(1ul);
-  if(v1265!=0){b=304u;continue;}else{b=305u;continue;}
- }
- case 304u:{
-  uint v1266=uint(v1235)+uint(v1264);
-  ulong v1267=v1227+v1264;
-  uchar v1268=uchar(clif_u8(t,v1266));
-  clif_st8(t,ulong(v1267),ulong(v1268));
-  {b=305u;continue;}
- }
- case 305u:{
-  uint v1269=uint(v1242)&uint(1ul);
-  uint v1270=uint(v1264)+v1269;
-  v1271=v1235+v1242;
-  uchar v1272=uchar((ulong)(v1271)<(ulong)(v1216));
-  if(v1272!=0){b=291u;continue;}else{b=293u;continue;}
- }
- case 291u:{
-  uint v1273=uint(clif_u16(t,v1271));
-  v1274=ulong(v1273);
-  ulong v1275=v1271+ulong(2ul);
-  uint v1276=v1229&uint(15ul);
-  uchar v1281=uchar((uint)(v1276)==(uint)(uint(15ul)));
-  if(v1281!=0){{uint t0=v1276;ulong t1=v1275;v1277=t0;v1278=t1;}b=306u;continue;}else{{uint t0=v1276;ulong t1=v1275;v1279=t0;v1280=t1;}b=308u;continue;}
- }
- case 306u:{
-  uchar v1282=uchar((ulong)(v1278)<(ulong)(v1216));
-  if(v1282!=0){b=307u;continue;}else{{uint t0=v1277;ulong t1=v1278;v1279=t0;v1280=t1;}b=308u;continue;}
- }
- case 307u:{
-  uint v1283=uint(clif_u8(t,v1278));
-  uint v1284=v1277+v1283;
-  ulong v1285=v1278+ulong(1ul);
-  uchar v1286=uchar((uint)(v1283)==(uint)(uint(255ul)));
-  if(v1286!=0){{uint t0=v1284;ulong t1=v1285;v1277=t0;v1278=t1;}b=306u;continue;}else{{uint t0=v1284;ulong t1=v1285;v1279=t0;v1280=t1;}b=308u;continue;}
- }
- case 308u:{
-  uint v1287=v1279+uint(4ul);
-  ulong v1288=ulong(v1287);
-  ulong v1289=v1243-v401;
-  uchar v1290=uchar((ulong)(v1274)!=(ulong)(ulong(0ul)));
-  uchar v1291=uchar((ulong)(v1274)<=(ulong)(v1289));
-  v1292=v1243+v1288;
-  uchar v1293=uchar((ulong)(v1292)<=(ulong)(v1225));
-  uchar v1294=v1290&v1291;
-  uchar v1295=v1294&v1293;
-  if(v1295!=0){b=292u;continue;}else{b=293u;continue;}
- }
- case 292u:{
-  v1296=v1243-v1274;
-  uchar v1298=uchar((ulong)(v1274)<(ulong)(ulong(8ul)));
-  if(v1298!=0){b=309u;continue;}else{b=310u;continue;}
- }
- case 309u:{
-  uint v1299=uint(clif_c8(t,ulong(v1296)));
-  clif_st8(t,ulong(v1243),ulong(v1299));
-  uint v1300=uint(clif_c8(t,(ulong(v1296)+ulong(long(1)))));
-  clif_st8(t,(ulong(v1243)+ulong(long(1))),ulong(v1300));
-  uint v1301=uint(clif_c8(t,(ulong(v1296)+ulong(long(2)))));
-  clif_st8(t,(ulong(v1243)+ulong(long(2))),ulong(v1301));
-  uint v1302=uint(clif_c8(t,(ulong(v1296)+ulong(long(3)))));
-  clif_st8(t,(ulong(v1243)+ulong(long(3))),ulong(v1302));
-  uint v1303=((uint(2)&63u)<32u?uint(uint(v1274))<<(uint(2)&31u):0u);
-  ulong v1304=ulong(1145049616ul);
-  ulong v1305=ulong((ulong)(v1304)>>(uint(v1303)&63u));
-  ulong v1306=v1305&ulong(15ul);
-  ulong v1307=v1296+v1306;
-  uint v1308=uint(clif_c32(t,ulong(v1307)));
-  clif_st32(t,(ulong(v1243)+ulong(long(4))),ulong(v1308));
-  ulong v1309=ulong(1984967748ul);
-  ulong v1310=ulong((ulong)(v1309)>>(uint(v1303)&63u));
-  ulong v1311=v1310&ulong(15ul);
-  ulong v1312=v1307+ulong(4ul);
-  ulong v1313=v1312-v1311;
-  {{ulong t0=v1313;v1297=t0;}b=311u;continue;}
- }
- case 310u:{
-  ulong v1314=ulong(clif_c64(t,ulong(v1296)));
-  clif_st64(t,ulong(v1243),ulong(v1314));
-  ulong v1315=v1296+ulong(8ul);
-  {{ulong t0=v1315;v1297=t0;}b=311u;continue;}
- }
- case 311u:{
-  ulong v1318=v1243+ulong(8ul);
-  {{ulong t0=v1318;ulong t1=v1297;v1316=t0;v1317=t1;}b=312u;continue;}
- }
- case 312u:{
-  uchar v1319=uchar((ulong)(v1316)<(ulong)(v1292));
-  if(v1319!=0){b=313u;continue;}else{{ulong t0=v1280;ulong t1=v1292;v1226=t0;v1227=t1;}b=288u;continue;}
- }
- case 313u:{
-  ulong v1320=ulong(clif_c64(t,ulong(v1317)));
-  clif_st64(t,ulong(v1316),ulong(v1320));
-  ulong v1321=v1316+ulong(8ul);
-  ulong v1322=v1317+ulong(8ul);
-  {{ulong t0=v1321;ulong t1=v1322;v1316=t0;v1317=t1;}b=312u;continue;}
- }
- case 293u:{
-  v1324=v1217&ulong(18446744073709551608ul);
-  ulong v1325=ulong(0ul);
-  {{ulong t0=v1325;v1323=t0;}b=314u;continue;}
- }
- case 314u:{
-  uchar v1326=uchar((ulong)(v1323)<(ulong)(v1324));
-  if(v1326!=0){b=315u;continue;}else{b=316u;continue;}
- }
- case 315u:{
-  ulong v1327=v401+v1323;
-  ulong v1328=ulong(clif_c64(t,ulong(v1327)));
-  ulong v1329=v1220+v1323;
-  clif_st64(t,ulong(v1329),ulong(v1328));
-  ulong v1330=v1323+ulong(8ul);
-  {{ulong t0=v1330;v1323=t0;}b=314u;continue;}
- }
- case 316u:{
-  ulong v1331=v1217&ulong(4ul);
-  if(v1331!=0){b=317u;continue;}else{b=318u;continue;}
- }
- case 317u:{
-  ulong v1332=v401+v1324;
-  ulong v1333=v1220+v1324;
-  uint v1334=uint(clif_c32(t,ulong(v1332)));
-  clif_st32(t,ulong(v1333),ulong(v1334));
-  {b=318u;continue;}
- }
- case 318u:{
-  ulong v1335=v1217&ulong(4ul);
-  v1336=v1324+v1335;
-  ulong v1337=v1217&ulong(2ul);
-  if(v1337!=0){b=319u;continue;}else{b=320u;continue;}
- }
- case 319u:{
-  ulong v1338=v401+v1336;
-  ulong v1339=v1220+v1336;
-  ushort v1340=ushort(clif_c16(t,ulong(v1338)));
-  clif_st16(t,ulong(v1339),ulong(v1340));
-  {b=320u;continue;}
- }
- case 320u:{
-  ulong v1341=v1217&ulong(2ul);
-  v1342=v1336+v1341;
-  ulong v1343=v1217&ulong(1ul);
-  if(v1343!=0){b=321u;continue;}else{b=322u;continue;}
- }
- case 321u:{
-  ulong v1344=v401+v1342;
-  ulong v1345=v1220+v1342;
-  uchar v1346=uchar(clif_c8(t,ulong(v1344)));
-  clif_st8(t,ulong(v1345),ulong(v1346));
-  {b=322u;continue;}
- }
- case 322u:{
-  uint v1347=uint(v1217)&uint(1ul);
-  uint v1348=uint(v1342)+v1347;
-  v1349=v401+v1217;
-  v1351=v1218&ulong(18446744073709551608ul);
-  ulong v1352=ulong(0ul);
-  {{ulong t0=v1352;v1350=t0;}b=323u;continue;}
- }
- case 323u:{
-  uchar v1353=uchar((ulong)(v1350)<(ulong)(v1351));
-  if(v1353!=0){b=324u;continue;}else{b=325u;continue;}
- }
- case 324u:{
-  ulong v1354=v1349+v1350;
-  ulong v1355=ulong(clif_c64(t,ulong(v1354)));
-  ulong v1356=v1222+v1350;
-  clif_st64(t,ulong(v1356),ulong(v1355));
-  ulong v1357=v1350+ulong(8ul);
-  {{ulong t0=v1357;v1350=t0;}b=323u;continue;}
- }
- case 325u:{
-  ulong v1358=v1218&ulong(4ul);
-  if(v1358!=0){b=326u;continue;}else{b=327u;continue;}
- }
- case 326u:{
-  ulong v1359=v1349+v1351;
-  ulong v1360=v1222+v1351;
-  uint v1361=uint(clif_c32(t,ulong(v1359)));
-  clif_st32(t,ulong(v1360),ulong(v1361));
-  {b=327u;continue;}
- }
- case 327u:{
-  ulong v1362=v1218&ulong(4ul);
-  v1363=v1351+v1362;
-  ulong v1364=v1218&ulong(2ul);
-  if(v1364!=0){b=328u;continue;}else{b=329u;continue;}
- }
- case 328u:{
-  ulong v1365=v1349+v1363;
-  ulong v1366=v1222+v1363;
-  ushort v1367=ushort(clif_c16(t,ulong(v1365)));
-  clif_st16(t,ulong(v1366),ulong(v1367));
-  {b=329u;continue;}
- }
- case 329u:{
-  ulong v1368=v1218&ulong(2ul);
-  v1369=v1363+v1368;
-  ulong v1370=v1218&ulong(1ul);
-  if(v1370!=0){b=330u;continue;}else{b=331u;continue;}
- }
- case 330u:{
-  ulong v1371=v1349+v1369;
-  ulong v1372=v1222+v1369;
-  uchar v1373=uchar(clif_c8(t,ulong(v1371)));
-  clif_st8(t,ulong(v1372),ulong(v1373));
-  {b=331u;continue;}
- }
- case 331u:{
-  uint v1374=uint(v1218)&uint(1ul);
-  uint v1375=uint(v1369)+v1374;
-  {b=287u;continue;}
- }
- case 286u:{
-  v1377=v1217&ulong(18446744073709551608ul);
-  ulong v1378=ulong(0ul);
-  {{ulong t0=v1378;v1376=t0;}b=332u;continue;}
- }
- case 332u:{
-  uchar v1379=uchar((ulong)(v1376)<(ulong)(v1377));
-  if(v1379!=0){b=333u;continue;}else{b=334u;continue;}
- }
- case 333u:{
-  uint v1380=uint(v1212)+uint(v1376);
-  ulong v1381=ulong(clif_u64(t,v1380));
-  ulong v1382=v1220+v1376;
-  clif_st64(t,ulong(v1382),ulong(v1381));
-  ulong v1383=v1376+ulong(8ul);
-  {{ulong t0=v1383;v1376=t0;}b=332u;continue;}
- }
- case 334u:{
-  ulong v1384=v1217&ulong(4ul);
-  if(v1384!=0){b=335u;continue;}else{b=336u;continue;}
- }
- case 335u:{
-  uint v1385=uint(v1212)+uint(v1377);
-  ulong v1386=v1220+v1377;
-  uint v1387=uint(clif_u32(t,v1385));
-  clif_st32(t,ulong(v1386),ulong(v1387));
-  {b=336u;continue;}
- }
- case 336u:{
-  ulong v1388=v1217&ulong(4ul);
-  v1389=v1377+v1388;
-  ulong v1390=v1217&ulong(2ul);
-  if(v1390!=0){b=337u;continue;}else{b=338u;continue;}
- }
- case 337u:{
-  uint v1391=uint(v1212)+uint(v1389);
-  ulong v1392=v1220+v1389;
-  ushort v1393=ushort(clif_u16(t,v1391));
-  clif_st16(t,ulong(v1392),ulong(v1393));
-  {b=338u;continue;}
- }
- case 338u:{
-  ulong v1394=v1217&ulong(2ul);
-  v1395=v1389+v1394;
-  ulong v1396=v1217&ulong(1ul);
-  if(v1396!=0){b=339u;continue;}else{b=340u;continue;}
- }
- case 339u:{
-  uint v1397=uint(v1212)+uint(v1395);
-  ulong v1398=v1220+v1395;
-  uchar v1399=uchar(clif_u8(t,v1397));
-  clif_st8(t,ulong(v1398),ulong(v1399));
-  {b=340u;continue;}
- }
- case 340u:{
-  uint v1400=uint(v1217)&uint(1ul);
-  uint v1401=uint(v1395)+v1400;
-  v1402=uint(v1212)+uint(v1217);
-  v1404=v1218&ulong(18446744073709551608ul);
-  ulong v1405=ulong(0ul);
-  {{ulong t0=v1405;v1403=t0;}b=341u;continue;}
- }
- case 341u:{
-  uchar v1406=uchar((ulong)(v1403)<(ulong)(v1404));
-  if(v1406!=0){b=342u;continue;}else{b=343u;continue;}
- }
- case 342u:{
-  uint v1407=v1402+uint(v1403);
-  ulong v1408=ulong(clif_u64(t,v1407));
-  ulong v1409=v1222+v1403;
-  clif_st64(t,ulong(v1409),ulong(v1408));
-  ulong v1410=v1403+ulong(8ul);
-  {{ulong t0=v1410;v1403=t0;}b=341u;continue;}
- }
- case 343u:{
-  ulong v1411=v1218&ulong(4ul);
-  if(v1411!=0){b=344u;continue;}else{b=345u;continue;}
- }
- case 344u:{
-  uint v1412=v1402+uint(v1404);
-  ulong v1413=v1222+v1404;
-  uint v1414=uint(clif_u32(t,v1412));
-  clif_st32(t,ulong(v1413),ulong(v1414));
-  {b=345u;continue;}
- }
- case 345u:{
-  ulong v1415=v1218&ulong(4ul);
-  v1416=v1404+v1415;
-  ulong v1417=v1218&ulong(2ul);
-  if(v1417!=0){b=346u;continue;}else{b=347u;continue;}
- }
- case 346u:{
-  uint v1418=v1402+uint(v1416);
-  ulong v1419=v1222+v1416;
-  ushort v1420=ushort(clif_u16(t,v1418));
-  clif_st16(t,ulong(v1419),ulong(v1420));
-  {b=347u;continue;}
- }
- case 347u:{
-  ulong v1421=v1218&ulong(2ul);
-  v1422=v1416+v1421;
-  ulong v1423=v1218&ulong(1ul);
-  if(v1423!=0){b=348u;continue;}else{b=349u;continue;}
- }
- case 348u:{
-  uint v1424=v1402+uint(v1422);
-  ulong v1425=v1222+v1422;
-  uchar v1426=uchar(clif_u8(t,v1424));
-  clif_st8(t,ulong(v1425),ulong(v1426));
-  {b=349u;continue;}
- }
- case 349u:{
-  uint v1427=uint(v1218)&uint(1ul);
-  uint v1428=uint(v1422)+v1427;
-  {b=287u;continue;}
- }
- case 287u:{
-  uint v1429=v300-v299;
-  uint v1430=v302+v1429;
-  uint v1431=v1430+uint(7ul);
-  uint v1432=v1431&uint(18446744073709551608ul);
-  uint v1433=v2*uint(128ul);
-  uint v1434=v1433*v358;
-  uint v1435=v1432+v1434;
-  v1436=uint(0ul);
-  uint v1437=uint(v1436);
-  uint v1438=uint(v1435);
-  uint v1439=uint(v0)+v1437;
-  v1440=v1439+v1438;
-  ulong v1441=ulong(v373);
-  v1442=v399+v1441;
-  v1443=ulong(v364);
-  v1445=v1443&ulong(18446744073709551608ul);
-  ulong v1446=ulong(0ul);
-  {{ulong t0=v1446;v1444=t0;}b=350u;continue;}
- }
- case 350u:{
-  uchar v1447=uchar((ulong)(v1444)<(ulong)(v1445));
-  if(v1447!=0){b=351u;continue;}else{b=352u;continue;}
- }
- case 351u:{
-  uint v1448=v1440+uint(v1444);
-  ulong v1449=ulong(clif_u64(t,v1448));
-  ulong v1450=v1442+v1444;
-  clif_st64(t,ulong(v1450),ulong(v1449));
-  ulong v1451=v1444+ulong(8ul);
-  {{ulong t0=v1451;v1444=t0;}b=350u;continue;}
- }
- case 352u:{
-  ulong v1452=v1443&ulong(4ul);
-  if(v1452!=0){b=353u;continue;}else{b=354u;continue;}
- }
- case 353u:{
-  uint v1453=v1440+uint(v1445);
-  ulong v1454=v1442+v1445;
-  uint v1455=uint(clif_u32(t,v1453));
-  clif_st32(t,ulong(v1454),ulong(v1455));
-  {b=354u;continue;}
- }
- case 354u:{
-  ulong v1456=v1443&ulong(4ul);
-  v1457=v1445+v1456;
-  ulong v1458=v1443&ulong(2ul);
-  if(v1458!=0){b=355u;continue;}else{b=356u;continue;}
- }
- case 355u:{
-  uint v1459=v1440+uint(v1457);
-  ulong v1460=v1442+v1457;
-  ushort v1461=ushort(clif_u16(t,v1459));
-  clif_st16(t,ulong(v1460),ulong(v1461));
-  {b=356u;continue;}
- }
- case 356u:{
-  ulong v1462=v1443&ulong(2ul);
-  v1463=v1457+v1462;
-  ulong v1464=v1443&ulong(1ul);
-  if(v1464!=0){b=357u;continue;}else{b=358u;continue;}
- }
- case 357u:{
-  uint v1465=v1440+uint(v1463);
-  ulong v1466=v1442+v1463;
-  uchar v1467=uchar(clif_u8(t,v1465));
-  clif_st8(t,ulong(v1466),ulong(v1467));
-  {b=358u;continue;}
- }
- case 358u:{
-  uint v1468=uint(v1443)&uint(1ul);
-  uint v1469=uint(v1463)+v1468;
-  ulong v1470=ulong(0ul);
-  ulong v1471=ulong(v367);
-  ulong v1472=v399+v1471;
-  clif_st64(t,(ulong(v1472)+ulong(long(-8))),ulong(v1470));
-  ulong v1473=ulong(v369);
-  ulong v1474=v399+v1473;
-  clif_st64(t,(ulong(v1474)+ulong(long(-8))),ulong(v1470));
-  ulong v1475=ulong(v371);
-  ulong v1476=v399+v1475;
-  clif_st64(t,(ulong(v1476)+ulong(long(-8))),ulong(v1470));
-  ulong v1477=ulong(v373);
-  ulong v1478=v399+v1477;
-  clif_st64(t,(ulong(v1478)+ulong(long(-8))),ulong(v1470));
-  ulong v1479=ulong(v375);
-  ulong v1480=v399+v1479;
-  clif_st64(t,(ulong(v1480)+ulong(long(-8))),ulong(v1470));
-  ulong v1481=ulong(v377);
-  ulong v1482=v399+v1481;
-  clif_st64(t,(ulong(v1482)+ulong(long(-8))),ulong(v1470));
-  ulong v1483=ulong(v379);
-  ulong v1484=v399+v1483;
-  clif_st64(t,(ulong(v1484)+ulong(long(-8))),ulong(v1470));
-  ulong v1485=ulong(v381);
-  ulong v1486=v399+v1485;
-  clif_st64(t,(ulong(v1486)+ulong(long(-8))),ulong(v1470));
-  ulong v1487=ulong(v383);
-  ulong v1488=v399+v1487;
-  clif_st64(t,(ulong(v1488)+ulong(long(-8))),ulong(v1470));
-  ulong v1489=ulong(v383);
-  ulong v1490=v399+v1489;
-  clif_st32(t,ulong(v1490),ulong(v1436));
-  clif_st32(t,(ulong(v1490)+ulong(long(4))),ulong(v313));
-  clif_st32(t,(ulong(v1490)+ulong(long(8))),ulong(v1436));
-  clif_st32(t,(ulong(v1490)+ulong(long(12))),ulong(v324));
-  clif_st32(t,(ulong(v1490)+ulong(long(16))),ulong(v1436));
-  clif_st32(t,(ulong(v1490)+ulong(long(20))),ulong(v335));
-  clif_st32(t,(ulong(v1490)+ulong(long(24))),ulong(v1436));
-  clif_st32(t,(ulong(v1490)+ulong(long(28))),ulong(v346));
-  ulong v1491=v280+ulong(16ul);
-  uint v1492=uint(16ul);
-  uint v1493=uint(clif_view(v,(v1+uint(16u))));
-  uint v1494=uint(clif_view(v,(v1+uint(72u))));
-  uint v1495=uint(clif_view(v,(v1+uint(76u))));
-  clif_st32(t,(ulong(v1491)+ulong(long(4))),ulong(v296));
-  clif_st32(t,(ulong(v1491)+ulong(long(12))),ulong(v1492));
-  clif_st32(t,(ulong(v1491)+ulong(long(16))),ulong(v1493));
-  clif_st32(t,(ulong(v1491)+ulong(long(72))),ulong(v1494));
-  clif_st32(t,(ulong(v1491)+ulong(long(76))),ulong(v1495));
-  clif_st32(t,(ulong(v1491)+ulong(long(20))),ulong(v365));
-  clif_st32(t,(ulong(v1491)+ulong(long(24))),ulong(v367));
-  clif_st32(t,(ulong(v1491)+ulong(long(28))),ulong(v369));
-  clif_st32(t,(ulong(v1491)+ulong(long(32))),ulong(v371));
-  clif_st32(t,(ulong(v1491)+ulong(long(36))),ulong(v373));
-  clif_st32(t,(ulong(v1491)+ulong(long(40))),ulong(v375));
-  uint v1496=v383+uint(0ul);
-  clif_st32(t,(ulong(v1491)+ulong(long(56))),ulong(v1496));
-  clif_st32(t,(ulong(v1491)+ulong(long(44))),ulong(v377));
-  uint v1497=v383+uint(8ul);
-  clif_st32(t,(ulong(v1491)+ulong(long(60))),ulong(v1497));
-  clif_st32(t,(ulong(v1491)+ulong(long(48))),ulong(v379));
-  uint v1498=v383+uint(16ul);
-  clif_st32(t,(ulong(v1491)+ulong(long(64))),ulong(v1498));
-  clif_st32(t,(ulong(v1491)+ulong(long(52))),ulong(v381));
-  uint v1499=v383+uint(24ul);
-  clif_st32(t,(ulong(v1491)+ulong(long(68))),ulong(v1499));
-  uint v1500=uint(1ul);
-  {{uint t0=v1500;v397=t0;}b=77u;continue;}
- }
- case 77u:{
-  if(v397!=0){b=359u;continue;}else{b=360u;continue;}
- }
- case 360u:{
-  ulong v1501=v280+ulong(8ul);
-  clif_ast(t,ulong(v1501),uint(v240));
-  {{ulong t0=v239;v238=t0;}b=61u;continue;}
- }
- case 359u:{
-  clif_fence();
-  ulong v1502=v280+ulong(8ul);
-  clif_ast(t,ulong(v1502),uint(v47));
-  {{ulong t0=v280;v238=t0;}b=61u;continue;}
- }
- case 63u:{
-  v1503=v47+uint(1ul);
-  uint v1504=v1503%v22;
-  uint v1505=v1504*v29;
-  ulong v1506=ulong(v1505);
-  ulong v1507=v1506+ulong(64ul);
-  ulong v1508=v9+v1507;
-  ulong v1509=v1508+ulong(0ul);
-  uint v1510=clif_ald(t,ulong(v1509));
-  uchar v1511=uchar((uint)(v1510)==(uint)(v1503));
-  if(v1511!=0){b=361u;continue;}else{{ulong t0=v239;v238=t0;}b=61u;continue;}
- }
- case 361u:{
-  ulong v1512=v9+ulong(0ul);
-  uint v1513=clif_acas(t,ulong(v1512),uint(v47),uint(v1503));
-  uchar v1514=uchar((uint)(v1513)==(uint)(v47));
-  if(v1514!=0){b=362u;continue;}else{{ulong t0=v239;v238=t0;}b=61u;continue;}
- }
- case 362u:{
-  uint v1515=uint(1ul);
-  ulong v1516=v9+ulong(44ul);
-  uint v1517=clif_aadd(t,ulong(v1516),uint(v1515));
-  v1518=v47+uint(2ul);
-  uint v1519=v1518%v22;
-  uint v1520=v1519*v29;
-  ulong v1521=ulong(v1520);
-  ulong v1522=v1521+ulong(64ul);
-  v1523=v9+v1522;
-  ulong v1524=v1523+ulong(0ul);
-  clif_ast(t,ulong(v1524),uint(v240));
-  clif_fence();
-  v1525=v42+uint(1ul);
-  {{uint t0=v240;v1526=t0;}b=363u;continue;}
- }
- case 363u:{
-  uchar v1527=uchar((uint)(v1526)<(uint)(v1525));
-  if(v1527!=0){b=364u;continue;}else{b=365u;continue;}
- }
- case 364u:{
-  uint v1528=v1526*uint(4ul);
-  ulong v1529=ulong(v1528);
-  ulong v1530=v1523+v1529;
-  ulong v1531=v1530+ulong(16ul);
-  clif_ast(t,ulong(v1531),uint(v240));
-  uint v1532=v1526+uint(1ul);
-  {{uint t0=v1532;v1526=t0;}b=363u;continue;}
- }
- case 365u:{
-  ulong v1533=v1523+ulong(4ul);
-  clif_ast(t,ulong(v1533),uint(v240));
-  clif_fence();
-  ulong v1534=v1523+ulong(0ul);
-  clif_ast(t,ulong(v1534),uint(v1518));
-  {{ulong t0=v239;v238=t0;}b=61u;continue;}
+  uchar v238=uchar((uint)(v237)<(uint)(v236));
+  if(v238!=0){b=61u;continue;}else{b=62u;continue;}
  }
  case 61u:{
-  uchar v1535=uchar((ulong)(v238)!=(ulong)(ulong(0ul)));
-  if(v1535!=0){b=366u;continue;}else{b=367u;continue;}
+  uint v239=v237*uint(4ul);
+  ulong v240=ulong(v239);
+  ulong v241=v234+v240;
+  ulong v242=v241+ulong(16ul);
+  clif_ast(t,ulong(v242),uint(v146));
+  uint v243=v237+uint(1ul);
+  {{uint t0=v243;v237=t0;}b=60u;continue;}
  }
- case 366u:{
-  uint v1536=uint(1ul);
-  ulong v1537=v9+ulong(36ul);
-  uint v1538=clif_aadd(t,ulong(v1537),uint(v1536));
-  {{ulong t0=v238;v43=t0;}b=1u;continue;}
+ case 62u:{
+  ulong v244=v234+ulong(4ul);
+  clif_ast(t,ulong(v244),uint(v146));
+  clif_fence();
+  ulong v245=v234+ulong(0ul);
+  clif_ast(t,ulong(v245),uint(v229));
+  {{ulong t0=v145;v144=t0;}b=38u;continue;}
  }
- case 367u:{
-  uint v1539=v44+uint(1ul);
-  uchar v1540=uchar((uint)(v1539)<(uint)(uint(4ul)));
-  if(v1540!=0){{uint t0=v1539;v44=t0;}b=2u;continue;}else{b=368u;continue;}
+ case 38u:{
+  uchar v246=uchar((ulong)(v144)!=(ulong)(ulong(0ul)));
+  if(v246!=0){b=63u;continue;}else{{ulong t0=v110;v55=t0;}b=4u;continue;}
  }
- case 368u:{
-  uint v1541=uint(1ul);
-  ulong v1542=v9+ulong(32ul);
-  uint v1543=clif_aadd(t,ulong(v1542),uint(v1541));
-  ulong v1544=v9+ulong(28ul);
-  uint v1545=clif_ald(t,ulong(v1544));
-  ulong v1546=ulong(v1545);
-  ulong v1547=v9+v1546;
-  {{ulong t0=v1547;v43=t0;}b=1u;continue;}
+ case 63u:{
+  uint v247=uint(1ul);
+  ulong v248=v9+ulong(40ul);
+  uint v249=clif_aadd(t,ulong(v248),uint(v247));
+  {{ulong t0=v144;v55=t0;}b=4u;continue;}
  }
- case 1u:{
-  return v43;
+ case 12u:{
+  v251=ulong(0ul);
+  v252=uint(0ul);
+  uint v253=v59%v34;
+  uint v254=v253*v41;
+  ulong v255=ulong(v254);
+  ulong v256=v255+ulong(64ul);
+  v257=v9+v256;
+  ulong v258=v257+ulong(0ul);
+  uint v259=clif_ald(t,ulong(v258));
+  uchar v260=uchar((uint)(v259)==(uint)(v59));
+  if(v260!=0){b=65u;continue;}else{{ulong t0=v251;v250=t0;}b=64u;continue;}
+ }
+ case 65u:{
+  {{uint t0=v252;v261=t0;}b=67u;continue;}
+ }
+ case 67u:{
+  uchar v262=uchar((uint)(v261)<(uint)(uint(16ul)));
+  if(v262!=0){b=68u;continue;}else{b=66u;continue;}
+ }
+ case 68u:{
+  uint v263=v48+v261;
+  uint v264=v263&v54;
+  uint v265=v264*uint(4ul);
+  ulong v266=ulong(v265);
+  ulong v267=v257+v266;
+  v268=v267+ulong(16ul);
+  v269=clif_acas(t,ulong(v268),uint(v252),uint(v53));
+  uchar v270=uchar((uint)(v269)==(uint)(uint(0ul)));
+  if(v270!=0){b=73u;continue;}else{b=69u;continue;}
+ }
+ case 69u:{
+  uint v271=v269&uint(18446744073709486080ul);
+  uchar v272=uchar((uint)(v271)==(uint)(v53));
+  if(v272!=0){b=70u;continue;}else{b=72u;continue;}
+ }
+ case 70u:{
+  v273=v269&uint(65535ul);
+  uchar v274=uchar((uint)(v273)==(uint)(uint(0ul)));
+  if(v274!=0){b=71u;continue;}else{b=74u;continue;}
+ }
+ case 74u:{
+  uint v275=v273+uint(18446744073709551615ul);
+  ulong v276=ulong(v275);
+  ulong v277=ulong((ulong)(v276)<<(uint(v37)&63u));
+  ulong v278=ulong(v43);
+  ulong v279=v277+v278;
+  ulong v280=v257+v279;
+  ulong v281=ulong(clif_c64(t,ulong(v280)));
+  uchar v282=uchar((ulong)(v281)==(ulong)(v18));
+  if(v282!=0){b=71u;continue;}else{b=72u;continue;}
+ }
+ case 71u:{
+  {{ulong t0=v251;v250=t0;}b=64u;continue;}
+ }
+ case 72u:{
+  uint v283=v261+uint(1ul);
+  {{uint t0=v283;v261=t0;}b=67u;continue;}
+ }
+ case 73u:{
+  {b=75u;continue;}
+ }
+ case 75u:{
+  uint v284=uint(1ul);
+  ulong v285=v257+ulong(4ul);
+  v286=clif_aadd(t,ulong(v285),uint(v284));
+  uchar v287=uchar((uint)(v286)<(uint)(v45));
+  if(v287!=0){b=76u;continue;}else{b=77u;continue;}
+ }
+ case 77u:{
+  clif_ast(t,ulong(v268),uint(v252));
+  {b=66u;continue;}
+ }
+ case 76u:{
+  ulong v288=ulong(v286);
+  ulong v289=ulong((ulong)(v288)<<(uint(v37)&63u));
+  ulong v290=ulong(v43);
+  ulong v291=v289+v290;
+  v292=v257+v291;
+  ulong v293=v292+ulong(8ul);
+  uint v294=clif_ald(t,ulong(v293));
+  uint v295=v294&uint(2147483648ul);
+  uint v296=v59|uint(2147483648ul);
+  ulong v297=v292+ulong(8ul);
+  uint v298=clif_acas(t,ulong(v297),uint(v294),uint(v296));
+  uchar v299=uchar((uint)(v298)==(uint)(v294));
+  uchar v300=uchar((uint)(v295)==(uint)(uint(0ul)));
+  uchar v301=v299&v300;
+  if(v301!=0){b=78u;continue;}else{b=75u;continue;}
+ }
+ case 78u:{
+  clif_fence();
+  clif_st64(t,ulong(v292),ulong(v18));
+  clif_fence();
+  uint v302=v286+uint(1ul);
+  uint v303=v53|v302;
+  clif_ast(t,ulong(v268),uint(v303));
+  uint v304=uint(clif_view(v,(v1+uint(4u))));
+  uint v305=uint((uint)(v2)<<(uint(10)&31u));
+  uint v306=v304-v305;
+  uint v307=uint(1024ul);
+  v308=min(v306,v307);
+  uint v309=v304+uint(1023ul);
+  v310=uint((uint)(v309)>>(uint(10)&31u));
+  uint v311=uint(clif_view(v,(v1+uint(24u))));
+  uint v312=v310+uint(1ul);
+  uint v313=v312*uint(0ul);
+  uint v314=v313+v2;
+  uint v315=v314*uint(4ul);
+  uint v316=uint(v311);
+  uint v317=uint(v315);
+  uint v318=uint(v0)+v316;
+  uint v319=v318+v317;
+  uint v320=uint(clif_u32(t,v319));
+  uint v321=v315+uint(4ul);
+  uint v322=uint(v311);
+  uint v323=uint(v321);
+  uint v324=uint(v0)+v322;
+  uint v325=v324+v323;
+  uint v326=uint(clif_u32(t,v325));
+  uint v327=max(v326,v320);
+  v328=v327-v320;
+  uint v329=v312*uint(1ul);
+  uint v330=v329+v2;
+  uint v331=v330*uint(4ul);
+  uint v332=uint(v311);
+  uint v333=uint(v331);
+  uint v334=uint(v0)+v332;
+  uint v335=v334+v333;
+  uint v336=uint(clif_u32(t,v335));
+  uint v337=v331+uint(4ul);
+  uint v338=uint(v311);
+  uint v339=uint(v337);
+  uint v340=uint(v0)+v338;
+  uint v341=v340+v339;
+  uint v342=uint(clif_u32(t,v341));
+  uint v343=max(v342,v336);
+  v344=v343-v336;
+  uint v345=v312*uint(2ul);
+  uint v346=v345+v2;
+  uint v347=v346*uint(4ul);
+  uint v348=uint(v311);
+  uint v349=uint(v347);
+  uint v350=uint(v0)+v348;
+  uint v351=v350+v349;
+  uint v352=uint(clif_u32(t,v351));
+  uint v353=v347+uint(4ul);
+  uint v354=uint(v311);
+  uint v355=uint(v353);
+  uint v356=uint(v0)+v354;
+  uint v357=v356+v355;
+  uint v358=uint(clif_u32(t,v357));
+  uint v359=max(v358,v352);
+  v360=v359-v352;
+  uint v361=v312*uint(3ul);
+  uint v362=v361+v2;
+  uint v363=v362*uint(4ul);
+  uint v364=uint(v311);
+  uint v365=uint(v363);
+  uint v366=uint(v0)+v364;
+  uint v367=v366+v365;
+  uint v368=uint(clif_u32(t,v367));
+  uint v369=v363+uint(4ul);
+  uint v370=uint(v311);
+  uint v371=uint(v369);
+  uint v372=uint(v0)+v370;
+  uint v373=v372+v371;
+  uint v374=uint(clif_u32(t,v373));
+  uint v375=max(v374,v368);
+  v376=v375-v368;
+  uint v377=uint(1ul);
+  uint v378=uint(clif_view(v,(v1+uint(16u))));
+  uint v379=uint((uint)(v378)>>(uint(0)&31u));
+  uint v380=v379&uint(15ul);
+  uint v381=uint(clif_view(v,(v1+uint(16u))));
+  uint v382=uint((uint)(v381)>>(uint(4)&31u));
+  uint v383=v382&uint(15ul);
+  uint v384=uint(clif_view(v,(v1+uint(16u))));
+  uint v385=uint((uint)(v384)>>(uint(8)&31u));
+  uint v386=v385&uint(15ul);
+  uint v387=uint(clif_view(v,(v1+uint(16u))));
+  uint v388=uint((uint)(v387)>>(uint(12)&31u));
+  v389=v388&uint(15ul);
+  uint v390=v308+uint(18446744073709551615ul);
+  v391=uint(0ul);
+  uint v392=v308*v391;
+  uint v393=v308*v377;
+  v394=v392+v393;
+  uint v395=v394+v328;
+  uint v396=v395+uint(16ul);
+  uint v397=v396+v390;
+  v398=v397/v308;
+  uint v399=v308*v398;
+  uint v400=v308*v380;
+  v401=v399+v400;
+  uint v402=v401+v344;
+  uint v403=v402+uint(16ul);
+  uint v404=v403+v390;
+  v405=v404/v308;
+  uint v406=v308*v405;
+  uint v407=v308*v383;
+  v408=v406+v407;
+  uint v409=v408+v360;
+  uint v410=v409+uint(16ul);
+  uint v411=v410+v390;
+  v412=v411/v308;
+  uint v413=v308*v412;
+  uint v414=v308*v386;
+  v415=v413+v414;
+  uint v416=v415+v376;
+  uint v417=v416+uint(16ul);
+  uint v418=v417+v390;
+  v419=v418/v308;
+  v420=v308*v419;
+  uint v421=v308+uint(7ul);
+  uint v422=uint((uint)(v421)>>(uint(3)&31u));
+  v423=v422*v389;
+  uint v424=v420+v423;
+  uint v425=v424+uint(23ul);
+  v426=v425&uint(18446744073709551608ul);
+  uint v427=v426+uint(40ul);
+  ulong v428=ulong(v427);
+  ulong v429=v428+ulong(208ul);
+  uchar v430=uchar((ulong)(v429)<=(ulong)(v20));
+  uint v432=uint(0ul);
+  if(v430!=0){b=79u;continue;}else{{uint t0=v432;v431=t0;}b=80u;continue;}
+ }
+ case 79u:{
+  v433=v292+ulong(144ul);
+  v434=v292+ulong(16ul);
+  uint v435=uint(16ul);
+  v436=uint(0ul);
+  uint v437=uint(clif_view(v,(v1+uint(16u))));
+  uint v438=uint(clif_view(v,(v1+uint(76u))));
+  uint v439=uint(clif_view(v,(v1+uint(80u))));
+  uint v440=uint(clif_view(v,(v1+uint(92u))));
+  clif_st32(t,(ulong(v434)+ulong(long(4))),ulong(v308));
+  clif_st32(t,(ulong(v434)+ulong(long(12))),ulong(v435));
+  clif_st32(t,(ulong(v434)+ulong(long(16))),ulong(v437));
+  clif_st32(t,(ulong(v434)+ulong(long(76))),ulong(v438));
+  clif_st32(t,(ulong(v434)+ulong(long(80))),ulong(v439));
+  clif_st32(t,(ulong(v434)+ulong(long(92))),ulong(v440));
+  clif_st32(t,(ulong(v434)+ulong(long(40))),ulong(v436));
+  clif_st32(t,(ulong(v434)+ulong(long(20))),ulong(v391));
+  clif_st32(t,(ulong(v434)+ulong(long(24))),ulong(v398));
+  clif_st32(t,(ulong(v434)+ulong(long(28))),ulong(v405));
+  clif_st32(t,(ulong(v434)+ulong(long(32))),ulong(v412));
+  clif_st32(t,(ulong(v434)+ulong(long(36))),ulong(v419));
+  ulong v441=ulong(v426);
+  v442=v433+v441;
+  clif_st32(t,(ulong(v434)+ulong(long(44))),ulong(v394));
+  uint v443=v426+uint(0ul);
+  clif_st32(t,(ulong(v434)+ulong(long(60))),ulong(v443));
+  clif_st32(t,ulong(v442),ulong(v436));
+  clif_st32(t,(ulong(v442)+ulong(long(4))),ulong(v328));
+  clif_st32(t,(ulong(v434)+ulong(long(48))),ulong(v401));
+  uint v444=v426+uint(8ul);
+  clif_st32(t,(ulong(v434)+ulong(long(64))),ulong(v444));
+  clif_st32(t,(ulong(v442)+ulong(long(8))),ulong(v436));
+  clif_st32(t,(ulong(v442)+ulong(long(12))),ulong(v344));
+  clif_st32(t,(ulong(v434)+ulong(long(52))),ulong(v408));
+  uint v445=v426+uint(16ul);
+  clif_st32(t,(ulong(v434)+ulong(long(68))),ulong(v445));
+  clif_st32(t,(ulong(v442)+ulong(long(16))),ulong(v436));
+  clif_st32(t,(ulong(v442)+ulong(long(20))),ulong(v360));
+  clif_st32(t,(ulong(v434)+ulong(long(56))),ulong(v415));
+  uint v446=v426+uint(24ul);
+  clif_st32(t,(ulong(v434)+ulong(long(72))),ulong(v446));
+  clif_st32(t,(ulong(v442)+ulong(long(24))),ulong(v436));
+  clif_st32(t,(ulong(v442)+ulong(long(28))),ulong(v376));
+  uint v447=uint(clif_view(v,(v1+uint(28u))));
+  uint v448=v2*uint(128ul);
+  uint v449=v448*v389;
+  uint v450=uint(v447);
+  uint v451=uint(v449);
+  uint v452=uint(v0)+v450;
+  v453=v452+v451;
+  ulong v454=ulong(v420);
+  v455=v433+v454;
+  v456=ulong(v423);
+  v458=v456&ulong(18446744073709551608ul);
+  ulong v459=ulong(0ul);
+  {{ulong t0=v459;v457=t0;}b=81u;continue;}
+ }
+ case 81u:{
+  uchar v460=uchar((ulong)(v457)<(ulong)(v458));
+  if(v460!=0){b=82u;continue;}else{b=83u;continue;}
+ }
+ case 82u:{
+  uint v461=v453+uint(v457);
+  ulong v462=ulong(clif_u64(t,v461));
+  ulong v463=v455+v457;
+  clif_st64(t,ulong(v463),ulong(v462));
+  ulong v464=v457+ulong(8ul);
+  {{ulong t0=v464;v457=t0;}b=81u;continue;}
+ }
+ case 83u:{
+  ulong v465=v456&ulong(4ul);
+  if(v465!=0){b=84u;continue;}else{b=85u;continue;}
+ }
+ case 84u:{
+  uint v466=v453+uint(v458);
+  ulong v467=v455+v458;
+  uint v468=uint(clif_u32(t,v466));
+  clif_st32(t,ulong(v467),ulong(v468));
+  {b=85u;continue;}
+ }
+ case 85u:{
+  ulong v469=v456&ulong(4ul);
+  v470=v458+v469;
+  ulong v471=v456&ulong(2ul);
+  if(v471!=0){b=86u;continue;}else{b=87u;continue;}
+ }
+ case 86u:{
+  uint v472=v453+uint(v470);
+  ulong v473=v455+v470;
+  ushort v474=ushort(clif_u16(t,v472));
+  clif_st16(t,ulong(v473),ulong(v474));
+  {b=87u;continue;}
+ }
+ case 87u:{
+  ulong v475=v456&ulong(2ul);
+  v476=v470+v475;
+  ulong v477=v456&ulong(1ul);
+  if(v477!=0){b=88u;continue;}else{b=89u;continue;}
+ }
+ case 88u:{
+  uint v478=v453+uint(v476);
+  ulong v479=v455+v476;
+  uchar v480=uchar(clif_u8(t,v478));
+  clif_st8(t,ulong(v479),ulong(v480));
+  {b=89u;continue;}
+ }
+ case 89u:{
+  uint v481=uint(v456)&uint(1ul);
+  uint v482=uint(v476)+v481;
+  v483=v310*uint(4ul);
+  v484=uint(clif_view(v,(v1+uint(20u))));
+  uint v485=v483*uint(4ul);
+  v486=v484+v485;
+  uint v487=v483*uint(4ul);
+  v488=v486+v487;
+  v489=uint(clif_view(v,(v1+uint(40u))));
+  {{uint t0=v436;v490=t0;}b=90u;continue;}
+ }
+ case 90u:{
+  uchar v491=uchar((uint)(v490)<(uint)(uint(4ul)));
+  if(v491!=0){b=91u;continue;}else{b=92u;continue;}
+ }
+ case 91u:{
+  uint v492=v2*uint(4ul);
+  uint v493=v492+v490;
+  uint v494=uint(v488);
+  uint v495=uint(v493);
+  uint v496=uint(v0)+v494;
+  uint v497=v496+v495;
+  uint v498=uint(clif_u8(t,v497));
+  uint v499=v493*uint(4ul);
+  uint v500=uint(v484);
+  uint v501=uint(v499);
+  uint v502=uint(v0)+v500;
+  uint v503=v502+v501;
+  uint v504=uint(clif_u32(t,v503));
+  uint v505=uint(v489);
+  uint v506=uint(v504);
+  uint v507=uint(v0)+v505;
+  uint v508=v507+v506;
+  uint v509=uint(clif_u32(t,v508));
+  uchar v510=uchar((uint)(v498)==(uint)(uint(2ul)));
+  uchar v511=uchar((uint)(v509)<(uint)(v483));
+  uchar v512=v510&v511;
+  uint v513=v512!=0?v509:v493;
+  uint v514=uint(v488);
+  uint v515=uint(v513);
+  uint v516=uint(v0)+v514;
+  uint v517=v516+v515;
+  uint v518=uint(clif_u8(t,v517));
+  uint v519=v513*uint(4ul);
+  uint v520=uint(v484);
+  uint v521=uint(v519);
+  uint v522=uint(v0)+v520;
+  uint v523=v522+v521;
+  uint v524=uint(clif_u32(t,v523));
+  uint v525=uint(v486);
+  uint v526=uint(v519);
+  uint v527=uint(v0)+v525;
+  uint v528=v527+v526;
+  uint v529=uint(clif_u32(t,v528));
+  ulong v530=ulong(v489);
+  ulong v531=ulong(v524);
+  ulong v532=v0+v530;
+  v533=v532+v531;
+  v534=ulong(v529);
+  v535=v533+v534;
+  ulong v536=ulong(v490);
+  ulong v537=ulong((ulong)(v536)<<(uint(2)&63u));
+  ulong v538=v434+v537;
+  uint v539=uint(clif_c32(t,(ulong(v538)+ulong(long(20)))));
+  uint v540=uint(clif_c32(t,(ulong(v538)+ulong(long(44)))));
+  uint v541=v308*v539;
+  ulong v542=v442+v537;
+  ulong v543=v542+v537;
+  uint v544=uint(clif_c32(t,(ulong(v543)+ulong(long(4)))));
+  uint v545=v540+v544;
+  ulong v546=ulong(v541);
+  v547=v433+v546;
+  ulong v548=ulong(v545);
+  v549=v433+v548;
+  uchar v550=uchar((uint)(v518)==(uint)(uint(1ul)));
+  if(v550!=0){b=93u;continue;}else{b=94u;continue;}
+ }
+ case 93u:{
+  {{ulong t0=v533;ulong t1=v547;v551=t0;v552=t1;}b=96u;continue;}
+ }
+ case 96u:{
+  uchar v553=uchar((ulong)(v551)<(ulong)(v535));
+  if(v553!=0){b=97u;continue;}else{b=101u;continue;}
+ }
+ case 97u:{
+  v554=uint(clif_u8(t,v551));
+  ulong v555=v551+ulong(1ul);
+  uint v556=uint((uint)(v554)>>(uint(4)&31u));
+  uchar v561=uchar((uint)(v556)==(uint)(uint(15ul)));
+  if(v561!=0){{uint t0=v556;ulong t1=v555;v557=t0;v558=t1;}b=102u;continue;}else{{uint t0=v556;ulong t1=v555;v559=t0;v560=t1;}b=104u;continue;}
+ }
+ case 102u:{
+  uchar v562=uchar((ulong)(v558)<(ulong)(v535));
+  if(v562!=0){b=103u;continue;}else{{uint t0=v557;ulong t1=v558;v559=t0;v560=t1;}b=104u;continue;}
+ }
+ case 103u:{
+  uint v563=uint(clif_u8(t,v558));
+  uint v564=v557+v563;
+  ulong v565=v558+ulong(1ul);
+  uchar v566=uchar((uint)(v563)==(uint)(uint(255ul)));
+  if(v566!=0){{uint t0=v564;ulong t1=v565;v557=t0;v558=t1;}b=102u;continue;}else{{uint t0=v564;ulong t1=v565;v559=t0;v560=t1;}b=104u;continue;}
+ }
+ case 104u:{
+  v567=ulong(v559);
+  v568=v552+v567;
+  uchar v569=uchar((ulong)(v568)<=(ulong)(v549));
+  ulong v570=v560+v567;
+  uchar v571=uchar((ulong)(v570)<=(ulong)(v535));
+  uchar v572=v569&v571;
+  if(v572!=0){b=98u;continue;}else{b=101u;continue;}
+ }
+ case 98u:{
+  v574=v567&ulong(18446744073709551608ul);
+  ulong v575=ulong(0ul);
+  {{ulong t0=v575;v573=t0;}b=105u;continue;}
+ }
+ case 105u:{
+  uchar v576=uchar((ulong)(v573)<(ulong)(v574));
+  if(v576!=0){b=106u;continue;}else{b=107u;continue;}
+ }
+ case 106u:{
+  uint v577=uint(v560)+uint(v573);
+  ulong v578=ulong(clif_u64(t,v577));
+  ulong v579=v552+v573;
+  clif_st64(t,ulong(v579),ulong(v578));
+  ulong v580=v573+ulong(8ul);
+  {{ulong t0=v580;v573=t0;}b=105u;continue;}
+ }
+ case 107u:{
+  ulong v581=v567&ulong(4ul);
+  if(v581!=0){b=108u;continue;}else{b=109u;continue;}
+ }
+ case 108u:{
+  uint v582=uint(v560)+uint(v574);
+  ulong v583=v552+v574;
+  uint v584=uint(clif_u32(t,v582));
+  clif_st32(t,ulong(v583),ulong(v584));
+  {b=109u;continue;}
+ }
+ case 109u:{
+  ulong v585=v567&ulong(4ul);
+  v586=v574+v585;
+  ulong v587=v567&ulong(2ul);
+  if(v587!=0){b=110u;continue;}else{b=111u;continue;}
+ }
+ case 110u:{
+  uint v588=uint(v560)+uint(v586);
+  ulong v589=v552+v586;
+  ushort v590=ushort(clif_u16(t,v588));
+  clif_st16(t,ulong(v589),ulong(v590));
+  {b=111u;continue;}
+ }
+ case 111u:{
+  ulong v591=v567&ulong(2ul);
+  v592=v586+v591;
+  ulong v593=v567&ulong(1ul);
+  if(v593!=0){b=112u;continue;}else{b=113u;continue;}
+ }
+ case 112u:{
+  uint v594=uint(v560)+uint(v592);
+  ulong v595=v552+v592;
+  uchar v596=uchar(clif_u8(t,v594));
+  clif_st8(t,ulong(v595),ulong(v596));
+  {b=113u;continue;}
+ }
+ case 113u:{
+  uint v597=uint(v567)&uint(1ul);
+  uint v598=uint(v592)+v597;
+  v599=v560+v567;
+  ulong v600=v599+ulong(2ul);
+  uchar v601=uchar((ulong)(v600)<=(ulong)(v535));
+  if(v601!=0){b=99u;continue;}else{b=101u;continue;}
+ }
+ case 99u:{
+  uint v602=uint(clif_u16(t,v599));
+  v603=ulong(v602);
+  ulong v604=v599+ulong(2ul);
+  uint v605=v554&uint(15ul);
+  uchar v610=uchar((uint)(v605)==(uint)(uint(15ul)));
+  if(v610!=0){{uint t0=v605;ulong t1=v604;v606=t0;v607=t1;}b=114u;continue;}else{{uint t0=v605;ulong t1=v604;v608=t0;v609=t1;}b=116u;continue;}
+ }
+ case 114u:{
+  uchar v611=uchar((ulong)(v607)<(ulong)(v535));
+  if(v611!=0){b=115u;continue;}else{{uint t0=v606;ulong t1=v607;v608=t0;v609=t1;}b=116u;continue;}
+ }
+ case 115u:{
+  uint v612=uint(clif_u8(t,v607));
+  uint v613=v606+v612;
+  ulong v614=v607+ulong(1ul);
+  uchar v615=uchar((uint)(v612)==(uint)(uint(255ul)));
+  if(v615!=0){{uint t0=v613;ulong t1=v614;v606=t0;v607=t1;}b=114u;continue;}else{{uint t0=v613;ulong t1=v614;v608=t0;v609=t1;}b=116u;continue;}
+ }
+ case 116u:{
+  uint v616=v608+uint(4ul);
+  ulong v617=ulong(v616);
+  ulong v618=v568-v547;
+  uchar v619=uchar((ulong)(v603)!=(ulong)(ulong(0ul)));
+  uchar v620=uchar((ulong)(v603)<=(ulong)(v618));
+  v621=v568+v617;
+  uchar v622=uchar((ulong)(v621)<=(ulong)(v549));
+  uchar v623=v619&v620;
+  uchar v624=v623&v622;
+  if(v624!=0){b=100u;continue;}else{b=101u;continue;}
+ }
+ case 100u:{
+  v625=v568-v603;
+  uchar v627=uchar((ulong)(v603)<(ulong)(ulong(8ul)));
+  if(v627!=0){b=117u;continue;}else{b=118u;continue;}
+ }
+ case 117u:{
+  uint v628=uint(clif_c8(t,ulong(v625)));
+  clif_st8(t,ulong(v568),ulong(v628));
+  uint v629=uint(clif_c8(t,(ulong(v625)+ulong(long(1)))));
+  clif_st8(t,(ulong(v568)+ulong(long(1))),ulong(v629));
+  uint v630=uint(clif_c8(t,(ulong(v625)+ulong(long(2)))));
+  clif_st8(t,(ulong(v568)+ulong(long(2))),ulong(v630));
+  uint v631=uint(clif_c8(t,(ulong(v625)+ulong(long(3)))));
+  clif_st8(t,(ulong(v568)+ulong(long(3))),ulong(v631));
+  uint v632=((uint(2)&63u)<32u?uint(uint(v603))<<(uint(2)&31u):0u);
+  ulong v633=ulong(1145049616ul);
+  ulong v634=ulong((ulong)(v633)>>(uint(v632)&63u));
+  ulong v635=v634&ulong(15ul);
+  ulong v636=v625+v635;
+  uint v637=uint(clif_c32(t,ulong(v636)));
+  clif_st32(t,(ulong(v568)+ulong(long(4))),ulong(v637));
+  ulong v638=ulong(1984967748ul);
+  ulong v639=ulong((ulong)(v638)>>(uint(v632)&63u));
+  ulong v640=v639&ulong(15ul);
+  ulong v641=v636+ulong(4ul);
+  ulong v642=v641-v640;
+  {{ulong t0=v642;v626=t0;}b=119u;continue;}
+ }
+ case 118u:{
+  ulong v643=ulong(clif_c64(t,ulong(v625)));
+  clif_st64(t,ulong(v568),ulong(v643));
+  ulong v644=v625+ulong(8ul);
+  {{ulong t0=v644;v626=t0;}b=119u;continue;}
+ }
+ case 119u:{
+  ulong v647=v568+ulong(8ul);
+  {{ulong t0=v647;ulong t1=v626;v645=t0;v646=t1;}b=120u;continue;}
+ }
+ case 120u:{
+  uchar v648=uchar((ulong)(v645)<(ulong)(v621));
+  if(v648!=0){b=121u;continue;}else{{ulong t0=v609;ulong t1=v621;v551=t0;v552=t1;}b=96u;continue;}
+ }
+ case 121u:{
+  ulong v649=ulong(clif_c64(t,ulong(v646)));
+  clif_st64(t,ulong(v645),ulong(v649));
+  ulong v650=v645+ulong(8ul);
+  ulong v651=v646+ulong(8ul);
+  {{ulong t0=v650;ulong t1=v651;v645=t0;v646=t1;}b=120u;continue;}
+ }
+ case 101u:{
+  {b=95u;continue;}
+ }
+ case 94u:{
+  ulong v652=v549-v547;
+  v653=min(v534,v652);
+  v655=v653&ulong(18446744073709551608ul);
+  ulong v656=ulong(0ul);
+  {{ulong t0=v656;v654=t0;}b=122u;continue;}
+ }
+ case 122u:{
+  uchar v657=uchar((ulong)(v654)<(ulong)(v655));
+  if(v657!=0){b=123u;continue;}else{b=124u;continue;}
+ }
+ case 123u:{
+  uint v658=uint(v533)+uint(v654);
+  ulong v659=ulong(clif_u64(t,v658));
+  ulong v660=v547+v654;
+  clif_st64(t,ulong(v660),ulong(v659));
+  ulong v661=v654+ulong(8ul);
+  {{ulong t0=v661;v654=t0;}b=122u;continue;}
+ }
+ case 124u:{
+  ulong v662=v653&ulong(4ul);
+  if(v662!=0){b=125u;continue;}else{b=126u;continue;}
+ }
+ case 125u:{
+  uint v663=uint(v533)+uint(v655);
+  ulong v664=v547+v655;
+  uint v665=uint(clif_u32(t,v663));
+  clif_st32(t,ulong(v664),ulong(v665));
+  {b=126u;continue;}
+ }
+ case 126u:{
+  ulong v666=v653&ulong(4ul);
+  v667=v655+v666;
+  ulong v668=v653&ulong(2ul);
+  if(v668!=0){b=127u;continue;}else{b=128u;continue;}
+ }
+ case 127u:{
+  uint v669=uint(v533)+uint(v667);
+  ulong v670=v547+v667;
+  ushort v671=ushort(clif_u16(t,v669));
+  clif_st16(t,ulong(v670),ulong(v671));
+  {b=128u;continue;}
+ }
+ case 128u:{
+  ulong v672=v653&ulong(2ul);
+  v673=v667+v672;
+  ulong v674=v653&ulong(1ul);
+  if(v674!=0){b=129u;continue;}else{b=130u;continue;}
+ }
+ case 129u:{
+  uint v675=uint(v533)+uint(v673);
+  ulong v676=v547+v673;
+  uchar v677=uchar(clif_u8(t,v675));
+  clif_st8(t,ulong(v676),ulong(v677));
+  {b=130u;continue;}
+ }
+ case 130u:{
+  uint v678=uint(v653)&uint(1ul);
+  uint v679=uint(v673)+v678;
+  {b=95u;continue;}
+ }
+ case 95u:{
+  uint v680=v490+uint(1ul);
+  {{uint t0=v680;v490=t0;}b=90u;continue;}
+ }
+ case 92u:{
+  uint v681=uint(1ul);
+  {{uint t0=v681;v431=t0;}b=80u;continue;}
+ }
+ case 80u:{
+  if(v431!=0){b=131u;continue;}else{b=132u;continue;}
+ }
+ case 132u:{
+  ulong v682=v292+ulong(8ul);
+  clif_ast(t,ulong(v682),uint(v252));
+  {{ulong t0=v251;v250=t0;}b=64u;continue;}
+ }
+ case 131u:{
+  clif_fence();
+  ulong v683=v292+ulong(8ul);
+  clif_ast(t,ulong(v683),uint(v59));
+  {{ulong t0=v292;v250=t0;}b=64u;continue;}
+ }
+ case 66u:{
+  v684=v59+uint(1ul);
+  uint v685=v684%v34;
+  uint v686=v685*v41;
+  ulong v687=ulong(v686);
+  ulong v688=v687+ulong(64ul);
+  ulong v689=v9+v688;
+  ulong v690=v689+ulong(0ul);
+  uint v691=clif_ald(t,ulong(v690));
+  uchar v692=uchar((uint)(v691)==(uint)(v684));
+  if(v692!=0){b=133u;continue;}else{{ulong t0=v251;v250=t0;}b=64u;continue;}
+ }
+ case 133u:{
+  ulong v693=v9+ulong(0ul);
+  uint v694=clif_acas(t,ulong(v693),uint(v59),uint(v684));
+  uchar v695=uchar((uint)(v694)==(uint)(v59));
+  if(v695!=0){b=134u;continue;}else{{ulong t0=v251;v250=t0;}b=64u;continue;}
+ }
+ case 134u:{
+  uint v696=uint(1ul);
+  ulong v697=v9+ulong(44ul);
+  uint v698=clif_aadd(t,ulong(v697),uint(v696));
+  v699=v59+uint(2ul);
+  uint v700=v699%v34;
+  uint v701=v700*v41;
+  ulong v702=ulong(v701);
+  ulong v703=v702+ulong(64ul);
+  v704=v9+v703;
+  ulong v705=v704+ulong(0ul);
+  clif_ast(t,ulong(v705),uint(v252));
+  clif_fence();
+  v706=v54+uint(1ul);
+  {{uint t0=v252;v707=t0;}b=135u;continue;}
+ }
+ case 135u:{
+  uchar v708=uchar((uint)(v707)<(uint)(v706));
+  if(v708!=0){b=136u;continue;}else{b=137u;continue;}
+ }
+ case 136u:{
+  uint v709=v707*uint(4ul);
+  ulong v710=ulong(v709);
+  ulong v711=v704+v710;
+  ulong v712=v711+ulong(16ul);
+  clif_ast(t,ulong(v712),uint(v252));
+  uint v713=v707+uint(1ul);
+  {{uint t0=v713;v707=t0;}b=135u;continue;}
+ }
+ case 137u:{
+  ulong v714=v704+ulong(4ul);
+  clif_ast(t,ulong(v714),uint(v252));
+  clif_fence();
+  ulong v715=v704+ulong(0ul);
+  clif_ast(t,ulong(v715),uint(v699));
+  {{ulong t0=v251;v250=t0;}b=64u;continue;}
+ }
+ case 64u:{
+  uchar v716=uchar((ulong)(v250)!=(ulong)(ulong(0ul)));
+  if(v716!=0){b=138u;continue;}else{b=139u;continue;}
+ }
+ case 138u:{
+  uint v717=uint(1ul);
+  ulong v718=v9+ulong(36ul);
+  uint v719=clif_aadd(t,ulong(v718),uint(v717));
+  {{ulong t0=v250;v55=t0;}b=4u;continue;}
+ }
+ case 139u:{
+  uint v720=v56+uint(1ul);
+  uchar v721=uchar((uint)(v720)<(uint)(uint(4ul)));
+  if(v721!=0){{uint t0=v720;v56=t0;}b=5u;continue;}else{b=140u;continue;}
+ }
+ case 140u:{
+  uint v722=uint(1ul);
+  ulong v723=v9+ulong(32ul);
+  uint v724=clif_aadd(t,ulong(v723),uint(v722));
+  ulong v725=v9+ulong(28ul);
+  uint v726=clif_ald(t,ulong(v725));
+  ulong v727=ulong(v726);
+  ulong v728=v9+v727;
+  {{ulong t0=v728;v55=t0;}b=4u;continue;}
+ }
+ case 4u:{
+  {{ulong t0=v55;v25=t0;}b=3u;continue;}
+ }
+ case 3u:{
+  return v25;
  }
  default:return 0;
  }}

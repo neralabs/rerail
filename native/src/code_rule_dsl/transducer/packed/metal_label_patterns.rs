@@ -63,8 +63,8 @@ pub(super) const GROUP: usize = 8;
 /// The kernel source for `patterns`, numbered from `first` (the plan's numbering, which items
 /// carry), with each pattern's metavariable names in index order. Every group's kernel answers
 /// the fact case.
-pub(super) fn source(patterns: &[&PackedPattern], first: usize) -> (String, Vec<Vec<String>>) {
-    let mut out = format!("{}{COMMON}", *super::TAPE_VIEW);
+pub(super) fn source(patterns: &[&PackedPattern], first: usize, format: u32) -> (String, Vec<Vec<String>>) {
+    let mut out = format!("{}{COMMON}", super::tape_view(format));
     let mut text = Vec::<u8>::new();
     let mut names = Vec::new();
     let mut bodies = String::new();

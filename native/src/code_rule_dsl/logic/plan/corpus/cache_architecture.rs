@@ -43,7 +43,7 @@ const NOT_CACHES: &[&str] = &[
     "object_segments",
     // Each guest's key, one per identity (decision 0391): the store's numbering of its guests, as `atom_key` is.
     "guest_keys",
-    "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
+    "push_pending", "snapshots", "snapshot_files", "workspaces", "store_sessions", "tree_pages_pending", "object_archive", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
     // Each guest's key by its identity (decision 0391): a name, as `strings`. The observer's journal of what it saw
@@ -67,9 +67,9 @@ const NOT_YET_MOVED: &[&str] = &[
     "facts_results", "facts_plan_sets", "facts_completions", "compiled_plans", "compiled_plan_reads", "plan_feedback",
     // The whole run's record.
     "run_record",
-    // The cross part's memo, statistics, checks, completed trees.
-    "cross_blocks", "cross_components", "cross_rows", "stat_blob", "fact_stats", "fact_value_stats", "corpus_stats",
-    "local_check_results", "context_check_results", "candidate_catalogs", "candidate_checks", "completed_directory_reuse",
+    // The cross part's statistics, checks, completed trees.
+    "stat_blob", "fact_stats", "fact_value_stats", "corpus_stats",
+    "context_check_results", "candidate_catalogs", "candidate_checks", "completed_directory_reuse",
     "completed_workspace_revisions", "tree_result_segments", "completed_snapshot_trees", "accel_models",
     // The derivation graph: what it records is the keys of §7.
     "name_bindings", "derivations", "derivation_inputs",

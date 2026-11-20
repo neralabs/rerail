@@ -736,40 +736,11 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
     // switch, read as it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
     let (result, made) = pushed(read(text));
     let equal_columns = std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off");
-    let helpers: Vec<_> = made.iter().filter(|name| name.ends_with("_observed")).collect();
-    assert_eq!(helpers.len(), usize::from(equal_columns), "{}", result.show());
-    if let [helper] = helpers.as_slice() {
-        assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));
-    }
-}
-
-#[test]
-fn a_local_join_can_export_a_node_bound_by_equality() {
-    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
-    let text = r#"
-        .decl node(d: number, n: node, k: symbol, start: number, end: number)
-        .decl child(p: node, c: node, i: number)
-        .decl text(n: node, x: symbol)
-        .input node, child, text
-        .decl excluded(n: node)
-        excluded(n) :- text(n, x), text(m, x), n != m.
-        .decl observed(n: node)
-        .output observed
-        observed(answer) :- node(_, p, "some-kind", _, _), child(p, g, 0), mid = g, answer = mid, !excluded(g).
-    "#;
-    // The version pass alone (0276 step 6: the tree twin it was compared with is gone): what it made is read.
-    let program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-    let (image, _) = Builder::of_program(&program).unwrap().finish().unwrap();
-    let mut pass = PushLocalJoins::default();
-    let mut pipeline = Pipeline::new("test", image);
-    pipeline.program(&mut pass);
-    let (result, _) = pipeline.finish().unwrap();
-    let made = pass.made;
     for m in &made {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
     }
     let helpers: Vec<_> = made.iter().filter(|name| name.ends_with("_observed")).collect();
-    assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
+    assert_eq!(helpers.len(), usize::from(equal_columns), "{}", result.show());
     if let [helper] = helpers.as_slice() {
         assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));
     }

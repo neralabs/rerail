@@ -28,13 +28,30 @@ fn the_last_runs_are_protected_and_history_is_kept_to_the_low_water_mark() {
     let s = sizes(10, 10);
     // Each manifest holds 40 bytes alone. Two protected; history of three is 120 bytes.
     let policy = CorpusPolicy { protected_runs: 2, high_water: 1000, low_water: 50, backstop_secs: 1000, ..CorpusPolicy::default() };
-    let all = decide(&ms, &s, &policy, 100);
+    let all = decide(&ms, &s, &policy, 100, &Aged::default());
     assert_eq!(all.kept, vec![10, 9, 8, 7, 6], "under the high-water mark nothing is evicted");
     assert_eq!((all.protected, all.history), (80, 120));
     let policy = CorpusPolicy { high_water: 100, ..policy };
-    let capped = decide(&ms, &s, &policy, 100);
+    let capped = decide(&ms, &s, &policy, 100, &Aged::default());
     assert_eq!(capped.kept, vec![10, 9, 8], "above it, history is kept newest first to the low-water mark");
     assert_eq!(capped.history, 40);
+}
+
+/// One budget holds every store session's aged data (decision 0450 step 3), the ended workspaces' first: their bytes
+/// count against the history's marks, and what they hold counts for no manifest again.
+#[test]
+fn ended_workspaces_aged_data_comes_first_under_the_one_budget() {
+    let ms: Vec<Manifest> = (0..5).map(|k| manifest(10 - k, 1, 100, &[2 * (5 - k) - 1, 2 * (5 - k)])).collect();
+    let s = sizes(10, 10);
+    let policy = CorpusPolicy { protected_runs: 2, high_water: 100, low_water: 50, backstop_secs: 1000, ..CorpusPolicy::default() };
+    // An ended workspace holds 45 bytes, manifest 8's sources among them: 8 holds only its 20 bytes of tapes alone.
+    let aged = Aged { bytes: 45, sources: HashSet::from([5, 6]), tapes: HashSet::new() };
+    let decided = decide(&ms, &s, &policy, 100, &aged);
+    assert_eq!(decided.kept, vec![10, 9], "the workspace's bytes leave no room for history");
+    assert_eq!(decided.history, 45);
+    // With a budget it fits, 8 is kept for its tapes alone.
+    let roomy = CorpusPolicy { high_water: 1000, ..policy };
+    assert_eq!(decide(&ms, &s, &roomy, 100, &aged).kept, vec![10, 9, 8, 7, 6]);
 }
 
 #[test]
@@ -42,10 +59,10 @@ fn a_manifest_holding_nothing_of_its_own_goes_and_an_idle_root_keeps_nothing() {
     let ms = vec![manifest(3, 1, 100, &[1, 2]), manifest(2, 1, 100, &[1, 2, 3]), manifest(1, 1, 100, &[1, 2])];
     let s = sizes(3, 10);
     let policy = CorpusPolicy { protected_runs: 1, high_water: 1000, low_water: 500, backstop_secs: 50, ..CorpusPolicy::default() };
-    assert_eq!(decide(&ms, &s, &policy, 100).kept, vec![3, 2], "manifest 1's sources are all in newer kept ones");
+    assert_eq!(decide(&ms, &s, &policy, 100, &Aged::default()).kept, vec![3, 2], "manifest 1's sources are all in newer kept ones");
     // Root 2 last ran at time 10: past the backstop at 100, its protected run goes too.
     let ms = vec![manifest(2, 1, 100, &[1]), manifest(1, 2, 10, &[2])];
-    assert_eq!(decide(&ms, &s, &policy, 100).kept, vec![2]);
+    assert_eq!(decide(&ms, &s, &policy, 100, &Aged::default()).kept, vec![2]);
 }
 
 /// Content compression cannot shrink: a different pseudo-random byte string per (file, version).
@@ -401,6 +418,14 @@ fn each_lane_keeps_its_last_runs_plans() {
         run([lane + 100; 32], lane);
     }
     assert_eq!(plans[1..].iter().map(|p| live(*p)).collect::<Vec<_>>(), vec![Some(0), Some(0), Some(1), Some(1)]);
+    // Each kept lane is a store session (decision 0450 §2), live while its last run is protected: the newest six.
+    let sessions: (i64, i64) = store
+        .connection
+        .lock()
+        .unwrap()
+        .query_row("SELECT count(*), count(ended) FROM store_sessions WHERE kind=2", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    assert_eq!(sessions, (6, 0));
 }
 
 /// A lane names its policy set (where its programs come from, and the run's options): an edit of the set's programs

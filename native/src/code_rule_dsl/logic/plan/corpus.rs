@@ -114,7 +114,6 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_NEAREST_BUFFERS",
     "RERAIL_FACTORIZE",
     "RERAIL_EXPORT_DEMAND",
-    "RERAIL_CROSS_MEMO",
     "RERAIL_REACH_INDEX",
     // `simplify`.
     "RERAIL_EXISTENCE_COUNTS",
@@ -134,7 +133,7 @@ pub const PREPARING: &[&str] = &[
 ];
 
 pub mod phase0;
-pub mod cross_memo;
+pub mod import_closure;
 pub mod switches;
 pub mod matchers;
 pub mod preparation;
@@ -302,8 +301,6 @@ pub struct Report {
     /// The statistics keeper's end (decision 0096 §3): the files it counted in and out this run, or why it gave them
     /// up (the next run counts every file in again). `None`: no keeper ran.
     pub stats_kept: Option<std::result::Result<(usize, usize), String>>,
-    /// The cross-file memo (decision 0076): import components found and components derived.
-    pub cross: (usize, usize),
     /// Where the prepared program came from: `prepared` by this run, kept in this process's `memory`, or read from the
     /// `store` (decision 0073).
     pub prepared: &'static str,
@@ -3080,13 +3077,11 @@ fn run_handed(
         // Includes alone do not imply component demand. Inspect each observed
         // module once; comments can conservatively request preparation. Missing
         // or malformed modules remain the parser's error, not a proof of no demand.
-        let uses_components = |text: &str| text.contains("cross-memo") || text.contains("rr_cx_");
+        let uses_components = |text: &str| text.contains("rr_cx_");
         let modules: BTreeSet<_> = graphs.iter().flat_map(|g| g.digests.keys()).collect();
         // A handed program, by its own settings and relations: its key is no text to search.
         let read_uses = |v: &Arc<crate::code_rule_dsl::logic::program_image::Version>| {
-            use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
-            ProgramFields::settings(&**v).iter().any(|(k, s)| k == "pragma" && s.contains("cross-memo"))
-                || v.declared_names().iter().any(|r| r.starts_with("rr_cx_"))
+            v.declared_names().iter().any(|r| r.starts_with("rr_cx_"))
                 || v.rules().any(|r| r.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()).starts_with("rr_cx_")))
         };
         component_seeded = read.map_or_else(|| programs.iter().any(|t| uses_components(t)), read_uses) || modules.into_iter().any(|path| {
@@ -3780,30 +3775,18 @@ fn run_observed_within(
     // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
     // over many roots prepares it once. The key is what preparing reads besides the store's atoms, which are asked
     // again below.
-    // Cross-file rows memoised per import component (decision 0076): the program asks, and its documents' language
-    // has import rules in `components.rr`. Not for a discovery round of `world`, which runs part of the program; the
-    // final round's world facts are program facts, so they are in the plan's digest.
-    let cross_mode = cross_memo::mode();
-    // With requests answered inside the fixpoint too: the cone runs first, so every loaded document's exports, the
-    // component rules' only reads, are in before the components are (decision 0065 §2a).
     // The copies hiding made for guests in the run's own language are folded where the program is prepared (decision
     // 0058, `FoldOwn`): a function of the combined program and the run's language, which the prepared key names, so a
     // program read prepared is not folded first.
     let loading_run = world::wanted(&*v, &shape);
-    let cross_declared = cross_memo::declared(&*v).filter(|_| cross_mode != cross_memo::Mode::Off && label == "python");
-    // A program that reads the components' relations itself (`rr_cx_reach`: a closure-local lookup) has them with or
-    // without the memo.
+    // A program that reads the import closure's relations (`rr_cx_reach`: a closure-local lookup) has its rules
+    // (`import_closure`, `components.rr`).
     let reads_components = shape.read.iter().any(|rel| rel.starts_with("rr_cx_"));
     if reads_components && label != "python" {
         return Err(Error::Plan(format!("the import components' relations (`rr_cx_*`) are Python's; this run's documents are {label}")));
     }
-    if cross_declared.is_some() || reads_components {
-        v = cross_memo::add_to(&v)?;
-        // The constants' own run outputs the constants alone (`constants::as_outputs`): it runs over no documents, so
-        // it makes no components, and its prune drops their rules.
-        if options.get(constants::OWN).is_some() {
-            edit_fields(&mut v, |p| Ok(p.b.retain_outputs(|o| o != cross_memo::COMPONENT)))?;
-        }
+    if reads_components {
+        v = import_closure::add_to(&v)?;
     }
     // A run that reads the file system answers a load with the loaded documents' rows of each export its cone of
     // requests reads, found by the export's location column (decision 0065 §2a). Factorizing changes which relations
@@ -3822,7 +3805,7 @@ fn run_observed_within(
             let rows = v.fact_values(&rel, &lists).unwrap_or_default();
             (rel, rows)
         }).collect();
-        hash.update(format!("{label}\0{facts:?}\0{:?}\0{:?}\0{}", v.input_names(), v.output_names(), cross_declared.is_some()).as_bytes());
+        hash.update(format!("{label}\0{facts:?}\0{:?}\0{:?}", v.input_names(), v.output_names()).as_bytes());
         // Whether exports are handed on factorized (decision 0099): another choice is another prepared program, and
         // another file-local part, so another per-file memo key.
         if !factorizing {
@@ -4013,7 +3996,6 @@ fn run_observed_within(
                 {
                     // What the run read of the program before the fold, the same after it.
                     assert_eq!(world::wanted(&*v, &shape::Shape::of(&v)), loading_run, "folding changed whether the run loads");
-                    assert!(cross_declared.is_none() || cross_memo::declared(&*v).is_some(), "folding dropped the cross memo's pragma");
                 }
             }
             // The prepared program's one image (decision 0281's path, step 6): made here, from the program as the rule
@@ -4203,7 +4185,6 @@ fn run_observed_within(
     let (local_version, mut cross_version) = (split.versions.local.clone(), split.versions.cross.clone());
     // The parts as the split made them, which the memo's and the components' keys are digests of (decision 0173 §7).
     let local_v = Arc::clone(&local_version);
-    let cross_v = Arc::clone(&cross_version);
     // The file-local part's fields, as the split made it: the run reads the part's rules and fields from its version.
     let local_placed = super::body::Placed::whole(Arc::clone(&local_v));
     let local_f = local_placed.fields()?;
@@ -4320,30 +4301,6 @@ fn run_observed_within(
         strata.identities(options, &phased, &base_rows)
     };
     let memo_space = memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref());
-    // The components' stored rows are a function of the phases' exports the cross-file rules read too (P3's
-    // `types__attr`, `types__tmap`: a library's stubs, which no component's documents hold), so the plan is digested
-    // under those as well. Coarse: an export that changes misses every component, not only those that read the rows
-    // that changed.
-    let cross_digest = {
-        let reads: BTreeSet<&str> = cross_v.rules().flat_map(|r| r.reads()).map(|a| cross_v.rel_name(a.rel())).collect();
-        under_phased(memo_program, &reads)
-    };
-    let cross_plan = match &cross_declared {
-        Some(declared) => {
-            let (plan, version) = cross_memo::split(&cross_version, &lowered.domains, declared, &cross_digest, &split.same_doc)?;
-            if !Arc::ptr_eq(&version, &cross_version) {
-                cross_version = version;
-            }
-            plan
-        }
-        None => None,
-    };
-    crate::code_rule_dsl::logic::profile::decision("cross-file memo (decision 0076)", || match (&cross_declared, &cross_plan) {
-        (None, _) if cross_memo::declared(head).is_none() => "off: the program declares no `.pragma \"cross-memo\"`".to_owned(),
-        (None, _) => format!("off ({})", if cross_mode == cross_memo::Mode::Off { "RERAIL_CROSS_MEMO=off" } else { "no import rules for the run's language" }),
-        (Some(_), None) => "off: the component rules did not reach the cross-file part".to_owned(),
-        (Some(_), Some(plan)) => format!("{} relations memoised per import component ({}){}", plan.memo.len(), plan.memo.keys().cloned().collect::<Vec<_>>().join(", "), if cross_mode == cross_memo::Mode::Verify { "; verifying: derived afresh and compared" } else { "" }),
-    });
     // The file-local outputs, whose memo entries hold lines (recorded for a SQL session below).
     let local_outputs: Vec<String> = local_f.outputs().map(str::to_owned).collect();
     // `declared_ret` rows come from outside the memo's key (`corpus::typing`): a program whose rules still read them
@@ -4395,15 +4352,11 @@ fn run_observed_within(
     // made by the chunk path as any file's are; the rest of the cross-file part reads the cone's rows as inputs.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the cone of requests".into()));
     let loading: Option<(Arc<crate::code_rule_dsl::logic::program_image::Version>, BTreeSet<String>)> = if loading_run {
-        // The prepared split's cone, made once; a run whose cross memo split the cross-file part (above) makes its own.
-        // Each of the cross-file part's version.
-        let cone = match cross_declared.is_none() {
-            true => shared_cone
-                .get_or_init(|| cone_of(&super::body::Placed::whole(shared_split.versions.cross.clone()), &split.exports, &split.base, head).map(Arc::new).map_err(|e| e.to_string()))
-                .clone()
-                .map_err(Error::Plan)?,
-            false => Arc::new(cone_of(&super::body::Placed::whole(cross_version.clone()), &split.exports, &split.base, head)?),
-        };
+        // The prepared split's cone, made once, of the cross-file part's version.
+        let cone = shared_cone
+            .get_or_init(|| cone_of(&super::body::Placed::whole(shared_split.versions.cross.clone()), &split.exports, &split.base, head).map(Arc::new).map_err(|e| e.to_string()))
+            .clone()
+            .map_err(Error::Plan)?;
         cross_version = cone.rest.clone();
         Some((cone.load.clone(), cone.reads.clone()))
     } else {
@@ -4460,10 +4413,8 @@ fn run_observed_within(
         }
     }
     // The parts less the constants are the prepared split's, made once for each set of constants (`Prepared::parts`):
-    // a later run shares them, and the trees their readers decode. A run whose cross memo split the cross-file part
-    // makes its own.
-    let parts_kept = cross_declared.is_none();
-    let kept_parts = parts_kept.then(|| shared_parts.get().filter(|(of, _)| *of == once).map(|(_, p)| p.clone())).flatten();
+    // a later run shares them, and the trees their readers decode.
+    let kept_parts = shared_parts.get().filter(|(of, _)| *of == once).map(|(_, p)| p.clone());
     let once_made = once.clone();
     let run_constants: Option<(lower::Lowered, Vec<String>)> = if let Some((l, c, constants)) = kept_parts {
         (local, cross) = (l, c);
@@ -4510,7 +4461,7 @@ fn run_observed_within(
             Ok((part_of(made), once.into_iter().collect()))
         }).transpose()?
     };
-    if parts_kept && shared_parts.get().is_none() {
+    if shared_parts.get().is_none() {
         let _ = shared_parts.set((once_made, (local.clone(), cross.clone(), run_constants.clone())));
     }
     if crate::code_rule_dsl::logic::version_trace::on() {
@@ -5424,7 +5375,7 @@ fn run_observed_within(
             let found: Vec<Option<memo::Found>> = if slice.is_some() { memo.found_all(&memo_plan, &keys).map_err(|e| Error::Plan(e.to_string()))? } else { keys.iter().map(|_| None).collect() };
             let mut out = HashMap::new();
             for (((path, key, id), frame), found) in olds.into_iter().zip(frames).zip(found) {
-                let Some((bytes, _)) = texts.get(&id) else { return Ok(Err(format!("{path}: its old source is no longer stored"))) };
+                let Some(bytes) = texts.get(&id) else { return Ok(Err(format!("{path}: its old source is no longer stored"))) };
                 let entry = match (slice.is_some(), found) {
                     (false, _) => None,
                     (true, Some(found)) => match found.entry(key).map_err(|e| Error::Plan(e.to_string()))? {
@@ -5972,7 +5923,7 @@ fn run_observed_within(
                 drop(c);
                 // Rung only when a step changed something: the main thread's wait polls by `advance`, and a ring for
                 // nothing woke it at once, every time (Bell::wait_as sleeps only when nothing rang): a wait of 33 s on
-                // the device's first pipeline spun on its core for 17 s of CPU (2026-11-17).
+                // the device's first pipeline spun on its core for 17 s of CPU (2026-11-17), one of 280 s 263 s.
                 if moved {
                     self.bell.ring();
                 }
@@ -8186,7 +8137,7 @@ fn run_observed_within(
         cache.record_guest_keys();
     }
     let mut publish_later = None;
-    let mut collecting = if recording && cross_plan.is_none() && durable.is_none() {
+    let mut collecting = if recording && durable.is_none() {
         record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).chain(kept_runs.lock().expect("the kept runs").iter()).copied().collect::<Vec<_>>(), Some(lane), policy, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?
     } else if recording {
         publish_later = Some((relations, reading));
@@ -8859,8 +8810,6 @@ fn run_observed_within(
     // strata as before (whole strata run or kept, `kept_strata`), to compare.
     let k4 = durable.is_some() && std::env::var("RERAIL_CROSS_K4").map_or(true, |v| v != "off");
     let one_fixpoint = run_placed.v.rules().next().is_some() && session.is_none() && !k4;
-    // The import components (decision 0076) run before the cross part, with no hooks: what they read is bound now.
-    let eager: BTreeSet<&str> = cross_plan.iter().flat_map(|p| p.components.rules().flat_map(|r| r.reads().map(|a| p.components.rel_name(a.rel())))).collect();
     // A new process that maintains its cross-file part from the store (t32 4.1) runs it as a session does: its
     // inputs bound before the run, not loaded as their first reader runs. Not a part whose requests the run answers
     // as it goes (0065 §2a, phase 0's loads): their answers are the loader's, which no kept row stands for.
@@ -8872,7 +8821,7 @@ fn run_observed_within(
         && cross.placed().ok().is_some_and(|p| p.fields().is_ok_and(|f| f.answers().is_empty()))
         && !phase0::active();
     for rel in &split.exports {
-        if one_fixpoint && !kept_part_on && !eager.contains(rel.as_str()) {
+        if one_fixpoint && !kept_part_on {
             let width = pf.width(rel);
             let empty = crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| format!("c{c}")).collect(), vec![Some(Vec::new()); width]);
             modules.bind(&db, rel, empty)?;
@@ -8938,89 +8887,7 @@ fn run_observed_within(
     let mut cross_recursive = 0;
     // `returns`, held for the typing outputs (`corpus::typing`), when the cross-file part derives it: a program that
     // declares it and derives it per file (`python/typing.rr` in a rule's program) has no table of it here.
-    let mut wanted: BTreeSet<String> = run_f.declared("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !head_outputs.contains(r)).collect();
-    // The import components (decision 0076): derived first, from the exports, and each one's stored rows looked up.
-    // The hits' rows are bound as `<rel>__cross` with `rr_cross_doc`; the misses are derived and stored after.
-    let mut cross_state: Option<(cross_memo::Components, cross_memo::Found)> = None;
-    if let Some(plan) = &cross_plan {
-        let components_span = crate::code_rule_dsl::logic::profile::span(|| "import components".into());
-        let held: BTreeSet<String> = cross_memo::HELD.iter().map(|r| (*r).to_owned()).collect();
-        let got = texts_run(&part_of(plan.components.clone()), &db, cross_stats.clone(), held, modes, &vocabulary)?;
-        let edges: Vec<(i64, i64)> = held_rows(&db, &got, cross_memo::HELD[1], 2)?.into_iter().map(|r| (r[0], r[1])).collect();
-        let mut keys: HashMap<i64, String> = HashMap::new();
-        let mut rows = Vec::new();
-        for r in held_rows(&db, &got, cross_memo::COMPONENT, 3)? {
-            if !keys.contains_key(&r[2]) {
-                let text = crate::code_rule_dsl::logic::native::symbol_text(&db, r[2])?;
-                keys.insert(r[2], text);
-            }
-            rows.push((r[0], r[1], keys[&r[2]].clone()));
-        }
-        let outputs_of = |rel: &str| head_outputs.iter().any(|o| o == rel);
-        native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("components:{k}")));
-        let components = cross_memo::Components::new(rows, &edges);
-        let found = cross_memo::lookup(&store, plan, &components, &paths)?;
-        // Every component found: a memoised relation's own rules derive nothing (each is guarded to the documents not
-        // found), so only its copy from `<rel>__cross` runs, and only the copies something reads (decision 0076).
-        let all_found = cross_mode == cross_memo::Mode::On && found.misses.is_empty() && !plan.memo.is_empty();
-        if all_found {
-            let before = cross.version.size();
-            cross_memo::keep_copies(&mut cross, plan, &wanted)?;
-            let after = cross.version.size();
-            crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
-                format!("every component found: {} rules of memoised relations not run, their copies only", before - after)
-            });
-        }
-        // No component found (a new store): `rr_cross_doc` is empty and every guard passes, so none is run.
-        if found.hits.is_empty() && cross_mode != cross_memo::Mode::Verify {
-            let dropped = cross_memo::drop_guards(&mut cross)?;
-            crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || format!("no component found: {dropped} guards on `rr_cross_doc` not run"));
-        }
-        let cross_now = cross.placed()?;
-        let cross_f = cross_now.fields()?;
-        let read: BTreeSet<&str> = cross_now.v.rules().flat_map(|r| r.reads().map(|a| cross_now.v.rel_name(a.rel()))).collect();
-        let mut replayed = Totals::new(tested_values.clone());
-        let inputs = found.inputs(&store, plan, &components, cross_mode, |r| !all_found || read.contains(format!("{r}{}", cross_memo::SUFFIX).as_str()))?;
-        let replayed_rows: usize = inputs.iter().skip(1).map(|(_, _, cols)| cols.first().map_or(0, Vec::len)).sum();
-        for (rel, width, cols) in inputs {
-            let types: Vec<String> = cross_f.types(&rel).into_iter().map(String::from).collect();
-            let columns = (0..width).map(|i| format!("c{i}")).collect();
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, cols.into_iter().map(Some).collect());
-            replayed.add_rows(&rel, source.len(), source.as_ref(), &types.iter().map(String::as_str).collect::<Vec<_>>());
-            modules.bind(&db, &rel, source)?;
-        }
-        replayed.apply(&mut cross_stats);
-        // Held for storing, unless an output (written to its table, read from there): only when a component missed or
-        // the run verifies. Every component found is replayed, and nothing is stored.
-        if !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify {
-            wanted.extend(plan.memo.keys().filter(|r| !head_outputs.contains(*r)).cloned());
-        }
-        drop(components_span);
-        crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
-            format!(
-                "{} documents in {} components over {} edges; {} found ({}), {} derived",
-                components.of.len(),
-                found.hits.len() + found.misses.len(),
-                edges.len(),
-                found.hits.len(),
-                if cross_mode == cross_memo::Mode::Verify { "derived again, to compare with their stored rows".to_owned() } else { format!("{replayed_rows} rows replayed") },
-                found.misses.len()
-            )
-        });
-        cross_state = Some((components, found));
-    }
-    // The memoised relations' derived rows, for storing (decision 0076).
-    let storing = cross_state.as_ref().is_some_and(|(_, found)| !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify);
-    let memo_rels: BTreeSet<String> = cross_plan.as_ref().filter(|_| storing).map(|p| p.memo.keys().cloned().collect()).unwrap_or_default();
-    let mut memo_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
-    // `derived`: the relations the part derives, each with its width (`derived_widths_in`).
-    let mut collect = |db: &Connection, got: &Outcome, derived: BTreeMap<&str, usize>| -> Result<()> {
-        for (rel, width) in derived.into_iter().filter(|(r, _)| memo_rels.contains(*r)) {
-            let rows = held_rows(db, got, rel, width)?;
-            memo_rows.entry(rel.to_owned()).or_default().extend(rows);
-        }
-        Ok(())
-    };
+    let wanted: BTreeSet<String> = run_f.declared("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !head_outputs.contains(r)).collect();
     let mut returns = Vec::new();
     // A session's outputs whose strata were clean, written by its last run of this program to this directory: their
     // files are as they were, and their row counts. And that program's key, to record what this run writes.
@@ -9514,7 +9381,6 @@ fn run_observed_within(
                     let run_again = std::mem::take(&mut got.again);
                     let run_quiet = got.quiet;
                     step("ran");
-                    collect(&db, &got, derived_widths_in(&fields))?;
                     step("collected");
                     if spike {
                         for (rel, why) in &maintained.again {
@@ -9832,10 +9698,6 @@ fn run_observed_within(
                         k.finish();
                         crate::code_rule_dsl::logic::profile::decision("cross-file strata kept across runs (decision 0077 §4)", || format!("{written} rows of the relations whose rows changed written to the store"));
                     }
-                    {
-                        let placed = cross.placed()?;
-                        collect(&db, &got, derived_widths_in(&placed.fields()?))?;
-                    }
                     if wanted.contains("returns") && got.kept.contains("returns") {
                         returns = held_rows(&db, &got, "returns", 2)?;
                     }
@@ -9846,23 +9708,6 @@ fn run_observed_within(
     }
     phase("cross", statements.count());
     drop(waves.take());
-    let mut cross_counts = (0, 0);
-    if let (Some(plan), Some((components, found))) = (&cross_plan, &cross_state) {
-        cross_counts = (found.hits.len(), found.misses.len());
-        let _storing = crate::code_rule_dsl::logic::profile::span(|| "store import components' rows".into());
-        let cross_placed = cross.placed()?;
-        let cross_f = cross_placed.fields()?;
-        let nodes: BTreeMap<String, Vec<usize>> = plan
-            .memo
-            .keys()
-            .map(|rel| (rel.clone(), cross_f.types(rel).iter().enumerate().filter(|(_, t)| **t == "node").map(|(i, _)| i).collect()))
-            .collect();
-        let recorded = cross_memo::record(&store, plan, components, found, cross_mode, &memo_rows, &nodes, &paths)?;
-        crate::code_rule_dsl::logic::profile::decision("import components stored (decision 0076)", || {
-            format!("{} components' rows stored ({} rows); {} found components verified", recorded.stored, recorded.rows, recorded.verified)
-        });
-        run_sources.extend(found.sources.iter().copied().chain(recorded.sources.iter().copied()));
-    }
     if let Some((relations, reading)) = publish_later {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "record the run in the store".into());
         collecting = record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).chain(kept_runs.lock().expect("the kept runs").iter()).copied().collect::<Vec<_>>(), Some(lane), policy, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
@@ -10210,7 +10055,7 @@ fn run_observed_within(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

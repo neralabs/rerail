@@ -758,7 +758,7 @@ pub fn pipeline_named(source: &str, name: &str) -> Result<ComputePipelineState, 
 /// engine ships compiled (`rerail_accel::gpu::kernels::pipeline_fixed`, decision 0395).
 pub fn pipeline_named_fixed(source: &str, name: &str, constant: Option<u32>) -> Result<ComputePipelineState, Error> {
     crate::device()?;
-    Ok(rerail_accel::gpu::kernels::pipeline_fixed(source, name, constant))
+    Ok(compiled(name, || rerail_accel::gpu::kernels::pipeline_fixed(source, name, constant)))
 }
 
 /// `source`'s pipeline `name` when a form of it is at hand (made by this process, or archived); otherwise `None`
@@ -780,10 +780,26 @@ pub fn pipeline_named_constant(
     crate::device()?;
     #[cfg(any(test, feature = "test-hooks"))]
     let before = rerail_accel::gpu::kernels::made_here();
-    let pipeline = rerail_accel::gpu::kernels::pipeline(source, name, constant);
+    let pipeline = compiled(name, || rerail_accel::gpu::kernels::pipeline(source, name, constant));
     #[cfg(any(test, feature = "test-hooks"))]
     COMPILED_HERE.set(COMPILED_HERE.get() + (rerail_accel::gpu::kernels::made_here() - before) as usize);
     Ok(pipeline)
+}
+
+/// `make`'s pipeline, its compile's wall in the profile where this thread made it (not found in memory or an
+/// archive): in all (`metal.compile_ms`, `metal.compiles`) and by kernel.
+fn compiled(name: &str, make: impl FnOnce() -> ComputePipelineState) -> ComputePipelineState {
+    let (made, started) = (rerail_accel::gpu::kernels::made_here(), std::time::Instant::now());
+    let pipeline = make();
+    if rerail_accel::gpu::kernels::made_here() > made {
+        let ms = started.elapsed().as_millis() as usize;
+        rerail_prof::count("metal.compile_ms", ms);
+        rerail_prof::count("metal.compiles", 1);
+        if rerail_prof::on() {
+            rerail_prof::count_named(format!("metal.compile_ms.{name}"), ms);
+        }
+    }
+    pipeline
 }
 
 #[cfg(any(test, feature = "test-hooks"))]

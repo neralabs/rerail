@@ -2956,6 +2956,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         };
 // copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
 // of the run's life from its start (decision 0353).
+        const TOTAL: rerail_prof::copies::Site = rerail_prof::copies::Site::new(10, "6", "a device fixpoint's total copied into a run's block");
+        TOTAL.copied(8 * k * total.rows);
         let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, total.rows)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst, at).map_err(|e| format!("{e:?}: a component's rows placed"))?;

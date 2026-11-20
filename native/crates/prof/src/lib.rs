@@ -196,6 +196,125 @@ pub fn stages() -> parking_lot::ArcMutexGuard<parking_lot::RawMutex, BTreeMap<St
     held()
 }
 
+/// The copies decision 0353 still lists, counted where each is made: the measure its steps drive to 0. Each site is
+/// one `static` (`copies::Site`), named by its row of 0353's table ("The copies today") and the step that removes it,
+/// and marked `copy (0353 step N)` beside it. Bytes and calls are always counted (two relaxed adds); the CPU a copy
+/// takes is timed only when stages are (`on`). A site joins the list at its first copy, so the profile's heading
+/// `copies (decision 0353)` names every site that copied in the run, and a site absent from it copied nothing.
+pub mod copies {
+    use std::sync::Mutex;
+
+    /// A site of a copy decision 0353 lists: code, its row and step fixed where it is written. What it copied is the
+    /// run's (`Copies`, decision 0442): a run's profile names the copies that run made.
+    pub struct Site {
+        /// Its row in 0353's table.
+        pub row: u8,
+        /// The step of 0353's plan that removes it.
+        pub step: &'static str,
+        /// What is copied, and where.
+        pub name: &'static str,
+    }
+
+    /// A site's totals so far.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct Totals {
+        pub bytes: u64,
+        pub calls: u64,
+        pub cpu_ns: u64,
+    }
+
+    /// The run's copies, by site (`rerail_context::local`; a site is its row and name, a `const` written once):
+    /// each site that copied, in the order it first did.
+    #[derive(Default)]
+    struct Copies(Mutex<Vec<(&'static Site, Totals)>>);
+
+    impl Copies {
+        fn add(&self, site: &'static Site, bytes: u64, cpu_ns: u64) {
+            let mut all = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let at = match all.iter().position(|(s, _)| (s.row, s.name) == (site.row, site.name)) {
+                Some(at) => at,
+                None => {
+                    all.push((site, Totals::default()));
+                    all.len() - 1
+                }
+            };
+            let t = &mut all[at].1;
+            t.bytes += bytes;
+            t.calls += 1;
+            t.cpu_ns += cpu_ns;
+        }
+    }
+
+    impl Site {
+        pub const fn new(row: u8, step: &'static str, name: &'static str) -> Self {
+            Self { row, step, name }
+        }
+
+        fn count(&'static self, bytes: usize, cpu_ns: u64) {
+            rerail_context::with_local::<Copies, _>(|c| c.add(self, bytes as u64, cpu_ns));
+        }
+
+        /// One copy of `bytes`, its CPU not timed (a copy inside a timed one, or too small to time).
+        pub fn copied(&'static self, bytes: usize) {
+            self.count(bytes, 0);
+        }
+
+        /// One copy made by `f`, which gives its bytes with its value; its CPU timed when stages are.
+        pub fn time<T>(&'static self, f: impl FnOnce() -> (T, usize)) -> T {
+            let start = super::on().then(super::thread_cpu);
+            let (out, bytes) = f();
+            let cpu = start.map_or(0, |start| super::thread_cpu().saturating_sub(start).as_nanos() as u64);
+            self.count(bytes, cpu);
+            out
+        }
+
+        /// A copy begun here, ended by `Copying::done` with its bytes: for a copy spread through a function.
+        pub fn start(&'static self) -> Copying {
+            Copying { site: self, start: super::on().then(super::thread_cpu) }
+        }
+    }
+
+    /// A copy under way at a site (`Site::start`).
+    #[must_use = "a copy is counted when it is done"]
+    pub struct Copying {
+        site: &'static Site,
+        start: Option<std::time::Duration>,
+    }
+
+    impl Copying {
+        pub fn done(self, bytes: usize) {
+            let cpu = self.start.map_or(0, |start| super::thread_cpu().saturating_sub(start).as_nanos() as u64);
+            self.site.count(bytes, cpu);
+        }
+    }
+
+    /// Every site that copied in the run under way, by row, with its totals.
+    pub fn sites() -> Vec<(&'static Site, Totals)> {
+        let Some(copies) = rerail_context::local_if_any::<Copies>() else { return Vec::new() };
+        let mut sites = copies.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        sites.sort_by_key(|(site, _)| (site.row, site.name));
+        sites
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const ONE: Site = Site::new(250, "test", "a test's copy");
+
+        #[test]
+        fn a_sites_copies_are_counted_and_listed_once() {
+            let _run = rerail_context::test_run();
+            ONE.copied(10);
+            let made = ONE.time(|| ("made", 32));
+            assert_eq!(made, "made");
+            let listed: Vec<_> = sites().into_iter().filter(|(site, _)| site.row == 250).collect();
+            assert_eq!(listed.len(), 1, "a site is listed once, however often it copies");
+            assert_eq!((listed[0].1.bytes, listed[0].1.calls), (42, 2));
+        }
+    }
+}
+
 /// A sampling heap profiler (`RERAIL_HEAP_SAMPLE`): which spans allocated the heap that is live at the footprint's
 /// peak. The engine's allocator calls `alloc` and `free` around jemalloc's; a thread samples an allocation per
 /// `INTERVAL` bytes it allocates (every one of `BIG` bytes or more), keyed by its address with the thread's innermost

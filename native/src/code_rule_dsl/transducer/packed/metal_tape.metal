@@ -76,6 +76,19 @@ inline bool code_admits(device const uint* rule,device const DeviceCode& code){
  }
  return true;
 }
+// The kind a presence records for a node of kind `kind`: an ERROR node's (0xffff) is ERROR_CODE (0), the tape's folded
+// code (decision 0434 §4; the host's `tape::presence_kind`).
+inline uint presence_kind(uint kind){return kind==0xffffu?0u:kind;}
+// Whether block `block` of document `d` (its nodes 1024*block ..) may hold a node a rule over codes admits, by the
+// tape's presence in its home (decision 0434 §4, step 6), read where it lies by `tape_has_kind`, the read the host's
+// planners and walks make too (`Roots::may_in`): one of its kinds, and each kind its tests name. A tape that holds no
+// presence admits every block.
+inline bool rule_may_in(device const uchar* s,DocView d,device const uint* rule,uint block){
+ uint kinds=rule[0],at=1u;
+ if(kinds!=0xffffffffu){bool any=false;for(uint k=0u;k<kinds&&!any;k++)any=clif_tape_has_kind(TAPE_READ(s,d),block,presence_kind(rule[1u+k]))!=0u;if(!any)return false;at+=kinds;}
+ for(uint k=0u,tests=rule[at];k<tests;k++){uint test=rule[at+1u+k];if((test>>16u)==1u&&clif_tape_has_kind(TAPE_READ(s,d),block,presence_kind(test&0xffffu))==0u)return false;}
+ return true;
+}
 // A row of bits over the batch's nodes, the 64 from batch node `b`.
 inline ulong root_row(device const uint* row,uint b){
  uint w=b/32u,sh=b%32u;ulong mask=ulong(row[w])|(ulong(row[w+1u])<<32u);
@@ -96,6 +109,8 @@ inline ulong root_mask_in(device const uchar* s,DocView d,device const uint* roo
   uint files=roots[0];
   if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return 0ul;
   device const uint* rule=roots+at+1u+(files+31u)/32u;
+  // A block whose presence rules the rule out has none of its codes read (a group lies in one block).
+  if(!rule_may_in(s,d,rule,from/1024u))return 0ul;
   for(uint k=lo;k<hi;k++)if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;
  }
  mask&=anchor;
