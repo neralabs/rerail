@@ -75,7 +75,7 @@ struct Facts<'a> {
     token_names: HashMap<u8, String>,
     word_names: Vec<String>,
     /// The states' questions (`mark_chain`): each chain of mark tests one function, `ask_{i}`, its body here, as the
-    /// lean parser asks `asi()` once where a statement may end and matches its answer (decision 0497).
+    /// lean parser asks `asi()` once where a statement may end and matches its answer (decision 0498).
     asks: std::cell::RefCell<Vec<String>>,
     /// Where tier 2 makes each token's record from its start (page 40), as simdjson's stage 2
     /// takes a structural index: the rules and the region read as `parse_string`.
@@ -593,7 +593,7 @@ fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixte
         rule(&mut out, &facts, e)?;
     }
     for (i, body) in facts.asks.borrow().iter().enumerate() {
-        writeln!(out, "/// A state's question (decision 0497): the first of its marks that holds at the token (its place in the\n/// chain), or the chain's length where none does, as the lean parser's `asi()`.\n#[inline(never)]\nfn ask_{i}(s: &mut S) -> u32 {{\n{body}}}\n").unwrap();
+        writeln!(out, "/// A state's question (decision 0498): the first of its marks that holds at the token (its place in the\n/// chain), or the chain's length where none does, as the lean parser's `asi()`.\n#[inline(never)]\nfn ask_{i}(s: &mut S) -> u32 {{\n{body}}}\n").unwrap();
     }
     if facts.sixteen {
         // The writer's ops, the host's own (`f16::Writer`'s), compiled with the run.
@@ -2525,7 +2525,7 @@ fn mark_test(x: &Facts<'_>, pc: usize) -> Result<(String, String), String> {
     Ok((format!("s.live >> {k} & 1 != 0{here}"), take))
 }
 
-/// The chain of mark tests from `pc` (decision 0497): `MARK` and its way (`GOTO` or `STOP`), two or more in a row,
+/// The chain of mark tests from `pc` (decision 0498): `MARK` and its way (`GOTO` or `STOP`), two or more in a row,
 /// `pc` the first (no mark test before it). One question, its answers the marks' ways and the word after.
 fn mark_chain(x: &Facts<'_>, pc: usize) -> Option<Vec<usize>> {
     let w = &x.native.structural;

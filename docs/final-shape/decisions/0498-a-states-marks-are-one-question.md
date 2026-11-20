@@ -1,4 +1,6 @@
-# 0497: A state's marks are one question
+# 0498: A state's marks are one question
+
+Numbered 0497 where it was written.
 
 Status: decided (the user, 2026-11-19: "the automatic semicolon as a question asked at the
 statement's end, like `asi()`, instead of a tier-1 bit corrected afterwards"). Item 2 of the
