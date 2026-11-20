@@ -1872,7 +1872,7 @@ describe("mechanical code rule regressions", () => {
   it("steers with the anchored location, interpolated message, and suggested fix", async () => {
     const { recorder, audits } = recordingAudits();
     const fixing = codeRuleSchema.parse({
-      format: "rerail.policy/v1", id: "test:logger", revision: 1, mode: "block",
+      format: "rerail.policy/v1", id: "test:logger", revision: 1, mode: "block", title: "Log through the logger",
       scope: { include: ["web/**/*.tsx"], exclude: [] },
       clauses: [{
         id: "logger",
@@ -1902,10 +1902,10 @@ describe("mechanical code rule regressions", () => {
         "  Suggested fix: replace 2:3–2:20 with `logger.info(user)`",
         "Fix it, or tell the user in one line why you won't and run `rerail feedback test:logger '<that line>'`.",
       ].join("\n"));
-      // Where the rule comes from is for the person's line, never the agent's text.
+      // Where the rule comes from, and its title, are for the person's line, never the agent's text.
       expect(requestSteer.mock.calls[0]![3]).toMatchObject({
         ruleIds: ["test:logger"],
-        rules: [{ id: "test:logger", state: "steered", origin: "From your rule library." }],
+        rules: [{ id: "test:logger", title: "Log through the logger", state: "steered", origin: "From your rule library." }],
       });
       expect(auditForPath(audits, "web/App.tsx")?.result).toMatchObject({
         violations: [expect.objectContaining({ fix: { span: expect.objectContaining({ startLine: 1, startColumn: 2 }), text: "logger.info(user)" } })],

@@ -97,6 +97,13 @@ describe("OMP steer renderer", () => {
     ]);
   });
 
+  it("names a titled rule by its title on the person's line, while the block names its id", () => {
+    const content = steerBlock({ kind: "edit" }, [{ ruleId: "local:no-shadows", mode: "steer", message: "Take this shadow off." }], "posix");
+    const rows = formatOmpSteer(content, [{ id: "local:no-shadows", title: "No shadows except\u001b[2J the sheet's", state: "steered" }], { expanded: true, hyperlinks: true, mark: MARK }, theme);
+    expect(rows[0]!.text).toBe("<accent>◆</accent> <mark>R E R A I L</mark><dim> · </dim>No shadows except[2J the sheet's  <accent>steered</accent>");
+    expect(rows.map(row => row.text)).toContain("<dim>- Take this shadow off. [local:no-shadows]</dim>");
+  });
+
   it("strips terminal controls from the guidance and rule ids a repository wrote", () => {
     const { content, details } = codeRuleSteer({ ruleId: "local:sh\u001bout", mode: "steer", message: "Stop\u001b[2J here.\u0007" });
     const rows = formatOmpSteer(content, details.rules, { expanded: true, hyperlinks: false, mark: MARK }, theme);
