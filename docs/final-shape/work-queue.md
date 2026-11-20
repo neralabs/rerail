@@ -7156,7 +7156,7 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
   file say (a test build keeps each event's flags, `fsevents::flags_of`): with content bits the file is named, of
   metadata alone it is not.
 
-### Q360. A session's edit reads its phases' kept parts back, and at the cycle cut finds no input delta in the entries
+### Q360. A session's edit reads its phases' kept parts back, and at the cycle cut finds no input delta in the entries (done 2026-11-20)
 
 - **Seen** (2026-11-20, the sync branch's merge of investigate-bend-vs-datalog at ee692490e, on a Mac farm host):
   `r8_a_session_edit_reads_no_kept_frame` reads 10 kept frames at the first edit. Bend's step-13 check in
@@ -7182,6 +7182,15 @@ Python process for every batch, though `code_rule_dsl::cpython` computes the sam
 - **To do**: find which `session::current()` a phase's run gets, and whether gctm's in-memory phase can hold its
   kept part in the session. Then run Bend's branch at the cycle cut with `RERAIL_STRATA_LIVE=1` and compare which
   inputs it asks.
+- **Done** (2026-11-20). The cause was `in_memory`, which stood for two things: a run whose outputs are captured
+  (a phase's, a429546488) and a run on an ephemeral store. `run_observed_within` left both out of the session, so
+  a phase's run bound its kept part from the store at every edit. A captured run is its session's again whenever
+  its store is not ephemeral: the session's store and kept parts, with an in-memory cross scratch (it has no output
+  directory). It leaves the session's output stacks and written outputs alone, and hashes no rows for them: no
+  directory holds its outputs. Its run databases are in memory only without a session. With the phase's run back
+  in the session, R8 reads no kept frame, and the entries check at the cycle cut passes too (the edit's inputs come
+  from the entries again). Both tests run un-ignored: `r8_a_session_edit_reads_no_kept_frame`,
+  `r2_a_session_reads_its_inputs_deltas_from_the_changed_entries`.
 
 ### Q362. A partial hit's cone that sees annotations only through `FoldOwn` admits none of them (open)
 

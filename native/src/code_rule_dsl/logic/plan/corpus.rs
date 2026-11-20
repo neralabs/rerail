@@ -3831,7 +3831,12 @@ fn run_observed_within(
     }
     // A long-lived process (the browser's engine, `session`) keeps its store, its last program compiled and each
     // file's file-local rows from run to run: an edit evaluates the files it changed and the cross-file part.
-    let session = held.as_mut().filter(|_| !in_memory && t.is_none() && !v.declares("declared_ret"));
+    // A run whose outputs are captured in memory (a phase's, a429546488) is still its session's: its store and its
+    // kept parts are the session's, held from run to run (0328 §5, R8); only its outputs and its cross scratch are in
+    // memory. A run on an ephemeral store is no session's.
+    let session = held.as_mut().filter(|_| !ThreadStore::ephemeral() && t.is_none() && !v.declares("declared_ret"));
+    // The run's databases are in memory where it has neither a session's store nor a directory.
+    let in_memory = in_memory && session.is_none();
     // The run's connections, set up by their owner and passed through (`connections`): a session's are kept from run
     // to run, readied here, before the scratch files are made again; a run of its own opens its own. (A run that
     // fails leaves its session new ones to open.)
@@ -3841,6 +3846,7 @@ fn run_observed_within(
     };
     let (path, cross_path) = match &session {
         None if in_memory => (":memory:".into(), ":memory:".into()),
+        Some(s) if capturing => (s.path.clone(), ":memory:".into()),
         Some(s) => (s.path.clone(), out.join("cross.sqlite")),
         None => (out.join("store.sqlite"), out.join("cross.sqlite")),
     };
@@ -9492,7 +9498,7 @@ fn run_observed_within(
                     drop(s);
                     written_key = Some(ckey);
                     // Only from a stack as the session's last run here left it: a stat of its file, not a read.
-                    if let Some(s) = session.as_ref()
+                    if let Some(s) = session.as_ref().filter(|_| !capturing)
                         && s.stacks.lock().expect("the session's stacks").get(out).is_some_and(|stack| stack.stands(out))
                     {
                         let written = s.written.lock().expect("the session's written outputs");
@@ -10200,7 +10206,7 @@ fn run_observed_within(
     {
         let flags = if own { output::flags::OWN } else { 0 } | if syntax::definition_ids() { output::flags::DEFINITION_IDS } else { 0 };
         // The session's stack here as its last run left it, if it stands (a stat, not a read).
-        let held: Option<session::Stack> = session.as_ref().and_then(|s| s.stacks.lock().expect("the session's stacks").get(out).filter(|k| k.stands(out)).cloned());
+        let held: Option<session::Stack> = session.as_ref().filter(|_| !capturing).and_then(|s| s.stacks.lock().expect("the session's stacks").get(out).filter(|k| k.stands(out)).cloned());
         let mut image = output::Builder::new(flags, false);
         let mut made: Vec<&str> = Vec::new();
         for (rel, parts) in &outputs {
@@ -10269,8 +10275,8 @@ fn run_observed_within(
         for rel in &made {
             rows.insert((*rel).to_owned(), made_image.rel(rel).expect("made").rows);
         }
-        // Each made output's rows' hashes, per row and as a set (a session's runs only).
-        let hashed: BTreeMap<&str, (Vec<u128>, Vec<u128>)> = if session.is_some() {
+        // Each made output's rows' hashes, per row and as a set (a session's runs that write a directory only).
+        let hashed: BTreeMap<&str, (Vec<u128>, Vec<u128>)> = if session.is_some() && !capturing {
             made.iter()
                 .map(|&rel| {
                     let r = made_image.rel(rel).expect("made");
@@ -10355,8 +10361,9 @@ fn run_observed_within(
             });
         }
         // What a session's run of this program wrote, for its next (`unchanged_outputs`); any other run's writes
-        // forget it. A base holds no output an earlier run wrote but this one did not make or keep.
-        if let Some(s) = session.as_ref() {
+        // forget it. A base holds no output an earlier run wrote but this one did not make or keep. A captured run
+        // wrote no directory: it leaves the session's outputs as they were.
+        if let Some(s) = session.as_ref().filter(|_| !capturing) {
             let mut written = s.written.lock().expect("the session's written outputs");
             if base {
                 written.retain(|p, _| p.parent() != Some(out));
