@@ -1,11 +1,11 @@
-# T10: Moti's facts engine (facts-engine, facts-plan)
+# T10: The facts engine (facts-engine, facts-plan)
 
 Research notes, read-only. Every claim cites a source. "not found" means I looked and the sources do not say it.
 
 ## 0. Refs, conventions, marks
 
-- **E** = `origin/Moti-Velz/facts-engine`, tip `5b0d63a7` ("Merge y3-wire", 2026-10-25 21:08).
-- **P** = `origin/Moti-Velz/facts-plan`, tip `a582db97` ("facts: Y3 wired path in the decision table").
+- **E** = `facts-engine`, tip `5b0d63a7` ("Merge y3-wire", 2026-10-25 21:08).
+- **P** = `facts-plan`, tip `a582db97` ("facts: Y3 wired path in the decision table").
 - Merge base: `31a6208b`.
 - Citations take the form `E:path:line` or `P:path:line`. A report citation names its section (`§`). For a file that is identical on both refs, I cite E.
 - **What exists on only one ref:**
@@ -23,7 +23,7 @@ Research notes, read-only. Every claim cites a source. "not found" means I looke
   - **M**: the source reports it as measured on a run.
   - **D**: derived by arithmetic from measured numbers.
   - **A**: estimated, assumed or inferred. This includes any number the source tags `[INFERENCE]`, "est." or "estimate".
-- **Time numbers.** Per-edit latencies are wall-clock in every source that states the clock. Batch costs (G2.3, A2, native's 393 s) are process CPU (user+sys). I copy each number as stated and do not convert wall to CPU. Most sources flag machine load: many runs were at 1-minute load 10–70 and marked "untrusted" by Moti's own protocol (PHASE-1 § Measurement: three runs, bench-lock, load < 8).
+- **Time numbers.** Per-edit latencies are wall-clock in every source that states the clock. Batch costs (G2.3, A2, native's 393 s) are process CPU (user+sys). I copy each number as stated and do not convert wall to CPU. Most sources flag machine load: many runs were at 1-minute load 10–70 and marked "untrusted" by the facts-engine stream's own protocol (PHASE-1 § Measurement: three runs, bench-lock, load < 8).
 
 ---
 
@@ -56,7 +56,7 @@ The doc also lists the Phase 1 mechanisms it retires (lines 34–42):
 - Spike B's hand-written delta expansions, which become test vectors.
 - "bind this stage to that fact relation", which becomes R11 selection sharing, admitted only under subtree closure.
 
-What is outside the engine (lines 44–47): "Rule shape. If a rule insists on recomputing a relation per clause over a clause-specific subset in a way no side condition admits, the engine computes it exactly and the cost is the rule's. That is a rule-authoring conversation (Jeremy), not an engine patch."
+What is outside the engine (lines 44–47): "Rule shape. If a rule insists on recomputing a relation per clause over a clause-specific subset in a way no side condition admits, the engine computes it exactly and the cost is the rule's. That is a rule-authoring conversation ([the rule owner]), not an engine patch."
 
 ## 2. Source: PLAN.md (E, same on P)
 
@@ -70,9 +70,9 @@ What is outside the engine (lines 44–47): "Rule shape. If a rule insists on re
   - Cause of the 28.6 GiB: "all 11,044 per-file jobs collected (9.85M rows with JSON maps) before any SQL runs".
   - Edit cost: 50.6 / 20.2 / 12.3 s.
   - The native matcher costs 0.4–1.4 ms per rule per file.
-  - Jeremy's `Facts::build` costs 27 ms per MB of source.
+  - The relational executor's `Facts::build` costs 27 ms per MB of source.
   - Store compaction: 204 → 93 s cold.
-  - "SQL set-composition engine (done, parked) | exact; ~3× native cold; never faster on Jeremy's rules; loss was SQLite per-statement and B-tree cost" (line 23).
+  - "SQL set-composition engine (done, parked) | exact; ~3× native cold; never faster on [the rule owner's] rules; loss was SQLite per-statement and B-tree cost" (line 23).
 - **Architecture summary** (lines 27–36), in six points:
   1. One logical algebra with SQLite semantics from two front ends. Speed comes from general rewrites and "a columnar physical algebra planned once per rule".
   2. Facts are relations with declared structure.
@@ -80,9 +80,9 @@ What is outside the engine (lines 44–47): "Rule shape. If a rule insists on re
   4. Memo by `(content hash, schema version, plan digest)`; incrementality is generated.
   5. One daemon.
   6. Exact or refuse; admission by gate.
-- **Decision log, verbatim** (line 82): "SQL set-composition engine retired as an executor: exact, but ~3× native on our rules and never faster on Jeremy's 60 (dl60). Native stays the production path until Phase 5."
+- **Decision log, verbatim** (line 82): "SQL set-composition engine retired as an executor: exact, but ~3× native on our rules and never faster on [the rule owner's] 60 (dl60). Native stays the production path until Phase 5."
 - **Phase 5** (line 72): "retire the SQLite global phase and the SQL executor".
-- **Roles** (lines 76–78). Jeremy "owns the relational executor and the rules … rule semantics are never changed by us."
+- **Roles** (lines 76–78). The rule owner "owns the relational executor and the rules … rule semantics are never changed by us."
 
 ## 3. Source: PHASE-1.md, spike-a.md, spike-b.md (Phase 1)
 
@@ -261,7 +261,7 @@ S2's deliverable includes "memo keys `(content hash, schema version, plan digest
 
 ## 6. Source: DECLARED-FACTS.md (the declared facts proposal)
 
-Status, verbatim (E:docs/facts/DECLARED-FACTS.md:3): "**proposal under evaluation, not scheduled.** Written 2026-10-23 as the decider's reading of Jeremy's suggestion; no implementation decision has been taken." It amends I2.
+Status, verbatim (E:docs/facts/DECLARED-FACTS.md:3): "**proposal under evaluation, not scheduled.** Written 2026-10-23 as the decider's reading of [the rule owner's] suggestion; no implementation decision has been taken." It amends I2.
 
 Origin: "34.9 s of byte-identical stage text recomputing the same relations per clause over clause-specific subsets; selection sharing admissible only under a subtree-closure side condition".
 
@@ -288,14 +288,14 @@ Origin: "34.9 s of byte-identical stage text recomputing the same relations per 
 
 **Expected effect** (A): "12 declared facts computed once per content … Expected: most of that 34.9 s, minus the semijoins (estimate; S9 measures)" (line 63). S9 was cancelled before its first commit ("the user asked for a judgement on the claim, not for work", P:SCRATCHPAD).
 
-**Open questions for Jeremy** (lines 67–74):
+**Open questions for the rule owner** (lines 67–74):
 
 1. Namespaces.
 2. Spans and text vs node ids only.
 3. Versioning.
 4. A `py.*` library pack.
 5. Budgets: "named refusal of that content's fact for all readers is the current rule".
-6. His compiler as the `define.match` front end.
+6. The rule owner's compiler as the `define.match` front end.
 
 **Width/interning for declared facts:** not specified beyond question 2 ("ids keep facts small and let consumers read text lazily from the source"). No storage format for declared facts was found; only the core v1 fact-file format exists.
 
@@ -457,7 +457,7 @@ E:docs/facts/reports/phase-2-s3-crossfile.md.
 
 The common setup is in P:docs/facts/DECISION-CROSSFILE.md:3:
 
-- 40 worktrees from `~/tempo-qe/workspaces47`;
+- 40 worktrees from a local set of QE workspaces;
 - S3's 1,111 events (a 300-event prefix where stated);
 - the 5 running repository plans;
 - target ≤ 250 MB at load, ≤ 300 MB after 1,000 edits, p95 ≤ 500 ms, exact.
@@ -716,7 +716,7 @@ Sources: E:docs/facts/reports/explore-y1-graph.md; code `spikes/facts-b/src/ygra
 - **Latency, dead code** (M): scoped 0.07 / 1.5 / 3.1 / 8.8 ms; unscoped 150–177 ms. Scoping uses inverse indexes over the old state, with proof by read set; fuzzing ran 800 steps.
 - **exported-families:** group G = (scope, owner, base_name); partition F = (scope, base_name, implementations). Scoped 0.005 / 0.04 / 0.09 ms (M).
 - **Exact** (M): 4,931 = 4,931; 0 = 0; 340 replay checks with 0 differences; 800 random deletion steps with 0 differences.
-- **Rule-shape list for Jeremy** (§ ~line 183):
+- **Rule-shape list for the rule owner** (§ ~line 183):
   1. "Declare reachability as reachability."
   2. Dispatch keyed by class.
   3. Definitions keyed by id. Without the "moved only" refinement, dirty p95 was 19,692 and scoped p95 34 ms.
@@ -763,19 +763,19 @@ E:spikes/facts-b/src/gen/hybrid.rs:
 - `d1_affected(reads, changed, block)` (line 430). Mutant 60 site at line 436 (`a.is_none() || b.is_none()`). Test `d1_affected_iff_a_read_block_differs` (line 997).
 - Lines 20–23, exactness: `--check batch|engine`. `engine` also runs the generator's from-scratch dataflow.
 
-## 15. Why SQLite was replaced, and why statistics-chosen plans were forbidden, in Moti's words
+## 15. Why SQLite was replaced, and why statistics-chosen plans were forbidden, in the facts docs' words
 
 **Replacing SQLite as executor:**
 
 1. PLAN.md:16 (measured basis): "267 s = 198 s SQLite stage builds (164,742) + 45 s input re-extraction (81,532 calls) + 13.5 s setup + 1.8 s producer".
-2. PLAN.md:23: "SQL set-composition engine (done, parked) | exact; ~3× native cold; never faster on Jeremy's rules; loss was SQLite per-statement and B-tree cost".
-3. PLAN.md:82: "SQL set-composition engine retired as an executor: exact, but ~3× native on our rules and never faster on Jeremy's 60 (dl60). Native stays the production path until Phase 5."
+2. PLAN.md:23: "SQL set-composition engine (done, parked) | exact; ~3× native cold; never faster on [the rule owner's] rules; loss was SQLite per-statement and B-tree cost".
+3. PLAN.md:82: "SQL set-composition engine retired as an executor: exact, but ~3× native on our rules and never faster on [the rule owner's] 60 (dl60). Native stays the production path until Phase 5."
 4. PHASE-1.md:59: "No SQLite, no per-statement planner. Keep each rule's cost measurable on its own."
 5. spike-a.md:242: "There is no SQLite and no per-statement planner at run time."
 6. P:SCRATCHPAD.md:82, the re-steer: "the goal is SQL's strong suit on native's raw speed through a strong architecture around invariants, not ad-hoc escape hatches and per-operator patching." This is attributed to the user.
 7. PLAN.md:72, Phase 5: "retire the SQLite global phase and the SQL executor".
 8. SQLite remains the semantic oracle (I1) and the differential target: "random differentials against the bundled SQLite" (INVARIANTS.md:23).
-9. jb-progress-2026-10-23 (P:SCRATCHPAD.md:131) on Jeremy's compiler: "SQLite in the hot path, nothing on cross-file". Conclusion: "his path reaches native parity per file at best and has no answer for cross-file or fleet memory".
+9. progress-2026-10-23 (P:SCRATCHPAD.md:131) on the rule owner's compiler: "SQLite in the hot path, nothing on cross-file". Conclusion: "[that] path reaches native parity per file at best and has no answer for cross-file or fleet memory".
 
 **Plans fixed by text, not chosen at run time:**
 
@@ -784,12 +784,12 @@ E:spikes/facts-b/src/gen/hybrid.rs:
 3. spike-a.md:234: "The plan is fixed by the text"; spike-a.md:281: "a fixed, text-determined rule, not a cost-based planner".
 4. phys.rs header (E:facts/src/phys.rs:1–3): "plans are compiled once per rule, printed stably, and a plan that scans a relation per outer row (an inner scan) is refused."
 5. LOOP.md:17–23: work counts must be deterministic and "do not move with load". Budgets are defined in algebraic units, "a fact about the plan on that content, reproducible on every engine".
-6. **The word "statistics" (or ANALYZE, cardinality-driven join ordering, `sqlite_stat`) does not appear** as a stated reason in any facts doc: not found. Moti's stated reasons are:
+6. **The word "statistics" (or ANALYZE, cardinality-driven join ordering, `sqlite_stat`) does not appear** as a stated reason in any facts doc: not found. The facts docs' stated reasons are:
    - determinism and identical plans across files (I5);
    - exactness without plan-dependent tie-breaking (I1);
    - per-rule cost measurable on its own (PHASE-1:59);
    - stable EXPLAIN for the gate (`explain-stable`).
-7. Related, from Tim's sql-set-composition design on `sql-dl60`, not Moti's facts docs: "`xBestIndex` cost hints are not relied on."
+7. Related, from the sql-set-composition design on `sql-dl60`, not the facts-engine docs: "`xBestIndex` cost hints are not relied on."
 
 ## 16. Contradictions and inconsistencies
 

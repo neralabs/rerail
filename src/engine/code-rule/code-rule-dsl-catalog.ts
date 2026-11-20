@@ -299,6 +299,8 @@ export interface CompiledCodeRuleDslEntry {
   readonly placement: CodeRulePlacement;
   /** Whether its finding in one file can depend on another file's text, as the engine routes its clauses (`readsOtherFiles`). */
   readonly crossFile: boolean;
+  /** The rule document's own title, which the person's line names the rule by (`steerTitle`); absent when it has none. */
+  readonly title?: string | undefined;
 }
 
 /** Immutable provenance and executables used to construct one native evaluation workspace. */
@@ -577,7 +579,7 @@ function builtRule(planned: PlannedRule, outcome: CompileOutcome, checkout: Chec
   const { policyId: id, rule, decisions, placement, sourceDigest } = planned;
   if (!outcome.ok) return { quarantined: refusedRule(id, rule, outcome.reason) };
   return {
-    entry: { id, executable: outcome.executable, placement, crossFile: outcome.crossFile },
+    entry: { id, executable: outcome.executable, placement, crossFile: outcome.crossFile, title: rule.document.rule.title },
     provenance: {
       ruleId: id, revision: rule.revision, payloadHash: rule.payloadHash, source: { ...rule.source },
       repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath, placement: decisions,

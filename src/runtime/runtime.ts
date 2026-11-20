@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { constants, type Stats } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
@@ -59,10 +59,10 @@ import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-sch
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
-import { steerOrigin } from "../engine/code-rule/steer-origin.js";
+import { steerOrigin, steerTitle } from "../engine/code-rule/steer-origin.js";
 import { checkoutPathBoundary } from "../engine/path-boundary.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
-import { isDefaultStorageRoot } from "./session-paths.js";
+import { isDefaultStorageRoot, sessionDirectory } from "./session-paths.js";
 import type {
   ContentItem,
   ContentSnapshot,
@@ -962,10 +962,6 @@ async function appendJsonLine(path: string, value: unknown, state: JsonlAppendSt
   state.truncateTo = null;
 }
 
-function sessionDirectory(root: string, sessionId: string): string {
-  return join(root, createHash("sha256").update(sessionId).digest("hex"));
-}
-
 /**
  * What the session store keeps of a result whose call named a secret-like path: that its output was left out, and how
  * large it was. People read the transcript whole, but a `cat .env` output is a secret Rerail recognizes, so it is never
@@ -993,16 +989,98 @@ const SESSION_RECORDS_GITIGNORE = "# Created by Rerail: session records stay out
  * repository's own ignores. Only the default root is Rerail's alone: a custom one (`RERAIL_STORAGE_ROOT`) may hold the
  * person's own files, so it is left as it is. In Rerail's own folder the file is rewritten whenever it holds anything
  * else, or is no regular file: a repository that commits one with `!*` would otherwise have the person's next
- * `git add -A` commit their prompts and pre-edit source.
+ * `git add -A` commit their prompts and pre-edit source. It is written `0644` whatever the umask: it holds only
+ * Rerail's `*`, and every account that records there, whose Git reads it, may then read it whoever wrote it. A rewrite
+ * that fails fails the session, as one onto a `.gitignore` folder or onto a file another program holds open does,
+ * except where the file is another account's to write. One this account may not read is rewritten when this account
+ * owns it or owns the records folder, whose owner may rename over any entry in it, sticky or not; it is kept, not
+ * replaced, only when another account owns both the file and the folder, as that account's Rerail wrote it. On
+ * Windows, whose lstat names no owner, one this account may not read is rewritten too, and kept only when this account
+ * may not add a file to the folder, as in a records folder another account repaired. There, with no file at the path
+ * either, the account that may list the folder, the one whose Git could add what is in it, writes it. Each time this
+ * account leaves the file to another one, stderr names it.
  */
 async function ignoreInGit(storageRoot: string): Promise<void> {
   const path = join(storageRoot, ".gitignore");
-  const stats = await lstat(path).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
-  if (stats?.isFile() === true && await readLedgerFile(path, storageRoot) === SESSION_RECORDS_GITIGNORE) return;
-  await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE);
+  if (keptAsFound(await foundGitignore(path, storageRoot))) return;
+  try {
+    await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE, 0o644);
+  } catch (error) {
+    if (!newFileRefused(error) || !leftToAnother(await foundGitignore(path, storageRoot))) throw error;
+    process.stderr.write(`rerail: left ${path} to the account that may add files to ${storageRoot}: this account may not, and that account's Rerail writes it\n`);
+  }
+}
+
+/** Whether a `.gitignore` found before any write is left as it is: Rerail's own, or another account's to write. */
+function keptAsFound(found: FoundGitignore): boolean {
+  return found.kind === "another account's" || (found.kind === "text" && found.text === SESSION_RECORDS_GITIGNORE);
+}
+
+/**
+ * Whether what is at a `.gitignore` this account may not add a file beside is another account's to write: nothing, a
+ * file another account keeps, or on Windows, where no owner is read, a file this account may not read.
+ */
+function leftToAnother({ kind }: FoundGitignore): boolean {
+  return kind === "missing" || kind === "another account's" || (kind === "unreadable" && process.platform === "win32");
+}
+
+/** Whether a file operation failed because this account may not do it there (EACCES, or EPERM as Windows reports it). */
+function accessRefused(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EACCES" || code === "EPERM";
+}
+
+/**
+ * Whether `error`, from `writeLedgerFile`, is the refusal to make its new file beside the one it replaces: this account
+ * may not add a file to the folder. That new file is the only one it opens; its rename fails with another call's error.
+ */
+function newFileRefused(error: unknown): boolean {
+  return accessRefused(error) && (error as NodeJS.ErrnoException).syscall === "open";
+}
+
+/**
+ * What is at a storage root's `.gitignore`: its text, nothing, something that is no regular file, a file this account
+ * may not read that another account keeps ({@link whoseUnreadable}), or one it may not read that this account may
+ * replace, not known. A file Windows refuses even to lstat, as one in a folder this account may not list, is one this
+ * account may not read.
+ */
+type FoundGitignore =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "missing" | "not a file" | "another account's" | "unreadable" };
+
+async function foundGitignore(path: string, storageRoot: string): Promise<FoundGitignore> {
+  let stats: Stats;
+  try {
+    stats = await lstat(path);
+  } catch (error) {
+    return lstatRefusal(error);
+  }
+  if (!stats.isFile()) return { kind: "not a file" };
+  let text: string | undefined;
+  try {
+    text = await readLedgerFile(path, storageRoot);
+  } catch (error) {
+    if (!accessRefused(error)) throw error;
+    return { kind: await whoseUnreadable(stats, storageRoot) };
+  }
+  return text === undefined ? { kind: "missing" } : { kind: "text", text };
+}
+
+/** What a `.gitignore` whose lstat failed with `error` is: nothing, or one this account may not read; else it throws. */
+function lstatRefusal(error: unknown): FoundGitignore {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
+  if (accessRefused(error)) return { kind: "unreadable" };
+  throw error;
+}
+
+/**
+ * Whose to write a `.gitignore` this account may not read is, given its lstat `stats`: another account's when another
+ * account owns both it and the records folder `storageRoot`; this account's to replace when it owns either, since a
+ * folder's owner may rename over any entry in it, and on Windows, whose lstat names no owner (its uid is always 0).
+ */
+async function whoseUnreadable(stats: Stats, storageRoot: string): Promise<"another account's" | "unreadable"> {
+  if (process.platform === "win32" || stats.uid === process.getuid?.()) return "unreadable";
+  return (await lstat(storageRoot)).uid === process.getuid?.() ? "unreadable" : "another account's";
 }
 
 /** Replays a session ledger into its registry and returns the turn the session had reached. */
@@ -2323,9 +2401,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
   async #openLedger(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
-    await makeLedgerFolder(directory);
-    keepFolderPrivate(directory);
+    // A root RERAIL_STORAGE_ROOT names elsewhere is the person's own and used as it is: no .gitignore is written there,
+    // and the folder below a `.rerail` on its path keeps its mode and ACL. In the default root the .gitignore is
+    // written before the folder's repair starts, so on Windows the new ACL Windows passes on reaches it too.
     if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
+    await makeLedgerFolder(directory, { repair: this.#storageRootIsDefault });
+    keepFolderPrivate(directory);
     const path = join(directory, "events.jsonl");
     const { values, appendState } = await readLines(path);
     const entries = validatedLedger(values);
@@ -2745,20 +2826,27 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await this.#append(this.#session(delivery.sessionId), { type: "delivery", delivery });
   }
 
-  async acceptSample(sample: AdapterSample): Promise<void> {
-    const state = this.#session(sample.sessionId);
+  /**
+   * `sample` as the session's content source keeps it: a person's plain message under its event's id, any other sample
+   * under one that also names its boundary and its place in the session.
+   */
+  #sampleItem(state: RuntimeSessionState, sample: AdapterSample): ContentItem {
     const plainUserMessage = sample.source === "user-input" && sample.boundary === "message";
     const id = plainUserMessage ? sample.eventId : `${sample.eventId}:${sample.boundary}:${state.sampleSequence++}`;
-    const owner = sampleOwner(sample.source);
-    const item: ContentItem = {
+    return {
       ref: { source: "host:event", id },
       text: sample.text,
       metadata: {
-        owner,
+        owner: sampleOwner(sample.source),
         session: sample.sessionId,
         fields: { eventId: sample.eventId, sampleSource: sample.source, boundary: sample.boundary },
       },
     };
+  }
+
+  async acceptSample(sample: AdapterSample): Promise<void> {
+    const state = this.#session(sample.sessionId);
+    const item = this.#sampleItem(state, sample);
     state.source.append(item);
     // A result stored without its output leaves its text out of the ledger as well; matching still reads it.
     await this.#append(state, { type: "sample", item: state.withheldResults.has(sample.eventId) ? { ...item, text: "" } : item });
@@ -2768,6 +2856,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const matches = registry.match(sample, { turn: state.turn });
 
     if (matches.length === 0) return;
+    await this.#deliverMatches(state, sample, registry, matches);
+  }
+
+  /** A delivery for each of `matches` on `sample`, recorded and kept for the sample's event. */
+  async #deliverMatches(state: RuntimeSessionState, sample: AdapterSample, registry: ConversationRuleRegistry, matches: readonly RuleMatch[]): Promise<void> {
     const deliveries = state.eventDeliveries.get(sample.eventId) ?? [];
     for (const match of matches) {
       registry.markDelivered([match.ruleId], state.turn);
@@ -2780,7 +2873,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.mode],
         content: steerBlock({ kind: "tool", tool: sampleTool(sample.source) }, findings, steerShell(state.descriptor.host)),
         ruleIds: [match.ruleId],
-        rules: steerRules(findings, steerOrigin),
+        rules: steerRules(findings, steerOrigin, ruleId => steerTitle(ruleId, undefined, match.title)),
       };
       await this.#append(state, { type: "delivery", delivery });
       deliveries.push(delivery);

@@ -195,7 +195,7 @@ pub fn run_split(
 /// compile starts on a thread of its own and this is false at once: the caller runs the batch on the interpreter's
 /// pipeline (compiled once for every program) meanwhile, never waiting on the compiler (`runtime::pipeline_ready`).
 pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
-    crate::runtime::pipeline_ready(&generate_forms(programs, width), "tempo_batch").is_some()
+    crate::runtime::pipeline_ready(&generate_forms(programs, width), "rerail_batch").is_some()
 }
 
 /// The bindings of a batch's slabs (`MAX_SLABS`): 0, then past the interpreter's 12–15.
@@ -213,6 +213,22 @@ pub fn run_batch(
     executor: Executor,
     spins: u32,
 ) -> Result<BatchRun, Error> {
+    check_supported(programs, files)?;
+    let forms = BatchForms::new(programs, executor);
+    // The files' bytes, resident in slabs (decision 0067): read in place, at most `MAX_SLABS`
+    // slabs a batch; past that the caller splits the batch.
+    let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
+    let sources = crate::slabs::admit_sources(&bytes)?;
+    let (slabs, slab_of) = crate::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
+    if files.is_empty() {
+        return Ok(BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 });
+    }
+    let table = FileTable::new(files, &forms, &sources, &slab_of, executor, width)?;
+    dispatch(&forms, &table, &slabs, width, executor, spins)
+}
+
+/// Refuses what the programs need that Metal lacks, and a machine without a Metal device.
+fn check_supported(programs: &[&BlockNative], files: &[BatchFile<'_>]) -> Result<(), Error> {
     // A fixed point (`rounds`) is the CPU's for now: each lane would run its rounds in its own
     // frame, within `block::MAX_ROUNDS`, to the same values.
     // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet.
@@ -223,153 +239,303 @@ pub fn run_batch(
         return Err(Error::UnsupportedBackend);
     }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let word = width.bytes() / 8;
-    let span = width.bytes() * GROUP;
-    // The form each executor runs: `class` by lookups only in generated MSL's `Lookup`.
-    let forms: Vec<BlockNative> = programs
-        .iter()
-        .map(|p| if executor == Executor::Generated(ClassStrategy::Lookup) { (*p).clone() } else { p.planes_form() })
-        .collect();
-    let carried: Vec<usize> = forms.iter().map(|n| n.insts.iter().filter(|i| i.carried()).count()).collect();
-    let records: Vec<usize> = match executor {
-        Executor::Interpreter => carried.clone(),
-        Executor::Generated(_) => forms.iter().map(record_words).collect(),
-    };
-    let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
-    // The files' bytes, resident in slabs (decision 0067): read in place, at most `MAX_SLABS`
-    // slabs a batch; past that the caller splits the batch.
-    let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
-    let sources = crate::slabs::admit_sources(&bytes)?;
-    let (slabs, slab_of) = crate::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
-    if files.is_empty() {
-        return Ok(BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 });
-    }
-    // The file table, and each base after the files before.
-    let (mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base, mut tot_base) = (0, 0, 0, 0, 0, 0, 0);
-    let counted: Vec<Vec<usize>> = forms.iter().map(rerail_compiler::native_cpu_block::counted).collect();
-    let mut rows = Vec::with_capacity(files.len());
-    let mut group_file: Vec<u32> = Vec::new();
-    for (i, file) in files.iter().enumerate() {
-        let n = forms.get(file.program).ok_or(Error::BackendFailure)?;
-        let len = file.bytes.len();
-        // Generated MSL's groups each start with `warm_lanes` lanes whose sinks write nothing.
-        let span = match executor {
-            Executor::Interpreter => span,
-            Executor::Generated(_) => width.bytes() * (GROUP - warm_lanes(n, width)),
+    Ok(())
+}
+
+/// `n` as a `u32`: past it the batch is over a budget, and the caller splits it.
+#[inline]
+fn fit(n: usize) -> Result<u32, Error> {
+    u32::try_from(n).map_err(|_| Error::BackendCapacity)
+}
+
+/// The programs in the form the executor runs, each one's carried instructions, and the words of
+/// look-back state it keeps a group.
+struct BatchForms {
+    forms: Vec<BlockNative>,
+    carried: Vec<usize>,
+    records: Vec<usize>,
+}
+
+impl BatchForms {
+    fn new(programs: &[&BlockNative], executor: Executor) -> Self {
+        // The form each executor runs: `class` by lookups only in generated MSL's `Lookup`.
+        let forms: Vec<BlockNative> = programs
+            .iter()
+            .map(|p| if executor == Executor::Generated(ClassStrategy::Lookup) { (*p).clone() } else { p.planes_form() })
+            .collect();
+        let carried: Vec<usize> = forms.iter().map(|n| n.insts.iter().filter(|i| i.carried()).count()).collect();
+        let records: Vec<usize> = match executor {
+            Executor::Interpreter => carried.clone(),
+            Executor::Generated(_) => forms.iter().map(record_words).collect(),
         };
-        let groups = (len + usize::from(n.delay)).div_ceil(span).max(1);
-        rows.push(FileRow {
-            src16: fit(sources[i].offset / 16)?,
-            len: fit(len)?,
-            program: fit(file.program)?,
-            group0: fit(group0)?,
-            groups: fit(groups)?,
-            out_base: fit(out_base)?,
-            state_base: fit(state_base)?,
-            halo_base: fit(halo_base)?,
-            ext_base: fit(ext_base)?,
-            pos_base: fit(pos_base)?,
-            slab: slab_of[i],
-            tot_base: fit(tot_base)?,
-            slot_base: 0,
-        });
-        group_file.extend(std::iter::repeat_n(fit(i)?, groups));
-        group0 += groups;
-        out_base += n.outputs.len() * groups * GROUP;
-        // The interpreter's look-back states, a word per carried instruction; generated MSL's
-        // exchange records (`record_words`).
-        state_base += records[file.program] * groups;
-        halo_base += carried[file.program] * groups * 3;
-        ext_base += counted[file.program].len() * groups;
-        pos_base += n.extracts.len() * len.max(1);
-        tot_base += counted[file.program].len();
+        BatchForms { forms, carried, records }
     }
-    let total = group0;
-    let table = crate::pool::upload(&rows)?;
-    // Generated MSL takes the groups round robin over the files (`ticket_order`): a (file, group)
-    // per ticket. The interpreter takes them file by file.
-    let group_file = match executor {
-        Executor::Interpreter => crate::pool::upload(&group_file)?,
-        Executor::Generated(_) => crate::pool::upload(&ticket_order(&rows.iter().map(|r| r.groups as usize).collect::<Vec<_>>()))?,
-    };
-    let out = crate::pool::zeroed::<u8>(out_base.max(1) * word)?;
-    let states = crate::pool::zeroed::<u32>(state_base.max(1))?;
-    let halos = crate::pool::zeroed::<u32>(halo_base.max(1))?;
-    let ext_states = crate::pool::zeroed::<u32>(ext_base.max(1))?;
-    let counts = crate::pool::zeroed::<u32>(tot_base.max(1))?;
-    let positions = crate::pool::zeroed::<u32>(pos_base.max(1))?;
-    let tickets = crate::pool::zeroed::<u32>(2)?;
-    let done = crate::pool::zeroed::<u32>(total)?;
-    let workers = workers(total);
-    let most = forms.iter().map(|n| n.insts.len()).max().unwrap_or(0);
-    let params = [fit(total)?, spins, fit(most)?, 0];
+}
+
+/// The file table, each group's file, each program's counted outputs (`native_cpu_block::counted`),
+/// and the batch's groups and bases past its last file.
+struct FileTable {
+    rows: Vec<FileRow>,
+    group_file: Vec<u32>,
+    counted: Vec<Vec<usize>>,
+    total: usize,
+    out_base: usize,
+    state_base: usize,
+    halo_base: usize,
+    ext_base: usize,
+    pos_base: usize,
+    tot_base: usize,
+}
+
+impl FileTable {
+    fn new(
+        files: &[BatchFile<'_>],
+        forms: &BatchForms,
+        sources: &[std::sync::Arc<crate::slabs::ResidentSource>],
+        slab_of: &[u32],
+        executor: Executor,
+        width: LaneWidth,
+    ) -> Result<Self, Error> {
+        let span = width.bytes() * GROUP;
+        // The file table, and each base after the files before.
+        let (mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base, mut tot_base) = (0, 0, 0, 0, 0, 0, 0);
+        let counted: Vec<Vec<usize>> = forms.forms.iter().map(rerail_compiler::native_cpu_block::counted).collect();
+        let mut rows = Vec::with_capacity(files.len());
+        let mut group_file: Vec<u32> = Vec::new();
+        for (i, file) in files.iter().enumerate() {
+            let n = forms.forms.get(file.program).ok_or(Error::BackendFailure)?;
+            let len = file.bytes.len();
+            // Generated MSL's groups each start with `warm_lanes` lanes whose sinks write nothing.
+            let span = match executor {
+                Executor::Interpreter => span,
+                Executor::Generated(_) => width.bytes() * (GROUP - warm_lanes(n, width)),
+            };
+            let groups = (len + usize::from(n.delay)).div_ceil(span).max(1);
+            let fields = [sources[i].offset / 16, len, file.program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, tot_base];
+            rows.push(FileRow::fitted(fields, slab_of[i])?);
+            group_file.extend(std::iter::repeat_n(fit(i)?, groups));
+            group0 += groups;
+            out_base += n.outputs.len() * groups * GROUP;
+            // The interpreter's look-back states, a word per carried instruction; generated MSL's
+            // exchange records (`record_words`).
+            state_base += forms.records[file.program] * groups;
+            halo_base += forms.carried[file.program] * groups * 3;
+            ext_base += counted[file.program].len() * groups;
+            pos_base += n.extracts.len() * len.max(1);
+            tot_base += counted[file.program].len();
+        }
+        Ok(FileTable { rows, group_file, counted, total: group0, out_base, state_base, halo_base, ext_base, pos_base, tot_base })
+    }
+}
+
+impl FileRow {
+    /// A row from its fields in order, all but `slab` and `slot_base` (0), each fit to a `u32`.
+    #[inline]
+    fn fitted(fields: [usize; 11], slab: u32) -> Result<Self, Error> {
+        let mut words = [0; 11];
+        for (word, &field) in words.iter_mut().zip(&fields) {
+            *word = fit(field)?;
+        }
+        let [src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, tot_base] = words;
+        Ok(FileRow { src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, slab, tot_base, slot_base: 0 })
+    }
+}
+
+/// The blocks bound at 1 to 10. The fields are declared in the reverse of the order they are
+/// leased in, so they drop (back to the pool) in the order `run_batch`'s locals did.
+struct BatchBlocks {
+    done: crate::pool::Block,
+    tickets: crate::pool::Block,
+    positions: crate::pool::Block,
+    counts: crate::pool::Block,
+    ext_states: crate::pool::Block,
+    halos: crate::pool::Block,
+    states: crate::pool::Block,
+    out: crate::pool::Block,
+    group_file: crate::pool::Block,
+    table: crate::pool::Block,
+}
+
+impl BatchBlocks {
+    fn new(file_table: &FileTable, executor: Executor, word: usize) -> Result<Self, Error> {
+        let table = crate::pool::upload(&file_table.rows)?;
+        // Generated MSL takes the groups round robin over the files (`ticket_order`): a (file, group)
+        // per ticket. The interpreter takes them file by file.
+        let group_file = match executor {
+            Executor::Interpreter => crate::pool::upload(&file_table.group_file),
+            Executor::Generated(_) => crate::pool::upload(&ticket_order(&file_table.rows.iter().map(|r| r.groups as usize).collect::<Vec<_>>())),
+        }?;
+        let (out, states, halos, ext_states) = Self::lanes_and_states(file_table, word)?;
+        let (counts, positions, tickets, done) = Self::sinks_and_tickets(file_table)?;
+        Ok(BatchBlocks { done, tickets, positions, counts, ext_states, halos, states, out, group_file, table })
+    }
+
+    /// The outputs' lane words, then the look-backs' states, zeroed.
+    fn lanes_and_states(file_table: &FileTable, word: usize) -> Result<(crate::pool::Block, crate::pool::Block, crate::pool::Block, crate::pool::Block), Error> {
+        let out = crate::pool::zeroed::<u8>(file_table.out_base.max(1) * word)?;
+        let states = crate::pool::zeroed::<u32>(file_table.state_base.max(1))?;
+        let halos = crate::pool::zeroed::<u32>(file_table.halo_base.max(1))?;
+        let ext_states = crate::pool::zeroed::<u32>(file_table.ext_base.max(1))?;
+        Ok((out, states, halos, ext_states))
+    }
+
+    /// The sinks' counts and positions, then the launch's tickets and done flags, zeroed.
+    fn sinks_and_tickets(file_table: &FileTable) -> Result<(crate::pool::Block, crate::pool::Block, crate::pool::Block, crate::pool::Block), Error> {
+        let counts = crate::pool::zeroed::<u32>(file_table.tot_base.max(1))?;
+        let positions = crate::pool::zeroed::<u32>(file_table.pos_base.max(1))?;
+        let tickets = crate::pool::zeroed::<u32>(2)?;
+        let done = crate::pool::zeroed::<u32>(file_table.total)?;
+        Ok((counts, positions, tickets, done))
+    }
+}
+
+/// The batch on the device: its blocks, pipeline and launches, and each file's results read back.
+fn dispatch(
+    forms: &BatchForms,
+    table: &FileTable,
+    slabs: &[std::sync::Arc<crate::slabs::Slab>],
+    width: LaneWidth,
+    executor: Executor,
+    spins: u32,
+) -> Result<BatchRun, Error> {
+    let word = width.bytes() / 8;
+    let blocks = BatchBlocks::new(table, executor, word)?;
+    let workers = workers(table.total);
+    let most = forms.forms.iter().map(|n| n.insts.len()).max().unwrap_or(0);
+    let params = [fit(table.total)?, spins, fit(most)?, 0];
+    let (interpreter, pipeline) = executor_pipeline(executor, &forms.forms, &table.counted, workers, most, width)?;
+    let buffers = bindings(&blocks, slabs, interpreter.as_ref());
+    let pass = Pass { pipeline: &pipeline, buffers, args: vec![(11, bytes_of(&params))], groups: workers, threads: GROUP };
+    let (seconds, launches) = launch_until_done(&pass, &blocks.tickets, table.total)?;
+    Ok(BatchRun { files: read_back(table, &forms.forms, &blocks, word), launches, seconds })
+}
+
+/// The executor's pipeline, and the interpreter's blocks (bound at 12 to 15) when it runs.
+fn executor_pipeline(
+    executor: Executor,
+    forms: &[BlockNative],
+    counted: &[Vec<usize>],
+    workers: usize,
+    most: usize,
+    width: LaneWidth,
+) -> Result<(Option<[crate::pool::Block; 4]>, metal::ComputePipelineState), Error> {
+    match executor {
+        Executor::Interpreter => {
+            let interpreter = interpreter_blocks(forms, counted, workers, most, width.bytes() / 8)?;
+            Ok((Some(interpreter), pipeline_named(&INTERPRETER, &format!("block_batch_{}", width.bytes()))?))
+        }
+        Executor::Generated(_) => {
+            let refs: Vec<&BlockNative> = forms.iter().collect();
+            let source = generate_forms(&refs, width);
+            Ok((None, pipeline_named(&source, "rerail_batch").inspect_err(|e| eprintln!("block program: pipeline rerail_batch: {e:?}"))?))
+        }
+    }
+}
+
+/// The interpreter's program table, steps and outputs, and its workers' values.
+fn interpreter_blocks(forms: &[BlockNative], counted: &[Vec<usize>], workers: usize, most: usize, word: usize) -> Result<[crate::pool::Block; 4], Error> {
+    let InterpreterTables { table, steps, outs } = InterpreterTables::new(forms, counted)?;
+    Ok([
+        crate::pool::upload(&table)?,
+        crate::pool::upload(&steps)?,
+        crate::pool::upload(&outs)?,
+        // Each worker's values: a slot of 32 lane words per step (decision 0034).
+        crate::pool::zeroed::<u8>((workers * most * GROUP * word).max(1))?,
+    ])
+}
+
+/// The interpreter's program table, and the steps and outputs its rows point into.
+struct InterpreterTables {
+    table: Vec<ProgramRow>,
+    steps: Vec<[u32; 4]>,
+    outs: Vec<u32>,
+}
+
+impl InterpreterTables {
+    fn new(forms: &[BlockNative], counted: &[Vec<usize>]) -> Result<Self, Error> {
+        let (mut steps, mut table, mut outs) = (Vec::new(), Vec::new(), Vec::new());
+        for (pi, n) in forms.iter().enumerate() {
+            table.push(program_row(n, &counted[pi], &mut steps, &mut outs)?);
+        }
+        steps.push([0; 4]);
+        outs.push(0);
+        Ok(InterpreterTables { table, steps, outs })
+    }
+}
+
+/// Program `n`'s row, its steps appended to `steps` and its outputs to `outs`.
+#[inline]
+fn program_row(n: &BlockNative, counted: &[usize], steps: &mut Vec<[u32; 4]>, outs: &mut Vec<u32>) -> Result<ProgramRow, Error> {
+    let step0 = push_steps(n, steps)?;
+    let (out0, ext0) = push_outputs(n, counted, outs)?;
+    Ok(ProgramRow {
+        step0,
+        steps: fit(n.insts.len())?,
+        out0,
+        outs: fit(n.outputs.len())?,
+        ext0,
+        exts: fit(rerail_compiler::native_cpu_block::counted(n).len())?,
+        pad: [0; 2],
+    })
+}
+
+/// Appends `n`'s instructions to `steps`; where they start.
+#[inline]
+fn push_steps(n: &BlockNative, steps: &mut Vec<[u32; 4]>) -> Result<u32, Error> {
+    let mut carry = 0u32;
+    let step0 = fit(steps.len())?;
+    for inst in &n.insts {
+        steps.push(encoded(inst, carry));
+        carry += u32::from(inst.carried());
+    }
+    Ok(step0)
+}
+
+/// Appends `n`'s outputs, then its counted outputs, to `outs`; where each starts.
+#[inline]
+fn push_outputs(n: &BlockNative, counted: &[usize], outs: &mut Vec<u32>) -> Result<(u32, u32), Error> {
+    let out0 = fit(outs.len())?;
+    // Each output: its value, and its delay in the top byte.
+    outs.extend(n.outputs.iter().enumerate().map(|(k, &v)| u32::from(v) | u32::from(n.output_delays[k]) << 24));
+    let ext0 = fit(outs.len())?;
+    // Each counted output: its index, its extract (0xff: a total only) and its delay.
+    for (c, &k) in counted.iter().enumerate() {
+        let e = if c < n.extracts.len() { c as u32 } else { 0xff };
+        outs.push(fit(k)? | e << 16 | u32::from(n.output_delays[k]) << 24);
+    }
+    Ok((out0, ext0))
+}
+
+/// The kernels' buffers: the blocks at 1 to 10, the slabs, and the interpreter's blocks at 12 to 15.
+fn bindings<'a>(
+    blocks: &'a BatchBlocks,
+    slabs: &'a [std::sync::Arc<crate::slabs::Slab>],
+    interpreter: Option<&'a [crate::pool::Block; 4]>,
+) -> Vec<(u64, &'a metal::BufferRef, u64)> {
     let mut buffers: Vec<(u64, &metal::BufferRef, u64)> = vec![
-        (1, out.buffer(), 0),
-        (2, table.buffer(), 0),
-        (3, group_file.buffer(), 0),
-        (4, states.buffer(), 0),
-        (5, halos.buffer(), 0),
-        (6, ext_states.buffer(), 0),
-        (7, positions.buffer(), 0),
-        (8, counts.buffer(), 0),
-        (9, tickets.buffer(), 0),
-        (10, done.buffer(), 0),
+        (1, blocks.out.buffer(), 0),
+        (2, blocks.table.buffer(), 0),
+        (3, blocks.group_file.buffer(), 0),
+        (4, blocks.states.buffer(), 0),
+        (5, blocks.halos.buffer(), 0),
+        (6, blocks.ext_states.buffer(), 0),
+        (7, blocks.positions.buffer(), 0),
+        (8, blocks.counts.buffer(), 0),
+        (9, blocks.tickets.buffer(), 0),
+        (10, blocks.done.buffer(), 0),
     ];
     // The slabs, each bound as it is (no copy); unused bindings repeat the first.
     for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
         buffers.push((at, slabs.get(k).unwrap_or(&slabs[0]).buffer(), 0));
     }
-    let interpreter;
-    let pipeline = match executor {
-        Executor::Interpreter => {
-            let (mut steps, mut table, mut outs) = (Vec::new(), Vec::new(), Vec::new());
-            for (pi, n) in forms.iter().enumerate() {
-                let mut carry = 0u32;
-                let step0 = fit(steps.len())?;
-                for inst in &n.insts {
-                    steps.push(encoded(inst, carry));
-                    carry += u32::from(inst.carried());
-                }
-                let out0 = fit(outs.len())?;
-                // Each output: its value, and its delay in the top byte.
-                outs.extend(n.outputs.iter().enumerate().map(|(k, &v)| u32::from(v) | u32::from(n.output_delays[k]) << 24));
-                let ext0 = fit(outs.len())?;
-                // Each counted output: its index, its extract (0xff: a total only) and its delay.
-                for (c, &k) in counted[pi].iter().enumerate() {
-                    let e = if c < n.extracts.len() { c as u32 } else { 0xff };
-                    outs.push(fit(k)? | e << 16 | u32::from(n.output_delays[k]) << 24);
-                }
-                table.push(ProgramRow {
-                    step0,
-                    steps: fit(n.insts.len())?,
-                    out0,
-                    outs: fit(n.outputs.len())?,
-                    ext0,
-                    exts: fit(rerail_compiler::native_cpu_block::counted(n).len())?,
-                    pad: [0; 2],
-                });
-            }
-            steps.push([0; 4]);
-            outs.push(0);
-            interpreter = [
-                crate::pool::upload(&table)?,
-                crate::pool::upload(&steps)?,
-                crate::pool::upload(&outs)?,
-                // Each worker's values: a slot of 32 lane words per step (decision 0034).
-                crate::pool::zeroed::<u8>((workers * most * GROUP * word).max(1))?,
-            ];
-            for (k, block) in interpreter.iter().enumerate() {
-                buffers.push((12 + k as u64, block.buffer(), 0));
-            }
-            pipeline_named(&INTERPRETER, &format!("block_batch_{}", width.bytes()))?
-        }
-        Executor::Generated(_) => {
-            let refs: Vec<&BlockNative> = forms.iter().collect();
-            let source = generate_forms(&refs, width);
-            pipeline_named(&source, "tempo_batch").inspect_err(|e| eprintln!("block program: pipeline tempo_batch: {e:?}"))?
-        }
-    };
-    let pass = Pass { pipeline: &pipeline, buffers, args: vec![(11, bytes_of(&params))], groups: workers, threads: GROUP };
+    for (k, block) in interpreter.into_iter().flatten().enumerate() {
+        buffers.push((12 + k as u64, block.buffer(), 0));
+    }
+    buffers
+}
+
+/// Launches `pass` until no group is left unfinished; the launches' GPU seconds, and their number.
+fn launch_until_done(pass: &Pass<'_>, tickets: &crate::pool::Block, total: usize) -> Result<(f64, usize), Error> {
     // Each launch finishes at least the first unfinished group, whose predecessors are all done.
     let (mut seconds, mut launches) = (0.0, 0);
     loop {
@@ -381,17 +547,22 @@ pub fn run_batch(
             // SAFETY: two words, written between launches, when no kernel runs.
             unsafe { std::ptr::write_bytes(tickets.host().cast::<u32>(), 0, 2) };
         }
-        seconds += encode_passes(std::slice::from_ref(&pass))?;
+        seconds += encode_passes(std::slice::from_ref(pass))?;
         launches += 1;
         if tickets.read::<u32>(2)[1] == 0 {
             break;
         }
     }
-    let lanes_bytes = out.read::<u8>(out_base * word);
-    let counts = counts.read::<u32>(tot_base);
-    let positions = positions.read::<u32>(pos_base);
-    let mut results = Vec::with_capacity(files.len());
-    for row in &rows {
+    Ok((seconds, launches))
+}
+
+/// Each file's outputs, extract positions and totals, read back from `blocks`.
+fn read_back(table: &FileTable, forms: &[BlockNative], blocks: &BatchBlocks, word: usize) -> Vec<BlockRun> {
+    let lanes_bytes = blocks.out.read::<u8>(table.out_base * word);
+    let counts = blocks.counts.read::<u32>(table.tot_base);
+    let positions = blocks.positions.read::<u32>(table.pos_base);
+    let mut results = Vec::with_capacity(table.rows.len());
+    for row in &table.rows {
         let n = &forms[row.program as usize];
         let (len, groups) = (row.len as usize, row.groups as usize);
         let lanes = groups * GROUP;
@@ -416,7 +587,7 @@ pub fn run_batch(
         // This executor has no record pass: a program with records runs on the serial one.
         results.push(BlockRun { outputs, positions, totals, codes: Vec::new() });
     }
-    Ok(BatchRun { files: results, launches, seconds })
+    results
 }
 
 /// The interpreter: every output's words over `bytes`, as 64-bit words of the stream.
@@ -564,7 +735,7 @@ pub fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStra
     generate_forms(&[&form], width)
 }
 
-/// A group of programs (each already in the form it runs) as one kernel, `tempo_batch`: a function
+/// A group of programs (each already in the form it runs) as one kernel, `rerail_batch`: a function
 /// per program, `program_P`, that computes each instruction once, in order, with a look-back for
 /// each carried one, and writes the file's outputs and extracts; and persistent workers that take
 /// the batch's groups in order and call their file's program (decision 0066).
@@ -597,7 +768,7 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
     out.push_str(&format!(
         "// Persistent workers (decision 0027): each takes group numbers in launch order and runs its\n\
          // file's program over the group. `p`: the batch's groups, the polls after the first.\n\
-         kernel void tempo_batch(\n\
+         kernel void rerail_batch(\n\
          \x20   device const uint4* s0 [[buffer(0)]], device {m}* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
          \x20   device const uint2* group_of [[buffer(3)]], device atomic_uint* states [[buffer(4)]],\n\
          \x20   device atomic_uint* halos [[buffer(5)]], device atomic_uint* ext_states [[buffer(6)]],\n\
@@ -873,7 +1044,7 @@ pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, E
     let plan = Plan::new(&form).at(&form, width);
     let exchanges: Vec<String> = plan.exchanges().iter().map(|(h, s)| format!("{}h+{}s", h.len(), s.len())).collect();
     let source = generate_forms(&[&form], width);
-    let pipeline = pipeline_named(&source, "tempo_batch")?;
+    let pipeline = pipeline_named(&source, "rerail_batch")?;
     Ok(format!(
         "{} instructions; {} local prevs ({} warm-up lanes a group), {} halos, {} scans; exchanges [{}] + counts {}, totals {}; record {} words a group; MSL {} lines; pipeline: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
         form.insts.len(),

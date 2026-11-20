@@ -41,7 +41,7 @@ rows.
 - **Recursion:** the native engine's recursion is far better than SQLite's recursive CTE (03 §7:
   4.5 s against 4 ms over 1.2M nodes). It is still 4.5× the tape.
 - **Prior work agrees:**
-  - The AST-index spike's design index (§7 and the tape's shape) has preorder plus subtree size,
+  - The SQL index prototype's design index (§7 and the tape's shape) has preorder plus subtree size,
     a nested interval: a descendant test is an O(1) range check on the tape, not a join.
   - The lessons ledger's row 22 says ordered sibling semantics need an NFA, not independent
     `cpos <` joins.

@@ -5,7 +5,7 @@ This report is read-only. Its sources:
 - **Rerail tape history.** `native/src/code_rule_dsl/tape.rs` at each version commit. Copies are in `scratchpad/tape/tape-v{3,4,5,6a,6b,7}.rs`.
 - **Rerail tape modules.** `tape/wire.rs` and `tape/index.rs`, and DLRE's SQL anchor store (`matcher/anchors/sql/`).
 - **Executor and Tempo tapes.** N1562 `packed/metal_batch_abi.rs`, and Tempo `scale-test-the-re-railer/tempo/native/src/policy_dsl/tape.rs`.
-- **ast-index-spike** at `9449260`: `DESIGN.md` (D), `DESIGN_HISTORY.md` (DH), `README.md` (R), `results/storage_report.md` (SR), and the two indexes in `docs/rule-engine-direction/prior-work/`.
+- **SQL index prototype** at `9449260`: `DESIGN.md` (D), `DESIGN_HISTORY.md` (DH), `README.md` (R), `results/storage_report.md` (SR), and the two indexes in `docs/rule-engine-direction/prior-work/`.
 
 ## 0. Headline
 
@@ -23,7 +23,7 @@ This report is read-only. Its sources:
      - flags live in sorted side lists;
      - ERROR is a code 0 plus a list lookup;
      - contextual kind aliases are a per-file string table plus an override list.
-2. **Version numbers collide.** Tempo's `TMPTAPE4` (Landing lineage) and Rerail's `TMPTAPE4` share a magic but have different tables. Tempo's has `supertypes`; Rerail's has `syntax_errors`. Tempo's Metal executor is still on Tempo's v4.
+2. **Version numbers collide.** Tempo's `TMPTAPE4` (predecessor lineage) and Rerail's `TMPTAPE4` share a magic but have different tables. Tempo's has `supertypes`; Rerail's has `syntax_errors`. Tempo's Metal executor is still on Tempo's v4.
 3. **Regularity is lost at exactly the fields a SQL, GPU or JIT consumer needs per node:** span start/end, the error kind, the extra/missing flags, aliases, and parent and size in large files.
    - The consequence is visible in DLRE. Its SQL path rebuilds row-per-node caches (`decoded_properties`, `decoded_spans`, `decoded_children`), which is the spike's rejected sidecar shape (D S089).
    - N1562 expands every node to a 44-byte `MetalNode` before any GPU or JIT work.
@@ -42,7 +42,7 @@ This report is read-only. Its sources:
 
 Legend: **IRR** marks an irregularity, meaning node *i* cannot be decoded with fixed-stride arithmetic alone.
 
-| | ast-index-spike rec6 v2 (D S047) | Tempo/Landing "v4" | Rerail v3 (`042d82eb`, 2026-10-08, port from Landing) | Rerail v4 (`aac1ff23`, 10-13, Forte Blade) | Rerail v5 (`2a303bfa`, 10-15, multi-region embedding) | Rerail v6 (`08053152`, 10-16, documents first pass) | Rerail v7 (`4e57c59d`/`1fbb06c7`, 10-16/19, "documents as their own tapes") |
+| | SQL index prototype rec6 v2 (D S047) | Tempo "v4" | Rerail v3 (`042d82eb`, 2026-10-08, port from the predecessor repository) | Rerail v4 (`aac1ff23`, 10-13, Forte Blade) | Rerail v5 (`2a303bfa`, 10-15, multi-region embedding) | Rerail v6 (`08053152`, 10-16, documents first pass) | Rerail v7 (`4e57c59d`/`1fbb06c7`, 10-16/19, "documents as their own tapes") |
 |---|---|---|---|---|---|---|---|
 | Header | none; per-file columns in `t_file` | magic, lang, version, len, digest, table lengths | magic `TMPTAPE3`, lang, 3 reserved, version, source len, SHA-256, 11 u64 lengths | `TMPTAPE4`; 12 lengths (adds syntax_errors) | `TMPTAPE5`; adds program count | `TMPTAPE6`; `HEADER_BYTES = 56+12·8` | `TMPTAPE7`; `HEADER_BYTES = 56+11·8` |
 | Record | 6 B `[kf:2][par:2][size:2]`, `kf = kind10 \| field6<<10` | same | same | same | same | same | same |
@@ -111,7 +111,7 @@ Legend: **IRR** marks an irregularity, meaning node *i* cannot be decoded with f
 - Zero-width positions are owned half-open.
 - Embedders run on the primary only; nesting is representable but unused.
 
-**ast-index-spike** (D S070 L4148-4190, S071 L4190-4240; DH L1754-1837):
+**SQL index prototype** (D S070 L4148-4190, S071 L4190-4240; DH L1754-1837):
 
 - **Model.** A multi-language file is "several single-language files joined together".
   - Each embedded region is parsed standalone and stored as its own tape row (its own `fid`).
@@ -148,7 +148,7 @@ Legend: **IRR** marks an irregularity, meaning node *i* cannot be decoded with f
   - Node ids become batch-global by adding `node_base`; nothing inside a column changes.
   - Cross-document relations (`host`/`embedded` clauses) use the document table and the map, never parent/size arithmetic across documents.
 
-## 4. ast-index-spike tape-format experiments
+## 4. SQL index prototype tape-format experiments
 
 Each row gives the question, the variant, the numbers, the verdict and the citation, then what it means for Rerail and for v8.
 

@@ -157,23 +157,6 @@ B102(c) :- kind(c, &quot;call&quot;), field(c, &quot;function&quot;, f),
       <p>Example: function-level-imports calls an import "circular-avoidance" when the module <em>name</em> looks internal. The .rerail version proves the cycle on the import graph.</p>
     </div>
     <div class="code">
-<div class="cap">Earlier attempt: YAML with embedded SQL (abridged)</div><div data-src>
-- when:
-    expr: &quot;%level &gt; 0 OR %module = &#x27;&#x27;
-      OR %module IN (&#x27;api&#x27;, &#x27;impl&#x27;, &#x27;data_layer&#x27;, &#x27;_internal&#x27;)
-      OR %module LIKE &#x27;api.%&#x27; OR %module LIKE &#x27;impl.%&#x27; OR …
-      OR (SUBSTR(%module, 1, 1) = &#x27;l&#x27; AND SUBSTR(%module, 2, 1) &gt;= &#x27;0&#x27;
-          AND SUBSTR(%module, 2, 1) &lt;= &#x27;9&#x27; AND … ))&quot;
-  value: &quot;&#x27;circular-avoidance&#x27;&quot;
-</div>
-<div class="cap">Python linter: scripts/lint_function_level_imports.py</div><div data-src>
-if module.startswith(internal_prefixes) or module in (&quot;api&quot;, &quot;impl&quot;, &quot;data_layer&quot;, &quot;_internal&quot;):
-    return &quot;circular-avoidance&quot;
-if module == &quot;&quot;:  # relative import
-    return &quot;circular-avoidance&quot;
-if _LAYERED_MODULE_RE.match(first_segment):     # l1000_schema, l9600_graphs, …
-    return &quot;circular-avoidance&quot;
-</div>
 <div class="cap">.rerail: function-level-imports.b2.rerail</div><div data-rr>
 // Import i, in module a, loads module b, and b already leads back to a through imports
 //   that run

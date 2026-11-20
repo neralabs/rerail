@@ -1,8 +1,8 @@
 # T6 notes: Tempo transducer IR, CPU/JIT/Metal execution, batch model, SQL-driven execution
 
 Research track T6. Read-only extraction from Tempo docs at
-`/Users/jeremy/orca/workspaces/scale-test-the-re-railer/tempo/docs/` (abbreviated `TD/` below)
-and PIAT research at `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/docs/rule-engine-direction/` (abbreviated `PIAT/`).
+`scale-test-the-re-railer:tempo/docs/` (abbreviated `TD/` below)
+and PIAT research at `Pulling-it-all-together:docs/rule-engine-direction/` (abbreviated `PIAT/`).
 Citations are `file:line`. Number marks: **M** = measured (the doc reports a run), **D** = design target / limit / estimate,
 **A** = asserted or claimed without a run shown in that doc. "not found" means I searched the named sources and the
 point is absent.
@@ -736,7 +736,7 @@ Lessons: allocation sizes include page alignment, "do not establish an exact sta
 - Digest includes format version, grammar identity, original pattern digest, words, strings, predicate dialects, capture predicates, labels, longs, repeat-control words, directives (:329-341).
 - Limits: max instructions, paths, steps per path, captures per output, outputs per file; limit failure = incomplete result, never negative (:349-359).
 - Checkpoint: all 331 historical patterns parse, 330 lower; capture-local host predicates `#contains?`, `#not-kind-eq?`, `#not-same-line?`, parent/ancestor lowered; provider-specific missing-capture behaviors preserved (Helix kind exclusion vacuously true; Helix line comparison false; Neovim text/relation true before `not-`) (:363-386).
-- **Catalog-level predicates**: "`#is-not? local` depends on local scopes, definitions, and references produced by other patterns. It cannot be evaluated exactly inside an independent top-level `Program`. It must use immutable catalog-level relations and normal SQL rule composition." Until host semantics are implemented, Tempo ignores `#is?`/`#is-not?` after shape validation, following ast-index-spike's structural oracle (:388-395).
+- **Catalog-level predicates**: "`#is-not? local` depends on local scopes, definitions, and references produced by other patterns. It cannot be evaluated exactly inside an independent top-level `Program`. It must use immutable catalog-level relations and normal SQL rule composition." Until host semantics are implemented, Tempo ignores `#is?`/`#is-not?` after shape validation, following the SQL index prototype's structural oracle (:388-395).
 - Rules: "Do not change a native expected result to fit Tempo output. Do not add query-specific execution code. Do not use sharding to hide production result-retention costs." (:418-420)
 
 ---
