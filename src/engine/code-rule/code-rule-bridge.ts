@@ -813,6 +813,12 @@ function takenErrors(worktree: string, errors: readonly ScanError[], takes: (pat
   return errors.filter(error => takes(error.path)).map(error => ({ ...error, path: inWorktree(worktree, error.path) }));
 }
 
+/** `walk`, answering for no call in a worktree that holds one of `left`, the sources it left to the next walk. */
+function answeringAround(walk: WalkStart, left: ReadonlySet<string>): WalkStart {
+  const holding = new Set([...left].map(path => rootHolding(walk.worktrees, path)));
+  return holding.size === 0 ? walk : { ...walk, readFrom: new Map([...walk.readFrom].filter(([worktree]) => !holding.has(worktree))) };
+}
+
 /**
  * Puts into `taken` the heads and unmerged entries a walk read of the worktree at `root` and of the checkouts inside it,
  * and the unmerged entries of the checkouts it passed (`SourceScan.unmerged`), by physical root.
@@ -3004,13 +3010,19 @@ export class CodeRuleBridge {
       const written = { stamp: change.after?.modifiedAt, deleted: change.after === undefined, since, until: findings.readFrom };
       if (await this.#callRanAsWritten(discovery, asked, path, written)) claimed.add(change.path);
     }
-    // This read of the session's checkout answers for its calls outside the session folder. It comes only while another
-    // session watches the checkout and a read of it finds a change: else such a call waits for the oldest calls to go
-    // (`MAX_FINISHED_CALLS`), which costs only its memory, and comes only of a session opened below its checkout's top.
-    if (!watched && findings.failedRoots.size === 0 && !findings.gaveUp) {
-      discovery.toolCalls.answeredIn(REST_OF_CHECKOUT, { at: findings.readFrom }, this.#callPlaces(discovery));
-    }
+    if (!watched) this.#restOfCheckoutRead(discovery, findings);
     return claimed;
+  }
+
+  /**
+   * A read of the session's checkout, `findings`, answers for its calls outside the session folder, unless it left a
+   * subtree unread or gave up on a path. It comes only while another session watches the checkout and a read of it finds
+   * a change: else such a call waits for the oldest calls to go (`MAX_FINISHED_CALLS`), which costs only its memory, and
+   * comes only of a session opened below its checkout's top.
+   */
+  #restOfCheckoutRead(discovery: SourceDiscovery, findings: WorktreeFindings): void {
+    if (findings.failedRoots.size > 0 || findings.gaveUp) return;
+    discovery.toolCalls.answeredIn(REST_OF_CHECKOUT, { at: findings.readFrom }, this.#callPlaces(discovery));
   }
 
   /**
@@ -3316,8 +3328,7 @@ export class CodeRuleBridge {
       left.add(path);
     }
     for (const [path, before] of take.views) this.#keepToolView(path, before);
-    const holding = new Set([...left].map(path => rootHolding(take.walk.worktrees, path)));
-    return holding.size === 0 ? take.walk : { ...take.walk, readFrom: new Map([...take.walk.readFrom].filter(([worktree]) => !holding.has(worktree))) };
+    return answeringAround(take.walk, left);
   }
 
   /**
