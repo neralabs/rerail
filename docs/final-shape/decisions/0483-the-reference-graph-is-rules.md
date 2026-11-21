@@ -62,7 +62,7 @@ It is wrong, for three reasons:
 
 `all`, native, cold (the cost store, the image store and the tape cache fresh for each run), `--profile profiling`,
 on this machine (Mac17,6, an M5), at load 6–15. "Before" is W's Rust summary and linker (the commit before
-de541884e); "after" is `python/references.rr` on the run's path. The program is `internal_dead_code` in both runs,
+de541884e); "after" is `python/references.rerail` on the run's path. The program is `internal_dead_code` in both runs,
 with the library included after. Every output relation's row count is equal (one new relation, `rr_embed_req`, holds the
 library's 4,323 requests to parse string annotations and is no finding).
 
@@ -92,7 +92,7 @@ What each step removed:
   functions.
 
 **Where it stands: after costs about 2.7 times before's CPU (105 s against 38–40 s).** The rest is no single
-explosion. It is the volume of the scope rules `python/names.rr` derives for every name in the corpus (`walk`,
+explosion. It is the volume of the scope rules `python/names.rerail` derives for every name in the corpus (`walk`,
 `wstart`, `nameref`, `bind_only`, `rf_bind`, `rf_in`: 1–2 s each, 7–19 rows a row kept), at the engine's 70–100 ns a
 join row. W's Rust walked each file once. Open:
 - the cross-file `reach_edges` rule of the program (6 s): the planner orders `structural_protocol` last on equal
@@ -102,4 +102,4 @@ join row. W's Rust walked each file once. Open:
 
 **Metal (R7).** At `--metal-mb 2048` the rows equal the before run's (plus `rr_embed_req`): after, 76.3 s of CPU,
 26.3 s of wall and 1,123 G instructions; before, 37.0 s, 31.6 s and 478 G (load about 5). At the default 512 MB the
-run fails: the derived relations' row blocks hold the Metal budget, and the ast matcher wave is refused (Q285).
+run fails: the derived relations' row blocks hold the Metal budget, and the ast matcher wave is refused (Q386).

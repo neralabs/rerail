@@ -19,7 +19,7 @@ later(c, f, r) :- x(c, f, r), x(c, f, s), @strlen(s) < @strlen(r).
 later(c, f, r) :- x(c, f, r), x(c, f, s), @strlen(s) = @strlen(r), s < r.
 ";
 
-/// references.rr's shortlex shape (`rf_method_first`), pytest-collect's max with a literal on the keys
+/// references.rerail's shortlex shape (`rf_method_first`), pytest-collect's max with a literal on the keys
 /// (`pyc_own`), and a min written the other way round are each the first of their group.
 #[test]
 fn a_rows_no_other_row_precedes_is_recognized_with_its_order() {

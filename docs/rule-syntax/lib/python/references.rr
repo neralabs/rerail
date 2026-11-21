@@ -24,7 +24,7 @@
 //   param_type   `p.f` for a parameter `p: T` of the function: f in T
 //   sibling      a decorated method's sibling, by the program's `.references` sibling links
 //
-// The program's `.references` setting (W's, decision 0476 R5) reaches the rules as facts the engine gives
+// The program's `.references` setting (W's, decision 0483 R5) reaches the rules as facts the engine gives
 // (`rr::lower::findings`, from the setting's JSON; none without one):
 //   references_given(1)                       the program has the setting
 //   references_include(g), references_exclude(g)  its scope's globs: the graph's documents (`**` when it names none)

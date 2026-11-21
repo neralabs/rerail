@@ -359,7 +359,7 @@ impl<P: FieldsMut + ?Sized> Findings<'_, P> {
     }
 
     /// The `.references` setting (W's: `siblingLinks`, `constructorFields`, `scope`) as the facts
-    /// `python/references.rr` reads (decision 0476 R5), in a program that includes it: `references_given(1)`, the
+    /// `python/references.rerail` reads (decision 0483 R5), in a program that includes it: `references_given(1)`, the
     /// scope's globs (`**` when it names none; none when it includes nothing), each sibling link, and the constructor
     /// fields' renaming. Each renaming is W's `Regex::replace`, the first match only: it is given as a regex whose
     /// every match is that one (`first_match`), for `@rx_replace`. No setting, no facts.
@@ -631,7 +631,7 @@ pub fn findings_on(prog: &mut (impl FieldsMut + ?Sized), pending: &PendingFindin
     Ok((f.rules, wrote))
 }
 
-/// The facts the `.references` setting gives `python/references.rr` (`Findings::references_setting`): none without
+/// The facts the `.references` setting gives `python/references.rerail` (`Findings::references_setting`): none without
 /// the setting.
 pub const REFERENCE_SETTING: [&str; 5] = ["references_given", "references_include", "references_exclude", "references_sibling", "references_field"];
 

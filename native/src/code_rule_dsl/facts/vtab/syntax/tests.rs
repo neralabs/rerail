@@ -2068,7 +2068,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
 /// A batch rebuilt with guests keeps its files' matcher rows (`with_matchers`' `kept`): the wave reads no guest, and
 /// a node's id is its document's, so the rows of the build before hold. Each round of guests ran the wave again over
 /// every file of the chunk: 17 s of 131 s of CPU on `all` once the reference graph's rules read string annotations
-/// (decision 0476).
+/// (decision 0483).
 #[test]
 fn a_batch_rebuilt_with_guests_keeps_its_matcher_rows() {
     struct Refused;

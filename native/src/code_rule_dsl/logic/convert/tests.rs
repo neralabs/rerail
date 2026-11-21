@@ -163,7 +163,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         None => false,
     };
     let configured = edited || option_values(&original) != option_values(&document);
-    // The reference graph `python/references.rr` derives, under the `.references` setting: the policy's, one per policy.
+    // The reference graph `python/references.rerail` derives, under the `.references` setting: the policy's, one per policy.
     let graphs = reference_graphs(&document);
     if graphs.len() > 1 {
         return Err(Failure::Config(format!("{} configures more than one reference graph", document["id"])));

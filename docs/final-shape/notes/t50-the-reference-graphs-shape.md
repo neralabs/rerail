@@ -1,10 +1,10 @@
 # t50: The reference graph's shape: where the rules spend, and the operators that make them fast
 
-Status: assessment and plan (2026-11-20). Follows decision 0476 (the reference graph is rules).
+Status: assessment and plan (2026-11-20). Follows decision 0483 (the reference graph is rules).
 
 ## Intro
 
-Decision 0476 replaced W's Rust reference graph with `.rr` rules (`lib/python/references.rr` over `lib/python/names.rr`).
+Decision 0483 replaced W's Rust reference graph with `.rerail` rules (`lib/python/references.rerail` over `lib/python/names.rerail`).
 The rows match W's. The run's CPU went from 38–40 s to 105.5 s on the `all` corpus (3,089 files, 9.6 M nodes). W's
 graph cost about 6 s of that 38 s, so the rules spend about 73 s where W's Rust spent 6.
 
@@ -272,7 +272,7 @@ estimates from the tables above, not measurements.
 
 | # | Step | Removes (est. CPU s) | Test first |
 |---|---|---|---|
-| 1 | **Split:** a relation computed from run constants (the setting facts) and one document's facts is file-local. `rf_module`, `rf_qn`, `rf_ref`, … go back to the per-file part. No `dm_rf_qn_0` over every node, no factorized `fl*` exports for them. | 12–18 (generated 10.8, export 5.0, cross ~2) | the split of `references.rr` puts `rf_module` and `rf_ref` file-local; the exports are the summary relations only |
+| 1 | **Split:** a relation computed from run constants (the setting facts) and one document's facts is file-local. `rf_module`, `rf_qn`, `rf_ref`, … go back to the per-file part. No `dm_rf_qn_0` over every node, no factorized `fl*` exports for them. | 12–18 (generated 10.8, export 5.0, cross ~2) | the split of `references.rerail` puts `rf_module` and `rf_ref` file-local; the exports are the summary relations only |
 | 2 | **Group argmin** for `X, !later` (and `min`/`max` under an explicit order) | ~1.5 (cross first/later), and the typing programs' `type_first` | the operator's rows equal the self-join's; linear work on a 10⁴-row group |
 | 3 | **As-of join** for `max t : { B(k, t), t < r }` | ~5 of T5's 7.7 | `rf_fn_seen_at` and `rf_seen_at` rows equal; work proportional to probes |
 | 4 | **`within` both bound is an interval test**, and **chain root** by the `nearest` pass | ~2 of T3's 2.5 | `rf_in`'s plan never enumerates `within` from the body |
@@ -280,7 +280,7 @@ estimates from the tables above, not measurements.
 | 6 | **Matcher captures** (0106 §4 extended): T1 and T4 tree patterns in the one matcher pass | ~10 of 12.9 | the two ways' rows equal on the ruff fixtures, as 0106's test pack does |
 | 7 | **Name forest** plus keyed nearest for the prefix walk | ~3.5 (`rf_hit`, part of `rf_target`) | `rf_hit` rows equal; no symbols made per step |
 | 8 | **Keep only exports and outputs**; intern only text that is read | store writer, ~3 of projection | kept relations = exports and outputs |
-| 9 | **Q285:** derived row blocks past the Metal budget spill to the deferrable tier, so the matcher wave gets its room at 512 MB (not a revert) | Metal at the default budget | the `all` run at 512 MB, rows equal |
+| 9 | **Q386:** derived row blocks past the Metal budget spill to the deferrable tier, so the matcher wave gets its room at 512 MB (not a revert) | Metal at the default budget | the `all` run at 512 MB, rows equal |
 
 Steps 1–4 are planner and split changes over existing machinery. Steps 5–7 add the operators. Each operator is its
 own decision record when it is built.
@@ -296,10 +296,10 @@ side's rows are compared, and each side's CPU is timed:
 
 | Stage | W's code | The rules (heads summed by `stage_of`) | Rows compared |
 |---|---|---|---|
-| scope | `ScopeTable::build_in` | `names.rr`'s heads but the walk's | `load`: each name read |
+| scope | `ScopeTable::build_in` | `names.rerail`'s heads but the walk's | `load`: each name read |
 | lookup | `resolve_python_index` per read | `wstart`, `walk`, `look`, `miss`, `in_first_iter`, `builtin_ref` | `look`: the scope each read lands on |
-| summary | `calls::summarize` | `references.rr` above `// ==== across files` | `def`, `ref`: W's spelled names |
-| link | `Graph::link_references` | `references.rr` below it | `link`, `open_name`, `edge`, `open` |
+| summary | `calls::summarize` | `references.rerail` above `// ==== across files` | `def`, `ref`: W's spelled names |
+| link | `Graph::link_references` | `references.rerail` below it | `link`, `open_name`, `edge`, `open` |
 
 `each_stage_of_ws_reference_graph_is_the_rules_on_the_projects` runs it on the calls oracle's projects. `…_on_the_cases`
 runs it on one small case per difference found so far. `reference_stages_timed` (ignored; `RERAIL_STAGE_CORPUS`) times it
@@ -349,7 +349,7 @@ lowering states each declared setting relation, empty when unset. The split alre
 constant (`fact`), so those relations go back to the per-file part. The split's test is
 `a_relation_stated_empty_is_a_constant`. A structural rule ("declared and not derived is a constant") was tried first
 and was wrong: the engine's world facts (`dir_entry`, `file_line`, …) are declared non-inputs too, and it made
-`lib/c/includes.rr` unstratifiable.
+`lib/c/includes.rerail` unstratifiable.
 
 The move surfaced an engine bug. An input's index was kept by its set of key columns, in the column order of the first
 caller (the planner's `probe_size`). A join that probed the same columns in another order read its key in its own order
@@ -399,7 +399,7 @@ The rows on `all` differ from W's in five stages, the same with the step on or o
 ### Step 2, done: the first of a group by an order (decision 0515)
 
 `X, !later` with `later` a self-join that states an order is read as a lattice relation: `min<>`, `max<>` or
-`shortlex_min<>` on the value column, and the self-join is gone. Nothing changes in `.rr`. On `all`, every stage's
+`shortlex_min<>` on the value column, and the self-join is gone. Nothing changes in `.rerail`. On `all`, every stage's
 rows are as before, and `rf_method`/`rf_super`/`rf_field`'s first and later strata go from 0.907 s to 0.474 s of CPU.
 `rf_compose` (symbols under `<`, text order) and `rf_init_later` (the value is not the head's last column) are left as
 written: 0.01 s together. Two things were found on the way: `ShortlexMin` joined a stored atom it did not hold in
@@ -471,7 +471,7 @@ executor's cost per row, not the chain.
 
 After them, on `all`: `load`, `def`, `link`, `edge` and `open` equal W's, and `look` has the same count. What is left
 reaches no edge and no open definition. It is W's scope model departing from Python's, which the rules keep, since
-`python/names.rr` serves the engine's other programs too:
+`python/names.rerail` serves the engine's other programs too:
 
 - `look` (29 rows each way):
   - W binds an assignment to a `nonlocal` name in the nearest enclosing function, not the one that owns the name.

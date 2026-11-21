@@ -11,7 +11,7 @@
 //! is read as a lattice relation: `F`'s value column joins its key's rows under the order (`min<>`, `max<>`,
 //! `shortlex_min<>`), and `F`'s rule is `X` and its other literals. The self-join `L` made a row for every pair of a
 //! group's rows; the lattice keeps one a key, in one pass. `L` is dropped when nothing else reads it. Nothing changes
-//! in `.rr`. `RERAIL_FIRST=off` leaves the shape as written, for measuring.
+//! in `.rerail`. `RERAIL_FIRST=off` leaves the shape as written, for measuring.
 use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
 use std::collections::{BTreeMap, BTreeSet};
 

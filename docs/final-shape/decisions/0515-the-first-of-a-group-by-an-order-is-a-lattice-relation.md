@@ -31,7 +31,7 @@ The engine already has the operator: a lattice relation keeps one value a key an
 
    Symbols under `<` alone are text order, which no lattice keeps, so that shape is left as written.
 2. **The rewrite.** F's value column becomes the order's lattice, and F's rule drops `!L`. L loses its declaration
-   and rules when nothing else reads it. Nothing changes in `.rr`. `RERAIL_FIRST=off` leaves the shape as written,
+   and rules when nothing else reads it. Nothing changes in `.rerail`. `RERAIL_FIRST=off` leaves the shape as written,
    for measuring.
 3. **Unbounded lattices need `widen k` only where they recurse.** A key's value changes once a batch when no rule of
    the relation reads it back, so nothing widens (`front::finish_checks_given`). The check before refused every

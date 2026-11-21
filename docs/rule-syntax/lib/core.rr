@@ -237,7 +237,7 @@
 // reference_open(f): f refers to something no static name denotes, or f's file does not parse: what f reaches
 // is not all known.
 .decl reference_open(n: node)
-// Both are rules, not inputs (decision 0476): a program that reads them includes python/references.rr, the one
+// Both are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the one
 // file that derives them.
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
@@ -750,7 +750,7 @@
 // .references {"siblingLinks": […], "constructorFields": {…}, "scope": {…}}
 //                                              the reference graph's links, as the policy's `references` gives
 //                                              them, over the files of `scope` (default: every file): facts
-//                                              python/references.rr reads (decision 0476).
+//                                              python/references.rerail reads (decision 0483).
 
 // Batched Python facts. Requests is a unary node relation; targets is a unary symbol relation.
 // These operators do not evaluate rules. Unknown semantic facts produce no known result.
