@@ -281,7 +281,7 @@ type PostOutcome = { kind: "accepted" } | { kind: "rejected"; error: string } | 
 const isEmptyBatch = (batch: BatchBuilder): boolean => batch.records.length === 0 && batch.oversized.length === 0;
 
 /** The last event number `batch` carries, its records and those too large to send; 0 when it carries none. */
-const lastSequence = (batch: { readonly records: readonly OutboxRecord[]; readonly oversized: readonly OutboxRecord[] }): number =>
+const lastSequence = (batch: BatchBuilder): number =>
   [...batch.records, ...batch.oversized].reduce((max, item) => Math.max(max, item.sequence ?? 0), 0);
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -716,7 +716,7 @@ export class RemoteOutbox {
       // Removed, or removed and added again, while this batch was out: its answer belongs to no remote now.
       if (!this.#configured(remote)) return;
       const machine = machineId(this.#home);
-      const sequence = lastSequence({ records, oversized });
+      const sequence = [...records, ...oversized].reduce((max, item) => Math.max(max, item.sequence ?? 0), 0);
       if (sequence > 0) state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, 'event', ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)").run(remote, sequence);
       const upsert = state.prepare("INSERT INTO sent (remote, stream, id, hash) VALUES (?, ?, ?, ?) ON CONFLICT (remote, stream, id) DO UPDATE SET hash = excluded.hash");
       for (const item of [...records, ...oversized]) if (item.hash !== undefined) upsert.run(remote, item.stream, item.id, item.hash);
