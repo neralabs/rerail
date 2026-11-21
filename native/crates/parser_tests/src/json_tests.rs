@@ -160,7 +160,7 @@ fn simdjson_forms_trees_are_14_jsons() {
 
 /// Each dispatch's arm (`'bX: loop { match d { … } }`, its top level) that is only `d = M;
 /// continue 'bX;`, back into its own loop, in generated Rust whose comments hold no braces.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", unix))]
 fn dispatch_resets(src: &str) -> Vec<String> {
     let lines: Vec<&str> = src.lines().filter(|l| !l.trim_start().starts_with("//")).collect();
     let mut out = Vec::new();
@@ -256,7 +256,8 @@ fn tree_inputs() -> Vec<Vec<u8>> {
 /// The trees test's form: tier 2 as `rust_stream` writes it, compiled by rustc and run on the JIT's
 /// harness in place of Cranelift's code, gives the JIT's trees, file for file (page 40: the
 /// comparison with simdjson is made on this Rust).
-#[cfg(target_arch = "aarch64")]
+// Unix: the tree's Rust is loaded as a library rustc builds (`dlopen`).
+#[cfg(all(target_arch = "aarch64", unix))]
 #[test]
 fn simdjson_forms_rust_trees_are_the_jits() {
     let (jit, mut aot) = (simdjson_form(), simdjson_form());
@@ -409,7 +410,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
 
 /// `src`, tier 2's Rust, built by rustc (optimized, as the ahead-of-time build) into a library
 /// and loaded: its entry.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", unix))]
 fn aot_entry(src: &str) -> rerail_compiler::native_cpu_stream::Entry {
     // A directory a source: the loader gives back the library already loaded at a path, so two
     // sources built at one path would both run the first.

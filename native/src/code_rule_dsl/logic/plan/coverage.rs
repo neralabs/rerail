@@ -395,7 +395,15 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(had == text, "the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it", path.display());
+    let old: BTreeSet<&str> = had.lines().collect();
+    let new: BTreeSet<&str> = text.lines().collect();
+    assert!(
+        had == text,
+        "the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it\n--- ledger\n{}\n+++ now\n{}",
+        path.display(),
+        old.difference(&new).copied().collect::<Vec<_>>().join("\n"),
+        new.difference(&old).copied().collect::<Vec<_>>().join("\n")
+    );
 }
 
 /// The ledger's place.
@@ -465,8 +473,18 @@ fn every_operation_runs_on_every_executor() {
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
+    // Without the device (Windows builds no device lane) its column is not measured here: the native one is compared
+    // alone, and the gaps by pack, which count the device's, are not.
+    let device_here = metal();
+    let measured = |t: &str| -> String {
+        if device_here {
+            return t.to_owned();
+        }
+        t.lines().map(|l| l.split('\t').enumerate().filter(|(i, _)| *i != 2).map(|(_, f)| f).collect::<Vec<_>>().join("\t") + "\n").collect()
+    };
+    let (had, rows) = (measured(&had), measured(&rows));
     // The gaps by pack follow from the matrix: compared once the matrix is as the ledger says.
-    if had == rows {
+    if had == rows && device_here {
         packs_ledger(&all, &rows);
     }
     if had != rows {

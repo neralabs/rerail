@@ -145,7 +145,7 @@ fn python_files(root: &Path, directory: &Path, out: &mut Vec<(String, String)>) 
                 path.strip_prefix(root)
                     .expect("inside the project")
                     .to_string_lossy()
-                    .into_owned(),
+                    .replace(std::path::MAIN_SEPARATOR, "/"),
                 std::fs::read_to_string(&path).expect("source"),
             ));
         }

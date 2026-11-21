@@ -129,7 +129,7 @@ fn executors_are_shared() {
     let mut found: Vec<(String, &str, usize)> = Vec::new();
     let mut bad = Vec::new();
     for f in sources() {
-        let rel = f.strip_prefix(&root).unwrap_or(&f).display().to_string();
+        let rel = f.strip_prefix(&root).unwrap_or(&f).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
         let Ok(text) = std::fs::read_to_string(&f) else { continue };
         for (pat, owner) in MADE {
             let at: Vec<usize> = product_lines(&text).into_iter().filter(|(_, l)| l.contains(pat) && !l.trim_start().starts_with("//")).map(|(n, _)| n).collect();

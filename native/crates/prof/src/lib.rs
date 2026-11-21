@@ -118,6 +118,72 @@ pub fn windows_cpu(thread: bool) -> (Duration, Duration) {
     (time(user), time(kernel))
 }
 
+/// Windows: the process's live threads, as (thread id, description). Rust sets a thread's description from its name
+/// (`SetThreadDescription`); a thread with none is left out, as one that ended meanwhile is.
+#[cfg(windows)]
+pub fn windows_threads() -> Vec<(u32, String)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE, LocalFree};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next};
+    use windows_sys::Win32::System::Threading::{GetThreadDescription, OpenThread, THREAD_QUERY_LIMITED_INFORMATION};
+    let pid = std::process::id();
+    // SAFETY: each handle is checked before use and closed after; a description is the system's, freed once read.
+    unsafe {
+        // Every thread of the system: the snapshot takes no process id for threads.
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let mut e: THREADENTRY32 = std::mem::zeroed();
+        e.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+        let mut more = Thread32First(snap, &mut e) != 0;
+        while more {
+            if e.th32OwnerProcessID == pid {
+                let h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, 0, e.th32ThreadID);
+                if !h.is_null() {
+                    let mut name: *mut u16 = std::ptr::null_mut();
+                    if GetThreadDescription(h, &mut name) >= 0 && !name.is_null() {
+                        let len = (0..).take_while(|&i| *name.add(i) != 0).count();
+                        out.push((e.th32ThreadID, String::from_utf16_lossy(std::slice::from_raw_parts(name, len))));
+                        LocalFree(name.cast());
+                    }
+                    CloseHandle(h);
+                }
+            }
+            more = Thread32Next(snap, &mut e) != 0;
+        }
+        CloseHandle(snap);
+        out
+    }
+}
+
+/// Windows: the CPU (user + kernel) of the process's thread `id`, read from another thread; `None` for one that has
+/// ended. `GetThreadTimes` counts in the clock's ticks (15.6 ms by default), not the time to the nanosecond.
+#[cfg(windows)]
+pub fn windows_thread_cpu(id: u32) -> Option<Duration> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::Threading::{GetExitCodeThread, GetThreadTimes, OpenThread, THREAD_QUERY_LIMITED_INFORMATION};
+    const STILL_ACTIVE: u32 = 259;
+    let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: the handle is checked before use and closed after; every out-pointer is a FILETIME or a u32.
+    unsafe {
+        let h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, 0, id);
+        if h.is_null() {
+            return None;
+        }
+        let mut code = 0u32;
+        let live = GetExitCodeThread(h, &mut code) != 0 && code == STILL_ACTIVE;
+        let got = live && GetThreadTimes(h, &mut created, &mut exited, &mut kernel, &mut user) != 0;
+        CloseHandle(h);
+        if !got {
+            return None;
+        }
+    }
+    let time = |t: FILETIME| Duration::from_nanos(((u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)) * 100);
+    Some(time(user) + time(kernel))
+}
+
 /// Windows: the process's peak working set (its resident high-water mark), in bytes; 0 if the call fails.
 #[cfg(windows)]
 pub fn windows_peak_working_set() -> u64 {

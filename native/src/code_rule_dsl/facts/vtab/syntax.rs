@@ -883,11 +883,16 @@ pub fn module(rel: &str) -> String {
     m.strip_suffix(".__init__").map(str::to_owned).unwrap_or(m)
 }
 
+/// The last segment of `path`: a library document is named as the engine has the file, with `\` on Windows.
+pub(crate) fn file_name(path: &str) -> &str {
+    path.rsplit(|c| c == '/' || (cfg!(windows) && c == '\\')).next().unwrap_or(path)
+}
+
 /// The package relative imports resolve against (`__package__`): a package's own name, else its
 /// module's parent.
 /// The package of module `m`, the file at `path`: `m` itself for a package's `__init__`, else `m`'s parent.
 pub(crate) fn package_of(path: &str, m: &str) -> String {
-    let name = path.rsplit('/').next().unwrap_or(path);
+    let name = file_name(path);
     if name.starts_with("__init__.") { m.to_owned() } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
 }
 

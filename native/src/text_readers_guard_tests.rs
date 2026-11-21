@@ -12,10 +12,11 @@ use crate::executors_guard_tests::{product_lines, repo, sources};
 const SPLITS: [&str; 7] = ["split('\\t')", "split_once('\\t')", "rsplit_once('\\t')", "rsplit('\\t')", "split(\"\\t\")", "split_once(\"\\t\")", ", '\\t')"];
 
 /// The files that may split on a tab, how many times, and why.
-const ALLOWED: [(&str, usize, &str); 7] = [
+const ALLOWED: [(&str, usize, &str); 8] = [
     ("native/src/code_rule_dsl/logic/strings/git.rs", 1, "a consulted read's key (repository root, revision), made in memory and stored length-prefixed"),
     ("native/src/code_rule_dsl/logic/plan/corpus/inputs.rs", 2, "a `.input` file's text (a repository file the rule declares as input), and a consulted read's key (revision, path)"),
-    ("native/src/code_rule_dsl/logic/plan/coverage.rs", 1, "the coverage ledger, a hand-kept document"),
+    ("native/src/code_rule_dsl/logic/plan/coverage.rs", 2, "the coverage ledger, a hand-kept document, and its native column alone where no device is"),
+    ("native/src/code_rule_dsl/logic/plan/prepared.rs", 1, "`RERAIL_SIZES_FROM`'s sizes log (Q290's oracle, a measurement aid)"),
     ("native/src/code_rule_dsl/typing/rounds.rs", 8, "the typing spike's fact dumps (T's research inputs), not a run's outputs"),
     ("native/src/code_rule_dsl/facts/ygraph/mod.rs", 2, "the y-graph's member lists and its recorded edges (fixtures of the replay)"),
     ("native/crates/tape_format/src/f16.rs", 1, "a language's format 16 code table, as the lab ships it (`Table::from_text`)"),
@@ -32,7 +33,7 @@ fn no_rule_or_fact_is_read_from_text() {
     let mut bad = Vec::new();
     let mut seen = Vec::new();
     for f in sources() {
-        let rel = f.strip_prefix(&root).unwrap_or(&f).display().to_string();
+        let rel = f.strip_prefix(&root).unwrap_or(&f).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
         let Ok(text) = std::fs::read_to_string(&f) else { continue };
         let at: Vec<usize> = product_lines(&text)
             .into_iter()

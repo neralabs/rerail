@@ -40,6 +40,10 @@ zstd = "=0.14.3"
 [target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+# A store file's identity (volume serial, file index) where Unix has its device and inode (`atoms.rs`).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-store = { path = ".", features = ["test-hooks"] }

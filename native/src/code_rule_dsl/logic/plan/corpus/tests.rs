@@ -696,7 +696,8 @@ fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
     let rule = dir.join("p.rerail");
     std::fs::write(&rule, format!(
         "#include \"core.rerail\"\nload(p, \"f\", \"python\") :- file_line(\"later.txt\", 1, p).\nload(p, \"b\", \"python\") :- dir_entry(\"{lib}\", \"b.pyi\", 0), p = cat(\"{lib}\", \"/b.pyi\").\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n",
-        lib = lib.display()
+        // In a rule's string `\` is an escape: the path with `/`, which Windows reads too.
+        lib = lib.display().to_string().replace('\\', "/")
     )).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let (out, store) = (dir.join("out"), dir.join("store.sqlite"));
@@ -1966,7 +1967,7 @@ fn every_switch_lowering_reads_is_classified() {
                 if let Some(m) = test_module.find(&text) {
                     text.truncate(m.start());
                 }
-                files.push((p.strip_prefix(&root).unwrap().display().to_string(), text));
+                files.push((p.strip_prefix(&root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), text));
             }
         }
         files

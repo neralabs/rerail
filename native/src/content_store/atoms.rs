@@ -668,7 +668,22 @@ impl Atoms {
             let made = m.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
             Some((p.to_owned(), (m.dev(), m.ino(), made)))
         });
-        #[cfg(not(unix))]
+        // Windows: the volume's serial and the file's index, as Unix's device and inode.
+        #[cfg(windows)]
+        let file = connection.path().filter(|p| !p.is_empty()).and_then(|p| {
+            use std::os::windows::io::AsRawHandle as _;
+            use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
+            let f = std::fs::File::open(p).ok()?;
+            // SAFETY: plain data, filled by the call below.
+            let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+            // SAFETY: an open handle, and a buffer of the type the call fills.
+            if unsafe { GetFileInformationByHandle(f.as_raw_handle(), &mut info) } == 0 {
+                return None;
+            }
+            let made = f.metadata().ok()?.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+            Some((p.to_owned(), (u64::from(info.dwVolumeSerialNumber), (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow), made)))
+        });
+        #[cfg(not(any(unix, windows)))]
         let file: Option<(String, (u64, u64, u128))> = None;
         if let Some((path, at)) = &file
             && let Some((held, id)) = rerail_prof::code_rule_dsl::logic::profile::shared::<Identities>().0.lock().get(path)

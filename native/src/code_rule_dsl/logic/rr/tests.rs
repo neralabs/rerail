@@ -4401,6 +4401,8 @@ libs(m) :- sources__library(_, m, "c", _).
 "#;
     let files = [("a.c", "#include \"inc/h.h\"\nint a;\n"), ("inc/h.h", "#include \"d.h\"\n"), ("inc/d.h", "int d;\n"), ("unused.h", "int u;\n")];
     let [docs, libs] = <[Vec<String>; 2]>::try_from(joined(guests_run("cheaders", &files, rule, &["docs", "libs"]))).unwrap();
+    // A library document is named by its path as the engine has it: on Windows, with `\`.
+    let docs: Vec<String> = docs.iter().map(|p| p.replace(std::path::MAIN_SEPARATOR, "/")).collect();
     let mut docs: Vec<&str> = docs.iter().map(|p| p.rsplit(".cheaders/").next().unwrap()).collect();
     docs.sort();
     assert_eq!(docs, ["a.c", "inc/d.h", "inc/h.h"], "parsed, each a translation unit");
