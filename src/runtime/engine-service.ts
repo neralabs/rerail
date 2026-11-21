@@ -74,7 +74,8 @@ export interface EngineService {
    * (its folder removed, or Rerail stopped in its checkout), then, once a daemon on the same records that held its
    * owner lock has ended, what it left open (`endAbandonedSessions`); and beside that, not behind it, closes each runtime
    * no session has used for 15 minutes while the daemon is short of room, or once its checkout was removed
-   * (`KeptRuntimes.sweep`). The service also does this every minute.
+   * (`KeptRuntimes.sweep`); and beside those, takes the events hooks left while it did not read (`untaken.taken`). The
+   * service also does this every minute.
    */
   closeIdleSessions(): Promise<void>;
   /**
@@ -1425,8 +1426,12 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   };
   // Walks a caller gave are the caller's to close.
   const closeWalks = options.worktreeWalks === undefined ? () => routing.worktreeWalks.close() : () => undefined;
-  const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
   const untaken = untakenTaker(options, async (request, caller) => await routeEngineEvent(request, options, routing, caller));
+  // Hooks skip a daemon an event still waits for, so a change notice of the folder lost on its way (the system dropped
+  // it, or it came while the watch followed the folder again) would leave every later event waiting with no pass.
+  const sweepIdleSessions = async (): Promise<void> => {
+    await Promise.all([untaken.taken(), sweepIdle(routing, options, databasePath)]);
+  };
   const answers: EngineAnswers = {
     ingest: async (incoming, request, { signal, answer }) => {
       // Every event hooks left before this one was sent begins its check first, in its session's queue.

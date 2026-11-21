@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
-import { mkdtemp, readFile, realpath } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFailed, onTestFinished, vi } from "vitest";
-import { type AdapterEvent, type CodeRuleAuditor, leaveUntaken, type UntakenPass } from "../../../src/engine/index.js";
+import { type AdapterEvent, type CodeRuleAuditor, leaveUntaken, UNTAKEN_EVENTS_DIR, type UntakenPass } from "../../../src/engine/index.js";
 import { engineRequestBody, ingestEngineEvent, startEngineService } from "../../../src/runtime/engine-service.js";
 import { SqliteSessionReader } from "../../../src/runtime/index.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
@@ -212,6 +212,18 @@ describe("an engine service beside the events hooks left while its daemon did no
     const recorded = recordedEvents(held.databasePath);
     expect(recorded.map(event => event.eventId)).toEqual(["left", "given"]);
     expect(recorded[0]!.observedAt).toBe(1_000);
+  });
+
+  it("takes each one at the minute's sweep though no notice of the folder told of it, so hooks stop skipping the daemon", async () => {
+    const held = await serviceWithUntaken();
+    await held.leave(prompt("left"), 1_000);
+    const left = async (): Promise<string[]> => (await readdir(join(held.root, UNTAKEN_EVENTS_DIR))).filter(name => name.endsWith(".json"));
+    expect(await left()).toHaveLength(1);
+    // No watch runs, as when the notice of the file was lost, and nothing else asked for a pass.
+    await held.service.closeIdleSessions();
+    expect(await left()).toEqual([]);
+    await held.send(prompt("sent"));
+    expect(recordedEvents(held.databasePath).map(event => event.eventId)).toEqual(["left", "sent"]);
   });
 
   it("checks a turn end left untaken as one sent, and the steer its checks find goes with the session's next answer, once", async () => {
