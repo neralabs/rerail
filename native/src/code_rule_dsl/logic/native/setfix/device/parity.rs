@@ -195,12 +195,37 @@ struct Tally {
     refused: BTreeMap<String, usize>,
 }
 
-/// Runs every case on the device and on the CPU; the failures (rows or counts that differ, a refused `must` case, an
-/// error), and the summary by family.
-fn check(fx: &Fixture, cases: &[Case]) -> (Vec<String>, BTreeMap<&'static str, Tally>) {
+/// Runs every case on the device and on the CPU, the cases split over threads, each with a fixture of its own (a
+/// connection runs one case at a time: 1,200 random cases one after another took 13 s): the failures (rows or counts
+/// that differ, a refused `must` case, an error), in the cases' order, and the summary by family.
+fn check(cases: &[Case]) -> (Vec<String>, BTreeMap<&'static str, Tally>) {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+    let share = cases.len().div_ceil(threads).max(1);
+    let parts: Vec<(Vec<String>, BTreeMap<&'static str, Tally>)> = std::thread::scope(|s| {
+        let handles: Vec<_> = cases.chunks(share).enumerate().map(|(i, part)| s.spawn(move || check_on(&fixture(), part, i * share))).collect();
+        handles.into_iter().map(|h| h.join().expect("a share of the cases")).collect()
+    });
+    let (mut failures, mut tally) = (Vec::new(), BTreeMap::<&'static str, Tally>::new());
+    for (f, t) in parts {
+        failures.extend(f);
+        for (family, part) in t {
+            let all = tally.entry(family).or_default();
+            all.cases += part.cases;
+            all.on_device += part.on_device;
+            all.rows += part.rows;
+            for (why, n) in part.refused {
+                *all.refused.entry(why).or_default() += n;
+            }
+        }
+    }
+    (failures, tally)
+}
+
+/// `check` of `cases` on `fx`, the first numbered `first` (a case's relations are named by its number).
+fn check_on(fx: &Fixture, cases: &[Case], first: usize) -> (Vec<String>, BTreeMap<&'static str, Tally>) {
     let mut failures = Vec::new();
     let mut tally: BTreeMap<&'static str, Tally> = BTreeMap::new();
-    for (id, c) in cases.iter().enumerate() {
+    for (id, c) in cases.iter().enumerate().map(|(i, c)| (first + i, c)) {
         let t = tally.entry(c.family).or_default();
         t.cases += 1;
         let what = || format!("[{} #{id}] seeds {:?} joins {:?}", c.family, c.seeds, c.joins);
@@ -802,10 +827,9 @@ macro_rules! parity_test {
             if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
                 return;
             }
-            let fx = fixture();
             let r = rels();
             let cases: Vec<Case> = $cases(&r);
-            let (failures, tally) = check(&fx, &cases);
+            let (failures, tally) = check(&cases);
             report($what, &failures, &tally);
         }
     };

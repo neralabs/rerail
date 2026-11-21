@@ -4,6 +4,7 @@
 pub use crate::code_rule_dsl::facts::rows::*;
 
 use super::runs::RowData;
+use std::sync::Arc;
 
 impl RowData for Rows {
     #[inline(always)]
@@ -17,6 +18,9 @@ impl RowData for Rows {
     }
     fn home(&self) -> Option<Home> {
         Rows::home(self)
+    }
+    fn lies_in(&self, facts: &Arc<Facts>) -> bool {
+        Rows::home_is(self, facts)
     }
 }
 

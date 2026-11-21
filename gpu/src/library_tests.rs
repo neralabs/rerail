@@ -778,6 +778,36 @@ fn a_grid_past_residency_is_the_groups_that_run() {
     assert!(wrong.iter().all(|&w| w == 0), "{}: reads before the barrier's writes: {wrong:?}", crate::device::backend());
 }
 
+/// Decision 0540 §3 on the CPU backend (t51 item 4): its groups take turns at a yield, and it knows how many run at
+/// once (the launch's `resident`). A dispatch of four times that many has exactly that many in its grid (not the
+/// first group alone, as a window that yields nowhere gave), and its barriers pass.
+#[test]
+fn the_cpus_grid_is_its_resident_groups() {
+    let Some((p, mut q)) = setup() else { return };
+    if crate::device::backend() != "CPU" {
+        return;
+    }
+    let lsz = 256u32;
+    let f = p.function("t_grid_barrier").unwrap();
+    let resident = crate::shared::get().and_then(|s| s.device.resident_groups(lsz, f.threadgroup_bytes())).expect("the CPU's resident count") as u32;
+    let groups = 4 * resident;
+    let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
+    launch(&q, f)
+        .value("args", &TestArgs { n: 4, w: groups })
+        .buffer("ctl", &ctl)
+        .buffer("slots", &slots)
+        .buffer("out", &out)
+        .run(&[groups as u64], &[lsz as u64])
+        .unwrap();
+    q.flush().await_().unwrap();
+    let c: Vec<u32> = read(&ctl, 4);
+    assert_eq!(c[2], 0, "a barrier failed");
+    assert_eq!(grid_joined(&c), resident, "the grid is the {resident} groups that run at once, of {groups}");
+    assert_eq!(c[1], 4 * 4, "the barriers' generation (two a barrier)");
+    let wrong: Vec<u32> = read(&out, groups as usize);
+    assert!(wrong.iter().all(|&w| w == 0), "reads before the barrier's writes: {wrong:?}");
+}
+
 /// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
 /// boundaries, at 1, 8 and 32 groups and the device's resident count of 32 and of 256 threads, its count read on the
 /// device.

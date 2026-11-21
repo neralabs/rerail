@@ -154,10 +154,16 @@ export class CheckoutOwners {
   readonly #confirmedGitEntries = new Map<string, string>();
   readonly #database: RerailDatabase | undefined;
 
-  /** `database`'s recorded checkouts, read for plain roots and for the version that forgets every answer. */
-  constructor(database?: RerailDatabase) {
+  /**
+   * `database`'s recorded checkouts, read for plain roots and for the version that forgets every answer
+   * (`recordedVersion`, `database`'s own unless given).
+   */
+  constructor(
+    database?: RerailDatabase,
+    recordedVersion: (() => string) | undefined = database === undefined ? undefined : recordedCheckoutsVersionReader(database),
+  ) {
     this.#database = database;
-    this.#recordedVersion = database === undefined ? undefined : recordedCheckoutsVersionReader(database);
+    this.#recordedVersion = recordedVersion;
   }
 
   /**

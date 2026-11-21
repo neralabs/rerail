@@ -52,7 +52,7 @@ pub fn configure() {
 }
 
 /// Whether this is one of the pool's threads running a job: on the pool, and not the main thread the machine took
-/// into it (`Machine::here`).
+/// into it (`Machine::here`, which records it: `rerail_context::MainThread`, on every platform).
 fn in_a_job() -> bool {
     on_pool() && !rerail_context::is_main_thread()
 }

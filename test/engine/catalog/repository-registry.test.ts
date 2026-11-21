@@ -490,8 +490,8 @@ describe("the repository registry", () => {
       const one = recordCheckout(database, a), two = recordCheckout(database, b);
       expect(two.cloneId).toBe(one.cloneId);
       expect(two.repositoryKey).toBe(one.repositoryKey);
-      expect(repositoryIdentityLocation(bare)).toMatchObject({ workspaceRoot: bare, git: true, main: true, identityPath: join(bare, "rerail-repository-id") });
-      expect(existsSync(join(bare, ".rerail", "repository-id"))).toBe(false);
+      // A bare repository is a folder, as Git places it (no top level), and its id is its worktrees' one.
+      expect(repositoryIdentityLocation(bare)).toMatchObject({ workspaceRoot: bare, git: false });
     }
   });
 

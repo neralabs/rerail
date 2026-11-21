@@ -152,6 +152,20 @@ pub enum Life {
 #[derive(Default)]
 struct Open([Mutex<Option<Arc<Facts>>>; 4]);
 
+/// The open blocks new relations go in outside a chunk (`Open`): the run's, or outside a run the machine's (decision
+/// 0442: every piece of state has an owner). A session's work between its runs shares the machine's, as a run's
+/// relations share the run's: a relation's tables grow in its block (0384), and a relation dropped gives its chunks
+/// back to it (0342). Outside a run `local` is a value of its own each time it is asked for: every relation then
+/// leased a block of a run's size, 16 GiB of address space where blocks reserve it (decision 0445), and a session's
+/// 1,000 one-document batches' relations reserved all of it (mmap refused at 256 TiB).
+fn open_blocks() -> Arc<Open> {
+    if crate::code_rule_dsl::logic::profile::run_own().is_some() {
+        crate::code_rule_dsl::logic::profile::local::<Open>()
+    } else {
+        crate::code_rule_dsl::logic::profile::machine::<Open>()
+    }
+}
+
 /// Every block leased on this machine, by `Life`, while it lives: what a profile reads (`held`; decision 0442: the
 /// machine's, as the memory it counts is).
 #[derive(Default)]
@@ -380,9 +394,14 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
 /// may read it in place (a pool slab when one is spare), a CPU run's never (Q58); its relations are made and
 /// dropped, so it keeps a free list.
 fn lease(bytes: usize, life: Life) -> Result<Block, String> {
+    lease_room(bytes.max(life.block_bytes()))
+}
+
+/// `lease`'s block of `bytes`, no more: a relation's alone in it outside a run (`Part::try_new_with`).
+fn lease_room(bytes: usize) -> Result<Block, String> {
     use rerail_blocks::alloc::{Need, Writes};
     let device = BLOCK_DEVICE.get().map_or(rerail_blocks::alloc::Device::May, |f| f());
-    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes: bytes.max(life.block_bytes()), writes: Writes::Churn, device, ..Need::SLAB })
+    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Churn, device, ..Need::SLAB })
 }
 
 /// What a block of relations asks of the policy about the device: the run's binding's (`placement::block_device`,
@@ -415,7 +434,7 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
 /// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
 fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
     let chunk = current_chunk();
-    let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
+    let runs = open_blocks();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
         && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN
@@ -1084,7 +1103,7 @@ impl Part {
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
         let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
-        let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
+        let (runs, live_blocks) = (open_blocks(), crate::code_rule_dsl::logic::profile::machine::<Live>());
         let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
@@ -2056,6 +2075,11 @@ impl Rows {
         Some(Home { facts: p.facts.clone(), life: p.life, grow: 0 })
     }
 
+    /// Whether `facts` is its home's block (`home`), read with no reference counted.
+    pub fn home_is(&self, facts: &Arc<Facts>) -> bool {
+        self.tail.as_ref().map(|t| &t.facts).or_else(|| self.segs.last().map(|(_, p)| &p.facts)).is_none_or(|f| Arc::ptr_eq(f, facts))
+    }
+
     /// Its relations, oldest first: the frozen segments, then the tail if it has rows. A reader that keeps them
     /// (`append_part`) holds the rows where they lie.
     pub fn parts(&self) -> impl Iterator<Item = &Part> {
@@ -2930,6 +2954,25 @@ mod tests {
         let live = [(Life::Run, 10 << 20, 4 << 20), (Life::Kept, 2 << 20, 2 << 20), (Life::Device, 64 << 20, 64 << 20), (Life::Source, 1 << 20, 0)];
         assert_eq!(held_of(&live), 6 << 20);
         assert_eq!(held_of(&live[..2]), held_of(&live), "the device's blocks, alive or not, change nothing");
+    }
+
+    /// Outside a run the open blocks are the machine's (decision 0442, `open_blocks`): a session's relations made
+    /// between its runs share one block, as a run's do, not a block of their own each (16 GiB of address space each
+    /// where blocks reserve it: a session's 1,000 one-document batches' relations reserved all of it).
+    #[test]
+    fn relations_made_outside_a_run_share_the_machines_block() {
+        assert!(crate::code_rule_dsl::logic::profile::run_own().is_none(), "outside a run");
+        let made: Vec<Rows> = (0..1000i64)
+            .map(|i| {
+                let mut r = Rows::new(2);
+                // copy: not block data (a test's literal rows)
+                r.extend_from_slice(&[i, i + 1, i + 2, i + 3]);
+                r
+            })
+            .collect();
+        let first = block_of(&made[0]);
+        assert!(made.iter().all(|r| Arc::ptr_eq(&block_of(r), &first)), "one block");
+        assert_eq!(*made[999].row(1, 2), [1001, 1002]);
     }
 
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of

@@ -2430,6 +2430,25 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert!(text.failure().is_none());
 }
 
+/// Decision 0494, R2 for `doc`'s other keys: a probe of it by a module (a file's import of another) makes that
+/// module's document alone, as one by its path does: the batch knows each file's module from its path and the
+/// corpus's name for it, none made.
+#[test]
+fn a_probe_of_doc_by_a_module_makes_that_document_alone() {
+    let store = ContentStore::open(&temp("probe-module")).unwrap();
+    let docs: Vec<Document> = (1..=5).map(|k| document(k, &format!("pkg/m{k}.py"), "python", &format!("x{k} = y({k})\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["doc".to_owned()].into()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let doc = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "doc").unwrap().2);
+    let module = i64::from(store.atoms_handle().intern("pkg.m4").unwrap());
+    let found = doc.lookup(2, &[module]).unwrap();
+    assert_eq!(found.iter().map(|&r| doc.value(r, 0)).collect::<Vec<_>>(), vec![4], "pkg/m4.py's row");
+    assert_eq!(batch.docs.made_count(), 1, "only the module's document is made");
+    assert_eq!(doc.lookup(2, &[i64::from(store.atoms_handle().intern("pkg.none").unwrap())]).unwrap(), Vec::<usize>::new(), "no file is that module");
+    assert_eq!(batch.docs.made_count(), 1, "a module no file is makes none");
+}
+
 /// Decision 0494, R5: a batch given its documents' views' counts and its relations' rows knows every view's and
 /// relation's `len` with no document made; a probe then makes its document alone. A made document whose counts differ
 /// from those given fails, named, and so does a relation whose made rows are not the count given.

@@ -369,6 +369,12 @@ impl Front {
         unsafe { *self.grid.host().cast::<u32>().add(2) != 0 }
     }
 
+    /// The groups that joined the run's grid (`ukl_grid_join`, decision 0540 §3: the ones running), after it.
+    pub fn joined(&self) -> u64 {
+        // SAFETY: the device finished writing the grid's words.
+        u64::from(unsafe { *self.grid.host().cast::<u32>().add(3) } & 0x7fff_ffff)
+    }
+
     /// `pp_setup` over the arena, `groups` groups.
     pub fn setup<'a>(&'a self, enc: &Enc<'a>, arena: &'a Arena, unit: &'a Unit, groups: u64) {
         enc.run("pp_setup", &[("arena", arena), ("data", self.data(unit)), ("lay", &self.lay)], None, groups);
@@ -446,7 +452,7 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
 /// Runs the persistent grid over the arena at `groups` groups, laid out as `l`, in one command
 /// buffer: `pp_setup` to the stage `l` names (the text pass is inside its P1 iterations,
 /// decision 0485), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
-/// `None` where a barrier failed (the grid's groups were not resident together).
+/// `None` where a barrier failed (a group of the grid past its wait's bound: the grid is the groups that joined it).
 pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<(usize, f64)>, Error> {
     l.write(&front.lay);
     let all = l.get("LAST") == TO_ALL;

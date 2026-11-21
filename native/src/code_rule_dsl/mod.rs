@@ -1760,6 +1760,9 @@ pub(crate) mod logic {
             // Decision 0494: a batch makes a document when first read.
             #[cfg(test)]
             pub mod made_batch_tests;
+            // Q332: what a warm run does to the files that did not change, by count (the `warm` nextest profile).
+            #[cfg(test)]
+            pub mod warm_tests;
             #[cfg(test)]
             pub mod cache_tests;
             // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
@@ -2042,7 +2045,8 @@ mod sql_executor {
     // Only in builds that have them in rerail-sessions (its own `cfg`): its tests, `test-hooks`, `headless`.
     #[cfg(any(test, feature = "test-hooks", feature = "headless"))]
     pub mod component_loop {
-        #[cfg(any(test, feature = "headless"))]
+        // Read by the tests alone: a headless build's comparison is rerail-sessions' own (`verification`).
+        #[cfg(test)]
         pub use rerail_sessions::code_rule_dsl::sql_executor::component_loop::*;
         #[cfg(test)]
                 pub mod tests;
