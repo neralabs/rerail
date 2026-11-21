@@ -186,6 +186,21 @@ E1 maintains 92 of P2's 99 strata for a 3-row delta, 2.4 s against a full run's 
 whose deltas are all empty) is the fix, in `plan::run`'s stratum loop, built by the hub's owners. This branch
 re-runs `spike_t28_a_session_maintains_the_typing_phase` after it lands. Done when E1's P2 costs under 0.5 s.
 
+**Done** (2026-11-21, 0101 §1 and §2 merged from the hub). `spike_t28_a_session_maintains_the_typing_phase` over the
+84-file corpus with typeshed, in a session, on a farm Mac, debug; it now prints each phase's quiet strata too. P2's
+CPU, and its strata as reached of all, maintained from deltas (of them recursive), passed on as quiet:
+
+| Run | Session | Full run | Strata reached | Maintained | Quiet |
+|---|---|---|---|---|---|
+| cold | 0.29 s | | 58 of 58, derived | | |
+| unchanged | 0.08 s | | 0 | | |
+| E1 (a function added) | 0.20 to 0.22 s | 0.62 to 0.65 s | 52 | 27 (2) | 21 |
+| E2 (a comment) | 0.08 s | 0.13 s | 0 | | |
+| E3 (a line in a body) | 0.09 s | 0.13 s | 0 | | |
+
+The exports equal the full run's after each edit. The relations E1 holds as quiet with no column measured (7) each
+have 0 or 1 rows (`explicit`, `rr_ctx6`, the `rr_rank` relations), whose row count is all there is to measure.
+
 ### Stage 7. Searches (this branch, a decision first)
 
 Generic instantiation (`inst`) and member lookup through the MRO (`mro_find`) as 0083 §4's searches, in place of
@@ -228,7 +243,7 @@ That also gives the cross-file memo its finer key. This waits for per-definition
 | 3 | 3.1: nothing; 3.2: 5.1 | this branch |
 | 4 | Two-pass's "derive again" merged (same code) | this branch |
 | 5 | 1 | engine and the owners |
-| 6 | 0101 §1 in the hub | the hub's owners; measured here |
+| 6 | 0101 §1 in the hub | the hub's owners; measured here: done |
 | 7 | 1 | this branch |
 | 8 | 2.1, 7.2, per-definition node ids | this branch: done (8.1) |
 

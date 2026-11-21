@@ -1679,8 +1679,8 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
             let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
             let rows: usize = p.exports.iter().map(|e| e.1).sum();
-            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?} (a new process's {:?}), maintained {:?}; export rows {rows}; parts: {}",
-                p.name, p.report.cross_strata, p.report.cross_kept, p.report.cross_maintained, parts.join(", "));
+            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?} (a new process's {:?}), maintained {:?}, quiet {:?}; export rows {rows}; parts: {}",
+                p.name, p.report.cross_strata, p.report.cross_kept, p.report.cross_maintained, p.report.cross_quiet, parts.join(", "));
         }
         println!("T28 {what}: the reader's run: {:.2} s", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>());
     };
