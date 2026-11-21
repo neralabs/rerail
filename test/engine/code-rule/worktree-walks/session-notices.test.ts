@@ -650,6 +650,18 @@ describe("a shell command's result reads the session folder by its change notice
     notices.close();
   });
 
+  it("reads by notices while Git keeps naming none of what it ignores beyond the .gitignore files, once a whole pass read with none", async () => {
+    const { notices, pass } = ignorePasses(await workspace());
+    pass("gen/", true);
+    expect(pass(undefined)).toBe(true);
+    // Before, every pass read the whole folder while Git kept failing.
+    expect(pass(undefined)).toBe(false);
+    // Git names them again, then none: their text is not what it named, so the pass reads whole.
+    expect(pass("gen/")).toBe(false);
+    expect(pass(undefined)).toBe(true);
+    notices.close();
+  });
+
   it("checks a write no notice told of at the first result ten minutes after the last whole walk began, and reads by notices after it", async () => {
     const root = await workspace();
     const watch = platformWatch();

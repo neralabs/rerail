@@ -774,6 +774,8 @@ export class SessionNotices {
    * What told Git to ignore beyond the folder's `.gitignore` files as the last whole pass that knew it began (`ended`).
    */
   #ignores: string | undefined;
+  /** Whether Git named none of those for the pass that ended last (`ended`). */
+  #ignoresUnnamed = false;
   /** The paths notices named since the last pass began. */
   #paths = new Set<string>();
   /**
@@ -844,10 +846,13 @@ export class SessionNotices {
    * Whether `ignores` is not what the last whole pass that knew them began with (`WorktreeLook.ignores`:
    * `info/exclude`, `core.excludesFile` and the configuration naming it), since no notice in the folder tells of a change
    * to those; undefined, Git did not name them now. Once Git names them after no whole pass knew them (its read failed,
-   * or the folder was in no repository), they moved: none can vouch for what they were.
+   * or the folder was in no repository), they moved: none can vouch for what they were. Git names none only when it
+   * was asked, which is when their text is not what it named last (`WorktreeLook.ignores`): none after a pass it named
+   * them for is a move, and none after a pass it named none for tells nothing new, since that pass read whole or came
+   * after one that did. So a Git that keeps failing costs one whole pass, not one per result.
    */
   #ignoresMoved(ignores: string | undefined): boolean {
-    return ignores !== this.#ignores;
+    return ignores === undefined ? !this.#ignoresUnnamed : ignores !== this.#ignores;
   }
 
   /**
@@ -896,6 +901,7 @@ export class SessionNotices {
    * keeps what the last whole pass that knew them began with, so the next pass weighs them against that.
    */
   ended(seen: WorktreeRead | undefined, found: SessionFound, ignores?: string): void {
+    this.#ignoresUnnamed = ignores === undefined;
     if (seen === undefined) {
       this.#endedNoticed(found.linked);
       return;
